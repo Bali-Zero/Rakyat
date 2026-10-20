@@ -30,8 +30,9 @@ class FakeEmbedder:
 
 
 class FakeVectorDB:
-    def __init__(self) -> None:
+    def __init__(self, result: dict[str, object] | None = None) -> None:
         self.calls: list[dict[str, object]] = []
+        self.result = result if result is not None else {"success": True}
 
     # Mirrors QdrantClient.upsert_documents, which is async.
     async def upsert_documents(
@@ -42,7 +43,7 @@ class FakeVectorDB:
         metadatas: list[dict[str, object]],
     ) -> dict[str, object]:
         self.calls.append({"chunks": chunks, "embeddings": embeddings, "metadatas": metadatas})
-        return {"success": True}
+        return self.result
 
 
 class FakeClassifier:
@@ -136,6 +137,40 @@ def test_is_legal_document_returns_false_when_parsing_fails(monkeypatch) -> None
     monkeypatch.setattr(ingestion_module, "auto_detect_and_parse", raise_parse_error)
 
     assert service._is_legal_document("/tmp/bad.pdf") is False
+
+
+async def test_ingest_book_reports_failure_when_vector_store_rejects_upsert(monkeypatch) -> None:
+    # Review 12 Oct: QdrantClient.upsert_documents returns {"success": False}
+    # on failed batches instead of raising, so ingest_book must read the result.
+    service = build_service()
+    service.vector_db = FakeVectorDB(
+        result={
+            "success": False,
+            "error": "Some batches failed: ['HTTP 500']",
+            "documents_added": 0,
+        },
+    )
+    monkeypatch.setattr(service, "_is_legal_document", lambda _file_path: False)
+    monkeypatch.setattr(
+        ingestion_module,
+        "get_document_info",
+        lambda _file_path: {
+            "title": "Detected Title",
+            "author": "Detected Author",
+            "status": "berlaku",
+            "region": "Bali",
+        },
+    )
+    monkeypatch.setattr(
+        ingestion_module, "auto_detect_and_parse", lambda _file_path: "full parsed text"
+    )
+
+    result = await service.ingest_book("/tmp/book.pdf", language="id")
+
+    assert len(service.vector_db.calls) == 1
+    assert result["success"] is False
+    assert result["chunks_created"] == 0
+    assert "Some batches failed" in str(result["error"])
 
 
 def test_fakes_match_async_contract_of_real_dependencies() -> None:

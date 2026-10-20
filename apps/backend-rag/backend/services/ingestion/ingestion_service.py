@@ -153,11 +153,17 @@ class IngestionService:
                 metadatas.append(meta)
 
             # Step 7: Store in vector database
-            await self.vector_db.upsert_documents(
+            upsert_result = await self.vector_db.upsert_documents(
                 chunks=chunk_texts,
                 embeddings=embeddings,
                 metadatas=metadatas,
             )
+            # QdrantClient reports failed batches as {"success": False} instead of raising.
+            if not (isinstance(upsert_result, dict) and upsert_result.get("success")):
+                error = (
+                    upsert_result.get("error") if isinstance(upsert_result, dict) else upsert_result
+                )
+                raise RuntimeError(f"Vector store upsert failed: {error}")
 
             logger.info("✅ Successfully ingested: %s", book_title)
 
