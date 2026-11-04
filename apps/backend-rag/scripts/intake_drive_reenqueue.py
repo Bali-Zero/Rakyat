@@ -40,7 +40,10 @@ before any Drive or database call, and the message names a line NUMBER, never wh
 Output: ONE JSON line of counts on stdout (``apply`` 0/1, ``duplicate_ids``, then the counters of the
 run: ``requested``, ``would_enqueue_new``, ``enqueued_new``, ``already_present``, ``skipped_*``,
 ``missing``, ``errors``, ``not_attempted``, ``disk_hold``). Logs go to stderr and carry Drive ids and
-counts only, never a file name or a path (``source_path`` goes to the queue row, as in the drain).
+counts only, never a file name or a path (``source_path`` goes to the queue row, as in the drain). They
+leave through ONE handler that lets only this CLI's and the Drive adapter's lines through: the records of
+every other logger, the Drive client's start-up lines that name folders included, are dropped, or at
+WARNING and above replaced by a line that names the logger and the exception class and nothing else.
 
 Exit: 0 ok; 2 bad input or configuration (nothing was touched); 3 the run had errors, stopped at the
 disk floor (``disk_hold=1``), could not start (database or Drive service) or could not close the database.
@@ -57,7 +60,9 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
+import time
 from pathlib import Path
 
 BACKEND_RAG = Path(__file__).resolve().parents[1]
@@ -78,6 +83,71 @@ MAX_IDS = 500
 MAX_FILE_BYTES = 4 * 1024 * 1024
 EXIT_OK, EXIT_BAD_INPUT, EXIT_ERRORS = 0, 2, 3
 DEFAULT_DSN = "postgresql://nuzantara@127.0.0.1:5432/nuzantara_dev"
+
+# The Drive client this CLI builds logs the NAMES of the folders it checks at start-up, and the raw text of
+# the exception when one check fails. Only the two loggers below write lines that carry Drive ids and counts
+# and nothing else; the one handler below is the only way a log record leaves this process.
+_SAFE_LOGGERS = frozenset({"intake_drive_reenqueue", "backend.services.intake.drive_adapter"})
+_HANDLER_NAME = "intake_drive_reenqueue.safe_stderr"
+_PLAIN = re.compile(r"[A-Za-z0-9_.]{1,100}")
+
+
+def _plain(word: object) -> str:
+    """A logger, level or class name when it is a plain identifier, else a question mark."""
+    return word if isinstance(word, str) and _PLAIN.fullmatch(word) else "?"
+
+
+class _SafeStderr(logging.Handler):
+    """The only route of a log record to stderr in this process.
+
+    The two loggers of _SAFE_LOGGERS are printed as they are, without any traceback. A record of any other
+    logger (the Drive client, Google's libraries, the database driver) is dropped below WARNING, and at
+    WARNING or above is replaced by a constant line that names the logger and, when the record carried one,
+    the exception CLASS: never its message, its text or its traceback.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            said = self._said(record)
+            if said is not None:
+                sys.stderr.write(said + "\n")
+        except Exception:
+            return  # no log line is worth a crash, and nothing may be written about why
+
+    @staticmethod
+    def _said(record: logging.LogRecord) -> str | None:
+        when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(record.created))
+        head = f"{when},{int(record.msecs):03d} {_plain(record.levelname)}"
+        if record.name in _SAFE_LOGGERS:
+            return f"{head} {record.name} {record.getMessage()}"
+        if record.levelno < logging.WARNING:
+            return None
+        kind = ""
+        if record.exc_info and record.exc_info[0] is not None:
+            kind = f" ({_plain(record.exc_info[0].__name__)})"
+        return f"{head} {_plain(record.name)} a record of this logger was withheld{kind}"
+
+
+def _install_safe_logging() -> None:
+    """Make _SafeStderr the process's only log route to the terminal."""
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        stream = getattr(handler, "stream", None)
+        to_the_terminal = isinstance(handler, logging.StreamHandler) and stream in (
+            sys.stdout,
+            sys.stderr,
+            sys.__stdout__,
+            sys.__stderr__,
+        )
+        if to_the_terminal or handler.get_name() == _HANDLER_NAME:
+            root.removeHandler(handler)
+    safe = _SafeStderr()
+    safe.set_name(_HANDLER_NAME)
+    root.addHandler(safe)
+    for name in _SAFE_LOGGERS:
+        speaker = logging.getLogger(name)
+        if speaker.getEffectiveLevel() > logging.INFO:
+            speaker.setLevel(logging.INFO)
 
 
 def read_ids(path: Path) -> tuple[list[str], int, str | None]:
@@ -181,9 +251,7 @@ async def _run(ids: list[str], repeated: int, scope_id: str, *, apply: bool) -> 
     return EXIT_ERRORS if counters["errors"] or counters["disk_hold"] or not closed else EXIT_OK
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+def _main(args: argparse.Namespace) -> int:
     ids, repeated, problem = read_ids(Path(args.ids_file).expanduser())
     if problem is not None:
         print(f"intake_drive_reenqueue: {problem}", file=sys.stderr)
@@ -193,6 +261,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"intake_drive_reenqueue: {_SCOPE_ENV} is not set", file=sys.stderr)
         return EXIT_BAD_INPUT
     return asyncio.run(_run(ids, repeated, scope_id, apply=args.apply))
+
+
+def main(argv: list[str] | None = None) -> int:
+    # --help and a usage error leave through SystemExit, as they should
+    args = _parser().parse_args(argv)
+    try:
+        _install_safe_logging()
+        return _main(args)
+    except Exception as exc:
+        # Whatever got this far is not an outcome the run knows: the interpreter's traceback would carry the
+        # exception's message, which can hold a file or folder name.
+        why = _failure_summary(exc)
+        logger.error("stopped on an unexpected fault (%s)", why)
+        return EXIT_ERRORS
 
 
 if __name__ == "__main__":

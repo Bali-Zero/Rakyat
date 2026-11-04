@@ -397,18 +397,8 @@ def test_the_help_splits_every_json_key_into_outcome_or_metadata_and_none_is_lef
     assert outcome | metadata == counters | {"apply", "duplicate_ids"}  # and none is unnamed
 
 
-def _real_run(
-    wired: Wired,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: Any,
-    text: str,
-    *,
-    apply: bool,
-    out_of_scope: bool = False,
-    broken: bool = False,
-) -> tuple[int, dict[str, int]]:
-    """The CLI over the REAL library and a fake Drive: one JSON line of counts, as an operator reads it."""
+def _patch_apply_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """What an apply needs besides Drive and the queue: a download that returns a size, an enqueue that records."""
 
     async def download(drive_service: Any, file_id: str, dest: Path) -> int:
         return 7
@@ -424,6 +414,21 @@ def _real_run(
     monkeypatch.setattr(da, "_pause", no_pause)
     monkeypatch.setattr(da, "_free_bytes", lambda: 10**15)
     monkeypatch.setattr(da, "_BLOB_ROOT", tmp_path / "blobs")
+
+
+def _real_run(
+    wired: Wired,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: Any,
+    text: str,
+    *,
+    apply: bool,
+    out_of_scope: bool = False,
+    broken: bool = False,
+) -> tuple[int, dict[str, int]]:
+    """The CLI over the REAL library and a fake Drive: one JSON line of counts, as an operator reads it."""
+    _patch_apply_path(monkeypatch, tmp_path)
     drive = wired.drive
     drive.add("DIR", f"{NAME}-dir", [SCOPE], "application/vnd.google-apps.folder")
     drive.add("ELSEWHERE", f"{NAME}-else", ["ROOT"], "application/vnd.google-apps.folder")
@@ -856,6 +861,436 @@ def test_the_script_runs_as_a_program(tmp_path: Path) -> None:
     assert "INTAKE_DRIVE_SCOPE_FOLDER_ID" in no_scope.stderr
     missing = _spawn()
     assert missing.returncode == 2 and "--ids-file" in missing.stderr
+
+
+# --------------------------------------------------------------------------- #
+# The log route: ONE handler, two speakers. The Drive client this CLI builds names folders in its start-up
+# lines and prints the raw text of a failed check: none of it may reach stdout or stderr.
+# --------------------------------------------------------------------------- #
+SAFE_HANDLER = "intake_drive_reenqueue.safe_stderr"
+SAFE_LOGGERS = ("intake_drive_reenqueue", "backend.services.intake.drive_adapter")
+SERVICE_LOGGER = "backend.services.integrations.service_account_drive_service"
+ROOT_ID, INDIVIDUALS_ID, COMPANIES_ID = "rootfolder0001", "indivfolder001", "compfolder0001"
+
+
+@pytest.fixture(autouse=True)
+def _restore_logging() -> Any:
+    """main() puts a handler on the root logger and raises two loggers to INFO: take both back."""
+    levels = {name: logging.getLogger(name).level for name in SAFE_LOGGERS}
+    yield
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        if handler.get_name() == SAFE_HANDLER:
+            root.removeHandler(handler)
+    for name, level in levels.items():
+        logging.getLogger(name).setLevel(level)
+
+
+def _record(name: str, level: int, message: str, *args: Any) -> logging.LogRecord:
+    return logging.LogRecord(name, level, __file__, 1, message, args, None)
+
+
+def _record_with_exception(name: str, exc: BaseException) -> logging.LogRecord:
+    try:
+        raise exc
+    except BaseException:
+        return logging.LogRecord(name, logging.ERROR, __file__, 1, "failed", (), sys.exc_info())
+
+
+def test_the_handler_lets_this_cli_and_the_drive_adapter_speak(cli: Any, capsys: Any) -> None:
+    handler = cli._SafeStderr()
+    for name in SAFE_LOGGERS:
+        handler.emit(_record(name, logging.INFO, "file_id=%s counted %d", "abc", 3))
+    err = capsys.readouterr().err
+    assert err.count("\n") == 2 and err.count("file_id=abc counted 3") == 2
+    assert all(name in err for name in SAFE_LOGGERS) and "INFO" in err
+
+
+def test_the_handler_never_prints_a_traceback_not_even_for_a_speaker_it_lets_through(
+    cli: Any, capsys: Any
+) -> None:
+    cli._SafeStderr().emit(
+        _record_with_exception(SAFE_LOGGERS[1], RuntimeError(f"cannot read {NAME}"))
+    )
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1 and "failed" in err
+    assert "Traceback" not in err and "RuntimeError" not in err and NAME not in err
+
+
+@pytest.mark.parametrize("level", [logging.DEBUG, logging.INFO])
+def test_the_handler_drops_the_low_records_of_every_other_logger(
+    cli: Any, capsys: Any, level: int
+) -> None:
+    cli._SafeStderr().emit(_record(SERVICE_LOGGER, level, "folder %r is fine", NAME))
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize("level", [logging.WARNING, logging.ERROR, logging.CRITICAL])
+def test_the_handler_replaces_a_warning_or_worse_of_another_logger_by_a_constant_line(
+    cli: Any, capsys: Any, level: int
+) -> None:
+    cli._SafeStderr().emit(_record(SERVICE_LOGGER, level, "folder %r: %s", NAME, f"error {NAME}"))
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1 and SERVICE_LOGGER in err and logging.getLevelName(level) in err
+    assert "withheld" in err and NAME not in err and "folder" not in err
+
+
+def test_the_withheld_line_names_the_exception_class_and_never_its_text(
+    cli: Any, capsys: Any
+) -> None:
+    exc = PermissionError(13, f"denied for {NAME}")
+    cli._SafeStderr().emit(_record_with_exception(SERVICE_LOGGER, exc))
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1 and "(PermissionError)" in err
+    assert NAME not in err and "denied" not in err and "Traceback" not in err
+
+
+def test_a_logger_or_an_exception_whose_name_is_not_plain_is_not_echoed(
+    cli: Any, capsys: Any
+) -> None:
+    odd = type(f"Error-{NAME}", (Exception,), {})
+    cli._SafeStderr().emit(_record_with_exception(f"lib.{NAME}", odd("x")))
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1 and "withheld" in err and NAME not in err and "?" in err
+
+
+def test_the_handler_never_raises_whatever_the_record_or_the_stream(
+    cli: Any, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    handler = cli._SafeStderr()
+    handler.emit(_record(SAFE_LOGGERS[0], logging.INFO, "%d", "not a number"))  # getMessage raises
+    assert capsys.readouterr() == ("", "")  # and nothing half-written was printed
+
+    attempts: list[str] = []
+
+    class Closed:
+        def write(self, text: str) -> int:
+            attempts.append(text)
+            raise ValueError("I/O operation on closed file")
+
+    monkeypatch.setattr(sys, "stderr", Closed())
+    handler.emit(_record(SAFE_LOGGERS[0], logging.INFO, "fine"))
+    handler.emit(_record(SERVICE_LOGGER, logging.ERROR, "fine"))
+    assert len(attempts) == 2  # both lines were tried; the closed stream's error stopped neither
+
+
+def test_the_installed_handler_is_one_and_main_run_twice_leaves_one(
+    wired: Wired, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    wired.stub_library(monkeypatch)
+    for _ in range(2):
+        run(wired.cli, capsys, "--ids-file", tsv(tmp_path, fid(1) + "\n"))
+    named = [h for h in logging.getLogger().handlers if h.get_name() == SAFE_HANDLER]
+    assert len(named) == 1
+
+
+def test_the_two_speakers_reach_info_in_a_process_whose_root_logger_is_quiet(
+    wired: Wired, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "level", logging.WARNING)
+    for name in SAFE_LOGGERS:
+        monkeypatch.setattr(logging.getLogger(name), "level", logging.NOTSET)
+    wired.stub_library(monkeypatch)
+    run(wired.cli, capsys, "--ids-file", tsv(tmp_path, fid(1) + "\n"))
+    assert all(logging.getLogger(name).isEnabledFor(logging.INFO) for name in SAFE_LOGGERS)
+    assert not logging.getLogger(SERVICE_LOGGER).isEnabledFor(
+        logging.INFO
+    )  # nobody else was raised
+
+
+# ---- main() lets no exception escape ---------------------------------------------------------------------
+def test_a_fault_that_nothing_else_catches_is_exit_3_with_a_summary_and_no_message(
+    wired: Wired,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def unreadable(path: Path) -> Any:
+        raise RuntimeError(f"unreadable {NAME}")
+
+    monkeypatch.setattr(wired.cli, "read_ids", unreadable)
+    with caplog.at_level(logging.DEBUG):
+        code, out, err = run(wired.cli, capsys, "--ids-file", tsv(tmp_path, fid(1) + "\n"))
+    assert code == 3 and out == "" and wired.built == {"pool": 0, "service": 0}
+    assert "unexpected fault" in err and "RuntimeError" in err  # said, by class and place
+    assert NAME not in err + caplog.text and "Traceback" not in err
+    assert all(r.exc_info is None and r.exc_text is None for r in caplog.records)
+
+
+@pytest.mark.parametrize("raised", [KeyboardInterrupt(), SystemExit(7)], ids=["interrupt", "exit"])
+def test_main_does_not_swallow_an_interrupt_or_an_exit(
+    raised: BaseException, wired: Wired, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def leave(path: Path) -> Any:
+        raise raised
+
+    monkeypatch.setattr(wired.cli, "read_ids", leave)
+    with pytest.raises(type(raised)):
+        wired.cli.main(["--ids-file", tsv(tmp_path, fid(1) + "\n")])
+
+
+FAULT_WORLD = f"""
+import pathlib
+_read_text = pathlib.Path.read_text
+def _unreadable(self, *args, **kwargs):
+    if self.name == "ids.tsv":
+        raise RuntimeError("unreadable {NAME}")
+    return _read_text(self, *args, **kwargs)
+pathlib.Path.read_text = _unreadable
+"""
+
+
+def test_an_unexpected_fault_ends_the_real_process_with_exit_3_no_traceback_and_no_name(
+    tmp_path: Path,
+) -> None:
+    child = _spawn_driven(
+        tmp_path,
+        FAULT_WORLD,
+        "--ids-file",
+        tsv(tmp_path, fid(1) + "\n"),
+        env_extra={"INTAKE_DRIVE_SCOPE_FOLDER_ID": SCOPE},
+    )
+    assert child.returncode == 3, child.stderr
+    assert "Traceback" not in child.stderr and 'File "' not in child.stderr
+    assert NAME not in child.stdout + child.stderr and child.stdout == ""
+    assert "unexpected fault" in child.stderr and "RuntimeError" in child.stderr
+
+
+# ---- the REAL service constructor, over a fake Drive API -------------------------------------------------
+class RealCtor:
+    """The CLI around the REAL ServiceAccountDriveService constructor, a fake Drive API and a fake pool.
+
+    Nothing real can be reached: the settings the constructor reads, its credentials factory and the
+    discovery build are all replaced, and the folders it checks at start-up carry the sentinel in their
+    name or in the text of the exception.
+    """
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, cli: Any) -> None:
+        import backend.services.integrations.service_account_drive_service as svc
+
+        self.cli = cli
+        self.pool = FakePool()
+        self.drive = FakeDrive()
+        self.discovery: list[tuple[str, str]] = []
+        real = self
+
+        async def create_pool(**kwargs: Any) -> FakePool:
+            return real.pool
+
+        def build(api: str, version: str, credentials: Any = None) -> Any:
+            real.discovery.append((api, version))
+            return real.drive.service
+
+        account = json.dumps(
+            {"type": "service_account", "client_email": "synthetic@example.invalid"}
+        )
+        settings = types.SimpleNamespace(
+            google_credentials_json=account,
+            google_drive_root_folder_id=ROOT_ID,
+            gdrive_individuals_folder_id=INDIVIDUALS_ID,
+            gdrive_companies_folder_id=COMPANIES_ID,
+        )
+        creds = types.SimpleNamespace(with_subject=lambda subject: object())
+        accounts = types.SimpleNamespace(
+            Credentials=types.SimpleNamespace(
+                from_service_account_info=lambda info, scopes=None: creds
+            )
+        )
+        monkeypatch.setattr(cli.asyncpg, "create_pool", create_pool)
+        monkeypatch.setattr(svc, "settings", settings)
+        monkeypatch.setattr(svc, "service_account", accounts)
+        monkeypatch.setattr(svc, "build", build)
+        self.drive.add(ROOT_ID, f"{NAME}-root-folder", [])
+        self.drive.add(INDIVIDUALS_ID, f"{NAME}-individuals", [])
+        self.drive.errors[COMPANIES_ID] = RuntimeError(f"folder {NAME} is unreachable")
+        self.drive.add("DIR", f"{NAME}-dir", [SCOPE], "application/vnd.google-apps.folder")
+        self.drive.add(fid(1), f"{NAME}-1.pdf", ["DIR"])
+
+
+@pytest.fixture
+def real_ctor(cli: Any, monkeypatch: pytest.MonkeyPatch) -> RealCtor:
+    monkeypatch.setenv("INTAKE_DRIVE_SCOPE_FOLDER_ID", SCOPE)
+    monkeypatch.delenv("INTAKE_DRIVE_MIN_FREE_GIB", raising=False)
+    return RealCtor(monkeypatch, cli)
+
+
+@pytest.mark.parametrize("apply", [False, True], ids=["dry-run", "apply"])
+def test_the_real_service_constructor_over_a_fake_drive_api_leaks_no_name_to_stdout_or_stderr(
+    apply: bool,
+    real_ctor: RealCtor,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _patch_apply_path(monkeypatch, tmp_path)
+    argv = ["--ids-file", tsv(tmp_path, fid(1) + "\n"), *(["--apply"] if apply else [])]
+    with caplog.at_level(logging.DEBUG):
+        code, out, err = run(real_ctor.cli, capsys, *argv)
+    assert real_ctor.discovery == [("drive", "v3")]  # the real constructor ran and built its client
+    assert (
+        NAME in caplog.text and "unreachable" in caplog.text
+    )  # control: it DID log the name and the raw text
+    assert code == 0 and json.loads(out)["requested"] == 1
+    assert NAME not in out and NAME not in err and "unreachable" not in err
+    assert (
+        "impersonating" not in err and "Loaded Google credentials" not in err
+    )  # INFO lines: dropped
+    assert "withheld" in err and SERVICE_LOGGER in err  # the ERROR line: replaced, not silent
+    assert "reenqueue_drive done" in err  # the adapter's own summary line still speaks
+
+
+def test_a_stream_handler_left_on_the_root_is_removed_so_it_cannot_print_what_the_safe_one_drops(
+    real_ctor: RealCtor, tmp_path: Path, capsys: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    foreign = logging.StreamHandler(sys.stderr)  # prints every record it is given, as it is
+    logging.getLogger().addHandler(foreign)
+    try:
+        with caplog.at_level(logging.DEBUG):
+            code, out, err = run(real_ctor.cli, capsys, "--ids-file", tsv(tmp_path, fid(1) + "\n"))
+        assert foreign not in logging.getLogger().handlers
+    finally:
+        logging.getLogger().removeHandler(foreign)
+    assert code == 0 and NAME not in out + err
+    assert (
+        NAME in caplog.text
+    )  # a handler that writes anywhere else (the harness's capture) is left alone
+
+
+def _real_ctor_driver(*, apply: bool, verbose_root: bool, control: Path) -> str:
+    items = {
+        ROOT_ID: {"id": ROOT_ID, "name": f"{NAME}-root-folder"},
+        INDIVIDUALS_ID: {"id": INDIVIDUALS_ID, "name": f"{NAME}-individuals"},
+        "DIR": {
+            "id": "DIR",
+            "name": f"{NAME}-dir",
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [SCOPE],
+        },
+        fid(1): {
+            "id": fid(1),
+            "name": f"{NAME}-1.pdf",
+            "mimeType": "application/pdf",
+            "parents": ["DIR"],
+        },
+    }
+    errors = {COMPANIES_ID: f"folder {NAME} is unreachable"}
+    applying = (
+        """
+async def _download(drive_service, file_id, dest):
+    return 7
+async def _enqueue(pool, **kwargs):
+    return types.SimpleNamespace(was_new=True)
+async def _no_pause(seconds):
+    return None
+da._download_file = _download
+da.enqueue = _enqueue
+da._pause = _no_pause
+da._free_bytes = lambda: 10**15
+"""
+        if apply
+        else ""
+    )
+    return f"""
+import asyncpg, atexit, logging, types
+
+class _Conn:
+    async def fetchval(self, query, *args):
+        return False
+class _Ctx:
+    async def __aenter__(self):
+        return _Conn()
+    async def __aexit__(self, *exc):
+        return False
+class _Pool:
+    def acquire(self):
+        return _Ctx()
+    async def close(self):
+        return None
+async def _create_pool(**kwargs):
+    return _Pool()
+asyncpg.create_pool = _create_pool
+
+ITEMS = {items!r}
+ERRORS = {errors!r}
+class _Request:
+    def __init__(self, run):
+        self._run = run
+    def execute(self):
+        return self._run()
+class _Files:
+    def get(self, *, fileId, fields, supportsAllDrives=False):
+        def run():
+            if fileId in ERRORS:
+                raise RuntimeError(ERRORS[fileId])
+            if fileId not in ITEMS:
+                raise RuntimeError("not found")
+            return dict(ITEMS[fileId])
+        return _Request(run)
+class _Api:
+    def files(self):
+        return _Files()
+
+import backend.services.integrations.service_account_drive_service as svc
+svc.settings = types.SimpleNamespace(
+    google_credentials_json='{{"type": "service_account", "client_email": "synthetic@example.invalid"}}',
+    google_drive_root_folder_id={ROOT_ID!r},
+    gdrive_individuals_folder_id={INDIVIDUALS_ID!r},
+    gdrive_companies_folder_id={COMPANIES_ID!r},
+)
+svc.service_account = types.SimpleNamespace(
+    Credentials=types.SimpleNamespace(
+        from_service_account_info=lambda info, scopes=None: types.SimpleNamespace(
+            with_subject=lambda subject: object()
+        )
+    )
+)
+svc.build = lambda api, version, credentials=None: _Api()
+import backend.services.intake.drive_adapter as da
+{applying}
+class _Tap(logging.Handler):
+    seen = False
+    def emit(self, record):
+        try:
+            if {NAME!r} in record.getMessage():
+                _Tap.seen = True
+        except Exception:
+            pass
+# the tap sits on the service's own logger, not on the root: a handler on the root would stop the script's
+# logging.basicConfig from installing its stderr handler and hide, in a version without the cure, the leak
+logging.getLogger("backend.services.integrations.service_account_drive_service").addHandler(_Tap())
+if {verbose_root!r}:
+    logging.getLogger().setLevel(logging.DEBUG)
+atexit.register(lambda: open({str(control)!r}, "w").write("1" if _Tap.seen else "0"))
+"""
+
+
+@pytest.mark.parametrize("verbose_root", [False, True], ids=["quiet-root", "verbose-root"])
+@pytest.mark.parametrize("apply", [False, True], ids=["dry-run", "apply"])
+def test_the_real_constructor_in_a_real_process_leaks_no_name_whatever_the_root_logger_says(
+    apply: bool, verbose_root: bool, tmp_path: Path
+) -> None:
+    control = tmp_path / "control.txt"
+    child = _spawn_driven(
+        tmp_path,
+        _real_ctor_driver(apply=apply, verbose_root=verbose_root, control=control),
+        "--ids-file",
+        tsv(tmp_path, fid(1) + "\n"),
+        *(["--apply"] if apply else []),
+        env_extra={"INTAKE_DRIVE_SCOPE_FOLDER_ID": SCOPE},
+    )
+    assert child.returncode == 0, child.stderr
+    assert (
+        control.read_text() == "1"
+    )  # control: the constructor logged the sentinel, inside that process
+    assert NAME not in child.stdout + child.stderr and "unreachable" not in child.stderr
+    assert "withheld" in child.stderr and SERVICE_LOGGER in child.stderr
+    assert (
+        "reenqueue_drive done" in child.stderr
+    )  # the INFO line of a speaker, even on a quiet root
+    assert json.loads(child.stdout)["requested"] == 1 and child.stdout.count("\n") == 1
 
 
 # --------------------------------------------------------------------------- #
