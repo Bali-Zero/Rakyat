@@ -1,0 +1,178 @@
+"""
+Pricing API
+
+- GET /api/pricing/all        — Full official price catalog (PricingService SSOT)
+- GET /api/pricing/search     — Search official prices by keyword (?q=...)
+- POST /api/pricing/scenario  — Dynamic scenario pricing (aggregates Oracle collections)
+"""
+
+import logging
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
+
+from backend.app.dependencies import get_current_user
+from backend.services.pricing.pricing_service import (
+    _is_internal_service,
+    _omit_internal_rows,
+    get_pricing_service,
+)
+
+OptionalUser = dict | None  # User dict from get_current_user, or None if unauthenticated
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/pricing", tags=["pricing"])
+
+
+@router.get("/all")
+async def get_all_prices() -> dict[str, Any]:
+    """
+    Return the full official Bali Zero price catalog.
+    Single source of truth — never hardcode or guess prices.
+    """
+    svc = get_pricing_service()
+    result = svc.get_all_prices()
+    if "error" in result:
+        raise HTTPException(status_code=503, detail=result["error"])
+    return _omit_internal_rows(result, svc)
+
+
+@router.get("/search")
+async def search_pricing(
+    q: str = Query(..., min_length=1, description="Service name or keyword"),
+) -> dict[str, Any]:
+    """
+    Search the official price catalog by keyword.
+    Returns matching services with exact prices.
+    """
+    svc = get_pricing_service()
+    result = svc.search_service(q)
+    if "error" in result:
+        raise HTTPException(status_code=503, detail=result["error"])
+    return _omit_internal_rows(result, svc)
+
+
+@router.get("/service")
+async def get_service_price(
+    key: str = Query(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Exact catalogue key, e.g. 'E33 Second Home (5 Years)'",
+    ),
+) -> dict[str, Any]:
+    """Return the official price for ONE service, by exact catalogue key.
+
+    This is the only pricing route reachable without auth (registered in
+    `backend/app/auth/public_endpoints.py`), because it is what the public
+    website needs to render a price instead of a hardcoded literal — Golden
+    Rule #11 says prices come from PricingTool, and until this existed there
+    was no public surface through which they could.
+
+    Exact-key only, deliberately. `/search` scores and guesses, which is right
+    for a human typing a keyword and wrong for a page rendering a number: a
+    near-miss shown as "the price" is worse than no price at all.
+
+    404 for an unknown key, 503 when the catalogue itself failed to load — the
+    caller must be able to tell "this service does not exist" from "the price
+    source is down", because only the second one should fall back to a cached
+    literal.
+    """
+    svc = get_pricing_service()
+    if not svc.loaded:
+        raise HTTPException(status_code=503, detail="Official prices not loaded")
+
+    entry = svc.get_service_by_key(key)
+    # An `"internal": true` row is hidden from public surfaces: same 404 as unknown.
+    # (Kept out of the docstring: it feeds the OpenAPI description and its pin.)
+    if entry is None or entry.get("internal") is True or _is_internal_service(svc, key, entry):
+        raise HTTPException(status_code=404, detail=f"Unknown service key: {key}")
+    return entry
+
+
+class ScenarioPricingRequest(BaseModel):
+    scenario: str = Field(
+        ..., description="Business scenario, e.g. 'PT PMA restaurant Seminyak 2 directors'"
+    )
+    user_level: int = Field(3, ge=1, le=5, description="User access level")
+
+
+class ScenarioPricingResponse(BaseModel):
+    scenario: str
+    total_setup_cost: float
+    total_recurring_cost: float
+    currency: str
+    breakdown_by_category: dict[str, float]
+    timeline_estimate: str
+    key_assumptions: list[str]
+    confidence: float
+    cost_items: list[dict[str, Any]]
+
+
+@router.post("/scenario", response_model=ScenarioPricingResponse)
+async def calculate_scenario_pricing(
+    request: Request,
+    body: ScenarioPricingRequest,
+    current_user: OptionalUser = Depends(get_current_user),
+) -> ScenarioPricingResponse:
+    """
+    Calculate comprehensive pricing for a business scenario.
+
+    Aggregates costs from KBLI, legal, tax, visa, and property Oracle collections.
+    Uses CrossOracleSynthesisService + bali_zero_pricing_hybrid collection.
+    """
+    try:
+        from backend.services.pricing.dynamic_pricing_service import DynamicPricingService
+    except ImportError as e:
+        logger.error("DynamicPricingService import failed: %s", e)
+        raise HTTPException(status_code=503, detail="Dynamic pricing service unavailable")
+
+    cross_oracle = getattr(request.app.state, "cross_oracle_synthesis_service", None)
+    search_service = getattr(request.app.state, "search_service", None)
+
+    if not cross_oracle or not search_service:
+        raise HTTPException(
+            status_code=503,
+            detail="Pricing dependencies not initialized (CrossOracle or SearchService unavailable)",
+        )
+
+    try:
+        service = DynamicPricingService(
+            cross_oracle_synthesis_service=cross_oracle,
+            search_service=search_service,
+        )
+        result = await service.calculate_pricing(
+            scenario=body.scenario,
+            user_level=body.user_level,
+        )
+
+        return ScenarioPricingResponse(
+            scenario=result.scenario,
+            total_setup_cost=result.total_setup_cost,
+            total_recurring_cost=result.total_recurring_cost,
+            currency=result.currency,
+            breakdown_by_category=result.breakdown_by_category,
+            timeline_estimate=result.timeline_estimate,
+            key_assumptions=result.key_assumptions,
+            confidence=result.confidence,
+            cost_items=[
+                {
+                    "category": item.category,
+                    "description": item.description,
+                    "amount": item.amount,
+                    "currency": item.currency,
+                    "is_recurring": item.is_recurring,
+                    "frequency": item.frequency,
+                    "source_oracle": item.source_oracle,
+                }
+                for item in result.cost_items
+            ],
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Dynamic pricing calculation failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Pricing calculation failed")

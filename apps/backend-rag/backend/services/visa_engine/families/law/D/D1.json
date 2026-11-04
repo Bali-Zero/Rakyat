@@ -1,0 +1,160 @@
+{
+  "code": "D1",
+  "official_name_id": "D1 Visa Kunjungan Wisata",
+  "source_url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/D1",
+  "retrieved_at": "2026-10-17T13:27:31Z",
+  "page_sha256": "bff8e3254c9a0cc2b4905a2bbbd0d9ed519a56d7fbda142c454f7f3d65dcabb7",
+  "definition_verbatim": "berwisata, mengunjungi keluarga, menghadiri pertemuan, insentif, konvensi, dan pameran atau acara sejenis lainnya (sebagai peserta), serta transit di Indonesia untuk ke negara lain.",
+  "jenis_visa_verbatim": "Visa ini merupakan Visa Kunjungan untuk beberapa kali masuk ke Indonesia dengan izin tinggal maksimal 60 hari setiap kedatangan, serta dihitung sejak tanggal kedatangan. Izin Tinggal ini dapat diperpanjang namun tidak dapat dikonversikan menjadi Izin Tinggal Terbatas.",
+  "stay_days": [
+    "Anda dapat tinggal di Indonesia maksimal 60 hari setiap kali kedatangan, dihitung sejak tanggal kedatangan."
+  ],
+  "extendable": [
+    "Anda dapat memperpanjang izin tinggal ini beberapa kali hingga maksimal 180 hari.",
+    "Perpanjangan izin tinggal dapat dilakukan secara online oleh sponsor melalui akun yang telah terdaftar di evisa.imigrasi.go.id",
+    "Izin Tinggal ini dapat diperpanjang namun tidak dapat dikonversikan menjadi Izin Tinggal Terbatas."
+  ],
+  "entry": "multiple",
+  "where_to_apply": null,
+  "sponsor_required": {
+    "as_stated_boolean": false,
+    "verbatim": [
+      "Anda tidak membutuhkan penjamin/sponsor untuk mengajukan visa ini.",
+      "Kecuali anda warga negara dari negara tertentu yang ada di dalam daftar ini."
+    ],
+    "invitation_requirement_see": "requirements_verbatim (Persyaratan Khusus)"
+  },
+  "requirements_verbatim": [
+    {
+      "n": 1,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "dokumen perjalanan yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis;"
+    },
+    {
+      "n": 2,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "bukti memiliki biaya hidup selama berada di wilayah Indonesia berupa rekening koran 3 bulan terakhir atas nama Orang Asing atau penjamin sebesar minimal USD2000 atau dalam mata uang lain yang setara jumlahnya,"
+    },
+    {
+      "n": 3,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "pasfoto berwarna terbaru (setahun terakhir). Detail"
+    },
+    {
+      "n": 4,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "curriculum vitae,"
+    },
+    {
+      "n": 5,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "rencana perjalanan (travel itinerary)."
+    },
+    {
+      "n": 6,
+      "section": "Persyaratan khusus",
+      "text": "surat keterangan, undangan, atau korespondensi dari instansi pemerintah atau lembaga swasta yang menjelaskan hubungan dengan Orang Asing bersangkutan; atau"
+    },
+    {
+      "n": 7,
+      "section": "Persyaratan khusus",
+      "text": "surat keterangan dari suami/istri atau orang tua (WNI) yang menjelaskan ikatan keluarga dengan Orang Asing bersangkutan dan kegiatan Orang Asing selama berada di Indonesia (dilengkapi dengan kartu keluarga/dokumen sejenisnya)."
+    }
+  ],
+  "pengajuan_intro_verbatim": "Orang asing harus memiliki akun di evisa.imigrasi.go.id sebelum mengajukan visa. Setelah memiliki akun, orang asing dapat mengajukan visa setelah login di evisa.imigrasi.go.id dengan menyiapkan berkas elektronik (detail format file) Orang Asing antara lain:",
+  "allowed_activities": "berwisata, mengunjungi keluarga, menghadiri pertemuan, insentif, konvensi, dan pameran atau acara sejenis lainnya (sebagai peserta), serta transit di Indonesia untuk ke negara lain.",
+  "prohibited_or_conditions_verbatim": [
+    "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa paspor sementara, paspor darurat, titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya harus melampirkan dokumen Izin Masuk Kembali ke negara tempat Visa Multipel diajukan serta tiket kembali/tiket terusan ke negara lain (kecuali bagi awak alat angkut).",
+    "Masa berlaku visa terhitung sejak tanggal penerbitan. Jika tidak digunakan setelah jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.",
+    "Orang Asing dengan izin tinggal dari Visa D1 dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+  ],
+  "ketentuan_lain_verbatim": [
+    "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa paspor sementara, paspor darurat, titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya harus melampirkan dokumen Izin Masuk Kembali ke negara tempat Visa Multipel diajukan serta tiket kembali/tiket terusan ke negara lain (kecuali bagi awak alat angkut).",
+    "Masa berlaku visa terhitung sejak tanggal penerbitan. Jika tidak digunakan setelah jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.",
+    "Orang Asing dengan izin tinggal dari Visa D1 dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+  ],
+  "pnbp_verbatim_for_reference_only": [
+    "- Visa Kunjungan Beberapa kali Perjalanan paling lama 1 tahun: Rp3.000.000",
+    "- Visa Kunjungan Beberapa kali Perjalanan paling lama 2 tahun: Rp5.000.000",
+    "- Visa Kunjungan Beberapa kali Perjalanan paling lama 5 tahun: Rp10.000.000",
+    "- Biaya Verifikasi I/II : Rp 0",
+    "- Penjamin dapat melakukan pembayaran melalui beberapa bank persepsi/bank yang telah ditunjuk di Indonesia. Setelah permohonan visa oleh penjamin selesai diajukan, silakan lihat kode tagihan (billing code) pada sistem sebagai dasar pembayaran visa."
+  ],
+  "itap_verbatim": [
+    {
+      "text": "Izin Tinggal ini dapat diperpanjang namun tidak dapat dikonversikan menjadi Izin Tinggal Terbatas.",
+      "url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/D1"
+    }
+  ],
+  "itap_eligibility_as_stated": null,
+  "total_max_verbatim": [
+    "Anda dapat memperpanjang izin tinggal ini beberapa kali hingga maksimal 180 hari."
+  ],
+  "notes": [
+    "PNBP is official-source reference only; never a client price.",
+    "VERIFIED_FROM_SOURCE confirms extraction, not resolution of contradictions or legal eligibility.",
+    "Requirement numbers follow source order; nested alternatives remain verbatim. A/B counts include the application steps listed by the source."
+  ],
+  "status": "VERIFIED_FROM_SOURCE",
+  "to_verify": [
+    "where_to_apply: null + TO_VERIFY; no explicit offshore/onshore application rule on the visa page.",
+    "conflicts: No sponsor stated for application; extension instructions refer to a sponsor.",
+    "Sponsor nationality exception: linked country list is a separate source; not inferred here."
+  ],
+  "conflicts": [
+    {
+      "issue": "No sponsor stated for application; extension instructions refer to a sponsor.",
+      "quotes": [
+        "Anda tidak membutuhkan penjamin/sponsor untuk mengajukan visa ini.\nKecuali anda warga negara dari negara tertentu yang ada di dalam daftar ini.",
+        "Perpanjangan izin tinggal dapat dilakukan secara online oleh sponsor melalui akun yang telah terdaftar di evisa.imigrasi.go.id"
+      ],
+      "status": "TO_VERIFY"
+    }
+  ],
+  "source_http_status": 200,
+  "source_raw_path": "raw/D1.html",
+  "source_sections_verbatim": [
+    {
+      "heading": "Dengan visa D1, anda dapat",
+      "text": "berwisata, mengunjungi keluarga, menghadiri pertemuan, insentif, konvensi, dan pameran atau acara sejenis lainnya (sebagai peserta), serta transit di Indonesia untuk ke negara lain."
+    },
+    {
+      "heading": "Jenis visa",
+      "text": "Visa ini merupakan Visa Kunjungan untuk beberapa kali masuk ke Indonesia dengan izin tinggal maksimal 60 hari setiap kedatangan, serta dihitung sejak tanggal kedatangan. Izin Tinggal ini dapat diperpanjang namun tidak dapat dikonversikan menjadi Izin Tinggal Terbatas."
+    },
+    {
+      "heading": "Masa tinggal",
+      "text": "Anda dapat tinggal di Indonesia maksimal 60 hari setiap kali kedatangan, dihitung sejak tanggal kedatangan.\nAnda dapat memperpanjang izin tinggal ini beberapa kali hingga maksimal 180 hari.\nPerpanjangan izin tinggal dapat dilakukan secara online oleh sponsor melalui akun yang telah terdaftar di evisa.imigrasi.go.id"
+    },
+    {
+      "heading": "Biaya (PNBP)",
+      "text": "Visa Kunjungan Beberapa kali Perjalanan paling lama 1 tahun: Rp3.000.000\nVisa Kunjungan Beberapa kali Perjalanan paling lama 2 tahun: Rp5.000.000\nVisa Kunjungan Beberapa kali Perjalanan paling lama 5 tahun: Rp10.000.000\nBiaya Verifikasi I/II : Rp 0\nPenjamin dapat melakukan pembayaran melalui beberapa bank persepsi/bank yang telah ditunjuk di Indonesia. Setelah permohonan visa oleh penjamin selesai diajukan, silakan lihat kode tagihan (billing code) pada sistem sebagai dasar pembayaran visa."
+    },
+    {
+      "heading": "Penjamin (Sponsor)",
+      "text": "Anda tidak membutuhkan penjamin/sponsor untuk mengajukan visa ini.\nKecuali anda warga negara dari negara tertentu yang ada di dalam daftar ini."
+    },
+    {
+      "heading": "Pengajuan visa",
+      "text": "Orang asing harus memiliki akun di evisa.imigrasi.go.id sebelum mengajukan visa. Setelah memiliki akun, orang asing dapat mengajukan visa setelah login di evisa.imigrasi.go.id dengan menyiapkan berkas elektronik (detail format file) Orang Asing antara lain:\ndokumen perjalanan yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis;\nbukti memiliki biaya hidup selama berada di wilayah Indonesia berupa rekening koran 3 bulan terakhir atas nama Orang Asing atau penjamin sebesar minimal USD2000 atau dalam mata uang lain yang setara jumlahnya,\npasfoto berwarna terbaru (setahun terakhir). Detail\ncurriculum vitae,\nrencana perjalanan (travel itinerary)."
+    },
+    {
+      "heading": "Persyaratan khusus",
+      "text": "surat keterangan, undangan, atau korespondensi dari instansi pemerintah atau lembaga swasta yang menjelaskan hubungan dengan Orang Asing bersangkutan; atau\nsurat keterangan dari suami/istri atau orang tua (WNI) yang menjelaskan ikatan keluarga dengan Orang Asing bersangkutan dan kegiatan Orang Asing selama berada di Indonesia (dilengkapi dengan kartu keluarga/dokumen sejenisnya)."
+    },
+    {
+      "heading": "Ketentuan lain",
+      "text": "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa paspor sementara, paspor darurat, titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya harus melampirkan dokumen Izin Masuk Kembali ke negara tempat Visa Multipel diajukan serta tiket kembali/tiket terusan ke negara lain (kecuali bagi awak alat angkut).\nMasa berlaku visa terhitung sejak tanggal penerbitan. Jika tidak digunakan setelah jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.\nOrang Asing dengan izin tinggal dari Visa D1 dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+    },
+    {
+      "heading": "Proses pengajuan dan pemberian visa",
+      "text": "pemeriksaan kelengkapan persyaratan;\nverifikasi pembayaran biaya imigrasi sesuai dengan ketentuan peraturan perundang-undangan;\npembuatan profil dan verifikasi;\npersetujuan;\npenerbitan visa.\nWaktu Proses lima hari kerja setelah pembayaran visa diterima."
+    },
+    {
+      "heading": "Dasar hukum",
+      "text": "Peraturan Pemerintah Nomor 45 tahun 2024 tentang Tarif PNBP di Lingkungan Kementerian Hukum dan HAM RI\nPeraturan Menteri Hukum dan HAM RI Nomor 11 Tahun 2024 tentang Visa dan Izin Tinggal\nPeraturan Menteri Hukum dan HAM RI Nomor 22 tahun 2023 tentang Visa dan Izin Tinggal\nKeputusan Menteri Imigrasi dan Pemasyarakatan Nomor M.IP-08.GR.01.01 tahun 2025 tentang Klasifikasi Visa\nPeraturan Menteri Keuangan RI Nomor 9/PMK.02/2022 tentang Jenis dan Tarif PNBP Kebutuhan Mendesak atas Pelayanan Keimigrasian yang berlaku pada Kemenkumham RI\nPeraturan Menteri Keuangan RI Nomor 82 Tahun 2023 tentang Jenis dan Tarif atas Jenis PNBP Kebutuhan Mendesak atas Pelayanan Golden Visa yang berlaku pada Kemenkumham RI"
+    }
+  ],
+  "persyaratan_khusus_verbatim": "surat keterangan, undangan, atau korespondensi dari instansi pemerintah atau lembaga swasta yang menjelaskan hubungan dengan Orang Asing bersangkutan; atau\nsurat keterangan dari suami/istri atau orang tua (WNI) yang menjelaskan ikatan keluarga dengan Orang Asing bersangkutan dan kegiatan Orang Asing selama berada di Indonesia (dilengkapi dengan kartu keluarga/dokumen sejenisnya).",
+  "itap_explicit_on_visa_page": false
+}

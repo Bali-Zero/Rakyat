@@ -1,0 +1,447 @@
+"use client";
+
+import React from "react";
+import { motion } from "framer-motion";
+import {
+  Search,
+  Loader2,
+  X,
+  FileText,
+  Scale,
+  Activity,
+  ClipboardList,
+} from "lucide-react";
+import {
+  apiPmaPresentation,
+  type KBLIDetail,
+  type KBLIPmaDisclosure,
+} from "@/lib/api/kbli.api";
+import {
+  describeObligation,
+  TRUNCATION_HINT,
+  TRUNCATION_NOTE,
+} from "@/lib/kbli-obligation-truncation";
+import {
+  STATUS_RETIRED_KBLI_2020,
+  summariseLicences,
+} from "@/lib/kbli-licence-summary";
+
+// =============================================================================
+// HELPERS
+// =============================================================================
+
+export function getPmaBadge(record: KBLIPmaDisclosure): {
+  label: string;
+  className: string;
+} {
+  const presentation = apiPmaPresentation(record);
+  if (presentation.status === "open")
+    return {
+      label: presentation.ownershipLabel,
+      className: "badge badge-success",
+    };
+  if (presentation.status === "restricted")
+    return {
+      label: presentation.ownershipLabel,
+      className: "badge badge-warning",
+    };
+  if (presentation.status === "closed")
+    return {
+      label: presentation.ownershipLabel,
+      className: "badge badge-error",
+    };
+  return {
+    label: presentation.ownershipLabel,
+    className: "badge badge-neutral",
+  };
+}
+
+export function getRiskBadge(risk: string): {
+  label: string;
+  className: string;
+} {
+  const r = (risk || "").toLowerCase();
+  // Honest gap over false reassurance: an undefined/unclassified risk must NOT
+  // fall through to "Low Risk" (Zero decision 2026-07-17). A cured false-friend
+  // code has no risk basis — say so, neutrally.
+  if (!r || r === "not classified" || r === "unknown")
+    return { label: "Not Classified", className: "badge badge-neutral" };
+  if (r.includes("tinggi") && r.includes("menengah"))
+    return { label: "Medium-High Risk", className: "badge badge-warning" };
+  if (r.includes("tinggi") || r === "high")
+    return { label: "High Risk", className: "badge badge-error" };
+  if (r.includes("menengah") && r.includes("rendah"))
+    return { label: "Medium-Low Risk", className: "badge badge-cyan" };
+  if (r.includes("menengah") || r === "medium")
+    return { label: "Medium Risk", className: "badge badge-warning" };
+  if (r.includes("rendah") || r === "low")
+    return { label: "Low Risk", className: "badge badge-info" };
+  return { label: risk || "Unknown", className: "badge badge-neutral" };
+}
+
+/**
+ * The one line the inspector copies to a client's clipboard — a pure function
+ * because it TRAVELS: it is pasted into emails, quotes and chat threads where
+ * none of the surrounding disclosure travels with it, so it is the one string
+ * on this surface that must stand alone. Extracted from `kbli-explorer/page.tsx`
+ * so it can be asserted in a test.
+ *
+ * For a code the 2025 catalogue does not carry, the line built from the inspect
+ * payload read (measured on prod 2026-09-20 for 74100):
+ *
+ *   KBLI 74100 — KBLI 74100 [KBLI 2020 — tidak ada dalam KBLI 2025] | PMA: PMA
+ *   Not Verified | Risk: Not applicable — code absent from KBLI 2025 |
+ *   Licenses: Not listed in our data | Sector: N/A
+ *
+ * Nothing there is FALSE — and it is still the wrong line to paste into a
+ * client's inbox: the code is printed twice, the tombstone suffix lands
+ * mid-sentence in Indonesian, and "Not listed in our data" reads as a gap in
+ * OUR records rather than a code that cannot be registered at all. So a
+ * retired code gets a sentence of its own instead of four segments that each
+ * decline to answer.
+ */
+export function buildInspectorCopyLine(data: KBLIDetail): string {
+  if (data.licensing_status === STATUS_RETIRED_KBLI_2020) {
+    return (
+      `KBLI ${data.code} — retired: this is a KBLI 2020 code and the KBLI 2025 ` +
+      `catalogue does not carry it, so it cannot be registered on OSS. No ` +
+      `licensing, risk or ownership answer applies to it. Search by business ` +
+      `activity for the KBLI 2025 code that covers what you do.`
+    );
+  }
+  const licList = summariseLicences(
+    data.licenses.map((l) => l.type),
+    data.licensing_status,
+  );
+  return `KBLI ${data.code} — ${data.title} | PMA: ${getPmaBadge(data).label} | Risk: ${getRiskBadge(data.risk_profile).label} | Licenses: ${licList} | Sector: ${data.sector}`;
+}
+
+export function getRiskLevel(
+  risk: string,
+): "low" | "medium-low" | "medium" | "medium-high" | "high" | "not-classified" {
+  const r = (risk || "").toLowerCase();
+  // Undefined/unclassified → "not-classified" (neutral gauge, no misleading
+  // needle), NEVER the old default "low" which falsely reassured (Zero 2026-07-17).
+  if (!r || r === "not classified" || r === "unknown") return "not-classified";
+  if (r.includes("tinggi") && r.includes("menengah")) return "medium-high";
+  if (r.includes("tinggi") || r === "high") return "high";
+  if (r.includes("menengah") && r.includes("rendah")) return "medium-low";
+  if (r.includes("menengah") || r === "medium") return "medium";
+  if (r.includes("rendah") || r === "low") return "low";
+  return "not-classified";
+}
+
+const RELATED_REQUIREMENT_LABELS: Record<string, string> = {
+  costs: "Capital & Cost Thresholds",
+  documents: "Supporting Documents",
+  entity_forms: "Entity Form Requirements",
+  immigration: "Immigration Requirements",
+  obligations: "Other Obligations",
+  regulations: "Regulatory References",
+};
+
+export function getRelatedRequirementGroups(
+  relatedRequirements: KBLIDetail["related_requirements"] | undefined,
+): Array<{ key: string; label: string; items: string[] }> {
+  return Object.entries(relatedRequirements ?? {})
+    .filter(([, items]) => Array.isArray(items) && items.length > 0)
+    .map(([key, items]) => ({
+      key,
+      label:
+        RELATED_REQUIREMENT_LABELS[key] ??
+        key
+          .replaceAll("_", " ")
+          .replace(/\b\w/g, (letter) => letter.toUpperCase()),
+      items,
+    }));
+}
+
+// =============================================================================
+// INSPECTOR COMPONENT
+// =============================================================================
+
+const KBLIInspector = ({
+  data,
+  isLoading,
+  onClose,
+  onInspect,
+}: {
+  data: KBLIDetail | null;
+  isLoading: boolean;
+  onClose?: () => void;
+  onInspect?: (code: string) => void;
+}) => {
+  if (isLoading) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-accent-sand">
+        <Loader2 size={32} className="animate-spin mb-4" />
+        <p className="text-xs uppercase tracking-widest">Loading details...</p>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-[var(--kbli-text-muted)] px-8 text-center">
+        <Search size={48} className="mb-6 opacity-20 stroke-1" />
+        <p className="text-sm font-medium text-[var(--kbli-text-muted)] mb-2">
+          Click on any result to see full details
+        </p>
+        <p className="text-xs text-[var(--kbli-text-muted)]">
+          Licenses, restrictions, risk level and related business codes will
+          appear here
+        </p>
+      </div>
+    );
+  }
+
+  const pmaBadge = getPmaBadge(data);
+  const riskBadge = getRiskBadge(data.risk_profile);
+  const relatedRequirementGroups = getRelatedRequirementGroups(
+    data.related_requirements,
+  );
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: 20 }}
+      animate={{ opacity: 1, x: 0 }}
+      className="h-full flex flex-col"
+    >
+      {/* Mobile close button */}
+      {onClose && (
+        <button
+          onClick={onClose}
+          className="md:hidden absolute top-4 right-4 z-10 p-2 rounded-full bg-surface-editorial-elevated text-[var(--kbli-text-muted)]"
+        >
+          <X size={18} />
+        </button>
+      )}
+      {/* Drag handle for mobile */}
+      {onClose && (
+        <div className="md:hidden flex justify-center pt-3 pb-1">
+          <div className="w-10 h-1 rounded-full bg-white/20" />
+        </div>
+      )}
+
+      <div className="p-6 md:p-8 border-b border-[var(--border)] bg-gradient-to-b from-[#0F1115] to-[#050507]">
+        <div className="flex items-center gap-2 flex-wrap mb-4">
+          <span className="px-3 py-1 rounded text-xs font-mono tracking-wider bg-slate-50 text-accent-sand border border-accent-sand/20">
+            KBLI {data.code}
+          </span>
+          <span className={pmaBadge.className}>{pmaBadge.label}</span>
+        </div>
+        <h2 className="text-2xl md:text-3xl font-serif text-[var(--foreground)] leading-tight mb-6">
+          {data.title}
+        </h2>
+
+        <div className="space-y-3">
+          <div className="flex justify-between items-center text-[11px] uppercase tracking-widest text-[var(--kbli-text-muted)]">
+            <span className={riskBadge.className}>{riskBadge.label}</span>
+            <span className="text-accent-sand">{data.licensing_status}</span>
+          </div>
+          <div className="h-[2px] w-full bg-surface-editorial-elevated relative">
+            <div
+              className="absolute top-0 left-0 h-full bg-accent-sand shadow-[0_0_10px_rgba(212,180,131,0.3)] transition-all duration-1000"
+              style={{
+                width: data.risk_profile.toLowerCase().includes("tinggi")
+                  ? "90%"
+                  : data.risk_profile.toLowerCase().includes("menengah")
+                    ? "50%"
+                    : "20%",
+              }}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-10 custom-scrollbar">
+        <section>
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--kbli-text-muted)] mb-4 flex items-center gap-2">
+            <FileText size={12} /> Official Description
+          </h3>
+          <p className="text-sm text-[var(--foreground)] leading-loose font-light border-l border-accent-sand/30 pl-5 italic">
+            &ldquo;{data.description}&rdquo;
+          </p>
+        </section>
+
+        {/* NEW: 2026 Business Intelligence Section */}
+        {data.intel && (
+          <section className="space-y-6">
+            <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--kbli-text-muted)] mb-4 flex items-center gap-2">
+              <Activity size={12} className="text-blue-400" /> 2026 Business
+              Intelligence
+            </h3>
+
+            <div className="grid grid-cols-1 gap-4">
+              <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-5">
+                <h4 className="text-blue-400 font-bold text-[10px] uppercase tracking-wider mb-2">
+                  What it Means
+                </h4>
+                <p className="text-[var(--foreground)] text-xs leading-relaxed">
+                  {data.intel.whatItMeans}
+                </p>
+              </div>
+              <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-5">
+                <h4 className="text-amber-400 font-bold text-[10px] uppercase tracking-wider mb-2">
+                  What you Need
+                </h4>
+                <p className="text-[var(--foreground)] text-xs leading-relaxed whitespace-pre-line">
+                  {data.intel.whatYouNeed}
+                </p>
+              </div>
+              <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-5">
+                <h4 className="text-green-400 font-bold text-[10px] uppercase tracking-wider mb-2">
+                  The Bali Context
+                </h4>
+                <p className="text-[var(--foreground)] text-xs leading-relaxed whitespace-pre-line">
+                  {data.intel.baliContext}
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-[var(--kbli-bg-surface)] border border-[var(--border)] rounded-xl p-4 text-[10px] text-[var(--kbli-text-muted)] italic">
+              <strong>2025 Transition:</strong> {data.intel.whatChanged}
+            </div>
+          </section>
+        )}
+
+        {data.licenses.length > 0 && (
+          <section>
+            <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--kbli-text-muted)] mb-4 flex items-center gap-2">
+              <Scale size={12} /> Required Licenses
+            </h3>
+            <div className="space-y-4">
+              {data.licenses.map((lic, idx) => (
+                <div
+                  key={idx}
+                  className="group p-4 bg-[#0A0C10] rounded border border-[var(--border)] hover:border-accent-sand/20 transition-all"
+                >
+                  <div className="flex justify-between items-start mb-2">
+                    <span className="text-sm font-medium text-silver group-hover:text-white transition-colors">
+                      {describeObligation(lic.type).text}
+                      {describeObligation(lic.type).truncated && (
+                        <span
+                          className="text-[#c98a3a]"
+                          title={TRUNCATION_HINT}
+                        >
+                          {" "}
+                          […{TRUNCATION_NOTE}]
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-[10px] uppercase px-2 py-1 rounded-full bg-[#151921] text-[var(--kbli-text-muted)] border border-[var(--border)]">
+                      {lic.sla}
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-1 text-xs text-[var(--kbli-text-muted)]">
+                    <span>
+                      Business Size:{" "}
+                      <span className="text-[var(--kbli-text-muted)]">
+                        {lic.scale.join(", ")}
+                      </span>
+                    </span>
+                    <span>
+                      Risk Level:{" "}
+                      <span className="text-[var(--kbli-text-muted)]">
+                        {lic.risk_level}
+                      </span>
+                    </span>
+                  </div>
+                  {lic.requirements.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-[var(--border)]">
+                      <p className="text-[10px] text-[var(--kbli-text-muted)] uppercase mb-2">
+                        What you need to do:
+                      </p>
+                      <ul className="space-y-1">
+                        {lic.requirements.slice(0, 3).map((req, ridx) => {
+                          const duty = describeObligation(req);
+                          return (
+                            <li
+                              key={ridx}
+                              className="text-[11px] text-[var(--kbli-text-muted)] leading-tight"
+                            >
+                              &bull; {duty.text}
+                              {duty.truncated && (
+                                <span
+                                  className="text-[#c98a3a]"
+                                  title={TRUNCATION_HINT}
+                                >
+                                  {" "}
+                                  […{TRUNCATION_NOTE}]
+                                </span>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {relatedRequirementGroups.length > 0 && (
+          <section aria-labelledby="related-requirements-heading">
+            <h3
+              id="related-requirements-heading"
+              className="text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--kbli-text-muted)] mb-2 flex items-center gap-2"
+            >
+              <ClipboardList size={12} /> Related Requirements (Not Permits)
+            </h3>
+            <p className="mb-4 text-[11px] leading-relaxed text-[var(--kbli-text-muted)]">
+              These are supporting obligations, documents, thresholds, or
+              regulatory references. They are shown separately from required
+              licenses and are not additional permits.
+            </p>
+            <div className="space-y-4">
+              {relatedRequirementGroups.map((group) => (
+                <div
+                  key={group.key}
+                  className="rounded border border-[var(--border)] bg-[#0A0C10] p-4"
+                >
+                  <h4 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-accent-sand">
+                    {group.label}
+                  </h4>
+                  <ul className="space-y-2">
+                    {group.items.map((item, index) => (
+                      <li
+                        key={`${group.key}-${index}`}
+                        className="text-[11px] leading-relaxed text-[var(--kbli-text-muted)]"
+                      >
+                        &bull; {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <section>
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--kbli-text-muted)] mb-4 flex items-center gap-2">
+            <Activity size={12} /> Related Business Codes
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            <div className="px-4 py-2 rounded-full bg-surface-deep text-xs text-accent-sand border border-accent-sand/20">
+              Sector: {data.sector}
+            </div>
+            {data.related_codes.map((rel, idx) => (
+              <button
+                key={idx}
+                onClick={() => onInspect?.(rel)}
+                className="px-4 py-2 rounded-full bg-surface-deep text-xs text-[var(--kbli-text-muted)] border border-[var(--border)] hover:border-accent-sand hover:text-accent-sand cursor-pointer transition-all"
+              >
+                {rel}
+              </button>
+            ))}
+          </div>
+        </section>
+      </div>
+    </motion.div>
+  );
+};
+
+export default KBLIInspector;

@@ -1,0 +1,72 @@
+# B LAW index
+
+Legal quotations are verbatim Indonesian with HTML entities decoded and layout whitespace normalized. PNBP is reference only, never a client price. A status of VERIFIED_FROM_SOURCE describes extraction; unresolved matters remain TO_VERIFY.
+
+| code | official name | stay | extendable | total max | sponsor | #requirements | itap stated? | status | url |
+|---|---|---|---|---|---|---|---|---|---|
+| B1 | B1 Visa Kunjungan Wisata | Anda dapat tinggal di Indonesia maksimal 30 hari, dihitung sejak tanggal kedatangan. | Anda dapat memperpanjang izin tinggal ini satu kali hingga (keseluruhan masa tinggal) maksimal 60 hari.<br>Bagi pemegang e-VoA (visa kunjungan saat kedatangan elektronik), perpanjangan izin tinggal dapat dilakukan secara online melalui evisa.imigrasi.go.id atau dapat melalui indonesiavoa.vfsevisa.id<br>Bagi pemegang VoA nonelektronik, perpanjangan izin tinggal dapat dilakukan di kantor imigrasi terdekat dari domisili anda.<br>Izin Tinggal ini dapat diperpanjang satu kali dan dapat dialihkan menjadi izin tinggal lain melalui mekanisme bridging visa. | Anda dapat memperpanjang izin tinggal ini satu kali hingga (keseluruhan masa tinggal) maksimal 60 hari. | Anda tidak membutuhkan penjamin/sponsor untuk mengajukan visa ini. | 12 | Not stated on this non-ITAS page | VERIFIED_FROM_SOURCE | https://www.imigrasi.go.id/wna/daftar-visa-indonesia/B1 |
+| B4 | B4 Visa Kunjungan Penugasan Pemerintahan | Anda dapat tinggal di Indonesia maksimal 30 hari, dihitung sejak tanggal kedatangan. | Anda dapat memperpanjang izin tinggal ini satu kali hingga (keseluruhan masa tinggal) maksimal 60 hari.<br>Bagi pemegang e-VoA (visa kunjungan saat kedatangan elektronik), perpanjangan izin tinggal dapat dilakukan secara online melalui evisa.imigrasi.go.id.<br>Bagi pemegang VoA nonelektronik, perpanjangan izin tinggal dapat dilakukan di kantor imigrasi terdekat dari domisili anda.<br>Izin Tinggal ini dapat diperpanjang satu kali dan dapat dialihkan menjadi izin tinggal lain melalui mekanisme bridging visa. | Anda dapat memperpanjang izin tinggal ini satu kali hingga (keseluruhan masa tinggal) maksimal 60 hari. | Anda tidak membutuhkan penjamin/sponsor untuk mengajukan visa ini. | 12 | Not stated on this non-ITAS page | VERIFIED_FROM_SOURCE | https://www.imigrasi.go.id/wna/daftar-visa-indonesia/B4 |
+
+## Conflicts / TO VERIFY
+
+
+## Conditions the Guide questions would need
+
+These are routing inputs derived solely from the cited quotations. Each item below points to its exact source text; alternatives, qualifiers and local scope must be retained.
+
+### B1
+
+Source: [B1 Visa Kunjungan Wisata](https://www.imigrasi.go.id/wna/daftar-visa-indonesia/B1).
+
+- Purpose / proposed activity: “berwisata<br>mengunjungi keluarga<br>menghadiri : pertemuan, insentif, konvensi, dan pameran atau acara sejenis lainnya<br>serta transit di Indonesia untuk ke negara lain.”
+- Visa category / entry / conversion conditions: “Visa B1 merupakan Visa Kunjungan Saat Kedatangan (Visa on Arrival) bagi negara subjek visa kunjungan saat kedatangan untuk satu kali masuk ke Indonesia dengan izin tinggal pertama kali maksimal 30 hari, dihitung sejak tanggal kedatangan. Izin Tinggal ini dapat diperpanjang satu kali dan dapat dialihkan menjadi izin tinggal lain melalui mekanisme bridging visa.”
+- Intended stay: “Anda dapat tinggal di Indonesia maksimal 30 hari, dihitung sejak tanggal kedatangan.”
+- Sponsor / nationality exceptions: “Anda tidak membutuhkan penjamin/sponsor untuk mengajukan visa ini.”
+- Extension plans / maximum duration: “Anda dapat memperpanjang izin tinggal ini satu kali hingga (keseluruhan masa tinggal) maksimal 60 hari.”
+- Extension plans / maximum duration: “Bagi pemegang e-VoA (visa kunjungan saat kedatangan elektronik), perpanjangan izin tinggal dapat dilakukan secara online melalui evisa.imigrasi.go.id atau dapat melalui indonesiavoa.vfsevisa.id”
+- Extension plans / maximum duration: “Bagi pemegang VoA nonelektronik, perpanjangan izin tinggal dapat dilakukan di kantor imigrasi terdekat dari domisili anda.”
+- Extension plans / maximum duration: “Izin Tinggal ini dapat diperpanjang satu kali dan dapat dialihkan menjadi izin tinggal lain melalui mekanisme bridging visa.”
+- Document or application input 1 (Pengajuan visa / Permohonan dan Pembayaran Pra Kedatangan): “mengajukan permohonan melalui evisa.imigrasi.go.id atau dapat melalui indonesiavoa.vfsevisa.id”
+- Document or application input 2 (Pengajuan visa / Permohonan dan Pembayaran Pra Kedatangan): “mengisi formulir dan mengunggah berkas secara elektronik, antara lain:<br>a. halaman biodata paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis (untuk pemegang dokumen perjalanan selain paspor kebangsaan seperti paspor darurat (emergency passport) atau paspor sementara (temporary passport) dll harus berlaku selama 12 bulan)<br>b. pasfoto berwarna terbaru (setahun terakhir). Detail<br>c. tiket kembali atau tiket terusan ke negara lain, kecuali bagi awak alat angkut yang akan singgah untuk bergabung dengan kapalnya dan melanjutkan perjalanan ke negara lain”
+- Document or application input 3 (Pengajuan visa / Permohonan dan Pembayaran Pra Kedatangan): “membayar menggunakan metode pembayaran digital melalui kartu debit/kredit”
+- Document or application input 4 (Pengajuan visa / Permohonan dan Pembayaran Pra Kedatangan): “mengecek dalam akun evisa dan email, karena visa kunjungan saat kedatangan elektronik akan dikirimkan oleh sistem dalam waktu 1x24 jam.”
+- Document or application input 5 (Pengajuan visa / Permohonan Pra Kedatangan dan Pembayaran Saat Kedatangan): “mengajukan permohonan melalui evisa.imigrasi.go.id”
+- Document or application input 6 (Pengajuan visa / Permohonan Pra Kedatangan dan Pembayaran Saat Kedatangan): “mengisi formulir dan mengunggah berkas secara elektronik, antara lain:<br>a. halaman biodata paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis<br>(untuk pemegang dokumen perjalanan selain paspor kebangsaan seperti paspor darurat (emergency passport) atau paspor sementara (temporary passport) dll harus berlaku selama 12 bulan)<br>b. pasfoto berwarna terbaru (setahun terakhir). Detail<br>c. tiket kembali atau tiket terusan ke negara lain, kecuali bagi awak alat angkut yang akan singgah untuk bergabung dengan kapalnya dan melanjutkan perjalanan ke negara lain”
+- Document or application input 7 (Pengajuan visa / Permohonan Pra Kedatangan dan Pembayaran Saat Kedatangan): “membayar menggunakan metode pembayaran digital melalui kartu debit/kredit”
+- Document or application input 8 (Pengajuan visa / Permohonan Pra Kedatangan dan Pembayaran Saat Kedatangan): “mengambil visa kunjungan saat kedatangan elektronik di konter visa.”
+- Document or application input 9 (Pengajuan visa / Permohonan dan Pembayaran Saat Kedatangan): “melakukan pembayaran Visa Kunjungan Saat Kedatangan di konter Bank yang ditunjuk pada area imigrasi bandar udara/pelabuhan dengan menunjukkan paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis kepada petugas (untuk pemegang dokumen perjalanan selain paspor kebangsaan seperti paspor darurat (emergency passport) atau paspor sementara (temporary passport) dll harus berlaku selama 12 bulan)”
+- Document or application input 10 (Pengajuan visa / Permohonan dan Pembayaran Saat Kedatangan): “memperoleh Vaucer Visa, kertas sekuriti sebagai tanda bukti pembayaran Visa kunjungan saat kedatangan”
+- Document or application input 11 (Pengajuan visa / Permohonan dan Pembayaran Saat Kedatangan): “menunjukkan Vaucer Visa kepada petugas imigrasi pada konter Visa Kunjungan Saat Kedatangan”
+- Document or application input 12 (Pengajuan visa / Permohonan dan Pembayaran Saat Kedatangan): “memperoleh stiker Visa Kunjungan Saat Kedatangan yang ditempelkan pada paspor serta tanda masuk elektronik.”
+- Activity / document / timing condition: “Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya tidak diizinkan mengajukan visa kunjungan saat kedatangan.”
+- Activity / document / timing condition: “Masa berlaku visa kunjungan saat kedatangan elektronik (e-voa) adalah 90 hari sejak diterbitkan. Jika tidak digunakan dalam jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.”
+- Activity / document / timing condition: “Orang Asing dengan izin tinggal dari Visa B1 dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia.”
+
+### B4
+
+Source: [B4 Visa Kunjungan Penugasan Pemerintahan](https://www.imigrasi.go.id/wna/daftar-visa-indonesia/B4).
+
+- Purpose / proposed activity: “menjalankan tugas pemerintahan, mengunjungi suatu tempat atau melakukan kegiatan dalam rangka tugas resmi pemerintahan. Termasuk dengan visa ini anda dapat berwisata serta mengunjungi teman dan keluarga.”
+- Visa category / entry / conversion conditions: “Visa ini merupakan Visa Kunjungan Saat Kedatangan (Visa on Arrival) bagi negara subjek visa kunjungan saat kedatangan untuk satu kali masuk ke Indonesia dengan izin tinggal pertama kali maksimal 30 hari, dihitung sejak tanggal kedatangan. Izin Tinggal ini dapat diperpanjang satu kali dan dapat dialihkan menjadi izin tinggal lain melalui mekanisme bridging visa.”
+- Intended stay: “Anda dapat tinggal di Indonesia maksimal 30 hari, dihitung sejak tanggal kedatangan.”
+- Sponsor / nationality exceptions: “Anda tidak membutuhkan penjamin/sponsor untuk mengajukan visa ini.”
+- Extension plans / maximum duration: “Anda dapat memperpanjang izin tinggal ini satu kali hingga (keseluruhan masa tinggal) maksimal 60 hari.”
+- Extension plans / maximum duration: “Bagi pemegang e-VoA (visa kunjungan saat kedatangan elektronik), perpanjangan izin tinggal dapat dilakukan secara online melalui evisa.imigrasi.go.id.”
+- Extension plans / maximum duration: “Bagi pemegang VoA nonelektronik, perpanjangan izin tinggal dapat dilakukan di kantor imigrasi terdekat dari domisili anda.”
+- Extension plans / maximum duration: “Izin Tinggal ini dapat diperpanjang satu kali dan dapat dialihkan menjadi izin tinggal lain melalui mekanisme bridging visa.”
+- Document or application input 1 (Pengajuan visa / Permohonan dan Pembayaran Pra Kedatangan): “mengajukan permohonan melalui evisa.imigrasi.go.id”
+- Document or application input 2 (Pengajuan visa / Permohonan dan Pembayaran Pra Kedatangan): “mengisi formulir dan mengunggah berkas secara elektronik, antara lain:<br>a. halaman biodata paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis (untuk pemegang dokumen perjalanan selain paspor kebangsaan seperti paspor darurat, dokumen identitas, dll harus berlaku selama 12 bulan)<br>b. pasfoto berwarna terbaru (setahun terakhir). Detail<br>c. tiket kembali atau tiket terusan ke negara lain, kecuali bagi awak alat angkut yang akan singgah untuk bergabung dengan kapalnya dan melanjutkan perjalanan ke negara lain”
+- Document or application input 3 (Pengajuan visa / Permohonan dan Pembayaran Pra Kedatangan): “membayar menggunakan metode pembayaran digital melalui kartu debit/kredit”
+- Document or application input 4 (Pengajuan visa / Permohonan dan Pembayaran Pra Kedatangan): “mengecek dalam akun evisa dan email, karena visa kunjungan saat kedatangan elektronik akan dikirimkan oleh sistem dalam waktu 1x24 jam.”
+- Document or application input 5 (Pengajuan visa / Permohonan Pra Kedatangan dan Pembayaran Saat Kedatangan): “mengajukan permohonan melalui evisa.imigrasi.go.id”
+- Document or application input 6 (Pengajuan visa / Permohonan Pra Kedatangan dan Pembayaran Saat Kedatangan): “mengisi formulir dan mengunggah berkas secara elektronik, antara lain:<br>a. halaman biodata paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis (untuk pemegang dokumen perjalanan selain paspor kebangsaan seperti paspor darurat, dokumen identitas, dll harus berlaku selama 12 bulan)<br>b. pasfoto berwarna terbaru (setahun terakhir). Detail<br>c. tiket kembali atau tiket terusan ke negara lain, kecuali bagi awak alat angkut yang akan singgah untuk bergabung dengan kapalnya dan melanjutkan perjalanan ke negara lain”
+- Document or application input 7 (Pengajuan visa / Permohonan Pra Kedatangan dan Pembayaran Saat Kedatangan): “membayar menggunakan metode pembayaran digital melalui kartu debit/kredit”
+- Document or application input 8 (Pengajuan visa / Permohonan Pra Kedatangan dan Pembayaran Saat Kedatangan): “mengambil visa kunjungan saat kedatangan elektronik di konter visa.”
+- Document or application input 9 (Pengajuan visa / Permohonan dan Pembayaran Saat Kedatangan): “melakukan pembayaran Visa Kunjungan Saat Kedatangan di konter Bank yang ditunjuk pada area imigrasi bandar udara/pelabuhan dengan menunjukkan paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis kepada petugas”
+- Document or application input 10 (Pengajuan visa / Permohonan dan Pembayaran Saat Kedatangan): “memperoleh Vaucer Visa, kertas sekuriti sebagai tanda bukti pembayaran Visa kunjungan saat kedatangan”
+- Document or application input 11 (Pengajuan visa / Permohonan dan Pembayaran Saat Kedatangan): “menunjukkan Vaucer Visa kepada petugas imigrasi pada konter Visa Kunjungan Saat Kedatangan”
+- Document or application input 12 (Pengajuan visa / Permohonan dan Pembayaran Saat Kedatangan): “memperoleh stiker Visa Kunjungan Saat Kedatangan yang ditempelkan pada paspor serta tanda masuk elektronik.”
+- Activity / document / timing condition: “Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya tidak diizinkan mengajukan visa kunjungan saat kedatangan.”
+- Activity / document / timing condition: “Masa berlaku visa kunjungan saat kedatangan elektronik (e-voa) adalah 90 hari sejak diterbitkan. Jika tidak digunakan dalam jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.”
+- Activity / document / timing condition: “Orang Asing dengan izin tinggal dari visa ini dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia.”
+

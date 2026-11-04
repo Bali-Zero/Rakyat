@@ -1,0 +1,496 @@
+vi.mock("@/components/portal/PortalMessageNotice", () => ({
+  PortalMessageNotice: () => null,
+}));
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import React from "react";
+import PortalLayout from "./layout";
+import { ApiError } from "@/lib/api/error-handler";
+
+// Hoisted mocks (must be defined before vi.mock)
+const {
+  mockPush,
+  mockReplace,
+  mockGetToken,
+  mockGetUserProfile,
+  mockGetProfile,
+  mockLogout,
+  mockFetchPortalSuperuser,
+  mockUsePathname,
+} = vi.hoisted(() => ({
+  mockPush: vi.fn(),
+  mockReplace: vi.fn(),
+  mockGetToken: vi.fn(),
+  mockGetUserProfile: vi.fn(),
+  mockGetProfile: vi.fn(),
+  mockLogout: vi.fn(),
+  mockFetchPortalSuperuser: vi.fn(),
+  mockUsePathname: vi.fn(() => "/portal"),
+}));
+
+// Mock next/navigation
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    push: mockPush,
+    replace: mockReplace,
+    prefetch: vi.fn(),
+    back: vi.fn(),
+  }),
+  usePathname: () => mockUsePathname(),
+}));
+
+// Mock components
+vi.mock("@/components/workspace/AppSidebar", () => ({
+  AppSidebar: ({
+    user,
+    onLogout,
+    navigationConfig,
+  }: {
+    user: { name: string; role: string; team: string };
+    onLogout: () => void;
+    navigationConfig: Array<{ items: Array<{ href: string }> }>;
+  }) => {
+    const handleClick = () => {
+      onLogout();
+    };
+    return (
+      <div
+        data-testid="app-sidebar"
+        data-role={user.role}
+        data-team={user.team}
+        data-first-href={navigationConfig[0]?.items[0]?.href}
+      >
+        <div>User: {user.name}</div>
+        <button onClick={handleClick}>Logout</button>
+      </div>
+    );
+  },
+}));
+
+vi.mock("@/components/workspace/Header", () => ({
+  Header: ({ userName }: { userName: string }) => (
+    <header data-testid="header">Header: {userName}</header>
+  ),
+}));
+
+// The authenticated layout imports PortalHeader + PortalErrorBoundary from
+// their own files (not the @/components/portal barrel) to keep the layout
+// chunk graph small. PortalBottomNav is loaded via next/dynamic, which is
+// also mocked below to return the real module synchronously in tests.
+vi.mock("@/components/portal/PortalHeader", () => ({
+  PortalHeader: ({
+    userName,
+    variant,
+    onMobileMenuToggle,
+    isMobileMenuOpen,
+  }: {
+    userName: string;
+    variant: string;
+    onMobileMenuToggle: () => void;
+    isMobileMenuOpen: boolean;
+  }) => (
+    <header data-testid="portal-header" data-variant={variant}>
+      Portal Header: {userName}
+      <button type="button" onClick={onMobileMenuToggle}>
+        {isMobileMenuOpen ? "Close menu" : "Open menu"}
+      </button>
+    </header>
+  ),
+}));
+
+vi.mock("@/components/portal/PortalErrorBoundary", () => ({
+  PortalErrorBoundary: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+}));
+
+vi.mock("@/components/portal/PortalBottomNav", () => ({
+  PortalBottomNav: ({ variant }: { variant: string }) => (
+    <nav data-testid="bottom-nav" data-variant={variant}>
+      Bottom Nav
+    </nav>
+  ),
+}));
+
+// next/dynamic defaults to a Promise-returning loader; in vitest/jsdom the
+// component never resolves, which makes PortalBottomNav render as undefined.
+// Replace dynamic() with a pass-through that invokes the loader eagerly and
+// returns whatever the mocked module exports. Works for both named-export
+// ({ default: m.Foo }) and default-export imports.
+vi.mock("next/dynamic", () => ({
+  default: (
+    loader: () => Promise<{ default: React.ComponentType<unknown> }>,
+  ) => {
+    const Component = (props: unknown) => {
+      const [Resolved, setResolved] =
+        React.useState<React.ComponentType<unknown> | null>(null);
+      React.useEffect(() => {
+        loader().then((mod) => setResolved(() => mod.default));
+      }, []);
+      if (!Resolved) return null;
+      return <Resolved {...(props as object)} />;
+    };
+    Component.displayName = "DynamicMock";
+    return Component;
+  },
+}));
+
+vi.mock("@/components/ui/toast", () => ({
+  ToastProvider: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="toast-provider">{children}</div>
+  ),
+}));
+
+// Mock api
+vi.mock("@/lib/api", () => ({
+  api: {
+    getToken: mockGetToken,
+    getUserProfile: mockGetUserProfile,
+    getProfile: mockGetProfile,
+    portal: {
+      getProfile: mockGetProfile,
+    },
+    logout: mockLogout,
+  },
+}));
+
+vi.mock("@/lib/portal/superuser", () => ({
+  fetchPortalSuperuser: mockFetchPortalSuperuser,
+}));
+
+vi.mock("@/types/navigation", () => ({
+  portalNavigation: [
+    {
+      items: [{ title: "Dashboard", href: "/portal", icon: "Home" }],
+    },
+  ],
+  partnerPortalNavigation: [
+    {
+      items: [
+        {
+          title: "Dashboard",
+          href: "/portal/partner/dashboard",
+          icon: "Home",
+        },
+      ],
+    },
+  ],
+}));
+
+describe("PortalLayout", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUsePathname.mockReturnValue("/portal");
+    window.history.replaceState({}, "", "/portal");
+    mockGetToken.mockReturnValue("test-token");
+    mockGetUserProfile.mockReturnValue(null);
+    mockGetProfile.mockResolvedValue({
+      fullName: "Test User",
+      name: "Test User",
+      email: "test@example.com",
+      avatar: null,
+    });
+    mockFetchPortalSuperuser.mockResolvedValue({
+      isSuperuser: false,
+      email: null,
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("replaces a cookie-only non-superuser deep link with the upgraded login", async () => {
+    mockGetToken.mockReturnValue(null);
+    window.history.replaceState({}, "", "/portal?view=active");
+    // Cookie-based SSO fallback also fails (no valid session)
+    mockGetProfile.mockRejectedValue(new Error("401 Unauthorized"));
+
+    render(
+      <PortalLayout>
+        <div>Test Content</div>
+      </PortalLayout>,
+    );
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith(
+        "/portal/login-upgraded?redirect=%2Fportal%3Fview%3Dactive",
+      );
+    });
+    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(screen.queryByText("Test Content")).not.toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("renders a cookie-only superuser instead of redirecting to login", async () => {
+    mockGetToken.mockReturnValue(null);
+    mockGetProfile.mockRejectedValue(
+      new Error("422 client selection required"),
+    );
+    mockFetchPortalSuperuser.mockResolvedValue({
+      isSuperuser: true,
+      email: "founder@example.test",
+    });
+
+    render(
+      <PortalLayout>
+        <div>Superuser Content</div>
+      </PortalLayout>,
+    );
+
+    expect(await screen.findByText("Superuser Content")).toBeInTheDocument();
+    expect(screen.getByText("User: founder")).toBeInTheDocument();
+    expect(mockFetchPortalSuperuser).toHaveBeenCalledWith(null);
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it("never asks the superuser probe on the partner cookie path", async () => {
+    mockUsePathname.mockReturnValue("/portal/partner/dashboard");
+    mockGetToken.mockReturnValue(null);
+    mockGetProfile.mockRejectedValue(new Error("401 Unauthorized"));
+    mockFetchPortalSuperuser.mockResolvedValue({
+      isSuperuser: true,
+      email: "founder@example.test",
+    });
+
+    render(
+      <PortalLayout>
+        <div>Partner Content</div>
+      </PortalLayout>,
+    );
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalled();
+    });
+    expect(mockFetchPortalSuperuser).not.toHaveBeenCalled();
+    expect(screen.queryByText("Partner Content")).not.toBeInTheDocument();
+  });
+
+  it("should load user profile from stored profile", async () => {
+    mockGetUserProfile.mockReturnValue({
+      name: "Stored User",
+      email: "stored@example.com",
+    });
+
+    render(
+      <PortalLayout>
+        <div>Test Content</div>
+      </PortalLayout>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("User: Stored User")).toBeInTheDocument();
+    });
+  });
+
+  it("uses partner navigation and identity labels on partner routes", async () => {
+    mockUsePathname.mockReturnValue("/portal/partner/dashboard");
+    mockGetUserProfile.mockReturnValue({
+      name: "Stored Partner",
+      email: "partner@example.test",
+      role: "partner",
+    });
+
+    render(
+      <PortalLayout>
+        <div>Partner Content</div>
+      </PortalLayout>,
+    );
+
+    const sidebar = await screen.findByTestId("app-sidebar");
+    expect(sidebar).toHaveAttribute("data-role", "partner");
+    expect(sidebar).toHaveAttribute("data-team", "Partner Portal");
+    expect(sidebar).toHaveAttribute(
+      "data-first-href",
+      "/portal/partner/dashboard",
+    );
+    expect(await screen.findByTestId("bottom-nav")).toHaveAttribute(
+      "data-variant",
+      "partner",
+    );
+    expect(screen.getByTestId("portal-header")).toHaveAttribute(
+      "data-variant",
+      "partner",
+    );
+  });
+
+  it("redirects a stored partner away from client-only portal routes", async () => {
+    mockGetUserProfile.mockReturnValue({
+      name: "Stored Partner",
+      email: "partner@example.test",
+      role: "partner",
+    });
+
+    render(
+      <PortalLayout>
+        <div>Client Content</div>
+      </PortalLayout>,
+    );
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith("/portal/partner/dashboard");
+    });
+    expect(screen.queryByText("Client Content")).not.toBeInTheDocument();
+  });
+
+  it("should load user profile from API when not stored", async () => {
+    mockGetUserProfile.mockReturnValue(null);
+    mockGetProfile.mockResolvedValue({
+      fullName: "API User",
+      email: "api@example.com",
+    });
+
+    render(
+      <PortalLayout>
+        <div>Test Content</div>
+      </PortalLayout>,
+    );
+
+    await waitFor(() => {
+      expect(mockGetProfile).toHaveBeenCalled();
+      expect(screen.getByText("User: API User")).toBeInTheDocument();
+    });
+  });
+
+  it("should show loading state initially", () => {
+    mockGetProfile.mockImplementation(() => new Promise(() => {})); // Never resolves
+
+    render(
+      <PortalLayout>
+        <div>Test Content</div>
+      </PortalLayout>,
+    );
+
+    expect(screen.getByText("Loading...")).toBeInTheDocument();
+  });
+
+  it("should render sidebar and header when loaded", async () => {
+    render(
+      <PortalLayout>
+        <div>Test Content</div>
+      </PortalLayout>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("app-sidebar")).toBeInTheDocument();
+      expect(screen.getByTestId("portal-header")).toBeInTheDocument();
+    });
+  });
+
+  it("gives the mobile navigation dialog the canonical sidebar width", async () => {
+    render(
+      <PortalLayout>
+        <div>Test Content</div>
+      </PortalLayout>,
+    );
+
+    const menuButton = await screen.findByRole("button", { name: "Open menu" });
+    menuButton.click();
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Client portal navigation",
+    });
+    expect(dialog).toHaveStyle({ width: "var(--bz-sidebar-width, 216px)" });
+    expect(dialog).toHaveClass("z-[70]");
+  });
+
+  it("should render children content", async () => {
+    render(
+      <PortalLayout>
+        <div data-testid="child-content">Test Content</div>
+      </PortalLayout>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("child-content")).toBeInTheDocument();
+    });
+  });
+
+  it("invalidates the session and replaces history with the upgraded login", async () => {
+    mockLogout.mockResolvedValue(undefined);
+
+    render(
+      <PortalLayout>
+        <div>Test Content</div>
+      </PortalLayout>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Logout")).toBeInTheDocument();
+    });
+
+    const logoutButton = screen.getByText("Logout");
+    logoutButton.click();
+
+    await waitFor(() => {
+      expect(mockLogout).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith("/portal/login-upgraded");
+    });
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("keeps protected content hidden when a stored session has expired", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    window.history.replaceState({}, "", "/portal?view=active");
+    mockGetProfile.mockRejectedValue(new ApiError("Session expired", 401));
+
+    render(
+      <PortalLayout>
+        <div>Test Content</div>
+      </PortalLayout>,
+    );
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith(
+        "/portal/login-upgraded?redirect=%2Fportal%3Fview%3Dactive",
+      );
+    });
+    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(screen.queryByText("Test Content")).not.toBeInTheDocument();
+
+    consoleSpy.mockRestore();
+  });
+
+  it("should handle non-401 errors gracefully", async () => {
+    mockGetProfile.mockRejectedValue(new Error("500 Server Error"));
+
+    render(
+      <PortalLayout>
+        <div>Test Content</div>
+      </PortalLayout>,
+    );
+
+    await waitFor(() => {
+      // Should not redirect on non-401 errors
+      expect(mockPush).not.toHaveBeenCalled();
+    });
+  });
+
+  it("should use portal navigation config", async () => {
+    render(
+      <PortalLayout>
+        <div>Test Content</div>
+      </PortalLayout>,
+    );
+
+    await waitFor(() => {
+      const sidebar = screen.getByTestId("app-sidebar");
+      expect(sidebar).toBeInTheDocument();
+    });
+  });
+
+  it("should set portal mode flags correctly", async () => {
+    render(
+      <PortalLayout>
+        <div>Test Content</div>
+      </PortalLayout>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("User: Test User")).toBeInTheDocument();
+    });
+  });
+});

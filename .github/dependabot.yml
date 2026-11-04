@@ -1,0 +1,288 @@
+# Dependabot security updates — weekly, grouped, auto-merge patch
+version: 2
+updates:
+  # Python backend
+  - package-ecosystem: "pip"
+    directory: "/apps/backend-rag"
+    # The two uv-compiled locks are OUTPUT, not input — Dependabot must not edit
+    # them.
+    #
+    # WHY IT WAS EDITING THEM: for pip, Dependabot "supports updates to any .txt
+    # file" (docs: supported-ecosystems-and-repositories, "pip and pip-compile").
+    # There is no heuristic that recognises compiled output, so
+    # requirements.lock.txt and requirements-prod.lock.txt were picked up as two
+    # more manifests purely because they end in .txt.
+    #
+    # WHAT THAT PRODUCED: this file already diagnosed the mechanism in the ignore
+    # block below ("Dependabot's pip lock updater bumps each package
+    # independently and does NOT honor sibling version pins"), but treated it as
+    # a per-package problem — hence the holds on fsspec, grpcio*, websockets,
+    # pdfplumber, pydantic*, mpmath, tokenizers. It is not per-package. Raising
+    # one == pin inside a compiled lock without re-running `uv pip compile`
+    # yields an internally unsatisfiable pin set, so the PR is born dead at
+    # `Install dependencies (uv, lock-pinned)` and its ~9 reds are ONE failure
+    # fanning out. Measured 2026-09-01, four distinct conflicts one mechanism:
+    # #5453 (openinference-semantic-conventions 0.1.32 vs >=0.1.33), #5452
+    # (portalocker 4.3.0 vs qdrant-client's <4.0), #5530 (transformers 5.16.1
+    # needs tokenizers>=0.23.1, lock has 0.22.2), #5454 (same profile). The
+    # tokenizers hold below was written for transformers 4.57 and the conflict
+    # returned at 5.16 — a per-package cure cannot outrun a mechanism.
+    #
+    # GLOB, NOT TWO FILENAMES — deliberate, and it is the npm block's lesson
+    # applied here: "scoping the fix to one dependency instead of the class is
+    # exactly why the disease came back through four other packages". A third
+    # compiled lock must be excluded by existing.
+    #
+    # WHAT THIS DOES NOT DO: a bump to a DIRECT dependency still opens a PR and
+    # still goes red — but on ONE check with a one-command fix, because the lock
+    # now lags its manifest and
+    # apps/backend-rag/backend/tests/test_lock_honors_requirements.py catches
+    # exactly that (it runs in backend-shard leg 3, feeding the REQUIRED
+    # "Backend Tests (Python)"; any requirements-file change forces the full
+    # unscoped suite, so it cannot be path-skipped). Fix: re-run the `uv pip
+    # compile` command in the lock's own header and commit the result. What
+    # disappears entirely is the lock-ONLY class — a transitive package like
+    # portalocker that appears in no source manifest — which is the class no
+    # recompile could ever have saved.
+    #
+    # THE HOLE THIS DOES NOT CLOSE — read it before trusting the block above:
+    # `exclude-paths` has NO EFFECT ON SECURITY UPDATES (dependabot-core #14408,
+    # OPEN, verbatim: "has no effect on security update PRs") — and line 1 of
+    # this file describes it as being about security updates. So the
+    # lock-editing vector stays open on exactly the path that matters most.
+    #
+    # BE PRECISE ABOUT THE RESIDUE, because an overstatement here is the kind
+    # that gets a real gap dismissed (this paragraph was corrected before merge:
+    # two cross-family reviewers, gpt-5.6-sol and qwen3.8-max, independently
+    # refuted its first draft). The second layer,
+    # apps/backend-rag/backend/tests/test_lock_honors_requirements.py, checks
+    # every manifest requirement THAT CARRIES A SPECIFIER against the lock pin.
+    # So a lock-only bump is NOT automatically invisible to it: if the new pin
+    # breaks an existing `!=`, ceiling or exact bound, that test goes red. That
+    # is precisely the MAL-2026-4750 shape — a fastapi lock bump to the 0.136.3
+    # that requirements.txt excludes with `!=`, pulling the malicious `fastar` —
+    # and it is the shape the net DOES catch.
+    #
+    # What escapes BOTH layers is narrower and still real: a lock-only change to
+    # a package that appears in NO source manifest (a transitive like
+    # portalocker — nothing declares a bound, so no bound can be violated), or
+    # one that lands on a version still satisfying every existing bound. For
+    # those there is no specifier to fail against. Combined with the
+    # auto-merge-patch posture on line 1, such a PR can be green and mergeable
+    # on its own. A Dependabot PR touching ONLY a .lock.txt therefore gets read
+    # by hand until the enforcement gate the reviewers asked for exists —
+    # tracked in .claude/skills/modus/PENDING-ARMS.md (2026-09-02, owner
+    # session[ci]).
+    #
+    # AND THIS IS BELIEVED, NOT YET OBSERVED: the option has two OPEN
+    # non-honoring bugs upstream — #15102 (`"exclude-paths": []` ignored in the
+    # graph builder) and #13526 (matched files updated anyway). What proves it
+    # works here is a Monday pip run that declines to touch these two files, not
+    # this config existing. Tracked in .claude/skills/modus/PENDING-ARMS.md
+    # (2026-09-02, condition 1 of 3 — "believed, not observed").
+    exclude-paths:
+      - "*.lock.txt"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "security"
+    ignore:
+      - dependency-name: "torch"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "sentence-transformers"
+        update-types: ["version-update:semver-major"]
+      # datasets caps fsspec, and a group bump that raises fsspec past the cap
+      # makes the WHOLE minor-and-patch group unsatisfiable (uv resolver error ->
+      # one failed install cascades into 4 red required checks; see closed group
+      # PR #2062). The ceiling MOVES with datasets, so this bound is raised in
+      # step with it, never dropped: removing it lets dependabot propose the next
+      # fsspec release the current datasets forbids, which is the same outage.
+      #
+      # 2026-07-28, after datasets 4.8.5 -> 5.0.0 landed (#3366): measured on
+      # PyPI, datasets 5.0.0 declares `fsspec[http]<=2026.4.0,>=2023.1.0`, so the
+      # bound goes 2026.2.0 -> 2026.4.0. (The lock still resolves fsspec==2026.2.0;
+      # this ignore is what keeps the gap between the lock and the cap safe to
+      # cross.) Re-measure the ceiling at the NEXT datasets major before touching
+      # this line — the note the previous bump left said "drop this when datasets
+      # raises its ceiling", which would have been the wrong move.
+      - dependency-name: "fsspec"
+        versions: [">2026.4.0"]
+      # presidio 2.2.363 REGRESSED its cryptography ceiling to <47.0.0 —
+      # colliding with OUR deliberate CVE floor cryptography>=48.0.1
+      # (requirements.txt, GHSA-537c-gmf6-5ccf; prod lock runs 49.x fine with
+      # presidio 2.2.362). Root cause of the whole #2084/#2267/#2318
+      # ResolutionImpossible saga. Corrected 2026-07-12 (same Zero decision,
+      # right patient: an earlier iteration wrongly held cryptography back,
+      # which would have blocked OUR security bumps). Drop when a presidio
+      # release supports cryptography>=48.
+      - dependency-name: "presidio-analyzer"
+        versions: [">=2.2.363"]
+      - dependency-name: "presidio-anonymizer"
+        versions: [">=2.2.363"]
+      # requirements.txt:152 deliberately ceilings protobuf <6.0.0 (OTEL /
+      # google-cloud-aiplatform compat, see the comment there). grpcio-status
+      # >=1.82 requires protobuf>=7.35, so any grpc-family bump makes the
+      # whole group ResolutionImpossible again (regenerated PR #2267 failed
+      # exactly there after the cryptography hold fixed the first conflict).
+      # The grpc family only moves TOGETHER with a deliberate protobuf major
+      # bump — drop these ignores in that PR.
+      - dependency-name: "grpcio"
+      - dependency-name: "grpcio-status"
+      - dependency-name: "grpcio-tools"
+      - dependency-name: "grpcio-health-checking"
+      # Dependabot's pip lock updater bumps each package independently and
+      # does NOT honor sibling version pins, so leader/follower pairs break
+      # the lock when the follower moves alone. The five holds below were
+      # isolated by locally resolving group PR #2328's locks with uv
+      # (2026-07-13): reverting exactly these five bumps makes BOTH
+      # requirements.lock.txt and requirements-prod.lock.txt resolve.
+      - dependency-name: "websockets"
+        versions: [">=16.0.0"] # langgraph-sdk (latest 0.4.2) pins websockets<16
+      - dependency-name: "pdfplumber"
+        # 0.11.10 exact-pins pdfminer.six==20260107, but pdfminer's date
+        # versioning reads as semver-major so it can never join this
+        # minor-and-patch group - bump the pdfplumber+pdfminer.six pair deliberately
+        versions: [">=0.11.10"]
+      # exact-pin pair: pydantic==X requires pydantic-core==Y - a solo bump
+      # of EITHER breaks the lock (#2328 bumped core to 2.47.0 against
+      # pydantic 2.13.4's ==2.46.4). Bump the pair deliberately.
+      - dependency-name: "pydantic"
+      - dependency-name: "pydantic-core"
+      - dependency-name: "mpmath"
+        versions: [">=1.4.0"] # sympy (latest 1.14.0) pins mpmath<1.4
+      - dependency-name: "tokenizers"
+        versions: [">0.23.0"] # transformers 4.57.x pins tokenizers<=0.23.0
+    groups:
+      # Security updates otherwise open one PR per advisory; one grouped PR per
+      # ecosystem keeps the queue readable. Version-update groups below are unchanged.
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      # OpenAI-stack packages isolated into their own group so a breaking bump
+      # (openai/langchain-openai sit near the frozen embedding path:
+      # text-embedding-3-small / 1536-dim / 93,283 vectors, CLAUDE.md sec.9)
+      # only fails a small, individually-mergeable PR instead of the whole
+      # batch. Both groups still receive minor+patch — nothing is ignored.
+      # (see closed PR #935: 60-pkg group failed 4 required checks as a unit)
+      openai-stack:
+        patterns:
+          - "openai"
+          - "langchain*"
+          - "tiktoken"
+          # "anthropic" travels WITH langchain-anthropic or the group cannot
+          # resolve. langchain-anthropic 1.5.2 requires anthropic<1.0.0,>=0.120.0
+          # (verified on PyPI), so a group that raises langchain-anthropic while
+          # leaving anthropic pinned at the lock's 0.117.0 is unsatisfiable as a
+          # unit — uv's exact words on PR #3357: "Because langchain-anthropic
+          # >=1.5.2 depends on anthropic>=0.120.0 and you require
+          # anthropic==0.117.0 ... your requirements are unsatisfiable."
+          # This is the same shape as the fsspec/datasets, grpcio and websockets
+          # notes above; the difference is that those were cured by IGNORING the
+          # co-constrained package, which cannot work here — the constraint is a
+          # floor that rises, not a ceiling that blocks, so freezing anthropic
+          # would freeze langchain-anthropic with it. Group them instead.
+          # Safe for the third dependent: openinference-instrumentation-anthropic
+          # 1.0.6 asks only for anthropic>=0.84.0, no upper bound.
+          - "anthropic"
+        update-types:
+          - "minor"
+          - "patch"
+      minor-and-patch:
+        exclude-patterns:
+          - "openai"
+          - "langchain*"
+          - "tiktoken"
+          # mirrors the openai-stack patterns above — a package left in both
+          # groups is claimed by whichever matches first, which makes the pairing
+          # above depend on ordering instead of on the declaration.
+          - "anthropic"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Node.js frontend
+  #
+  # directory MUST stay "/" — this is an npm-workspaces monorepo whose single
+  # hoisted package-lock.json lives at the root. Pointed at "/apps/mouth" (as it
+  # was until 2026-07-16) Dependabot can see that workspace's package.json but
+  # NOT the root lock, so every PR it opened bumped the manifest and left the
+  # lock behind. Four majors landed that way (#2384/#2385/#2386/#2387) and broke
+  # `npm ci` on main for days; the only jobs that run `npm ci` are non-required,
+  # so nothing went red that anyone had to look at. From "/" Dependabot resolves
+  # the workspace tree and updates the manifest AND the root lock in one PR.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "security"
+    ignore:
+      # lucide-react majors are not safely auto-mergeable here: the mouth vitest
+      # runner inlines packages/core, so vite's import-analysis resolver fails on
+      # the bare `lucide-react` import when declared != lock (closed PR #956).
+      #
+      # NOTE 2026-07-16: the *desync* half of that old rationale is now fixed at
+      # the root (directory "/" above + the required `npm lock honors manifest`
+      # gate), so this ignore no longer carries the structural cure — it is now
+      # just an ordinary "icon-library majors get a human" hold, mirroring the
+      # torch / sentence-transformers semver-major ignore in the pip block. It
+      # was ALSO the scar: scoping the fix to one dependency instead of the class
+      # is exactly why the disease came back through four other packages. Do not
+      # add per-package ignores here to paper over a lock desync — fix the lock.
+      - dependency-name: "lucide-react"
+        update-types: ["version-update:semver-major"]
+    groups:
+      # Security updates otherwise open one PR per advisory; one grouped PR per
+      # ecosystem keeps the queue readable. Version-update groups below are unchanged.
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "ci"
+    groups:
+      # Security updates otherwise open one PR per advisory; one grouped PR per
+      # ecosystem keeps the queue readable. Version-update groups below are unchanged.
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      # The three github/codeql-action/* steps are ONE contract, not three
+      # dependencies: `init` writes the CodeQL config that `autobuild` reads,
+      # and `analyze` consumes what autobuild produced. Ungrouped, Dependabot
+      # opens a separate PR per step, so the refs diverge the moment one lands
+      # without the others — security.yml then runs init at one version and
+      # autobuild at another. That happened: PR #5444 carried only the
+      # `autobuild` half of 4.37.7 -> 4.37.9, and its CodeQL jobs failed for
+      # exactly that reason (cured out-of-band by PR #5517, which moved all
+      # three refs in one commit; #5444 was closed as superseded).
+      #
+      # Deliberately NARROW. A catch-all group over this whole ecosystem would
+      # be a poison-batch risk: one bad action bump would block every other
+      # action update behind it, with no way to merge the innocent ones
+      # separately. That is the same reasoning the `openai-stack` comment
+      # records for pip above, and it is why this groups a single coupled
+      # family rather than "all github-actions minor+patch".
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"

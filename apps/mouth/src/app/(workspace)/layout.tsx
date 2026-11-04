@@ -1,0 +1,539 @@
+"use client";
+
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useRouter, usePathname } from "next/navigation";
+import { AppSidebar } from "@/components/workspace/AppSidebar";
+import { Header } from "@/components/workspace/Header";
+import { ToastProvider } from "@/components/ui/toast";
+import { api, ApiError } from "@/lib/api";
+import type { GateStatus } from "@/lib/api";
+import GateScreen from "./GateScreen";
+// useTeamStatus removed — PANOPTICON auto-clock-in from login (2026-04-14)
+import { logger } from "@/lib/logger";
+import { ErrorBoundary } from "@/components/optimization";
+import { ZantaraWidget } from "@/components/workspace/ZantaraWidget";
+import { KitaCommandPalette } from "@/components/workspace/KitaCommandPalette";
+import { PortalChampionCelebration } from "@/components/workspace/PortalChampionCelebration";
+import { VisaOracleTestingGuideOverlay } from "./dashboard/VisaOracleTestingGuideOverlay";
+import { I18nProvider } from "@/i18n";
+import { routeTitles } from "@/types/navigation";
+import { useQueryClient } from "@tanstack/react-query";
+import { removeDashboardQueries } from "@/hooks/useDashboardData";
+
+/**
+ * R19 typefaces for the whole kita workspace. The faces are declared once in
+ * app/portal/r19-fonts.css (self-hosted variable TTFs under public/fonts/);
+ * importing the file does not select them — the
+ * [data-theme][data-product="kita"] blocks in globals.css point --font-serif
+ * and --font-sans at those families, which is what puts Fraunces on the
+ * mastheads and Manrope on the body. Same import as
+ * (workspace)/garuda-voa/layout.tsx, which already did this page-locally.
+ */
+import "../portal/r19-fonts.css";
+
+interface WorkspaceLayoutProps {
+  children: React.ReactNode;
+}
+
+const CLIENT_PORTAL_URL = "https://my.balizero.com/portal";
+
+function getClientPortalDestination(hostname: string): string {
+  return hostname === "kita.balizero.com" ||
+    hostname === "www.kita.balizero.com"
+    ? CLIENT_PORTAL_URL
+    : "/portal";
+}
+
+function getRouteTitle(pathname: string | null): string {
+  if (!pathname) return "Workspace";
+  if (routeTitles[pathname]) return routeTitles[pathname];
+  for (const [route, title] of Object.entries(routeTitles)) {
+    if (pathname.startsWith(route) && route !== "/") return title;
+  }
+  return "Workspace";
+}
+
+export default function WorkspaceLayout({ children }: WorkspaceLayoutProps) {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const pathname = usePathname();
+  const pageTitle = getRouteTitle(pathname);
+  const mobileSidebarRef = useRef<HTMLDivElement | null>(null);
+  const mobileMenuToggleRef = useRef<HTMLButtonElement | null>(null);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isZantaraOpen, setIsZantaraOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [user, setUser] = useState({
+    name: "",
+    email: "",
+    role: "",
+    team: "",
+    avatar: undefined as string | undefined,
+  });
+
+  // INTAKE login gate (spec §3/§5). `gateChecked` stays false until the first
+  // status probe resolves so we never flash the workspace then yank it (§5).
+  // `gateBypassed` is set by admin override / after the all-clear "Enter" CTA.
+  const [gateStatus, setGateStatus] = useState<GateStatus | null>(null);
+  const [gateChecked, setGateChecked] = useState(false);
+  const [gateBypassed, setGateBypassed] = useState(false);
+
+  // Product persona is independent from theme. On the production hostname it
+  // is set before paint; this fallback keeps direct/local workspace routes in
+  // the same day-first contract without overriding a stored dark preference.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.product = "kita";
+    if (root.dataset.theme === "light") root.dataset.theme = "operative-light";
+    if (root.dataset.theme === "dark") root.dataset.theme = "operative-dark";
+    if (
+      root.dataset.theme !== "operative-light" &&
+      root.dataset.theme !== "operative-dark"
+    ) {
+      root.dataset.theme = "operative-light";
+    }
+  }, []);
+
+  // Clock-in is now automatic on login (PANOPTICON Phase 0)
+
+  // Cmd+J shortcut to toggle Zantara
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "j") {
+        e.preventDefault();
+        setIsZantaraOpen((prev) => !prev);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Load user profile
+  const loadUserProfile = useCallback(async () => {
+    try {
+      const storedProfile = api.getUserProfile();
+      if (storedProfile) {
+        const userName =
+          storedProfile.name ||
+          (storedProfile.email ? storedProfile.email.split("@")[0] : "User");
+        setUser({
+          name: userName,
+          email: storedProfile.email || "",
+          role: storedProfile.role || "Member",
+          team: storedProfile.team || "Team",
+          avatar: storedProfile.avatar,
+        });
+        return;
+      }
+
+      const profile = await api.getProfile({ redirectOnUnauthorized: false });
+      const userName =
+        profile.name || (profile.email ? profile.email.split("@")[0] : "User");
+      setUser({
+        name: userName,
+        email: profile.email || "",
+        role: profile.role || "Member",
+        team: profile.team || "Team",
+        avatar: profile.avatar,
+      });
+    } catch (error) {
+      // A 401 here is NOT a fault — it is this gate working. An anonymous
+      // visitor reaching a workspace route gets 401, and the re-throw below
+      // sends them to login, which is the intended flow.
+      //
+      // Logging that at ERROR made every anonymous hit a Sentry event (the
+      // logger forwards unconditionally in production). Measured 2026-08-28 on
+      // /whatsapp: Sentry answers 429 to the flood, which means it is DROPPING
+      // REAL events — an expected outcome was blinding us to genuine ones.
+      //
+      // This is classification, not silencing: a genuine failure (5xx, network,
+      // malformed profile) still logs at ERROR and still reaches Sentry. Only
+      // the "you are not logged in" case is demoted. Detection uses
+      // ApiError.statusCode, never a substring of the message — this class's own
+      // docstring records the scar from callers that sniffed `error.message`.
+      //
+      // It must be `debug`, NOT `warn`: logger.warn calls sendToSentry on the
+      // exact same `!isDevelopment` branch as logger.error (logger.ts:153-159 vs
+      // :168-169), so demoting to warn would have changed the label and fixed
+      // nothing. `debug` returns early in production (logger.ts:143) — the event
+      // stays visible while developing and stops manufacturing Sentry traffic in
+      // production. That is defensible here precisely because "an anonymous
+      // visitor reached a protected route" is not diagnostic: it happens on
+      // every such visit, and the login redirect is already the observable.
+      const isUnauthenticated =
+        error instanceof ApiError && error.statusCode === 401;
+      const context = { component: "WorkspaceLayout", action: "loadProfile" };
+      if (isUnauthenticated) {
+        logger.debug(
+          "Profile unavailable — visitor is not authenticated",
+          context,
+        );
+      } else {
+        logger.error(
+          "Failed to load profile",
+          context,
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }
+      throw error; // Re-throw so caller can redirect to login
+    }
+  }, []);
+
+  // Fetch the INTAKE gate status (cheap count probe). Fail OPEN on error
+  // (spec §8 Q4: a status outage must not lock everyone out) — clearing
+  // gateStatus so the workspace renders, but still marking it checked.
+  const refetchGate = useCallback(async () => {
+    try {
+      const status = await api.getGateStatus();
+      setGateStatus(status);
+    } catch (error) {
+      logger.warn("Gate status probe failed — failing open", {
+        component: "WorkspaceLayout",
+        action: "gateStatus",
+        metadata: { error: String(error) },
+      });
+      setGateStatus(null);
+    } finally {
+      setGateChecked(true);
+    }
+  }, []);
+
+  // Check authentication and load data
+  useEffect(() => {
+    const checkAuth = () => {
+      const loadData = async () => {
+        setIsLoading(true);
+        try {
+          await loadUserProfile();
+
+          const profile = api.getUserProfile();
+          if (profile?.role === "client") {
+            // This is a cross-origin transition in production. A Next router
+            // navigation first requests an RSC payload from kita, whose 301 to
+            // my.balizero.com is cross-origin and can be rejected by the RSC
+            // client. Use a document navigation so the browser owns the domain
+            // handoff; previews and localhost stay on their current origin.
+            window.location.replace(
+              getClientPortalDestination(window.location.hostname),
+            );
+            return;
+          }
+
+          // INTAKE gate probe alongside the profile load (spec §5). Awaited so
+          // the loading state stays up until clearance is known — never flash
+          // the workspace before the gate decision.
+          await refetchGate();
+        } catch (error) {
+          const currentUrl =
+            typeof window !== "undefined" ? window.location.href : "";
+          const loginBase = "https://kita.balizero.com/login";
+          const loginUrl = currentUrl
+            ? `${loginBase}?redirect=${encodeURIComponent(currentUrl)}`
+            : loginBase;
+
+          // --- UI DEV BYPASS ---
+          if (process.env.NODE_ENV === "development") {
+            logger.warn(
+              "[DEV MODE] Bypassing login redirect for local UI inspection",
+              {
+                component: "WorkspaceLayout",
+                action: "authCheck",
+              },
+            );
+            setUser({
+              name: "Zero (Local Dev)",
+              email: "zero@balizero.com",
+              role: "admin",
+              team: "Management",
+              avatar: undefined,
+            });
+            // No backend in local dev — treat the gate as cleared so the
+            // workspace is inspectable.
+            setGateChecked(true);
+            setIsLoading(false);
+            return;
+          }
+
+          // Cookie-only session fallback (auth-gates-cookie-primary, round 2
+          // — spec §6-bis). getProfile() failing here is NEVER, by itself,
+          // proof the visitor is anonymous: `/api/auth/profile` is
+          // bearer-only (HTTPBearer strict), and against the locked FastAPI
+          // 0.141.1 that dependency answers **401** to a request with no
+          // Authorization header — even one carrying a VALID cookie session
+          // (verified against the locked FastAPI 0.141.1 source, 2026-08-29:
+          // HTTPBearer never reads cookies at all; a prior version of this
+          // comment said 403, wrong for this backend version). So neither a
+          // 401 nor
+          // a 403 from getProfile can be trusted on its own — only the
+          // session probe can tell. Ask it unconditionally, every time.
+          const session = await api.hasSession();
+          if (session !== "anonymous") {
+            // Cookie-only session confirmed (or the probe was inconclusive
+            // — fail open rather than force a logout). The real profile/role
+            // is unrecoverable client-side here (residual: `/api/auth/profile`
+            // is bearer-only and the JWT is httpOnly), so seed a minimal
+            // placeholder instead of bouncing a genuinely logged-in visitor
+            // to /login.
+            setUser({
+              name: "Team member",
+              email: "",
+              role: "Member",
+              team: "Team",
+              avatar: undefined,
+            });
+            await refetchGate();
+            return;
+          }
+
+          window.location.href = loginUrl;
+          return;
+        } finally {
+          setIsLoading(false);
+        }
+      };
+
+      loadData();
+    };
+
+    const timeoutId = setTimeout(checkAuth, 100);
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // ← Run only once on mount to avoid infinite loop
+
+  // F5 — re-fetch the gate on every workspace route change (not just mount),
+  // so obligations that arrive mid-session re-engage the gate. The mount probe
+  // already covered the first render, so skip the initial pathname run.
+  // Re-engagement choice: if the gate flips back to `blocked`, we clear
+  // `gateBypassed` so a freshly-blocked state always shows the gate again —
+  // an admin override / all-clear entry is point-in-time, not a day pass.
+  const didInitialGateFetch = useRef(false);
+  useEffect(() => {
+    if (!gateChecked) return; // wait for the mount probe to land first
+    if (!didInitialGateFetch.current) {
+      didInitialGateFetch.current = true;
+      return; // mount effect already fetched for the initial pathname
+    }
+    void refetchGate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname, gateChecked]);
+
+  // Drop the bypass whenever the gate is (re-)reported as blocked, so a new
+  // obligation re-engages the screen even after a prior override/entry.
+  useEffect(() => {
+    if (gateStatus?.blocked) {
+      setGateBypassed(false);
+    }
+  }, [gateStatus]);
+
+  // Handle logout
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } catch (error) {
+      logger.error(
+        "Logout error",
+        { component: "WorkspaceLayout", action: "logout" },
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    } finally {
+      removeDashboardQueries(queryClient);
+      router.push("/login");
+    }
+  };
+
+  // Handle mobile menu toggle
+  const handleMobileMenuToggle = () => {
+    setIsMobileMenuOpen(!isMobileMenuOpen);
+  };
+
+  // Close mobile menu on route change
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [pathname]);
+
+  // Mobile sidebar dialog: Esc to close + focus trap + return focus to toggle
+  useEffect(() => {
+    if (!isMobileMenuOpen) return;
+
+    const root = mobileSidebarRef.current;
+    const focusables = root
+      ? Array.from(
+          root.querySelectorAll<HTMLElement>(
+            'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"]), input:not([disabled]), select:not([disabled])',
+          ),
+        )
+      : [];
+    focusables[0]?.focus();
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsMobileMenuOpen(false);
+        return;
+      }
+      if (e.key !== "Tab" || focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      mobileMenuToggleRef.current?.focus();
+    };
+  }, [isMobileMenuOpen]);
+
+  // Show loading state — also hold here until the gate decision is known so we
+  // never flash the workspace before clearance is determined (spec §5).
+  if (isLoading || !gateChecked) {
+    return (
+      <main
+        id="main-content"
+        aria-busy="true"
+        aria-live="polite"
+        className="bz-product-kita min-h-screen flex items-center justify-center"
+        style={{ background: "var(--bz-base, #0f1419)" }}
+      >
+        <div className="flex flex-col items-center gap-4">
+          <div
+            className="w-10 h-10 border-2 border-[var(--bz-accent)] border-t-transparent rounded-full animate-spin"
+            role="status"
+            aria-label="Loading workspace"
+          />
+          <p className="text-sm text-[var(--bz-text-1)]">Loading…</p>
+        </div>
+      </main>
+    );
+  }
+
+  // Admin override visibility (F6). The backend lock is the real gate; the
+  // frontend only needs to know whether to SHOW the override button — mirror
+  // the role set used by ApiClientBase.isAdmin().
+  const isAdmin = ["admin", "founder", "owner", "board"].includes(
+    (user.role || "").toLowerCase(),
+  );
+
+  // INTAKE gate interception (spec §3.2/§5): render the gate INSTEAD of the
+  // workspace while blocked and not bypassed. ToastProvider wraps it because
+  // GateScreen's action feedback uses useToast.
+  // The /review page is the ONE workspace route that must remain reachable
+  // while the gate is blocking — it is HOW the reviewer clears the document
+  // queue. Without this exception the gate would loop the reviewer back to
+  // the wall (the original /process deep-link bug).
+  if (gateStatus?.blocked && !gateBypassed && pathname !== "/review") {
+    return (
+      <I18nProvider>
+        <ToastProvider>
+          <GateScreen
+            status={gateStatus}
+            userEmail={user.email}
+            isAdmin={isAdmin}
+            onRefresh={refetchGate}
+            onEnter={() => setGateBypassed(true)}
+          />
+          <PortalChampionCelebration key={user.email} identity={user.email} />
+        </ToastProvider>
+      </I18nProvider>
+    );
+  }
+
+  return (
+    <I18nProvider>
+      <ToastProvider>
+        <a href="#main-content" className="bz-skip-link">
+          Skip to main content
+        </a>
+        <div
+          className="bz-product-kita min-h-screen"
+          style={{ background: "var(--bz-base, #0f1419)" }}
+        >
+          {/* Desktop Sidebar — labelled landmark so AT can list it */}
+          <div className="hidden md:block">
+            <AppSidebar
+              user={user}
+              reviewCount={gateStatus?.sections?.documents?.count ?? 0}
+              onLogout={handleLogout}
+              onZantaraToggle={() => setIsZantaraOpen((prev) => !prev)}
+              isZantaraOpen={isZantaraOpen}
+              ariaLabel="Primary"
+            />
+          </div>
+
+          {/* Mobile Sidebar Overlay */}
+          {isMobileMenuOpen && (
+            <>
+              <div
+                className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40 md:hidden transition-all duration-300"
+                onClick={() => setIsMobileMenuOpen(false)}
+                aria-hidden="true"
+              />
+              <div
+                ref={mobileSidebarRef}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Workspace navigation"
+                className="fixed inset-y-0 left-0 z-50 md:hidden"
+                style={{ width: "var(--bz-sidebar-width, 216px)" }}
+              >
+                <AppSidebar
+                  id="workspace-mobile-nav"
+                  user={user}
+                  reviewCount={gateStatus?.sections?.documents?.count ?? 0}
+                  onLogout={handleLogout}
+                  onZantaraToggle={() => setIsZantaraOpen((prev) => !prev)}
+                  isZantaraOpen={isZantaraOpen}
+                  ariaLabel="Primary (mobile)"
+                />
+              </div>
+            </>
+          )}
+
+          {/* Main Content */}
+          <div className="md:ml-[216px] min-h-screen flex flex-col transition-all duration-300">
+            <Header
+              userName={user.name}
+              onMobileMenuToggle={handleMobileMenuToggle}
+              isMobileMenuOpen={isMobileMenuOpen}
+              mobileMenuToggleRef={mobileMenuToggleRef}
+            />
+
+            <main
+              id="main-content"
+              aria-labelledby="bz-page-title"
+              tabIndex={-1}
+              className="flex-1 p-[var(--bz-product-page-gap)]"
+            >
+              <h1 id="bz-page-title" className="sr-only">
+                {pageTitle}
+              </h1>
+              <ErrorBoundary
+                fallback={
+                  <div className="p-8 text-center text-[var(--bz-text-1)]">
+                    Something went wrong. Please refresh the page.
+                  </div>
+                }
+              >
+                {children}
+              </ErrorBoundary>
+            </main>
+          </div>
+        </div>
+        <ZantaraWidget
+          open={isZantaraOpen}
+          onClose={() => setIsZantaraOpen(false)}
+        />
+        <KitaCommandPalette />
+        <PortalChampionCelebration key={user.email} identity={user.email} />
+        <VisaOracleTestingGuideOverlay
+          identity={api.getUserProfile()?.email?.trim().toLowerCase() ?? ""}
+        />
+      </ToastProvider>
+    </I18nProvider>
+  );
+}

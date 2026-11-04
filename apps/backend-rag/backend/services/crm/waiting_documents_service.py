@@ -1,0 +1,403 @@
+"""
+Waiting Documents Automation Service.
+
+Handles automated notification when practice status changes to 'waiting_documents':
+- Sends email to team leader with client details and a reminder to collect documents
+- Sends email to client asking them to upload/send required documents
+"""
+
+import os
+from typing import Any
+
+import asyncpg
+
+from backend.app.utils.logging_utils import get_logger
+from backend.security.pii_log_identifier import redact_identifier_for_log
+from backend.services.common.cache import cache_invalidating
+from backend.services.crm.welcome.welcome_templates import PRACTICE_DOCUMENT_CHECKLISTS
+from backend.services.notifications.email_audit import (
+    _bounded_scrub,
+    format_send_error,
+    log_email_attempt,
+    notify_email_failure_critical,
+    record_email_result,
+)
+from backend.services.notifications.email_branding import logo_header_html, team_email_html
+from backend.services.notifications.email_http import get_email_client
+
+# Internal email API — uses Brevo, from=zantara@balizero.com
+_EMAIL_API_URL = os.getenv(
+    "INTERNAL_EMAIL_API_URL",
+    "https://nuzantara-rag.fly.dev/api/notifications/send-email",
+)
+_EMAIL_API_KEY = os.getenv("NUZANTARA_API_KEY", "")
+
+logger = get_logger(__name__)
+
+
+class WaitingDocumentsService:
+    """Handles automated notifications when practice moves to 'waiting_documents'."""
+
+    def __init__(self, db_pool: asyncpg.Pool) -> None:
+        self.db_pool = db_pool
+
+    @cache_invalidating(
+        [
+            lambda self, practice_id, *a, **k: f"zantara:crm_practice:{practice_id}:*",
+            "zantara:crm_practices:*",
+        ]
+    )
+    async def trigger_on_waiting_documents(
+        self,
+        practice_id: int,
+        triggered_by: str,
+    ) -> dict[str, Any]:
+        """
+        Trigger when practice status changes to 'waiting_documents'.
+
+        Sends:
+        1. Email to team leader: reminder to collect documents from client
+        2. Email to client: request to provide required documents
+
+        Args:
+            practice_id: ID of the practice
+            triggered_by: Email of user who triggered the status change
+
+        Returns:
+            dict with results of all operations
+        """
+        logger.info("Waiting documents automation triggered for practice %s", practice_id)
+
+        try:
+            practice_data = await self._fetch_practice_data(practice_id)
+            if not practice_data:
+                return {"success": False, "error": "Practice not found"}
+
+            client_data = await self._fetch_client_data(practice_data["client_id"])
+            if not client_data:
+                return {"success": False, "error": "Client not found"}
+
+            team_leader_email = practice_data.get("assigned_to") or practice_data.get("created_by")
+
+            results = {
+                "team_leader_notified": False,
+                "client_notified": False,
+            }
+
+            # Send email to team leader
+            if team_leader_email:
+                try:
+                    await self._send_team_leader_notification(
+                        team_leader_email=team_leader_email,
+                        client_name=client_data["full_name"],
+                        practice_data=practice_data,
+                    )
+                    results["team_leader_notified"] = True
+                    logger.info(
+                        "Waiting docs notification sent to team leader %s",
+                        team_leader_email,
+                    )
+                except Exception as e:
+                    logger.error("Failed to notify team leader: %s", e)
+            else:
+                logger.warning("No team leader assigned for practice %s", practice_id)
+
+            # Send email to client
+            if client_data.get("email"):
+                try:
+                    await self._send_client_documents_request(
+                        client_email=client_data["email"],
+                        client_name=client_data["full_name"],
+                        practice_data=practice_data,
+                        team_member_email=team_leader_email,
+                    )
+                    results["client_notified"] = True
+                    logger.info(
+                        "Document request email sent to client %s",
+                        redact_identifier_for_log(client_data["email"]),
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to send document request to client: %s",
+                        _bounded_scrub(str(e), 400),
+                    )
+            else:
+                logger.warning(f"Client {client_data['id']} has no email")
+
+            await self._log_activity(
+                practice_id=practice_id,
+                triggered_by=triggered_by,
+                description="Waiting documents - notifications sent to team leader and client",
+            )
+
+            logger.info("Waiting documents automation completed for practice %s", practice_id)
+            return {"success": True, **results}
+
+        except Exception as error:
+            logger.error(
+                "Waiting documents automation failed for practice %s: %s",
+                practice_id,
+                error,
+                exc_info=True,
+            )
+            return {"success": False, "error": str(error)}
+
+    async def _send_team_leader_notification(
+        self,
+        team_leader_email: str,
+        client_name: str,
+        practice_data: dict,
+    ) -> None:
+        """Notify team leader that documents need to be collected from the client."""
+        practice_type = practice_data.get("practice_type_name", "Immigration Service")
+        practice_id = practice_data["id"]
+
+        subject = f"[TEAM] 📋 Documents Needed — {client_name} ({practice_type})"
+
+        body_html = team_email_html(
+            title=f"📋 Documents Needed — {client_name}",
+            intro="This practice has moved to the <b>Document Collection</b> phase and needs your attention. A request email has already been sent to the client automatically.",
+            meta_rows=[
+                ("Client", client_name),
+                ("Service", practice_type),
+                ("Practice ID", f"#{practice_id}"),
+            ],
+            body_html=(
+                "<b>What to do:</b>"
+                "<ol style='margin:6px 0 4px 18px;padding:0;'>"
+                "<li>Contact the client and confirm which documents are required</li>"
+                "<li>Set a clear deadline for document submission</li>"
+                "<li>Upload received documents to the CRM</li>"
+                "<li>Once all documents are received, move the practice to <i>Sending Invoice</i></li>"
+                "</ol>"
+            ),
+            cta_label="Open practice in CRM",
+            cta_url=f"https://kita.balizero.com/process/{practice_id}",
+            signature="Zantara CRM",
+        )
+
+        await self._send_with_brevo_fallback(
+            team_leader_email,
+            subject,
+            body_html,
+            email_type="waiting_docs_team",
+            practice_id=practice_id,
+            client_id=practice_data.get("client_id"),
+            prebuilt_html=True,
+        )
+
+    async def _send_client_documents_request(
+        self,
+        client_email: str,
+        client_name: str,
+        practice_data: dict,
+        team_member_email: str | None = None,
+    ) -> None:
+        """Send document request email to client with practice-specific checklist."""
+        practice_type = practice_data.get("practice_type_name", "Immigration Service")
+        practice_type_code = (practice_data.get("practice_type_code") or "").upper()
+
+        subject = f"[CLIENT] 📋 Documents Needed for Your {practice_type}"
+
+        # Use practice-specific checklist if available, fall back to generic
+        checklist = PRACTICE_DOCUMENT_CHECKLISTS.get(practice_type_code)
+        if checklist:
+            doc_list = "\n".join(f"• {item}" for item in checklist)
+            doc_section = f"""📄 Documents Required for {practice_type}:
+{doc_list}"""
+        else:
+            doc_section = """📄 General Documents (your advisor will confirm the exact list):
+• Valid passport (all pages)
+• Recent passport-size photos
+• Proof of address
+• Any relevant previous permits or visas"""
+
+        body = f"""Dear {client_name},
+
+Thank you for choosing Bali Zero! We're moving forward with your {practice_type} and we need a few documents from you to get started.
+
+{doc_section}
+
+How to Submit Your Documents:
+
+Option 1 — Upload to your client portal:
+https://my.balizero.com
+
+Option 2 — Send via WhatsApp to your case handler
+
+Option 3 — Reply to this email with scans/photos
+
+⏱️ Please submit your documents as soon as possible so we can proceed without delays.
+
+Questions? We're Here!
+If you're unsure about any document, just ask — we're happy to clarify.
+
+Warm regards,
+Zantara — Bali Zero Team
+
+---
+📧 asya@balizero.com | 🌐 www.balizero.com
+"""
+
+        await self._send_with_brevo_fallback(
+            client_email,
+            subject,
+            body,
+            email_type="waiting_docs_client",
+            practice_id=practice_data["id"],
+            client_id=practice_data.get("client_id"),
+            cc=team_member_email
+            if team_member_email and team_member_email != client_email
+            else None,
+            include_logo=True,
+        )
+
+    async def _send_with_brevo_fallback(
+        self,
+        to_email: str,
+        subject: str,
+        body: str,
+        *,
+        email_type: str,
+        practice_id: int | None = None,
+        client_id: int | None = None,
+        cc: str | None = None,
+        include_logo: bool = False,
+        prebuilt_html: bool = False,
+    ) -> None:
+        """Send email via Brevo. No provider fallback (2026-09-27, removed).
+
+        A Zoho fallback used to sit here but called
+        ``ZohoEmailService.send_email`` with the wrong keyword arguments
+        (``to_email``/``subject``/``body`` vs. the real
+        ``user_id``/``to``/``subject``/``content``) since the call site was
+        first written — Zoho here would only ever be a staff member's own
+        OAuth-connected mailbox, not a system identity, which contradicts
+        the house rule that CRM mail goes out as
+        ``from=zantara@balizero.com`` via Brevo. Every attempt is recorded
+        in ``email_send_log`` so the retry worker can pick up drops
+        silently. If Brevo fails the exception is re-raised after emitting
+        a Telegram page — the caller's outer try/except then flips
+        ``*_notified=False`` in the results dict.
+        """
+        row_id = await log_email_attempt(
+            self.db_pool,
+            email_type=email_type,
+            to_email=to_email,
+            subject=subject,
+            practice_id=practice_id,
+            client_id=client_id,
+        )
+
+        # 1) Brevo
+        try:
+            if prebuilt_html:
+                html_body = body
+            else:
+                html_body = body.replace("\n", "<br>")
+                if include_logo:
+                    html_body = f"{logo_header_html()}{html_body}"
+            payload: dict = {"to": to_email, "subject": subject, "body": html_body}
+            if cc:
+                payload["cc"] = cc
+            # Context for the endpoint's @balizero.com CC hard rule
+            # (Antonello 2026-06-17): non-invoice → assigned lead, else asya@.
+            # cc here is the practice's assigned/team-leader address.
+            payload["email_type"] = email_type
+            if cc:
+                payload["assigned_to"] = cc
+            client = await get_email_client()
+            response = await client.post(
+                _EMAIL_API_URL,
+                headers={"X-API-Key": _EMAIL_API_KEY},
+                json=payload,
+            )
+            response.raise_for_status()
+            logger.info("Email sent to %s via Brevo", redact_identifier_for_log(to_email))
+            await record_email_result(
+                self.db_pool,
+                row_id,
+                status="sent",
+                provider="brevo",
+            )
+            return
+        except Exception as brevo_error:
+            brevo_err_msg = format_send_error(brevo_error)
+            # C2 (PR #7385 gate follow-up): `to_email` and the provider's own
+            # error text are logged, never stored raw here — same helpers
+            # #7438 already reused for router.py/email_audit.py. The
+            # unscrubbed `brevo_err_msg` variable below still feeds
+            # record_email_result (a DB column, not a log) and
+            # notify_email_failure_critical (which scrubs internally).
+            logger.error(
+                "Brevo failed for %s, no fallback provider: %s",
+                redact_identifier_for_log(to_email),
+                _bounded_scrub(brevo_err_msg, 400),
+            )
+            await record_email_result(
+                self.db_pool,
+                row_id,
+                status="failed",
+                provider="brevo",
+                error_message=brevo_err_msg,
+            )
+            notify_email_failure_critical(
+                email_type=email_type,
+                to_email=to_email,
+                subject=subject,
+                practice_id=practice_id,
+                error=brevo_err_msg,
+            )
+            raise
+
+    async def _fetch_practice_data(self, practice_id: int) -> dict | None:
+        """Fetch practice data from database."""
+        async with self.db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    p.*,
+                    pt.code as practice_type_code,
+                    pt.name as practice_type_name
+                FROM practices p
+                LEFT JOIN practice_types pt ON p.practice_type_id = pt.id
+                WHERE p.id = $1
+                """,
+                practice_id,
+            )
+            return dict(row) if row else None
+
+    async def _fetch_client_data(self, client_id: int) -> dict | None:
+        """Fetch client data from database."""
+        async with self.db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT id, full_name, email, phone, nationality
+                FROM clients
+                WHERE id = $1
+                """,
+                client_id,
+            )
+            return dict(row) if row else None
+
+    async def _log_activity(
+        self,
+        practice_id: int,
+        triggered_by: str,
+        description: str,
+    ) -> None:
+        """Log activity to activity_log table."""
+        async with self.db_pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO activity_log (
+                    entity_type, entity_id, action, performed_by, description
+                )
+                VALUES ($1, $2, $3, $4, $5)
+                """,
+                "practice",
+                practice_id,
+                "waiting_documents",
+                triggered_by,
+                description,
+            )

@@ -1,0 +1,340 @@
+import type { ReactNode } from "react";
+import type { KBLIBaliL4, KBLICode, KBLIProvenance } from "@/lib/kbli-types";
+import {
+  baliBlockClause,
+  baliClosureQualifier,
+  isMoratoriumBasis,
+} from "@/lib/kbli-bali-block";
+import { isSourcedBaliClosure } from "@/lib/kbli-pma-disclosure";
+
+// =============================================================================
+// TRACK-P — "Sources & Verification" panel
+// One row per fact layer rendered on the page: what the source is, which KBLI
+// vintage it speaks, and whether it is verified / pending / detached. The
+// honesty contract (kbli-navigator corner §0): a declared gap is acceptable, a
+// plausible-but-wrong assertion is not — so no row ever claims more than its
+// structured marker supports.
+// =============================================================================
+
+interface KBLIProvenancePanelProps {
+  kbli: KBLICode;
+  /** Dataset sidecar date (kbli-dataset-version.json) — NOT file mtime */
+  lastModified: Date;
+}
+
+/** Human-readable labels for the raw assembly markers (fallback: raw value). */
+const ASSEMBLY_LABELS: Record<string, string> = {
+  "BPS_7_2025 + PP28_2025": "BPS Peraturan 7/2025 + PP 28/2025",
+  PP28_2025_ONLY: "PP 28/2025 (not in the BPS 7/2025 index)",
+  BPS_7_2025_ONLY: "BPS Peraturan 7/2025 (no PP 28/2025 rows)",
+};
+
+type Verdict = "verified" | "pending" | "gap";
+
+const VERDICT_STYLE: Record<Verdict, { label: string; color: string }> = {
+  verified: { label: "Verified", color: "var(--kbli-pma-open)" },
+  pending: { label: "Audit pending", color: "var(--kbli-pma-restricted)" },
+  gap: { label: "Declared gap", color: "var(--foreground-muted)" },
+};
+
+interface SourceRow {
+  layer: string;
+  /** Usually plain text; a CHIUSO_BALI closure citation renders as links. */
+  source: ReactNode;
+  vintage: string;
+  verdict: Verdict;
+  detail?: string;
+  locator?: string | null;
+}
+
+/**
+ * The applied-closure citation for a CHIUSO_BALI row: the instrument (linked),
+ * the code list it was matched against (linked), and the KBLI-2020 ancestors
+ * the match ran through. Every URL here already passed the http(s)-only gate
+ * in `discloseBaliL4` — this renders whatever it is handed, so that gate is
+ * the ONLY place a bad URL can be stopped, never re-checked per surface.
+ */
+function closureSourceNode(
+  closure: NonNullable<KBLIBaliL4["closure"]>,
+): ReactNode {
+  const instrumentLabel = closure.instrument ?? "Bali PMA closure instrument";
+  const ancestors = closure.ancestors2020 ?? [];
+  return (
+    <>
+      {closure.url ? (
+        <a href={closure.url} target="_blank" rel="noopener noreferrer">
+          {instrumentLabel}
+        </a>
+      ) : (
+        instrumentLabel
+      )}
+      {closure.listSource && (
+        <>
+          {" "}
+          · code list:{" "}
+          {closure.listUrl ? (
+            <a href={closure.listUrl} target="_blank" rel="noopener noreferrer">
+              {closure.listSource}
+            </a>
+          ) : (
+            closure.listSource
+          )}
+        </>
+      )}
+      {ancestors.length > 0 && (
+        <> · KBLI 2020 {ancestors.join(", ")}, BPS conversion table</>
+      )}
+    </>
+  );
+}
+
+/** Exported for test: this panel had no test at all, which is how the Bali row
+ * came to cite a rule that did not produce the verdict it was describing. */
+export function buildRows(kbli: KBLICode, prov: KBLIProvenance): SourceRow[] {
+  const rows: SourceRow[] = [];
+
+  rows.push({
+    layer: "Activity definition",
+    source:
+      ASSEMBLY_LABELS[prov.definition.assembly ?? ""] ??
+      prov.definition.assembly ??
+      "—",
+    vintage: "KBLI 2025",
+    verdict: "verified",
+    detail: "Title and scope as defined by the KBLI-2025 classification.",
+    locator: prov.definition.locator,
+  });
+
+  if (prov.licensing.status === "oss_native") {
+    rows.push({
+      layer: "Risk & licensing",
+      source: "OSS RBA risk scope (ruang lingkup)",
+      vintage: "KBLI 2025",
+      verdict: "verified",
+      detail:
+        "Risk category and licensing rows are KBLI-2025-native from the OSS Risk-Based Approach catalog.",
+      locator: prov.licensing.locator,
+    });
+  } else if (prov.licensing.status === "pending_crosswalk") {
+    // Two honest readings of the no-scope set, discriminated by whether rows
+    // are actually served (114 carry PP28-via-2020 rows; 101 have none —
+    // special/sectoral regime). Wording per corner rule F12 — and the status
+    // is NOT named: `no_oss_risk` covers a missing dump line, any non-200 and
+    // `success:false`, so writing "404" asserts something we may not have seen.
+    // A 404 would attest
+    // retrievability via the OSS API, never regulatory absence.
+    const hasRows = kbli.licensing.length > 0;
+    rows.push({
+      layer: "Risk & licensing",
+      source: hasRows
+        ? "PP 28/2025 rows via KBLI-2020 numbering"
+        : "No OSS-RBA rows retrievable — special / sectoral regime",
+      vintage: hasRows ? "KBLI 2020" : "—",
+      verdict: hasRows ? "pending" : "gap",
+      detail: hasRows
+        ? "No KBLI-2025 risk scope was retrievable from the OSS API for this code. The rows shown were recorded under the KBLI-2020 numbering and await per-code crosswalk adjudication."
+        : "No KBLI-2025 risk scope was retrievable from the OSS API for this code, and no licensing rows are served on this page. Activities in this group are typically licensed under a special or sectoral regime — on the crosswalk watchlist: if OSS publishes a scope, the code is re-adjudicated.",
+    });
+  } else if (prov.licensing.status === "unverified_source") {
+    rows.push({
+      layer: "Risk & licensing",
+      source: "No recognised source marker — audit required",
+      vintage: "—",
+      verdict: "pending",
+      detail:
+        "This code's licensing rows carry no recognised provenance marker (absent or unknown), so their source and vintage cannot be stated. Treat them as unaudited until the crosswalk program classifies them.",
+    });
+  } else {
+    // Neutral by design: the causes behind a detach VARY per code (digit
+    // collision, wrong-pointer transplant, unlocatable source) — the
+    // correction note in the Divergence section carries the specifics, this
+    // row never flattens them into one cause (Codex gate F2).
+    rows.push({
+      layer: "Risk & licensing",
+      source: "Detached — source could not be verified",
+      vintage: "—",
+      verdict: "gap",
+      detail:
+        "The previously-served rows were removed because their source could not be verified as applying to this activity. See Regulatory Divergence above for the documented correction note.",
+    });
+  }
+
+  // Positive gate: only a compiler-located official basis + vintage verifies
+  // the whole-code verdict. A broad instrument name or mechanical crosswalk is
+  // useful context, but never proof of the current open/restricted/closed value.
+  rows.push(
+    prov.pma.status === "declared_gap"
+      ? {
+          layer: "Foreign ownership (PMA)",
+          source: "No adjudicated per-code official basis",
+          vintage: "—",
+          verdict: "gap",
+          detail:
+            "The canonical record declares a verification gap for the current ownership value. The instrument locator layer can identify a potentially applicable provision, but it does not verify this whole-code verdict; confirm it at oss.go.id before relying on it.",
+        }
+      : {
+          layer: "Foreign ownership (PMA)",
+          source: prov.pma.source ?? "Official PMA instrument",
+          vintage: prov.pma.vintage ?? "—",
+          verdict: "verified",
+          detail:
+            "The current whole-code foreign-ownership verdict has an adjudicated official basis and source vintage in the canonical record.",
+          locator: prov.pma.locator,
+        },
+  );
+
+  // Added 2026-09-16 (W-J B1 disclose): a Bali applied closure sourced to a
+  // public press release (`isSourcedBaliClosure`) is self-sufficient evidence
+  // and does not need the national PMA tuple located to be shown here — the
+  // panel's whole point is to say what IS and ISN'T verified, and this row
+  // states its OWN Bali-scoped provenance regardless of the national one.
+  if (
+    (prov.pma.status === "located" || isSourcedBaliClosure(kbli.baliL4)) &&
+    kbli.baliL4
+  ) {
+    const m = kbli.baliL4.moratorium;
+    const isNonClassifiable = kbli.baliL4.status === "NON_CLASSIFICABILE";
+    // Added 2026-09-15 (W-J B1): off Bali's applied PMA closure list —
+    // `blocked` is false, but the generic "the risk tier cleared it" wording
+    // below would be a NEW misattribution of the same shape this row exists
+    // to prevent: this code was never tested against the applied closure and
+    // cleared, it was simply never on the 18-field list to begin with.
+    const isAttentionFascia = kbli.baliL4.status === "ATTENZIONE_FASCIA_BALI";
+    // CHIUSO_BALI with a `closure` citation gets the richer instrument + code
+    // list + ancestors source; without one (today's data, before the data PR
+    // lands `closure`), it falls through to the existing moratorium-basis text.
+    const closure =
+      kbli.baliL4.status === "CHIUSO_BALI" ? kbli.baliL4.closure : undefined;
+    // This row is the honesty surface for the Bali layer, so it must not
+    // attribute the verdict to a rule that did not produce it. `m.rule` is a
+    // constant on every record, not per-code evidence — citing it for the 111
+    // codes blocked by an activity-level restriction told a reader the block
+    // was the risk-tier moratorium when it was not.
+    const moratoriumBasis = isMoratoriumBasis(
+      kbli.baliL4.blocked,
+      kbli.baliL4.status,
+    );
+    rows.push({
+      layer: "Bali status",
+      // ATTENZIONE_FASCIA_BALI is checked FIRST and unconditionally: a record
+      // that still carries the old blanket `moratorium.rule` ("blocks ALL Low
+      // + Medium-Low ... permanent (effective 2026-05-13)") must never print
+      // it here — `isMoratoriumBasis` returns true for any non-blocked code
+      // by design, so falling through to that branch would self-contradict
+      // the `detail` text two lines below on the very same row (Codex sol
+      // MAJOR finding 1 on PR #6578).
+      source: isAttentionFascia
+        ? "Bali Provincial Government press release (24 Jul 2026): OSS closed to new PMA licensing for 18 business fields"
+        : closure
+          ? closureSourceNode(closure)
+          : moratoriumBasis
+            ? m?.rule
+              ? `${m.rule}${m.effective ? ` (effective ${m.effective})` : ""}`
+              : "Bali moratorium overlay (Gubernur letter B.27.000/642)"
+            : "Activity-level restriction — not the risk-tier moratorium overlay",
+      vintage: "2026 overlay",
+      verdict: isNonClassifiable ? "gap" : "pending",
+      detail: isNonClassifiable
+        ? "Not classifiable until the true risk tier is re-derived — the tier this verdict depended on was detached."
+        : isAttentionFascia
+          ? `Not among the 18 business fields Bali closed to new PMA licensing since the third week of May 2026; the low/medium-low risk tier named in the Governor's January 2026 request letter does not by itself close this code — verify the applicable tier and zoning on OSS · confidence ${kbli.baliL4.confidence}.`
+          : moratoriumBasis
+            ? `Conservative posture derived from the risk tier · confidence ${kbli.baliL4.confidence}.`
+            : `This activity is ${baliBlockClause(kbli.baliL4.status)}${baliClosureQualifier(kbli.baliL4)} · confidence ${kbli.baliL4.confidence}.`,
+    });
+  }
+
+  return rows;
+}
+
+export function KBLIProvenancePanel({
+  kbli,
+  lastModified,
+}: KBLIProvenancePanelProps) {
+  const prov = kbli.provenance;
+  if (!prov) return null;
+
+  const rows = buildRows(kbli, prov);
+  const dateStr = lastModified.toISOString().slice(0, 10);
+
+  return (
+    <section className="mt-12">
+      <div className="mb-5 flex items-center gap-3">
+        <div
+          className="h-8 w-1 rounded-full"
+          style={{
+            background:
+              "linear-gradient(to bottom, var(--kbli-accent2), var(--kbli-accent))",
+          }}
+        />
+        <div>
+          <h2 className="text-sm font-bold uppercase tracking-[0.12em] text-[var(--kbli-accent)]">
+            Sources &amp; Verification
+          </h2>
+          <p className="text-xs text-[var(--foreground-muted)]">
+            Each data layer below traces to a government source with its KBLI
+            vintage — or is declared as a gap. Nothing in these layers is
+            silently filled in.
+          </p>
+        </div>
+      </div>
+
+      <div
+        className="overflow-hidden rounded-xl border border-[var(--border)]"
+        style={{ background: "var(--kbli-bg-elevated)" }}
+      >
+        {rows.map((row) => {
+          const v = VERDICT_STYLE[row.verdict];
+          return (
+            <div
+              key={row.layer}
+              className="flex flex-col gap-1.5 border-b border-[var(--border)] px-5 py-4 last:border-b-0 sm:flex-row sm:items-start sm:gap-4"
+            >
+              <div className="sm:w-44 sm:shrink-0">
+                <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--foreground-muted)]">
+                  {row.layer}
+                </span>
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold text-[var(--foreground)]">
+                    {row.source}
+                  </span>
+                  <span
+                    className="rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+                    style={{
+                      color: v.color,
+                      borderColor: "var(--kbli-border)",
+                      background: "var(--kbli-bg-surface)",
+                    }}
+                  >
+                    {v.label}
+                  </span>
+                  <span className="rounded-full border border-[var(--kbli-border)] px-2 py-0.5 text-[10px] font-medium text-[var(--foreground-muted)]">
+                    {row.vintage}
+                  </span>
+                </div>
+                {row.detail && (
+                  <p className="mt-1 text-xs leading-relaxed text-[var(--foreground-secondary)]">
+                    {row.detail}
+                  </p>
+                )}
+                {row.locator && (
+                  <p className="mt-1 font-mono text-[10px] text-[var(--foreground-muted)]">
+                    locator: {row.locator}
+                  </p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <p className="mt-3 text-[11px] text-[var(--foreground-muted)]">
+        Dataset last updated {dateStr} · KBLI 2020 and KBLI 2025 reuse code
+        numbers for different activities — cross-vintage rows are labeled, never
+        merged silently.
+      </p>
+    </section>
+  );
+}

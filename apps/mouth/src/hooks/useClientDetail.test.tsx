@@ -1,0 +1,214 @@
+import type { ReactNode } from "react";
+import { act, renderHook } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { describe, expect, it, vi } from "vitest";
+import {
+  buildBusinessStorySearchTerms,
+  clientDetailQueryKey,
+  useInvalidateClient,
+  useSetClientCache,
+  clientTimelineQueryKey,
+} from "./useClientDetail";
+import type {
+  Client,
+  ClientCompanyLink,
+  ClientProfile,
+} from "@/lib/api/crm/crm.types";
+
+const makeClient = (status: Client["status"]): Client => ({
+  id: 7,
+  uuid: "synthetic-client-7",
+  full_name: "Synthetic Cache Client",
+  email: "synthetic.cache@example.test",
+  status,
+  client_type: "individual",
+  created_at: "2026-07-27T00:00:00Z",
+  updated_at: "2026-07-27T00:00:00Z",
+});
+
+const makeProfile = (status: Client["status"]): ClientProfile => ({
+  client: makeClient(status),
+  family_members: [],
+  documents: [],
+  expiry_alerts: [],
+  practices: [],
+  company_links: [],
+  stats: {
+    family_count: 0,
+    documents_count: 0,
+    practices_count: 0,
+    expired_count: 0,
+    red_alerts: 0,
+    yellow_alerts: 0,
+  },
+});
+
+const wrapperFor =
+  (queryClient: QueryClient) =>
+  ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+
+describe("buildBusinessStorySearchTerms", () => {
+  it("starts from the person and deduplicates linked company names", () => {
+    const links: ClientCompanyLink[] = [
+      {
+        link_id: 1,
+        company_id: 10,
+        company_name: "Bimala Investments Bali PT",
+        company_type: "PT PMA",
+        role: "Shareholder",
+        is_primary: true,
+        status: "active",
+      },
+      {
+        link_id: 2,
+        company_id: 10,
+        company_name: "  Bimala Investments Bali PT  ",
+        company_type: "PT PMA",
+        role: "Director",
+        is_primary: false,
+        status: "active",
+      },
+    ];
+
+    expect(buildBusinessStorySearchTerms("Wefize Cej Cejuliv", links)).toEqual([
+      "Wefize Cej Cejuliv",
+      "Bimala Investments Bali PT",
+    ]);
+  });
+
+  it("names only the client when no company is linked", () => {
+    /* GUILT for portal audit F-06: the term list used to fall back to the
+       two tax-pilot keys, which are REAL client companies — so viewing an
+       unlinked client emitted two unrelated clients' company names into
+       the evidence-dossiers query string. */
+    expect(buildBusinessStorySearchTerms("Vabav Xukaqecox", [])).toEqual([
+      "Vabav Xukaqecox",
+    ]);
+  });
+});
+
+describe("client detail cache transitions", () => {
+  it("patches the client immediately while preserving the rest of the profile", () => {
+    const queryClient = new QueryClient();
+    const queryKey = clientDetailQueryKey(7);
+    const activeProfile = makeProfile("active");
+    queryClient.setQueryData(queryKey, activeProfile);
+
+    const { result } = renderHook(() => useSetClientCache(7), {
+      wrapper: wrapperFor(queryClient),
+    });
+
+    act(() => {
+      result.current(makeClient("inactive"));
+    });
+
+    expect(queryClient.getQueryData<ClientProfile>(queryKey)).toEqual({
+      ...activeProfile,
+      client: makeClient("inactive"),
+    });
+  });
+
+  it("refetches the exact client detail query even while it is inactive", async () => {
+    const queryClient = new QueryClient();
+    const queryKey = clientDetailQueryKey(7);
+    const refreshedProfile = {
+      ...makeProfile("active"),
+      practices: [{ id: 71 }],
+      stats: {
+        ...makeProfile("active").stats,
+        practices_count: 1,
+      },
+    } as ClientProfile;
+    const refetchProfile = vi.fn().mockResolvedValue(refreshedProfile);
+    queryClient.setQueryDefaults(queryKey, { queryFn: refetchProfile });
+    queryClient.setQueryData(queryKey, makeProfile("active"));
+
+    const { result } = renderHook(() => useInvalidateClient(7), {
+      wrapper: wrapperFor(queryClient),
+    });
+
+    await act(async () => {
+      await result.current();
+    });
+
+    expect(refetchProfile).toHaveBeenCalledTimes(1);
+    expect(queryClient.getQueryData<ClientProfile>(queryKey)).toEqual(
+      refreshedProfile,
+    );
+  });
+
+  it("invalidates the profile and timeline without touching other client caches", async () => {
+    const queryClient = new QueryClient();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    const profileKey = clientDetailQueryKey(7);
+    const timelineKey = clientTimelineQueryKey(7);
+    const businessStoryKey = [
+      "client",
+      "7",
+      "business-story",
+      ["Synthetic Cache Client"],
+    ] as const;
+    const otherClientKey = clientDetailQueryKey(8);
+    const otherClientTimelineKey = clientTimelineQueryKey(8);
+
+    queryClient.setQueryData(profileKey, makeProfile("active"));
+    queryClient.setQueryData(timelineKey, []);
+    queryClient.setQueryData(businessStoryKey, []);
+    queryClient.setQueryData(otherClientKey, makeProfile("active"));
+    queryClient.setQueryData(otherClientTimelineKey, []);
+
+    const { result } = renderHook(() => useInvalidateClient(7), {
+      wrapper: wrapperFor(queryClient),
+    });
+
+    await act(async () => {
+      await result.current();
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: profileKey,
+      exact: true,
+      refetchType: "all",
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: timelineKey,
+      exact: true,
+      refetchType: "all",
+    });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({
+      queryKey: businessStoryKey,
+      exact: true,
+      refetchType: "all",
+    });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({
+      queryKey: otherClientKey,
+      exact: true,
+      refetchType: "all",
+    });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({
+      queryKey: otherClientTimelineKey,
+      exact: true,
+      refetchType: "all",
+    });
+  });
+
+  it.each([0, Number.NaN, undefined])(
+    "does not invalidate an invalid client id %s",
+    async (clientId) => {
+      const queryClient = new QueryClient();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+      const { result } = renderHook(() => useInvalidateClient(clientId), {
+        wrapper: wrapperFor(queryClient),
+      });
+
+      await act(async () => {
+        await result.current();
+      });
+
+      expect(invalidateSpy).not.toHaveBeenCalled();
+      expect(queryClient.getQueryData(clientDetailQueryKey(0))).toBeUndefined();
+    },
+  );
+});

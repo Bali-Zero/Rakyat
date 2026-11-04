@@ -1,0 +1,956 @@
+"""
+Unit tests for Channel Optimizations.
+Covers: RateLimitConfig, ChannelRateLimiter, MessageDeduplicator, ChannelMetrics,
+ConnectionPool, DeliveryManager, initialize_optimizations.
+"""
+
+import asyncio
+import json
+import logging
+import os
+import re
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+os.environ.setdefault("JWT_SECRET_KEY", "test_jwt_secret_key_for_testing_only_min_32_chars")
+os.environ.setdefault("API_KEYS", "test_api_key_1")
+os.environ.setdefault("OPENAI_API_KEY", "test_key")
+os.environ.setdefault("GOOGLE_API_KEY", "test_key")
+
+from backend.channels.optimizations import (
+    ChannelMetrics,
+    ChannelRateLimiter,
+    ConnectionPool,
+    DeliveryManager,
+    MessageDeduplicator,
+    RateLimitConfig,
+    initialize_optimizations,
+)
+
+# --------------------------------------------------------------------------- #
+# RateLimitConfig
+# --------------------------------------------------------------------------- #
+
+
+class TestRateLimitConfig:
+    def test_defaults(self) -> None:
+        config = RateLimitConfig()
+        assert config.max_requests_per_minute == 60
+        assert config.max_requests_per_hour == 1000
+        assert config.burst_size == 10
+
+    def test_custom_values(self) -> None:
+        config = RateLimitConfig(
+            max_requests_per_minute=30, max_requests_per_hour=500, burst_size=5
+        )
+        assert config.max_requests_per_minute == 30
+        assert config.burst_size == 5
+
+
+# --------------------------------------------------------------------------- #
+# ChannelRateLimiter
+# --------------------------------------------------------------------------- #
+
+
+class TestChannelRateLimiter:
+    @pytest.fixture
+    def limiter(self) -> ChannelRateLimiter:
+        return ChannelRateLimiter(
+            RateLimitConfig(
+                max_requests_per_minute=5,
+                max_requests_per_hour=20,
+                burst_size=3,
+            )
+        )
+
+    @pytest.mark.asyncio
+    async def test_acquire_success_no_redis(self, limiter: ChannelRateLimiter) -> None:
+        with patch("backend.channels.optimizations._get_redis_client", return_value=None):
+            result = await limiter.acquire("telegram")
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_burst_exhaustion(self, limiter: ChannelRateLimiter) -> None:
+        with patch("backend.channels.optimizations._get_redis_client", return_value=None):
+            # Exhaust burst tokens (3)
+            assert await limiter.acquire("ch1") is True
+            assert await limiter.acquire("ch1") is True
+            assert await limiter.acquire("ch1") is True
+            # 4th should fail (burst exhausted, tokens not refilled yet)
+            result = await limiter.acquire("ch1")
+            # May or may not fail depending on timing; at minimum shouldn't crash
+            assert isinstance(result, bool)
+
+    @pytest.mark.asyncio
+    async def test_minute_limit_in_memory(self, limiter: ChannelRateLimiter) -> None:
+        with patch("backend.channels.optimizations._get_redis_client", return_value=None):
+            # Pre-fill minute counts to max
+            now = time.time()
+            limiter.minute_counts["ch2"] = [now] * 5
+            limiter.tokens["ch2"] = 10  # Reset burst tokens
+            result = await limiter.acquire("ch2")
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_hour_limit_in_memory(self, limiter: ChannelRateLimiter) -> None:
+        with patch("backend.channels.optimizations._get_redis_client", return_value=None):
+            now = time.time()
+            limiter.hour_counts["ch3"] = [now] * 20
+            limiter.tokens["ch3"] = 10
+            result = await limiter.acquire("ch3")
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_redis_success(self, limiter: ChannelRateLimiter) -> None:
+        mock_redis = AsyncMock()
+        mock_redis.incr = AsyncMock(return_value=1)
+        mock_redis.expire = AsyncMock()
+
+        with patch("backend.channels.optimizations._get_redis_client", return_value=mock_redis):
+            result = await limiter.acquire("ch_redis")
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_redis_minute_exceeded(self, limiter: ChannelRateLimiter) -> None:
+        mock_redis = AsyncMock()
+        mock_redis.incr = AsyncMock(return_value=100)  # Way over limit
+        mock_redis.decr = AsyncMock()
+
+        with patch("backend.channels.optimizations._get_redis_client", return_value=mock_redis):
+            result = await limiter.acquire("ch_over")
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_redis_hour_exceeded(self, limiter: ChannelRateLimiter) -> None:
+        incr_results = iter([1, 100])  # minute=1 (ok), hour=100 (exceeded)
+
+        mock_redis = AsyncMock()
+        mock_redis.incr = AsyncMock(side_effect=lambda key: next(incr_results))
+        mock_redis.expire = AsyncMock()
+        mock_redis.decr = AsyncMock()
+
+        with patch("backend.channels.optimizations._get_redis_client", return_value=mock_redis):
+            result = await limiter.acquire("ch_hour")
+            assert result is False
+            # Should have called decr twice (undo hour + undo minute)
+            assert mock_redis.decr.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_redis_exception_falls_back(self, limiter: ChannelRateLimiter) -> None:
+        mock_redis = AsyncMock()
+        mock_redis.incr = AsyncMock(side_effect=Exception("Redis down"))
+
+        with patch("backend.channels.optimizations._get_redis_client", return_value=mock_redis):
+            result = await limiter.acquire("ch_fallback")
+            assert isinstance(result, bool)
+
+    def test_cleanup_old_counts(self, limiter: ChannelRateLimiter) -> None:
+        now = time.time()
+        limiter.minute_counts["ch"] = [now - 120, now - 90, now - 30, now]
+        limiter.hour_counts["ch"] = [now - 7200, now - 3601, now - 100, now]
+        limiter._cleanup_old_counts("ch", now)
+        assert len(limiter.minute_counts["ch"]) == 2
+        assert len(limiter.hour_counts["ch"]) == 2
+
+
+# --------------------------------------------------------------------------- #
+# MessageDeduplicator
+# --------------------------------------------------------------------------- #
+
+
+class TestMessageDeduplicator:
+    @pytest.fixture
+    def dedup(self) -> MessageDeduplicator:
+        return MessageDeduplicator(ttl_seconds=10)
+
+    @pytest.mark.asyncio
+    async def test_first_message_not_duplicate(self, dedup: MessageDeduplicator) -> None:
+        result = await dedup.is_duplicate("telegram", "user1", "hello")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_second_same_message_is_duplicate(self, dedup: MessageDeduplicator) -> None:
+        await dedup.is_duplicate("telegram", "user1", "hello")
+        result = await dedup.is_duplicate("telegram", "user1", "hello")
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_different_text_not_duplicate(self, dedup: MessageDeduplicator) -> None:
+        await dedup.is_duplicate("telegram", "user1", "hello")
+        result = await dedup.is_duplicate("telegram", "user1", "goodbye")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_different_channel_not_duplicate(self, dedup: MessageDeduplicator) -> None:
+        await dedup.is_duplicate("telegram", "user1", "hello")
+        result = await dedup.is_duplicate("whatsapp", "user1", "hello")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_different_user_not_duplicate(self, dedup: MessageDeduplicator) -> None:
+        await dedup.is_duplicate("telegram", "user1", "hello")
+        result = await dedup.is_duplicate("telegram", "user2", "hello")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_expired_entries_cleaned(self, dedup: MessageDeduplicator) -> None:
+        # Manually set an old hash
+        dedup.seen_hashes["old_hash"] = time.time() - 100
+        await dedup.is_duplicate("telegram", "user1", "new message")
+        assert "old_hash" not in dedup.seen_hashes
+
+
+# --------------------------------------------------------------------------- #
+# ChannelMetrics
+# --------------------------------------------------------------------------- #
+
+
+class TestChannelMetrics:
+    @pytest.fixture
+    def metrics(self) -> ChannelMetrics:
+        return ChannelMetrics()
+
+    def test_record_message_received(self, metrics: ChannelMetrics) -> None:
+        metrics.record_message_received("telegram")
+        metrics.record_message_received("telegram")
+        assert metrics.counters["telegram.messages_received"] == 2
+
+    def test_record_message_sent(self, metrics: ChannelMetrics) -> None:
+        metrics.record_message_sent("telegram", 150.0)
+        assert metrics.counters["telegram.messages_sent"] == 1
+        assert len(metrics.latencies["telegram"]) == 1
+
+    def test_record_error(self, metrics: ChannelMetrics) -> None:
+        metrics.record_error("telegram", "timeout")
+        metrics.record_error("telegram", "timeout")
+        metrics.record_error("telegram", "auth_fail")
+        assert metrics.counters["telegram.errors.timeout"] == 2
+        assert metrics.counters["telegram.errors.auth_fail"] == 1
+
+    def test_get_stats_empty(self, metrics: ChannelMetrics) -> None:
+        stats = metrics.get_stats("nonexistent")
+        assert stats["messages_received"] == 0
+        assert stats["messages_sent"] == 0
+        assert stats["errors"] == 0
+        assert stats["success_rate"] == "0.0%"
+
+    def test_get_stats_with_data(self, metrics: ChannelMetrics) -> None:
+        metrics.record_message_received("tg")
+        metrics.record_message_received("tg")
+        metrics.record_message_sent("tg", 100.0)
+        metrics.record_error("tg", "timeout")
+
+        stats = metrics.get_stats("tg")
+        assert stats["messages_received"] == 2
+        assert stats["messages_sent"] == 1
+        assert stats["errors"] == 1
+        assert stats["success_rate"] == "50.0%"
+
+    def test_latency_trimming(self, metrics: ChannelMetrics) -> None:
+        for i in range(1100):
+            metrics.record_message_sent("tg", float(i))
+        assert len(metrics.latencies["tg"]) == 1000
+
+    def test_p95_latency(self, metrics: ChannelMetrics) -> None:
+        for i in range(100):
+            metrics.record_message_sent("tg", float(i))
+        stats = metrics.get_stats("tg")
+        assert float(stats["p95_latency_ms"]) > 0
+
+
+# --------------------------------------------------------------------------- #
+# ConnectionPool
+# --------------------------------------------------------------------------- #
+
+
+class TestConnectionPool:
+    @pytest.fixture
+    def pool(self) -> ConnectionPool:
+        return ConnectionPool(max_connections=50, timeout=15.0)
+
+    @pytest.mark.asyncio
+    async def test_get_client_creates(self, pool: ConnectionPool) -> None:
+        with patch("httpx.AsyncClient") as mock_httpx, patch("httpx.Limits"):
+            mock_client = MagicMock()
+            mock_httpx.return_value = mock_client
+
+            client = await pool.get_client("telegram")
+            assert client is mock_client
+            assert "telegram" in pool.clients
+
+    @pytest.mark.asyncio
+    async def test_get_client_reuses(self, pool: ConnectionPool) -> None:
+        with patch("httpx.AsyncClient") as mock_httpx, patch("httpx.Limits"):
+            mock_httpx.return_value = MagicMock()
+
+            c1 = await pool.get_client("telegram")
+            c2 = await pool.get_client("telegram")
+            assert c1 is c2
+            mock_httpx.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_close_all(self, pool: ConnectionPool) -> None:
+        mock_client = AsyncMock()
+        pool.clients["telegram"] = mock_client
+        pool.clients["whatsapp"] = AsyncMock()
+
+        await pool.close_all()
+        assert len(pool.clients) == 0
+        mock_client.aclose.assert_awaited_once()
+
+
+# --------------------------------------------------------------------------- #
+# DeliveryManager
+# --------------------------------------------------------------------------- #
+
+
+class TestDeliveryManager:
+    @pytest.fixture
+    def dm(self) -> DeliveryManager:
+        return DeliveryManager(db_pool=None)
+
+    @pytest.fixture
+    def dm_with_db(self) -> DeliveryManager:
+        mock_pool = AsyncMock()
+        mock_pool.execute = AsyncMock()
+        return DeliveryManager(db_pool=mock_pool)
+
+    @pytest.mark.asyncio
+    async def test_persist_failed_no_pg_no_redis(
+        self, dm: DeliveryManager, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with (
+            patch("backend.channels.optimizations._get_redis_client", return_value=None),
+            caplog.at_level(logging.ERROR, logger=_OPTIMIZATIONS_LOGGER_NAME),
+        ):
+            # Should not raise, just log error about lost message
+            await dm.persist_failed(
+                channel="telegram",
+                channel_id="12345",
+                content="hello",
+                error="timeout",
+            )
+        text = _all_log_text(caplog.records)
+        assert "message LOST" in text
+        assert "telegram" in text
+
+    @pytest.mark.asyncio
+    async def test_persist_failed_pg_success(self, dm_with_db: DeliveryManager) -> None:
+        await dm_with_db.persist_failed(
+            channel="telegram",
+            channel_id="12345",
+            content="hello",
+            error="timeout",
+            sender_id="user1",
+            metadata={"key": "val"},
+        )
+        dm_with_db._db_pool.execute.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_persist_failed_pg_fails_redis_fallback(self) -> None:
+        mock_pool = AsyncMock()
+        mock_pool.execute = AsyncMock(side_effect=Exception("PG down"))
+        dm = DeliveryManager(db_pool=mock_pool)
+
+        mock_redis = AsyncMock()
+        mock_redis.lpush = AsyncMock()
+
+        with patch("backend.channels.optimizations._get_redis_client", return_value=mock_redis):
+            await dm.persist_failed(
+                channel="telegram",
+                channel_id="12345",
+                content="hello",
+                error="timeout",
+            )
+            mock_redis.lpush.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_persist_to_redis_no_redis(self, dm: DeliveryManager) -> None:
+        with patch("backend.channels.optimizations._get_redis_client", return_value=None):
+            result = await dm._persist_to_redis({"channel": "test", "channel_id": "1"})
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_persist_to_redis_success(self, dm: DeliveryManager) -> None:
+        mock_redis = AsyncMock()
+        mock_redis.lpush = AsyncMock()
+
+        with patch("backend.channels.optimizations._get_redis_client", return_value=mock_redis):
+            result = await dm._persist_to_redis({"channel": "test", "channel_id": "1"})
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_persist_to_redis_exception(self, dm: DeliveryManager) -> None:
+        mock_redis = AsyncMock()
+        mock_redis.lpush = AsyncMock(side_effect=Exception("Redis error"))
+
+        with patch("backend.channels.optimizations._get_redis_client", return_value=mock_redis):
+            result = await dm._persist_to_redis({"channel": "test", "channel_id": "1"})
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_drain_redis_dlq_no_pool(self, dm: DeliveryManager) -> None:
+        result = await dm._drain_redis_dlq()
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_drain_redis_dlq_no_redis(self, dm_with_db: DeliveryManager) -> None:
+        with patch("backend.channels.optimizations._get_redis_client", return_value=None):
+            result = await dm_with_db._drain_redis_dlq()
+            assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_drain_redis_dlq_success(self) -> None:
+        mock_pool = AsyncMock()
+        mock_pool.execute = AsyncMock()
+        dm = DeliveryManager(db_pool=mock_pool)
+
+        record = json.dumps(
+            {
+                "channel": "telegram",
+                "channel_id": "123",
+                "sender_id": "",
+                "content": "hi",
+                "metadata": {},
+                "error_message": "err",
+                "error_type": "fail",
+                "queued_at": time.time(),
+            }
+        )
+
+        mock_redis = AsyncMock()
+        mock_redis.rpop = AsyncMock(side_effect=[record, None])
+
+        with patch("backend.channels.optimizations._get_redis_client", return_value=mock_redis):
+            result = await dm._drain_redis_dlq()
+            assert result == 1
+
+    @pytest.mark.asyncio
+    async def test_drain_redis_dlq_pg_fails_repush(self) -> None:
+        mock_pool = AsyncMock()
+        mock_pool.execute = AsyncMock(side_effect=Exception("PG down"))
+        dm = DeliveryManager(db_pool=mock_pool)
+
+        record = json.dumps(
+            {
+                "channel": "telegram",
+                "channel_id": "123",
+                "sender_id": "",
+                "content": "hi",
+                "metadata": {},
+                "error_message": "err",
+                "error_type": "fail",
+                "queued_at": time.time(),
+            }
+        )
+
+        mock_redis = AsyncMock()
+        mock_redis.rpop = AsyncMock(return_value=record)
+        mock_redis.lpush = AsyncMock()
+
+        with patch("backend.channels.optimizations._get_redis_client", return_value=mock_redis):
+            result = await dm._drain_redis_dlq()
+            assert result == 0
+            mock_redis.lpush.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_start_and_stop_retry_loop(self) -> None:
+        dm = DeliveryManager()
+
+        async def fake_loop(adapters: dict) -> None:
+            await asyncio.sleep(1000)
+
+        with patch.object(dm, "_process_dlq", side_effect=fake_loop):
+            await dm.start_retry_loop({})
+            assert dm._retry_task is not None
+
+            # Start again should be no-op
+            first_task = dm._retry_task
+            await dm.start_retry_loop({})
+            assert dm._retry_task is first_task
+
+            await dm.stop_retry_loop()
+            assert dm._retry_task is None
+
+    @pytest.mark.asyncio
+    async def test_alert_exhausted_no_token(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        dm = DeliveryManager()
+        mock_settings = MagicMock()
+        mock_settings.telegram_bot_token = None
+
+        # backend.core.config is used inside _alert_exhausted (local import)
+        mock_config_module = MagicMock()
+        mock_config_module.settings = mock_settings
+
+        import sys
+
+        with (
+            patch.dict(sys.modules, {"backend.core.config": mock_config_module}),
+            patch.object(
+                dm, "_get_alert_client", AsyncMock()
+            ) as mock_get_client,
+            caplog.at_level(logging.WARNING, logger=_OPTIMIZATIONS_LOGGER_NAME),
+        ):
+            await dm._alert_exhausted(
+                {
+                    "id": 1,
+                    "channel": "tg",
+                    "channel_id": "123",
+                    "content": "msg",
+                    "attempt_count": 2,
+                    "max_attempts": 3,
+                },
+                "error msg",
+            )
+        # No token -> must bail out BEFORE ever touching the HTTP client.
+        mock_get_client.assert_not_called()
+        assert "TELEGRAM_BOT_TOKEN not set" in _all_log_text(caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_alert_exhausted_with_token(self) -> None:
+        dm = DeliveryManager()
+        mock_settings = MagicMock()
+        mock_settings.telegram_bot_token = "fake_token"
+        mock_settings.telegram_owner_chat_id = "12345"
+
+        mock_config_module = MagicMock()
+        mock_config_module.settings = mock_settings
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock()
+        mock_client.is_closed = False
+
+        import sys
+
+        with patch.dict(sys.modules, {"backend.core.config": mock_config_module}):
+            dm._alert_client = mock_client
+            await dm._alert_exhausted(
+                {
+                    "id": 1,
+                    "channel": "tg",
+                    "channel_id": "123",
+                    "content": "msg",
+                    "attempt_count": 2,
+                    "max_attempts": 3,
+                },
+                "error msg",
+            )
+            mock_client.post.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_alert_exhausted_exception(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        dm = DeliveryManager()
+        mock_settings = MagicMock()
+        mock_settings.telegram_bot_token = "fake_token"
+        mock_settings.telegram_owner_chat_id = "12345"
+
+        mock_config_module = MagicMock()
+        mock_config_module.settings = mock_settings
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=Exception("Network error"))
+        mock_client.is_closed = False
+
+        import sys
+
+        with (
+            patch.dict(sys.modules, {"backend.core.config": mock_config_module}),
+            caplog.at_level(logging.WARNING, logger=_OPTIMIZATIONS_LOGGER_NAME),
+        ):
+            dm._alert_client = mock_client
+            # Should not raise
+            await dm._alert_exhausted(
+                {
+                    "id": 1,
+                    "channel": "tg",
+                    "channel_id": "123",
+                    "content": "msg",
+                    "attempt_count": 2,
+                    "max_attempts": 3,
+                },
+                "error msg",
+            )
+        mock_client.post.assert_awaited_once()
+        text = _all_log_text(caplog.records)
+        assert "failed to send exhaustion alert" in text
+        assert "Network error" in text
+
+    @pytest.mark.asyncio
+    async def test_get_alert_client_creates(self) -> None:
+        dm = DeliveryManager()
+        with patch("httpx.AsyncClient") as mock_httpx:
+            mock_httpx.return_value = MagicMock(is_closed=False)
+            client = await dm._get_alert_client()
+            assert client is not None
+
+    @pytest.mark.asyncio
+    async def test_get_alert_client_reuses(self) -> None:
+        dm = DeliveryManager()
+        existing = MagicMock(is_closed=False)
+        dm._alert_client = existing
+        client = await dm._get_alert_client()
+        assert client is existing
+
+    @pytest.mark.asyncio
+    async def test_get_alert_client_recreates_if_closed(self) -> None:
+        dm = DeliveryManager()
+        dm._alert_client = MagicMock(is_closed=True)
+        with patch("httpx.AsyncClient") as mock_httpx:
+            new_client = MagicMock(is_closed=False)
+            mock_httpx.return_value = new_client
+            client = await dm._get_alert_client()
+            assert client is new_client
+
+
+# --------------------------------------------------------------------------- #
+# initialize_optimizations
+# --------------------------------------------------------------------------- #
+
+
+class TestInitializeOptimizations:
+    def test_initializes_all_globals(self) -> None:
+        import backend.channels.optimizations as opt
+
+        initialize_optimizations(db_pool=None)
+
+        assert opt.rate_limiter is not None
+        assert opt.message_deduplicator is not None
+        assert opt.channel_metrics is not None
+        assert opt.connection_pool is not None
+        assert opt.delivery_manager is not None
+
+    def test_initializes_with_db_pool(self) -> None:
+        import backend.channels.optimizations as opt
+
+        mock_pool = MagicMock()
+        initialize_optimizations(db_pool=mock_pool)
+
+        assert opt.delivery_manager._db_pool is mock_pool
+
+
+# --------------------------------------------------------------------------- #
+# _get_redis_client
+# --------------------------------------------------------------------------- #
+
+
+class TestGetRedisClient:
+    def test_returns_none_on_exception(self) -> None:
+        """Test that _get_redis_client returns None when RedisManager is unavailable."""
+        import sys
+
+        from backend.channels.optimizations import _get_redis_client
+
+        mock_redis_module = MagicMock()
+        mock_redis_module.RedisManager.get_instance.return_value.get_async_client.side_effect = (
+            Exception("fail")
+        )
+
+        with patch.dict(sys.modules, {"backend.core.redis_manager": mock_redis_module}):
+            result = _get_redis_client()
+            # The function catches all exceptions and returns None
+            assert result is None
+
+    def test_returns_client_on_success(self) -> None:
+        """Test that _get_redis_client returns client when RedisManager works."""
+        import sys
+
+        from backend.channels.optimizations import _get_redis_client
+
+        mock_client = MagicMock()
+        mock_redis_module = MagicMock()
+        mock_redis_module.RedisManager.get_instance.return_value.get_async_client.return_value = (
+            mock_client
+        )
+
+        with patch.dict(sys.modules, {"backend.core.redis_manager": mock_redis_module}):
+            result = _get_redis_client()
+            assert result is mock_client
+
+
+# --------------------------------------------------------------------------- #
+# _process_dlq — adapter-missing must NOT orphan the row (2026-06-21 fix)
+# --------------------------------------------------------------------------- #
+
+
+class TestProcessDlqAdapterMissing:
+    """Regression: a channel with no adapter in the loop's process group used to
+    `continue` silently → row stuck pending attempt_count=0 forever (43 IG rows
+    for a week). Now it counts an attempt and backs off / exhausts."""
+
+    def _pool_with_one_row(self, attempt_count: int, max_attempts: int = 5):
+        row = {
+            "id": 99,
+            "channel": "instagram",
+            "channel_id": "ig_123",
+            "content": "ciao",
+            "attempt_count": attempt_count,
+            "max_attempts": max_attempts,
+        }
+        pool = AsyncMock()
+        pool.execute = AsyncMock()
+        # First fetch returns the row, then the loop is cancelled.
+        pool.fetch = AsyncMock(return_value=[row])
+        return pool, row
+
+    async def _run_one_iteration(self, dm: DeliveryManager, adapters: dict) -> None:
+        # Loop is `while True: sleep; drain; fetch; process`. Its body CATCHES
+        # CancelledError → break (returns normally). Let the 1st sleep pass, then
+        # raise CancelledError on the 2nd sleep so exactly one pass runs and the
+        # loop exits cleanly. Skip the redis drain.
+        calls = {"n": 0}
+
+        async def fake_sleep(_seconds: float) -> None:
+            calls["n"] += 1
+            if calls["n"] >= 2:  # after the post-fetch work, next sleep cancels
+                raise asyncio.CancelledError
+
+        dm._drain_redis_dlq = AsyncMock(return_value=0)  # type: ignore[method-assign]
+        with patch.object(asyncio, "sleep", fake_sleep):
+            await dm._process_dlq(adapters)  # loop catches CancelledError → returns
+
+    @pytest.mark.asyncio
+    async def test_adapter_missing_marks_retrying_not_orphan(self) -> None:
+        pool, _ = self._pool_with_one_row(attempt_count=0)
+        dm = DeliveryManager(db_pool=pool)
+        await self._run_one_iteration(dm, adapters={})  # no instagram adapter
+
+        # The row must have been UPDATEd (not skipped). Find the UPDATE call.
+        update_calls = [
+            c for c in pool.execute.await_args_list if "UPDATE failed_messages" in c.args[0]
+        ]
+        assert update_calls, "adapter-missing row was orphaned (no UPDATE)"
+        sql, *params = update_calls[0].args
+        # status=$1, attempt_count=$2 → retrying / 1 (below max)
+        assert params[0] == "retrying"
+        assert params[1] == 1
+
+    @pytest.mark.asyncio
+    async def test_adapter_missing_exhausts_at_max(self) -> None:
+        pool, _ = self._pool_with_one_row(attempt_count=4, max_attempts=5)
+        dm = DeliveryManager(db_pool=pool)
+        await self._run_one_iteration(dm, adapters={})
+
+        update_calls = [
+            c for c in pool.execute.await_args_list if "UPDATE failed_messages" in c.args[0]
+        ]
+        assert update_calls
+        sql, *params = update_calls[0].args
+        assert params[0] == "exhausted"
+        assert params[1] == 5
+        assert params[2] is None  # next_retry None when exhausted
+
+
+# --------------------------------------------------------------------------- #
+# F7: raw channel identifier (phone/chat_id/sender_id) must NEVER appear in a
+# log record — guilt/innocence per cicatrix-superscar.md family #3.
+# --------------------------------------------------------------------------- #
+#
+# optimizations.py is a channel-agnostic choke point: for WhatsApp traffic,
+# `channel_id` IS the raw phone number (see channels/whatsapp/adapter.py,
+# which passes the phone straight through as channel_id). Both the rate
+# limiter and the DLQ persist paths log it, so both need the same guilt +
+# innocence proof as the messaging-identity reference fix.
+
+_OPTIMIZATIONS_LOGGER_NAME = "backend.channels.optimizations"
+_NON_DIGITS_RE = re.compile(r"\D+")
+
+# Obviously-synthetic — never a shape mistakable for a real client's number.
+_SYNTHETIC_PHONE = "628400004000"
+
+
+def _digits_only(text: str) -> str:
+    return _NON_DIGITS_RE.sub("", text)
+
+
+def _all_log_text(records: list[logging.LogRecord]) -> str:
+    return "\n".join(r.getMessage() for r in records)
+
+
+class TestRateLimiterRawIdentifierNeverInLogsGuilt:
+    @pytest.mark.asyncio
+    async def test_burst_limit_never_logs_raw_phone(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # Deterministic, not timing-dependent: the pre-existing
+        # test_burst_exhaustion (above) already documents that acquiring
+        # twice back-to-back is NOT reliably rejected under load — the
+        # refill formula is `tokens += (now - last_refill)` in whole
+        # seconds elapsed, so a slow test runner can silently refill the
+        # single burst token between two awaits and flip this red. Force
+        # the rejected state directly, the same way
+        # test_minute_limit_in_memory (below) forces its state, instead of
+        # racing the wall clock.
+        limiter = ChannelRateLimiter(
+            RateLimitConfig(max_requests_per_minute=5, max_requests_per_hour=20, burst_size=1)
+        )
+        limiter.tokens[_SYNTHETIC_PHONE] = 0
+        limiter.last_refill[_SYNTHETIC_PHONE] = time.time()
+
+        with (
+            caplog.at_level(logging.WARNING, logger=_OPTIMIZATIONS_LOGGER_NAME),
+            patch("backend.channels.optimizations._get_redis_client", return_value=None),
+        ):
+            result = await limiter.acquire(_SYNTHETIC_PHONE)
+            assert result is False
+
+        text = _all_log_text(caplog.records)
+        assert _SYNTHETIC_PHONE not in text
+        assert _SYNTHETIC_PHONE not in _digits_only(text)
+        assert "id:" in text
+
+    @pytest.mark.asyncio
+    async def test_minute_limit_in_memory_never_logs_raw_phone(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        limiter = ChannelRateLimiter(
+            RateLimitConfig(max_requests_per_minute=5, max_requests_per_hour=20, burst_size=3)
+        )
+        now = time.time()
+        limiter.minute_counts[_SYNTHETIC_PHONE] = [now] * 5
+        limiter.tokens[_SYNTHETIC_PHONE] = 10
+
+        with (
+            caplog.at_level(logging.WARNING, logger=_OPTIMIZATIONS_LOGGER_NAME),
+            patch("backend.channels.optimizations._get_redis_client", return_value=None),
+        ):
+            result = await limiter.acquire(_SYNTHETIC_PHONE)
+            assert result is False
+
+        text = _all_log_text(caplog.records)
+        assert _SYNTHETIC_PHONE not in text
+        assert _SYNTHETIC_PHONE not in _digits_only(text)
+        assert "id:" in text
+
+    @pytest.mark.asyncio
+    async def test_redis_minute_exceeded_never_logs_raw_phone(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        limiter = ChannelRateLimiter(RateLimitConfig())
+        mock_redis = AsyncMock()
+        mock_redis.incr = AsyncMock(return_value=100)
+        mock_redis.decr = AsyncMock()
+
+        with (
+            caplog.at_level(logging.WARNING, logger=_OPTIMIZATIONS_LOGGER_NAME),
+            patch("backend.channels.optimizations._get_redis_client", return_value=mock_redis),
+        ):
+            result = await limiter.acquire(_SYNTHETIC_PHONE)
+            assert result is False
+
+        text = _all_log_text(caplog.records)
+        assert _SYNTHETIC_PHONE not in text
+        assert _SYNTHETIC_PHONE not in _digits_only(text)
+        assert "id:" in text
+
+
+class TestDeliveryManagerRawIdentifierNeverInLogsGuilt:
+    @pytest.mark.asyncio
+    async def test_both_pg_and_redis_unavailable_never_logs_raw_phone(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        dm = DeliveryManager(db_pool=None)
+        with (
+            caplog.at_level(logging.ERROR, logger=_OPTIMIZATIONS_LOGGER_NAME),
+            patch("backend.channels.optimizations._get_redis_client", return_value=None),
+        ):
+            await dm.persist_failed(
+                channel="whatsapp",
+                channel_id=_SYNTHETIC_PHONE,
+                content="hello",
+                error="timeout",
+            )
+
+        text = _all_log_text(caplog.records)
+        assert _SYNTHETIC_PHONE not in text
+        assert _SYNTHETIC_PHONE not in _digits_only(text)
+        assert "id:" in text
+
+    @pytest.mark.asyncio
+    async def test_pg_success_never_logs_raw_phone(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_pool = AsyncMock()
+        mock_pool.execute = AsyncMock()
+        dm = DeliveryManager(db_pool=mock_pool)
+
+        with caplog.at_level(logging.INFO, logger=_OPTIMIZATIONS_LOGGER_NAME):
+            await dm.persist_failed(
+                channel="whatsapp",
+                channel_id=_SYNTHETIC_PHONE,
+                content="hello",
+                error="timeout",
+            )
+
+        text = _all_log_text(caplog.records)
+        assert _SYNTHETIC_PHONE not in text
+        assert _SYNTHETIC_PHONE not in _digits_only(text)
+        assert "id:" in text
+
+    @pytest.mark.asyncio
+    async def test_pg_fails_redis_fallback_never_logs_raw_phone(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_pool = AsyncMock()
+        mock_pool.execute = AsyncMock(side_effect=Exception("PG down"))
+        dm = DeliveryManager(db_pool=mock_pool)
+
+        mock_redis = AsyncMock()
+        mock_redis.lpush = AsyncMock()
+
+        with (
+            caplog.at_level(logging.INFO, logger=_OPTIMIZATIONS_LOGGER_NAME),
+            patch("backend.channels.optimizations._get_redis_client", return_value=mock_redis),
+        ):
+            await dm.persist_failed(
+                channel="whatsapp",
+                channel_id=_SYNTHETIC_PHONE,
+                content="hello",
+                error="timeout",
+            )
+
+        text = _all_log_text(caplog.records)
+        assert _SYNTHETIC_PHONE not in text
+        assert _SYNTHETIC_PHONE not in _digits_only(text)
+        assert "id:" in text
+
+
+class TestRedactedChannelIdStaysCorrelatable:
+    """Innocence: same channel_id -> same digest across two calls, so an
+    operator can still correlate a client's rate-limit / DLQ log lines."""
+
+    @pytest.mark.asyncio
+    async def test_same_phone_yields_same_digest_across_two_dlq_persists(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_pool = AsyncMock()
+        mock_pool.execute = AsyncMock()
+        dm = DeliveryManager(db_pool=mock_pool)
+
+        with caplog.at_level(logging.INFO, logger=_OPTIMIZATIONS_LOGGER_NAME):
+            await dm.persist_failed(
+                channel="whatsapp", channel_id=_SYNTHETIC_PHONE, content="a", error="e1"
+            )
+            first_text = _all_log_text(caplog.records)
+            caplog.clear()
+
+            await dm.persist_failed(
+                channel="whatsapp", channel_id=_SYNTHETIC_PHONE, content="b", error="e2"
+            )
+            second_text = _all_log_text(caplog.records)
+
+        first_digest = next(tok for tok in first_text.split() if "id:" in tok)
+        second_digest = next(tok for tok in second_text.split() if "id:" in tok)
+        assert first_digest == second_digest

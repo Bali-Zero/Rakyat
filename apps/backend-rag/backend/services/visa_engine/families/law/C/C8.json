@@ -1,0 +1,72 @@
+{
+  "code": "C8",
+  "official_name_id": "C8 Visa Kunjungan Kegiatan Olahraga",
+  "source_url": "https://peraturan.go.id/files/permenkumham-no-22-tahun-2023.pdf",
+  "retrieved_at": "2026-10-18T18:40:59Z",
+  "page_sha256": null,
+  "definition_verbatim": "olahraga yang tidak bersifat komersial;",
+  "jenis_visa_verbatim": "Visa kunjungan 1 (satu) kali perjalanan dapat diberikan kepada Orang Asing untuk melakukan kegiatan:",
+  "stay_days": null,
+  "extendable": null,
+  "entry": "single",
+  "where_to_apply": null,
+  "sponsor_required": {
+    "as_stated_boolean": null,
+    "verbatim": [
+      "bukti penjaminan dari Penjamin, kecuali untuk kunjungan tertentu;"
+    ],
+    "invitation_requirement_see": "requirements_verbatim"
+  },
+  "requirements_verbatim": [
+    {
+      "n": 1,
+      "section": "Pasal 19 ayat (5) huruf g (as replaced by Permenkumham 11/2024 Pasal I angka 6)",
+      "text": "untuk kegiatan melakukan olahraga yang tidak bersifat komersil, berupa undangan dari penyelenggara kegiatan;"
+    }
+  ],
+  "pengajuan_intro_verbatim": "Permohonan Visa kunjungan 1 (satu) kali perjalanan bagi Orang Asing diajukan melalui aplikasi dengan melampirkan:",
+  "allowed_activities": "see definition_verbatim",
+  "prohibited_or_conditions_verbatim": null,
+  "ketentuan_lain_verbatim": null,
+  "pnbp_verbatim_for_reference_only": null,
+  "status": "REGULATION_SOURCED_TO_VERIFY",
+  "source": {
+    "type": "REGULATION",
+    "citation": "Permenkumham 22/2023 Pasal 13 ayat (1) huruf l",
+    "document_sha256": "2e9165804c38e9a60b4f1c4a046bd727a97043d7386be90d608c68db31c015d4",
+    "fidelity": "VERBATIM_REGULATION_WHITESPACE_NORMALIZED",
+    "amendment": {
+      "url": "https://peraturan.go.id/files/permenkumham-no-11-tahun-2024.pdf",
+      "citation": "Permenkumham 11/2024 Pasal I angka 6 (Pasal 19 ayat (1) and ayat (5))",
+      "document_sha256": "ecbbeccc196145f47f24e68473a27c19d6f0408e607abb365ce9acd22cbf5f02"
+    },
+    "index_evidence": {
+      "url": "https://kanwilsultra.imigrasi.go.id/wna/daftar-visa-indonesia",
+      "verbatim": "C8 Visa Kunjungan Kegiatan Olahraga",
+      "retrieved_at": "2026-10-18T18:40:59Z"
+    },
+    "code_to_activity_status": "TO_VERIFY",
+    "classification_basis_verbatim": "Ketentuan mengenai klasifikasi Visa sebagaimana dimaksud pada ayat (1) dan ayat (2) ditetapkan oleh Menteri.",
+    "classification_basis_citation": "Permenkumham 22/2023 Pasal 70 ayat (3)"
+  },
+  "notes": [
+    "The official index lists this code; the regulations name activities, not these alphanumeric indices. The title comes from the official index, not from the regulation. Code-to-activity mapping and any statutory parent/child relationship remain TO_VERIFY pending the classification decision.",
+    "Only whitespace is normalized in regulatory excerpts. Pasal 19 excerpts are activity-level evidence, not a complete visa-specific checklist. No eligibility, stay, extension, sponsorship exception or price is inherited from a child card.",
+    "page_sha256 is null because no substantive code-specific page was retrieved. PDF content hashes are recorded separately in source; the DB verification_status remains TO_VERIFY."
+  ],
+  "to_verify": [
+    "source.code_to_activity_status",
+    "statutory_parent_child_relationship",
+    "page_sha256",
+    "stay_days",
+    "extendable",
+    "where_to_apply",
+    "sponsor_required.as_stated_boolean",
+    "complete_code_specific_requirements",
+    "prohibited_or_conditions_verbatim",
+    "ketentuan_lain_verbatim",
+    "pnbp_verbatim_for_reference_only",
+    "is_sold",
+    "price_keys"
+  ]
+}

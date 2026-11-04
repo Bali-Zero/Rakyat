@@ -1,0 +1,1164 @@
+"""
+NUZANTARA PRIME - Base Migration Framework
+Provides base classes and utilities for database migrations
+"""
+
+import asyncio
+import hashlib
+import logging
+import os
+import random
+import re
+import sys
+import time
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+from urllib.parse import urlparse
+
+import asyncpg
+
+from backend.app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Provenance (migration 299)
+# ---------------------------------------------------------------------------
+# `_schema_versions` records WHAT and WHEN. Migration 299 added WHO, THROUGH
+# WHAT and WITH WHICH RUNNER. These helpers fill them, and the rule that makes
+# them worth anything is: `applied_as` is asked of POSTGRES, never taken from
+# something the caller can set. A provenance field a caller can spoof records
+# a claim, not a fact.
+
+_APPLIED_VIA_VALUES = ("release_command", "manual", "ci")
+
+# ---------------------------------------------------------------------------
+# The dedicated migration role (RULED 2026-09-11, option D)
+# ---------------------------------------------------------------------------
+# Production runs every migration as the RUNTIME role, `backend_rag_v2`,
+# through the one `DATABASE_URL`. That role owns every table but is NOT a
+# member of `visa_ledger_owner`, which owns the SECURITY DEFINER retention
+# binders -- so any migration that must `ALTER FUNCTION ... OWNER TO
+# visa_ledger_owner` (six so far: 253, 268, 281, 286, 300, 301; 304 is the
+# seventh) either failed the deploy (2026-08-26, five migrations) or was
+# applied by hand under a superuser. The measured decision is in
+# docs/plans/2026-08-24-garuda-voa-live/STEP5-PRIVILEGE-DECISION.md.
+#
+# The cure is a second DSN, `MIGRATION_DATABASE_URL`, authenticating as a
+# dedicated LOGIN role that is a member of both. The runner connects as it and
+# IMMEDIATELY assumes the runtime role, so every object a migration creates is
+# owned by `backend_rag_v2` exactly as today; a migration that needs the ledger
+# owner wraps that one block in `RESET ROLE` / `SET ROLE backend_rag_v2`.
+# Under the single-DSN runtime (CI, a laptop, Fly before the secret exists)
+# those two statements are no-ops for `backend_rag_v2` and the file stays
+# valid. Provenance stays honest for free: `resolve_applied_as` records
+# `backend_rag_v2 (session_user=backend_rag_migrator)`.
+
+RUNTIME_ROLE = "backend_rag_v2"
+LEDGER_ROLE = "visa_ledger_owner"
+
+
+def resolve_migration_dsn() -> str | None:
+    """The DSN the migration runner connects with.
+
+    `MIGRATION_DATABASE_URL` when set, else `DATABASE_URL`. Only the
+    migration runner resolves through here (`MigrationManager`, `apply()`,
+    `migrate.py`; `services/misc/migration_runner.py` builds a manager and so
+    inherits it). `schema_audit` and the runtime keep reading
+    `settings.database_url` directly and never see the migrator DSN.
+    """
+    return settings.migration_database_url or settings.database_url
+
+
+def migration_dsn_is_dedicated(database_url: str | None = None) -> bool:
+    """Is the SELECTED url the dedicated migrator DSN?
+
+    Dedicated-vs-legacy is a property of the URL the runner actually connects
+    WITH, not of the process environment. Called with no argument it answers
+    for `resolve_migration_dsn()`'s own choice, which is the default path.
+
+    Called with an explicit URL -- a caller that handed its own DSN to
+    `MigrationManager` or to `apply()` -- it answers for THAT url, and an
+    explicit LEGACY override therefore stays legacy even while
+    `MIGRATION_DATABASE_URL` is set. Before this, a globally configured
+    migrator DSN imposed dedicated-role checks on a connection that was never
+    the migrator and could not satisfy them (Tomen, 2026-09-11).
+
+    An ALTERNATE dedicated URL -- a second migrator DSN that is not the
+    configured one -- is not distinguishable from a legacy one by inspecting
+    the string, so it classifies as legacy here and its caller must say
+    `dedicated=True` explicitly.
+    """
+    configured = settings.migration_database_url
+    if not configured:
+        return False
+    return database_url is None or database_url == configured
+
+
+async def assume_runtime_role(
+    conn: asyncpg.Connection,
+    *,
+    runtime_role: str = RUNTIME_ROLE,
+    ledger_role: str = LEDGER_ROLE,
+    dedicated: bool,
+) -> str | None:
+    """Make the session's EFFECTIVE role the runtime role, right after connect.
+
+    Returns the role assumed, or None when nothing had to change. Asked of the
+    server, never of the DSN string: the DSN says who AUTHENTICATED, the
+    catalogue says whether that principal may become the runtime role.
+
+    SINGLE DSN (`MIGRATION_DATABASE_URL` unset -- CI, laptops, Fly until the
+    secret exists): an unconditional no-op, not even a catalogue read. The
+    2026-09-11 change must be invisible there, and "invisible" is a property
+    that has to be enforced rather than argued: a superuser is a member of
+    every role by `pg_has_role`'s definition, so a member-based rule would
+    have made CI's `test` superuser silently `SET ROLE` the moment any test
+    created a role literally named `backend_rag_v2` (codex, finding 3).
+
+    DEDICATED DSN, the migrator session -- every one of these refuses BEFORE
+    any statement runs, because each is option D in name only:
+      * a SUPERUSER: the point of the role is that no superuser credential
+        sits in the deploy loop.
+      * a session that IS the runtime role: that is the old single DSN under
+        the new variable, and would fail on the first ledger-owned object.
+      * `current_user <> session_user` at connect: a connection-time role
+        setting (`ALTER ROLE ... SET role`), which `RESET ROLE` would restore
+        instead of the migrator, silently defeating the bracket.
+      * the runtime role absent, or the migrator unable to `SET ROLE` to it
+        (PG16+ `SET` option; `MEMBER` on older servers).
+      * the ledger role present but the migrator not a member of it: the
+        one privilege the whole role exists to carry.
+    Then `SET ROLE <runtime_role>`, re-read `current_user`, and refuse if the
+    server disagrees.
+
+    `dedicated` is REQUIRED and has no default, deliberately (Gemini 3.1 Pro,
+    2026-09-11). It used to fall back to `migration_dsn_is_dedicated()` with no
+    argument -- i.e. to the ambient setting -- and that default defeats the
+    whole invariant: this function receives a CONNECTION, which does not carry
+    the URL it was opened with, so a fallback here can only ever classify the
+    process, never this connection. A caller that had deliberately selected a
+    legacy URL would silently get the dedicated checks applied to a session
+    that authenticates as the runtime role, and be refused. Whoever CHOSE the
+    URL knows the mode; it is passed down from there, never re-derived here.
+    """
+    if not dedicated:
+        return None
+
+    row = await conn.fetchrow(
+        """
+        SELECT current_user AS cu,
+               session_user AS su,
+               COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = session_user), false)
+                   AS is_super,
+               EXISTS (SELECT 1 FROM pg_roles r
+                       WHERE r.rolsuper AND pg_has_role(session_user, r.oid, 'MEMBER'))
+                   AS reaches_super,
+               EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1) AS runtime_exists,
+               CASE
+                   WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1) THEN false
+                   WHEN current_setting('server_version_num')::int >= 160000
+                       THEN pg_has_role(session_user, $1, 'SET')
+                   ELSE pg_has_role(session_user, $1, 'MEMBER')
+               END AS can_set_runtime,
+               EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $2) AS ledger_exists,
+               CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $2)
+                    THEN pg_has_role(session_user, $2, 'MEMBER') ELSE false END
+                   AS ledger_member
+        """,
+        runtime_role,
+        ledger_role,
+    )
+
+    def _refuse(reason: str) -> MigrationError:
+        return MigrationError(
+            f"MIGRATION_DATABASE_URL refused (session_user={row['su']!r}): {reason} "
+            "-- option D needs a non-superuser migrator that is a member of "
+            f"{runtime_role!r} and {ledger_role!r} (RULED 2026-09-11)"
+        )
+
+    if row["is_super"]:
+        raise _refuse("it authenticates as a SUPERUSER")
+    if row["reaches_super"]:
+        # A non-superuser that is a member of a superuser role could SET ROLE
+        # up to it from inside a migration file (kimi finding 5): the same
+        # credential-in-the-loop, one hop away.
+        raise _refuse("it is a member of a SUPERUSER role")
+    if row["su"] == runtime_role:
+        raise _refuse("it authenticates AS the runtime role, i.e. it is the old single DSN")
+    if not row["runtime_exists"]:
+        raise _refuse(f"runtime role {runtime_role!r} does not exist")
+    if not row["can_set_runtime"]:
+        raise _refuse(f"it cannot SET ROLE to {runtime_role!r}")
+    if row["ledger_exists"] and not row["ledger_member"]:
+        raise _refuse(f"it is not a member of {ledger_role!r}")
+    if row["cu"] == runtime_role:
+        # Already assumed on this physical connection -- and MEASUREMENT says
+        # that is the ordinary case, not the exception. `RESET ALL` PRESERVES
+        # `current_user` after a `SET ROLE`; `DISCARD ALL` is what resets it
+        # (PG 17.10, measured 2026-09-11), and asyncpg >= 0.30's release query
+        # is `pg_advisory_unlock_all; CLOSE ALL; UNLISTEN *; RESET ALL`. So the
+        # per-acquire `setup` hook is NOT load-bearing against the pool's own
+        # release, as this comment claimed until 2026-09-11: it is load-bearing
+        # against an explicit `RESET ROLE` by a borrower, which DOES drop the
+        # role. Either way the hook must be idempotent, and this branch is what
+        # makes it so.
+        return runtime_role
+    if row["cu"] != row["su"]:
+        raise _refuse(
+            f"current_user={row['cu']!r} differs from session_user at connect "
+            "(a connection-time role setting would defeat RESET ROLE)"
+        )
+
+    # asyncpg has no parameter binding for utility statements; the role name is
+    # a module constant (or a test's own uuid-suffixed role), quoted defensively.
+    await conn.execute(f'SET ROLE "{runtime_role}"')
+    effective = await conn.fetchval("SELECT current_user")
+    if effective != runtime_role:
+        raise _refuse(f"after SET ROLE the server reports current_user={effective!r}")
+    logger.info("migration session %s assumed runtime role %s", row["su"], runtime_role)
+    return runtime_role
+
+
+def resolve_applied_via() -> str:
+    """Which invocation path is running: release_command | manual | ci.
+
+    Deterministic and derived from the ENVIRONMENT THE PLATFORM SETS, not from
+    a flag a human passes:
+
+    * Fly sets `FLY_APP_NAME` in the machine that runs `release_command`.
+    * GitHub Actions sets `CI=true` (and `GITHUB_ACTIONS`).
+    * Anything else is a human at a shell -- `manual`.
+
+    CI IS CHECKED FIRST, and that ordering is a correction (2026-08-31, blind
+    refuter). The first version checked Fly first, reasoning that a Fly machine
+    is the more specific fact. It is not: this repository's CI runs
+    `flyctl ssh console` against a Fly machine, so a CI-driven apply executes
+    WITH `FLY_APP_NAME` set and would have been recorded as `release_command` --
+    the single label most likely to be trusted in an incident. `GITHUB_ACTIONS`
+    is the narrower signal and is what actually distinguishes the two.
+
+    Declared limit: this is SELF-REPORTED from the environment and a
+    determined caller can set these variables. It is a provenance HINT, unlike
+    `applied_as`, which the server answers. The CHECK constraint in migration
+    299 bounds the vocabulary so an unexpected string is rejected by the
+    database rather than silently stored, but it cannot make an environment
+    honest.
+    """
+    if os.environ.get("GITHUB_ACTIONS") or os.environ.get("CI"):
+        return "ci"
+    if os.environ.get("FLY_APP_NAME"):
+        return "release_command"
+    return "manual"
+
+
+def resolve_runner_version() -> str:
+    """A NON-SECRET identifier of the runner that applied a row.
+
+    Deliberately boring: the module path plus the Python version. It must never
+    carry a token, a DSN, a hostname or a username -- this string is written to
+    a table that survives, and a provenance column is exactly the kind of place
+    a secret gets parked "temporarily". Kept short because it is stored per
+    row.
+    """
+    return f"migration_base/py{sys.version_info.major}.{sys.version_info.minor}"
+
+
+async def resolve_applied_as(conn: asyncpg.Connection) -> str | None:
+    """The effective PostgreSQL role, asked of the server.
+
+    Records `current_user`, and `session_user` TOO when they differ -- as
+    `current_user (session_user)`. Both, because neither alone is the answer:
+    `current_user` is the EFFECTIVE role and moves under `SET ROLE`;
+    `session_user` is the role that authenticated and does not.
+
+    CORRECTED 2026-08-31 by a blind refuter, because the first version of this
+    docstring overclaimed: it said `current_user` makes W130's temporary
+    `GRANT visa_ledger_owner TO backend_rag_v2` visible. It does NOT. A role
+    MEMBERSHIP does not change `current_user` unless someone also issues
+    `SET ROLE`; the grant merely makes the privilege reachable. What this
+    column honestly gives is the effective role at apply time plus the
+    authenticated one when they diverge -- which catches `SET ROLE`, and does
+    not catch a bare membership. Said plainly rather than left as a claim the
+    mechanism cannot support.
+
+    Returns None rather than raising if the query fails: provenance is
+    valuable, but refusing to record a migration that APPLIED CLEANLY because
+    a metadata read failed would turn a nice-to-have into an outage.
+    """
+    try:
+        row = await conn.fetchrow("SELECT current_user AS cu, session_user AS su")
+        if row is None:
+            return None
+        if row["cu"] == row["su"]:
+            return str(row["cu"])
+        return f"{row['cu']} (session_user={row['su']})"
+    except Exception:  # provenance must never block an apply that succeeded
+        logger.warning("could not resolve current_user for provenance; recording NULL")
+        return None
+
+
+async def _schema_versions_has_provenance(conn: asyncpg.Connection) -> bool:
+    """True when migration 299 has been applied to THIS database.
+
+    Necessary because the runner must work against a database that predates
+    299 -- including while 299 itself is the migration being applied. Asked of
+    the catalogue, not assumed from the file tree.
+    """
+    fetchval = getattr(conn, "fetchval", None)
+    if fetchval is None:
+        # A connection object that cannot answer a catalogue question cannot
+        # prove provenance columns exist. FAIL SAFE to the legacy INSERT rather
+        # than raising: this probe exists to ADD a metadata column, and it must
+        # never be the reason a migration that would otherwise apply cleanly
+        # does not. (Found by an existing test whose FakeConnection implements
+        # only `execute` -- the probe turned a passing test into an
+        # AttributeError, which is the probe breaking the thing it observes.)
+        return False
+    try:
+        return bool(
+            await fetchval(
+                # table_schema scoped: an unrelated `_schema_versions` in another
+                # schema would otherwise make this claim the columns exist and
+                # send a 10-column INSERT at a table that has 9 -- aborting a
+                # migration that would have applied fine (refuter, 2026-08-31).
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = '_schema_versions' "
+                "AND column_name = 'applied_as')"
+            )
+        )
+    except Exception:  # a metadata read must never abort a good apply
+        logger.warning("could not probe _schema_versions provenance columns; assuming absent")
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Lock-contention retry
+# ---------------------------------------------------------------------------
+# 2026-09-17: migration 317's `ALTER TABLE ... SET DEFAULT` (ACCESS EXCLUSIVE)
+# failed 3x under `lock_timeout 5s` with `canceling statement due to lock
+# timeout` (SQLSTATE 55P03) -- the nightly pg_dump window (19:20-22:20Z) holds
+# an AccessShareLock on every table for ~40 min per attempt, and an ordinary
+# long reader can do the same. Before this the runner had no retry at all: one
+# timeout killed the whole `apply()`, indistinguishable from any other SQL
+# error. `MigrationManager.rollback_migration` runs the same shape of
+# single-transaction DDL and shares the identical exposure, so both paths use
+# this one retry primitive.
+#
+# Per-attempt SHORT `lock_timeout` (fails fast rather than tying up the whole
+# release_command for the Fly ceiling) plus a bounded retry that re-runs the
+# WHOLE transaction body, INCLUDING the ledger write where the caller's `body`
+# includes one (`BaseMigration.apply()`'s `_log_migration` call): the
+# alternative -- writing the ledger row outside/after the retried transaction
+# -- could record a migration as applied when the DDL never committed. Retries
+# ONLY `asyncpg.exceptions.LockNotAvailableError` (55P03); a
+# `QueryCanceledError` (57014, e.g. a `statement_timeout` inside the migration
+# itself) or any other error propagates on the FIRST occurrence, unretried --
+# those are not lock contention and blind-retrying them would just repeat a
+# failure that will never resolve on its own.
+LOCK_RETRY_LOCK_TIMEOUT = "2s"
+LOCK_RETRY_BACKOFF_BASE_SECONDS = 0.5
+LOCK_RETRY_BACKOFF_CAP_SECONDS = 3.0
+LOCK_RETRY_MAX_ATTEMPTS = 8
+LOCK_RETRY_BUDGET_SECONDS = 90.0
+# Arithmetic (worst case, no jitter): 8 attempts x up to 2s lock wait each =
+# 16s, plus 7 inter-attempt backoffs 0.5+1+2+3+3+3+3 = 15.5s (doubling from
+# 0.5s, capped at 3s) = ~31.5s total, +≤20% jitter (~3.1s) = ~35s -- well
+# inside the 90s budget ceiling and Fly's release_command default (5 min).
+
+
+def _lock_retry_backoff_seconds(attempt: int) -> float:
+    """Backoff before the attempt AFTER `attempt` (which just failed).
+
+    Doubles from `LOCK_RETRY_BACKOFF_BASE_SECONDS`, capped at
+    `LOCK_RETRY_BACKOFF_CAP_SECONDS`, plus up to 20% jitter so several
+    concurrent retriers (a fleet of Fly machines hitting the same lock) don't
+    all wake up on the same tick.
+    """
+    base = min(
+        LOCK_RETRY_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)),
+        LOCK_RETRY_BACKOFF_CAP_SECONDS,
+    )
+    return base + random.uniform(0, base * 0.2)
+
+
+async def _describe_lock_blockers(conn: asyncpg.Connection) -> str:
+    """Best-effort: name who holds a granted lock that could block a DDL.
+
+    Never raises -- a failing diagnostic must not mask the
+    `LockNotAvailableError` it exists to explain, so it runs in its own
+    try/except. Reports `pid`/`usename`/`application_name`/`relname` ONLY --
+    never `query` or `state`, which can carry client PII or OSINT via a
+    session's bound parameters or an in-flight statement's literal text
+    (CLAUDE.md Builder Contract §4, output boundary).
+
+    Every lock mode conflicts with ACCESS EXCLUSIVE (the mode a DDL statement
+    needs), so any OTHER session's granted relation lock in `public` is a
+    candidate blocker; the explicit mode list documents that reasoning rather
+    than relying on an unfiltered scan.
+    """
+    try:
+        rows = await conn.fetch(
+            """
+            SELECT l.pid, a.usename, a.application_name, c.relname
+            FROM pg_locks l
+            JOIN pg_stat_activity a ON a.pid = l.pid
+            JOIN pg_class c ON c.oid = l.relation
+            WHERE l.database = (
+                    SELECT oid FROM pg_database WHERE datname = current_database()
+                  )
+              AND l.locktype = 'relation'
+              AND c.relnamespace = 'public'::regnamespace
+              AND l.granted
+              AND l.pid <> pg_backend_pid()
+              AND l.mode IN (
+                  'AccessShareLock', 'RowShareLock', 'RowExclusiveLock',
+                  'ShareUpdateExclusiveLock', 'ShareLock',
+                  'ShareRowExclusiveLock', 'ExclusiveLock', 'AccessExclusiveLock'
+              )
+            ORDER BY l.pid
+            """
+        )
+    except Exception as exc:  # diagnostic must never mask the real error
+        return f"(could not enumerate lock holders: {exc})"
+
+    if not rows:
+        return (
+            "(no granted relation locks found in 'public' at diagnostic time "
+            "-- the blocker may have already released)"
+        )
+
+    return ", ".join(
+        f"pid={r['pid']} usename={r['usename']!r} "
+        f"application_name={r['application_name']!r} relation={r['relname']!r}"
+        for r in rows
+    )
+
+
+async def run_with_lock_retry(
+    conn: asyncpg.Connection,
+    migration_name: str,
+    body: Callable[[], Awaitable[bool]],
+) -> bool:
+    """Run `body` inside a fresh transaction, retrying a lock-timed-out DDL.
+
+    `body` is invoked with no arguments, once per attempt, inside
+    `async with conn.transaction():`, right after a per-attempt SHORT
+    `SET LOCAL lock_timeout` is issued on `conn`. `SET LOCAL` is required, not
+    `SET`, because `MigrationManager.rollback_migration` runs this on a
+    POOLED connection (`self.pool.acquire()`): a plain `SET` inside a
+    transaction that COMMITS persists on that session for as long as it
+    stays checked out, and leaks the short lock_timeout into whatever the
+    next pool borrower does. `SET LOCAL` dies with the transaction either
+    way -- committed or rolled back -- so it never outlives this call
+    regardless of which connection kind calls it. A migration/rollback text
+    that issues its own (plain, non-LOCAL) `SET lock_timeout` still runs
+    AFTER this one inside the same transaction and still wins for the rest
+    of it -- Postgres GUC `SET` is last-write-wins within one transaction
+    scope, `LOCAL` or not, so no special-casing is needed for that override
+    to keep working.
+
+    On `asyncpg.exceptions.LockNotAvailableError` the transaction has already
+    been rolled back by the `async with` block -- `conn` is retried, not
+    reconnected. Sleeps `_lock_retry_backoff_seconds(attempt)` between
+    attempts, up to `LOCK_RETRY_MAX_ATTEMPTS` or until the next backoff would
+    cross `LOCK_RETRY_BUDGET_SECONDS`, whichever comes first. Any other
+    exception -- including `QueryCanceledError` (57014) -- propagates
+    immediately, unretried.
+
+    Raises `MigrationError` naming the blocking session(s) once attempts are
+    exhausted.
+    """
+    loop_start = time.monotonic()
+    last_lock_error: asyncpg.exceptions.LockNotAvailableError | None = None
+    attempt = 0
+    for attempt in range(1, LOCK_RETRY_MAX_ATTEMPTS + 1):
+        try:
+            async with conn.transaction():
+                await conn.execute(f"SET LOCAL lock_timeout = '{LOCK_RETRY_LOCK_TIMEOUT}'")
+                return await body()
+        except asyncpg.exceptions.LockNotAvailableError as exc:
+            last_lock_error = exc
+            elapsed = time.monotonic() - loop_start
+            logger.info(
+                "%s: lock timeout on attempt %d/%d (%.1fs elapsed): %s",
+                migration_name,
+                attempt,
+                LOCK_RETRY_MAX_ATTEMPTS,
+                elapsed,
+                exc,
+            )
+            if attempt == LOCK_RETRY_MAX_ATTEMPTS:
+                break
+            delay = _lock_retry_backoff_seconds(attempt)
+            if elapsed + delay >= LOCK_RETRY_BUDGET_SECONDS:
+                logger.info(
+                    "%s: next backoff would exceed the %.0fs budget; stopping at attempt %d/%d",
+                    migration_name,
+                    LOCK_RETRY_BUDGET_SECONDS,
+                    attempt,
+                    LOCK_RETRY_MAX_ATTEMPTS,
+                )
+                break
+            await asyncio.sleep(delay)
+
+    blockers = await _describe_lock_blockers(conn)
+    raise MigrationError(
+        f"{migration_name}: still lock-blocked after {attempt} attempt(s) "
+        f"({time.monotonic() - loop_start:.1f}s elapsed, budget "
+        f"{LOCK_RETRY_BUDGET_SECONDS:.0f}s) -- blocked by: {blockers}"
+    ) from last_lock_error
+
+
+class MigrationError(Exception):
+    """Base exception for migration errors"""
+
+    pass
+
+
+# Marker convention for SQL migrations: everything after this marker line
+# is the rollback SQL. The marker itself is a `--` comment, so PostgreSQL
+# would happily execute the rollback DDL together with the forward DDL
+# (and undo the migration in the same transaction) unless we strip it.
+ROLLBACK_MARKER_RE = re.compile(
+    r"^\s*--\s*===\s*ROLLBACK\s*===\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def split_migration_sql(sql_text: str) -> tuple[str, str | None]:
+    """Split a SQL migration body at the `-- === ROLLBACK ===` marker.
+
+    Returns:
+        (forward_sql, rollback_sql) where rollback_sql is None if the marker
+        is absent. forward_sql is right-stripped (no trailing whitespace).
+        rollback_sql is left/right-stripped; it may be the empty string when
+        the marker is present but no rollback DDL follows it.
+    """
+    match = ROLLBACK_MARKER_RE.search(sql_text)
+    if not match:
+        return sql_text, None
+    forward = sql_text[: match.start()].rstrip()
+    rollback = sql_text[match.end() :].strip()
+    return forward, rollback
+
+
+# Dependency declaration convention for SQL migrations: a header comment of
+# the form `-- depends: 277` (comma-separated numbers allowed) declares that
+# those migrations must be applied BEFORE this one. Like the rollback marker,
+# the declaration is a `--` comment, so PostgreSQL ignores it; the runner
+# (`MigrationManager.discover_migrations`) extracts it and passes it to
+# BaseMigration(dependencies=...), and `_check_dependencies()` refuses to
+# apply the migration while any declared dependency is missing from
+# `schema_migrations`. Files without the line declare no constraint.
+DEPENDS_MARKER_RE = re.compile(
+    r"^\s*--\s*depends\s*:\s*([0-9].*?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def extract_dependencies(sql_text: str) -> list[int]:
+    """Extract declared `-- depends: N[, M, ...]` numbers from a SQL file.
+
+    Returns the sorted, de-duplicated list of dependency migration numbers;
+    the empty list when no declaration is present. Unparseable tokens are
+    ignored rather than failing discovery — a malformed declaration must not
+    block unrelated migrations.
+    """
+    numbers: set[int] = set()
+    for match in DEPENDS_MARKER_RE.finditer(sql_text):
+        for token in match.group(1).replace(",", " ").split():
+            try:
+                numbers.add(int(token))
+            except ValueError:
+                continue
+    return sorted(numbers)
+
+
+class MigrationIrreversibleError(MigrationError):
+    """Raised when a migration explicitly has no safe rollback path.
+
+    Use this in rollback_sql or a custom rollback hook when the operation
+    (e.g., DROP COLUMN with data loss, denormalization) cannot be reversed.
+    Raising this is preferable to silently ignoring rollback — it forces
+    the caller to acknowledge the irreversibility.
+    """
+
+    pass
+
+
+# All migration_*.py files that existed before 2026-04-18 are grandfathered:
+# they were written before the rollback requirement was introduced and are
+# applied manually (the automated loader only reads db/migrations_v2/*.sql).
+# New migrations (migration_number > 111) MUST supply rollback_sql.
+LEGACY_NO_ROLLBACK_WHITELIST: frozenset[str] = frozenset(
+    {
+        "migration_001",
+        "migration_007",
+        "migration_010",
+        "migration_012",
+        "migration_013",
+        "migration_014",
+        "migration_015",
+        "migration_016",
+        "migration_018",
+        "migration_019",
+        "migration_020",
+        "migration_021a_baseline",
+        "migration_021b_add_bm25_sparse_vectors",
+        "migration_022",
+        "migration_025",
+        "migration_026",
+        "migration_027_team_memory_facts",
+        "migration_028_knowledge_graph_schema",
+        "migration_029_kg_source_chunks",
+        "migration_030_zoho_email",
+        "migration_031_client_portal",
+        "migration_031b_hybrid_collections",
+        "migration_032_drop_legacy_kg_tables",
+        "migration_033_newsletter",
+        "migration_034_google_drive_tokens",
+        "migration_035_kbli_blueprints",
+        "migration_036_team_departments",
+        "migration_037_folder_access_rules",
+        "migration_038_news_items",
+        "migration_040_email_activity_log",
+        "migration_041_clients_missing_columns",
+        "migration_041b_team_activity_logging",
+        "migration_042_passport_enrichment",
+        "migration_043_fix_visa_types_from_qdrant",
+        "migration_043b_knowledge_activity_log",
+        "migration_044_seed_practice_types",
+        "migration_050_client_memory_sync",
+        "migration_051_client_messaging_link",
+        "migration_052_openclaw_message_logs",
+        "migration_054_practice_required_documents",
+        "migration_055_kg_performance_indexes",
+        "migration_060_x_monitored_tweets",
+        "migration_061_documents_ocr_status",
+        "migration_062_client_drive_subfolders",
+        "migration_063_lkpm_reports",
+        "migration_064_kg_reverse_traversal_index",
+        "migration_065_cell_organism_tables",
+        "migration_066_populate_practice_types_from_pricing",
+        "migration_067_clients_soft_delete_indexes",
+        "migration_068_hr_payroll",
+        "migration_069_audit_logs",
+        "migration_069b_hr_bonus_rates_alignment",
+        "migration_070_conversation_history",
+        "migration_070b_legal_ingest_jobs",
+        "migration_071_notification_alerts",
+        "migration_072_welcome_email_queue",
+        "migration_073_visa_lifecycle",
+        "migration_074_content_hash",
+        "migration_075_practice_status_notify",
+        "migration_076_event_bus_triggers",
+        "migration_076b_hr_leave_balances_seed",
+        "migration_077_kg_staging_tables",
+        "migration_077b_post_publish_queue",
+        "migration_078_ppq_step_tracking",
+        "migration_079_naga_tables",
+        "migration_080a_visa_oracle_sessions",
+        "migration_080b_renewal_dedup",
+        "migration_080c_hr_team_cleanup",
+        "migration_081_naga_claim_quality",
+        "migration_081b_prime_nexus_geo",
+        "migration_084a_nlm_verification_log",
+        "migration_084b_client_perf_indexes",
+        "migration_085a_prime_proposals",
+        "migration_085b_check_no_empty_strings",
+        "migration_086_channel_dlq",
+        "migration_087_normalize_practice_states",
+        "migration_088_kg_gin_indexes",
+        "migration_089_api_key_records",
+        "migration_090_security_audit_log",
+        "migration_091_client_consent_log",
+        "migration_092a_attendance_late_incidents",
+        "migration_092b_coastline_distance",
+        "migration_093_lkpm_assigns_and_oss_creds",
+        "migration_094_conversation_threads",
+        "migration_095_backfill_threads",
+        "migration_096_kg_communities",
+        "migration_097_entity_mentions",
+        "migration_098a_owner_weekly_cashout",
+        "migration_098b_guardian_decisions",
+        "migration_099_hr_bonus_historical",
+        "migration_100a_lkpm_company_id",
+        "migration_100b_widen_gender_column",
+        "migration_100c_olympus_tables",
+        "migration_101_critical_indexes",
+        "migration_102_materialized_views",
+        "migration_103_pg_tuning",
+        "migration_104_olympus_v3_columns",
+        "migration_105_covering_indexes",
+        "migration_106_news_dedup_constraint",
+        "migration_107_bridge_outbox",
+        "migration_108_kg_proposals",
+        "migration_109_funnel_sessions",
+        "migration_110_notification_prefs",
+        "migration_111_notification_log",
+    }
+)
+
+
+class BaseMigration:
+    """
+    Base class for all database migrations.
+
+    Provides:
+    - Transaction management with automatic rollback
+    - Migration tracking (prevents duplicate execution)
+    - SQL validation
+    - Verification hooks (verify_apply, verify_rollback)
+    - Consistent error handling
+    - Rollback enforcement for post-2026-04-18 migrations
+    """
+
+    MIGRATIONS_DIR = Path(__file__).parent / "migrations_v2"
+
+    # Dangerous SQL patterns that should not be in migrations
+    DANGEROUS_PATTERNS = [
+        "DROP DATABASE",
+        "DROP SCHEMA",
+        "TRUNCATE",  # Unless explicitly needed
+    ]
+
+    def __init__(
+        self,
+        migration_number: int,
+        sql_file: str,
+        description: str,
+        dependencies: list[int] | None = None,
+        rollback_sql: str | None = None,
+        _sql_dir: Path | None = None,
+    ) -> None:
+        """
+        Initialize migration.
+
+        Args:
+            migration_number: Sequential migration number (e.g., 7, 10, 12)
+            sql_file: Name of SQL file in db/migrations/ directory
+            description: Human-readable description of migration
+            dependencies: List of migration numbers that must be applied first
+            rollback_sql: SQL to reverse this migration. Required for migration_number > 111.
+                          Use MigrationIrreversibleError inside a rollback hook when truly
+                          one-way (e.g., DROP COLUMN with data loss).
+            _sql_dir: Override SQL directory (for testing only)
+        """
+        self.migration_number = migration_number
+        sql_dir = _sql_dir if _sql_dir is not None else self.MIGRATIONS_DIR
+        self.sql_file = sql_dir / sql_file
+        self.description = description
+        self.dependencies = dependencies or []
+        self.rollback_sql = rollback_sql
+
+        # Extract base name from SQL file (remove .sql extension)
+        sql_base_name = sql_file.replace(".sql", "")
+        # Remove any migration number prefix if it exists (e.g., "001_fix_missing_tables" -> "fix_missing_tables")
+        sql_base_name = re.sub(r"^\d{3}_", "", sql_base_name)
+        self.migration_name = f"{migration_number:03d}_{sql_base_name}"
+
+        if not self.sql_file.exists():
+            raise MigrationError(f"SQL file not found: {self.sql_file}")
+
+        # Enforce rollback_sql for migrations created after the cutoff (> 111).
+        # Legacy migrations are grandfathered via LEGACY_NO_ROLLBACK_WHITELIST.
+        # Reconstruct what migration_name would look like as a stem key
+        migration_stem = f"migration_{migration_number:03d}_{sql_base_name}".rstrip("_")
+        is_legacy = migration_number <= 111 or migration_stem in LEGACY_NO_ROLLBACK_WHITELIST
+        if not is_legacy and rollback_sql is None:
+            raise ValueError(
+                f"Migration {migration_number} ({self.migration_name}) must supply "
+                "`rollback_sql`. Post-2026-04-18 migrations require an explicit rollback. "
+                "If the migration is truly irreversible, raise MigrationIrreversibleError "
+                "inside the rollback SQL comment or supply a compensating migration reference."
+            )
+
+    def _sanitize_db_url(self, url: str) -> str:
+        """Sanitize database URL for logging (hide credentials)"""
+        parsed = urlparse(url)
+        if parsed.password:
+            safe_url = f"{parsed.scheme}://{parsed.username}:***@{parsed.hostname}"
+            if parsed.port:
+                safe_url += f":{parsed.port}"
+            safe_url += parsed.path
+            return safe_url
+        return url
+
+    # A CREATE TRIGGER declares WHEN it fires via a trigger-EVENT clause:
+    # `{BEFORE|AFTER} <event>[ OR <event> ...] ON <table>`. `BEFORE TRUNCATE
+    # ON public.foo` / `AFTER INSERT OR TRUNCATE ON public.foo` contain the
+    # substring "TRUNCATE" but declare a WIPE GUARD (a trigger that runs
+    # before/after a TRUNCATE, typically to reject it -- see migration 252's
+    # `*_no_wipe` triggers on the visa write substrate), never a destructive
+    # `TRUNCATE [TABLE] [ONLY] <relation>` statement. A bare substring check
+    # can't tell these apart (cicatrix family #3, guard-over-match) -- so
+    # match on what follows TRUNCATE instead: a destructive TRUNCATE
+    # statement is followed by TABLE/ONLY/a bare relation name, while a
+    # trigger-event TRUNCATE is always followed by the keyword ON (the
+    # table clause) or OR (chained with another event). Word-boundaried so
+    # "ONLY" doesn't get mistaken for "ON".
+    _DANGEROUS_TRUNCATE_STATEMENT_RE = re.compile(
+        r"\bTRUNCATE\b(?!\s+(?:ON|OR)\b)",
+        re.IGNORECASE,
+    )
+
+    def _validate_sql(self, sql: str) -> None:
+        """
+        Validate SQL file is safe to execute.
+
+        Raises:
+            MigrationError: If SQL contains dangerous patterns
+        """
+        sql_upper = sql.upper()
+        for pattern in self.DANGEROUS_PATTERNS:
+            if pattern in sql_upper:
+                # Allow TRUNCATE if it's in a comment, or if it's a trigger
+                # EVENT declaration rather than a destructive statement.
+                if pattern == "TRUNCATE":
+                    for line in sql.split("\n"):
+                        stripped = line.strip()
+                        if not stripped or stripped.startswith("--"):
+                            continue
+                        if self._DANGEROUS_TRUNCATE_STATEMENT_RE.search(line):
+                            raise MigrationError(
+                                f"SQL contains potentially dangerous pattern: {pattern}. "
+                                "If this is intentional, add a comment explaining why.",
+                            )
+                else:
+                    raise MigrationError(f"SQL contains dangerous pattern: {pattern}")
+
+    def _calculate_checksum(self, sql: str) -> str:
+        """Calculate SHA256 checksum of SQL content"""
+        return hashlib.sha256(sql.encode("utf-8")).hexdigest()
+
+    async def _ensure_migration_log(self, conn: asyncpg.Connection) -> None:
+        """Ensure migration tracking tables exist."""
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                id SERIAL PRIMARY KEY,
+                migration_name VARCHAR(255) UNIQUE NOT NULL,
+                migration_number INTEGER NOT NULL,
+                executed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                checksum VARCHAR(64) NOT NULL,
+                description TEXT,
+                execution_time_ms INTEGER,
+                rollback_sql TEXT
+            )
+        """,
+        )
+
+        # Create index for faster lookups
+        await conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_schema_migrations_name
+            ON schema_migrations(migration_name)
+        """,
+        )
+        await conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_schema_migrations_number
+            ON schema_migrations(migration_number)
+        """,
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS _schema_versions (
+                id SERIAL PRIMARY KEY,
+                migration_name VARCHAR(255) UNIQUE NOT NULL,
+                migration_number INTEGER NOT NULL,
+                executed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                checksum VARCHAR(64) NOT NULL,
+                description TEXT,
+                execution_time_ms INTEGER,
+                rollback_sql TEXT,
+                applied_by VARCHAR(255) DEFAULT 'system'
+            )
+        """,
+        )
+        await conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_schema_versions_number
+            ON _schema_versions(migration_number)
+        """,
+        )
+
+    async def _is_applied(self, conn: asyncpg.Connection) -> bool:
+        """Check if migration already applied"""
+        await self._ensure_migration_log(conn)
+        result = await conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE migration_name = $1)",
+            self.migration_name,
+        )
+        return bool(result)
+
+    async def _check_dependencies(self, conn: asyncpg.Connection) -> None:
+        """Check that all dependency migrations have been applied"""
+        if not self.dependencies:
+            return
+
+        await self._ensure_migration_log(conn)
+
+        for dep_number in self.dependencies:
+            result = await conn.fetchval(
+                """
+                SELECT EXISTS(
+                    SELECT 1 FROM schema_migrations
+                    WHERE migration_number = $1
+                )
+            """,
+                dep_number,
+            )
+
+            if not result:
+                raise MigrationError(
+                    f"Migration {self.migration_number} depends on migration {dep_number}, "
+                    f"but {dep_number} has not been applied yet",
+                )
+
+    async def _log_migration(
+        self,
+        conn: asyncpg.Connection,
+        sql: str,
+        execution_time_ms: int,
+        rollback_sql: str | None = None,
+    ) -> None:
+        """Log migration to both transition-period tracking tables."""
+        checksum = self._calculate_checksum(sql)
+        await conn.execute(
+            """
+            INSERT INTO schema_migrations
+            (migration_name, migration_number, checksum, description, execution_time_ms, rollback_sql)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (migration_name) DO NOTHING
+        """,
+            self.migration_name,
+            self.migration_number,
+            checksum,
+            self.description,
+            execution_time_ms,
+            rollback_sql,
+        )
+        # Provenance (migration 299). Asked of the CATALOGUE, not assumed from
+        # the file tree: this runner must keep working against a database that
+        # predates 299 -- including during the apply of 299 itself, where the
+        # columns do not exist yet at the moment this row is written.
+        if await _schema_versions_has_provenance(conn):
+            await conn.execute(
+                """
+                INSERT INTO _schema_versions
+                (migration_name, migration_number, checksum, description,
+                 execution_time_ms, rollback_sql, applied_by,
+                 applied_as, applied_via, runner_version)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                ON CONFLICT (migration_name) DO NOTHING
+            """,
+                self.migration_name,
+                self.migration_number,
+                checksum,
+                self.description,
+                execution_time_ms,
+                rollback_sql,
+                "migration-base",
+                await resolve_applied_as(conn),
+                resolve_applied_via(),
+                resolve_runner_version(),
+            )
+            return
+
+        await conn.execute(
+            """
+            INSERT INTO _schema_versions
+            (migration_name, migration_number, checksum, description, execution_time_ms, rollback_sql, applied_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (migration_name) DO NOTHING
+        """,
+            self.migration_name,
+            self.migration_number,
+            checksum,
+            self.description,
+            execution_time_ms,
+            rollback_sql,
+            "migration-base",
+        )
+
+    async def verify(self, conn: asyncpg.Connection) -> bool:
+        """
+        Verify migration was applied correctly.
+
+        Override this method in subclasses to add custom verification logic.
+
+        Returns:
+            True if verification passes, False otherwise
+        """
+        return True
+
+    async def verify_apply(self, conn: asyncpg.Connection | None) -> bool:
+        """
+        Verify post-apply state. Override in subclasses for custom checks.
+
+        Returns:
+            True if post-apply verification passes.
+        """
+        return True
+
+    async def verify_rollback(self, conn: asyncpg.Connection | None) -> bool:
+        """
+        Verify post-rollback state. Override in subclasses for custom checks.
+
+        Returns:
+            True if post-rollback verification passes.
+        """
+        return True
+
+    async def apply(
+        self, database_url: str | None = None, *, dedicated: bool | None = None
+    ) -> bool:
+        """
+        Apply migration with transaction and automatic rollback.
+
+        Args:
+            database_url: the DSN to apply through. `MigrationManager` passes
+                its own, so the ledger, the advisory lock and the SQL all hit
+                ONE database (codex finding 1, 2026-09-11 -- before this the
+                manager's pool and this connect could resolve differently).
+                Defaults to `resolve_migration_dsn()`.
+            dedicated: the mode BOUND to that DSN by `MigrationManager`. When
+                omitted (a standalone `apply()`), it is classified from the
+                DSN actually selected on this call, never from the ambient
+                setting alone -- so an explicit legacy URL stays legacy.
+
+        Returns:
+            True if migration applied successfully, False otherwise
+
+        Raises:
+            MigrationError: If migration fails or validation fails
+        """
+        dsn = database_url or resolve_migration_dsn()
+        if dedicated is None:
+            dedicated = migration_dsn_is_dedicated(dsn)
+        if not dsn:
+            raise MigrationError("DATABASE_URL not configured")
+
+        # Read SQL file
+        try:
+            sql = self.sql_file.read_text(encoding="utf-8")
+        except Exception as e:
+            raise MigrationError(f"Failed to read SQL file {self.sql_file}: {e}") from e
+
+        # The file may contain a `-- === ROLLBACK ===` marker followed by
+        # rollback DDL. PostgreSQL treats the marker as a comment, so executing
+        # the full file would CREATE then DROP the same objects in one
+        # transaction. Apply the forward portion only; the rollback string is
+        # stored separately on `self.rollback_sql` for `rollback_migration()`.
+        sql_forward, _embedded_rollback = split_migration_sql(sql)
+
+        # Validate SQL
+        try:
+            self._validate_sql(sql_forward)
+        except MigrationError as e:
+            logger.error(f"SQL validation failed for {self.migration_name}: {e}")
+            raise
+
+        # Sanitize URL for logging
+        safe_url = self._sanitize_db_url(dsn)
+        logger.info(f"Applying migration {self.migration_name} to {safe_url}")
+
+        # Connect to database
+        try:
+            conn = await asyncpg.connect(dsn)
+        except Exception as e:
+            raise MigrationError(f"Cannot connect to database: {e}") from e
+
+        # Option D: the migrator session becomes the runtime role BEFORE the
+        # transaction opens, so the file's own `RESET ROLE`/`SET ROLE` pair
+        # (if any) brackets exactly the block that needs the ledger owner.
+        try:
+            await assume_runtime_role(conn, dedicated=dedicated)
+        except MigrationError:
+            await conn.close()
+            raise
+        except Exception as e:  # a catalogue/network failure must not leak the connection
+            await conn.close()
+            raise MigrationError(f"Cannot assume the runtime role: {e}") from e
+
+        start_time = time.time()
+
+        async def _attempt() -> bool:
+            # Check dependencies
+            await self._check_dependencies(conn)
+
+            # Check if already applied
+            if await self._is_applied(conn):
+                execution_time_ms = int((time.time() - start_time) * 1000)
+                await self._log_migration(
+                    conn,
+                    sql,
+                    execution_time_ms,
+                    self.rollback_sql,
+                )
+                logger.info(
+                    "Migration %s already applied; migration ledgers reconciled",
+                    self.migration_name,
+                )
+                return True
+
+            # Execute SQL (forward portion only; rollback portion is
+            # stored on `self.rollback_sql` and will be re-run via
+            # MigrationManager.rollback_migration if ever invoked).
+            try:
+                await conn.execute(sql_forward)
+            except asyncpg.exceptions.LockNotAvailableError:
+                # Let run_with_lock_retry see this undisguised so it can
+                # decide whether to retry the whole attempt.
+                raise
+            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
+                raise MigrationError(f"SQL execution failed: {e}") from e
+
+            # Verify migration
+            if not await self.verify(conn):
+                raise MigrationError(f"Verification failed for {self.migration_name}")
+
+            if not await self.verify_apply(conn):
+                raise MigrationError(f"verify_apply failed for {self.migration_name}")
+
+            # Log migration
+            execution_time_ms = int((time.time() - start_time) * 1000)
+            await self._log_migration(conn, sql, execution_time_ms, self.rollback_sql)
+
+            logger.info(
+                f"✅ Migration {self.migration_name} applied successfully in {execution_time_ms}ms",
+            )
+            return True
+
+        try:
+            # `run_with_lock_retry` opens the transaction (one per attempt) and
+            # retries the WHOLE body -- including the ledger write above -- on
+            # a lock-timed-out DDL; see its docstring for why the ledger write
+            # stays inside rather than moving after the retried transaction.
+            return await run_with_lock_retry(conn, self.migration_name, _attempt)
+        except MigrationError:
+            # Re-raise migration errors
+            raise
+        except Exception as e:
+            logger.error(f"Migration {self.migration_name} failed: {e}", exc_info=True)
+            raise MigrationError(f"Migration failed: {e}") from e
+        finally:
+            await conn.close()
+
+    async def rollback(self, manager) -> bool:
+        """
+        Rollback migration using MigrationManager.
+
+        Args:
+            manager: MigrationManager instance
+
+        Returns:
+            True if rollback successful, False otherwise
+        """
+        return await manager.rollback_migration(self.migration_name)
+
+    def __repr__(self) -> str:
+        return f"<Migration {self.migration_number}: {self.description}>"

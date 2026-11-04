@@ -1,0 +1,272 @@
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+const { mockGetTaxOverview, mockToastError } = vi.hoisted(() => ({
+  mockGetTaxOverview: vi.fn(),
+  mockToastError: vi.fn(),
+}));
+
+vi.mock("@/lib/api", () => ({
+  api: {
+    portal: {
+      getTaxOverview: mockGetTaxOverview,
+    },
+  },
+}));
+
+vi.mock("@/components/ui/toast", () => ({
+  useToast: () => ({ error: mockToastError }),
+}));
+
+vi.mock("@/lib/logger", () => ({
+  logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+}));
+
+vi.mock("@/lib/analytics", () => ({
+  trackTaxDashboardViewed: vi.fn(),
+}));
+
+import TaxesPage from "./page";
+
+const TAX_DATA = {
+  summary: {
+    status: "attention",
+    totalDue: 4_500_000,
+    nextDeadline: new Date(Date.now() + 5 * 86400000).toISOString(),
+    daysToDeadline: 5,
+    pendingCount: 1,
+    overdueCount: 1,
+  },
+  obligations: [
+    {
+      id: "ob-1",
+      name: "PPh 25 Monthly Installment",
+      type: "PPh 25",
+      period: "Jul 2026",
+      dueDate: new Date(Date.now() + 5 * 86400000).toISOString(),
+      status: "pending",
+      amount: 4_500_000,
+    },
+    {
+      id: "ob-2",
+      name: "PPN Monthly Return",
+      type: "PPN",
+      period: "Jun 2026",
+      dueDate: new Date(Date.now() - 10 * 86400000).toISOString(),
+      status: "overdue",
+      amount: 2_000_000,
+    },
+    {
+      id: "ob-3",
+      name: "PPh 21 Withholding",
+      type: "PPh 21",
+      period: "Jun 2026",
+      dueDate: new Date(Date.now() - 40 * 86400000).toISOString(),
+      status: "filed",
+    },
+  ],
+};
+
+async function renderLoaded() {
+  mockGetTaxOverview.mockResolvedValue(TAX_DATA);
+  const utils = render(<TaxesPage />);
+  await screen.findByText("PPh 25 Monthly Installment");
+  return utils;
+}
+
+describe("TaxesPage", () => {
+  it("renders the day masthead and token-driven surfaces (WS3 slice 5)", async () => {
+    const { container } = await renderLoaded();
+
+    // Day masthead: copper rule + Cormorant serif headline in --tx-pure.
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading).toHaveTextContent("Tax Overview");
+    expect(heading.style.fontFamily).toBe("var(--font-serif)");
+    expect(heading.className).toContain("text-[var(--tx-pure)]");
+    expect(
+      container.querySelector(
+        '[aria-hidden="true"].bg-\\[var\\(--bz-copper\\)\\]',
+      ),
+    ).not.toBeNull();
+
+    // Card surfaces read theme tokens, not the old dark rgba glass.
+    expect(container.innerHTML).toContain("var(--bz-elevated)");
+    expect(container.innerHTML).not.toContain("rgba(30,30,35,0.7)");
+    expect(container.innerHTML).not.toContain("rgba(255,255,255,0.05)");
+  });
+
+  it("says Total Due is not tracked instead of printing Rp 0", async () => {
+    // The backend has no payment tracking, so it now sends totalDue: null
+    // rather than a hardcoded 0 that this tile rendered as a confident
+    // "Rp 0" (portal audit, ux F2). A measured zero still prints Rp 0.
+    mockGetTaxOverview.mockResolvedValue({
+      summary: { ...TAX_DATA.summary, totalDue: null },
+      obligations: [],
+    });
+    render(<TaxesPage />);
+
+    expect(await screen.findByText("Not tracked")).toBeInTheDocument();
+    expect(screen.queryByText("Rp 0")).toBeNull();
+  });
+
+  it("renders no obligations section when the client has none", async () => {
+    // A client with no company, no tax practice and no NPWP gets an empty
+    // obligations list from the backend (portal audit, live F-05).
+    mockGetTaxOverview.mockResolvedValue({
+      summary: {
+        status: "none",
+        totalDue: null,
+        nextDeadline: null,
+        daysToDeadline: null,
+        pendingCount: 0,
+        overdueCount: 0,
+      },
+      obligations: [],
+    });
+    render(<TaxesPage />);
+
+    await screen.findByText("Not tracked");
+    expect(screen.queryByText("Current Obligations")).toBeNull();
+    expect(screen.queryByText("Pending")).toBeNull();
+  });
+
+  it("maps obligation statuses to the semantic --state-* tokens", async () => {
+    await renderLoaded();
+
+    // StatusBadge tone chips: color-mix tint bg + state-token fg.
+    const pendingChip = screen.getByText("Pending").closest("div");
+    expect(pendingChip?.style.color).toBe("var(--state-warning)");
+    expect(pendingChip?.style.background).toContain("color-mix");
+    const overdueChip = screen.getByText("Overdue").closest("div");
+    expect(overdueChip?.style.color).toBe("var(--state-danger)");
+    const filedChip = screen.getByText("Filed").closest("div");
+    expect(filedChip?.style.color).toBe("var(--state-success)");
+  });
+
+  it("colors the days-to-deadline panel with the danger state token", async () => {
+    await renderLoaded();
+
+    // daysToDeadline = 5 → ≤ 7 → --state-danger (icon + number + tint panel).
+    const daysNumber = screen.getByText("5");
+    expect(daysNumber.style.color).toBe("var(--state-danger)");
+    const panel = daysNumber.closest("div")?.parentElement?.parentElement;
+    expect(panel?.style.background).toContain("var(--state-danger) 8%");
+    expect(panel?.style.borderColor).toContain("var(--state-danger) 30%");
+  });
+
+  it("renders countdown chips via the shared token-driven CountdownChip", async () => {
+    await renderLoaded();
+
+    // Both deadlines fall in the ≤7d danger window (5d future / 10d overdue).
+    const chips = screen
+      .getAllByText(/d left|overdue|today/)
+      .filter((el) => el.style.background.includes("color-mix"));
+    expect(chips.length).toBeGreaterThanOrEqual(2);
+    for (const chip of chips) {
+      expect(chip.style.color).toBe("var(--state-danger)");
+    }
+  });
+
+  it("uses the AA daylight copper step for the help notice", async () => {
+    await renderLoaded();
+
+    const helpNotice = screen.getByText(/Need help with your taxes/);
+    expect(helpNotice.style.color).toBe(
+      "var(--bz-copper-text, var(--tx-secondary))",
+    );
+  });
+
+  it("renders the loading skeleton without hardcoded dark surfaces", () => {
+    mockGetTaxOverview.mockReturnValue(new Promise(() => {}));
+    const { container } = render(<TaxesPage />);
+    expect(container.querySelector(".animate-pulse")).not.toBeNull();
+    expect(container.innerHTML).not.toContain("rgba(30,30,35,0.7)");
+  });
+
+  it("renders the empty state when no tax data is available", async () => {
+    mockGetTaxOverview.mockResolvedValue(null);
+    render(<TaxesPage />);
+    expect(
+      await screen.findByText("No tax data available"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      "Tax Overview",
+    );
+  });
+
+  it("distinguishes an initial outage from a truthful empty state and recovers", async () => {
+    mockGetTaxOverview
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValueOnce(TAX_DATA);
+    render(<TaxesPage />);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Unable to load tax information",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No tax data available")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "We couldn't verify your tax records. Check your connection and try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(mockToastError).toHaveBeenCalledWith(
+      "Failed to load tax information",
+      "Please try again later",
+    );
+
+    const callsAfterFailure = mockGetTaxOverview.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Tax Status")).toBeInTheDocument();
+    expect(mockGetTaxOverview).toHaveBeenCalledTimes(callsAfterFailure + 1);
+  });
+
+  it("shows no compliance badge or wording in the Tax Status card when there is no deadline", async () => {
+    mockGetTaxOverview.mockResolvedValue({
+      ...TAX_DATA,
+      summary: {
+        ...TAX_DATA.summary,
+        status: "none",
+        nextDeadline: null,
+        daysToDeadline: null,
+      },
+    });
+    render(<TaxesPage />);
+    const headerRow = (await screen.findByText("Tax Status")).closest(
+      "div.justify-between",
+    ) as HTMLElement;
+
+    expect(screen.queryByText("Compliant")).not.toBeInTheDocument();
+    expect(within(headerRow).queryByText("Compliant")).not.toBeInTheDocument();
+    expect(headerRow.querySelector(".rounded-full")).toBeNull();
+  });
+
+  it("shows no compliance badge or wording in the Tax Status card when the deadline is far away", async () => {
+    mockGetTaxOverview.mockResolvedValue({
+      ...TAX_DATA,
+      summary: { ...TAX_DATA.summary, status: "upcoming" },
+    });
+    render(<TaxesPage />);
+    const headerRow = (await screen.findByText("Tax Status")).closest(
+      "div.justify-between",
+    ) as HTMLElement;
+
+    expect(screen.queryByText("Compliant")).not.toBeInTheDocument();
+    expect(within(headerRow).queryByText("Compliant")).not.toBeInTheDocument();
+    expect(headerRow.querySelector(".rounded-full")).toBeNull();
+  });
+
+  it("renders the Overdue badge in the Tax Status card when tax status is overdue", async () => {
+    mockGetTaxOverview.mockResolvedValue({
+      ...TAX_DATA,
+      summary: { ...TAX_DATA.summary, status: "overdue" },
+    });
+    render(<TaxesPage />);
+    const summarySection = (await screen.findByText("Tax Status")).closest(
+      "section",
+    ) as HTMLElement;
+
+    expect(within(summarySection).getByText("Overdue")).toBeInTheDocument();
+  });
+});

@@ -1,0 +1,172 @@
+{
+  "code": "D12",
+  "official_name_id": "D12 Visa Kunjungan Pra-Investasi",
+  "source_url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/D12",
+  "retrieved_at": "2026-10-17T13:27:32Z",
+  "page_sha256": "2aefc8353dd1c9a085ef2cefb8895cb90b4508d0bdb3004a5eb047f9ae757f66",
+  "definition_verbatim": "melakukan kunjungan dalam rangka prainvestasi atau memulai usaha antara lain survei lapangan dan/atau studi kelayakan. Termasuk dengan visa ini anda dapat berwisata serta mengunjungi teman dan keluarga.",
+  "jenis_visa_verbatim": "Visa D12 merupakan Visa Kunjungan untuk beberapa kali masuk ke Indonesia dengan izin tinggal maksimal 180 hari setiap kedatangan, serta dihitung sejak tanggal kedatangan. Izin tinggal dari visa ini bisa diperpanjang untuk 180 hari berikutnya namun tidak bisa dialihkan menjadi izin tinggal terbatas.",
+  "stay_days": [
+    "Anda dapat tinggal di Indonesia maksimal 180 hari, dihitung sejak tanggal kedatangan."
+  ],
+  "extendable": [
+    "Anda dapat memperpanjang izin tinggal ini satu kali hingga keseluruhan masa tinggal paling lama 12 bulan (1 tahun) atau 2 tahun, bergantung pada durasi visa yang Anda pilih.",
+    "Perpanjangan izin tinggal dapat dilakukan secara online oleh sponsor melalui akun yang telah terdaftar di evisa.imigrasi.go.id",
+    "Izin tinggal dari visa ini bisa diperpanjang untuk 180 hari berikutnya namun tidak bisa dialihkan menjadi izin tinggal terbatas."
+  ],
+  "entry": "multiple",
+  "where_to_apply": null,
+  "sponsor_required": {
+    "as_stated_boolean": false,
+    "verbatim": [
+      "Anda tidak membutuhkan penjamin/sponsor untuk mengajukan visa ini."
+    ],
+    "invitation_requirement_see": "requirements_verbatim (Persyaratan Khusus)"
+  },
+  "requirements_verbatim": [
+    {
+      "n": 1,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "dokumen perjalanan yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis, (untuk pemegang dokumen perjalanan selain paspor kebangsaan seperti paspor darurat, dokumen identitas, dll harus berlaku selama 12 bulan);"
+    },
+    {
+      "n": 2,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "bukti memiliki biaya hidup selama berada di wilayah Indonesia berupa rekening koran 3 bulan terakhir atas nama Orang Asing atau penjamin sebesar minimal USD5000 atau dalam mata uang lain yang setara jumlahnya,"
+    },
+    {
+      "n": 3,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "pasfoto berwarna terbaru (setahun terakhir). Detail"
+    },
+    {
+      "n": 4,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "curriculum vitae,"
+    },
+    {
+      "n": 5,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "rencana perjalanan (travel itinerary)."
+    },
+    {
+      "n": 6,
+      "section": "Persyaratan khusus",
+      "text": "surat keterangan, undangan, atau korespondensi dari instansi pemerintah atau lembaga swasta yang menjelaskan hubungan dengan Orang Asing bersangkutan."
+    }
+  ],
+  "pengajuan_intro_verbatim": "Orang asing harus memiliki akun di evisa.imigrasi.go.id sebelum mengajukan visa. Setelah memiliki akun, orang asing dapat mengajukan visa setelah login di evisa.imigrasi.go.id dengan menyiapkan berkas elektronik (detail format file) Orang Asing antara lain:",
+  "allowed_activities": "melakukan kunjungan dalam rangka prainvestasi atau memulai usaha antara lain survei lapangan dan/atau studi kelayakan. Termasuk dengan visa ini anda dapat berwisata serta mengunjungi teman dan keluarga.",
+  "prohibited_or_conditions_verbatim": [
+    "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa paspor sementara, paspor darurat, titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya harus melampirkan dokumen Izin Masuk Kembali ke negara tempat Visa Multipel diajukan serta tiket kembali/tiket terusan ke negara lain (kecuali bagi awak alat angkut).",
+    "Masa berlaku visa terhitung sejak tanggal penerbitan. Jika tidak digunakan setelah jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.",
+    "Orang Asing dengan izin tinggal dari visa ini dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+  ],
+  "ketentuan_lain_verbatim": [
+    "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa paspor sementara, paspor darurat, titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya harus melampirkan dokumen Izin Masuk Kembali ke negara tempat Visa Multipel diajukan serta tiket kembali/tiket terusan ke negara lain (kecuali bagi awak alat angkut).",
+    "Masa berlaku visa terhitung sejak tanggal penerbitan. Jika tidak digunakan setelah jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.",
+    "Orang Asing dengan izin tinggal dari visa ini dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+  ],
+  "pnbp_verbatim_for_reference_only": [
+    "Masa tinggal 1 tahun Rp. 5.000.000",
+    "- Biaya visa 1 tahun Rp 3.000.000",
+    "- Biaya Verifikasi II Rp 2,000,000",
+    "Masa tinggal 2 tahun Rp. 7.000.000",
+    "- Biaya visa 2 tahun Rp 5.000.000",
+    "- Biaya Verifikasi II Rp 2,000,000",
+    "Semua pembayaran (PNBP) dapat dilakukan melalui beberapa bank yang telah ditunjuk. Silakan lihat kode billing yang muncul di sistem setelah pengajuan visa oleh sponsor."
+  ],
+  "itap_verbatim": [
+    {
+      "text": "Izin tinggal dari visa ini bisa diperpanjang untuk 180 hari berikutnya namun tidak bisa dialihkan menjadi izin tinggal terbatas.",
+      "url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/D12"
+    }
+  ],
+  "itap_eligibility_as_stated": null,
+  "total_max_verbatim": [
+    "Anda dapat memperpanjang izin tinggal ini satu kali hingga keseluruhan masa tinggal paling lama 12 bulan (1 tahun) atau 2 tahun, bergantung pada durasi visa yang Anda pilih."
+  ],
+  "notes": [
+    "PNBP is official-source reference only; never a client price.",
+    "VERIFIED_FROM_SOURCE confirms extraction, not resolution of contradictions or legal eligibility.",
+    "Requirement numbers follow source order; nested alternatives remain verbatim. A/B counts include the application steps listed by the source."
+  ],
+  "status": "VERIFIED_FROM_SOURCE",
+  "to_verify": [
+    "where_to_apply: null + TO_VERIFY; no explicit offshore/onshore application rule on the visa page.",
+    "conflicts: No sponsor stated for application; extension instructions refer to a sponsor.",
+    "conflicts: Extension duration differs between Jenis visa and Masa tinggal."
+  ],
+  "conflicts": [
+    {
+      "issue": "No sponsor stated for application; extension instructions refer to a sponsor.",
+      "quotes": [
+        "Anda tidak membutuhkan penjamin/sponsor untuk mengajukan visa ini.",
+        "Perpanjangan izin tinggal dapat dilakukan secara online oleh sponsor melalui akun yang telah terdaftar di evisa.imigrasi.go.id"
+      ],
+      "status": "TO_VERIFY"
+    },
+    {
+      "issue": "Extension duration differs between Jenis visa and Masa tinggal.",
+      "quotes": [
+        "Visa D12 merupakan Visa Kunjungan untuk beberapa kali masuk ke Indonesia dengan izin tinggal maksimal 180 hari setiap kedatangan, serta dihitung sejak tanggal kedatangan. Izin tinggal dari visa ini bisa diperpanjang untuk 180 hari berikutnya namun tidak bisa dialihkan menjadi izin tinggal terbatas.",
+        "Anda dapat memperpanjang izin tinggal ini satu kali hingga keseluruhan masa tinggal paling lama 12 bulan (1 tahun) atau 2 tahun, bergantung pada durasi visa yang Anda pilih."
+      ],
+      "status": "TO_VERIFY"
+    }
+  ],
+  "source_http_status": 200,
+  "source_raw_path": "raw/D12.html",
+  "source_sections_verbatim": [
+    {
+      "heading": "Dengan visa D12, anda dapat",
+      "text": "melakukan kunjungan dalam rangka prainvestasi atau memulai usaha antara lain survei lapangan dan/atau studi kelayakan. Termasuk dengan visa ini anda dapat berwisata serta mengunjungi teman dan keluarga."
+    },
+    {
+      "heading": "Jenis visa",
+      "text": "Visa D12 merupakan Visa Kunjungan untuk beberapa kali masuk ke Indonesia dengan izin tinggal maksimal 180 hari setiap kedatangan, serta dihitung sejak tanggal kedatangan. Izin tinggal dari visa ini bisa diperpanjang untuk 180 hari berikutnya namun tidak bisa dialihkan menjadi izin tinggal terbatas."
+    },
+    {
+      "heading": "Masa tinggal",
+      "text": "Anda dapat tinggal di Indonesia maksimal 180 hari, dihitung sejak tanggal kedatangan.\nAnda dapat memperpanjang izin tinggal ini satu kali hingga keseluruhan masa tinggal paling lama 12 bulan (1 tahun) atau 2 tahun, bergantung pada durasi visa yang Anda pilih.\nPerpanjangan izin tinggal dapat dilakukan secara online oleh sponsor melalui akun yang telah terdaftar di evisa.imigrasi.go.id"
+    },
+    {
+      "heading": "Biaya (PNBP)",
+      "text": "Masa tinggal 1 tahun Rp. 5.000.000\nBiaya visa 1 tahun Rp 3.000.000\nBiaya Verifikasi II Rp 2,000,000\nMasa tinggal 2 tahun Rp. 7.000.000\nBiaya visa 2 tahun Rp 5.000.000\nBiaya Verifikasi II Rp 2,000,000\nSemua pembayaran (PNBP) dapat dilakukan melalui beberapa bank yang telah ditunjuk. Silakan lihat kode billing yang muncul di sistem setelah pengajuan visa oleh sponsor."
+    },
+    {
+      "heading": "Penjamin (Sponsor)",
+      "text": "Anda tidak membutuhkan penjamin/sponsor untuk mengajukan visa ini."
+    },
+    {
+      "heading": "Pengajuan visa",
+      "text": "Orang asing harus memiliki akun di evisa.imigrasi.go.id sebelum mengajukan visa. Setelah memiliki akun, orang asing dapat mengajukan visa setelah login di evisa.imigrasi.go.id dengan menyiapkan berkas elektronik (detail format file) Orang Asing antara lain:\ndokumen perjalanan yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis, (untuk pemegang dokumen perjalanan selain paspor kebangsaan seperti paspor darurat, dokumen identitas, dll harus berlaku selama 12 bulan);\nbukti memiliki biaya hidup selama berada di wilayah Indonesia berupa rekening koran 3 bulan terakhir atas nama Orang Asing atau penjamin sebesar minimal USD5000 atau dalam mata uang lain yang setara jumlahnya,\npasfoto berwarna terbaru (setahun terakhir). Detail\ncurriculum vitae,\nrencana perjalanan (travel itinerary)."
+    },
+    {
+      "heading": "Persyaratan khusus",
+      "text": "surat keterangan, undangan, atau korespondensi dari instansi pemerintah atau lembaga swasta yang menjelaskan hubungan dengan Orang Asing bersangkutan."
+    },
+    {
+      "heading": "Ketentuan lain",
+      "text": "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa paspor sementara, paspor darurat, titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya harus melampirkan dokumen Izin Masuk Kembali ke negara tempat Visa Multipel diajukan serta tiket kembali/tiket terusan ke negara lain (kecuali bagi awak alat angkut).\nMasa berlaku visa terhitung sejak tanggal penerbitan. Jika tidak digunakan setelah jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.\nOrang Asing dengan izin tinggal dari visa ini dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+    },
+    {
+      "heading": "Proses pengajuan dan pemberian visa",
+      "text": "Pengajuan Visa di Direktorat Jenderal Imigrasi:\npemeriksaan kelengkapan persyaratan;\nverifikasi pembayaran biaya imigrasi sesuai dengan ketentuan peraturan perundang-undangan;\npembuatan profil dan verifikasi;\npersetujuan;\npenerbitan visa.\nWaktu Proses lima hari kerja setelah pembayaran visa diterima."
+    },
+    {
+      "heading": "Dasar hukum",
+      "text": "Peraturan Pemerintah Nomor 45 tahun 2024 tentang Tarif PNBP di Lingkungan Kementerian Hukum dan HAM RI\nPeraturan Menteri Hukum dan HAM RI Nomor 11 Tahun 2024 tentang Visa dan Izin Tinggal\nPeraturan Menteri Hukum dan HAM RI Nomor 22 tahun 2023 tentang Visa dan Izin Tinggal\nKeputusan Menteri Imigrasi dan Pemasyarakatan Nomor M.IP-08.GR.01.01 tahun 2025 tentang Klasifikasi Visa\nPeraturan Menteri Keuangan RI Nomor 9/PMK.02/2022 tentang Jenis dan Tarif PNBP Kebutuhan Mendesak atas Pelayanan Keimigrasian yang berlaku pada Kemenkumham RI\nPeraturan Menteri Keuangan RI Nomor 82 Tahun 2023 tentang Jenis dan Tarif atas Jenis PNBP Kebutuhan Mendesak atas Pelayanan Golden Visa yang berlaku pada Kemenkumham RI"
+    }
+  ],
+  "persyaratan_khusus_verbatim": "surat keterangan, undangan, atau korespondensi dari instansi pemerintah atau lembaga swasta yang menjelaskan hubungan dengan Orang Asing bersangkutan.",
+  "itap_explicit_on_visa_page": false,
+  "owner_rulings": [
+    {
+      "date": "2026-10-19",
+      "topic": "max_stay_per_entry",
+      "ruling": "Maximum stay 180 days per entry; visa validity 1 or 2 years. max_total_days 180 (per entry).",
+      "history": "The page's conflicting passages (Jenis visa: another 180 days; Masa tinggal: total 12 months or 2 years) stay quoted and the conflicts entry stays in to_verify. NB-2 reads Permenkumham 22/2023 jo. 11/2024 Pasal 95 ayat (4) as extensions of 180 days each up to 12 months total: PLAUSIBLE dissent, the owner ruling decides."
+    }
+  ]
+}

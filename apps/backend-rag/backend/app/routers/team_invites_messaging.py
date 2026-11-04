@@ -1,0 +1,680 @@
+"""
+ZANTARA CRM - Portal Integration Router
+
+Team-side endpoints for Portal interaction:
+- Check client portal status
+- Send portal invites from CRM
+- Preview client's portal view
+- Get unread messages count
+- Send messages to clients
+
+This creates the "intradinamici" connection between Team and Portal.
+
+Created: 2025-12-30
+"""
+
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
+from uuid import uuid4
+
+import asyncpg
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, EmailStr
+
+from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.deps.crm_access import get_crm_user_filter
+from backend.app.utils.crm_utils import verify_client_access
+from backend.app.utils.logging_utils import get_logger
+from backend.app.utils.service_accounts import is_human_team_member
+from backend.services.portal._rbac import ClientContext
+from backend.services.portal.portal_profile_service import PLACEHOLDER_PIN_HASH
+from backend.services.portal.portal_reply_service import get_pending_replies
+
+if TYPE_CHECKING:
+    from backend.services.portal import InviteService, PortalService
+else:
+    InviteService = Any
+    PortalService = Any
+
+
+def _utc_iso(value: datetime | None) -> str | None:
+    """ISO-8601 with an explicit UTC offset, even for a naive datetime.
+
+    `team_members.last_login` is `timestamp WITHOUT time zone` and is written
+    by `NOW()` on a database whose session timezone is UTC — so the value IS
+    UTC, but `.isoformat()` emitted it bare ("2026-09-10T21:54:37"), and
+    `new Date(...)` in the browser reads a bare timestamp as LOCAL time. On a
+    WITA screen that shifted a login made at 05:54 today to "Sep 10" —
+    yesterday (portal audit finding F-07). Attaching the offset the value
+    already has costs nothing and lets every reader localise it correctly.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
+
+
+def _team_impersonation_ctx(client_id: int, current_user: dict) -> ClientContext:
+    """
+    Build a ClientContext for a team member viewing a client's portal data.
+
+    Callers MUST have already invoked `verify_client_access(client_id, ...)`
+    before using this helper. The service-layer RBAC decorator treats the
+    returned context as an authorised impersonation (impersonating=True)
+    because the RBAC gate already fired at the router layer.
+
+    Audit 2026-04-18 HIGH-6.
+    """
+    return ClientContext(
+        client_id=client_id,
+        email=str(current_user.get("email") or ""),
+        impersonating=True,
+        user_id=str(current_user.get("user_id") or current_user.get("id") or ""),
+        name=str(current_user.get("name") or ""),
+    )
+
+
+logger = get_logger(__name__)
+
+router = APIRouter(prefix="/api/crm/portal", tags=["team-invites"])
+
+
+# ================================================
+# PYDANTIC MODELS
+# ================================================
+
+
+class PortalStatusResponse(BaseModel):
+    """Portal status for a client"""
+
+    has_portal_access: bool
+    portal_user_id: int | None = None
+    portal_email: str | None = None
+    last_login: str | None = None
+    pending_invite: bool = False
+    invite_expires_at: str | None = None
+
+
+class SendInviteRequest(BaseModel):
+    """Request to send portal invite"""
+
+    email: EmailStr | None = None  # Optional - uses client email if not provided
+
+
+class TeamMessageRequest(BaseModel):
+    """Request to send message to client"""
+
+    content: str
+    subject: str | None = None
+    practice_id: int | None = None
+
+
+class UnreadCountResponse(BaseModel):
+    """Unread messages count"""
+
+    total_unread: int
+    by_client: list[dict[str, Any]]
+
+
+# ================================================
+# HELPER FUNCTIONS
+# ================================================
+
+
+def _invitation_public_view(result: dict[str, Any]) -> dict[str, Any]:
+    """Strip the raw invitation secret before it reaches an HTTP response.
+
+    ``InviteService.create_invitation`` returns ``token``/``invite_url``
+    because the legitimate delivery channel (Brevo email in
+    ``portal_invite.send_invitation``) needs them to build the invite link.
+    This router has no email-sending step of its own (a separate defect,
+    not fixed here — see SPEC-p0-invite.md PR B / B1) and must never let
+    the raw, unsent token leak back to the calling team member's browser.
+    """
+    return {k: v for k, v in result.items() if k not in ("token", "invite_url")}
+
+
+def require_team_auth(current_user: dict = Depends(get_current_user)) -> dict:
+    """Ensure user is a real team member — neither a client nor a service account.
+
+    8 endpoints here send messages to real clients and grant portal-status
+    visibility; "not a client" is not the same question as "is a colleague".
+    """
+    if not is_human_team_member(current_user.get("role")):
+        raise HTTPException(
+            status_code=403,
+            detail="This endpoint is only accessible to team members",
+        )
+    return current_user
+
+
+def get_invite_service(db_pool: asyncpg.Pool = Depends(get_database_pool)) -> InviteService:
+    """Dependency injection for InviteService"""
+    from backend.services.portal import InviteService as _InviteService
+
+    return _InviteService(db_pool)
+
+
+def get_portal_service(db_pool: asyncpg.Pool = Depends(get_database_pool)) -> PortalService:
+    """Dependency injection for PortalService"""
+    from backend.services.portal import PortalService as _PortalService
+
+    return _PortalService(db_pool)
+
+
+# ================================================
+# PORTAL STATUS ENDPOINTS
+# ================================================
+
+
+@router.get("/clients/{client_id}/status")
+async def get_portal_status(
+    client_id: int,
+    current_user: dict = Depends(require_team_auth),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """
+    Check portal status for a client.
+
+    Returns:
+    - Whether client has portal access
+    - Portal user details if exists
+    - Pending invitation status
+    """
+    async with db_pool.acquire() as conn:
+        await verify_client_access(client_id, current_user, conn, allow_assigned=True)
+
+        # Check for portal user.
+        #
+        # `portal_access = true` alone is NOT portal access — superscar #2,
+        # Esiste != Armato. `PortalProfileService.ensure_portal_profile()` runs
+        # as a background task on every client creation that carries an email
+        # and inserts the row with `portal_access = true` and
+        # PLACEHOLDER_PIN_HASH, a hash that no PIN can ever match. Measured on
+        # production 2026-09-10: of 532 active client rows with
+        # `portal_access = true`, **448 carry that placeholder and can never log
+        # in** — 84% — and only 9 have ever logged in at all. Without the
+        # pin_hash predicate this endpoint answers "has portal access" for all
+        # 448, so the workspace shows "Portal active" for a client who was never
+        # invited and hides the control that would invite them.
+        #
+        # Compared by EQUALITY against the constant, not by a substring of it
+        # (superscar #3): a guard on an entity is an entity test.
+        #
+        # `last_login` is also read from the real column here. It used to be
+        # `tm.created_at as last_login`, so every "last signed in" the CRM
+        # displayed was in fact the date the record was created.
+        portal_user = await conn.fetchrow(
+            """
+            SELECT tm.id, tm.email, tm.last_login
+            FROM team_members tm
+            WHERE tm.linked_client_id = $1
+              AND tm.role = 'client'
+              AND tm.active = true
+              AND tm.portal_access = true
+              AND tm.pin_hash IS DISTINCT FROM $2
+            """,
+            client_id,
+            PLACEHOLDER_PIN_HASH,
+        )
+
+        # Check for pending invitation
+        pending_invite = await conn.fetchrow(
+            """
+            SELECT expires_at
+            FROM client_invitations
+            WHERE client_id = $1
+              AND used_at IS NULL
+              AND expires_at > NOW()
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            client_id,
+        )
+
+        if portal_user:
+            return {
+                "success": True,
+                "data": {
+                    "has_portal_access": True,
+                    "portal_user_id": portal_user["id"],
+                    "portal_email": portal_user["email"],
+                    "last_login": _utc_iso(portal_user["last_login"]),
+                    "pending_invite": False,
+                    "invite_expires_at": None,
+                },
+            }
+        if pending_invite:
+            return {
+                "success": True,
+                "data": {
+                    "has_portal_access": False,
+                    "portal_user_id": None,
+                    "portal_email": None,
+                    "last_login": None,
+                    "pending_invite": True,
+                    "invite_expires_at": pending_invite["expires_at"].isoformat(),
+                },
+            }
+        return {
+            "success": True,
+            "data": {
+                "has_portal_access": False,
+                "portal_user_id": None,
+                "portal_email": None,
+                "last_login": None,
+                "pending_invite": False,
+                "invite_expires_at": None,
+            },
+        }
+
+
+# ================================================
+# INVITE ENDPOINTS
+# ================================================
+
+
+@router.post("/clients/{client_id}/invite")
+async def send_portal_invite(
+    client_id: int,
+    request: SendInviteRequest | None = None,
+    current_user: dict = Depends(require_team_auth),
+    invite_service: InviteService = Depends(get_invite_service),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """
+    Send portal invitation to a client from CRM.
+
+    If email not provided, uses client's email from the clients table.
+
+    B1 (SPEC-p0-invite.md, 2026-08-23): this is a fourth invitation-minting
+    path — `write=True` requires the caller's email to match the client's
+    `assigned_to`/`created_by` or be an admin, and the response never
+    carries the raw `token`/`invite_url`.
+    """
+    async with db_pool.acquire() as conn:
+        await verify_client_access(client_id, current_user, conn, allow_assigned=True, write=True)
+
+    try:
+        # Get client email if not provided
+        email = request.email if request else None
+
+        if not email:
+            async with db_pool.acquire() as conn:
+                client = await conn.fetchrow(
+                    "SELECT email FROM clients WHERE id = $1",
+                    client_id,
+                )
+                if not client or not client["email"]:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Client has no email address. Please provide one.",
+                    )
+                email = client["email"]
+
+        result = await invite_service.create_invitation(
+            client_id=client_id,
+            email=email,
+            created_by=current_user.get("email", "system"),
+        )
+
+        logger.info(f"Portal invite sent for client {client_id} by {current_user.get('email')}")
+
+        return {
+            "success": True,
+            "message": f"Invitation sent to {email}",
+            "data": _invitation_public_view(result),
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to send portal invite: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to send invitation",
+        ) from e
+
+
+# ================================================
+# PREVIEW ENDPOINT
+# ================================================
+
+
+@router.get("/clients/{client_id}/preview")
+async def get_portal_preview(
+    client_id: int,
+    current_user: dict = Depends(require_team_auth),
+    portal_service: PortalService = Depends(get_portal_service),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """
+    Get client's portal view data (for "View as Client" feature).
+
+    Returns the same data the client would see in their portal dashboard.
+    """
+    async with db_pool.acquire() as conn:
+        await verify_client_access(client_id, current_user, conn, allow_assigned=True)
+
+    ctx = _team_impersonation_ctx(client_id, current_user)
+    try:
+        dashboard = await portal_service.get_dashboard(client_id, current_user=ctx)
+        visa = await portal_service.get_visa_status(client_id, current_user=ctx)
+        companies = await portal_service.get_companies(client_id, current_user=ctx)
+        taxes = await portal_service.get_tax_overview(client_id, current_user=ctx)
+
+        return {
+            "success": True,
+            "data": {
+                "dashboard": dashboard,
+                "visa": visa,
+                "companies": companies,
+                "taxes": taxes,
+            },
+        }
+    except Exception as e:
+        logger.error("Failed to get portal preview for client %s: %s", client_id, e)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to load portal preview",
+        ) from e
+
+
+# ================================================
+# MESSAGES ENDPOINTS (Team side)
+# ================================================
+
+
+@router.get("/messages/unread-count")
+async def get_unread_messages_count(
+    _current_user: dict = Depends(require_team_auth),
+    assigned_filter: str | None = Depends(get_crm_user_filter),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """
+    Get count of unread messages from all clients.
+
+    For header notification badge.
+
+    B3 (SPEC-p0-invite.md, 2026-08-23): scoped to the caller's assignment,
+    same pattern as `get_recent_portal_activity` below — `assigned_filter`
+    is None for admins (no filter, full book) and the caller's lowercased
+    email otherwise. Applied to BOTH queries: a total count that ignored
+    the filter would still leak the volume of a client the caller cannot
+    otherwise see.
+    """
+    async with db_pool.acquire() as conn:
+        # Total unread (joined to clients so the assignment filter can apply)
+        total_query = """
+            SELECT COUNT(*)
+            FROM portal_messages pm
+            JOIN clients c ON c.id = pm.client_id
+            WHERE pm.direction = 'client_to_team'
+              AND pm.read_at IS NULL
+              AND c.deleted_at IS NULL
+        """
+        total_params: list[str] = []
+
+        if assigned_filter is not None:
+            total_query += " AND LOWER(c.assigned_to) = $1"
+            total_params.append(assigned_filter)
+
+        total = await conn.fetchval(total_query, *total_params)
+
+        # By client
+        by_client_query = """
+            SELECT
+                pm.client_id,
+                c.full_name as client_name,
+                COUNT(*) as unread_count
+            FROM portal_messages pm
+            JOIN clients c ON c.id = pm.client_id
+            WHERE pm.direction = 'client_to_team'
+              AND pm.read_at IS NULL
+              AND c.deleted_at IS NULL
+        """
+        by_client_params: list[str] = []
+
+        if assigned_filter is not None:
+            by_client_query += " AND LOWER(c.assigned_to) = $1"
+            by_client_params.append(assigned_filter)
+
+        by_client_query += """
+            GROUP BY pm.client_id, c.full_name
+            ORDER BY unread_count DESC
+            LIMIT 10
+        """
+
+        by_client = await conn.fetch(by_client_query, *by_client_params)
+
+        return {
+            "success": True,
+            "data": {
+                **await get_pending_replies(conn, assigned_filter),
+                "total_unread": total or 0,
+                "by_client": [
+                    {
+                        "client_id": row["client_id"],
+                        "client_name": row["client_name"],
+                        "unread_count": row["unread_count"],
+                    }
+                    for row in by_client
+                ],
+            },
+        }
+
+
+@router.get("/clients/{client_id}/messages")
+async def get_client_messages(
+    client_id: int,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user: dict = Depends(require_team_auth),
+    portal_service: PortalService = Depends(get_portal_service),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """
+    Get message thread for a client (team view).
+
+    Same messages as client sees, but from team perspective.
+    """
+    async with db_pool.acquire() as conn:
+        await verify_client_access(client_id, current_user, conn, allow_assigned=True)
+
+    ctx = _team_impersonation_ctx(client_id, current_user)
+    try:
+        data = await portal_service.get_messages(
+            client_id,
+            limit=limit,
+            offset=offset,
+            current_user=ctx,
+        )
+        return {
+            "success": True,
+            "data": data,
+        }
+    except Exception as e:
+        logger.error("Failed to get messages for client %s: %s", client_id, e)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to load messages",
+        ) from e
+
+
+@router.post("/clients/{client_id}/messages")
+async def send_message_to_client(
+    client_id: int,
+    request: TeamMessageRequest,
+    current_user: dict = Depends(require_team_auth),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """
+    Send a message to a client (team → client).
+
+    B2 (SPEC-p0-invite.md, 2026-08-23 — owner ruling): restricted to
+    `write=True` — only the client's assigned team member (or `created_by`)
+    or a CRM admin may send. Behaviour change for staff: a colleague who is
+    not assigned to the client now gets 403 instead of being able to send a
+    client-visible message.
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            # S03-S3 / B2: BOLA fix — verify caller has write access to this client
+            await verify_client_access(
+                client_id, current_user, conn, allow_assigned=True, write=True
+            )
+
+            async with conn.transaction():
+                message = await conn.fetchrow(
+                    """
+                    INSERT INTO portal_messages
+                        (client_id, practice_id, subject, direction, content, sent_by)
+                    VALUES ($1, $2, $3, 'team_to_client', $4, $5)
+                    RETURNING id, subject, content, sent_by, created_at
+                    """,
+                    client_id,
+                    request.practice_id,
+                    request.subject,
+                    request.content,
+                    current_user.get("email", "team"),
+                )
+
+                await conn.execute(
+                    "INSERT INTO portal_message_email_outbox (message_id, idempotency_key) VALUES ($1, $2)",
+                    message["id"],
+                    uuid4(),
+                )
+
+            logger.info(
+                "Manual portal message saved: client_id=%s message_id=%s", client_id, message["id"]
+            )
+
+            return {
+                "success": True,
+                "message": "Message sent",
+                "data": {
+                    "id": message["id"],
+                    "subject": message["subject"],
+                    "content": message["content"],
+                    "sent_by": message["sent_by"],
+                    "created_at": message["created_at"].isoformat(),
+                },
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to send message to client %s: %s", client_id, e)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to send message",
+        ) from e
+
+
+@router.post("/clients/{client_id}/messages/{message_id}/read")
+async def mark_client_message_read(
+    client_id: int,
+    message_id: int,
+    current_user: dict = Depends(require_team_auth),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """
+    Mark a client message as read (team reading client's message).
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            await verify_client_access(
+                client_id, current_user, conn, allow_assigned=True, write=True
+            )
+
+            await conn.execute(
+                """
+                UPDATE portal_messages
+                SET read_at = NOW()
+                WHERE id = $1
+                  AND client_id = $2
+                  AND direction = 'client_to_team'
+                  AND read_at IS NULL
+                """,
+                message_id,
+                client_id,
+            )
+
+            return {
+                "success": True,
+                "message": "Message marked as read",
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to mark message %s as read: %s", message_id, e)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to update message",
+        ) from e
+
+
+# ================================================
+# ACTIVITY ENDPOINT
+# ================================================
+
+
+@router.get("/activity/recent")
+async def get_recent_portal_activity(
+    limit: int = Query(10, ge=1, le=50),
+    _current_user: dict = Depends(require_team_auth),
+    assigned_filter: str | None = Depends(get_crm_user_filter),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """
+    Get recent client portal activity.
+
+    For dashboard widget showing:
+    - New messages
+    - Document uploads
+    - Login activity
+    """
+    async with db_pool.acquire() as conn:
+        # Recent messages from clients (Filtered by access)
+        query = """
+            SELECT
+                pm.id,
+                'message' as activity_type,
+                pm.client_id,
+                c.full_name as client_name,
+                pm.subject,
+                LEFT(pm.content, 100) as preview,
+                pm.created_at
+            FROM portal_messages pm
+            JOIN clients c ON c.id = pm.client_id
+            WHERE pm.direction = 'client_to_team'
+        """
+        params: list[int | str] = [limit]
+
+        if assigned_filter is not None:
+            query += " AND LOWER(c.assigned_to) = $2"
+            params.append(assigned_filter)
+
+        query += " ORDER BY pm.created_at DESC LIMIT $1"
+
+        messages = await conn.fetch(query, *params)
+
+        return {
+            "success": True,
+            "data": {
+                "activities": [
+                    {
+                        "id": row["id"],
+                        "type": row["activity_type"],
+                        "client_id": row["client_id"],
+                        "client_name": row["client_name"],
+                        "subject": row["subject"],
+                        "preview": row["preview"],
+                        "timestamp": row["created_at"].isoformat(),
+                    }
+                    for row in messages
+                ],
+            },
+        }

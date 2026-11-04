@@ -1,0 +1,1464 @@
+"""
+Dashboard Summary Router
+
+Aggregated endpoint for dashboard data to reduce API calls.
+Replaces 7 separate calls with 1 optimized call.
+"""
+
+import asyncio
+import time
+from datetime import datetime, timezone
+from typing import Any
+
+import asyncpg
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from backend.app.core.config import settings
+from backend.app.dependencies import get_current_user, get_database_pool, require_team_member
+from backend.app.routers.crm_interactions import get_interactions_stats, list_interactions
+from backend.app.routers.crm_practices import get_practices_stats, list_practices
+from backend.app.utils.crm_utils import AvatarUrl
+from backend.app.utils.logging_utils import get_logger
+from backend.core.cache import get_cache_service
+from backend.core.collection_registry import resolve_collection_name
+from backend.core.qdrant_db import QdrantClient
+from backend.services.integrations.zoho_email_service import ZohoEmailService
+from backend.services.integrations.zoho_oauth_service import ZohoOAuthService
+from backend.services.memory.collective_memory_service import CollectiveMemoryService
+
+logger = get_logger(__name__)
+
+# Cache service for dashboard data
+_cache = get_cache_service()
+DASHBOARD_CACHE_TTL = 30  # 30 seconds cache for dashboard
+NEURAL_PULSE_CACHE_TTL = 60  # 60 seconds cache for neural pulse
+
+router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+
+
+# Default fallback data
+DEFAULT_PRACTICE_STATS = {
+    "total_practices": 0,
+    "active_practices": 0,
+    "by_status": {},
+    "by_type": [],
+    "revenue": {
+        "total_revenue": 0,
+        "paid_revenue": 0,
+        "outstanding_revenue": 0,
+    },
+}
+
+DEFAULT_INTERACTION_STATS = {
+    "total_interactions": 0,
+    "last_7_days": 0,
+    "by_type": {},
+    "by_sentiment": {},
+    "by_team_member": [],
+}
+
+DEFAULT_CLOCK_STATUS = {"today_hours": 0}
+
+
+def _get_user_id(current_user: dict) -> str:
+    """Extract user_id from current_user dict."""
+    return current_user.get("sub") or current_user.get("user_id", "")
+
+
+def _is_admin(current_user: dict) -> bool:
+    """Check if user is admin."""
+    role = current_user.get("role", "").lower()
+    return role in ["admin", "founder", "owner"]
+
+
+async def _get_email_stats(db_pool: asyncpg.Pool, user_id: str) -> dict:
+    """Get email statistics."""
+    try:
+        email_service = ZohoEmailService(db_pool)
+        oauth_service = ZohoOAuthService(db_pool)
+
+        # Check if email is connected using get_connection_status
+        connection_status = await oauth_service.get_connection_status(user_id)
+        if not connection_status.get("connected"):
+            return {"connected": False, "unread_count": 0}
+
+        # Get unread count
+        unread_count = await email_service.get_unread_count(user_id)
+
+        return {
+            "connected": True,
+            "unread_count": unread_count,
+        }
+    except Exception as e:
+        logger.warning("Failed to get email stats for user %s: %s", user_id, e)
+        return {"connected": False, "unread_count": 0}
+
+
+async def _get_critical_deadlines(db_pool: asyncpg.Pool, user_id: str, is_admin: bool) -> int:
+    """
+    Get count of practices with critical deadlines (expiring within 7 days).
+
+    Critical deadlines are practices with expiry_date within 7 days from today.
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            # Build query based on user role
+            if is_admin:
+                # Admin sees all practices
+                query = """
+                    SELECT COUNT(*) as count
+                    FROM practices
+                    WHERE expiry_date IS NOT NULL
+                    AND expiry_date > CURRENT_DATE
+                    AND expiry_date <= CURRENT_DATE + INTERVAL '7 days'
+                    AND status NOT IN ('completed', 'cancelled')
+                """
+                result = await conn.fetchrow(query)
+            else:
+                # Team members see only assigned practices
+                query = """
+                    SELECT COUNT(*) as count
+                    FROM practices
+                    WHERE expiry_date IS NOT NULL
+                    AND expiry_date > CURRENT_DATE
+                    AND expiry_date <= CURRENT_DATE + INTERVAL '7 days'
+                    AND status NOT IN ('completed', 'cancelled')
+                    AND assigned_to = $1
+                """
+                result = await conn.fetchrow(query, user_id)
+
+            return result["count"] if result else 0
+    except Exception as e:
+        logger.warning("Failed to get critical deadlines for user %s: %s", user_id, e)
+        return 0
+
+
+async def _get_revenue_stats(db_pool: asyncpg.Pool) -> dict:
+    """
+    Get revenue statistics (total, paid, outstanding).
+
+    Returns revenue from all practices with actual_price set.
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            revenue_row = await conn.fetchrow(
+                """
+                SELECT
+                    COALESCE(SUM(actual_price), 0) as total_revenue,
+                    COALESCE(SUM(CASE WHEN payment_status = 'paid' THEN actual_price ELSE 0 END), 0) as paid_revenue,
+                    COALESCE(SUM(CASE WHEN payment_status IN ('unpaid', 'partial') THEN actual_price - COALESCE(paid_amount, 0) ELSE 0 END), 0) as outstanding_revenue
+                FROM practices
+                WHERE actual_price IS NOT NULL
+                """,
+            )
+
+            if revenue_row:
+                return {
+                    "total_revenue": float(revenue_row["total_revenue"] or 0),
+                    "paid_revenue": float(revenue_row["paid_revenue"] or 0),
+                    "outstanding_revenue": float(revenue_row["outstanding_revenue"] or 0),
+                }
+            return {
+                "total_revenue": 0,
+                "paid_revenue": 0,
+                "outstanding_revenue": 0,
+            }
+    except Exception as e:
+        logger.warning("Failed to get revenue stats: %s", e)
+        return {
+            "total_revenue": 0,
+            "paid_revenue": 0,
+            "outstanding_revenue": 0,
+        }
+
+
+async def _get_total_clients(db_pool: asyncpg.Pool) -> int:
+    """
+    Total registered clients for the admin KPI bar.
+
+    Uses the SAME definition as /api/crm/clients/stats/overview (the source of
+    the /clients page total): every non-soft-deleted client, regardless of
+    status. NOT the /api/dashboard/stats definition (status = 'active'), which
+    yields a different number and would make the KPI disagree with /clients.
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            return await conn.fetchval("SELECT COUNT(*) FROM clients WHERE deleted_at IS NULL") or 0
+    except Exception as e:
+        logger.warning("Failed to get total clients: %s", e)
+        return 0
+
+
+async def _calculate_revenue_growth(db_pool: asyncpg.Pool) -> float:
+    """
+    Calculate revenue growth percentage (current month vs previous month).
+
+    Returns growth percentage as float (e.g., 5.5 for 5.5% growth).
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            # Get current month revenue
+            current_month = await conn.fetchrow(
+                """
+                SELECT COALESCE(SUM(actual_price), 0) as revenue
+                FROM practices
+                WHERE actual_price IS NOT NULL
+                AND payment_status = 'paid'
+                AND DATE_TRUNC('month', updated_at) = DATE_TRUNC('month', CURRENT_DATE)
+                """,
+            )
+
+            # Get previous month revenue
+            previous_month = await conn.fetchrow(
+                """
+                SELECT COALESCE(SUM(actual_price), 0) as revenue
+                FROM practices
+                WHERE actual_price IS NOT NULL
+                AND payment_status = 'paid'
+                AND DATE_TRUNC('month', updated_at) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
+                """,
+            )
+
+            current_revenue = float(current_month["revenue"] or 0) if current_month else 0
+            previous_revenue = float(previous_month["revenue"] or 0) if previous_month else 0
+
+            if previous_revenue == 0:
+                return 0.0 if current_revenue == 0 else 100.0
+
+            growth = ((current_revenue - previous_revenue) / previous_revenue) * 100
+            return round(growth, 1)
+    except Exception as e:
+        logger.warning("Failed to calculate revenue growth: %s", e)
+        return 0.0
+
+
+async def _get_active_team_members_count(db_pool: asyncpg.Pool) -> int:
+    """
+    Count of active team members for the owner's KPI bar (role=zero widget's
+    `agenti_count`). Replaces a `0` literal that never changed.
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            return await conn.fetchval("SELECT COUNT(*) FROM team_members WHERE active = TRUE") or 0
+    except Exception as e:
+        logger.warning("Failed to get active team members count: %s", e)
+        return 0
+
+
+async def _get_compliant_clients_count(db_pool: asyncpg.Pool) -> int:
+    """
+    Clients with no unresolved compliance alert (role=tax widget's
+    `clienti_compliant`). Replaces a `0` literal that never changed.
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            return (
+                await conn.fetchval(
+                    """SELECT COUNT(*) FROM clients c
+                   WHERE c.deleted_at IS NULL
+                   AND NOT EXISTS (
+                       SELECT 1 FROM compliance_alerts a
+                       WHERE a.client_id = c.id
+                       AND a.status IN ('pending', 'sent', 'acknowledged')
+                   )""",
+                )
+                or 0
+            )
+    except Exception as e:
+        logger.warning("Failed to get compliant clients count: %s", e)
+        return 0
+
+
+async def _get_pending_tax_alerts_count(db_pool: asyncpg.Pool) -> int:
+    """
+    Unresolved tax-category compliance alerts (role=tax widget's
+    `alert_pajak`). Replaces a `0` literal that never changed.
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            return (
+                await conn.fetchval(
+                    """SELECT COUNT(*) FROM compliance_alerts
+                   WHERE category = 'tax'
+                   AND status IN ('pending', 'sent', 'acknowledged')""",
+                )
+                or 0
+            )
+    except Exception as e:
+        logger.warning("Failed to get pending tax alerts count: %s", e)
+        return 0
+
+
+async def _get_new_leads_count(db_pool: asyncpg.Pool) -> int:
+    """
+    Homepage lead-intent handoffs created this month (role=marketing widget's
+    `lead_nuovi`). Replaces a `0` literal that never changed.
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            return (
+                await conn.fetchval(
+                    """SELECT COUNT(*) FROM lead_intents
+                   WHERE DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)""",
+                )
+                or 0
+            )
+    except Exception as e:
+        logger.warning("Failed to get new leads count: %s", e)
+        return 0
+
+
+@router.get("/summary")
+async def get_dashboard_summary(
+    current_user: dict = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """
+    Get aggregated dashboard data in a single call.
+
+    Replaces 7 separate API calls with 1 optimized call.
+    """
+    user_id = _get_user_id(current_user)
+    is_admin = _is_admin(current_user)
+
+    try:
+        # Per-task timeout to prevent one slow query from blocking the entire response
+        TASK_TIMEOUT = 5.0  # seconds
+
+        async def _with_timeout(coro, fallback) -> Any:
+            try:
+                return await asyncio.wait_for(coro, timeout=TASK_TIMEOUT)
+            except asyncio.TimeoutError:
+                logger.warning("Dashboard task timed out after %ss", TASK_TIMEOUT)
+                return fallback
+
+        # Parallel fetch all data with per-task timeouts
+        # RBAC: non-admins see only their own assigned practices/stats
+        tasks = [
+            _with_timeout(
+                get_practices_stats(user_id=user_id, pool=db_pool, is_admin=is_admin),
+                DEFAULT_PRACTICE_STATS,
+            ),
+            _with_timeout(get_interactions_stats(user_id, db_pool), DEFAULT_INTERACTION_STATS),
+            _with_timeout(
+                list_practices(
+                    status="in_progress",
+                    limit=5,
+                    user_id=user_id,
+                    pool=db_pool,
+                    assigned_to=None if is_admin else user_id,
+                ),
+                [],
+            ),
+            _with_timeout(
+                list_interactions(
+                    interaction_type="whatsapp",
+                    limit=5,
+                    user_id=user_id,
+                    pool=db_pool,
+                ),
+                [],
+            ),
+            _with_timeout(
+                _get_email_stats(db_pool, user_id),
+                {"connected": False, "unread_count": 0},
+            ),
+            _with_timeout(_get_critical_deadlines(db_pool, user_id, is_admin), 0),
+        ]
+
+        # Add admin-only tasks
+        if is_admin:
+            tasks.extend(
+                [
+                    _with_timeout(
+                        _get_revenue_stats(db_pool),
+                        {"total_revenue": 0, "paid_revenue": 0, "outstanding_revenue": 0},
+                    ),
+                    _with_timeout(_calculate_revenue_growth(db_pool), 0.0),
+                    _with_timeout(_get_total_clients(db_pool), 0),
+                ],
+            )
+
+        # Execute all tasks in parallel
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Process results with fallbacks
+        practice_stats = (
+            results[0] if not isinstance(results[0], Exception) else DEFAULT_PRACTICE_STATS
+        )
+        interaction_stats = (
+            results[1] if not isinstance(results[1], Exception) else DEFAULT_INTERACTION_STATS
+        )
+        practices = results[2] if not isinstance(results[2], Exception) else []
+        interactions = results[3] if not isinstance(results[3], Exception) else []
+        email_stats = (
+            results[4]
+            if not isinstance(results[4], Exception)
+            else {"connected": False, "unread_count": 0}
+        )
+        critical_deadlines = results[5] if not isinstance(results[5], Exception) else 0
+
+        # Admin-only results
+        revenue_stats = (
+            results[6]
+            if is_admin and not isinstance(results[6], Exception)
+            else {"total_revenue": 0, "paid_revenue": 0, "outstanding_revenue": 0}
+        )
+        revenue_growth = results[7] if is_admin and not isinstance(results[7], Exception) else 0.0
+        total_clients = results[8] if is_admin and not isinstance(results[8], Exception) else 0
+
+        # Check system health
+        has_failures = any(isinstance(result, Exception) for result in results[:5])
+        system_status = "healthy" if not has_failures else "degraded"
+
+        # Map practices to preview format
+        mapped_practices = []
+        for practice in practices[:5]:
+            # Map backend status to frontend valid status
+            backend_status = practice.get("status", "inquiry").lower()
+            status_map = {
+                "in_progress": "in_progress",
+                "completed": "completed",
+                "inquiry": "inquiry",
+                "quotation": "quotation",
+                "documents": "documents",
+                "unknown": "inquiry",
+                "new": "inquiry",
+                "pending": "inquiry",
+            }
+            frontend_status = status_map.get(backend_status, "inquiry")
+
+            # Safely calculate days remaining with proper type handling
+            days_remaining = None
+            if practice.get("expiry_date"):
+                try:
+                    expiry = practice["expiry_date"]
+                    today = datetime.now(timezone.utc).date()
+
+                    # Handle different date formats
+                    if isinstance(expiry, str):
+                        # Parse ISO format date string
+                        expiry_date = datetime.fromisoformat(expiry.replace("Z", "+00:00")).date()
+                    elif hasattr(expiry, "date"):
+                        # It's a datetime object
+                        expiry_date = expiry.date()
+                    else:
+                        # It's already a date object
+                        expiry_date = expiry
+
+                    days_remaining = (expiry_date - today).days
+                except (ValueError, TypeError) as e:
+                    logger.warning(
+                        f"Failed to parse expiry_date for practice {practice.get('id')}: {e}",
+                    )
+                    days_remaining = None
+
+            mapped_practices.append(
+                {
+                    "id": practice.get("id"),
+                    "title": practice.get("practice_type_code", "").upper().replace("_", " ")
+                    or "Case",
+                    "client": practice.get("client_name", "Unknown Client"),
+                    "status": frontend_status,
+                    "daysRemaining": days_remaining,
+                },
+            )
+
+        # Map interactions to WhatsApp format
+        mapped_interactions = []
+        for interaction in interactions[:5]:
+            mapped_interactions.append(
+                {
+                    "id": str(interaction.get("id")),
+                    "contactName": interaction.get("client_name", "Anonymous"),
+                    "message": interaction.get("summary")
+                    or interaction.get("full_content", "No content"),
+                    "timestamp": interaction.get("created_at", "")[:8]
+                    if interaction.get("created_at")
+                    else "",
+                    "isRead": interaction.get("read_receipt") is True,
+                    "hasAiSuggestion": bool(interaction.get("conversation_id")),
+                    "practiceId": interaction.get("practice_id"),
+                },
+            )
+
+        # Calculate stats
+        hours_worked = float(interaction_stats.get("total_interactions", 0) * 0.25)  # Estimate
+
+        response = {
+            "user": {
+                "email": current_user.get("email", ""),
+                "role": current_user.get("role", ""),
+                "is_admin": is_admin,
+            },
+            "stats": {
+                "activeCases": practice_stats.get("active_practices", 0),
+                "criticalDeadlines": critical_deadlines,
+                "pendingInvoices": practice_stats.get("by_status", {}).get("sending_invoice", 0),
+                "whatsappUnread": interaction_stats.get("by_type", {}).get("whatsapp", 0),
+                "emailUnread": email_stats.get("unread_count", 0),
+                "hoursWorked": f"{int(hours_worked)}h {int((hours_worked % 1) * 60)}m",
+            },
+            "data": {
+                "practices": mapped_practices,
+                "interactions": mapped_interactions,
+                "email": email_stats,
+            },
+            "system_status": system_status,
+            "last_updated": asyncio.get_event_loop().time(),
+        }
+
+        # Add admin-only data
+        if is_admin:
+            response["revenue"] = revenue_stats
+            response["revenue_growth"] = revenue_growth
+            # KPI bar counts — total_clients matches the /clients page source
+            # (crm_clients stats/overview: deleted_at IS NULL); total_practices
+            # comes from the practice stats already fetched above.
+            response["total_clients"] = total_clients
+            response["total_practices"] = practice_stats.get("total_practices", 0)
+
+        return response
+
+    except Exception as e:
+        logger.error("Failed to get dashboard summary for user %s: %s", user_id, e)
+        # Return degraded response
+        return {
+            "user": {
+                "email": current_user.get("email", ""),
+                "role": current_user.get("role", ""),
+                "is_admin": is_admin,
+            },
+            "stats": {
+                "activeCases": 0,
+                "criticalDeadlines": 0,
+                "pendingInvoices": 0,
+                "whatsappUnread": 0,
+                "emailUnread": 0,
+                "hoursWorked": "0h 0m",
+            },
+            "data": {
+                "practices": [],
+                "interactions": [],
+                "email": {"connected": False, "unread_count": 0},
+            },
+            "system_status": "degraded",
+            "last_updated": asyncio.get_event_loop().time(),
+        }
+
+
+@router.get("/neural-pulse")
+async def get_neural_pulse(
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """
+    Get real-time AI status metrics (Neural Pulse).
+    Cached for 60 seconds to reduce load.
+    """
+    # Check cache first
+    cache_key = "dashboard:neural_pulse"
+    cached_result = await _cache.get(cache_key)
+    if cached_result:
+        return cached_result
+
+    start_time = time.time()
+    try:
+        # 1. Get memory facts count (graceful fallback if table missing)
+        memory_facts = 0
+        try:
+            memory_service = CollectiveMemoryService(pool=db_pool)
+            memory_stats = await memory_service.get_stats()
+            memory_facts = memory_stats.get("total_facts", 0)
+        except Exception as e:
+            logger.warning("Failed to get memory stats (table may not exist): %s", e)
+
+        # 2. Get knowledge docs count (from Qdrant)
+        knowledge_docs = 0
+        try:
+            qdrant = QdrantClient(
+                qdrant_url=settings.qdrant_url,
+                collection_name=resolve_collection_name("kbli_2025_final"),
+            )
+            qdrant_stats = await qdrant.get_stats()
+            knowledge_docs = qdrant_stats.get("total_documents", 0)
+            await qdrant.close()
+        except Exception as e:
+            logger.warning("Failed to get Qdrant stats for pulse: %s", e)
+
+        # 3. Get last activity
+        last_activity = "Initializing neural link..."
+        try:
+            async with db_pool.acquire() as conn:
+                # Check last conversation - use session_id as identifier since title may not exist
+                last_conv = await conn.fetchval(
+                    """SELECT session_id FROM conversations
+                       ORDER BY created_at DESC LIMIT 1""",
+                )
+                if last_conv:
+                    last_activity = f"Last chat: {last_conv[:30]}..."
+                else:
+                    # Fallback to interactions table
+                    last_int = await conn.fetchval(
+                        "SELECT summary FROM interactions ORDER BY created_at DESC LIMIT 1",
+                    )
+                    if last_int:
+                        last_activity = f"Last CRM: {last_int[:30]}..."
+
+        except Exception as e:
+            logger.warning("Failed to get last activity for pulse: %s", e)
+
+        latency_ms = int((time.time() - start_time) * 1000)
+
+        result = {
+            "status": "healthy",
+            # memory_facts/knowledge_docs are already real queries (memory_service
+            # / Qdrant get_stats above) — the `or 42` / `or 53757` masks used to
+            # replace a genuine zero with a stale historical number, which is
+            # itself a fake constant. No consumer reads either field (no page
+            # renders /neural-pulse; only an autogenerated OpenAPI type mirrors
+            # it), so there is nothing to preserve except honesty on a real zero.
+            "memory_facts": memory_facts,
+            "knowledge_docs": knowledge_docs,
+            "latency_ms": latency_ms,
+            "last_activity": last_activity,
+        }
+
+        # Cache the result
+        await _cache.set(cache_key, result, NEURAL_PULSE_CACHE_TTL)
+        return result
+
+    except Exception as e:
+        logger.error("Failed to generate neural pulse: %s", e)
+        return {
+            "status": "degraded",
+            "memory_facts": 0,
+            "knowledge_docs": 0,
+            "latency_ms": int((time.time() - start_time) * 1000),
+            "last_activity": "System heartbeat failing",
+        }
+
+
+@router.get("/role-metrics")
+async def get_role_metrics(
+    role: str = "zero",
+    user_id: str = "",
+    _current_user: dict[str, Any] = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """
+    Get role-specific dashboard metrics.
+    Supports roles: zero, team, tax, marketing, accounting.
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            # Common stats used by multiple roles
+            active_practices = (
+                await conn.fetchval(
+                    "SELECT COUNT(*) FROM practices WHERE status NOT IN ('completed', 'cancelled')",
+                )
+                or 0
+            )
+            overdue_invoices = (
+                await conn.fetchval(
+                    "SELECT COUNT(*) FROM practices WHERE payment_status = 'unpaid' AND actual_price IS NOT NULL",
+                )
+                or 0
+            )
+            revenue_mtd = (
+                await conn.fetchval(
+                    """SELECT COALESCE(SUM(actual_price), 0) FROM practices
+                   WHERE payment_status = 'paid'
+                   AND DATE_TRUNC('month', updated_at) = DATE_TRUNC('month', CURRENT_DATE)""",
+                )
+                or 0
+            )
+            expiring_soon = (
+                await conn.fetchval(
+                    """SELECT COUNT(*) FROM practices
+                   WHERE expiry_date IS NOT NULL
+                   AND expiry_date <= CURRENT_DATE + INTERVAL '30 days'
+                   AND status NOT IN ('completed', 'cancelled')""",
+                )
+                or 0
+            )
+
+        if role == "zero":
+            agenti_count = await _get_active_team_members_count(db_pool)
+            metrics = {
+                "revenue_mtd": float(revenue_mtd),
+                "visti_scadenza": int(expiring_soon),
+                "fatture_overdue": int(overdue_invoices),
+                "agenti_count": int(agenti_count),
+            }
+        elif role == "team":
+            async with db_pool.acquire() as conn:
+                user_practices = (
+                    await conn.fetchval(
+                        "SELECT COUNT(*) FROM practices WHERE assigned_to = $1 AND status NOT IN ('completed', 'cancelled')",
+                        user_id,
+                    )
+                    or 0
+                )
+                stalled = (
+                    await conn.fetchval(
+                        """SELECT COUNT(*) FROM practices
+                       WHERE assigned_to = $1
+                       AND updated_at < CURRENT_DATE - INTERVAL '7 days'
+                       AND status NOT IN ('completed', 'cancelled')""",
+                        user_id,
+                    )
+                    or 0
+                )
+                next_deadline = await conn.fetchval(
+                    """SELECT TO_CHAR(MIN(expiry_date), 'DD/MM/YYYY') FROM practices
+                       WHERE assigned_to = $1
+                       AND expiry_date IS NOT NULL
+                       AND status NOT IN ('completed', 'cancelled')""",
+                    user_id,
+                )
+            metrics = {
+                "assigned_cases": int(user_practices),
+                "prossima_scadenza": next_deadline,
+                "clienti_assegnati": int(user_practices),
+                "stalled_count": int(stalled),
+            }
+        elif role == "tax":
+            clienti_compliant = await _get_compliant_clients_count(db_pool)
+            alert_pajak = await _get_pending_tax_alerts_count(db_pool)
+            metrics = {
+                "clienti_compliant": int(clienti_compliant),
+                "scadenze_7gg": int(expiring_soon),
+                "dichiarazioni_pending": int(active_practices),
+                "alert_pajak": int(alert_pajak),
+                "prossima_scadenza": None,
+            }
+        elif role == "marketing":
+            async with db_pool.acquire() as conn:
+                articles_published = (
+                    await conn.fetchval(
+                        "SELECT COUNT(*) FROM articles WHERE status = 'published' AND DATE_TRUNC('month', published_at) = DATE_TRUNC('month', CURRENT_DATE)",
+                    )
+                    or 0
+                )
+                articles_review = (
+                    await conn.fetchval("SELECT COUNT(*) FROM articles WHERE status = 'draft'") or 0
+                )
+            lead_nuovi = await _get_new_leads_count(db_pool)
+            metrics = {
+                "articoli_pubblicati": int(articles_published),
+                "articoli_in_review": int(articles_review),
+                "lead_nuovi": int(lead_nuovi),
+            }
+        elif role == "accounting":
+            async with db_pool.acquire() as conn:
+                paid_mtd = (
+                    await conn.fetchval(
+                        """SELECT COUNT(*) FROM practices
+                       WHERE payment_status = 'paid'
+                       AND DATE_TRUNC('month', updated_at) = DATE_TRUNC('month', CURRENT_DATE)""",
+                    )
+                    or 0
+                )
+                overdue_total = (
+                    await conn.fetchval(
+                        """SELECT COALESCE(SUM(actual_price - COALESCE(paid_amount, 0)), 0)
+                       FROM practices WHERE payment_status = 'unpaid' AND actual_price IS NOT NULL""",
+                    )
+                    or 0
+                )
+            metrics = {
+                "fatture_pagate_mtd": int(paid_mtd),
+                "fatture_overdue": int(overdue_invoices),
+                "fatture_pending": int(active_practices),
+                "ricavi_mtd": float(revenue_mtd),
+                "overdue_total": float(overdue_total),
+            }
+        else:
+            agenti_count = await _get_active_team_members_count(db_pool)
+            metrics = {
+                "revenue_mtd": float(revenue_mtd),
+                "visti_scadenza": int(expiring_soon),
+                "fatture_overdue": int(overdue_invoices),
+                "agenti_count": int(agenti_count),
+            }
+
+        return {"role": role, "metrics": metrics, "alerts": []}
+
+    except Exception as e:
+        logger.warning("role-metrics fallback for role=%s: %s", role, e)
+        # Return safe defaults per role so frontend never breaks
+        defaults: dict[str, Any] = {
+            "zero": {
+                "revenue_mtd": 0,
+                "visti_scadenza": 0,
+                "fatture_overdue": 0,
+                "agenti_count": 0,
+            },
+            "team": {
+                "assigned_cases": 0,
+                "prossima_scadenza": None,
+                "clienti_assegnati": 0,
+                "stalled_count": 0,
+            },
+            "tax": {
+                "clienti_compliant": 0,
+                "scadenze_7gg": 0,
+                "dichiarazioni_pending": 0,
+                "alert_pajak": 0,
+                "prossima_scadenza": None,
+            },
+            "marketing": {
+                "articoli_pubblicati": 0,
+                "articoli_in_review": 0,
+                "lead_nuovi": 0,
+            },
+            "accounting": {
+                "fatture_pagate_mtd": 0,
+                "fatture_overdue": 0,
+                "fatture_pending": 0,
+                "ricavi_mtd": 0,
+                "overdue_total": 0,
+            },
+        }
+        return {"role": role, "metrics": defaults.get(role, defaults["zero"]), "alerts": []}
+
+
+# ============================================================================
+# Portal Champion challenge leaderboard (staff-only, live widget)
+# ============================================================================
+# Scoring/window/tier rules are NOT here — they live in the single source
+# `backend.services.portal.challenge_leaderboard`, shared with the offline
+# report `scripts/portal_challenge_leaderboard.py` so the two can never
+# disagree about who is winning.
+
+PORTAL_CHALLENGE_CACHE_KEY = "dashboard:portal_challenge:v3"
+PORTAL_CHALLENGE_CACHE_TTL = 30
+
+
+def _portal_challenge_now() -> datetime:
+    """The one clock seam every Portal Champion code path reads through —
+    payload building, the SSE close check, and `generated_at`. Tests pin
+    the round deterministically by monkeypatching this NAME rather than the
+    stdlib `datetime` class itself, so a test doesn't have to also survive
+    subclassing/patching every other unrelated `datetime.now()` call in
+    this file (e.g. the `/summary` endpoint's own `today = ...` at L438)."""
+    return datetime.now(timezone.utc)
+
+
+class PortalChallengeTier(BaseModel):
+    tier: int
+    threshold: int
+    prize_idr: int
+
+
+class PortalChallengeTaxRules(BaseModel):
+    podium_super_bonus_idr: int
+    best_tax_fallback_idr: int
+    best_tax_fallback_threshold: int
+
+
+class PortalChallengeRankPrize(BaseModel):
+    rank: int
+    prize_idr: int
+    min_points: int | None = None  # Round 2: minimum score for this slot
+
+
+class PortalChallengeScoringRules(BaseModel):
+    registration: int
+    first_document: int
+    unanswered_request: int
+    unreviewed_document: int
+    response_working_hours: float
+    review_working_hours: float
+    service_hours: str
+
+
+class PortalChallengeEntry(BaseModel):
+    member: str
+    display_name: str
+    avatar_url: AvatarUrl = None
+    department: str | None
+    is_tax: bool
+    is_me: bool
+    rank: int
+    activations: int
+    invited: int
+    last_activation_at: datetime | None
+    award_tier: int | None
+    prize_idr: int
+    tax_bonus_idr: int
+    total_prize_idr: int
+    next_tier_threshold: int | None
+    to_next_tier: int | None
+    # Round 2 additions — 0/None in round 1.
+    points: int = 0
+    carry_points: int = 0
+    registrations: int = 0
+    document_bonuses: int = 0
+    unanswered_requests: int = 0
+    unreviewed_documents: int = 0
+    penalty_points: int = 0
+    september_choice: str | None = None
+    last_event_at: datetime | None = None
+    prize_slot: int | None = None
+    september_rank: int | None = None
+    playoff_pending: bool = False
+    # Round 2 sprint minimum (Zero's ruling, 2026-10-12) — None in round 1.
+    sprint_points: int | None = None
+    sprint_reached: bool | None = None
+    sprint_penalty_idr: int | None = None
+
+
+class PortalChallengeSprint(BaseModel):
+    start: datetime
+    end: datetime
+    min_points: int
+    penalty_idr: int
+
+
+class PortalChallengeRecentActivation(BaseModel):
+    display_name: str
+    at: datetime
+
+
+class PortalChallengeRecentEvent(BaseModel):
+    kind: str
+    display_name: str
+    points: int
+    at: datetime
+
+
+class PortalChallengeSeptemberEntry(BaseModel):
+    member: str
+    display_name: str
+    avatar_url: AvatarUrl = None
+    is_tax: bool
+    rank: int
+    activations: int
+    invited: int
+    award_tier: int | None
+    prize_idr: int
+    tax_bonus_idr: int
+    total_prize_idr: int
+    september_choice: str | None = None
+
+
+class PortalChallengeSeptember(BaseModel):
+    status: str
+    window_start: datetime
+    window_end: datetime
+    team_total_activations: int
+    entries: list[PortalChallengeSeptemberEntry]
+
+
+class PortalChallengeAsyaMission(BaseModel):
+    member: str
+    display_name: str
+    avatar_url: AvatarUrl = None
+    target_points: int
+    prize_idr: int
+    bonus_points: int
+    mission_bonuses: int
+    unanswered_requests: int
+    unreviewed_documents: int
+    penalty_points: int
+    points: int
+    reached: bool
+    is_me: bool
+
+
+class PortalChallengeResponse(BaseModel):
+    status: str
+    round: int = 1
+    campaign: str | None = None
+    window_start: datetime
+    window_end: datetime
+    timezone: str
+    generated_at: datetime
+    tiers: list[PortalChallengeTier]
+    tax_rules: PortalChallengeTaxRules
+    rank_prizes: list[PortalChallengeRankPrize] = []
+    sprint: PortalChallengeSprint | None = None
+    scoring: PortalChallengeScoringRules | None = None
+    team_total_activations: int
+    team_total_points: int = 0
+    entries: list[PortalChallengeEntry]
+    recent_activations: list[PortalChallengeRecentActivation]
+    recent_events: list[PortalChallengeRecentEvent] = []
+    september: PortalChallengeSeptember | None = None
+    asya_mission: PortalChallengeAsyaMission | None = None
+
+
+async def _build_round1_payload(db_pool: asyncpg.Pool) -> dict[str, Any]:
+    """Round 1 (September, frozen) payload — unchanged shape/behaviour, plus
+    `round`/`campaign`/new-fields-as-zero-or-null so both rounds validate
+    against the same `PortalChallengeResponse` model through the transition.
+    """
+    from backend.services.portal.challenge_leaderboard import (
+        ROSTER_SQL,
+        TAX_FALLBACK_BONUS_IDR,
+        TAX_FALLBACK_THRESHOLD,
+        TAX_PODIUM_BONUS_IDR,
+        TIERS,
+        WINDOW_END,
+        WINDOW_START,
+        build_aggregates_sql,
+        build_recent_activations_sql,
+        build_team_total_activations_sql,
+        compute_awards,
+        compute_status,
+        member_key_from_email,
+        merge_roster_and_activity,
+    )
+
+    async with db_pool.acquire() as conn:
+        # Sequential on ONE connection, not gathered: asyncpg forbids
+        # concurrent operations on a single connection. All four queries hit
+        # small/indexed tables and this whole payload sits behind the 30s
+        # cache above, so 4 round trips per cache-miss is cheap.
+        roster_records = await conn.fetch(ROSTER_SQL)
+        activity_records = await conn.fetch(build_aggregates_sql())
+        recent_records = await conn.fetch(build_recent_activations_sql())
+        team_total_activations = await conn.fetchval(build_team_total_activations_sql()) or 0
+
+    members = merge_roster_and_activity(
+        [dict(r) for r in roster_records], [dict(r) for r in activity_records]
+    )
+    awarded = compute_awards(members)
+    display_by_email = {m.email: m.display_name for m in members}
+    from backend.services.portal.challenge_events import portrait_url
+
+    avatar_by_email = {row["email"]: portrait_url(row.get("avatar")) for row in roster_records}
+
+    return {
+        "status": compute_status(_portal_challenge_now()),
+        "round": 1,
+        "campaign": None,
+        "window_start": WINDOW_START.isoformat(),
+        "window_end": WINDOW_END.isoformat(),
+        "timezone": "Asia/Makassar",
+        "tiers": [
+            {"tier": t.tier, "threshold": t.threshold, "prize_idr": t.prize_idr} for t in TIERS
+        ],
+        "tax_rules": {
+            "podium_super_bonus_idr": TAX_PODIUM_BONUS_IDR,
+            "best_tax_fallback_idr": TAX_FALLBACK_BONUS_IDR,
+            "best_tax_fallback_threshold": TAX_FALLBACK_THRESHOLD,
+        },
+        "rank_prizes": [],
+        "scoring": None,
+        # DISTINCT client_id across the whole window, not sum(e.activations) —
+        # a client activated via two rows credited to two different creators
+        # would otherwise be double-counted here (each creator legitimately
+        # counts it once for their own tally).
+        "team_total_activations": int(team_total_activations),
+        "team_total_points": 0,
+        "entries": [
+            {
+                "email": e.email,
+                "member": e.member,
+                "display_name": e.display_name,
+                "avatar_url": avatar_by_email.get(e.email),
+                "department": e.department,
+                "is_tax": e.is_tax,
+                "rank": e.rank,
+                "activations": e.activations,
+                "invited": e.invited,
+                "last_activation_at": e.last_activation_at.isoformat()
+                if e.last_activation_at
+                else None,
+                "award_tier": e.award_tier,
+                "prize_idr": e.prize_idr,
+                "tax_bonus_idr": e.tax_bonus_idr,
+                "total_prize_idr": e.total_prize_idr,
+                "next_tier_threshold": e.next_tier_threshold,
+                "to_next_tier": e.to_next_tier,
+                "points": 0,
+                "carry_points": 0,
+                "registrations": 0,
+                "document_bonuses": 0,
+                "unanswered_requests": 0,
+                "unreviewed_documents": 0,
+                "penalty_points": 0,
+                "september_choice": None,
+                "last_event_at": None,
+            }
+            for e in awarded
+        ],
+        "recent_activations": [
+            {
+                "display_name": display_by_email.get(
+                    r["creator_email"], member_key_from_email(r["creator_email"])
+                ),
+                "at": r["used_at"].isoformat(),
+            }
+            for r in recent_records
+        ],
+        "recent_events": [],
+        "september": None,
+        "asya_mission": None,
+    }
+
+
+async def _build_round2_payload(db_pool: asyncpg.Pool, now: datetime) -> dict[str, Any]:
+    """Round 2 (October, "Lascia o raddoppia") payload: reruns the R1 SQL
+    for the frozen `september` block (same query text, same result the
+    widget showed before the window closed) alongside the R2 engine's own
+    queries, then scores via `challenge_round2.score_round2`."""
+    from backend.services.portal import challenge_round2 as r2
+    from backend.services.portal.challenge_events import portrait_url
+    from backend.services.portal.challenge_leaderboard import (
+        ROSTER_SQL,
+        TAX_FALLBACK_BONUS_IDR,
+        TAX_FALLBACK_THRESHOLD,
+        TAX_PODIUM_BONUS_IDR,
+        WINDOW_END,
+        WINDOW_START,
+        build_aggregates_sql,
+        build_team_total_activations_sql,
+        compute_awards,
+        member_key_from_email,
+        merge_roster_and_activity,
+    )
+
+    async with db_pool.acquire() as conn:
+        # Sequential on ONE connection (asyncpg forbids concurrent use of
+        # one connection) — 9 small/indexed queries behind the 30s cache.
+        roster_records = await conn.fetch(ROSTER_SQL)
+        r1_activity_records = await conn.fetch(build_aggregates_sql())
+        r1_team_total = await conn.fetchval(build_team_total_activations_sql()) or 0
+        registration_records = await conn.fetch(r2.build_registration_aggregates_sql())
+        recent_registration_records = await conn.fetch(r2.build_recent_registrations_sql())
+        team_total_registrations = await conn.fetchval(r2.build_team_total_registrations_sql()) or 0
+        first_document_records = await conn.fetch(r2.build_first_documents_sql())
+        request_records = await conn.fetch(r2.build_client_requests_sql())
+        review_records = await conn.fetch(r2.build_required_document_reviews_sql())
+        asya_request_records = await conn.fetch(r2.build_asya_requests_sql())
+        asya_client_event_records = await conn.fetch(r2.build_asya_client_events_sql())
+
+    roster_dicts = [dict(r) for r in roster_records]
+    r1_members = merge_roster_and_activity(roster_dicts, [dict(r) for r in r1_activity_records])
+    r1_awarded = compute_awards(r1_members)
+    display_by_email = {m.email: m.display_name for m in r1_members}
+    avatar_by_email = {row["email"]: portrait_url(row.get("avatar")) for row in roster_records}
+
+    snapshot = r2.score_round2(
+        roster_dicts,
+        r1_awarded,
+        [dict(r) for r in registration_records],
+        [dict(r) for r in first_document_records],
+        [dict(r) for r in request_records],
+        [dict(r) for r in review_records],
+        [dict(r) for r in asya_request_records],
+        [dict(r) for r in asya_client_event_records],
+        now,
+    )
+
+    # Six-player ruling (2026-09-29): the live feed never shows a non-participant.
+    recent_registration_records = [
+        r
+        for r in recent_registration_records
+        if r["creator_email"].strip().lower() in r2.ROUND2_PARTICIPANTS
+    ]
+    recent_registration_events = [
+        {
+            "kind": "registration",
+            "display_name": display_by_email.get(
+                r["creator_email"], member_key_from_email(r["creator_email"])
+            ),
+            "points": r2.REGISTRATION_POINTS,
+            "at": r["used_at"],
+        }
+        for r in recent_registration_records
+    ]
+    merged_events = sorted(
+        recent_registration_events
+        + [
+            {"kind": ev.kind, "display_name": ev.display_name, "points": ev.points, "at": ev.at}
+            for ev in snapshot.recent_events
+        ],
+        key=lambda ev: ev["at"],
+        reverse=True,
+    )[:10]
+
+    asya_display_name = snapshot.asya_mission.display_name
+    asya_avatar_url = None
+    for row in roster_records:
+        if row["email"].strip().lower() == r2.ASYA_EMAIL:
+            asya_display_name = row.get("display_name") or asya_display_name
+            asya_avatar_url = portrait_url(row.get("avatar"))
+            break
+
+    return {
+        "status": r2.compute_round_status(now, 2),
+        "round": 2,
+        "campaign": "Lascia o raddoppia",
+        "window_start": r2.ROUND2_START.isoformat(),
+        "window_end": r2.ROUND2_END.isoformat(),
+        "timezone": "Asia/Makassar",
+        "sprint": {
+            "start": r2.SPRINT_START.isoformat(),
+            "end": r2.SPRINT_END.isoformat(),
+            "min_points": r2.SPRINT_MIN_POINTS,
+            "penalty_idr": r2.SPRINT_PENALTY_IDR,
+        },
+        "tiers": [],
+        "tax_rules": {
+            "podium_super_bonus_idr": TAX_PODIUM_BONUS_IDR,
+            "best_tax_fallback_idr": TAX_FALLBACK_BONUS_IDR,
+            "best_tax_fallback_threshold": TAX_FALLBACK_THRESHOLD,
+        },
+        "rank_prizes": [
+            {
+                "rank": rank,
+                "prize_idr": prize,
+                "min_points": r2.RANK_PRIZE_MIN_POINTS[rank],
+            }
+            for rank, prize in sorted(r2.RANK_PRIZES_IDR.items())
+        ],
+        "scoring": {
+            "registration": r2.REGISTRATION_POINTS,
+            "first_document": r2.FIRST_DOCUMENT_POINTS,
+            "unanswered_request": -r2.UNANSWERED_REQUEST_PENALTY,
+            "unreviewed_document": -r2.UNREVIEWED_DOCUMENT_PENALTY,
+            "response_working_hours": r2.RESPONSE_WORKING_HOURS_LIMIT,
+            "review_working_hours": r2.REVIEW_WORKING_HOURS_LIMIT,
+            "service_hours": "Senin–Jumat 09.00–18.30 WITA",
+        },
+        "team_total_activations": int(team_total_registrations),
+        "team_total_points": snapshot.team_total_points,
+        "entries": [
+            {
+                "email": e.email,
+                "member": e.member,
+                "display_name": e.display_name,
+                "avatar_url": avatar_by_email.get(e.email),
+                "department": e.department,
+                "is_tax": e.is_tax,
+                "rank": e.rank,
+                "activations": e.activations,
+                "invited": e.invited,
+                "last_activation_at": e.last_activation_at.isoformat()
+                if e.last_activation_at
+                else None,
+                "award_tier": e.award_tier,
+                "prize_idr": e.prize_idr,
+                "tax_bonus_idr": e.tax_bonus_idr,
+                "total_prize_idr": e.total_prize_idr,
+                "next_tier_threshold": e.next_tier_threshold,
+                "to_next_tier": e.to_next_tier,
+                "points": e.points,
+                "carry_points": e.carry_points,
+                "registrations": e.registrations,
+                "document_bonuses": e.document_bonuses,
+                "unanswered_requests": e.unanswered_requests,
+                "unreviewed_documents": e.unreviewed_documents,
+                "penalty_points": e.penalty_points,
+                "september_choice": e.september_choice,
+                "last_event_at": e.last_event_at.isoformat() if e.last_event_at else None,
+                "prize_slot": e.prize_slot,
+                "september_rank": e.september_rank,
+                "playoff_pending": e.playoff_pending,
+                "sprint_points": e.sprint_points,
+                "sprint_reached": e.sprint_reached,
+                "sprint_penalty_idr": e.sprint_penalty_idr,
+            }
+            for e in snapshot.entries
+        ],
+        "recent_activations": [
+            {
+                "display_name": display_by_email.get(
+                    r["creator_email"], member_key_from_email(r["creator_email"])
+                ),
+                "at": r["used_at"].isoformat(),
+            }
+            for r in recent_registration_records
+        ],
+        "recent_events": [{**ev, "at": ev["at"].isoformat()} for ev in merged_events],
+        "september": {
+            "status": "closed",
+            "window_start": WINDOW_START.isoformat(),
+            "window_end": WINDOW_END.isoformat(),
+            "team_total_activations": int(r1_team_total),
+            "entries": [
+                {
+                    "member": e.member,
+                    "display_name": e.display_name,
+                    "avatar_url": avatar_by_email.get(e.email),
+                    "is_tax": e.is_tax,
+                    "rank": e.rank,
+                    "activations": e.activations,
+                    "invited": e.invited,
+                    "award_tier": e.award_tier,
+                    "prize_idr": e.prize_idr,
+                    "tax_bonus_idr": e.tax_bonus_idr,
+                    "total_prize_idr": e.total_prize_idr,
+                    "september_choice": "prize" if e.email in r2.SEPTEMBER_PRIZE_TAKEN else "carry",
+                }
+                for e in r1_awarded
+            ],
+        },
+        "asya_mission": {
+            "member": snapshot.asya_mission.member,
+            "display_name": asya_display_name,
+            "avatar_url": asya_avatar_url,
+            "target_points": snapshot.asya_mission.target_points,
+            "prize_idr": snapshot.asya_mission.prize_idr,
+            "bonus_points": snapshot.asya_mission.bonus_points,
+            "mission_bonuses": snapshot.asya_mission.mission_bonuses,
+            "unanswered_requests": snapshot.asya_mission.unanswered_requests,
+            "unreviewed_documents": snapshot.asya_mission.unreviewed_documents,
+            "penalty_points": snapshot.asya_mission.penalty_points,
+            "points": snapshot.asya_mission.points,
+            "reached": snapshot.asya_mission.reached,
+        },
+    }
+
+
+async def _build_portal_challenge_payload(db_pool: asyncpg.Pool) -> dict[str, Any]:
+    """Compute the JSON-safe (str timestamps, no `email`-bearing PII risk
+    beyond staff addresses already visible in `team_members`) leaderboard
+    payload. Cached whole — `is_me`/`generated_at` are added per-request by
+    the caller, never cached (they depend on who is asking / when).
+
+    Dispatches on the active round: `now` is read once here so a request
+    that straddles the exact ROUND2_START instant is scored consistently
+    within itself even though the module-level constant is a fixed instant.
+    """
+    from backend.services.portal import challenge_round2 as r2
+
+    now = _portal_challenge_now()
+    if r2.active_round(now) == 1:
+        return await _build_round1_payload(db_pool)
+    return await _build_round2_payload(db_pool, now)
+
+
+@router.get("/portal-challenge", response_model=PortalChallengeResponse)
+async def get_portal_challenge(
+    fresh: bool = False,
+    current_user: dict = Depends(require_team_member),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> PortalChallengeResponse:
+    """Portal Champion challenge leaderboard — staff-only (`require_team_member`
+    rejects a client token with 403), hodudi the kita home page live widget.
+    """
+    from backend.services.portal.challenge_round2 import ASYA_EMAIL
+
+    payload = None if fresh else await _cache.get(PORTAL_CHALLENGE_CACHE_KEY)
+    if payload is None:
+        payload = await _build_portal_challenge_payload(db_pool)
+        if not fresh:
+            await _cache.set(PORTAL_CHALLENGE_CACHE_KEY, payload, PORTAL_CHALLENGE_CACHE_TTL)
+
+    current_email = (current_user.get("email") or "").strip().lower()
+    entries = [
+        PortalChallengeEntry(
+            member=e["member"],
+            display_name=e["display_name"],
+            avatar_url=e.get("avatar_url"),
+            department=e["department"],
+            is_tax=e["is_tax"],
+            is_me=e["email"] == current_email,
+            rank=e["rank"],
+            activations=e["activations"],
+            invited=e["invited"],
+            last_activation_at=e["last_activation_at"],
+            award_tier=e["award_tier"],
+            prize_idr=e["prize_idr"],
+            tax_bonus_idr=e["tax_bonus_idr"],
+            total_prize_idr=e["total_prize_idr"],
+            next_tier_threshold=e["next_tier_threshold"],
+            to_next_tier=e["to_next_tier"],
+            points=e.get("points", 0),
+            carry_points=e.get("carry_points", 0),
+            registrations=e.get("registrations", 0),
+            document_bonuses=e.get("document_bonuses", 0),
+            unanswered_requests=e.get("unanswered_requests", 0),
+            unreviewed_documents=e.get("unreviewed_documents", 0),
+            penalty_points=e.get("penalty_points", 0),
+            september_choice=e.get("september_choice"),
+            last_event_at=e.get("last_event_at"),
+            prize_slot=e.get("prize_slot"),
+            september_rank=e.get("september_rank"),
+            playoff_pending=e.get("playoff_pending", False),
+            sprint_points=e.get("sprint_points"),
+            sprint_reached=e.get("sprint_reached"),
+            sprint_penalty_idr=e.get("sprint_penalty_idr"),
+        )
+        for e in payload["entries"]
+    ]
+    september = payload.get("september")
+    asya_mission = payload.get("asya_mission")
+    return PortalChallengeResponse(
+        status=payload["status"],
+        round=payload.get("round", 1),
+        campaign=payload.get("campaign"),
+        window_start=payload["window_start"],
+        window_end=payload["window_end"],
+        timezone=payload["timezone"],
+        generated_at=_portal_challenge_now(),
+        tiers=[PortalChallengeTier(**t) for t in payload["tiers"]],
+        tax_rules=PortalChallengeTaxRules(**payload["tax_rules"]),
+        rank_prizes=[PortalChallengeRankPrize(**p) for p in payload.get("rank_prizes", [])],
+        sprint=PortalChallengeSprint(**payload["sprint"]) if payload.get("sprint") else None,
+        scoring=PortalChallengeScoringRules(**payload["scoring"])
+        if payload.get("scoring")
+        else None,
+        team_total_activations=payload["team_total_activations"],
+        team_total_points=payload.get("team_total_points", 0),
+        entries=entries,
+        recent_activations=[
+            PortalChallengeRecentActivation(**r) for r in payload["recent_activations"]
+        ],
+        recent_events=[PortalChallengeRecentEvent(**ev) for ev in payload.get("recent_events", [])],
+        september=PortalChallengeSeptember(
+            status=september["status"],
+            window_start=september["window_start"],
+            window_end=september["window_end"],
+            team_total_activations=september["team_total_activations"],
+            entries=[PortalChallengeSeptemberEntry(**e) for e in september["entries"]],
+        )
+        if september
+        else None,
+        asya_mission=PortalChallengeAsyaMission(**asya_mission, is_me=current_email == ASYA_EMAIL)
+        if asya_mission
+        else None,
+    )
+
+
+@router.get("/portal-challenge/events")
+async def portal_challenge_events(
+    request: Request,
+    current_user: dict = Depends(require_team_member),
+) -> StreamingResponse:
+    from backend.core.redis_manager import RedisManager
+    from backend.services.portal import challenge_round2 as r2
+    from backend.services.portal.challenge_events import goal_fanout
+
+    now = _portal_challenge_now()
+    if r2.compute_round_status(now, r2.active_round(now)) == "closed":
+        return StreamingResponse(
+            iter(["event: closed\ndata: {}\n\n"]), media_type="text/event-stream"
+        )
+
+    redis = RedisManager.get_instance().get_async_client()
+    if redis is None:
+        raise HTTPException(status_code=503, detail="Live celebrations temporarily unavailable")
+    # Fail before the 200 headers: a stream that breaks after them makes EventSource retry
+    # every 3 s, while a 503 closes it and the client's capped backoff applies.
+    try:
+        await redis.ping()
+    except Exception as exc:
+        logger.warning("portal challenge events: redis preflight failed (%s)", type(exc).__name__)
+        raise HTTPException(
+            status_code=503, detail="Live celebrations temporarily unavailable"
+        ) from None
+    return StreamingResponse(
+        goal_fanout.events(
+            redis, request.headers.get("last-event-id") or request.query_params.get("last_event_id")
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store, no-transform", "X-Accel-Buffering": "no"},
+    )

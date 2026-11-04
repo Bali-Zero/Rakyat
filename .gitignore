@@ -1,0 +1,993 @@
+# ========================================
+# NUZANTARA PRIME - ROOT .GITIGNORE
+# ========================================
+
+# IDE Files
+.cursor/
+.idea/
+
+# Research render artifacts (HTML/PDF generated, not source)
+research/legal/*/render/*.html
+research/legal/*/render/*.pdf
+research/visa/c5a-render-*/*.html
+research/visa/c5a-render-*/*.pdf
+
+# Lighthouse CI local reports
+.lighthouseci/
+
+# MCP config (contains API keys)
+.mcp.json
+
+# VSCode (allow settings.json for team, exclude personal files)
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Python
+__pycache__/
+*.py[cod]
+uv.lock
+.venv/
+**/.venv/
+# Also catch .venv symlinks (without trailing slash, the dir-pattern misses them)
+.venv
+**/.venv
+# WR2 HTML renderer venv — its name doesn't match the .venv* patterns above, so
+# without this line `git status` shows it as `?? .venv-wr2-html/` and the deploy
+# puller flags the worktree DIRTY (scar W81/html-venv, 2026-06-17). Gitignore it
+# so it never counts as a local change.
+.venv-wr2-html/
+**/.venv-wr2-html/
+# Catch-all for venv SIBLINGS/BACKUPS that org self-heal creates (.venv.broken-<ts>,
+# .venv.bak, .venv-<name>) — same scar class as html-venv above. 2026-06-27 a
+# backend self-heal left apps/backend-rag/.venv.broken-210424/ in the -deploy CLONE,
+# which made `git status` dirty and the puller REFUSED to fast-forward → #1779 (and
+# every later merge) could not reach the live organs. The bare `.venv`/`.venv/`
+# patterns miss the `.venv.<suffix>` / `.venv-<suffix>` names. Cover the whole family
+# so a generated venv variant can never again wedge the runtime checkout (anti-W81).
+.venv.*
+**/.venv.*
+.venv-*
+**/.venv-*
+# apps/backend-rag/data/ holds large logs + raw assets we don't ship, BUT
+# apps/backend-rag/data/evaluation/ holds small static golden-query fixtures
+# that tests import at collection time — CI needs them in the repo.
+# Ignore everything under data/ EXCEPT evaluation/, which we carve out.
+apps/backend-rag/data/*
+!apps/backend-rag/data/evaluation/
+# apps/backend-rag/data/curated_qa/ holds the harvester's *.jsonl corpus
+# input (P7/D3-L2 SPEC v2) — real corpus files are ops-populated, not
+# committed. Track only the schema-documenting README.
+!apps/backend-rag/data/curated_qa/
+apps/backend-rag/data/curated_qa/*
+!apps/backend-rag/data/curated_qa/README.md
+# Prevent recursive apps structure
+apps/backend-rag/apps/
+check_ingest.py
+run_ingest.py
+# scripts/*.py  <-- REMOVED BLANKET IGNORE to allow tracking useful root scripts
+scripts/smoke_test_quick.py
+scripts/verify_json.py
+test_playwright.py
+test_playwright.pylass
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+/lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+# `MANIFEST` above matches data/kbli-filiera/manifest/ case-insensitively on
+# macOS — the vault manifest is the committed integrity layer (workflow doc §6)
+!data/kbli-filiera/manifest/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+test-results/
+test-results-*.xml
+test_results/
+testsprite_tests/tmp/
+
+# Next.js / Frontend
+.next/
+# a renamed .next build cache (.trash/.next-verify3210/...) escaped the .next/
+# rule above and cost 135 MB in a quarantine commit on 2026-08-20 — ignore the
+# rename target too.
+.trash/
+out/
+build/
+dist/
+.vercel/
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+next-env.d.ts
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Reports
+reports/
+# ...but a research capture's own evidence is NOT generated output. A bare `reports/` matches
+# any directory of that name at ANY depth: on 2026-08-31 it silently swallowed the 17 lane
+# reports that a committed research INDEX.md points at, and `git add -A` exited 0 having added
+# nothing. Git cannot re-include a file whose PARENT directory is excluded, so the directory
+# itself is un-excluded here — negating only the contents would not work.
+!research/**/reports/
+# Same disease, second victim (2026-09-10): the weekly measure-only CI reports
+# (scripts/ci/change_map_coverage.py, scripts/ci/flaky_harvest.py) write their committed,
+# reviewable output to docs/reports/<name>/<date>.md — a normal deliverable, not generated
+# noise — and the bare `reports/` rule above silently ate it too, identically to the research
+# incident documented right above. Un-exclude the whole docs/reports tree rather than adding
+# a third one-off negation the next report generator would also need to discover. The
+# DIRECTORY itself is un-excluded, not just its contents: git cannot re-include files under a
+# parent directory it is still excluding.
+!docs/reports/
+!docs/reports/**
+*.md.report
+*.json.report
+sentinel-results/
+deep-analysis-results/
+.openclaw-evals/
+
+# Environment (never commit real secrets)
+.env*
+!.env.example
+!.env.sample
+!.env.template
+!.env.test
+.envrc
+
+# IDE (duplicate section cleaned — primary block is at top)
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Secrets & keys (never commit)
+*.pem
+*.key
+*.p12
+*.pfx
+*.der
+*.crt
+*.cer
+*.jwk
+*credentials*.json
+!*credentials*.example.json
+google_credentials.json
+
+# AI/dev tooling (local state)
+.cursor/
+# Codex CLI local config: MCP server map + hooks carrying absolute /Users
+# paths and Keychain/secret references — machine-local, never versioned.
+.codex/
+# Qwen CLI local config (permissions, computer-use settings) — same class
+# as .codex/.gemini/ above: machine-local, never versioned.
+.qwen/
+.libs/
+**/.claude/settings.local.json
+**/.claude/locks/
+**/.claude/handovers/
+
+# Security scanners (local output)
+.scannerwork/
+
+# Service account keys (CRITICAL: never commit)
+service-account-key.json
+*service-account-key*.json
+*service_account_key*.json
+
+# Local secrets directory (keep only docs)
+.secrets/*
+!.secrets/README.md
+
+# Root-local env and secret files
+.env.combined
+service-account.json
+google-credentials.json
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+nuzantara.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup
+.AppleDouble
+
+# Data & Artifacts
+data/temp/
+data/*.json
+data/*.log
+data/qdrant_production_snapshots/
+data/flyio-export-*/
+data/kg_production_export/
+data/hgt_coordinator/
+# NUZANTARA-LEX corpus cache (Phase 0, apps/nuzantara-lex/scripts/fetch_norms.py) —
+# regulation PDFs never enter git, only the manifest with sha256 provenance does.
+data/nuzantara-lex/
+benchmark_results/
+carousel-bali-traffic/output/
+carousel-bali-traffic/images/
+
+# Large/local datasets (keep out of git)
+nuzantara_laws/apps/scraper/data/raw_laws_local/Unified_Knowledge_Base/
+
+# Node
+node_modules/
+# No trailing slash too: catches a `node_modules` SYMLINK (e.g. a worktree
+# sharing deps with the main checkout via `ln -s`), which the directory-only
+# pattern above does not match — that gap is how two self-referential
+# symlinks got committed at repo root and apps/mouth/ in PR #4095, breaking
+# every npm-based CI job (root is a *file* to npm, not a directory).
+node_modules
+.pnpm-store/
+.pnpm-debug.log
+
+# Docker
+# Misc
+*.tar.gz
+*.zip
+*.rar
+conv/generated/
+
+# CodeQL & Security Scans
+codeql-db/
+codeql-results/
+*.sarif
+
+# Model files (large)
+*.gguf
+*.safetensors
+*.bin
+/models/
+ZANTARA_JAKSEL/models/
+
+# Generated documentation
+docs/*.log
+docs/*.json
+docs/generated/
+
+# Image files - ignore globally to avoid AI context pollution
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.JPG
+*.JPEG
+*.PNG
+*.GIF
+*.WEBP
+*.HEIC
+
+# BUT allow images in frontend public folder (needed for website)
+!apps/mouth/public/**/*.jpg
+!apps/mouth/public/**/*.jpeg
+!apps/mouth/public/**/*.png
+!apps/mouth/public/**/*.gif
+!apps/mouth/public/**/*.webp
+
+# Allow pricing assets (heros + icons generated via codex $imagegen)
+!docs/pricing/assets/**/*.png
+!docs/pricing/assets/**/*.jpg
+
+coverage.json
+# Auto-generated Playwright extensions
+.playwright-mcp/
+.playwright-cli/
+apps/mouth/coverage/
+lint_*.txt
+
+# ========================================
+# LOCAL DEVELOPMENT & TEMP FILES
+# ========================================
+
+# Cursor IDE
+.cursorignore
+
+# Root-local artifacts and session output
+/output/
+/outputs/
+.CLAUDE.md.swp
+.next/
+.vercel/
+.playwright-mcp/
+snapshots/
+test_results/
+venv/
+__pycache__/
+.ruff_cache/
+"Client Portal Login UPGRADED"/
+prime-*.png
+prime_*.png
+
+# Backup directories
+backups/
+
+# Deployment logs and scripts (local only)
+deployment_logs.txt
+verification_logs_final.txt
+verify_logs.txt
+DEPLOYMENT.md
+QUICK_DEPLOY.md
+EMERGENCY-CLEANUP.sh
+deploy.sh
+nuzantara_full_context.txt
+
+# Intel scraper temp data
+apps/bali-intel-scraper/data/pending_articles/
+apps/bali-intel-scraper/data/previews/
+apps/bali-intel-scraper/data/images/image_context_*.json
+apps/bali-intel-scraper/scripts/data/
+
+# Session docs (local development)
+docs/sessions/
+
+# Railway migration leftovers
+railway_ignore/
+env.production
+.vercel
+.env*.local
+
+# OSINT sovereignty (Symbiosis Law 2 — WhatsApp/intel corpus NEVER leaves Pro)
+# Existing *.local patterns did NOT cover .local.tsv / .local.jsonl; this closes the leak.
+*.local.*
+research/personal/wa-corpus/
+# Client-PII research artifacts (named-client cases must NEVER reach cloud GitHub/Vercel).
+# Added 2026-06-05 after a self-audit found research/visa/clients/ un-ignored, holding a
+# real client file one `git add -A` away from the cloud.
+# GOTCHA (2026-07-13): these patterns only stop NEW files — anything ALREADY TRACKED before
+# they landed stayed tracked and public. A named-client case file predating this block
+# survived here for 6 weeks and had to be git-rm'd by hand. When you add an ignore rule for
+# a leak class, ALSO sweep what is already tracked: `git ls-files | grep -E '<the pattern>'`.
+research/*/clients/
+research/**/*-case.md
+research/**/*-guidance.html
+research/**/*-guidance.pdf
+
+# plist-snapshot DR mirror — lives ONLY on the chore/plist-snapshot-dr branch
+# (force-added there by plist_snapshot_dr.sh); ignored on every working branch.
+infra/launchagents/_snapshot-live/
+
+# WhatsApp/Baileys session credentials + sync-key dumps (OSINT secrets, Symbiosis Law 2).
+# A git stash captured 3041 such files (session-quarantine); this blocks any re-leak.
+apps/wa-mirror/historical/
+**/session-quarantine-*/
+**/baileys_auth*/
+**/creds.json
+
+# ========================================
+# SECURITY FIXES (2026-01-11)
+# ========================================
+scripts/data/nuzantara_key.json
+scripts/data/sa_nuzantara.json
+scripts/data/temp_creds.json
+scripts/data/*_key.json
+scripts/data/*_creds.json
+
+test_github_token.py
+apps/mouth/SESSION_2026_01_19_SUMMARY.md
+apps/mouth/QUICK_ARTICLE_PUBLISHING.md
+apps/backend-rag/backend/db/migrations_legacy_archive/044_google_drive_oauth_tokens.sql
+
+# OAuth tokens (secrets)
+apps/backend-rag/oauth_tokens.json
+apps/backend-rag/scripts/generate_oauth_token.py
+apps/backend-rag/scripts/setup_oauth_token.py
+OVERLORD_LOG.md
+data/exports/legal_unified_hybrid_*.json
+
+# ========================================
+# OPENCLAW / AI WORKSPACE FILES
+# ========================================
+AGENTS.md
+BOOTSTRAP.md
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md
+.clawhub/
+.geminiignore
+GEMINI.md
+WORKSPACE.md
+
+# ClawHub installed skills (managed by clawhub CLI, not source-controlled)
+skills/deepwiki/
+skills/gog/
+skills/gogcli/
+skills/google-calendar/
+skills/google-workspace-mcp/
+skills/perplexity-deep-search/
+skills/senior-devops/
+skills/skillvet/
+skills/tdd-guide/
+skills/test-runner/
+
+# Generated markdown docs (one-off reports, not project docs)
+BRIEF_KB_ARCHITECTURE_REASONING.md
+CHANGELOG.md
+LOGGER_REMOTE_COMPLETE.txt
+SENTRY_AND_LOGGER_COMPLETE.md
+SENTRY_DEPLOYMENT_SUCCESS.txt
+SUPER_KNOWLEDGE_GRAPH_STRATEGY.md
+VERCEL_*.md
+WINDSURF_PHASE2_PATCH.md
+WORKSPACE_CLEANUP_COMPLETE.md
+
+# Frontend generated docs
+apps/mouth/OPTIMIZATION_GUIDE.md
+apps/mouth/docs/DOCUMENTS_OPTIMIZATION.md
+apps/mouth/docs/PORTAL_HOOKS.md
+
+# KBLI backup JSONs (large, only track the canonical file)
+source_documents/KBLI_2025_FINAL_CLEAN.backup_*.json
+
+# ========================================
+# UTILITY SCRIPTS (one-off, not tracked)
+# ========================================
+apps/backend-rag/backend/scripts/add_*.py
+apps/backend-rag/backend/scripts/create_portal_*.py
+apps/backend-rag/backend/scripts/create_portal_*.sh
+apps/backend-rag/backend/scripts/check_portal_*.py
+apps/backend-rag/backend/scripts/update_portal_*.sql
+apps/backend-rag/backend/scripts/kg_query.py
+apps/backend-rag/backend/scripts/search_client.py
+
+# Temp upload folders
+.tmp.driveupload/
+
+# Lock files (use package-lock.json instead)
+pnpm-lock.yaml
+
+# Gemini CLI project config (local only)
+.gemini/
+
+# Syncthing artifacts
+*.sync-conflict-*
+.stfolder
+.stignore
+.stversions/
+
+# GIS/scraping one-off scripts (not part of project)
+mission_*.py
+scan_geonode*.json
+scan_defigix.json
+scan_interactive.json
+heist_catalog.json
+
+# Misc root artifacts
+AI_CONFIG_DEPLOYMENT_LOG.md
+npm
+*.png.sync-conflict-*
+apps/backend-rag/MagicMock/
+apps/backend-rag/scripts/zantara_expert_test.py
+.antigravity/
+.launchd-test
+.sync-test
+.syncthing-restart-test
+
+# Test/QA reports (local only)
+PRODUCTION_LIVE_TEST_REPORT_*.md
+WEBAPP_COMMUNICATION_TEST_REPORT_*.md
+ZANTARA_RESPONSE_QUALITY_ISSUES_*.md
+
+# Homunculus AI workspace
+.homunculus/
+
+# One-off verification scripts
+verify_homepage.mjs
+apps/backend-rag/.venv/
+
+# KBLI temporary files and utilities
+apps/backend-rag/backend/app/routers/*.before-claude
+harvested_zones/
+# TAC-2 (2026-07-05): was a bare `main.py` — it silently hid apps/remediator/main.py
+# (the ENTIRE app) and apps/graph-engine's entrypoint from git (TAC-1 P2-7). Anchored
+# to repo root; the two `!` exceptions it forced are now unnecessary and removed.
+/main.py
+master_building_codes_complete.json
+
+# EvoSkill runtime outputs (Phase 1 evolver loop generates these)
+agent-library/.evoskill/frontier/
+agent-library/.evoskill/reports/
+agent-library/.evoskill/logs/
+agent-library/.evoskill/skills/
+agent-library/.evoskill/prompts/
+agent-library/.evoskill/state.json
+agent-library/.evoskill/loop_checkpoint.json
+agent-library/.evoskill/feedback_history.md
+
+service_roi_calculator.py
+service_zone_finder.py
+
+# API keys
+sk-*
+
+
+# Temporary files
+codebase_parts/
+openclaw
+!infra/openclaw/
+
+.aider*
+.claude/
+# Track shared Claude Code project assets (commands, helper scripts, hooks, settings)
+# while still ignoring local artifacts (settings.local.json, locks/, handovers/).
+# Pattern: re-include directories first, then specific files, leaving everything else ignored.
+!.claude/
+.claude/*
+!.claude/agents/
+.claude/agents/*
+# 2026-07-16 red-team finding #8: !.claude/agents/ alone exposes the WHOLE
+# subtree to git add -A, not just the 10 vendored WR2 files. Narrow to an
+# explicit allowlist — same negate-then-reinclude pattern as .claude/ above,
+# one level deeper. Update this list only when deliberately vendoring more.
+!.claude/agents/wr2-brief-interpreter.md
+!.claude/agents/wr2-critic.md
+!.claude/agents/wr2-design-architect.md
+# 2026-08-08: the last two wr2-* specs that still lived ONLY in ~/.claude/agents/
+# (family #1). Vendored here so the repo copy is canon on every machine; each
+# carries a `CANON:` marker naming this directory. Adding them to this allowlist
+# is the deliberate act the comment above asks for — without these two lines
+# `git add -A` skips the files in silence and the vendoring is a no-op.
+!.claude/agents/wr2-external-bench.md
+!.claude/agents/wr2-ig-metrics-analyst.md
+!.claude/agents/wr2-image-prompt-author.md
+!.claude/agents/wr2-layout-composer.md
+!.claude/agents/wr2-storyboarder.md
+!.claude/agents/wr2-design-architect-resources/
+.claude/agents/wr2-design-architect-resources/*
+!.claude/agents/wr2-design-architect-resources/architecture-patterns.md
+!.claude/agents/wr2-design-architect-resources/brand-bali-zero.md
+!.claude/agents/wr2-design-architect-resources/brand-external-audit.md
+!.claude/agents/wr2-design-architect-resources/deep-research.md
+# T3.3 lane aggregators (PR #2548) — same explicit-allowlist discipline.
+!.claude/agents/README.md
+!.claude/agents/backend-verifier.md
+!.claude/agents/frontend-browser.md
+!.claude/agents/mcp-health.md
+!.claude/agents/spalla-review.md
+# Task #95 (2026-07-27): promoted from ~/.claude/agents/ (was HOME-only, never
+# repo-tracked) so the wrapper's Tier-1 spec has a source of truth to arm from —
+# declared home-fork pair in infra/home-fork/declared-pairs.json. No PII: this is
+# a workflow spec (source URLs, JSON schema), not a client-data agent.
+!.claude/agents/regulatory-watcher.md
+# E1/R1 (2026-08-27): 7 grunt agent defs pinned to Haiku 4.5 — same explicit-
+# allowlist discipline as the groups above. Adding them here is the
+# deliberate act the top comment asks for; without these lines `git add`
+# skips the files in silence and the def never ships in the PR.
+!.claude/agents/ledger-writer.md
+!.claude/agents/log-triage.md
+# 2026-09-04: the two agent definitions that a LIVE cron actually loads and that still
+# lived ONLY in ~/.claude/agents/ (family #1). competitor-monitor is dispatched by
+# com.balizero.competitor-monitor.monthly; nb-curator by com.balizero.nb-curator.daily.
+# Same deliberate-allowlist act as the 2026-08-08 wr2 block above: without these two
+# lines `git add -A` skips the files in silence and the vendoring is a no-op.
+!.claude/agents/competitor-monitor.md
+!.claude/agents/nb-curator.md
+# 2026-09-16: meta-one-steward is the weekly reviewer for the Meta One Advanced
+# subscription (docs/marketing/meta-one-advanced-playbook.md, /metaone corner).
+# Same deliberate-allowlist act as the two blocks above: without this line
+# `git add` skips the file in silence and the def never ships in the PR.
+!.claude/agents/meta-one-steward.md
+# 2026-07-17: slash commands hold PER-PERSON team corners (subhi/ari/... with
+# probation dates, RBAC perimeters) that live ONLY in ~/.claude/commands and must
+# NEVER reach this PUBLIC repo (UU PDP / SYMBIOSIS Law 2). !.claude/commands/ nudo
+# would track any corner dropped into the repo dir — same red-team finding #8 as
+# agents. Narrow to an explicit per-file allowlist: only vetted process/utility
+# commands. Update this list ONLY when deliberately vendoring a non-PII command.
+!.claude/commands/
+.claude/commands/*
+!.claude/commands/codex-second-opinion.md
+!.claude/commands/stadio-zero.md
+!.claude/commands/scar.md
+!.claude/commands/verify.md
+!.claude/commands/resume.md
+!.claude/scripts/
+!.claude/hooks/
+!.claude/rules/
+!.claude/skills/
+!.claude/agent-memory/
+!.claude/settings.json
+.cosoda/
+OPENCLAW_MASTER_GUIDE_2026.md
+
+# ========================================
+# CLEANUP 2026-03-07
+# ========================================
+
+# Scraper temp data & chrome profile
+apps/bali-intel-scraper/data/.chrome-profile/
+apps/bali-intel-scraper/data/intel_output_latest.json
+apps/bali-intel-scraper/data/pipeline/
+apps/bali-intel-scraper/data/enriched/
+apps/bali-intel-scraper/data/review_*.txt
+
+# Dead scraper Dockerfiles (removed)
+apps/bali-intel-scraper/Dockerfile.fetcher
+apps/bali-intel-scraper/Dockerfile.optimized
+
+# Client dossiers (one-off, local only)
+DOSSIER_*.md
+
+# CRM utility script outputs (data in Fly.io DB)
+scripts/*_report.json
+scripts/*_log.json
+
+# Fly.io staging config (local only)
+apps/backend-rag/fly.staging.toml
+
+# CRM utility scripts (local one-off operations, not part of product)
+scripts/clients_cleanup.py
+scripts/company_crm_extract.py
+scripts/drive_reorganize.py
+scripts/gap1_dedup_individual_crm.py
+scripts/gap2_link_drive_to_crm.py
+scripts/gap3_populate_portal_data.py
+scripts/import_companies_from_report.py
+scripts/ocr_batch_pipeline.py
+scripts/populate_client_company_links.py
+scripts/reextract_companies.py
+scripts/drive_reorganize_report.json
+
+# Translate script (runs via LaunchAgent, not part of main pipeline)
+apps/bali-intel-scraper/scripts/translate_articles.py
+ai-dispatch-output/
+.ai-dispatch-cache/
+.superpowers/
+
+# ========================================
+# CLEANUP 2026-03-24
+# ========================================
+
+# Local utility scripts (not part of product)
+list_httpx.sh
+start_air_agents.sh
+
+# External repos accidentally in workspace
+My-Portfolio/
+
+# Competitor/research data (generated, not source)
+competitor_*.csv
+competitor_*.jsonl
+competitor_*.txt
+expat_urls.csv
+biznews_urls.csv
+*.pptx
+compliance_report_*.pdf
+
+# ============================================
+# Dev-tools research artifacts (Claude Code experiments, pilot runs, agent-teams scratchpad)
+# Convention 2026-05-13: research/dev-tools/ is ephemeral working dir, NOT versioned.
+# Background: branch-switch by sibling Claude session has lost untracked files here twice
+# (cf. cicatrix scar "Untracked files lost when sibling automation switches branches mid-session").
+# Durable artifacts MUST live in ~/.claude/projects/-Users-nuzantara/pilot-archives/ instead.
+# ============================================
+research/dev-tools/
+
+# ============================================
+# Ephemeral research directories (2026-05-16 convention post Gemini+DeepSeek panel)
+# Auditable but NOT in git tree until explicit promote.
+# Risk: committed PII/strategy data permanently in main (Gemini hazard #2).
+# Voice samples + CRM exports + HR data MUST stay local.
+# ============================================
+research/marketing/zantara-visual-dataset/
+research/marketing/flow-assets/
+research/crm-exports/
+research/hr/
+# Employee/client PII at rest (KTP, passport, NPWP, akta scans). Belt-and-suspenders:
+# today only the global *.JPG/*.jpg patterns catch the KTP images in data/hr/ — this
+# whole-dir rule guards against a future non-image PII file (PDF, .md, .csv) slipping in.
+# HR identity docs MUST stay local (Symbiosis Law 2 / UU PDP). Never commit.
+data/hr/
+# research/agent-craft: ignore working subdirs, but TRACK proposed-agents/ + S17 frozen index
+research/agent-craft/_assets/
+research/agent-craft/census-raw/
+research/nb-archive/
+research/nlm-elevation/
+research/seo_cell/
+
+# Voice samples (any path)
+**/antonello_voice_*.wav
+**/antonello_voice_*.m4a
+**/zero_voice_*.wav
+**/zero_voice_*.m4a
+
+# OpenCode / alternative AI tools
+.opencode/
+opencode.json
+
+# n8n workflows (local automation, not tracked)
+n8n-workflows/
+
+# Scraper scraped data (regenerated by cron)
+apps/bali-intel-scraper/data/scraped/
+
+# Venv (both naming conventions)
+venv/
+.venv/
+.worktrees/
+apps/backend-rag/venv/
+
+# ========================================
+# CLEANUP 2026-03-28 — Untracked binaries, state, generated
+# ========================================
+
+# Large PDFs — serve from Google Drive / Vercel Blob, not git
+apps/mouth/public/blueprints/*.pdf
+apps/mouth/public/files/visa/*.pdf
+apps/mouth/public/audio/*.mp3
+apps/mouth/public/videos/*.mp4
+apps/kbli-navigator/public/*.mp4
+apps/backend-rag/data/assets/*.pdf
+data/kb_sources/**/*.pdf
+data/kbli_pdfs/
+docs/team-guides/*.pdf
+
+# KBLI JSON duplicates (keep only source_documents canonical)
+apps/mouth/data/KBLI_2025_FINAL_CLEAN.json
+apps/backend-rag/source_documents/
+# apps/kbli-navigator/data/kbli-2025.json is NOT ignored (scar #1 HOME-fork cure,
+# 2026-07-19): it used to be untracked here, which let it silently rot to a
+# 2026-03-28 snapshot while balizero.com/kbli moved on. It is now a tracked,
+# byte-identical mirror of canonical kept in sync by scripts/sync_kbli_dataset.sh
+# + CI check-kbli-dataset-sync — same discipline as the mouth copy above.
+!apps/kbli-navigator/data/kbli-2025.json
+
+# Generated/state JSON files
+apps/backend-rag/coverage_report.json
+apps/backend-rag/coverage_response_processor.json
+apps/backend-rag/scripts/ready_to_curl.json
+apps/backend-rag/openapi.json
+apps/evaluator/articles_indexing_state.json
+apps/evaluator/indexing_state.json
+apps/evaluator/nlm_nb*_*.json
+apps/evaluator/nlm_nb*_*.jsonl
+apps/evaluator/nlm_deep_research/*_state.json
+apps/evaluator/nlm_deep_research/coverage_matrix.json
+apps/evaluator/nlm_deep_research/*.lock
+apps/evaluator/nlm_deep_research/output/
+# Per-run output the evaluator crons leave in Pro's main checkout (found untracked there
+# 2026-09-26, never committed, 0 tracked on main): daily_sweep.py writes a dated
+# sweep_report_<date>.txt on every run, and the KBLI/article indexing sweep family writes its
+# reports and submit-state beside the state files already ignored above. Logs, not research.
+apps/evaluator/sweep_report_*.txt
+apps/evaluator/indexing_sweep_report_*.txt
+apps/evaluator/kbli_indexing_submit_state.json
+# meta_one_steward.py (Pro-resident) keeps its ledger, daily Graph snapshots and monthly
+# Business Suite exports in shared/meta_one/ by default (META_ONE_STATE_DIR). Machine state
+# rewritten on every tick; nothing under it has ever been committed.
+shared/meta_one/
+apps/mouth/scripts/kbli_data_backup.json
+apps/mouth/scripts/kbli_english_keywords.json
+scripts/.rag_canary/
+
+# Agent/tool runtime state (local only)
+.agent/
+.clawhub/
+.cosoda/
+.superpowers/
+.openclaw/
+.opencode/
+.homunculus/
+.ai-dispatch-cache/
+
+# Data exports and snapshots
+data/exports/
+data/kbli_2025_export/
+data/scraping/
+data/source_documents/PP*.pdf
+data/source_documents/kbli_2020_official.json
+
+# Training data (ingested into Qdrant, not needed in git)
+apps/backend-rag/training-data/
+
+# Package lock files in sub-apps (root handles dependencies)
+apps/*/package-lock.json
+apps/team-agent/bridge/package-lock.json
+# ...except where that premise is FALSE. "root handles dependencies" holds only
+# for the five npm workspaces declared in the root package.json; five apps under
+# apps/ carry a package.json and are NOT among them (bali-zero-magazine,
+# kbli-navigator, wa-dashboard-m1, wa-meta-inbox, wa-mirror).
+# Measured 2026-08-09: the root package-lock.json has 2202 entries and ZERO of
+# them are wa-mirror's — no baileys, no qrcode-terminal, not even the @types it
+# declares. So its install floated on every machine, and on 2026-08-06 a rebuild
+# left Pro with the production half of the tree and none of the devDependencies:
+# `npm run build` then exited 2 on four "type errors" that were nothing but the
+# absent @types/qrcode-terminal, while tsc emitted correct JS anyway (it compiled
+# with the Homebrew global 5.9.3, since the pinned typescript was missing too).
+# An exit code that says "failed" over a correct artifact is unusable, which is
+# how a live organ's deploy step lost its verdict. The remaining five stay
+# uncovered on the W81 ledger — do not read this negation as the class being cured.
+!apps/wa-mirror/package-lock.json
+
+# Backend test/state artifacts
+apps/backend-rag/business-testing/
+apps/backend-rag/reports/
+
+# Canva script output
+scripts/canva/output/
+
+# NLM handoff files
+apps/evaluator/handoff/
+.windsurf/
+apps/mouth/public/kbli-navigator/images/base64_data.txt
+apps/evaluator/indexing_state.json
+tmp_notebooklm/
+
+# Temporary batch processing scripts (root-level)
+batch*_processing/
+batch*_db_upsert.py
+batch*_extraction.py
+batch*_pdfs/
+check_columns.py
+check_documents.py
+list_tables.py
+download_batch*.py
+data/batch*/
+data/doc_*.pdf
+scripts/create_missing_batch*.py
+scripts/db_verify_batch*.py
+scripts/download_batch*.py
+scripts/process_batch*.py
+scripts/verify_batch*.py
+scripts/inspect_schema.py
+apps/mouth/public/temp_*.png
+.worktrees/
+apps/backend-rag/scripts/output/
+
+# Runtime artifacts / local backups
+apps/cell/data/.ai_intel_last_harvest
+apps/mouth/public/assets/logo/_pre-fix-backup-*/
+# WR2 runtime path (logs, output zips, .env, .venv) — used by canva_renderer + intel_publisher.
+# Only the README is tracked: apps/war-room is a DATA DIR, not an app (prune 2026-10-19).
+apps/war-room/*
+!apps/war-room/README.md
+# Per-app Jest/Vitest coverage outputs
+packages/core/coverage/
+# seo_cell runtime data (SQLite DB + WAL + birth_date.txt — all local)
+data/seo_cell/
+
+# F1 baseline artifacts (large screenshots/JSON dumps)
+.artifacts/
+
+# Root-level scratch dumps (PII / one-off API responses); blocked by root_guard
+# but adding here so a stray `git add .` from a working dir won't reintroduce them.
+/Nuzantara/
+/api-news.txt
+/api-*.txt
+
+# Codex spalla transcripts (machine-local audit trail; canonical location is
+# ~/logs/codex-spalla/ + ~/logs/codex-spalla.jsonl telemetry, both per-machine).
+# Transcripts contain `(see ~/.codex/AGENTS.md)` references that docs_audit.py
+# parses as broken markdown links and fails Docs Guardian on every PR.
+docs/codex-reviews/
+
+# Bali Zero Price List 2026 — generated outputs live outside the repo on ~/Desktop/
+# Source of truth: apps/backend-rag/backend/data/bali_zero_official_prices_2026.json
+# Generator:       scripts/pricelist_2026/
+# Versioned MD:    docs/pricing/Bali_Zero_Price_List_2026.md
+# Working assets:  ~/Desktop/Bali_Zero_Price_List_2026_assets/
+
+# Mini-Pro2 venv aside (transient backup during venv recreations)
+apps/backend-rag/.venv.mini-aside-*/
+apps/mouth/scripts/output/
+
+# Generated artifacts from analysis scripts
+apps/mouth/scripts/output/
+
+# Root-level runtime cache (cache/projects.json from WR2 cron) — blocks the
+# deploy worktree ff-only pull when untracked. Root-anchored so it does NOT
+# match vendor/evoskill/src/cache/ (tracked).
+/cache/
+apps/evaluator/.rag-eval-prod.env
+
+# pytest-testmon local coverage→test dependency map (per-machine, never shared).
+# Added 2026-06-09 (scripts/fast-gate.sh, 4-LLM panel ship #1).
+.testmondata
+.testmondata-*
+
+# WR2 manual carousel assets (pre-authored injection batches — delivered to Pro via deploy-puller)
+!docs/wr2/manual-assets/**/*.png
+!docs/wr2/manual-assets/**/*.jpg
+
+# Client PII CSVs — never commit (Law 2 / UU PDP). Added 2026-06-15 after 4-LLM
+# panel found ~746 client records tracked on origin/main (PR #133/#258).
+docs/crm/**/*.csv
+research/compliance/*clients*.csv
+research/compliance/*passport*.csv
+apps/backend-rag/scripts/output/*campaign*.csv
+**/dq_clients*.csv
+**/dq_orphan_clients*.csv
+research/nb-health/nb-inventory-live.json
+# apps/backend-rag/scripts/nlm_pack_crm.py writes WhatsApp client dossiers and their
+# timing file into research/crm/ of the checkout it runs from. They are client PII by
+# construction (Builder Contract §4) and must never be promoted: two were, until 2026-09-26.
+research/crm/*-wa-dossier-*.txt
+research/crm/*-timing-*.json
+
+# Client-PII outputs (Builder Contract §4) — never tracked. scripts/crm_guardian_deep_audit.py
+# writes its jsonl/run.log into research/compliance/deep_audit_*/ of the checkout it runs from.
+research/compliance/deep_audit_*/*.jsonl
+research/compliance/deep_audit_*/run.log
+# CRM guardian xlsx exports. After this removal no xlsx is tracked under research/compliance/,
+# so the extension-wide form ignores nothing that should be tracked.
+research/compliance/*.xlsx
+# apps/backend-rag/backend/services/wa_copilot/metrics_dashboard.py `--eval-set` output.
+research/wa-copilot/*eval-set*.jsonl
+# scripts/wa_corpus/query_lab.py loads its ground truth from this untracked file when present
+# and falls back to synthetic fixtures otherwise.
+scripts/wa_corpus/_ground_truth_local.py
+
+# S7 yield: local PII drafts staging (NEVER commit — UU PDP)
+s7-yield-drafts-local/
+research/crm/*-drafts-local/
+# yield-optimizer weekly report: client names/pitches - never commit, UU PDP
+research/commercial/*-yield-opportunities.md
+.agent-task.json
+
+# arm_keep_worktrees.py: human-readable quarantine receipts (recovery aid, never tracked)
+.agent-receipts/
+
+# husky runtime dir — regenerated by `husky install`, never committed
+.husky/_
+
+# kb-current-live campaign: per-machine scheduled-probe history (kb/ops/probe_history.py).
+# Runtime state appended by a cron on whichever machine runs the job, same class as the
+# DLQ/heartbeat state files already excluded here — not a source artifact.
+kb/ops/probe_history.jsonl
+scripts/tests/_fixtures_doctrine/
+
+# cc-meta-loop run artifacts: the per-run machine-config snapshot is regenerable
+# (`scripts/cc_meta_research_loop.py --inventory-only`) and carries this machine's hook
+# and path layout; the curated REPORT.md, proposals and verdicts are the research.
+research/agent-craft/cc-meta-loop/*/inventory.json
+# The seats' raw answers embed the prompt echo (that same inventory) and, for codex, its tool
+# trace over the operator's home — the parsed proposals and verdicts are the research.
+research/agent-craft/cc-meta-loop/*/round-*/raw_answers.json
+
+# G5 residual-PII cleanup (2026-09-27): four one-off scripts/reports carried real client
+# names/phones/emails/passport numbers or a near-complete real company roster hardcoded as
+# literal data, past their operational shelf life. Pre-removal content quarantined on Pro
+# (~/.agent/pii-quarantine/g5-residuals-0927/, 0600). Ignored so a future re-export under the
+# same filename doesn't slip back onto main unreviewed.
+apps/backend-rag/scripts/fix_lkpm_orphans_batch1.py
+apps/backend-rag/process_batches_2_3.py
+docs/crm/assignment-mismatches-2026-04-20.md
+docs/crm/reports-2026-04-20/mismatches.csv
+apps/backend-rag/backend/data/team_members.json
+
+# Harness door files are rendered per host by the backstage activator; they never enter this repository.
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+QWEN.md

@@ -1,0 +1,835 @@
+import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs";
+import bundleAnalyzer from "@next/bundle-analyzer";
+import path from "node:path";
+
+const withBundleAnalyzer = bundleAnalyzer({
+  enabled: process.env.ANALYZE === "true",
+});
+
+const nextConfig: NextConfig = {
+  // Note: "standalone" output removed — Vercel handles bundling natively.
+  // Using standalone on Vercel caused serverless functions to exceed 300MB
+  // (507MB for KBLI routes) by including all node_modules in each function.
+  turbopack: {
+    root: path.join(__dirname, "../.."),
+  },
+  reactStrictMode: true,
+  // CI e2e runs hit the dev server via 127.0.0.1 while Next considers its
+  // origin "localhost"; without this, Next 16 blocks cross-origin dev
+  // resources and React never hydrates (visa-oracle-v2.spec.ts red, CI-only).
+  allowedDevOrigins: ["127.0.0.1"],
+  typescript: {
+    ignoreBuildErrors: false,
+  },
+
+  // ⚡ Bundle optimization
+  compress: true,
+  productionBrowserSourceMaps: false,
+  poweredByHeader: false, // Remove X-Powered-By header for security
+
+  // Exclude heavy directories from serverless function tracing
+  // Without this, Vercel traces public/ (537MB) into each function, exceeding the 300MB limit
+  outputFileTracingExcludes: {
+    "/*": [
+      "./public/blueprints/**",
+      "./public/static/**",
+      "./public/files/**",
+      "./public/audio/**",
+      "./public/videos/**",
+      "./public/kbli-navigator/**",
+      "./coverage/**",
+      "./test-results/**",
+      "./playwright-report/**",
+    ],
+  },
+  outputFileTracingIncludes: {
+    "/*": [
+      "./data/KBLI_2025_FINAL_CLEAN.json",
+      "./data/kbli-2025.json",
+      "./data/kbli-gold-all.json",
+      "./src/content/articles/**/*.mdx",
+    ],
+  },
+
+  // 🚀 Experimental optimizations
+  experimental: {
+    // Optimize package imports for faster dev and smaller bundles
+    optimizePackageImports: [
+      "lucide-react",
+      "@radix-ui/react-icons",
+      "date-fns",
+      "framer-motion",
+      "@nivo/core",
+      "@nivo/bar",
+      "@nivo/line",
+      "@nivo/pie",
+    ],
+    // Server Actions optimization
+    serverMinification: true,
+    // Optimize CSS (removes unused CSS in production)
+    optimizeCss: true,
+    // Partial Prerendering - Next.js 16 handles this automatically
+    // PPR features are now part of the core rendering engine
+    // Turbopack for faster builds (when stable)
+    // turbo: {},
+  },
+  // NOTE: Domain redirects handled by Vercel Dashboard to avoid conflicts
+  images: {
+    // 🖼️ Image Optimization - Auto AVIF/WebP conversion
+    formats: ["image/avif", "image/webp"], // Modern formats (70% smaller)
+    deviceSizes: [640, 750, 828, 1080, 1200, 1920], // Responsive breakpoints
+    imageSizes: [16, 32, 48, 64, 96, 128, 256, 384], // Icon/thumbnail sizes
+    minimumCacheTTL: 60 * 60 * 24 * 365, // Cache 1 year
+    dangerouslyAllowSVG: true,
+    contentDispositionType: "attachment",
+    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
+
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "nuzantara-rag.fly.dev",
+      },
+      {
+        protocol: "https",
+        hostname: "*.fly.dev",
+      },
+      {
+        protocol: "https",
+        hostname: "oaidalleapiprodscus.blob.core.windows.net",
+      },
+      {
+        protocol: "https",
+        hostname: "placehold.co",
+      },
+      {
+        protocol: "https",
+        hostname: "image.pollinations.ai",
+      },
+      {
+        protocol: "https",
+        hostname: "balizero.com",
+      },
+      {
+        protocol: "https",
+        hostname: "www.datocms-assets.com",
+      },
+      {
+        protocol: "https",
+        hostname: "images.unsplash.com",
+      },
+      {
+        protocol: "https",
+        hostname: "storage.googleapis.com",
+      },
+    ],
+  },
+  async headers() {
+    return [
+      {
+        // Force no-cache for kbli-navigator proxy routes
+        source: "/kbli-navigator",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "no-cache, no-store, must-revalidate",
+          },
+        ],
+      },
+      {
+        source: "/kbli-navigator/:path*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "no-cache, no-store, must-revalidate",
+          },
+        ],
+      },
+      {
+        // Cache public assets (fonts, etc) for 1 year.
+        //
+        // This rule used to read `/:path*.woff2` — it judged a SPELLING where
+        // the comment describes an ENTITY, and the two stopped agreeing the
+        // day the R19 faces landed. Fraunces and Manrope ship as variable
+        // .ttf under /fonts (360 KB + 165 KB, measured 2026-09-16), so they
+        // fell through to the default and production served them with
+        // `max-age=0, must-revalidate` — half a megabyte revalidated on every
+        // navigation of a funnel whose visitors are on Indonesian mobile.
+        //
+        // Caveat, unchanged from when this rule covered woff2 alone: these
+        // filenames carry no content hash, so `immutable` means REPLACING a
+        // face requires a new filename, not a new byte stream.
+        source: "/:path*.:ext(woff2|woff|ttf|otf)",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
+      },
+      {
+        // Add security headers shared by every application surface.
+        // The portal CSP is intentionally scoped below: a global policy must
+        // not block dependencies required by independent surfaces such as Prime.
+        source: "/:path*",
+        headers: [
+          {
+            key: "X-DNS-Prefetch-Control",
+            value: "on",
+          },
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=63072000; includeSubDomains; preload",
+          },
+          {
+            key: "X-Frame-Options",
+            value: "DENY",
+          },
+          {
+            key: "X-Content-Type-Options",
+            value: "nosniff",
+          },
+          {
+            key: "Referrer-Policy",
+            value: "strict-origin-when-cross-origin",
+          },
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=(), payment=()",
+          },
+        ],
+      },
+      {
+        // Enforce the client-safe policy only on portal documents. Other app
+        // surfaces have distinct runtime dependencies and require their own CSP.
+        source: "/portal/:path*",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value:
+              "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob: https:; connect-src 'self' https://nuzantara-rag.fly.dev wss://nuzantara-rag.fly.dev https://*.sentry.io https://www.google-analytics.com; worker-src 'self' blob:; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'",
+          },
+        ],
+      },
+      {
+        // Voice concierge needs microphone capture for browser speech input.
+        source: "/intelligence/voice-concierge",
+        headers: [
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(self), geolocation=(), payment=()",
+          },
+        ],
+      },
+      // The `Link: rel=preconnect` header to fonts.googleapis.com and
+      // fonts.gstatic.com that used to live here was removed on 2026-08-13,
+      // when the four families became self-hosted (packages/core/fonts/files/).
+      // It was added for Core Web Vitals and, once nothing fetches from those
+      // hosts, it inverts: every route pays a DNS + TCP + TLS handshake to a
+      // host it will never ask for a byte. Do not add it back without a font
+      // that actually loads from there.
+    ];
+  },
+
+  // Redirect legacy /kbli-navigator to new Next.js /kbli app
+  async redirects() {
+    return [
+      // Recruitment assessment retired after hire (2026-10-21).
+      {
+        source: "/interview_natalie",
+        destination: "/team",
+        permanent: true,
+      },
+      // The former zoning pitch now points to the property eligibility tool.
+      {
+        source: "/zoning",
+        destination: "/property/eligibility",
+        permanent: true,
+      },
+      // Newsroom deduplication (2026-09-06): preserve inbound links while
+      // consolidating duplicate articles created with truncated slugs.
+      {
+        source:
+          "/business/bali-vs-koh-samui-where-your-property-money-actually-works-h",
+        destination:
+          "/business/bali-vs-koh-samui-where-your-property-money-actually-works-harder",
+        permanent: true,
+      },
+      {
+        source:
+          "/business/rupiah-under-pressure-what-bank-indonesias-intervention-mean",
+        destination:
+          "/business/rupiah-under-pressure-what-bank-indonesias-intervention-means-for-you",
+        permanent: true,
+      },
+      {
+        source:
+          "/taxes/indonesia-gives-tax-authority-power-to-override-your-interco",
+        destination:
+          "/taxes/indonesia-gives-tax-authority-power-to-override-your-intercompany-prices",
+        permanent: true,
+      },
+      {
+        source:
+          "/trends/indonesias-data-law-now-covers-us-transfers-what-expats-and-",
+        destination:
+          "/trends/indonesias-data-law-now-covers-us-transfers-what-expats-and-businesses-must-know",
+        permanent: true,
+      },
+      // Legacy article URLs (audit 2026-09-09, PR pair with #6133): renamed slugs, category-less
+      // /insights/<slug> links (the platform 301 lands them on /<slug>) and /articles/<slug> — all
+      // soft-404 today. Specific entries must precede the category catch-alls below.
+      {
+        source: "/business/pt-pma-setup-guide",
+        destination: "/business/foreign-company-incorporation-steps",
+        permanent: true,
+      }, // 79 refs
+      {
+        source: "/immigration/kitas-work-permit-guide",
+        destination:
+          "/visas/working-kitas-e23-indonesias-revised-legal-framework-explained",
+        permanent: true,
+      }, // 41 refs
+      {
+        source: "/tax-legal/personal-income-tax-guide",
+        destination: "/taxes/pph-21-expat-guide",
+        permanent: true,
+      }, // 23 refs
+      {
+        source: "/immigration/digital-nomad-visa-indonesia",
+        destination: "/visas/e33g-remote-worker-visa-guide",
+        permanent: true,
+      }, // 22 refs
+      {
+        source: "/immigration/second-home-visa",
+        destination: "/visas/second-home-visa-indonesia",
+        permanent: true,
+      }, // 13 refs
+      {
+        source: "/immigration/overstay-penalties",
+        destination: "/visas/visa-overstay-penalties-indonesia-guide",
+        permanent: true,
+      }, // 10 refs
+      {
+        source: "/immigration/entry-requirements",
+        destination: "/visas/visa-free-vs-evoa-indonesia-comparison",
+        permanent: true,
+      }, // 10 refs
+      {
+        source: "/immigration/work-permit-mistakes",
+        destination:
+          "/visas/indonesias-work-permit-maze-what-expats-must-know-before-taking-the-job",
+        permanent: true,
+      }, // 10 refs
+      {
+        source: "/business/kbli-codes-explained",
+        destination: "/kbli",
+        permanent: true,
+      }, // 10 refs
+      {
+        source: "/tax-legal/corporate-tax-indonesia",
+        destination: "/taxes/corporate-income-tax",
+        permanent: true,
+      }, // 8 refs
+      {
+        source: "/property/property-due-diligence",
+        destination: "/property/property-due-diligence-bali",
+        permanent: true,
+      }, // 5 refs
+      {
+        source: "/property/leasehold-property-bali",
+        destination: "/property/leasehold-vs-freehold",
+        permanent: true,
+      }, // 5 refs
+      {
+        source: "/property/pt-pma-property-investment",
+        destination: "/property/rental-property-investment",
+        permanent: true,
+      }, // 5 refs
+      {
+        source: "/property/hak-pakai-vs-hak-milik",
+        destination: "/property/leasehold-vs-freehold",
+        permanent: true,
+      }, // 5 refs
+      {
+        source: "/property/buying-property-foreigner-bali",
+        destination: "/property/buying-property-bali-foreigners-guide",
+        permanent: true,
+      }, // 5 refs
+      {
+        source: "/lifestyle/healthcare-indonesia",
+        destination: "/living/healthcare-system-indonesia",
+        permanent: true,
+      }, // 5 refs
+      {
+        source: "/lifestyle/best-areas-bali",
+        destination: "/living/best-areas-bali-2026",
+        permanent: true,
+      }, // 5 refs
+      {
+        source: "/lifestyle/moving-to-bali-checklist",
+        destination: "/living/living-in-bali-honest-guide",
+        permanent: true,
+      }, // 5 refs
+      {
+        source: "/lifestyle/international-schools-bali",
+        destination:
+          "/visas/navigating-indonesian-schools-what-expat-families-need-to-know",
+        permanent: true,
+      }, // 5 refs
+      {
+        source: "/business/hiring-employees-indonesia",
+        destination: "/business/hiring-indonesian-employees",
+        permanent: true,
+      }, // 5 refs
+      {
+        source: "/immigration/visa-comparison-chart",
+        destination: "/visas/indonesia-visa-timeline-comparison",
+        permanent: true,
+      }, // 5 refs
+      {
+        source: "/immigration/voa-extension-guide",
+        destination: "/visas/e-voa-electronic-visa-on-arrival-guide",
+        permanent: true,
+      }, // 5 refs
+      {
+        source: "/lifestyle/best-coworking-bali",
+        destination: "/living/coworking-spaces-bali",
+        permanent: true,
+      }, // 4 refs
+      {
+        source: "/business/retail-business-guide",
+        destination: "/business/kbli-2025-retail-sector-bali-investment-guide",
+        permanent: true,
+      }, // 4 refs
+      {
+        source: "/business/starting-business-indonesia-roadmap",
+        destination:
+          "/business/starting-a-business-in-indonesia-complete-guide",
+        permanent: true,
+      }, // 4 refs
+      {
+        source: "/tax-legal/freelancer-taxes-indonesia",
+        destination: "/taxes/freelancer-tax-guide",
+        permanent: true,
+      }, // 3 refs
+      {
+        source: "/tax-legal/npwp-registration-foreigners",
+        destination: "/taxes/npwp-foreigners-guide",
+        permanent: true,
+      }, // 3 refs
+      {
+        source: "/immigration/digital-nomad-kitas",
+        destination: "/visas/e33g-remote-worker-visa-guide",
+        permanent: true,
+      }, // 3 refs
+      {
+        source: "/immigration/family-dependent-visa",
+        destination:
+          "/visas/indonesia-family-kitas-2026-what-spouses-and-dependents-must-know",
+        permanent: true,
+      }, // 3 refs
+      { source: "/navigator/kbli", destination: "/kbli", permanent: true }, // 3 refs
+      {
+        source: "/lifestyle/cost-living-bali-2025",
+        destination: "/living/cost-of-living-bali",
+        permanent: true,
+      }, // 2 refs
+      {
+        source: "/immigration/visa-overstay-consequences",
+        destination: "/visas/visa-overstay-penalties-indonesia-guide",
+        permanent: true,
+      }, // 2 refs
+      {
+        source: "/immigration/e31-family-dependent-visa-guide",
+        destination:
+          "/visas/indonesia-family-kitas-2026-what-spouses-and-dependents-must-know",
+        permanent: true,
+      }, // 2 refs
+      {
+        source: "/tax-legal/panduan-pajak-penghasilan-pribadi",
+        destination: "/taxes/pph-21-expat-guide",
+        permanent: true,
+      }, // 1 refs
+      {
+        source: "/tax-legal/pajak-penghasilan-badan",
+        destination: "/taxes/corporate-income-tax",
+        permanent: true,
+      }, // 1 refs
+      {
+        source: "/lifestyle/driving-license-for-foreigners",
+        destination: "/living/driving-license-foreigners",
+        permanent: true,
+      }, // 1 refs
+      {
+        source: "/lifestyle/health-insurance-for-foreigners",
+        destination: "/living/health-insurance-foreigners",
+        permanent: true,
+      }, // 1 refs
+      {
+        source: "/immigration/visa-extension-step-by-step",
+        destination: "/visas/tourist-visa-extension-indonesia-guide",
+        permanent: true,
+      }, // 1 refs
+      {
+        source: "/tax-legal/panduan-ppn",
+        destination: "/taxes/vat-ppn-guide",
+        permanent: true,
+      }, // 1 refs
+      {
+        source: "/kbli-2025-bali-transformation",
+        destination: "/business/kbli-2025-bali-transformation",
+        permanent: true,
+      },
+      {
+        source: "/kbli-2025-hospitality-accommodation",
+        destination: "/business/kbli-2025-hospitality-accommodation",
+        permanent: true,
+      },
+      {
+        source: "/kbli-2025-real-estate-property",
+        destination: "/business/kbli-2025-real-estate-property",
+        permanent: true,
+      },
+      {
+        source: "/oss-registration-guide",
+        destination: "/business/oss-registration-guide",
+        permanent: true,
+      },
+      {
+        source: "/beginners-guide-kbli-2025",
+        destination: "/business/beginners-guide-kbli-2025",
+        permanent: true,
+      },
+      {
+        source: "/kbli-2025-food-beverage-fnb",
+        destination: "/business/kbli-2025-food-beverage-fnb",
+        permanent: true,
+      },
+      {
+        source: "/kbli-2025-construction-building",
+        destination: "/business/kbli-2025-construction-building",
+        permanent: true,
+      },
+      {
+        source: "/environmental-permits",
+        destination: "/business/environmental-permits",
+        permanent: true,
+      },
+      {
+        source: "/pt-pma-closure-dissolution",
+        destination: "/business/pt-pma-closure-dissolution",
+        permanent: true,
+      },
+      {
+        source: "/kbli-2025-foreign-ownership-pma-guide",
+        destination: "/business/kbli-2025-foreign-ownership-pma-guide",
+        permanent: true,
+      },
+      {
+        source: "/kbli-2025-new-codes-spotlight",
+        destination: "/business/kbli-2025-new-codes-spotlight",
+        permanent: true,
+      },
+      {
+        source: "/kbli-klu-fiscal-control-2025",
+        destination: "/business/kbli-klu-fiscal-control-2025",
+        permanent: true,
+      },
+      {
+        source: "/kbli-2025-gold-rush-migration",
+        destination: "/business/kbli-2025-gold-rush-migration",
+        permanent: true,
+      },
+      {
+        source: "/bpjs-kesehatan-employer-guide",
+        destination: "/business/bpjs-kesehatan-employer-guide",
+        permanent: true,
+      },
+      {
+        source: "/bpjs-ketenagakerjaan-employer-guide",
+        destination: "/business/bpjs-ketenagakerjaan-employer-guide",
+        permanent: true,
+      },
+      {
+        source: "/audit-requirements-indonesia",
+        destination: "/business/audit-requirements-indonesia",
+        permanent: true,
+      },
+      {
+        source: "/monthly-bookkeeping-indonesia",
+        destination: "/business/monthly-bookkeeping-indonesia",
+        permanent: true,
+      },
+      {
+        source: "/bphtb-property-transfer-tax",
+        destination: "/taxes/bphtb-property-transfer-tax",
+        permanent: true,
+      },
+      {
+        source: "/kbli-2020-to-2025-migration-guide",
+        destination: "/business/kbli-2020-to-2025-migration-guide",
+        permanent: true,
+      },
+      {
+        source: "/kbli-2025-it-services-software",
+        destination: "/business/kbli-2025-it-services-software",
+        permanent: true,
+      },
+      {
+        source: "/kbli-2025-consulting-professional-services",
+        destination: "/business/kbli-2025-consulting-professional-services",
+        permanent: true,
+      },
+      {
+        source: "/kbli-2025-retail-ecommerce",
+        destination: "/business/kbli-2025-retail-ecommerce",
+        permanent: true,
+      },
+      {
+        source: "/indonesia-zero-tax-foreign-income-2026",
+        destination: "/taxes/indonesia-zero-tax-foreign-income-2026",
+        permanent: true,
+      },
+      {
+        source: "/double-taxation-treaties",
+        destination: "/taxes/double-taxation-treaties",
+        permanent: true,
+      },
+      {
+        source: "/crypto-tax-indonesia-2026",
+        destination: "/taxes/crypto-tax-indonesia-2026",
+        permanent: true,
+      },
+      {
+        source: "/capital-gains-tax-indonesia",
+        destination: "/taxes/capital-gains-tax-indonesia",
+        permanent: true,
+      },
+      {
+        source: "/pbb-property-tax-indonesia",
+        destination: "/taxes/pbb-property-tax-indonesia",
+        permanent: true,
+      },
+      {
+        source: "/remote-work-tax",
+        destination: "/living/remote-work-tax",
+        permanent: true,
+      },
+      {
+        source: "/articles/e25b-director-kitas-guide",
+        destination: "/visas/e25b-director-kitas-guide",
+        permanent: true,
+      },
+      {
+        source: "/articles/e23-employee-kitas-guide",
+        destination: "/visas/e23-employee-kitas-guide",
+        permanent: true,
+      },
+      {
+        source: "/articles/e33g-remote-worker-visa-guide",
+        destination: "/visas/e33g-remote-worker-visa-guide",
+        permanent: true,
+      },
+      {
+        source: "/articles/kbli-2025-capital-investment-requirements",
+        destination: "/business/kbli-2025-capital-investment-requirements",
+        permanent: true,
+      },
+      // Category renames (2026-03-23) — keep for 12+ months
+      { source: "/immigration", destination: "/visas", permanent: true },
+      // SEO redirect: freelancer tax guide (2026-05-28)
+      {
+        source: "/tax-for-freelancers-indonesia-2026",
+        destination: "/taxes/freelancer-tax-guide",
+        permanent: true,
+      },
+      {
+        source: "/id/tax-for-freelancers-indonesia-2026",
+        destination: "/id/taxes/freelancer-tax-guide",
+        permanent: true,
+      },
+      {
+        source: "/id/insights/pbb-property-tax-indonesia",
+        destination: "/taxes/pbb-property-tax-indonesia",
+        permanent: true,
+      },
+      {
+        source: "/it/tax-for-freelancers-indonesia-2026",
+        destination: "/it/taxes/freelancer-tax-guide",
+        permanent: true,
+      },
+      // Editorial re-slug (2026-07-23): spouse dependent KITAS is E31B, not
+      // E33F (Kepmen M.IP-08.GR.01.01/2025 taxonomy). Must precede the
+      // /immigration/:slug* catch-all below.
+      {
+        source: "/immigration/e33f-spouse-dependent-kitas-guide",
+        destination: "/immigration/e31b-spouse-dependent-kitas-guide",
+        permanent: true,
+      },
+      {
+        source: "/visas/e33f-spouse-dependent-kitas-guide",
+        destination: "/visas/e31b-spouse-dependent-kitas-guide",
+        permanent: true,
+      },
+      // Editorial re-slug (2026-07-24): child dependent KITAS is E31E, not
+      // E33E (Kepmen M.IP-08.GR.01.01/2025 taxonomy; E33E is the senior
+      // 5-year Second Home track). Must precede the /immigration/:slug*
+      // catch-all below.
+      {
+        source: "/immigration/e33e-child-dependent-kitas-guide",
+        destination: "/immigration/e31e-child-dependent-kitas-guide",
+        permanent: true,
+      },
+      {
+        source: "/visas/e33e-child-dependent-kitas-guide",
+        destination: "/visas/e31e-child-dependent-kitas-guide",
+        permanent: true,
+      },
+      {
+        source: "/immigration/:slug*",
+        destination: "/visas/:slug*",
+        permanent: true,
+      },
+      { source: "/tax-legal", destination: "/taxes", permanent: true },
+      {
+        source: "/tax-legal/:slug*",
+        destination: "/taxes/:slug*",
+        permanent: true,
+      },
+      {
+        source: "/tax/gap",
+        destination: "/taxes/gap",
+        permanent: true,
+      },
+      { source: "/tax", destination: "/taxes", permanent: true },
+      {
+        source: "/tax/:slug*",
+        destination: "/taxes/:slug*",
+        permanent: true,
+      },
+      { source: "/lifestyle", destination: "/living", permanent: true },
+      {
+        source: "/lifestyle/:slug*",
+        destination: "/living/:slug*",
+        permanent: true,
+      },
+      { source: "/tech", destination: "/trends", permanent: true },
+      {
+        source: "/tech/:slug*",
+        destination: "/trends/:slug*",
+        permanent: true,
+      },
+      { source: "/bali_news", destination: "/living", permanent: true },
+      {
+        source: "/bali_news/:slug*",
+        destination: "/living/:slug*",
+        permanent: true,
+      },
+      { source: "/digital-nomad", destination: "/living", permanent: true },
+      {
+        source: "/digital-nomad/:slug*",
+        destination: "/living/:slug*",
+        permanent: true,
+      },
+      {
+        source: "/kbli-navigator",
+        destination: "/kbli",
+        permanent: true,
+      },
+      {
+        source: "/kbli-navigator/:path*",
+        destination: "/kbli/:path*",
+        permanent: true,
+      },
+      // Track C consolidation (2026-07-17, #2610 + C2): /visa-v2 was the
+      // twin session's C1 foundation prototype, superseded by the
+      // complete (visa-oracle) experience at /visa-oracle.
+      {
+        source: "/visa-v2",
+        destination: "/visa-oracle",
+        permanent: true,
+      },
+      // Note: /chat redirect to zantara.balizero.com is handled by middleware
+      // (cannot be here — next.config redirects would conflict with middleware rewrites)
+      // Wrong-page fix (2026-08-20): /visa/second-home-e33 was served 200 by the
+      // (blog)/[category]/[slug] catch-all with ZERO second-home content — the
+      // canonical E33 landing is /visa/second-home. See .claude/skills/secondhome §4bis.
+      {
+        source: "/visa/second-home-e33",
+        destination: "/visa/second-home",
+        permanent: true,
+      },
+      // R19 legal footer migration (spec C1, PR-A, #7533): /privacy and
+      // /terms keep their URL (route group only), /cookies gets its real
+      // top-level URL. Permanent because the v2 page files are deleted in
+      // the same PR.
+      {
+        source: "/v2/privacy",
+        destination: "/privacy",
+        permanent: true,
+      },
+      {
+        source: "/v2/terms",
+        destination: "/terms",
+        permanent: true,
+      },
+      {
+        source: "/v2/cookies",
+        destination: "/cookies",
+        permanent: true,
+      },
+      // R19 company footer migration (spec C1, PR-B, 2026-09-27): /about,
+      // /careers and /press get their real top-level URL. Permanent
+      // because the v2 page files are deleted in the same PR.
+      {
+        source: "/v2/company/about",
+        destination: "/about",
+        permanent: true,
+      },
+      {
+        source: "/v2/company/careers",
+        destination: "/careers",
+        permanent: true,
+      },
+      {
+        source: "/v2/company/press",
+        destination: "/press",
+        permanent: true,
+      },
+    ];
+  },
+
+  // NOTE: API proxying is handled by src/app/api/[...path]/route.ts
+  // Do NOT add rewrites for /api/* here as they conflict with the API route handler
+  // and can cause Mixed Content issues in production.
+};
+
+// Sentry configuration options.
+//
+// `silent` is deliberately NOT set. Its own type says it "suppresses all build
+// logs (ALL log levels, INCLUDING errors)" — not just the upload chatter the
+// comment here used to claim. That matters because the plugin's default on a
+// failed release/source-map upload is to THROW and stop the build: with
+// `silent: true` the deploy still failed, but with no line saying why. An
+// expired or revoked SENTRY_AUTH_TOKEN is exactly that failure, and it was
+// costing a blind red instead of a named one.
+//
+// `errorHandler` is deliberately NOT set either: providing one makes
+// compilation CONTINUE past an upload failure, which would turn a loud broken
+// deploy into a silent release with no source maps. The default throw is the
+// behaviour we want.
+export const sentryWebpackPluginOptions = {
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+  // Only upload source maps in production
+  disableServerWebpackPlugin: !process.env.SENTRY_DSN,
+  disableClientWebpackPlugin: !process.env.NEXT_PUBLIC_SENTRY_DSN,
+};
+
+// Export with Sentry and Bundle Analyzer wrappers
+const configWithAnalyzer = withBundleAnalyzer(nextConfig);
+
+export default process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN
+  ? withSentryConfig(configWithAnalyzer, sentryWebpackPluginOptions)
+  : configWithAnalyzer;

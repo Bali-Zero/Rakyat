@@ -1,0 +1,241 @@
+"""
+Portal Process Timeline Router.
+
+Exposes practice status history as a visual timeline for the client portal.
+"""
+
+from typing import Any
+
+import asyncpg
+from fastapi import APIRouter, Depends, HTTPException
+
+from backend.app.dependencies import get_database_pool
+from backend.app.routers.portal import get_current_client
+from backend.app.utils.logging_utils import get_logger
+
+logger = get_logger(__name__)
+
+router = APIRouter(prefix="/api/portal/process", tags=["portal-process"])
+
+# Canonical status ordering for visual stepper
+STATUS_ORDER = [
+    "inquiry",
+    "quotation_sent",
+    "sending_invoice",
+    "payment_pending",
+    "waiting_payment",
+    "waiting_documents",
+    "in_progress",
+    "on_process",
+    "submitted_to_gov",
+    "approved",
+    "completed",
+]
+
+STATUS_LABELS = {
+    "inquiry": "Inquiry",
+    "quotation_sent": "Quotation Sent",
+    "sending_invoice": "Sending Invoice",
+    "payment_pending": "Payment Pending",
+    "waiting_payment": "Waiting for Payment",
+    "waiting_documents": "Waiting for Documents",
+    "in_progress": "In Progress",
+    "on_process": "On Process",
+    "submitted_to_gov": "Submitted to Government",
+    "approved": "Approved",
+    "completed": "Completed",
+    "cancelled": "Cancelled",
+}
+
+
+TERMINAL_STATUSES = frozenset({"completed", "approved", "cancelled"})
+
+
+def _status_label(status: str | None) -> str:
+    """Human label for a status, NULL-safe.
+
+    `practices.status` is NULLABLE in production, and every call site here used
+    to do `STATUS_LABELS.get(status, status.replace(...))` — Python evaluates a
+    `dict.get` default EAGERLY, so a NULL status raised AttributeError before
+    the lookup even happened. That was a LIVE 500 on the fallback path, i.e. on
+    the path production takes today, not something migration 310 introduced;
+    310 only makes a second path reach it. Measured 2026-08-27: both paths
+    raised `'NoneType' object has no attribute 'replace'`.
+    """
+    if not status:
+        return "Unknown"
+    return STATUS_LABELS.get(status, status.replace("_", " ").title())
+
+
+def _step_flags(
+    status: str | None, current_status: str | None, is_last: bool
+) -> tuple[bool, bool]:
+    """`(completed, is_current)` for one step — the ONE place either path decides it.
+
+    RULED 2026-09-11 (Zero, answering Q2 of `practice-timeline-semantics-v1`): a
+    CANCELLED practice is a step that is CLOSED but did not SUCCEED. It is
+    `completed` — nothing is still running, so no spinner — and never
+    `is_current`; the client tells it apart from `completed`/`approved` by its
+    status, which `stateColors.ts` already maps to `danger` rather than to the
+    success tone. It is not rendered as a green tick and not rendered as a
+    practice still in flight.
+
+    This function exists because the two paths used to compute these two flags
+    SEPARATELY and disagreed for exactly that status: the history path said
+    `completed=True` (a filled tick) and the fallback path `completed=False` (a
+    grey circle) for the same cancelled practice. Applying migration 310 would
+    therefore have flipped 124 of 893 real rows from one rendering to the other
+    without a line of frontend changing — a review seat found it, and it is the
+    reason a single helper now serves both branches.
+    """
+    is_current = bool(
+        is_last and status == current_status and status not in TERMINAL_STATUSES
+    )
+    return (not is_current), is_current
+
+
+async def _build_timeline(
+    pool: asyncpg.Pool,
+    practice_id: int,
+    client_id: int,
+) -> dict[str, Any] | None:
+    """Build timeline data for a practice. Returns None if not found."""
+    async with pool.acquire() as conn:
+        # NOTE: this query is client-portal-only (see get_current_client
+        # dependency below) — it must never select staff-identity columns
+        # (practice_status_log.changed_by, clients.assigned_to). Those are
+        # internal actor emails, not something to hand to a client. See
+        # PR fixing the identity leak for the incident this guards against.
+        practice = await conn.fetchrow(
+            """
+            SELECT p.id, p.client_id, p.status, p.start_date, p.completion_date,
+                   p.expiry_date, p.notes, pt.name as practice_name,
+                   pt.category as practice_category
+            FROM practices p
+            JOIN practice_types pt ON pt.id = p.practice_type_id
+            WHERE p.id = $1
+              AND p.client_id = $2
+              AND (p.client_visible IS TRUE OR p.client_visible IS NULL)
+            """,
+            practice_id,
+            client_id,
+        )
+
+        if not practice:
+            return None
+
+        # Status history. Migration 310 creates practice_status_log and the
+        # trigger that fills it; before that migration this query raised
+        # UndefinedTableError on every request and the old code swallowed it
+        # with a bare `except Exception: pass`, so the tracker answered 200
+        # with a one-step timeline and no surface anywhere went red. Prod was
+        # measured in exactly that state on 2026-08-27.
+        #
+        # The narrow except stays, because a database that has not run 310 yet
+        # must still serve the practice's current status rather than 500 — but
+        # it now catches ONLY "the table is absent" and says so out loud. Every
+        # other failure (permissions, a dropped connection, a bad plan) is a
+        # real fault and is logged as one instead of being spelled as an empty
+        # history, which is indistinguishable from a practice that never moved.
+        history_rows: list[dict] = []
+        try:
+            history_rows = [
+                dict(r)
+                for r in await conn.fetch(
+                    """
+                    SELECT old_status, new_status, changed_at
+                    FROM practice_status_log
+                    WHERE practice_id = $1
+                    -- `id ASC` is the tie-breaker, not decoration: `is_last`
+                    -- below decides which step is CURRENT, and rows stamped
+                    -- before the clock_timestamp() convergence (or written in
+                    -- one transaction) can share a changed_at. Without it
+                    -- Postgres may return either row last and the wrong step
+                    -- renders as current.
+                    ORDER BY changed_at ASC, id ASC
+                    """,
+                    practice_id,
+                )
+            ]
+        except asyncpg.UndefinedTableError:
+            logger.warning(
+                "practice_status_log is absent — serving a single-step timeline. "
+                "Migration 310 has not been applied to this database."
+            )
+        except (asyncpg.PostgresError, asyncpg.InterfaceError):
+            # InterfaceError is listed EXPLICITLY because it is NOT a subclass of
+            # PostgresError — verified: its MRO is InterfaceError -> InterfaceMessage
+            # -> Exception. A connection dropped between the two queries therefore
+            # escaped the narrowed handler and reached the client as a 500, where the
+            # bare `except Exception` this replaced degraded to a 200. That was a
+            # regression introduced by narrowing, and this restores the prior
+            # behaviour: a client asking about their own practice must not get a 500
+            # because the history table is unreachable.
+            logger.exception(
+                "practice_status_log query failed for practice %s; serving a single-step timeline",
+                practice_id,
+            )
+
+        current_status = practice["status"]
+
+        if history_rows:
+            steps = []
+            for i, row in enumerate(history_rows):
+                status = row["new_status"]
+                is_last = i == len(history_rows) - 1
+                # A TERMINAL status is never "current" even when it is the last
+                # row: `completed`/`approved`/`cancelled` are where the journey
+                # ENDS. Without this the history path answered
+                # {"status": "completed", "completed": False, "is_current": True}
+                # and the client rendered a spinning loader on a finished
+                # practice — while the fallback path, right below, got it right.
+                # The two paths disagreed on the same practice.
+                completed, is_current = _step_flags(status, current_status, is_last)
+                steps.append(
+                    {
+                        "status": status,
+                        "label": _status_label(status),
+                        "completed": completed,
+                        "is_current": is_current,
+                        "changed_at": str(row["changed_at"]) if row["changed_at"] else None,
+                    }
+                )
+        else:
+            fb_completed, fb_is_current = _step_flags(
+                current_status, current_status, is_last=True
+            )
+            steps = [
+                {
+                    "status": current_status,
+                    "label": _status_label(current_status),
+                    "completed": fb_completed,
+                    "is_current": fb_is_current,
+                    "changed_at": str(practice["start_date"]) if practice["start_date"] else None,
+                }
+            ]
+
+        return {
+            "practice_id": practice["id"],
+            "practice_name": practice["practice_name"],
+            "practice_category": practice["practice_category"],
+            "current_status": current_status,
+            "start_date": str(practice["start_date"]) if practice["start_date"] else None,
+            "completion_date": str(practice["completion_date"])
+            if practice["completion_date"]
+            else None,
+            "expiry_date": str(practice["expiry_date"]) if practice["expiry_date"] else None,
+            "steps": steps,
+        }
+
+
+@router.get("/{practice_id}/timeline")
+async def get_process_timeline(
+    practice_id: int,
+    client: dict = Depends(get_current_client),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """Get timeline of status changes for a specific practice."""
+    result = await _build_timeline(db_pool, practice_id, client["client_id"])
+    if result is None:
+        raise HTTPException(status_code=404, detail="Practice not found")
+    return {"success": True, "data": result}

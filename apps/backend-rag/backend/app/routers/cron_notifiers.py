@@ -1,0 +1,487 @@
+"""
+Cron Notifiers Router
+
+Exposes POST endpoints for the daily notification jobs:
+1. Visa/KITAS/Passport expiry alerts → team leaders + zero@
+2. Unpaid invoice reminders → asya@
+3. Stale practice alerts → team leaders + zero@
+4. LKPM deadline reminders → tax consultants + zero@
+
+All endpoints are API-key authenticated (same key as MCP/OpenClaw).
+Designed to be called from Air cron or OpenClaw scheduler.
+
+Usage:
+    curl -X POST https://nuzantara-rag.fly.dev/api/cron/notifiers/all \
+         -H "X-API-Key: $NUZANTARA_API_KEY"
+"""
+
+import os
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
+
+from backend.app.utils.logging_utils import get_logger
+
+logger = get_logger(__name__)
+
+router = APIRouter(prefix="/api/cron/notifiers", tags=["cron-notifiers"])
+
+_API_KEY = os.getenv("NUZANTARA_API_KEY", "")
+
+
+def _verify_api_key(request: Request) -> None:
+    """Verify API key from header."""
+    key = request.headers.get("X-API-Key") or request.headers.get("x-api-key")
+    if key != _API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+def _get_db_pool(request: Request) -> Any:
+    """Get database pool from app state."""
+    pool = getattr(request.app.state, "db_pool", None)
+    if pool is None:
+        raise HTTPException(status_code=503, detail="Database pool not available")
+    return pool
+
+
+@router.post("/visa-expiry")
+async def run_visa_expiry_notifier(request: Request) -> dict[str, Any]:
+    """Check visa/KITAS/passport expiry and email team leaders."""
+    _verify_api_key(request)
+    db_pool = _get_db_pool(request)
+
+    # Kill switch: check system_settings for approval flag
+    async with db_pool.acquire() as conn:
+        approved = await conn.fetchval(
+            "SELECT value FROM system_settings WHERE key = 'visa_expiry_notifier_enabled'"
+        )
+    if approved != "true":
+        logger.warning(
+            "Visa expiry notifier BLOCKED — awaiting owner approval (set visa_expiry_notifier_enabled=true)"
+        )
+        return {"service": "visa_expiry", "status": "blocked", "reason": "awaiting_owner_approval"}
+
+    from backend.services.compliance.visa_expiry_team_notifier import VisaExpiryTeamNotifier
+
+    notifier = VisaExpiryTeamNotifier(db_pool)
+    result = await notifier.check_and_notify()
+    logger.info("Visa expiry notifier: %s", result)
+    return {"service": "visa_expiry", **result}
+
+
+@router.post("/unpaid-invoices")
+async def run_unpaid_invoice_notifier(request: Request) -> dict[str, Any]:
+    """Check invoices unpaid for 7+ days and remind Asya."""
+    _verify_api_key(request)
+    db_pool = _get_db_pool(request)
+
+    from backend.services.invoicing.unpaid_invoice_notifier import UnpaidInvoiceNotifier
+
+    notifier = UnpaidInvoiceNotifier(db_pool)
+    result = await notifier.check_and_notify()
+    logger.info("Unpaid invoice notifier: %s", result)
+    return {"service": "unpaid_invoices", **result}
+
+
+@router.post("/stale-practices")
+async def run_stale_practice_notifier(request: Request) -> dict[str, Any]:
+    """Check practices with no activity for 7+ days and alert team leaders."""
+    _verify_api_key(request)
+    db_pool = _get_db_pool(request)
+
+    from backend.services.crm.stale_practice_notifier import StalePracticeNotifier
+
+    notifier = StalePracticeNotifier(db_pool)
+    result = await notifier.check_and_notify()
+    logger.info("Stale practice notifier: %s", result)
+    return {"service": "stale_practices", **result}
+
+
+@router.post("/lkpm-deadlines")
+async def run_lkpm_deadline_notifier(request: Request) -> dict[str, Any]:
+    """Check pending LKPM reports and remind tax consultants of approaching deadlines."""
+    _verify_api_key(request)
+    db_pool = _get_db_pool(request)
+
+    from backend.services.compliance.lkpm_deadline_notifier import LKPMDeadlineNotifier
+
+    notifier = LKPMDeadlineNotifier(db_pool)
+    result = await notifier.check_and_notify()
+    logger.info("LKPM deadline notifier: %s", result)
+    return {"service": "lkpm_deadlines", **result}
+
+
+class TeamWhatsAppRequest(BaseModel):
+    """Request for the 'send WhatsApp text to a team member, by email' primitive.
+
+    `team_email`, never a phone number — the caller (scripts/s7_yield_dispatch.py)
+    must not resolve or hold a phone itself; that happens server-side in
+    team_whatsapp_sender.py so the active/has-a-number check cannot be
+    bypassed by a bug in the caller's own gate.
+    """
+
+    team_email: str = Field(..., description="Bali Zero team member's @balizero.com email")
+    text: str = Field(..., min_length=1, max_length=4096, description="Message text")
+
+
+@router.post("/team-whatsapp")
+async def run_team_whatsapp_send(body: TeamWhatsAppRequest, request: Request) -> dict[str, Any]:
+    """Send free-form WhatsApp text to a Bali Zero team member, resolved
+    server-side from team_members by email.
+
+    Built for the S7 Yield WhatsApp digest (Law-2 derogation authorized
+    2026-08-21, see SYMBIOSIS.md — "il cancello vive anche lato server"): an
+    inactive or unknown assignee is rejected HERE independently of whatever
+    the caller's own client-side gate already decided — the same fact
+    checked twice. No fallback recipient exists on any path.
+    """
+    _verify_api_key(request)
+    db_pool = _get_db_pool(request)
+
+    from backend.services.crm.team_whatsapp_sender import (
+        TeamMemberNotFound,
+        TeamMemberNoWhatsApp,
+        send_to_team_member,
+    )
+
+    try:
+        result = await send_to_team_member(db_pool, body.team_email, body.text)
+    except TeamMemberNotFound as exc:
+        raise HTTPException(
+            status_code=404, detail="team member not found or not active"
+        ) from exc
+    except TeamMemberNoWhatsApp as exc:
+        raise HTTPException(
+            status_code=422, detail="team member has no WhatsApp number on file"
+        ) from exc
+    logger.info("Team WhatsApp send: service=team_whatsapp status=ok")
+    return {"service": "team_whatsapp", **result}
+
+
+@router.post("/welcome-pending")
+async def run_welcome_pending(request: Request) -> dict[str, Any]:
+    """Process pending welcome emails whose 30-min delay has elapsed. Called every 15 min from Air cron."""
+    _verify_api_key(request)
+    db_pool = _get_db_pool(request)
+
+    from backend.services.crm.welcome.welcome_email_service import process_pending_welcome_emails
+
+    result = await process_pending_welcome_emails(db_pool)
+    logger.info("Welcome pending processor: %s", result)
+    return {"service": "welcome_pending", **result}
+
+
+@router.post("/birthday")
+async def run_birthday_notifier(request: Request) -> dict[str, Any]:
+    """Send birthday emails to clients with today's birthday. Called daily from Air cron."""
+    _verify_api_key(request)
+    db_pool = _get_db_pool(request)
+
+    from backend.services.crm.birthday_notifier_service import run_birthday_notifier_task
+
+    result = await run_birthday_notifier_task(db_pool)
+    logger.info("Birthday notifier: %s", result)
+    return {"service": "birthday", **result}
+
+
+@router.post("/compliance-forecast")
+async def run_compliance_forecast(request: Request) -> dict[str, Any]:
+    """
+    Run the predictive compliance engine and return forecasts with revenue estimates.
+
+    Kill switch: system_settings.compliance_forecast_enabled must be "true".
+    Optional query param: ?scan_days=365 (default 365).
+    """
+    _verify_api_key(request)
+    db_pool = _get_db_pool(request)
+
+    from backend.services.compliance.predictive_engine import (
+        PredictiveComplianceEngine,
+        is_engine_enabled,
+    )
+    from backend.services.pricing.pricing_service import get_pricing_service
+
+    if not await is_engine_enabled(db_pool):
+        return {
+            "service": "compliance_forecast",
+            "status": "disabled",
+            "reason": "Set compliance_forecast_enabled=true in system_settings to enable",
+        }
+
+    scan_days_raw = request.query_params.get("scan_days", "365")
+    try:
+        scan_days = max(30, min(int(scan_days_raw), 730))
+    except ValueError:
+        scan_days = 365
+
+    try:
+        pricing_service = get_pricing_service()
+        all_prices = pricing_service.get_pricing("all")
+    except Exception:
+        logger.exception("Failed to load pricing data for compliance forecast")
+        return {
+            "service": "compliance_forecast",
+            "status": "error",
+            "reason": "pricing_unavailable",
+        }
+
+    engine = PredictiveComplianceEngine(db_pool, all_prices, scan_window_days=scan_days)
+    result = await engine.scan()
+
+    # Persist + dispatch alerts for the forecasts just computed — gated by
+    # the SAME kill switch checked above (is_engine_enabled() already
+    # returned True to reach this point); no new/second switch is
+    # introduced. Defensive by design: a failure here must never break the
+    # forecast HTTP response, which already succeeded — this is a
+    # deliberately broad `except Exception` around best-effort side-channel
+    # work bolted onto an already-computed result (AlertsEngine itself only
+    # swallows per-forecast DB errors internally; this also covers wiring/
+    # construction failures, e.g. a misconfigured Telegram chat env var).
+    alerts_generated = 0
+    alerts_error: str | None = None
+    try:
+        from backend.services.compliance.alert_wiring import build_alerts_engine
+
+        alerts_engine = build_alerts_engine(db_pool, pricing_service=pricing_service)
+        generated_alerts = await alerts_engine.generate_alerts(result.forecasts)
+        alerts_generated = len(generated_alerts)
+    except Exception as exc:
+        logger.exception(
+            "AlertsEngine wiring failed; forecasts computed but alerts not generated/dispatched"
+        )
+        alerts_error = str(exc)
+
+    # Serialize to JSON-safe dict
+    forecasts_out = [
+        {
+            "client_id": f.client_id,
+            "client_name": f.client_name,
+            "assigned_to": f.assigned_to,
+            "document_type": f.document_type,
+            "current_visa_type": f.current_visa_type,
+            "expiry_date": f.expiry_date.isoformat(),
+            "days_until_expiry": f.days_until_expiry,
+            "matched_rule_id": f.matched_rule_id,
+            "processing_days": f.processing_days,
+            "lead_time_start": f.lead_time_start.isoformat(),
+            "recommended_action_by": f.recommended_action_by.isoformat(),
+            "days_until_action": f.days_until_action,
+            "estimated_revenue_idr": f.estimated_revenue_idr,
+            "renewal_pricing_key": f.renewal_pricing_key,
+            "priority_score": f.priority_score,
+            "urgency_level": f.urgency_level,
+            "required_docs": f.required_docs,
+            "passport_expires_before_visa": f.passport_expires_before_visa,
+            "notes": f.notes,
+        }
+        for f in result.forecasts
+    ]
+
+    response: dict[str, Any] = {
+        "service": "compliance_forecast",
+        "status": "ok",
+        "scan_window_days": result.scan_window_days,
+        "generated_at": result.generated_at,
+        "summary": {
+            "total_forecasts": result.summary.total_forecasts,
+            "by_urgency": result.summary.by_urgency,
+            "total_estimated_revenue_idr": result.summary.total_estimated_revenue_idr,
+            "clients_with_active_practice_skipped": (
+                result.summary.clients_with_active_practice_skipped
+            ),
+            "top_revenue_forecasts": [
+                {
+                    "client_name": f.client_name,
+                    "document_type": f.document_type,
+                    "expiry_date": f.expiry_date.isoformat(),
+                    "estimated_revenue_idr": f.estimated_revenue_idr,
+                    "urgency_level": f.urgency_level,
+                }
+                for f in result.summary.top_revenue_forecasts
+            ],
+        },
+        "forecasts": forecasts_out,
+        # Count of AlertRow objects returned by generate_alerts() — i.e. every
+        # forecast that resulted in a new alert, a severity promotion, or an
+        # existing-active-alert dedup match. Not strictly "messages
+        # dispatched" (dedup-skip rows are counted but not re-dispatched);
+        # see AlertsEngine.generate_alerts docstring for the exact contract.
+        "alerts_generated": alerts_generated,
+    }
+    if alerts_error is not None:
+        response["alerts_error"] = alerts_error
+    return response
+
+
+@router.post("/e33-guarantee-scan")
+async def run_e33_guarantee_scan(request: Request) -> dict[str, Any]:
+    """Scan open E33 Second Home cases and persist Day-90 / annual-maintenance alerts.
+
+    Loads non-terminal E33 cases, builds per-case compliance forecasts
+    (Day-90 guarantee gate with Day 30/60/75 escalation + annual maintenance
+    recurrence) and feeds them to the existing AlertsEngine — same
+    persist/dedup/promote path as /compliance-forecast. Team dispatch only;
+    nothing client-facing (Legge 5).
+
+    Kill switch: system_settings.e33_guarantee_scan_enabled must be "true"
+    (blocked by default, same posture as visa_expiry_notifier_enabled).
+    """
+    _verify_api_key(request)
+    db_pool = _get_db_pool(request)
+
+    from backend.services.crm.e33_guarantee_scanner import (
+        E33GuaranteeScanner,
+        ScanSwitchState,
+        resolve_scan_switch,
+    )
+
+    switch = await resolve_scan_switch(db_pool)
+    if not switch.is_enabled:
+        # Both states block, but they are not the same event: an absent row
+        # means nobody ever armed the organ (it can sit dead indefinitely and
+        # look healthy), while an explicit non-"true" value is a recorded
+        # decision. Reporting them identically is what let this scanner ship
+        # un-armed and unnoticed — see the scanner module docstring.
+        unprovisioned = switch is ScanSwitchState.UNPROVISIONED
+        logger.warning(
+            "E33 guarantee scan BLOCKED — %s (switch '%s')",
+            "kill switch NEVER PROVISIONED" if unprovisioned else "explicitly disabled",
+            "e33_guarantee_scan_enabled",
+        )
+        return {
+            "service": "e33_guarantee_scan",
+            "status": "blocked",
+            "switch_state": switch.value,
+            "reason": (
+                "switch_not_provisioned" if unprovisioned else "awaiting_owner_approval"
+            ),
+        }
+
+    scanner = E33GuaranteeScanner(db_pool)
+    result = await scanner.scan()
+    return {"service": "e33_guarantee_scan", **result}
+
+
+@router.post("/email-health")
+async def run_email_health(request: Request) -> dict[str, Any]:
+    """Run retry + stale-detection + escalation + daily report for email.
+
+    Designed to be called every 30 min from Air cron. Respects the
+    ``email_health_monitor_enabled`` kill switch in ``system_settings``
+    (seeded to 'true' by migration 126).
+
+    Returns a consolidated stats dict. If any phase raises, the response
+    body carries ``status = "partial_failure"`` (HTTP 200) so monitoring
+    can distinguish a clean run from one with internal failures without
+    a code change to the Air cron wrapper.
+    """
+    _verify_api_key(request)
+    db_pool = _get_db_pool(request)
+
+    async with db_pool.acquire() as conn:
+        enabled = await conn.fetchval(
+            "SELECT value FROM system_settings WHERE key = 'email_health_monitor_enabled'",
+        )
+    if enabled != "true":
+        logger.warning(
+            "Email health monitor BLOCKED — set email_health_monitor_enabled=true to run",
+        )
+        return {"service": "email_health", "status": "blocked"}
+
+    from backend.services.notifications.email_health_monitor import EmailHealthMonitor
+
+    monitor = EmailHealthMonitor(db_pool)
+    stats: dict[str, Any] = {"service": "email_health"}
+    errors: list[dict[str, str]] = []
+
+    for phase_name, phase_coro in (
+        ("unstuck_stale", monitor.check_stale_sendings()),
+        ("retry", monitor.check_and_retry_failed_emails()),
+        ("escalate", monitor.escalate_unrecoverable()),
+        ("daily_report", monitor.generate_daily_report()),
+    ):
+        try:
+            stats[phase_name] = await phase_coro
+        except Exception as e:
+            logger.error("email-health phase %s failed: %s", phase_name, e, exc_info=True)
+            stats[phase_name] = {"error": str(e)}
+            errors.append({"phase": phase_name, "error": str(e)})
+
+    stats["status"] = "partial_failure" if errors else "ok"
+    stats["errors"] = errors
+    return stats
+
+
+@router.post("/all")
+async def run_all_notifiers(request: Request) -> dict[str, Any]:
+    """Run all four notifiers in sequence. Single cron endpoint.
+
+    The response still returns HTTP 200 (unchanged for monitoring
+    compatibility — the Air cron wrapper treats non-200 as outright
+    failures) but the body now carries ``status`` = ``partial_failure`` when
+    any sub-task raised. Monitoring dashboards that already consume this
+    endpoint can treat ``status != "ok"`` as an alert condition without
+    causing a regression today.
+    """
+    _verify_api_key(request)
+    db_pool = _get_db_pool(request)
+
+    results: dict[str, Any] = {}
+    errors: list[dict[str, str]] = []
+
+    # 1. Visa expiry (with kill switch)
+    try:
+        async with db_pool.acquire() as conn:
+            approved = await conn.fetchval(
+                "SELECT value FROM system_settings WHERE key = 'visa_expiry_notifier_enabled'"
+            )
+        if approved != "true":
+            logger.warning("Visa expiry notifier BLOCKED in /all — awaiting owner approval")
+            results["visa_expiry"] = {"status": "blocked", "reason": "awaiting_owner_approval"}
+        else:
+            from backend.services.compliance.visa_expiry_team_notifier import VisaExpiryTeamNotifier
+
+            notifier = VisaExpiryTeamNotifier(db_pool)
+            results["visa_expiry"] = await notifier.check_and_notify()
+    except Exception as e:
+        logger.error("Visa expiry notifier failed: %s", e, exc_info=True)
+        results["visa_expiry"] = {"error": str(e)}
+        errors.append({"notifier": "visa_expiry", "error": str(e)})
+
+    # 2. Unpaid invoices
+    try:
+        from backend.services.invoicing.unpaid_invoice_notifier import UnpaidInvoiceNotifier
+
+        notifier = UnpaidInvoiceNotifier(db_pool)
+        results["unpaid_invoices"] = await notifier.check_and_notify()
+    except Exception as e:
+        logger.error("Unpaid invoice notifier failed: %s", e, exc_info=True)
+        results["unpaid_invoices"] = {"error": str(e)}
+        errors.append({"notifier": "unpaid_invoices", "error": str(e)})
+
+    # 3. Stale practices
+    try:
+        from backend.services.crm.stale_practice_notifier import StalePracticeNotifier
+
+        notifier = StalePracticeNotifier(db_pool)
+        results["stale_practices"] = await notifier.check_and_notify()
+    except Exception as e:
+        logger.error("Stale practice notifier failed: %s", e, exc_info=True)
+        results["stale_practices"] = {"error": str(e)}
+        errors.append({"notifier": "stale_practices", "error": str(e)})
+
+    # 4. LKPM deadlines (kill switch handled inside the notifier)
+    try:
+        from backend.services.compliance.lkpm_deadline_notifier import LKPMDeadlineNotifier
+
+        notifier = LKPMDeadlineNotifier(db_pool)
+        results["lkpm_deadlines"] = await notifier.check_and_notify()
+    except Exception as e:
+        logger.error("LKPM deadline notifier failed: %s", e, exc_info=True)
+        results["lkpm_deadlines"] = {"error": str(e)}
+        errors.append({"notifier": "lkpm_deadlines", "error": str(e)})
+
+    status = "partial_failure" if errors else "ok"
+    logger.info("All notifiers completed (status=%s): %s", status, results)
+    return {"status": status, "errors": errors, "results": results}

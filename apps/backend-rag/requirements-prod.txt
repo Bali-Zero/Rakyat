@@ -1,0 +1,148 @@
+# ZANTARA RAG Backend - PRODUCTION DEPENDENCIES (Optimized for <8GB)
+# Removes heavy ML packages that aren't used in production (OpenAI API for embeddings)
+# Last updated: 2026-01-18 - Security updates: fastapi, openai, requests
+
+# Core Framework
+fastapi!=0.136.3,>=0.141.1  # Upgraded for starlette 0.50+; exclude 0.136.3 (MAL-2026-4750 supply-chain malware injecting 'fastar' dep)
+starlette>=1.6.0,<1.7.0  # Security fix: CVE-2026-48818/48817 (fix 1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1); supersedes PYSEC-2026-161 / GHSA-86qp-5c8j-p5mr; keep prod on the suite-tested 1.x line.
+uvicorn[standard]>=0.52.3  # Upgraded for async improvements
+pydantic>=2.12.5
+pydantic-settings>=2.15.0
+python-multipart>=0.0.31  # Security fix: arbitrary file write
+
+# MCP Protocol (Critical for Client Handshake)
+mcp>=2.2.0
+anyio>=4.14.2
+
+# Vector Database
+qdrant-client>=1.19.0,<1.20.0  # Match Qdrant server 1.12.x; avoid client/server minor-drift warnings.
+
+# AI API Clients (optimized for resolution speed)
+openai>=2.53.0  # Upgraded for httpx 0.28+ (proxies parameter removed)
+anthropic>=1.2.0  # Updated for httpx 0.28+ compatibility
+google-genai>=2.18.1  # Unified SDK (replaces google-generativeai)
+google-api-python-client>=2.198.0
+google-auth>=2.56.3
+google-auth-httplib2>=0.4.1
+
+# Tigris (S3-compatible) — used by scripts/wr2_image_generator.py +
+# scripts/wr2_draft_generator.py to upload hero images to the warroom
+# bucket. No backend module imports it; pinned here so production venv
+# rebuilds (Pro `nuzantara-deploy` worktree) stay self-sufficient.
+boto3>=1.43.71
+
+langchain-core>=1.6.1
+langchain-anthropic>=1.7.0
+langchain-openai>=1.6.0
+langgraph>=1.2.11
+langgraph-checkpoint-postgres>=3.1.3  # CVE-2026-71433 in 3.1.0
+h2>=4.4.1  # transitive via httpx; CVE-2026-71554 in 4.4.0
+
+# PII Detection (UU PDP compliance)
+presidio-analyzer>=2.2.362
+presidio-anonymizer>=2.2.362
+
+# Document Processing (lightweight)
+openpyxl>=3.1.5  # CVE-2023-43515 fixed in 3.1.5
+email-validator>=2.3.0
+defusedxml>=0.7.1,<0.8  # Reject DTD/entity expansion in portal OOXML members across XML encodings
+pypdf>=6.21.1  # Security: pip-audit 22 Okt 2026 CVE-2026-113786..113795 (fixed in 6.20.0-6.21.1)
+Pillow>=13.0.0  # Direct dependency for strict portal image validation; 13.0.0 fixes eight image-parser CVEs
+reportlab>=5.0.0  # PDF generation for invoices (lightweight alternative to WeasyPrint)
+beautifulsoup4>=4.15.0  # Security and stability updates
+python-magic>=0.4.27  # MIME type detection from file content
+rapidfuzz>=3.14.0  # Fuzzy name matching for accounting bank-statement reconciliation (P1)
+
+# OCR (Gemini Vision based - same as passport box)
+# Uses google-genai already included above
+pdfplumber>=0.11.0
+pdfminer.six>=20251107
+ebooklib>=0.20
+python-docx>=1.1.0
+
+# HTTP/Network
+httpx>=0.28.1,<1.0.0
+requests>=2.32.4  # Security: .netrc credential leak fix
+aiohttp>=3.14.5  # Security: zip bomb, directory traversal, DoS fixes
+urllib3>=2.0.0
+
+# Authentication
+PyJWT[crypto]==2.15.1  # Security fix: CVE-2026-32597 crit header validation
+cryptography>=50.0.0  # GHSA-537c-gmf6-5ccf fix (vulnerable static OpenSSL in wheels)
+bcrypt>=5.0.0  # Security and performance improvements
+passlib[bcrypt]>=1.7.4
+
+# Database
+asyncpg>=0.31.0  # Performance and security improvements
+psycopg2-binary>=2.9.9
+redis>=8.1.0  # Security updates and new features
+sqlmodel>=0.0.39  # Bug fixes and compatibility updates
+
+# Compression
+brotli-asgi>=1.4.0  # Brotli compression middleware (replaces GZip, ~20% better compression)
+
+# Utilities
+python-dotenv>=1.0.0
+loguru>=0.7.2
+packaging>=26.3,<27
+psutil>=5.9.0  # Required for app/metrics.py performance monitoring
+structlog>=25.5.0  # Security and feature updates
+slowapi>=0.1.10  # Rate limiting for FastAPI
+
+# Observability
+prometheus-fastapi-instrumentator>=8.1.0
+sentry-sdk[fastapi]>=2.68.0  # Error monitoring
+
+# XML/HTML Processing
+lxml>=6.1.1
+
+# ML/Math
+scikit-learn>=1.3.0  # Required for GoldenAnswerService cosine similarity
+
+# Visa Engine — signed RulePack bundle verification
+# (backend/services/visa_engine/bundle.py): RFC 8785 JSON Canonicalization
+# Scheme (JCS) over the signed envelope + Draft 2020-12 JSON Schema
+# validation of the raw wire dict before any Pydantic parsing.
+rfc8785==0.1.4  # exact pin: canonicalization is a security-relevant deterministic contract, no version drift allowed
+jsonschema>=4.26.0  # already resolved transitively via `mcp`, but bundle.py imports Draft202012Validator/FormatChecker directly — declared explicitly so a future `mcp` dependency change can never silently drop it from the lock (scar W98)
+rfc3339-validator>=0.1.4  # jsonschema's FormatChecker() "date-time" check is a no-op without this installed (silently skips validation, not an error) — 3-seat verify FIX-NOW #11 caught it present in the dev venv (via some other transitive chain) but undeclared in any manifest, so a clean prod install from the lock would have silently run with format validation OFF
+
+# REMOVED FOR SIZE OPTIMIZATION:
+# - sentence-transformers (2GB+ with PyTorch) - using OpenAI API embeddings
+# - playwright (500MB+ with browsers) - not needed for API
+# - datasets (large with PyTorch dependencies)
+# - EbookLib (rarely used)
+# - fake-useragent (not needed)
+# - pre-commit, ruff, pytest (dev tools)
+# - pandas (large, optional for this app)
+# Force rebuild 2026-02-13_00:12:41
+python-json-logger>=2.0.0
+orjson>=3.10.0  # 3-10× faster JSON serialization (FastAPI default response, hot path: pii_scanner, audit_logger, event_bus)
+aiosmtplib>=5.1.2
+apscheduler==3.11.3
+
+# Security: setuptools fixes for CVE-2024-6345, PYSEC-2025-49, PYSEC-2022-43012
+setuptools>=84.1.0
+langsmith>=0.11.0  # Observability: @traceable on RAG nodes + KG nodes
+
+# Langfuse + OpenInference instrumentation (PR #312, prod runtime — was
+# missing in requirements-prod.txt so observability silently no-op'd in
+# production even with LANGFUSE_*_KEY secrets set on Fly).
+# Phase 0 of OpenLLMetry expansion. See docs/oss-injections-2026-04-26.md.
+langfuse>=4.14.4,<5.0.0  # LLM observability, OTEL-based v2+
+openinference-instrumentation-anthropic>=2.1.1  # Anthropic SDK auto-trace
+openinference-instrumentation-google-genai>=1.4.0  # Auto-trace Gemini SDK
+openinference-instrumentation-openai>=0.1.54  # Auto-trace OpenAI-compat (DeepSeek, Ollama)
+
+# Fuzzy name matching for accounting bank-statement reconciliation (P1).
+# MUST stay in sync with requirements.txt — the prod Docker image installs from
+# requirements-prod.lock.txt, NOT requirements.txt, so a dep added only there
+# crashes the app at boot (matcher.py: from rapidfuzz import fuzz).
+rapidfuzz>=3.14.0
+
+# Monorepo workspace package: cell-core (DNA-recording — Genome, Experience,
+# Skill, Metabolic, HGT). Editable install; path is resolved relative to the
+# working directory where `pip install -r` runs. In the Dockerfile that is
+# `/app/apps/backend-rag/`, which resolves `../../packages/cell-core` to
+# `/app/packages/cell-core` (copied earlier in the builder stage).
+-e ../../packages/cell-core

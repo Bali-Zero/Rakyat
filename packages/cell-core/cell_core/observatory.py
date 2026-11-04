@@ -1,0 +1,321 @@
+"""Cell pulse observatory emitter.
+
+Writes pulse events directly to the EventBus events_outbox via asyncpg,
+then triggers pg_notify on the 'cell_pulse_observed' channel. Designed
+to run inside any cell process (standalone LaunchAgent or in-app), with
+NO dependency on backend-rag's Python package — that was BLOCKER B1
+from the 2026-05-01 cross-LLM review.
+
+Failures are swallowed (WARN log) — pulse loop must NEVER block on
+observability.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+from typing import Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import asyncpg
+
+logger = logging.getLogger(__name__)
+
+_pool: Optional["asyncpg.Pool"] = None
+_pool_lock_pid: Optional[int] = None  # detect fork without inherit
+
+
+def is_enabled() -> bool:
+    """Return True iff CELL_OBSERVATORY_EMIT env var is the literal 'true' (case-insensitive)."""
+    return os.environ.get("CELL_OBSERVATORY_EMIT", "").lower() == "true"
+
+
+async def _get_or_create_pool() -> "Optional[asyncpg.Pool]":
+    """Return the lazy-initialized asyncpg pool, or None if EVENTBUS_DATABASE_URL is unset.
+
+    Returns None also when asyncpg is not installed (cell-core installed
+    without the [postgres] optional extra).
+    """
+    global _pool, _pool_lock_pid
+    try:
+        import asyncpg
+    except ImportError:
+        # Cell-core installed without [postgres] extra; observatory disabled.
+        return None
+
+    current_pid = os.getpid()
+    if _pool_lock_pid is not None and _pool_lock_pid != current_pid:
+        # Process forked since pool creation; pool is invalid in child.
+        _pool = None
+        _pool_lock_pid = None
+
+    if _pool is not None:
+        return _pool
+
+    dsn = os.environ.get("EVENTBUS_DATABASE_URL")
+    if not dsn:
+        return None
+
+    _pool = await asyncpg.create_pool(
+        dsn,
+        min_size=1,
+        max_size=3,
+        command_timeout=5.0,
+    )
+    _pool_lock_pid = current_pid
+    return _pool
+
+
+def _reset_pool_for_tests() -> None:
+    """Internal test hook — DO NOT use in production."""
+    global _pool, _pool_lock_pid
+    _pool = None
+    _pool_lock_pid = None
+
+
+_INSERT_SQL = (
+    "INSERT INTO events_outbox (channel, payload) "
+    "VALUES ($1, $2) RETURNING id"
+)
+_NOTIFY_SQL = "SELECT pg_notify($1, $2)"
+
+
+async def emit_pulse_observed(
+    cell_id: str,
+    cell_kind: str,
+    pulse_id: str,
+    pulse_timestamp_ms: int,
+    phase: str,
+    sensors: list[dict[str, Any]],
+    pulse_result: dict[str, Any],
+    homeostatic_state: dict[str, Any],
+    scar_signals: Optional[list[dict[str, Any]]] = None,
+    metadata: Optional[dict[str, Any]] = None,
+) -> None:
+    """Emit a pulse-observed event to events_outbox + pg_notify.
+
+    No-op when CELL_OBSERVATORY_EMIT != 'true' or EVENTBUS_DATABASE_URL is unset.
+    Errors are swallowed (WARN log) — caller MUST NOT block on this.
+    """
+    if not is_enabled():
+        return
+
+    try:
+        pool = await _get_or_create_pool()
+        if pool is None:
+            return
+
+        payload: dict[str, Any] = {
+            "event_version": "v1",
+            "cell_id": cell_id,
+            "cell_kind": cell_kind,
+            "pulse_id": pulse_id,
+            "pulse_timestamp": pulse_timestamp_ms,
+            "phase": phase,
+            "sensors": sensors,
+            "pulse_result": pulse_result,
+            "homeostatic_state": homeostatic_state,
+            "scar_signals": scar_signals or [],
+            "metadata": metadata or {},
+        }
+
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(_INSERT_SQL, "cell_pulse_observed", json.dumps(payload))
+                outbox_id = int(row["id"])
+                # Gap 1 Layer 3 fix 2026-05-12: pg_notify has an 8000-byte payload
+                # limit (Postgres NOTIFY hard cap). Cells with many sensors
+                # (seo_cell has 7 sensors with rich metadata) easily exceed it
+                # and the entire emit fails. The events_outbox row already
+                # carries the full payload — the NOTIFY only needs the routing
+                # tuple + the keys the collector reads in storage.insert_pulse_event
+                # (cell_observatory/storage.py): _outbox_id, cell_id, cell_kind,
+                # pulse_id, pulse_timestamp, phase, pulse_result.classifier_self.
+                # Sensors + homeostatic_state + scar_signals stay only in events_outbox
+                # row payload (queryable via outbox_id for full-detail consumers).
+                notify_stub = {
+                    "_outbox_id": outbox_id,
+                    "cell_id": cell_id,
+                    "cell_kind": cell_kind,
+                    "pulse_id": pulse_id,
+                    "pulse_timestamp": pulse_timestamp_ms,
+                    "phase": phase,
+                    "pulse_result": {
+                        "classifier_self": pulse_result.get("classifier_self"),
+                    },
+                }
+                await conn.execute(_NOTIFY_SQL, "cell_pulse_observed", json.dumps(notify_stub))
+    except Exception as exc:
+        logger.warning(
+            "cell_observatory emit failed (non-blocking): cell=%s pulse=%s err=%s",
+            cell_id, pulse_id, exc,
+        )
+
+
+# W27 Path A (2026-05-23): separate emit function for the sustained-red
+# event kind. Routes to PG channel `cell_pulse_sustained_red` so the
+# pg-to-organism-bridge maps `kind=channel` correctly, and the Organism
+# yaml rule `cell_sustained_red_restart` matches it. Payload is FLAT so
+# the yaml_rules matcher (which reads payload.<key>_gte) can read
+# `consecutive` as a numeric field.
+async def emit_sustained_red(
+    cell_id: str,
+    pulse_id: str,
+    pulse_timestamp_ms: int,
+    consecutive: int,
+    target_app: str = "nuzantara-rag",
+    target_process_group: str = "api",
+    metadata: Optional[dict[str, Any]] = None,
+) -> None:
+    """Emit a cell_pulse_sustained_red event to events_outbox + pg_notify.
+
+    No-op when CELL_OBSERVATORY_EMIT != 'true' or EVENTBUS_DATABASE_URL is unset.
+    Errors are swallowed (WARN log) — caller MUST NOT block on this.
+
+    Payload schema (FLAT — required by yaml_rules.py matcher engine):
+      - cell_id: str
+      - pulse_id: str
+      - pulse_timestamp: int (ms)
+      - consecutive: int (red-streak count)
+      - classifier_self: "red"
+      - app: str (Fly app target, default nuzantara-rag)
+      - process_group: str (Fly process group, default api)
+    """
+    if not is_enabled():
+        return
+
+    try:
+        pool = await _get_or_create_pool()
+        if pool is None:
+            return
+
+        payload: dict[str, Any] = {
+            "event_version": "v1",
+            "cell_id": cell_id,
+            "pulse_id": pulse_id,
+            "pulse_timestamp": pulse_timestamp_ms,
+            "consecutive": consecutive,
+            "classifier_self": "red",
+            "app": target_app,
+            "process_group": target_process_group,
+            "metadata": metadata or {},
+        }
+
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    _INSERT_SQL, "cell_pulse_sustained_red", json.dumps(payload),
+                )
+                outbox_id = int(row["id"])
+                notify_stub = {
+                    "_outbox_id": outbox_id,
+                    "cell_id": cell_id,
+                    "pulse_id": pulse_id,
+                    "consecutive": consecutive,
+                    "classifier_self": "red",
+                    "app": target_app,
+                    "process_group": target_process_group,
+                }
+                await conn.execute(
+                    _NOTIFY_SQL, "cell_pulse_sustained_red", json.dumps(notify_stub),
+                )
+                logger.warning(
+                    "W27: cell_pulse_sustained_red emitted (cell=%s consecutive=%d outbox_id=%d)",
+                    cell_id, consecutive, outbox_id,
+                )
+    except Exception as exc:
+        logger.warning(
+            "cell_observatory sustained_red emit failed (non-blocking): cell=%s pulse=%s err=%s",
+            cell_id, pulse_id, exc,
+        )
+
+
+# W57 (2026-05-26): Self-healing wa-mirror enrichment Layer C emitter.
+# Emits `cell_pulse_sustained_red` with FLAT top-level error_class,
+# missing_module, python_path fields (yaml_rules.py matcher is flat —
+# no dotted nested lookup). The Organism YAML rule
+# `enrichment_dep_missing_repair` reads these to dispatch python_env_repair.
+async def emit_enrichment_repair_request(
+    cell_id: str,
+    pulse_id: str,
+    pulse_timestamp_ms: int,
+    consecutive: int,
+    error_class: str,
+    missing_module: str,
+    python_path: str,
+    target_app: str = "wa-mirror-enrichment",
+    target_process_group: str = "enrichment",
+    metadata: Optional[dict[str, Any]] = None,
+) -> None:
+    """Emit a cell_pulse_sustained_red event with W57 self-healing payload.
+
+    Payload schema (FLAT — required by yaml_rules.py FLAT matcher):
+      - cell_id: str (e.g. "wa-mirror-enrichment")
+      - pulse_id: str
+      - pulse_timestamp: int (ms)
+      - consecutive: int (red-streak count)
+      - classifier_self: "red"
+      - app: str (matches yaml rule's payload.app)
+      - process_group: str
+      - error_class: str (matches yaml rule's payload.error_class)
+      - missing_module: str (substituted into {payload.missing_module} param)
+      - python_path: str (substituted into {payload.python_path} param)
+      - metadata: dict (free-form, NOT matchable)
+
+    No-op when CELL_OBSERVATORY_EMIT != 'true' or EVENTBUS_DATABASE_URL is unset.
+    Errors are swallowed (WARN log) — caller MUST NOT block on this.
+    """
+    if not is_enabled():
+        return
+
+    try:
+        pool = await _get_or_create_pool()
+        if pool is None:
+            return
+
+        payload: dict[str, Any] = {
+            "event_version": "v1",
+            "cell_id": cell_id,
+            "pulse_id": pulse_id,
+            "pulse_timestamp": pulse_timestamp_ms,
+            "consecutive": consecutive,
+            "classifier_self": "red",
+            "app": target_app,
+            "process_group": target_process_group,
+            "error_class": error_class,
+            "missing_module": missing_module,
+            "python_path": python_path,
+            "metadata": metadata or {},
+        }
+
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    _INSERT_SQL, "cell_pulse_sustained_red", json.dumps(payload),
+                )
+                outbox_id = int(row["id"])
+                notify_stub = {
+                    "_outbox_id": outbox_id,
+                    "cell_id": cell_id,
+                    "pulse_id": pulse_id,
+                    "consecutive": consecutive,
+                    "classifier_self": "red",
+                    "app": target_app,
+                    "process_group": target_process_group,
+                    "error_class": error_class,
+                    "missing_module": missing_module,
+                }
+                await conn.execute(
+                    _NOTIFY_SQL, "cell_pulse_sustained_red", json.dumps(notify_stub),
+                )
+                logger.warning(
+                    "W57: cell_pulse_sustained_red (enrichment_repair) emitted "
+                    "(cell=%s error_class=%s missing_module=%s consecutive=%d outbox_id=%d)",
+                    cell_id, error_class, missing_module, consecutive, outbox_id,
+                )
+    except Exception as exc:
+        logger.warning(
+            "cell_observatory enrichment_repair_request emit failed (non-blocking): "
+            "cell=%s pulse=%s err=%s",
+            cell_id, pulse_id, exc,
+        )

@@ -1,0 +1,1905 @@
+"""
+KBLI Notebook Chat API - LLM-powered chat, translation, explanation
+
+Split from kbli_notebook.py for maintainability.
+Provides: LLM gateway singleton, query translation, language detection,
+KBLI explanation generation, multi-domain routing, chat endpoint.
+"""
+
+import json
+import logging
+import math
+import re
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from backend.app.dependencies import (
+    get_optional_database_pool,
+    get_search_service,
+)
+from backend.app.routers.kbli_notebook import (
+    KBLINotebookChatRequest,
+    KBLINotebookChatResponse,
+    KBLISearchResult,
+    _get_kbli_payload_from_qdrant,
+    _official_scope,
+    _payload_value,
+    _pma_disclosure_fields,
+    _resolve_embedding,
+    _result_from_payload,
+    _search_kbli_qdrant,
+    _tombstone_result,
+)
+from backend.core.cache import cached
+from backend.services.kbli_catalogue_membership import (
+    PHANTOM_LICENSING_STATUS,
+    fetch_catalogue_membership,
+    is_absent_from_catalogue,
+)
+from backend.services.kbli_pma_disclosure import disclose_bali, is_sourced_bali_closure
+from backend.services.rag.agentic.kg_orchestrator import KGAgenticOrchestrator
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/kbli-notebook", tags=["KBLI Notebook Chat"])
+
+_llm_gateway_instance = None
+
+
+def _get_llm_gateway() -> Any:
+    global _llm_gateway_instance
+    if _llm_gateway_instance is None:
+        from backend.services.rag.agentic.llm_gateway import LLMGateway
+
+        _llm_gateway_instance = LLMGateway()
+    return _llm_gateway_instance
+
+
+KBLI_MASTER_PROMPT = (
+    "You are Zantara AI, helping people navigate Indonesian business regulations. Your expertise is KBLI 2025 (Indonesian Business Classification), and you can also answer questions about visa, legal, and tax matters when relevant.\n\n"
+    "LANGUAGE RULES:\n"
+    "- Respond in the user's language: {lang}\n"
+    "- If Indonesian query → answer in Indonesian. If English → answer in English.\n"
+    "- Never respond in Italian, French, or Spanish unless explicitly asked.\n\n"
+    "YOUR APPROACH:\n"
+    "- Be conversational, clear, and helpful — like talking to a knowledgeable friend, not reading a legal document.\n"
+    "- Start with a direct answer to the user's question, then provide supporting details.\n"
+    "- Use the eligible context data provided; never fill a provenance gap from memory or analogy.\n"
+    "- Explain trade-offs, options, and practical next steps when relevant.\n\n"
+    "PMA STATUS GLOSSARY (answer these directly without needing source data):\n"
+    "- TERBUKA = Open to foreign investment. It does not establish a percentage; state a ceiling only when the context carries a separately verified ownership cap.\n"
+    "- TERBATAS = Open with restrictions — max foreign ownership percentage applies (PMA dengan batasan kepemilikan)\n"
+    "- TERTUTUP = Closed to foreign investment — Indonesian nationals only (PMA tidak diperbolehkan)\n"
+    "- PMA = Penanaman Modal Asing = Foreign Direct Investment\n"
+    "- NOT_VERIFIED = this code's whole-code foreign-ownership verdict is withheld because the record lacks a located official basis and source vintage. Never infer TERBUKA/TERBATAS/TERTUTUP or a percentage for that code; state the gap and direct the user to OSS/BKPM verification.\n"
+    "- CAPITAL FACTS FOR PMA (two DIFFERENT thresholds — never conflate them):\n"
+    "  * Modal Disetor Minimum (paid-up capital) = Rp 2.5 Billion, per Permen Investasi/Hilirisasi-BKPM "
+    "5/2025 (in force 2025-10-02, abrogates Permen BKPM 4/2021).\n"
+    "  * Minimum Investment Value per KBLI code per business location (excluding land and buildings) = "
+    "more than Rp 10 Billion. This is a SEPARATE threshold from paid-up capital.\n"
+    "  * NEVER present Rp 10 Billion as the modal disetor / paid-up capital minimum — that figure is "
+    "obsolete (pre-BKPM 5/2025) and conflates the two thresholds.\n"
+    "- OSS = Online Single Submission system at oss.go.id — official licensing portal\n"
+    "- NIB = Nomor Induk Berusaha = Business Identification Number (first step in OSS)\n"
+    "If a user asks what these terms mean, explain them directly using this glossary.\n\n"
+    "KNOWN KBLI CODES (use these exact definitions when asked):\n"
+    "- 47901 = PLATFORM DIGITAL INTERMEDIASI PERDAGANGAN ECERAN — Operating a digital marketplace that intermediates retail sales. NOTE: this is the MARKETPLACE OPERATOR. A business selling its OWN goods online takes the code of the PRODUCT CATEGORY it sells. KBLI 47911 was a 2020 code and does NOT exist in KBLI 2025 — never cite it.\n"
+    "- 56101 = AKTIVITAS PENYEDIAAN MAKANAN DI BANGUNAN TETAP (RESTORAN) — Restaurant services with a permanent building. Risk is scale-dependent.\n"
+    "- 56210 = AKTIVITAS JASA BOGA UNTUK ACARA TERTENTU (EVENT CATERING) — Event catering/katering.\n"
+    "- 56290 = AKTIVITAS JASA BOGA LAINNYA — Other food service activities.\n"
+    "If a user asks about these codes by number, explain them directly from this list.\n\n"
+    "ACCURACY GUIDELINES:\n"
+    "1. Use only real citations from the context data. Don't make up placeholder references like 'Chapter X' or 'Bab Y'.\n"
+    "2. Always explain how licensing and risk levels vary by business scale (Mikro/Kecil/Menengah/Besar) — this is critical.\n"
+    "3. For foreign investment (PMA) questions, mention BOTH capital thresholds accurately: modal disetor "
+    "(paid-up capital) minimum Rp 2.5 Billion (Permen BKPM 5/2025, effective 2025-10-02) AND minimum "
+    "investment value per KBLI per location of more than Rp 10 Billion (excluding land/buildings). "
+    "Never state Rp 10 Billion as the paid-up capital figure.\n"
+    "4. If data is missing from context, say so clearly: 'This detail isn't in the official documents — please verify at oss.go.id'.\n"
+    "5. When PMA status is NOT_VERIFIED or 'Verify at OSS', do not infer a verdict or cap; explain that the whole-code ownership claim lacks a located official basis/source vintage and should be checked with OSS/BKPM.\n"
+    # Moved here 2026-09-20 from the hand-written answer table that used to carry
+    # it as part of a licensing verdict. This is CONSULTING GUIDANCE — which
+    # question to ask before naming a code — not a claim about any code's regime,
+    # so it belongs beside the other accuracy rules and not in a fallback record.
+    "7. ONLINE SELLING IS A FORK, NOT A CODE. 47901 (PLATFORM DIGITAL INTERMEDIASI PERDAGANGAN ECERAN) "
+    "covers OPERATING a marketplace that intermediates OTHER sellers. A business selling its OWN goods "
+    "online takes the PRODUCT CATEGORY code instead, and carries that category's own restrictions — "
+    "e.g. alcoholic beverages 47221. Ask which of the two the client is doing before naming a single code; "
+    "the KBLI-2020 code 47911 does NOT exist in KBLI 2025 and is not an answer to either.\n"
+    "6. NEVER estimate a licensing risk tier (Rendah/Menengah Rendah/Menengah Tinggi/Tinggi) for a KBLI code "
+    "by analogy with other codes' risk levels. If risk_category for the code in context is 'Verify at OSS' "
+    "or otherwise unverified/absent, say so honestly and point the user to oss.go.id or the Bali Zero team "
+    "— do not guess a plausible tier.\n"
+    "8. COLLOQUIAL TERMS: Know that 'restoran/restaurant/rumah makan' = aktivitas penyediaan makanan (KBLI 56101), "
+    "'katering/catering' = jasa boga (KBLI 56210 / 56290), "
+    "'mobile app/aplikasi/software development' = aktivitas pemrograman komputer (KBLI 62199) or pengembangan aplikasi e-commerce (KBLI 62191), "
+    "'IT consulting/konsultan IT/software consultant' = aktivitas konsultasi manajemen dan bisnis (KBLI 70209), "
+    "'online retail/e-commerce/toko online/online shop' = KBLI 47901 if the client OPERATES a marketplace platform, "
+    "otherwise the code of the PRODUCT CATEGORY sold online (there is no single 'e-commerce' code in KBLI 2025), "
+    "'co-working space/ruang kerja bersama/shared office' = pengelolaan gedung perkantoran (KBLI 68127), "
+    "'villa/sewa villa/villa rental' = aktivitas vila (KBLI 55203 — rumah pribadi disewakan kepada wisatawan), "
+    "'homestay/rumah sewa harian' = aktivitas rumah tinggal sewa (KBLI 55201), "
+    "'hostel/youth hostel' = aktivitas hostel remaja (KBLI 55202) or akomodasi jangka pendek lainnya (KBLI 55209), "
+    "'glamping/bungalow/cottage/glamping/treehouse/cabin' = aktivitas penyediaan akomodasi jangka pendek lainnya (KBLI 55209), "
+    "'hotel bintang 5/five star hotel' = KBLI 55101, 'hotel bintang 4' = KBLI 55102, 'hotel bintang 3' = KBLI 55103, "
+    "'platform booking akomodasi/intermediasi akomodasi' = aktivitas jasa intermediasi akomodasi (KBLI 55400), "
+    "'yoga studio/pilates/studio kebugaran/fitness studio' = fasilitas pusat kebugaran (KBLI 93116), "
+    "'gym/fitness center/pusat kebugaran' = fasilitas pusat kebugaran (KBLI 93116), "
+    "'surf school/sekolah surfing/olahraga air' = pengelolaan fasilitas olahraga lainnya (KBLI 93119), "
+    "'gambling/casino/perjudian' = aktivitas perjudian dan pertaruhan (KBLI 92000 — NOTE: heavily restricted in Indonesia), "
+    "'travel agency/agen perjalanan' = aktivitas agen perjalanan (KBLI 79110 — intermediary selling packages), "
+    "'tour operator/biro perjalanan/tour organizer' = aktivitas biro perjalanan wisata (KBLI 79121 — organizes and sells tours directly), "
+    "'tour guide/pemandu wisata/pramuwisata' = jasa pramuwisata (KBLI 79903), "
+    "'photography/foto studio/fotografer/wedding photographer/commercial photo' = aktivitas fotografi lainnya (KBLI 74209), "
+    "'drone photography/aerial photo/foto udara' = aktivitas fotografi udara (KBLI 74201), "
+    "'graphic design/desain grafis/logo design/branding' = aktivitas desain grafis/komunikasi visual (KBLI 74192), "
+    "'interior design/desain interior' = aktivitas desain interior (KBLI 74191), "
+    "'fashion design/desain mode/desain tekstil' = aktivitas desain tekstil mode dan garmen (KBLI 74113), "
+    "'bar/wine bar/cocktail bar/beach club' = aktivitas bar (KBLI 56301 — alcohol service still requires SKPL/PB-UMKU and local licensing), "
+    "'salon/hair salon/barbershop/pangkas rambut/hair studio' = aktivitas penataan dan pangkas rambut (KBLI 96210), "
+    "'beauty salon/nail studio/nail art/eyelash extension/brow studio/wax studio/make-up artist/MUA/perawatan kecantikan' = aktivitas perawatan kecantikan (KBLI 96220), "
+    "'spa/day spa/wellness/spa harian/sauna/steam bath/pemandian uap/solarium' = aktivitas SPA harian sauna dan pemandian uap (KBLI 96230), "
+    "'laundry/dry cleaning/cuci pakaian/laundromat' = aktivitas pencucian dan pembersihan produk tekstil (KBLI 96100), "
+    "'art gallery/galeri seni komersial/commercial art gallery/art shop' = perdagangan eceran khusus barang kesenian dan rekreasi (KBLI 47690 — includes commercial art gallery selling paintings/sculptures/art), "
+    "'art venue/art center/performance space/venue kesenian/pusat kebudayaan' = aktivitas operasional tempat dan fasilitas kesenian (KBLI 90310 — NOTE: 90310 exists in BPS 2025 but verify in OSS as it may not have PMA data). "
+    "'tattoo studio permanente/permanent tattoo/tattoo artist' = IMPORTANT: BPS 2025 does NOT have a dedicated KBLI code for permanent tattoo. "
+    "KBLI 96900 (AKTIVITAS JASA PERORANGAN LAINNYA YTDL) covers only temporary henna/biological ink decoration — NOT permanent tattoo. "
+    "Tell the user: permanent tattoo studios in Indonesia operate under KBLI 96900 by convention, but must verify with OSS as there is no dedicated code. "
+    "If user asks about these, map them to the correct KBLI code in your response.\n\n"
+    "\n"
+    "RESPONSE STRUCTURE:\n"
+    "Write a complete, helpful answer that covers:\n"
+    "- The main KBLI code(s) that answer the user's question\n"
+    "- PMA status (TERBUKA/TERBATAS/TERTUTUP) and what it means for foreign investors\n"
+    "- Key requirements, licensing steps, or business scale considerations\n"
+    "- Practical guidance or next steps when relevant\n"
+    "\n"
+    "DO NOT append lists of related KBLI codes at the end (like 'Verify at OSS KBLI 56101...') — the UI shows those separately.\n"
+    "Only mention additional codes if they directly clarify the answer (e.g., comparing restaurant vs catering).\n"
+    "Be thorough but conversational — explain everything they need to know without being robotic."
+)
+
+FOREIGN_INVESTMENT_QUERY_MARKERS: tuple[str, ...] = (
+    "pma",
+    "foreign",
+    "foreigner",
+    "foreign-owned",
+    "foreign owned",
+    "foreign investment",
+    "asing",
+    "investor",
+    "100%",
+)
+
+PMA_SCALE_CONTEXT_BY_CODE: dict[str, str] = {
+    "56101": (
+        "The user is asking about a PT PMA or foreign-owned restaurant, so evaluate "
+        "licensing as skala usaha Besar. Canonical KBLI 2025 data for 56101 shows "
+        "Besar risk: Menengah Tinggi; licensing: NIB dan Sertifikat Standar; PB-UMKU "
+        "can include SLHS, SKPL A/B/C when alcohol is sold, and NKV. Do not describe "
+        "a PT PMA restaurant as Menengah Rendah."
+    ),
+}
+
+
+def _is_foreign_investment_query(query: str) -> bool:
+    normalized = query.lower()
+    return any(marker in normalized for marker in FOREIGN_INVESTMENT_QUERY_MARKERS)
+
+
+def _requires_structured_pma_gate(query: str) -> bool:
+    """Return whether a multi-domain answer could make an ownership claim.
+
+    The KG orchestrator owns its own retrieval path, so this router cannot prove
+    that every PMA sentence in its free-form answer passed the five-field
+    evidence gate. Foreign-investment and immigration-shaped questions stay on
+    the KBLI router's fail-closed path until the orchestrator exposes equivalent
+    structured provenance.
+    """
+    normalized = query.lower()
+    ownership_terms = bool(
+        re.search(r"\b(?:own|owner|ownership|kepemilikan|dimiliki)\b", normalized)
+    )
+    immigration_terms = any(
+        marker in normalized
+        for marker in (
+            "kitas",
+            "kitap",
+            "visa",
+            "work permit",
+            "izin kerja",
+            "izin tinggal",
+            "imigrasi",
+            "immigration",
+        )
+    )
+    return _is_foreign_investment_query(query) or ownership_terms or immigration_terms
+
+
+def _scale_specific_pma_context_note(code: str, query: str) -> str:
+    if not _is_foreign_investment_query(query):
+        return ""
+    return PMA_SCALE_CONTEXT_BY_CODE.get(code, "")
+
+
+async def _fill_bali_verdicts(results: list["KBLISearchResult"]) -> None:
+    """Backfill the Bali verdict on any result that was not built from a Qdrant payload.
+
+    THIS IS THE CLASS FIX, and it is here rather than at the constructors on
+    purpose. Seven call sites in this module build a `KBLISearchResult`: two from
+    a Qdrant payload, the other five from `kbli_documents`, `kg_nodes` or a
+    hardcoded fallback — none of which carry the Bali layer (measured: 0 of 1,563
+    `kbli_documents` rows hold an `l4_bali` key). Curing only the constructors I
+    happened to look at would not reduce the risk, it would only move WHICH query
+    shape gets the wrong answer — a code typed directly still resolves through
+    the Postgres path.
+
+    So the fill happens once, at the choke point every answer passes through, and
+    every future constructor inherits it without knowing this exists.
+
+    Failure is SILENCE, never a guess: if Qdrant is unreachable or the point has
+    no verdict, `bali_blocked` stays None and the note helper says nothing. A
+    degraded answer that omits the Bali warning is bad; one that invents "open"
+    is the defect this whole lane exists to remove.
+    """
+    for result in results:
+        needs_bali_verdict = result.bali_blocked is None
+        if not needs_bali_verdict and result.pma_verdict_verified:
+            continue
+        try:
+            payload = await _get_kbli_payload_from_qdrant(result.code)
+        except Exception as exc:  # broad on purpose: degrade to silence, never to a claim
+            logger.warning("Bali verdict lookup failed for %s: %s", result.code, exc)
+            continue
+        if not payload:
+            continue
+        # Apply the full national evidence tuple atomically. Constructing a
+        # temporary response model runs the same fail-closed validator used by
+        # the HTTP API, so a raw cap can never be backfilled without its locator
+        # and vintage (Pydantic assignment itself is not validated here).
+        candidate = {
+            **result.model_dump(),
+            **_pma_disclosure_fields(payload),
+        }
+        if needs_bali_verdict:
+            bali = disclose_bali(
+                {
+                    **_pma_disclosure_fields(payload),
+                    "bali_blocked": _payload_value(payload, "bali_blocked"),
+                    "bali_needs_review": _payload_value(payload, "bali_needs_review"),
+                    "bali_status": _payload_value(payload, "bali_status"),
+                    "bali_reason": _payload_value(payload, "bali_reason", default=""),
+                    "bali_closure_url": _payload_value(payload, "bali_closure_url"),
+                    "bali_closure_scope": _payload_value(payload, "bali_closure_scope"),
+                    "bali_confidence": _payload_value(payload, "bali_confidence"),
+                }
+            )
+            candidate.update(
+                {
+                    "bali_blocked": bali["bali_blocked"],
+                    "bali_needs_review": bali["bali_needs_review"],
+                    "bali_status": bali["bali_status"],
+                    "bali_reason": bali["bali_reason"],
+                    "bali_closure_url": bali["bali_closure_url"],
+                    "bali_closure_scope": bali["bali_closure_scope"],
+                    "bali_confidence": bali["bali_confidence"],
+                }
+            )
+        disclosed = KBLISearchResult(**candidate)
+        result.pma_status = disclosed.pma_status
+        result.pma_max_asing = disclosed.pma_max_asing
+        result.pma_verification_status = disclosed.pma_verification_status
+        result.pma_official_basis = disclosed.pma_official_basis
+        result.pma_source_vintage = disclosed.pma_source_vintage
+        result.pma_cap_special = disclosed.pma_cap_special
+        result.pma_cap_verified = disclosed.pma_cap_verified
+        # These fields share the PMA gate.  Copy them back as part of the
+        # same atomic disclosure decision so a later payload that downgrades a
+        # result to ``declared_gap`` cannot leave previously attached Bali or
+        # editorial claims on the mutable response object.
+        result.expert_legal = disclosed.expert_legal
+        result.bali_status = disclosed.bali_status
+        result.bali_blocked = disclosed.bali_blocked
+        result.bali_needs_review = disclosed.bali_needs_review
+        result.bali_reason = disclosed.bali_reason
+        result.bali_closure_url = disclosed.bali_closure_url
+        result.bali_closure_scope = disclosed.bali_closure_scope
+        result.bali_confidence = disclosed.bali_confidence
+        if not result.pma_verdict_verified:
+            continue
+        if not needs_bali_verdict or result.bali_blocked is None:
+            continue
+        logger.info(
+            "🌴 Backfilled Bali verdict for %s: %s (blocked=%s)",
+            result.code,
+            result.bali_status,
+            result.bali_blocked,
+        )
+
+
+# --------------------------------------------------------------- national scope
+#
+# WHY THIS EXISTS. The note below used to open EVERY block with "This is a
+# PROVINCIAL restriction ... an activity can be 100% open nationally and still be
+# unregistrable in Bali." That is true of the Bali moratorium and false of the
+# rest: measured 2026-08-05 on `data/source_documents/KBLI_2025_FINAL_CLEAN.json`,
+# 518 codes carry `l4_bali.blocked` and **77** of them are closed to a PT PMA
+# everywhere in Indonesia. Asked about 64110 in production, the bot was right on
+# the substance and then framed a Bank Indonesia State monopoly as a provincial
+# rule — an answer whose natural next step for the reader is "then I will
+# register it in Jakarta".
+#
+# THE RULE IS DELIBERATELY THE PAGE'S RULE, code for code and status for status
+# (`apps/mouth/src/lib/kbli-bali-block.ts::isNationalClosure`). Two surfaces
+# answering the same question from the same record must not each grow their own
+# list — that is how `/kbli/69104` came to say one thing while WhatsApp said
+# another. They cannot share a module across Python and TypeScript, so the
+# identity is pinned by a test that reads the TypeScript file instead.
+#
+# The third input, the national ceiling, is the page's `nationallyClosed`
+# derivation: `pma_status == TERTUTUP` or a ceiling of 0%. It carries 63 of the
+# 77 on its own; the status set and the code list exist for the 14 where
+# `pma_status` says TERBUKA/100 while the activity is reserved by name.
+_NATIONAL_CLOSURE_STATUSES: dict[str, str] = {
+    "CHIUSO_REGOLATORE_SETTORIALE": "a sectoral regulator reserves the activity nationwide",
+    "CHIUSO_PMA_NO_BESAR": (
+        "the activity is allocated to Koperasi/UMKM by Perpres 49/2021 Lampiran II, "
+        "a bidang usaha a PT PMA cannot take"
+    ),
+}
+
+_NATIONAL_CLOSURE_CODES: dict[str, str] = {
+    "01287": "narcotics/medicinal-plant cultivation, TERTUTUP nationally",
+    "47111": "minimarket/supermarket retail, reserved to Indonesian citizens (WNI)",
+    "47112": "minimarket/supermarket retail, reserved to Indonesian citizens (WNI)",
+    "59131": "film/video distribution, TERTUTUP nationally",
+    "69102": "legal consultancy, reserved to Indonesian-licensed advocates (UU 18/2003)",
+    "69104": "notary/PPAT, a personal State office open to WNI only (UU 30/2004 as am. UU 2/2014)",
+    "86201": "a solo doctor's practice, closed to foreign nationals under Kemenkes health law",
+    "86202": "a solo specialist practice, closed to foreign nationals under Kemenkes health law",
+}
+
+
+# The pipeline's own vocabulary, rendered in words — a SECOND route into the
+# same leak, and the measurement is stated exactly because it is not the route
+# that was bleeding.
+#
+# The live leak was the note's own `Verdict code: {bali_status}` suffix: 450 of
+# the 518 blocked codes handed the model a symbol, and production repeated
+# `CHIUSO_REGOLATORE_SETTORIALE` to a client. Deleting that suffix is the cure.
+#
+# This helper covers the other way in: `bali_reason` is quoted to the model
+# verbatim, so a symbol written INSIDE a reason sentence would leak just the
+# same. Measured 2026-08-05 on the canonical: 9 reasons quote a symbol
+# (`OK_or_HIGHER_RISK` x6, `CHIUSO_MORATORIA_BALI` x2, `pma_cap_verified` x1)
+# and **none of the 9 is on a blocked code**, so today this guards a population
+# of ZERO — said plainly rather than counted as nine fixes. It is here because
+# the reason text is rewritten by cure lanes most weeks and a blocked code's
+# reason is one edit away from carrying one; its own mutation test proves it
+# bites, so it is defence-in-depth, not decoration.
+#
+# The sentence is still passed through; only the tokens are spoken. The fallback
+# — underscores to spaces — is what makes it fail-CLOSED: a symbol nobody has
+# mapped yet degrades to readable words instead of reaching a client.
+_INTERNAL_SYMBOL_RE = re.compile(r"\b[A-Za-z]+(?:_[A-Za-z]+)+\b")
+
+_SYMBOL_PLAIN_TEXT: dict[str, str] = {
+    "OK_or_HIGHER_RISK": "not reached by the moratorium",
+    "APERTO_BALI_RISCHIO_ALTO": "open in Bali at a higher risk tier",
+    "BLOCCATO_CLASSE_RISCHIO": "blocked by its risk class",
+    "BLOCCATO_DIPENDE_SCOPE": "blocked depending on the declared scope",
+    "CHIUSO_BALI": "closed in Bali",
+    "CHIUSO_BALI_PROPOSTO": "proposed for closure in Bali",
+    "CHIUSO_MORATORIA_BALI": "closed by the Bali moratorium",
+    "CHIUSO_PMA_NO_BESAR": "allocated to Koperasi/UMKM, not open to a PT PMA",
+    "CHIUSO_REGOLATORE_SETTORIALE": "closed by the sectoral regulator",
+    "NON_CLASSIFICABILE": "not classifiable from the data we hold",
+    "pma_cap_verified": "foreign-ownership cap verified",
+}
+
+
+def _speak_internal_symbols(text: object) -> str:
+    """Render pipeline enum tokens as words, leaving the sentence otherwise intact.
+
+    Takes `object`, not `str`, deliberately. This runs on EVERY answer, and the
+    reason is ASSIGNED onto the model from a Qdrant payload — Pydantic does not
+    validate on assignment, so a point storing a number there would hand `re.sub`
+    a non-string and 500 the answer. The first draft did exactly that and took 8
+    sibling tests down with it; a cosmetic step must never be able to kill the
+    answer it decorates.
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    return _INTERNAL_SYMBOL_RE.sub(
+        lambda m: _SYMBOL_PLAIN_TEXT.get(m.group(0), m.group(0).replace("_", " ")),
+        text,
+    )
+
+
+def _is_zero_ceiling(value: object) -> bool:
+    """True only for a REAL 0% cap — absence must never read as a closure.
+
+    The indexer writes an absent cap as `""` and `_payload_value` maps `""`/None
+    to the default, so absence arrives as `None`. Comparing either to 0 is
+    already False in Python; this helper exists so that a later "tidy-up" to
+    `int(value or 0)` — which would turn every point without the field into a
+    national closure — has to argue with a named function and its test.
+
+    Only an exact finite numeric value counts. Numeric strings, booleans and
+    non-finite floats are malformed source values and never become a claim.
+    """
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, (int, float)) and math.isfinite(value) and value == 0
+
+
+def _national_closure_basis(result: "KBLISearchResult") -> str | None:
+    """Why this activity is closed to a PT PMA nationwide, or None if it is not.
+
+    Returns a PHRASE, not a boolean, because the note has to tell the reader what
+    closed it: "closed nationally" with no basis is the kind of assertion this
+    lane keeps having to withdraw.
+    """
+    if not result.pma_verdict_verified:
+        return None
+
+    by_code = _NATIONAL_CLOSURE_CODES.get(result.code)
+    if by_code:
+        return by_code
+    by_status = _NATIONAL_CLOSURE_STATUSES.get(result.bali_status or "")
+    if by_status:
+        return by_status
+    if (result.pma_status or "").strip().upper() == "TERTUTUP":
+        return "the national PMA list closes the activity (TERTUTUP)"
+    if result.pma_cap_verified is True and _is_zero_ceiling(result.pma_max_asing):
+        return "the national foreign-ownership ceiling is 0%"
+    return None
+
+
+def _bali_verdict_context_note(result: "KBLISearchResult") -> str:
+    """The Bali provincial verdict, as a line the model cannot miss.
+
+    DERIVED from the payload, never a hand-maintained table: the sibling note
+    above reads `PMA_SCALE_CONTEXT_BY_CODE`, which is fine for a handful of
+    special cases and hopeless for the 518 codes this covers.
+
+    Three deliberate choices, each one a way this could go wrong:
+
+    * **Silence when the payload says nothing.** `bali_blocked is None` means the
+      point predates the Bali layer, not that the activity is open. Inventing
+      "open" from an absent field is the exact inference this lane spent a week
+      withdrawing.
+    * **Not gated on the query.** `_scale_specific_pma_context_note` only fires
+      when the question mentions foreign investment; a Bali block is material
+      even when it does not ("how do I open a massage parlour in Bali?"), and
+      staying silent there is what produced the wrong answer.
+    * **The whole Bali verdict requires a verified PMA tuple.** Bali-side status,
+      block, and reason all describe PT PMA registrability. Publishing any of
+      them for a `declared_gap` row would bypass the exact provenance gate.
+
+    Two more, added 2026-08-05 (see `_national_closure_basis` above):
+
+    * **Scope before wording.** A block is described as provincial only when it
+      IS provincial. 77 of the 518 are national, and calling those "a Bali
+      restriction" hands the reader the wrong next step.
+    * **No internal symbol reaches the model.** The note used to end with
+      `Verdict code: CHIUSO_REGOLATORE_SETTORIALE`, and production repeated that
+      token to a client. The vocabulary of the pipeline is not the vocabulary of
+      an answer — the page has held that line since 2026-07-25
+      (`kbli-status-labels.ts::INTERNAL_ENUM_LABELS`); this was the surface that
+      had not. The symbol still goes to the log, where it belongs.
+
+    Sourced-closure addendum (2026-09-16): a Bali closure with its own
+    published source (`is_sourced_bali_closure`) fires even when the national
+    PMA tuple is `NOT_VERIFIED` — the website discloses the same closure under
+    the same condition. That branch names ONLY the Bali closure and its
+    source; it never states or infers a national ownership verdict, because
+    none is verified for that record.
+    """
+    if result.bali_blocked is None:
+        return ""
+
+    if not result.pma_verdict_verified:
+        if not is_sourced_bali_closure(
+            status=result.bali_status,
+            blocked=result.bali_blocked,
+            needs_review=result.bali_needs_review,
+            closure_url=result.bali_closure_url,
+        ):
+            return ""
+        reason = _speak_internal_symbols(result.bali_reason or "").strip()
+        review_note = (
+            " Present this as a conservative, Bali-sourced reading pending "
+            "further verification, not a certified legal determination."
+            if result.bali_needs_review is True
+            else ""
+        )
+        pieces = [
+            "BALI — CLOSED TO A FOREIGN-OWNED COMPANY (PT PMA) BY A SOURCED "
+            "BALI PROVINCIAL CLOSURE. The NATIONAL PMA status for this code is "
+            "NOT_VERIFIED: you MUST NOT state or infer a national ownership "
+            "status or percentage for this code from this Bali fact."
+        ]
+        if reason:
+            pieces.append(f"Stated cause: {reason}")
+        if result.bali_closure_scope:
+            pieces.append(f"Scope: {result.bali_closure_scope}")
+        if result.bali_confidence and result.bali_confidence != "HIGH":
+            pieces.append(
+                f"Confidence on this closure is {result.bali_confidence}; "
+                "present it as a conservative reading."
+            )
+        pieces.append(f"Source: {result.bali_closure_url}")
+        note = " ".join(pieces)
+        # A scoped closure (the hotel rows) bars only that slice of the code:
+        # the instruction must carry the scope, never a blanket "this activity".
+        if result.bali_closure_scope:
+            scope_clause = (
+                f" for {result.bali_closure_scope} only, and say that the scope "
+                "must be confirmed on OSS"
+            )
+        elif result.bali_confidence != "HIGH":
+            # MEDIUM codes merge 2020 activities not all on Bali's list: the
+            # instruction itself carries the hedge, as the page does.
+            scope_clause = " on a conservative reading, pending confirmation on OSS"
+        else:
+            scope_clause = ""
+        return (
+            f"{note} You MUST say the Bali provincial government has closed "
+            f"this activity to new PT PMA licensing{scope_clause} and cite the "
+            f"source URL.{review_note}"
+        )
+
+    national = _national_closure_basis(result)
+    # Coerce BEFORE `.strip()`, not after: `(42 or "").strip()` raises, and that
+    # ordering bug predates this change — it has been one malformed payload away
+    # from a 500 since the field was added.
+    reason = _speak_internal_symbols(result.bali_reason or "").strip()
+    review_note = (
+        " The canonical Bali record remains flagged for human review; present this as "
+        "a cautious current classification, not a final legal determination."
+        if result.bali_needs_review is True
+        else ""
+    )
+
+    if not result.bali_blocked:
+        if national:
+            # 79122 today, and the shape is what matters: the moratorium does not
+            # reach it, so the old text said "NOT blocked" and stopped — a
+            # sentence whose only reading is "go ahead" on an activity closed to
+            # foreign capital outright. "Not blocked in Bali" is not permission.
+            return (
+                "NOT blocked by the Bali provincial moratorium — but this activity is "
+                "closed to a foreign-owned company (PT PMA) at the NATIONAL level "
+                f"({national}), so the absence of a Bali block is NOT permission. You "
+                f"MUST NOT present it as registrable by a PT PMA.{review_note}"
+            )
+        return (
+            "BALI: this activity is NOT blocked for a PT PMA by the Bali provincial "
+            f"moratorium. National ownership rules still apply separately.{review_note}"
+        )
+
+    if national:
+        note = (
+            "CLOSED TO A FOREIGN-OWNED COMPANY (PT PMA) — NATIONALLY, not only in Bali. "
+            f"The closure is {national}, so it applies everywhere in Indonesia: "
+            "registering the activity in another province does NOT change the answer, "
+            "and there is no Jakarta route around it."
+        )
+        if reason:
+            note = f"{note} Stated cause: {reason}"
+        return (
+            f"{note} You MUST say a PT PMA cannot register this activity anywhere in "
+            "Indonesia and give this cause. Do NOT describe it as a Bali-only "
+            f"restriction and do NOT offer another province as an alternative.{review_note}"
+        )
+
+    note = (
+        "BALI — BLOCKED FOR A FOREIGN-OWNED COMPANY (PT PMA). This is a PROVINCIAL "
+        "restriction and it is independent of the national PMA status above: an "
+        "activity can be 100% open nationally and still be unregistrable in Bali."
+    )
+    if reason:
+        note = f"{note} Stated cause: {reason}"
+    note = (
+        f"{note} You MUST say the activity is blocked in Bali and give this cause. "
+        "Do not answer that it can be registered in Bali."
+    )
+    return f"{note}{review_note}"
+
+
+_TRANSLATE_SYSTEM = (
+    "You are an expert in KBLI (Klasifikasi Baku Lapangan Usaha Indonesia), the Indonesian Business Classification System.\n"
+    "Your task: translate any business activity query (in any language) into the most accurate Indonesian KBLI search phrase.\n\n"
+    "Rules:\n"
+    "1. Output ONLY the Indonesian search phrase. No explanation, no quotes, no punctuation.\n"
+    "2. Use terminology from official KBLI 2025 titles (BPS Regulation No. 7/2025).\n"
+    "3. For sector/category questions (e.g. 'construction sector', 'tourism sector'), use the Indonesian sector name.\n"
+    "4. For comparison questions (e.g. 'difference between X and Y'), output both Indonesian terms separated by a space.\n"
+    "5. For KBLI code numbers (e.g. 'KBLI 56101'), pass them through unchanged.\n"
+    "6. For Indonesian terms already correct (e.g. 'tertutup', 'terbuka', 'terbatas', 'PMA'), pass them through unchanged.\n"
+    "7. Prefer specific activity descriptions over generic sector names when the query is about a specific business.\n"
+    "8. Known colloquial mappings — use these exact Indonesian phrases:\n"
+    "   catering/katering → jasa boga acara tertentu\n"
+    "   tattoo permanente/permanent tattoo/tattoo studio → jasa perorangan lainnya (NOTE: no dedicated BPS code)\n"
+    "   henna/tato henna/temporary tattoo → jasa perorangan lainnya\n"
+    "   salon/hair salon/barbershop/pangkas rambut → aktivitas penataan dan pangkas rambut\n"
+    "   beauty salon/nail studio/nail art/eyelash extension/brow studio/MUA → aktivitas perawatan kecantikan\n"
+    "   spa/day spa/wellness spa/spa harian/sauna/steam bath → aktivitas SPA harian sauna pemandian uap\n"
+    "   laundry/dry cleaning/cuci pakaian → aktivitas pencucian pembersihan tekstil\n"
+    "   art gallery/galeri seni komersial/commercial art gallery → perdagangan eceran barang kesenian\n"
+    "   art venue/art center/venue pertunjukan/pusat kebudayaan → aktivitas operasional tempat fasilitas kesenian\n"
+    "   photography/fotografer → aktivitas fotografi\n"
+    "   co-working space → penyewaan ruang kantor\n"
+    "   mobile app/aplikasi → pemrograman komputer aplikasi\n"
+    "   surf school/sekolah surfing → pendidikan olahraga rekreasi\n"
+    "   online retail/e-commerce/online shop/toko online → perdagangan eceran melalui media internet\n"
+    "   online store/digital retail/internet retail → perdagangan eceran melalui media internet\n"
+    "   yoga studio/yoga class/studio yoga → aktivitas olahraga kebugaran\n"
+    "   IT consulting/IT consultant/konsultan IT → konsultasi manajemen teknologi informasi\n"
+    "   villa rental/sewa villa/penginapan villa → penyediaan akomodasi vila\n"
+    "   travel agency/agen perjalanan/tour operator → agen perjalanan wisata\n"
+    "   coffee shop/café/kafe/kedai kopi → restoran dan kafe\n"
+)
+
+
+def _is_buried(result) -> bool:
+    """A result the tombstone replaced, recognised by the field it WRITES.
+
+    Never by the title text: `TOMBSTONE_TITLE_SUFFIX` is prose, and a guard that
+    matched it would convict any record whose own title happened to quote it and
+    would miss the burial the day the wording changes.
+    """
+    return getattr(result, "risk_category", None) == PHANTOM_LICENSING_STATUS
+
+
+def _suggested_queries(results) -> list[str]:
+    """The follow-ups offered under an answer, which must not contradict it.
+
+    Extracted from the route body so the burial verdict can govern it and so it can
+    be tested without standing up the whole chat path. Behaviour for a live code is
+    unchanged, line for line.
+    """
+    if not results:
+        return []
+
+    top = results[0]
+
+    if _is_buried(top):
+        # The answer above just said this number cannot be registered. Offering
+        # "what licenses do I need for it" invites the question that answer refused,
+        # and interpolating `top.title` would paste the tombstone suffix into the
+        # middle of a sentence about an activity. Ask FORWARD instead: the reader's
+        # real question is which 2025 code carries their work now.
+        return [
+            f"Which KBLI 2025 code replaces {top.code}?",
+            "How do I find the right KBLI 2025 code for my activity?",
+        ]
+
+    suggested_queries = [f"What licenses do I need for KBLI {top.code}?"]
+    if top.pma_status in ("TERBUKA", "TERBATAS", "TERTUTUP"):
+        suggested_queries.append(f"Is {top.title} open to foreign investors?")
+    else:
+        suggested_queries.append(f"Can a foreigner own a {top.title} business?")
+    if len(results) > 1:
+        suggested_queries.append(
+            f"What's the difference between KBLI {top.code} and {results[1].code}?",
+        )
+    else:
+        suggested_queries.append(f"What are the risk requirements for KBLI {top.code}?")
+    return suggested_queries
+
+
+class _NoPool(Exception):
+    """Internal signal: there is no database to ask, so skip to the next store.
+
+    A sentinel rather than a branch so the no-pool case and the failed-query
+    case leave by the same door — the Qdrant attempt below is the degradation
+    path for both, and two doors is how one of them stops being taken.
+    """
+
+
+_RISK_UNRESOLVED = "Verify at OSS"
+
+
+def _channel_risk(*candidates: Any) -> str:
+    """The ONE risk derivation this channel has, with its precedence declared.
+
+    Until today five places produced `risk_category` for the same code and they
+    disagreed about what ignorance is even called: the `kbli_documents` branch
+    hardcoded `"Verify at OSS"`, the `kg_nodes` branch defaulted to it, the Qdrant
+    payload builder and the ILIKE fallback defaulted to `"Unknown"`, and a
+    hardcoded table served hand-written tiers. Which answer a client got depended
+    on store availability, not on the law.
+
+    Precedence is the order the caller passes. The floor is ONE word for "we do
+    not know" and it is `"Verify at OSS"`, because the system prompt already
+    carries a rule keyed on that exact string; `"Unknown"` is folded into it
+    rather than kept as a second dialect of the same fact.
+    """
+    for candidate in candidates:
+        if isinstance(candidate, str):
+            value = candidate.strip()
+            if value and value != "Unknown":
+                return value
+    return _RISK_UNRESOLVED
+
+
+async def _resolve_code_from_stores(pool: Any, code: str) -> "KBLISearchResult | None":
+    """Resolve one KBLI code to a chat match through the stores, in one order.
+
+    WHY ONE FUNCTION AND NOT FOUR BRANCHES. The same argument `_bury_if_phantom`
+    already makes about the tombstone: a fact produced in four places is four
+    places to cure, plus a fifth branch tomorrow nobody remembers (superscar #9).
+    The precedence is `kbli_documents` -> `kg_nodes` -> Qdrant, and it is written
+    here once instead of being implied by the order of four `if` blocks.
+
+    WHY THE RISK IS READ FROM `kg_nodes` EVEN WHEN `kbli_documents` ANSWERS.
+    Measured read-only inside the running image on 2026-09-20: `kbli_documents`
+    carries no `kategori_risiko` key at all — 0 rows out of 1,563 — while
+    `kg_nodes` carries a value on 1,383 of its 1,562 `kbli:` nodes. The old code
+    let the first branch win and hardcode `"Verify at OSS"`, so the channel
+    withheld a government tier we hold, for as many as 1,383 codes. The PMA tuple
+    still comes from whichever store answered, because a disclosure tuple is only
+    meaningful beside the record that certifies it.
+
+    WHICH WAY IT FAILS. A raising query yields no half-built match — both
+    constructions sit inside the `try`, so an exception during decode or
+    construction is caught before any `return` and the code falls through.
+
+    A DEAD POOL IS NOT A DEAD LOOKUP, and this is the one line to read twice.
+    `get_optional_database_pool` exists for graceful degradation, and the branch
+    order this function replaced encoded that: the Postgres branches were gated
+    on `pool`, the Qdrant one was NOT. Returning early here would cut the whole
+    typed-code path the moment Postgres blinks, for every code, silently — a
+    regression nobody asked for wearing the shape of a guard clause. So a
+    missing pool skips the DB block and Qdrant still gets asked.
+    """
+    kg_props: dict[str, Any] = {}
+    try:
+        if pool is None:
+            raise _NoPool
+        async with pool.acquire() as conn:
+            kg_row = await conn.fetchrow(
+                "SELECT entity_id, name, properties FROM kg_nodes WHERE entity_id = $1",
+                f"kbli:{code}",
+            )
+            if kg_row:
+                kg_props = (
+                    json.loads(kg_row["properties"])
+                    if isinstance(kg_row["properties"], str)
+                    else (kg_row["properties"] or {})
+                )
+
+            # The generated ``kbli_documents.content`` column is deliberately not
+            # selected: a PMA tuple cannot certify arbitrary prose stored beside it.
+            row = await conn.fetchrow(
+                "SELECT kode_kbli, judul, metadata FROM kbli_documents WHERE kode_kbli = $1",
+                code,
+            )
+            if row:
+                metadata = (
+                    row["metadata"]
+                    if isinstance(row["metadata"], dict)
+                    else json.loads(row["metadata"])
+                )
+                logger.info("✅ Direct structured lookup from kbli_documents: %s", code)
+                return KBLISearchResult(
+                    code=code,
+                    title=row["judul"],
+                    description=_official_scope(metadata, code),
+                    score=1.0,
+                    risk_category=_channel_risk(
+                        metadata.get("kategori_risiko"),
+                        kg_props.get("kategori_risiko"),
+                    ),
+                    **_pma_disclosure_fields(metadata),
+                )
+
+            if kg_row:
+                logger.info("⚠️ Direct lookup fallback to kg_nodes: %s", code)
+                return KBLISearchResult(
+                    code=code,
+                    title=kg_row["name"],
+                    description=_official_scope(kg_props, code),
+                    score=1.0,
+                    risk_category=_channel_risk(kg_props.get("kategori_risiko")),
+                    **_pma_disclosure_fields(kg_props),
+                )
+    except _NoPool:
+        logger.info("No database pool — resolving %s from Qdrant alone", code)
+    except Exception as lookup_err:
+        logger.warning("Direct lookup failed for %s: %s", code, lookup_err)
+
+    qdrant_payload = await _get_kbli_payload_from_qdrant(code)
+    if qdrant_payload:
+        match = _result_from_payload(qdrant_payload, score=1.0)
+        # `_result_from_payload` is shared with the public search surface and
+        # floors at `"Unknown"`; this channel speaks one dialect of ignorance.
+        match.risk_category = _channel_risk(match.risk_category)
+        logger.info("✅ Found KBLI %s via Qdrant payload filter: %s", code, match.title)
+        return match
+
+    return None
+
+
+async def _bury_if_phantom(
+    pool: Any, match: "KBLISearchResult | None"
+) -> "KBLISearchResult | None":
+    """Replace a resolved chat match with a tombstone when its code is gone.
+
+    WHY THIS EXISTS. PR #6810 taught `inspect_kbli` that ten of the codes in the
+    graph are KBLI-2020 numbers KBLI 2025 does not carry, and to bury them instead
+    of answering them. This channel never learned it, so the bot could still
+    describe 74100 as a live regulated activity the day after the page buried it —
+    and this is the surface clients actually talk to.
+
+    WHY ONE CALL AND NOT ONE PER PATH. Two paths in the caller can set the match —
+    a code the client typed and an activity keyword that routes to one — and both
+    now resolve through `_resolve_code_from_stores`. Curing each would be two
+    copies of one predicate plus a third path tomorrow that nobody remembers to
+    cure (superscar #9). They converge on one variable, so the verdict is applied
+    once, where they meet — which is AFTER the keyword path, not before it: until
+    2026-09-20 that path ran past this call and could not be buried at all.
+
+    WHICH WAY IT FAILS. No pool, no match, an unreadable catalogue, or a lookup
+    that raises — all mean `UNKNOWN`, and `UNKNOWN` returns the match untouched.
+    Absence convicts only when the catalogue is evidently present, which
+    `fetch_catalogue_membership` owns and logs. The asymmetry is deliberate: we
+    would rather keep answering ten phantom codes than bury a live catalogue.
+    """
+    if match is None or not pool:
+        return match
+
+    try:
+        async with pool.acquire() as conn:
+            membership = await fetch_catalogue_membership(conn, match.code)
+    except Exception as membership_err:
+        # Same shape as the direct-lookup arm: a failed check must not take the
+        # chat turn down, and must not silently convict a code either.
+        logger.warning(
+            "Catalogue membership check failed for %s: %s", match.code, membership_err
+        )
+        return match
+
+    if not is_absent_from_catalogue(membership):
+        return match
+
+    logger.info(
+        "🪦 KBLI %s is absent from the KBLI 2025 catalogue — serving a tombstone "
+        "to the chat channel",
+        match.code,
+    )
+    return _tombstone_result(match)
+
+
+@cached(
+    ttl=604800,
+    prefix="kbli_translate_v14",
+)  # Cache translations for 7 days (v13: recommendation redirect fix)
+async def _translate_query_for_kbli(query: str) -> str:
+    """Translate any-language query to Indonesian KBLI search terms."""
+    try:
+        from backend.services.rag.agentic.llm_gateway import TIER_FLASH
+
+        gateway = _get_llm_gateway()
+
+        # Check if LLM gateway is available before attempting translation
+        if not gateway._available:
+            logger.warning("⚠️ LLM Gateway not available for translation, using original query")
+            return query
+
+        chat = gateway.create_chat_with_history(
+            history_to_use=[],
+            model_tier=TIER_FLASH,
+            system_instruction=_TRANSLATE_SYSTEM,
+        )
+        translated, model_used, _resp, _usage = await gateway.send_message(
+            chat=chat,
+            message=query,
+            system_prompt=_TRANSLATE_SYSTEM,
+            tier=TIER_FLASH,
+            enable_function_calling=False,
+            conversation_messages=[{"role": "user", "content": query}],
+        )
+
+        # Validate translation is not empty
+        if not translated or not translated.strip():
+            logger.warning("⚠️ Translation returned empty from %s, using original", model_used)
+            return query
+
+        translated = translated.strip().strip('"').strip("'")
+        logger.info("🌐 Query translation: '%s' → '%s' (model: %s)", query, translated, model_used)
+        return translated
+    except Exception as e:
+        logger.warning(f"Query translation failed ({type(e).__name__}), using original: {e}")
+        return query
+
+
+def _detect_language(query: str) -> str:
+    """Detect query language using keyword heuristics including Indonesian."""
+    words = set(query.lower().split())
+    # Indonesian markers
+    id_words = {
+        "apa",
+        "bagaimana",
+        "syarat",
+        "usaha",
+        "bisa",
+        "saya",
+        "mau",
+        "buka",
+        "perizinan",
+        "risiko",
+        "modal",
+        "asing",
+        "pma",
+        "lokal",
+        "investasi",
+    }
+    if len(words & id_words) >= 2:
+        return "Indonesian"
+    # Italian markers
+    it_words = {
+        "goqame",
+        "aprire",
+        "quale",
+        "codice",
+        "serve",
+        "come",
+        "sono",
+        "che",
+        "per",
+        "una",
+        "della",
+        "questo",
+        "quanto",
+        "costa",
+        "cosa",
+        "posso",
+        "devo",
+        "fare",
+        "mio",
+        "bisogno",
+        "attivita",
+        "licenza",
+        "negozio",
+    }
+    if len(words & it_words) >= 2:
+        return "Italian"
+    # French markers
+    fr_words = {
+        "je",
+        "veux",
+        "ouvrir",
+        "quel",
+        "pour",
+        "une",
+        "est",
+        "les",
+        "des",
+        "mon",
+        "faire",
+        "comment",
+    }
+    if len(words & fr_words) >= 2:
+        return "French"
+    # Spanish markers
+    es_words = {"quiero", "abrir", "cual", "para", "como", "necesito", "puedo", "hacer", "negocio"}
+    if len(words & es_words) >= 2:
+        return "Spanish"
+    return "English"
+
+
+async def _generate_kbli_explanation_gemini(
+    query: str,
+    results: list[KBLISearchResult],
+) -> str:
+    """Generate KBLI explanation using Gemini Flash - Fast, Cost-Effective.
+
+    Uses Google Gemini 2.0 Flash with a simplified prompt focused on
+    clarity and accuracy.
+    """
+    logger.info("🤖 Using Gemini Flash for KBLI explanation")
+    return await _generate_kbli_explanation(query, results)
+
+
+@cached(
+    ttl=43200,
+    prefix="kbli_explain_v35",
+)  # Cache explanations for 12 hours.
+# v28 (2026-08-03): the Bali provincial verdict now reaches the model. The bump is
+# NOT cosmetic — this cache is 12h deep and keyed on the prefix, so every answer
+# already stored under v27 was generated blind to the Bali block and would keep
+# being served for half a day after the deploy. A cure the cache hides is not live.
+# v29 (2026-08-05): 77 national closures are no longer framed as Bali-provincial,
+# and no internal verdict symbol reaches the model. Same reason for the bump, and
+# it bites harder here: an answer cached under v28 is one that told a client to
+# try another province, and it would keep saying so for 12 hours after deploy.
+# v30 (2026-08-15): raw whole-code PMA prose is withheld unless the result
+# carries located + official basis + source vintage. Old answers may contain the
+# now-withheld claim, so the prefix is part of the disclosure boundary.
+# v31 (2026-08-15): declared-gap rows keep the structured Bali warning but no
+# longer pass through a mixed free-form reason that can contain national PMA
+# claims. Cached v30 answers may already quote that prose.
+# v32 (2026-08-15): generated kbli_documents prose is admitted only when that
+# row's own PMA tuple matches the verified search result. Cached v31 answers may
+# already contain unbound or divergent parent-document ownership claims.
+# v33 (2026-08-15): Bali-side status, block, and reason are now withheld with the
+# whole PMA claim whenever the exact national evidence tuple is absent.
+# v34 (2026-08-15): Postgres parent prose is no longer eligible on a matching
+# PMA tuple alone. Cached v33 answers may contain uncertified arbitrary content.
+async def _generate_kbli_explanation(
+    query: str,
+    results: list[KBLISearchResult],
+) -> str:
+    """Generate a grounded explanation of KBLI search results using LLM.
+
+    Args:
+        query: User query
+        results: Search results with codes and metadata
+    """
+    if not results:
+        return "No matching KBLI codes found for your search. Try different keywords or describe your business activity in more detail."
+
+    lang = _detect_language(query)
+    logger.info(f"🌐 Detected language: {lang} for query: '{query[:40]}'")
+
+    # Every answer passes here, whatever built its results — see _fill_bali_verdicts.
+    await _fill_bali_verdicts(results)
+
+    context_parts = []
+    for r in results:
+        pma_verified = r.pma_verdict_verified
+        expert_info = ""
+
+        scale_note = _scale_specific_pma_context_note(r.code, query) if pma_verified else ""
+        if scale_note:
+            expert_info = f"{expert_info}\n  PMA/foreign-owned scale note: {scale_note}"
+
+        bali_note = _bali_verdict_context_note(r)
+        if bali_note:
+            expert_info = f"{expert_info}\n  {bali_note}"
+
+        # Generated parent documents and expert blobs are never eligible merely
+        # because a structured PMA tuple matches: that tuple cannot certify the
+        # arbitrary prose beside it. Build the prompt only from safe structured
+        # fields and the official BPS description. Editorial text needs a
+        # separate exact content-hash + PMA-fingerprint certification path.
+        logger.debug(f"  Using structured context for {r.code}")
+        if not pma_verified:
+            pma_line = (
+                "PMA: NOT_VERIFIED. Do not state or infer an ownership status or "
+                "percentage for this code; explain the evidence gap and recommend "
+                "official OSS/BKPM verification."
+            )
+        else:
+            cap = "ownership cap: not verified"
+            if r.pma_cap_verified is True:
+                if r.pma_cap_special is True and r.pma_max_asing == "special":
+                    cap = "ownership cap: special non-percentage conditions"
+                elif (
+                    isinstance(r.pma_max_asing, (int, float))
+                    and not isinstance(r.pma_max_asing, bool)
+                    and math.isfinite(r.pma_max_asing)
+                ):
+                    cap = f"maximum foreign ownership: {r.pma_max_asing}%"
+            pma_line = (
+                f"PMA: {r.pma_status}; {cap}; official basis: "
+                f"{r.pma_official_basis}; source vintage: {r.pma_source_vintage}"
+            )
+        context_parts.append(
+            f"- KBLI {r.code}: {r.title}\n  Scope: {r.description}\n  {pma_line}\n  Risk: {r.risk_category}{expert_info}",
+        )
+    context = "\n".join(context_parts)
+
+    # Use unified MASTER PROMPT formatted with detected language
+    lang_system = KBLI_MASTER_PROMPT.format(lang=lang)
+
+    # Build a structured, detailed message that guides comprehensive responses
+    message = (
+        f"User question: {query}\n\n"
+        f"Relevant KBLI data from official sources (BPS 2025, PP 28/2025):\n{context}\n\n"
+        f"Task: Write a comprehensive, conversational answer covering:\n\n"
+        f"1. PRIMARY KBLI CODE(S): State the main code(s), full Indonesian name, and English translation\n"
+        f"2. PMA STATUS: State a code-specific verdict/cap only when its context includes a located official basis and source vintage. For NOT_VERIFIED, state the evidence gap and do not infer a verdict.\n"
+        f"3. CAPITAL REQUIREMENTS: If PMA relevant, state BOTH thresholds correctly — modal disetor "
+        f"(paid-up capital) minimum Rp 2.5 Billion per BKPM 5/2025 (effective 2025-10-02), and minimum "
+        f"investment value per KBLI per location of more than Rp 10 Billion (excluding land/buildings). "
+        f"Never call Rp 10 Billion the paid-up capital minimum\n"
+        f"4. LICENSING & RISK: Explain how requirements vary by business scale (Mikro/Kecil/Menengah/Besar)\n"
+        f"5. PRACTICAL GUIDANCE: Include next steps, where to register (OSS), or any Bali-specific considerations\n\n"
+        f"Be thorough and use only the eligible detailed information provided in the context data above. "
+        f"Don't just summarize — explain what each requirement means and how it applies to their situation."
+    )
+
+    try:
+        from backend.services.rag.agentic.llm_gateway import TIER_FLASH
+
+        gateway = _get_llm_gateway()
+
+        # Check if LLM gateway is available
+        if not gateway._available:
+            logger.error(
+                "❌ LLM Gateway not available - check GOOGLE_API_KEY or GOOGLE_APPLICATION_CREDENTIALS",
+            )
+            raise RuntimeError("LLM service not available")
+
+        chat = gateway.create_chat_with_history(
+            history_to_use=[],
+            model_tier=TIER_FLASH,
+            system_instruction=lang_system,
+        )
+
+        response_text, model_used, _resp_obj, usage = await gateway.send_message(
+            chat=chat,
+            message=message,
+            system_prompt=lang_system,
+            tier=TIER_FLASH,
+            enable_function_calling=False,
+            conversation_messages=[{"role": "user", "content": message}],
+        )
+
+        # CRITICAL: Validate response is not empty
+        if not response_text or not response_text.strip():
+            logger.error("❌ LLM returned empty response. Model: %s, Usage: %s", model_used, usage)
+            raise RuntimeError(f"LLM returned empty response from model {model_used}")
+
+        logger.info(
+            f"✅ KBLI explanation generated. Model: {model_used}, Length: {len(response_text)} chars",
+        )
+        return response_text
+
+    except Exception as e:
+        logger.error(f"❌ LLM explanation failed: {type(e).__name__}: {e}")
+        # Deterministic fallback: markdown list of results (language-aware)
+        if lang == "Indonesian":
+            lines = [f"Ditemukan {len(results)} kode KBLI yang relevan dengan pencarian Anda:\n"]
+        else:
+            lines = [f"I found {len(results)} KBLI code(s) relevant to your search:\n"]
+        for r in results:
+            lines.append(f"**KBLI {r.code}** - {r.title}\n{r.description}\n")
+        fallback_answer = "\n".join(lines)
+        logger.info(f"✅ Using fallback answer, length: {len(fallback_answer)} chars")
+        return fallback_answer
+
+
+# Minimum score threshold for ABSTAIN logic.
+# Calibrated 2026-07-08 against the LIVE prod score distribution (query embedder
+# text-embedding-3-small vs the enriched ~6k-char kbli_2025_final docs): legit
+# natural-language questions score 0.28-0.52, legit single keywords 0.18-0.32,
+# off-domain noise 0.11-0.16. The previous 0.40 (tuned on the older, shorter
+# pre-enrichment collection) sat ABOVE the entire legit band and abstained on
+# every natural question in prod — including the site's own suggested examples.
+# Tripwire test: TestChatAbstainThreshold (test_kbli_notebook.py).
+MIN_RELEVANCE_SCORE = 0.18
+
+# Non-business keywords that should trigger helpful redirect
+NON_BUSINESS_KEYWORDS = [
+    "kitas",
+    "kitap",
+    "visa",
+    "immigration",
+    "imigrasi",
+    "passport",
+    "paspor",
+    "stay permit",
+    "work permit",
+    "izin tinggal",
+    "izin kerja",
+    "renewal",
+    "agente immigrazione",
+    "visto",
+    "permesso di soggiorno",
+    "immigrazione",
+    # Recommendation/opinion queries (not KBLI classification)
+    "best restaurant",
+    "best cafe",
+    "best coffee shop",
+    "recommend restaurant",
+    "where to eat",
+    "mana makan",
+    "restoran terbaik",
+    "tempat makan terbaik",
+]
+
+
+def _is_non_business_query(query: str) -> bool:
+    """Check if query is about immigration/visa rather than business classification."""
+    query_lower = query.lower()
+    return any(keyword in query_lower for keyword in NON_BUSINESS_KEYWORDS)
+
+
+def _is_multi_domain_query(query: str) -> bool:
+    """
+    Check if query spans multiple knowledge domains (KBLI + visa/immigration/legal/tax).
+
+    Examples:
+    - "Can I open a restaurant with retirement KITAS?" → True (KBLI + visa)
+    - "What KBLI code for restaurant?" → False (pure KBLI)
+    - "KITAS requirements for foreigners" → False (pure visa, will be deflected)
+
+    Returns True only if query mentions BOTH business/KBLI AND visa/legal/tax.
+    """
+    query_lower = query.lower()
+
+    # Domain 1: Business/KBLI indicators
+    business_keywords = [
+        "kbli",
+        "business",
+        "open",
+        "start",
+        "restaurant",
+        "cafe",
+        "villa",
+        "hotel",
+        "company",
+        "pt",
+        "pma",
+        "usaha",
+        "bisnis",
+        "buka",
+        "restoran",
+        "kafe",
+        "perusahaan",
+        "investor",
+        "investment",
+    ]
+    has_business = any(kw in query_lower for kw in business_keywords)
+
+    # Domain 2: Visa/immigration indicators
+    visa_keywords = [
+        "kitas",
+        "kitap",
+        "visa",
+        "retirement",
+        "work permit",
+        "imta",
+        "rptka",
+        "tka",
+        "izin kerja",
+        "izin tinggal",
+        "pensiunan",
+    ]
+    has_visa = any(kw in query_lower for kw in visa_keywords)
+
+    # Domain 3: Legal/tax indicators
+    legal_keywords = [
+        "law",
+        "regulation",
+        "tax",
+        "uu ",
+        "pp ",
+        "permen",
+        "pajak",
+        "hukum",
+        "peraturan",
+        "ppn",
+        "pph",
+    ]
+    has_legal = any(kw in query_lower for kw in legal_keywords)
+
+    # Multi-domain = business + (visa OR legal)
+    is_multi_domain = has_business and (has_visa or has_legal)
+
+    if is_multi_domain:
+        logger.info(
+            "🌐 Multi-domain query detected: business=%s, visa=%s, legal=%s",
+            has_business,
+            has_visa,
+            has_legal,
+        )
+
+    return is_multi_domain
+
+
+@router.post("/chat", response_model=KBLINotebookChatResponse)
+async def chat_kbli(
+    http_request: Request,  # Iniezione corretta dell'oggetto Request di FastAPI
+    kbli_request: KBLINotebookChatRequest,  # Il body della richiesta
+    search_service=Depends(get_search_service),
+    pool=Depends(get_optional_database_pool),
+) -> KBLINotebookChatResponse:
+    """Specialized chat for KBLI Notebook with BPS 2025 focus."""
+    logger.info(f"💬 KBLI Chat Request: '{kbli_request.query[:50]}...'")
+
+    # Check LLM availability early
+    gateway = _get_llm_gateway()
+    if not gateway._available:
+        logger.error(
+            "❌ LLM Gateway not available - GOOGLE_API_KEY or GOOGLE_APPLICATION_CREDENTIALS may be missing",
+        )
+    else:
+        logger.debug("✅ LLM Gateway is available")
+
+    try:
+        # Translate query to Indonesian KBLI terms for better matching
+        search_query = await _translate_query_for_kbli(kbli_request.query)
+
+        # Extract KBLI codes from query for direct lookup
+        codes_from_query = re.findall(r"\b\d{5}\b", kbli_request.query)
+        direct_kbli_match = None
+
+        # Try direct KBLI lookup. One derivation, one declared precedence —
+        # see `_resolve_code_from_stores`. The hand-written answer table that used
+        # to sit at the end of this chain is gone: measured inside the running
+        # image on 2026-09-20, all nine of its codes are present in
+        # `kbli_documents` AND in `kg_nodes`, so the branch was unreachable for
+        # every one of them while still serving hand-written tiers through the
+        # keyword path below.
+        if codes_from_query:
+            for code in codes_from_query:
+                direct_kbli_match = await _resolve_code_from_stores(pool, code)
+                if direct_kbli_match:
+                    break
+
+
+        # P2 FIX: Keyword-to-code injection for activities not in Qdrant
+        # Detects activity keywords in query and injects a direct match BEFORE semantic search
+        # CORRECTED 2026-07-27: this comment used to read "prevents wrong codes
+        # (e.g. 47901 for online retail instead of 47911)" — exactly backwards, and
+        # that belief is what put a retired 2020 code on the channel. 47911 does not
+        # exist in the KBLI 2025 catalogue; 47901 does, and it is the code that cites
+        # 47911 in its pp28_sources. Verify a target against the catalogue before
+        # adding a row here: a code this map names but no store carries is answered
+        # by nobody — the route abstains and semantic search takes the turn.
+        _activity_keyword_map: list[tuple[list[str], str]] = [
+            # Online retail / e-commerce (handle spaced variants like "e comerce", "e commerce")
+            (
+                [
+                    "online retail",
+                    "e-commerce",
+                    "ecommerce",
+                    "e commerce",
+                    "e comerce",
+                    "toko online",
+                    "online shop",
+                    "internet retail",
+                    "digital retail",
+                    "online store",
+                    "jual online",
+                    "perdagangan online",
+                ],
+                "47901",
+            ),
+            # Event catering / catering
+            (
+                [
+                    "event catering",
+                    "katering",
+                    "catering service",
+                    "wedding catering",
+                    "jasa boga",
+                    "food catering",
+                    "corporate catering",
+                ],
+                "56210",
+            ),
+            # Restaurant / coffee shop / cafe
+            (
+                [
+                    "restaurant",
+                    "restoran",
+                    "coffee shop",
+                    "café",
+                    "cafe ",
+                    "kafe ",
+                    "kedai kopi",
+                    "warung kopi",
+                    "tempat makan",
+                    "rumah makan",
+                ],
+                "56101",
+            ),
+            # Bar / nightclub
+            (
+                ["bar bali", "open a bar", "nightclub", "klub malam", "diskotek", "buka bar"],
+                "56301",
+            ),
+            # Art gallery (commercial — selling art)
+            (
+                [
+                    "art gallery",
+                    "galeri seni",
+                    "galeri lukisan",
+                    "commercial art gallery",
+                    "sell paintings",
+                    "art shop",
+                    "toko seni",
+                    "jual lukisan",
+                ],
+                "47690",
+            ),
+            # Hair salon / barbershop
+            (
+                [
+                    "hair salon",
+                    "hair studio",
+                    "barbershop",
+                    "pangkas rambut",
+                    "potong rambut",
+                    "salon rambut",
+                    "barber shop",
+                ],
+                "96210",
+            ),
+            # Beauty salon / nail / lash / brow
+            (
+                [
+                    "nail studio",
+                    "nail art",
+                    "manicure",
+                    "pedicure",
+                    "eyelash extension",
+                    "lash lift",
+                    "brow studio",
+                    "sulam alis",
+                    "wax studio",
+                    "make-up artist",
+                    "mua ",
+                    "beauty salon",
+                    "salon kecantikan",
+                    "perawatan kecantikan",
+                ],
+                "96220",
+            ),
+            # Day spa / sauna
+            (
+                [
+                    "day spa",
+                    "spa harian",
+                    "sauna",
+                    "steam bath",
+                    "pemandian uap",
+                    "solarium",
+                    "wellness center",
+                    "spa bali",
+                    "open a spa",
+                ],
+                "96230",
+            ),
+            # Laundry
+            (
+                [
+                    "laundry",
+                    "dry cleaning",
+                    "cuci cazu",
+                    "cuci pakaian",
+                    "laundromat",
+                    "jasa cuci",
+                    "dobi",
+                ],
+                "96100",
+            ),
+            # Tattoo studio (permanent — no dedicated BPS code)
+            (
+                [
+                    "tattoo studio",
+                    "tattoo artist",
+                    "tato studio",
+                    "tattoo shop",
+                    "buka tattoo",
+                    "open tattoo",
+                ],
+                "96900",
+            ),
+        ]
+        if not direct_kbli_match:
+            query_lower_kw = kbli_request.query.lower()
+            for keywords, target_code in _activity_keyword_map:
+                if not any(kw in query_lower_kw for kw in keywords):
+                    continue
+                # The map routes an activity phrase to a code. The FACTS about
+                # that code come from the stores, through the same derivation the
+                # typed-code path uses — a keyword match is a routing hint, never
+                # a licensing source. If no store knows the code we abstain and
+                # fall through to semantic search, which is the honest answer.
+                direct_kbli_match = await _resolve_code_from_stores(pool, target_code)
+                if direct_kbli_match:
+                    logger.info(
+                        f"🎯 Keyword injection: '{query_lower_kw[:40]}' → KBLI {target_code}",
+                    )
+                    break
+                logger.info(
+                    "🎯 Keyword hit on %s but no store carries it — abstaining",
+                    target_code,
+                )
+
+        # A code the client typed may be a KBLI-2020 number KBLI 2025 does not
+        # carry. PR #6810 taught `inspect_kbli` to bury those; this channel never
+        # learned it, so until today the bot could still describe 74100 as a live
+        # regulated activity the day after the page buried it.
+        #
+        # WHY HERE AND NOT IN EACH PATH. Two paths above can set
+        # `direct_kbli_match` — the code the client typed and the activity-keyword
+        # route above — and both resolve through `_resolve_code_from_stores`.
+        # Curing each would be two copies of one predicate and a third path
+        # tomorrow that nobody remembers (superscar #9). They converge on ONE
+        # variable, so the verdict is applied once, where they meet. It sits after
+        # the keyword route on purpose: while it sat before, a keyword-injected
+        # match skipped the tombstone entirely.
+        #
+        # SILENCE WHEN WE CANNOT ASK. No pool, or an unreadable catalogue, means
+        # `UNKNOWN` — the match is returned untouched and this channel behaves
+        # exactly as it did before. Absence is only convicting when the catalogue
+        # is evidently present; `fetch_catalogue_membership` owns that asymmetry
+        # and logs what it swallowed.
+        direct_kbli_match = await _bury_if_phantom(pool, direct_kbli_match)
+
+        # Search semantic context with translated query
+        results = []
+        try:
+            embedding = await _resolve_embedding(search_service, search_query)
+            raw_results = await _search_kbli_qdrant(embedding, 7)
+
+            # Deduplicate by code
+            seen_codes = set()
+            for r in raw_results:
+                p = r.get("payload", {})
+                code = _payload_value(p, "kode_kbli", "kode", "kode_kbli_2025", default="N/A")
+                if code in seen_codes:
+                    continue
+                seen_codes.add(code)
+                results.append(_result_from_payload(p, score=r.get("score", 0.0)))
+                if len(results) >= 5:
+                    break
+
+            # When a specific code is in the query, filter Qdrant results to same 2-digit sector prefix
+            # This prevents cross-sector contamination (e.g. 64954 Syariah pawn in catering results)
+            if codes_from_query and direct_kbli_match:
+                query_prefix = direct_kbli_match.code[:2]
+                before = len(results)
+                results = [r for r in results if r.code.startswith(query_prefix)]
+                if len(results) < before:
+                    logger.info(
+                        f"🧹 Filtered Qdrant results by sector prefix '{query_prefix}': {before} → {len(results)}",
+                    )
+
+            # Add direct match at the beginning if found
+            if direct_kbli_match and direct_kbli_match.code not in {r.code for r in results}:
+                results.insert(0, direct_kbli_match)
+                logger.info(f"✅ Added direct KBLI match: {direct_kbli_match.code}")
+
+            logger.info(f"✅ Found {len(results)} KBLI results from Qdrant")
+        except Exception as q_err:
+            logger.warning("⚠️ Qdrant search failed, falling back to PostgreSQL: %s", q_err)
+            # Fallback to Postgres search by name/code
+            try:
+                db_pool = await get_optional_database_pool(http_request)
+                if db_pool:
+                    async with db_pool.acquire() as conn:
+                        rows = await conn.fetch(
+                            "SELECT entity_id, name, properties FROM kg_nodes WHERE entity_type = 'kbli' AND (name ILIKE $1 OR entity_id ILIKE $1) LIMIT 5",
+                            f"%{search_query}%",
+                        )
+                        for row in rows:
+                            code = row["entity_id"].replace("kbli:", "")
+                            props = (
+                                json.loads(row["properties"])
+                                if isinstance(row["properties"], str)
+                                else row["properties"]
+                            )
+                            results.append(
+                                KBLISearchResult(
+                                    code=code,
+                                    title=row["name"],
+                                    description=_official_scope(props, code),
+                                    score=0.8,  # Static score for fallback
+                                    risk_category=_channel_risk(
+                                        props.get("kategori_risiko")
+                                    ),
+                                    **_pma_disclosure_fields(props),
+                                ),
+                            )
+                        logger.info(
+                            f"✅ Found {len(results)} KBLI results from PostgreSQL fallback",
+                        )
+            except Exception as db_err:
+                logger.error("❌ PostgreSQL fallback failed: %s", db_err)
+
+        # Detect KBLI codes from results
+        codes_from_results = [r.code for r in results if r.code != "N/A"]
+        detected_kbli = list(dict.fromkeys(codes_from_query + codes_from_results))
+
+        # MULTI-DOMAIN ROUTING: If query spans KBLI + visa/legal, use KG Orchestrator
+        if _is_multi_domain_query(kbli_request.query) and not _requires_structured_pma_gate(
+            kbli_request.query
+        ):
+            logger.info("🌐 Multi-domain query detected → routing to KG Orchestrator")
+            try:
+                # Initialize KG Orchestrator with db_pool and search_service
+                if not pool:
+                    logger.warning("⚠️ Database pool unavailable, falling back to KBLI-only mode")
+                else:
+                    orchestrator = KGAgenticOrchestrator(db_pool=pool, retriever=search_service)
+
+                    # Process query with full KG-enhanced reasoning
+                    kg_response = await orchestrator.process(
+                        query=kbli_request.query,
+                        session_id=kbli_request.session_id or "kbli-notebook",
+                        user_id=None,
+                    )
+
+                    logger.info(
+                        f"✅ KG Orchestrator response: {len(kg_response.answer)} chars, {len(kg_response.sources)} sources",
+                    )
+                    logger.info(f"📊 Reasoning trace: {kg_response.reasoning_trace[:2]}")
+
+                    # Map KG response to KBLI chat response format
+                    # Extract KBLI codes from KG entities if available
+                    kg_detected_kbli = detected_kbli.copy()
+                    if kg_response.golden_route_matched:
+                        logger.info(f"🎯 Golden route matched: {kg_response.golden_route_matched}")
+
+                    # Build suggested queries from KG context
+                    suggested_kg = []
+                    if detected_kbli:
+                        suggested_kg.append(f"What licenses do I need for KBLI {detected_kbli[0]}?")
+                    if (
+                        "visa" in kbli_request.query.lower()
+                        or "kitas" in kbli_request.query.lower()
+                    ):
+                        suggested_kg.append(
+                            "What are the legal business structures for foreigners in Indonesia?",
+                        )
+                        suggested_kg.append("Contact Bali Zero for visa consultation")
+
+                    return KBLINotebookChatResponse(
+                        answer=kg_response.answer,
+                        detected_kbli=kg_detected_kbli,
+                        results=[],  # Don't show KBLI cards (info in answer)
+                        sources=kg_response.sources
+                        if kg_response.sources
+                        else [{"title": "Multi-domain KG reasoning", "relevance": "High"}],
+                        suggested_queries=suggested_kg
+                        or ["Explore more KBLI codes", "Contact Bali Zero team"],
+                    )
+            except Exception as kg_err:
+                logger.error("❌ KG Orchestrator failed, falling back to KBLI-only: %s", kg_err)
+                # Fall through to standard KBLI processing
+        elif _is_multi_domain_query(kbli_request.query):
+            logger.info(
+                "🛡️ Multi-domain query kept on structured KBLI path because it may require a PMA verdict"
+            )
+
+        # Check for non-business queries (KITAS/visa/immigration OR recommendations)
+        if _is_non_business_query(kbli_request.query):
+            logger.info(f"⚠️ Non-business query detected: '{kbli_request.query[:50]}'")
+            query_lang = _detect_language(kbli_request.query)
+            query_lower_nb = kbli_request.query.lower()
+            _recommendation_keywords = [
+                "best ",
+                "recommend",
+                "where to eat",
+                "mana makan",
+                "terbaik",
+            ]
+            is_recommendation = any(kw in query_lower_nb for kw in _recommendation_keywords)
+
+            if is_recommendation:
+                abstain_answer = (
+                    "I can't recommend specific restaurants or businesses — that's not my specialty.\n\n"
+                    "I am **Zantara AI**, specialized in **KBLI** (Klasifikasi Baku Lapangan Usaha Indonesia) — "
+                    "the Indonesian Business Classification System. I help you find the right KBLI code for your "
+                    "business and understand licensing, investment status (PMA), and regulatory requirements.\n\n"
+                    "Are you perhaps looking to **open** a restaurant or food business in Bali? I can help with that!"
+                )
+                suggested = [
+                    "I want to open a restaurant in Bali",
+                    "KBLI code for a cafe or coffee shop",
+                    "What KBLI for catering?",
+                ]
+            elif query_lang == "Indonesian":
+                abstain_answer = (
+                    "Pertanyaan ini berkaitan dengan imigrasi atau visa, yang berada di luar keahlian saya.\n\n"
+                    "Saya spesialis dalam **KBLI** (Klasifikasi Baku Lapangan Usaha Indonesia) — sistem klasifikasi "
+                    "kegiatan usaha di Indonesia berdasarkan Peraturan BPS No. 7/2025.\n\n"
+                    "Untuk informasi visa dan imigrasi (KITAS, KITAP, Izin Kerja), silakan hubungi:\n"
+                    "• Situs resmi imigrasi Indonesia: imigrasi.go.id\n"
+                    "• Agen imigrasi berlisensi\n\n"
+                    "Apakah saya bisa membantu Anda menemukan kode KBLI yang tepat untuk bisnis Anda di Indonesia?"
+                )
+                suggested = [
+                    "Buka restoran di Bali",
+                    "Kode KBLI untuk impor ekspor",
+                    "Hotel dan hospitality KBLI",
+                ]
+            else:
+                abstain_answer = (
+                    "This question is about immigration or visas, which is outside my area of expertise.\n\n"
+                    "I am specialized in **KBLI** (Klasifikasi Baku Lapangan Usaha Indonesia) — the Indonesian Business "
+                    "Classification System under BPS Regulation No. 7/2025. I can help you identify the right KBLI "
+                    "code for your business activity and understand the associated licensing and investment requirements.\n\n"
+                    "For visa and immigration information (KITAS, KITAP, Work Permit), please consult:\n"
+                    "• Official Indonesian immigration website: imigrasi.go.id\n"
+                    "• An authorized immigration agent\n\n"
+                    "Can I help you find the right KBLI code for your business in Indonesia instead?"
+                )
+                suggested = [
+                    "I want to open a restaurant in Bali",
+                    "KBLI code for import export business",
+                    "Hotel and hospitality KBLI",
+                ]
+            return KBLINotebookChatResponse(
+                answer=abstain_answer,
+                detected_kbli=[],
+                results=[],
+                sources=[],
+                suggested_queries=suggested,
+            )
+
+        # GLOSSARY SHORTCUT: Answer definitional questions directly without requiring Qdrant results
+        _glossary_terms = {
+            "terbatas": (
+                "**TERBATAS** means the business activity is *open to foreign investment with restrictions*. "
+                "This means a maximum foreign ownership percentage applies — the exact limit depends on the specific KBLI code "
+                "and is defined in Indonesia's Negative Investment List (DNI). "
+                "Foreign investors (PMA) can participate but cannot exceed the stated ownership cap.\n\n"
+                "**Key facts:**\n"
+                "- PMA is allowed, but capped (e.g. max 49%, 51%, or 67% depending on the sector)\n"
+                "- Modal disetor (paid-up capital) minimum for PMA: Rp 2.5 Billion (Permen BKPM 5/2025, "
+                "effective 2025-10-02) — separate from the minimum investment value per KBLI per location "
+                "(more than Rp 10 Billion, excluding land/buildings)\n"
+                "- Verify the exact cap for your specific KBLI code at: oss.go.id/perizinan\n\n"
+                "Compare with: TERBUKA (100% foreign ownership allowed) | TERTUTUP (foreigners cannot invest)"
+            ),
+            "terbuka": (
+                "**TERBUKA** means the business activity is *fully open to foreign investment*. "
+                "Foreign investors (PMA) can own up to 100% of the business.\n\n"
+                "**Key facts:**\n"
+                "- No ownership cap for foreigners\n"
+                "- Modal disetor (paid-up capital) minimum for PMA: Rp 2.5 Billion (Permen BKPM 5/2025, "
+                "effective 2025-10-02) — separate from the minimum investment value per KBLI per location "
+                "(more than Rp 10 Billion, excluding land/buildings)\n"
+                "- Register at: oss.go.id\n\n"
+                "Compare with: TERBATAS (restricted ownership) | TERTUTUP (closed to foreigners)"
+            ),
+            "tertutup": (
+                "**TERTUTUP** means the business activity is *closed to foreign investment*. "
+                "Only Indonesian nationals (WNI) can own this type of business. PMA is not permitted.\n\n"
+                "**Key facts:**\n"
+                "- Foreign investors (PMA) cannot own this business type\n"
+                "- Indonesian nationals only\n"
+                "- Verify status at: oss.go.id/perizinan\n\n"
+                "Compare with: TERBUKA (100% foreign allowed) | TERBATAS (restricted foreign allowed)"
+            ),
+        }
+        query_lower = kbli_request.query.lower()
+        for term, glossary_answer in _glossary_terms.items():
+            # Match queries like "what does X mean", "what is X", "explain X", "X meaning", or just the term alone
+            if (
+                term in query_lower
+                and any(
+                    kw in query_lower
+                    for kw in [
+                        "mean",
+                        "what",
+                        "explain",
+                        "definition",
+                        "define",
+                        "arti",
+                        "apa itu",
+                        "pengertian",
+                    ]
+                )
+            ) or query_lower.strip() == term:
+                logger.info("📚 Glossary shortcut triggered for term: %s", term)
+                return KBLINotebookChatResponse(
+                    answer=glossary_answer,
+                    detected_kbli=[],
+                    results=[],
+                    sources=[{"title": "Negative Investment List (DNI)", "relevance": "High"}],
+                    suggested_queries=[
+                        f"What KBLI codes are {term.upper()}?",
+                        "Can a foreigner open a restaurant in Bali?",
+                        "What is the minimum capital for PMA?",
+                    ],
+                )
+
+        # ABSTAIN LOGIC: Filter results by minimum relevance score
+        # BUT: Bypass if there's a direct KBLI code match (exact code lookup)
+        has_direct_match = direct_kbli_match is not None
+        logger.info(
+            f"🔍 ABSTAIN check: has_direct_match={has_direct_match}, results={len(results)}, codes={codes_from_query}",
+        )
+        filtered_results = [r for r in results if r.score >= MIN_RELEVANCE_SCORE]
+
+        if not has_direct_match and not filtered_results and results:
+            logger.warning(
+                "⚠️ All results below threshold %s. Triggering ABSTAIN.",
+                MIN_RELEVANCE_SCORE,
+            )
+            query_lang = _detect_language(kbli_request.query)
+            if query_lang == "Indonesian":
+                abstain_answer = (
+                    "Saya tidak menemukan kode KBLI yang sesuai untuk pencarian Anda.\n\n"
+                    "**Coba ubah pertanyaan Anda:**\n"
+                    "• Deskripsikan kegiatan usaha secara spesifik (misalnya 'restoran', 'vila', 'jasa pemrograman')\n"
+                    "• Sebutkan jenis produk atau layanan yang ingin Anda tawarkan\n"
+                    "• Jika Anda sudah mengetahui kode KBLI-nya, masukkan langsung (contoh: '56101')\n\n"
+                    "Saya spesialis KBLI 2025 (Peraturan BPS No. 7/2025) dan siap membantu Anda "
+                    "menemukan kode yang tepat untuk kegiatan usaha di Indonesia."
+                )
+                suggested = ["Restoran di Bali", "Impor ekspor Indonesia", "Hotel dan hospitality"]
+            else:
+                abstain_answer = (
+                    "I could not find a strong KBLI match for your search. This may be because the business activity "
+                    "description needs to be more specific.\n\n"
+                    "**Try rephrasing your question:**\n"
+                    "• Describe the specific business activity (e.g. 'restaurant', 'villa rental', 'software development')\n"
+                    "• Include the type of service or product you plan to offer\n"
+                    "• If you know the KBLI code, enter it directly (e.g. '56101')\n\n"
+                    "I am specialized in KBLI 2025 (BPS Regulation No. 7/2025) and can help you find the right "
+                    "classification code for your business activity in Indonesia."
+                )
+                suggested = [
+                    "Restaurant in Bali",
+                    "Import export Indonesia",
+                    "Hotel and hospitality",
+                ]
+            return KBLINotebookChatResponse(
+                answer=abstain_answer,
+                detected_kbli=[],
+                results=[],
+                sources=[],
+                suggested_queries=suggested,
+            )
+
+        # Use filtered results for explanation (unless we have direct match)
+        if has_direct_match and not codes_from_query:
+            # Keyword-injected match (no code in query): use ONLY the direct match,
+            # so a lower-ranked Qdrant hit cannot displace the code the keyword map
+            # deliberately chose. (The original comment here named 47901 as the
+            # "wrong" result to suppress in favour of 47911 — backwards: 47911 is a
+            # retired 2020 code absent from KBLI 2025, 47901 is the live successor.)
+            results = [direct_kbli_match]
+            logger.info(
+                f"🎯 Keyword injection: restricting results to direct match only ({direct_kbli_match.code})",
+            )
+        elif not has_direct_match:
+            results = filtered_results if filtered_results else results
+
+        # Resolve the authoritative Qdrant tuple before building structured
+        # prompt context. No generated Postgres/KG prose crosses this boundary.
+        await _fill_bali_verdicts(results)
+
+        # Generate explanation via Claude Haiku 4.5 (fast, cost-effective)
+        # Falls back to Gemini Flash if Claude unavailable
+        answer = await _generate_kbli_explanation_gemini(kbli_request.query, results)
+
+        # CRITICAL: Ensure answer is never empty
+        if not answer or not answer.strip():
+            logger.error("❌ CRITICAL: Answer is empty after _generate_kbli_explanation")
+            # Ultimate fallback
+            if results:
+                answer = f"I found {len(results)} KBLI code(s) relevant to your search:\n\n"
+                for r in results:
+                    answer += f"**KBLI {r.code}** - {r.title}\n{r.description}\n\n"
+            else:
+                answer = "I could not find relevant KBLI information. Please try rephrasing your question with more specific business activity terms."
+
+        # Generate template-based follow-up suggestions, which the burial governs
+        suggested_queries = _suggested_queries(results)
+
+        logger.info(
+            f"✅ KBLI Chat Response: answer_length={len(answer)}, results={len(results)}, detected={detected_kbli}",
+        )
+
+        return KBLINotebookChatResponse(
+            answer=answer,
+            detected_kbli=detected_kbli,
+            results=[],  # Don't show KBLI cards in UI (info already in answer text)
+            sources=[{"title": "PP 28/2025", "relevance": "High"}],
+            suggested_queries=suggested_queries,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        # The same fence as `inspect_kbli`'s catch-all, one module over. `e` here is
+        # the vector store's, the database's or the model provider's own words —
+        # table names, host:port, an upstream error body — and this route needs no
+        # authentication. The whole string stays HERE with the traceback: the client
+        # is told that we failed, not how.
+        logger.error(f"❌ KBLI Chat Error: {e!s}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal processing error") from e

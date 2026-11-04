@@ -1,0 +1,66 @@
+name: CodeQL
+
+# Derived from the production-only Security Scanning workflow: ONLY the CodeQL
+# matrix job is kept. It reports the two required contexts
+# `CodeQL Analysis (python)` and `CodeQL Analysis (javascript)`.
+#
+# Both legs ALWAYS run their full analysis. The source gated each leg behind a
+# path-aware `changes` job (scripts/ci/change_map.py) with a fail-open default;
+# that classifier is backstage-only, and a required context must never silently
+# skip, so the gate is removed rather than ported. There is NO job-level `if:`:
+# a skipped matrix job emits one bare `CodeQL Analysis` check run and the two
+# suffixed required contexts never report.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  # Cancel superseded runs on PR branches; never on main, never in the merge queue.
+  cancel-in-progress: ${{ (github.ref != 'refs/heads/main') && github.event_name != 'merge_group' }}
+
+jobs:
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["python", "javascript"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended,security-and-quality
+          config-file: ./.github/codeql-config.yml
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          category: "/language:${{matrix.language}}"
+          # merge_group: analyse, never upload. The queue's temporary ref is
+          # deleted once the group is rebuilt or merged, and a SARIF upload at
+          # the end of a long analysis then fails with "ref ... not found".
+          upload: ${{ github.event_name == 'merge_group' && 'never' || 'always' }}

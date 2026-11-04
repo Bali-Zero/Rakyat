@@ -1,0 +1,446 @@
+{
+  "family": "E31",
+  "name": "Family and dependent visas",
+  "category": "KITAS/Limited Stay",
+  "permit_class": "ITAS",
+  "entry_type": null,
+  "law_dir": "law/E31",
+  "start_question": "family_relationship",
+  "questions": {
+    "family_relationship": {
+      "text_en": "Which family relationship brings you to Indonesia?",
+      "options": {
+        "spouse_indonesian_citizen": "E31A",
+        "spouse_itas_itap_holder": "E31B",
+        "child_of_lawful_foreign_indonesian_marriage": "E31C",
+        "foreign_stepchild_of_lawful_foreign_indonesian_marriage": "E31D",
+        "child_of_itas_itap_or_valid_limited_stay_visa_holder": "E31E",
+        "child_indonesian_parent_court_established_relationship": "E31F",
+        "parent_of_indonesian_child": "E31G",
+        "parent_of_child_with_itas_itap_or_valid_limited_stay_visa": "E31H",
+        "child_joining_sibling_with_itas_itap_or_valid_limited_stay_visa": "E31J"
+      }
+    },
+    "not_joining_golden_visa": {
+      "text_en": "Are you joining a family member who does not hold a Golden Visa?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "sponsor": {
+      "text_en": "Has the sponsor or family member required by this visa agreed to support your application?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "stay_months": {
+      "text_en": "How many months do you need to stay in Indonesia?",
+      "kind": "integer"
+    }
+  },
+  "visas": {
+    "E31": {
+      "sponsor_required": null,
+      "entry_type": null,
+      "is_sold": null,
+      "extendable": null,
+      "stay_options": null,
+      "price_keys": []
+    },
+    "E31A": {
+      "sponsor_required": true,
+      "entry_type": "MULTIPLE",
+      "is_sold": true,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 1,
+          "unit": "YEAR"
+        },
+        {
+          "value": 2,
+          "unit": "YEAR"
+        }
+      ],
+      "price_keys": [
+        {
+          "category": "kitas_permits",
+          "item_key": "Spouse 1 Year (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Spouse 1 Year (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Spouse 1 Year (Extend)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Spouse 2 Years (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Spouse 2 Years (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Spouse 2 Years (Extend)"
+        }
+      ]
+    },
+    "E31B": {
+      "sponsor_required": true,
+      "entry_type": "MULTIPLE",
+      "is_sold": true,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 1,
+          "unit": "YEAR"
+        },
+        {
+          "value": 2,
+          "unit": "YEAR"
+        }
+      ],
+      "price_keys": [
+        {
+          "category": "kitas_permits",
+          "item_key": "Spouse 1 Year (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Spouse 1 Year (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Spouse 1 Year (Extend)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Spouse 2 Years (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Spouse 2 Years (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Spouse 2 Years (Extend)"
+        }
+      ]
+    },
+    "E31C": {
+      "sponsor_required": true,
+      "entry_type": "MULTIPLE",
+      "is_sold": true,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 1,
+          "unit": "YEAR"
+        },
+        {
+          "value": 2,
+          "unit": "YEAR"
+        }
+      ],
+      "price_keys": [
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Extend)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Extend)"
+        }
+      ]
+    },
+    "E31D": {
+      "sponsor_required": true,
+      "entry_type": "MULTIPLE",
+      "is_sold": true,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 1,
+          "unit": "YEAR"
+        },
+        {
+          "value": 2,
+          "unit": "YEAR"
+        }
+      ],
+      "price_keys": [
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Extend)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Extend)"
+        }
+      ]
+    },
+    "E31E": {
+      "sponsor_required": true,
+      "entry_type": "MULTIPLE",
+      "is_sold": true,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 1,
+          "unit": "YEAR"
+        },
+        {
+          "value": 2,
+          "unit": "YEAR"
+        }
+      ],
+      "price_keys": [
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Extend)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Extend)"
+        }
+      ],
+      "requires_question": "not_joining_golden_visa"
+    },
+    "E31F": {
+      "sponsor_required": true,
+      "entry_type": "MULTIPLE",
+      "is_sold": true,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 1,
+          "unit": "YEAR"
+        },
+        {
+          "value": 2,
+          "unit": "YEAR"
+        }
+      ],
+      "price_keys": [
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Extend)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Extend)"
+        }
+      ]
+    },
+    "E31G": {
+      "sponsor_required": true,
+      "entry_type": "MULTIPLE",
+      "is_sold": true,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 1,
+          "unit": "YEAR"
+        },
+        {
+          "value": 2,
+          "unit": "YEAR"
+        }
+      ],
+      "price_keys": [
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Extend)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Extend)"
+        }
+      ]
+    },
+    "E31H": {
+      "sponsor_required": true,
+      "entry_type": "MULTIPLE",
+      "is_sold": true,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 1,
+          "unit": "YEAR"
+        },
+        {
+          "value": 2,
+          "unit": "YEAR"
+        }
+      ],
+      "price_keys": [
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Extend)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Extend)"
+        }
+      ],
+      "requires_question": "not_joining_golden_visa"
+    },
+    "E31J": {
+      "sponsor_required": true,
+      "entry_type": "MULTIPLE",
+      "is_sold": true,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 1,
+          "unit": "YEAR"
+        },
+        {
+          "value": 2,
+          "unit": "YEAR"
+        }
+      ],
+      "price_keys": [
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 1 Year (Extend)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Dependent 2 Years (Extend)"
+        }
+      ]
+    }
+  },
+  "notes": [
+    "E31 is a NOT_FOUND secondary card, projected as TO_VERIFY with permit_class NULL and excluded from Guide paths.",
+    "Relationship options follow official titles and special requirements. E31F names the court-established legal parent-child relationship; it does not invent an adoption, age or marital-status rule. E31C/F applicability can overlap and remains TO_VERIFY; a generic child-of-WNI answer does not select a code.",
+    "E31D is the foreign stepchild in a lawful foreign/Indonesian marriage; its application request and family-register checklist name the Indonesian parent. The foreign-parent title is not a foreign-sponsor entitlement.",
+    "Only E31E and E31H expressly prohibit joining a Golden Visa holder as a Family Dependant. Their gate is not extended to other codes by inference.",
+    "Sponsor means the sponsor or family support stated in the selected Law card. Documentary evidence is a result checklist, never a question.",
+    "All nine substantive pages state 1 or 2 YEAR initial stays and extensions without a cumulative maximum. Months compare at exactly 12 per YEAR; above 24 months returns OK_WITH_EXTENSION with total_max_known false.",
+    "Spouse price descriptions explicitly cover Indonesian-citizen and ITAS/ITAP-holder spouses (E31A/B). Dependent descriptions cover family of ITAS/ITAP holders (E31E/H/J). These are exact catalog references, not a choice of application channel or duration-specific quote.",
+    "Born KITAS and Dependent KITAP + MERP mappings remain TO_VERIFY; no price or is_sold value is inferred for them.",
+    "E31B title versus WNI-spouse application-letter wording, E31A PNBP component mismatch, and E31A/B/C GCI direct-ITAP versus visa-page ITAS context remain TO_VERIFY. Cards are unchanged.",
+    "Offshore/onshore application location, cumulative extension maxima and per-code ITAS-to-ITAP conversion remain null + TO_VERIFY. The family-category conversion text and direct GCI context in ITAP.json establish no per-code conversion; DB itap stays NULL for every code.",
+    "OWNER RULING 2026-10-19 (commercial, not Law): E31C, E31D, E31F and E31G are sold under the six exact kitas_permits Dependent keys (1 Year / 2 Years x Altus/Onshore, Offshore, Extend); is_sold true. This supersedes the earlier unpriced ruling (price_keys [], is_sold null). The keys are catalog references, not a choice of channel or a duration-specific quote."
+  ]
+}

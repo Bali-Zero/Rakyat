@@ -1,0 +1,622 @@
+"""
+Intel Staging Service
+
+Handles staging area operations for Intel articles.
+"""
+
+import fcntl
+import hashlib
+import json
+import logging
+import re
+import shutil
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Literal
+
+from backend.app.core.config import settings
+from backend.app.metrics import (
+    intel_filter_usage_total,
+    intel_search_queries_total,
+    intel_sort_usage_total,
+    intel_staging_queue_size,
+)
+
+logger = logging.getLogger(__name__)
+
+# Shape of an intel staging item id, and the SINGLE place that decides it.
+#
+# WHY (CodeQL py/path-injection #7793/#7794/#7795/#7796/#7797 + #3677-#3679, 2026-08-01)
+# --------------------------------------------------------------------------------------
+# Every staging path is built as `staging_dir / f"{item_id}.json"`. With no shape
+# check, `item_id = "../../../../etc/passwd"` resolves OUTSIDE the staging directory
+# — verified against the live rag machine, where that join resolves to
+# `/etc/passwd.json`. `archive_item()` then MOVES whatever it finds there.
+#
+# The triage of those alerts recorded that the reachable-by-path-param call sites were
+# safe only because uvicorn percent-decodes before routing (`%2F` yields a 404) — that
+# is INHERITED safety, asserted nowhere in this module. It also does not extend to the
+# sources these alerts actually name: a JSON body (`POST /api/intel/staging/bulk-reject/
+# {type}` takes `item_ids: list[str]`) and a Telegram `/cover` caption, neither of which
+# passes through any URL decoder. This module now asserts the shape itself.
+#
+# `generate_item_id()` emits `{intel_type}_{YYYYmmdd_HHMMSS}_{sha256[:8]}`; a live
+# sample of ids on the prod staging volume matched this pattern in full.
+#
+# Imported by `intel_cover_handler` too, so the two path-building surfaces cannot drift
+# apart — same reason `_memory_identity` is shared by its two chokepoints.
+_ITEM_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def assert_valid_item_id(item_id: str) -> None:
+    """
+    Reject any item id that could escape the staging directory when joined into a path.
+
+    Raises:
+        ValueError: if the id is not a bare `[A-Za-z0-9_-]{1,128}` token. The offending
+            value is NOT echoed into the message — it reaches this code from a request
+            body or a chat caption, and the message travels into logs and API responses.
+    """
+    if not isinstance(item_id, str) or not _ITEM_ID_RE.match(item_id):
+        raise ValueError("Malformed intel item_id")
+
+
+# WR2 liveness rewire — red-team round (FIX1+FIX2, 2026-07-18).
+_VALID_LIVENESS_TIERS = {"breaking", "developing", "evergreen"}
+
+
+def _normalize_live_news_projection(data: dict[str, Any]) -> dict[str, Any]:
+    """Coerce the 3 live-news fields for safe projection into pending items.
+
+    Staging JSON is not guaranteed clean — hand-edited files, pre-validation
+    legacy entries, or a future writer could carry garbage (non-numeric
+    score, an unknown tier string) or an EXPLICIT JSON null (which bypasses
+    `dict.get(key, default)` because the key IS present — the default only
+    applies when the key is missing). wr2_topic_selector.py's live-pool hard
+    filter does `int(i.get("live_news_score") or 0)` unguarded by try/except
+    — a non-numeric score reaching it raises ValueError and crashes the
+    batch job. Normalize once, here, so every consumer downstream
+    (topic selector, draft generator, News Room UI) gets a clean shape
+    unconditionally, regardless of how dirty the source JSON is.
+
+    Also carries live_news_reasons, previously omitted from the projection
+    entirely — wr2_topic_selector.py reads it straight off the pending item
+    (`top_item.get("live_news_reasons")`), not from a separate full-JSON
+    preview call, so its absence here was a silent drop, not a deliberate
+    payload-weight trim.
+    """
+    raw_score = data.get("live_news_score")
+    try:
+        score = int(round(float(raw_score)))
+    except (TypeError, ValueError):
+        score = 0
+    score = max(0, min(100, score))
+
+    raw_tier = data.get("liveness_tier")
+    tier = raw_tier.lower() if isinstance(raw_tier, str) else ""
+    if tier not in _VALID_LIVENESS_TIERS:
+        tier = "evergreen"
+
+    raw_reasons = data.get("live_news_reasons")
+    reasons: list[str] = []
+    if isinstance(raw_reasons, list):
+        for r in raw_reasons:
+            if isinstance(r, str):
+                cleaned = r.strip()[:200]
+                if cleaned:
+                    reasons.append(cleaned)
+    reasons = reasons[:3]
+
+    return {
+        "live_news_score": score,
+        "liveness_tier": tier,
+        "live_news_reasons": reasons,
+    }
+
+
+class IntelStagingService:
+    """
+    Service for managing Intel staging area.
+
+    Handles saving, reading, listing, and archiving staging items.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the staging service with directory paths."""
+        self.base_staging_dir = Path(settings.get_intel_staging_base_dir)
+        self.visa_staging_dir = self.base_staging_dir / "visa"
+        self.news_staging_dir = self.base_staging_dir / "news"
+
+        # Ensure directories exist
+        self._ensure_directories()
+
+    def _ensure_directories(self) -> None:
+        """Ensure staging directories exist, with fallback to /tmp if needed."""
+        try:
+            self.visa_staging_dir.mkdir(parents=True, exist_ok=True)
+            self.news_staging_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # Fallback to /tmp if configured path is not writable (local dev)
+            self.base_staging_dir = Path("/tmp/staging")
+            self.visa_staging_dir = self.base_staging_dir / "visa"
+            self.news_staging_dir = self.base_staging_dir / "news"
+            self.visa_staging_dir.mkdir(parents=True, exist_ok=True)
+            self.news_staging_dir.mkdir(parents=True, exist_ok=True)
+
+    def get_staging_dir(self, intel_type: Literal["visa", "news"]) -> Path:
+        """
+        Get staging directory for intel type.
+
+        Args:
+            intel_type: "visa" or "news"
+
+        Returns:
+            Path to staging directory
+        """
+        return self.visa_staging_dir if intel_type == "visa" else self.news_staging_dir
+
+    def generate_item_id(
+        self,
+        intel_type: Literal["visa", "news"],
+        title: str,
+        source_url: str,
+    ) -> str:
+        """
+        Generate unique item ID for staging item.
+
+        Args:
+            intel_type: "visa" or "news"
+            title: Article title
+            source_url: Article source URL
+
+        Returns:
+            Unique item ID
+        """
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        content_hash = hashlib.sha256(f"{title}{source_url}".encode()).hexdigest()[:8]
+        return f"{intel_type}_{timestamp}_{content_hash}"
+
+    def save_staging_item(
+        self,
+        intel_type: Literal["visa", "news"],
+        item_id: str,
+        staging_data: dict[str, Any],
+    ) -> Path:
+        """
+        Save staging item to file.
+
+        Args:
+            intel_type: "visa" or "news"
+            item_id: Unique item identifier
+            staging_data: Item data to save
+
+        Returns:
+            Path to saved file
+
+        Raises:
+            ValueError: if item_id is not a bare token (would escape the staging dir).
+        """
+        assert_valid_item_id(item_id)
+        staging_dir = self.get_staging_dir(intel_type)
+        staging_file = staging_dir / f"{item_id}.json"
+
+        # Atomic write: write to temp file first, then rename
+        json_content = json.dumps(staging_data, indent=2)
+        temp_file = staging_file.with_suffix(".json.tmp")
+
+        try:
+            temp_file.write_text(json_content)
+
+            # Atomic rename (works on most filesystems)
+            temp_file.replace(staging_file)
+
+        except Exception:
+            # Clean up temp file on error
+            if temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except Exception as e:
+                    logger.debug("Failed to clean up temp file %s: %s", temp_file, e)
+                    pass
+            raise
+
+        return staging_file
+
+    def compare_and_set_status(
+        self,
+        intel_type: Literal["visa", "news"],
+        item_id: str,
+        *,
+        expected: set[str],
+        new_status: str,
+        updates: dict[str, Any] | None = None,
+        expected_values: dict[str, Any] | None = None,
+    ) -> tuple[bool, dict[str, Any] | None]:
+        """Atomically transition one staging item across worker processes."""
+
+        assert_valid_item_id(item_id)
+        staging_dir = self.get_staging_dir(intel_type)
+        lock_dir = staging_dir / ".locks"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / f"{item_id}.lock"
+        with lock_path.open("a+", encoding="utf-8") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            try:
+                current = self.load_staging_item(intel_type, item_id)
+                if current is None:
+                    return False, None
+                status = str(current.get("status", "pending"))
+                if status not in expected:
+                    return False, current
+                if expected_values and any(
+                    current.get(field) != expected_value
+                    for field, expected_value in expected_values.items()
+                ):
+                    return False, current
+                current["status"] = new_status
+                if updates:
+                    current.update(updates)
+                self.save_staging_item(intel_type, item_id, current)
+                return True, current
+            finally:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+    def backfill_enrichment_if_absent(
+        self,
+        intel_type: Literal["visa", "news"],
+        item_id: str,
+        new_enrichment: dict[str, Any],
+    ) -> bool:
+        """Atomically merge `new_enrichment` onto a staging item iff its current
+        enrichment is missing/empty.
+
+        Uses the same per-item `fcntl` advisory lock as `compare_and_set_status`
+        so two same-URL submissions racing the dedup-heal read-modify-write
+        (W-L610: `submit_from_scraper`'s enrichment backfill was a lockless RMW —
+        both racers could read "empty", both write, and one payload silently
+        vanishes under last-write-wins) instead serialize: the loser observes the
+        winner's write already in place and no-ops.
+
+        Returns:
+            True if this call performed the backfill, False if the item does not
+            exist or already carries a non-empty `enrichment`.
+        """
+        assert_valid_item_id(item_id)
+        staging_dir = self.get_staging_dir(intel_type)
+        lock_dir = staging_dir / ".locks"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / f"{item_id}.lock"
+        with lock_path.open("a+", encoding="utf-8") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            try:
+                current = self.load_staging_item(intel_type, item_id)
+                if current is None:
+                    return False
+                existing_enrichment = current.get("enrichment")
+                if isinstance(existing_enrichment, dict) and existing_enrichment:
+                    return False
+                current["enrichment"] = new_enrichment
+                self.save_staging_item(intel_type, item_id, current)
+                return True
+            finally:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+    def load_staging_item(
+        self,
+        intel_type: Literal["visa", "news"],
+        item_id: str,
+    ) -> dict[str, Any] | None:
+        """
+        Load staging item from file.
+
+        Args:
+            intel_type: "visa" or "news"
+            item_id: Unique item identifier
+
+        Returns:
+            Item data, or None if not found — including when item_id is malformed. A read
+            answers "does this item exist", and an id that cannot name a staging item
+            names nothing; callers already map None to 404, so no caller changes.
+        """
+        try:
+            assert_valid_item_id(item_id)
+        except ValueError:
+            logger.warning(
+                "Rejected malformed intel item_id on read",
+                extra={"intel_type": intel_type},
+            )
+            return None
+
+        staging_dir = self.get_staging_dir(intel_type)
+        file_path = staging_dir / f"{item_id}.json"
+
+        if not file_path.exists():
+            return None
+
+        try:
+            with open(file_path) as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(
+                "Error reading staging file %s: %s",
+                file_path,
+                e,
+                exc_info=True,
+                extra={"intel_type": intel_type, "item_id": item_id},
+            )
+            return None
+
+    def check_duplicate(
+        self,
+        intel_type: Literal["visa", "news"],
+        source_url: str,
+        days: int = 7,
+    ) -> dict[str, Any] | None:
+        """
+        Check if article with same source_url exists in staging.
+
+        Args:
+            intel_type: "visa" or "news"
+            source_url: Source URL to check
+            days: Number of days to check back (default: 7)
+
+        Returns:
+            Existing item data if duplicate found, None otherwise
+        """
+        staging_dir = self.get_staging_dir(intel_type)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+
+        file_paths = list(staging_dir.glob("*.json"))
+
+        for file_path in file_paths:
+            try:
+                with open(file_path) as f:
+                    data = json.load(f)
+
+                if data.get("source_url") == source_url:
+                    detected_at = data.get("detected_at")
+                    if detected_at:
+                        try:
+                            detected_dt = datetime.fromisoformat(detected_at.replace("Z", "+00:00"))
+                            if detected_dt >= cutoff_date:
+                                return data
+                        except (ValueError, TypeError):
+                            # If date parsing fails, consider it a duplicate anyway
+                            return data
+                    else:
+                        # No date, consider it a duplicate
+                        return data
+            except json.JSONDecodeError as e:
+                logger.warning("Invalid JSON in staging file %s: %s", file_path, e)
+                continue
+            except PermissionError as e:
+                logger.warning("Permission denied reading %s: %s", file_path, e)
+                continue
+            except Exception as e:
+                logger.error("Error reading staging file %s: %s", file_path, e, exc_info=True)
+                continue
+        return None
+
+    def list_pending_items(
+        self,
+        intel_type: str = "all",
+        filter_type: str | None = None,
+        sort_type: str | None = None,
+        search: str | None = None,
+        include_enrichment: bool = False,
+    ) -> dict[str, Any]:
+        """
+        List items pending approval in staging area.
+
+        Args:
+            intel_type: "all", "visa", or "news"
+            filter_type: Optional filter type
+            sort_type: Optional sort type
+            search: Optional search query
+            include_enrichment: round-2 red-team fix (scar family #9). The
+                full structured enrichment object is ~1400-2000 words; the
+                route has no pagination and most consumers (News Room UI,
+                Visa Oracle UI, MCP tool) never read it — only
+                wr2_topic_selector.py does, and only for the single ranked
+                top item. Default False keeps the default projection lean
+                (no "enrichment" key at all); pass True to opt in. Archived/
+                approved items NEVER carry enrichment regardless of this
+                flag — the topic selector never ranks published items, and
+                UIs that need archived detail already use /preview.
+
+        Returns:
+            Dictionary with items and count
+        """
+        # Track metrics
+        if filter_type and filter_type != "all":
+            intel_filter_usage_total.labels(intel_type=intel_type, filter_type=filter_type).inc()
+
+        if sort_type:
+            intel_sort_usage_total.labels(intel_type=intel_type, sort_type=sort_type).inc()
+
+        if search:
+            intel_search_queries_total.labels(intel_type=intel_type).inc()
+
+        items: list[dict[str, Any]] = []
+
+        dirs_to_check: list[tuple[str, Path]] = []
+        if intel_type in ["all", "visa"]:
+            dirs_to_check.append(("visa", self.visa_staging_dir))
+        if intel_type in ["all", "news"]:
+            dirs_to_check.append(("news", self.news_staging_dir))
+
+        for category, directory in dirs_to_check:
+            if not directory.exists():
+                logger.warning(
+                    "Directory does not exist: %s",
+                    directory,
+                    extra={"category": category},
+                )
+                continue
+
+            # Pending/approved/published items in staging root
+            for file_path in directory.glob("*.json"):
+                try:
+                    with open(file_path) as f:
+                        data = json.load(f)
+                        # Only trust explicit status field (set by publish endpoint)
+                        status = data.get("status", "pending")
+                        # published_url is set ONLY by the publish endpoint, not by scraper
+                        if status != "published" and data.get("published_url"):
+                            status = "published"
+                        projected: dict[str, Any] = {
+                            "id": file_path.stem,
+                            "type": category,
+                            "title": data.get("title", "Untitled"),
+                            "status": status,
+                            "detected_at": data.get("detected_at"),
+                            "source": data.get("source_url", data.get("url", "")),
+                            "detection_type": data.get("detection_type", "NEW"),
+                            "content": data.get("content"),
+                            "cover_image": data.get("cover_image"),
+                            # WR2 liveness rewire (SPRINT B1, scar family
+                            # #9 break #3): these were already persisted
+                            # in staging JSON but never served — legacy
+                            # items (no key) uniformly default to
+                            # 0/"evergreen"/[]. live_news_* trio goes
+                            # through the normalizer (red-team FIX1+FIX2)
+                            # so garbage/null source data can't crash or
+                            # leak downstream.
+                            "tier": data.get("tier"),
+                            "published_at": data.get("published_at"),
+                            "relevance_score": data.get("relevance_score"),
+                            "category": data.get("category"),
+                            **_normalize_live_news_projection(data),
+                        }
+                        # WR2 enrichment passthrough round-2 red-team fix
+                        # (scar family #9, state-schema mutation drift):
+                        # opt-in only (payload fan-out, MUST-FIX #1) — the
+                        # route has no pagination and only the topic
+                        # selector reads this, from the single ranked top
+                        # item. Type-guarded (MUST-FIX #2) — a hand-edited/
+                        # legacy staging JSON can carry a truthy non-dict
+                        # (e.g. a list); `or {}` only normalizes falsy
+                        # values, so a non-dict would otherwise pass through
+                        # and crash wr2_draft_generator.py's unguarded
+                        # `.get("thirty_second_brief")` downstream.
+                        if include_enrichment:
+                            _enr = data.get("enrichment")
+                            projected["enrichment"] = _enr if isinstance(_enr, dict) else {}
+                        items.append(projected)
+                except Exception as e:
+                    logger.error(
+                        "Error reading staging file %s: %s",
+                        file_path,
+                        e,
+                        exc_info=True,
+                        extra={"file": str(file_path), "category": category},
+                    )
+
+            # Published items from archived/approved (last 50 only)
+            approved_dir = directory / "archived" / "approved"
+            if approved_dir.exists():
+                archived_files = sorted(
+                    approved_dir.glob("*.json"),
+                    key=lambda f: f.stat().st_mtime,
+                    reverse=True,
+                )[:50]
+                for file_path in archived_files:
+                    try:
+                        with open(file_path) as f:
+                            data = json.load(f)
+                            items.append(
+                                {
+                                    "id": file_path.stem,
+                                    "type": category,
+                                    "title": data.get("title", "Untitled"),
+                                    "status": "published",
+                                    "detected_at": data.get("detected_at"),
+                                    "source": data.get("source_url", data.get("url", "")),
+                                    "detection_type": data.get("detection_type", "NEW"),
+                                    "content": data.get("content"),
+                                    "cover_image": data.get("cover_image"),
+                                    "tier": data.get("tier"),
+                                    "published_at": data.get("published_at"),
+                                    "relevance_score": data.get("relevance_score"),
+                                    "category": data.get("category"),
+                                    # Round-2 red-team MUST-FIX #1: archived/
+                                    # approved items NEVER carry enrichment
+                                    # (regardless of include_enrichment) —
+                                    # the topic selector never ranks
+                                    # published items, and detail-view
+                                    # consumers already use /preview.
+                                    **_normalize_live_news_projection(data),
+                                },
+                            )
+                    except Exception as e:
+                        logger.error(
+                            "Error reading archived file %s: %s",
+                            file_path,
+                            e,
+                            extra={"file": str(file_path), "category": category},
+                        )
+
+        # Sort by date (newest first)
+        items.sort(key=lambda x: x.get("detected_at", ""), reverse=True)
+
+        return {"items": items, "count": len(items)}
+
+    def archive_item(
+        self,
+        intel_type: Literal["visa", "news"],
+        item_id: str,
+        archive_type: Literal["approved", "rejected", "published"],
+    ) -> Path:
+        """
+        Archive staging item to archive directory.
+
+        Args:
+            intel_type: "visa" or "news"
+            item_id: Unique item identifier
+            archive_type: "approved", "rejected", or "published"
+
+        Returns:
+            Path to archived file
+
+        Raises:
+            ValueError: if item_id is not a bare token. A move is an ACTION, not a
+                lookup, so it refuses loudly instead of degrading to "not found".
+        """
+        assert_valid_item_id(item_id)
+        staging_dir = self.get_staging_dir(intel_type)
+        file_path = staging_dir / f"{item_id}.json"
+
+        if not file_path.exists():
+            raise FileNotFoundError(f"Staging item not found: {item_id}")
+
+        archive_dir = staging_dir / "archived" / archive_type
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = archive_dir / file_path.name
+
+        try:
+            shutil.move(str(file_path), str(archive_path))
+
+        except Exception as e:
+            logger.error("Failed to archive file %s to %s: %s", file_path, archive_path, e)
+            raise
+
+        return archive_path
+
+    def update_staging_queue_metrics(self) -> None:
+        """Update Prometheus gauge for staging queue sizes."""
+        try:
+            visa_count = (
+                len(list(self.visa_staging_dir.glob("*.json")))
+                if self.visa_staging_dir.exists()
+                else 0
+            )
+            news_count = (
+                len(list(self.news_staging_dir.glob("*.json")))
+                if self.news_staging_dir.exists()
+                else 0
+            )
+
+            intel_staging_queue_size.labels(intel_type="visa").set(visa_count)
+            intel_staging_queue_size.labels(intel_type="news").set(news_count)
+        except Exception as e:
+            logger.warning("Failed to update staging queue size metrics: %s", e)

@@ -1,0 +1,1510 @@
+"use client";
+
+import { useState } from "react";
+import { RiskBadge } from "./RiskBadge";
+import type {
+  KBLIBusinessScale,
+  KBLICode,
+  KBLIGoldContent,
+  KBLILicenseByScale,
+  KBLIPmaInfo,
+} from "@/lib/kbli-types";
+import { formatTimeframe } from "@/lib/kbli-derive";
+import {
+  describeObligation,
+  TRUNCATION_HINT,
+  TRUNCATION_NOTE,
+} from "@/lib/kbli-obligation-truncation";
+import {
+  UNVERIFIED_LICENSING_FACT,
+  isLicensingVerificationPending,
+  isLicensingVerifiedForBareClaim,
+  isPmaVerdictVerified,
+  licensingContentInheritedFrom,
+} from "@/lib/kbli-provenance";
+import {
+  formatPmaOwnership,
+  isSourcedBaliClosure,
+} from "@/lib/kbli-pma-disclosure";
+import {
+  baliBlockClause,
+  baliClosureQualifier,
+  shouldShowReason,
+  narratesUnverifiedRoute,
+} from "@/lib/kbli-bali-block";
+import dynamic from "next/dynamic";
+
+const ReactMarkdown = dynamic(() => import("react-markdown"), { ssr: false });
+
+// =============================================================================
+// Types
+// =============================================================================
+
+interface LicensingSectionProps {
+  kbli: KBLICode;
+  gold: KBLIGoldContent | null;
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+const RISK_EN: Record<string, string> = {
+  Rendah: "Low",
+  "Menengah Rendah": "Medium-Low",
+  "Menengah Tinggi": "Medium-High",
+  Tinggi: "High",
+};
+
+function riskEn(id: string): string {
+  return RISK_EN[id] ?? id;
+}
+
+/** Section type determines visual treatment */
+type SectionType = "obligations" | "authority" | "pma" | "note" | "default";
+
+function detectSectionType(title: string): SectionType {
+  const t = title.toLowerCase();
+  if (
+    t.includes("obligation") ||
+    t.includes("key obligation") ||
+    t.includes("before you start")
+  )
+    return "obligations";
+  if (t.includes("authority")) return "authority";
+  if (t === "pma" || t.includes("pma status") || t.includes("foreign"))
+    return "pma";
+  if (t.includes("note") || t.includes("important")) return "note";
+  return "default";
+}
+
+/** Rename obscure section titles to reader-friendly versions */
+function humanizeTitle(title: string): string {
+  const t = title.toLowerCase();
+  if (t === "key obligations" || t === "key obligation")
+    return "Before You Start";
+  if (t === "authority chain") return "Who Approves What";
+  return title;
+}
+
+/** Parse whatYouNeed markdown into structured sections */
+function parseWhatYouNeed(markdown: string) {
+  let alert: string | null = null;
+  let source: string | null = null;
+
+  // Extract alert block
+  const alertPatterns = [
+    /\n\*\*⚠️[^*]*\*\*[\s\S]*?(?=\n\*\*Source Regulation|\n\*\*Note on GR|$)/,
+    /\n\*\*⚠️[^*]*\*\*:[\s\S]*?(?=\n\*\*Source|$)/,
+  ];
+  let rest = markdown;
+  for (const pattern of alertPatterns) {
+    const match = rest.match(pattern);
+    if (match) {
+      alert = match[0].trim();
+      rest = rest.replace(match[0], "").trim();
+      break;
+    }
+  }
+
+  // Extract source regulation
+  const srcPattern = /\*\*Source Regulation:\*\*[^\n]*/;
+  const srcMatch = rest.match(srcPattern);
+  if (srcMatch) {
+    source = srcMatch[0]
+      .replace(/\*\*/g, "")
+      .replace("Source Regulation:", "")
+      .trim();
+    rest = rest.replace(srcMatch[0], "").trim();
+  }
+
+  // Parse `rest` into individual sections by splitting on bold headers
+  const sections: { title: string; body: string }[] = [];
+  const lines = rest.split("\n");
+  let currentTitle = "";
+  let currentBody: string[] = [];
+
+  for (const line of lines) {
+    const headerMatch = line.match(/^\*\*([^*]+?):\*\*\s*(.*)/);
+    if (headerMatch) {
+      if (currentTitle || currentBody.length > 0) {
+        sections.push({
+          title: currentTitle,
+          body: currentBody.join("\n").trim(),
+        });
+      }
+      currentTitle = headerMatch[1].trim();
+      currentBody = headerMatch[2] ? [headerMatch[2]] : [];
+    } else {
+      currentBody.push(line);
+    }
+  }
+  if (currentTitle || currentBody.length > 0) {
+    sections.push({ title: currentTitle, body: currentBody.join("\n").trim() });
+  }
+
+  return { sections, alert, source };
+}
+
+// =============================================================================
+// Section color config
+// =============================================================================
+
+const SECTION_STYLES: Record<
+  SectionType,
+  {
+    accentColor: string;
+    iconBg: string;
+    iconColor: string;
+    topBorder: string;
+  }
+> = {
+  obligations: {
+    accentColor: "var(--kbli-accent)",
+    iconBg: "var(--kbli-accent-subtle)",
+    iconColor: "var(--kbli-accent)",
+    topBorder: "var(--kbli-accent)",
+  },
+  authority: {
+    accentColor: "var(--kbli-accent2)",
+    iconBg: "var(--kbli-zantara-bg)",
+    iconColor: "var(--kbli-accent2)",
+    topBorder: "var(--kbli-accent2)",
+  },
+  pma: {
+    accentColor: "var(--kbli-pma-open)",
+    iconBg: "var(--kbli-pma-open-bg)",
+    iconColor: "var(--kbli-pma-open)",
+    topBorder: "var(--kbli-pma-open)",
+  },
+  note: {
+    accentColor: "var(--kbli-amber)",
+    iconBg: "var(--kbli-pma-restricted-bg)",
+    iconColor: "var(--kbli-amber)",
+    topBorder: "var(--kbli-amber)",
+  },
+  default: {
+    accentColor: "var(--kbli-accent)",
+    iconBg: "var(--kbli-accent-subtle)",
+    iconColor: "var(--kbli-accent)",
+    topBorder: "var(--kbli-border)",
+  },
+};
+
+// =============================================================================
+// Sub-components
+// =============================================================================
+
+/** Key Facts at a Glance — horizontal stats grid */
+function KeyFacts({
+  licensing,
+  pma,
+  baliBlocked = false,
+  pmaVerified,
+  notClassifiable = false,
+  verificationPending = false,
+  rowsVerified,
+}: {
+  licensing: KBLILicenseByScale[];
+  pma: KBLIPmaInfo;
+  baliBlocked?: boolean;
+  pmaVerified: boolean;
+  /** provenance.state === "not_classifiable" — collision-cured, rows detached */
+  notClassifiable?: boolean;
+  /** rows served but not verified against a KBLI-2025-native OSS source */
+  verificationPending?: boolean;
+  /**
+   * `isLicensingVerifiedForBareClaim` — the POSITIVE gate, required rather than
+   * defaulted: a record whose provenance block is absent or unreadable must
+   * withhold the value, and a default of `true` here would be the fail-open
+   * shape this cure exists to remove.
+   */
+  rowsVerified: boolean;
+}) {
+  const nationalOwnership = pmaVerified
+    ? formatPmaOwnership(pma)
+    : UNVERIFIED_LICENSING_FACT;
+  const ownershipValue =
+    pmaVerified && baliBlocked
+      ? `National: ${nationalOwnership} · blocked in Bali`
+      : nationalOwnership;
+  const primary = licensing[0];
+  if (!primary) {
+    // No OSS-RBA scale rows. Two honest readings, discriminated by the
+    // structured provenance state (TRACK-P), never by prose:
+    // - not_classifiable → a collision cure DETACHED the rows; licensing is
+    //   genuinely not yet defined for this KBLI-2025 activity.
+    // - otherwise → special/sectoral licensing regime (government, finance/
+    //   OJK-BI, education, health, culture; 101 codes fall here).
+    const specialFacts: { label: string; value: string; accent?: string }[] = [
+      {
+        label: "Licensing Route",
+        value: notClassifiable
+          ? "No verified basis — divergence documented"
+          : "Special / sectoral regime",
+      },
+      {
+        label: "OSS-RBA Rows",
+        value: notClassifiable
+          ? "Detached (unverified source)"
+          : // Corner rule F12: `_l2_status = no_oss_risk` is written for a
+            // MISSING dump line, ANY non-200, or `success: false` — so naming
+            // a 404 asserts an HTTP status we did not necessarily observe, in
+            // the one sentence whose whole job is honesty.
+            "None retrievable via the OSS API",
+      },
+      {
+        label: "Foreign Ownership",
+        value: ownershipValue,
+        accent: !pmaVerified
+          ? "var(--foreground-muted)"
+          : pma.status === "open" && !baliBlocked
+            ? "var(--kbli-pma-open)"
+            : "var(--kbli-pma-closed)",
+      },
+      {
+        label: "Authority",
+        value: notClassifiable
+          ? "Not verified — see divergence note"
+          : "Sector regulator — verify case-by-case",
+      },
+    ];
+    return (
+      <div
+        className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-[var(--border)] sm:grid-cols-4"
+        style={{ background: "var(--kbli-border)" }}
+      >
+        {specialFacts.map((f) => (
+          <div
+            key={f.label}
+            className="flex flex-col gap-1.5 px-4 py-3.5"
+            style={{ background: "var(--kbli-bg-elevated)" }}
+          >
+            <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--foreground-muted)]">
+              {f.label}
+            </span>
+            <span
+              className="text-sm font-semibold"
+              style={{ color: f.accent ?? "var(--foreground)" }}
+            >
+              {f.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // A cell states a licensing value only when the record's own provenance says
+  // the rows are OSS-RBA KBLI-2025 native. Otherwise it carries the declared
+  // gap — the treatment Foreign Ownership has always had two cells to the
+  // right. This REVERSES "one grid-level qualifier instead of per-cell noise"
+  // (Codex gate round 5): that trade assumed the qualifier would be noisy, and
+  // the census says it fires on 3 of the 1,342 codes that serve rows, of which
+  // one (49213) prints a full-weight tier on a page that separately states the
+  // rows were removed for want of a verifiable source.
+  const facts: { label: string; value: string; accent?: string }[] = [
+    {
+      label: "Risk Level",
+      value: rowsVerified
+        ? `${riskEn(primary.riskCategory)} (${primary.riskCategory})`
+        : UNVERIFIED_LICENSING_FACT,
+      accent: rowsVerified ? undefined : "var(--foreground-muted)",
+    },
+    {
+      label: "License Type",
+      value: rowsVerified ? primary.licenseType : UNVERIFIED_LICENSING_FACT,
+      accent: rowsVerified ? undefined : "var(--foreground-muted)",
+    },
+    {
+      label: "Processing",
+      value: rowsVerified
+        ? (formatTimeframe(primary.timeframe) ?? "Through OSS")
+        : UNVERIFIED_LICENSING_FACT,
+      // green accent for instant issuance (raw "Otomatis" → formatted "Instant")
+      accent: !rowsVerified
+        ? "var(--foreground-muted)"
+        : primary.timeframe?.toLowerCase().includes("otomatis")
+          ? "var(--kbli-pma-open)"
+          : undefined,
+    },
+    {
+      label: "Foreign Ownership",
+      // National PMA openness != Bali registrability. When the code is open
+      // nationally but blocked for a PT PMA in Bali (l4_bali.blocked), don't
+      // headline a green "100% Open" — qualify it, and drop the green accent.
+      value: ownershipValue,
+      accent: !pmaVerified
+        ? "var(--foreground-muted)"
+        : pma.status === "open" && !baliBlocked
+          ? "var(--kbli-pma-open)"
+          : pma.status === "restricted"
+            ? "var(--kbli-pma-restricted)"
+            : pma.status === "open"
+              ? "var(--kbli-pma-closed)"
+              : pma.status === "closed"
+                ? "var(--kbli-pma-closed)"
+                : undefined,
+    },
+    {
+      label: "Authority",
+      value: "BKPM / OSS",
+    },
+  ];
+
+  return (
+    <div>
+      <div
+        className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-[var(--border)] sm:grid-cols-3 lg:grid-cols-5"
+        style={{ background: "var(--kbli-border)" }}
+      >
+        {facts.map((f) => (
+          <div
+            key={f.label}
+            className="flex flex-col gap-1.5 px-4 py-3.5"
+            style={{ background: "var(--kbli-bg-elevated)" }}
+          >
+            <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--foreground-muted)]">
+              {f.label}
+            </span>
+            <span
+              className="text-sm font-semibold"
+              style={{ color: f.accent ?? "var(--foreground)" }}
+            >
+              {f.value}
+            </span>
+          </div>
+        ))}
+      </div>
+      {/* The values are WITHHELD above, not footnoted — so this line says
+          where they went and why, in the two shapes the dataset
+          distinguishes: a pending crosswalk, or rows detached by a
+          code-number collision. */}
+      {!rowsVerified && (
+        <p className="mt-2 text-[11px] text-[var(--foreground-muted)]">
+          {notClassifiable
+            ? "⚠ This code's licensing rows were detached after a code-number collision: their source could not be verified as applying to this activity. See Regulatory Divergence above."
+            : verificationPending
+              ? "⏳ We hold PP 28/2025 licensing rows for this code, but their KBLI-2025 crosswalk is not verified — they are listed, unverified, under PP28/2025 Licensing Data below."
+              : "⏳ The provenance of this code's licensing rows is not recorded — see Sources & Verification below."}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Tier Tabs for multi-scale licensing */
+function TierTabs({
+  tiers,
+  activeTier,
+  onSelect,
+}: {
+  tiers: KBLILicenseByScale[];
+  activeTier: number;
+  onSelect: (i: number) => void;
+}) {
+  if (tiers.length <= 1) return null;
+
+  return (
+    <div
+      className="flex flex-wrap gap-1 rounded-lg p-1"
+      style={{ background: "var(--kbli-bg-secondary)" }}
+    >
+      {tiers.map((tier, i) => (
+        <button
+          key={i}
+          onClick={() => onSelect(i)}
+          className={`rounded-md border px-3 py-1.5 text-xs transition-all ${
+            activeTier === i
+              ? "border-[var(--border)] bg-[var(--kbli-bg-surface)] font-bold text-[var(--foreground)]"
+              : "border-transparent font-medium text-[var(--foreground-muted)] hover:text-[var(--foreground-secondary)]"
+          }`}
+        >
+          {tier.scales.join(" + ")}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Tier Detail — collapsible raw PP28 data */
+function TierDetail({ tier }: { tier: KBLILicenseByScale }) {
+  return (
+    <div className="space-y-3">
+      {tier.requirements.length > 0 && (
+        <details className="group rounded-lg border border-[var(--border)] overflow-hidden">
+          <summary
+            className="flex cursor-pointer items-center gap-3 px-4 py-3 text-xs font-bold uppercase tracking-[0.12em] text-[var(--foreground-muted)] transition-colors hover:text-[var(--foreground-secondary)]"
+            style={{ background: "var(--kbli-bg-elevated)" }}
+          >
+            <span>Requirements (Indonesian)</span>
+            <span className="ml-auto rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px] font-medium">
+              {tier.requirements.length}
+            </span>
+          </summary>
+          <div
+            className="space-y-2 p-4"
+            style={{ background: "var(--kbli-bg-surface)" }}
+          >
+            {tier.requirements.map((req, i) => {
+              const duty = describeObligation(req);
+              return (
+                <div
+                  key={i}
+                  className="flex items-start gap-3 rounded-lg border border-[var(--border)] px-3.5 py-2.5"
+                  style={{ background: "var(--kbli-bg-elevated)" }}
+                >
+                  <span
+                    className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] font-bold"
+                    style={{
+                      background: "var(--kbli-accent-subtle)",
+                      color: "var(--kbli-accent)",
+                    }}
+                  >
+                    {i + 1}
+                  </span>
+                  <span className="text-sm leading-relaxed text-[var(--foreground-secondary)]">
+                    {duty.text}
+                    {duty.truncated && (
+                      <span
+                        className="text-[var(--kbli-accent)]"
+                        title={TRUNCATION_HINT}
+                      >
+                        {" "}
+                        […{TRUNCATION_NOTE}]
+                      </span>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </details>
+      )}
+
+      {tier.obligations.length > 0 && (
+        <details className="group rounded-lg border border-[var(--border)] overflow-hidden">
+          <summary
+            className="flex cursor-pointer items-center gap-3 px-4 py-3 text-xs font-bold uppercase tracking-[0.12em] text-[var(--foreground-muted)] transition-colors hover:text-[var(--foreground-secondary)]"
+            style={{ background: "var(--kbli-bg-elevated)" }}
+          >
+            <span>Post-License Obligations</span>
+            <span className="ml-auto rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px] font-medium">
+              {tier.obligations.length}
+            </span>
+          </summary>
+          <div
+            className="space-y-1.5 p-4"
+            style={{ background: "var(--kbli-bg-surface)" }}
+          >
+            {tier.obligations.map((obl, i) => {
+              const duty = describeObligation(obl);
+              return (
+                <div
+                  key={i}
+                  className="flex items-start gap-2.5 rounded-lg px-3 py-2"
+                  style={{
+                    background: "var(--kbli-bg-elevated)",
+                    border: "1px solid var(--kbli-border)",
+                  }}
+                >
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--kbli-accent)]/40" />
+                  <div>
+                    <span className="text-sm leading-relaxed text-[var(--foreground-secondary)]">
+                      {duty.text}
+                      {duty.truncated && (
+                        <span
+                          className="text-[var(--kbli-accent)]"
+                          title={TRUNCATION_HINT}
+                        >
+                          {" "}
+                          […{TRUNCATION_NOTE}]
+                        </span>
+                      )}
+                    </span>
+                    {/* English translation for common Indonesian obligations */}
+                    {obl.toLowerCase().includes("sertifikat laik sehat") && (
+                      <p className="mt-0.5 text-xs text-[var(--foreground-muted)]">
+                        → Obtain Health Feasibility Certificate from Dinas
+                        Kesehatan
+                      </p>
+                    )}
+                    {obl.toLowerCase().includes("laporan kegiatan") && (
+                      <p className="mt-0.5 text-xs text-[var(--foreground-muted)]">
+                        → Submit periodic business activity reports to regulator
+                      </p>
+                    )}
+                    {obl.toLowerCase().includes("standar") &&
+                      obl.toLowerCase().includes("menerapkan") && (
+                        <p className="mt-0.5 text-xs text-[var(--foreground-muted)]">
+                          → Submit documentation of standard implementation
+                          compliance
+                        </p>
+                      )}
+                    {obl.toLowerCase().includes("penerapan standar") &&
+                      !obl.toLowerCase().includes("menerapkan") && (
+                        <p className="mt-0.5 text-xs text-[var(--foreground-muted)]">
+                          → Provide evidence of business standard compliance
+                          documents
+                        </p>
+                      )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+/** Regulatory Alert — high-impact callout */
+function RegulatoryAlert({ markdown }: { markdown: string }) {
+  // Split multi-warning alerts into separate visual blocks
+  const warnings = markdown.split(/\n(?=\*\*\d+\.\s)/).filter((w) => w.trim());
+  const isMultiWarning = warnings.length > 1;
+
+  return (
+    <div
+      className="relative overflow-hidden rounded-xl border px-6 py-5"
+      style={{
+        background: "var(--kbli-bg-surface)",
+        borderColor: "var(--kbli-border)",
+      }}
+    >
+      {/* Glow orb */}
+      <div
+        className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full"
+        style={{
+          background: "none",
+        }}
+      />
+      {/* Second glow for emphasis */}
+      <div
+        className="pointer-events-none absolute -bottom-12 -left-12 h-32 w-32 rounded-full"
+        style={{
+          background: "none",
+        }}
+      />
+
+      <div className="relative">
+        <div className="mb-4 flex items-center gap-2.5">
+          <span
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-base"
+            style={{
+              background: "var(--kbli-pma-closed-bg)",
+              border: "1px solid var(--kbli-border)",
+            }}
+          >
+            ⚠
+          </span>
+          <span
+            className="text-xs font-bold uppercase tracking-[0.15em]"
+            style={{ color: "var(--kbli-pma-closed)" }}
+          >
+            Regulatory Alert
+          </span>
+        </div>
+
+        {isMultiWarning ? (
+          <div className="space-y-3">
+            {warnings.map((warning, i) => (
+              <div
+                key={i}
+                className="rounded-lg px-4 py-3 kbli-prose"
+                style={{
+                  background: "var(--kbli-pma-closed-bg)",
+                  border: "1px solid var(--kbli-border)",
+                }}
+              >
+                <ReactMarkdown>{warning.trim()}</ReactMarkdown>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="kbli-prose">
+            <ReactMarkdown>{markdown}</ReactMarkdown>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Authority flow — visual horizontal pipeline instead of bullets */
+function AuthorityFlow({ body }: { body: string }) {
+  // Parse "**Level:** description" patterns from the markdown
+  const items: { level: string; description: string }[] = [];
+  const lines = body.split("\n").filter((l) => l.trim());
+  for (const line of lines) {
+    const match = line.match(/[-*]\s*\*\*([^*]+?):\*\*\s*(.*)/);
+    if (match) {
+      items.push({ level: match[1].trim(), description: match[2].trim() });
+    }
+  }
+
+  if (items.length === 0) {
+    // Fallback to prose if we can't parse
+    return (
+      <div className="kbli-prose">
+        <ReactMarkdown>{body}</ReactMarkdown>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-0 sm:flex-row sm:items-stretch sm:gap-0">
+      {items.map((item, i) => (
+        <div key={i} className="flex items-stretch sm:flex-1">
+          <div
+            className="flex flex-1 flex-col gap-1 rounded-lg px-4 py-3"
+            style={{ background: "var(--kbli-bg-surface)" }}
+          >
+            <span
+              className="text-[10px] font-bold uppercase tracking-[0.15em]"
+              style={{ color: "var(--kbli-accent2)" }}
+            >
+              {item.level}
+            </span>
+            <span className="text-xs leading-relaxed text-[var(--foreground-secondary)]">
+              {item.description}
+            </span>
+          </div>
+          {i < items.length - 1 && (
+            <div className="flex items-center justify-center px-1.5 text-[var(--foreground-muted)] sm:px-2">
+              <span className="hidden text-lg sm:block">→</span>
+              <span className="block text-lg sm:hidden">↓</span>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// =============================================================================
+// Numbered Step List — colored boxes with gradient shades
+// =============================================================================
+
+/** Step colors — 7 shades cycling through amber→orange→teal palette */
+const STEP_COLORS = [
+  {
+    bg: "var(--kbli-bg-surface)",
+    border: "var(--kbli-border)",
+    num: "var(--kbli-accent)",
+  },
+  {
+    bg: "var(--kbli-bg-surface)",
+    border: "var(--kbli-border)",
+    num: "var(--kbli-accent)",
+  },
+  {
+    bg: "var(--kbli-zantara-bg)",
+    border: "var(--kbli-border)",
+    num: "var(--kbli-accent2)",
+  },
+  {
+    bg: "var(--kbli-zantara-bg)",
+    border: "var(--kbli-border)",
+    num: "var(--kbli-accent2)",
+  },
+  {
+    bg: "var(--kbli-pma-open-bg)",
+    border: "var(--kbli-border)",
+    num: "var(--kbli-pma-open)",
+  },
+  {
+    bg: "var(--kbli-pma-open-bg)",
+    border: "var(--kbli-border)",
+    num: "var(--kbli-pma-open)",
+  },
+  {
+    bg: "var(--kbli-pma-restricted-bg)",
+    border: "var(--kbli-border)",
+    num: "var(--kbli-amber)",
+  },
+];
+
+/**
+ * Company-incorporation step is SCALE-aware, not PMA-centric. The KBLI Navigator
+ * speaks to everyone (Zero, 2026-06-29):
+ *   Mikro / Kecil / Menengah → WNI → PT PMDN / CV / Perorangan (local)
+ *   Besar                    → WNI or WNA → PT PMDN (local) or PT PMA (foreign)
+ * The old gold text hardcoded "PT PMA incorporation" as step 1 for EVERY code —
+ * which excludes the WNI small-business reader, and on a Bali-blocked code flatly
+ * contradicts the "reserved for UMKM / closed to a PT PMA" verdict above it.
+ * `scales` is the currently-selected TierTab's scale array.
+ */
+function companyFormForScale(
+  scales: KBLIBusinessScale[],
+  pmaVerified: boolean,
+): {
+  label: string;
+  desc: string;
+} {
+  const isBesar = scales.includes("Besar");
+  if (isBesar) {
+    return {
+      label: "Company incorporation",
+      desc: pmaVerified
+        ? "PT PMDN (local) or PT PMA (foreign) — notary deed, AHU registration"
+        : "PT PMDN (local); verify PMA eligibility before choosing a foreign-owned form — notary deed, AHU registration",
+    };
+  }
+  return {
+    label: "Company incorporation",
+    desc: "PT PMDN / CV / Perorangan (local, WNI) — notary deed, AHU registration",
+  };
+}
+
+/** A step whose label/desc names a company-incorporation form (PT PMA / PT PMDN / CV). */
+function isIncorporationStep(label: string, desc: string): boolean {
+  const t = `${label} ${desc}`.toLowerCase();
+  return (
+    t.includes("incorporation") ||
+    t.includes("pt pma") ||
+    t.includes("pt pmdn") ||
+    t.includes("pendirian")
+  );
+}
+
+/**
+ * Rewrite the "PMA: Fully open — 100% foreign ownership allowed" trailing line when
+ * the code is Bali-blocked. The 100% openness is a NATIONAL fact, but printed bare
+ * under a Bali-blocked verdict it reads as "you can own 100% here". Qualify it.
+ */
+function rewritePmaLineForBali(
+  line: string,
+  baliBlocked: boolean,
+  pmaVerified: boolean,
+): string {
+  if (!pmaVerified && (/\*\*PMA:\*\*/i.test(line) || /^PMA:/i.test(line))) {
+    return "**PMA:** Whole-code foreign-ownership status is not yet verified; confirm the current treatment at oss.go.id.";
+  }
+  if (!baliBlocked) return line;
+  if (!/\*\*PMA:\*\*/i.test(line) && !/^PMA:/i.test(line)) return line;
+  if (!/fully open|100%|foreign ownership/i.test(line)) return line;
+  // The parenthetical used to read "(reserved UMKM / moratorium)" — two causes
+  // named at once, of which at most one can be this code's, and neither is for
+  // the 68 TERTUTUP / 2 sector-regulator / 2 Bali-sectoral codes. This helper
+  // only receives `baliBlocked`, not the status, so it states NO cause: the
+  // frame directly above derives the real one from `l4_bali.status`.
+  return "**PMA:** 100% open nationally — but not open to a PT PMA in Bali. See the Bali status above.";
+}
+
+function StepList({
+  body,
+  activeScales = [],
+  baliBlocked = false,
+  pmaVerified = false,
+}: {
+  body: string;
+  activeScales?: KBLIBusinessScale[];
+  baliBlocked?: boolean;
+  pmaVerified?: boolean;
+}) {
+  const lines = body.split("\n");
+  const steps: { num: number; label: string; desc: string }[] = [];
+  let otherContent: string[] = [];
+
+  for (const line of lines) {
+    // Match "1. **Label** — desc" or "1. **Label** (extra text) — desc"
+    const stepMatch = line.match(/^(\d+)\.\s+\*\*([^*]+)\*\*\s*(.*)/);
+    if (stepMatch) {
+      const num = parseInt(stepMatch[1]);
+      let label = stepMatch[2].trim();
+      // Everything after **label** — split on em-dash to get parenthetical + desc
+      const afterLabel = stepMatch[3].trim();
+      const dashIdx = afterLabel.search(/[—–]/);
+      let desc =
+        dashIdx >= 0 ? afterLabel.slice(dashIdx + 1).trim() : afterLabel;
+      const paren = dashIdx >= 0 ? afterLabel.slice(0, dashIdx).trim() : "";
+      label = paren ? `${label} ${paren}` : label;
+      // SCALE-aware company form: replace the hardcoded "PT PMA incorporation"
+      // step with the form that actually fits the selected business scale.
+      if (isIncorporationStep(label, desc)) {
+        const form = companyFormForScale(activeScales, pmaVerified);
+        label = form.label;
+        desc = form.desc;
+      }
+      steps.push({ num, label, desc });
+    } else if (line.trim()) {
+      otherContent.push(rewritePmaLineForBali(line, baliBlocked, pmaVerified));
+    }
+  }
+
+  if (steps.length === 0) {
+    return (
+      <div className="kbli-prose">
+        <ReactMarkdown>{body}</ReactMarkdown>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {steps.map((step, i) => {
+        const color = STEP_COLORS[i % STEP_COLORS.length];
+        return (
+          <div
+            key={step.num}
+            className="flex items-start gap-3 rounded-xl px-4 py-3"
+            style={{
+              background: color.bg,
+              border: `1px solid ${color.border}`,
+            }}
+          >
+            <span
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-black mt-0.5"
+              style={{ background: "var(--kbli-bg-base)", color: color.num }}
+            >
+              {step.num}
+            </span>
+            <div className="min-w-0">
+              <span
+                className="text-sm font-semibold"
+                style={{ color: color.num }}
+              >
+                {step.label}
+              </span>
+              {step.desc && (
+                <span className="ml-1.5 text-sm text-[var(--foreground-secondary)]">
+                  — {step.desc}
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Render any trailing non-step content */}
+      {otherContent.length > 0 && (
+        <div className="kbli-prose pt-1">
+          <ReactMarkdown>{otherContent.join("\n")}</ReactMarkdown>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Editorial content section with proper visual hierarchy */
+function ContentSection({
+  title,
+  body,
+  type,
+  activeScales = [],
+  baliBlocked = false,
+  pmaVerified = false,
+}: {
+  title: string;
+  body: string;
+  type: SectionType;
+  activeScales?: KBLIBusinessScale[];
+  baliBlocked?: boolean;
+  pmaVerified?: boolean;
+}) {
+  if (!body.trim()) return null;
+
+  const style = SECTION_STYLES[type];
+  const displayTitle = humanizeTitle(title);
+
+  // Detect step-by-step sections
+  const isStepByStep =
+    title.toLowerCase().includes("step") ||
+    title.toLowerCase().includes("how to") ||
+    /^\d+\.\s+\*\*/.test(body.trim());
+
+  // PMA sections are usually one line — render inline, not as a card
+  if (type === "pma") {
+    const renderedBody = pmaVerified
+      ? body
+      : "Whole-code foreign-ownership status is not yet verified. Confirm the current treatment at oss.go.id before relying on this editorial section.";
+    return (
+      <div
+        className="flex items-start gap-3 rounded-lg px-4 py-3"
+        style={{ background: "var(--kbli-bg-surface)" }}
+      >
+        <div
+          className="mt-0.5 h-4 w-0.5 shrink-0 rounded-full"
+          style={{ background: style.accentColor }}
+        />
+        <div>
+          <span
+            className="text-[10px] font-bold uppercase tracking-[0.15em]"
+            style={{ color: style.accentColor }}
+          >
+            {displayTitle}
+          </span>
+          <div className="mt-1 text-sm text-[var(--foreground-secondary)]">
+            <ReactMarkdown>{renderedBody}</ReactMarkdown>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Section header */}
+      {displayTitle && (
+        <div className="mb-3 flex items-center gap-2.5">
+          <div
+            className="h-5 w-0.5 rounded-full"
+            style={{ background: style.accentColor }}
+          />
+          <h4
+            className="text-xs font-bold uppercase tracking-[0.15em]"
+            style={{ color: style.accentColor }}
+          >
+            {displayTitle}
+          </h4>
+        </div>
+      )}
+
+      {/* Authority chain gets special visual treatment */}
+      {type === "authority" ? (
+        <AuthorityFlow body={body} />
+      ) : isStepByStep ? (
+        <StepList
+          body={body}
+          activeScales={activeScales}
+          baliBlocked={baliBlocked}
+          pmaVerified={pmaVerified}
+        />
+      ) : (
+        <div className="kbli-prose">
+          <ReactMarkdown>{body}</ReactMarkdown>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// =============================================================================
+// Main Component
+// =============================================================================
+
+export function LicensingSection({ kbli, gold }: LicensingSectionProps) {
+  const [activeTier, setActiveTier] = useState(0);
+
+  const parsed = gold ? parseWhatYouNeed(gold.whatYouNeed) : null;
+  const currentTier = kbli.licensing[activeTier] ?? kbli.licensing[0];
+
+  // When Bali blocks this code for PMA, the licensing steps below are still the
+  // correct NATIONAL procedure (open in Jakarta/Lombok/etc.) — but they must NOT
+  // be read as a how-to for a foreign-owned company IN BALI. Frame, don't hide:
+  // the steps are national truth; the Bali restriction is the local override.
+  const baliBlocked = kbli.baliL4?.blocked === true;
+  const pmaVerified = isPmaVerdictVerified(kbli);
+  // GARUDA-FILIERA Fase-1 cure #4 (2026-07-17): a code whose Bali risk tier
+  // was carried over from a different activity (code-number collision) is
+  // neither blocked nor confirmed open — an analogous frame, warn tone
+  // rather than block tone, since this is an unresolved gap, not a verdict.
+  const baliNonClassifiable = kbli.baliL4?.status === "NON_CLASSIFICABILE";
+  // Added 2026-09-15 (W-J B1): this code is NOT on Bali's applied PMA closure
+  // list (18 business fields, OSS closed since the third week of May 2026),
+  // so `blocked` is false — but the low/medium-low risk tier the OLD blanket
+  // reading relied on was only ever named in the Governor's own request
+  // letter, never enacted for it. Must read as "verify", never as "cleared".
+  const baliAttentionFascia = kbli.baliL4?.status === "ATTENZIONE_FASCIA_BALI";
+  // Added 2026-09-16 (review F1): a CHIUSO_BALI closure can be SCOPED (the
+  // hotel rows: "building area under 6,000 m²" — bars only that slice, not
+  // the whole code) or MEDIUM-confidence/needs-review (Bali Zero's own
+  // conservative reading applied to a 2025 code that also merges KBLI-2020
+  // activities not on Bali's 18-field list). Either way a bare "closed to
+  // new PMA licensing" overstates the record.
+  const closureScope = kbli.baliL4?.closure?.scopeQualifier;
+  const closureQualifier = baliClosureQualifier(kbli.baliL4);
+  // Review r2 m3: when there is no scope AND the record is not
+  // HIGH-confidence-and-not-needs-review, the heading itself must carry the
+  // conservative-reading caveat too — the body already does (via
+  // `closureQualifier`), but a search snippet or a quick scan of the badge
+  // strip only sees the heading.
+  const closureHeadingConservative =
+    !closureScope &&
+    (kbli.baliL4?.confidence !== "HIGH" || kbli.baliL4?.needsReview === true);
+
+  return (
+    <div className="space-y-8">
+      {/* ── NATIONAL-vs-BALI FRAME (only when Bali blocks PMA for this code) ── */}
+      {!pmaVerified && (
+        <div className="rounded-xl border border-slate-400/25 bg-slate-400/5 px-5 py-4">
+          <div className="mb-1.5 flex items-center gap-2">
+            <span aria-hidden="true">❓</span>
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--foreground-muted)]">
+              PMA eligibility requires verification
+            </span>
+          </div>
+          <p className="text-sm leading-relaxed text-[var(--foreground-secondary)]">
+            The canonical record has no adjudicated per-code official basis and
+            source vintage for the current whole-code PMA value. Treat the
+            licensing procedure below as business-licensing guidance, not proof
+            that a PT PMA may register this activity; confirm at oss.go.id.
+          </p>
+        </div>
+      )}
+
+      {/* Added 2026-09-16 (W-J B1 disclose): a Bali applied closure sourced
+          to a public press release is self-sufficient evidence, disclosed
+          even though the NATIONAL PMA verdict above is not yet verified.
+          Does NOT reuse the verified block's "valid for a foreign-owned
+          company outside Bali" sentence below — that would assert an
+          unverified national permission this record cannot back. */}
+      {!pmaVerified && isSourcedBaliClosure(kbli.baliL4) && (
+        <div
+          className="rounded-xl border px-5 py-4"
+          style={{
+            background: "var(--kbli-pma-closed-bg)",
+            borderColor: "var(--kbli-border)",
+          }}
+        >
+          <div className="mb-1.5 flex items-center gap-2">
+            <span aria-hidden="true">🏝️</span>
+            <span
+              className="text-xs font-bold uppercase tracking-[0.12em]"
+              style={{ color: "var(--kbli-pma-closed)" }}
+            >
+              Bali — closed to new PMA licensing
+              {closureScope ? ` for ${closureScope}` : ""}
+              {closureHeadingConservative ? " (conservative reading)" : ""}
+            </span>
+          </div>
+          <p className="text-sm leading-relaxed text-[var(--foreground-secondary)]">
+            In <strong>Bali</strong>, this activity is currently{" "}
+            {baliBlockClause(kbli.baliL4?.status)}
+            {closureQualifier}. The licensing path below is the national
+            procedure; whether a PT PMA may use it outside Bali is not yet
+            verified — see the note above.
+          </p>
+        </div>
+      )}
+
+      {pmaVerified && baliBlocked && (
+        <div
+          className="rounded-xl border px-5 py-4"
+          style={{
+            background: "var(--kbli-pma-closed-bg)",
+            borderColor: "var(--kbli-border)",
+          }}
+        >
+          <div className="mb-1.5 flex items-center gap-2">
+            <span aria-hidden="true">🏝️</span>
+            <span
+              className="text-xs font-bold uppercase tracking-[0.12em]"
+              style={{ color: "var(--kbli-pma-closed)" }}
+            >
+              National procedure — does not apply to a PT PMA in Bali
+            </span>
+          </div>
+          <p className="text-sm leading-relaxed text-[var(--foreground-secondary)]">
+            The licensing path below is the <strong>national</strong> procedure,
+            valid for a foreign-owned company outside Bali (e.g. Jakarta). In{" "}
+            <strong>Bali</strong>, this activity is currently{" "}
+            {baliBlockClause(kbli.baliL4?.status)}
+            {/* The reason is spliced mid-sentence, so its own terminal period
+                would collide with the one below ("…(GARUDA-FILIERA).. See the").
+                Un-disclosed reasons end without a period and were fine; every
+                disclosed one ends with a full stop, and there are now 152 of
+                them. It is also SUPPRESSED when it answers the moratorium-test
+                question on a code the moratorium did not block — see
+                `shouldShowReason`; that pairing is what put a cause and its
+                denial in the same sentence on 58 pages. */}
+            {shouldShowReason(kbli.baliL4?.status, kbli.baliL4?.reason)
+              ? ` — ${(kbli.baliL4?.reason ?? "").replace(/\.\s*$/, "")}`
+              : ""}
+            . See the Bali status badge above before planning a Bali setup.
+          </p>
+        </div>
+      )}
+
+      {/* ── NATIONAL-vs-BALI FRAME (Bali applicability not yet classifiable) ── */}
+      {pmaVerified && !baliBlocked && baliNonClassifiable && (
+        <div
+          className="rounded-xl border px-5 py-4"
+          style={{
+            background: "var(--kbli-pma-restricted-bg)",
+            borderColor: "var(--kbli-border)",
+          }}
+        >
+          <div className="mb-1.5 flex items-center gap-2">
+            <span aria-hidden="true">🏝️</span>
+            <span
+              className="text-xs font-bold uppercase tracking-[0.12em]"
+              style={{ color: "var(--kbli-pma-restricted)" }}
+            >
+              National procedure — Bali applicability not yet classifiable
+            </span>
+          </div>
+          <p className="text-sm leading-relaxed text-[var(--foreground-secondary)]">
+            The licensing path below is the <strong>national</strong> procedure,
+            valid for a foreign-owned company outside Bali (e.g. Jakarta). In{" "}
+            <strong>Bali</strong>, whether this activity is open to a PT PMA
+            cannot be determined until the correct risk tier is established.
+            {kbli.baliL4?.reason ? ` ${kbli.baliL4.reason}` : ""} Verify with
+            the Bali Zero team before planning a Bali setup.
+          </p>
+        </div>
+      )}
+
+      {/* ── NATIONAL-vs-BALI FRAME (not on Bali's applied PMA closure list) ── */}
+      {pmaVerified && !baliBlocked && baliAttentionFascia && (
+        <div
+          className="rounded-xl border px-5 py-4"
+          style={{
+            background: "var(--kbli-pma-restricted-bg)",
+            borderColor: "var(--kbli-border)",
+          }}
+        >
+          <div className="mb-1.5 flex items-center gap-2">
+            <span aria-hidden="true">🏝️</span>
+            <span
+              className="text-xs font-bold uppercase tracking-[0.12em]"
+              style={{ color: "var(--kbli-pma-restricted)" }}
+            >
+              Not on Bali's PMA closure list — verify before filing
+            </span>
+          </div>
+          <p className="text-sm leading-relaxed text-[var(--foreground-secondary)]">
+            The licensing path below is the <strong>national</strong> procedure.
+            This activity is not among the 18 business fields Bali closed to new
+            PMA licensing in 2026; the low/medium-low risk tier was named only
+            in the Governor's January 2026 request letter to BKPM, never enacted
+            for this code specifically. Verify the applicable risk tier and
+            zoning on OSS before filing in <strong>Bali</strong>.
+          </p>
+        </div>
+      )}
+
+      {/* ── RISK-TIER DISPUTE FRAME (gold editorial vs OSS record disagree) ──
+          Independent axis from the Bali frames above — a code can be both
+          Bali-blocked/non-classifiable AND risk-disputed, so this is its own
+          condition, never chained with `!baliBlocked`. Never renders the
+          editorial side's tier (RENDER CONTRACT, kbli-risk-dispute.ts). */}
+      {kbli.riskDispute && (
+        <div
+          className="rounded-xl border px-5 py-4"
+          style={{
+            background: "var(--kbli-pma-restricted-bg)",
+            borderColor: "var(--kbli-border)",
+          }}
+        >
+          <div className="mb-1.5 flex items-center gap-2">
+            <span aria-hidden="true">⚖️</span>
+            <span
+              className="text-xs font-bold uppercase tracking-[0.12em]"
+              style={{ color: "var(--kbli-pma-restricted)" }}
+            >
+              Sources disagree on the risk tier
+            </span>
+          </div>
+          <p className="text-sm leading-relaxed text-[var(--foreground-secondary)]">
+            {kbli.riskDispute.kind === "universal_claim" ? (
+              <>
+                The editorial guide on this page states one risk tier as
+                applying at every business scale, while the licensing rows on
+                this record carry {kbli.riskDispute.recordTiers.join(" / ")}{" "}
+                across its scopes and scales. The two sources have not been
+                reconciled — verify the current tier on oss.go.id before filing.
+              </>
+            ) : (
+              <>
+                The licensing rows on this record list{" "}
+                {kbli.riskDispute.recordTiers.join(" / ")} across its scopes and
+                business scales, while the editorial guide on this page
+                describes a different tier. The two sources have not been
+                reconciled — verify the current tier on oss.go.id before filing.
+              </>
+            )}
+            {kbli.riskDispute.baliDependsOnTier && (
+              <>
+                {" "}
+                The Bali position shown on this page is derived from the
+                record&apos;s tier, so it inherits this disagreement.
+              </>
+            )}
+          </p>
+        </div>
+      )}
+
+      {/* ── PERPRES SLICE-DISCLOSURE FRAME (a restricted bidang usaha hides
+          inside an otherwise-open code) ── Independent axis, own condition,
+          never chained to riskDispute/baliBlocked — perpres_slice_disclosure_
+          relation.py only ever emits this for BROADER-adjudicated codes
+          (whole-code pma.status renders open), so it can co-occur with either
+          frame above. One paragraph per row (30111 carries two: a warship
+          slice at 49% and a Pinisi/Cadik slice at 0%). */}
+      {kbli.perpresSlice && kbli.perpresSlice.length > 0 && (
+        <div
+          className="rounded-xl border px-5 py-4"
+          style={{
+            background: "var(--kbli-pma-restricted-bg)",
+            borderColor: "var(--kbli-border)",
+          }}
+        >
+          <div className="mb-1.5 flex items-center gap-2">
+            <span aria-hidden="true">⚠️</span>
+            <span
+              className="text-xs font-bold uppercase tracking-[0.12em]"
+              style={{ color: "var(--kbli-pma-restricted)" }}
+            >
+              One activity inside this code is foreign-capital restricted
+            </span>
+          </div>
+          {kbli.perpresSlice.map((row, i) => (
+            <p
+              key={`${row.locator}-${i}`}
+              className="text-sm leading-relaxed text-[var(--foreground-secondary)]"
+              style={i > 0 ? { marginTop: "0.5rem" } : undefined}
+            >
+              One specific activity inside this code — &quot;{row.bidangUsaha}
+              &quot; —{" "}
+              {row.foreignCapPct === 0 ? (
+                row.condition ? (
+                  // A phased cap (0% at establishment, opening later — e.g.
+                  // 58130 press: 49% via capital market for expansion) is NOT
+                  // an absolute closure. The unqualified "no foreign equity
+                  // in that slice" sentence is false for the expansion phase
+                  // on these rows — render the condition verbatim instead of
+                  // asserting the absolute.
+                  <>
+                    is reserved for domestic capital at establishment under
+                    Perpres 10/2021 (as amended) — {row.condition}.
+                  </>
+                ) : (
+                  <>
+                    is reserved for domestic capital under Perpres 10/2021 (as
+                    amended): no foreign equity in that slice.
+                  </>
+                )
+              ) : (
+                <>
+                  is capped at 49% foreign ownership under Perpres 10/2021 (as
+                  amended){row.condition ? `, ${row.condition}` : ""}.
+                </>
+              )}
+            </p>
+          ))}
+          {/* One closing sentence for the WHOLE frame, not per row: on a
+              multi-row code (30111 — warship 49% + Pinisi/Cadik 0%), "the
+              rest of the code is open" repeated after the warship row would
+              be false — the Pinisi slice, named in the very next row, is not
+              open. State it once, after every row has had its say. */}
+          <p
+            className="text-sm leading-relaxed text-[var(--foreground-secondary)]"
+            style={{ marginTop: "0.5rem" }}
+          >
+            {pmaVerified
+              ? "Everything else in this code is open as shown."
+              : "These narrower annex entries do not verify the current whole-code PMA verdict."}{" "}
+            Check which side your exact activity falls on before filing.
+          </p>
+        </div>
+      )}
+
+      {/* ── KEY FACTS AT A GLANCE ── */}
+      <KeyFacts
+        licensing={kbli.licensing}
+        pma={kbli.pma}
+        baliBlocked={baliBlocked}
+        pmaVerified={pmaVerified}
+        notClassifiable={kbli.provenance?.state === "not_classifiable"}
+        verificationPending={isLicensingVerificationPending(kbli)}
+        rowsVerified={isLicensingVerifiedForBareClaim(kbli)}
+      />
+
+      {/* ── PP28 RAW DATA (collapsible) ── */}
+      {currentTier && (
+        <details className="group rounded-xl border border-[var(--border)] overflow-hidden">
+          <summary
+            className="flex cursor-pointer items-center gap-3 px-5 py-3.5 text-xs font-bold uppercase tracking-[0.12em] text-[var(--foreground-muted)] transition-colors hover:text-[var(--foreground-secondary)] [&::-webkit-details-marker]:hidden list-none"
+            style={{ background: "var(--kbli-bg-elevated)" }}
+          >
+            <svg
+              className="h-4 w-4 shrink-0 transition-transform duration-200 group-open:rotate-90"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            >
+              <path d="M6 4l4 4-4 4" />
+            </svg>
+            <span>PP28/2025 Licensing Data</span>
+            <span className="ml-auto rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px] font-medium">
+              {kbli.licensing.length}{" "}
+              {kbli.licensing.length === 1 ? "scale" : "scales"}
+            </span>
+          </summary>
+          <div
+            className="space-y-4 p-5"
+            style={{ background: "var(--kbli-bg-surface)" }}
+          >
+            {/* The section title names the SOURCE; this line states the
+                verification status of everything below it (Codex round 6b). */}
+            {isLicensingVerificationPending(kbli) && (
+              <p className="text-[11px] text-[var(--foreground-muted)]">
+                ⏳ All licensing values below await KBLI-2025 crosswalk
+                verification — see Sources &amp; Verification.
+              </p>
+            )}
+            {/* A DIFFERENT provenance question from the line above. That one asks
+                whether the KBLI-2025 crosswalk has been verified; this one asks
+                where the PP 28/2025 rows came from in the first place. 336 codes
+                have no PP 28 row of their own and were filled from OTHER KBLI-2020
+                codes — 62110 (video games) inherits three defence-industry
+                permits that way. Those codes are NOT the record's
+                `bps_2020_ancestors`: `pp28_sources` is the licensing-basis
+                pointer, a separate field, and 0 of the 390 inherited rows have
+                sources contained in their ancestors (62110 lists one ancestor
+                and five sources). The indexed <meta> goes SILENT on the licence
+                type for these (kbli-meta.ts); a body can qualify, so it keeps the
+                value and names the source instead. */}
+            {licensingContentInheritedFrom(kbli) && (
+              <p className="text-[11px] text-[var(--foreground-muted)]">
+                ↩ This code has no PP 28/2025 licensing row of its own — the
+                values below were carried over from KBLI 2020 code
+                {licensingContentInheritedFrom(kbli)!.length > 1 ? "s " : " "}
+                {licensingContentInheritedFrom(kbli)!.join(", ")}. Confirm the
+                licence type with the Bali Zero team before acting on it.
+              </p>
+            )}
+            {/* Tier tabs */}
+            {kbli.licensing.length > 1 && (
+              <div className="flex flex-wrap items-center gap-4">
+                <span className="text-xs text-[var(--foreground-muted)]">
+                  Business scale:
+                </span>
+                <TierTabs
+                  tiers={kbli.licensing}
+                  activeTier={activeTier}
+                  onSelect={setActiveTier}
+                />
+              </div>
+            )}
+
+            {/* Tier header */}
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-sm font-semibold text-[var(--foreground)]">
+                {currentTier.scales.join(", ")}
+              </span>
+              <RiskBadge
+                category={currentTier.riskCategory}
+                size="sm"
+                verificationPending={isLicensingVerificationPending(kbli)}
+              />
+              <span className="text-xs text-[var(--foreground-muted)]">
+                {currentTier.licenseType}
+              </span>
+              {currentTier.timeframe && (
+                <span
+                  className="rounded-full px-2.5 py-0.5 text-xs font-medium"
+                  style={{
+                    background: currentTier.timeframe
+                      .toLowerCase()
+                      .includes("otomatis")
+                      ? "var(--kbli-pma-open-bg)"
+                      : "var(--kbli-pma-restricted-bg)",
+                    color: currentTier.timeframe
+                      .toLowerCase()
+                      .includes("otomatis")
+                      ? "var(--kbli-pma-open)"
+                      : "var(--kbli-pma-restricted)",
+                  }}
+                >
+                  ⏱ {currentTier.timeframe}
+                </span>
+              )}
+              {currentTier.fictivePositive && (
+                <span
+                  className="rounded-full px-2.5 py-0.5 text-xs font-medium"
+                  style={{
+                    background: "var(--kbli-pma-open-bg)",
+                    color: "var(--kbli-pma-open)",
+                  }}
+                >
+                  Fiktif Positif
+                </span>
+              )}
+            </div>
+            <TierDetail tier={currentTier} />
+          </div>
+        </details>
+      )}
+
+      {/* ── EDITORIAL CONTENT SECTIONS ── */}
+      {parsed && parsed.sections.length > 0 && (
+        <div className="space-y-6">
+          {/* The walkthrough predates the cure that detached this code's rows,
+              so it can still name a tier, an issuing authority and a timeline
+              that KeyFacts above has already declared unsupported. Frame it —
+              the steps stay (they are the editorial record) but nobody reads
+              them as a route they can follow today. */}
+          {narratesUnverifiedRoute(
+            kbli.licensing.length,
+            gold?.whatYouNeed,
+          ) && (
+            <div
+              className="rounded-xl border px-5 py-4"
+              style={{
+                background: "var(--kbli-pma-restricted-bg)",
+                borderColor: "var(--kbli-border)",
+              }}
+            >
+              <div className="mb-1.5 flex items-center gap-2">
+                <span aria-hidden="true">⚠️</span>
+                <span
+                  className="text-xs font-bold uppercase tracking-[0.12em]"
+                  style={{ color: "var(--kbli-pma-restricted)" }}
+                >
+                  Steps below predate this code&rsquo;s licensing review
+                </span>
+              </div>
+              <p className="text-sm leading-relaxed text-[var(--foreground-secondary)]">
+                The walkthrough that follows was written against licensing rows
+                we have since been unable to verify for this activity — which is
+                why no risk tier or licensing route is shown above. Treat any
+                risk level, issuing authority or processing time in these steps
+                as <strong>provisional</strong>, and confirm the current
+                requirements at oss.go.id or with the Bali Zero team before
+                acting on them.
+              </p>
+            </div>
+          )}
+          {parsed.sections.map((sec, i) => (
+            <ContentSection
+              key={i}
+              title={sec.title}
+              body={sec.body}
+              type={detectSectionType(sec.title)}
+              activeScales={currentTier?.scales ?? []}
+              baliBlocked={baliBlocked}
+              pmaVerified={pmaVerified}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* ── REGULATORY ALERT ── */}
+      {parsed?.alert && <RegulatoryAlert markdown={parsed.alert} />}
+
+      {/* ── SOURCE REGULATION ── */}
+      {parsed?.source && (
+        <details className="rounded-xl border border-[var(--border)] overflow-hidden">
+          <summary
+            className="cursor-pointer px-4 py-2.5 text-xs font-medium text-[var(--foreground-muted)] transition-colors hover:text-[var(--foreground-secondary)]"
+            style={{ background: "var(--kbli-bg-elevated)" }}
+          >
+            Source Regulations
+          </summary>
+          <div
+            className="px-4 py-2.5 text-xs text-[var(--foreground-secondary)]"
+            style={{ background: "var(--kbli-bg-surface)" }}
+          >
+            {parsed.source}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}

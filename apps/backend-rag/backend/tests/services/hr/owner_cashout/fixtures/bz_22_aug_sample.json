@@ -1,0 +1,16 @@
+{
+  "description": "Real sample from BZ 22 AUG tab",
+  "rows": [
+    ["NEW CASHOUT 22 AUGUST 2025"],
+    ["NAME", "PROCESS", "PNBP", "URGENT", "RPTKA/IMTA", "TOTAL INCOME", "MARGIN BS", "MARGIN BZ", "NOTE"],
+    ["TIXAMUFI REMOWA", "BRIDGING VISA", "Rp1,000,000", "", "", "Rp5,000,000", "Rp3,000,000", "Rp1,000,000"],
+    [],
+    ["RUK HIBET CASTEL", "C1", "Rp1,000,000", "", "", "Rp2,700,000", "Rp600,000", "Rp1,100,000"],
+    ["MUDIVA EMILIANO JOTI ZOLE", "C1", "Rp1,000,000", "", "", "Rp2,700,000", "Rp600,000", "Rp1,100,000"],
+    [],
+    ["JUTIM WOMUMAW KOSTRO", "C10", "Rp2,000,000", "", "", "Rp3,500,000", "Rp800,000", "Rp700,000"],
+    [],
+    ["LIZE RALPH TAJOBIVAW", "D12 2 YEARS", "Rp7,000,000", "", "", "Rp9,800,000", "Rp800,000", "Rp2,000,000", "DISCOUNT 200K"],
+    ["RUTIHAF JEKA XIDEFUVO", "D12 1 YEAR - URGENT", "Rp5,000,000", "Rp1,000,000", "", "Rp7,500,000", "Rp800,000", "Rp700,000"]
+  ]
+}

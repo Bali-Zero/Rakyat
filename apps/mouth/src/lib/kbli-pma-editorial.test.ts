@@ -1,0 +1,183 @@
+import { describe, expect, it } from "vitest";
+
+import { getAllCodes, getCode } from "./kbli-data";
+import { getGoldContent } from "./kbli-data.server";
+import {
+  discloseKbliBaliReason,
+  discloseKbliEditorial,
+  neutralKbliChatOpener,
+} from "./kbli-pma-editorial";
+import { isPmaVerdictVerified } from "./kbli-provenance";
+import { isSourcedBaliClosure } from "./kbli-pma-disclosure";
+
+describe("PMA editorial disclosure boundary", () => {
+  // 16291 → 16292 on 2026-09-18: 16291 is now located (Lampiran II, naso lot);
+  // 16292 is its declared-gap sibling with gold + intel, same shape.
+  it.each(["16292", "10793"])(
+    "withholds real generated ownership prose for declared-gap code %s",
+    (code) => {
+      const record = getCode(code);
+      expect(record).toBeDefined();
+      const rawGold = getGoldContent(code);
+      expect(record?.intel_2026).toBeUndefined();
+      expect(rawGold).toBeNull();
+
+      const disclosed = discloseKbliEditorial(record!, rawGold);
+      expect(disclosed.intel).toBeUndefined();
+      expect(disclosed.gold).toBeNull();
+      expect(disclosed.withheld).toBe(true);
+      expect(discloseKbliBaliReason(record!)).toBeUndefined();
+      expect(neutralKbliChatOpener(record!)).not.toMatch(
+        /open|closed|100%|TERBUKA|TERBATAS|TERTUTUP/i,
+      );
+    },
+  );
+
+  it("preserves editorial identity for a located verdict", () => {
+    const record = getCode("47221");
+    expect(record).toBeDefined();
+    expect(isPmaVerdictVerified(record!)).toBe(true);
+
+    const gold = getGoldContent("47221");
+    expect(gold).not.toBeNull();
+    const disclosed = discloseKbliEditorial(record!, gold);
+    expect(disclosed.intel).toBe(record!.intel_2026);
+    expect(disclosed.gold).toBe(gold);
+    expect(disclosed.withheld).toBe(false);
+    expect(discloseKbliBaliReason(record!)).toBe(record!.baliL4?.reason);
+  });
+
+  it("withholds generated prose when the verdict is located but its cap is not verified", () => {
+    const base = getCode("47221");
+    expect(base).toBeDefined();
+    const malformed = {
+      ...base!,
+      pma: {
+        ...base!.pma,
+        maxForeign: 100,
+        capSpecial: false,
+        capVerified: false,
+      },
+    };
+    const sentinelGold = getGoldContent("47221");
+    expect(sentinelGold).not.toBeNull();
+
+    expect(discloseKbliEditorial(malformed, sentinelGold)).toEqual({
+      gold: null,
+      intel: undefined,
+      withheld: true,
+    });
+  });
+
+  it("rejects a torn located tuple whose public fields disagree with provenance", () => {
+    const base = getCode("47221");
+    expect(base).toBeDefined();
+    const torn = {
+      ...base!,
+      pma: {
+        ...base!.pma,
+        officialBasis: "different locator",
+      },
+    };
+
+    expect(isPmaVerdictVerified(torn)).toBe(false);
+    expect(discloseKbliEditorial(torn, getGoldContent("47221"))).toMatchObject({
+      gold: null,
+      intel: undefined,
+      withheld: true,
+    });
+  });
+
+  it("enforces the corpus partition: gaps withheld and only reviewed located prose exposed", () => {
+    const codes = getAllCodes();
+    const located = codes.filter(isPmaVerdictVerified);
+    const gaps = codes.filter((record) => !isPmaVerdictVerified(record));
+
+    // SAETTA-20260915 W-H PR-3a moved 3 codes (55201/55203/79903) from
+    // declared_gap to located (Lampiran II allocation): 1505 -> 1502, 54 -> 57.
+    // The intel-bearing subset does NOT move with it: none of the 3 are
+    // registered in pma-editorial-certifications.json's `canonicalIntel`
+    // section, so `intel_2026` on the public KBLICode stays `undefined` for
+    // all 3 regardless of this PR. W-H PR-3c v3 then de-certified 12 of the
+    // 49 canonicalIntel entries (10214/16221/22121/47111/50111/50112/51102/
+    // 55105/65111/79122/95220/96100) whose prose still claimed an openness
+    // their own tuple denies: 49 -> 37. W-H PR-3f de-certified 47221's
+    // canonicalIntel too (whatYouNeed claimed a UMKM/Koperasi partnership
+    // condition its own pma_kondisi denies): 37 -> 36. 47221 stays located
+    // (its PMA tuple is unaffected) and keeps its mouthGold certification.
+    expect(codes).toHaveLength(1559);
+    // 57 -> 65 located / 1502 -> 1494 gaps: W-H PR-3b moves 8 more codes
+    // (47241 47242 47244 47245 47246 47249 47712 47722) from declared_gap to
+    // located under Perpres 49/2021 Lampiran II entry 46. None of the 8 is
+    // registered in canonicalIntel, so the certified-intel count stays 36.
+    // 2026-09-18 naso lot: 10307 10308 16291 16293 32201 55106 moved
+    // declared_gap→located under Perpres 49/2021 Lampiran II (whole-code rows
+    // via 1:1 BPS crosswalk), 65→71 / 1494→1488.
+    // 2026-09-18 naso PR-2: 13133 closed by the union of Lampiran II item 11 +
+    // Lampiran III entry #2, declared_gap→located, 1488→1487 / 71→72.
+    // 2026-09-18 naso PR-3: 59 statutory closures (2 named by Perpres 10/2021
+    // Pasal 2(2)(b), 2 UU 25/2007 Pasal 12(2) items, 54 government activities
+    // under Pasal 2(1)(b)/2(3), 99000 under Pasal 2(1a)) relabelled
+    // declared_gap→located, TERTUTUP/0 unchanged: 1487→1428 / 72→131. None of the 59 is
+    // registered in canonicalIntel, so the certified-intel count stays 36.
+    // 2026-09-18 naso PR-4 (residual lot 1): 329 codes the Perpres partition
+    // leaves RESIDUAL (no Lampiran I/II/III row, no body article, no Pasal
+    // 11(2) carve-out, Usaha Besar row observed, Bali OK_or_HIGHER_RISK, no
+    // legacy PMA prose) relabelled declared_gap→located under Pasal 3(1)(d) +
+    // 3(2). The rule reaches 507; 178 are WITHHELD because absence is evidence
+    // of openness only where the Perpres owns the ownership question — 61
+    // finance/banking codes Pasal 11(2) hands to their own legislation, 67 in
+    // sectors (99 00 00-00 10) whose statute this lane never read, 29 with an
+    // adjudicated 4-digit sibling, 19 categories the body states in prose
+    // (alcohol, tobacco, explosives and weapons repair, CITES breeding,
+    // penjaminan), and 2 whose 2025 judul IS the activity a Lampiran III row
+    // caps under a different number.
+    // TERBUKA/100 unchanged: 1428→1099 gaps / 131→460 located.
+    // 2026-09-21 naso PR-5 (residual lot 2): 260 more codes — same rule,
+    // ATTENZIONE_FASCIA_BALI Bali axis instead of OK_or_HIGHER_RISK —
+    // relabelled declared_gap→located. 460→720 located / 1099→839 gaps.
+    // None of the 260 is in the 36-code editorially certified set, so that
+    // count is untouched.
+    // 2026-09-23 (#7136 OSS refresh ADOPT carry): 93113/93193 carried into
+    // lot 1/lot 2 by the compiler itself, same relabel, neither certified.
+    // 720→722 located / 839→837 gaps / 36 certified unchanged.
+    // 2026-09-25: 50121's canonicalIntel de-certified — its pma_kondisi/
+    // pma_nota cure moved the certified pmaFingerprint. 50121 stays located
+    // (TERBATAS/49 unchanged): 722/837 unaffected, 36 -> 35 certified.
+    expect(located).toHaveLength(722);
+    expect(gaps).toHaveLength(837);
+    expect(located.filter((record) => record.intel_2026)).toHaveLength(35);
+
+    for (const record of gaps) {
+      const disclosed = discloseKbliEditorial(
+        record,
+        getGoldContent(record.code),
+      );
+      expect(disclosed.intel).toBeUndefined();
+      expect(disclosed.gold).toBeNull();
+      // Added 2026-09-16 (W-J B1 disclose): a Bali APPLIED closure sourced to
+      // a public press release discloses its reason too, even on a
+      // `declared_gap` national record — the ONE named exception, scoped
+      // exactly to `isSourcedBaliClosure`.
+      if (isSourcedBaliClosure(record.baliL4)) {
+        expect(discloseKbliBaliReason(record)).toBe(record.baliL4?.reason);
+      } else {
+        expect(discloseKbliBaliReason(record)).toBeUndefined();
+      }
+    }
+    for (const record of located) {
+      const gold = getGoldContent(record.code);
+      const disclosed = discloseKbliEditorial(record, gold);
+      expect(disclosed.intel).toBe(record.intel_2026);
+      expect(disclosed.gold).toBe(gold);
+      expect(discloseKbliBaliReason(record)).toBe(record.baliL4?.reason);
+    }
+    for (const code of ["10722", "47222", "50134", "73100", "96220"]) {
+      const record = getCode(code)!;
+      expect(record.intel_2026, code).toBeUndefined();
+      expect(discloseKbliEditorial(record, getGoldContent(code)).withheld).toBe(
+        getGoldContent(code) === null,
+      );
+    }
+  });
+});

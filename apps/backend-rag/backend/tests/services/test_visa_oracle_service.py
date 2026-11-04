@@ -1,0 +1,704 @@
+"""Tests for VisaOracleService.
+
+All tests mock PricingService so no JSON file or network access is required.
+"""
+
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from backend.services.visa_oracle.visa_oracle_service import (
+    VisaOracleService,
+    get_visa_oracle_service,
+)
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+SAMPLE_PRICES = {
+    "services": {
+        "single_entry_visas": {
+            "C1 Tourism": {
+                "price": "2.300.000 IDR",
+                "duration": "60 days",
+                "validity": "",
+                "notes": "Single entry, 60 days",
+            },
+            "C22A&B Internship (180 Days)": {
+                "price": "5.800.000 IDR",
+                "duration": "180 days",
+                "validity": "",
+                "notes": "",
+            },
+            "C2 Business": {
+                "price": "4.500.000 IDR",
+                "duration": "60 days",
+                "validity": "",
+                "notes": "Business visit",
+            },
+        },
+        "multiple_entry_visas": {
+            "D12 Business Investigation (1 Year)": {
+                "price": "9.800.000 IDR",
+                "duration": "1 year",
+                "validity": "1 year",
+                "notes": "Multiple entry",
+            },
+        },
+        "kitas_permits": {
+            "Retirement (Altus/Onshore)": {
+                "price": "35.000.000 IDR",
+                "duration": "1 year",
+                "validity": "1 year",
+                "notes": "Retirement KITAS",
+            },
+            "Investor KITAS 2 Years (Altus/Onshore)": {
+                "price": "45.000.000 IDR",
+                "duration": "2 years",
+                "validity": "2 years",
+                "notes": "Investor KITAS",
+            },
+            "Spouse 1 Year (Altus/Onshore)": {
+                "price": "22.000.000 IDR",
+                "duration": "1 year",
+                "validity": "1 year",
+                "notes": "Spouse KITAS",
+            },
+            "E33G Remote Worker (Altus/Onshore)": {
+                "price": "28.000.000 IDR",
+                "duration": "1 year",
+                "validity": "1 year",
+                "notes": "Remote worker / digital nomad",
+            },
+            "Working KITAS (Altus/Onshore)": {
+                "price": "40.000.000 IDR",
+                "duration": "1 year",
+                "validity": "1 year",
+                "notes": "Work permit KITAS",
+            },
+        },
+        "visa_extensions": {},
+        "kitap_permits": {},
+        "company_services": {},
+        "other_process": {},
+        "urgent_services": {},
+    }
+}
+
+
+@pytest.fixture
+def service() -> VisaOracleService:
+    """Return a VisaOracleService with mocked PricingService."""
+    mock_pricing = MagicMock()
+    mock_pricing.prices = SAMPLE_PRICES
+
+    with patch(
+        "backend.services.visa_oracle.visa_oracle_service.get_pricing_service",
+        return_value=mock_pricing,
+    ):
+        svc = VisaOracleService()
+    return svc
+
+
+# ---------------------------------------------------------------------------
+# recommend_visas — structural tests
+# ---------------------------------------------------------------------------
+
+
+def test_recommend_visas_returns_list(service: VisaOracleService) -> None:
+    """recommend_visas must always return a list."""
+    result = service.recommend_visas(
+        nationality="Australian",
+        purpose="visit",
+        duration="short",
+        family=False,
+    )
+    assert isinstance(result, list)
+
+
+def test_recommend_visas_max_three_results(service: VisaOracleService) -> None:
+    """Never returns more than 3 results."""
+    result = service.recommend_visas(
+        nationality="German",
+        purpose="visit",
+        duration="short",
+        family=False,
+    )
+    assert len(result) <= 3
+
+
+def test_recommend_visas_required_fields(service: VisaOracleService) -> None:
+    """Every result must carry the required fields."""
+    result = service.recommend_visas(
+        nationality="British",
+        purpose="invest",
+        duration="long",
+        family=False,
+    )
+    required = {"visa_name", "category", "price", "score"}
+    for item in result:
+        assert required.issubset(item.keys()), f"Missing fields in {item}"
+
+
+# ---------------------------------------------------------------------------
+# recommend_visas — purpose-specific behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_recommend_visas_visit_short_returns_tourism(service: VisaOracleService) -> None:
+    """visit + short duration should prioritise tourism / single-entry visas."""
+    result = service.recommend_visas(
+        nationality="Australian",
+        purpose="visit",
+        duration="short",
+        family=False,
+    )
+    assert len(result) > 0
+    # Top result may be visa_on_arrival, single_entry_visas, or multiple_entry_visas
+    # depending on scoring — all are valid for a short visit
+    top = result[0]
+    assert top["category"] in {"single_entry_visas", "multiple_entry_visas", "visa_on_arrival"}
+    # Tourism or Business visa should appear in results
+    names = [r["visa_name"] for r in result]
+    assert any("Tourism" in n or "Business" in n or "Arrival" in n for n in names)
+
+
+def test_recommend_visas_invest_long_returns_kitas(service: VisaOracleService) -> None:
+    """invest + long duration must surface investor KITAS."""
+    result = service.recommend_visas(
+        nationality="Singaporean",
+        purpose="invest",
+        duration="long",
+        family=False,
+    )
+    assert len(result) > 0
+    # At least one result from kitas_permits
+    categories = {r["category"] for r in result}
+    assert "kitas_permits" in categories
+    # Investor KITAS should appear
+    names = [r["visa_name"] for r in result]
+    assert any("Investor" in n or "KITAS" in n for n in names)
+
+
+def test_recommend_visas_retire_returns_retirement_visa(service: VisaOracleService) -> None:
+    """retire purpose must surface retirement KITAS."""
+    result = service.recommend_visas(
+        nationality="Dutch",
+        purpose="retire",
+        duration="long",
+        family=False,
+    )
+    assert len(result) > 0
+    names = [r["visa_name"] for r in result]
+    assert any("Retirement" in n or "retire" in n.lower() for n in names)
+
+
+def test_recommend_visas_digital_nomad_includes_remote_worker(
+    service: VisaOracleService,
+) -> None:
+    """digital_nomad purpose should surface E33G Remote Worker."""
+    result = service.recommend_visas(
+        nationality="American",
+        purpose="digital_nomad",
+        duration="long",
+        family=False,
+    )
+    assert len(result) > 0
+    names = [r["visa_name"] for r in result]
+    assert any("Remote" in n or "Freelance" in n or "C1" in n for n in names)
+
+
+def test_recommend_visas_family_match_adds_spouse_bonus(service: VisaOracleService) -> None:
+    """family=True should boost spouse/dependent KITAS in ranking."""
+    result_with_family = service.recommend_visas(
+        nationality="Japanese",
+        purpose="work",
+        duration="long",
+        family=True,
+    )
+    result_without_family = service.recommend_visas(
+        nationality="Japanese",
+        purpose="work",
+        duration="long",
+        family=False,
+    )
+    # The spouse option should score higher when family=True
+    spouse_with = next((r for r in result_with_family if "Spouse" in r["visa_name"]), None)
+    spouse_without = next((r for r in result_without_family if "Spouse" in r["visa_name"]), None)
+    if spouse_with and spouse_without:
+        assert spouse_with["score"] > spouse_without["score"]
+
+
+# ---------------------------------------------------------------------------
+# get_all_visa_types
+# ---------------------------------------------------------------------------
+
+
+def test_get_all_visa_types_returns_list(service: VisaOracleService) -> None:
+    """get_all_visa_types must return a non-empty list."""
+    result = service.get_all_visa_types()
+    assert isinstance(result, list)
+    assert len(result) > 0
+
+
+def test_get_all_visa_types_has_required_fields(service: VisaOracleService) -> None:
+    """Each entry must have name, category and price."""
+    result = service.get_all_visa_types()
+    for item in result:
+        assert "name" in item
+        assert "category" in item
+        assert "price" in item
+
+
+def test_get_all_visa_types_includes_all_categories(service: VisaOracleService) -> None:
+    """All non-empty service categories should be represented."""
+    result = service.get_all_visa_types()
+    categories = {r["category"] for r in result}
+    assert "single_entry_visas" in categories
+    assert "kitas_permits" in categories
+
+
+# ---------------------------------------------------------------------------
+# build_whatsapp_message
+# ---------------------------------------------------------------------------
+
+
+def test_build_whatsapp_message_returns_wa_url(service: VisaOracleService) -> None:
+    """build_whatsapp_message must return a wa.me URL."""
+    url = service.build_whatsapp_message(
+        nationality="Australian",
+        purpose="visit",
+        duration="short",
+        visa_name="C1 Tourism",
+        price="2.300.000 IDR",
+    )
+    assert url.startswith("https://wa.me/")
+    assert "C1%20Tourism" in url or "C1" in url
+
+
+# ---------------------------------------------------------------------------
+# build_telegram_summary
+# ---------------------------------------------------------------------------
+
+
+def test_build_telegram_summary_contains_session_id(service: VisaOracleService) -> None:
+    """Telegram summary must include (part of) the session_id."""
+    sid = "abc123def456"
+    summary = service.build_telegram_summary(
+        session_id=sid,
+        quiz_answers={"nationality": "French", "purpose": "retire", "duration": "long"},
+        recommended_visas=[],
+        messages=[],
+        language="fr",
+    )
+    assert sid[:12] in summary
+
+
+def test_build_telegram_summary_contains_nationality(service: VisaOracleService) -> None:
+    """Telegram summary must include nationality."""
+    summary = service.build_telegram_summary(
+        session_id="x" * 32,
+        quiz_answers={"nationality": "Mijotafak", "purpose": "visit", "duration": "short"},
+        recommended_visas=[],
+        messages=[],
+        language="pt",
+    )
+    assert "Mijotafak" in summary
+
+
+# ---------------------------------------------------------------------------
+# build_telegram_summary — FIX-5 (Codex red-team P1 #4) Markdown escaping
+# ---------------------------------------------------------------------------
+#
+# `build_telegram_summary` is sent with `parse_mode="Markdown"` (legacy
+# Telegram v1), which treats `_`, `*`, backtick, and `[` as formatting
+# syntax. A user who types e.g. `nationality: "_pwned_"` into the quiz can
+# otherwise inject formatting/link-like structure into the message Damar's
+# team reads. Deliberately NOT the full MarkdownV2 char set — legacy v1
+# doesn't recognize backslash as an escape prefix outside these 4 chars, so
+# escaping e.g. `.`/`-`/`!` would insert a literal stray backslash instead
+# of hiding one.
+
+
+def test_build_telegram_summary_escapes_underscore_in_nationality(
+    service: VisaOracleService,
+) -> None:
+    """Guilt: an underscore in a user-controlled field must not survive
+    unescaped — Markdown v1 would render `_pwned_` as italic."""
+    summary = service.build_telegram_summary(
+        session_id="x" * 32,
+        quiz_answers={"nationality": "_pwned_", "purpose": "visit", "duration": "short"},
+        recommended_visas=[],
+        messages=[],
+        language="en",
+    )
+    assert "_pwned_" not in summary
+    assert "\\_pwned\\_" in summary
+
+
+def test_build_telegram_summary_escapes_asterisk_and_backtick(
+    service: VisaOracleService,
+) -> None:
+    """Guilt: `*` (bold) and backtick (code span) must also be escaped."""
+    summary = service.build_telegram_summary(
+        session_id="x" * 32,
+        quiz_answers={"nationality": "US", "purpose": "*bold* `code`", "duration": "short"},
+        recommended_visas=[],
+        messages=[],
+        language="en",
+    )
+    assert "*bold*" not in summary
+    assert "`code`" not in summary
+    assert "\\*bold\\*" in summary
+    assert "\\`code\\`" in summary
+
+
+def test_build_telegram_summary_escapes_visa_name_and_price(
+    service: VisaOracleService,
+) -> None:
+    """Guilt: `visa_name`/`price` in `recommended_visas` are also
+    user-influenced (they trace back to a client-declared session in the
+    body-only handoff fallback path) — defense-in-depth even though the
+    router now resolves them server-side for the verified path."""
+    summary = service.build_telegram_summary(
+        session_id="x" * 32,
+        quiz_answers={"nationality": "US", "purpose": "work", "duration": "long"},
+        recommended_visas=[{"visa_name": "[Fake_Visa]", "price": "1_000_000 IDR", "score": 1.0}],
+        messages=[],
+        language="en",
+    )
+    assert "[Fake_Visa]" not in summary
+    assert "\\[Fake\\_Visa]" in summary
+
+
+def test_build_telegram_summary_plain_text_unaffected(service: VisaOracleService) -> None:
+    """Innocence: ordinary text with none of the 4 special chars renders
+    byte-for-byte unchanged — no stray backslashes inserted."""
+    summary = service.build_telegram_summary(
+        session_id="x" * 32,
+        quiz_answers={"nationality": "Mijotafak", "purpose": "retire", "duration": "long"},
+        recommended_visas=[],
+        messages=[],
+        language="en",
+    )
+    assert "\\" not in summary
+
+
+def test_escape_telegram_markdown_v1_only_escapes_four_chars() -> None:
+    """Unit test for the escape helper directly: legacy Markdown v1 doesn't
+    treat `.`/`-`/`!`/`(`/`)` as syntax — escaping them would introduce a
+    stray literal backslash into the rendered message rather than hiding
+    one, so they must pass through untouched."""
+    from backend.services.visa_oracle.visa_oracle_service import (
+        _escape_telegram_markdown_v1,
+    )
+
+    result = _escape_telegram_markdown_v1("a_b*c`d[e.f-g!h(i)j")
+    assert result == "a\\_b\\*c\\`d\\[e.f-g!h(i)j"
+
+
+# ---------------------------------------------------------------------------
+# R2-B (Codex re-review NEW-BUG, F4) — code-span sanitization for
+# session_id/language, distinct from escaping (which is invalid inside a
+# Telegram Markdown code span).
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_session_id_strips_disallowed_chars() -> None:
+    from backend.services.visa_oracle.visa_oracle_service import (
+        _sanitize_code_entity_session_id,
+    )
+
+    assert _sanitize_code_entity_session_id("abc`*_[123") == "abc_123"
+
+
+def test_sanitize_session_id_truncates_to_40_chars() -> None:
+    from backend.services.visa_oracle.visa_oracle_service import (
+        _sanitize_code_entity_session_id,
+    )
+
+    result = _sanitize_code_entity_session_id("a" * 100)
+    assert result == "a" * 40
+
+
+def test_sanitize_session_id_falls_back_to_unknown_when_emptied() -> None:
+    from backend.services.visa_oracle.visa_oracle_service import (
+        _sanitize_code_entity_session_id,
+    )
+
+    assert _sanitize_code_entity_session_id("`*[]()~>!.,") == "unknown"
+
+
+def test_sanitize_session_id_passes_through_valid_charset_unchanged() -> None:
+    from backend.services.visa_oracle.visa_oracle_service import (
+        _sanitize_code_entity_session_id,
+    )
+
+    assert _sanitize_code_entity_session_id("deadbeef-1234_5678") == "deadbeef-1234_5678"
+
+
+def test_sanitize_language_strips_disallowed_chars() -> None:
+    from backend.services.visa_oracle.visa_oracle_service import (
+        _sanitize_code_entity_language,
+    )
+
+    assert _sanitize_code_entity_language("en`*_[9") == "en"
+
+
+def test_sanitize_language_truncates_to_8_chars() -> None:
+    from backend.services.visa_oracle.visa_oracle_service import (
+        _sanitize_code_entity_language,
+    )
+
+    assert _sanitize_code_entity_language("abcdefghij") == "abcdefgh"
+
+
+def test_sanitize_language_falls_back_to_unknown_when_emptied() -> None:
+    from backend.services.visa_oracle.visa_oracle_service import (
+        _sanitize_code_entity_language,
+    )
+
+    assert _sanitize_code_entity_language("123`*_[") == "unknown"
+
+
+def test_sanitize_language_lowercases_and_passes_through_hyphen() -> None:
+    from backend.services.visa_oracle.visa_oracle_service import (
+        _sanitize_code_entity_language,
+    )
+
+    assert _sanitize_code_entity_language("EN-us") == "en-us"
+
+
+def test_build_telegram_summary_session_id_with_backtick_does_not_break_entity(
+    service: VisaOracleService,
+) -> None:
+    """R2-B adversarial test (Codex re-review): a `session_id` containing a
+    backtick plus `*_[` characters must not break the code-span entity nor
+    inject formatting into the surrounding message. Structural check: every
+    backtick in the summary is part of a properly PAIRED code span (an even
+    total count), and none of the injected symbols survive verbatim."""
+    malicious_session_id = "abc`*_[def`123"
+    summary = service.build_telegram_summary(
+        session_id=malicious_session_id,
+        quiz_answers={"nationality": "US", "purpose": "work", "duration": "long"},
+        recommended_visas=[],
+        messages=[],
+        language="en",
+    )
+
+    # The raw malicious payload must not appear anywhere in the output.
+    assert malicious_session_id not in summary
+    assert "abc`*_[def`123" not in summary
+
+    # Every backtick present belongs to a well-formed code span — an odd
+    # count would mean a span was left open (or one was force-closed
+    # early), corrupting the rest of the message's formatting.
+    assert summary.count("`") % 2 == 0
+
+    # The sanitized session_id keeps only the whitelisted charset — no
+    # backtick/asterisk/underscore/bracket survives into the code span.
+    assert "abc_def123"[:12] in summary or "abc_def" in summary
+
+
+def test_build_telegram_summary_language_with_backtick_does_not_break_entity(
+    service: VisaOracleService,
+) -> None:
+    """Same adversarial property for `language`."""
+    summary = service.build_telegram_summary(
+        session_id="x" * 32,
+        quiz_answers={"nationality": "US", "purpose": "work", "duration": "long"},
+        recommended_visas=[],
+        messages=[],
+        language="en`*_[injected",
+    )
+
+    assert "en`*_[injected" not in summary
+    assert summary.count("`") % 2 == 0
+
+
+# ---------------------------------------------------------------------------
+# hash_ip and generate_session_id
+# ---------------------------------------------------------------------------
+
+
+def test_hash_ip_is_64_chars(service: VisaOracleService) -> None:
+    """SHA-256 hex digest must be exactly 64 characters."""
+    result = service.hash_ip("127.0.0.1")
+    assert len(result) == 64
+    assert result.isalnum()
+
+
+def test_hash_ip_is_deterministic(service: VisaOracleService) -> None:
+    """Same IP must always produce the same hash."""
+    h1 = service.hash_ip("192.168.1.1")
+    h2 = service.hash_ip("192.168.1.1")
+    assert h1 == h2
+
+
+def test_hash_ip_different_ips_differ(service: VisaOracleService) -> None:
+    """Different IPs must produce different hashes."""
+    h1 = service.hash_ip("10.0.0.1")
+    h2 = service.hash_ip("10.0.0.2")
+    assert h1 != h2
+
+
+def test_generate_session_id_length(service: VisaOracleService) -> None:
+    """Session ID must be exactly 64 hex chars (32 bytes)."""
+    sid = service.generate_session_id()
+    assert len(sid) == 64
+    assert all(c in "0123456789abcdef" for c in sid)
+
+
+def test_generate_session_id_unique(service: VisaOracleService) -> None:
+    """Successive session IDs must be unique."""
+    ids = {service.generate_session_id() for _ in range(10)}
+    assert len(ids) == 10
+
+
+# ---------------------------------------------------------------------------
+# Singleton
+# ---------------------------------------------------------------------------
+
+
+def test_get_visa_oracle_service_singleton() -> None:
+    """get_visa_oracle_service must return the same instance twice."""
+    import backend.services.visa_oracle.visa_oracle_service as module
+
+    # Reset singleton for test isolation
+    module._visa_oracle_service = None
+
+    mock_pricing = MagicMock()
+    mock_pricing.prices = SAMPLE_PRICES
+
+    with patch(
+        "backend.services.visa_oracle.visa_oracle_service.get_pricing_service",
+        return_value=mock_pricing,
+    ):
+        svc1 = get_visa_oracle_service()
+        svc2 = get_visa_oracle_service()
+
+    assert svc1 is svc2
+
+    # Clean up singleton so other tests are not affected
+    module._visa_oracle_service = None
+
+
+# ---------------------------------------------------------------------------
+# E33F Everywhere (2026-10-14 ruling) — retire purpose & internal row filtering
+# ---------------------------------------------------------------------------
+
+
+def test_recommend_visas_retire_ranks_e33f_and_excludes_internal_rows() -> None:
+    """Guilt: recommend_visas(purpose='retire') returns one deduplicated E33F row,
+    no (Extend) row, and no internal rows."""
+    from backend.services.pricing.pricing_service import PricingService
+
+    real_pricing = PricingService()
+    with patch(
+        "backend.services.visa_oracle.visa_oracle_service.get_pricing_service",
+        return_value=real_pricing,
+    ):
+        svc = VisaOracleService()
+
+    result = svc.recommend_visas(
+        nationality="Dutch",
+        purpose="retire",
+        duration="medium",
+        family=False,
+    )
+    assert len(result) > 0
+    names = [r["visa_name"] for r in result]
+    e33f_names = [n for n in names if "E33F" in n]
+    assert e33f_names == ["E33F Second Home Senior (1 Year, Altus/Onshore)"]
+    assert all(not n.endswith("(Extend)") for n in names)
+    for internal_name in (
+        "Retirement (Altus/Onshore)",
+        "Retirement (Offshore)",
+        "Retirement (Extend)",
+    ):
+        assert internal_name not in names
+
+
+def test_recommend_visas_retire_omits_stub_internal_row_that_would_rank_first() -> None:
+    """Guilt: a stub catalogue row with 'internal': True and all retire keywords
+    is omitted even when its score would rank first ahead of a public row."""
+    stub_prices = {
+        "services": {
+            "kitas_permits": {
+                "Internal Retirement Top (Altus/Onshore)": {
+                    "name": "Internal Retirement Top (Altus/Onshore)",
+                    "internal": True,
+                    "price": "16.000.000 IDR",
+                    "duration": "1 year",
+                    "validity": "1 year",
+                    "keywords": [
+                        "e33f",
+                        "retirement",
+                        "retire",
+                        "pensioner",
+                        "pension",
+                    ],
+                },
+                "E33F Second Home Senior (1 Year, Altus/Onshore)": {
+                    "name": "E33F Second Home Senior (1 Year, Altus/Onshore)",
+                    "price": "16.000.000 IDR",
+                    "duration": "1 year",
+                    "validity": "1 year",
+                    "keywords": ["retire"],
+                },
+            },
+        },
+    }
+    mock_pricing = MagicMock()
+    mock_pricing.prices = stub_prices
+
+    with patch(
+        "backend.services.visa_oracle.visa_oracle_service.get_pricing_service",
+        return_value=mock_pricing,
+    ):
+        svc = VisaOracleService()
+
+    result = svc.recommend_visas(
+        nationality="Australian",
+        purpose="retire",
+        duration="medium",
+        family=False,
+    )
+    names = [r["visa_name"] for r in result]
+    assert "Internal Retirement Top (Altus/Onshore)" not in names
+    assert names == ["E33F Second Home Senior (1 Year, Altus/Onshore)"]
+
+
+def test_recommend_visas_retire_innocence_other_purposes_and_kitap() -> None:
+    """Innocence: other purposes and Retirement KITAP + MERP metadata/scoring remain intact."""
+    from backend.services.pricing.pricing_service import PricingService
+    from backend.services.visa_oracle.visa_oracle_service import VISA_METADATA
+
+    assert VISA_METADATA["Retirement KITAP + MERP"] == {
+        "duration": "5 years",
+        "validity": "KITAP — permanent residence",
+    }
+    assert "E33F Second Home Senior (1 Year, Offshore)" in VISA_METADATA
+    assert "E33F Second Home Senior (1 Year, Altus/Onshore)" in VISA_METADATA
+    assert "E33F Second Home Senior (Extend)" in VISA_METADATA
+
+    real_pricing = PricingService()
+    with patch(
+        "backend.services.visa_oracle.visa_oracle_service.get_pricing_service",
+        return_value=real_pricing,
+    ):
+        svc = VisaOracleService()
+
+    all_types = {v["name"] for v in svc.get_all_visa_types()}
+    assert "Retirement KITAP + MERP" in all_types
+    assert "E33F Second Home Senior (1 Year, Offshore)" in all_types
+    assert "Retirement (Offshore)" not in all_types
+
+    work_res = svc.recommend_visas(
+        nationality="British",
+        purpose="work",
+        duration="medium",
+        family=False,
+    )
+    assert any("Working KITAS" in r["visa_name"] for r in work_res)

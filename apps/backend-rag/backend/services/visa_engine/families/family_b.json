@@ -1,0 +1,95 @@
+{
+  "family": "B",
+  "name": "Visas on arrival",
+  "category": "Visit Visa",
+  "permit_class": "VOA",
+  "entry_type": "SINGLE",
+  "law_dir": "law/B",
+  "questions": {
+    "activity": {
+      "text_en": "What is the main purpose of your visit?",
+      "options": {
+        "holiday_family_meetings_transit": "B1",
+        "official_government_duties": "B4"
+      },
+      "labels_en": {
+        "holiday_family_meetings_transit": "Tourism, family visits, meetings, incentives, conventions, exhibitions or transit.",
+        "official_government_duties": "Carry out official government duties."
+      }
+    },
+    "nationality": {
+      "text_en": "What is the nationality of your passport? Answer with its ISO 3166-1 two-letter country code (for example AU).",
+      "kind": "nationality"
+    },
+    "eligible_nationality": {
+      "text_en": "Has your nationality been confirmed as eligible for visa on arrival?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "travel_status": {
+      "text_en": "Which travel status applies to you?",
+      "options": {
+        "national_passport": true,
+        "temporary_or_emergency_passport": true,
+        "stateless_or_other_non_national_document": false
+      }
+    },
+    "stay_days": {
+      "text_en": "How many days do you need to stay?",
+      "kind": "integer"
+    }
+  },
+  "visas": {
+    "B1": {
+      "sponsor_required": false,
+      "sponsor": "NOT_REQUIRED",
+      "is_sold": true,
+      "stay_days": 30,
+      "stay_options": [
+        {
+          "value": 30,
+          "unit": "DAY"
+        }
+      ],
+      "extendable": true,
+      "max_total_days": 60,
+      "price_keys": [
+        {
+          "category": "single_entry_visas",
+          "item_key": "B1 Visa on Arrival (VOA)"
+        },
+        {
+          "category": "single_entry_visas",
+          "item_key": "B1 Visa on Arrival Extension"
+        }
+      ],
+      "requires_questions": ["nationality", "travel_status"]
+    },
+    "B4": {
+      "sponsor_required": false,
+      "sponsor": "NOT_REQUIRED",
+      "is_sold": null,
+      "stay_days": 30,
+      "stay_options": [
+        {
+          "value": 30,
+          "unit": "DAY"
+        }
+      ],
+      "extendable": true,
+      "max_total_days": 60,
+      "price_keys": [],
+      "requires_questions": ["eligible_nationality", "travel_status"]
+    }
+  },
+  "notes": [
+    "Both codes allow one entry and an initial 30 DAY stay, with one extension to a total of 60 days. Owner ruling 2026-10-19: B1 is 30 days, not a 60-day initial product.",
+    "B4 requires a visa-on-arrival subject nationality but its card contains no country list. Eligibility must be confirmed from the official list; unknown answers ask again.",
+    "OWNER RULING 2026-10-19: B1 decides from the official-portal list in its card (eligible_nationalities, 97 entries, retrieved 2026-10-19; instrument Kepmenkumham M.HH-02.GR.01.06 Tahun 2024, ditetapkan 2024-01-09, from a secondary source, annex identity with the portal list TO_VERIFY), separate from the page verbatim. The nationality answer is an ISO 3166-1 alpha-2 code; an unknown code is asked again; a known unlisted code is NOT_COVERED. A1-eligible nationals on this list remain B1-eligible.",
+    "Temporary/emergency passports are explicitly allowed. Stateless persons and other listed non-national documents are excluded. Passport validity, photographs, tickets and payment remain the Law checklist.",
+    "Both pages say no sponsor. B4 has no exact price key and is_sold stays null. B1 links only its exact initial and extension keys; PNBP is reference only.",
+    "The pages mention conversion through bridging, not an express ITAP entitlement. DB itap and apply_channel stay null; e-VOA validity of 90 days is not a stay option."
+  ]
+}

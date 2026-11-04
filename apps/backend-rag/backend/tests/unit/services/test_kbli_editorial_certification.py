@@ -1,0 +1,302 @@
+from __future__ import annotations
+
+import copy
+import json
+
+import pytest
+
+from backend.scripts.reindex_kbli_2025_final import SOURCE_FILE
+from backend.services.kbli_editorial_certification import (
+    assert_certified_source_dataset,
+    load_editorial_registry,
+    matches_editorial_certification,
+    neutral_kbli_chat_opener_text,
+    validate_editorial_registry,
+)
+
+STATUTORY_CLOSURES_59 = frozenset(
+    ["01287", "11010", "11020", "92000", "99000"]
+    + [
+        "84111", "84112", "84113", "84114", "84115", "84119", "84121", "84122", "84123",
+        "84124", "84125", "84126", "84129", "84130", "84141", "84142", "84143", "84144",
+        "84145", "84146", "84147", "84148", "84149", "84210", "84221", "84222", "84223",
+        "84224", "84231", "84232", "84233", "84234", "84300",
+    ]
+    + [
+        "59111", "59121", "59131", "60311", "85101", "85201", "85311", "85315", "85321",
+        "85401", "85403", "85550", "85560", "86101", "86104", "87201", "87301", "91111",
+        "91121", "91211", "91221",
+    ]
+)  # fmt: skip
+assert len(STATUTORY_CLOSURES_59) == 59
+
+# The opening of the basis `scripts/kbli_filiera/apply_residual_open.py` writes.
+# Matching on the prefix, not the whole string, keeps this test from pinning the
+# basis PROSE — that is the compiler's own suite's job.
+RESIDUAL_BASIS_PREFIX = "Perpres 10/2021 Pasal 3(1)(d) + 3(2)"
+
+
+@pytest.fixture(scope="module")
+def registry() -> dict:
+    return load_editorial_registry()
+
+
+@pytest.fixture(scope="module")
+def records() -> dict[str, dict]:
+    payload = json.loads(SOURCE_FILE.read_bytes())
+    return {record["kode_kbli_2025"]: record for record in payload["data"]}
+
+
+def test_registry_is_bound_to_the_exact_canonical_dataset(registry: dict) -> None:
+    source_bytes = SOURCE_FILE.read_bytes()
+    assert_certified_source_dataset(source_bytes, registry)
+
+    with pytest.raises(ValueError, match="do not match"):
+        assert_certified_source_dataset(source_bytes + b"\n", registry)
+
+
+def test_canonical_certification_partition_is_exact(
+    registry: dict,
+    records: dict[str, dict],
+) -> None:
+    certified = {
+        code
+        for code, record in records.items()
+        if matches_editorial_certification(
+            "canonicalIntel",
+            code,
+            record,
+            record["intel_2026"],
+            registry,
+        )
+    }
+
+    assert certified == set(registry["canonicalIntel"])
+    assert len(certified) == 35
+    # SAETTA-20260915 W-H PR-3a moved 55201/55203/79903 from declared_gap to
+    # located (Perpres 49/2021 Lampiran II allocation); none of the three is
+    # a certified canonicalIntel entry, so they join the pre-existing
+    # located-but-uncertified set. PR-3c v3 de-certified 12 further codes
+    # (10214/16221/22121/47111/50111/50112/51102/55105/65111/79122/95220/
+    # 96100) whose prose still claimed an openness their own tuple denies —
+    # they join the same set (fail closed: withheld, not re-authored blind).
+    # PR-3f de-certifies one more, canonicalIntel-only: 47221's whatYouNeed
+    # claimed a UMKM/Koperasi partnership condition the record's own
+    # pma_kondisi denies (a distribution-network/location requirement
+    # instead, Perpres 10/2021 Lampiran III line 4202 #44). 47221 stays
+    # located and keeps its mouthGold certification untouched.
+    # 2026-09-25: 50121 de-certified (canonicalIntel only). Its pma_kondisi/
+    # pma_nota cure moved the certified pmaFingerprint, and no compiler
+    # re-certifies a moved fingerprint. 50121 stays located (TERBATAS/49
+    # unchanged). 36 -> 35.
+    # W-H PR-3b: 8 specialised-retail codes located under the Lampiran II
+    # allocation, prose not certified.
+    # 2026-09-18 naso lot: 10307 10308 16291 16293 32201 55106 located under
+    # the Lampiran II allocation, prose not certified.
+    # 2026-09-18 naso PR-2: 13133 located by the union of Lampiran II item 11
+    # and Lampiran III entry #2, prose re-authored by spec, not certified.
+    # 2026-09-18 naso PR-3: the 59 statutory closures (TERTUTUP/0 unchanged)
+    # relabelled declared_gap -> located by apply_statutory_closures.py; none
+    # is a certified canonicalIntel entry (86101's gold spec certifies
+    # mouthGold, not canonicalIntel).
+    # 2026-09-18 naso PR-4 (residual lot 1): 329 codes relabelled
+    # declared_gap -> located by apply_residual_open.py under the RESIDUAL
+    # article. Enumerating them here would be a second copy of the lot; they
+    # are identified by the basis the compiler writes, which is the property
+    # that matters — a located code arriving WITHOUT that basis still has to be
+    # named below, and a 330th code carrying it breaks the count.
+    # 2026-09-21 naso PR-5 (residual lot 2): 260 more codes relabelled the
+    # same way — same compiler, same `BASIS` string, ATTENZIONE_FASCIA_BALI
+    # Bali axis instead of OK_or_HIGHER_RISK — so they carry the identical
+    # basis prefix and join the same set. 329->589.
+    # 2026-09-23 (#7136 OSS refresh ADOPT carry): 93113/93193 carried into
+    # lot 1/lot 2 by apply_residual_open.py itself (reached by the lot rule,
+    # not previously listed) — same compiler, same BASIS prefix, join the
+    # same set. 589->591.
+    residual_lot = {
+        code
+        for code, record in records.items()
+        if str(record.get("pma_official_basis") or "").startswith(RESIDUAL_BASIS_PREFIX)
+    }
+    assert len(residual_lot) == 591
+    assert residual_lot.isdisjoint(certified)
+    assert all(
+        records[code].get("pma_verification_status") == "located"
+        for code in residual_lot
+    )
+    # No member of the lot is in a division the Perpres hands to sector law
+    # (Pasal 11(2): 64/65/66) or in one whose own statute this lane never read
+    # (99 00 00-00 10) — the withholding legs, asserted where a client-facing
+    # suite can see them and not only inside the compiler's own tests.
+    assert not {code[:2] for code in residual_lot} & {
+        "64", "65", "66", "09", "35", "49", "50", "51", "52", "53", "61",
+    }  # fmt: skip
+    assert {
+        code
+        for code, record in records.items()
+        if record.get("pma_verification_status") == "located"
+    } - certified - residual_lot == STATUTORY_CLOSURES_59 | {
+        "10722",
+        "47222",
+        "50134",
+        "55201",
+        "55203",
+        "73100",
+        "79903",
+        "96220",
+        "10214",
+        "16221",
+        "22121",
+        "47111",
+        "50111",
+        "50112",
+        "51102",
+        "55105",
+        "65111",
+        "79122",
+        "95220",
+        "96100",
+        "47221",
+        "47241",
+        "47242",
+        "47244",
+        "47245",
+        "47246",
+        "47249",
+        "47712",
+        "47722",
+        "10307",
+        "10308",
+        "16291",
+        "16293",
+        "32201",
+        "55106",
+        "13133",
+        "50121",
+    }
+
+
+def test_content_pma_and_code_drift_fail_closed(
+    registry: dict,
+    records: dict[str, dict],
+) -> None:
+    # 47111 was de-certified in PR-3c v3 (canonicalIntel AND mouthGold) — a
+    # still-certified code exercises the drift checks; 47111's withheld state
+    # is asserted separately below.
+    original = records["41016"]
+    content = original["intel_2026"]
+    assert matches_editorial_certification(
+        "canonicalIntel",
+        "41016",
+        original,
+        content,
+        registry,
+    )
+
+    changed_content = copy.deepcopy(content)
+    changed_content["whatItMeans"] += "!"
+    assert not matches_editorial_certification(
+        "canonicalIntel",
+        "41016",
+        original,
+        changed_content,
+        registry,
+    )
+
+    changed_pma = copy.deepcopy(original)
+    changed_pma["pma_max_asing"] = 1
+    assert not matches_editorial_certification(
+        "canonicalIntel",
+        "41016",
+        changed_pma,
+        content,
+        registry,
+    )
+
+    wrong_code = copy.deepcopy(original)
+    wrong_code["kode_kbli_2025"] = "65121"
+    assert not matches_editorial_certification(
+        "canonicalIntel",
+        "41016",
+        wrong_code,
+        content,
+        registry,
+    )
+
+
+def test_decertified_code_is_withheld_not_reauthored(
+    registry: dict,
+    records: dict[str, dict],
+) -> None:
+    """GATE-6593 (predecessor #6593/#6594) BLOCKED partly on a stale test that
+    still pinned a de-certified code as certified. 47111 lost both
+    canonicalIntel and mouthGold certification in this PR (PR-3c v3) — assert
+    the withdrawal fails closed rather than silently re-matching."""
+    record = records["47111"]
+    assert "47111" not in registry["canonicalIntel"]
+    assert "47111" not in registry["mouthGold"]
+    assert not matches_editorial_certification(
+        "canonicalIntel",
+        "47111",
+        record,
+        record["intel_2026"],
+        registry,
+    )
+
+
+def test_decertified_canonical_intel_leaves_mouth_gold_untouched(
+    registry: dict,
+    records: dict[str, dict],
+) -> None:
+    """W-H PR-3f: 47221's canonicalIntel.whatYouNeed claimed a UMKM/Koperasi
+    partnership condition the record's own pma_kondisi denies (a
+    distribution-network/location requirement instead, Perpres 10/2021
+    Lampiran III line 4202 #44). De-certify canonicalIntel ONLY — assert the
+    withdrawal fails closed there while mouthGold's separately reviewed
+    prose for the same code stays certified, proving the scope was exact."""
+    record = records["47221"]
+    assert "47221" not in registry["canonicalIntel"]
+    assert not matches_editorial_certification(
+        "canonicalIntel",
+        "47221",
+        record,
+        record["intel_2026"],
+        registry,
+    )
+    assert "47221" in registry["mouthGold"]
+
+
+def test_explicit_bad_registry_never_falls_back_to_the_default(
+    records: dict[str, dict],
+) -> None:
+    # 41016 (not 47111): 47111 is no longer certified in the real registry,
+    # so `matches_editorial_certification(..., {})` would pass for it
+    # regardless of whether the empty-registry argument is actually
+    # respected — a fallback bug (e.g. `registry or load_editorial_registry()`
+    # silently substituting the real default for a falsy `{}`) would produce
+    # the SAME "not matched" result for 47111, since 47111 isn't in the real
+    # registry either. 41016 IS certified in the real registry, so the same
+    # fallback bug would flip this assertion to matched=True and fail it.
+    record = records["41016"]
+    assert not matches_editorial_certification(
+        "canonicalIntel",
+        "41016",
+        record,
+        record["intel_2026"],
+        {},
+    )
+    with pytest.raises(ValueError, match="expected None"):
+        assert_certified_source_dataset(SOURCE_FILE.read_bytes(), {})
+
+
+def test_registry_validation_and_neutral_opener(registry: dict) -> None:
+    assert validate_editorial_registry(copy.deepcopy(registry)) == registry
+    malformed = copy.deepcopy(registry)
+    malformed["canonicalIntel"]["41016"]["contentSha256"] = "not-a-digest"
+    with pytest.raises(ValueError, match="contentSha256"):
+        validate_editorial_registry(malformed)
+
+    opener = neutral_kbli_chat_opener_text("47111")
+    assert opener.startswith("Ask me about KBLI 47111")
+    assert "%" not in opener
+    assert "Bali" not in opener

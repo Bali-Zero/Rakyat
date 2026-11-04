@@ -1,0 +1,1209 @@
+"""
+Unit tests for Article Composer API
+
+Tests cover:
+- Article enrichment with Claude OAuth (compose endpoint, v5 back from DeepSeek/TP1
+  after the upstream `claude` CLI non-TTY hang on Fly — see
+  `memory/feedback_claude_cli_linux_hang.md`)
+- Article publishing to GitHub (publish endpoint)
+- Helper functions (slug generation, MDX content generation)
+- Error handling and edge cases
+"""
+
+import base64
+import json
+from datetime import datetime, timezone
+from io import BytesIO
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from fastapi.testclient import TestClient
+from PIL import Image
+
+from backend.app.routers.article_composer import (
+    BaliZeroTake,
+    ComposeRequest,
+    EnrichedArticle,
+    ExtraSection,
+    NextSteps,
+    PublishRequest,
+    TLDRSection,
+    _plain_text_snippet,
+    build_enrichment_prompt,
+    generate_mdx_content,
+    generate_slug,
+    router,
+)
+from backend.services.article_composer.claude_client import (
+    ClaudeBudgetExhausted,
+    ClaudeOAuthMessage,
+    _TextBlock,
+    _Usage,
+)
+from backend.services.cover_images import _cover_as_jpeg, cover_card_as_jpeg
+
+# --- FIXTURES ---
+
+
+def _png_bytes(width: int = 64, height: int = 40) -> bytes:
+    """Create a valid RGB PNG for cover publication tests."""
+    output = BytesIO()
+    Image.new("RGB", (width, height), color="navy").save(output, format="PNG")
+    return output.getvalue()
+
+
+def test_cover_helper_converts_png_to_jpeg_and_crops_card_to_16_10() -> None:
+    """Covers stay full-size while cards are cropped, never stretched or padded."""
+    hero = _cover_as_jpeg(_png_bytes(width=2100, height=900))
+    card = cover_card_as_jpeg(hero)
+
+    with Image.open(BytesIO(hero)) as hero_image:
+        assert hero_image.format == "JPEG"
+        assert hero_image.mode == "RGB"
+        assert hero_image.size == (2100, 900)
+
+    with Image.open(BytesIO(card)) as card_image:
+        assert card_image.format == "JPEG"
+        assert card_image.mode == "RGB"
+        assert abs((card_image.width / card_image.height) - 1.6) < 0.01
+        assert card_image.width <= 2100
+        assert card_image.height <= 900
+
+
+@pytest.fixture
+def test_client():
+    """Create FastAPI test client.
+
+    Disables the slowapi rate limiter so tests that hit /compose multiple
+    times in a row don't trip the 10/minute cap meant for real clients, and
+    re-enables it afterwards: the limiter is module-global, so leaving it off
+    silently disabled it for every later test on the same xdist worker
+    (test_compose_article_rate_limit then saw 11x500 and never a 429). The
+    restore runs in `finally` so a setup exception between the mutation and
+    the `yield` (e.g. `FastAPI()`/`include_router`/`TestClient` raising)
+    still restores it — a bare post-yield restore does not run in that case.
+    """
+    from fastapi import FastAPI
+
+    from backend.app.dependencies import get_current_user
+    from backend.app.routers.article_composer import limiter
+
+    was_enabled = limiter.enabled
+    limiter.enabled = False
+    try:
+        app = FastAPI()
+        app.include_router(router)
+        # /publish pushes to the public website — admin-only (Case OS R3 gate).
+        # These tests exercise the handler body, so they authenticate as an admin;
+        # the gate itself is covered by test_caseos_r3_admin_gates.py.
+        app.dependency_overrides[get_current_user] = lambda: {
+            "id": "u-1",
+            "email": "zero@balizero.com",
+            "role": "admin",
+        }
+        yield TestClient(app)
+    finally:
+        limiter.enabled = was_enabled
+
+
+def test_test_client_fixture_restores_limiter_on_setup_exception():
+    """A setup exception between the mutation and the `yield` must not leave
+    the module-global `limiter.enabled = False` behind for later tests.
+
+    Regression for PR #7444's REWORK: that version restored the limiter only
+    after `yield`, so a `FastAPI()`/`include_router`/`TestClient` failure
+    during setup skipped the restore entirely and leaked the disabled
+    limiter to whatever ran next on the same xdist worker.
+    """
+    from backend.app.routers.article_composer import limiter
+
+    original_enabled = limiter.enabled
+    limiter.enabled = True  # known starting state, independent of test order
+
+    generator = test_client.__wrapped__()
+    try:
+        with patch("fastapi.FastAPI", side_effect=RuntimeError("boom during setup")):
+            with pytest.raises(RuntimeError, match="boom during setup"):
+                next(generator)
+
+        assert limiter.enabled is True, (
+            "a setup exception left limiter.enabled=False behind for later tests"
+        )
+    finally:
+        generator.close()
+        limiter.enabled = original_enabled
+
+
+@pytest.fixture
+def sample_compose_request():
+    """Sample compose request"""
+    return ComposeRequest(
+        title="New Visa Regulation 2026",
+        content="The Indonesian government announced new visa regulations affecting expats in Bali and across the archipelago. The new rules require additional documentation for work permit renewals and introduce stricter compliance checks for foreign workers.",
+        category="immigration",
+        source_url="https://example.com/news",
+        author="Test Author",
+    )
+
+
+@pytest.fixture
+def sample_enriched_article():
+    """Sample enriched article"""
+    return EnrichedArticle(
+        title="New Visa Regulation 2026",
+        headline="Indonesia Tightens Visa Rules: What Expats Need to Know",
+        tldr=TLDRSection(
+            should_worry="Yes",
+            what="New visa regulations require additional documentation",
+            who="All expats on work permits",
+            when="Effective March 2026",
+            risk_level="High",
+        ),
+        facts="The Indonesian government has announced significant changes to visa regulations. "
+        * 50,  # ~500 words
+        bali_zero_take=BaliZeroTake(
+            hidden_insight="This is part of a broader immigration crackdown",
+            our_analysis="The timing suggests coordination with other ASEAN countries",
+            our_advice="Review your visa status immediately and consult immigration lawyer",
+        ),
+        next_steps=NextSteps(
+            expat=["Check visa expiry", "Gather required documents"],
+            investor=["Review company sponsorship", "Update compliance procedures"],
+        ),
+        category="immigration",
+        priority="high",
+        relevance_score=85,
+        ai_summary="Indonesia introduces stricter visa requirements for expats starting March 2026",
+        ai_tags=["visa", "immigration", "regulation", "expat", "compliance"],
+        suggested_components=["timeline", "checklist", "alert-box"],
+        cover_image=None,
+        source="Test Author",
+        source_url="https://example.com/news",
+        enriched_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def _make_llm_message(payload: dict) -> ClaudeOAuthMessage:
+    """Build a ClaudeOAuthMessage carrying the given JSON payload.
+
+    Mirrors what call_claude_with_retry() returns after the Claude OAuth
+    round-trip, so tests can patch the wrapper without touching any
+    provider SDK.
+    """
+    return ClaudeOAuthMessage(
+        content=[_TextBlock(text=json.dumps(payload))],
+        usage=_Usage(input_tokens=1000, output_tokens=1500),
+        model="claude-sonnet-5",
+        token_label="token_1",
+    )
+
+
+@pytest.fixture
+def mock_llm_response():
+    """Mock Claude response shaped as ClaudeOAuthMessage."""
+    return _make_llm_message(
+        {
+            "headline": "Indonesia Tightens Visa Rules: What Expats Need to Know",
+            "tldr": {
+                "should_worry": "Yes",
+                "what": "New visa regulations require additional documentation",
+                "who": "All expats on work permits",
+                "when": "Effective March 2026",
+                "risk_level": "High",
+            },
+            "facts": "The Indonesian government has announced significant changes. " * 80,
+            "bali_zero_take": {
+                "hidden_insight": "This is part of broader immigration crackdown",
+                "our_analysis": "Timing suggests ASEAN coordination",
+                "our_advice": "Review visa status immediately",
+            },
+            "next_steps": {
+                "expat": ["Check visa expiry", "Gather documents"],
+                "investor": ["Review sponsorship", "Update procedures"],
+            },
+            "category": "immigration",
+            "priority": "high",
+            "relevance_score": 85,
+            "ai_summary": "Indonesia introduces stricter visa requirements",
+            "ai_tags": ["visa", "immigration", "regulation"],
+            "suggested_components": ["timeline", "checklist"],
+        },
+    )
+
+
+# --- COMPOSE ENDPOINT TESTS ---
+
+
+@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch("backend.app.routers.article_composer.call_claude_with_retry")
+def test_compose_article_success(
+    mock_call,
+    test_client,
+    sample_compose_request,
+    mock_llm_response,
+):
+    """Test successful article composition via the Claude OAuth door."""
+    mock_call.return_value = mock_llm_response
+
+    response = test_client.post(
+        "/api/articles/compose",
+        json=sample_compose_request.model_dump(),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["article"] is not None
+    assert data["article"]["headline"] == "Indonesia Tightens Visa Rules: What Expats Need to Know"
+    assert data["article"]["priority"] == "high"
+    assert data["api_cost_cents"] >= 0
+    assert "image_prompt" not in data["article"]
+    mock_call.assert_called_once()
+    assert mock_call.call_args.kwargs.get("model") == "claude-sonnet-5"
+
+
+@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch("backend.app.routers.article_composer.call_claude_with_retry")
+def test_compose_article_priority_word_count(mock_call, test_client):
+    """Test that facts section length varies by priority (high=600, medium=500, low=400 words)."""
+    for priority, expected_words in (("high", 600), ("medium", 500), ("low", 400)):
+        facts_text = " ".join(["word"] * expected_words)
+        mock_call.return_value = _make_llm_message(
+            {
+                "headline": "Test Headline",
+                "tldr": {
+                    "should_worry": "Depends",
+                    "what": "Test",
+                    "who": "Test",
+                    "when": "Test",
+                    "risk_level": "Medium",
+                },
+                "facts": facts_text,
+                "bali_zero_take": {
+                    "hidden_insight": "Test",
+                    "our_analysis": "Test",
+                    "our_advice": "Test",
+                },
+                "next_steps": {"expat": [], "investor": []},
+                "category": "business",
+                "priority": priority,
+                "relevance_score": 50,
+                "ai_summary": "Test",
+                "ai_tags": [],
+                "suggested_components": [],
+            },
+        )
+
+        request = ComposeRequest(
+            title="Test Article Title",
+            content=(
+                "Test content for article enrichment that must be at least one hundred "
+                "characters long to pass the validation check in the compose request "
+                "validator model."
+            ),
+            category="business",
+        )
+        response = test_client.post("/api/articles/compose", json=request.model_dump())
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["article"]["priority"] == priority
+        facts = data["article"]["facts"]
+        word_count = len(facts.split())
+        assert word_count >= expected_words - 50
+
+
+@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch("backend.app.routers.article_composer.call_claude_with_retry")
+def test_compose_article_json_cleanup(mock_call, test_client, sample_compose_request):
+    """Test that markdown JSON blocks are cleaned correctly."""
+    minimal_payload = {
+        "headline": "Test",
+        "tldr": {
+            "should_worry": "No",
+            "what": "Test",
+            "who": "Test",
+            "when": "Test",
+            "risk_level": "Low",
+        },
+        "facts": "Test facts",
+        "bali_zero_take": {
+            "hidden_insight": "Test",
+            "our_analysis": "Test",
+            "our_advice": "Test",
+        },
+        "next_steps": {"expat": [], "investor": []},
+        "category": "business",
+        "priority": "low",
+        "relevance_score": 30,
+        "ai_summary": "Test",
+        "ai_tags": [],
+        "suggested_components": [],
+    }
+    payload_json = json.dumps(minimal_payload)
+
+    for wrapper in (f"```json\n{payload_json}\n```", f"```\n{payload_json}\n```", payload_json):
+        mock_call.return_value = ClaudeOAuthMessage(
+            content=[_TextBlock(text=wrapper)],
+            usage=_Usage(input_tokens=500, output_tokens=800),
+            model="deepseek-v4-flash-0731",
+            token_label="deepseek_cache_hit=0",
+        )
+
+        response = test_client.post(
+            "/api/articles/compose",
+            json=sample_compose_request.model_dump(),
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+
+@patch.dict("os.environ", {}, clear=True)
+def test_compose_article_missing_api_key(test_client, sample_compose_request):
+    """Test compose fails gracefully when API key is missing."""
+    response = test_client.post(
+        "/api/articles/compose",
+        json=sample_compose_request.model_dump(),
+    )
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["code"] == "API_KEY_NOT_CONFIGURED"
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in detail["message"]
+
+
+@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch("backend.app.routers.article_composer.call_claude_with_retry")
+def test_compose_article_json_parse_error(
+    mock_call,
+    test_client,
+    sample_compose_request,
+):
+    """Test compose handles JSON parse errors from the LLM."""
+    mock_call.return_value = ClaudeOAuthMessage(
+        content=[_TextBlock(text="Invalid JSON {{{")],
+        usage=_Usage(input_tokens=500, output_tokens=100),
+        model="claude-sonnet-5",
+        token_label="token_1",
+    )
+
+    response = test_client.post(
+        "/api/articles/compose",
+        json=sample_compose_request.model_dump(),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is False
+    assert data["error"]["code"] in {"INVALID_JSON_RESPONSE", "JSON_PARSE_ERROR"}
+
+
+@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch("backend.app.routers.article_composer.call_claude_with_retry")
+def test_compose_article_api_error(mock_call, test_client, sample_compose_request):
+    """Test compose handles Claude OAuth errors."""
+    from backend.services.article_composer.claude_client import ClaudeClientError
+
+    mock_call.side_effect = ClaudeClientError("all OAuth seats failed")
+
+    response = test_client.post(
+        "/api/articles/compose",
+        json=sample_compose_request.model_dump(),
+    )
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["code"] == "API_ERROR"
+    assert "LLM" in detail["message"]
+
+
+def test_compose_status_configured(test_client):
+    """Test compose status endpoint when configured"""
+    with patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"}):
+        response = test_client.get("/api/articles/compose/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["configured"] is True
+        assert data["api_key_set"] is True
+        assert data["model"] == "claude-sonnet-5"
+        assert data["provider"] == "claude_oauth"
+        assert {"breaker_state", "last_error", "last_success_at"} <= set(data)
+
+
+def test_compose_status_not_configured(test_client):
+    """Test compose status endpoint when not configured"""
+    with patch.dict("os.environ", {}, clear=True):
+        response = test_client.get("/api/articles/compose/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["configured"] is False
+        assert data["api_key_set"] is False
+
+
+# --- PUBLISH ENDPOINT TESTS ---
+
+
+@pytest.mark.asyncio
+@patch("backend.services.integrations.github_publisher.github_publisher")
+async def test_publish_article_with_cover_image(
+    mock_publisher,
+    test_client,
+    sample_enriched_article,
+):
+    """Test publishing article with cover image (base64)"""
+    # Setup mock — publish goes via PR + auto-merge (protected branch path)
+    mock_publisher.is_configured = True
+    mock_publisher.check_file_exists = AsyncMock(return_value=False)
+    mock_publisher.create_commit_with_files = AsyncMock(
+        return_value={
+            "success": True,
+            "commit_sha": "abc123",
+            "files_count": 2,
+            "branch": "auto-publish/abc123",
+            "pull_request_url": "https://github.com/Balizero1987/Teman2/pull/42",
+            "pull_request_number": 42,
+            "auto_merge_enabled": True,
+        },
+    )
+
+    # Create base64 image
+    image_data = _png_bytes()
+    image_base64 = base64.b64encode(image_data).decode("utf-8")
+
+    # Call endpoint
+    request = PublishRequest(
+        article=sample_enriched_article,
+        cover_image_base64=image_base64,
+        cover_image_filename="test-article.jpg",
+        position="normal",
+    )
+    response = test_client.post("/api/articles/publish", json=request.model_dump())
+
+    # Assertions
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["article_url"] is not None
+    assert data["commit_sha"] == "abc123"
+    assert data["image_path"] == "/static/news/test-article.jpg"
+
+    # Verify atomic commit was called via the pull-request path
+    mock_publisher.create_commit_with_files.assert_called_once()
+    call_args = mock_publisher.create_commit_with_files.call_args
+    files = call_args[1]["files"]
+    assert {entry["path"] for entry in files} == {
+        "apps/mouth/public/static/news/test-article.jpg",
+        "apps/mouth/public/static/news/test-article_card.jpg",
+        "apps/mouth/src/content/articles/immigration/indonesia-tightens-visa-rules-what-expats-need-to-know.mdx",
+    }
+    mdx = next(entry["content"] for entry in files if entry["path"].endswith(".mdx"))
+    assert 'cardImage: "/static/news/test-article_card.jpg"' in mdx
+    assert call_args[1]["pull_request"] is True
+    assert call_args[1]["must_not_exist_paths"] == [
+        "apps/mouth/src/content/articles/immigration/indonesia-tightens-visa-rules-what-expats-need-to-know.mdx"
+    ]
+
+
+@pytest.mark.asyncio
+@patch("backend.services.integrations.github_publisher.github_publisher")
+async def test_publish_article_without_cover_image(
+    mock_publisher,
+    test_client,
+    sample_enriched_article,
+):
+    """Test publishing article without cover image (single MDX file, PR path)"""
+    # Setup mock — even a single file goes via the PR path now
+    mock_publisher.is_configured = True
+    mock_publisher.check_file_exists = AsyncMock(return_value=False)
+    mock_publisher.create_commit_with_files = AsyncMock(
+        return_value={
+            "success": True,
+            "commit_sha": "def456",
+            "files_count": 1,
+            "branch": "auto-publish/def456",
+            "pull_request_url": "https://github.com/Balizero1987/Teman2/pull/43",
+            "pull_request_number": 43,
+            "auto_merge_enabled": True,
+        },
+    )
+
+    # Call endpoint
+    request = PublishRequest(article=sample_enriched_article, position="normal")
+    response = test_client.post("/api/articles/publish", json=request.model_dump())
+
+    # Assertions
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["image_path"] is None
+
+    # Verify the commit was made via the pull-request path (single MDX file)
+    mock_publisher.create_commit_with_files.assert_called_once()
+    call_args = mock_publisher.create_commit_with_files.call_args
+    assert len(call_args[1]["files"]) == 1  # MDX only
+    assert call_args[1]["pull_request"] is True
+    assert call_args[1]["must_not_exist_paths"] == [call_args[1]["files"][0]["path"]]
+
+    # The returned article_url uses the SERVED category ("visas"), not the
+    # content folder the MDX was written to ("immigration" — see
+    # category_map above). Regression guard for the folder-vs-served-category
+    # bug: see backend/services/article_routes.py.
+    assert call_args[1]["files"][0]["path"].startswith(
+        "apps/mouth/src/content/articles/immigration/"
+    )
+    assert data["article_url"].startswith("https://balizero.com/visas/")
+
+
+@pytest.mark.asyncio
+@patch("backend.services.integrations.github_publisher.github_publisher")
+async def test_publish_article_url_uses_served_category_not_content_folder(
+    mock_publisher,
+    test_client,
+    sample_enriched_article,
+):
+    """A ``business_regulations`` article is written to the
+    ``business_regulations`` content folder (unmapped in ``category_map`` so
+    it passes through as its own folder name) but MUST be served at
+    ``/business/`` — the site only routes served categories, not folder
+    names. Measured live 2026-09-05: the folder-named URL 404s.
+    """
+    mock_publisher.is_configured = True
+    mock_publisher.check_file_exists = AsyncMock(return_value=False)
+    mock_publisher.create_commit_with_files = AsyncMock(
+        return_value={
+            "success": True,
+            "commit_sha": "regcat1",
+            "files_count": 1,
+            "branch": "auto-publish/regcat1",
+            "pull_request_number": 91,
+            "auto_merge_enabled": True,
+        },
+    )
+
+    article = sample_enriched_article.model_copy(update={"category": "business_regulations"})
+    request = PublishRequest(article=article, position="normal", slug="new-kbli-rules")
+    response = test_client.post("/api/articles/publish", json=request.model_dump())
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+
+    call_args = mock_publisher.create_commit_with_files.call_args
+    mdx_path = call_args[1]["files"][0]["path"]
+    assert mdx_path == "apps/mouth/src/content/articles/business_regulations/new-kbli-rules.mdx"
+    assert data["article_url"] == "https://balizero.com/business/new-kbli-rules"
+
+
+@pytest.mark.asyncio
+@patch("backend.services.integrations.github_publisher.github_publisher")
+async def test_hero_publication_commits_article_cover_and_layout_atomically(
+    mock_publisher,
+    test_client,
+    sample_enriched_article,
+):
+    mock_publisher.is_configured = True
+    mock_publisher.check_file_exists = AsyncMock(return_value=False)
+    mock_publisher.create_commit_with_files = AsyncMock(
+        return_value={
+            "commit_sha": "hero123",
+            "pull_request_number": 88,
+            "auto_merge_enabled": True,
+        }
+    )
+    image_base64 = base64.b64encode(_png_bytes()).decode("utf-8")
+    request = PublishRequest(
+        article=sample_enriched_article,
+        cover_image_base64=image_base64,
+        cover_image_filename="hero.jpg",
+        position="hero_main",
+        slug="new-hero-story",
+    )
+
+    response = test_client.post("/api/articles/publish", json=request.model_dump())
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    files = mock_publisher.create_commit_with_files.await_args.kwargs["files"]
+    paths = {entry["path"] for entry in files}
+    assert paths == {
+        "apps/mouth/public/static/news/hero.jpg",
+        "apps/mouth/public/static/news/hero_card.jpg",
+        "apps/mouth/src/content/articles/immigration/new-hero-story.mdx",
+    }
+    assert mock_publisher.create_commit_with_files.await_args.kwargs[
+        "json_object_updates"
+    ] == {
+        "apps/mouth/src/content/homepage-layout.json": {
+            "hero_main": "new-hero-story"
+        }
+    }
+
+
+@pytest.mark.asyncio
+@patch("backend.services.integrations.github_publisher.github_publisher")
+async def test_existing_public_slug_is_never_overwritten(
+    mock_publisher,
+    test_client,
+    sample_enriched_article,
+):
+    mock_publisher.is_configured = True
+    mock_publisher.check_file_exists = AsyncMock(return_value=True)
+    mock_publisher.create_commit_with_files = AsyncMock()
+
+    response = test_client.post(
+        "/api/articles/publish",
+        json=PublishRequest(
+            article=sample_enriched_article,
+            slug="existing-story",
+        ).model_dump(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert "already exists" in response.json()["message"].lower()
+    mock_publisher.create_commit_with_files.assert_not_awaited()
+
+
+@patch("backend.services.integrations.github_publisher.github_publisher")
+def test_publish_article_github_not_configured(
+    mock_publisher,
+    test_client,
+    sample_enriched_article,
+):
+    """Test publish fails when GitHub not configured"""
+    mock_publisher.is_configured = False
+
+    request = PublishRequest(article=sample_enriched_article)
+    response = test_client.post("/api/articles/publish", json=request.model_dump())
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is False
+    assert "GitHub API not configured" in data["message"]
+
+
+@pytest.mark.asyncio
+@patch("backend.services.integrations.github_publisher.github_publisher")
+async def test_publish_article_github_error(mock_publisher, test_client, sample_enriched_article):
+    """Test publish handles GitHub API errors"""
+    from backend.services.integrations.github_publisher import GitHubPublisherError
+
+    mock_publisher.is_configured = True
+    mock_publisher.check_file_exists = AsyncMock(return_value=False)
+    mock_publisher.create_commit_with_files = AsyncMock(
+        side_effect=GitHubPublisherError("GitHub API error"),
+    )
+
+    request = PublishRequest(article=sample_enriched_article)
+    response = test_client.post("/api/articles/publish", json=request.model_dump())
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is False
+    assert "Failed to publish to GitHub" in data["message"]
+
+
+def test_publish_status(test_client):
+    """Test publish status endpoint"""
+    with patch("backend.services.integrations.github_publisher.github_publisher") as mock_publisher:
+        mock_publisher.is_configured = True
+        with patch("backend.app.core.config.settings") as mock_settings:
+            mock_settings.github_token = "test-token"
+            mock_settings.github_owner = "test-owner"
+            mock_settings.github_repo = "test-repo"
+
+            response = test_client.get("/api/articles/publish/status")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["configured"] is True
+            assert data["github_token_set"] is True
+            assert data["github_owner"] == "test-owner"
+            assert data["github_repo"] == "test-repo"
+
+
+# --- HELPER FUNCTION TESTS ---
+
+
+def test_generate_slug_basic():
+    """Test slug generation from headline"""
+    headline = "Indonesia Tightens Visa Rules"
+    slug = generate_slug(headline)
+    assert slug == "indonesia-tightens-visa-rules"
+
+
+def test_generate_slug_special_characters():
+    """Test slug generation removes special characters"""
+    headline = "New Law: Tax @ 25% for Investors!"
+    slug = generate_slug(headline)
+    assert slug == "new-law-tax-25-for-investors"
+
+
+def test_generate_slug_multiple_spaces():
+    """Test slug generation handles multiple spaces"""
+    headline = "Tax    Law    Update"
+    slug = generate_slug(headline)
+    assert slug == "tax-law-update"
+
+
+def test_generate_slug_long_headline():
+    """Test slug generation limits length to 120 chars"""
+    headline = "This is a very long headline that should be truncated to sixty characters maximum"
+    slug = generate_slug(headline)
+    assert len(slug) <= 120
+    assert not slug.endswith("-")  # No trailing hyphen
+
+
+def test_generate_slug_unicode():
+    """Test slug generation handles unicode characters"""
+    headline = "Café & Résumé: Naïve Approach"
+    slug = generate_slug(headline)
+    assert slug == "caf-rsum-nave-approach"
+
+
+def test_generate_mdx_content_json_serialization(sample_enriched_article):
+    """Test MDX content generation with JSON serialization for React components"""
+    slug = "test-article"
+    mdx = generate_mdx_content(sample_enriched_article, slug, None)
+
+    # Verify next_steps are JSON serialized
+    assert '["Check visa expiry", "Gather required documents"]' in mdx
+    assert '["Review company sponsorship", "Update compliance procedures"]' in mdx
+
+    # Verify frontmatter
+    assert f'slug: "{slug}"' in mdx
+    assert f'title: "{sample_enriched_article.headline}"' in mdx
+
+    # Verify sections
+    assert "## TL;DR" in mdx
+    assert "## The Facts" in mdx
+    assert "## Bali Zero Take" in mdx
+    assert "## Next Steps" in mdx
+
+
+def test_generate_mdx_content_renders_every_stated_tldr_row(sample_enriched_article):
+    """A TL;DR whose source states all four facts keeps the familiar card."""
+    mdx = generate_mdx_content(sample_enriched_article, "visa-rules", None)
+
+    assert (
+        '<InfoCard\n  title="Quick Summary"\n  items={[\n'
+        '    { label: "Should I Worry?", value: "Yes" },\n'
+        '    { label: "Risk Level", value: "High" },\n'
+        '    { label: "Who\'s Affected", value: "All expats on work permits" },\n'
+        '    { label: "When", value: "Effective March 2026" },\n'
+        "  ]}\n/>\n\n**New visa regulations require additional documentation**"
+    ) in mdx
+
+
+def test_generate_mdx_content_invents_no_tldr_row(sample_enriched_article):
+    """Guilt: a TL;DR that states only WHAT must not grow a risk, audience or
+    date row — and an unknown row is left out, never filled with a stock value."""
+    article = sample_enriched_article.model_copy(
+        update={"tldr": TLDRSection(what="1,460 groups registered for GloBE status")}
+    )
+    mdx = generate_mdx_content(article, "globe", None)
+
+    assert "## TL;DR\n\n**1,460 groups registered for GloBE status**" in mdx
+    for invented in ("Should I Worry?", "Risk Level", "Who's Affected", "Quick Summary"):
+        assert invented not in mdx
+
+    partial = sample_enriched_article.model_copy(
+        update={"tldr": TLDRSection(what="w", who="Multinational groups", when=" ")}
+    )
+    card = generate_mdx_content(partial, "partial", None)
+    assert '{ label: "Who\'s Affected", value: "Multinational groups" }' in card
+    assert '"When"' not in card and "Should I Worry?" not in card
+
+
+def test_generate_mdx_content_renders_expat_and_investor_exactly_as_today(
+    sample_enriched_article,
+):
+    """Innocence: a draft with real For Expats/For Investors groups (and no
+    general/extra_sections) renders exactly as before the fix — same two
+    named groups, no third "Recommended Actions" group."""
+    mdx = generate_mdx_content(sample_enriched_article, "visa-rules", None)
+
+    assert '{ text: "For Expats", subItems: ["Check visa expiry", "Gather required documents"] }' in mdx
+    assert (
+        '{ text: "For Investors", subItems: ["Review company sponsorship", '
+        '"Update compliance procedures"] }'
+    ) in mdx
+    assert "Recommended Actions" not in mdx
+
+
+def test_generate_mdx_content_never_invents_filler_or_audience_split(sample_enriched_article):
+    """Guilt: the GloBE article (2026-09-23) got a filler "Review the article
+    for specific actions" step for expats, and its real content was split
+    50/50 into expat/investor groups that invented an audience the draft
+    never named. A single audience-neutral `general` list must render as
+    ONE neutral group, never split, never filled."""
+    article = sample_enriched_article.model_copy(
+        update={
+            "next_steps": NextSteps(
+                expat=[],
+                investor=[],
+                general=["Confirm scope with the group tax team before filing."],
+            )
+        }
+    )
+    mdx = generate_mdx_content(article, "globe", None)
+
+    assert "Review the article for specific actions" not in mdx
+    assert "For Expats" not in mdx
+    assert "For Investors" not in mdx
+    assert (
+        '{ text: "Recommended Actions", '
+        'subItems: ["Confirm scope with the group tax team before filing."] }'
+    ) in mdx
+
+
+def test_generate_mdx_content_omits_next_steps_section_when_empty(sample_enriched_article):
+    """Guilt: a Next Steps with no expat, investor or general items must
+    omit the whole "## Next Steps" section rather than render an empty or
+    filler-filled Checklist."""
+    article = sample_enriched_article.model_copy(
+        update={"next_steps": NextSteps(expat=[], investor=[], general=[])}
+    )
+    mdx = generate_mdx_content(article, "no-steps", None)
+
+    assert "## Next Steps" not in mdx
+    assert "<Checklist" not in mdx
+    assert "Review the article for specific actions" not in mdx
+
+
+def test_generate_mdx_content_preserves_extra_draft_sections_in_place(sample_enriched_article):
+    """Guilt: the GloBE article (2026-09-23) lost its "## In Practice" and
+    "## Sources" sections — the renderer only ever knew about TL;DR/Facts/
+    Bali Zero Take/Next Steps/Primary Source. Any other draft section must
+    render, in the right slot, with its links intact."""
+    article = sample_enriched_article.model_copy(
+        update={
+            "extra_sections": [
+                ExtraSection(
+                    heading="In Practice",
+                    body="A PT PMA's foreign ownership alone does not settle its position.",
+                    insert_after="facts",
+                ),
+                ExtraSection(
+                    heading="Sources",
+                    body="- [DDTCNews](https://news.ddtc.co.id/example)\n"
+                    "- [PMK 136/2024](https://pajak.go.id/example)",
+                    insert_after="next_steps",
+                ),
+            ]
+        }
+    )
+    mdx = generate_mdx_content(article, "globe-sections", None)
+
+    facts_index = mdx.index("## The Facts")
+    in_practice_index = mdx.index("## In Practice")
+    bzt_index = mdx.index("## Bali Zero Take")
+    next_steps_index = mdx.index("## Next Steps")
+    sources_index = mdx.index("## Sources")
+    primary_source_index = mdx.index("## Primary Source")
+
+    assert facts_index < in_practice_index < bzt_index < next_steps_index < sources_index
+    assert sources_index < primary_source_index
+    assert "A PT PMA's foreign ownership alone does not settle its position." in mdx
+    assert "[DDTCNews](https://news.ddtc.co.id/example)" in mdx
+    assert "[PMK 136/2024](https://pajak.go.id/example)" in mdx
+
+
+def test_generate_mdx_content_no_extra_sections_by_default(sample_enriched_article):
+    """Innocence: an article with no extra_sections renders exactly as
+    before — no stray headings appear."""
+    mdx = generate_mdx_content(sample_enriched_article, "visa-rules", None)
+    # The fixture's Facts body is a repeated sentence, not a heading, so the
+    # only "##" headings present are the fixed, known ones.
+    known_headings = {"## TL;DR", "## The Facts", "## Bali Zero Take", "## Next Steps", "## Primary Source"}
+    found_headings = {line for line in mdx.splitlines() if line.startswith("## ")}
+    assert found_headings == known_headings
+
+
+def test_generate_mdx_content_yaml_escapes_untrusted_tags(sample_enriched_article):
+    """Title-derived quotes must not corrupt the publication frontmatter."""
+    import yaml
+
+    sample_enriched_article.ai_tags = ["business", '"golden', "rule: update"]
+    mdx = generate_mdx_content(sample_enriched_article, "safe-tags", None)
+    frontmatter = mdx.split("---", 2)[1]
+
+    parsed = yaml.safe_load(frontmatter)
+    assert parsed["tags"] == ["business", '"golden', "rule: update"]
+
+
+def test_generate_mdx_content_neutralizes_executable_mdx(sample_enriched_article):
+    """Public editorial copy must remain text, never executable MDX/JSX."""
+    attack = (
+        '<script dangerouslySetInnerHTML={{__html:"window.__DAMAR_PROBE__=1"}} />\n'
+        "export const injected = true\n"
+        "[unsafe](javascript:alert(1))"
+    )
+    sample_enriched_article.facts = attack
+    sample_enriched_article.tldr.what = attack
+    sample_enriched_article.bali_zero_take.our_analysis = attack
+
+    mdx = generate_mdx_content(sample_enriched_article, "safe-mdx", None)
+
+    assert "<script" not in mdx
+    assert "{{__html" not in mdx
+    assert "\nexport const injected" not in mdx
+    assert "javascript:alert" not in mdx
+    assert "&lt;script" in mdx
+    assert "e&#120;port const injected" in mdx
+    assert "](#blocked-protocol-alert(1))" in mdx
+
+
+def test_generate_mdx_content_cover_image_path(sample_enriched_article):
+    """Test MDX content uses provided cover image path"""
+    slug = "test-article"
+    cover_path = "/static/news/custom-image.jpg"
+    mdx = generate_mdx_content(sample_enriched_article, slug, cover_path)
+
+    assert f'coverImage: "{cover_path}"' in mdx
+
+
+def test_generate_mdx_content_includes_canonical_primary_source(
+    sample_enriched_article,
+):
+    sample_enriched_article.source = "Official Indonesian source"
+    sample_enriched_article.source_url = (
+        "https://example.go.id/regulation?access_token=private#internal"
+    )
+
+    mdx = generate_mdx_content(sample_enriched_article, "source-citation", None)
+
+    assert "## Primary Source" in mdx
+    assert "[Official Indonesian source](https://example.go.id/regulation)" in mdx
+    assert "access_token" not in mdx
+
+
+def test_generate_mdx_content_card_image_derived(sample_enriched_article):
+    """News cover paths get a derived 16:10 cardImage (_card suffix)."""
+    slug = "test-article"
+    mdx = generate_mdx_content(sample_enriched_article, slug, "/static/news/custom-image.jpg")
+    assert 'cardImage: "/static/news/custom-image_card.jpg"' in mdx
+
+
+def test_generate_mdx_content_card_image_fallback_non_news(sample_enriched_article):
+    """Non-news cover paths fall back: cardImage == coverImage (no _card suffix)."""
+    slug = "test-article"
+    cover_path = "/static/blog/immigration/x.jpg"
+    mdx = generate_mdx_content(sample_enriched_article, slug, cover_path)
+    assert f'cardImage: "{cover_path}"' in mdx
+
+
+def test_generate_mdx_content_reading_time(sample_enriched_article):
+    """Test MDX content calculates reading time"""
+    slug = "test-article"
+    mdx = generate_mdx_content(sample_enriched_article, slug, None)
+
+    # Reading time should be calculated (min 3 minutes)
+    assert "readingTime:" in mdx
+    # Extract reading time value
+    import re
+
+    match = re.search(r"readingTime: (\d+)", mdx)
+    assert match
+    reading_time = int(match.group(1))
+    assert reading_time >= 3
+
+
+def test_plain_text_snippet_strips_heading_markdown():
+    """A '## Facts' heading and inline markdown must render as plain prose."""
+    raw = "## Facts\n\nIndonesia is **moving forward** with a [sweeping reform](https://x.io)."
+    snippet = _plain_text_snippet(raw, 280)
+
+    assert "#" not in snippet
+    assert "**" not in snippet
+    assert "[" not in snippet and "](" not in snippet
+    assert snippet.startswith("Indonesia is moving forward")
+
+
+def test_plain_text_snippet_truncates_at_word_boundary():
+    """Truncation never splits a word and only appends an ellipsis when cut."""
+    raw = "Indonesia is moving forward with a sweeping set of Usaha Menengah reforms today"
+    snippet = _plain_text_snippet(raw, 40)
+
+    assert len(snippet) <= 41  # 40 chars + the ellipsis character
+    assert snippet.endswith("…")
+    body = snippet[:-1].rstrip()
+    assert raw.startswith(body)
+    # The character right after the kept text in the source is a word
+    # boundary (space), proving no word was cut mid-way.
+    assert raw[len(body) : len(body) + 1] in (" ", "")
+
+
+def test_plain_text_snippet_no_ellipsis_when_untruncated():
+    """Short input is returned as-is — no trailing ellipsis added."""
+    snippet = _plain_text_snippet("Short headline", 70)
+    assert snippet == "Short headline"
+    assert not snippet.endswith("…")
+
+
+def test_generate_mdx_content_excerpt_and_seo_description_strip_markdown_fallback(
+    sample_enriched_article,
+):
+    """excerpt/seoDescription must be plain prose even when the only
+
+    available source is raw markdown content (e.g. the intel staging
+    conversion falling back to ``content[:280]`` when no '## Summary'
+    section exists — see backend/app/routers/intel_scraper.py
+    ``convert_staging_to_enriched_article``).
+    """
+    sample_enriched_article.ai_summary = (
+        "## Facts\n\nIndonesia is moving forward with a sweeping set of Usaha "
+        "Menengah reforms that will change how small and medium businesses "
+        "register for a KBLI code across the archipelago starting in Ma"
+    )
+    sample_enriched_article.seo_title = None
+    sample_enriched_article.seo_description = None
+
+    mdx = generate_mdx_content(sample_enriched_article, "seo-fallback-plain", None)
+
+    import yaml
+
+    frontmatter = yaml.safe_load(mdx.split("---", 2)[1])
+
+    expected_excerpt = _plain_text_snippet(sample_enriched_article.ai_summary, 280)
+    expected_seo_desc = _plain_text_snippet(sample_enriched_article.ai_summary, 155)
+    expected_seo_title = _plain_text_snippet(sample_enriched_article.headline, 70)
+
+    assert frontmatter["excerpt"] == expected_excerpt
+    assert frontmatter["seoDescription"] == expected_seo_desc
+    assert frontmatter["seoTitle"] == expected_seo_title
+
+    for field, value in (
+        ("excerpt", frontmatter["excerpt"]),
+        ("seoDescription", frontmatter["seoDescription"]),
+        ("seoTitle", frontmatter["seoTitle"]),
+    ):
+        assert "#" not in value, f"{field} still carries a markdown heading: {value!r}"
+        assert "\n" not in value
+        if value.endswith("…"):
+            # Whatever precedes the ellipsis must end at a real word — in
+            # the fully markdown-stripped source, the character right after
+            # the kept text is a space (or the kept text runs to the end),
+            # never mid-word.
+            body = value[:-1].rstrip()
+            plain_source = _plain_text_snippet(
+                sample_enriched_article.ai_summary, len(sample_enriched_article.ai_summary) + 10
+            )
+            assert plain_source[len(body) : len(body) + 1] in (" ", "")
+
+
+def test_generate_mdx_content_seo_title_prefers_short_headline_untruncated(
+    sample_enriched_article,
+):
+    """A headline at or under 70 chars is used verbatim — no ellipsis added."""
+    sample_enriched_article.headline = "Indonesia Tightens Visa Rules for Expats"
+    sample_enriched_article.seo_title = None
+
+    mdx = generate_mdx_content(sample_enriched_article, "seo-title-short", None)
+
+    assert 'seoTitle: "Indonesia Tightens Visa Rules for Expats"' in mdx
+
+
+def test_build_enrichment_prompt_truncates_content():
+    """Test enrichment prompt truncates content to 8000 chars"""
+    title = "Test"
+    long_content = "word " * 3000  # ~15000 chars
+    category = "business"
+
+    prompt = build_enrichment_prompt(title, long_content, category)
+
+    # Verify content is truncated
+    assert "word " * 1600 in prompt  # ~8000 chars worth
+    assert len(long_content) > 8000
+    # Prompt should contain truncated content
+    assert title in prompt
+    assert category in prompt
+
+
+def test_build_enrichment_prompt_priority_instructions():
+    """Test enrichment prompt contains priority-based word count instructions"""
+    prompt = build_enrichment_prompt("Test", "Content", "business")
+
+    # Verify dynamic word count instruction is present
+    assert "400-600 words based on news relevance" in prompt
+    assert "high priority = 600 words" in prompt
+    assert "medium = 500" in prompt
+    assert "low = 400" in prompt
+
+
+# --- INTEGRATION TEST ---
+
+
+@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch("backend.app.routers.article_composer.call_claude_with_retry")
+@patch("backend.services.integrations.github_publisher.github_publisher")
+def test_full_compose_and_publish_flow(
+    mock_publisher,
+    mock_call,
+    test_client,
+    mock_llm_response,
+):
+    """Integration test: compose article then publish it (Claude OAuth-backed)."""
+    mock_call.return_value = mock_llm_response
+    mock_publisher.is_configured = True
+    mock_publisher.check_file_exists = AsyncMock(return_value=False)
+    mock_publisher.create_commit_with_files = AsyncMock(
+        return_value={
+            "success": True,
+            "commit_sha": "abc123",
+            "files_count": 1,
+            "branch": "auto-publish/abc123",
+            "pull_request_url": "https://github.com/Balizero1987/Teman2/pull/123",
+            "pull_request_number": 123,
+            "auto_merge_enabled": True,
+        },
+    )
+
+    compose_request = ComposeRequest(
+        title="Test Article",
+        content=(
+            "Test content for integration test that must be at least one hundred "
+            "characters long to pass the validation check in the compose request "
+            "validator model."
+        ),
+        category="business",
+    )
+    compose_response = test_client.post(
+        "/api/articles/compose",
+        json=compose_request.model_dump(),
+    )
+
+    assert compose_response.status_code == 200
+    compose_data = compose_response.json()
+    assert compose_data["success"] is True
+    assert compose_data["article"] is not None
+
+    enriched_article = EnrichedArticle(**compose_data["article"])
+    publish_request = PublishRequest(article=enriched_article)
+    publish_response = test_client.post(
+        "/api/articles/publish",
+        json=publish_request.model_dump(),
+    )
+
+    assert publish_response.status_code == 200
+    publish_data = publish_response.json()
+    assert publish_data["success"] is True
+    assert publish_data["article_url"] is not None
+    assert publish_data["commit_sha"] == "abc123"
+
+
+@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch(
+    "backend.app.routers.article_composer.call_claude_with_retry",
+    new_callable=AsyncMock,
+    side_effect=ClaudeBudgetExhausted("article_composer budget exhausted: 4.0s left of 110s, no further attempt"),
+)
+def test_compose_budget_exhausted_is_503_not_500(mock_call, test_client, sample_compose_request):
+    """Gate finding on #8929 round 2: a spent budget took the generic 500 API_ERROR path."""
+    response = test_client.post("/api/articles/compose", json=sample_compose_request.model_dump(mode="json"))
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "LLM_BUDGET_EXHAUSTED"

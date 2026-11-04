@@ -1,0 +1,1554 @@
+"""
+Legal Ingestion Service
+Specialized ingestion pipeline for Indonesian legal documents
+"""
+
+import asyncio
+import hashlib
+import logging
+import os
+import time
+from dataclasses import dataclass
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any
+
+from backend.app.metrics import metrics_collector
+from backend.app.models import TierLevel
+from backend.core.bm25_vectorizer import BM25Vectorizer
+from backend.core.collection_registry import canonicalize_collection_name, resolve_collection_name
+from backend.core.embeddings import create_embeddings_generator
+from backend.core.legal import (
+    HierarchicalIndexer,
+    LegalChunker,
+    LegalCleaner,
+    LegalMetadataExtractor,
+    LegalStructureParser,
+)
+from backend.core.parsers import DocumentParseError, auto_detect_and_parse
+from backend.core.qdrant_db import QdrantClient
+from backend.services.ingestion.ingestion_logger import IngestionStage, ingestion_logger
+from backend.services.integrations.service_account_drive_service import (
+    DriveArchiveIntegrityError,
+    ServiceAccountDriveService,
+)
+from backend.utils.tier_classifier import TierClassifier
+
+logger = logging.getLogger(__name__)
+
+
+def _failure_stage(error: Exception) -> IngestionStage:
+    """Which stage does this failure belong to?
+
+    Was `PARSING if "parse" in str(error).lower() else COMPLETION`, which read
+    the stage off a word that happens to appear in some messages. "Incomplete
+    vision transcription of ..." contains no "parse" and was filed under
+    COMPLETION -- a document that never got past reading, recorded as having
+    reached the end. Parse failures are now recognised by TYPE.
+    """
+    from backend.core.parsers import DocumentParseError
+
+    if isinstance(error, DocumentParseError) or isinstance(
+        error.__cause__, DocumentParseError,
+    ):
+        return IngestionStage.PARSING
+    if "parse" in str(error).lower():
+        return IngestionStage.PARSING
+    return IngestionStage.COMPLETION
+
+
+LEGAL_CANONICAL_COLLECTION = "legal_unified"
+LEGAL_ENV_OVERRIDE_FLAG = "LEGAL_INGEST_ALLOW_QDRANT_ENV_OVERRIDE"
+CURRENT_RETRIEVAL_SCOPE = "current"
+HISTORICAL_RETRIEVAL_SCOPE = "historical_only"
+ALLOWED_RETRIEVAL_SCOPES = frozenset(
+    {CURRENT_RETRIEVAL_SCOPE, HISTORICAL_RETRIEVAL_SCOPE},
+)
+
+ALLOWED_CANONICAL_COLLECTIONS = frozenset({
+    LEGAL_CANONICAL_COLLECTION,
+    "tax_genius",
+})
+
+
+class LegalIngestIntegrityError(RuntimeError):
+    """Raised when legal/regulatory ingestion would write to an unsafe target."""
+
+
+@dataclass(frozen=True)
+class LegalIngestPreflight:
+    """Pure preflight inputs for legal/regulatory ingestion integrity checks."""
+
+    configured_qdrant_url: str
+    process_qdrant_url: str | None
+    env_file_qdrant_url: str | None
+    requested_collection: str
+    resolved_collection: str
+    allow_process_env_override: bool
+    environment: str
+
+
+def _normalize_optional_url(value: str | None) -> str | None:
+    """Normalize URL strings only for source-conflict comparisons."""
+    if value is None:
+        return None
+    stripped = value.strip().rstrip("/")
+    return stripped or None
+
+
+def _env_flag_enabled(value: str | None) -> bool:
+    """Return True for explicit opt-in env flags."""
+    return value is not None and value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def read_qdrant_url_from_env_file(env_file_path: Path) -> str | None:
+    """Read QDRANT_URL from a dotenv-style file without mutating process env."""
+    if not env_file_path.exists():
+        return None
+
+    for raw_line in env_file_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        if key.strip() != "QDRANT_URL":
+            continue
+        value = raw_value.strip().strip('"').strip("'")
+        return value or None
+    return None
+
+
+def build_legal_ingest_preflight(
+    *,
+    configured_qdrant_url: str,
+    requested_collection: str,
+    resolved_collection: str,
+    env_file_path: Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> LegalIngestPreflight:
+    """Build legal ingest preflight inputs from explicit runtime sources."""
+    env = environ if environ is not None else os.environ
+    backend_rag_root = Path(__file__).resolve().parents[3]
+    qdrant_env_file = env_file_path or backend_rag_root / ".env"
+
+    return LegalIngestPreflight(
+        configured_qdrant_url=configured_qdrant_url,
+        process_qdrant_url=env.get("QDRANT_URL"),
+        env_file_qdrant_url=read_qdrant_url_from_env_file(qdrant_env_file),
+        requested_collection=requested_collection,
+        resolved_collection=resolved_collection,
+        allow_process_env_override=_env_flag_enabled(env.get(LEGAL_ENV_OVERRIDE_FLAG)),
+        environment=env.get("ENVIRONMENT", "development"),
+    )
+
+
+def validate_legal_ingest_preflight(preflight: LegalIngestPreflight) -> None:
+    """Validate legal ingest env source and target collection before writing."""
+    process_url = _normalize_optional_url(preflight.process_qdrant_url)
+    env_file_url = _normalize_optional_url(preflight.env_file_qdrant_url)
+    configured_url = _normalize_optional_url(preflight.configured_qdrant_url)
+    environment = preflight.environment.strip().lower()
+
+    if not configured_url:
+        raise LegalIngestIntegrityError("QDRANT_URL is empty for legal ingestion")
+
+    if (
+        environment != "production"
+        and process_url
+        and env_file_url
+        and process_url != env_file_url
+        and not preflight.allow_process_env_override
+    ):
+        raise LegalIngestIntegrityError(
+            "QDRANT_URL source conflict: process environment overrides a different .env "
+            f"value for legal ingestion. Set {LEGAL_ENV_OVERRIDE_FLAG}=1 for an "
+            "intentional local/canary override."
+        )
+
+    canonical_target = canonicalize_collection_name(preflight.resolved_collection)
+    if canonical_target not in ALLOWED_CANONICAL_COLLECTIONS:
+        raise LegalIngestIntegrityError(
+            "Legal ingestion target collection must resolve to one of "
+            f"{sorted(ALLOWED_CANONICAL_COLLECTIONS)!r}; "
+            f"requested={preflight.requested_collection!r} "
+            f"resolved={preflight.resolved_collection!r}"
+        )
+
+
+def _coerce_positive_int(value: Any, field_name: str) -> int:
+    """Coerce a result counter to int for explicit integrity checks."""
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise LegalIngestIntegrityError(f"Legal ingestion result has invalid {field_name}") from exc
+
+
+def validate_legal_ingest_result(result: dict[str, Any]) -> None:
+    """Ensure legal ingestion did not silently succeed with no indexed data."""
+    if not result.get("success"):
+        error = result.get("error") or result.get("message") or "unknown error"
+        raise LegalIngestIntegrityError(f"Legal ingestion failed: {error}")
+
+    chunks_created = _coerce_positive_int(result.get("chunks_created"), "chunks_created")
+    if chunks_created <= 0:
+        raise LegalIngestIntegrityError("Legal ingestion produced zero chunks")
+
+    chunks_upserted = _coerce_positive_int(
+        result.get("chunks_upserted", chunks_created),
+        "chunks_upserted",
+    )
+    if chunks_upserted <= 0:
+        raise LegalIngestIntegrityError("Legal ingestion produced zero upserts")
+
+
+def validate_legal_retrieval_scope(retrieval_scope: str) -> str:
+    """Normalize a legal source's retrieval scope or fail closed."""
+    normalized = retrieval_scope.strip().lower()
+    if normalized not in ALLOWED_RETRIEVAL_SCOPES:
+        raise LegalIngestIntegrityError(
+            "Legal ingestion retrieval_scope must be one of "
+            f"{sorted(ALLOWED_RETRIEVAL_SCOPES)!r}; got {retrieval_scope!r}",
+        )
+    return normalized
+
+
+_INCOMPLETE_IDENTITY_TOKENS = frozenset({"DOC", "UNKNOWN", "0", "NONE"})
+
+# WIZ-1/WIZ-2 (kb-current-live, 2026-08-26): the identity_source values this
+# module records on every ingested chunk's payload. A "hash_fallback" id is
+# safe from collision (build_content_bound_legal_doc_id already binds it to
+# source bytes) but is NOT reachable by a document_id or citation lookup --
+# only by vector similarity. Measured against 12 real regulatory-watcher
+# deltas (research/operations/2026-08-26-wiz1-regulatory-ingest-route.md
+# section 5.2): 7 of the 12 rows land here -- 58% by row, or 64% counting the
+# 11 distinct derived identities. (Corrected 2026-08-26 by cross-family review:
+# this comment and the document both said "roughly two-thirds", which the
+# document's own table refutes -- 5 clean rows of 12 leaves 7, not 8.) That
+# fraction was previously
+# invisible -- the boolean driving it was computed inside
+# build_content_bound_legal_doc_id and discarded once the id string was
+# built. Recording the label lets a census answer "how many documents
+# entered without a citable identity" with a number, not a guess.
+IDENTITY_SOURCE_DECLARED = "declared"
+IDENTITY_SOURCE_EXTRACTED = "extracted"
+IDENTITY_SOURCE_HASH_FALLBACK = "hash_fallback"
+
+
+def _normalize_identity_triple(metadata: dict[str, Any]) -> list[str]:
+    """The three raw identity fields, normalized once so every caller that
+    reasons about the (type_abbrev, number, year) triple -- id-building and
+    citability alike -- agrees on the same normalization."""
+    identity = [
+        str(metadata.get("type_abbrev") or "DOC"),
+        str(metadata.get("number") or "UNKNOWN"),
+        str(metadata.get("year") or "UNKNOWN"),
+    ]
+    return [part.replace(" ", "_").replace("/", "_") for part in identity]
+
+
+def identity_triple_is_incomplete(metadata: dict[str, Any]) -> bool:
+    """True when the extracted (type_abbrev, number, year) triple has a
+    missing or placeholder field.
+
+    This is the exact condition `build_content_bound_legal_doc_id` already
+    evaluates to decide whether to bind the identity to source bytes instead
+    of content -- extracted into its own function so a caller can record WHY
+    an id took the hash-fallback shape, rather than only ever seeing the
+    opaque hash suffix in the id string.
+    """
+    return any(
+        part.upper() in _INCOMPLETE_IDENTITY_TOKENS
+        for part in _normalize_identity_triple(metadata)
+    )
+
+
+def classify_identity_source(
+    metadata: dict[str, Any],
+    declared_storage_id: str | None,
+) -> str:
+    """Which of the three shapes produced this document's stored identity.
+
+    A DECLARED id is the curated corpus explicitly stating which instrument a
+    file is (CLAUDE.md/legal_ingestion_service.py comment on `doc_id`) -- it
+    is citable by construction, whatever the extractor found. Everything
+    derived falls to EXTRACTED (a clean, citation-matching triple) or
+    HASH_FALLBACK (the triple was incomplete, so the id is bound to source
+    bytes and cannot be looked up by citation).
+    """
+    if declared_storage_id:
+        return IDENTITY_SOURCE_DECLARED
+    if identity_triple_is_incomplete(metadata):
+        return IDENTITY_SOURCE_HASH_FALLBACK
+    return IDENTITY_SOURCE_EXTRACTED
+
+
+def build_content_bound_legal_doc_id(
+    metadata: dict[str, Any],
+    source_sha256: str,
+) -> str:
+    """Build a stable legal identity, binding incomplete metadata to source bytes."""
+    normalized = _normalize_identity_triple(metadata)
+    if identity_triple_is_incomplete(metadata):
+        normalized.append(source_sha256[:16])
+    return "_".join(normalized)
+
+
+class LegalIngestionService:
+    """
+    Specialized ingestion service for Indonesian legal documents.
+    Implements 4-stage pipeline: Clean → Extract Metadata → Parse Structure → Chunk
+    """
+
+    def __init__(self, collection_name: str = "legal_unified") -> None:
+        """
+        Initialize legal ingestion service.
+
+        Args:
+            collection_name: Qdrant collection name for legal documents
+        """
+        self.cleaner = LegalCleaner()
+        self.metadata_extractor = LegalMetadataExtractor()
+        self.structure_parser = LegalStructureParser()
+        self.chunker = LegalChunker()
+        self.sparse_vectorizer = BM25Vectorizer()
+        self.embedder = create_embeddings_generator()
+        resolved_collection_name = resolve_collection_name(collection_name)
+        self.vector_db = QdrantClient(collection_name=resolved_collection_name)
+        validate_legal_ingest_preflight(
+            build_legal_ingest_preflight(
+                configured_qdrant_url=self.vector_db.qdrant_url,
+                requested_collection=collection_name,
+                resolved_collection=resolved_collection_name,
+            )
+        )
+        self.classifier = TierClassifier()
+
+        # Initialize Hierarchical Indexer
+        self.indexer = HierarchicalIndexer(
+            structure_parser=self.structure_parser,
+            qdrant_client=self.vector_db,
+            embeddings=self.embedder,
+            chunker=self.chunker,
+            sparse_vectorizer=self.sparse_vectorizer,
+        )
+
+        # Initialize KG Extractor (lazy init per evitare costi se non usato)
+        self.kg_extractor = None
+        self.kg_enabled = False  # TEMP DISABLED: KG extraction causes OOM on 2GB Fly machine
+
+        logger.info(
+            "LegalIngestionService initialized (collection: %s -> %s)",
+            collection_name,
+            resolved_collection_name,
+        )
+
+    @staticmethod
+    async def _quarantine_current_points(
+        vector_db: QdrantClient,
+        document_id: str,
+    ) -> list[str]:
+        """Mark a previous current-law version historical before replacement."""
+        points = await vector_db.scroll_strict(
+            metadata_filter={"document_id": document_id},
+        )
+        # Qdrant applies one filter operation server-side. Writing a top-level
+        # guard excludes both flat legal payloads and nested legacy payloads,
+        # because current-law filters inspect both representations.
+        await vector_db.set_payload_by_filter(
+            metadata_filter={"document_id": document_id},
+            payload={"retrieval_scope": HISTORICAL_RETRIEVAL_SCOPE},
+        )
+        return [str(point["id"]) for point in points]
+
+    @staticmethod
+    async def _assert_identity_unclaimed(
+        vector_db: QdrantClient,
+        document_id: str,
+        source_basename: str,
+    ) -> None:
+        """Refuse to write onto an identity another source document already holds.
+
+        Chunk ids are ``{document_id}_Pasal_{n}`` and Qdrant point ids are
+        ``uuid5(chunk_id)``, so two documents sharing a ``document_id`` share
+        point ids and the second ingest OVERWRITES the first. Qdrant reports
+        that as a successful upsert, because it is one — which is why the
+        failure mode is silent data loss rather than an error.
+
+        Measured on 2026-08-25: ``Permen_1_2026`` held 544 points belonging to
+        PMK 1/2026 (Ministry of Finance, Coretax) *and* Permen Imipas 1/2026
+        (Ministry of Immigration). The tax regulation had upserted 544 chunks of
+        its own; 494 survived; the immigration regulation's 50 account for the
+        difference exactly.
+
+        This guard is deliberately the LOUD half of the cure. It does not decide
+        what a good identity is — it only refuses to let one document silently
+        become another. That makes every future collision, including classes
+        nobody has enumerated yet, an error at write time instead of a hole
+        discovered months later.
+
+        Re-ingesting the SAME source document is not a collision and must pass:
+        that is how a corpus is refreshed.
+
+        ONE RESIDUAL HOLE, stated rather than papered over:
+
+        1. The ``/upload`` route names its temp file from the
+           uploader-supplied filename, so on that path the comparator is only
+           as unique as what the uploader typed. Two different laws uploaded
+           as ``UU_6_2023.pdf`` would still collide. Curated corpus ingests,
+           which is where the incident happened, use repo-controlled
+           filenames.
+
+        That hole is not a reason to withhold the guard: it converts the
+        common case from silent loss into a loud refusal, and a partial guard
+        that says so is worth more than none.
+
+        A point carrying NEITHER ``source_basename`` NOR ``file_path`` yields
+        no claimant. Rather than reading that as "unclaimed, so free to take",
+        an identity held ONLY by such points fails CLOSED: ownership cannot be
+        verified, so the write is refused until the existing points are
+        backfilled with a resolvable claimant. The alternative (treat
+        claimant-less as free) would let a foreign document overwrite it with
+        the guard's own blessing — exactly the silent loss this guard exists
+        to stop.
+        """
+        existing = await vector_db.scroll_strict(
+            metadata_filter={"document_id": document_id},
+        )
+        if not existing:
+            return
+
+        claimants: set[str] = set()
+        for point in existing:
+            payload = point.get("payload") or {}
+            metadata = payload.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = payload
+            claimant = metadata.get("source_basename")
+            if not claimant:
+                stored_path = metadata.get("file_path")
+                claimant = Path(str(stored_path)).name if stored_path else None
+            if claimant:
+                claimants.add(str(claimant))
+
+        if not claimants:
+            raise LegalIngestIntegrityError(
+                "Legal identity collision (unresolvable): document_id "
+                f"{document_id!r} already holds {len(existing)} point(s), none "
+                "of which carry a resolvable source_basename or file_path "
+                "claimant. Ownership cannot be verified, so this identity "
+                "fails closed rather than reading as free to take. Backfill "
+                "source_basename onto the existing points before ingesting "
+                f"onto this identity with {source_basename!r}."
+            )
+
+        foreign = claimants - {source_basename}
+        if foreign:
+            raise LegalIngestIntegrityError(
+                "Legal identity collision: document_id "
+                f"{document_id!r} is already held by {sorted(foreign)!r}; "
+                f"refusing to overwrite it with {source_basename!r}. "
+                "Two documents sharing an identity share point ids, so this "
+                "write would silently destroy the other document's chunks. "
+                "Declare a distinct document_id for one of them."
+            )
+
+    async def ingest_legal_document(
+        self,
+        file_path: str,
+        title: str | None = None,
+        tier_override: TierLevel | None = None,
+        collection_name: str | None = None,
+        skip_pricing: bool = False,
+        category: str | None = None,
+        trace_id: str | None = None,
+        user_id: str | None = None,
+        document_id: str | None = None,
+        retrieval_scope: str = CURRENT_RETRIEVAL_SCOPE,
+        source_url: str | None = None,
+        effective_date: date | None = None,
+        observed_at: datetime | None = None,
+    ) -> dict[str, Any]:
+        """
+        Ingest a legal document through the complete pipeline.
+        ...
+        """
+        start_time = time.time()
+        source = "file_upload"
+        file_type = Path(file_path).suffix.lower()
+        reconciliation_state = "NOT_REQUIRED"
+
+        try:
+            retrieval_scope = validate_legal_retrieval_scope(retrieval_scope)
+            # The caller's document_id is the DECLARED STORAGE IDENTITY when it
+            # is given. Until 2026-08-25 this parameter reached only the
+            # ingestion logger and the log `extra` fields, while the identity
+            # actually written to Qdrant was always derived from the extracted
+            # (type, number, year) triple — so a caller who passed a
+            # document_id got a correlation id and believed they had set the
+            # storage key. Capture it here, before `start_ingestion` reassigns
+            # `document_id` to its own trace id.
+            declared_storage_id = document_id
+            # Generate document ID if not provided
+            if not document_id:
+                document_id = f"legal_{int(start_time)}_{Path(file_path).stem}"
+
+            document_id = ingestion_logger.start_ingestion(
+                file_path=file_path,
+                document_id=document_id,
+                source=source,
+                trace_id=trace_id,
+                user_id=user_id,
+            )
+
+            logger.info(
+                f"Starting legal document ingestion: {file_path} (Category: {category or 'None'})"
+            )
+
+            # Override collection if specified
+            target_collection = resolve_collection_name(
+                collection_name or self.vector_db.collection_name
+            )
+            validate_legal_ingest_preflight(
+                build_legal_ingest_preflight(
+                    configured_qdrant_url=self.vector_db.qdrant_url,
+                    requested_collection=collection_name or self.vector_db.collection_name,
+                    resolved_collection=target_collection,
+                )
+            )
+            request_vector_db = (
+                QdrantClient(collection_name=target_collection)
+                if collection_name
+                else self.vector_db
+            )
+
+            # These two PUTs are FAIL-CLOSED, deliberately and not incidentally:
+            # `ensure_keyword_payload_index` is a bare PUT + raise_for_status(),
+            # so a failing PUT aborts an ingest that might otherwise have
+            # succeeded. That is the right trade -- an ingest whose collision
+            # guard cannot run must not proceed -- but it is a trade, not a
+            # free "safe and idempotent".
+            #
+            # CORRECTED 2026-08-25: an earlier revision of this comment said the
+            # risk was "a 403 on a caller-supplied collection (`collection_name`
+            # is request-controlled)". That was a refuter's claim, accepted
+            # without measuring it, and it is FALSE.
+            # `validate_legal_ingest_preflight` (:124) runs at :412, well before
+            # these PUTs, and rejects any target that does not canonicalize to
+            # ALLOWED_CANONICAL_COLLECTIONS -- today `legal_unified` or
+            # `tax_genius`. A caller cannot steer this code at an arbitrary
+            # collection, so the arbitrary-ACL scenario never reaches here.
+            # Measured by attempting exactly that: an ingest naming a scratch
+            # collection died at the preflight with
+            # "target collection must resolve to one of ['legal_unified',
+            # 'tax_genius']", never reaching the index calls.
+            #
+            # What remains genuinely open, and is the reason this stays
+            # fail-closed rather than tolerant: a timeout on a first-ever index
+            # build over a large collection, and a PUT of a DIFFERENT schema
+            # over an existing index. Neither is verified here.
+            #
+            # Payload indexes the fail-closed filters below REQUIRE. A missing
+            # index does not degrade a Qdrant filter, it makes the query an
+            # ERROR: "Index required but not found for <key>". Both
+            # representations are named because on a flat-payload collection
+            # `_convert_filter_to_qdrant_format` ADDS the bare key to the
+            # nested one (`should: [metadata.X, X]`) rather than replacing it,
+            # and a `should` member is an indexed key like any other.
+            #
+            # `document_id` is unconditional because three fail-closed filters
+            # depend on it and the first of them runs on EVERY ingest: the
+            # identity guard, the current-scope quarantine, and the historical
+            # delete. Measured 2026-08-25 against `legal_unified`, which indexes
+            # the flat `document_id` and not `metadata.document_id`: every
+            # `scroll_strict` answered HTTP 400 for every document_id, colliding
+            # or not. The guard shipped in #4865 therefore failed 100% of legal
+            # ingests rather than only the colliding ones, and the historical
+            # quarantine/delete pair had the same latent defect before it --
+            # unnoticed only because the Drive fail-closed archive check aborts
+            # that path earlier.
+            await request_vector_db.ensure_keyword_payload_index("document_id")
+            await request_vector_db.ensure_keyword_payload_index("metadata.document_id")
+            # WIZ-1/WIZ-2: the flat `identity_source` key written below must be
+            # indexed for the same reason `document_id` is -- on this Qdrant
+            # deployment an unindexed filter key does not return "0 results",
+            # it errors. Without this, a census asking "how many documents
+            # have identity_source=hash_fallback" would fail at query time,
+            # which is exactly the kind of silent-signal failure this change
+            # exists to avoid. No `metadata.identity_source` twin: this field
+            # is new and only ever written flat, never in the legacy nested
+            # payload shape.
+            await request_vector_db.ensure_keyword_payload_index("identity_source")
+
+            # Historical instruments must only enter a collection once the
+            # executable retrieval guard's payload indexes exist.
+            if retrieval_scope == HISTORICAL_RETRIEVAL_SCOPE:
+                await request_vector_db.ensure_keyword_payload_index("retrieval_scope")
+                await request_vector_db.ensure_keyword_payload_index("metadata.retrieval_scope")
+
+            # STAGE 1: Parse document
+            parsing_start = time.time()
+            ocr_used = False
+            # Try normal extraction first, fallback to OCR if needed
+            try:
+                raw_text = auto_detect_and_parse(file_path, use_ocr=False)
+            except DocumentParseError as e:
+                from backend.services.multimodal.pdf_vision_service import (
+                    IncompleteTranscriptionError,
+                )
+
+                if isinstance(e.__cause__, IncompleteTranscriptionError):
+                    # A document read only in PART must not fall into the branch
+                    # below: that branch exists to give a scan a second, fuller
+                    # pass, and here the fuller pass has already happened and
+                    # came back short. Retrying runs the same engine over the
+                    # same pages to reach the same verdict, and -- worse -- the
+                    # decision is read off e.__cause__ rather than off a
+                    # substring of the message, so rewording the error can never
+                    # silently move a half-read law into the retry path.
+                    raise
+                if "No text extracted" in str(e):
+                    # Try OCR for scanned PDFs (async version)
+                    logger.info(
+                        "[STAGE 1] No text found in PDF, attempting OCR extraction...",
+                        extra={
+                            "document_id": document_id,
+                            "stage": "parsing",
+                            "ocr_fallback": True,
+                        },
+                    )
+                    from backend.core.parsers import extract_text_from_pdf_async
+
+                    try:
+                        # Check if we're in async context
+                        asyncio.get_running_loop()
+                        # We're in async context, use async version
+                        raw_text = await extract_text_from_pdf_async(file_path, use_ocr=True)
+                        ocr_used = True
+                        logger.info(
+                            f"[STAGE 1] OCR extraction successful: {len(raw_text)} characters",
+                            extra={
+                                "document_id": document_id,
+                                "stage": "parsing",
+                                "ocr_used": True,
+                                "text_length": len(raw_text),
+                            },
+                        )
+                    except RuntimeError:
+                        # No running loop, use sync version
+                        raw_text = auto_detect_and_parse(file_path, use_ocr=True)
+                        ocr_used = True
+                        logger.info(
+                            f"[STAGE 1] OCR extraction successful (sync): {len(raw_text)} characters",
+                            extra={
+                                "document_id": document_id,
+                                "stage": "parsing",
+                                "ocr_used": True,
+                                "text_length": len(raw_text),
+                            },
+                        )
+                else:
+                    raise
+            parsing_duration = time.time() - parsing_start
+
+            logger.info(
+                f"[STAGE 1] Parsing completed: {len(raw_text)} chars in {parsing_duration:.2f}s",
+                extra={
+                    "document_id": document_id,
+                    "stage": "parsing",
+                    "duration_seconds": parsing_duration,
+                    "text_length": len(raw_text),
+                    "ocr_used": ocr_used,
+                },
+            )
+
+            ingestion_logger.parsing_success(
+                document_id=document_id,
+                file_path=file_path,
+                text_length=len(raw_text),
+                duration_ms=parsing_duration * 1000,
+                source=source,
+                trace_id=trace_id,
+            )
+
+            metrics_collector.record_parsing_duration(
+                file_type=file_type, source=source, duration_seconds=parsing_duration
+            )
+
+            source_bytes = await asyncio.to_thread(Path(file_path).read_bytes)
+            source_sha256 = hashlib.sha256(source_bytes).hexdigest()
+
+            # Logging already done above with structured data
+
+            # STAGE 1.5: Upload to Google Drive (Permanent)
+            drive_file_id = None
+            drive_web_link = None
+            drive_archive: dict[str, Any] = {"status": "not_attempted"}
+            try:
+                from backend.app.core.config import settings
+
+                legal_root_id = settings.legal_drive_root_folder_id
+                archive_root_id = legal_root_id or settings.google_drive_root_folder_id
+                drive_service = ServiceAccountDriveService(
+                    root_folder_id=archive_root_id,
+                    delegated_user=settings.legal_drive_impersonate_user,
+                )
+
+                if legal_root_id:
+                    folder_id = legal_root_id
+                else:
+                    folder_id = await self._ensure_drive_folder_exists(
+                        drive_service=drive_service,
+                        folder_path="BALI ZERO/PERATURAN",
+                    )
+
+                filename = Path(file_path).name
+                archive_db_pool = await self.indexer._get_db_pool()
+                drive_file, archive_status = await drive_service.archive_file_idempotent(
+                    folder_id=folder_id,
+                    file_content=source_bytes,
+                    file_name=filename,
+                    mime_type="application/pdf",
+                    db_pool=archive_db_pool,
+                    require_distributed_lock=(
+                        retrieval_scope == HISTORICAL_RETRIEVAL_SCOPE
+                    ),
+                )
+                drive_archive["status"] = archive_status
+
+                drive_file_id = drive_file["id"]
+                drive_web_link = drive_file.get("webViewLink")
+                drive_archive.update({"file_id": drive_file_id, "web_link": drive_web_link})
+
+                logger.info(
+                    "[STAGE 1.5] Uploaded to Drive: %s",
+                    drive_file_id,
+                    extra={
+                        "document_id": document_id,
+                        "stage": "drive_upload",
+                        "drive_file_id": drive_file_id,
+                        "drive_web_link": drive_web_link,
+                        "success": True,
+                    },
+                )
+
+            except DriveArchiveIntegrityError as e:
+                if retrieval_scope == HISTORICAL_RETRIEVAL_SCOPE:
+                    raise LegalIngestIntegrityError(
+                        f"Legal Drive archive integrity failure: {e}"
+                    ) from e
+                drive_archive = {"status": "failed", "reason": "archive_integrity"}
+                logger.warning(
+                    "[STAGE 1.5] Current-law Drive archive integrity failure "
+                    "(non-blocking): %s",
+                    e,
+                    extra={
+                        "document_id": document_id,
+                        "stage": "drive_upload",
+                        "error_type": type(e).__name__,
+                        "non_blocking": True,
+                    },
+                )
+            except Exception as e:
+                if retrieval_scope == HISTORICAL_RETRIEVAL_SCOPE:
+                    raise LegalIngestIntegrityError(
+                        "Historical legal ingestion requires a verified Drive archive"
+                    ) from e
+                # Current-law ingestion preserves the legacy non-blocking Drive behavior.
+                drive_archive = {"status": "failed", "reason": "archive_unavailable"}
+                logger.warning(
+                    "[STAGE 1.5] Google Drive upload failed (non-blocking): %s",
+                    e,
+                    extra={
+                        "document_id": document_id,
+                        "stage": "drive_upload",
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "non_blocking": True,
+                    },
+                )
+
+            # STAGE 2: Clean (The Washer)
+            cleaning_start = time.time()
+            cleaned_text = self.cleaner.clean(raw_text)
+            cleaning_duration = time.time() - cleaning_start
+
+            # OPTIONAL: Skip Pricing (Golden Data Enforcement)
+            pricing_removed = 0
+            if skip_pricing:
+                logger.info(
+                    "[STAGE 2] Removing pricing information from text...",
+                    extra={
+                        "document_id": document_id,
+                        "stage": "cleaning",
+                        "skip_pricing": True,
+                    },
+                )
+                # Split by newlines first
+                lines = cleaned_text.splitlines()
+                if len(lines) < 5 and len(cleaned_text) > 1000:
+                    # If few lines but lots of text, it might be one huge block. Try splitting by periods.
+                    logger.debug(
+                        "[STAGE 2] Text appears to be a single block. Splitting by sentences.",
+                        extra={"document_id": document_id, "stage": "cleaning"},
+                    )
+                    lines = cleaned_text.split(". ")
+                    separator = ". "
+                else:
+                    separator = "\n"
+
+                filtered_lines = [
+                    line
+                    for line in lines
+                    if not any(x in line.upper() for x in ["IDR", "RP ", "RP.", "RUPIAH"])
+                ]
+                pricing_removed = len(lines) - len(filtered_lines)
+                cleaned_text = separator.join(filtered_lines)
+                logger.info(
+                    "[STAGE 2] Removed %s segments containing pricing info",
+                    pricing_removed,
+                    extra={
+                        "document_id": document_id,
+                        "stage": "cleaning",
+                        "pricing_segments_removed": pricing_removed,
+                    },
+                )
+
+            logger.info(
+                f"[STAGE 2] Cleaning completed: {len(cleaned_text)} chars in {cleaning_duration:.2f}s",
+                extra={
+                    "document_id": document_id,
+                    "stage": "cleaning",
+                    "duration_seconds": cleaning_duration,
+                    "text_length": len(cleaned_text),
+                    "pricing_removed": pricing_removed,
+                },
+            )
+
+            # STAGE 3: Extract Metadata (The Librarian)
+            metadata_start = time.time()
+            metadata = self.metadata_extractor.extract(cleaned_text)
+            metadata_duration = time.time() - metadata_start
+
+            metrics_collector.record_metadata_extraction_duration(
+                document_type="legal", source=source, duration_seconds=metadata_duration
+            )
+
+            ingestion_logger.metadata_extracted(
+                document_id=document_id,
+                metadata=metadata,
+                source=source,
+                trace_id=trace_id,
+            )
+
+            # HYBRID EXTRACTION: Fallback to Google AI Studio if Pattern Extraction fails
+            # NOTE: Changed from Vertex AI to Google AI Studio (2026-02-06)
+            # Reason: Vertex AI costs were Rp 5.5M/month vs Google AI Studio ~Rp 800/month
+            if not metadata or metadata.get("type") == "UNKNOWN":
+                logger.info(
+                    "[STAGE 3] Pattern extraction failed/incomplete. Attempting Google AI Studio fallback...",
+                    extra={
+                        "document_id": document_id,
+                        "stage": "metadata_extraction",
+                        "fallback_method": "google_ai_studio",
+                    },
+                )
+                try:
+                    import json as json_module
+                    import os
+
+                    from google import genai
+
+                    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get(
+                        "GOOGLE_IMAGEN_API_KEY"
+                    )
+                    if not api_key:
+                        raise ValueError("GOOGLE_API_KEY not configured")
+
+                    client = genai.Client(api_key=api_key)
+                    prompt = f"""You are an expert Indonesian Legal Analyst.
+Extract metadata from this legal document. Return ONLY a JSON object with these fields:
+- type: Full document type (e.g., "Undang-Undang", "Peraturan Pemerintah")
+- type_abbrev: Abbreviation (e.g., "UU", "PP", "PERMEN")
+- number: Document number (e.g., "6", "28")
+- year: Year (e.g., "2023", "2025")
+- title: Document title
+- issuer: Issuing body
+
+Document text (first 3000 chars):
+{cleaned_text[:3000]}
+
+Return ONLY valid JSON, no markdown."""
+
+                    response = client.models.generate_content(
+                        model="gemini-2.0-flash",
+                        contents=prompt,
+                    )
+                    response_text = response.text.strip()
+                    # Clean markdown if present
+                    if response_text.startswith("```"):
+                        response_text = response_text.split("```")[1]
+                        if response_text.startswith("json"):
+                            response_text = response_text[4:]
+                    ai_metadata = json_module.loads(response_text)
+
+                    if ai_metadata:
+                        logger.info(
+                            f"[STAGE 3] Google AI Studio extraction successful: {ai_metadata.get('type_abbrev')} {ai_metadata.get('number')}",
+                            extra={
+                                "document_id": document_id,
+                                "stage": "metadata_extraction",
+                                "metadata_type": ai_metadata.get("type_abbrev"),
+                                "metadata_number": ai_metadata.get("number"),
+                                "fallback_success": True,
+                                "cost_effective": True,
+                            },
+                        )
+                        # Merge AI metadata, preferring AI results for missing fields
+                        if not metadata:
+                            metadata = ai_metadata
+                        else:
+                            metadata.update({k: v for k, v in ai_metadata.items() if v})
+                except Exception as e:
+                    logger.warning(
+                        "[STAGE 3] Google AI Studio fallback failed: %s",
+                        e,
+                        extra={
+                            "document_id": document_id,
+                            "stage": "metadata_extraction",
+                            "fallback_error": str(e),
+                            "error_type": type(e).__name__,
+                        },
+                    )
+
+            if not metadata or metadata.get("type_abbrev") == "UNKNOWN":
+                logger.warning(
+                    "[STAGE 3] Could not extract metadata (Pattern + AI failed), using category fallback",
+                    extra={
+                        "document_id": document_id,
+                        "stage": "metadata_extraction",
+                        "fallback_reason": "pattern_and_ai_failed",
+                        "category": category,
+                    },
+                )
+
+                # Use category as fallback for type_abbrev if possible
+                fallback_type = "DOC"
+                if category:
+                    # e.g. "01_immigrazione" -> "IMMIGRAZIONE"
+                    fallback_type = category.split("_")[-1].upper()
+
+                if not metadata:
+                    metadata = {
+                        "type": "UNKNOWN",
+                        "type_abbrev": fallback_type,
+                        "number": "UNKNOWN",
+                        "year": "UNKNOWN",
+                        "topic": title or Path(file_path).stem,
+                        "status": None,
+                        "full_title": title or Path(file_path).stem,
+                    }
+                else:
+                    metadata["type_abbrev"] = fallback_type
+                    if metadata.get("topic") == "UNKNOWN":
+                        metadata["topic"] = title or Path(file_path).stem
+
+            # Use extracted title if not provided
+            document_title = title or metadata.get("full_title", Path(file_path).stem)
+
+            # STAGE 4: Parse Structure (The Architect)
+            # structure = self.structure_parser.parse(cleaned_text)
+            # logger.info(
+            #     f"Parsed structure: {len(structure.get('batang_tubuh', []))} BAB, "
+            #     f"{len(structure.get('pasal_list', []))} Pasal"
+            # )
+
+            # STAGE 5: Classify tier
+            if tier_override:
+                tier = tier_override
+                logger.info(f"Using manual tier override: {tier.value}")
+            else:
+                # Use first 2000 chars for classification
+                content_sample = cleaned_text[:2000]
+                tier = self.classifier.classify_book_tier(
+                    document_title, "Pemerintah Indonesia", content_sample
+                )
+
+            min_level = self.classifier.get_min_access_level(tier)
+
+            # STAGE 6: Hierarchical Indexing (Parent-Child)
+            # Generate a document ID
+            # A declared identity wins over the derived one. The derived triple
+            # (type, number, year) does NOT identify an Indonesian instrument:
+            # every ministry numbers its regulations from 1 each year, so PMK
+            # 1/2026 and Permen Imipas 1/2026 both reduce to `Permen_1_2026`.
+            # Declaring the identity is how a curated corpus states which
+            # instrument a file is; derivation stays the fallback for ingests
+            # that declare nothing.
+            identity_source = classify_identity_source(metadata, declared_storage_id)
+            current_doc_id = declared_storage_id or build_content_bound_legal_doc_id(
+                metadata, source_sha256
+            )
+            doc_id = current_doc_id
+            if retrieval_scope == HISTORICAL_RETRIEVAL_SCOPE:
+                doc_id = f"{doc_id}__historical"
+
+            # Prepare base metadata
+            base_metadata = {
+                "book_title": document_title,
+                "book_author": "Pemerintah Indonesia",
+                "category": category,
+                "tier": tier.value,
+                "min_level": min_level,
+                "language": "id",  # Indonesian
+                "file_path": file_path,
+                # Stable per-source comparator for the identity-collision guard.
+                # `file_path` is absolute and therefore machine-dependent (the
+                # same file ingested from a worktree and from the checkout
+                # differs), so the basename is what the guard compares.
+                "source_basename": Path(file_path).name,
+                "doc_type": "legal",
+                # Legal-specific metadata
+                "legal_type": metadata.get("type_abbrev"),
+                "legal_number": metadata.get("number"),
+                "legal_year": metadata.get("year"),
+                "legal_topic": metadata.get("topic"),
+                # `legal_status` write RETIRED 2026-08-25 (Lane P,
+                # kb-p2-status-retire-0825) — see
+                # backend/core/legal/constants.py's tombstone comment above
+                # `# Status indicators`. The key is now genuinely absent from
+                # every new point, not present-and-None: `metadata` no longer
+                # carries a "status" entry at all, so there is nothing here to
+                # write. scripts/ci/legal_status_read_lint.py enforces that
+                # nothing reads the field this line used to populate.
+                "retrieval_scope": retrieval_scope,
+                # WIZ-1/WIZ-2 (2026-08-26): declared / extracted / hash_fallback.
+                # "hash_fallback" means this document's identity is safe from
+                # collision but NOT reachable by document_id or citation
+                # lookup -- only by vector similarity. See
+                # classify_identity_source() above for the full rationale.
+                # Flat top-level key (this field never existed in the legacy
+                # nested `{metadata: {...}}` shape, so there is no
+                # `metadata.identity_source` twin to also index).
+                "identity_source": identity_source,
+                # CRITICAL: Keep original keys for LegalChunker context injection
+                "type_abbrev": metadata.get("type_abbrev"),
+                "number": metadata.get("number"),
+                "year": metadata.get("year"),
+                "topic": metadata.get("topic"),
+            }
+
+            if source_url:
+                base_metadata["source_url"] = source_url
+            if effective_date:
+                base_metadata["effective_date"] = effective_date.isoformat()
+            if observed_at:
+                base_metadata["observed_at"] = observed_at.isoformat()
+
+            # Add Drive file info if available
+            if drive_file_id:
+                base_metadata["drive_file_id"] = drive_file_id
+            if drive_web_link:
+                base_metadata["drive_web_link"] = drive_web_link
+
+            # Use HierarchicalIndexer
+            indexing_start = time.time()
+            quarantined_current_ids: list[str] = []
+            source_basename = Path(file_path).name
+            # Fail before the first mutation OF THE VECTOR STORE: the quarantine
+            # below already rewrites payloads, so a collision detected after it
+            # would leave the other document's points half-modified. (STAGE 1.5
+            # has already archived the file to Drive by this point -- that is an
+            # outward copy, not a mutation of the corpus, and a refused ingest
+            # therefore leaves an archived PDF behind. Deliberate: the archive is
+            # idempotent and a spare copy is harmless, whereas moving the guard
+            # earlier is impossible -- the identity is not known until metadata
+            # extraction, which runs after the archive step.)
+            await self._assert_identity_unclaimed(
+                request_vector_db,
+                doc_id,
+                source_basename,
+            )
+            if retrieval_scope == HISTORICAL_RETRIEVAL_SCOPE:
+                # The historical path does not merely WRITE to `doc_id`
+                # (`X__historical`) -- it quarantines and then DELETES every
+                # point under `current_doc_id` (`X`). Guarding only `doc_id`
+                # leaves `X` uninspected, so a historical ingest whose derived
+                # identity happens to match a DIFFERENT ministry's current-law
+                # document would pass the guard and then delete that document in
+                # full. That is strictly worse than the incident this guard was
+                # written for: the incident overwrote 50 chunks, this would
+                # remove all of them, with the guard's blessing.
+                await self._assert_identity_unclaimed(
+                    request_vector_db,
+                    current_doc_id,
+                    source_basename,
+                )
+                reconciliation_state = "QUARANTINE_IN_PROGRESS"
+                quarantined_current_ids = await self._quarantine_current_points(
+                    request_vector_db,
+                    current_doc_id,
+                )
+                reconciliation_state = "CURRENT_SCOPE_QUARANTINED"
+            indexing_result = await self.indexer.index_legal_document(
+                document_text=cleaned_text,
+                document_id=doc_id,
+                metadata=base_metadata,
+                qdrant_client=request_vector_db,
+            )
+            chunks_indexed = _coerce_positive_int(
+                indexing_result.get("chunks_indexed"),
+                "chunks_indexed",
+            )
+            chunks_upserted = _coerce_positive_int(
+                indexing_result.get("chunks_upserted", chunks_indexed),
+                "chunks_upserted",
+            )
+            if chunks_indexed <= 0:
+                raise LegalIngestIntegrityError(
+                    f"Legal ingestion produced zero chunks for {doc_id}"
+                )
+            if chunks_upserted <= 0:
+                raise LegalIngestIntegrityError(
+                    f"Legal ingestion produced zero upserts for {doc_id}"
+                )
+            if retrieval_scope == HISTORICAL_RETRIEVAL_SCOPE:
+                await request_vector_db.delete_by_filter(
+                    metadata_filter={"document_id": current_doc_id},
+                )
+                reconciliation_state = "HISTORICAL_REPLACEMENT_COMPLETE"
+                if quarantined_current_ids:
+                    logger.info(
+                        "Removed quarantined current-law points after historical replacement",
+                        extra={
+                            "document_id": document_id,
+                            "quarantined_points": len(quarantined_current_ids),
+                        },
+                    )
+            indexing_duration = time.time() - indexing_start
+
+            # Record chunking and embedding metrics
+            metrics_collector.record_chunking_duration(
+                file_type=file_type,
+                chunk_strategy="legal_hierarchical",
+                duration_seconds=indexing_duration,
+            )
+
+            total_duration = time.time() - start_time
+
+            # Record success metrics
+            metrics_collector.record_document_ingested(
+                source=source,
+                file_type=file_type,
+                collection=target_collection,
+                status="success",
+                chunks_created=chunks_indexed,
+            )
+
+            metrics_collector.record_document_processing_duration(
+                source=source, collection=target_collection, duration_seconds=total_duration
+            )
+
+            logger.info(
+                "[STAGE 6] Successfully ingested legal document: %s",
+                document_title,
+                extra={
+                    "document_id": document_id,
+                    "stage": "completion",
+                    "chunks_created": chunks_indexed,
+                    "chunks_upserted": chunks_upserted,
+                    "parent_documents": indexing_result["parent_documents"],
+                    "total_bab": indexing_result.get("total_bab", 0),
+                    "total_pasal": indexing_result.get("total_pasal", 0),
+                },
+            )
+
+            # STAGE 7: Knowledge Graph Extraction (Permanent)
+            kg_extraction_result = {}
+            if self.kg_enabled and chunks_indexed > 0:
+                kg_start = time.time()
+                try:
+                    kg_extractor = await self._get_kg_extractor()
+
+                    if kg_extractor is None:
+                        logger.info(
+                            "[STAGE 7] KG extractor not available - skipping KG extraction",
+                            extra={
+                                "document_id": document_id,
+                                "stage": "kg_extraction",
+                                "skipped": True,
+                                "skip_reason": "extractor_not_available",
+                            },
+                        )
+                        kg_extraction_result = {"skipped": "extractor_not_available"}
+                    else:
+                        # Extract KG from newly created chunks
+                        # Usa collection_name corrente (potrebbe essere override)
+                        logger.info(
+                            "[STAGE 7] Starting KG extraction...",
+                            extra={
+                                "document_id": document_id,
+                                "stage": "kg_extraction",
+                                "collection_name": target_collection,
+                            },
+                        )
+                        kg_result = await kg_extractor.extract_from_collection(
+                            collection_name=target_collection,
+                            document_id=doc_id,  # Filtra solo chunks di questo documento
+                            limit=None,  # Processa tutti i chunks del documento
+                            dry_run=False,
+                        )
+
+                        kg_duration = time.time() - kg_start
+
+                        logger.info(
+                            f"[STAGE 7] KG extraction completed: {kg_result.get('entities_extracted', 0)} entities, "
+                            f"{kg_result.get('relationships_extracted', 0)} relationships",
+                            extra={
+                                "document_id": document_id,
+                                "stage": "kg_extraction",
+                                "entities_extracted": kg_result.get("entities_extracted", 0),
+                                "relationships_extracted": kg_result.get(
+                                    "relationships_extracted", 0
+                                ),
+                                "chunks_processed": kg_result.get("chunks_processed", 0),
+                                "duration_seconds": kg_duration,
+                                "success": True,
+                            },
+                        )
+
+                        # Aggiungi KG stats al risultato
+                        kg_extraction_result = {
+                            "entities": kg_result.get("entities_extracted", 0),
+                            "relationships": kg_result.get("relationships_extracted", 0),
+                            "duration_seconds": kg_duration,
+                        }
+
+                except Exception as e:
+                    # Non bloccare ingestione se KG fallisce - logga ma continua
+                    error_msg = str(e)
+                    kg_duration = time.time() - kg_start
+                    logger.warning(
+                        "[STAGE 7] KG extraction failed (non-blocking): %s",
+                        error_msg,
+                        extra={
+                            "document_id": document_id,
+                            "stage": "kg_extraction",
+                            "error": error_msg,
+                            "error_type": type(e).__name__,
+                            "duration_seconds": kg_duration,
+                            "non_blocking": True,
+                        },
+                    )
+                    kg_extraction_result = {"error": error_msg}
+                    # Non rilanciare l'eccezione - l'ingestione deve continuare
+
+            # Log completion
+            ingestion_logger.ingestion_completed(
+                document_id=document_id,
+                file_path=file_path,
+                chunks_created=chunks_indexed,
+                collection_name=target_collection,
+                tier=tier.value,
+                total_duration_ms=total_duration * 1000,
+                source=source,
+                trace_id=trace_id,
+                user_id=user_id,
+            )
+
+            result = {
+                "success": True,
+                "book_title": document_title,
+                "book_author": "Pemerintah Indonesia",
+                "tier": tier.value,
+                "chunks_created": chunks_indexed,
+                "chunks_upserted": chunks_upserted,
+                "legal_metadata": metadata,
+                "structure": {
+                    "bab_count": indexing_result["total_bab"],
+                    "pasal_count": indexing_result["total_pasal"],
+                },
+                "message": f"Successfully ingested {document_title}",
+                "error": None,
+                "document_id": document_id,
+                "processing_time_seconds": total_duration,
+                "drive_archive": drive_archive,
+            }
+            if retrieval_scope == HISTORICAL_RETRIEVAL_SCOPE:
+                result["reconciliation_status"] = reconciliation_state
+
+            # Add KG extraction results if available
+            if kg_extraction_result:
+                result["kg_extraction"] = kg_extraction_result
+
+            # Semantic cache: wipe the legal domain so next reader sees fresh answers
+            # within the next request, rather than waiting the 4h per-domain TTL.
+            try:
+                from backend.services.caching.semantic_cache import (
+                    DOMAIN_LEGAL,
+                    invalidate_by_domain,
+                )
+
+                await invalidate_by_domain(DOMAIN_LEGAL)
+            except Exception as cache_exc:
+                logger.debug(
+                    "Semantic cache legal-domain invalidation skipped: %s",
+                    cache_exc,
+                )
+
+            return result
+
+        except Exception as e:
+            total_duration = time.time() - start_time
+            error_type = type(e).__name__
+            reconciliation_requires_review = reconciliation_state in {
+                "QUARANTINE_IN_PROGRESS",
+                "CURRENT_SCOPE_QUARANTINED",
+            }
+
+            # Record error metrics
+            metrics_collector.record_document_ingested(
+                source=source,
+                file_type=file_type,
+                collection=collection_name or "unknown",
+                status="error",
+            )
+
+            metrics_collector.record_parsing_error(
+                file_type=file_type, error_type=error_type, source=source
+            )
+
+            # Log error with structured logging
+            ingestion_logger.ingestion_failed(
+                document_id=document_id or f"failed_{int(start_time)}",
+                file_path=file_path,
+                error=e,
+                stage=_failure_stage(e),
+                duration_ms=total_duration * 1000,
+                source=source,
+                trace_id=trace_id,
+                user_id=user_id,
+            )
+
+            logger.error("❌ Error ingesting legal document %s: %s", file_path, e, exc_info=True)
+            if reconciliation_requires_review:
+                logger.critical(
+                    "Historical scope reconciliation failed after current-scope mutation; "
+                    "manual review or idempotent retry required",
+                    extra={
+                        "document_id": document_id,
+                        "reconciliation_state": reconciliation_state,
+                        "required_action": "HUMAN_REVIEW_REQUIRED",
+                    },
+                )
+            return {
+                "success": False,
+                "book_title": title or Path(file_path).stem,
+                "book_author": "Pemerintah Indonesia",
+                "tier": "Unknown",
+                "chunks_created": 0,
+                "message": "Failed to ingest legal document",
+                "error": str(e),
+                "document_id": document_id,
+                "processing_time_seconds": total_duration,
+                "reconciliation_status": (
+                    "HUMAN_REVIEW_REQUIRED"
+                    if reconciliation_requires_review
+                    else reconciliation_state
+                ),
+                "current_scope_state": (
+                    "QUARANTINED_OR_UNKNOWN"
+                    if reconciliation_requires_review
+                    else "UNCHANGED_OR_NOT_APPLICABLE"
+                ),
+            }
+
+    async def _ensure_drive_folder_exists(
+        self,
+        drive_service,
+        folder_path: str,
+    ) -> str:
+        """
+        Trova o crea cartella su Google Drive.
+
+        Args:
+            drive_service: ServiceAccountDriveService instance
+            folder_path: Path relativo da root (es: "BALI ZERO/PERATURAN")
+
+        Returns:
+            Folder ID della cartella finale
+        """
+        from backend.app.core.config import settings
+
+        # Split path in componenti
+        parts = [p.strip() for p in folder_path.split("/") if p.strip()]
+
+        # Inizia dalla root folder (da settings)
+        current_parent_id = settings.google_drive_root_folder_id or "root"
+
+        # Naviga/crea ogni livello
+        for folder_name in parts:
+            # The service-account adapter supports an exact parent-scoped lookup.
+            try:
+                matching_folder = await drive_service.find_folder(
+                    name=folder_name,
+                    parent_id=current_parent_id,
+                )
+
+                if matching_folder:
+                    current_parent_id = matching_folder["id"]
+                    logger.debug("Found existing Drive folder: %s", folder_name)
+                else:
+                    # Crea cartella
+                    folder = await drive_service.create_folder(
+                        name=folder_name,
+                        parent_id=current_parent_id,
+                    )
+                    current_parent_id = folder["id"]
+                    logger.info("Created Drive folder: %s (%s)", folder_name, current_parent_id)
+            except Exception as e:
+                # Se list_files fallisce, prova a creare direttamente
+                logger.warning(
+                    "Error listing files in %s: %s. Attempting to create folder...",
+                    current_parent_id,
+                    e,
+                )
+                try:
+                    folder = await drive_service.create_folder(
+                        name=folder_name,
+                        parent_id=current_parent_id,
+                    )
+                    current_parent_id = folder["id"]
+                    logger.info("Created Drive folder: %s (%s)", folder_name, current_parent_id)
+                except Exception as create_error:
+                    logger.error("Failed to create folder %s: %s", folder_name, create_error)
+                    raise
+
+        return current_parent_id
+
+    async def _get_kg_extractor(self) -> None:
+        """Lazy initialization of KG extractor."""
+        if self.kg_extractor is None:
+            import os
+            import sys
+
+            import asyncpg
+
+            from backend.app.core.config import settings
+
+            try:
+                # Import KGIncrementalExtractor from scripts
+                # File is at: apps/backend-rag/scripts/kg_incremental_extraction.py
+                # Current file: apps/backend-rag/backend/services/ingestion/legal_ingestion_service.py
+                # Navigate: backend/services/ingestion -> backend/services -> backend -> apps/backend-rag
+                backend_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                # backend_path is now apps/backend-rag/backend
+                backend_rag_path = os.path.dirname(backend_path)  # apps/backend-rag
+                scripts_path = os.path.join(backend_rag_path, "scripts")
+                kg_extractor_path = os.path.join(scripts_path, "kg_incremental_extraction.py")
+
+                if not os.path.exists(kg_extractor_path):
+                    raise ImportError(
+                        f"kg_incremental_extraction.py not found at {kg_extractor_path}"
+                    )
+
+                if scripts_path not in sys.path:
+                    sys.path.insert(0, scripts_path)
+
+                # Import with proper module path
+                import importlib.util
+
+                spec = importlib.util.spec_from_file_location(
+                    "kg_incremental_extraction", kg_extractor_path
+                )
+                kg_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(kg_module)
+                KGIncrementalExtractor = kg_module.KGIncrementalExtractor
+
+                # Initialize LLM client for KG extraction.
+                gemini = None
+                openai_client = None
+                provider = "gemini"
+                try:
+                    from openai import AsyncOpenAI
+
+                    openai_key = os.environ.get("OPENAI_API_KEY")
+                    openai_base_url = os.environ.get("OPENAI_BASE_URL")
+                    if openai_key:
+                        client_kwargs = {"api_key": openai_key}
+                        if openai_base_url:
+                            client_kwargs["base_url"] = openai_base_url
+                        openai_client = AsyncOpenAI(**client_kwargs)
+                        provider = "openai"
+                        logger.info("OpenAI client initialized for KG extraction")
+                except Exception as e:
+                    logger.warning("Could not initialize OpenAI for KG extraction: %s", e)
+
+                try:
+                    if openai_client is None:
+                        import tempfile
+
+                        from google import genai
+
+                        creds_json = settings.google_credentials_json
+                        project_id = os.environ.get("GOOGLE_PROJECT_ID", "nuzantara")
+                        location = os.environ.get("GOOGLE_LOCATION", "us-central1")
+
+                        if creds_json:
+                            with tempfile.NamedTemporaryFile(
+                                mode="w", suffix=".json", delete=False
+                            ) as f:
+                                f.write(creds_json)
+                                creds_path = f.name
+                            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_path
+
+                        client = genai.Client(vertexai=True, project=project_id, location=location)
+                        gemini = client
+                        logger.info("Gemini client initialized for KG extraction")
+                except Exception as e:
+                    logger.warning("Could not initialize Gemini for KG extraction: %s", e)
+
+                # Create DB pool (with error handling)
+                db_pool = None
+                if settings.database_url:
+                    try:
+                        db_pool = await asyncpg.create_pool(
+                            settings.database_url, min_size=1, max_size=5
+                        )
+                    except Exception as db_error:
+                        logger.warning(
+                            "Could not create database pool for KG extraction: %s", db_error
+                        )
+                        # Return None to skip KG extraction
+                        return None
+
+                if not db_pool:
+                    logger.warning("Database pool not available - skipping KG extraction")
+                    return None
+
+                # Initialize extractor
+                self.kg_extractor = KGIncrementalExtractor(
+                    db_pool=db_pool,
+                    qdrant_url=settings.qdrant_url,
+                    qdrant_api_key=settings.qdrant_api_key or "",
+                    gemini_client=gemini,
+                    openai_client=openai_client,
+                    provider=provider,
+                )
+                logger.info("KG extractor initialized")
+            except Exception as e:
+                logger.warning("Failed to initialize KG extractor: %s", e)
+                return None
+
+        return self.kg_extractor
+
+    def detect_legal_document(self, text: str) -> bool:
+        """
+        Detect if text appears to be an Indonesian legal document.
+
+        Args:
+            text: Text to check
+
+        Returns:
+            True if text appears to be a legal document
+        """
+        return self.metadata_extractor.is_legal_document(text)

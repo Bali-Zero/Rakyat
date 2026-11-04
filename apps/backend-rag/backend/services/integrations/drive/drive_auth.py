@@ -1,0 +1,280 @@
+import base64
+import json
+import logging
+import os
+from datetime import datetime, timedelta, timezone
+
+import asyncpg
+import httpx
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.oauth2 import service_account
+
+# Metriche Prometheus (con fallback per sicurezza)
+try:
+    from backend.app.metrics import drive_oauth_refresh_total
+
+    METRICS_ENABLED = True
+except ImportError:
+    METRICS_ENABLED = False
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+
+class DriveAuthManager:
+    """
+    Gestisce l'autenticazione ibrida per Google Drive (OAuth + Service Account).
+    Incorpora il rinnovo asincrono dei token OAuth e la validazione dei permessi (folder access rules).
+    """
+
+    def __init__(self, db_pool: asyncpg.Pool, http_client: httpx.AsyncClient) -> None:
+        self.db_pool = db_pool
+        self.http_client = http_client
+        self.scopes = ["https://www.googleapis.com/auth/drive"]
+
+    @property
+    def service_account_available(self) -> bool:
+        """True if a service-account credential is configured and structurally valid.
+
+        Lightweight, non-network check (no token mint): parses the same
+        credential `_get_service_account_token`/`ServiceAccountDriveService`
+        would load (raw or base64-encoded JSON, `settings.google_credentials_json`
+        which resolves GOOGLE_CREDENTIALS_JSON / GOOGLE_SERVICE_ACCOUNT_JSON /
+        GOOGLE_SERVICE_ACCOUNT / GEMINI_SA_TOKEN) and confirms it looks like a
+        service-account key. This used to be a bare `getattr(..., False)` probe
+        on an attribute this class never defined, so it was permanently False
+        regardless of whether a usable credential existed.
+        """
+        from backend.app.core.config import settings
+
+        creds_str = getattr(settings, "google_credentials_json", None)
+        if not creds_str:
+            return False
+
+        try:
+            info = json.loads(creds_str)
+        except json.JSONDecodeError:
+            try:
+                info = json.loads(base64.b64decode(creds_str).decode("utf-8"))
+            except Exception:
+                return False
+
+        return info.get("type") == "service_account"
+
+    async def get_access_token(self, user_id: str = "system") -> str | None:
+        """
+        Recupera un token di accesso valido.
+        Priorità 1: Token OAuth dal Database (es. sistema/admin).
+        Priorità 2: Fallback su Service Account.
+        """
+        # 1. Tentativo di recupero tramite OAuth
+        token = await self._get_or_refresh_oauth_token(user_id)
+        if token:
+            return token
+
+        # 2. Fallback su Service Account in caso di fallimento OAuth
+        logger.warning("OAuth token non disponibile per %s. Fallback su Service Account.", user_id)
+        return await self._get_service_account_token()
+
+    async def _get_or_refresh_oauth_token(self, user_id: str) -> str | None:
+        """
+        Recupera il token OAuth da PostgreSQL. Se è scaduto o in scadenza (< 5 min),
+        effettua il refresh asincrono tramite l'http_client condiviso.
+        """
+        try:
+            async with self.db_pool.acquire() as conn:
+                record = await conn.fetchrow(
+                    """
+                    SELECT access_token, refresh_token, expires_at
+                    FROM google_drive_tokens
+                    WHERE user_id = $1
+                    """,
+                    user_id,
+                )
+
+                if not record:
+                    return None
+
+                access_token = record["access_token"]
+                refresh_token = record["refresh_token"]
+                expires_at = record["expires_at"]
+
+                # Assicura che expires_at sia aware della timezone per il calcolo
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+                time_to_expiry = (expires_at - datetime.now(timezone.utc)).total_seconds()
+
+                # Se mancano meno di 5 minuti alla scadenza, esegui il refresh
+                if time_to_expiry < 300:
+                    logger.info(
+                        "Token OAuth per %s in scadenza (TTL: %ss). Inizio refresh.",
+                        user_id,
+                        time_to_expiry,
+                    )
+                    return await self._refresh_oauth_token(user_id, refresh_token)
+
+                return access_token
+
+        except Exception as e:
+            logger.error(
+                "Errore critico nel recupero token OAuth per %s: %s",
+                user_id,
+                e,
+                exc_info=True,
+            )
+            return None
+
+    async def _refresh_oauth_token(self, user_id: str, refresh_token: str) -> str | None:
+        """
+        Esegue la chiamata asincrona all'API di Google per ottenere un nuovo access_token,
+        sfruttando il connection pool di HTTPX per azzerare i colli di bottiglia.
+        """
+        if not refresh_token:
+            logger.error(
+                "Impossibile effettuare il refresh per %s: refresh_token mancante.",
+                user_id,
+            )
+            if METRICS_ENABLED:
+                drive_oauth_refresh_total.labels(status="failed").inc()
+            return None
+
+        client_id = os.getenv("GOOGLE_CLIENT_ID")
+        client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+
+        if not client_id or not client_secret:
+            logger.error(
+                "Credenziali OAuth (Client ID/Secret) non configurate nelle variabili d'ambiente.",
+            )
+            return None
+
+        try:
+            # Esecuzione HTTP non bloccante
+            response = await self.http_client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "refresh_token": refresh_token,
+                    "grant_type": "refresh_token",
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            new_access_token = data["access_token"]
+            expires_in = data.get("expires_in", 3599)
+            new_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+
+            # Aggiornamento atomico nel database
+            async with self.db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE google_drive_tokens
+                    SET access_token = $1, expires_at = $2, updated_at = NOW()
+                    WHERE user_id = $3
+                    """,
+                    new_access_token,
+                    new_expires_at,
+                    user_id,
+                )
+
+            if METRICS_ENABLED:
+                drive_oauth_refresh_total.labels(status="success").inc()
+
+            logger.info("Refresh del token OAuth per %s completato con successo.", user_id)
+            return new_access_token
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"Fallimento HTTP durante il refresh del token Google OAuth per {user_id}: {e.response.text}",
+                exc_info=True,
+            )
+            if METRICS_ENABLED:
+                drive_oauth_refresh_total.labels(status="failed").inc()
+            return None
+        except Exception as e:
+            logger.error(
+                "Errore di sistema imprevisto durante il refresh token per %s: %s",
+                user_id,
+                e,
+                exc_info=True,
+            )
+            if METRICS_ENABLED:
+                drive_oauth_refresh_total.labels(status="failed").inc()
+            return None
+
+    async def _get_service_account_token(self) -> str | None:
+        """
+        Carica le credenziali del Service Account come fallback dalle variabili di ambiente.
+        """
+        try:
+            sa_json_str = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+            if not sa_json_str:
+                logger.error(
+                    "La variabile d'ambiente GOOGLE_SERVICE_ACCOUNT_JSON non è configurata.",
+                )
+                return None
+
+            sa_info = json.loads(sa_json_str)
+            credentials = service_account.Credentials.from_service_account_info(
+                sa_info,
+                scopes=self.scopes,
+            )
+
+            # Nota: L'oggetto request di google.auth è sincrono,
+            # ma lo usiamo in fallback stretto per firmare e fare fetch del token
+            request = GoogleAuthRequest()
+            credentials.refresh(request)
+            return credentials.token
+
+        except json.JSONDecodeError as e:
+            logger.error(
+                "GOOGLE_SERVICE_ACCOUNT_JSON contiene JSON non valido: %s",
+                e,
+                exc_info=True,
+            )
+            return None
+        except Exception as e:
+            logger.error("Errore caricamento del token Service Account: %s", e, exc_info=True)
+            return None
+
+    async def get_user_allowed_folders(self, user_email: str) -> tuple[list[str], bool]:
+        """
+        Gestisce i permessi granulari dell'utente su base dipartimentale o esplicita.
+        Verifica la tabella folder_access_rules per generare una whitelist di cartelle.
+        Ritorna una tupla: (lista_cartelle_permesse, booleano_can_see_all)
+        """
+        try:
+            async with self.db_pool.acquire() as conn:
+                # Interroga i permessi del dipartimento incrociando team_members, departments e folder_access_rules
+                rows = await conn.fetch(
+                    """
+                    SELECT d.can_see_all, f.folder_name
+                    FROM team_members tm
+                    JOIN departments d ON tm.department = d.code
+                    LEFT JOIN folder_access_rules f ON d.code = f.department_code
+                    WHERE tm.email = $1 AND tm.active = true
+                    """,
+                    user_email,
+                )
+
+                if not rows:
+                    return ([], False)
+
+                # Se almeno un record segnala can_see_all come True (es. Owner/Founder)
+                can_see_all = any(r.get("can_see_all", False) for r in rows)
+
+                # Estrae i nomi dei folder specifici
+                allowed_folders = [r["folder_name"] for r in rows if r["folder_name"] is not None]
+
+                return (list(set(allowed_folders)), can_see_all)
+
+        except Exception as e:
+            logger.error(
+                "Fallimento recupero permessi folder per l'utente %s: %s",
+                user_email,
+                e,
+                exc_info=True,
+            )
+            return ([], False)

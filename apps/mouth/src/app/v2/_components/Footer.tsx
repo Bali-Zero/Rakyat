@@ -1,0 +1,284 @@
+"use client";
+
+import { BZLogo } from "@balizero/core/components/BZLogo";
+import {
+  Mail,
+  Phone,
+  MapPin,
+  MessageCircle,
+  Send,
+  type LucideIcon,
+} from "lucide-react";
+import { buildWhatsAppLink } from "@/lib/whatsapp-utm";
+import { trackFunnelEvent } from "@balizero/core/analytics";
+import { getOrCreateSessionId } from "@balizero/core/auth";
+import { usePathname } from "next/navigation";
+
+const SERVICES = [
+  { label: "Visa & Immigration", href: "/services/visa" },
+  { label: "Company Setup", href: "/services/company" },
+  { label: "Tax & Compliance", href: "/services/tax" },
+  { label: "Property DD", href: "/services/property" },
+  { label: "Golden Visa", href: "/visas/golden-visa-indonesia-complete-guide" },
+];
+
+const NEWS = [
+  { label: "Visas", href: "/news?category=visas" },
+  { label: "Business", href: "/news?category=business" },
+  { label: "Taxes", href: "/news?category=taxes" },
+  { label: "Property", href: "/news?category=property" },
+  { label: "Living", href: "/news?category=living" },
+];
+
+// Only links with a REAL destination (Subhi audit F7). The #team/#careers/
+// #press fragments had no matching id= anchors on the about page (phantom
+// anchors — all four links landed on the same view). Team has a real page
+// at /team; Careers + Press have none, so they are removed, not faked.
+const COMPANY = [
+  { label: "About", href: "/about" },
+  { label: "Team", href: "/team" },
+];
+
+export function Footer() {
+  const pathname = usePathname();
+  const footerFunnel = pathname.startsWith("/visa")
+    ? "visa"
+    : pathname.startsWith("/kbli")
+      ? "kbli"
+      : pathname.startsWith("/tax")
+        ? "tax"
+        : pathname.startsWith("/property")
+          ? "property"
+          : "home";
+
+  const FOOTER_EVENT = {
+    home: "home_whatsapp_cta",
+    visa: "visa_whatsapp_cta",
+    kbli: "kbli_whatsapp_cta",
+    tax: "tax_whatsapp_cta",
+    property: "property_whatsapp_cta",
+  } as const;
+
+  return (
+    <footer
+      className="pt-12 md:pt-20 pb-[80px] sm:pb-8 md:pb-16 px-5 md:px-10"
+      style={{
+        background: "var(--footer-bg)",
+        borderTop: "1px solid var(--footer-border)",
+      }}
+    >
+      <div className="max-w-[1400px] mx-auto">
+        {/* Top row — 5 columns on desktop, 2-col tablet, stacks on mobile */}
+        <div className="footer-grid grid mb-14">
+          {/* Brand */}
+          <div>
+            <BZLogo variant="round" size={68} />
+            <h3
+              className="brand-tagline mt-5 mb-4"
+              style={{ fontSize: 16, justifyContent: "flex-start" }}
+            >
+              Your Bali, from Zero.
+            </h3>
+            <p
+              className="text-[13px] leading-relaxed max-w-xs"
+              style={{ color: "var(--text-tertiary)" }}
+            >
+              Your trusted partner for business, immigration, and investment in
+              Indonesia since 2020. Trusted by 5,000+ clients.
+            </p>
+          </div>
+
+          {/* Services */}
+          <FooterCol title="Services" items={SERVICES} />
+
+          {/* News */}
+          <FooterCol title="News" items={NEWS} />
+
+          {/* Company */}
+          <FooterCol title="Company" items={COMPANY} />
+
+          {/* Contact — the one that matters */}
+          <div>
+            <h4
+              className="text-[11px] font-bold uppercase tracking-[0.15em] mb-5"
+              style={{ color: "var(--text-tertiary)" }}
+            >
+              Get in touch
+            </h4>
+            <div className="flex flex-col gap-3">
+              <ContactLink
+                href={buildWhatsAppLink(footerFunnel)}
+                Icon={MessageCircle}
+                label="WhatsApp"
+                value="+62 821 3454 721"
+                external
+                onClick={() =>
+                  void trackFunnelEvent(FOOTER_EVENT[footerFunnel], {
+                    sessionId: getOrCreateSessionId(),
+                    payload: { trigger: "footer" },
+                  })
+                }
+              />
+              <ContactLink
+                href="https://t.me/Balizerobot"
+                Icon={Send}
+                label="Telegram"
+                value="@Balizerobot"
+                external
+              />
+              <ContactLink
+                href="mailto:zantara@balizero.com"
+                Icon={Mail}
+                label="Email"
+                value="zantara@balizero.com"
+              />
+              <ContactLink
+                href="tel:+628213454721"
+                Icon={Phone}
+                label="Phone"
+                value="+62 821 3454 721"
+              />
+              <ContactLink
+                href="https://maps.google.com/?q=Bali+Indonesia"
+                Icon={MapPin}
+                label="Location"
+                value="Bali, Indonesia"
+                external
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom bar */}
+        <div
+          className="pt-6 flex items-center justify-between flex-wrap gap-4"
+          style={{ borderTop: "1px solid var(--footer-border)" }}
+        >
+          <span
+            className="text-[11px]"
+            style={{ color: "var(--text-tertiary)" }}
+          >
+            © 2026 Bali Zero. All rights reserved.
+          </span>
+          <div className="flex items-center gap-x-5 gap-y-2 flex-wrap justify-end">
+            {/* P4: py-3 -my-3 expands hit area to ~44px without changing visual spacing */}
+            <a
+              href="/privacy"
+              className="text-[11px] py-3 -my-3"
+              style={{ color: "var(--text-tertiary)" }}
+            >
+              Privacy Policy
+            </a>
+            <a
+              href="/terms"
+              className="text-[11px] py-3 -my-3"
+              style={{ color: "var(--text-tertiary)" }}
+            >
+              Terms of Service
+            </a>
+            <a
+              href="/cookies"
+              className="text-[11px] py-3 -my-3"
+              style={{ color: "var(--text-tertiary)" }}
+            >
+              Cookie Policy
+            </a>
+          </div>
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+function FooterCol({
+  title,
+  items,
+}: {
+  title: string;
+  items: { label: string; href: string }[];
+}) {
+  return (
+    <div>
+      <h4
+        className="text-[11px] font-bold uppercase tracking-[0.15em] mb-5"
+        style={{ color: "var(--text-tertiary)" }}
+      >
+        {title}
+      </h4>
+      <ul className="flex flex-col list-none p-0 m-0">
+        {items.map((it) => (
+          <li key={it.label}>
+            <a
+              href={it.href}
+              className="inline-flex min-h-11 items-center text-[13px] transition-colors"
+              style={{ color: "var(--text-secondary)" }}
+            >
+              {it.label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function ContactLink({
+  href,
+  Icon,
+  label,
+  value,
+  external,
+  onClick,
+}: {
+  href: string;
+  Icon: LucideIcon;
+  label: string;
+  value: string;
+  external?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <a
+      href={href}
+      target={external ? "_blank" : undefined}
+      rel={external ? "noopener noreferrer" : undefined}
+      onClick={onClick}
+      className="flex items-center gap-3 group"
+    >
+      {/* Editorial monochrome badge: no per-platform fill. One brand accent
+          (--accent-zantara, the funnel-agnostic chrome accent — the footer must
+          NOT read --accent-funnel, semantic.css §3) appears only on hover/focus.
+          Contrast measured against the live --footer-bg (#162d50, editorial
+          theme): resting icon white @72% = 7.8:1, hover accent #8b5cf6 = 3.3:1
+          — both clear WCAG AA (3:1 for non-text UI components). */}
+      <div
+        className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0
+          border border-[color:var(--border-strong)] bg-transparent
+          text-[color:var(--footer-icon-color,rgba(255,255,255,0.72))]
+          transition-[color,border-color,background-color] duration-200 ease-out
+          group-hover:border-[color:var(--accent-zantara)]
+          group-hover:text-[color:var(--accent-zantara)]
+          group-hover:bg-[color-mix(in_srgb,var(--accent-zantara)_10%,transparent)]
+          group-focus-visible:border-[color:var(--accent-zantara)]
+          group-focus-visible:text-[color:var(--accent-zantara)]
+          group-focus-visible:bg-[color-mix(in_srgb,var(--accent-zantara)_10%,transparent)]"
+      >
+        <Icon size={15} strokeWidth={2} />
+      </div>
+      <div className="flex flex-col min-w-0">
+        <span
+          className="text-[10px] font-semibold uppercase tracking-wider"
+          style={{ color: "var(--text-tertiary)" }}
+        >
+          {label}
+        </span>
+        <span
+          className="text-[12px] font-semibold truncate"
+          style={{ color: "var(--text-primary)" }}
+        >
+          {value}
+        </span>
+      </div>
+    </a>
+  );
+}

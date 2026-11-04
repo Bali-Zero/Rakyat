@@ -1,0 +1,90 @@
+name: actionlint
+
+# Schema + expression gate for GitHub Actions workflow files.
+#
+# Born 2026-07-16: the ai-pr-review.yml advisory Action (#2533) merged green but
+# NEVER RAN — a literal empty `${EXPR}` inside a run: comment startup-failed it on
+# every push (GitHub scans run: bodies for expressions before the shell ever sees
+# the '#'). Nothing in CI caught it: a startup-failing workflow is non-required, so
+# it stays green-because-invisible (scar #2, exists != armed). This gate turns that
+# whole class into a hard, REQUIRED failure — actionlint validates workflow schema +
+# every `${{ }}` expression, and flags untrusted-input interpolation (the
+# privileged-PR-trigger + head.ref injection class fixed in the same PR).
+#
+# NO `paths:` filter — this is meant to be a REQUIRED check. A path-filtered required
+# check never reports on PRs outside its paths and leaves them stuck at
+# "Expected — waiting for status" forever (same reasoning as adversarial-review-gate.yml).
+# actionlint on a clean corpus is ~2s, so running on every PR blocks nothing innocent.
+#
+# actionlint is pinned by VERSION AND SHA256 — a compromised release cannot inject.
+# `-shellcheck=` keeps the gate to schema + expressions (the class that caused real
+# incidents); shell-style is out of scope (the corpus is not shellcheck-clean, and
+# that is a separate, noisier tightening for later).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Per-PR/per-ref for every author. A shared per-workflow group keyed on
+  # github.actor was removed 2026-09-02: GitHub keeps only ONE pending run per
+  # group, so a 3rd near-simultaneous arrival was cancelled BEFORE any job
+  # started — no check-run object is created, so a required context sits at
+  # "Expected — waiting for status" with nothing red to see. Concurrency is now
+  # bounded only by the account-level ceiling, which QUEUES past it rather than
+  # dropping: lateness is visible, an absent check-run is not.
+  group: actionlint-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+
+jobs:
+  lint:
+    name: actionlint — workflow schema + expression gate
+    runs-on: ubuntu-latest
+    # 5 → 12 (2026-08-06). This job sat exactly ON the floor its own new step
+    # enforces, while gaining work (a pip install + a second lint) — and the
+    # floor clears a bad checkout, it does not clear a bad checkout PLUS a release
+    # download PLUS two linters. Being at the edge of the rule you are writing is
+    # how you get bitten by it — and this job WAS: on the merge-queue ref its own
+    # checkout ran 4m59s and the 5-minute budget killed it.
+    timeout-minutes: 12
+    env:
+      ACTIONLINT_VERSION: "1.7.12"
+      ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download actionlint (pinned version + sha256)
+        run: |
+          set -euo pipefail
+          url="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL "$url" -o actionlint.tgz
+          echo "${ACTIONLINT_SHA256}  actionlint.tgz" | sha256sum -c -
+          tar xzf actionlint.tgz actionlint
+          chmod +x actionlint
+
+      - name: Checkout-budget floor (a job's floor is the checkout, not its script)
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/lint_workflow_timeout_floor.py
+
+      - name: Lint all workflow files
+        run: |
+          set -euo pipefail
+          # No file args → actionlint auto-discovers .github/workflows/*.yml.
+          # -shellcheck= disables the shellcheck pass (pre-installed on the runner,
+          # would flood on shell style); we gate schema + expression syntax +
+          # untrusted-input use, which is the class that startup-fails or injects.
+          ./actionlint -color -shellcheck=
+
+      # P4 contract item 7: every name in .github/required-checks.yml is a job that triggers on pull_request (main),
+      # never skips, checks out the event ref, runs hosted and reaches no secret. Its own guilt corpus runs with it.
+      - name: Required-checks contract
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --disable-pip-version-check pytest==9.0.3 PyYAML==6.0.3
+          python3 -m pytest -q -p no:cacheprovider scripts/ci/test_required_checks_contract.py

@@ -1,0 +1,141 @@
+{
+  "code": "A37",
+  "official_name_id": "A37 Bebas Visa Kru Kapal di Perairan Indonesia",
+  "source_url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/A37",
+  "retrieved_at": "2026-10-17T13:27:30Z",
+  "page_sha256": "6e1457f7128cca9073b16f36c4c70c72487802b5eadfd881f9b04603fc5d44a2",
+  "definition_verbatim": "Sebagai nakhoda, awak kapal, atau tenaga ahli asing di atas kapal laut atau alat apung yang datang langsung dengan Alat Angkutnya untuk beroperasi di perairan Nusantara, laut teritorial, landas kontinen, dan/atau Zona Ekonomi Eksklusif Indonesia. Termasuk dengan fasilitas bebas visa ini anda dapat berwisata serta mengunjungi teman dan keluarga.",
+  "jenis_visa_verbatim": "Fasilitas Bebas Visa A37 merupakan kategori bebas visa yang diperuntukkan bagi nakhoda, kapten pilot, atau awak alat angkut untuk satu kali masuk ke Indonesia dengan izin tinggal maksimal 30 hari, dihitung sejak tanggal kedatangan. Izin Tinggal dari fasilitas bebas visa ini tidak dapat diperpanjang dan tidak dapat dialihkan menjadi izin tinggal lain.",
+  "stay_days": [
+    "Anda dapat tinggal di Indonesia maksimal 30 hari, dihitung sejak tanggal kedatangan."
+  ],
+  "extendable": [
+    "Anda tidak dapat memperpanjang izin tinggal ini.",
+    "Izin Tinggal dari fasilitas bebas visa ini tidak dapat diperpanjang dan tidak dapat dialihkan menjadi izin tinggal lain."
+  ],
+  "entry": "single",
+  "where_to_apply": "Saat Kedatangan\nPra Kedatangan (elektronik)",
+  "sponsor_required": {
+    "as_stated_boolean": false,
+    "verbatim": [
+      "Anda tidak membutuhkan penjamin/sponsor untuk mengajukan fasiltas bebas visa ini."
+    ],
+    "invitation_requirement_see": "requirements_verbatim (Persyaratan Khusus)"
+  },
+  "requirements_verbatim": [
+    {
+      "n": 1,
+      "section": "Pengajuan visa / Saat Kedatangan",
+      "text": "paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis"
+    },
+    {
+      "n": 2,
+      "section": "Pengajuan visa / Saat Kedatangan",
+      "text": "tiket kembali atau tiket terusan ke negara lain, kecuali bagi awak alat angkut yang akan singgah untuk bergabung dengan kapalnya dan melanjutkan perjalanan ke negara lain"
+    },
+    {
+      "n": 3,
+      "section": "Pengajuan visa / Saat Kedatangan",
+      "text": "petugas pada konter imigrasi akan menerakan izin masuk yang sekaligus merupakan izin tinggal."
+    },
+    {
+      "n": 4,
+      "section": "Pengajuan visa / Pra Kedatangan (elektronik)",
+      "text": "anda harus mengisi formulir elektronik di evisa.imigrasi.go.id"
+    },
+    {
+      "n": 5,
+      "section": "Pengajuan visa / Pra Kedatangan (elektronik)",
+      "text": "anda akan menerima tanda masuk elektronik yang sekaligus merupakan izin tinggal dan bisa digunakan untuk melintasi autogate pada tempat pemeriksaan imigrasi."
+    },
+    {
+      "n": 6,
+      "section": "Persyaratan Khusus",
+      "text": "Terdaftar dalam Deklarasi Umum atau daftar awak kapal, pesawat udara, atau kendaraan, kecuali kendaraan pribadi dan kargo."
+    }
+  ],
+  "pengajuan_intro_verbatim": null,
+  "allowed_activities": "Sebagai nakhoda, awak kapal, atau tenaga ahli asing di atas kapal laut atau alat apung yang datang langsung dengan Alat Angkutnya untuk beroperasi di perairan Nusantara, laut teritorial, landas kontinen, dan/atau Zona Ekonomi Eksklusif Indonesia. Termasuk dengan fasilitas bebas visa ini anda dapat berwisata serta mengunjungi teman dan keluarga.",
+  "prohibited_or_conditions_verbatim": [
+    "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa paspor sementara, paspor darurat, titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya tidak diizinkan mengajukan fasilitas bebas visa.",
+    "Orang Asing dengan izin tinggal dari fasilitas bebas visa dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+  ],
+  "ketentuan_lain_verbatim": [
+    "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa paspor sementara, paspor darurat, titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya tidak diizinkan mengajukan fasilitas bebas visa.",
+    "Orang Asing dengan izin tinggal dari fasilitas bebas visa dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+  ],
+  "pnbp_verbatim_for_reference_only": [
+    "- Biaya Rp0",
+    "- Biaya Verifikasi I/II Rp 0"
+  ],
+  "itap_verbatim": [
+    {
+      "text": "Izin Tinggal dari fasilitas bebas visa ini tidak dapat diperpanjang dan tidak dapat dialihkan menjadi izin tinggal lain.",
+      "url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/A37"
+    }
+  ],
+  "itap_eligibility_as_stated": null,
+  "total_max_verbatim": [
+    "Anda dapat tinggal di Indonesia maksimal 30 hari, dihitung sejak tanggal kedatangan."
+  ],
+  "notes": [
+    "PNBP is official-source reference only; never a client price.",
+    "VERIFIED_FROM_SOURCE confirms extraction, not resolution of contradictions or legal eligibility.",
+    "Requirement numbers follow source order; nested alternatives remain verbatim. A/B counts include the application steps listed by the source."
+  ],
+  "status": "VERIFIED_FROM_SOURCE",
+  "to_verify": [],
+  "conflicts": [],
+  "source_http_status": 200,
+  "source_raw_path": "raw/A37.html",
+  "source_sections_verbatim": [
+    {
+      "heading": "Dengan fasilitas bebas visa A37, anda dapat",
+      "text": "Sebagai nakhoda, awak kapal, atau tenaga ahli asing di atas kapal laut atau alat apung yang datang langsung dengan Alat Angkutnya untuk beroperasi di perairan Nusantara, laut teritorial, landas kontinen, dan/atau Zona Ekonomi Eksklusif Indonesia. Termasuk dengan fasilitas bebas visa ini anda dapat berwisata serta mengunjungi teman dan keluarga."
+    },
+    {
+      "heading": "Jenis visa",
+      "text": "Fasilitas Bebas Visa A37 merupakan kategori bebas visa yang diperuntukkan bagi nakhoda, kapten pilot, atau awak alat angkut untuk satu kali masuk ke Indonesia dengan izin tinggal maksimal 30 hari, dihitung sejak tanggal kedatangan. Izin Tinggal dari fasilitas bebas visa ini tidak dapat diperpanjang dan tidak dapat dialihkan menjadi izin tinggal lain."
+    },
+    {
+      "heading": "Masa tinggal",
+      "text": "Anda dapat tinggal di Indonesia maksimal 30 hari, dihitung sejak tanggal kedatangan.\nAnda tidak dapat memperpanjang izin tinggal ini."
+    },
+    {
+      "heading": "Biaya (PNBP)",
+      "text": "Biaya Rp0\nBiaya Verifikasi I/II Rp 0"
+    },
+    {
+      "heading": "Penjamin (Sponsor)",
+      "text": "Anda tidak membutuhkan penjamin/sponsor untuk mengajukan fasiltas bebas visa ini."
+    },
+    {
+      "heading": "Pengajuan visa",
+      "text": "Saat Kedatangan\nanda harus menunjukkan:\npaspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis\ntiket kembali atau tiket terusan ke negara lain, kecuali bagi awak alat angkut yang akan singgah untuk bergabung dengan kapalnya dan melanjutkan perjalanan ke negara lain\npetugas pada konter imigrasi akan menerakan izin masuk yang sekaligus merupakan izin tinggal.\nPra Kedatangan (elektronik)\nanda harus mengisi formulir elektronik di evisa.imigrasi.go.id\nanda akan menerima tanda masuk elektronik yang sekaligus merupakan izin tinggal dan bisa digunakan untuk melintasi autogate pada tempat pemeriksaan imigrasi."
+    },
+    {
+      "heading": "Persyaratan Khusus",
+      "text": "Terdaftar dalam Deklarasi Umum atau daftar awak kapal, pesawat udara, atau kendaraan, kecuali kendaraan pribadi dan kargo."
+    },
+    {
+      "heading": "Ketentuan lain",
+      "text": "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa paspor sementara, paspor darurat, titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya tidak diizinkan mengajukan fasilitas bebas visa.\nOrang Asing dengan izin tinggal dari fasilitas bebas visa dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+    },
+    {
+      "heading": "Dasar hukum",
+      "text": "Peraturan Pemerintah Nomor 45 tahun 2024 tentang Tarif PNBP di Lingkungan Kementerian Hukum dan HAM RI\nPeraturan Menteri Hukum dan HAM RI Nomor 11 Tahun 2024 tentang Visa dan Izin Tinggal\nPeraturan Menteri Hukum dan HAM RI Nomor 22 tahun 2023 tentang Visa dan Izin Tinggal\nKeputusan Menteri Imigrasi dan Pemasyarakatan Nomor M.IP-08.GR.01.01 tahun 2025 tentang Klasifikasi Visa\nPeraturan Menteri Keuangan RI Nomor 9/PMK.02/2022 tentang Jenis dan Tarif PNBP Kebutuhan Mendesak atas Pelayanan Keimigrasian yang berlaku pada Kemenkumham RI\nPeraturan Menteri Keuangan RI Nomor 82 Tahun 2023 tentang Jenis dan Tarif atas Jenis PNBP Kebutuhan Mendesak atas Pelayanan Golden Visa yang berlaku pada Kemenkumham RI"
+    }
+  ],
+  "application_routes_verbatim": [
+    {
+      "heading": "Saat Kedatangan",
+      "text": "anda harus menunjukkan:\npaspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis\ntiket kembali atau tiket terusan ke negara lain, kecuali bagi awak alat angkut yang akan singgah untuk bergabung dengan kapalnya dan melanjutkan perjalanan ke negara lain\npetugas pada konter imigrasi akan menerakan izin masuk yang sekaligus merupakan izin tinggal."
+    },
+    {
+      "heading": "Pra Kedatangan (elektronik)",
+      "text": "anda harus mengisi formulir elektronik di evisa.imigrasi.go.id\nanda akan menerima tanda masuk elektronik yang sekaligus merupakan izin tinggal dan bisa digunakan untuk melintasi autogate pada tempat pemeriksaan imigrasi."
+    }
+  ],
+  "persyaratan_khusus_verbatim": "Terdaftar dalam Deklarasi Umum atau daftar awak kapal, pesawat udara, atau kendaraan, kecuali kendaraan pribadi dan kargo.",
+  "itap_explicit_on_visa_page": false
+}

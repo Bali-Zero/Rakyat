@@ -1,0 +1,1845 @@
+@import "tailwindcss";
+@import "../../../../packages/core/tokens/index.css";
+@import "../../../../packages/core/tailwind/theme.css";
+@import "../../../../packages/core/effects/grain.css";
+@import "../../../../packages/core/effects/shimmer.css";
+@import "../styles/kbli-theme.css";
+
+/* Redefine dark variant to target data-theme instead of .dark class
+   (design doc §5 "Toggle mechanism", step 2 of three coupled changes).
+   Covers every dark-surfaced persona theme actually written by the
+   pre-paint script / core provider: dark, operative-dark, editorial. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *, [data-theme='operative-dark'], [data-theme='operative-dark'] *, [data-theme='editorial'], [data-theme='editorial'] *));
+
+/* Brand entrance strip — "Your 3ali, from ZerΩ" slogan + service subtitle.
+   Copied verbatim from (marketing)/page.tsx lines 132–225 so /v2 and legacy
+   homepage render the brand entrance identically. Shared in globals so any
+   route group can use it. */
+.brand-entrance {
+  border-bottom: 1px solid rgba(212, 168, 83, 0.15);
+  background: var(--surface-base);
+  position: relative;
+  overflow: visible;
+}
+.brand-inner {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 26px 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.brand-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  text-align: center;
+}
+.brand-tagline {
+  font-family: "Arial Black", "Impact", "Franklin Gothic Heavy", sans-serif;
+  font-weight: 900;
+  font-style: normal;
+  font-size: 24px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fff;
+  line-height: 1.1;
+  margin: 0;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 0.15em;
+  white-space: nowrap;
+}
+.brand-logo-3-img {
+  height: 1.6em;
+  width: auto;
+  margin: 0 -0.08em 0 -0.05em;
+  object-fit: contain;
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.5));
+}
+.brand-om-circle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.85em;
+  height: 0.85em;
+  background: #fff;
+  border-radius: 50%;
+  position: relative;
+  flex-shrink: 0;
+  vertical-align: middle;
+  margin-top: -0.1em;
+}
+.brand-om-circle::after {
+  content: "ॐ";
+  font-size: 0.55em;
+  font-family: serif;
+  color: #111;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+.brand-sub {
+  font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+  margin: 0;
+}
+.brand-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.brand-stat {
+  font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+}
+.brand-stat-sep {
+  font-size: 8px;
+  color: rgba(212, 168, 83, 0.4);
+}
+@media (max-width: 768px) {
+  .brand-inner {
+    padding: 12px 20px;
+  }
+  .brand-tagline {
+    font-size: 22px;
+  }
+  .brand-right {
+    display: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Liquid glassmorphism — premium surface utility.
+   Apply .bz-glass for a base glass card; add .bz-glass--strong for
+   the intense variant used on funnel boxes and service cards.
+   Designed to sit on any surface and pick up --accent-funnel from
+   an ancestor data-funnel attribute.
+═══════════════════════════════════════════════════════════════ */
+.bz-glass {
+  position: relative;
+  border-radius: 20px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  box-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  isolation: isolate;
+}
+.bz-glass::before {
+  /* Iridescent top highlight (simulated brushed light) */
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.12) 0%,
+    rgba(255, 255, 255, 0) 30%
+  );
+  z-index: -1;
+}
+.bz-glass::after {
+  /* Soft funnel-tinted accent glow from top-left */
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: radial-gradient(
+    ellipse 80% 60% at 20% 0%,
+    color-mix(
+        in srgb,
+        var(--accent-funnel, var(--accent-zantara)) 14%,
+        transparent
+      )
+      0%,
+    transparent 65%
+  );
+  opacity: 0.7;
+  z-index: -1;
+}
+
+.bz-glass--strong {
+  /* Accent-infused glass: the card's --accent-funnel bleeds into the base
+     so the funnel color dominates the visual. */
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent-funnel, white) 28%, transparent) 0%,
+    color-mix(in srgb, var(--accent-funnel, white) 8%, transparent) 100%
+  );
+  border: 1px solid
+    color-mix(in srgb, var(--accent-funnel, white) 35%, transparent);
+  backdrop-filter: blur(36px) saturate(180%) brightness(1.05);
+  -webkit-backdrop-filter: blur(36px) saturate(180%) brightness(1.05);
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.35),
+    0 1px 0 rgba(255, 255, 255, 0.12) inset,
+    0 0 0 1px
+      color-mix(in srgb, var(--accent-funnel, transparent) 20%, transparent)
+      inset,
+    0 0 40px
+      color-mix(in srgb, var(--accent-funnel, transparent) 18%, transparent);
+}
+.bz-glass--strong::after {
+  /* Saturated funnel glow from top-left, ~2x stronger than base. */
+  opacity: 1;
+  background: radial-gradient(
+    ellipse 100% 80% at 25% 0%,
+    color-mix(
+        in srgb,
+        var(--accent-funnel, var(--accent-zantara)) 55%,
+        transparent
+      )
+      0%,
+    color-mix(
+        in srgb,
+        var(--accent-funnel, var(--accent-zantara)) 12%,
+        transparent
+      )
+      45%,
+    transparent 80%
+  );
+}
+.bz-glass--strong:hover {
+  border-color: color-mix(
+    in srgb,
+    var(--accent-funnel, white) 60%,
+    transparent
+  );
+  box-shadow:
+    0 28px 80px rgba(0, 0, 0, 0.4),
+    0 0 0 1px color-mix(in srgb, var(--accent-funnel, white) 45%, transparent)
+      inset,
+    0 0 80px
+      color-mix(in srgb, var(--accent-funnel, transparent) 35%, transparent);
+}
+
+:root {
+  /* Map design system vars to kbli theme */
+  --background: var(--kbli-bg-base);
+  --background-secondary: var(--kbli-bg-elevated);
+  --background-elevated: var(--kbli-bg-surface);
+  --background-hover: var(--kbli-bg-surface-hover);
+
+  --foreground: var(--kbli-text-primary);
+  --foreground-secondary: var(--kbli-text-secondary);
+  --foreground-muted: var(--kbli-text-muted);
+
+  --border: var(--kbli-border);
+  --border-hover: var(--kbli-border-hover);
+
+  --accent: var(--kbli-accent);
+  --accent-hover: var(--kbli-accent-hover);
+  --accent-foreground: #16213a;
+
+  /* GARUDA — Proposal 3 (2026-05-18) */
+  --bz-base: #0f1419;
+  --bz-elevated: #1b222b;
+  --bz-surface: #28313d;
+  --bz-card: #2e3847;
+  --bz-card-hover: #35414f;
+  --bz-accent: #d4845a;
+  --bz-accent-hover: #bf7350;
+  --bz-accent-warm: #c9a96e;
+  --bz-accent-cool: #5e7fb5;
+
+  /* God Tier Anthracite Tokens */
+  --anthracite-base: #0f1419;
+  --anthracite-elevated: #1b222b;
+
+  /* Cinematic Border Tokens */
+  --glass-highlight: rgba(255, 255, 255, 0.12);
+  --glass-rim: rgba(255, 255, 255, 0.03);
+
+  /* Typography */
+  --tx-pure: #ffffff;
+  --tx-primary: #f8fafc;
+  --tx-secondary: #94a3b8;
+  --tx-tertiary: #475569;
+
+  /* Neon Accents */
+  --neon-blue: #3b82f6;
+  --neon-purple: #8b5cf6;
+  --neon-emerald: #10b981;
+  --neon-amber: #f59e0b;
+  --neon-rose: #f43f5e;
+  --neon-cyan: #06b6d4;
+  --bz-copper: #d4845a;
+  /* Text-safe copper step. Dark: copper itself is AA on anthracite, so the
+     text variant aliases it; operative-light overrides it below (WS3). */
+  --bz-copper-text: var(--bz-copper);
+
+  /* Sidebar — GARUDA pill active */
+  --sidebar-active-bg: #d4845a;
+  /* Filled controls need a darker, white-text-safe copper than the accent
+     used for icons and large text. This stays AA in both theme modes. */
+  --bz-sidebar-active-fill: #9d5230;
+  --bz-focus-ring: #d4845a;
+  --border-focus: var(--bz-focus-ring);
+  --sidebar-active-border: transparent;
+  --sidebar-pill-radius: 12px;
+
+  --bz-text-1: #edeae4;
+  --bz-text-2: var(--tx-secondary);
+  --bz-text-3: #545c6a;
+  --bz-border: rgba(255, 255, 255, 0.05);
+  --bz-border-hover: rgba(255, 255, 255, 0.1);
+  --bz-border-accent: rgba(201, 169, 110, 0.18);
+  --bz-green: #3ecf8e;
+  --bz-red: #d95f5a;
+  --bz-amber: #d4923a;
+  --success: #4db87a;
+  --warning: #d4923a;
+  --error: #d95f5a;
+  --bz-sidebar-width: 216px;
+  --bz-header-height: 48px;
+  --bz-batik-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'%3E%3Cpath d='M0 10 L10 0 L20 10 L10 20 Z' fill='none' stroke='%23c9a96e' stroke-width='0.5'/%3E%3C/svg%3E");
+  /* Header surface — dark default; overridden under operative-light */
+  --portal-header-bg: rgba(29, 39, 59, 0.7);
+  --bz-shell-header-shadow: 0 8px 30px rgba(0, 0, 0, 0.14);
+  --bz-bottom-nav-bg: rgba(19, 19, 21, 0.82);
+  --bz-bottom-nav-border: rgba(255, 255, 255, 0.06);
+  --bz-bottom-nav-shadow: 0 -12px 32px rgba(0, 0, 0, 0.2);
+  --bz-bottom-nav-active: rgba(212, 132, 90, 0.12);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   PORTAL LIGHT SURFACE — "Rumah Putih / Lounge" (2026-06-21)
+
+   The pre-paint themeInitScript in layout.tsx routes `kita.`, `my.` and
+   `zantara.` to data-theme="operative-light" by default; `prime.` retains the
+   immersive operative-dark persona. This block arms the common daylight
+   surface, then product-scoped tokens below differentiate the team workspace
+   from the client portal. Accent copper is kept for brand continuity while
+   base/text/border/elevated invert. WCAG AA verified:
+   ink #16213a on paper #f4f1ea ≈ 12.8:1; soft-ink #475372 ≈ 6.4:1.
+   ─────────────────────────────────────────────────────────────────────────── */
+[data-theme="operative-light"] {
+  color-scheme: light;
+
+  /* Shell base surfaces — warm paper, not glaring white */
+  --bz-base: #f4f1ea;
+  --bz-elevated: #ffffff;
+  --bz-surface: #ffffff;
+  --bz-card: #ffffff;
+  --bz-card-hover: #faf8f3;
+
+  /* Generic background/foreground mappings (body + ui components) */
+  --background: #f4f1ea;
+  --background-secondary: #ffffff;
+  --background-elevated: #ffffff;
+  --background-hover: #faf8f3;
+  --foreground: #16213a;
+  --foreground-secondary: #475372;
+  --foreground-muted: var(--tx-secondary);
+  --border: rgba(9, 9, 11, 0.08);
+  --border-hover: rgba(9, 9, 11, 0.14);
+  --accent: #d4845a;
+  --accent-hover: #bf7350;
+  --accent-foreground: var(--tx-pure);
+
+  /* Typography on light */
+  --tx-pure: #16213a;
+  --tx-primary: #16213a;
+  --tx-secondary: #475372;
+  --tx-tertiary: var(--tx-secondary);
+  --bz-text-1: #16213a;
+  --bz-text-2: #475372;
+  --bz-text-3: var(--tx-secondary);
+
+  /* Borders / glass on light (dark hairlines, not white) */
+  --bz-border: rgba(9, 9, 11, 0.08);
+  --bz-border-hover: rgba(9, 9, 11, 0.14);
+  --bz-border-accent: rgba(201, 169, 110, 0.35);
+  --glass-highlight: rgba(9, 9, 11, 0.05);
+  --glass-rim: rgba(9, 9, 11, 0.06);
+
+  /* Header surface (consumed by PortalHeader, was hardcoded dark navy) */
+  --portal-header-bg: rgba(244, 241, 234, 0.72);
+
+  /* Day-copper steps (GARUDA Day Edition, WS3 2026-07-24). Measured on
+     paper #f4f1ea: #d4845a = 2.57:1 (fill/icon-grade only); the concept
+     copper #b5633a = 3.87:1 — passes the 3:1 floor for icons/large text
+     but NOT 4.5:1 for small text; #9d5230 (the concept's own copper
+     gradient end) = 5.05:1 on paper / 5.70:1 on card → the small-text
+     step. */
+  --bz-copper: #b5633a;
+  --bz-copper-text: #9d5230;
+  --bz-focus-ring: #9d5230;
+  --border-focus: var(--bz-focus-ring);
+
+  /* Daylight gold for warm accents / focus rings (was #c9a96e = 1.98:1 on
+     paper, below even the 3:1 non-text floor). #8a6d3b = 4.30:1. */
+  --bz-accent-warm: #8a6d3b;
+
+  /* Neon → state parity on light: mirror the WS2 AA steps from
+     packages/core/tokens/semantic.css (:root[data-theme='operative-light'])
+     so legacy --neon-* reads on not-yet-migrated portal pages keep ≥4.5:1
+     until each page moves to --state-* (WS3 drain, page by page). */
+  --neon-emerald: #147a3a;
+  --neon-amber: #ad4f08;
+  --neon-rose: #b91c1c;
+  --neon-blue: #1d4ed8;
+
+  /* Status colors deepened for AA contrast on light paper */
+  --bz-green: #0f9d63;
+  --bz-red: #c2453f;
+  --bz-amber: #b67519;
+  --success: #0f9d63;
+  --warning: #b67519;
+  --error: #c2453f;
+
+  /* KBLI base tokens — the ROOT layer body + several shell utilities derive
+     from (body bg = var(--kbli-bg-base); --background = var(--kbli-bg-base)).
+     Without these the <body> stayed dark navy #1d273b even with the portal
+     surface light. Remap them to the paper palette so the whole client
+     surface — not just the GARUDA-token components — turns light. */
+  --kbli-bg-base: #f4f1ea;
+  --kbli-ink: #141416;
+  --kbli-bg-primary: #f4f1ea;
+  --kbli-bg-secondary: #ffffff;
+  --kbli-bg-elevated: #ffffff;
+  --kbli-bg-surface: #ffffff;
+  --kbli-bg-surface-hover: #faf8f3;
+  --kbli-bg-card: #ffffff;
+  --kbli-bg-card-hover: #faf8f3;
+  --kbli-bg-input: #ffffff;
+  --kbli-text-primary: #16213a;
+  --kbli-text-secondary: #475372;
+  --kbli-text-muted: #7a8aa6;
+  --kbli-border: rgba(9, 9, 11, 0.08);
+  --kbli-border-hover: rgba(9, 9, 11, 0.14);
+
+  /* Focus indicator — universal keyboard navigation (WCAG 2.1.1 + 2.4.7)
+     Scoped to operative-light only — cannot leak into kita/dark theme. */
+  *:focus-visible {
+    outline: 2px solid var(--bz-focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+/* ── Bali Zero product family ──
+   Theme answers light/dark. Product answers density, shape and atmosphere.
+   Keeping those axes separate lets Kita and My share one accessible system
+   without pretending they serve the same job. */
+[data-product="kita"] {
+  --bz-product-radius: 12px;
+  /* concept-K geometry: the SIAP gutter is 24, the portal's is 28. */
+  --bz-product-page-gap: 24px;
+  --bz-product-row-height: 52px;
+  --bz-product-heading-font: "Inter", system-ui, sans-serif;
+  --bz-header-height: 48px;
+}
+
+[data-product="my"] {
+  --bz-product-radius: 18px;
+  --bz-product-page-gap: 28px;
+  --bz-product-row-height: 60px;
+  --bz-product-heading-font: var(--font-serif), Wimolog, serif;
+  --bz-header-height: 64px;
+}
+
+/* Kita: R19 paper, concept-K "SIAP". Same alphabet as the my seam below —
+   paper ground, ink type, copper for "needs you", forest for "done", slate
+   for "ours/moving", muted for "waiting" — on a denser grammar: the unit is
+   a 44px hairline row, not a card.
+
+   The --bz-kita-* indirection is kept because
+   (workspace)/__tests__/kita-theme.contract.test.ts pins six alias
+   declarations through it; only the VALUES behind the names change.
+
+   Contrast measured (WCAG 2.1 relative luminance), text on paper #f7f4ee:
+   ink #1d2c3b 12.96:1 · muted #58626b 5.67:1 · copper #a44b36 5.26:1 ·
+   warning #8a5a2b 5.35:1 · forest #253e33 10.54:1 · slate #233d52 10.28:1;
+   paper #fffcf7 on a forest button 11.30:1, on a slate fill 11.03:1.
+   --line-control #58626b is the interactive-boundary line, and it is the
+   muted ink: 5.67:1 on paper, 4.88:1 on the wash. K1a shipped #767c82 from
+   DISPOSITION.md C13; all six frozen renders carry #58626b instead, citing an
+   imperator ruling ON that finding, and MEASURE.md — which is generated from
+   the probe — was simply not regenerated after it. The renders are what
+   FROZEN.md tells a window to copy, and the ruling's value is also the
+   stronger one. R19's --line-strong #a8aca9 measures 2.09:1 and fails SC
+   1.4.11's 3:1 under a control, which is why a control has its own token at
+   all. Dark is unchanged: rgba(247,244,238,.42) over the ink ground composites
+   to exactly the renders' #727071.
+
+   No red on kita: --state-danger and --bz-red resolve to copper and every
+   dangerous state carries a WORD. --bz-neon-purple is re-aliased to slate so
+   the pages that still READ that name (token-drain.residuals.guard.test.ts
+   pins the read on /admin/team-activity and /intelligence/analytics) paint
+   R19 without their guard going red.
+
+   Deliberately NOT redeclared here, each for a stated reason:
+   --bz-chart-1..8 (a categorical series is not part of the R19 alphabet;
+   the intel/ops window owns that decision) and --bz-sidebar-active-fill (the
+   workspace rail still paints a filled active item until the shell window
+   replaces it with the copper left rule; its #9d5230 fill carries white at
+   5.69:1, so leaving it is safe and re-aliasing it first would put
+   white-on-paper text on production for one deploy). */
+[data-theme="operative-light"][data-product="kita"] {
+  --bz-kita-canvas: #f7f4ee;
+  --bz-kita-card: #fffcf7;
+  --bz-kita-card-hover: #f7f4ee;
+  --bz-kita-wash: #eae3d8;
+  --bz-kita-overlay: rgba(255, 252, 247, 0.86);
+  --bz-kita-nav: #f7f4ee;
+  /* The rail is ink in both light and dark — the K1c-bis workspace sidebar
+     carries no theme swap, only the content around it does. */
+  --bz-kita-rail: #1d2c3b;
+  /* Copper TEXT on the dashboard's ink hero panel (PortalChallengeWidget
+     paints its band with --bz-text-1, which is ink #1d2c3b here). Raw
+     --bz-copper reads 2.47:1 on it; the on-dark step reads 5.30:1. */
+  --bz-kita-ink-panel-copper: var(--bz-copper-on-dark);
+
+  --surface-base: var(--bz-kita-canvas);
+  --surface-matter: var(--bz-kita-card);
+  --surface-overlay: var(--bz-kita-overlay);
+  --surface-raised: var(--bz-kita-card);
+  --surface-deep: var(--bz-kita-canvas);
+  --surface-sunken: var(--bz-kita-wash);
+  --surface-selected: var(--bz-kita-wash);
+  /* --nav-bg / --bz-kita-nav stay the paper header background: Header.tsx:99
+     paints the workspace header with var(--nav-bg), and it sits outside the
+     K1c-bis rail's perimeter — turning it ink would put ink text on an ink
+     header. kita-theme.contract.test.ts and kita-r19.contract.test.ts both
+     pin `--nav-bg: var(--bz-kita-nav);`, so do not fold it into the rail
+     tokens below; a later window should not "tidy" this into one variable. */
+  --nav-bg: var(--bz-kita-nav);
+  --nav-rail-bg: var(--bz-kita-rail);
+  --nav-fg: #f7f4ee;
+  --nav-fg-muted: rgba(247, 244, 238, 0.78);
+  --nav-active-wash: rgba(247, 244, 238, 0.06);
+  /* Light's render has border-right:0 on the rail, so --nav-edge repeats the
+     rail's own ink here rather than a visible line: an ink border on an ink
+     rail is invisible under box-sizing: border-box anyway, and giving both
+     themes the same --nav-edge property keeps AppSidebar to one code path
+     instead of a light/dark branch for a border that never shows in light. */
+  --nav-edge: var(--bz-kita-rail);
+  --nav-rule: #ce8571;
+
+  --bz-base: var(--bz-kita-canvas);
+  --bz-bg: var(--bz-kita-canvas);
+  --bz-elevated: var(--bz-kita-card);
+  --bz-surface: var(--bz-kita-card);
+  --bz-surface-2: var(--bz-kita-wash);
+  --bz-wash: var(--bz-kita-wash);
+  --bz-card: var(--bz-kita-card);
+  --bz-card-hover: var(--bz-kita-card-hover);
+
+  /* Type colour — ink and muted only */
+  --tx-pure: #1d2c3b;
+  --tx-primary: #1d2c3b;
+  --tx-secondary: #58626b;
+  --tx-tertiary: #58626b;
+  --bz-text-1: #1d2c3b;
+  --bz-text-2: #58626b;
+  --bz-text-3: #58626b;
+  /* --bz-text-pure is deliberately NOT redeclared, and the my seam does not
+     redeclare it either. It resolves through packages/core to #000000 light /
+     #ffffff dark, and clients/page.tsx:806 paints it as the label ON the
+     copper fill of the active "assigned to me" filter. Ink there would read
+     2.47:1 where black reads 3.64:1 — both under SC 1.4.3, but redeclaring it
+     would LOWER a live ratio, and K3 is the window that removes that fill.
+     "Pure" is the extreme of the ramp, so black is also the honest value for
+     the name; --tx-pure carries the R19 ink for the type scale. */
+  --bz-text-primary: #1d2c3b;
+  --bz-text-secondary: #58626b;
+  --bz-text-muted: #58626b;
+
+  --background: var(--bz-kita-canvas);
+  --background-secondary: var(--bz-kita-card);
+  --background-elevated: var(--bz-kita-card);
+  --background-hover: var(--bz-kita-card-hover);
+  --foreground: #1d2c3b;
+  --foreground-secondary: #58626b;
+  --foreground-muted: #58626b;
+
+  /* Lines — hairline everywhere, a darker line only under a control */
+  --bz-line: #dad8d1;
+  --bz-line-strong: #a8aca9;
+  --line-control: #58626b;
+  --bz-border: #dad8d1;
+  --bz-border-hover: #a8aca9;
+  --bz-border-accent: rgba(164, 75, 54, 0.28);
+  --border: #dad8d1;
+  --border-hover: #a8aca9;
+  --bz-glass-rim: #dad8d1;
+  --bz-glass-highlight: var(--bz-kita-wash);
+  --glass-rim: #dad8d1;
+  --glass-highlight: var(--bz-kita-wash);
+
+  /* The ONE forest surface in kita: the login panel. It is the same colour in
+     both themes on purpose — --state-success lifts in the dark so "done" stays
+     legible as TEXT, and a lifted forest is not a surface. Paper sits on it at
+     11.30:1 either way. */
+  --bz-panel: #253e33;
+  --bz-on-panel: #f7f4ee;
+
+  /* Copper = needs you. Never a button fill. */
+  --bz-copper: #a44b36;
+  --bz-copper-text: #a44b36;
+  --bz-copper-deep: #a44b36;
+  --bz-accent: #a44b36;
+  --bz-accent-hover: #8f4130;
+  --bz-accent-warm: #8a5a2b;
+  --bz-accent-glow: rgba(164, 75, 54, 0.16);
+  --bz-accent-subtle: rgba(164, 75, 54, 0.08);
+  --bz-accent-muted: rgba(164, 75, 54, 0.12);
+  --bz-on-warm: #fffcf7;
+  /* Legacy name, single consumer (hr/employees/page.tsx:469) where it is the
+     ink ON the copper fill, never a navy. Left at #060d14 it measures 3.36:1
+     on R19 copper and fails SC 1.4.3; aliased to the on-accent ink it reads
+     5.70:1. K4 removes the copper fill and the alias goes with it. */
+  --bz-navy-900: var(--bz-on-warm);
+  --bz-focus-ring: #a44b36;
+  --border-focus: #a44b36;
+  --accent: #a44b36;
+  --accent-hover: #8f4130;
+  --accent-foreground: #fffcf7;
+
+  /* Forest = done, slate = ours/moving, muted = waiting */
+  --bz-green: #253e33;
+  --bz-gold: #8a5a2b;
+  --bz-amber: #8a5a2b;
+  --bz-red: #a44b36;
+  --bz-neon-purple: #233d52;
+
+  /* States — four meanings, no red: danger speaks copper */
+  --state-success: #253e33;
+  --state-warning: #8a5a2b;
+  --state-danger: #a44b36;
+  --state-info: #233d52;
+  --success: #253e33;
+  --warning: #8a5a2b;
+  --error: #a44b36;
+
+  --kbli-bg-base: var(--bz-kita-canvas);
+  --kbli-ink: #141416;
+  --kbli-bg-primary: var(--bz-kita-canvas);
+  --kbli-bg-secondary: var(--bz-kita-card);
+  --kbli-bg-elevated: var(--bz-kita-card);
+  --kbli-bg-surface: var(--bz-kita-card);
+  --kbli-bg-surface-hover: var(--bz-kita-card-hover);
+  --kbli-bg-card: var(--bz-kita-card);
+  --kbli-bg-card-hover: var(--bz-kita-card-hover);
+  --kbli-bg-input: var(--bz-kita-card);
+  --kbli-text-primary: #1d2c3b;
+  --kbli-text-secondary: #58626b;
+  --kbli-text-muted: #58626b;
+  --kbli-border: #dad8d1;
+  --kbli-border-hover: #a8aca9;
+  --kbli-accent: #a44b36;
+
+  /* Shell — a hairline instead of a drop shadow */
+  --portal-header-bg: rgba(255, 252, 247, 0.86);
+  --bz-shell-header-shadow: none;
+  --bz-shadow-card: 0 10px 30px rgba(29, 44, 59, 0.045);
+
+  /* Type — Fraunces mastheads, Manrope body. The faces are declared in
+     app/portal/r19-fonts.css, imported by (workspace)/layout.tsx and
+     app/login/page.tsx. */
+  --font-serif: "Fraunces", ui-serif, Wimolog, serif;
+  --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
+
+  /* The base body rule pins "Inter" literally, so the sans token alone
+     cannot reach it. This descendant rule is the only non-custom-property
+     declaration in the block and stays behind the kita qualifier. */
+  & body {
+    font-family: var(--font-sans);
+  }
+}
+
+/* Kita, after dark. Same four meanings on an ink ground, derived with the
+   same rules as the my dark block: copper lifts to #c46a52 for TEXT
+   (4.98:1 on #121016, 4.57:1 on the card) while the raw #a44b36 stays for
+   fills and rules, and forest/slate/warning lift through a paper mix so
+   "done", "ours" and the warning step stay legible. Danger is still copper,
+   neon-purple is still slate. */
+[data-theme="operative-dark"][data-product="kita"] {
+  --bz-kita-canvas: #121016;
+  --bz-kita-card: #1a1a1f;
+  --bz-kita-card-hover: rgba(247, 244, 238, 0.07);
+  --bz-kita-wash: #222025;
+  --bz-kita-overlay: rgba(26, 26, 31, 0.86);
+  --bz-kita-nav: #121016;
+  /* Same ink as light — the rail is invariant across themes. */
+  --bz-kita-rail: #1d2c3b;
+  /* After dark --bz-text-1 is PAPER #f7f4ee, so the "ink" hero panel is a
+     paper band: raw copper reads 5.26:1 there, the on-dark step only 2.45:1. */
+  --bz-kita-ink-panel-copper: var(--bz-copper);
+
+  --surface-base: var(--bz-kita-canvas);
+  --surface-matter: var(--bz-kita-card);
+  --surface-overlay: var(--bz-kita-overlay);
+  --surface-raised: var(--bz-kita-card);
+  --surface-deep: var(--bz-kita-canvas);
+  --surface-sunken: var(--bz-kita-wash);
+  --surface-selected: var(--bz-kita-wash);
+  /* Left exactly as light declares it — see the comment on --nav-bg there.
+     Header.tsx paints on it regardless of theme. */
+  --nav-bg: var(--bz-kita-nav);
+  --nav-rail-bg: var(--bz-kita-rail);
+  --nav-fg: #f7f4ee;
+  --nav-fg-muted: rgba(247, 244, 238, 0.78);
+  --nav-active-wash: rgba(247, 244, 238, 0.06);
+  /* The one deviation from light: dark's render draws a real right edge on
+     the rail, a paper hairline rather than the rail's own ink. */
+  --nav-edge: rgba(247, 244, 238, 0.14);
+  --nav-rule: #ce8571;
+
+  --bz-base: var(--bz-kita-canvas);
+  --bz-bg: var(--bz-kita-canvas);
+  --bz-elevated: var(--bz-kita-card);
+  --bz-surface: var(--bz-kita-card);
+  --bz-surface-2: var(--bz-kita-wash);
+  --bz-wash: var(--bz-kita-wash);
+  --bz-card: var(--bz-kita-card);
+  --bz-card-hover: var(--bz-kita-card-hover);
+
+  /* Type colour — paper on ink (17.21:1) */
+  --tx-pure: #f7f4ee;
+  --tx-primary: #f7f4ee;
+  --tx-secondary: rgba(247, 244, 238, 0.62);
+  /* Muted was 0.45: 4.25:1 on the canvas, 4.17:1 on the card — under
+     SC 1.4.3 for the 9–11px labels that read it. 0.62 is 7.02 / 6.73:1. */
+  --tx-tertiary: rgba(247, 244, 238, 0.62);
+  --bz-text-1: #f7f4ee;
+  --bz-text-2: rgba(247, 244, 238, 0.62);
+  --bz-text-3: rgba(247, 244, 238, 0.62);
+  /* --bz-text-pure: see the light block — left to resolve through
+     packages/core so the /clients copper pairing is not made worse. */
+  --bz-text-primary: #f7f4ee;
+  --bz-text-secondary: rgba(247, 244, 238, 0.62);
+  --bz-text-muted: rgba(247, 244, 238, 0.62);
+
+  --background: var(--bz-kita-canvas);
+  --background-secondary: var(--bz-kita-card);
+  --background-elevated: var(--bz-kita-card);
+  --background-hover: var(--bz-kita-card-hover);
+  --foreground: #f7f4ee;
+  --foreground-secondary: rgba(247, 244, 238, 0.62);
+  --foreground-muted: rgba(247, 244, 238, 0.62);
+
+  /* Lines */
+  --bz-line: rgba(247, 244, 238, 0.12);
+  --bz-line-strong: rgba(247, 244, 238, 0.2);
+  --line-control: rgba(247, 244, 238, 0.42);
+  --bz-border: rgba(247, 244, 238, 0.12);
+  --bz-border-hover: rgba(247, 244, 238, 0.2);
+  --bz-border-accent: rgba(196, 106, 82, 0.35);
+  --border: rgba(247, 244, 238, 0.12);
+  --border-hover: rgba(247, 244, 238, 0.2);
+  --bz-glass-rim: rgba(247, 244, 238, 0.12);
+  --bz-glass-highlight: var(--bz-kita-wash);
+  --glass-rim: rgba(247, 244, 238, 0.12);
+  --glass-highlight: var(--bz-kita-wash);
+
+  /* The one forest surface, unchanged after dark — see the light block. */
+  --bz-panel: #253e33;
+  --bz-on-panel: #f7f4ee;
+
+  /* Copper = needs you; the fill stays raw, the text lifts */
+  --bz-copper: #a44b36;
+  --bz-copper-text: #c46a52;
+  --bz-copper-deep: #a44b36;
+  --bz-accent: #c46a52;
+  --bz-accent-hover: #d07e68;
+  --bz-accent-warm: #c6af96;
+  --bz-accent-glow: rgba(196, 106, 82, 0.2);
+  --bz-accent-subtle: rgba(196, 106, 82, 0.1);
+  --bz-accent-muted: rgba(196, 106, 82, 0.16);
+  --bz-on-warm: #121016;
+  --bz-navy-900: var(--bz-on-warm);
+  --bz-focus-ring: #c46a52;
+  --border-focus: #c46a52;
+  --accent: #c46a52;
+  --accent-hover: #d07e68;
+  --accent-foreground: #121016;
+
+  --bz-green: color-mix(in srgb, #253e33 40%, #f7f4ee);
+  --bz-gold: color-mix(in srgb, #8a5a2b 45%, #f7f4ee);
+  --bz-amber: color-mix(in srgb, #8a5a2b 45%, #f7f4ee);
+  --bz-red: #c46a52;
+  --bz-neon-purple: color-mix(in srgb, #233d52 40%, #f7f4ee);
+
+  /* States */
+  --state-success: color-mix(in srgb, #253e33 40%, #f7f4ee);
+  --state-warning: color-mix(in srgb, #8a5a2b 45%, #f7f4ee);
+  --state-danger: #c46a52;
+  --state-info: color-mix(in srgb, #233d52 40%, #f7f4ee);
+  --success: color-mix(in srgb, #253e33 40%, #f7f4ee);
+  --warning: color-mix(in srgb, #8a5a2b 45%, #f7f4ee);
+  --error: #c46a52;
+
+  --kbli-bg-base: var(--bz-kita-canvas);
+  --kbli-ink: #141416;
+  --kbli-bg-primary: var(--bz-kita-canvas);
+  --kbli-bg-secondary: var(--bz-kita-card);
+  --kbli-bg-elevated: var(--bz-kita-card);
+  --kbli-bg-surface: var(--bz-kita-card);
+  --kbli-bg-surface-hover: var(--bz-kita-card-hover);
+  --kbli-bg-card: var(--bz-kita-card);
+  --kbli-bg-card-hover: var(--bz-kita-card-hover);
+  --kbli-bg-input: var(--bz-kita-card);
+  --kbli-text-primary: #f7f4ee;
+  --kbli-text-secondary: rgba(247, 244, 238, 0.62);
+  --kbli-text-muted: rgba(247, 244, 238, 0.62);
+  --kbli-border: rgba(247, 244, 238, 0.12);
+  --kbli-border-hover: rgba(247, 244, 238, 0.2);
+  --kbli-accent: #c46a52;
+
+  /* Shell */
+  --portal-header-bg: rgba(18, 16, 22, 0.86);
+  --bz-shell-header-shadow: none;
+  --bz-shadow-card: 0 10px 30px rgba(0, 0, 0, 0.32);
+
+  /* Type */
+  --font-serif: "Fraunces", ui-serif, Wimolog, serif;
+  --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
+
+  & body {
+    font-family: var(--font-sans);
+  }
+}
+
+/* My: R19 paper. Warm paper ground, ink type, copper for "needs you" and
+   forest for "done" — four meanings, no red anywhere. Every declaration
+   below is a token the /portal/** screens already read (measured with
+   `grep -rhoE "var\(--(bz|tx|state|portal|kbli|background|foreground|surface|border)[a-z0-9-]*"`
+   over apps/mouth/src/app/portal + src/components/portal), so the R19
+   language arrives through the seam with no markup change. Scoped to
+   [data-product="my"]: kita and prime read their own blocks untouched.
+
+   Contrast measured (WCAG 2.1 relative luminance), text on paper #F7F4EE:
+   ink #1D2C3B 12.96:1 · muted #58626B 5.67:1 · copper #A44B36 5.26:1 ·
+   warning #8A5A2B 5.35:1 · forest #253E33 10.54:1 · slate #233D52 10.28:1;
+   paper #FFFCF7 on a forest button 11.3:1. All AA for body text.
+   --tx-tertiary and --bz-text-3 are deliberately NOT redeclared: they are
+   already `var(--tx-secondary)` aliases upstream, and R19's line-strong
+   #A8ACA9 measures 2.09:1 on paper — a line colour, not a text colour. */
+[data-theme="operative-light"][data-product="my"] {
+  /* Surfaces — paper ground, warm-white elevated */
+  --bz-base: #f7f4ee;
+  --bz-elevated: #fffcf7;
+  --bz-card: #fffcf7;
+  --bz-card-hover: #f7f4ee;
+  --background: #f7f4ee;
+  --background-elevated: #fffcf7;
+  --surface-raised: #fffcf7;
+  --kbli-bg-base: #f7f4ee;
+  --kbli-bg-card: #fffcf7;
+
+  /* Type colour — ink and muted only */
+  --tx-pure: #1d2c3b;
+  --tx-primary: #1d2c3b;
+  --tx-secondary: #58626b;
+  --bz-text-1: #1d2c3b;
+  --bz-text-2: #58626b;
+  --foreground: #1d2c3b;
+  --foreground-muted: #58626b;
+  --kbli-text-primary: #1d2c3b;
+  --kbli-text-secondary: #58626b;
+  --kbli-text-muted: #58626b;
+
+  /* Lines — hairline, and line-strong only where a line is wanted */
+  --bz-border: #dad8d1;
+  --bz-border-hover: #a8aca9;
+  --bz-border-accent: rgba(164, 75, 54, 0.28);
+  --border: #dad8d1;
+  --kbli-border: #dad8d1;
+
+  /* Copper = needs you. Never a button fill (see block note above). */
+  --bz-copper: #a44b36;
+  --bz-copper-text: #a44b36;
+  --bz-accent: #a44b36;
+  --bz-accent-warm: #a44b36;
+  --bz-on-warm: #fffcf7;
+  --bz-focus-ring: #a44b36;
+  --bz-green: #253e33;
+
+  /* States — four meanings, no red: danger speaks copper */
+  --state-success: #253e33;
+  --state-warning: #8a5a2b;
+  --state-danger: #a44b36;
+  --state-info: #233d52;
+
+  /* GARUDA VOA DELIBERA fase 2 (b): --bz-data / --bz-status-mark, mirrored
+     here so both grounds declare the names (only the dark block is live on
+     the VOA funnel today). Same hue family as the dark ground's #F4C430
+     (45.3°) so the token means the same thing on either ground; lightness
+     retuned for paper contrast — a flat mirror of #F4C430 measures well
+     under 4.5:1 on #f7f4ee. #7a6629 clears 5.09:1 here. --bz-status-mark is
+     non-text only (border/rule/dot, WCAG 1.4.11's 3:1, not 4.5:1) and reuses
+     the dark block's hex unchanged: 5.03:1 on paper, well clear either way. */
+  --bz-data: #7a6629;
+  --bz-status-mark: #d01033;
+
+  /* Shell — hairline instead of a drop shadow */
+  --portal-header-bg: rgba(255, 252, 247, 0.86);
+  --bz-shell-header-shadow: none;
+  --bz-bottom-nav-bg: rgba(255, 252, 247, 0.94);
+  --bz-bottom-nav-border: #dad8d1;
+  --bz-bottom-nav-active: rgba(164, 75, 54, 0.1);
+  --bz-bottom-nav-shadow: none;
+  --bz-shadow-card: 0 10px 30px rgba(29, 44, 59, 0.045);
+
+  /* Type — Fraunces headlines, Manrope body. The faces are declared in
+     app/portal/r19-fonts.css. --bz-product-heading-font is NOT redeclared:
+     [data-product="my"] already resolves it through var(--font-serif). */
+  --font-serif: "Fraunces", ui-serif, Wimolog, serif;
+  --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
+
+  /* The base body rule pins "Inter" literally, so the sans token alone
+     cannot reach it. This descendant rule is the only non-custom-property
+     declaration in the block and stays behind the my qualifier. */
+  body {
+    font-family: var(--font-sans);
+  }
+}
+
+/* My, after dark. Same four meanings on an ink ground: copper lifts to
+   #c46a52 for text (4.98:1 on #121016, 4.57:1 on the card), forest lifts
+   through a paper mix so "done" stays legible, and danger is still copper.
+   Raw #a44b36 measures 3.27:1 on the dark base — kept for fills only. */
+[data-theme="operative-dark"][data-product="my"] {
+  /* Surfaces */
+  --bz-base: #121016;
+  --bz-elevated: #1a1a1f;
+  --bz-card: #1a1a1f;
+  --bz-card-hover: rgba(247, 244, 238, 0.07);
+  --background: #121016;
+  --background-elevated: #1a1a1f;
+  --surface-raised: #1a1a1f;
+  --kbli-bg-base: #121016;
+  --kbli-bg-card: #1a1a1f;
+
+  /* Type colour — paper on ink (17.21:1) */
+  --tx-pure: #f7f4ee;
+  --tx-primary: #f7f4ee;
+  --tx-secondary: rgba(247, 244, 238, 0.62);
+  /* Muted was 0.45: 4.23:1 on the base, 4.18:1 on the card — under
+     SC 1.4.3 for the portal labels that read it. 0.62 is 7.04 / 6.74:1,
+     the same step the kita dark block already ships. */
+  --tx-tertiary: rgba(247, 244, 238, 0.62);
+  --bz-text-1: #f7f4ee;
+  --bz-text-2: rgba(247, 244, 238, 0.62);
+  --bz-text-3: rgba(247, 244, 238, 0.62);
+  --foreground: #f7f4ee;
+  --foreground-muted: rgba(247, 244, 238, 0.62);
+  --kbli-text-primary: #f7f4ee;
+  --kbli-text-secondary: rgba(247, 244, 238, 0.62);
+  --kbli-text-muted: rgba(247, 244, 238, 0.62);
+
+  /* Lines */
+  --bz-border: rgba(247, 244, 238, 0.12);
+  --bz-border-hover: rgba(247, 244, 238, 0.2);
+  --bz-border-accent: rgba(196, 106, 82, 0.35);
+  --border: rgba(247, 244, 238, 0.12);
+  --kbli-border: rgba(247, 244, 238, 0.12);
+
+  /* Copper = needs you; the fill stays raw, the text lifts */
+  --bz-copper: #a44b36;
+  --bz-copper-text: #c46a52;
+  --bz-accent: #c46a52;
+  --bz-accent-warm: #a44b36;
+  --bz-on-warm: #f7f4ee;
+  --bz-focus-ring: #c46a52;
+  --bz-green: color-mix(in srgb, #253e33 40%, #f7f4ee);
+
+  /* States */
+  --state-success: color-mix(in srgb, #253e33 40%, #f7f4ee);
+  --state-warning: color-mix(in srgb, #8a5a2b 45%, #f7f4ee);
+  --state-danger: #c46a52;
+  --state-info: color-mix(in srgb, #233d52 40%, #f7f4ee);
+
+  /* GARUDA VOA DELIBERA fase 2 (b): --bz-data prices/dates/order-reference
+     text (11.60:1 on #121016), --bz-status-mark a non-text status marker
+     (border/rule/dot only, max one per viewport, always paired with the
+     WORD — never a fill, never text) at 3.42:1 against #121016 (WCAG
+     1.4.11's 3:1 floor for non-text). Declared here in globals.css, never in
+     voa-r19.css — that file's own contract test forbids a colour literal in
+     it, comments included. */
+  --bz-data: #f4c430;
+  --bz-status-mark: #d01033;
+
+  /* Shell */
+  --portal-header-bg: rgba(18, 16, 22, 0.86);
+  --bz-shell-header-shadow: none;
+  --bz-bottom-nav-bg: rgba(18, 16, 22, 0.94);
+  --bz-bottom-nav-border: rgba(247, 244, 238, 0.12);
+  --bz-bottom-nav-active: rgba(164, 75, 54, 0.22);
+  --bz-bottom-nav-shadow: none;
+  --bz-shadow-card: 0 10px 30px rgba(0, 0, 0, 0.32);
+
+  /* Type */
+  --font-serif: "Fraunces", ui-serif, Wimolog, serif;
+  --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
+
+  body {
+    font-family: var(--font-sans);
+  }
+}
+
+[data-theme="operative-light"] .glass-panel-deep {
+  box-shadow: 4px 0 24px rgba(22, 33, 58, 0.06);
+}
+
+/* Shared product surfaces. These are intentionally color-agnostic: theme
+   tokens supply the palette while the product persona supplies the radius. */
+.bz-product-panel {
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-product-radius, 12px);
+  box-shadow: var(--bz-shadow-card);
+}
+
+.bz-product-panel--interactive {
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.bz-product-panel--interactive:hover {
+  background: var(--bz-card-hover);
+  border-color: var(--bz-border-hover);
+  box-shadow: var(--bz-shadow-card-hover);
+}
+
+.bz-product-divider {
+  border-color: var(--bz-border);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   PORTAL LIGHT COMPONENT SURFACES — Day Edition re-arm (WS3, 2026-07-24)
+
+   Component classes defined in @layer components below carry anthracite
+   values that collapse on paper. These unlayered [data-theme] rules beat the
+   layered definitions (unlayered author styles win over @layer), so the
+   dark theme is untouched.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* crystal-stat-card: white 2% gradient is invisible on paper and the
+   rgba(0,0,0,.3) drop shadow reads muddy. Re-arm as the Day concept's warm
+   panel — card white, hairline warm border, inset keyline + soft navy
+   shadow (concept .panel: 0 14px 34px rgba(22,33,58,.07)). */
+[data-theme="operative-light"] .crystal-stat-card {
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.9),
+    0 14px 34px rgba(22, 33, 58, 0.07);
+}
+[data-theme="operative-light"] .crystal-stat-card:hover {
+  background: var(--bz-card-hover);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.9),
+    0 18px 40px rgba(22, 33, 58, 0.1);
+}
+
+/* lux-text-gradient: the white→gray gradient is invisible on paper (white
+   end ≈ 1.1:1). Re-arm as ink → soft-ink (14.2:1 → 6.8:1 on paper). */
+[data-theme="operative-light"] .lux-text-gradient {
+  background: linear-gradient(
+    180deg,
+    var(--tx-pure) 0%,
+    var(--tx-secondary) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--kbli-bg-base);
+  color: var(--kbli-text-primary);
+  font-family:
+    "Inter",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+  min-height: 100vh;
+  position: relative;
+}
+
+/* Editorial persona (balizero.com, visa/tax/kbli): headings use Cormorant
+   Garamond serif. Operative personas (kita., prime., my.) keep their own
+   heading treatments — sans for operative-dark, page-local Cormorant
+   imports for operative-light portal screens. See layout.tsx themeInitScript
+   for persona assignment. */
+[data-theme="editorial"] :is(h1, h2, h3) {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* Zantara widget fade-in animation */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Subtle ambient gradients — GARUDA */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -25vh -25vw;
+  background:
+    radial-gradient(
+      ellipse 60% 40% at 50% 0%,
+      rgba(212, 132, 90, 0.035) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      circle at 10% 60%,
+      rgba(30, 58, 90, 0.06) 0%,
+      transparent 45%
+    ),
+    radial-gradient(
+      circle at 90% 40%,
+      rgba(15, 35, 60, 0.05) 0%,
+      transparent 40%
+    );
+  pointer-events: none;
+  z-index: 0;
+  mix-blend-mode: color-dodge;
+}
+
+/* GARUDA KPI animations */
+@keyframes kpi-impact {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.14);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.kpi-impact {
+  animation: kpi-impact 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.garuda-kpi-bar {
+  height: 3px;
+  background: var(--bz-accent);
+  border-radius: 0 0 2px 2px;
+  transition: width 600ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Noise texture overlay */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  opacity: 0.015;
+  pointer-events: none;
+  z-index: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Ensure content above pseudo-elements */
+#__next,
+main,
+[data-nextjs-scroll-focus-boundary] {
+  position: relative;
+  z-index: 1;
+}
+
+/* Premium Liquid Animations */
+@keyframes aurora {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animate-aurora {
+  background-size: 200% 200%;
+  animation: aurora 8s ease infinite;
+}
+
+@keyframes pulse-glow {
+  0% {
+    box-shadow: 0 0 10px rgba(212, 132, 90, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 35px rgba(212, 132, 90, 0.5);
+  }
+  100% {
+    box-shadow: 0 0 10px rgba(212, 132, 90, 0.15);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes fade-in-up {
+  0% {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  opacity: 0;
+  animation: fade-in-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@property --border-angle {
+  syntax: "<angle>";
+  inherits: true;
+  initial-value: 0deg;
+}
+
+@keyframes holographic-spin {
+  0% {
+    --border-angle: 0deg;
+  }
+  100% {
+    --border-angle: 360deg;
+  }
+}
+
+.holographic-card {
+  position: relative;
+  background-clip: padding-box;
+}
+
+.holographic-card::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: 1.1rem;
+  background: conic-gradient(
+    from var(--border-angle),
+    transparent 20%,
+    #d4845a,
+    #a855f7,
+    #3b82f6,
+    transparent 80%
+  );
+  animation: holographic-spin 3s linear infinite;
+  z-index: -1;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+
+.holographic-card:hover::before {
+  opacity: 1;
+}
+
+@keyframes progress-grow {
+  from {
+    width: 0%;
+  }
+}
+
+@layer utilities {
+  /* WCAG 2.1 — visually-hidden helper (text only for AT). Keep clipping
+     pattern, not display:none, so screen readers still announce the node. */
+  .sr-only {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+  }
+
+  /* Workspace skip-link — appears on first Tab so keyboard users can jump
+     past the sidebar/header into <main id="main-content">. */
+  .bz-skip-link {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 100;
+    padding: 0.5rem 1rem;
+    background: var(--bz-accent, #d4845a);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    border-bottom-right-radius: 6px;
+    transform: translateY(-150%);
+    transition: transform 150ms ease;
+  }
+  /* Kita: white on the dark-theme copper #c46a52 is 3.80:1. The product's
+     own on-accent ink is #121016 on #c46a52 (4.98:1) after dark and #fffcf7
+     on #a44b36 (5.64:1) in daylight. Scoped so other products keep white. */
+  [data-product="kita"] .bz-skip-link {
+    color: var(--accent-foreground, #fff);
+  }
+  .bz-skip-link:focus,
+  .bz-skip-link:focus-visible {
+    transform: translateY(0);
+    outline: 2px solid #fff;
+    outline-offset: -4px;
+  }
+
+  .glass-panel-deep {
+    background: var(--bz-elevated, #1b222b);
+    backdrop-filter: blur(20px) saturate(1.2);
+    -webkit-backdrop-filter: blur(20px) saturate(1.2);
+    border-right: 1px solid var(--bz-border, rgba(255, 255, 255, 0.05));
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.35);
+  }
+
+  .glass-card-warm {
+    @apply bg-[rgba(26,26,30,0.5)] backdrop-blur-md border border-[rgba(255,255,255,0.08)] shadow-[0_4px_24px_rgba(0,0,0,0.2)] transition-all duration-300;
+  }
+
+  .glass-card-warm:hover {
+    @apply bg-[rgba(36,36,41,0.6)] border-[rgba(255,255,255,0.15)] shadow-[0_8px_32px_rgba(212,132,90,0.15)] -translate-y-0.5;
+  }
+
+  .glass-card-mckinsey {
+    @apply bg-[rgba(10,37,64,0.3)] backdrop-blur-md border border-[rgba(255,255,255,0.05)] shadow-[0_4px_24px_rgba(0,0,0,0.2)] transition-all duration-300;
+  }
+
+  .glass-card-mckinsey:hover {
+    @apply bg-[rgba(10,37,64,0.6)] border-[#2251ff]/50 shadow-[0_8px_32px_rgba(34,81,255,0.15)] -translate-y-0.5;
+  }
+
+  /* God Tier Anthracite Utilities */
+  .crystal-stat-card {
+    @apply bg-gradient-to-br from-[rgba(255,255,255,0.02)] to-[rgba(255,255,255,0.005)] backdrop-blur-2xl rounded-2xl p-5 shadow-[inset_0_1px_0_0_var(--glass-highlight),inset_0_0_0_1px_var(--glass-rim),0_10px_20px_-5px_rgba(0,0,0,0.3)] relative overflow-hidden transition-all duration-300;
+  }
+  .crystal-stat-card:hover {
+    @apply -translate-y-0.5 bg-gradient-to-br from-[rgba(255,255,255,0.03)] to-[rgba(255,255,255,0.01)];
+  }
+
+  .stat-glow-line {
+    @apply absolute left-0 top-0 bottom-0 w-[2px];
+    box-shadow: 0 0 15px 1px currentColor;
+  }
+
+  .ledger-container {
+    @apply bg-gradient-to-br from-[rgba(20,28,43,0.5)] to-[rgba(20,28,43,0.8)] border border-[var(--glass-rim)] rounded-[1.25rem] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05),0_20px_40px_-10px_rgba(0,0,0,0.5)] backdrop-blur-[48px] flex flex-col overflow-hidden;
+  }
+
+  .lux-text-gradient {
+    background: linear-gradient(180deg, #ffffff 0%, #94a3b8 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)];
+  }
+}
+
+/* ── v2 hero — responsive aspect + gradient + logo sizing ————————— */
+
+/* Shared image scrim token — P1: single definition applied to hero, featured
+   carousel, founder cards, and trust strip. Any element that puts text over
+   a photo should use this. */
+:root {
+  --img-scrim: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.78) 0%,
+    rgba(0, 0, 0, 0.35) 45%,
+    rgba(0, 0, 0, 0) 75%
+  );
+  --nav-h: 3.5rem; /* = h-14 = 56px — used by any hero that needs to clear the fixed nav */
+}
+
+/* prefers-reduced-motion: disable cross-fade transitions on the news carousel */
+@media (prefers-reduced-motion: reduce) {
+  .news-carousel-img-fade {
+    transition: none !important;
+  }
+}
+
+.hero-aspect {
+  aspect-ratio: 4 / 5;
+  min-height: 560px;
+  max-height: 90vh;
+}
+.hero-gradient {
+  background: linear-gradient(
+    180deg,
+    rgba(18, 16, 22, 0.25) 0%,
+    rgba(18, 16, 22, 0.55) 55%,
+    rgba(18, 16, 22, 0.92) 100%
+  );
+}
+.hero-logo :is(img, svg) {
+  width: 72px !important;
+  height: auto !important;
+}
+@media (min-width: 768px) {
+  .hero-aspect {
+    aspect-ratio: 21 / 9;
+    min-height: 560px;
+    max-height: none;
+  }
+  .hero-gradient {
+    background: linear-gradient(
+      90deg,
+      rgba(18, 16, 22, 0.85) 0%,
+      rgba(18, 16, 22, 0.6) 28%,
+      rgba(18, 16, 22, 0.25) 48%,
+      transparent 62%
+    );
+  }
+  .hero-logo :is(img, svg) {
+    width: 120px !important;
+  }
+}
+
+/* ── v2 funnel — responsive grid: stack on mobile, 2-col on md+ ─────── */
+.funnel-grid {
+  grid-template-columns: 1fr !important;
+  gap: 1rem !important;
+}
+@media (min-width: 768px) {
+  .funnel-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 1.5rem !important;
+  }
+}
+
+/* ── v2 socialproof — stack columns on mobile ───────────────────────── */
+.socialproof-grid {
+  grid-template-columns: 1fr !important;
+}
+@media (min-width: 768px) {
+  .socialproof-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+}
+
+/* ── v2 funnel image — forced aspect on mobile when grid stacks ──────── */
+.funnel-image {
+  aspect-ratio: 4 / 3;
+  min-height: 240px;
+}
+@media (min-width: 768px) {
+  .funnel-image {
+    aspect-ratio: auto;
+    min-height: 0;
+  }
+}
+
+/* ── v2 FABs — pill+label on desktop, compact icon-only on mobile ───── */
+
+/* Hide global WhatsApp FAB inside L1 funnels (visa/kbli/tax/property).
+   Those pages already ship a dedicated HeaderWhatsAppCTA in the NavShell
+   + a CTAHandoff sticky bottom inside FunnelFrame — a 3rd floating
+   button would be redundant visual noise. Selector targets the
+   data-funnel attribute that FunnelFrame sets on its root <div>. */
+:has([data-funnel]) .fab-whatsapp {
+  display: none;
+}
+
+/* Hide the public contact FAB inside the authenticated workspace.
+   Workspace routes already have AppSidebar plus internal assistant widgets,
+   and the public FAB overlaps dense CRM surfaces on mobile. */
+:has(.glass-panel-deep) .fab-whatsapp {
+  display: none;
+}
+
+.fab-whatsapp,
+.fab-zantara {
+  bottom: 88px;
+  height: 56px;
+  padding-left: 8px;
+  padding-right: 8px;
+  width: 56px;
+  justify-content: center;
+}
+.fab-whatsapp {
+  left: 20px;
+}
+.fab-zantara {
+  right: 20px;
+}
+.fab-label {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .fab-whatsapp,
+  .fab-zantara {
+    /* P0.5: raised from 32px — the FAB at 32px overlapped footer legal links.
+       52px clears the legal row + the footer border with breathing room. */
+    bottom: 52px;
+    height: 60px;
+    padding-left: 10px;
+    padding-right: 24px;
+    width: auto;
+    justify-content: flex-start;
+  }
+  .fab-whatsapp {
+    left: 32px;
+  }
+  .fab-zantara {
+    right: 32px;
+  }
+  .fab-label {
+    display: flex;
+  }
+}
+
+/* ── v2 footer — 5-col on desktop, 2-col on tablet, 1-col on mobile ─── */
+.footer-grid {
+  grid-template-columns: 1fr !important;
+  gap: 2rem !important;
+}
+
+/* P4: focus-visible rings for Rumah Putih cards, links, pills, and the FAB.
+   Scope to the homepage light surface so existing dark portal rings are untouched. */
+#top a:focus-visible,
+#top button:focus-visible {
+  outline: 2px solid #1e3863;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+#zantara-fab:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: 3px;
+}
+
+@media (min-width: 640px) {
+  .footer-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+}
+@media (min-width: 1024px) {
+  .footer-grid {
+    grid-template-columns: 1.5fr repeat(4, 1fr) !important;
+    gap: 3rem !important;
+  }
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   MYTHOS Stage-B Batch 1 — "Rumah Putih" route-scoped LIGHT overrides.
+
+   These rules are scoped to `.rumah-putih` (set per-page alongside RUMAH_VARS,
+   see lib/theme/rumahVars.ts) so they re-tint ONLY the long-form blog reader
+   and the category index — the pages whose source uses hardcoded-dark Tailwind
+   utilities (text-white, bg-white/5, prose-invert, …) that do NOT read tokens.
+   Touching those shared components' source would leak the light theme to pages
+   not in this batch (/services, /property, the /v2/news + dashboard widget);
+   scoping by class keeps the blast radius to the converted wrappers only.
+
+   The cover hero photo and any text painted ON an image overlay (FeaturedCard,
+   the article cover) stay light-on-dark — see the `.absolute` exclusions — the
+   FT "dark island" pattern. Accent buttons (WhatsApp green, etc.) keep their
+   own backgrounds + white text; we never recolor text inside an element with
+   its own non-transparent background.
+   WCAG AA: ink #16213a ≈ 13.5:1, soft-ink #475372 ≈ 7.1:1 on paper #f7f6f2.
+   These rules now read the R19 tokens (--r19-ink/-muted/-line/-line-strong/
+   -surface/-paper/-wash/-copper), with the literals above kept as the `var()`
+   fallback for any render without an R19 ancestor.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* ── Long-form body: MDX renderer (.mdx-content) + markdown fallback (.prose).
+      The `prose prose-invert` classes are NO-OPS here (no typography plugin) —
+      the real colors come from the explicit per-element classes below. ── */
+.rumah-putih .mdx-content,
+.rumah-putih .prose {
+  color: var(--r19-ink, #16213a);
+}
+.rumah-putih .mdx-content h1,
+.rumah-putih .mdx-content h2,
+.rumah-putih .mdx-content h3,
+.rumah-putih .mdx-content h4,
+.rumah-putih .prose h1,
+.rumah-putih .prose h2,
+.rumah-putih .prose h3,
+.rumah-putih .prose h4 {
+  color: var(--r19-ink, #1e3863) !important; /* headings: R19 ink */
+}
+.rumah-putih .mdx-content p,
+.rumah-putih .mdx-content li,
+.rumah-putih .mdx-content ul,
+.rumah-putih .mdx-content ol,
+.rumah-putih .prose p,
+.rumah-putih .prose li,
+.rumah-putih .prose ul,
+.rumah-putih .prose ol {
+  color: var(--r19-ink, #1f2a44) !important; /* body: R19 ink */
+}
+.rumah-putih .mdx-content strong,
+.rumah-putih .prose strong {
+  color: var(--r19-ink, #16213a) !important;
+}
+.rumah-putih .mdx-content em,
+.rumah-putih .prose em {
+  color: var(--r19-ink, #1f2a44) !important;
+}
+/* Blockquote — hairline-navy rule on a faint navy wash */
+.rumah-putih .mdx-content blockquote,
+.rumah-putih .prose blockquote {
+  color: var(--r19-muted, #475372) !important;
+  background: var(--r19-wash, rgba(30, 56, 99, 0.045)) !important;
+  border-left-color: var(--r19-copper, #1e3863) !important;
+}
+/* Inline code — ink on a faint navy chip (keep the red token for keywords) */
+.rumah-putih .mdx-content :not(pre) > code,
+.rumah-putih .prose :not(pre) > code {
+  background: var(--r19-wash, rgba(30, 56, 99, 0.08)) !important;
+  color: var(--r19-ink, #b3261e) !important; /* inline code: R19 ink */
+}
+/* Code block — keep a dark slab (code reads best dark; FT-style island) */
+.rumah-putih .mdx-content pre,
+.rumah-putih .prose pre {
+  background: var(--r19-wash, #0f1f33) !important;
+  border-color: var(--r19-line, rgba(30, 56, 99, 0.25)) !important;
+}
+.rumah-putih .mdx-content pre code,
+.rumah-putih .prose pre code {
+  color: var(--r19-ink, #e8edf6) !important;
+}
+/* Tables — hairline navy borders, ink text, faint navy header */
+.rumah-putih .mdx-content table,
+.rumah-putih .mdx-content thead,
+.rumah-putih .mdx-content th,
+.rumah-putih .mdx-content td,
+.rumah-putih .mdx-content tr,
+.rumah-putih .prose table,
+.rumah-putih .prose thead,
+.rumah-putih .prose th,
+.rumah-putih .prose td,
+.rumah-putih .prose tr {
+  border-color: var(--r19-line, #e3e1da) !important;
+}
+.rumah-putih .mdx-content thead,
+.rumah-putih .prose thead {
+  background: var(--r19-wash, rgba(30, 56, 99, 0.05)) !important;
+}
+.rumah-putih .mdx-content th,
+.rumah-putih .prose th {
+  color: var(--r19-muted, #475372) !important;
+}
+.rumah-putih .mdx-content td,
+.rumah-putih .prose td {
+  color: var(--r19-ink, #1f2a44) !important;
+}
+.rumah-putih .mdx-content hr,
+.rumah-putih .prose hr {
+  border-color: var(--r19-line, #e3e1da) !important;
+}
+.rumah-putih .mdx-content tr:hover,
+.rumah-putih .prose tr:hover {
+  background: var(--r19-wash, rgba(30, 56, 99, 0.04)) !important;
+}
+/* Image caption under figures */
+.rumah-putih .mdx-content span.block.text-center,
+.rumah-putih .prose span.block.text-center {
+  color: var(--r19-muted, #475372) !important;
+}
+
+/* ── Article + category chrome: re-tint hardcoded white text that sits ON
+      PAPER. Exclude anything inside an `.absolute` block — that's image-overlay
+      text (cover hero, FeaturedCard) which must stay white. ── */
+.rumah-putih .text-white:not(.absolute *),
+.rumah-putih .text-white\/90:not(.absolute *) {
+  color: var(--r19-ink, #16213a) !important;
+}
+.rumah-putih .text-white\/80:not(.absolute *),
+.rumah-putih .text-white\/70:not(.absolute *) {
+  color: var(--r19-ink, #1f2a44) !important;
+}
+.rumah-putih .text-white\/60:not(.absolute *),
+.rumah-putih .text-white\/50:not(.absolute *),
+.rumah-putih .text-white\/40:not(.absolute *) {
+  color: var(--r19-muted, #475372) !important;
+}
+
+/* Hairline rules + faint surfaces that used white-on-dark (on paper). Skip
+   image overlays (`.absolute`). */
+.rumah-putih .border-white\/10:not(.absolute *),
+.rumah-putih .border-white\/5:not(.absolute *) {
+  border-color: var(--r19-line, #e3e1da) !important;
+}
+.rumah-putih .bg-white\/5:not(.absolute *),
+.rumah-putih .bg-white\/10:not(.absolute *) {
+  background-color: var(--r19-surface, #ffffff) !important;
+}
+
+/* Article author card + tag chips + engagement border (dark-glass → white card)
+   — these used inline rgba(255,255,255,…) so target them structurally. */
+.rumah-putih article > div.mt-12.p-6.rounded-2xl {
+  background: var(--r19-surface, #ffffff) !important;
+  border: 1px solid var(--r19-line, #e3e1da) !important;
+  box-shadow: none !important;
+}
+/* Tag pills */
+.rumah-putih article .article-topic-pill {
+  background: var(--r19-wash, rgba(30, 56, 99, 0.06)) !important;
+  color: var(--r19-muted, #475372) !important;
+}
+/* Related-articles band (dark wash → paper-raised) */
+.rumah-putih section.bg-\[rgba\(3\,18\,25\,0\.5\)\] {
+  background: var(--r19-surface, #ffffff) !important;
+  border-top-color: var(--r19-line, #e3e1da) !important;
+}
+
+/* Category index "Popular in …" sidebar card + icon chip */
+.rumah-putih .bg-white\/5.border.border-white\/10:not(.absolute *) {
+  background: var(--r19-surface, #ffffff) !important;
+  border-color: var(--r19-line, #e3e1da) !important;
+}
+
+/* Article markdown inline-code red token used by the ReactMarkdown fallback */
+.rumah-putih .text-\[\#ff6b6b\] {
+  color: var(--r19-ink, #b3261e) !important;
+}
+/* Dark island on purpose: the article Share menu (ArticleEngagement.tsx,
+   `absolute … bg-[#0a1929]`) keeps white text, which the ink retint above
+   skips inside `.absolute`, so its background must stay dark. */
+.rumah-putih .bg-\[\#0a1929\] {
+  background: #0f1f33 !important;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   MYTHOS Stage-B Batch 2 — "Rumah Putih" route-scoped LIGHT overrides for the
+   SERVICE pages (services/[slug] detail + the contact channel cards).
+
+   The detail page (services/[slug]/page.tsx + ServicePricing.tsx) is written
+   with hardcoded-dark Tailwind utilities (bg-[#051C2C], bg-[#0a2540], text-white,
+   serif headings) that do NOT read tokens. Scoping by `.rumah-putih` (set on the
+   page wrapper alongside RUMAH_VARS) re-tints ONLY this page family — touching
+   the component source would leak the light theme to /property, /visa, etc.
+
+   The hard-accent islands (orange Free-Consultation sidebar, green WhatsApp CTA,
+   solid accent badges/buttons) are tagged `.rp-dark-island` and KEEP their own
+   accent background + white text — the FT "dark island" pattern. The text-white
+   re-tint from Batch 1 (`.text-white:not(.absolute *)`) must NOT touch them, so
+   the rules below re-assert white inside `.rp-dark-island` at equal/higher
+   specificity, placed AFTER Batch 1's block (later source order wins on ties).
+   WCAG AA: ink #16213a ≈ 13.5:1, soft-ink #475372 ≈ 7.1:1 on paper #f7f6f2;
+   navy headings #1e3863 ≈ 10.8:1; white on orange #d14832 ≈ 4.8:1.
+   These rules now read the R19 tokens (--r19-ink/-muted/-line/-line-strong/
+   -surface/-paper/-wash), with the literals above kept as the `var()` fallback
+   for any render without an R19 ancestor.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* ── Hardcoded-dark hex surfaces → paper-raised white card + hairline. ── */
+.rumah-putih .bg-\[\#0a2540\]:not(.rp-dark-island):not(.rp-dark-island *),
+.rumah-putih .bg-\[\#051C2C\]:not(.rp-dark-island):not(.rp-dark-island *) {
+  background-color: var(--r19-surface, #ffffff) !important;
+  border: 1px solid var(--r19-line, #e3e1da) !important;
+}
+/* The page root paints paper via RUMAH_VARS inline; the Tailwind bg-[#051C2C]
+   class on that same root would otherwise win — neutralize it to paper. */
+.rumah-putih.bg-\[\#051C2C\] {
+  background-color: var(--r19-paper, #f7f6f2) !important;
+}
+
+/* ── Serif section headings + h1/h3 hardcoded text-white → navy (not ink). ── */
+.rumah-putih h1.text-white:not(.rp-dark-island *),
+.rumah-putih h2.text-white:not(.rp-dark-island *),
+.rumah-putih h3.text-white:not(.rp-dark-island *),
+.rumah-putih .font-serif.text-white:not(.rp-dark-island *) {
+  color: var(--r19-ink, #1e3863) !important;
+}
+
+/* ── Accent-blue-editorial popular card wash (dark-glass → faint navy). ── */
+.rumah-putih
+  .bg-accent-blue-editorial\/10:not(.rp-dark-island):not(.rp-dark-island *) {
+  background-color: var(--r19-wash, rgba(30, 56, 99, 0.05)) !important;
+}
+
+/* ── Accent tinted package cards (visa orange/sky at /20) → white + accent
+      hairline. These are NOT islands (their text is ink, not white). ── */
+.rumah-putih .bg-orange-500\/20:not(.rp-dark-island),
+.rumah-putih .bg-sky-500\/20:not(.rp-dark-island) {
+  background-color: var(--r19-surface, #ffffff) !important;
+}
+.rumah-putih .border-orange-500\/40 {
+  border-color: var(
+    --r19-line-strong,
+    color-mix(in srgb, #f97316 36%, #e3e1da)
+  ) !important;
+}
+.rumah-putih .border-sky-500\/40 {
+  border-color: var(
+    --r19-line-strong,
+    color-mix(in srgb, #0ea5e9 36%, #e3e1da)
+  ) !important;
+}
+
+/* ── Secondary "outline" buttons used dark border-white/20 + white text →
+      navy hairline + navy ink (they sit on paper, NOT on an island). ── */
+.rumah-putih button.border-white\/20:not(.rp-dark-island *),
+.rumah-putih a.border-white\/20:not(.rp-dark-island *) {
+  border-color: var(--r19-line-strong, #cfccc2) !important;
+  color: var(--r19-ink, #1e3863) !important;
+}
+.rumah-putih .border-white\/20:not(.rp-dark-island *):hover {
+  background-color: var(--r19-wash, rgba(30, 56, 99, 0.06)) !important;
+}
+
+/* ── DARK-ISLAND re-assert: anything tagged .rp-dark-island keeps its accent
+      background and forces its text/icons back to white, overriding Batch 1's
+      text-white re-tint and the ink defaults. ── */
+.rumah-putih .rp-dark-island,
+.rumah-putih .rp-dark-island * {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.rumah-putih .rp-dark-island .text-white,
+.rumah-putih .rp-dark-island.text-white,
+.rumah-putih .rp-dark-island h3,
+.rumah-putih .rp-dark-island span:not([class*="text-"]) {
+  color: #ffffff !important;
+}
+.rumah-putih .rp-dark-island .text-white\/80,
+.rumah-putih .rp-dark-island .text-white\/90 {
+  color: rgba(255, 255, 255, 0.88) !important;
+}

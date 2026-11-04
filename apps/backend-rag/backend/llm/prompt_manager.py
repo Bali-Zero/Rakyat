@@ -1,0 +1,522 @@
+"""
+Prompt Manager - Handles system prompt loading and building
+
+Separated from ZantaraAIClient to follow Single Responsibility Principle.
+
+NOTE: Base prompt now comes from backend.prompts.zantara_core (Single Source of Truth).
+No more reading .md files at runtime.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from typing import TYPE_CHECKING, Any
+
+from backend.prompts.zantara_core import ZANTARA_MASTER_TEMPLATE as _TEMPLATE_V1
+
+logger = logging.getLogger(__name__)
+
+# Feature flag: ZANTARA_PROMPT_VERSION selects between
+# - v1: original SSOT (Italian-heavy inline examples)
+# - v2: multi-language business phrases via business_rules_i18n
+# - v3: v2 + concrete worked examples per domain (pricing/visa/tax/kbli/
+#       escalation/identity-lock in it/en/id) — short-circuits the
+#       abstract policy → concrete behaviour translation step
+# - v4: v3 + unified prompt door (this module IS that door — see
+#       backend/services/rag/agentic/prompt_builder.py, which used to import
+#       ZANTARA_MASTER_TEMPLATE directly from v1, bypassing this env var
+#       entirely) + {today_wita} date-injection placeholder + corrected
+#       worked examples (phantom KBLI codes, invalid get_pricing() call
+#       shapes) + deadline-neutral KBLI migration guidance.
+# - v5: audience-COMPOSED prompt (backend/prompts/zantara_core_v5.py) — no
+#       single flat template. SYSTEM = CORE_FACTUAL + AUDIENCE_VOICE[audience]
+#       + CAPABILITY_BLOCK[audience], built by build_master_template(audience).
+#       ZANTARA_MASTER_TEMPLATE below stays bound (for legacy/non-audience-
+#       aware consumers) to the "client" build — the most-restricted, fail-
+#       safe audience, NEVER team/creator. Audience-aware consumers must call
+#       get_master_template(audience) instead (defined near the bottom of
+#       this module) to get the team/creator capability set.
+# Default is v1. Each newer version falls back gracefully to the previous
+# one if its module import fails (defensive against partial deploys).
+# NOTE: this fallback is silent-by-design for partial-deploy resilience, but
+# an EXPLICITLY requested version that fails to import is logged at ERROR
+# (not WARNING) — an operator who set ZANTARA_PROMPT_VERSION=v4 and is
+# silently served v3 needs that to be loud, not buried in info-level noise.
+_RAW_PROMPT_VERSION = os.environ.get("ZANTARA_PROMPT_VERSION")
+_PROMPT_VERSION = (_RAW_PROMPT_VERSION or "v1").lower()
+
+_KNOWN_PROMPT_VERSIONS: tuple[str, ...] = ("v1", "v2", "v3", "v4", "v5")
+
+# Fail LOUD (not silently) when an EXPLICITLY-SET, non-empty
+# ZANTARA_PROMPT_VERSION doesn't match any known version — e.g. a typo'd Fly
+# secret ("v04", "V4 ", "latest"). An UNSET variable (_RAW_PROMPT_VERSION is
+# None) keeps today's meaning EXACTLY unchanged: silent default to v1. This
+# only adds visibility for a value someone actually TYPED and got wrong — it
+# still serves v1 (the safest, best-tested default) rather than crashing the
+# process, but a typo that silently downgrades prod's prompt must be loud,
+# not discovered days later.
+if _RAW_PROMPT_VERSION and _PROMPT_VERSION not in _KNOWN_PROMPT_VERSIONS:
+    logger.error(
+        "PromptManager: ZANTARA_PROMPT_VERSION=%r is not a recognised "
+        "version (available: %s) — silently falling back to v1 would look "
+        "like success. Serving v1; fix the env var if a newer prompt was "
+        "intended.",
+        _RAW_PROMPT_VERSION,
+        ", ".join(_KNOWN_PROMPT_VERSIONS),
+    )
+
+# The version actually served after import-time resolution — may differ from
+# _PROMPT_VERSION if a requested version's import fails and this module
+# falls back to an earlier one (see the except clauses below). Consumers
+# that need to know whether v5's audience-composed shape is active
+# (prompt_builder.py, to avoid double-applying the persona layer v5 already
+# bakes into build_master_template()) read THIS, not _PROMPT_VERSION.
+PROMPT_VERSION_ACTIVE: str = "v1"
+
+if _PROMPT_VERSION == "v5":
+    try:
+        from backend.prompts.zantara_core_v4 import (
+            today_wita_string as get_today_wita,
+        )
+        from backend.prompts.zantara_core_v5 import (
+            build_master_template as _build_master_template_v5,
+        )
+
+        # ZANTARA_MASTER_TEMPLATE stays bound for legacy/non-audience-aware
+        # consumers (e.g. PromptManager.get_system_prompt below) — bound to
+        # the "client" build, the most-restricted/fail-safe audience, NEVER
+        # team/creator. Audience-aware callers use get_master_template()
+        # instead (defined near the bottom of this module).
+        ZANTARA_MASTER_TEMPLATE = _build_master_template_v5("client")
+        PROMPT_VERSION_ACTIVE = "v5"
+        logger.info(
+            "PromptManager: using zantara_core_v5 (ZANTARA_PROMPT_VERSION=v5, "
+            "audience-composed)",
+        )
+    except ImportError as exc:  # pragma: no cover — defensive fallback
+        logger.error(
+            "PromptManager: ZANTARA_PROMPT_VERSION=v5 requested but "
+            "zantara_core_v5 import failed (%s) — falling back to v4. "
+            "This is a REGRESSION — investigate before trusting prod is on v5.",
+            exc,
+        )
+        try:
+            from backend.prompts.zantara_core_v4 import (
+                ZANTARA_MASTER_TEMPLATE,
+            )
+            from backend.prompts.zantara_core_v4 import (
+                today_wita_string as get_today_wita,
+            )
+
+            PROMPT_VERSION_ACTIVE = "v4"
+        except ImportError:
+            try:
+                from backend.prompts.zantara_core_v3 import (
+                    ZANTARA_MASTER_TEMPLATE,
+                )
+
+                PROMPT_VERSION_ACTIVE = "v3"
+            except ImportError:
+                try:
+                    from backend.prompts.zantara_core_v2 import (
+                        ZANTARA_MASTER_TEMPLATE,
+                    )
+
+                    PROMPT_VERSION_ACTIVE = "v2"
+                except ImportError:
+                    ZANTARA_MASTER_TEMPLATE = _TEMPLATE_V1
+                    PROMPT_VERSION_ACTIVE = "v1"
+elif _PROMPT_VERSION == "v4":
+    try:
+        from backend.prompts.zantara_core_v4 import (
+            ZANTARA_MASTER_TEMPLATE,
+        )
+        from backend.prompts.zantara_core_v4 import (
+            today_wita_string as get_today_wita,
+        )
+
+        logger.info("PromptManager: using zantara_core_v4 (ZANTARA_PROMPT_VERSION=v4)")
+        PROMPT_VERSION_ACTIVE = "v4"
+    except ImportError as exc:  # pragma: no cover — defensive fallback
+        logger.error(
+            "PromptManager: ZANTARA_PROMPT_VERSION=v4 requested but "
+            "zantara_core_v4 import failed (%s) — falling back to v3. "
+            "This is a REGRESSION (v3 has known-fixed bugs re-appearing) — "
+            "investigate before trusting prod is on v4.",
+            exc,
+        )
+        try:
+            from backend.prompts.zantara_core_v3 import (
+                ZANTARA_MASTER_TEMPLATE,
+            )
+
+            PROMPT_VERSION_ACTIVE = "v3"
+        except ImportError:
+            try:
+                from backend.prompts.zantara_core_v2 import (
+                    ZANTARA_MASTER_TEMPLATE,
+                )
+
+                PROMPT_VERSION_ACTIVE = "v2"
+            except ImportError:
+                ZANTARA_MASTER_TEMPLATE = _TEMPLATE_V1
+elif _PROMPT_VERSION == "v3":
+    try:
+        from backend.prompts.zantara_core_v3 import (
+            ZANTARA_MASTER_TEMPLATE,
+        )
+
+        logger.info("PromptManager: using zantara_core_v3 (ZANTARA_PROMPT_VERSION=v3)")
+        PROMPT_VERSION_ACTIVE = "v3"
+    except ImportError as exc:  # pragma: no cover — defensive fallback
+        logger.error(
+            "PromptManager: ZANTARA_PROMPT_VERSION=v3 requested but "
+            "zantara_core_v3 import failed (%s) — falling back to v2.",
+            exc,
+        )
+        try:
+            from backend.prompts.zantara_core_v2 import (
+                ZANTARA_MASTER_TEMPLATE,
+            )
+
+            PROMPT_VERSION_ACTIVE = "v2"
+        except ImportError:
+            ZANTARA_MASTER_TEMPLATE = _TEMPLATE_V1
+elif _PROMPT_VERSION == "v2":
+    try:
+        from backend.prompts.zantara_core_v2 import (
+            ZANTARA_MASTER_TEMPLATE,
+        )
+
+        logger.info("PromptManager: using zantara_core_v2 (ZANTARA_PROMPT_VERSION=v2)")
+        PROMPT_VERSION_ACTIVE = "v2"
+    except ImportError as exc:  # pragma: no cover — defensive fallback
+        logger.error(
+            "PromptManager: ZANTARA_PROMPT_VERSION=v2 requested but "
+            "zantara_core_v2 import failed (%s) — falling back to v1.",
+            exc,
+        )
+        ZANTARA_MASTER_TEMPLATE = _TEMPLATE_V1
+else:
+    ZANTARA_MASTER_TEMPLATE = _TEMPLATE_V1
+
+# get_today_wita: only bound when v4 successfully imports (above). Consumers
+# that need date-injection regardless of the active version should import
+# backend.prompts.zantara_core_v4.today_wita_string directly (it has no
+# dependency on which version is selected) rather than relying on this
+# module-level name being present.
+if "get_today_wita" not in globals():
+
+    def get_today_wita() -> str:  # simple passthrough fallback
+        """Fallback when v4 isn't the active/importable version.
+
+        Still returns a real WITA date string (not a placeholder) so a
+        consumer that unconditionally calls this never gets a broken value —
+        it just means the *template* in use may not have a place to put it.
+        """
+        from backend.prompts.zantara_core_v4 import today_wita_string
+
+        return today_wita_string()
+
+
+def get_master_template(audience: str | None = None) -> str:
+    """Return the master template for the currently ACTIVE prompt version.
+
+    v5 (``PROMPT_VERSION_ACTIVE == "v5"``) is audience-composed: SYSTEM =
+    CORE_FACTUAL + AUDIENCE_VOICE[audience] + CAPABILITY_BLOCK[audience].
+    ``audience`` is threaded straight to
+    ``zantara_core_v5.build_master_template``, which already fails SAFE
+    (unrecognised/absent → "client", the most-restricted voice and the
+    emptiest capability set — see that function's docstring). A ``None``
+    audience passed here is likewise treated as "client".
+
+    v1-v4 (every other resolvable version) have no audience axis — this
+    returns the SAME module-level ``ZANTARA_MASTER_TEMPLATE`` regardless of
+    ``audience``, byte-identical to calling that name directly (unchanged
+    from before this function existed). Persona layering for those versions
+    still happens at the call site (prompt_builder.py's CREATOR_PERSONA/
+    TEAM_PERSONA prepend), which stays in place for v1-v4 and is skipped
+    only when ``PROMPT_VERSION_ACTIVE == "v5"`` (v5 already bakes the
+    audience voice into the string this function returns).
+    """
+    if PROMPT_VERSION_ACTIVE == "v5":
+        return _build_master_template_v5(audience or "client")
+    return ZANTARA_MASTER_TEMPLATE
+
+
+# ToneStyle is imported at runtime to avoid circular import
+# The TONE_PROMPTS dict uses string keys at module level, mapped to ToneStyle at runtime
+_TONE_PROMPTS_BY_NAME: dict[str, str] = {
+    "professional": "Maintain a professional, balanced tone. Be clear and concise.",
+    "warm": "Use a warm, friendly tone. Show empathy and encouragement.",
+    "technical": "Provide detailed technical explanations. Use precise terminology.",
+    "simple": "Explain in simple terms. Break down complex concepts step by step.",
+    "encouraging": "Be reassuring and supportive. Acknowledge the challenge and offer clear next steps.",
+    "direct": "Be direct and action-oriented. Focus on solutions, not explanations.",
+}
+
+
+def _get_tone_prompt(style: Any) -> str | None:
+    """Get tone prompt for a style (ToneStyle enum or string)."""
+    if style is None:
+        return None
+    # If it's a string, use directly
+    if isinstance(style, str):
+        return _TONE_PROMPTS_BY_NAME.get(style.lower())
+    # If it's a ToneStyle enum, get its value
+    if hasattr(style, "value"):
+        return _TONE_PROMPTS_BY_NAME.get(style.value.lower())
+    return None
+
+
+# Backward compatibility: TONE_PROMPTS as a property-like dict
+# This is a class that acts like a dict but lazily resolves ToneStyle keys
+class _TonePromptsDict:
+    """Dict-like class that supports both ToneStyle enum and string keys."""
+
+    def get(self, key: Any, default: str | None = None) -> str | None:
+        return _get_tone_prompt(key) or default
+
+    def __getitem__(self, key: Any) -> str:
+        result = _get_tone_prompt(key)
+        if result is None:
+            raise KeyError(key)
+        return result
+
+
+TONE_PROMPTS = _TonePromptsDict()
+
+if TYPE_CHECKING:
+    from backend.services.misc.emotional_attunement import ToneStyle
+
+
+class PromptManager:
+    """
+    Manages system prompt loading and building with context injection.
+
+    Responsibilities:
+    - Load prompt from file or use embedded fallback
+    - Build prompt with memory and identity context
+    - Handle prompt file errors gracefully
+    """
+
+    def __init__(self) -> None:
+        """Initialize PromptManager and load base system prompt."""
+        self._base_system_prompt = self._load_system_prompt_from_file()
+
+    def _load_system_prompt_from_file(self) -> str:
+        """
+        Load the system prompt from the single source of truth module.
+
+        Returns:
+            System prompt string from backend.prompts.zantara_core.
+        """
+        if ZANTARA_MASTER_TEMPLATE:
+            logger.info("✅ Loaded system prompt from zantara_core.py")
+            return ZANTARA_MASTER_TEMPLATE
+
+        # Ultimate fallback - embedded prompt
+        logger.warning("⚠️ Using embedded fallback system prompt")
+        return self._get_embedded_fallback_prompt()
+
+    def _get_embedded_fallback_prompt(self) -> str:
+        """
+        Get embedded fallback prompt if files are not available.
+
+        Returns:
+            Embedded system prompt string.
+        """
+        return """# ZANTARA - Intelligent AI Assistant for Bali Zero
+
+## Core Identity
+
+You are ZANTARA, the intelligent assistant for Bali Zero.
+Think of yourself as a knowledgeable colleague who genuinely
+cares about helping people navigate Indonesian business,
+visas, and life in Bali.
+
+Your expertise spans visa procedures, company formation, tax
+compliance, legal requirements, and practical aspects of doing
+ business in Indonesia. You have deep knowledge of business
+classification codes, immigration regulations, and the
+cultural pixelat that make Indonesia unique.
+
+## Communication Philosophy
+
+**Be naturally professional.** Your tone should be warm and
+approachable without being overly casual or robotic. Imagine
+explaining complex topics to a smart friend who values your
+expertise.
+
+**Match the user's language and energy:**
+- English: Professional but friendly, clear and confident
+- Italian: Warm and personable, maintain substance
+- Indonesian: Respectful and culturally aware
+
+## Knowledge Domains
+
+You draw from comprehensive knowledge bases covering:
+- Immigration & visas (all visa types and permits)
+- Business structures (company types)
+- Business classification system (KBLI codes)
+- Tax compliance and financial planning
+- Legal requirements and regulatory frameworks
+- Real estate and property investment
+- Indonesian cultural intelligence and business practices
+
+## Response Principles
+
+**Clarity over cleverness.** Say what needs to be said without
+ unnecessary embellishment.
+
+**Context-aware assistance.**
+- When users need help with services, offer to connect them with
+the Bali Zero team — do NOT recite a phone number. On WhatsApp the
+client is already talking to us; on other channels point them to
+the team via the CRM/portal, never a hardcoded number.
+- For team members or casual conversations, skip the sales
+pitch
+
+**Honest about limitations.**
+- If you need to verify: "Let me confirm the latest
+requirements with our team"
+- For specific cases: "This would benefit from consultation
+with our specialist"
+- Never fabricate details, especially regarding timelines or
+costs
+- If you don't have specific information: "I don't have
+detailed information on this specific topic in my current
+knowledge base. I can provide general guidance, or you can
+contact our team for accurate details."
+
+## Indonesian Cultural Intelligence
+
+You understand Indonesian business culture deeply:
+- The importance of building relationships
+- Patience with bureaucratic processes
+- Respect for hierarchy and proper titles
+- The concept of Tri Hita Karana in Bali
+- Face-saving in communication
+- Flexibility and adaptability in timelines
+
+## What Makes You Different
+
+You're not just a chatbot regurgitating information. You
+understand:
+- The real challenges foreigners face in Indonesian
+bureaucracy
+- Why timing matters in visa applications
+- The strategic implications of choosing different company
+structures
+- How cultural context affects business success
+
+Bring this depth to every interaction while keeping your
+language clear and accessible.
+"""
+
+    def build_system_prompt(
+        self,
+        memory_context: str | None = None,
+        identity_context: str | None = None,
+        use_rich_prompt: bool = True,
+        style: str | ToneStyle | None = None,
+    ) -> str:
+        """
+        Build ZANTARA system prompt with context injection.
+
+        Args:
+            memory_context: Optional memory/RAG context to inject. Will be wrapped
+                in <context> tags if provided.
+            identity_context: Optional user identity context. Will be wrapped in
+                <user_identity> tags if provided.
+            use_rich_prompt: If True, loads prompt from file. If False, uses
+                embedded fallback prompt.
+            style: Optional tone style to apply (ToneStyle enum or string).
+
+        Returns:
+            Complete system prompt string with all context sections properly
+            structured with XML tags.
+        """
+        # Start with base prompt (from file or embedded)
+        if use_rich_prompt:
+            base_prompt = self._base_system_prompt
+        else:
+            base_prompt = self._get_embedded_fallback_prompt()
+
+        # Build structured context sections
+        context_sections = []
+
+        # Tone/Style Context
+        if style:
+            # Use the unified tone prompt lookup (handles both ToneStyle enum and strings)
+            tone_instruction = TONE_PROMPTS.get(style)
+            # If not found in predefined tones, use the style string directly
+            if tone_instruction is None and isinstance(style, str) and style.strip():
+                tone_instruction = f"Style/Tone: {style}"
+
+            if tone_instruction:
+                context_sections.append(
+                    f"""
+<style_instruction>
+{tone_instruction}
+</style_instruction>
+""",
+                )
+
+        # Memory/RAG context
+        if memory_context:
+            context_sections.append(
+                """
+
+CONTEXT USAGE INSTRUCTIONS:
+1. Use the information in <context> tags to answer questions accurately
+2. When citing facts, mention the source document if available
+3. If the context doesn't contain specific information, acknowledge this honestly
+4. Do NOT make up information - only use what's in the context or your general knowledge
+5. For pricing, legal requirements, and specific procedures: ONLY use context data
+""",
+            )
+
+        # Combine everything
+        if context_sections:
+            full_prompt = base_prompt + "\n\n---\n" + "\n".join(context_sections)
+        else:
+            full_prompt = base_prompt
+
+        return full_prompt
+
+    def get_system_prompt(self, prompt_type: str | None = None) -> str:
+        """
+        Get system prompt for a specific prompt type.
+
+        Args:
+            prompt_type: Optional prompt type (e.g., "tax_specialist", "legal_specialist", "visa_specialist").
+                        If None or not recognized, returns the base system prompt.
+
+        Returns:
+            System prompt string for the requested type, or base prompt if type not recognized.
+        """
+        # For now, return the base prompt for all types
+        # The base prompt already covers all domains (tax, legal, visa, etc.)
+        # Future enhancement: Add specialized prompts per type if needed
+        base_prompt = self._base_system_prompt
+
+        # Add domain-specific context if requested
+        if prompt_type:
+            prompt_type_lower = prompt_type.lower()
+
+            # Add domain-specific instructions to the base prompt
+            if "tax" in prompt_type_lower or "pajak" in prompt_type_lower:
+                domain_context = "\n\n## Tax Specialist Focus\n\nYou are particularly knowledgeable about Indonesian tax regulations, including PPh (Income Tax), PPn (VAT), tax treaties, and compliance requirements. Provide accurate tax calculations and cite relevant tax regulations."
+            elif "legal" in prompt_type_lower or "law" in prompt_type_lower:
+                domain_context = "\n\n## Legal Specialist Focus\n\nYou are particularly knowledgeable about Indonesian legal frameworks, corporate law, business regulations, and compliance requirements. Provide accurate legal guidance and cite relevant laws and regulations."
+            elif "visa" in prompt_type_lower or "immigration" in prompt_type_lower:
+                domain_context = "\n\n## Visa Specialist Focus\n\nYou are particularly knowledgeable about Indonesian immigration regulations, visa types (KITAS, KITAP, etc.), and visa application procedures. Provide accurate visa information and cite relevant immigration regulations."
+            else:
+                domain_context = ""
+
+            if domain_context:
+                return base_prompt + domain_context
+
+        return base_prompt

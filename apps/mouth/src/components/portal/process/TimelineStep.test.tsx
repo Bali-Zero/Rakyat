@@ -1,0 +1,154 @@
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
+import { TimelineStep } from "./TimelineStep";
+import type { ProcessStep } from "@/lib/schemas/process";
+
+function makeStep(overrides: Partial<ProcessStep> = {}): ProcessStep {
+  return {
+    status: "on_process",
+    label: "On Process",
+    completed: false,
+    is_current: false,
+    changed_at: null,
+    ...overrides,
+  };
+}
+
+describe("TimelineStep", () => {
+  it("renders the BE-provided step label as heading", () => {
+    render(
+      <TimelineStep
+        step={makeStep({
+          label: "Waiting for Documents",
+          status: "waiting_documents",
+        })}
+        onSelect={() => {}}
+        isLast={false}
+      />,
+    );
+    // Heading carries the label
+    const heading = screen.getByRole("heading", { level: 3 });
+    expect(heading).toHaveTextContent("Waiting for Documents");
+  });
+
+  it("shows 'current' marker when is_current=true, hides it otherwise", () => {
+    const { rerender } = render(
+      <TimelineStep
+        step={makeStep({ is_current: true })}
+        onSelect={() => {}}
+        isLast={false}
+      />,
+    );
+    expect(screen.getByText(/current/i)).toBeInTheDocument();
+
+    rerender(
+      <TimelineStep
+        step={makeStep({ is_current: false })}
+        onSelect={() => {}}
+        isLast={false}
+      />,
+    );
+    expect(screen.queryByText(/^current$/i)).not.toBeInTheDocument();
+  });
+
+  it("formats changed_at into a date line; hides line when null", () => {
+    const { rerender, container } = render(
+      <TimelineStep
+        step={makeStep({ changed_at: "2026-04-18T10:15:00Z" })}
+        onSelect={() => {}}
+        isLast={false}
+      />,
+    );
+    // A date paragraph is rendered with year present (locale-insensitive check)
+    const p = container.querySelector("p");
+    expect(p).not.toBeNull();
+    expect(p!.textContent || "").toMatch(/2026/);
+
+    rerender(
+      <TimelineStep
+        step={makeStep({ changed_at: null })}
+        onSelect={() => {}}
+        isLast={false}
+      />,
+    );
+    // No date paragraph
+    expect(container.querySelector("p")).toBeNull();
+  });
+
+  it("never renders a staff actor identity next to the date, even if a stale payload still carries changed_by", () => {
+    // ProcessStep no longer declares `changed_by` — this simulates a stale
+    // cached/legacy response that still includes it, to prove the
+    // component ignores it rather than merely lacking a type for it.
+    const staleStep = {
+      ...makeStep({ changed_at: "2026-04-18T10:15:00Z" }),
+      changed_by: "staff@example.com",
+    } as ProcessStep;
+    const { container } = render(
+      <TimelineStep step={staleStep} onSelect={() => {}} isLast={false} />,
+    );
+    const p = container.querySelector("p");
+    expect(p).not.toBeNull();
+    expect(p!.textContent || "").not.toMatch(/staff@example\.com/);
+    expect(p!.textContent || "").not.toMatch(/@/);
+  });
+
+  it("fires onSelect when the button is clicked", () => {
+    const onSelect = vi.fn();
+    const step = makeStep({ label: "Inquiry", status: "inquiry" });
+    render(<TimelineStep step={step} onSelect={onSelect} isLast />);
+    fireEvent.click(screen.getByRole("button"));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith(step);
+  });
+
+  it("fires onSelect on Enter and Space key", () => {
+    const onSelect = vi.fn();
+    const step = makeStep();
+    render(<TimelineStep step={step} onSelect={onSelect} isLast />);
+    const button = screen.getByRole("button");
+    fireEvent.keyDown(button, { key: "Enter" });
+    fireEvent.keyDown(button, { key: " " });
+    expect(onSelect).toHaveBeenCalledTimes(2);
+  });
+
+  it("reflects completed state via data attribute on the dot", () => {
+    const { rerender } = render(
+      <TimelineStep
+        step={makeStep({ completed: true })}
+        onSelect={() => {}}
+        isLast
+      />,
+    );
+    expect(screen.getByTestId("timeline-step-dot")).toHaveAttribute(
+      "data-completed",
+      "true",
+    );
+
+    rerender(
+      <TimelineStep
+        step={makeStep({ completed: false })}
+        onSelect={() => {}}
+        isLast
+      />,
+    );
+    expect(screen.getByTestId("timeline-step-dot")).toHaveAttribute(
+      "data-completed",
+      "false",
+    );
+  });
+
+  it("drives the dot from state tokens with a page-bg cutout (WS3 day pass)", () => {
+    render(
+      <TimelineStep
+        step={makeStep({ status: "waiting_documents", completed: false })}
+        onSelect={() => {}}
+        isLast
+      />,
+    );
+    const dot = screen.getByTestId("timeline-step-dot");
+    // Border/color read the semantic --state-warning token (was hex fallbacks)
+    expect(dot.style.borderColor).toContain("--state-warning");
+    // Incomplete dot cuts out to the page bg, not a hardcoded black
+    expect(dot.style.backgroundColor).toBe("var(--bz-base)");
+  });
+});

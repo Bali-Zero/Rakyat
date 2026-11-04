@@ -1,0 +1,91 @@
+{
+  "family": "E23",
+  "eligible_codes_as_stated": null,
+  "status": "TO_VERIFY",
+  "reason": "The official conversion sections list activity categories, without an explicit E-code eligibility mapping. No category-to-code equivalence is inferred.",
+  "official_category_and_condition_verbatim": [
+    {
+      "text": "Orang Asing dapat diberikan alih status Izin Tinggal Terbatas (ITAS) menjadi Izin Tinggal Tetap (ITAP) berdasarkan permohonan.\nPermohonan alih status ITAS menjadi ITAP diajukan dalam waktu paling lama 30 hari sebelum jangka waktu ITAS berakhir.\nPermohonan alih status ITAS menjadi ITAP diajukan oleh Orang Asing, Penjamin, atau Penanggung Jawab melalui aplikasi kepada Kepala Kantor Imigrasi.\nAlih status Izin Tinggal Terbatas (ITAS) menjadi Izin Tinggal Tetap (ITAP) dapat diberikan kepada Orang Asing yang merupakan pemegang Izin Tinggal Terbatas yang melakukan kegiatan:\nsebagai pekerja;\nsebagai rohaniwan;\npenanaman modal asing;\npenyatuan keluarga;\nrepatriasi;\nrumah kedua, yang terdiri atas:\nrumah kedua;\nkeahlian khusus;\ntokoh dunia;\nlanjut usia berusia 60 tahun atau lebih.",
+      "url": "https://www.imigrasi.go.id/wna/izin-tinggal-keimigrasian/izin-tinggal-terbatas-menjadi-izin-tinggal-tetap"
+    },
+    {
+      "text": "Alih status Izin Tinggal terbatas menjadi Izin Tinggal Tetap bagi Orang Asing sebagai rohaniawan, pekerja, investor, dan wisatawan lanjut usia mancanegara diberikan dengan ketentuan Orang Asing yang bersangkutan telah berada di Wilayah Indonesia paling singkat 3 (tiga) tahun berturut-turut sejak tanggal diberikannya Izin Tinggal terbatas.",
+      "url": "https://jakartatimur.imigrasi.go.id/alih-status-itas-itap/"
+    }
+  ],
+  "source_documents": [
+    {
+      "source_url": "https://www.imigrasi.go.id/wna/izin-tinggal-keimigrasian/izin-tinggal-terbatas-menjadi-izin-tinggal-tetap",
+      "effective_url": "https://www.imigrasi.go.id/wna/izin-tinggal-keimigrasian/izin-tinggal-terbatas-menjadi-izin-tinggal-tetap",
+      "retrieved_at": "2026-10-17T13:28:02Z",
+      "http_status": 200,
+      "curl_exit_code": 0,
+      "byte_count": 58950,
+      "page_sha256": "571f270a3bc77d9eed40fc9dfab4d4819f0199f01a73fe6257f15728fd4cfb4e",
+      "raw_path": "raw/ITAP_CENTRAL.html"
+    },
+    {
+      "source_url": "https://jakartapusat.imigrasi.go.id/index.php/layanan/warga-negara-asing-wna/izin-tinggal-keimigrasian/alih-status-itas-itap",
+      "effective_url": "https://jakartapusat.imigrasi.go.id/index.php/layanan/warga-negara-asing-wna/izin-tinggal-keimigrasian/alih-status-itas-itap",
+      "retrieved_at": "2026-10-17T13:27:35Z",
+      "http_status": 200,
+      "curl_exit_code": 0,
+      "byte_count": 95928,
+      "page_sha256": "bd42a46f60b738e4a5e4d88bf026bd603262f530c61d098d05867bce6dfc950a",
+      "raw_path": "raw/ITAP_JAKARTA_PUSAT.html"
+    },
+    {
+      "source_url": "https://jakartatimur.imigrasi.go.id/alih-status-itas-itap/",
+      "effective_url": "https://jakartatimur.imigrasi.go.id/alih-status-itas-itap/",
+      "retrieved_at": "2026-10-17T13:27:39Z",
+      "http_status": 200,
+      "curl_exit_code": 0,
+      "byte_count": 130117,
+      "page_sha256": "0cd198064d55fc745b3e79dd831a5ff75b808ce5ef69d501ded5bf5b46f7531d",
+      "raw_path": "raw/ITAP_JAKARTA_TIMUR.html"
+    }
+  ],
+  "codes": [
+    {
+      "code": "E23",
+      "eligible_as_stated": null,
+      "status": "TO_VERIFY",
+      "visa_page_itap_verbatim": [
+        {
+          "text": "Izin Tinggal ini dapat diperpanjang dan dapat dialihkan menjadi izin tinggal lainnya.",
+          "url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/E23"
+        }
+      ]
+    },
+    {
+      "code": "E23A",
+      "eligible_as_stated": null,
+      "status": "TO_VERIFY",
+      "visa_page_itap_verbatim": null
+    },
+    {
+      "code": "E23U",
+      "eligible_as_stated": null,
+      "status": "TO_VERIFY",
+      "visa_page_itap_verbatim": null
+    },
+    {
+      "code": "E23V",
+      "eligible_as_stated": null,
+      "status": "TO_VERIFY",
+      "visa_page_itap_verbatim": null
+    },
+    {
+      "code": "E23X",
+      "eligible_as_stated": null,
+      "status": "TO_VERIFY",
+      "visa_page_itap_verbatim": null
+    },
+    {
+      "code": "E23Y",
+      "eligible_as_stated": null,
+      "status": "TO_VERIFY",
+      "visa_page_itap_verbatim": null
+    }
+  ]
+}

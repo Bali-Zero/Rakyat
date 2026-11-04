@@ -1,0 +1,473 @@
+name: Deploy Backend to Fly.io
+
+# Rakyat main IS the source of truth: github.sha is the deployed identity.
+# Trigger is push-to-main and manual dispatch ONLY. Never add pull_request,
+# any other PR-type trigger, merge_group or workflow_run: the only deploy secret
+# (FLY_API_TOKEN) lives in the `production` Environment, and a PR-triggered run
+# must never be able to reach it.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/backend-rag/**"
+      # Docs-class .md only. A blanket "!**/*.md" would also skip runtime-read
+      # markdown baked into the image (training-data/*.md, consumed by
+      # conversation_trainer), stranding merged content undeployed.
+      - "!apps/backend-rag/docs/**"
+      - "!apps/backend-rag/**/README.md"
+      - "!apps/backend-rag/AGENTS.md"
+      - "!apps/backend-rag/CLAUDE.md"
+      - "!apps/backend-rag/**/tests/**"
+      - "!apps/backend-rag/**/test_*.py"
+      - "!apps/backend-rag/**/*_test.py"
+      # Everything else the Dockerfile COPYs into the image.
+      - "packages/cell-core/**"
+      - "packages/research-os-core/**"
+      - "apps/crm-cell/crm_cell/**"
+      - "apps/kbli-navigator/lib/kbli-gold-content.ts"
+      - "apps/kbli-navigator/data/kbli-2025.json"
+      - "data/source_documents/KBLI_2025_FINAL_CLEAN.json"
+      - "data/kbli-filiera/pma-editorial-certifications.json"
+      - "scripts/install-claude-code.sh"
+      - ".github/workflows/fly-deploy.yml"
+  workflow_dispatch: # manual retrigger (e.g. after a secret rotation)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fly-deploy-production
+  cancel-in-progress: false # never cancel a deploy in flight
+
+jobs:
+  # No Environment, no secret: this job runs untrusted-to-secrets code (pip
+  # install, tests) and therefore cannot see FLY_API_TOKEN.
+  pre-deploy-gate:
+    name: Pre-deploy validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/backend-rag
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: nuzantara_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/nuzantara_test
+      REDIS_URL: redis://localhost:6379
+      PYTHONPATH: .
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: apps/backend-rag/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          # requirements.txt declares cell-core editable (`-e ../../packages/cell-core`).
+          pip install -r requirements.txt -q
+          pip install pytest pytest-asyncio pytest-mock ruff -q
+
+      - name: Import chain gate
+        run: |
+          python -c "from backend.app.dependencies import get_current_user; print('Import chain OK')"
+
+      - name: Ruff lint (blocking only on deploy-critical issues)
+        run: |
+          # F401 unused import, F821 undefined name, F822 undefined __all__
+          # export, F823 local referenced before assignment: the ones that break
+          # the running backend or silently rot it.
+          ruff check backend/app/ --select F401,F821,F822,F823 --output-format=concise
+          echo "Deploy-critical lint OK"
+
+      - name: Ruff full lint (informational, non-blocking)
+        run: |
+          ruff check backend/app/ --output-format=concise || true
+        continue-on-error: true
+
+      - name: Core tests (confidence + KG fast gate)
+        run: |
+          PYTHONPATH=. pytest \
+            backend/tests/services/rag/test_confidence.py \
+            backend/tests/services/rag/test_kg_langgraph.py \
+            backend/tests/services/rag/test_kg_subgraphs.py \
+            --tb=short -x \
+            --junit-xml=test-results-gate.xml
+          echo "Core tests OK"
+
+      - name: Verify CVE exception file is not stale (blocking)
+        working-directory: ${{ github.workspace }}
+        run: |
+          pip install pyyaml -q
+          python scripts/check_cve_exceptions.py
+
+      - name: Check Dependabot critical vulnerabilities
+        run: |
+          pip install safety pyyaml -q
+          safety check -r requirements.txt \
+            --save-json safety-deploy-report.json \
+            || true
+          # Same filter CI uses, so an expired or missing exception fails the gate.
+          CVE_EXCEPTIONS_PATH=${{ github.workspace }}/.security/exceptions.yaml \
+            python ${{ github.workspace }}/scripts/filter_safety_findings.py \
+            safety-deploy-report.json
+
+      - name: Upload gate test results
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pre-deploy-gate-results
+          path: apps/backend-rag/test-results-gate.xml
+
+  run-migrations:
+    name: Run DB migrations on Fly.io
+    needs: pre-deploy-gate
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 10
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
+
+      - name: Run DB migrations via flyctl console
+        timeout-minutes: 3
+        run: |
+          # Pinned to the `api` group: the migrator imports asyncpg, which only
+          # `api` installs. Unpinned, flyctl picked the `rag` machine (whose sshd
+          # timed out) and backend merges were never deployed.
+          flyctl ssh console \
+            --app nuzantara-rag \
+            --process-group api \
+            --command "/bin/sh -c 'cd /app && python -m backend.db.migrate apply-all'"
+          echo "SQL v2 migrations OK"
+
+  deploy:
+    name: Fly.io rolling deploy
+    needs: run-migrations # blocked if the migration fails
+    runs-on: ubuntu-24.04
+    environment: production
+    # Happy path measured ~7-8 min; a depot outage burns ~10 min before the
+    # retry on the non-depot builder, so 35 keeps the fallback alive.
+    timeout-minutes: 35
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      GIT_SHA: ${{ github.sha }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
+
+      - name: Deploy (rolling strategy, monorepo context)
+        run: |
+          # fly.toml [deploy] release_command runs
+          # `backend.db.migrate apply-all && backend.db.schema_audit` and blocks
+          # promotion on failure, so a failed release_command fails this step and
+          # the previous release stays live.
+          #
+          # Retry policy: lease contention is retried after 90s; a depot-builder
+          # failure ("error releasing builder") retries on the non-depot remote
+          # builder. Anything else (broken Dockerfile, failed release_command)
+          # fails immediately: a retry that changes nothing is a repetition.
+          depot_flag=""
+          for attempt in 1 2 3; do
+            echo "Fly deploy attempt ${attempt}/3${depot_flag:+ (${depot_flag})}"
+            set +e
+            # shellcheck disable=SC2086
+            flyctl deploy \
+              --strategy rolling \
+              --app nuzantara-rag \
+              --remote-only \
+              ${depot_flag} \
+              --dockerfile apps/backend-rag/Dockerfile \
+              --config apps/backend-rag/fly.toml \
+              --build-arg GIT_SHA="${GIT_SHA}" 2>&1 | tee fly-deploy.log
+            status=${PIPESTATUS[0]}
+            set -e
+
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+
+            if grep -Eiq "failed to acquire leases|Failed to acquire lease|lease currently held" fly-deploy.log && [ "$attempt" -lt 3 ]; then
+              echo "::warning::Fly machine lease still held; retrying deploy after 90s"
+              sleep 90
+              continue
+            fi
+
+            # Only "error releasing builder" is depot-specific; the generic
+            # "failed to fetch an image or build from source" and the routine
+            # "Waiting for depot builder" banner are not.
+            if grep -Eiq "error releasing builder" fly-deploy.log && [ "$attempt" -lt 3 ]; then
+              echo "::warning::Fly depot builder unreachable; retrying on the non-depot remote builder"
+              depot_flag="--depot=false"
+              continue
+            fi
+
+            exit "$status"
+          done
+
+  # SQL v2 migrations must re-run AFTER the new image is live: the pre-deploy
+  # job ssh-es into the PREVIOUS image, which does not contain SQL files added by
+  # the same push. Idempotent (_schema_versions); a no-op without new SQL.
+  run-sql-v2-migrations-post-deploy:
+    name: Re-run SQL v2 migrations on fresh image
+    needs: deploy
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 15
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
+
+      - name: Pin migration to a fresh-image machine in the api group (sentinel)
+        id: sentinel
+        run: |
+          # Verify the rolling swap converged (one image tag across started
+          # machines) before running migrations, so they never run on the OLD
+          # image. nuzantara-rag has two process groups; only `api` has asyncpg,
+          # so the machine we pin to must be in `api`.
+          for i in $(seq 1 18); do
+            JSON=$(flyctl machines list --app nuzantara-rag --json 2>/dev/null || echo '[]')
+            STARTED_TAGS=$(echo "$JSON" | jq -r '[.[] | select(.state=="started") | .image_ref.tag] | unique')
+            STARTED_COUNT=$(echo "$STARTED_TAGS" | jq 'length')
+            if [ "$STARTED_COUNT" = "1" ]; then
+              TAG=$(echo "$STARTED_TAGS" | jq -r '.[0]')
+              MACHINE=$(echo "$JSON" | jq -r --arg tag "$TAG" '
+                [.[]
+                 | select(.state=="started"
+                          and .image_ref.tag==$tag
+                          and (.config.metadata.fly_process_group == "api"))]
+                | .[0].id // empty')
+              if [ -n "$MACHINE" ]; then
+                echo "All started machines share image tag: $TAG"
+                echo "Pinning migration to api-group machine: $MACHINE"
+                echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+                echo "machine=$MACHINE" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "Attempt $i/18: image tag converged ($TAG) but no started machine in api process group yet"
+            else
+              echo "Attempt $i/18: started_unique_tags=$STARTED_COUNT (rolling not yet converged)"
+            fi
+            sleep 10
+          done
+          echo "::error::Could not isolate a fresh-image machine in the api process group after 3 min"
+          echo "$JSON" | jq '.[] | {id, state, group: .config.metadata.fly_process_group, tag: .image_ref.tag}'
+          exit 1
+
+      - name: Re-run SQL v2 apply-all on fresh image
+        id: migrate
+        timeout-minutes: 5
+        env:
+          MACHINE: ${{ steps.sentinel.outputs.machine }}
+        run: |
+          set -o pipefail
+          # NOTE: do NOT add `PYTHONPATH=.`: it shadows the container's
+          # site-packages and asyncpg disappears from sys.path. Keep the command
+          # identical to the pre-deploy job, which is proven to work.
+          flyctl ssh console \
+            --app nuzantara-rag \
+            --machine "$MACHINE" \
+            --process-group api \
+            --command "/bin/sh -c 'cd /app && python -m backend.db.migrate apply-all'" \
+            2>&1 | tee migration_output.txt
+          APPLIED=$(grep -cF "   - Migration " migration_output.txt || true)
+          echo "applied_count=$APPLIED" >> "$GITHUB_OUTPUT"
+          echo "::notice::SQL v2 post-deploy: $APPLIED migrations applied on fresh image"
+
+      - name: Fail loud on migration error
+        if: failure()
+        run: |
+          echo "::error::Post-deploy SQL v2 migration failed. Backend is live but the schema may be misaligned; investigate now."
+          if [ -f migration_output.txt ]; then
+            head -100 migration_output.txt || true
+          fi
+
+  # Python-idiom migrations also need the new image (apply_migration_NNN.py is
+  # only in the deployed image). All scripts are idempotent. Add a step below
+  # for each new Python migration.
+  run-python-migrations:
+    name: Run Python-idiom migrations (post-deploy, idempotent)
+    needs: [deploy, run-sql-v2-migrations-post-deploy]
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 20
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
+
+      - name: Wait for new image to be serving
+        run: |
+          # --command runs its argv directly (not through a shell), so any
+          # metacharacter must be wrapped in `/bin/sh -c '...'`.
+          for i in $(seq 1 6); do
+            if flyctl ssh console --app nuzantara-rag --process-group api --command "/bin/sh -c 'test -f /app/backend/migrations/apply_migration_119.py && echo ready'" 2>/dev/null | grep -q ready; then
+              echo "New image live (apply_migration_119.py present)"
+              exit 0
+            fi
+            echo "Attempt $i/6: waiting 10s for new image..."
+            sleep 10
+          done
+          echo "::error::New image does not expose apply_migration_119.py after 60s"
+          exit 1
+
+      - name: Pin Python migrations to a fresh-image machine in the api group (sentinel)
+        id: sentinel
+        timeout-minutes: 5
+        run: |
+          # Same filter as the SQL v2 post-deploy sentinel: the `rag` group has
+          # no asyncpg, so an auto-routed ssh would time out.
+          for i in $(seq 1 18); do
+            JSON=$(flyctl machines list --app nuzantara-rag --json 2>/dev/null || echo '[]')
+            STARTED_TAGS=$(echo "$JSON" | jq -r '[.[] | select(.state=="started") | .image_ref.tag] | unique')
+            STARTED_COUNT=$(echo "$STARTED_TAGS" | jq 'length')
+            if [ "$STARTED_COUNT" = "1" ]; then
+              TAG=$(echo "$STARTED_TAGS" | jq -r '.[0]')
+              MACHINE=$(echo "$JSON" | jq -r --arg tag "$TAG" '
+                [.[]
+                 | select(.state=="started"
+                          and .image_ref.tag==$tag
+                          and (.config.metadata.fly_process_group == "api"))]
+                | .[0].id // empty')
+              if [ -n "$MACHINE" ]; then
+                echo "Pinning Python migrations to api-group machine: $MACHINE (tag $TAG)"
+                echo "machine=$MACHINE" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "Attempt $i/18: image tag converged ($TAG) but no started machine in api process group yet"
+            else
+              echo "Attempt $i/18: started_unique_tags=$STARTED_COUNT (rolling not yet converged)"
+            fi
+            sleep 10
+          done
+          echo "::error::Could not isolate a fresh-image machine in the api process group after 3 min"
+          echo "$JSON" | jq '.[] | {id, state, group: .config.metadata.fly_process_group, tag: .image_ref.tag}'
+          exit 1
+
+      - name: Run Python migration 119 (partners)
+        timeout-minutes: 2
+        env:
+          MACHINE: ${{ steps.sentinel.outputs.machine }}
+        run: |
+          flyctl ssh console \
+            --app nuzantara-rag \
+            --machine "$MACHINE" \
+            --process-group api \
+            --command "/bin/sh -c 'cd /app && python -m backend.migrations.apply_migration_119'"
+          echo "Python migration 119 OK"
+
+      - name: Run Python migration 120 (partner_email_outbox)
+        timeout-minutes: 2
+        env:
+          MACHINE: ${{ steps.sentinel.outputs.machine }}
+        run: |
+          flyctl ssh console \
+            --app nuzantara-rag \
+            --machine "$MACHINE" \
+            --process-group api \
+            --command "/bin/sh -c 'cd /app && python -m backend.migrations.apply_migration_120'"
+          echo "Python migration 120 OK"
+
+      - name: Run Python migration 121 (practices.family_member_id)
+        timeout-minutes: 2
+        env:
+          MACHINE: ${{ steps.sentinel.outputs.machine }}
+        run: |
+          flyctl ssh console \
+            --app nuzantara-rag \
+            --machine "$MACHINE" \
+            --process-group api \
+            --command "/bin/sh -c 'cd /app && python -m backend.migrations.apply_migration_121'"
+          echo "Python migration 121 OK"
+
+      - name: Flag degraded post-deploy migration
+        if: failure()
+        run: |
+          echo "::error::Python migration failed. The new image is already live and serving traffic; the module that depends on the migration may be degraded. Investigate manually."
+
+  # Gated on `deploy` alone via always(): a failed post-deploy migration must
+  # not skip the assessment of the LIVE service (a skip is not a failure and
+  # would silence the rollback path).
+  #
+  # Rollback scope: `flyctl releases rollback` reverts the IMAGE only, never the
+  # DATABASE (migrations already ran). Rolling back means old code with a
+  # new-or-partly-new schema: safe only if those migrations were
+  # backward-compatible.
+  post-deploy-health:
+    name: Post-deploy health check + rollback
+    needs: [deploy, run-sql-v2-migrations-post-deploy, run-python-migrations]
+    if: |
+      always() &&
+      needs.deploy.result == 'success'
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 15
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      EXPECTED_SHA: ${{ github.sha }}
+
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
+
+      - name: Health check serving the expected SHA (10 attempts x 30s = 5 min max)
+        id: health_check
+        run: |
+          # Healthy is not enough: the build that answers must be THIS commit.
+          # During a rolling swap an old machine can still answer /health.
+          for i in $(seq 1 10); do
+            BODY=$(curl -sf --max-time 20 https://nuzantara-rag.fly.dev/health 2>/dev/null || echo "")
+            STATUS=$(echo "$BODY" | jq -r '.status // empty' 2>/dev/null || true)
+            SERVED=$(echo "$BODY" | jq -r '.build_sha // empty' 2>/dev/null || true)
+            if [ "$STATUS" = "healthy" ] && [ "$SERVED" = "$EXPECTED_SHA" ]; then
+              echo "Health check passed (attempt $i): status=healthy build_sha=$SERVED"
+              echo "healthy=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Attempt $i/10: status='${STATUS}' build_sha='${SERVED}' expected='${EXPECTED_SHA}'"
+            echo "Waiting 30s..."
+            sleep 30
+          done
+          echo "::error::Health check failed after 5 minutes (not healthy, or not serving the expected build SHA)"
+          echo "healthy=false" >> "$GITHUB_OUTPUT"
+          exit 1
+
+      - name: Automatic rollback if the health check fails
+        if: failure() && steps.health_check.outputs.healthy == 'false'
+        run: |
+          echo "::warning::Starting automatic rollback (image only; DB schema is NOT reverted)"
+          flyctl releases rollback --app nuzantara-rag --yes
+          echo "::error::Deploy FAILED health check; rolled back to the previous release. Check the run logs."
+
+      - name: Degraded post-deploy migration notice
+        if: |
+          success() &&
+          (needs.run-python-migrations.result != 'success' ||
+           needs.run-sql-v2-migrations-post-deploy.result != 'success')
+        run: |
+          echo "::error::Service is healthy and serving ${EXPECTED_SHA} but a post-deploy migration did not succeed (sql-v2: ${{ needs.run-sql-v2-migrations-post-deploy.result }}, python: ${{ needs.run-python-migrations.result }}). Schema state is NOT verified; investigate before treating the deploy as complete."
+          exit 1

@@ -1,0 +1,431 @@
+import { describe, expect, it } from "vitest";
+import {
+  getAllCodes,
+  getBaliCensus,
+  getCode,
+  getCodesBySection,
+  getHeroStyle,
+  mapPmaStatus,
+  getRelatedCodes,
+  getSectionMeta,
+  getSections,
+} from "./kbli-data";
+import { hasPublishablePmaCap } from "./kbli-pma-disclosure";
+import rawData from "../../data/KBLI_2025_FINAL_CLEAN.json";
+
+describe("kbli-data", () => {
+  it("maps only the three canonical PMA tokens and fails closed otherwise", () => {
+    expect(mapPmaStatus("TERBUKA")).toBe("open");
+    expect(mapPmaStatus("TERBATAS")).toBe("restricted");
+    expect(mapPmaStatus("TERTUTUP")).toBe("closed");
+    expect(mapPmaStatus("FUTURE_STATUS")).toBe("unknown");
+    expect(mapPmaStatus("terbuka")).toBe("unknown");
+  });
+
+  it("loads the canonical KBLI dataset as flat frontend records", () => {
+    const codes = getAllCodes();
+
+    expect(codes.length).toBeGreaterThan(1000);
+    expect(codes[0]).toEqual(
+      expect.objectContaining({
+        code: expect.any(String),
+        titleId: expect.any(String),
+        titleEn: expect.any(String),
+        description: expect.any(String),
+        pma: expect.objectContaining({
+          status: expect.stringMatching(/^(open|restricted|closed|unknown)$/),
+          verificationStatus: expect.stringMatching(/^(located|declared_gap)$/),
+        }),
+        licensing: expect.any(Array),
+        transition: expect.objectContaining({
+          pp28LicensingSourceCodes: expect.any(Array),
+        }),
+        tier: expect.stringMatching(/^(gold|silver|bronze)$/),
+        keywords: expect.any(Array),
+      }),
+    );
+  });
+
+  it("atomically withholds every PMA claim on gaps and preserves located tuples", () => {
+    const gap = getCode("01111");
+    const located = getCode("02102");
+
+    expect(gap?.pma).toMatchObject({
+      status: "unknown",
+      maxForeign: null,
+      condition: null,
+      isPriority: false,
+      note: null,
+      source: null,
+      verificationStatus: "declared_gap",
+      officialBasis: null,
+      sourceVintage: null,
+      capSpecial: false,
+      capVerified: false,
+      routeTo: null,
+      citation: null,
+    });
+    expect(located?.pma).toMatchObject({
+      status: "open",
+      maxForeign: 100,
+      verificationStatus: "located",
+      sourceVintage: "2021-05-25",
+    });
+    expect(located?.pma.officialBasis).toEqual(expect.any(String));
+    expect(located?.pma.citation).toEqual(expect.any(String));
+
+    const codes = getAllCodes();
+    const gaps = codes.filter(
+      (code) => code.pma.verificationStatus === "declared_gap",
+    );
+    const locatedCodes = codes.filter(
+      (code) => code.pma.verificationStatus === "located",
+    );
+    // SAETTA-20260915 W-H PR-3a moved 3 codes (55201/55203/79903) from
+    // declared_gap to located (Lampiran II allocation): 1505 -> 1502, 54 -> 57.
+    // W-H PR-3b moves 8 more codes (47241 47242 47244 47245 47246 47249
+    // 47712 47722) from declared_gap to located under Perpres 49/2021
+    // Lampiran II entry 46: 1502 -> 1494, 57 -> 65.
+    // 2026-09-18 naso lot: 10307 10308 16291 16293 32201 55106 moved
+    // declared_gap→located under Perpres 49/2021 Lampiran II (whole-code rows
+    // via 1:1 BPS crosswalk), 1494→1488 / 65→71.
+    // 2026-09-18 naso PR-2: 13133 closed by the union of Lampiran II item 11 +
+    // Lampiran III entry #2, declared_gap→located, 1488→1487 / 71→72.
+    // 2026-09-18 naso PR-3: 59 statutory closures (2 named by Perpres 10/2021
+    // Pasal 2(2)(b), 2 UU 25/2007 Pasal 12(2) items, 54 government activities
+    // under Pasal 2(1)(b)/2(3), 99000 under Pasal 2(1a)) relabelled
+    // declared_gap→located, TERTUTUP/0 unchanged: 1487→1428 / 72→131.
+    // 2026-09-18 naso PR-4 (residual lot 1): 329 codes the Perpres partition
+    // leaves RESIDUAL (no Lampiran I/II/III row, no body article, no Pasal
+    // 11(2) carve-out, Usaha Besar row observed, Bali OK_or_HIGHER_RISK, no
+    // legacy PMA prose) relabelled declared_gap→located under Pasal 3(1)(d) +
+    // 3(2). The rule reaches 507; 178 are WITHHELD because absence is evidence
+    // of openness only where the Perpres owns the ownership question — 61
+    // finance/banking codes Pasal 11(2) hands to their own legislation, 67 in
+    // sectors (99 00 00-00 10) whose statute this lane never read, 29 with an
+    // adjudicated 4-digit sibling, 19 categories the body states in prose
+    // (alcohol, tobacco, explosives and weapons repair, CITES breeding,
+    // penjaminan), and 2 whose 2025 judul IS the activity a Lampiran III row
+    // caps under a different number.
+    // TERBUKA/100 unchanged: 1428→1099 gaps / 131→460 located.
+    // 2026-09-21 naso PR-5 (residual lot 2): 260 more codes — same rule,
+    // ATTENZIONE_FASCIA_BALI Bali axis instead of OK_or_HIGHER_RISK —
+    // relabelled declared_gap→located. 1099→839 gaps / 460→720 located.
+    // 2026-09-23 (#7136 OSS refresh ADOPT carry): 93113/93193 carried into
+    // lot 1/lot 2 by the compiler itself, same relabel. 839→837 gaps /
+    // 720→722 located.
+    expect(gaps).toHaveLength(837);
+    expect(locatedCodes).toHaveLength(722);
+    for (const code of gaps) {
+      expect(code.pma, code.code).toMatchObject({
+        status: "unknown",
+        maxForeign: null,
+        condition: null,
+        source: null,
+        officialBasis: null,
+        sourceVintage: null,
+        capVerified: false,
+        citation: null,
+      });
+      expect(code.intel_2026, `${code.code} intel`).toBeUndefined();
+      expect(code.tier, `${code.code} tier`).not.toBe("gold");
+    }
+
+    // Added 2026-09-16 (W-J B1 disclose, review F5): "no baliL4 on a gap" has
+    // exactly ONE named exception — a Bali APPLIED closure sourced to a
+    // public press release. Testing that exception through the very
+    // function that implements it (`isSourcedBaliClosure`, which by its own
+    // definition REQUIRES `status === "CHIUSO_BALI"`) would be tautological:
+    // it cannot catch a bug that widens the exception, only one that changes
+    // which field it inspects. Instead this derives the expected set
+    // independently from the raw JSON and asserts the served set matches it
+    // exactly — no more, no fewer members.
+    const rawDeclaredGapChiusoBali = (
+      rawData as {
+        data: Array<{
+          kode_kbli_2025: string;
+          pma_verification_status?: string;
+          l4_bali?: { status?: string };
+        }>;
+      }
+    ).data
+      .filter(
+        (r) =>
+          r.l4_bali?.status === "CHIUSO_BALI" &&
+          r.pma_verification_status !== "located",
+      )
+      .map((r) => r.kode_kbli_2025)
+      .sort();
+    const disclosedOnAGap = gaps
+      .filter((code) => code.baliL4 !== undefined)
+      .map((code) => code.code)
+      .sort();
+    expect(disclosedOnAGap).toEqual(rawDeclaredGapChiusoBali);
+    // 39 -> 38 (W-H PR-3b): 47249 was one of the 39 declared_gap/CHIUSO_BALI
+    // records the disclose change above surfaces. This cure moves it to
+    // `pma_verification_status: "located"`, so it now fails this filter's
+    // own `!== "located"` guard and leaves BOTH the raw-JSON-derived set and
+    // `gaps` (it is no longer declared_gap at all) — not a disclosure bug,
+    // the code is simply no longer a gap.
+    // 38 -> 37 on 2026-09-18 (naso lot): 55106 (CHIUSO_BALI, ex-Hotel Melati)
+    // moved to located under Lampiran II, so it leaves this set the same way
+    // 47249 did — the other five naso codes are ATTENZIONE_FASCIA_BALI.
+    expect(disclosedOnAGap).toHaveLength(37);
+    for (const code of gaps) {
+      if (code.baliL4 !== undefined) {
+        expect(code.baliL4.status, code.code).toBe("CHIUSO_BALI");
+        expect(code.baliL4.closure?.url, code.code).toMatch(/^https:\/\//);
+      }
+    }
+
+    expect(located?.intel_2026).toBeDefined();
+    expect(located?.baliL4).toBeDefined();
+    for (const code of locatedCodes) {
+      expect(hasPublishablePmaCap(code.pma), code.code).toBe(true);
+    }
+  });
+
+  it("finds a known food-service code with transformed title and section data", () => {
+    const code = getCode("56101");
+
+    expect(code).toBeDefined();
+    expect(code).toMatchObject({
+      code: "56101",
+      titleId: "Aktivitas Penyediaan Makanan di Bangunan Tetap",
+      section: "I",
+      sectionName: "Accommodation & Food Service",
+    });
+    expect(code?.keywords).toContain("penyediaan");
+  });
+
+  it("groups codes by section and reports matching section counts", () => {
+    const sectionCodes = getCodesBySection("i");
+    const sections = getSections();
+    const sectionI = sections.find((section) => section.id === "I");
+
+    expect(sectionCodes.length).toBeGreaterThan(0);
+    expect(sectionI).toMatchObject({
+      id: "I",
+      nameEn: "Accommodation & Food Service",
+      codeCount: sectionCodes.length,
+    });
+    expect(sectionCodes.every((code) => code.section === "I")).toBe(true);
+  });
+
+  it("returns related codes without repeating the target code", () => {
+    const related = getRelatedCodes("56101", 4);
+
+    expect(related.length).toBeGreaterThan(0);
+    expect(related.length).toBeLessThanOrEqual(4);
+    expect(related.map((item) => item.code)).not.toContain("56101");
+    expect(related[0].code.startsWith("561")).toBe(true);
+  });
+
+  it("returns empty related-code results for unknown codes", () => {
+    expect(getRelatedCodes("00000")).toEqual([]);
+  });
+
+  it("distributes related links to neighbors instead of the section head", () => {
+    const sectionCodes = getCodesBySection("C");
+    expect(sectionCodes.length).toBeGreaterThan(20);
+
+    const last = sectionCodes[sectionCodes.length - 1];
+    const relatedCodes = getRelatedCodes(last.code, 6).map((r) => r.code);
+
+    // Neighbor-window: the immediate predecessor is always linked...
+    expect(relatedCodes).toContain(sectionCodes[sectionCodes.length - 2].code);
+    // ...and the old head-of-list fill (which concentrated every inbound
+    // link on the first section codes) no longer happens.
+    expect(relatedCodes).not.toContain(sectionCodes[0].code);
+  });
+
+  it("normalizes section metadata and hero styles with safe fallbacks", () => {
+    expect(getSectionMeta("i")).toMatchObject({
+      nameEn: "Accommodation & Food Service",
+      icon: "🏨",
+    });
+    expect(getSectionMeta("unknown")).toBeNull();
+
+    // 2026-07-07: getHeroStyle now derives from the deterministic
+    // kbli-cover-design.ts palette (dark editorial, no neon) instead of the
+    // old SECTOR_HERO map — assert per-section distinctness + stable
+    // fallback rather than a specific hardcoded hex.
+    expect(getHeroStyle("I").gradient).not.toEqual(getHeroStyle("J").gradient);
+    expect(getHeroStyle(null)).toEqual(getHeroStyle("unknown"));
+  });
+
+  // Batch-B step 4 (2026-07-25): the additive `bps_2020_ancestors` canonical
+  // field surfaces as `transition.bpsCrosswalk`, DISTINCT from the pp28-sourced
+  // `pp28LicensingSourceCodes`. These are the guilt+innocence + no-regression tripwires.
+  describe("authoritative BPS ancestry and PP28 licensing sources stay separate", () => {
+    it("derives bpsCrosswalk on an OSS-native Batch-B code and shows the honest mechanical-only status", () => {
+      // 01111 is OSS-native (_l2_status is null) and carries the field.
+      const code = getCode("01111");
+      expect(code).toBeDefined();
+      const bps = code?.transition.bpsCrosswalk;
+      expect(bps).toBeDefined();
+      expect(bps?.codes.length).toBeGreaterThan(0);
+      // At this migration step NOTHING is adjudicated — the surface must NOT
+      // imply a licensing/regime transfer. Mechanical presence ≠ inheritance.
+      expect(bps?.adjudicationStatus).toBe("mechanical-only");
+      expect(bps?.inheritanceVerdict).toBe("not-adjudicated");
+      // Regression guard: the PP28 licensing-source list remains visible under
+      // its true role alongside BPS ancestry.
+      expect(Array.isArray(code?.transition.pp28LicensingSourceCodes)).toBe(
+        true,
+      );
+    });
+
+    it("surfaces the deliberate Batch-A BPS ancestry pass without conflating its PP28 source", () => {
+      // 01287 is _l2_status: no_oss_risk. The original Batch-B program
+      // explicitly deferred it; the opt-in Batch-A pass now copies the
+      // independently gate-certified BPS edge while preserving PP28's role.
+      const code = getCode("01287");
+      expect(code).toBeDefined();
+      expect(code?.transition.bpsCrosswalk).toEqual({
+        codes: ["01287"],
+        adjudicationStatus: "mechanical-only",
+        inheritanceVerdict: "not-adjudicated",
+      });
+      expect(code?.transition.pp28LicensingSourceCodes).toEqual(["01287"]);
+    });
+
+    it("carries bpsCrosswalk on all 1,559 codes and never with an empty codes list", () => {
+      const codes = getAllCodes();
+      const withBps = codes.filter((c) => c.transition.bpsCrosswalk);
+      // 1,338 default Batch-B records + the deliberate 221-record Batch-A
+      // second pass. A count change must force a new program decision.
+      expect(withBps.length).toBe(1559);
+      // Never render an empty/degenerate crosswalk element.
+      for (const c of withBps) {
+        const bps = c.transition.bpsCrosswalk!;
+        expect(bps.codes.length).toBeGreaterThan(0);
+        expect(typeof bps.adjudicationStatus).toBe("string");
+        expect(typeof bps.inheritanceVerdict).toBe("string");
+      }
+    });
+
+    it("every code exposes PP28 licensing sources under the hard-renamed field", () => {
+      const codes = getAllCodes();
+      expect(
+        codes.every((c) =>
+          Array.isArray(c.transition.pp28LicensingSourceCodes),
+        ),
+      ).toBe(true);
+    });
+
+    it("pins the full 1,559-code source partition after the Batch-A ancestry pass", () => {
+      const codes = getAllCodes();
+      let both = 0;
+      let pp28Only = 0;
+      let bpsOnly = 0;
+      let neither = 0;
+      let differingBoth = 0;
+
+      for (const code of codes) {
+        const pp28 = code.transition.pp28LicensingSourceCodes;
+        const bps = code.transition.bpsCrosswalk?.codes ?? [];
+        if (pp28.length > 0 && bps.length > 0) {
+          both++;
+          if (
+            [...new Set(pp28)].sort().join(",") !==
+            [...new Set(bps)].sort().join(",")
+          ) {
+            differingBoth++;
+          }
+        } else if (pp28.length > 0) pp28Only++;
+        else if (bps.length > 0) bpsOnly++;
+        else neither++;
+      }
+
+      expect(codes).toHaveLength(1559);
+      expect({ both, pp28Only, bpsOnly, neither, differingBoth }).toEqual({
+        both: 1384,
+        pp28Only: 0,
+        bpsOnly: 175,
+        neither: 0,
+        differingBoth: 620,
+      });
+      expect(both + bpsOnly).toBe(1559);
+      expect(pp28Only + neither).toBe(0);
+      expect(both + pp28Only).toBe(1384);
+    });
+
+    it("pins all 359 wrong-vintage BPS link traps and the 36 removed PP28 links", () => {
+      const codes = getAllCodes();
+      const live2025Codes = new Set(codes.map((code) => code.code));
+      const bpsVintageLinkTraps = codes.flatMap((code) =>
+        (code.transition.bpsCrosswalk?.codes ?? []).filter(
+          (ancestor) => ancestor !== code.code && live2025Codes.has(ancestor),
+        ),
+      );
+      const pp28VintageLinkTraps = codes.flatMap((code) =>
+        code.transition.pp28LicensingSourceCodes.filter(
+          (source) => source !== code.code && live2025Codes.has(source),
+        ),
+      );
+
+      expect(bpsVintageLinkTraps).toHaveLength(359);
+      expect(pp28VintageLinkTraps).toHaveLength(36);
+    });
+  });
+});
+
+// =============================================================================
+// W-J B1 disclose (2026-09-16): a Bali APPLIED closure (CHIUSO_BALI, sourced
+// to a public press release) discloses even when the national PMA verdict is
+// not located. 39 of the 40 CHIUSO_BALI records were `declared_gap` and
+// therefore hidden before this change; only 55105 (already `located`) was
+// served. These pins anchor the real-data population the disclosure/render
+// tests elsewhere (kbli-pma-disclosure.test.ts, KBLIProvenancePanel.test.ts,
+// kbli-faq.test.ts, kbli-meta.test.ts, kbli-bali-block.test.ts) depend on.
+// =============================================================================
+describe("W-J B1 disclose — real-data population", () => {
+  it("68111 (Residential Property Development) discloses a sourced Bali closure though the national PMA verdict is not located", () => {
+    const kbli = getCode("68111");
+    expect(kbli?.provenance?.pma.status).toBe("declared_gap");
+    expect(kbli?.baliL4).toMatchObject({
+      status: "CHIUSO_BALI",
+      blocked: true,
+    });
+    expect(kbli?.baliL4?.closure?.url).toMatch(
+      /^https:\/\/www\.baliprov\.go\.id\//,
+    );
+  });
+
+  it("62900 (ATTENZIONE_FASCIA_BALI, unlocated) stays undisclosed — the rule is additive, not looser", () => {
+    // 01192 was this test's example until naso PR-5 (residual lot 2) located
+    // it. 62900 carries the same ATTENZIONE_FASCIA_BALI status and stays
+    // declared_gap — withheld by that lot's own legacy_pma_prose leg
+    // (pma_nota/pma_prioritas), not by anything this test is about.
+    const kbli = getCode("62900");
+    expect(kbli?.provenance?.pma.status).toBe("declared_gap");
+    expect(kbli?.baliL4).toBeUndefined();
+  });
+
+  it("112 served codes now disclose baliL4.blocked (14 pre-disclosure → 53 → 112 with naso PR-3)", () => {
+    // 2026-09-18 naso PR-3: the 59 statutory closures are TERTUTUP/blocked in
+    // `l4_bali` and become disclosed once located: 53 → 112. Their legacy
+    // moratorium-test `reason` is withheld at the seam (discloseBaliL4).
+    const blocked = getAllCodes().filter((c) => c.baliL4?.blocked === true);
+    expect(blocked).toHaveLength(112);
+    const noteLeaks = blocked.filter((c) =>
+      /not\s+blocked\s+by\s+moratorium/i.test(c.baliL4?.reason ?? ""),
+    );
+    expect(noteLeaks.map((c) => c.code)).toEqual([]);
+  });
+
+  it("40 served codes disclose CHIUSO_BALI (39 newly-disclosed declared_gap + 1 already-located)", () => {
+    const chiusoBali = getAllCodes().filter(
+      (c) => c.baliL4?.status === "CHIUSO_BALI",
+    );
+    expect(chiusoBali).toHaveLength(40);
+    expect(chiusoBali.every((c) => c.baliL4?.blocked === true)).toBe(true);
+  });
+
+  it("the canonical census counts 135 blocked regardless of per-code disclosure gating", () => {
+    const census = getBaliCensus();
+    expect(census.filter((c) => c.blocked)).toHaveLength(135);
+    expect(census.length).toBeGreaterThan(1500);
+  });
+});

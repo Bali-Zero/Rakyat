@@ -1,0 +1,288 @@
+{
+  "family": "E33",
+  "name": "Second Home visas",
+  "category": "KITAS/Limited Stay",
+  "permit_class": "ITAS",
+  "entry_type": null,
+  "law_dir": "law/E33",
+  "questions": {
+    "activity": {
+      "text_en": "Which situation describes your intended stay in Indonesia?",
+      "options": {
+        "second_home": "E33",
+        "government_invited_expert": "E33A",
+        "government_invited_collaboration": "E33B",
+        "government_invited_world_figure": "E33C",
+        "senior_five_years": "E33E",
+        "senior_one_year": "E33F",
+        "remote_foreign_company": "E33G"
+      },
+      "labels_en": {
+        "second_home": "Settle in Indonesia using an immigration guarantee.",
+        "government_invited_expert": "Invited by the government for my special expertise.",
+        "government_invited_collaboration": "Invited by the government for my expertise to collaborate with the government or a state institution, using an immigration guarantee.",
+        "government_invited_world_figure": "Invited by the government as a world figure.",
+        "senior_five_years": "Senior residence with an initial stay of up to 5 years.",
+        "senior_one_year": "Senior residence with an initial stay of 1 year.",
+        "remote_foreign_company": "Carry out tasks under an employment agreement with a company established outside Indonesia."
+      }
+    },
+    "second_home_commitment": {
+      "text_en": "Will you commit to either at least USD 130,000 in your own account at a state-owned Indonesian bank or a flat/apartment in Indonesia worth at least USD 1,000,000?",
+      "options": {
+        "own_name_state_bank_130000": true,
+        "apartment_1000000": true,
+        "neither": false
+      }
+    },
+    "collaboration_commitment": {
+      "text_en": "Will you commit to providing proof of collaboration with the government or a state institution?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "age_55": {
+      "text_en": "Are you at least 55 years old?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "senior_deposit_commitment": {
+      "text_en": "Will you commit to keeping at least USD 50,000 in your own account at a state-owned Indonesian bank?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "monthly_income": {
+      "text_en": "Do you have income or an allowance of at least USD 3,000 per month?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "annual_income": {
+      "text_en": "Do you earn salary or income of at least USD 60,000 per year?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "central_government_sponsor": {
+      "text_en": "Who will sponsor your stay?",
+      "options": {
+        "central_government": true,
+        "local_government": false,
+        "company": false,
+        "individual": false,
+        "none": false
+      }
+    },
+    "sponsor": {
+      "text_en": "Do you have a sponsor for your stay?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "stay_months": {
+      "text_en": "How many months do you need to stay in Indonesia?",
+      "kind": "integer"
+    }
+  },
+  "visas": {
+    "E33": {
+      "sponsor_required": false,
+      "sponsor": "NOT_REQUIRED",
+      "entry_type": "MULTIPLE",
+      "is_sold": true,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 5,
+          "unit": "YEAR"
+        }
+      ],
+      "max_total_months": 120,
+      "price_keys": [
+        {
+          "category": "kitas_permits",
+          "item_key": "E33 Second Home (5 Years)"
+        }
+      ],
+      "requires_questions": ["second_home_commitment"]
+    },
+    "E33A": {
+      "sponsor_required": true,
+      "sponsor": "REQUIRED",
+      "entry_type": "MULTIPLE",
+      "is_sold": null,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 5,
+          "unit": "YEAR"
+        },
+        {
+          "value": 10,
+          "unit": "YEAR"
+        }
+      ],
+      "max_total_months": 120,
+      "price_keys": [],
+      "sponsor_question": "central_government_sponsor"
+    },
+    "E33B": {
+      "sponsor_required": false,
+      "sponsor": "NOT_REQUIRED",
+      "entry_type": "MULTIPLE",
+      "is_sold": null,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 5,
+          "unit": "YEAR"
+        },
+        {
+          "value": 10,
+          "unit": "YEAR"
+        }
+      ],
+      "max_total_months": 120,
+      "price_keys": [],
+      "requires_questions": ["collaboration_commitment"]
+    },
+    "E33C": {
+      "sponsor_required": true,
+      "sponsor": "REQUIRED",
+      "entry_type": "MULTIPLE",
+      "is_sold": null,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 5,
+          "unit": "YEAR"
+        },
+        {
+          "value": 10,
+          "unit": "YEAR"
+        }
+      ],
+      "max_total_months": 120,
+      "price_keys": [],
+      "sponsor_question": "central_government_sponsor"
+    },
+    "E33D": {
+      "sponsor_required": null,
+      "sponsor": null,
+      "entry_type": null,
+      "is_sold": null,
+      "extendable": null,
+      "stay_options": null,
+      "price_keys": []
+    },
+    "E33E": {
+      "sponsor_required": false,
+      "sponsor": "NOT_REQUIRED",
+      "entry_type": "MULTIPLE",
+      "is_sold": true,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 5,
+          "unit": "YEAR"
+        }
+      ],
+      "max_total_months": 120,
+      "price_keys": [
+        {
+          "category": "kitas_permits",
+          "item_key": "E33E Second Home Senior (5 Years)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "E33E Second Home Senior (Extend)"
+        }
+      ],
+      "requires_questions": [
+        "age_55",
+        "senior_deposit_commitment",
+        "monthly_income"
+      ],
+      "auto_select_stay": true
+    },
+    "E33F": {
+      "sponsor_required": true,
+      "sponsor": "REQUIRED",
+      "entry_type": "MULTIPLE",
+      "is_sold": true,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 1,
+          "unit": "YEAR"
+        }
+      ],
+      "max_total_months": 72,
+      "price_keys": [
+        {
+          "category": "kitas_permits",
+          "item_key": "E33F Second Home Senior (1 Year, Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "E33F Second Home Senior (1 Year, Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "E33F Second Home Senior (Extend)"
+        }
+      ],
+      "requires_questions": ["age_55", "monthly_income"]
+    },
+    "E33G": {
+      "sponsor_required": false,
+      "sponsor": "NOT_REQUIRED",
+      "entry_type": "MULTIPLE",
+      "is_sold": true,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 1,
+          "unit": "YEAR"
+        }
+      ],
+      "max_total_months": 72,
+      "price_keys": [
+        {
+          "category": "kitas_permits",
+          "item_key": "E33G Remote Worker (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "E33G Remote Worker (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "E33G Remote Worker (Extend)"
+        }
+      ],
+      "requires_questions": ["annual_income"]
+    }
+  },
+  "notes": [
+    "Seven separate Guide leaves; E33D is NOT_FOUND, TO_VERIFY and excluded. Absence from the price list leaves is_sold null, not false.",
+    "Each path asks at most four questions, except E33F (five: activity, age, income, sponsor, months) since the 2026-10-19 age ruling. E33E has one published initial choice (5 YEAR), selected without a duration question after its three conditions. An explicitly supplied stay_months is still validated.",
+    "Questions concern legal conditions, not possession of documents. All required evidence, expertise certificates or qualifying degrees, invitations, employment agreements and 90-day commitment reports remain in the verbatim checklist.",
+    "E33/E33E initial stay uses only the code page (up to 5 years); the general official table also lists 10 years. That conflict is TO_VERIFY, not another initial choice.",
+    "Cumulative limits are 120 months from the code pages for E33/E33A/E33B/E33C/E33E; 72 months from the separately pinned code-specific supplementary_stay_evidence for E33F/E33G. Years are never converted into days.",
+    "E33F sponsor type is not stated on its captured page and remains TO_VERIFY; an organization-only sponsor rule is not copied across.",
+    "OWNER RULING 2026-10-19 (not verbatim Law): the senior age threshold for E33E and E33F is 55, per owner ruling + Pasal 173 f angka 4 (Permenkumham 11/2024). This resolves the senior_age_threshold_55_vs_60 TO_VERIFY (and E33F's minimum_age_not_stated); the Pasal 105 ayat (10) huruf d / ITAP-page 60 conflict stays recorded in the cards' notes as history. E33F now asks the same age_55 question as E33E.",
+    "The annual-income and activity answers for E33G do not replace its required foreign-company employment agreement. Freelance work without that agreement is not offered as a route.",
+    "ITAP stage by law (owner ruling 2026-10-18 segui la legge, replacing the earlier no-KITAP rule): Permenkumham 22/2023 Pasal 173 huruf f allows ITAS to ITAP for E33 (angka 1), E33A/E33B (2), E33C (3), E33E/E33F (4, 55+ per Permenkumham 11/2024); Pasal 179 ayat (1) needs 3 years of ITAS, Pasal 178 needs commitments fulfilled. E33G has no ITAP (not in Pasal 173); E33D is TO_VERIFY. Per-code finding is in the cards (itap_eligibility_as_stated_boolean) and ITAP.json. DB itap is null for all eight, as for the other E families.",
+    "All apply_channel values remain null. Offshore/onshore labels in exact commercial price keys do not establish a legal application-location rule.",
+    "Income or allowance is not narrowed to passive income. The full selling/work restriction and its exception remain verbatim in the cards."
+  ]
+}

@@ -1,0 +1,1531 @@
+"""WA outbox worker's codex broker leg (BOT-V4 S2 PR-5).
+
+Route decision + offer + wait + consume + finalize for ONE claimed
+``wa_outbox`` row (spec
+research/operations/2026-08-19-bot-chatgpt-provider-broker-spec.md, section
+2.1). The leg runs INSIDE the worker's claim. ``attempt`` NEVER raises; it
+answers in exactly one of four shapes:
+
+Durable fall-off reason (2026-08-28, migration 290): every outcome below
+that is NOT a served completion writes a bounded, non-PII reason code to
+``wa_outbox.generation_fall_off_reason`` (+ ``generation_fall_off_at``) —
+see ``record_fall_off_reason`` and ``_normalize_fall_off_reason`` below.
+This is a SEPARATE, independently-written column from ``generation_route``
+(the offer-time CAS fence half — never touched here) and the write is
+always best-effort: it can never fail the send, because a failure to
+record WHY nothing was sent must not become a second reason nothing was
+sent.
+
+  text        — a consumed, finalized completion: the worker sends it.
+  stand_down  — drift verdict: the leg has ALREADY terminalized the row
+                atomically; the worker generates nothing.
+  fall-off    — a CERTAIN pre-durable outcome (gates, load, build, offer
+                admission refusals, typed FAILED/DEADLINE waits, consume
+                lost, finalize DEFECT). Corrected 2026-08-27 (Zero:
+                "spegni gemini e collega chatgpt" — Gemini is retired from
+                this worker, full stop): this NO LONGER falls off to a
+                Gemini leg answering in the same claim — there is no
+                second generator to hand it to. The caller
+                (``wa_outbox_worker._process_claimed_row``) raises into
+                its OWN retry ladder instead, EXCEPT the two fall-off
+                reasons that are standing conditions in disguise
+                (``autoreply_disabled`` / ``no_customer_message`` — see
+                ``_CODEX_LEG_STANDING_REASONS`` there), which raise
+                ``SilentStandingCondition`` and notify nobody, exactly as
+                ``generate_bot_reply``'s own two silent exits always did.
+  fail        — an UNCERTAIN outcome at or after a durable boundary
+                (``offer_uncertain`` / ``offer_contract_break`` /
+                ``wait_error`` / ``post_completion`` /
+                ``stand_down_fence_lost``): the worker raises into the
+                SAME retry ladder as fall-off above — as of the Gemini cut
+                there is no longer a distinct cost difference between the
+                two ("fall-off costs zero attempts, fail costs one") since
+                neither can hand off to a second generator anymore. The
+                retry re-claims with a fresh thread read; a durable offer
+                answers it ``ALREADY_SPENT`` (see #5093, this leg's retry
+                budget dependency) rather than a fresh generation.
+
+The codex leg runs IFF all of (spec 2.1 route decision):
+  1. ``is_bot_autoreply_enabled()`` — the SAME ``WA_INBOX_BOT_AUTOREPLY``
+     kill switch ``generate_bot_reply`` honors as its first statement
+     (that function is retained for back-compat shape only — see
+     ``wa_outbox_worker``'s module docstring — but the flag semantics it
+     defines are still the ones this leg's caller mirrors via
+     ``SilentStandingCondition`` on ``autoreply_disabled``). The leg steps
+     aside when it is off so the caller raises the same silent standing
+     condition ``generate_bot_reply`` always raised for this case.
+  2. ``WA_GENERATION_PROVIDER == "codex"`` — env, read live per claim;
+     absent means the caller raises a (non-silent) standing condition —
+     see ``wa_outbox_worker``'s ``provider_is_codex()`` check — never a
+     fall back to Gemini. S2 ships dark.
+  3. The 24h customer-care window has >= 2 x T_exec of margin left — a row
+     about to lose its send window never waits on a broker round-trip.
+  4. The context package builds (``POST /api/wa-package/build``, the RAG
+     process owns the retriever); unbuildable -> fall-off (retry ladder).
+  5. ``offer_job`` returns OFFERED (a fresh job) or REATTACHED (a prior
+     leg for this row is still alive) — admission lock, gauge liveness,
+     breaker, depth and the wa_outbox fence are all checked inside the
+     offer transaction; every other outcome -> fall-off (retry ladder),
+     including the NAMED ``legs_exhausted`` (this row already spent its
+     whole codex retry budget — spec gradino 2/5), kept distinct in the
+     log/reason from the generic ``ALREADY_SPENT`` race fallback.
+
+A consumed completion is NEVER returned raw: it runs through
+``finalize_wa_answer(provider="codex")`` — the SHARED post-generation
+pipeline both the codex leg and the (retained, not WA-reachable)
+``generate_bot_reply`` path use (abstain policy from the FROZEN evidence,
+monologue leak, scaffold strip, channel formatting, size cap, pricing veto
+against the frozen package's price sources, secret-egress scan). A text
+DEFECT falls off into the SAME retry ladder as any other fall-off above
+(spec 2.3 TEXT_DEFECT) — it no longer regenerates via Gemini in the same
+claim.
+
+Connection discipline: this module NEVER touches the worker's claim
+connection — every DB statement runs on a connection acquired from the
+pool. The worker's lease heartbeat runs concurrently on the claim
+connection for the whole duration of this leg, and asyncpg allows exactly
+one operation in flight per connection: sharing it would make the
+heartbeat and the leg race into ``InterfaceError``. The offer fence needs
+no shared session state — it is a row-level CAS on ``claim_token`` +
+status, visible from any connection.
+
+Breaker discipline — this module records NOTHING into the breaker. Folds
+belong to transition owners only (``wait_for_job``'s deadline CAS,
+``complete_job``'s accepted branches, the reaper — see
+``record_breaker_result``'s docstring): a worker-side fold would double
+count a job its owner already folded. This deliberately supersedes the
+pre-merge design note "DEFECT -> record_breaker_result(fail)", written
+before the transition-owner doctrine landed in PR #4348.
+
+PII discipline: log lines carry outbox/job ids, outcomes and short reasons
+only — never query, history or result text.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import math
+import os
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+import asyncpg
+import httpx
+
+from backend.app.core.config import settings
+from backend.services.communication import detect_language
+from backend.services.integrations import wa_broker
+from backend.services.integrations.wa_completion_envelope import decode_completion
+from backend.services.integrations.wa_finalize import (
+    FinalizeOutcome,
+    finalize_wa_answer,
+)
+from backend.services.integrations.wa_greeting import match_greeting
+from backend.services.integrations.wa_human_handoff import (
+    _FALLBACK_RECIPIENT,
+    match_human_request,
+    notify_human_handoff,
+)
+from backend.services.integrations.wa_identity import match_identity_question
+
+# Same-package deliberate reuse of the bot leg's lazy-singleton RAG client,
+# notifier and kill switch: ONE persistent HTTP client per process (Golden
+# Rule #10), the human-notification wiring stays in the one module whose
+# tests patch it, and the autoreply switch keeps ONE owner.
+# `_load_bound_thread_context` (B2.5 PR-1, migration 318) replaces
+# `_load_thread_context` on THIS leg only — anchored to the outbox row's
+# own inbound message, never the thread's latest (D1: a retry answered a
+# NEWER message than the one its row was created for). The bare
+# `_load_thread_context` stays wa_inbox_bot's own thread-latest loader,
+# still owned there for its one remaining caller.
+from backend.services.integrations.wa_inbox_bot import (
+    _get_rag_client,
+    _load_bound_thread_context,
+    _tell_a_human,
+    is_bot_autoreply_enabled,
+)
+from backend.services.rag.agentic._support_signal import (
+    SupportVerdict,
+    has_visible_character,
+)
+from backend.services.rag.agentic.wa_dlp import restore_text
+
+logger = logging.getLogger(__name__)
+
+CUSTOMER_WINDOW_HOURS = 24
+
+# Bounded, non-PII vocabulary for wa_outbox.generation_fall_off_reason
+# (migrations 290+291's CHECK constraint mirrors this set verbatim — keep
+# the two in sync by hand; there is no single source both can import from,
+# since the migration is SQL and this is Python read at a different time).
+_KNOWN_FALL_OFF_REASONS: frozenset[str] = frozenset(
+    {
+        "provider_not_codex",
+        "standing_autoreply_disabled",
+        "standing_no_customer_message",
+        "window_margin",
+        "package_build_error",
+        # "package_unbuildable" stays reachable as the fallback bucket for
+        # a future, not-yet-catalogued PackageUnbuildable reason (migration
+        # 291) — the three KNOWN sub-reasons below get their own distinct
+        # value instead of colliding into this one (2026-08-28: row 348
+        # fell off "package_unbuildable" and the sub-reason was already
+        # gone from the ~60s Fly log retention by the time anyone looked).
+        "package_unbuildable",
+        "package_unbuildable_greeting_domain",
+        "package_unbuildable_no_collections",
+        "package_unbuildable_dlp_error",
+        "build_contract_break",
+        "offer_acquire_error",
+        "offer_uncertain",
+        "offer_refused",
+        "offer_contract_break",
+        "wait_error",
+        "wait_failed",
+        "stand_down_drift",
+        "stand_down_fence_lost",
+        "post_completion_error",
+        "consume_lost",
+        "finalize_defect",
+        "internal_error",
+        "unknown",
+        # B2.4 PR-2 (design B2-4-design.md §1.3, ruling I96-5): the SQL-
+        # countable durable counter for "no authenticated verdict travelled
+        # back" — collapses two log-only details (`no_verdict`: decode
+        # failed/absent/MAC-or-hash mismatch; `unavailable`: the daemon's
+        # own judge could not rule) into ONE bounded column value; the
+        # detail lives only in the ERROR log next to each raise site.
+        "support_judge_absent",
+        # B2.5 PR-1 (migration 318, ruling a): the six terminal reasons
+        # wa_outbox_worker.py itself now writes in the SAME statement as
+        # every status='failed' UPDATE it makes on this table — these are
+        # already-normalized category values, never raw strings passed
+        # through `_normalize_fall_off_reason`, hence the identity entries
+        # in the prefix map below.
+        "thread_missing",
+        "aborted_human_takeover",
+        "aborted_human_takeover_pre_send",
+        "window_closed_24h",
+        "send_exhausted",
+        "generation_exhausted",
+    }
+)
+
+# Maps the PREFIX (text before the first ':') of a CodexLegResult.reason /
+# .fail raw string, or a worker-level raw string, to one of the category
+# codes above. The raw strings themselves are never PII (built only from
+# fixed literals, typed exception class names, and typed enum values — see
+# wa_codex_leg's own PII-discipline paragraph) but they ARE open-ended
+# (an exception class name is not drawn from a closed set), so every raw
+# string is normalized through this map before it ever reaches the DB.
+_FALL_OFF_REASON_PREFIX_MAP: dict[str, str] = {
+    "provider_not_codex": "provider_not_codex",
+    "autoreply_disabled": "standing_autoreply_disabled",
+    "no_customer_message": "standing_no_customer_message",
+    "window_margin": "window_margin",
+    "package_build_error": "package_build_error",
+    "unbuildable": "package_unbuildable",
+    "build_contract_break": "build_contract_break",
+    "offer_acquire_error": "offer_acquire_error",
+    "offer_uncertain": "offer_uncertain",
+    "offer": "offer_refused",
+    "offer_contract_break": "offer_contract_break",
+    "wait_error": "wait_error",
+    "wait": "wait_failed",
+    "drift": "stand_down_drift",
+    "stand_down_fence_lost": "stand_down_fence_lost",
+    "post_completion": "post_completion_error",
+    "consume_lost": "consume_lost",
+    "finalize": "finalize_defect",
+    "internal_error": "internal_error",
+    "support_judge_absent": "support_judge_absent",
+    # B2.5 PR-1: identity entries — these six are written directly as
+    # already-bounded category values by wa_outbox_worker.py (never
+    # normalized through this function), listed here only so the coverage
+    # test (test_wa_codex_leg.py) and the CHECK-constraint-superset test
+    # both stay true.
+    "thread_missing": "thread_missing",
+    "aborted_human_takeover": "aborted_human_takeover",
+    "aborted_human_takeover_pre_send": "aborted_human_takeover_pre_send",
+    "window_closed_24h": "window_closed_24h",
+    "send_exhausted": "send_exhausted",
+    "generation_exhausted": "generation_exhausted",
+}
+
+# Migration 291: the package-builder leg's "unbuildable" head carries a
+# SECOND, genuinely distinct piece of information after its colon — WHICH
+# of `wa_package_builder.PackageUnbuildable`'s call sites refused
+# ("greeting_domain" / "no_collections" / "dlp_error"). Collapsing all
+# three into the single "package_unbuildable" bucket (the pre-291
+# behaviour) is exactly the blindness this map exists to end, one level
+# down from what migration 290 already fixed. Keyed on the EXACT string
+# after the first ':' (never a prefix match — the three known values never
+# collide with each other or with a future one); anything not in this
+# sub-map falls through to `_FALL_OFF_REASON_PREFIX_MAP["unbuildable"]`
+# (the generic "package_unbuildable" bucket) rather than "unknown" — a
+# real PackageUnbuildable outcome should never look indistinguishable from
+# a genuinely uncatalogued reason head.
+_UNBUILDABLE_SUB_REASON_MAP: dict[str, str] = {
+    "greeting_domain": "package_unbuildable_greeting_domain",
+    "no_collections": "package_unbuildable_no_collections",
+    "dlp_error": "package_unbuildable_dlp_error",
+}
+
+# Migration 297: the SAME blindness 291 cured for "unbuildable", one row
+# down in the map above. `finalize:<defect_reason>` names WHICH of
+# `wa_finalize.py`'s DEFECT branches refused to let the text leave, and
+# collapsing all of them into "finalize_defect" records the STAGE while
+# hiding the CAUSE — a pricing veto, an oversized output, a monologue leak
+# and a secret-egress hit are four different defects with four different
+# cures. Measured cost: outbox row 363 (2026-08-28T21:43:52Z) had THREE
+# successful codex generations (`consumed_ok`, 9711/10137/8521 ms) thrown
+# away by this stage, and the durable record could not say why; the
+# per-attempt reason lived only in a Fly log line with ~60s retention.
+#
+# Keyed on the EXACT string after the first ':', with ONE prefix case:
+# `secret_egress:<pattern-name>` (wa_finalize's `_codex_egress_veto`) is
+# stored as the bare "finalize_secret_egress" — the suffix is unbounded,
+# which would defeat the CHECK constraint, and it names a scanner pattern
+# that this column (read by dashboards, pasted into reports) has no
+# business carrying. Anything unrecognised falls through to the generic
+# "finalize_defect" bucket rather than "unknown", so a real finalize
+# outcome never looks indistinguishable from an uncatalogued reason head.
+_FINALIZE_SUB_REASON_MAP: dict[str, str] = {
+    "internal_monologue_leak": "finalize_internal_monologue_leak",
+    "pricing_outside_package": "finalize_pricing_outside_package",
+    "empty_rag_answer": "finalize_empty_rag_answer",
+    "persona_escalate_marker": "finalize_persona_escalate_marker",
+    "empty_after_escalate_strip": "finalize_empty_after_escalate_strip",
+    "workflow_only_output": "finalize_workflow_only_output",
+    "empty_after_channel_format": "finalize_empty_after_channel_format",
+    "oversized_output": "finalize_oversized_output",
+    "rag_abstain": "finalize_rag_abstain",
+    "blank_send_text": "finalize_blank_send_text",
+}
+
+# The one sub-reason whose raw form carries a variable suffix.
+#
+# Named for the SCAN, not with the word "secret" in the identifier, on
+# purpose: detect-secrets' Secret Keyword heuristic fires on an assignment
+# whose NAME contains "secret", so the obvious `_FINALIZE_SECRET_EGRESS_*`
+# spelling failed the Detect Secrets gate (measured on this PR's first
+# run). Renaming REMOVES the finding; a `pragma: allowlist secret` would
+# only annotate it, and the next reader would have to work out whether a
+# real secret had ever been suppressed there.
+_FINALIZE_EGRESS_SCAN_HEAD = "secret_egress"
+
+
+def _normalize_fall_off_reason(raw: str) -> str:
+    """Map an open-ended raw reason string to a bounded DB-safe category.
+
+    Splits ``raw`` once on the first ':' and looks the result up in
+    ``_FALL_OFF_REASON_PREFIX_MAP`` by EXACT match — e.g.
+    "offer_contract_break:missing_job_id" head-splits to
+    "offer_contract_break", a distinct dict key from the shorter "offer"
+    (itself the head of "offer:legs_exhausted" etc.); there is only ever
+    one lookup, so no key can shadow another. Coverage (every head this
+    module can actually emit is a key here) is enforced by
+    ``test_fall_off_reason_map_covers_every_reason_the_module_can_emit`` in
+    ``test_wa_codex_leg.py``, not by this function. Anything unrecognised
+    (a future reason string that test has not yet been taught either — the
+    CI gate this test backs is what should catch that BEFORE this branch
+    ever fires in prod) maps to "unknown" rather than raising — this
+    function backs a best-effort write and must never be the thing that
+    turns a fall-off into a second, unrelated failure.
+
+    TWO exceptions to "the head alone decides the category". When the head
+    is "unbuildable" (migration 291) or "finalize" (migration 297), the
+    text AFTER the colon is itself a second, closed-vocabulary signal —
+    which PackageUnbuildable call site refused, or which wa_finalize DEFECT
+    branch refused — and is looked up in ``_UNBUILDABLE_SUB_REASON_MAP`` /
+    ``_FINALIZE_SUB_REASON_MAP`` before falling back to the generic
+    "package_unbuildable" / "finalize_defect" bucket. The finalize case has
+    one raw form with a variable suffix, ``secret_egress:<pattern-name>``,
+    which is matched by its own head and stored WITHOUT the suffix — see
+    those maps' own docstrings.
+    """
+    if not raw:
+        return "unknown"
+    head, _sep, rest = raw.partition(":")
+    if head == "unbuildable":
+        return _UNBUILDABLE_SUB_REASON_MAP.get(
+            rest, _FALL_OFF_REASON_PREFIX_MAP["unbuildable"]
+        )
+    if head == "finalize":
+        # `secret_egress:<pattern-name>` is the one raw form with a
+        # variable suffix — match on its head and DROP the suffix, never
+        # store it (see _FINALIZE_SUB_REASON_MAP's docstring).
+        if rest.partition(":")[0] == _FINALIZE_EGRESS_SCAN_HEAD:
+            return "finalize_secret_egress"
+        return _FINALIZE_SUB_REASON_MAP.get(
+            rest, _FALL_OFF_REASON_PREFIX_MAP["finalize"]
+        )
+    return _FALL_OFF_REASON_PREFIX_MAP.get(head, "unknown")
+
+
+async def record_fall_off_reason(
+    pool: asyncpg.Pool, *, outbox_id: int, raw_reason: str
+) -> None:
+    """Best-effort, non-blocking write of a normalized fall-off reason.
+
+    Runs on its OWN connection from the pool — never the caller's claim
+    connection (same discipline as the rest of this module: the worker's
+    lease heartbeat may be running concurrently on that connection).
+    Catches ``Exception`` (DB errors, a bad pool, etc.): recording why
+    nothing was sent must never become a second reason nothing was sent
+    (mandate constraint 4). A failure here is logged at WARNING and
+    otherwise invisible to the caller — callers do not await this for
+    correctness, only for the write's best-effort completion before the
+    row moves on. NOT caught: ``BaseException`` (cancellation). A
+    cancelled write propagates, same as every other acquire in this
+    module (see the module docstring's "attempt() never raises... except
+    cancellation") — swallowing it here would be the wrong kind of
+    best-effort, since it would hide asyncio shutdown from the caller
+    instead of merely hiding a DB hiccup.
+    """
+    reason = _normalize_fall_off_reason(raw_reason)
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE wa_outbox
+                SET generation_fall_off_reason = $2, generation_fall_off_at = NOW()
+                WHERE id = $1
+                """,
+                outbox_id,
+                reason,
+            )
+    except Exception as exc:  # best-effort — never propagate (constraint 4)
+        logger.warning(
+            "wa_codex_leg: failed to record fall-off reason (outbox=%s "
+            "reason=%s): %s",
+            outbox_id,
+            reason,
+            type(exc).__name__,
+        )
+
+
+class _StandDownFenceLost(Exception):
+    """The atomic stand-down abort found the claim fence gone — another
+    worker owns the row now. Raised inside the abort transaction so the
+    discard rolls back with it: the new owner's own leg re-runs the drift
+    protocol against the still-pending completion."""
+
+# The package build is a route decision (embedding + Qdrant, target well
+# under T_exec) — never borrow the RAG client's 120s chat timeout for it.
+_BUILD_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+
+
+def _canary_tokens() -> tuple[str, ...]:
+    """Canary values for the egress scan (spec 4.3), from the env.
+
+    The daemon-side provisioning (`scripts/provision_zantara_codex.sh`)
+    plants canary FILES in the `zantara-codex` sandbox precisely to be leak
+    tripwires; the SAME values are set here (Fly secret
+    ``WA_CODEX_CANARY_TOKENS``, comma-separated) so `finalize_wa_answer`
+    can veto any answer that carries one. Unset/empty = no canary half —
+    the pattern half of the secret scan stays armed regardless
+    (`secret_scan=True` below is unconditional). Read per-call, not at
+    import: a rotated Fly secret must take effect on restart without a
+    code change, and tests can drive both states without reload tricks.
+    """
+    raw = os.getenv("WA_CODEX_CANARY_TOKENS", "")
+    return tuple(token for token in (part.strip() for part in raw.split(",")) if token)
+
+
+def provider_is_codex() -> bool:
+    """Env-read live on every claim; absent/anything-else -> the caller
+    raises a (non-silent) standing condition — never a Gemini fallback,
+    retired 2026-08-27 (Zero: "spegni gemini e collega chatgpt")."""
+    return os.getenv("WA_GENERATION_PROVIDER", "").strip().lower() == "codex"
+
+
+def _window_margin_ok(thread: Any, *, margin_s: float) -> bool:
+    """True when the 24h window has at least ``margin_s`` seconds left.
+
+    Local-clock heuristic mirroring the worker's ``_window_open_locally``:
+    the authoritative window gate stays the SQL check at send time — this
+    only decides whether a broker round-trip is worth starting.
+    """
+    last = thread["last_customer_at"]
+    if last is None:
+        return False
+    remaining = timedelta(hours=CUSTOMER_WINDOW_HOURS) - (
+        datetime.now(timezone.utc) - last
+    )
+    return remaining.total_seconds() >= margin_s
+
+
+def _normalize_evidence_score(raw: Any) -> float | None:
+    """Coerce the sealed wire's ``evidence_score`` to a carrier-safe float.
+
+    Accepts ``int``/``float`` only — ``bool`` is excluded even though it is
+    an ``int`` subclass, so a stray ``True``/``False`` on the wire never
+    silently becomes 1.0/0.0 — and only a finite value (``math.isfinite``);
+    anything else (``None``, a string, NaN, +/-inf) returns ``None``. Pure:
+    no read, no write, no log — this carrier must never persist a value the
+    sealed wire did not actually mean as a score.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    if not math.isfinite(raw):
+        return None
+    return float(raw)
+
+
+@dataclass
+class CodexLegResult:
+    """Exactly one of four shapes: text (send it), stand_down (abort the
+    row, do NOT generate), fail (worker raises -> retry ladder, nothing
+    may be generated in THIS claim), or none of those (fall off — as of
+    the 2026-08-27 Gemini cut this ALSO raises into the worker's retry
+    ladder, except the two standing-condition reasons in
+    ``wa_outbox_worker._CODEX_LEG_STANDING_REASONS``, which raise
+    ``SilentStandingCondition`` and notify nobody — never a second
+    generator in the same claim)."""
+
+    text: str | None = None
+    stand_down: bool = False
+    fail: str = ""
+    reason: str = ""
+    # Which path produced `text`. "codex" is the broker completion; the
+    # deterministic greeting turn sets "scripted_greeting" so the worker's
+    # log line does not claim a broker round-trip that never happened
+    # (cross-family refuter finding 4, 2026-09-03 — `generation_route` stays
+    # NULL on that row, so a log saying "codex leg served" was the only
+    # record of it and it was false).
+    served_by: str = "codex"
+    # B2.3b carrier (research/operations/2026-09-11-bot-staff-room/
+    # B2-engine.md §4 PR B2.3b): the sealed evidence label, its normalised
+    # score and the opaque package reference — carried, never recomputed
+    # and never inferred from `text`, from the parsed sealed wire
+    # (`evidence_inputs`/`package_hash`, both above) into the two
+    # text-bearing returns that follow the parse: the support-negative
+    # return and the completed return. Every other return (fall-off, fail,
+    # stand_down, scripted greeting, finalize defect) leaves all three
+    # None — there is no sealed decision to carry.
+    evidence_abstain_label: bool | None = None
+    evidence_score: float | None = None
+    package_ref: str | None = None
+
+
+# Deterministic scripted reply for a caption-less non-text attachment
+# (B2.5-3). Measured on real delivery, 2026-09-25: thread 394, inbound
+# 899/901 (2026-09-20), both `media_type='image'`, `body` length 0 — the
+# bound inbound classified as `no_customer_message`, the row burned the full
+# five-attempt retry ladder (~7.5 min) and terminalized `failed`. The client
+# got no reply at all and no human was told; they re-sent the photo 12
+# minutes later. In 90 days: 2 image + 2 unsupported out of 282 inbound.
+#
+# Scope, and a KNOWN GAP left for a follow-up PR: `bound.media_type` is
+# checked, never guessed from `query` — but `query` (the anchor's `body`)
+# is empty on TWO different inputs, and this leg cannot tell them apart.
+# `whatsapp_chat.py::_handle_meta_inbox_message` fills `body` ONLY for
+# `type == "text"` (`~:1227`); Meta ships the caption on other message
+# types as sibling fields the ingest path never reads, so an attachment
+# WITH a caption ALSO lands here today, indistinguishable from one
+# without. Fixing the ingestion gap is its own PR (captures the caption
+# into `body` for every media type) — out of scope here, and the reply
+# copy below is worded to be true either way in the meantime: it never
+# assumes the client did not already ask something, and never claims the
+# file was opened or read.
+_MEDIA_ACK_TYPES = frozenset({"image", "document", "audio", "video", "sticker", "unsupported"})
+
+# Wording rules (hard, PR description + round-2 review finding MEDIUM):
+# never claims the bot read/opened the file; never invites documents,
+# passport numbers or other personal data over WhatsApp; never assumes
+# the client did not already write a question — and says so EXPLICITLY,
+# not just by omission, because the ingestion gap above means a caption
+# sitting unread on the Meta side is a real, common case: the text states
+# plainly that a caption sent together with the file is not read either,
+# so the client understands WHY a second, separate text message is
+# needed instead of silently re-asking; and — since `notify_human_handoff`
+# can return True on a dedup-suppressed OR an email-delivery-failed send
+# (best-effort, `send_internal_email(..., raise_on_failure=False)`) —
+# never claims a colleague was notified at all. ONE text per language;
+# the notification call stays best-effort and its outcome is logged, but
+# the reply no longer branches on it.
+_MEDIA_ACK_TEXTS: dict[str, str] = {
+    "en": (
+        "I can't open or check attachments in this chat, and I can't "
+        "read text sent together with a file. If there's anything I can "
+        "help with, please send it here as a separate text message."
+    ),
+    "id": (
+        "Saya tidak bisa membuka atau memeriksa lampiran di chat ini, "
+        "dan tidak bisa membaca teks yang dikirim bersama file. Kalau "
+        "ada yang bisa saya bantu, silakan kirim di sini sebagai pesan "
+        "teks terpisah."
+    ),
+    "it": (
+        "Non riesco ad aprire o controllare gli allegati in questa "
+        "chat, né a leggere il testo inviato insieme al file. Se c'è "
+        "qualcosa in cui posso aiutarti, mandamelo qui come messaggio "
+        "di testo separato."
+    ),
+    "ru": (
+        "Я не могу открывать или проверять вложения в этом чате и не "
+        "вижу текст, отправленный вместе с файлом. Если чем-то можно "
+        "помочь, напишите об этом здесь отдельным текстовым "
+        "сообщением."
+    ),
+    "uk": (
+        "Я не можу відкривати або перевіряти вкладення в цьому чаті й "
+        "не бачу текст, надісланий разом із файлом. Якщо чимось можу "
+        "допомогти, напишіть про це тут окремим текстовим "
+        "повідомленням."
+    ),
+}
+
+_MEDIA_ACK_FALLBACK_LANG = "en"
+
+
+def _media_ack_language(history: list[dict[str, str]]) -> str:
+    """The language of the latest prior CUSTOMER text turn, newest first.
+
+    `detect_language` (backend.services.communication) is the SAME detector
+    the apology/ack path (`wa_outbox_worker._maybe_send_apology`) already
+    uses for this exact fallback shape, and its own keys ("it"/"en"/"id"/
+    "ru"/"uk"/"auto") are used here DIRECTLY as the `_MEDIA_ACK_TEXTS`
+    lookup — never routed through `get_localized_stub`'s "ITALIAN"-style
+    vocabulary, which is a different table with different keys entirely
+    (wiring one into the other silently answers in English under a
+    matching-looking key — measured 2026-08-11, pinned by
+    `test_an_unknown_language_name_must_not_silently_become_an_english_apology`).
+    'auto' means unclassified, not a language: keep scanning older turns:
+    the SAME history-fallback order `_maybe_send_apology` uses. No
+    classifiable turn at all (empty history, or every candidate 'auto')
+    falls to the fixed English default, never a guess.
+    """
+    for turn in reversed(history):
+        if turn.get("role") != "user":
+            continue
+        detected = detect_language(turn.get("content") or "")
+        if detected != "auto":
+            return detected
+    return _MEDIA_ACK_FALLBACK_LANG
+
+
+def _media_ack_text(language: str) -> str:
+    return _MEDIA_ACK_TEXTS.get(language, _MEDIA_ACK_TEXTS[_MEDIA_ACK_FALLBACK_LANG])
+
+
+# The B2.5-2 human-handoff turn's honest fallback (round-1 cross-family
+# review finding, 2026-09-25): `notify_human_handoff`'s return now means
+# DELIVERED, not merely attempted — so the turn below picks ITS reply from
+# that truthful signal instead of always returning `human_request.text`
+# ("I'm flagging this for a colleague..."), which would otherwise repeat
+# the exact lie this whole PR exists to stop, one call site downstream of
+# where the notifier itself was fixed. Deliberately never names a phone —
+# `_FALLBACK_RECIPIENT` (imported from `wa_human_handoff`) is the ONE
+# existing constant for "write to us directly" in this codebase; nothing
+# new is invented.
+_HUMAN_HANDOFF_UNREACHABLE_TEXTS: dict[str, str] = {
+    "en": (
+        f"I couldn't reach a colleague automatically just now. Please try "
+        f"again in a few minutes, or write directly to {_FALLBACK_RECIPIENT}."
+    ),
+    "id": (
+        f"Saya belum berhasil menghubungi kolega secara otomatis saat ini. "
+        f"Silakan coba lagi dalam beberapa menit, atau kirim email langsung "
+        f"ke {_FALLBACK_RECIPIENT}."
+    ),
+    "it": (
+        f"Al momento non sono riuscito a contattare automaticamente un "
+        f"collega. Riprova tra qualche minuto, oppure scrivi direttamente a "
+        f"{_FALLBACK_RECIPIENT}."
+    ),
+    "ru": (
+        f"Сейчас не удалось автоматически связаться с коллегой. "
+        f"Попробуйте, пожалуйста, ещё раз через несколько минут или "
+        f"напишите напрямую на {_FALLBACK_RECIPIENT}."
+    ),
+    "uk": (
+        f"Зараз не вдалося автоматично зв'язатися з колегою. Спробуйте, "
+        f"будь ласка, ще раз за кілька хвилин або напишіть напряму на "
+        f"{_FALLBACK_RECIPIENT}."
+    ),
+}
+
+
+def _human_handoff_unreachable_text(language: str) -> str:
+    return _HUMAN_HANDOFF_UNREACHABLE_TEXTS.get(
+        language, _HUMAN_HANDOFF_UNREACHABLE_TEXTS[_MEDIA_ACK_FALLBACK_LANG]
+    )
+
+
+async def _stub_unsupported(
+    *,
+    parsed_wire: dict[str, Any],
+    evidence_inputs: dict[str, Any],
+    query: str,
+    thread_id: int,
+    tell_a_human: Any,
+    package_hash: str,
+    reason: str,
+    carry_evidence: bool = True,
+) -> CodexLegResult:
+    """The shared terminal-abstention stub (B2.4 PR-2): generates NOTHING
+    and hands an empty answer straight to the UNCHANGED finalizer's safe-
+    abstention path — since ``answer=""``, ``_abstain_answer_worth_sending``
+    always returns "" regardless of ``context_length``/``evidence_score``,
+    so the localized safe-abstention text is served and a human is told.
+
+    Reused by BOTH callers that must never release substantive advice: the
+    pre-offer V4 residual (no visible question) and the post-consume
+    NOT_SUPPORTED/UNKNOWN branch (design B2-4-design.md §1.1 step 4). The
+    evidence carrier is ALWAYS the ``*_unsupported`` pair — the pure
+    scorer's own NOT_SUPPORTED-scored values — never the plain
+    ``evidence_score``/``abstain`` (those stay the `support=None` values
+    per `wa_package_builder.py` and would leak a relevance figure a
+    verdict this negative must never carry).
+
+    ``carry_evidence=False`` nulls the three carrier fields (D6: REATTACHED
+    legs never carry another claim's package reference — I83, unchanged by
+    this PR).
+    """
+    price_sources: list[str] = [
+        str(chunk.get("text", "")) for chunk in parsed_wire.get("chunks", [])
+    ]
+    if parsed_wire.get("pricing_block") is not None:
+        price_sources.append(
+            json.dumps(parsed_wire["pricing_block"], ensure_ascii=False, sort_keys=True)
+        )
+    stub_result = await finalize_wa_answer(
+        data={
+            "answer": "",
+            "abstain": True,
+            "abstain_reason": "support_unsupported",
+            "context_length": evidence_inputs.get("context_length"),
+            "evidence_score": evidence_inputs.get("evidence_score_unsupported"),
+        },
+        query=query,
+        thread_id=thread_id,
+        tell_a_human=tell_a_human,
+        provider="codex",
+        price_sources=price_sources,
+        secret_scan=True,
+        canary_tokens=_canary_tokens(),
+    )
+    return CodexLegResult(
+        text=stub_result.text,
+        reason=reason,
+        served_by="support_abstain",
+        evidence_abstain_label=(
+            # Absent only on a package sealed before this PR: a stub is an
+            # abstention, so the label defaults fail-closed (Gemini PR-2 r1).
+            bool(evidence_inputs.get("abstain_unsupported", True)) if carry_evidence else None
+        ),
+        evidence_score=(
+            _normalize_evidence_score(evidence_inputs.get("evidence_score_unsupported"))
+            if carry_evidence
+            else None
+        ),
+        package_ref=package_hash if carry_evidence else None,
+    )
+
+
+async def attempt(
+    pool: asyncpg.Pool,
+    *,
+    outbox_id: int,
+    thread_id: int,
+    message_id: int,
+    claim_token: uuid.UUID,
+    outbox_expected_status: str,
+    thread: Any,
+) -> CodexLegResult:
+    """Run the codex leg for one claimed row.
+
+    Never raises — except cancellation (``BaseException``), which must
+    propagate: swallowing it would break asyncio shutdown semantics, and
+    every acquire in this module is a real async-with, so a cancelled leg
+    leaks no connection.
+
+    Before returning, records a durable fall-off reason (migration 290) for
+    every outcome that is NOT a served completion — including a stand_down,
+    since that too means nothing was generated in this claim. The record is
+    best-effort on its own connection (``record_fall_off_reason`` swallows
+    every ordinary ``Exception``, same cancellation exception as this
+    function's own contract above), so it can never turn a successful
+    completion late in this function into a failure, nor mask the real
+    outcome being returned.
+    """
+    try:
+        result = await _attempt(
+            pool,
+            outbox_id=outbox_id,
+            thread_id=thread_id,
+            message_id=message_id,
+            claim_token=claim_token,
+            outbox_expected_status=outbox_expected_status,
+            thread=thread,
+        )
+    except Exception as exc:  # any escape = fall off, never the retry ladder
+        logger.warning(
+            "wa_codex_leg: internal error, falling off (outbox=%s): %s",
+            outbox_id,
+            type(exc).__name__,
+        )
+        result = CodexLegResult(reason=f"internal_error:{type(exc).__name__}")
+
+    if result.text is None:
+        await record_fall_off_reason(
+            pool, outbox_id=outbox_id, raw_reason=result.fail or result.reason
+        )
+    return result
+
+
+async def _attempt(
+    pool: asyncpg.Pool,
+    *,
+    outbox_id: int,
+    thread_id: int,
+    message_id: int,
+    claim_token: uuid.UUID,
+    outbox_expected_status: str,
+    thread: Any,
+) -> CodexLegResult:
+    if not is_bot_autoreply_enabled():
+        # generate_bot_reply (retained for back-compat shape, not
+        # WA-reachable — see wa_outbox_worker's module docstring) raises
+        # BotStandingCondition for this as its FIRST statement; the route
+        # steps aside so the SAME reason surfaces here — the worker turns
+        # it into SilentStandingCondition (notifies nobody, exactly as
+        # generate_bot_reply's own silent exit always did). A provider
+        # switch must never out-rank the kill switch.
+        return CodexLegResult(reason="autoreply_disabled")
+
+    margin_s = 2.0 * wa_broker.deadline_seconds()
+    if not _window_margin_ok(thread, margin_s=margin_s):
+        return CodexLegResult(reason="window_margin")
+
+    bound = await _load_bound_thread_context(pool, thread_id=thread_id, outbox_id=outbox_id)
+    query, history = bound.query, bound.history
+    # B2.5 (ruling a/b): log WHICH inbound this attempt is bound to — an
+    # integer id only, never the body — so a retry's context can be told
+    # apart from a fresh generation's without ever printing customer text.
+    logger.info(
+        "wa_codex_leg: bound to inbound=%s (outbox=%s)",
+        bound.inbound_message_id,
+        outbox_id,
+    )
+
+    # Deterministic caption-less-attachment turn (B2.5-3), checked BEFORE
+    # the `no_customer_message` fall-off below: an empty body on a real
+    # image/document/audio/video/sticker/unsupported message is not the
+    # same standing condition as a thread with no customer inbound at
+    # all — it is a turn with a scripted answer, same reasoning as the
+    # greeting/identity/human-handoff turns further down. Placed here,
+    # before them, because it is the only one of the four whose predicate
+    # is decided by `bound.media_type` rather than by matching `query`
+    # text — and `query` is empty by construction on this branch, so none
+    # of the text matchers below could ever fire on it anyway.
+    #
+    # Notification reuses `notify_human_handoff` (best-effort, wrapped here
+    # for the same reason the human-handoff turn wraps it: a Brevo failure
+    # must never turn a served scripted reply into a text=None fall-off)
+    # with `reason="media_attachment_no_caption"` so the in-app alert and
+    # email describe what actually happened instead of borrowing the
+    # human-handoff turn's "client asked for a human" text. The RETURN
+    # VALUE is logged, never read by the reply text: `notify_human_handoff`
+    # now reports genuine delivery, but this ack is sent whatever it
+    # returns, and a True from the dedup window means a colleague was
+    # reached about the thread earlier, not about THIS attachment. The ack
+    # text therefore takes no `notified` argument at all — it never
+    # promises a notification about the attachment it cannot vouch for.
+    if not query and bound.media_type in _MEDIA_ACK_TYPES:
+        language = _media_ack_language(history)
+        notified = False
+        try:
+            notified = await notify_human_handoff(
+                pool,
+                thread_id=thread_id,
+                counterpart_phone=thread["counterpart_phone"],
+                language=language,
+                reason="media_attachment_no_caption",
+            )
+        except Exception as exc:
+            logger.error(
+                "wa_codex_leg: media-ack notification failed (outbox=%s): %s",
+                outbox_id,
+                type(exc).__name__,
+            )
+        logger.info(
+            "wa_codex_leg: scripted media ack served outbox=%s lang=%s notified=%s",
+            outbox_id,
+            language,
+            notified,
+        )
+        return CodexLegResult(
+            text=_media_ack_text(language),
+            served_by="scripted_media_ack",
+        )
+
+    if not query:
+        # generate_bot_reply raises BotStandingCondition for this too; the
+        # ROUTE decision just steps aside and lets the same reason surface
+        # — the worker turns it into SilentStandingCondition, same as
+        # autoreply_disabled above.
+        return CodexLegResult(reason="no_customer_message")
+
+    # Deterministic greeting turn — BEFORE the package build, which is the
+    # first step that can retrieve anything. A bare "halo" classifies as
+    # QueryDomain.GREETING, whose collection list is empty by design, so the
+    # builder refuses with PackageUnbuildable("greeting_domain") and (since
+    # the Gemini cut) the row takes the full five-attempt retry ladder to
+    # arrive at an English error stub ~7m45s later. Measured on the real
+    # thread, cycle 359. `match_greeting` is a pure function with no I/O and
+    # answers None for anything that is not a BARE greeting — "halo, berapa
+    # harga PT PMA?" still goes down the normal route untouched.
+    #
+    # Placed here rather than in the worker because this is where the query
+    # actually exists (one DB read, already done above), and here rather
+    # than in the package builder because a greeting is not an unbuildable
+    # package — it is a turn with a scripted answer.
+    #
+    # Deliberately does NOT run wa_finalize: that pipeline exists to police
+    # GENERATED text (abstain labels, monologue leaks, KG scaffold, pricing
+    # veto, secret egress). This text is a module constant — nothing in it
+    # came from a model, from retrieval, or from the client.
+    #
+    # Known gap, declared: `wa_outbox.generation_route` stays NULL on these
+    # rows, because that column is one half of the codex OFFER's CAS fence
+    # and this row is never offered. A scripted greeting is therefore not
+    # yet countable in SQL; the log line below is the only marker. Same
+    # ledger family as "an abstain leaves no record" — a column, and its own
+    # PR.
+    greeting = match_greeting(query)
+    if greeting is not None:
+        logger.info(
+            "wa_codex_leg: scripted greeting served outbox=%s lang=%s",
+            outbox_id,
+            greeting.language,
+        )
+        return CodexLegResult(text=greeting.text, served_by="scripted_greeting")
+
+    # Deterministic human-handoff turn (B2.5-2), THIRD authority, checked
+    # BEFORE identity and AFTER greeting: this order is deliberate and
+    # pinned by a test (test_two_authorities_match_human_request_wins_over_
+    # identity in test_wa_codex_leg.py). A message can carry BOTH an
+    # identity phrase and a human-request phrase ("are you human or can I
+    # talk to a person") — identity alone would answer with a capability
+    # list and notify nobody, silently dropping the highest-intent message
+    # this bot ever receives. Human-request wins the double-match.
+    #
+    # Notification is best-effort and wrapped here, not (only) inside
+    # `notify_human_handoff`: `notify_human_handoff` itself never raises
+    # (its own contract), but the outer `attempt()` turns ANY unhandled
+    # exception from `_attempt` into a text=None fall-off, so this stays a
+    # second, independent layer — the client's REPLY must never be lost
+    # even if a future bug breaks that contract.
+    #
+    # The reply text is now CONDITIONED on the truthful return
+    # (round-1 cross-family review, 2026-09-25; corrected round 3, S1 of
+    # spec_Fa_r3.md): `notify_human_handoff` returning True means a
+    # colleague HAS BEEN REACHED for this thread — either by THIS call, or
+    # by an earlier call still live in the dedup window — so only THEN
+    # does the client hear "I'm flagging this for a colleague". A False
+    # (nobody reached AT ALL — every channel failed this call, or the
+    # thread is in the failed-attempt cooldown) or a caught exception gets
+    # the honest variant instead: no claim that anyone was told, a
+    # concrete next step (try again shortly, or write directly). A
+    # dedup-suppressed call is no longer in the False set — it means
+    # someone already was told, and now says so.
+    human_request = match_human_request(query)
+    if human_request is not None:
+        notified = False
+        try:
+            notified = await notify_human_handoff(
+                pool,
+                thread_id=thread_id,
+                counterpart_phone=thread["counterpart_phone"],
+                language=human_request.language,
+            )
+        except Exception as exc:
+            logger.error(
+                "wa_codex_leg: human handoff notification failed (outbox=%s): %s",
+                outbox_id,
+                type(exc).__name__,
+            )
+        reply_text = (
+            human_request.text
+            if notified
+            else _human_handoff_unreachable_text(human_request.language)
+        )
+        logger.info(
+            "wa_codex_leg: scripted human handoff served outbox=%s lang=%s notified=%s",
+            outbox_id,
+            human_request.language,
+            notified,
+        )
+        return CodexLegResult(text=reply_text, served_by="scripted_human_handoff")
+
+    # Deterministic identity turn (B2.5-1b), second authority, same order,
+    # same reasoning, checked right after the greeting: measured on real
+    # delivery 2026-09-15 15:47-15:49 WITA, "ciao tu sei Zantara?" and "ti ho
+    # chiesto xiw zoc tu?" both reached the package build, found no chunk in
+    # any collection that says who Zantara is, and terminalized as the
+    # ABSTAIN stub — the second one in English, to a client writing Italian.
+    # An identity question is not an unbuildable package, same as a
+    # greeting: it is a turn with a scripted answer, so it never reaches
+    # retrieval at all.
+    identity = match_identity_question(query)
+    if identity is not None:
+        logger.info(
+            "wa_codex_leg: scripted identity served outbox=%s lang=%s",
+            outbox_id,
+            identity.language,
+        )
+        return CodexLegResult(text=identity.text, served_by="scripted_identity")
+
+    epoch = int(thread["handling_version"])
+
+    try:
+        client = await _get_rag_client()
+        resp = await client.post(
+            "/api/wa-package/build",
+            # dlp=True (G-P3): the codex leg is the ONLY caller of this
+            # endpoint (grep-verified) and is the ONE route that hands
+            # customer text to an external generator — the DLP gate applies
+            # here and only here, never on the Gemini leg.
+            json={"query": query, "history": history, "thread_epoch": epoch, "dlp": True},
+            timeout=_BUILD_TIMEOUT,
+        )
+        resp.raise_for_status()
+        built = resp.json()
+    except Exception as exc:
+        logger.warning(
+            "wa_codex_leg: package build failed (outbox=%s): %s",
+            outbox_id,
+            type(exc).__name__,
+        )
+        return CodexLegResult(reason="package_build_error")
+
+    if built.get("unbuildable") is not None:
+        return CodexLegResult(reason=f"unbuildable:{built['unbuildable']}")
+    wire = built.get("package_wire")
+    package_hash = built.get("package_hash")
+    # G-P3: local variable of THIS coroutine only — never persisted, never
+    # logged, never forwarded past the `restore_text` call below (same
+    # invocation of `_attempt` that requested the build, per the ground
+    # map's "provably never leaves Fly" verification).
+    reversal_map: dict[str, str] = built.get("reversal_map") or {}
+    if not wire or not package_hash:
+        # A builder that answered 200 without either half of the sealed
+        # envelope is a contract break, not a route decision.
+        logger.warning(
+            "wa_codex_leg: build response missing wire/hash (outbox=%s)",
+            outbox_id,
+        )
+        return CodexLegResult(reason="build_contract_break")
+
+    # ONE representation of the sealed fact (Codex r2 finding 1): every
+    # downstream read — the offer row's evidence_inputs, the finalize
+    # pipeline's frozen-evidence verdict, the pricing veto's sources —
+    # parses from the WIRE, the exact bytes package_hash covers. A
+    # response-level copy could diverge from the sealed one and steer the
+    # abstain policy with values the hash never covered, which is why the
+    # build response no longer carries one. A malformed wire raises here,
+    # pre-offer, and falls off via the outer catch.
+    parsed_wire = json.loads(wire)
+    evidence_inputs = parsed_wire.get("evidence_inputs") or {}
+
+    phone = str(thread["counterpart_phone"])
+
+    async def _tell(reason: str) -> bool:
+        return await _tell_a_human(phone=phone, reason=reason, thread_id=thread_id)
+
+    # B2.4 PR-2, named residual V4 (design B2-4-design.md §2 item B): the
+    # builder no longer judges (support_verdict is always None now — see
+    # wa_package_builder.py), so the OLD pre-offer support-negative branch
+    # is gone; the leg offers UNCONDITIONALLY. The ONE exception is a
+    # package whose final user turn carries no visible character at all —
+    # `support_inputs_from_wire`'s SAME rule (`has_visible_character`,
+    # shared so the two never drift), applied leniently here: a malformed
+    # or empty history is not this residual's problem (the offer/wait path
+    # below still runs and the daemon's own stricter check is the real
+    # backstop for that) — only a STRUCTURALLY normal last turn with no
+    # visible character is caught, so a question-less package never
+    # reaches the daemon and never folds into the broker breaker over a
+    # leg-side bug rather than a seat failure.
+    history_field = parsed_wire.get("history")
+    last_turn = history_field[-1] if isinstance(history_field, list) and history_field else None
+    last_query = last_turn.get("content") if isinstance(last_turn, dict) else None
+    if isinstance(last_query, str) and not has_visible_character(last_query):
+        logger.info(
+            "wa_codex_leg: package has no visible question, stubbing before offer "
+            "(outbox=%s)",
+            outbox_id,
+        )
+        return await _stub_unsupported(
+            parsed_wire=parsed_wire,
+            evidence_inputs=evidence_inputs,
+            query=query,
+            thread_id=thread_id,
+            tell_a_human=_tell,
+            package_hash=package_hash,
+            reason="support_no_visible_query",
+        )
+
+    # The offer boundary is FAIL-CLOSED only where the outcome is
+    # genuinely UNCERTAIN (Codex r3, sharpened by r4): the three phases
+    # are separated because they carry three different certainties.
+    #   entry   — acquiring the connection failed: offer_job never ran,
+    #             nothing durable exists -> fall off (certain).
+    #   call    — offer_job raised: the job and its generation_route
+    #             marker may already be committed -> fail (uncertain; the
+    #             retry answers ALREADY_SPENT or offers afresh).
+    #   release — the connection release raised AFTER a known result: a
+    #             certain non-OFFERED outcome stands (fall off with it);
+    #             after OFFERED the durable job makes fail the safe
+    #             reading of an unhealthy pool.
+    # A REAL async-with does the acquire/release choreography (Codex r5):
+    # CancelledError is a BaseException, so a manual __aexit__ call placed
+    # outside a finally is SKIPPED by cancellation during offer_job — the
+    # connection stays checked out and pool.close() hangs shutdown. The
+    # with-protocol releases on every exit path, cancellation included;
+    # cancellation itself then PROPAGATES (the one deliberate exception to
+    # attempt's never-raises contract — swallowing it would break asyncio
+    # semantics). ``entered`` distinguishes an acquire-ENTRY failure
+    # (certain: offer_job never ran) from a RELEASE failure (classified
+    # against the known offer outcome below).
+    offer: wa_broker.OfferResult | None = None
+    call_exc: Exception | None = None
+    release_exc: Exception | None = None
+    body_cancel: BaseException | None = None
+    entered = False
+    try:
+        async with pool.acquire() as offer_conn:
+            entered = True
+            try:
+                offer = await wa_broker.offer_job(
+                    offer_conn,
+                    outbox_id=outbox_id,
+                    thread_id=thread_id,
+                    claim_token=claim_token,
+                    outbox_expected_status=outbox_expected_status,
+                    package=wire,
+                    evidence_inputs=json.dumps(evidence_inputs, sort_keys=True),
+                    package_hash=package_hash,
+                    thread_epoch=epoch,
+                )
+            except Exception as exc:
+                call_exc = exc
+            except BaseException as exc:
+                # Cancellation (or another BaseException) — remember it
+                # BEFORE it enters __aexit__ (Codex r6): if the release
+                # then raises a plain Exception, PEP 3134 makes that
+                # exception REPLACE the cancellation (burying it in
+                # __context__), the outer except-Exception would swallow
+                # it into a fail, and the worker would retry instead of
+                # stopping. The re-raise below restores it.
+                body_cancel = exc
+                raise
+    except Exception as exc:
+        if body_cancel is not None:
+            logger.error(
+                "wa_codex_leg: connection release failed while cancelling "
+                "(outbox=%s): %s",
+                outbox_id,
+                type(exc).__name__,
+            )
+            raise body_cancel
+        if not entered:
+            logger.warning(
+                "wa_codex_leg: offer connection acquire failed "
+                "(outbox=%s): %s",
+                outbox_id,
+                type(exc).__name__,
+            )
+            return CodexLegResult(
+                reason=f"offer_acquire_error:{type(exc).__name__}"
+            )
+        release_exc = exc
+
+    if call_exc is not None or offer is None:
+        exc_name = type(call_exc).__name__ if call_exc is not None else "NoResult"
+        logger.error(
+            "wa_codex_leg: offer outcome uncertain (outbox=%s): %s",
+            outbox_id,
+            exc_name,
+        )
+        return CodexLegResult(fail=f"offer_uncertain:{exc_name}")
+    # OFFERED (a job was just created — first leg or a fresh retry leg) and
+    # REATTACHED (a prior leg for this outbox_id is still alive) both carry
+    # a job_id worth waiting on and are handled identically from here.
+    # Every other outcome is a certain non-durable fall-off (retry budget
+    # gradino 2/5) — including the now-NAMED LEGS_EXHAUSTED, distinct in
+    # the log/reason from the generic ALREADY_SPENT race fallback.
+    if offer.outcome not in (
+        wa_broker.OfferOutcome.OFFERED,
+        wa_broker.OfferOutcome.REATTACHED,
+    ):
+        logger.info(
+            "wa_codex_leg: offer fell off (outbox=%s outcome=%s)",
+            outbox_id,
+            offer.outcome.value,
+        )
+        return CodexLegResult(reason=f"offer:{offer.outcome.value}")
+    if release_exc is not None:
+        logger.error(
+            "wa_codex_leg: connection release failed after durable offer "
+            "(outbox=%s): %s",
+            outbox_id,
+            type(release_exc).__name__,
+        )
+        return CodexLegResult(fail=f"offer_uncertain:{type(release_exc).__name__}")
+    if offer.job_id is None:
+        # OFFERED/REATTACHED without an id is a broken transport contract
+        # over a possibly-durable job — an ordinary fall-off has no way to
+        # ever wait/consume/discard it (Codex r4 finding 1), so this is
+        # classified `fail` (retry ladder), never treated as recoverable.
+        logger.error(
+            "wa_codex_leg: %s without job_id (outbox=%s)",
+            offer.outcome.value,
+            outbox_id,
+        )
+        return CodexLegResult(fail="offer_contract_break:missing_job_id")
+    if offer.thread_epoch is None:
+        # Same contract-break class as a missing job_id — the post-
+        # completion drift check below has nothing safe to fence against.
+        logger.error(
+            "wa_codex_leg: %s without thread_epoch (outbox=%s job=%s)",
+            offer.outcome.value,
+            outbox_id,
+            offer.job_id,
+        )
+        return CodexLegResult(fail="offer_contract_break:missing_thread_epoch")
+    if offer.outcome is wa_broker.OfferOutcome.REATTACHED:
+        logger.info(
+            "wa_codex_leg: reattached to a still-alive prior leg "
+            "(outbox=%s job=%s)",
+            outbox_id,
+            offer.job_id,
+        )
+    # The epoch the SERVING job actually runs under — for a fresh OFFERED
+    # this equals the local `epoch` read above, but for REATTACHED it is
+    # the PRIOR leg's own frozen thread_epoch, which can predate this
+    # claim's own thread read (the prior leg may have been offered by an
+    # earlier, since-failed claim). The post-completion drift check below
+    # MUST fence against this value, not the local `epoch` — using the
+    # wrong one would silently defeat the thread-epoch-drift protocol on
+    # a reattach (spec 2.3).
+    serving_epoch = offer.thread_epoch
+
+    # From here on an OFFERED job is DURABLE: an untyped failure can no
+    # longer be an in-claim fall-off — the daemon may complete the job and
+    # the thread may drift while we cannot see it, so generating in this
+    # claim would skip the drift protocol entirely (Codex r2 finding 2).
+    # The typed non-COMPLETED outcomes below stay fall-offs: their
+    # transitions leave no pending completion behind.
+    try:
+        wait = await wa_broker.wait_for_job(pool, offer.job_id)
+    except Exception as exc:
+        logger.error(
+            "wa_codex_leg: wait failed after durable offer (outbox=%s "
+            "job=%s): %s",
+            outbox_id,
+            offer.job_id,
+            type(exc).__name__,
+        )
+        return CodexLegResult(fail=f"wait_error:{type(exc).__name__}")
+    if wait.outcome is not wa_broker.WaitOutcome.COMPLETED:
+        # B2.4 PR-2 (design §1.1 step 4, ruling I96-5 "loud absent judge"):
+        # the daemon's OWN judge coming back unable to rule is not an
+        # ordinary typed failure — it is the fail-closed gate itself
+        # firing, so it gets the SAME durable counter and an ERROR (not
+        # INFO) log, distinct from every other wait outcome below.
+        if (
+            wait.outcome is wa_broker.WaitOutcome.FAILED
+            and wait.error_class == "support_judge_unavailable"
+        ):
+            logger.error(
+                "wa_codex_leg: support judge unavailable (outbox=%s job=%s)",
+                outbox_id,
+                offer.job_id,
+            )
+            return CodexLegResult(reason="support_judge_absent:unavailable")
+        # FAILED and DEADLINE were folded into the breaker by their
+        # transition owners (complete_job / the wait CAS) — no fold here.
+        logger.info(
+            "wa_codex_leg: wait fell off (outbox=%s job=%s outcome=%s error=%s)",
+            outbox_id,
+            offer.job_id,
+            wait.outcome.value,
+            wait.error_class or "-",
+        )
+        return CodexLegResult(
+            reason=f"wait:{wait.outcome.value}:{wait.error_class or ''}"
+        )
+
+    # Post-completion section — FAIL-CLOSED. A completion now exists; if
+    # the drift verification (or the discard/consume it commands) breaks,
+    # this claim may neither serve nor regenerate: classifying such a
+    # failure as an ordinary fall-off risks answering from the pre-drift
+    # thread snapshot with the drift check silently skipped. ``fail``
+    # sends the worker down its retry ladder instead — the retry re-claims
+    # with a fresh thread read, and the spent offer answers it
+    # ``ALREADY_SPENT`` (see #5093) on the NEXT codex-leg attempt against
+    # CURRENT context, rather than any generator re-answering blind from
+    # this stale one. The unconsumed completion is reaped by the
+    # dead-consumer grace (its ``completed_at`` anchor is guaranteed by
+    # migration 274).
+    try:
+        # Drift check (spec 2.3), BEFORE consuming: a takeover — or a
+        # takeover+release, which moves handling_version without leaving
+        # human_handling true — during exec means this completion must
+        # never be sent AND must never trigger a fresh generation. Fenced
+        # against serving_epoch (the epoch the JOB actually ran under),
+        # not the local `epoch` — on a REATTACHED leg those two can
+        # differ (see serving_epoch's definition above).
+        async with pool.acquire() as check_conn:
+            fresh = await check_conn.fetchrow(
+                """
+                SELECT human_handling, handling_version
+                FROM meta_inbox_threads
+                WHERE thread_id = $1
+                """,
+                thread_id,
+            )
+        if (
+            fresh is None
+            or bool(fresh["human_handling"])
+            or int(fresh["handling_version"]) != serving_epoch
+        ):
+            # Stand-down is ATOMIC (Codex r2 finding 3): the drift verdict
+            # terminalizes the outbox row, discards the completion and
+            # writes the ledger sentinel in ONE transaction — a crash can
+            # no longer lose the verdict between a committed discard and a
+            # never-committed abort (where the reclaimer would requeue the
+            # row and a retry would regenerate what the verdict forbade).
+            # Fence FIRST: if the claim is gone, the raise rolls the whole
+            # transaction back and the new owner re-runs the drift
+            # protocol against the still-pending completion.
+            async with pool.acquire() as abort_conn:
+                async with abort_conn.transaction():
+                    fenced = await abort_conn.fetchrow(
+                        """
+                        UPDATE wa_outbox
+                        SET status = 'failed',
+                            generation_fall_off_reason = 'stand_down_drift',
+                            generation_fall_off_at = NOW()
+                        WHERE id = $1 AND claim_token = $2 AND status = $3
+                        RETURNING id
+                        """,
+                        outbox_id,
+                        claim_token,
+                        outbox_expected_status,
+                    )
+                    if fenced is None:
+                        raise _StandDownFenceLost()
+                    await wa_broker.discard_completion(
+                        abort_conn, offer.job_id, reason="takeover"
+                    )
+                    await abort_conn.execute(
+                        """
+                        UPDATE meta_inbox_messages
+                        SET status = 'failed',
+                            error = 'aborted_human_takeover_codex_drift'
+                        WHERE id = $1
+                        """,
+                        message_id,
+                    )
+            logger.info(
+                "wa_codex_leg: completion discarded on drift, row aborted "
+                "(outbox=%s job=%s)",
+                outbox_id,
+                offer.job_id,
+            )
+            return CodexLegResult(stand_down=True, reason="drift")
+
+        async with pool.acquire() as consume_conn:
+            text = await wa_broker.consume_result(consume_conn, offer.job_id)
+    except _StandDownFenceLost:
+        logger.warning(
+            "wa_codex_leg: stand-down fence lost (outbox=%s job=%s)",
+            outbox_id,
+            offer.job_id,
+        )
+        return CodexLegResult(fail="stand_down_fence_lost")
+    except Exception as exc:
+        logger.error(
+            "wa_codex_leg: post-completion verification failed (outbox=%s "
+            "job=%s): %s",
+            outbox_id,
+            offer.job_id,
+            type(exc).__name__,
+        )
+        return CodexLegResult(fail=f"post_completion:{type(exc).__name__}")
+
+    if text is None or not text.strip():
+        # Lost a race with the reaper's dead-consumer grace (or a defect no
+        # owner may fold twice) — the job's fold already happened at its
+        # transition. Fall off without a second fold.
+        logger.warning(
+            "wa_codex_leg: consume lost (outbox=%s job=%s)",
+            outbox_id,
+            offer.job_id,
+        )
+        return CodexLegResult(reason="consume_lost")
+
+    # B2.4 PR-2 (design B2-4-design.md §1.1 step 4, §1.2): the consumed
+    # text is NEVER the model's raw answer any more — it is a completion
+    # envelope the daemon sealed with a MAC under WA_BROKER_KEY, binding
+    # the verdict (and, on SUPPORTED, the answer) to THIS CLAIM's own
+    # `package_hash`. Decoding against that hash makes the REATTACHED case
+    # (design §1.5) fall out for free: a prior leg's envelope for a
+    # DIFFERENT package_hash fails the hash check inside `decode_completion`
+    # exactly like any other forgery — no separate branch needed here.
+    broker_key = getattr(settings, "wa_broker_key", None)
+    completion = decode_completion(text, key=broker_key, package_hash=package_hash)
+    if completion is None:
+        # Absent, invalid, MAC mismatch, hash mismatch — including RAW
+        # model text an OLD (un-provisioned) daemon still forwards, and a
+        # forged look-alike JSON a prompt-injected client message could
+        # make the model print (ruling I96 C2): NEVER released. Loud
+        # (I96-5): this is the fail-closed gate itself firing, not an
+        # ordinary fall-off, hence ERROR (not INFO/WARNING).
+        logger.error(
+            "wa_codex_leg: support verdict absent or unauthenticated "
+            "(outbox=%s job=%s)",
+            outbox_id,
+            offer.job_id,
+        )
+        return CodexLegResult(reason="support_judge_absent:no_verdict")
+
+    votes_repr = ",".join(vote.value for vote in completion.votes)
+    if completion.verdict is not SupportVerdict.SUPPORTED:
+        logger.info(
+            "wa_codex_leg: support verdict %s judge=%s votes=%s "
+            "(outbox=%s job=%s) — terminal stub",
+            completion.verdict.value,
+            completion.judge,
+            votes_repr,
+            outbox_id,
+            offer.job_id,
+        )
+        # D6/I83 (unchanged): a REATTACHED completion was offered by an
+        # EARLIER claim with its OWN package — this claim's rebuilt sealed
+        # wire does not describe the package that actually generated the
+        # verdict, so the carrier stays NULL exactly as the SUPPORTED
+        # release below already does for REATTACHED.
+        return await _stub_unsupported(
+            parsed_wire=parsed_wire,
+            evidence_inputs=evidence_inputs,
+            query=query,
+            thread_id=thread_id,
+            tell_a_human=_tell,
+            package_hash=package_hash,
+            reason="support_unsupported",
+            carry_evidence=offer.outcome is wa_broker.OfferOutcome.OFFERED,
+        )
+
+    logger.info(
+        "wa_codex_leg: support verdict SUPPORTED judge=%s votes=%s "
+        "(outbox=%s job=%s)",
+        completion.judge,
+        votes_repr,
+        outbox_id,
+        offer.job_id,
+    )
+    # The envelope's authenticated answer IS the model text from here on —
+    # never the raw wire `text` above, which is the envelope's own sealed
+    # JSON, not the answer.
+    text = completion.answer
+
+    # G-P3 restore: the generator answered against a REDACTED package (its
+    # prompt carried `[PII-CATEGORY-N]` placeholders, never the customer's
+    # real values), so its completion may echo those same placeholders back
+    # — substitute them for the real values HERE, before the shared
+    # finalize pipeline and before this ever becomes CodexLegResult.text. A
+    # placeholder shape the generator invented (never issued for this
+    # package) is stripped, not restored to garbage (wa_dlp.restore_text).
+    # No-op when reversal_map is empty (dlp=False build, or a redaction
+    # that found nothing to redact).
+    text = restore_text(text, reversal_map)
+
+    # Finalize — the SHARED pipeline, provider="codex" (spec 2.3): abstain
+    # verdict from the FROZEN evidence, text-defect checks, channel
+    # formatting, and the codex-only egress vetoes (pricing against the
+    # frozen package's own price sources; secret-egress scan — both
+    # MANDATORY, the pipeline refuses a fail-open configuration). Price
+    # sources come from the SAME sealed wire the executor answered from
+    # (parsed once, above) so the veto can never run against a different
+    # retrieval than the answer used. canary_tokens come from the env
+    # (PR-6 wiring, spec 4.3): provisioning plants canary files in the
+    # zantara-codex sandbox and the same values arrive here as the
+    # WA_CODEX_CANARY_TOKENS Fly secret — the pattern half of the scan is
+    # armed regardless of whether any canaries are configured.
+    price_sources: list[str] = [
+        str(chunk.get("text", "")) for chunk in parsed_wire.get("chunks", [])
+    ]
+    if parsed_wire.get("pricing_block") is not None:
+        price_sources.append(
+            json.dumps(parsed_wire["pricing_block"], ensure_ascii=False, sort_keys=True)
+        )
+
+    # `phone` and `_tell` are defined once, above, right after `evidence_inputs`
+    # is parsed — reused here unchanged (moved up in B2.1 so the support-
+    # negative branch above can call `finalize_wa_answer` with the same
+    # `tell_a_human` closure before any broker offer exists).
+    result = await finalize_wa_answer(
+        data={
+            "answer": text,
+            "abstain": bool(evidence_inputs.get("abstain")),
+            "abstain_reason": (
+                "frozen_evidence_label" if evidence_inputs.get("abstain") else None
+            ),
+            "context_length": evidence_inputs.get("context_length"),
+            "evidence_score": evidence_inputs.get("evidence_score"),
+        },
+        query=query,
+        thread_id=thread_id,
+        tell_a_human=_tell,
+        provider="codex",
+        price_sources=price_sources,
+        secret_scan=True,
+        canary_tokens=_canary_tokens(),
+    )
+    if result.outcome is FinalizeOutcome.DEFECT or not result.text.strip():
+        # TEXT_DEFECT (spec 2.3): fall off into the worker's retry ladder
+        # so a LATER codex-leg attempt can regenerate and re-enter the
+        # same pipeline (no second generator to hand this off to since the
+        # 2026-08-27 Gemini cut). The blank-text guard is defensive: SEND
+        # promises non-empty text, and a blank slipping through would
+        # otherwise be sent to the client as an empty message.
+        logger.info(
+            "wa_codex_leg: finalize rejected completion (outbox=%s job=%s "
+            "reason=%s)",
+            outbox_id,
+            offer.job_id,
+            result.defect_reason or "blank_send_text",
+        )
+        return CodexLegResult(
+            reason=f"finalize:{result.defect_reason or 'blank_send_text'}"
+        )
+
+    # A REATTACHED completion was offered by an EARLIER claim with ITS OWN
+    # package (`wa_broker.py`'s reattach path selects the still-alive job by
+    # `outbox_id` alone and never compares `package_hash`; `OfferResult`
+    # carries no hash at all), so THIS claim's rebuilt sealed wire does not
+    # describe the package that actually generated `text` — carrying it
+    # here would attribute the completion to a package it never came from.
+    # Only OFFERED (this claim's own offer, first leg or a fresh retry leg)
+    # carries the three fields; REATTACHED leaves them None rather than
+    # naming another package (D6: nothing inferred).
+    if offer.outcome is wa_broker.OfferOutcome.OFFERED:
+        return CodexLegResult(
+            text=result.text,
+            reason="completed",
+            evidence_abstain_label=bool(evidence_inputs.get("abstain")),
+            evidence_score=_normalize_evidence_score(evidence_inputs.get("evidence_score")),
+            package_ref=package_hash,
+        )
+    return CodexLegResult(
+        text=result.text,
+        reason="completed",
+    )

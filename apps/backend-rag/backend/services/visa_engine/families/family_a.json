@@ -1,0 +1,134 @@
+{
+  "family": "A",
+  "name": "Visa exemptions",
+  "category": "Visit Visa",
+  "permit_class": "VISA_FREE",
+  "entry_type": "SINGLE",
+  "law_dir": "law/A",
+  "questions": {
+    "activity": {
+      "text_en": "What is the main purpose of your visit?",
+      "options": {
+        "holiday_family_meetings_transit": "A1",
+        "official_government_duties": "A4",
+        "active_transport_crew": "A36",
+        "crew_arriving_on_operating_vessel": "A37"
+      },
+      "labels_en": {
+        "holiday_family_meetings_transit": "Tourism, family visits, meetings, incentives, conventions, exhibitions or transit.",
+        "official_government_duties": "Carry out official government duties.",
+        "active_transport_crew": "Serve as an active captain, pilot or transport crew member.",
+        "crew_arriving_on_operating_vessel": "Arrive directly aboard the vessel or floating equipment as its captain, crew member or foreign expert to operate in Indonesian waters, territorial sea, continental shelf or exclusive economic zone."
+      }
+    },
+    "nationality": {
+      "text_en": "What is the nationality of your passport? Answer with its ISO 3166-1 two-letter country code (for example AU).",
+      "kind": "nationality",
+      "otherwise_ask": "singapore_permit_holder"
+    },
+    "singapore_permit_holder": {
+      "text_en": "Do you hold a certain Singapore stay permit (for example Singapore permanent residence) that qualifies for this visa exemption?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "eligible_nationality": {
+      "text_en": "Has your nationality been confirmed as eligible for this visa exemption?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "travel_status": {
+      "text_en": "Which travel status applies to you?",
+      "options": {
+        "national_passport": true,
+        "stateless_or_non_national_document": false
+      }
+    },
+    "stay_days": {
+      "text_en": "How many days do you need to stay?",
+      "kind": "integer"
+    }
+  },
+  "visas": {
+    "A1": {
+      "sponsor_required": false,
+      "sponsor": "NOT_REQUIRED",
+      "is_sold": true,
+      "stay_days": 30,
+      "stay_options": [
+        {
+          "value": 30,
+          "unit": "DAY"
+        }
+      ],
+      "extendable": false,
+      "max_total_days": 30,
+      "price_keys": [
+        {
+          "category": "single_entry_visas",
+          "item_key": "A1 Visa-Free Tourism"
+        }
+      ],
+      "requires_questions": ["nationality", "travel_status"]
+    },
+    "A4": {
+      "sponsor_required": false,
+      "sponsor": "NOT_REQUIRED",
+      "is_sold": null,
+      "stay_days": 30,
+      "stay_options": [
+        {
+          "value": 30,
+          "unit": "DAY"
+        }
+      ],
+      "extendable": false,
+      "max_total_days": 30,
+      "price_keys": [],
+      "requires_questions": ["eligible_nationality", "travel_status"]
+    },
+    "A36": {
+      "sponsor_required": false,
+      "sponsor": "NOT_REQUIRED",
+      "is_sold": null,
+      "stay_days": 30,
+      "stay_options": [
+        {
+          "value": 30,
+          "unit": "DAY"
+        }
+      ],
+      "extendable": false,
+      "max_total_days": 30,
+      "price_keys": [],
+      "requires_questions": ["travel_status"]
+    },
+    "A37": {
+      "sponsor_required": false,
+      "sponsor": "NOT_REQUIRED",
+      "is_sold": null,
+      "stay_days": 30,
+      "stay_options": [
+        {
+          "value": 30,
+          "unit": "DAY"
+        }
+      ],
+      "extendable": false,
+      "max_total_days": 30,
+      "price_keys": [],
+      "requires_questions": ["travel_status"]
+    }
+  },
+  "notes": [
+    "All four cards state a single entry, 30 DAY initial stay, no extension and no conversion. No sponsor is required.",
+    "A4 says certain nationalities without supplying the country list in its card. Eligibility must be confirmed against the official list; no nationality list is inferred. A36/A37 do not inherit that unstated restriction.",
+    "OWNER RULING 2026-10-19: A1 decides from the regulation-sourced list in its card (eligible_nationalities, separate from the page verbatim): 19 states/SARs per Perpres 95/2024 Lampiran A (13) and Permenimipas 10/2026 Lampiran (6), with sources and retrieval date 2026-10-19. The nationality answer is an ISO 3166-1 alpha-2 code; an unknown code is asked again; a known unlisted code is offered the Singapore permit-holder route (Perpres 95/2024 Lampiran B): yes gives TO_VERIFY (the 10/2026 title drops that wording; NB-2 reads the route as limited to certain Kepri entry points), no gives NOT_COVERED. 18 of the 19 (all but MO) are also B1-eligible and family B never excludes them.",
+    "The travel-status question enforces the explicit stateless/non-national-document exclusion, not document possession. Passport validity, tickets, crew registration and application steps remain checklists.",
+    "A36 and A37 overlap for some crew; the operating-vessel option states the more specific A37 activity. Their different definitions are preserved, including A37's narrower generic visa-type wording.",
+    "Only A1 has an exact commercial key. A4/A36/A37 is_sold stays null. Official zero PNBP is not a commercial price. DB itap and apply_channel stay null."
+  ]
+}

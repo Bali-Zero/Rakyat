@@ -1,0 +1,53 @@
+{
+  "code": "E28E",
+  "official_name_id": "E28E Visa Investor Kawasan Ekonomi Khusus",
+  "source_url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/E28E",
+  "retrieved_at": "2026-10-17T13:27:12Z",
+  "page_sha256": "93a2ca506307f70ebef5a0801891653a582c50d817b6551a985673670c8efcac",
+  "definition_verbatim": null,
+  "jenis_visa_verbatim": null,
+  "stay_days": null,
+  "extendable": null,
+  "entry": null,
+  "where_to_apply": null,
+  "sponsor_required": {
+    "as_stated_boolean": null,
+    "verbatim": null,
+    "invitation_requirement_see": "requirements_verbatim (Persyaratan Khusus)"
+  },
+  "requirements_verbatim": null,
+  "pengajuan_intro_verbatim": null,
+  "allowed_activities": null,
+  "prohibited_or_conditions_verbatim": null,
+  "ketentuan_lain_verbatim": null,
+  "pnbp_verbatim_for_reference_only": null,
+  "notes": [
+    "HTTP 200; official title exists but visa-body content is unavailable: 'Data Belum Tersedia'. NOT_FOUND describes missing substantive content, not proof that the visa code is abolished.",
+    "All unstated legal fields remain null; no sibling visa requirements substituted."
+  ],
+  "status": "NOT_FOUND",
+  "itap_verbatim": null,
+  "itap_eligibility_as_stated_boolean": null,
+  "itap_status": "TO_VERIFY",
+  "itap_family_evidence": "ITAP.json",
+  "total_max_stay_verbatim": null,
+  "http_status": 200,
+  "raw_path": "raw/E28E.html",
+  "to_verify": [
+    "itap_eligibility_as_stated_boolean",
+    "where_to_apply",
+    "definition_verbatim",
+    "jenis_visa_verbatim",
+    "stay_days",
+    "extendable",
+    "entry",
+    "sponsor_required",
+    "requirements_verbatim",
+    "allowed_activities",
+    "prohibited_or_conditions_verbatim",
+    "ketentuan_lain_verbatim",
+    "pnbp_verbatim_for_reference_only",
+    "total_max_stay_verbatim"
+  ],
+  "unavailable_verbatim": "Data Belum Tersedia"
+}

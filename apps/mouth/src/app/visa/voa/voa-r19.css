@@ -1,0 +1,604 @@
+/**
+ * GARUDA VOA — R19 skin, scoped to this funnel only.
+ *
+ * Reuses the [data-product="my"] tokens declared in app/globals.css — no
+ * new colour is introduced here. The theme half of that pair is NOT named
+ * in this file's selectors (see the specificity note below): `layout.tsx`
+ * decides which ground the funnel wears, and this skin reads whatever
+ * --bz-* / --tx-* the winning theme block declares. Neither my-block
+ * declares the funnel-shell vocabulary AppFrame/AppWizard read
+ * (--surface-base, --text-primary, --color-text-muted,
+ * --color-border-subtle, --accent-funnel), so this file bridges those
+ * names onto the my-block's --bz-* and --tx-* tokens. Primary CTA = ink
+ * fill + paper text, never a copper fill (R19 law: copper is a person,
+ * not an action).
+ *
+ * --text-on-accent is bound to --bz-base, not --bz-on-warm, and that
+ * binding is why this file survives a ground flip at all. --bz-on-warm's
+ * job elsewhere is "text on a warm/copper fill", which is always paper —
+ * correct in the light block, but in the dark block it resolves to the
+ * SAME value as --tx-pure. Since --accent-funnel here is tx-pure (not a
+ * copper fill), that identity made the dark-ground CTA paper-on-paper —
+ * invisible text, measured empirically against the running dev server
+ * before that fix (the computed foreground and background of the button
+ * were byte-identical). --bz-base is tx-pure's actual opposite by
+ * construction in BOTH themes (the ground a theme's ink text sits on), so
+ * the CTA renders ink-fill/paper-text on the daylight ground this funnel
+ * ships on today, and would render the inverted paper-fill/ink-text on an
+ * ink ground, with no edit here.
+ *
+ * Selector is [data-product="my"][data-garuda-voa="r19"] — TWO attributes,
+ * and neither of them is the theme. Both halves are load-bearing:
+ *
+ *   - the theme is absent so a ground flip is one line in `layout.tsx` and
+ *     not a 50-selector rewrite in here. It used to be present
+ *     ([data-theme="operative-dark"]), which is exactly why moving this
+ *     funnel to daylight cost this file a full re-scope once already.
+ *   - the PAIR keeps the rule at 0-2-0, and that is what beats the core
+ *     theme sheets. Both packages/core/tokens/themes/operative-dark.css and
+ *     .../operative-light.css declare --surface-base and --text-primary
+ *     under a plain [data-theme="..."] (0-1-0) matching the SAME element
+ *     this rule matches. A bare [data-garuda-voa="r19"] would also be
+ *     0-1-0, would tie with them, and would leave the outcome to stylesheet
+ *     import order — the hazard the previous selector was bumped to escape.
+ *     Dropping the theme must not drop the specificity with it.
+ *
+ * The descendant rules below inherit that 0-2-0 base; see the [data-funnel]
+ * note for the 0-3-0 that one needs.
+ */
+[data-product="my"][data-garuda-voa="r19"] {
+  min-height: 100vh;
+  background: var(--bz-base);
+  color: var(--tx-pure);
+  font-family: var(--font-sans);
+
+  --surface-base: var(--bz-base);
+  --text-primary: var(--tx-pure);
+  --color-text-muted: var(--tx-secondary);
+  --color-border-subtle: var(--bz-border);
+  --accent-funnel: var(--tx-pure);
+  --text-on-accent: var(--bz-base);
+}
+
+/*
+ * AppFrame stamps data-funnel="visa" on its own inner section element.
+ * That element also matches packages/core/tokens/semantic.css's rule for
+ * [data-funnel="visa"] (0-1-0) and themes/editorial.css's rule for
+ * [data-theme="editorial"] [data-funnel="visa"] (0-2-0, matching via the
+ * html data-theme="editorial" ancestor the pre-paint script always sets).
+ * Both redeclare --accent-funnel back to red directly on that element,
+ * which an ancestor's inherited value can never out-cascade. Redeclared
+ * here at 0-3-0 so the ink fill actually reaches it.
+ */
+[data-product="my"][data-garuda-voa="r19"] [data-funnel] {
+  --accent-funnel: var(--tx-pure);
+  --accent-funnel-text: var(--tx-pure);
+  --text-on-accent: var(--bz-base);
+}
+
+/*
+ * Hero handoff — "rather ask a person first?".
+ *
+ * R19 law, three ways: the pill is NOT copper (copper marks ownership, the
+ * person who owns a case, never an action a visitor takes), NOT red (the
+ * my-block has no red at all — danger itself speaks copper), and its target
+ * is 48px tall, above the 44px floor, because on a 390px phone this is the
+ * one control a visitor uses when the wizard is not what they wanted.
+ * Forest --bz-green carries WhatsApp's meaning inside the palette instead of
+ * importing WhatsApp's own brand green, which token-lint would read as a new
+ * hardcoded brand hex on a redesigned surface. (Not spelled out here either:
+ * this file's own contract test forbids a colour literal anywhere in it,
+ * comments included — which is how this docblock first turned it red.)
+ *
+ * The rule that follows sits BELOW the hero copy and ABOVE the wizard's own
+ * "STEP 1 OF 4" strip, so the two rules never stack into the collision the
+ * first pass of this lane produced.
+ */
+[data-product="my"][data-garuda-voa="r19"] .voa-hero-wa {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+  margin: 0 0 1.5rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--bz-border);
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-hero-wa__line {
+  margin: 0;
+  flex: 1 1 14rem;
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  line-height: 1.45;
+  color: var(--tx-secondary);
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-hero-wa__cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  min-height: 48px;
+  padding: 0 1.25rem;
+  border: 1px solid var(--bz-green);
+  border-radius: 999px;
+  background: var(--bz-elevated);
+  color: var(--bz-green);
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background 160ms ease,
+    color 160ms ease;
+}
+
+/* The dot is the only ornament: a presence light, not a logo. */
+[data-product="my"][data-garuda-voa="r19"] .voa-hero-wa__cta::before {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--bz-green);
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-hero-wa__cta:hover,
+[data-product="my"][data-garuda-voa="r19"] .voa-hero-wa__cta:focus-visible {
+  background: var(--bz-green);
+  color: var(--bz-elevated);
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-hero-wa__cta:hover::before,
+[data-product="my"][data-garuda-voa="r19"]
+  .voa-hero-wa__cta:focus-visible::before {
+  background: var(--bz-elevated);
+}
+
+/* Phone: the pill takes the full row rather than crowding the copy. */
+@media (max-width: 30rem) {
+  [data-product="my"][data-garuda-voa="r19"] .voa-hero-wa__cta {
+    width: 100%;
+  }
+}
+
+/*
+ * Safe Clock hero — the published filing deadline as the first thing an
+ * eligible visitor reads, replacing the clause it used to be inside an
+ * AppFrame subtitle.
+ *
+ * The number takes --bz-data (globals.css declares that token FOR dates and
+ * prices, 11.60:1 on this ground). What changes between states is the left
+ * RULE and the word, never the number's colour — so the three live states
+ * read as three states rather than three temperatures of the same one, and
+ * the data keeps one consistent meaning across the whole funnel.
+ *
+ * The `today` rule is --bz-status-mark, used strictly inside the contract
+ * globals.css writes for it: a non-text marker at 3.42:1 (WCAG 1.4.11's 3:1
+ * floor), a border and never a fill, never text, at most one per viewport —
+ * and this rule renders only in the `today` state, which is mutually
+ * exclusive with the other three, so the "one per viewport" half holds by
+ * construction rather than by convention.
+ */
+[data-product="my"][data-garuda-voa="r19"] .voa-clock {
+  margin: 0 0 1.75rem;
+  padding: 1.25rem 1.25rem 1.25rem 1.5rem;
+  border-left: 3px solid var(--bz-border);
+  border-radius: 0 8px 8px 0;
+  background: var(--bz-elevated);
+  display: grid;
+  gap: 0.4rem;
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-clock--ample {
+  border-left-color: var(--state-info);
+  border-left-width: 3px;
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-clock--soon {
+  border-left-color: var(--state-warning);
+  border-left-width: 7px;
+}
+
+/*
+ * D-day is the only state with a width of its own, and that is a daylight
+ * fact rather than a taste. On the ink ground `soon` and `today` were 2.4:1
+ * apart in luminance and 7px each: the colour carried the difference. On the
+ * paper ground the same two tokens measure 5.35:1 and 5.03:1 against it —
+ * 1.06:1 apart from EACH OTHER, which is not a difference a person reads,
+ * and is no difference at all to someone who does not separate a burnt
+ * warning brown from a mark red. Two of the four Safe Clock states collapsed
+ * into one the moment the funnel moved to daylight. Width is the axis that
+ * does not depend on hue perception, and 10px also puts the loudest rule on
+ * the most urgent day, which is the order the rest of this table already
+ * reads in (3 → 7 → 10, then back to 3 for a state that is over).
+ */
+[data-product="my"][data-garuda-voa="r19"] .voa-clock--today {
+  border-left-color: var(--bz-status-mark);
+  border-left-width: 10px;
+}
+
+/*
+ * `--bz-border-hover` used to carry this state. On the ink ground it
+ * composited to 1.78:1 — that is not a fourth colour, it is an absence, and
+ * the PR that shipped it claimed four distinct state identities. It is no
+ * better on paper, where it is the opaque R19 line-strong and measures
+ * 2.09:1: still under 1.4.11's 3:1 non-text floor, so the reason this rule
+ * does not use it survived the ground flip unchanged.
+ *
+ * `--tx-tertiary` carries it instead, and what that NAME resolves to is now
+ * ground-dependent in a way worth stating: the daylight my-block declares no
+ * `--tx-tertiary` of its own, so it arrives from the plain theme block as an
+ * alias of `--tx-secondary` and lands on the muted ink at 5.67:1 (it was
+ * 4.19:1 on the ink ground). Clear of the floor either way, and it still
+ * reads as "retired" rather than as "broken". (No literal here on purpose:
+ * this file's contract test bans one anywhere, comments included.)
+ */
+[data-product="my"][data-garuda-voa="r19"] .voa-clock--passed {
+  border-left-color: var(--tx-tertiary);
+  border-left-width: 3px;
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-clock__count {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 0.6rem;
+}
+
+/*
+ * clamp() bottoms out at a size that still reads as the page's largest thing
+ * on a 360px phone, which is the device the mandate names as the real one.
+ * Tabular figures so the count does not reflow sideways when it crosses from
+ * two digits to one at WITA midnight.
+ */
+[data-product="my"][data-garuda-voa="r19"] .voa-clock__num {
+  font-family: var(--font-serif);
+  font-size: clamp(3rem, 14vw, 4.5rem);
+  font-weight: 450;
+  line-height: 0.95;
+  letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums;
+  color: var(--bz-data);
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-clock__unit,
+[data-product="my"][data-garuda-voa="r19"] .voa-clock__word {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--tx-pure);
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-clock__word--lead {
+  font-family: var(--font-serif);
+  font-size: clamp(2.5rem, 11vw, 3.75rem);
+  font-weight: 450;
+  line-height: 1;
+  letter-spacing: -0.035em;
+  color: var(--bz-data);
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-clock__date {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.45;
+  color: var(--tx-pure);
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-clock__note {
+  margin: 0.35rem 0 0;
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--tx-secondary);
+}
+
+/*
+ * The handoff is a control on its own row, not a link inside a sentence.
+ *
+ * Its predecessor was an `<a>` with `display: inline-flex; min-height: 48px`
+ * sitting mid-paragraph, which is how you reach the thumb floor without
+ * "turning it into a button" — except that on the promoted build at 390px it
+ * broke the note into three fragments, because a 48px box does not fit a
+ * 1.35-line-height text line. The unit tests could not see it; the rendered
+ * page could. A tap target and a sentence want different boxes.
+ *
+ * Copper is the ground's own "needs you" tone and this IS a request directed
+ * at the reader, so the text takes --bz-accent (4.57:1 on the card) rather
+ * than the ink the body uses. It is an outline, never a fill: a filled copper
+ * control on this surface would read as the primary purchase action, which
+ * lives on the checkout screen and is green.
+ */
+[data-product="my"][data-garuda-voa="r19"] .voa-clock__handoff {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  min-height: 48px;
+  margin-top: 0.5rem;
+  padding: 0 1.1rem;
+  border: 1px solid var(--tx-tertiary);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--bz-accent);
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: none;
+  transition: border-color 160ms ease;
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-clock__handoff:hover,
+[data-product="my"][data-garuda-voa="r19"] .voa-clock__handoff:focus-visible {
+  border-color: var(--bz-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/*
+ * The only motion here is orientation: the hero settles once, on the render
+ * that first resolves the day, so the eye lands on the number rather than
+ * discovering it. It never repeats, and it is gone entirely under
+ * reduced-motion — which is the whole point of declaring it in a media query
+ * instead of a transition the preference cannot reach.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  [data-product="my"][data-garuda-voa="r19"] .voa-clock {
+    animation: voa-clock-settle 260ms ease-out both;
+  }
+}
+
+@keyframes voa-clock-settle {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/*
+ * "What happens next" / "What we cannot promise".
+ *
+ * Two lists at the SAME weight. The limits are not small print — the
+ * commitment and its boundary are the same kind of statement, and shrinking
+ * one of them is how a funnel turns an honest limit into a thing it hopes you
+ * skip. Same size, same colour, one rule apart.
+ *
+ * The numerals take --bz-data like every other figure on this surface, at a
+ * size that reads as a list marker rather than competing with the clock's
+ * count — R3 of the design corner: one peak per viewport, and the peak here is
+ * still the number of days.
+ */
+[data-product="my"][data-garuda-voa="r19"] .voa-next {
+  margin: 2rem 0 0;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--bz-border);
+  display: grid;
+  gap: 0.75rem;
+}
+
+/*
+ * MEASURED, not chosen by eye. The first draft of this rule carried
+ * --tx-tertiary, which composites to 4.23:1 on --bz-base — under 1.4.3's
+ * 4.5:1 floor, and these headings are 0.72rem, so the large-text exemption
+ * does not apply. --tx-secondary composites to 7.04:1 and is what the rest of
+ * this stylesheet already uses for text (the only other --tx-tertiary here is
+ * a BORDER, where the floor is 3:1). The section's own guard pins both halves.
+ */
+[data-product="my"][data-garuda-voa="r19"] .voa-next__heading {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--tx-secondary);
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-next__heading--limits {
+  margin-top: 1.25rem;
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-next__steps,
+[data-product="my"][data-garuda-voa="r19"] .voa-next__limits {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.7rem;
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-next__step {
+  display: grid;
+  grid-template-columns: 1.4rem minmax(0, 1fr);
+  gap: 0.7rem;
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--tx-pure);
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-next__n {
+  font-family: var(--font-serif);
+  font-size: 1.05rem;
+  font-weight: 450;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  color: var(--bz-data);
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-next__limit {
+  padding-left: 0.85rem;
+  border-left: 2px solid var(--bz-accent);
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--tx-pure);
+}
+
+/*
+ * Full width on purpose. The handoff on the clock is a pill because it sits
+ * beside prose; this one closes a section and is the last thing before the
+ * visitor decides, so it takes the row. (It also avoids, by construction, the
+ * `align-self` slip recorded on the clock's own handoff: in a grid container
+ * the inline axis is governed by `justify-self`, not `align-self`, and
+ * stretching is what was wanted here anyway.)
+ *
+ * Note for whoever edits this file next: its contract test bans a colour
+ * literal in COMMENTS too, and a PR reference written as a hash followed by
+ * four digits is indistinguishable from a short hex. Spell PR numbers without
+ * the hash here — this rule cost one red run to learn.
+ */
+[data-product="my"][data-garuda-voa="r19"] .voa-next__ask {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  margin-top: 1rem;
+  padding: 0 1.25rem;
+  border: 1px solid var(--tx-tertiary);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--bz-accent);
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: border-color 160ms ease;
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-next__ask:hover,
+[data-product="my"][data-garuda-voa="r19"] .voa-next__ask:focus-visible {
+  border-color: var(--bz-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/*
+ * "Start your application" — the magic-link step, which is the ONLY door into
+ * the rest of the funnel.
+ *
+ * Measured before it was styled, and both numbers are why this block exists:
+ *
+ *   1. The field had no visible edge. Its boundary read
+ *      --color-border-subtle, which line 42 of this file aliases to
+ *      --bz-border: composited over the field's own fill that is 1.40:1, and
+ *      SC 1.4.11 asks 3:1 of the boundary of an interactive control. The
+ *      boundary now takes --tx-tertiary and measures 4.18:1. That token was
+ *      rejected for TEXT one section below at 4.23:1 — the floors differ, and
+ *      this file already used it as a border for the same reason.
+ *   2. The step had no heading. The screen carried exactly one heading, its
+ *      own h1, and the entry to the application was a bare label sitting
+ *      BELOW the "delete this check" control. A customer who has just read
+ *      "1. Upload a photo of your passport page" had nothing on the page
+ *      connecting that sentence to an email field.
+ *
+ * Why an email step at all, stated here because the page cannot show it: the
+ * upload route is behind the account session cookie that only the magic-link
+ * exchange sets (upload/api-client.ts, auth/exchange/route.ts). A direct link
+ * to the upload page would land an unauthenticated visitor on a screen whose
+ * first request fails. The email IS the door, so it is named as one.
+ *
+ * 16px on the input is not a type choice: below 16px iOS Safari zooms the
+ * viewport on focus, which on a 390px screen throws the rest of the form off
+ * the page — the mandate's mobile-first accent, enforced by arithmetic.
+ */
+[data-product="my"][data-garuda-voa="r19"] .voa-entry {
+  display: grid;
+  gap: 0.6rem;
+  margin: 1.75rem 0 0;
+  max-width: 420px;
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-entry__heading {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--tx-secondary);
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-entry__body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--tx-pure);
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-entry__label {
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--tx-pure);
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-entry__input {
+  min-height: 48px;
+  padding: 0 0.85rem;
+  border: 1px solid var(--tx-tertiary);
+  border-radius: 6px;
+  background: var(--bz-elevated);
+  color: var(--tx-pure);
+  font-family: var(--font-sans);
+  font-size: 16px;
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-entry__input:focus-visible {
+  outline: 2px solid var(--bz-accent);
+  outline-offset: 2px;
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-entry__submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 1.25rem;
+  border: none;
+  border-radius: 8px;
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-entry__submit[disabled] {
+  cursor: default;
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-entry__status {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--tx-pure);
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-entry__error {
+  margin: 0;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--bz-accent);
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--tx-pure);
+}
+
+[data-product="my"][data-garuda-voa="r19"] .voa-entry__form {
+  display: grid;
+  gap: 0.6rem;
+}

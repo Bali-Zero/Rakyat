@@ -1,0 +1,781 @@
+"""
+Re-index kbli_2025_final from KBLI_2025_FINAL_CLEAN.json (v8.0-final-complete).
+
+Replaces old OSS_RBA_API data with definitive BPS 7/2025 + PP28/2025 data.
+Preserves existing gold editorial points (doc_type=kbli_gold).
+
+Data flow:
+1. Load 1,563 codes from KBLI_2025_FINAL_CLEAN.json
+2. Build rich embedding text per code (uraian + per_skala + PMA + intel_2026)
+3. Generate dense embeddings (text-embedding-3-small, 1536 dims)
+4. Generate BM25 sparse vectors (hash-based, vocab_size=30000)
+5. Delete old OSS_RBA_API points (preserve gold editorial)
+6. Upsert with named vectors {"dense": [...], "bm25": {...}}
+
+Deterministic UUIDs ensure idempotent re-runs.
+
+Usage:
+    cd apps/backend-rag
+    source .venv/bin/activate
+    PYTHONPATH=. python backend/scripts/reindex_kbli_2025_final.py --dry-run
+    PYTHONPATH=. python backend/scripts/reindex_kbli_2025_final.py --qdrant-url http://localhost:16335
+"""
+
+import argparse
+import hashlib
+import json
+import logging
+import os
+import re
+import sys
+import uuid
+from datetime import datetime, timezone
+
+from dotenv import load_dotenv
+
+from backend.core.collection_registry import resolve_collection_name
+from backend.scripts._kbli_repo_root import resolve_repo_root
+from backend.services.kbli_editorial_certification import (
+    assert_certified_source_dataset,
+    load_editorial_registry,
+    matches_editorial_certification,
+    with_neutral_kbli_chat_opener,
+)
+from backend.services.kbli_pma_disclosure import disclose_bali, disclose_pma
+
+# Repo root: robust resolver that works in both the dev checkout and the Fly
+# container (where parents[4] raises IndexError — the layout is shallower).
+# Computed early so the .env loader and SOURCE_FILE both derive from it.
+_REPO_ROOT = resolve_repo_root(
+    ["source_documents/KBLI_2025_FINAL_CLEAN.json"],
+    script_file=__file__,
+)
+
+# Load apps/backend-rag/.env so QDRANT_URL / QDRANT_API_KEY / OPENAI_API_KEY are present
+# even when this script is invoked directly (not via the FastAPI app). The path is
+# derived from _REPO_ROOT (which replaces the old parents[2] — a frozen measurement
+# of the dev layout that raised IndexError in the container). Without this the script
+# silently fell back to localhost:6333 and aborted on a missing OPENAI_API_KEY (env
+# had to be exported by hand). Existing env vars win (load_dotenv does not override),
+# so CI / explicit exports still take precedence.
+_BACKEND_RAG_ENV = _REPO_ROOT / ".env"
+if _BACKEND_RAG_ENV.exists():
+    load_dotenv(_BACKEND_RAG_ENV)
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
+
+# --- Config ---
+COLLECTION_NAME = resolve_collection_name("kbli_2025_final")
+EMBEDDING_MODEL = "text-embedding-3-small"
+EMBED_BATCH_SIZE = 20
+UPSERT_BATCH_SIZE = 20
+DELETE_BATCH_SIZE = 100
+
+SOURCE_FILE = _REPO_ROOT / "source_documents" / "KBLI_2025_FINAL_CLEAN.json"
+
+# 5-digit KBLI codes (e.g. "56101")
+_CODE_RE = re.compile(r"^\d{5}$")
+
+
+def parse_only_codes(raw: str | None) -> list[str] | None:
+    """Parse the --only flag value into a list of validated 5-digit codes.
+
+    Returns ``None`` when *raw* is falsy (flag not given).  Raises
+    ``argparse.ArgumentTypeError`` on any malformed token so argparse surfaces
+    a clean error — the caller never sees junk.
+    """
+    if not raw:
+        return None
+    codes: list[str] = []
+    for token in raw.split(","):
+        code = token.strip()
+        if not _CODE_RE.match(code):
+            raise argparse.ArgumentTypeError(
+                f"invalid KBLI code {code!r} in --only — expected 5-digit numeric",
+            )
+        codes.append(code)
+    if not codes:
+        raise argparse.ArgumentTypeError("--only received no codes")
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for c in codes:
+        if c not in seen:
+            seen.add(c)
+            unique.append(c)
+    return unique
+
+
+def filter_entries_to_codes(
+    entries: list[dict],
+    only_codes: list[str] | None,
+) -> list[dict]:
+    """Filter *entries* to *only_codes*, erroring on any absent code.
+
+    A silent skip would report success over nothing (esiste≠armato), so we exit
+    nonzero naming every missing code instead.
+    """
+    if only_codes is None:
+        return entries
+    lookup: dict[str, dict] = {}
+    for e in entries:
+        code = e.get("kode_kbli_2025", "")
+        if code:
+            lookup[code] = e
+    missing = [c for c in only_codes if c not in lookup]
+    if missing:
+        logger.error(
+            "--only requested code(s) absent from source data: %s",
+            ", ".join(missing),
+        )
+        sys.exit(1)
+    return [lookup[c] for c in only_codes]
+
+
+def deterministic_uuid(code: str) -> str:
+    """Generate deterministic UUID from KBLI code for idempotent upserts."""
+    key = f"kbli_2025_bps::{code}"
+    return str(uuid.UUID(hashlib.md5(key.encode()).hexdigest()))
+
+
+def render_bali_embedding_block(entry: dict) -> list[str]:
+    """Render Bali facts without using them to infer a national PMA verdict."""
+    bali = disclose_bali(entry)
+    if not bali["has_bali_l4"]:
+        return []
+
+    lines = ["## Status PMA di Bali (L4 — moratorium provinsi)"]
+    if bali["bali_blocked"] is True:
+        lines.append(
+            "- DIBLOKIR untuk PMA di Bali: kegiatan risiko Rendah/Menengah-Rendah "
+            "tidak dapat didaftarkan PT PMA di Provinsi Bali (moratorium 2026-05-13)."
+        )
+    lines.append(f"- Status Bali: {bali['bali_status']}")
+
+    if bali["bali_reason"]:
+        lines.append(f"- Alasan: {bali['bali_reason']}")
+    if bali["bali_closure_scope"]:
+        lines.append(f"- Cakupan penutupan: {bali['bali_closure_scope']}")
+    if bali["bali_confidence"] and bali["bali_confidence"] != "HIGH":
+        lines.append(
+            f"- Catatan: tingkat keyakinan penutupan ini {bali['bali_confidence']} "
+            "— bacaan konservatif, menunggu verifikasi lebih lanjut."
+        )
+    if bali["bali_closure_url"]:
+        lines.append(f"- Sumber penutupan: {bali['bali_closure_url']}")
+    lines.append(
+        "- Note: national status (Perpres 10/2021) can differ from the "
+        "provincial block; read both verdicts."
+    )
+    return lines
+
+
+def disclosed_canonical_intel(
+    entry: dict,
+    registry: dict | None = None,
+) -> dict | None:
+    """Return only exact reviewed intel, with a compiler-owned neutral opener."""
+    code = str(entry.get("kode_kbli_2025") or "")
+    intel = entry.get("intel_2026")
+    if not isinstance(intel, dict):
+        return None
+    if not matches_editorial_certification(
+        "canonicalIntel",
+        code,
+        entry,
+        intel,
+        registry,
+    ):
+        return None
+    return with_neutral_kbli_chat_opener(code, intel)
+
+
+def build_embedding_text(entry: dict, registry: dict | None = None) -> str:
+    """
+    Build rich embedding text for a KBLI code.
+
+    Combines BPS uraian, PP28 licensing detail, PMA status, and intel_2026
+    into a single searchable text block with [CONTEXT:] prefix.
+    """
+    code = entry["kode_kbli_2025"]
+    judul = entry.get("judul", "")
+    uraian = entry.get("uraian", "")
+    sektor = entry.get("sektor_id", "")
+    pma_disclosure = disclose_pma(entry)
+    pma_status = pma_disclosure["pma_status"]
+    pma_verified = pma_disclosure["pma_verification_status"] == "located"
+    certified_intel = disclosed_canonical_intel(entry, registry)
+
+    parts = [
+        f"[CONTEXT: KBLI 2025 - BPS 7/2025 + PP28/2025 - Kode {code} - {judul}]",
+        "",
+        f"# KBLI {code}: {judul}",
+        "",
+    ]
+
+    # BPS description (uraian)
+    if uraian:
+        parts.append("## Deskripsi (BPS)")
+        parts.append(uraian)
+        parts.append("")
+
+    # Sektor
+    if sektor:
+        parts.append(f"**Sektor:** {sektor}")
+        parts.append("")
+
+    # PMA status
+    if pma_status and pma_verified:
+        pma_section = [f"## Status PMA: {pma_status}"]
+        cap = pma_disclosure["pma_max_asing"]
+        if pma_disclosure["pma_cap_verified"]:
+            if cap == "special":
+                pma_section.append("- Kepemilikan asing: kondisi khusus non-persentase")
+            elif cap is not None:
+                pma_section.append(f"- Kepemilikan asing maksimal: {cap}%")
+        else:
+            pma_section.append("- Kepemilikan asing: belum terverifikasi")
+        if pma_disclosure["pma_kondisi"]:
+            pma_section.append(f"- Kondisi: {pma_disclosure['pma_kondisi']}")
+        if pma_disclosure["pma_prioritas"]:
+            pma_section.append("- Prioritas: Ya")
+        if pma_disclosure["pma_nota"]:
+            pma_section.append(f"- Nota: {pma_disclosure['pma_nota']}")
+        parts.extend(pma_section)
+        parts.append("")
+    else:
+        parts.extend(
+            [
+                "## Status PMA: NOT_VERIFIED",
+                "- Whole-code foreign ownership is withheld: no located official basis and source vintage are recorded.",
+                "",
+            ]
+        )
+
+    # PP28/2025 licensing (per_skala)
+    # CAP: some codes (e.g. 61108 telecom) carry 60+ per_skala entries whose verbatim
+    # persyaratan/kewajiban blow the embedding text past the 8192-token limit of
+    # text-embedding-3-small (observed 539k chars). The licensing detail is repetitive
+    # across scale combinations; for SEMANTIC SEARCH the first N distinct entries carry
+    # the signal. We cap to PER_SKALA_MAX entries and note the omission, so the embedding
+    # stays under the model limit without losing the discriminating content.
+    PER_SKALA_MAX = 12
+    per_skala = entry.get("per_skala", [])
+    if per_skala:
+        parts.append("## Perizinan per Skala Usaha (PP 28/2025)")
+        omitted = len(per_skala) - PER_SKALA_MAX
+        for skala in per_skala[:PER_SKALA_MAX]:
+            skala_names = ", ".join(skala.get("skala_usaha", []))
+            risiko = skala.get("kategori_risiko", "")
+            perizinan = skala.get("perizinan", "")
+            jangka = skala.get("jangka_waktu", "")
+
+            parts.append(f"### Skala: {skala_names}")
+            parts.append(f"- Kategori risiko: {risiko}")
+            parts.append(f"- Perizinan: {perizinan}")
+            if jangka:
+                parts.append(f"- Jangka waktu: {jangka}")
+
+            persyaratan = skala.get("persyaratan", [])
+            if persyaratan:
+                parts.append("- Persyaratan:")
+                for req in persyaratan:
+                    parts.append(f"  - {req}")
+
+            kewajiban = skala.get("kewajiban", [])
+            if kewajiban:
+                parts.append("- Kewajiban:")
+                for kew in kewajiban:
+                    parts.append(f"  - {kew}")
+
+            kewenangan = skala.get("kewenangan", "")
+            if kewenangan:
+                parts.append(f"- Kewenangan: {kewenangan}")
+
+            fiktif = skala.get("fiktif_positif", False)
+            if fiktif:
+                parts.append("- Fiktif positif: Ya (otomatis jika tidak ditolak)")
+
+            parts.append("")
+        if omitted > 0:
+            parts.append(
+                f"(... {omitted} kombinasi skala/ruang-lingkup tambahan dengan pola "
+                "perizinan serupa tidak ditampilkan di sini.)",
+            )
+            parts.append("")
+
+    # Intel 2026 (Bali-specific intelligence)
+    # Intel is generated prose and may contain whole-code ownership claims.
+    # It is one atomic editorial layer: do not attempt substring redaction.
+    intel = certified_intel if pma_verified else None
+    if intel:
+        parts.append("## Intelligence 2026")
+        if isinstance(intel, dict):
+            for k, v in intel.items():
+                if v:
+                    parts.append(f"- {k}: {v}")
+        elif isinstance(intel, str):
+            parts.append(intel)
+        parts.append("")
+
+    # L4 Bali sovereign-local status (moratorium 2026-05-13) — embed it so semantic
+    # search surfaces the Bali block, not just the national PMA status.
+    bali_block = render_bali_embedding_block(entry)
+    if bali_block:
+        parts.extend(bali_block)
+        parts.append("")
+
+    text = "\n".join(parts)
+    # Final safety cap: text-embedding-3-small rejects inputs over 8192 tokens.
+    # ~24000 chars is a conservative ceiling (mixed ID/EN ≈ 3 chars/token); the
+    # PER_SKALA_MAX cap above keeps virtually every code well under this, but a
+    # pathological uraian or ruang_lingkup must never abort the whole re-index.
+    MAX_EMBED_CHARS = 20000
+    if len(text) > MAX_EMBED_CHARS:
+        text = text[:MAX_EMBED_CHARS].rsplit("\n", 1)[0] + "\n(... dipotong untuk batas panjang.)"
+    return text
+
+
+def build_payload(
+    entry: dict,
+    embedding_text: str,
+    registry: dict | None = None,
+) -> dict:
+    """Build Qdrant payload matching the kbli_2025_final schema."""
+    code = entry["kode_kbli_2025"]
+    per_skala = entry.get("per_skala", [])
+
+    # Extract scale names and risk levels
+    scales = []
+    risk_levels = set()
+    for skala in per_skala:
+        scales.extend(skala.get("skala_usaha", []))
+        if skala.get("kategori_risiko"):
+            risk_levels.add(skala["kategori_risiko"])
+
+    description = entry.get("uraian", "")
+    risk_category = next(iter(risk_levels), "")
+
+    # L4 Bali sovereign-local layer (flat fields — KBLI flat-payload golden rule).
+    # National PMA openness (pma_status) != Bali registrability (bali_status).
+    pma = disclose_pma(entry)
+    bali = disclose_bali(entry)
+    certified_intel = disclosed_canonical_intel(entry, registry)
+
+    return {
+        "text": embedding_text,
+        "content": embedding_text,
+        "kode": code,
+        "kode_kbli": code,
+        "kode_kbli_2025": code,
+        "judul": entry.get("judul", ""),
+        "official_description": description,
+        "description": description,
+        "prefix_2": code[:2],
+        "prefix_3": code[:3],
+        "digit_count": len(code),
+        "sources": ["BPS_7_2025", "PP_28_2025"],
+        "doc_type": "kbli_bps",
+        "version": "v8.2-final-l4-bali-reviewed",
+        "sektor": entry.get("sektor_id", ""),
+        "section": entry.get("sektor_id", ""),
+        "pma_status": pma["pma_status"],
+        "pma_max_asing": pma["pma_max_asing"],
+        "pma_verification_status": pma["pma_verification_status"],
+        "pma_official_basis": pma["pma_official_basis"],
+        "pma_source_vintage": pma["pma_source_vintage"],
+        "pma_cap_special": pma["pma_cap_special"],
+        "pma_cap_verified": pma["pma_cap_verified"],
+        "has_per_skala": bool(per_skala),
+        "scales": scales,
+        "risk_levels": list(risk_levels),
+        "kategori_risiko": risk_category,
+        "has_intel_2026": certified_intel is not None,
+        "has_gold_content": False,
+        "status_mapping": entry.get("status_mapping", ""),
+        # L4 Bali (flat) — sovereign-local status, moratorium 2026-05-13
+        **bali,
+        "indexed_at": "",  # filled at upsert time
+    }
+
+
+async def embed_texts(texts: list[str], client) -> list[list[float]]:
+    """Embed texts using OpenAI text-embedding-3-small."""
+    all_embeddings = []
+    for i in range(0, len(texts), EMBED_BATCH_SIZE):
+        batch = texts[i : i + EMBED_BATCH_SIZE]
+        response = await client.embeddings.create(model=EMBEDDING_MODEL, input=batch)
+        all_embeddings.extend([d.embedding for d in response.data])
+        logger.info(f"  Embedded batch {i}-{i + len(batch)} ({len(batch)} texts)")
+    return all_embeddings
+
+
+async def ensure_payload_indexes(qdrant_url: str, api_key: str | None):
+    """Ensure the keyword payload indexes this script's filters depend on exist.
+
+    delete_old_points() and verify_collection() filter/count on doc_type and
+    metadata.doc_type; the kode_kbli index lets callers fetch a single code. Qdrant
+    rejects a filtered count/delete on an UNINDEXED keyword field with
+    'Index required but not found' — which silently aborted the delete step on a
+    collection that had never been indexed. Creating an index is idempotent (a no-op
+    if it already exists), so this is safe to run on every re-index.
+    """
+    import httpx
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["api-key"] = api_key
+
+    fields = ["doc_type", "metadata.doc_type", "kode_kbli"]
+    async with httpx.AsyncClient(timeout=60) as http:
+        for field in fields:
+            resp = await http.put(
+                f"{qdrant_url}/collections/{COLLECTION_NAME}/index",
+                params={"wait": "true"},
+                json={"field_name": field, "field_schema": "keyword"},
+                headers=headers,
+            )
+            if resp.status_code == 200:
+                logger.info(f"  Payload index ready: {field}")
+            else:
+                # Already-exists or benign errors should not abort the re-index.
+                logger.warning(f"  Index ensure for {field}: {resp.status_code} {resp.text[:120]}")
+
+
+async def delete_old_points(qdrant_url: str, api_key: str | None):
+    """Delete old OSS_RBA_API points, preserving gold editorial points."""
+    import httpx
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["api-key"] = api_key
+
+    async with httpx.AsyncClient(timeout=120) as http:
+        # Count old points first
+        count_resp = await http.post(
+            f"{qdrant_url}/collections/{COLLECTION_NAME}/points/count",
+            json={
+                "filter": {
+                    "should": [
+                        {"key": "doc_type", "match": {"value": "kbli_bps"}},
+                        {"key": "metadata.doc_type", "match": {"value": "kbli_bps"}},
+                    ],
+                },
+                "exact": True,
+            },
+            headers=headers,
+        )
+        if count_resp.status_code == 200:
+            old_count = count_resp.json()["result"]["count"]
+            logger.info(f"  Found {old_count} old (non-gold) points to delete")
+        else:
+            logger.warning(f"  Count failed: {count_resp.status_code}")
+            old_count = 0
+
+        if old_count == 0:
+            logger.info("  No old points to delete")
+            return
+
+        # Delete by filter (all non-gold points)
+        del_resp = await http.post(
+            f"{qdrant_url}/collections/{COLLECTION_NAME}/points/delete",
+            json={
+                "filter": {
+                    "should": [
+                        {"key": "doc_type", "match": {"value": "kbli_bps"}},
+                        {"key": "metadata.doc_type", "match": {"value": "kbli_bps"}},
+                    ],
+                },
+            },
+            headers=headers,
+        )
+        if del_resp.status_code == 200:
+            logger.info(f"  Deleted {old_count} old points")
+        else:
+            logger.error(f"  Delete failed: {del_resp.status_code} {del_resp.text[:300]}")
+            raise RuntimeError("Failed to delete old points")
+
+
+async def upsert_to_qdrant(points: list[dict], qdrant_url: str, api_key: str | None):
+    """Upsert points to Qdrant in batches, with retry+backoff per batch (network flap resilience)."""
+    import asyncio
+
+    import httpx
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["api-key"] = api_key
+
+    async with httpx.AsyncClient(timeout=120) as http:
+        for i in range(0, len(points), UPSERT_BATCH_SIZE):
+            batch = points[i : i + UPSERT_BATCH_SIZE]
+            for attempt in range(1, 5):
+                try:
+                    resp = await http.put(
+                        f"{qdrant_url}/collections/{COLLECTION_NAME}/points",
+                        json={"points": batch},
+                        headers=headers,
+                    )
+                    if resp.status_code != 200:
+                        logger.error(
+                            f"  Upsert batch {i} failed: {resp.status_code} {resp.text[:300]}"
+                        )
+                    else:
+                        logger.info(f"  Upserted batch {i}-{i + len(batch)} ({len(batch)} points)")
+                    break
+                except httpx.TimeoutException:
+                    if attempt == 4:
+                        logger.error(f"  Upsert batch {i} timed out after 4 attempts, giving up")
+                        raise
+                    wait = 2**attempt
+                    logger.warning(
+                        f"  Upsert batch {i} timeout (attempt {attempt}/4), retrying in {wait}s"
+                    )
+                    await asyncio.sleep(wait)
+
+
+async def verify_collection(qdrant_url: str, api_key: str | None):
+    """Verify final collection state."""
+    import httpx
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["api-key"] = api_key
+
+    async with httpx.AsyncClient(timeout=30) as http:
+        r = await http.get(f"{qdrant_url}/collections/{COLLECTION_NAME}", headers=headers)
+        if r.status_code == 200:
+            info = r.json()["result"]
+            total = info["points_count"]
+            indexed = info["indexed_vectors_count"]
+            logger.info(f"  Collection: {total} points, {indexed} indexed vectors")
+
+        # Count by doc_type.
+        # Payloads are written FLAT (build_payload puts doc_type at top level, per the KBLI
+        # flat-payload golden rule), but legacy points may still carry it nested under
+        # `metadata.doc_type`. Match either, mirroring delete_old_points' dual-key filter —
+        # otherwise this verify count returns 0 on a successful flat re-index (green-that-lies).
+        for doc_type in ["kbli_bps", "kbli_gold"]:
+            cr = await http.post(
+                f"{qdrant_url}/collections/{COLLECTION_NAME}/points/count",
+                json={
+                    "filter": {
+                        "should": [
+                            {"key": "doc_type", "match": {"value": doc_type}},
+                            {"key": "metadata.doc_type", "match": {"value": doc_type}},
+                        ],
+                    },
+                    "exact": True,
+                },
+                headers=headers,
+            )
+            if cr.status_code == 200:
+                count = cr.json()["result"]["count"]
+                logger.info(f"  doc_type={doc_type}: {count} points")
+
+
+async def main():
+    parser = argparse.ArgumentParser(
+        description="Re-index kbli_2025_final from KBLI_2025_FINAL_CLEAN.json",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Parse and build but don't embed or upsert",
+    )
+    parser.add_argument(
+        "--qdrant-url",
+        type=str,
+        default="",
+        help="Qdrant URL (default: from env or localhost)",
+    )
+    parser.add_argument("--skip-delete", action="store_true", help="Skip deleting old points")
+    parser.add_argument("--limit", type=int, default=0, help="Limit number of codes (0=all)")
+    parser.add_argument(
+        "--only",
+        type=parse_only_codes,
+        default=None,
+        metavar="CODE[,CODE...]",
+        help="Comma-separated 5-digit KBLI codes — re-index ONLY these codes. "
+        "Errors out if any requested code is absent from the source data. "
+        "When set, the delete step is SKIPPED automatically (upsert-only path): "
+        "deterministic UUIDs overwrite the old points for those codes anyway, "
+        "and the collection-wide delete would wipe codes you did NOT select.",
+    )
+    args = parser.parse_args()
+
+    qdrant_url = args.qdrant_url or os.getenv("QDRANT_URL", "http://localhost:6333")
+    qdrant_api_key = os.getenv("QDRANT_API_KEY", "")
+
+    # Try to get Qdrant key from environment or use known production key
+    if not qdrant_api_key and "16335" in qdrant_url:
+        # Fly proxy — try getting key from Qdrant app
+        logger.warning("No QDRANT_API_KEY set. For fly proxy, set it or pass via env.")
+
+    logger.info(f"Source: {SOURCE_FILE}")
+    logger.info(f"Qdrant: {qdrant_url} -> {COLLECTION_NAME}")
+    logger.info(f"Dry run: {args.dry_run}")
+
+    if not SOURCE_FILE.exists():
+        logger.error(f"Source file not found: {SOURCE_FILE}")
+        sys.exit(1)
+
+    # Load source data
+    logger.info("Loading KBLI_2025_FINAL_CLEAN.json...")
+    source_bytes = SOURCE_FILE.read_bytes()
+    registry = load_editorial_registry()
+    assert_certified_source_dataset(source_bytes, registry)
+    source = json.loads(source_bytes)
+
+    version = source["metadata"]["version"]
+    entries = source["data"]
+    total_codes = len(entries)
+    logger.info(f"Version: {version}")
+    logger.info(f"Total codes: {total_codes}")
+
+    # Per-code selection (--only): filter BEFORE building points.
+    entries = filter_entries_to_codes(entries, args.only)
+    if args.only:
+        logger.info("%d of %d codes selected via --only", len(entries), total_codes)
+
+    if args.limit > 0:
+        entries = entries[: args.limit]
+        logger.info(f"Limited to {args.limit} codes")
+
+    # Build points
+    logger.info("Building embedding texts and payloads...")
+    indexed_at = datetime.now(timezone.utc).isoformat()
+    all_points = []
+
+    for entry in entries:
+        code = entry["kode_kbli_2025"]
+        embedding_text = build_embedding_text(entry, registry)
+        payload = build_payload(entry, embedding_text, registry)
+        payload["indexed_at"] = indexed_at  # flat payload (KBLI flat-payload golden rule)
+
+        all_points.append(
+            {
+                "id": deterministic_uuid(code),
+                "payload": payload,
+                "_text_to_embed": embedding_text,
+            },
+        )
+
+    logger.info(f"Built {len(all_points)} points")
+
+    # Statistics
+    has_uraian = sum(1 for e in entries if e.get("uraian"))
+    has_per_skala = sum(1 for e in entries if e.get("per_skala"))
+    has_pma = sum(1 for e in entries if e.get("pma_status"))
+    has_certified_intel = sum(
+        1 for entry in entries if disclosed_canonical_intel(entry, registry) is not None
+    )
+    logger.info("Data coverage:")
+    logger.info(f"  uraian (BPS description): {has_uraian}/{len(entries)}")
+    logger.info(f"  per_skala (PP28 licensing): {has_per_skala}/{len(entries)}")
+    logger.info(f"  pma_status: {has_pma}/{len(entries)}")
+    logger.info(f"  certified intel_2026: {has_certified_intel}/{len(entries)}")
+
+    # Text length stats
+    text_lengths = [len(p["_text_to_embed"]) for p in all_points]
+    avg_len = sum(text_lengths) / len(text_lengths)
+    logger.info(
+        f"  Avg text length: {avg_len:.0f} chars (min={min(text_lengths)}, max={max(text_lengths)})",
+    )
+
+    if args.dry_run:
+        logger.info("\nDRY RUN - sample points:")
+        for p in all_points[:2]:
+            pl = p["payload"]  # flat payload
+            logger.info(f"  Code: {pl['kode']}")
+            logger.info(f"  Judul: {pl['judul'][:80]}")
+            logger.info(f"  Sektor: {pl['sektor']}")
+            logger.info(f"  PMA (national): {pl['pma_status']}")
+            logger.info(f"  Bali (L4): {pl['bali_status']} (blocked={pl['bali_blocked']})")
+            logger.info(f"  Scales: {pl['scales']}")
+            logger.info(f"  Text preview: {p['_text_to_embed'][:300]}...")
+            logger.info("")
+        bali_blocked = sum(1 for p in all_points if p["payload"]["bali_blocked"])
+        bali_l4 = sum(1 for p in all_points if p["payload"]["has_bali_l4"])
+        logger.info(
+            f"L4 coverage: {bali_l4}/{len(all_points)} have Bali status, {bali_blocked} blocked in Bali"
+        )
+        logger.info(f"Would delete old OSS_RBA_API points and upsert {len(all_points)} new points")
+        return
+
+    # --- Real execution ---
+
+    # Step 1: Generate dense embeddings
+    from openai import AsyncOpenAI
+
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if not openai_key:
+        logger.error("OPENAI_API_KEY not set")
+        sys.exit(1)
+
+    client = AsyncOpenAI(api_key=openai_key)
+    texts = [p["_text_to_embed"] for p in all_points]
+    logger.info(f"\nStep 1: Embedding {len(texts)} texts with {EMBEDDING_MODEL}...")
+    embeddings = await embed_texts(texts, client)
+    logger.info(f"Got {len(embeddings)} embeddings (dims={len(embeddings[0])})")
+
+    # Step 2: Generate BM25 sparse vectors
+    sys.path.insert(0, str(_REPO_ROOT))
+    from backend.core.bm25_vectorizer import BM25Vectorizer
+
+    bm25 = BM25Vectorizer()
+
+    # Update avg doc length based on actual corpus
+    token_lengths = [len(bm25.tokenize(t)) for t in texts]
+    avg_tokens = sum(token_lengths) / len(token_lengths)
+    bm25.update_avg_doc_length(avg_tokens)
+
+    logger.info(f"\nStep 2: Generating BM25 sparse vectors (avg {avg_tokens:.0f} tokens/doc)...")
+    sparse_vectors = [bm25.generate_sparse_vector(t) for t in texts]
+    logger.info(f"Generated {len(sparse_vectors)} sparse vectors")
+
+    # Step 3: Ensure payload indexes (delete/verify filters depend on them), then delete old points
+    logger.info(f"\nStep 3: Ensuring payload indexes on {COLLECTION_NAME}...")
+    await ensure_payload_indexes(qdrant_url, qdrant_api_key)
+    # --only forces skip-delete: the collection-wide delete would wipe codes
+    # we did NOT select, and deterministic UUIDs overwrite the old points for
+    # the selected codes anyway (upsert-only path).
+    effective_skip_delete = args.skip_delete or args.only is not None
+    if not effective_skip_delete:
+        logger.info(f"Step 3: Deleting old OSS_RBA_API points from {COLLECTION_NAME}...")
+        await delete_old_points(qdrant_url, qdrant_api_key)
+    elif args.only is not None:
+        logger.info("Step 3: Delete skipped (--only implies upsert-only)")
+    else:
+        logger.info("Step 3: Delete skipped (--skip-delete)")
+
+    # Step 4: Build final Qdrant points and upsert
+    logger.info(f"\nStep 4: Upserting {len(all_points)} points...")
+    qdrant_points = []
+    for point, emb, sparse in zip(all_points, embeddings, sparse_vectors, strict=False):
+        qdrant_points.append(
+            {
+                "id": point["id"],
+                "vector": {
+                    "dense": emb,
+                    "bm25": sparse,
+                },
+                "payload": point["payload"],
+            },
+        )
+
+    await upsert_to_qdrant(qdrant_points, qdrant_url, qdrant_api_key)
+
+    # Step 5: Verify
+    logger.info(f"\nStep 5: Verifying {COLLECTION_NAME}...")
+    await verify_collection(qdrant_url, qdrant_api_key)
+
+    logger.info(f"\nDone. {len(qdrant_points)} BPS codes re-indexed into {COLLECTION_NAME}.")
+    logger.info("Gold editorial points preserved. Old OSS_RBA_API data replaced.")
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    asyncio.run(main())

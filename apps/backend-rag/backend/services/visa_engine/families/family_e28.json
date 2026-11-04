@@ -1,0 +1,285 @@
+{
+  "family": "E28",
+  "name": "Investor visas",
+  "category": "KITAS/Limited Stay",
+  "permit_class": "ITAS",
+  "entry_type": null,
+  "law_dir": "law/E28",
+  "start_question": "investment_route",
+  "questions": {
+    "investment_route": {
+      "text_en": "Which investment activity or corporate role will you undertake in Indonesia?",
+      "options": {
+        "shareholder_in_sponsoring_company": "E28A",
+        "individual_establishing_company": "E28B",
+        "capital_market_investor": "E28C",
+        "foreign_branch_or_subsidiary_director_or_commissioner": "E28D",
+        "ikn_foreign_branch_or_subsidiary_director_or_commissioner": "E28F",
+        "parent_company_representative_in_indonesian_branch": "E28G"
+      }
+    },
+    "own_shareholding": {
+      "text_en": "Do you personally own shares worth at least IDR 10 billion (or equivalent) in the sponsoring company registered with the Ministry of Investment/BKPM?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "sponsor": {
+      "text_en": "Will that company sponsor your visa application?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "investment_commitment_e28b_5y": {
+      "text_en": "For the 5-year stay: Can you commit to establishing an Indonesian company with placed shares or investment of at least USD 2.5 million, fulfilled within 90 days after entry?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "investment_commitment_e28b_10y": {
+      "text_en": "For the 10-year stay: Can you commit to establishing an Indonesian company with placed shares or investment of at least USD 5 million, fulfilled within 90 days after entry?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "investment_commitment_e28d_5y": {
+      "text_en": "For the 5-year stay: Will the foreign company commit to invest at least USD 25 million, fulfilled within 90 days after entry?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "investment_commitment_e28d_10y": {
+      "text_en": "For the 10-year stay: Will the foreign company commit to invest at least USD 50 million, fulfilled within 90 days after entry?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "investment_commitment_e28f_5y": {
+      "text_en": "For the 5-year stay: Will the foreign company commit to invest at least USD 5 million, fulfilled within 90 days after entry?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "investment_commitment_e28f_10y": {
+      "text_en": "For the 10-year stay: Will the foreign company commit to invest at least USD 10 million, fulfilled within 90 days after entry?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "investment_commitment_e28g_5y": {
+      "text_en": "For the 5-year stay: Will the foreign company commit to invest at least USD 25 million, fulfilled within 90 days after entry?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "investment_commitment_e28g_10y": {
+      "text_en": "For the 10-year stay: Will the foreign company commit to invest at least USD 50 million, fulfilled within 90 days after entry?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "investment_commitment_e28c_5y": {
+      "text_en": "For the 5-year stay: do you hold Indonesian government bonds, listed-company shares or mutual funds worth at least USD 350,000?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "investment_commitment_e28c_10y": {
+      "text_en": "For the 10-year stay: do you hold Indonesian government bonds, listed-company shares or mutual funds worth at least USD 700,000, or an apartment worth at least USD 1,000,000?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "stay_months": {
+      "text_en": "How many months do you need to stay in Indonesia?",
+      "kind": "integer"
+    }
+  },
+  "visas": {
+    "E28": {
+      "sponsor_required": null,
+      "entry_type": null,
+      "is_sold": null,
+      "extendable": null,
+      "stay_options": null,
+      "price_keys": []
+    },
+    "E28A": {
+      "sponsor_required": true,
+      "entry_type": "MULTIPLE",
+      "is_sold": true,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 1,
+          "unit": "YEAR"
+        },
+        {
+          "value": 2,
+          "unit": "YEAR"
+        }
+      ],
+      "price_keys": [
+        {
+          "category": "kitas_permits",
+          "item_key": "Investor KITAS 2 Years (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Investor KITAS 2 Years (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Investor KITAS 2 Years (Extend)"
+        }
+      ],
+      "requires_question": "own_shareholding",
+      "max_total_months": 72
+    },
+    "E28B": {
+      "sponsor_required": false,
+      "entry_type": "MULTIPLE",
+      "is_sold": null,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 5,
+          "unit": "YEAR"
+        },
+        {
+          "value": 10,
+          "unit": "YEAR"
+        }
+      ],
+      "price_keys": [],
+      "sponsor": "NOT_REQUIRED",
+      "max_total_months": 120,
+      "requires_question_by_stay": {
+        "5": "investment_commitment_e28b_5y",
+        "10": "investment_commitment_e28b_10y"
+      }
+    },
+    "E28C": {
+      "sponsor_required": false,
+      "entry_type": "MULTIPLE",
+      "is_sold": null,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 5,
+          "unit": "YEAR"
+        },
+        {
+          "value": 10,
+          "unit": "YEAR"
+        }
+      ],
+      "price_keys": [],
+      "sponsor": "NOT_REQUIRED",
+      "max_total_months": 120,
+      "requires_question_by_stay": {
+        "5": "investment_commitment_e28c_5y",
+        "10": "investment_commitment_e28c_10y"
+      }
+    },
+    "E28D": {
+      "sponsor_required": false,
+      "entry_type": "MULTIPLE",
+      "is_sold": null,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 5,
+          "unit": "YEAR"
+        },
+        {
+          "value": 10,
+          "unit": "YEAR"
+        }
+      ],
+      "price_keys": [],
+      "sponsor": "NOT_REQUIRED",
+      "max_total_months": 120,
+      "requires_question_by_stay": {
+        "5": "investment_commitment_e28d_5y",
+        "10": "investment_commitment_e28d_10y"
+      }
+    },
+    "E28E": {
+      "sponsor_required": null,
+      "entry_type": null,
+      "is_sold": null,
+      "extendable": null,
+      "stay_options": null,
+      "price_keys": []
+    },
+    "E28F": {
+      "sponsor_required": false,
+      "entry_type": "MULTIPLE",
+      "is_sold": null,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 5,
+          "unit": "YEAR"
+        },
+        {
+          "value": 10,
+          "unit": "YEAR"
+        }
+      ],
+      "price_keys": [],
+      "sponsor": "NOT_REQUIRED",
+      "max_total_months": 120,
+      "requires_question_by_stay": {
+        "5": "investment_commitment_e28f_5y",
+        "10": "investment_commitment_e28f_10y"
+      }
+    },
+    "E28G": {
+      "sponsor_required": false,
+      "entry_type": "MULTIPLE",
+      "is_sold": null,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 5,
+          "unit": "YEAR"
+        },
+        {
+          "value": 10,
+          "unit": "YEAR"
+        }
+      ],
+      "price_keys": [],
+      "sponsor": "NOT_REQUIRED",
+      "requires_question_by_stay": {
+        "5": "investment_commitment_e28g_5y",
+        "10": "investment_commitment_e28g_10y"
+      }
+    }
+  },
+  "notes": [
+    "E28 and E28E are secondary NOT_FOUND cards, excluded from the Guide; unknown fields remain null + TO_VERIFY.",
+    "E28A is the Investor KITAS. Only its three exact commercial keys exist in the price list. No 1-year or Golden Visa price is invented; is_sold for unpriced codes remains null.",
+    "Investor KITAP + MERP exists in the price list but is not mapped to a code: ITAP.json has no verified per-code conversion. DB itap stays null for all codes.",
+    "Initial stays retain YEAR units; comparison uses exactly 12 MONTHS per YEAR. max_total_months uses exact calendar equivalents of the supplementary official table: 6 YEAR = 72 MONTH, 10 YEAR = 120 MONTH. No years are converted to days.",
+    "E28A page offers 1 or 2 years; the supplementary table says 2 years for the first ITAS. Preserve both; TO_VERIFY. The Guide follows the code page for initial choices.",
+    "E28G has substantive official text and is reachable, but current classification remains TO_VERIFY; no retirement or successor code is inferred. Its cumulative maximum is unknown.",
+    "Activity routes overlap: E28A also allows company establishment and corporate roles. The Guide follows the selected route and does not assert exclusivity or full eligibility.",
+    "Golden Visa investment commitments are asked for the stay tier actually selected (guide.py requires_question_by_stay): stay months first, the smallest fitting 5/10-year option, then one yes/no on that tier's exact card amount (investment_commitment_<code>_5y / _10y). A no gives NOT_COVERED naming the tier; there is no silent downgrade to the lower tier. E28C apartment alternative exists only in the 10-year requirements and conflicts with the securities-only summary; no standalone property route is inferred. A yes answer does not verify the commitment. Documents remain a result checklist.",
+    "Offshore/onshore application location and code-specific ITAP conversion remain null + TO_VERIFY. Commercial price-key names do not establish legal application-channel rules."
+  ]
+}

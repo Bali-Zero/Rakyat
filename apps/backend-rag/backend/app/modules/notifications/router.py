@@ -1,0 +1,759 @@
+"""
+Notifications Router
+====================
+FastAPI router for notification endpoints.
+
+Endpoints:
+- POST /api/notifications/check: Run manual expiry check
+- GET /api/notifications/status: Get notification system status
+- GET /api/notifications/pending: Get pending alerts (admin)
+- POST /api/notifications/send: Send pending alerts (admin)
+"""
+
+import logging
+from datetime import datetime, timezone
+from uuid import UUID
+
+import asyncpg
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel, field_validator
+
+from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.modules.notifications.checker import ExpiryChecker
+from backend.app.modules.notifications.models import ClientInfo
+from backend.app.modules.notifications.service import NotificationService
+from backend.app.services.internal_email import EmailDeliveryUncertain
+from backend.app.utils.crm_utils import is_crm_admin
+from backend.app.utils.internal_api_auth import verify_internal_api_key
+from backend.security.pii_log_identifier import redact_identifier_for_log
+from backend.services.notifications.email_audit import _bounded_scrub
+from backend.services.notifications.email_http import get_email_client
+from backend.services.notifications.recipient_redirects import redirect_recipients
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/notifications", tags=["notifications"])
+
+
+class CheckRequest(BaseModel):
+    """Request body for manual check trigger."""
+
+    client_id: int | None = None  # If None, check all clients
+
+
+class CheckResponse(BaseModel):
+    """Response from check operation."""
+
+    success: bool
+    alerts_generated: int
+    message: str
+    timestamp: datetime
+
+
+class StatusResponse(BaseModel):
+    """System status response."""
+
+    status: str
+    pending_alerts: int
+    last_check: datetime | None
+    email_provider: str
+
+
+class EmailAttachment(BaseModel):
+    """Email attachment (base64-encoded)."""
+
+    name: str
+    content: str  # base64-encoded
+    contentType: str = "application/pdf"
+
+
+class SendEmailRequest(BaseModel):
+    """Request body for sending a direct email."""
+
+    to: str
+    subject: str
+    body: str
+    cc: str | None = None  # comma-separated CC addresses
+    bcc: str | None = None  # comma-separated BCC addresses
+    attachments: list[EmailAttachment] | None = None
+    idempotency_key: UUID | None = None
+    # Context for the @balizero.com CC hard rule (Antonello 2026-06-17):
+    # invoice → asya@, everything else → the practice's assigned lead.
+    # Both optional so legacy callers still work (they fall back to asya@).
+    email_type: str | None = None  # e.g. "invoice_client", "welcome", "waiting_docs_client"
+    assigned_to: str | None = None  # the practice's assigned team-member email
+
+    @field_validator("subject", "body")
+    @classmethod
+    def _reject_empty(cls, v: str, info) -> str:
+        if not v or not v.strip():
+            raise ValueError(f"{info.field_name} must not be empty or whitespace-only")
+        return v
+
+
+class SendEmailResponse(BaseModel):
+    """Response from direct email send."""
+
+    success: bool
+    message: str
+    delivery_uncertain: bool = False
+
+
+async def get_clients_from_db(pool, client_id: int | None = None) -> list[ClientInfo]:
+    """Fetch clients from database.
+
+    Ground truth (2026-08-08, information_schema on live `clients`): there is
+    no `preferred_language`/`language`/`lang`/`locale` column on this table at
+    all — `COALESCE(c.preferred_language, ...)` raised
+    ``asyncpg.UndefinedColumnError``. Same established default used elsewhere
+    in this codebase for the identical gap (lkpm_ready_pack.py: "Default to
+    English — preferred_language column may not exist"). There is also no
+    `is_active` boolean — the live status column is `status` (character
+    varying: 'lead' | 'active' | 'prospect' | 'inactive'); a notifications
+    sweep for expiring passports/visas/birthdays is scoped to clients Bali
+    Zero is actively serving, i.e. `status = 'active'`.
+
+    Ground truth (2026-08-08, prove-live post-#3822/#3827): the query was
+    missing a soft-delete filter — 1238 rows came back from a `status =
+    'active'` scan against 741 actually-active (non-deleted) clients. The
+    497-row gap is soft-deleted clients (`deleted_at IS NOT NULL`) whose
+    `status` was never flipped off 'active'. Without this filter, the first
+    real daily sweep (APScheduler cron, 09:00 WITA) would have emailed alerts
+    to ~497 ex-clients. `deleted_at` exists on the live `clients` table.
+    """
+    async with pool.acquire() as conn:
+        if client_id:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    c.id,
+                    c.email,
+                    c.full_name,
+                    'en' as preferred_language,
+                    c.assigned_to as team_leader_email,
+                    c.date_of_birth,
+                    c.passport_expiry,
+                    c.passport_number,
+                    v.expiry_date as visa_expiry,
+                    v.visa_type
+                FROM clients c
+                LEFT JOIN (
+                    SELECT DISTINCT ON (client_id)
+                        client_id, expiry_date, document_type as visa_type
+                    FROM documents
+                    WHERE document_category = 'immigration'
+                    AND expiry_date IS NOT NULL
+                    ORDER BY client_id, expiry_date DESC
+                ) v ON v.client_id = c.id
+                WHERE c.id = $1 AND c.status = 'active' AND c.deleted_at IS NULL
+                """,
+                client_id,
+            )
+        else:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    c.id,
+                    c.email,
+                    c.full_name,
+                    'en' as preferred_language,
+                    c.assigned_to as team_leader_email,
+                    c.date_of_birth,
+                    c.passport_expiry,
+                    c.passport_number,
+                    v.expiry_date as visa_expiry,
+                    v.visa_type
+                FROM clients c
+                LEFT JOIN (
+                    SELECT DISTINCT ON (client_id)
+                        client_id, expiry_date, document_type as visa_type
+                    FROM documents
+                    WHERE document_category = 'immigration'
+                    AND expiry_date IS NOT NULL
+                    ORDER BY client_id, expiry_date DESC
+                ) v ON v.client_id = c.id
+                WHERE c.status = 'active' AND c.deleted_at IS NULL
+                """,
+            )
+
+        clients = []
+        for row in rows:
+            client_data = dict(row)
+            # Convert string dates to datetime
+            for field in ["date_of_birth", "passport_expiry", "visa_expiry"]:
+                if client_data.get(field) and isinstance(client_data[field], str):
+                    client_data[field] = datetime.fromisoformat(client_data[field])
+            clients.append(ClientInfo(**client_data))
+
+        return clients
+
+
+@router.post("/check", response_model=CheckResponse)
+async def run_expiry_check(
+    request: CheckRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+    pool: asyncpg.Pool = Depends(get_database_pool),
+):
+    """
+    Run manual expiry check for all clients or specific client.
+    Requires authentication.
+    """
+    try:
+        # Fetch clients
+        clients = await get_clients_from_db(pool, request.client_id)
+
+        if not clients:
+            return CheckResponse(
+                success=True,
+                alerts_generated=0,
+                message="No active clients found",
+                timestamp=datetime.now(tz=timezone.utc).replace(tzinfo=None),
+            )
+
+        # Run check
+        checker = ExpiryChecker()
+        alerts = checker.check_all_clients(clients)
+
+        # Store alerts in database
+        async with pool.acquire() as conn:
+            for alert in alerts:
+                await conn.execute(
+                    """
+                    INSERT INTO notification_alerts
+                    (client_id, alert_type, status, message, email_subject, email_body, created_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    ON CONFLICT (client_id, alert_type, DATE(created_at))
+                    DO NOTHING
+                    """,
+                    alert.client_id,
+                    alert.alert_type.value,
+                    alert.status.value,
+                    alert.message,
+                    alert.email_subject,
+                    alert.email_body,
+                    alert.created_at,
+                )
+
+        logger.info(
+            "Manual expiry check completed",
+            extra={
+                "user": current_user.get("email"),
+                "clients_checked": len(clients),
+                "alerts_generated": len(alerts),
+            },
+        )
+
+        return CheckResponse(
+            success=True,
+            alerts_generated=len(alerts),
+            message=f"Check completed. {len(alerts)} alerts generated.",
+            timestamp=datetime.now(tz=timezone.utc).replace(tzinfo=None),
+        )
+
+    except Exception as e:
+        logger.error("Expiry check failed", exc_info=e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/status", response_model=StatusResponse)
+async def get_notification_status(
+    current_user: dict = Depends(get_current_user),
+    pool: asyncpg.Pool = Depends(get_database_pool),
+):
+    """Get notification system status."""
+    try:
+        async with pool.acquire() as conn:
+            pending_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM notification_alerts WHERE status = 'pending'",
+            )
+            last_check = await conn.fetchval("SELECT MAX(created_at) FROM notification_alerts")
+
+        return StatusResponse(
+            status="operational",
+            pending_alerts=pending_count,
+            last_check=last_check,
+            email_provider="sendgrid",
+        )
+
+    except Exception as e:
+        logger.error("Failed to get status", exc_info=e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/send-pending")
+async def send_pending_alerts(
+    current_user: dict = Depends(get_current_user),
+    pool: asyncpg.Pool = Depends(get_database_pool),
+):
+    """
+    Send all pending alerts.
+    Admin only endpoint.
+    """
+    # Check admin role (canonical is_crm_admin — same gate as the rest of the
+    # CRM; the old `.get("is_admin")` gated on a flag the auth layer never
+    # populates, 403'ing genuine admins. Bug #6 class-fix, W89).
+    if not is_crm_admin(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        service = NotificationService(pool)
+
+        # Get pending alerts
+        pending = await service.get_pending_alerts()
+
+        if not pending:
+            return {"success": True, "message": "No pending alerts", "sent": 0}
+
+        # Send alerts
+        async def get_client_email(client_id: int) -> str | None:
+            async with pool.acquire() as conn:
+                return await conn.fetchval(
+                    "SELECT email FROM clients WHERE id = $1",
+                    client_id,
+                )
+
+        results = await service.process_alerts_batch(pending, get_client_email)
+
+        successful = sum(1 for r in results if r.success)
+
+        return {
+            "success": True,
+            "message": f"Processed {len(results)} alerts",
+            "sent": successful,
+            "failed": len(results) - successful,
+        }
+
+    except Exception as e:
+        logger.error("Failed to send pending alerts", exc_info=e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# Accounting owns invoices; everything else falls back to accounting too
+# when no assigned lead is known, so the rule can never be silently void.
+_ACCOUNTING_CC = "asya@balizero.com"
+_INVOICE_EMAIL_TYPES = frozenset({"invoice_client", "invoice", "invoice_team"})
+
+#: RULED by Antonello 2026-09-02, scoped in his own words to "solo per le
+#: pratiche del garuda voa": VOA practice mail copies these three. Nothing
+#: else moves -- every other practice keeps the assigned-lead rule below.
+#: A tuple rather than one address because this is the single email family
+#: with a STANDING copy list instead of one contextual reader.
+_GARUDA_VOA_CC: tuple[str, ...] = (
+    "surya@balizero.com",
+    "vino@balizero.com",
+    "zero@balizero.com",
+)
+
+#: Credential deliveries are NOT correspondence. The body of one of these IS
+#: the recipient's single-use key to their own account, so a copy is not an
+#: audit trail -- it is a second person who can sign in as the customer.
+#: They therefore carry NO Bali Zero copy at all, and any cc/bcc a caller
+#: supplied is STRIPPED rather than merely left un-augmented.
+#:
+#: Membership is a fixed set decided HERE, never a boolean the caller passes:
+#: a bypass anyone can set is not a rule (superscar #3 -- match the entity,
+#: not a flag). An email_type that is absent, misspelled or unknown is NOT a
+#: credential delivery and keeps its copy, so the failure mode of a typo is
+#: an unwanted copy, never a leaked credential.
+_CREDENTIAL_DELIVERY_EMAIL_TYPES = frozenset({"garuda_magic_link"})
+
+
+def _is_balizero(addr: str) -> bool:
+    """True iff ``addr`` is on the @balizero.com domain (suffix match,
+    case-insensitive). Never a bare substring -- superscar #3: match the
+    entity, not the text. So ``z@dxxxxxx2.dx2.dxx4.com`` is NOT a match."""
+    return addr.strip().lower().endswith("@balizero.com")
+
+
+def _normalise_email_type(email_type: str | None) -> str:
+    return (email_type or "").strip().lower()
+
+
+def _is_garuda_voa(email_type: str) -> bool:
+    """True for the GARUDA VOA practice email family.
+
+    A PREFIX test on a controlled internal field, not a substring search of
+    free text: ``garuda_voa`` exactly, or ``garuda_voa_`` followed by the
+    specific message name. ``garuda_voa_order_confirmed`` matches;
+    ``not_garuda_voa`` does not.
+    """
+    return email_type == "garuda_voa" or email_type.startswith("garuda_voa_")
+
+
+def _pick_balizero_cc(email_type: str, assigned_to: str | None) -> list[str]:
+    """Choose WHICH Bali Zero address(es) to copy.
+
+    The order is a precedence, not a preference:
+    - GARUDA VOA practice -> the standing three (Antonello 2026-09-02)
+    - invoices            -> accounting (Antonello 2026-06-17)
+    - otherwise           -> the practice's assigned lead
+    - no assigned lead    -> accounting, so a client mail is never sent
+      with nobody copied.
+    """
+    if _is_garuda_voa(email_type):
+        return list(_GARUDA_VOA_CC)
+    if email_type in _INVOICE_EMAIL_TYPES:
+        return [_ACCOUNTING_CC]
+    if assigned_to and _is_balizero(assigned_to):
+        return [assigned_to.strip()]
+    return [_ACCOUNTING_CC]
+
+
+def _enforce_balizero_cc(
+    to: str,
+    cc_list: list[str] | None,
+    bcc_list: list[str] | None,
+    email_type: str | None = None,
+    assigned_to: str | None = None,
+) -> tuple[list[str] | None, list[str] | None]:
+    """Decide who else is in the loop on an outbound email.
+
+    HARD RULE (Antonello 2026-06-17): a client must never receive an email
+    without a Bali Zero address copied in. Structural enforcement at the
+    single send choke-point.
+
+    ONE CATEGORY IS EXEMPT, and the exemption is the point rather than a
+    hole in the rule: a credential delivery (see
+    ``_CREDENTIAL_DELIVERY_EMAIL_TYPES``) has exactly one legitimate
+    recipient, because its body is the key to that recipient's account.
+    Those are stripped of cc AND bcc.
+
+    Returns the (possibly rewritten) ``(cc_list, bcc_list)`` pair. It returns
+    BOTH -- an earlier version returned only cc, which left no way to drop a
+    bcc, and a bcc'd login link leaks exactly as much as a cc'd one.
+    """
+    etype = _normalise_email_type(email_type)
+
+    if etype in _CREDENTIAL_DELIVERY_EMAIL_TYPES:
+        if cc_list or bcc_list:
+            logger.warning(
+                "send-email: %s is a credential delivery -- dropping %d cc and "
+                "%d bcc recipient(s); a login link has one recipient by design",
+                etype,
+                len(cc_list or []),
+                len(bcc_list or []),
+            )
+        return None, None
+
+    if _is_balizero(to):
+        return cc_list, bcc_list
+
+    existing = (cc_list or []) + (bcc_list or [])
+
+    if _is_garuda_voa(etype):
+        # Deliberately NOT "add one if nobody is copied". The three are a
+        # STANDING list, so they are unioned in even when another Bali Zero
+        # address is already present -- which is what "in cc vanno surya,
+        # vino e zero" asks for. Scoped to this one family on purpose.
+        already = {a.strip().lower() for a in existing}
+        missing = [a for a in _GARUDA_VOA_CC if a.lower() not in already]
+        if not missing:
+            return cc_list, bcc_list
+        augmented = list(cc_list or [])
+        augmented.extend(missing)
+        logger.info(
+            "send-email: GARUDA VOA practice mail (email_type=%s) -- adding %d "
+            "standing recipient(s) to CC",
+            etype,
+            len(missing),
+        )
+        return augmented, bcc_list
+
+    if any(_is_balizero(a) for a in existing):
+        return cc_list, bcc_list
+
+    chosen = _pick_balizero_cc(etype, assigned_to)
+    augmented = list(cc_list or [])
+    augmented.extend(chosen)
+    logger.warning(
+        "send-email: no @balizero.com in to/cc/bcc for external recipient "
+        "(email_type=%s) -- forcing %d address(es) into CC (hard rule)",
+        etype,
+        len(chosen),
+    )
+    return augmented, bcc_list
+
+
+@router.post("/send-email", response_model=SendEmailResponse)
+async def send_direct_email(
+    request: SendEmailRequest,
+    _auth: dict = Depends(verify_internal_api_key),
+) -> SendEmailResponse:
+    """
+    Send email via best available channel.
+
+    Routing:
+    - @balizero.com recipients → Zoho SMTP (avoids intra-domain spoofing rejection)
+    - External recipients → Brevo HTTP API (better deliverability + tracking)
+
+    Auth: X-API-Key header.
+    Sender is always zantara@balizero.com (alias of zero@balizero.com).
+    """
+    cc_list = [c.strip() for c in request.cc.split(",")] if request.cc else None
+    bcc_list = [b.strip() for b in request.bcc.split(",")] if request.bcc else None
+    attachments = [a.model_dump() for a in request.attachments] if request.attachments else None
+
+    # HARD RULE (Antonello 2026-06-17): a client never receives an email
+    # without at least one @balizero.com address in the loop. Enforced
+    # here — the single send choke-point — so no caller can bypass it.
+    # Contextual CC: GARUDA VOA → the standing three, invoice → asya@,
+    # else the assigned lead, else asya@. One exemption, and it is not a
+    # bypass: a credential delivery (magic link) has one recipient by
+    # design, so it is stripped of cc AND bcc.
+    cc_list, bcc_list = _enforce_balizero_cc(
+        request.to, cc_list, bcc_list, request.email_type, request.assigned_to
+    )
+    # An identity that is read elsewhere (Kagecesa: xug@/veronika@/kagecesa.xug@ -> nakhoda@) is
+    # rewritten in its own seat, for every email type: a credential delivery keeps its single
+    # recipient, it just lands in the mailbox the person reads.
+    to_addr, cc_list, bcc_list = redirect_recipients(request.to, cc_list, bcc_list)
+    if to_addr != request.to:
+        logger.info("send-email: primary recipient redirected to the mailbox the identity reads")
+
+    # Keyed delivery uses one provider so fallback cannot duplicate an
+    # accepted request whose response was lost.
+    if request.idempotency_key is not None:
+        try:
+            accepted = await _send_via_brevo(
+                to_addr,
+                request.subject,
+                request.body,
+                cc_list,
+                bcc_list,
+                attachments,
+                idempotency_key=str(request.idempotency_key),
+            )
+        except EmailDeliveryUncertain:
+            return SendEmailResponse(
+                success=False, message="Email delivery uncertain", delivery_uncertain=True
+            )
+        return SendEmailResponse(
+            success=accepted,
+            message="Email accepted" if accepted else "Email not accepted",
+        )
+
+    # Provider chain (NB-E 2026-04-29):
+    #   intra-domain (@balizero.com): Zoho SMTP → Brevo
+    #   external:                     Brevo → Resend → Zoho SMTP
+    # Resend uses uxxxxx7@dxx5.dxxxxxx2.com (separate DKIM) so a Brevo
+    # account suspension / apex DNS issue cannot also kill the fallback.
+    if to_addr.endswith("@balizero.com"):
+        chain: list[tuple[str, callable]] = [  # type: ignore[type-arg]
+            ("zoho", _send_via_zoho_smtp),
+            ("brevo", _send_via_brevo),
+        ]
+    else:
+        chain = [
+            ("brevo", _send_via_brevo),
+            ("resend", _send_via_resend),
+            ("zoho", _send_via_zoho_smtp),
+        ]
+
+    for idx, (name, sender) in enumerate(chain):
+        result = await sender(
+            to_addr,
+            request.subject,
+            request.body,
+            cc_list,
+            bcc_list,
+            attachments,
+        )
+        if result:
+            tag = "primary" if idx == 0 else f"fallback={name}"
+            # C4 (PR #7385 gate follow-up): `request.to`/`request.subject` are
+            # caller-supplied PII/free-text (the latter can itself carry an
+            # address, e.g. "Re: naneni@example.com") — never logged raw.
+            # Reuses email_audit's own digest + bounded scrub, not a new regex.
+            # C3 (#7438 gate, CodeQL 9217, py/log-injection): main's original
+            # line used `{request.subject!r}`, whose repr escapes `\n` — the
+            # #7438 rewrite dropped that when it switched to %-style logging,
+            # so a subject containing a real newline landed in the log
+            # unescaped (a forged log line is a `\n` away). `repr()` restores
+            # the escaping on the SCRUBBED text, same as main had on the raw
+            # one — order matters: scrub first (bounds the input, matches
+            # every other caller's contract), escape second (the digest and
+            # surrounding text can still legitimately contain a literal `\n`
+            # if the caller's subject did).
+            logger.info(
+                "Direct email sent to %s via %s (%s) — %s",
+                redact_identifier_for_log(to_addr),
+                name,
+                tag,
+                repr(_bounded_scrub(request.subject, 120)),
+            )
+            return SendEmailResponse(
+                success=True,
+                message=f"Email sent to {to_addr} via {name}",
+            )
+        logger.warning(
+            "Provider %s failed for %s, trying next in chain",
+            name,
+            redact_identifier_for_log(to_addr),
+        )
+
+    return SendEmailResponse(
+        success=False,
+        message=f"All providers failed: {', '.join(n for n, _ in chain)}",
+    )
+
+
+async def _send_via_zoho_smtp(
+    to_email: str,
+    subject: str,
+    body: str,
+    cc_list: list[str] | None,
+    bcc_list: list[str] | None = None,
+    attachments: list[dict] | None = None,
+) -> bool:
+    """Send via Zoho SMTP (for intra-domain @balizero.com delivery)."""
+    try:
+        from backend.app.modules.notifications.service import SMTPProvider
+
+        provider = SMTPProvider()
+        return await provider.send_email(
+            to_email=to_email,
+            subject=subject,
+            html_body=body,
+            from_email="zantara@balizero.com",
+            from_name="Zantara",
+            cc=cc_list,
+            bcc=bcc_list,
+            attachments=attachments,
+        )
+    except Exception as e:
+        # C4: `e`'s text is provider-supplied and can echo the recipient back
+        # (an SMTP bounce quoting the address), so it is scrubbed the same
+        # way `email_audit.notify_email_failure_critical` scrubs `error`.
+        logger.error(
+            "Zoho SMTP failed for %s: %s",
+            redact_identifier_for_log(to_email),
+            _bounded_scrub(str(e), 400),
+        )
+        return False
+
+
+async def _send_via_brevo(
+    to_email: str,
+    subject: str,
+    body: str,
+    cc_list: list[str] | None,
+    bcc_list: list[str] | None = None,
+    attachments: list[dict] | None = None,
+    idempotency_key: str | None = None,
+) -> bool:
+    """Send via Brevo HTTP API (for external delivery)."""
+    import os
+
+    api_key = os.getenv("SENDGRID_API_KEY", "")
+    if not api_key:
+        return False
+
+    payload: dict = {
+        "sender": {"email": "zantara@balizero.com", "name": "Zantara"},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "htmlContent": body,
+    }
+    if cc_list:
+        payload["cc"] = [{"email": e} for e in cc_list]
+    if bcc_list:
+        payload["bcc"] = [{"email": e} for e in bcc_list]
+    if attachments:
+        payload["attachment"] = [
+            {"name": a.get("name", "attachment"), "content": a.get("content", "")}
+            for a in attachments
+        ]
+
+    is_brevo = api_key.startswith("xkeysib-")
+    if idempotency_key:
+        if not is_brevo:
+            return False
+        payload["headers"] = {"idempotencyKey": idempotency_key}
+    url = (
+        "https://api.brevo.com/v3/smtp/email"
+        if is_brevo
+        else "https://api.sendgrid.com/v3/mail/send"
+    )
+    headers = (
+        {"api-key": api_key, "Content-Type": "application/json"}
+        if is_brevo
+        else {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    )
+
+    if not is_brevo:
+        payload = {
+            "personalizations": [{"to": [{"email": to_email}]}],
+            "from": {"email": "zantara@balizero.com", "name": "Zantara"},
+            "subject": subject,
+            "content": [{"type": "text/html", "value": body}],
+        }
+        if cc_list:
+            payload["personalizations"][0]["cc"] = [{"email": e} for e in cc_list]
+        if bcc_list:
+            payload["personalizations"][0]["bcc"] = [{"email": e} for e in bcc_list]
+
+    try:
+        client = await get_email_client()
+        resp = await client.post(url, json=payload, headers=headers, timeout=15.0)
+        if resp.status_code in (200, 201, 202):
+            return True
+        if idempotency_key:
+            if resp.status_code >= 500:
+                raise EmailDeliveryUncertain("provider_server_error")
+            try:
+                error = resp.json()
+            except (ValueError, AttributeError):
+                error = {}
+            if isinstance(error, dict) and error.get("code") == "duplicate_parameter":
+                # The provider does not give us the original acceptance receipt.
+                raise EmailDeliveryUncertain("provider_duplicate_ambiguous")
+        logger.error("Brevo request rejected: status=%s", resp.status_code)
+        return False
+    except EmailDeliveryUncertain:
+        raise
+    except Exception as e:
+        logger.error("Brevo transport failed: %s", type(e).__name__)
+        if idempotency_key:
+            raise EmailDeliveryUncertain("provider_transport_error") from None
+        return False
+
+
+async def _send_via_resend(
+    to_email: str,
+    subject: str,
+    body: str,
+    cc_list: list[str] | None,
+    bcc_list: list[str] | None = None,
+    attachments: list[dict] | None = None,
+) -> bool:
+    """Send via Resend HTTPS API (fallback for external delivery, NB-E 2026-04-29).
+
+    Uses ``uxxxxx7@dxx5.dxxxxxx2.com`` (separate DKIM/MX subdomain) so a
+    Brevo suspension or apex ``balizero.com`` DNS misconfiguration does
+    not also break the fallback path. Returns False on any failure.
+    """
+    from backend.services.notifications.resend_http import send_via_resend
+
+    return await send_via_resend(
+        to_email=to_email,
+        subject=subject,
+        body=body,
+        cc=cc_list,
+        bcc=bcc_list,
+        attachments=attachments,
+    )
+
+
+# NOTE: test_endpoint.py (staging-only manual test router, self-documented
+# "remove before production") was deleted 2026-08-08 — it queried the
+# never-provisioned client_documents table in all 3 handlers, so it could
+# never have worked in staging or prod. The conditional include that used
+# to mount it here is gone with it.
+#
+# NOTE: admin_router (prefix="/api/admin/notifications") is intentionally NOT
+# nested here. Nesting it under this router (prefix="/api/notifications") gave
+# the double-prefixed path /api/notifications/api/admin/notifications/* — a 404
+# for the frontend, which correctly calls /api/admin/notifications/*. It is
+# mounted at the top level in router_registration.py (its own manifest entry)
+# so its absolute prefix is honored as-is.

@@ -1,0 +1,597 @@
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
+import { logger } from "@/lib/logger";
+import { logRouteTouch } from "@/lib/api/route-touch";
+import { toError } from "@/lib/types/common";
+
+// Use Node.js runtime (not Edge) for long-running SSE streams.
+// Edge has a 30s timeout which kills workspace-stream responses.
+export const runtime = "nodejs";
+export const maxDuration = 300; // 5 minutes max for agentic RAG
+
+const VISA_ORACLE_EVALUATE_PATH = "/api/visa-oracle/evaluate";
+const VISA_ORACLE_MAX_BODY_BYTES = 32 * 1024;
+
+// The Fetch spec forbids a non-null body on these statuses ("null body status").
+// `new Response(buf, { status })` throws a TypeError even when `buf` is an empty
+// ArrayBuffer — the caught TypeError then surfaced as a fabricated 500 "Proxy
+// error" for upstream responses (e.g. a successful DELETE returning 204) that
+// never actually failed.
+const NULL_BODY_STATUSES = new Set([204, 205, 304]);
+
+class RequestBodyTooLargeError extends Error {
+  constructor() {
+    super(`Request body exceeds ${VISA_ORACLE_MAX_BODY_BYTES} bytes`);
+    this.name = "RequestBodyTooLargeError";
+  }
+}
+
+async function readBodyWithLimit(
+  req: NextRequest,
+  maxBytes: number,
+): Promise<ArrayBuffer> {
+  const declaredLength = req.headers.get("content-length");
+  if (declaredLength !== null) {
+    const parsedLength = Number(declaredLength);
+    if (Number.isFinite(parsedLength) && parsedLength > maxBytes) {
+      throw new RequestBodyTooLargeError();
+    }
+  }
+
+  if (req.body === null) return new ArrayBuffer(0);
+
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel("request body limit exceeded");
+        throw new RequestBodyTooLargeError();
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bounded = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bounded.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bounded.buffer;
+}
+
+function normalizeBackendBaseUrl(url: string): string {
+  return url
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/api$/, "");
+}
+
+function getBackendBaseUrl(): string {
+  const raw =
+    process.env.NUZANTARA_API_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    "https://nuzantara-rag.fly.dev";
+  return normalizeBackendBaseUrl(raw);
+}
+
+// Next's trailingSlash normalisation 308s the slash form of these paths down to
+// the no-slash form before this handler ever runs. The backend's rag-proxy
+// catch-all (rag_proxy.py:327) FULL-matches the de-slashed path and answers 404
+// instead of letting Starlette's redirect_slashes issue a 307, because these
+// backend routes are registered ONLY as "/" under a router prefix that is NOT
+// in HEAVY_PREFIXES. The slash has to be put back on upstream, exactly here.
+// Exact pathname match — not a prefix, not a substring (cicatrix #3 shape).
+const SLASH_ONLY_UPSTREAM_PATHS = new Set(["/api/crm/interactions"]);
+
+async function proxy(req: NextRequest): Promise<Response> {
+  const backendBase = getBackendBaseUrl();
+  const url = new URL(req.url);
+  const upstreamPath = SLASH_ONLY_UPSTREAM_PATHS.has(url.pathname)
+    ? `${url.pathname}/`
+    : url.pathname;
+  const targetUrl = `${backendBase}${upstreamPath}${url.search}`;
+  const isPublicVisaEvaluation =
+    url.pathname === VISA_ORACLE_EVALUATE_PATH && req.method === "POST";
+  // Never put Visa Oracle's semantic request_category query in logs or error
+  // metadata. The upstream still receives the full targetUrl.
+  const logTargetUrl = isPublicVisaEvaluation
+    ? `${backendBase}${url.pathname}`
+    : targetUrl;
+
+  // Extract correlation ID for logging
+  const correlationId = req.headers.get("X-Correlation-ID") || "unknown";
+  const isStreamingEndpoint =
+    url.pathname === "/api/dashboard/portal-challenge/events" ||
+    url.pathname.includes("/agentic-rag/stream") ||
+    url.pathname.includes("/agentic-rag/workspace-stream");
+
+  // Log requests in development
+  if (process.env.NODE_ENV !== "production") {
+    logger.debug(`[Proxy] ${req.method} ${url.pathname} -> ${logTargetUrl}`, {
+      component: "AUTO",
+      action: "log",
+    });
+  }
+
+  // Log streaming requests
+  if (isStreamingEndpoint && process.env.NODE_ENV !== "production") {
+    logger.debug(`[Proxy] SSE request start: ${req.method} ${url.pathname}`, {
+      component: "AUTO",
+      action: "log",
+      metadata: {
+        correlationId,
+      },
+    });
+  }
+
+  const headers = new Headers(req.headers);
+  headers.delete("host");
+  headers.delete("connection");
+  headers.delete("content-length");
+  headers.delete("transfer-encoding");
+
+  // Authentication: prefer Authorization header over cookie to prevent stale session leak.
+  // When frontend sends Authorization: Bearer, STRIP nz_access_token from cookies
+  // so the backend uses only the header token (which is the current user's session).
+  const hasAuthHeader = headers.has("authorization");
+  const cookies = req.cookies;
+  const csrfCookie = cookies.get("nz_csrf_token");
+
+  if (isPublicVisaEvaluation) {
+    // The evaluate endpoint is intentionally anonymous. Forwarding a portal
+    // session would unnecessarily bind sensitive interview facts to an
+    // authenticated identity at the backend boundary.
+    headers.delete("authorization");
+    headers.delete("proxy-authorization");
+    headers.delete("cookie");
+    headers.delete("x-api-key");
+    headers.delete("x-csrf-token");
+  } else if (hasAuthHeader) {
+    // Strip nz_access_token from cookie header — Authorization takes precedence.
+    // The browser auto-includes httpOnly cookies, so we must actively remove it.
+    const existingCookie = headers.get("cookie") || "";
+    const cleaned = existingCookie
+      .split(";")
+      .map((c) => c.trim())
+      .filter((c) => !c.startsWith("nz_access_token="))
+      .join("; ");
+    if (cleaned) {
+      headers.set("cookie", cleaned);
+    } else {
+      headers.delete("cookie");
+    }
+  } else {
+    // No Authorization header: forward cookie for SSO/portal clients
+    const authCookie = cookies.get("nz_access_token");
+    if (authCookie) {
+      const existingCookie = headers.get("cookie") || "";
+      const cookieValue = `nz_access_token=${authCookie.value}`;
+      headers.set(
+        "cookie",
+        existingCookie ? `${existingCookie}; ${cookieValue}` : cookieValue,
+      );
+    }
+  }
+
+  // Always forward CSRF token as cookie
+  if (csrfCookie && !isPublicVisaEvaluation) {
+    const existingCookie = headers.get("cookie") || "";
+    const csrfValue = `nz_csrf_token=${csrfCookie.value}`;
+    headers.set(
+      "cookie",
+      existingCookie ? `${existingCookie}; ${csrfValue}` : csrfValue,
+    );
+  }
+
+  // BUG-A FIX: For mutating methods, also promote the CSRF cookie value into
+  // the X-CSRF-Token request header.  The backend validate_csrf() uses the
+  // double-submit cookie pattern and requires BOTH the cookie AND the header to
+  // be present and matching.  The browser cannot set this header itself (the
+  // Next proxy is the only place where the httpOnly-adjacent cookie is visible),
+  // so we inject it here for every state-changing request uniformly.
+  const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+  if (
+    csrfCookie &&
+    !isPublicVisaEvaluation &&
+    MUTATING_METHODS.has(req.method)
+  ) {
+    headers.set("X-CSRF-Token", csrfCookie.value);
+  }
+
+  let body: BodyInit | undefined = undefined;
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    const contentType = req.headers.get("content-type") || "";
+    if (isPublicVisaEvaluation) {
+      const mimeEssence = contentType.split(";", 1)[0].trim().toLowerCase();
+      if (mimeEssence !== "application/json") {
+        return new Response(
+          JSON.stringify({ detail: "Content-Type must be application/json" }),
+          {
+            status: 415,
+            headers: {
+              "Cache-Control": "no-store",
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      }
+
+      try {
+        const buf = await readBodyWithLimit(req, VISA_ORACLE_MAX_BODY_BYTES);
+        body = buf.byteLength ? buf : undefined;
+      } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+          return new Response(
+            JSON.stringify({
+              detail: `Request body exceeds ${VISA_ORACLE_MAX_BODY_BYTES} bytes`,
+            }),
+            {
+              status: 413,
+              headers: {
+                "Cache-Control": "no-store",
+                "Content-Type": "application/json",
+              },
+            },
+          );
+        }
+        throw error;
+      }
+    } else if (contentType.includes("multipart/form-data")) {
+      // CRITICAL: When passing FormData to fetch, fetch generates its own boundary.
+      // We must delete the original Content-Type header so fetch can set the correct one.
+      headers.delete("content-type");
+      body = (await req.formData()) as unknown as BodyInit;
+    } else {
+      const buf = await req.arrayBuffer();
+      body = buf.byteLength ? buf : undefined;
+      // CRITICAL: Preserve Content-Type header for JSON and other body types
+      // FastAPI needs this to parse request body correctly
+      if (contentType && !headers.has("content-type")) {
+        headers.set("content-type", contentType);
+      }
+    }
+  }
+
+  const upstreamStartTime = Date.now();
+  try {
+    // Debug logging for DELETE with body
+    if (req.method === "DELETE" && body) {
+      logger.debug("🔍 [PROXY] DELETE with body detected:", {
+        component: "AUTO",
+        action: "log",
+        metadata: {
+          method: req.method,
+          path: url.pathname,
+          hasBody: !!body,
+          bodySize: body
+            ? typeof body === "string"
+              ? body.length
+              : "binary"
+            : "none",
+          contentType: headers.get("content-type"),
+          targetUrl,
+        },
+      });
+    }
+
+    // Use redirect: 'manual' and handle redirects ourselves to preserve cookies
+    // For DELETE with body, ensure body is properly forwarded
+    const requestInit: RequestInit = {
+      method: req.method,
+      headers,
+      ...(isStreamingEndpoint ? { signal: req.signal } : {}),
+      redirect: "manual",
+      credentials: isPublicVisaEvaluation ? "omit" : "include",
+    };
+
+    // Only add body if it exists and method supports it
+    if (body && ["POST", "PUT", "DELETE", "PATCH"].includes(req.method)) {
+      requestInit.body = body;
+      logger.debug("🔍 [PROXY] Body added to request:", {
+        component: "AUTO",
+        action: "log",
+        metadata: {
+          method: req.method,
+          bodyIncluded: true,
+          bodyLength: typeof body === "string" ? body.length : "binary",
+        },
+      });
+    }
+
+    let upstream = await fetch(targetUrl, requestInit);
+
+    // The anonymous evaluation request contains sensitive applicant facts.
+    // Never replay that body to a Location chosen by an upstream response,
+    // including same-origin redirects whose target could change later.
+    if (
+      isPublicVisaEvaluation &&
+      upstream.status >= 300 &&
+      upstream.status < 400
+    ) {
+      upstream = new Response(
+        JSON.stringify({ detail: "Unexpected upstream redirect" }),
+        {
+          status: 502,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    // Handle redirects manually to preserve cookies (fetch doesn't forward cookies on redirects)
+    let redirectCount = 0;
+    const maxRedirects = 5;
+    while (
+      upstream.status >= 300 &&
+      upstream.status < 400 &&
+      redirectCount < maxRedirects
+    ) {
+      const location = upstream.headers.get("location");
+      if (!location) break;
+
+      // Resolve relative URLs against the backend base
+      const redirectUrl = location.startsWith("http")
+        ? location.replace(/^http:/, "https:") // Force HTTPS
+        : `${backendBase}${location.startsWith("/") ? "" : "/"}${location}`;
+
+      // HTTP 307 and 308 preserve the original method (including POST/DELETE body)
+      // HTTP 301, 302, 303 convert POST to GET (standard browser behavior)
+      // For DELETE with body, we need to preserve the method and body
+      const preserveMethod =
+        upstream.status === 307 ||
+        upstream.status === 308 ||
+        req.method === "DELETE";
+      const redirectMethod = preserveMethod
+        ? req.method
+        : req.method === "POST"
+          ? "GET"
+          : req.method;
+
+      upstream = await fetch(redirectUrl, {
+        method: redirectMethod,
+        headers,
+        body: preserveMethod && body ? body : undefined, // Preserve body for 307/308
+        redirect: "manual",
+        credentials: isPublicVisaEvaluation ? "omit" : "include",
+      });
+      redirectCount++;
+    }
+
+    const upstreamDuration = Date.now() - upstreamStartTime;
+    const touch = logRouteTouch("proxy", url.pathname, req.method, {
+      status: upstream.status,
+      durationMs: upstreamDuration,
+    });
+
+    // Log streaming response status
+    if (isStreamingEndpoint && process.env.NODE_ENV !== "production") {
+      logger.debug(`[Proxy] SSE upstream response: ${upstream.status}`, {
+        component: "AUTO",
+        action: "log",
+        metadata: {
+          correlationId,
+          durationMs: upstreamDuration,
+        },
+      });
+    }
+
+    // Log errors in development and production (for auth errors)
+    if (upstream.status >= 400) {
+      const isAuthError = upstream.status === 401 || upstream.status === 403;
+
+      if (isAuthError && isPublicVisaEvaluation) {
+        logger.warn("[Proxy] Anonymous Visa Oracle upstream rejected request", {
+          component: "AUTO",
+          action: "upstream_rejected",
+          metadata: { status: upstream.status },
+        });
+      } else if (isAuthError) {
+        const hasAuthCookie = !!cookies.get("nz_access_token");
+        const authLogContext = {
+          component: "AUTO",
+          action: "auth_rejected",
+          metadata: {
+            cookies: {
+              authCookie: hasAuthCookie,
+              csrfCookie: !!csrfCookie,
+              hasAuthHeader: hasAuthHeader,
+            },
+            targetUrl: logTargetUrl,
+            correlationId,
+            userAgent: req.headers.get("user-agent")?.substring(0, 50),
+          },
+        };
+
+        if (hasAuthCookie || hasAuthHeader) {
+          logger.warn(
+            `[Proxy] Auth rejected ${upstream.status} for ${req.method} ${url.pathname} with credentials`,
+            {
+              ...authLogContext,
+              action: "auth_rejected",
+            },
+          );
+        } else {
+          logger.warn(
+            `[Proxy] Auth rejected ${upstream.status} for ${req.method} ${url.pathname} without credentials`,
+            authLogContext,
+          );
+        }
+      } else if (process.env.NODE_ENV !== "production") {
+        // Log other errors only in development
+        logger.error(
+          `[Proxy] Error ${upstream.status} for ${req.method} ${url.pathname}`,
+          {
+            component: "AUTO",
+            action: "error",
+            metadata: {
+              targetUrl: logTargetUrl,
+              correlationId,
+            },
+          },
+          toError(
+            `[Proxy] Error ${upstream.status} for ${req.method} ${url.pathname}`,
+          ),
+        );
+      }
+    }
+
+    // Forward headers from upstream
+    const respHeaders = new Headers(upstream.headers);
+    respHeaders.delete("transfer-encoding");
+    respHeaders.delete("content-encoding");
+
+    // CRITICAL: Prevent caching of authenticated API responses + Fly.io re-compression
+    respHeaders.set("Cache-Control", "no-store, no-transform");
+    respHeaders.set("X-Route-Touch", `${touch.family}:${touch.operation}`);
+
+    // For SSE (streaming) endpoints, pass through the body stream as-is
+    // SSE endpoints are typically not compressed and need to stay as streams
+    if (isStreamingEndpoint) {
+      return new Response(upstream.body, {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers: respHeaders,
+      });
+    }
+
+    // For non-streaming endpoints, read the body as ArrayBuffer
+    // This fixes an issue where Vercel edge doesn't properly pass through
+    // compressed response bodies from upstream
+    respHeaders.delete("content-length"); // Length may change after decompression
+
+    const bodyBuffer = await upstream.arrayBuffer();
+
+    // CRITICAL: For auth/login responses, manually set cookies via NextResponse
+    // Vercel Edge Runtime silently drops Set-Cookie headers with domain=.balizero.com
+    // when they come from a proxied response. We must use NextResponse.cookies.set()
+    // to bypass this restriction.
+    const isLoginEndpoint =
+      url.pathname === "/api/auth/login" &&
+      req.method === "POST" &&
+      upstream.status === 200;
+
+    if (isLoginEndpoint) {
+      try {
+        const bodyJson = JSON.parse(new TextDecoder().decode(bodyBuffer));
+        const jwt = bodyJson?.data?.token;
+        const csrf = bodyJson?.data?.csrfToken;
+        if (jwt) {
+          const isLocalhost =
+            url.hostname === "localhost" || url.hostname === "127.0.0.1";
+          const cookieDomain = isLocalhost
+            ? null
+            : (process.env.COOKIE_DOMAIN || ".balizero.com").replace(
+                /\s+/g,
+                "",
+              );
+          // Follow the backend token lifetime (expiresIn = JWT_ACCESS_TOKEN_EXPIRE_HOURS*3600)
+          // so the cookie never outlives or under-lives the JWT. Mirrors
+          // app/api/auth/login/route.ts. Fallback 86400 only if expiresIn is absent.
+          const maxAge = bodyJson?.data?.expiresIn || 86400;
+          // CRITICAL: Strip upstream Set-Cookie headers — they carry SameSite=none
+          // which Chrome 130+ rejects without Partitioned. We re-set cookies manually
+          // using raw header strings to bypass Vercel Edge Runtime restrictions.
+          respHeaders.delete("set-cookie");
+          // Build raw Set-Cookie strings — Vercel Edge forwards these reliably
+          // On localhost, omit Domain so the browser accepts the cookie
+          const tokenParts = [
+            `nz_access_token=${jwt}`,
+            ...(cookieDomain ? [`Domain=${cookieDomain}`] : []),
+            `HttpOnly`,
+            `Max-Age=${maxAge}`,
+            `Path=/`,
+            `SameSite=Lax`,
+            ...(isLocalhost ? [] : [`Secure`]),
+          ];
+          respHeaders.append("set-cookie", tokenParts.join("; "));
+          if (csrf) {
+            const csrfParts = [
+              `nz_csrf_token=${csrf}`,
+              ...(cookieDomain ? [`Domain=${cookieDomain}`] : []),
+              `Max-Age=${maxAge}`,
+              `Path=/`,
+              `SameSite=Lax`,
+              ...(isLocalhost ? [] : [`Secure`]),
+            ];
+            respHeaders.append("set-cookie", csrfParts.join("; "));
+          }
+          return new Response(bodyBuffer, {
+            status: upstream.status,
+            statusText: upstream.statusText,
+            headers: respHeaders,
+          });
+        }
+      } catch {
+        // Fall through to normal response if JSON parse fails
+      }
+    }
+
+    return new Response(
+      NULL_BODY_STATUSES.has(upstream.status) ? null : bodyBuffer,
+      {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers: respHeaders,
+      },
+    );
+  } catch (error) {
+    logger.error(
+      `[Proxy] Fetch error for ${req.method} ${url.pathname}`,
+      {
+        component: "AUTO",
+        action: "error",
+        metadata: {
+          method: req.method,
+          pathname: url.pathname,
+          targetUrl: logTargetUrl,
+        },
+      },
+      toError(error),
+    );
+    return new Response(
+      JSON.stringify({
+        error: "Proxy error",
+        message: "Service temporarily unavailable",
+      }),
+      {
+        status: 500,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+        },
+      },
+    );
+  }
+}
+
+export async function GET(req: NextRequest) {
+  return proxy(req);
+}
+
+export async function POST(req: NextRequest) {
+  return proxy(req);
+}
+
+export async function PUT(req: NextRequest) {
+  return proxy(req);
+}
+
+export async function PATCH(req: NextRequest) {
+  return proxy(req);
+}
+
+export async function DELETE(req: NextRequest) {
+  return proxy(req);
+}
+
+export async function OPTIONS(req: NextRequest) {
+  return proxy(req);
+}

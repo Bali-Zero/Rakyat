@@ -1,0 +1,147 @@
+{
+  "code": "D3",
+  "official_name_id": "D3 Visa Kunjungan Perawatan Kesehatan",
+  "source_url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/D3",
+  "retrieved_at": "2026-10-17T13:27:31Z",
+  "page_sha256": "206434a173a9674f8829776728cc2a5c0265d60f2da6fc0519275be48bce1b34",
+  "definition_verbatim": "menjalani pengobatan di Indonesia. Termasuk dengan visa ini anda dapat berwisata serta mengunjungi teman dan keluarga.",
+  "jenis_visa_verbatim": "Visa ini merupakan Visa Kunjungan untuk beberapa kali masuk ke Indonesia dengan izin tinggal maksimal 60 hari setiap kedatangan, serta dihitung sejak tanggal kedatangan. Izin Tinggal ini dapat diperpanjang namun tidak dapat dikonversikan menjadi Izin Tinggal Terbatas.",
+  "stay_days": [
+    "Anda dapat tinggal di Indonesia maksimal 60 hari, dihitung sejak tanggal kedatangan."
+  ],
+  "extendable": [
+    "Anda dapat memperpanjang izin tinggal ini beberapa kali hingga maksimal 180 hari.",
+    "Perpanjangan izin tinggal dapat dilakukan secara online oleh sponsor melalui akun yang telah terdaftar di evisa.imigrasi.go.id",
+    "Izin Tinggal ini dapat diperpanjang namun tidak dapat dikonversikan menjadi Izin Tinggal Terbatas."
+  ],
+  "entry": "multiple",
+  "where_to_apply": null,
+  "sponsor_required": {
+    "as_stated_boolean": true,
+    "verbatim": [
+      "Anda membutuhkan penjamin/sponsor untuk mengajukan visa ini."
+    ],
+    "invitation_requirement_see": "requirements_verbatim (Persyaratan Khusus)"
+  },
+  "requirements_verbatim": [
+    {
+      "n": 1,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "surat permohonan dan surat pernyataan penjamin,"
+    },
+    {
+      "n": 2,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "dokumen perjalanan yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis,"
+    },
+    {
+      "n": 3,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "bukti memiliki biaya hidup selama berada di wilayah Indonesia berupa rekening koran 3 bulan terakhir atas nama Orang Asing atau penjamin sebesar minimal USD2000 atau dalam mata uang lain yang setara jumlahnya,"
+    },
+    {
+      "n": 4,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "pasfoto berwarna terbaru (setahun terakhir). Detail"
+    },
+    {
+      "n": 5,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "curriculum vitae,"
+    },
+    {
+      "n": 6,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "rencana perjalanan (travel itinerary)."
+    },
+    {
+      "n": 7,
+      "section": "Persyaratan khusus",
+      "text": "surat keterangan dari instansi pemerintah/lembaga swasta/pernyataan Orang Asing yang menjelaskan bahwa akan melakukan pengobatan di wilayah Indonesia."
+    }
+  ],
+  "pengajuan_intro_verbatim": "Penjamin (sponsor) harus memiliki akun di evisa.imigrasi.go.id sebelum mengajukan visa bagi Orang Asing yang dia sponsori. Setelah memiliki akun, penjamin dapat mengajukan visa ini bagi Orang Asing setelah login di evisa.imigrasi.go.id dengan menyiapkan berkas elektronik (detail format file) Orang Asing antara lain:",
+  "allowed_activities": "menjalani pengobatan di Indonesia. Termasuk dengan visa ini anda dapat berwisata serta mengunjungi teman dan keluarga.",
+  "prohibited_or_conditions_verbatim": [
+    "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa paspor sementara, paspor darurat, titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya harus melampirkan dokumen Izin Masuk Kembali ke negara tempat Visa Multipel diajukan serta tiket kembali/tiket terusan ke negara lain (kecuali bagi awak alat angkut).",
+    "Masa berlaku visa terhitung sejak tanggal penerbitan. Jika tidak digunakan setelah jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.",
+    "Orang Asing dengan izin tinggal dari Visa D3 dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+  ],
+  "ketentuan_lain_verbatim": [
+    "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa paspor sementara, paspor darurat, titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya harus melampirkan dokumen Izin Masuk Kembali ke negara tempat Visa Multipel diajukan serta tiket kembali/tiket terusan ke negara lain (kecuali bagi awak alat angkut).",
+    "Masa berlaku visa terhitung sejak tanggal penerbitan. Jika tidak digunakan setelah jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.",
+    "Orang Asing dengan izin tinggal dari Visa D3 dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+  ],
+  "pnbp_verbatim_for_reference_only": [
+    "- Masa tinggal 1 tahun Rp3.000.000",
+    "- Masa tinggal 2 tahun Rp5.000.000",
+    "- Biaya Verifikasi I/II Rp 0",
+    "- Semua pembayaran (PNBP) dapat dilakukan melalui beberapa bank yang telah ditunjuk. Silakan lihat kode billing yang muncul di sistem setelah pengajuan visa oleh sponsor."
+  ],
+  "itap_verbatim": [
+    {
+      "text": "Izin Tinggal ini dapat diperpanjang namun tidak dapat dikonversikan menjadi Izin Tinggal Terbatas.",
+      "url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/D3"
+    }
+  ],
+  "itap_eligibility_as_stated": null,
+  "total_max_verbatim": [
+    "Anda dapat memperpanjang izin tinggal ini beberapa kali hingga maksimal 180 hari."
+  ],
+  "notes": [
+    "PNBP is official-source reference only; never a client price.",
+    "VERIFIED_FROM_SOURCE confirms extraction, not resolution of contradictions or legal eligibility.",
+    "Requirement numbers follow source order; nested alternatives remain verbatim. A/B counts include the application steps listed by the source."
+  ],
+  "status": "VERIFIED_FROM_SOURCE",
+  "to_verify": [
+    "where_to_apply: null + TO_VERIFY; no explicit offshore/onshore application rule on the visa page."
+  ],
+  "conflicts": [],
+  "source_http_status": 200,
+  "source_raw_path": "raw/D3.html",
+  "source_sections_verbatim": [
+    {
+      "heading": "Dengan visa D3, anda dapat",
+      "text": "menjalani pengobatan di Indonesia. Termasuk dengan visa ini anda dapat berwisata serta mengunjungi teman dan keluarga."
+    },
+    {
+      "heading": "Jenis visa",
+      "text": "Visa ini merupakan Visa Kunjungan untuk beberapa kali masuk ke Indonesia dengan izin tinggal maksimal 60 hari setiap kedatangan, serta dihitung sejak tanggal kedatangan. Izin Tinggal ini dapat diperpanjang namun tidak dapat dikonversikan menjadi Izin Tinggal Terbatas."
+    },
+    {
+      "heading": "Masa tinggal",
+      "text": "Anda dapat tinggal di Indonesia maksimal 60 hari, dihitung sejak tanggal kedatangan.\nAnda dapat memperpanjang izin tinggal ini beberapa kali hingga maksimal 180 hari.\nPerpanjangan izin tinggal dapat dilakukan secara online oleh sponsor melalui akun yang telah terdaftar di evisa.imigrasi.go.id"
+    },
+    {
+      "heading": "Biaya (PNBP)",
+      "text": "Masa tinggal 1 tahun Rp3.000.000\nMasa tinggal 2 tahun Rp5.000.000\nBiaya Verifikasi I/II Rp 0\nSemua pembayaran (PNBP) dapat dilakukan melalui beberapa bank yang telah ditunjuk. Silakan lihat kode billing yang muncul di sistem setelah pengajuan visa oleh sponsor."
+    },
+    {
+      "heading": "Penjamin (Sponsor)",
+      "text": "Anda membutuhkan penjamin/sponsor untuk mengajukan visa ini."
+    },
+    {
+      "heading": "Pengajuan visa",
+      "text": "Penjamin (sponsor) harus memiliki akun di evisa.imigrasi.go.id sebelum mengajukan visa bagi Orang Asing yang dia sponsori. Setelah memiliki akun, penjamin dapat mengajukan visa ini bagi Orang Asing setelah login di evisa.imigrasi.go.id dengan menyiapkan berkas elektronik (detail format file) Orang Asing antara lain:\nsurat permohonan dan surat pernyataan penjamin,\ndokumen perjalanan yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis,\nbukti memiliki biaya hidup selama berada di wilayah Indonesia berupa rekening koran 3 bulan terakhir atas nama Orang Asing atau penjamin sebesar minimal USD2000 atau dalam mata uang lain yang setara jumlahnya,\npasfoto berwarna terbaru (setahun terakhir). Detail\ncurriculum vitae,\nrencana perjalanan (travel itinerary)."
+    },
+    {
+      "heading": "Persyaratan khusus",
+      "text": "surat keterangan dari instansi pemerintah/lembaga swasta/pernyataan Orang Asing yang menjelaskan bahwa akan melakukan pengobatan di wilayah Indonesia."
+    },
+    {
+      "heading": "Ketentuan lain",
+      "text": "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa paspor sementara, paspor darurat, titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya harus melampirkan dokumen Izin Masuk Kembali ke negara tempat Visa Multipel diajukan serta tiket kembali/tiket terusan ke negara lain (kecuali bagi awak alat angkut).\nMasa berlaku visa terhitung sejak tanggal penerbitan. Jika tidak digunakan setelah jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.\nOrang Asing dengan izin tinggal dari Visa D3 dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+    },
+    {
+      "heading": "Proses pengajuan dan pemberian visa",
+      "text": "Pengajuan Visa di Direktorat Jenderal Imigrasi:\npemeriksaan kelengkapan persyaratan;\nverifikasi pembayaran biaya imigrasi sesuai dengan ketentuan peraturan perundang-undangan;\npembuatan profil dan verifikasi;\npersetujuan;\npenerbitan visa.\nWaktu Proses lima hari kerja setelah pembayaran visa diterima."
+    },
+    {
+      "heading": "Dasar hukum",
+      "text": "Peraturan Pemerintah Nomor 45 tahun 2024 tentang Tarif PNBP di Lingkungan Kementerian Hukum dan HAM RI\nPeraturan Menteri Hukum dan HAM RI Nomor 11 Tahun 2024 tentang Visa dan Izin Tinggal\nPeraturan Menteri Hukum dan HAM RI Nomor 22 tahun 2023 tentang Visa dan Izin Tinggal\nKeputusan Menteri Imigrasi dan Pemasyarakatan Nomor M.IP-08.GR.01.01 tahun 2025 tentang Klasifikasi Visa\nPeraturan Menteri Keuangan RI Nomor 9/PMK.02/2022 tentang Jenis dan Tarif PNBP Kebutuhan Mendesak atas Pelayanan Keimigrasian yang berlaku pada Kemenkumham RI\nPeraturan Menteri Keuangan RI Nomor 82 Tahun 2023 tentang Jenis dan Tarif atas Jenis PNBP Kebutuhan Mendesak atas Pelayanan Golden Visa yang berlaku pada Kemenkumham RI"
+    }
+  ],
+  "persyaratan_khusus_verbatim": "surat keterangan dari instansi pemerintah/lembaga swasta/pernyataan Orang Asing yang menjelaskan bahwa akan melakukan pengobatan di wilayah Indonesia.",
+  "itap_explicit_on_visa_page": false
+}

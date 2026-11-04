@@ -1,0 +1,980 @@
+"use client";
+
+import { useEffect, useState, useCallback, useRef, memo } from "react";
+import dynamic from "next/dynamic";
+import {
+  Loader2,
+  FileText,
+  Upload,
+  AlertCircle,
+  CheckCircle,
+  Clock,
+  FolderOpen,
+  AlertTriangle,
+  X,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
+import { api } from "@/lib/api";
+import { logger } from "@/lib/logger";
+import { useToast } from "@/components/ui/toast";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import type { ClientRequiredDocument } from "@/lib/types/required-documents";
+
+// Lazy: FileUploadField only renders when user clicks upload (not first paint)
+const FileUploadField = dynamic(
+  () =>
+    import("@/components/documents/FileUploadField").then((m) => ({
+      default: m.FileUploadField,
+    })),
+  { ssr: false },
+);
+
+// Lazy: ProcessStepper is below fold (timeline view, below document list)
+const ProcessStepper = dynamic(
+  () =>
+    import("@/components/portal").then((m) => ({ default: m.ProcessStepper })),
+  { ssr: false },
+);
+import { usePortalProcessTimeline } from "@/hooks/usePortalProcessTimeline";
+import {
+  PracticeBaton,
+  statusToBaton,
+} from "@/components/portal/PracticeBaton";
+import type { PortalMatter } from "@/lib/api/portal";
+import {
+  BASE64_UPLOAD_MAX_BYTES,
+  BASE64_UPLOAD_MAX_LABEL,
+} from "@/lib/upload/base64UploadLimit";
+
+// Status configurations — WS3 slice 4 (GARUDA Day Edition, 2026-07-24):
+// state colors read the semantic --state-* tokens (WS2 operative-light AA
+// overrides: success 4.80 / warning 4.78 / danger 5.74 / info 5.94 :1 on
+// paper) instead of Tailwind dark-grade utilities (text-amber-500 & co.
+// fail AA on paper). `fg` is a full CSS color expression; chipStyle()
+// derives the 12% tint background from it.
+const STATUS_CONFIG = {
+  pending: {
+    fg: "var(--state-warning)",
+    icon: <Clock className="w-4 h-4" />,
+    label: "Pending",
+  },
+  uploaded: {
+    fg: "var(--state-info)",
+    icon: <Upload className="w-4 h-4" />,
+    label: "Uploaded",
+  },
+  verified: {
+    fg: "var(--state-success)",
+    icon: <CheckCircle className="w-4 h-4" />,
+    label: "Verified",
+  },
+  rejected: {
+    fg: "var(--state-danger)",
+    icon: <X className="w-4 h-4" />,
+    label: "Rejected",
+  },
+} as const;
+
+/** Chip colors: fg at full strength, bg as a 12% tint of the same color. */
+function chipStyle(fg: string): React.CSSProperties {
+  return {
+    color: fg,
+    backgroundColor: `color-mix(in srgb, ${fg} 12%, transparent)`,
+  };
+}
+
+// Process status mapping with colors (mirrored from CRM workspace).
+// Honest day mapping (slice-4 brief): done → success, current/in-flight →
+// info, waiting-on-client → warning, blocked/cancelled → danger,
+// early/neutral → --text-tertiary (4.77:1 on paper), money-in-flight →
+// copper via --bz-copper-text (slice-1 fallback until PR #3050 merges).
+const PROCESS_STATUS_CONFIG: Record<string, { label: string; fg: string }> = {
+  inquiry: { label: "Inquiry", fg: "var(--text-tertiary, var(--tx-tertiary))" },
+  quotation_sent: {
+    label: "Quotation Sent",
+    fg: "var(--bz-copper-text, var(--tx-secondary))",
+  },
+  sending_invoice: {
+    label: "Sending Invoice",
+    fg: "var(--bz-copper-text, var(--tx-secondary))",
+  },
+  payment_pending: {
+    label: "Payment Pending",
+    fg: "var(--state-warning)",
+  },
+  waiting_payment: {
+    label: "Waiting for Payment",
+    fg: "var(--state-warning)",
+  },
+  in_progress: { label: "In Progress", fg: "var(--state-info)" },
+  on_process: { label: "On Process", fg: "var(--state-info)" },
+  waiting_documents: {
+    label: "Waiting for Documents",
+    fg: "var(--state-warning)",
+  },
+  submitted_to_gov: {
+    label: "Submitted to Government",
+    fg: "var(--state-info)",
+  },
+  approved: {
+    label: "Approved",
+    fg: "var(--state-success)",
+  },
+  completed: { label: "Completed", fg: "var(--state-success)" },
+  cancelled: { label: "Cancelled", fg: "var(--state-danger)" },
+};
+
+// Keep compat for any old references
+const PROCESS_STATUS_LABELS: Record<string, string> = Object.fromEntries(
+  Object.entries(PROCESS_STATUS_CONFIG).map(([k, v]) => [k, v.label]),
+);
+
+const PORTAL_CARD_STYLE = {
+  background: "var(--bz-elevated)",
+  borderColor: "var(--bz-border)",
+  // GARUDA Day concept .panel shadow — soft navy on paper, near-invisible
+  // on dark (harmless there).
+  boxShadow: "0 14px 34px rgba(22, 33, 58, 0.07)",
+} as const;
+
+const PORTAL_CARD_MUTED_STYLE = {
+  background: "var(--bz-card)",
+  borderColor: "var(--bz-border)",
+} as const;
+
+interface ProcessGroup {
+  practiceId: number;
+  processName: string;
+  processStatus: string;
+  documents: ClientRequiredDocument[];
+}
+
+// Status Badge Component
+const StatusBadge = memo(
+  ({ status }: { status: keyof typeof STATUS_CONFIG }) => {
+    const config = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
+    return (
+      <Badge
+        variant="secondary"
+        className="flex items-center gap-1"
+        style={chipStyle(config.fg)}
+      >
+        {config.icon}
+        {config.label}
+      </Badge>
+    );
+  },
+);
+StatusBadge.displayName = "StatusBadge";
+
+// Document Upload Modal
+function DocumentUploadModal({
+  document,
+  isOpen,
+  onClose,
+  onUpload,
+  isUploading,
+  flowPosition,
+  flowTotal,
+}: {
+  document: ClientRequiredDocument | null;
+  isOpen: boolean;
+  onClose: () => void;
+  onUpload: (file: string, fileName: string, notes: string) => Promise<void>;
+  isUploading: boolean;
+  flowPosition?: number;
+  flowTotal?: number;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [notes, setNotes] = useState("");
+
+  const handleFileSelect = (
+    selectedFile: File | null,
+    error: string | null,
+  ) => {
+    setFile(selectedFile);
+    setFileError(error);
+  };
+
+  const handleSubmit = async () => {
+    if (!file) return;
+
+    // Convert file to base64
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64 = reader.result as string;
+      await onUpload(base64, file.name, notes);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleOpenChange = (open: boolean) => {
+    if (!open) {
+      setFile(null);
+      setFileError(null);
+      setNotes("");
+      onClose();
+    }
+  };
+
+  if (!document) return null;
+
+  const isUploadFlow = Boolean(flowPosition && flowTotal);
+  const hasNextDocument =
+    isUploadFlow && (flowPosition as number) < (flowTotal as number);
+  const submitLabel = isUploadFlow
+    ? hasNextDocument
+      ? "Upload & continue"
+      : "Upload last document"
+    : "Upload";
+
+  return (
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>
+            {isUploadFlow ? "Upload documents" : "Upload required document"}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          {isUploadFlow && (
+            <div
+              className="flex items-center justify-between text-sm"
+              aria-live="polite"
+            >
+              <span className="font-medium">
+                Document {flowPosition} of {flowTotal}
+              </span>
+              <span style={{ color: "var(--bz-text-2)" }}>
+                One file for each requirement
+              </span>
+            </div>
+          )}
+          <div
+            className="p-3 rounded-lg backdrop-blur-md"
+            style={{ background: "var(--glass-rim)" }}
+          >
+            <p className="font-medium">{document.document_label}</p>
+            {document.description && (
+              <p className="text-sm" style={{ color: "var(--bz-text-2)" }}>
+                {document.description}
+              </p>
+            )}
+          </div>
+
+          <FileUploadField
+            id="doc-upload"
+            label="Select Document"
+            accept=".pdf,.jpg,.jpeg,.png"
+            maxSize={BASE64_UPLOAD_MAX_BYTES}
+            onFileSelect={handleFileSelect}
+            error={fileError}
+          />
+          <p className="text-xs" style={{ color: "var(--bz-text-2)" }}>
+            Accepted formats: PDF, JPG or PNG. Maximum file size:{" "}
+            {BASE64_UPLOAD_MAX_LABEL}.
+          </p>
+
+          <div>
+            <label
+              htmlFor="doc-upload-notes"
+              className="text-sm font-medium mb-1 block"
+            >
+              Notes (optional)
+            </label>
+            <textarea
+              id="doc-upload-notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Add any notes about this document..."
+              className="w-full px-3 py-2 rounded-lg border text-sm min-h-[80px]"
+              style={{
+                background: "var(--glass-rim)",
+                borderColor: "var(--bz-border)",
+                color: "var(--bz-text-1)",
+              }}
+            />
+          </div>
+
+          <div className="flex gap-2 justify-end">
+            <Button
+              variant="outline"
+              onClick={() => handleOpenChange(false)}
+              disabled={isUploading}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleSubmit} disabled={!file || isUploading}>
+              {isUploading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <Upload className="w-4 h-4 mr-2" />
+                  {submitLabel}
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Process Card Component
+function ProcessCard({
+  process,
+  onUploadClick,
+}: {
+  process: ProcessGroup;
+  onUploadClick: (doc: ClientRequiredDocument) => void;
+}) {
+  const [isExpanded, setIsExpanded] = useState(true);
+  const [showTimeline, setShowTimeline] = useState(false);
+  const { data: timeline, isLoading: isLoadingTimeline } =
+    usePortalProcessTimeline(showTimeline ? process.practiceId : null);
+
+  const pendingCount = process.documents.filter(
+    (d) => d.status === "pending",
+  ).length;
+  const uploadedCount = process.documents.filter(
+    (d) => d.status === "uploaded",
+  ).length;
+  const verifiedCount = process.documents.filter(
+    (d) => d.status === "verified",
+  ).length;
+  const totalCount = process.documents.length;
+  const progress =
+    totalCount > 0 ? Math.round((verifiedCount / totalCount) * 100) : 0;
+
+  return (
+    <div
+      className="rounded-xl border overflow-hidden backdrop-blur-xl transition-all duration-300"
+      style={PORTAL_CARD_STYLE}
+    >
+      {/* Header */}
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        aria-expanded={isExpanded}
+        aria-label={`${isExpanded ? "Collapse" : "Expand"} ${process.processName}`}
+        className="w-full p-4 flex items-center justify-between transition-colors"
+        style={{ background: "transparent" }}
+        onMouseEnter={(e) =>
+          (e.currentTarget.style.background = "var(--bz-card-hover)")
+        }
+        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-[var(--bz-accent)]/10 flex items-center justify-center">
+            <FolderOpen className="w-5 h-5 text-[var(--bz-accent)]" />
+          </div>
+          <div className="text-left">
+            <h3 className="font-semibold text-[var(--bz-text-1)]">
+              {process.processName}
+            </h3>
+            <span
+              className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+              style={chipStyle(
+                PROCESS_STATUS_CONFIG[process.processStatus]?.fg ||
+                  "var(--text-tertiary, var(--tx-tertiary))",
+              )}
+            >
+              {PROCESS_STATUS_CONFIG[process.processStatus]?.label ||
+                process.processStatus}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          {/* Your Turn / Our Turn baton — derived from the practice status.
+              The single signal that tells the client whether THEY must act. */}
+          <PracticeBaton
+            status={process.processStatus}
+            compact
+            className="hidden sm:flex"
+          />
+          <div className="text-right hidden sm:block">
+            <p className="text-sm font-medium">
+              {verifiedCount}/{totalCount} documents
+            </p>
+            <div
+              className="w-24 h-1.5 rounded-full mt-1 border border-[var(--bz-border)]"
+              style={{ background: "var(--bz-border)" }}
+            >
+              <div
+                className="h-full bg-[var(--bz-accent)] rounded-full transition-all"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+          {isExpanded ? (
+            <ChevronUp className="w-5 h-5" />
+          ) : (
+            <ChevronDown className="w-5 h-5" />
+          )}
+        </div>
+      </button>
+
+      {/* Timeline Section */}
+      {isExpanded && (
+        <div
+          className="px-4 py-2 border-t"
+          style={{ borderColor: "var(--bz-border)" }}
+        >
+          <button
+            onClick={() => setShowTimeline(!showTimeline)}
+            className="text-xs font-medium flex items-center gap-1 transition-opacity hover:opacity-80"
+            style={{ color: "var(--bz-copper-text, var(--tx-secondary))" }}
+          >
+            {showTimeline ? "Hide Timeline" : "View Timeline"}
+          </button>
+          {showTimeline && (
+            <div className="mt-3">
+              {isLoadingTimeline ? (
+                <div className="flex items-center gap-2 py-2">
+                  <div
+                    className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin"
+                    style={{
+                      borderColor: "var(--bz-copper)",
+                      borderTopColor: "transparent",
+                    }}
+                  />
+                  <span
+                    className="text-xs"
+                    style={{ color: "var(--bz-text-2)" }}
+                  >
+                    Loading timeline...
+                  </span>
+                </div>
+              ) : timeline?.steps ? (
+                <ProcessStepper steps={timeline.steps} />
+              ) : (
+                <p
+                  className="text-xs py-2"
+                  style={{ color: "var(--text-tertiary, var(--bz-text-3))" }}
+                >
+                  No timeline data available
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Documents List */}
+      {isExpanded && (
+        <div
+          className="border-t divide-y divide-[var(--bz-border)]"
+          style={{ borderColor: "var(--bz-border)" }}
+        >
+          {/* Your Turn / Our Turn full banner — the hard dependency made explicit.
+              When it's the client's turn, surface the concrete next action
+              (the first pending document) so they know exactly what to do. */}
+          {(() => {
+            const baton = statusToBaton(process.processStatus);
+            const firstPending = process.documents.find(
+              (d) => d.status === "pending" || d.status === "rejected",
+            );
+            const statusLabel =
+              PROCESS_STATUS_CONFIG[process.processStatus]?.label ||
+              process.processStatus;
+            return (
+              <div
+                className="p-4"
+                style={{ borderBottom: "1px solid var(--bz-border)" }}
+              >
+                <PracticeBaton
+                  status={process.processStatus}
+                  statusLabel={statusLabel}
+                  nextActionLabel={
+                    baton === "your_turn"
+                      ? firstPending
+                        ? `Upload: ${firstPending.document_label}`
+                        : "Review what's needed below"
+                      : undefined
+                  }
+                  onAction={() => {
+                    if (firstPending) {
+                      document
+                        .getElementById(`doc-${firstPending.id}`)
+                        ?.scrollIntoView({
+                          behavior: "smooth",
+                          block: "center",
+                        });
+                    }
+                  }}
+                />
+              </div>
+            );
+          })()}
+          {process.documents.length === 0 ? (
+            <div
+              className="p-6 text-center"
+              style={{ color: "var(--bz-text-2)" }}
+            >
+              <FileText className="w-10 h-10 mx-auto mb-2 opacity-30" />
+              <p>No documents required</p>
+            </div>
+          ) : (
+            process.documents.map((doc) => (
+              <div
+                key={doc.id}
+                id={`doc-${doc.id}`}
+                className="p-4 flex items-start justify-between gap-3"
+                style={
+                  doc.is_required
+                    ? { borderLeft: "2px solid var(--state-warning)" }
+                    : undefined
+                }
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium">{doc.document_label}</span>
+                    {doc.is_required && (
+                      <Badge
+                        variant="secondary"
+                        className="text-[10px]"
+                        style={chipStyle("var(--state-warning)")}
+                      >
+                        Required
+                      </Badge>
+                    )}
+                  </div>
+                  {doc.description && (
+                    <p
+                      className="text-sm mt-0.5"
+                      style={{ color: "var(--bz-text-2)" }}
+                    >
+                      {doc.description}
+                    </p>
+                  )}
+                  <div className="flex items-center gap-2 mt-2">
+                    <StatusBadge
+                      status={doc.status as keyof typeof STATUS_CONFIG}
+                    />
+                  </div>
+                </div>
+
+                {doc.status === "pending" && (
+                  <Button size="sm" onClick={() => onUploadClick(doc)}>
+                    <Upload className="w-4 h-4 mr-1" />
+                    Upload
+                  </Button>
+                )}
+                {doc.status === "uploaded" && (
+                  <Badge
+                    variant="secondary"
+                    style={chipStyle("var(--state-info)")}
+                  >
+                    Under Review
+                  </Badge>
+                )}
+                {doc.status === "verified" && (
+                  <CheckCircle
+                    className="w-5 h-5"
+                    style={{ color: "var(--state-success)" }}
+                  />
+                )}
+                {doc.status === "rejected" && (
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => onUploadClick(doc)}
+                  >
+                    <Upload className="w-4 h-4 mr-1" />
+                    Re-upload
+                  </Button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Main Page Component
+export default function PortalProcessPage() {
+  const toast = useToast();
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
+  const [profile, setProfile] = useState<{
+    id: number;
+    fullName: string;
+  } | null>(null);
+  const [matters, setMatters] = useState<PortalMatter[]>([]);
+  const [documents, setDocuments] = useState<ClientRequiredDocument[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadDoc, setUploadDoc] = useState<ClientRequiredDocument | null>(
+    null,
+  );
+  const [uploadFlow, setUploadFlow] = useState<{
+    position: number;
+    total: number;
+  } | null>(null);
+
+  // Load profile and documents — stable reference, no toast dependency in deps
+  const loadData = useCallback(
+    async (options?: { showLoading?: boolean; showErrorToast?: boolean }) => {
+      const showLoading = options?.showLoading ?? true;
+      const showErrorToast = options?.showErrorToast ?? true;
+      try {
+        if (showLoading) {
+          setIsLoading(true);
+        }
+
+        const [profileData, mattersData, docs] = await Promise.all([
+          api.portal.getProfile(),
+          api.portal.listMatters(),
+          // The portal-scoped endpoint resolves client_id from the caller's
+          // JWT, unlike the CRM endpoint which rejects plain client JWTs.
+          api.portal.getMyRequiredDocuments() as Promise<
+            ClientRequiredDocument[]
+          >,
+        ]);
+        setProfile({ id: profileData.id, fullName: profileData.fullName });
+        setMatters(mattersData.matters);
+        setDocuments(docs);
+      } catch (err) {
+        if (showErrorToast) {
+          toastRef.current.error(
+            "Failed to load data",
+            "Please try again later",
+          );
+        }
+        logger.error("Failed to load process data", {}, err as Error);
+      } finally {
+        if (showLoading) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [],
+  ); // stable — no deps that change every render
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const pendingUploadDocuments = documents.filter(
+    (doc) => doc.status === "pending" || doc.status === "rejected",
+  );
+
+  const openSingleDocumentUpload = (doc: ClientRequiredDocument) => {
+    setUploadFlow(null);
+    setUploadDoc(doc);
+  };
+
+  const closeDocumentUpload = () => {
+    setUploadDoc(null);
+    setUploadFlow(null);
+  };
+
+  const startDocumentUploadFlow = () => {
+    const firstPendingDocument = pendingUploadDocuments[0];
+    if (!firstPendingDocument) return;
+
+    setUploadFlow({
+      position: 1,
+      total: pendingUploadDocuments.length,
+    });
+    setUploadDoc(firstPendingDocument);
+  };
+
+  // Handle document upload
+  const handleUpload = async (
+    file: string,
+    fileName: string,
+    notes: string,
+  ) => {
+    if (!uploadDoc) return;
+
+    const currentUploadDoc = uploadDoc;
+    setIsUploading(true);
+    try {
+      await api.crm.uploadClientDocument(currentUploadDoc.practice_id, {
+        required_doc_id: currentUploadDoc.id,
+        file,
+        file_name: fileName,
+        notes,
+      });
+
+      setDocuments((currentDocuments) =>
+        currentDocuments.map((doc) =>
+          doc.id === currentUploadDoc.id
+            ? {
+                ...doc,
+                uploaded_by_client: true,
+                status: "uploaded",
+                client_notes: notes || doc.client_notes,
+              }
+            : doc,
+        ),
+      );
+
+      const nextDocument = uploadFlow
+        ? pendingUploadDocuments.find((doc) => doc.id !== currentUploadDoc.id)
+        : undefined;
+      toastRef.current.success(
+        "Document uploaded",
+        nextDocument
+          ? "Select the next required document"
+          : "Your document has been submitted for review",
+      );
+
+      if (nextDocument && uploadFlow) {
+        setUploadFlow({
+          position: uploadFlow.position + 1,
+          total: uploadFlow.total,
+        });
+        setUploadDoc(nextDocument);
+      } else {
+        closeDocumentUpload();
+        void loadData({ showLoading: false, showErrorToast: false });
+      }
+    } catch (err) {
+      toastRef.current.error("Upload failed", "Please try again");
+      logger.error("Failed to upload document", {}, err as Error);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const processGroups: ProcessGroup[] = matters.map((matter) => ({
+    practiceId: matter.id,
+    processName: matter.title,
+    processStatus: matter.status,
+    documents: documents.filter((doc) => doc.practice_id === matter.id),
+  }));
+
+  for (const doc of documents) {
+    const existing = processGroups.find(
+      (group) => group.practiceId === doc.practice_id,
+    );
+    if (existing) {
+      continue;
+    }
+    processGroups.push({
+      practiceId: doc.practice_id,
+      processName: doc.process_name,
+      processStatus: doc.process_status,
+      documents: documents.filter(
+        (candidate) => candidate.practice_id === doc.practice_id,
+      ),
+    });
+  }
+
+  // Stats
+  const totalDocs = documents.length;
+  const pendingDocs = documents.filter((d) => d.status === "pending").length;
+  const verifiedDocs = documents.filter((d) => d.status === "verified").length;
+  const completionRate =
+    totalDocs > 0 ? Math.round((verifiedDocs / totalDocs) * 100) : 0;
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6 animate-in fade-in duration-500 max-w-4xl mx-auto">
+        <section>
+          <div
+            className="h-7 w-36 rounded animate-pulse"
+            style={{ background: "var(--bz-border)" }}
+          />
+          <div
+            className="h-4 w-72 rounded mt-2 animate-pulse"
+            style={{ background: "var(--bz-border)", opacity: 0.5 }}
+          />
+        </section>
+        <div className="grid grid-cols-3 gap-3">
+          {[1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="rounded-xl border p-4 h-20 animate-pulse"
+              style={PORTAL_CARD_MUTED_STYLE}
+            />
+          ))}
+        </div>
+        <div className="space-y-3">
+          {[1, 2].map((i) => (
+            <div
+              key={i}
+              className="rounded-xl border p-5 h-28 animate-pulse"
+              style={PORTAL_CARD_MUTED_STYLE}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-500 max-w-4xl mx-auto">
+      {/* Header — Day masthead (GARUDA Day Edition): copper rule + Cormorant
+          serif headline per concept (--font-serif, wired on <html>); Inter
+          everywhere else. */}
+      <section>
+        <div
+          aria-hidden="true"
+          className="w-14 h-[3px] rounded-sm mb-4 bg-[var(--bz-copper)]"
+        />
+        <h1
+          className="text-2xl font-semibold tracking-tight text-[var(--tx-pure)]"
+          style={{ fontFamily: "var(--font-serif)" }}
+        >
+          My Processes
+        </h1>
+        <p className="text-sm mt-1" style={{ color: "var(--tx-secondary)" }}>
+          Track your active processes and upload required documents
+        </p>
+      </section>
+
+      {/* Stats Cards */}
+      {totalDocs > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div
+            className="rounded-xl border p-4 backdrop-blur-md shadow-lg"
+            style={PORTAL_CARD_STYLE}
+          >
+            <p className="text-sm" style={{ color: "var(--bz-text-2)" }}>
+              Active Processes
+            </p>
+            <p className="text-2xl font-bold">{processGroups.length}</p>
+          </div>
+          <div
+            className="rounded-xl border p-4"
+            style={{ ...PORTAL_CARD_STYLE, backdropFilter: "blur(24px)" }}
+          >
+            <p className="text-sm" style={{ color: "var(--bz-text-2)" }}>
+              Documents Required
+            </p>
+            <p className="text-2xl font-bold">{totalDocs}</p>
+          </div>
+          <div
+            className="rounded-xl border p-4"
+            style={{ ...PORTAL_CARD_STYLE, backdropFilter: "blur(24px)" }}
+          >
+            <p className="text-sm" style={{ color: "var(--bz-text-2)" }}>
+              Pending Upload
+            </p>
+            <p
+              className="text-2xl font-bold"
+              style={{ color: "var(--state-warning)" }}
+            >
+              {pendingDocs}
+            </p>
+          </div>
+          <div
+            className="rounded-xl border p-4"
+            style={{ ...PORTAL_CARD_STYLE, backdropFilter: "blur(24px)" }}
+          >
+            <p className="text-sm" style={{ color: "var(--bz-text-2)" }}>
+              Completion
+            </p>
+            <p
+              className="text-2xl font-bold"
+              style={{ color: "var(--state-success)" }}
+            >
+              {completionRate}%
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Process List */}
+      {processGroups.length === 0 ? (
+        <div
+          className="rounded-xl border p-12 text-center backdrop-blur-lg"
+          style={PORTAL_CARD_STYLE}
+        >
+          <FolderOpen
+            className="w-16 h-16 mx-auto mb-4"
+            style={{ color: "var(--bz-text-3)" }}
+          />
+          <h3 className="text-lg font-medium mb-2">No Active Processes</h3>
+          <p className="max-w-md mx-auto" style={{ color: "var(--bz-text-2)" }}>
+            You don&apos;t have any active processes at the moment. When your
+            case officer creates a process for you, it will appear here with any
+            documents you need to upload.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {pendingDocs > 0 && (
+            <div
+              className="rounded-lg p-4 flex flex-col gap-4 sm:flex-row sm:items-center"
+              style={{
+                background: "var(--bz-card)",
+                border:
+                  "1px solid color-mix(in srgb, var(--state-warning) 30%, transparent)",
+              }}
+            >
+              <div className="flex flex-1 items-start gap-3">
+                <AlertTriangle
+                  className="w-5 h-5 shrink-0 mt-0.5"
+                  style={{ color: "var(--state-warning)" }}
+                />
+                <div>
+                  <p
+                    className="font-medium"
+                    style={{ color: "var(--state-warning)" }}
+                  >
+                    Documents Required
+                  </p>
+                  <p
+                    className="text-sm"
+                    style={{ color: "var(--state-warning)" }}
+                  >
+                    You have {pendingDocs} document
+                    {pendingDocs > 1 ? "s" : ""} waiting to be uploaded. Please
+                    upload them to proceed with your process.
+                  </p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                className="w-full sm:w-auto"
+                onClick={startDocumentUploadFlow}
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                Upload {pendingDocs > 1 ? "documents" : "document"}
+              </Button>
+            </div>
+          )}
+
+          {processGroups.map((process) => (
+            <ProcessCard
+              key={process.practiceId}
+              process={process}
+              onUploadClick={openSingleDocumentUpload}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Upload Modal */}
+      <DocumentUploadModal
+        key={uploadDoc?.id ?? "closed"}
+        document={uploadDoc}
+        isOpen={!!uploadDoc}
+        onClose={closeDocumentUpload}
+        onUpload={handleUpload}
+        isUploading={isUploading}
+        flowPosition={uploadFlow?.position}
+        flowTotal={uploadFlow?.total}
+      />
+    </div>
+  );
+}

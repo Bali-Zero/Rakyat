@@ -1,0 +1,1469 @@
+"""
+Intel Scraper & Publish Endpoints
+
+Split from intel.py for maintainability.
+Provides: scraper submission, register notification, ingest to Qdrant,
+publish staging items, homepage layout update, convert staging to article.
+"""
+
+import asyncio
+import base64
+import json
+import os
+import re
+import time
+from datetime import datetime, timezone
+from pathlib import Path as PathLib
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from backend.app.core.config import settings
+from backend.app.dependencies import get_current_user
+from backend.app.metrics import (
+    intel_articles_duplicates,
+    intel_articles_submitted,
+    intel_scraper_latency,
+    intel_user_actions_total,
+)
+from backend.app.routers.intel import (
+    INTEL_COLLECTIONS,
+    PublishToSiteRequest,
+    RegisterNotificationRequest,
+    ScraperSubmission,
+    classification_service,
+    get_embedder,
+    staging_service,
+)
+from backend.app.utils.crm_utils import is_crm_admin
+from backend.app.utils.internal_api_auth import verify_internal_api_key
+from backend.app.utils.logging_utils import get_logger
+from backend.core.cache import invalidate_cache
+from backend.core.qdrant_db import QdrantClient
+from backend.services.article_routes import served_category
+from backend.services.content_guards import (
+    ArticleGuardViolation,
+    enforce_public_article,
+)
+from backend.services.cover_images import _cover_as_jpeg
+from backend.services.intel.intel_staging_service import assert_valid_item_id
+
+logger = get_logger(__name__)
+
+router = APIRouter(tags=["intel-scraper"])
+
+
+def _require_publish_admin(user: dict[str, Any]) -> None:
+    """Gate publish-to-public-website to admins. Raises 403 otherwise.
+
+    Publishing opens a PR against the public site repo, so an authenticated
+    team member is not a sufficient principal (Case OS R3).
+    """
+    if not is_crm_admin(user):
+        raise HTTPException(status_code=403, detail="Publish requires admin")
+
+
+# --- CONVERSION FUNCTIONS ---
+
+
+def _summary_from_content(content: str, limit: int = 300) -> str:
+    """Extract a complete-sentence summary from the first prose paragraph."""
+    paragraph_lines: list[str] = []
+    for line in content.splitlines():
+        stripped_line = line.strip()
+        if not stripped_line:
+            if paragraph_lines:
+                break
+            continue
+        if re.match(r"^#{1,6}\s", stripped_line):
+            continue
+        paragraph_lines.append(stripped_line)
+
+    paragraph = " ".join(paragraph_lines)
+    paragraph = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", paragraph)
+    paragraph = re.sub(r"[*_`]", "", paragraph).strip()
+    if not paragraph:
+        return ""
+
+    sentences = re.split(r"(?<=[.!?])\s+", paragraph)
+    summary_sentences: list[str] = []
+    summary_length = 0
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        separator_length = 1 if summary_sentences else 0
+        if summary_length + separator_length + len(sentence) > limit:
+            break
+        summary_sentences.append(sentence)
+        summary_length += separator_length + len(sentence)
+
+    if summary_sentences:
+        return " ".join(summary_sentences).rstrip(" (—-,;:")
+
+    words = paragraph.split()
+    truncated_words: list[str] = []
+    for word in words:
+        candidate = " ".join([*truncated_words, word])
+        if len(candidate) + 1 > limit:
+            break
+        truncated_words.append(word)
+
+    truncated = " ".join(truncated_words)
+    # Keep currency/number/scale phrases together: "IDR 250 million" must
+    # never become the very different amount "IDR 250" at the cutoff.
+    for amount in re.finditer(
+        r"(?:\b(?:[A-Z]{3}|Rp)\s*|[$€£]\s*)?\b\d[\d,.]*"
+        r"(?:\s+(?i:thousand|million|billion|trillion|ribu|juta|miliar|triliun))?\b",
+        " ".join(words),
+    ):
+        if amount.start() < len(truncated) < amount.end():
+            truncated = truncated[: amount.start()].rstrip()
+            break
+    return truncated.rstrip(" (—-,;:") + "…"
+
+
+def _parse_bali_zero_take(text: str) -> dict[str, str]:
+    """Preserve prose intact; only explicit labels divide editorial subsections."""
+    sections = {"hidden_insight": "", "our_analysis": "", "our_advice": ""}
+    labels = list(
+        re.finditer(
+            r"^[ \t]*(?:#{3,6}[ \t]+|[-*][ \t]+)?(?:\*\*)?"
+            r"(?:The[ \t]+)?(Hidden Insight|Our Analysis|Our Advice)"
+            r"(?:\*\*)?[ \t]*(?::[ \t]*(?:\*\*)?[ \t]*|\n|$)",
+            text,
+            re.MULTILINE | re.IGNORECASE,
+        )
+    )
+    if not labels:
+        sections["our_analysis"] = text.strip()
+        return sections
+
+    # A preamble is still analysis, even when only some labels are supplied.
+    sections["our_analysis"] = text[: labels[0].start()].strip()
+    for index, label in enumerate(labels):
+        end = labels[index + 1].start() if index + 1 < len(labels) else len(text)
+        key = label.group(1).lower().replace(" ", "_")
+        body = text[label.end() : end].strip()
+        sections[key] = "\n\n".join(part for part in (sections[key], body) if part)
+    return sections
+
+
+def _classify_draft_heading(heading: str) -> str | None:
+    """Name the mapped section a draft "##" heading opens, if any. The one
+    heading grammar shared by the extractors and extra_sections (spec D8):
+    case-insensitive, optional trailing ":"."""
+    normalized = heading.strip().rstrip(":").strip().lower()
+    if normalized == "summary":
+        return "summary"
+    if normalized == "facts":
+        return "facts"
+    if normalized in {"bali zero take", "bali zero's take", "bali zero’s take"}:
+        return "bali_zero_take"
+    if normalized == "next steps":
+        return "next_steps"
+    return None
+
+
+def _split_draft_sections(content: str) -> list[tuple[str, str | None, str]]:
+    """Every "##" section of a draft in order, as (heading, mapped key, body)."""
+    headings = list(re.finditer(r"(?m)^##[ \t]+(.+?)[ \t]*$", content))
+    sections: list[tuple[str, str | None, str]] = []
+    for index, heading_match in enumerate(headings):
+        body_end = headings[index + 1].start() if index + 1 < len(headings) else len(content)
+        heading = heading_match.group(1).strip()
+        body = content[heading_match.end() : body_end].strip()
+        sections.append((heading, _classify_draft_heading(heading), body))
+    return sections
+
+
+# The line grammar of a "## Next Steps" body. Spec and case table:
+# docs/specs/newsroom-next-steps-grammar-v1.md (after four PRs of layered
+# regex fixes, #7285 → #7336, each cure regressing another case).
+#
+# An audience is named only by a whole label LINE ("### For Expats",
+# "**For Expats:**", "*For Expats:*", "Investors"), never by the word inside
+# a step: a substring match relabelled "Expats should renew…" and cut
+# "expatriate" to "riate…" (gate BLOCK on #7322).
+_NEXT_STEPS_AUDIENCE_LABEL = re.compile(
+    r"^[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*|__|\*(?!\s)|_(?!\s))?[ \t]*"
+    r"(?:For[ \t]+)?(Expat|Investor)s?[ \t]*:?[ \t]*(?:\*\*|__|\*|_)?[ \t]*:?[ \t]*$",
+    re.IGNORECASE,
+)
+_NEXT_STEPS_HEADING = re.compile(r"^[ \t]*#{1,6}[ \t]+\S")
+_NEXT_STEPS_RULE = re.compile(r"^[ \t]*([-*_])(?:[ \t]*\1){2,}[ \t]*$")
+# "-Check" and "-5% tax" are not list items (markdown agrees, spec D7).
+_NEXT_STEPS_LIST_ITEM = re.compile(r"^[ \t]*(?:[-*+]|\d{1,3}[.)])(?:[ \t]+(.*))?$")
+# Items that say "nothing yet" rather than name a step (invariant 4).
+_PLACEHOLDER_STEPS = frozenset({"tbd", "tba", "n/a", "na", "none", "todo"})
+
+
+def _parse_next_steps(body: str) -> dict[str, list[str]]:
+    """Split a "## Next Steps" body into expat / investor / general items.
+
+    Per line: a label line switches the audience; any other heading switches
+    back to general and is not an item; a list marker starts an item; a blank
+    line or a horizontal rule ends one and is never an item; any other line
+    continues the open item or starts one. Text before the first label, or
+    with no label at all, is general. Only the leading list marker is removed
+    and nothing is capped: every worded line lands in exactly one item.
+    """
+    groups: dict[str, list[str]] = {"expat": [], "investor": [], "general": []}
+    audience = "general"
+    item_audience = audience
+    item_lines: list[str] = []
+
+    def close_item() -> None:
+        text = "\n".join(item_lines).strip()
+        item_lines.clear()
+        if re.search(r"\w", text) and text.rstrip(".").strip().lower() not in _PLACEHOLDER_STEPS:
+            groups[item_audience].append(text)
+
+    for line in body.splitlines():
+        label = _NEXT_STEPS_AUDIENCE_LABEL.match(line)
+        if label or _NEXT_STEPS_HEADING.match(line):
+            close_item()
+            audience = label.group(1).lower() if label else "general"
+            continue
+        if not line.strip() or _NEXT_STEPS_RULE.match(line):
+            close_item()
+            continue
+        list_item = _NEXT_STEPS_LIST_ITEM.match(line)
+        if list_item:
+            close_item()
+            line = list_item.group(1) or ""
+        if not item_lines:
+            item_audience = audience
+        if line.strip():
+            item_lines.append(line.strip())
+    close_item()
+    return groups
+
+
+def convert_staging_to_enriched_article(staging_data: dict[str, Any]) -> dict[str, Any]:
+    """
+    Convert staging item (markdown simple) to EnrichedArticle format.
+
+    Parses markdown content to extract sections and generates EnrichedArticle structure.
+
+    Args:
+        staging_data: Staging item dictionary with title, content (markdown), etc.
+
+    Returns:
+        Dictionary ready to be converted to EnrichedArticle Pydantic model
+    """
+
+    title = staging_data.get("title", "Untitled")
+    # CRLF drafts must parse like LF ones (spec D8).
+    content = staging_data.get("content", "").replace("\r\n", "\n").replace("\r", "\n")
+    category = staging_data.get("category", "news")
+    relevance_score = staging_data.get("relevance_score", 50)
+    source_url = staging_data.get("source_url", staging_data.get("url", ""))
+    source_name = staging_data.get("source_name", "Bali Intel Scraper")
+
+    # Parse markdown content to extract sections
+    # Format: ## Summary\n...\n## Facts\n...\n## Bali Zero Take\n...\n## Next Steps\n...
+    sections = _split_draft_sections(content)
+
+    def _mapped_body(key: str) -> str | None:
+        return next((body for _, known, body in sections if known == key), None)
+
+    summary_body = _mapped_body("summary")
+    ai_summary = (
+        _summary_from_content(summary_body, limit=280)
+        if summary_body is not None
+        else _summary_from_content(content)
+    )
+
+    facts_body = _mapped_body("facts")
+    facts = facts_body if facts_body is not None else content
+
+    bali_zero_take = _parse_bali_zero_take(_mapped_body("bali_zero_take") or "")
+
+    # A draft that never names "For Expats"/"For Investors" states ONE
+    # audience-neutral list: it lands in `general`, never split 50/50 between
+    # the two and never filled with "Review the article for specific actions"
+    # (2026-09-23 GloBE regression).
+    next_steps = _parse_next_steps(_mapped_body("next_steps") or "")
+
+    # Preserve every OTHER draft "##" section instead of silently dropping it
+    # (2026-09-23 GloBE regression: "## In Practice" and "## Sources" never
+    # reached the MDX). Walk every "##" heading in draft order; the four
+    # mapped ones above are consumed into their own fields and skipped here,
+    # everything else is carried through verbatim with an anchor recording
+    # which mapped section it immediately followed, so the renderer can slot
+    # it back after that section (one that precedes Facts lands right after
+    # Facts: there is no slot before it). A draft with no "## Facts" heading
+    # already carries every section inside the `facts` fallback above, so
+    # nothing is collected again (gate finding F2 on #7322: printed twice).
+    extra_sections: list[dict[str, str]] = []
+    last_known_anchor = "facts"
+    for heading_text, known, body in sections if facts_body is not None else []:
+        if known:
+            if known != "summary":
+                last_known_anchor = known
+            continue
+        if body:
+            extra_sections.append(
+                {"heading": heading_text, "body": body, "insert_after": last_known_anchor}
+            )
+
+    # Editorial priority: how much the story matters to Bali Zero (it feeds
+    # `trending`), not how exposed the reader is.
+    if relevance_score >= 75:
+        priority = "high"
+    elif relevance_score >= 50:
+        priority = "medium"
+    else:
+        priority = "low"
+
+    # The TL;DR states only what the draft supports. A staging item carries no
+    # reader-risk, audience or date field, so those rows stay empty instead of
+    # being derived from relevance_score or filled with a stock audience.
+    tldr_what = _summary_from_content(facts, limit=150) or title
+
+    # Generate tags from category and title
+    ai_tags = [category]
+    title_words = title.lower().split()
+    for word in title_words[:4]:
+        if len(word) > 3 and word not in ["the", "and", "for", "with", "from"]:
+            ai_tags.append(word)
+
+    # Suggested components based on content
+    suggested_components = ["InfoCard", "Checklist"]
+    if "timeline" in content.lower() or "date" in content.lower():
+        suggested_components.append("timeline")
+    if "comparison" in content.lower() or "vs" in content.lower():
+        suggested_components.append("comparison-table")
+
+    # Build EnrichedArticle structure
+    return {
+        "title": title,
+        "headline": title,
+        "tldr": {"what": tldr_what},
+        "facts": facts,
+        "bali_zero_take": bali_zero_take,
+        "next_steps": next_steps,
+        "category": category,
+        "priority": priority,
+        "relevance_score": relevance_score,
+        "ai_summary": ai_summary,
+        "ai_tags": ai_tags[:5],  # Limit to 5 tags
+        "suggested_components": suggested_components[:3],  # Limit to 3 components
+        "cover_image": None,  # Will be set from staging_data if available
+        "source": source_name,
+        "source_url": source_url,
+        "enriched_at": datetime.now(timezone.utc).isoformat(),
+        "seo_title": staging_data.get("seo_title"),
+        "seo_description": staging_data.get("seo_description"),
+        "cover_image_alt": staging_data.get("cover_image_alt"),
+        "extra_sections": extra_sections,
+    }
+
+
+# --- SCRAPER INTEGRATION ENDPOINTS ---
+
+
+@router.post("/api/intel/staging/register-notification")
+async def register_notification(
+    request: RegisterNotificationRequest,
+    _api_key_verified=Depends(verify_internal_api_key),
+) -> dict[str, Any]:
+    """Register Telegram message_id → staging item mapping for Damar's cover image uploads."""
+    from backend.services.intel.intel_cover_handler import intel_cover_handler
+
+    intel_cover_handler.register_notification(
+        telegram_message_id=request.telegram_message_id,
+        chat_id=request.chat_id,
+        intel_type=request.intel_type,
+        item_id=request.item_id,
+        title=request.title,
+    )
+    await invalidate_cache("zantara:intel_scraper:*")
+    return {
+        "success": True,
+        "message_id": request.telegram_message_id,
+        "item_id": request.item_id,
+    }
+
+
+def _derive_tier_from_score(score: Any) -> str:
+    """Bucket a live_news_score into the enricher's tier scheme.
+
+    WR2 liveness rewire — red-team round FIX3, 2026-07-18. Mirrors
+    claude_cli_enricher._normalize_live_news_fields's own buckets
+    (>=80 breaking, >=40 developing, else evergreen) so a submission that
+    carries a score WITHOUT an explicit tier doesn't silently default to
+    "evergreen" and fall out of wr2_topic_selector's live pool (a score=85
+    item with no tier previously persisted as 85/"evergreen" — excluded).
+    Defensive against non-numeric input even though ScraperSubmission
+    already validates `live_news_score` as `int | None`.
+    """
+    try:
+        s = int(round(float(score)))
+    except (TypeError, ValueError):
+        return "evergreen"
+    if s >= 80:
+        return "breaking"
+    if s >= 40:
+        return "developing"
+    return "evergreen"
+
+
+@router.post("/api/intel/scraper/submit")
+async def submit_from_scraper(
+    submission: ScraperSubmission,
+    _api_key_verified=Depends(verify_internal_api_key),
+) -> dict[str, Any]:
+    """
+    Receive article from bali-intel-scraper and save to staging.
+
+    This endpoint acts as the bridge between the scraper and Intelligence Center.
+    Articles are classified as 'visa' or 'news' and saved to the appropriate
+    staging folder for team approval.
+
+    Flow:
+    1. Scraper POSTs article here
+    2. Backend classifies type (visa/news)
+    3. Saves to data/staging/{type}/{item_id}.json
+    4. Intelligence Center UI shows for manual approval
+    5. Team votes via Telegram
+    6. If approved → ingested to Qdrant
+    """
+    start_time = time.time()
+
+    try:
+        # Classify intel type using service
+        intel_type = classification_service.classify_intel_type(
+            submission.category,
+            submission.title,
+            submission.content,
+        )
+
+        # Generate unique item ID
+        item_id = staging_service.generate_item_id(
+            intel_type,
+            submission.title,
+            submission.source_url,
+        )
+
+        # Check for duplicates
+        duplicate = staging_service.check_duplicate(intel_type, submission.source_url)
+        if duplicate:
+            logger.info(
+                f"Duplicate article detected (same URL): {submission.source_url}",
+                extra={"item_id": item_id, "existing_id": duplicate.get("item_id")},
+            )
+
+            intel_articles_duplicates.labels(intel_type=intel_type).inc()
+            intel_scraper_latency.labels(scraper_type=submission.source_name).observe(
+                time.time() - start_time,
+            )
+
+            # Round-2 red-team MUST-FIX #3 (scar family #9): the early
+            # return above happens BEFORE staging_data (with enrichment) is
+            # built below, so a duplicate hit against an item written by an
+            # older/partial-deploy scraper — enrichment absent or `{}` —
+            # would leave that item's future draft stuck at `{}` forever
+            # (7-day dedup window). Heal it in place: merge the new
+            # submission's enrichment into the existing staging file when
+            # the existing item doesn't already have a usable one. Never
+            # let a heal failure turn a successful dedup into a 500 —
+            # log and fall through to the unchanged response shape.
+            #
+            # The merge itself goes through `backfill_enrichment_if_absent`
+            # (per-item fcntl advisory lock, same one `compare_and_set_status`
+            # uses) rather than a raw load/save here: two same-URL submissions
+            # racing this read-modify-write could both see "empty" and both
+            # write, silently losing one payload under last-write-wins
+            # (W-L610). The lock serializes the racers instead.
+            enrichment_backfilled = False
+            new_enrichment = submission.enrichment
+            dup_item_id = duplicate.get("item_id")
+            if (
+                isinstance(new_enrichment, dict)
+                and new_enrichment
+                and dup_item_id
+                and duplicate.get("status") in (None, "pending")
+            ):
+                try:
+                    enrichment_backfilled = staging_service.backfill_enrichment_if_absent(
+                        intel_type, dup_item_id, new_enrichment
+                    )
+                    if enrichment_backfilled:
+                        logger.info(
+                            "Backfilled enrichment onto duplicate staging item",
+                            extra={"item_id": dup_item_id},
+                        )
+                except Exception:
+                    logger.warning(
+                        "Enrichment backfill failed for duplicate staging item "
+                        "— dedup response unaffected",
+                        extra={"item_id": dup_item_id},
+                        exc_info=True,
+                    )
+
+            response: dict[str, Any] = {
+                "success": True,
+                "message": "Article already exists in staging",
+                "item_id": duplicate.get("item_id"),
+                "intel_type": intel_type,
+                "duplicate": True,
+            }
+            if enrichment_backfilled:
+                response["enrichment_backfilled"] = True
+            return response
+
+        # WR2 liveness rewire (SPRINT B1, scar family #9 break #2; red-team
+        # FIX3 2026-07-18): normalize with uniform defaults so every staging
+        # item — scraper sent them or not — has a consistent liveness shape
+        # downstream. When liveness_tier is absent but a score IS present,
+        # derive the tier from the score instead of defaulting to
+        # "evergreen" — a validated, explicitly-provided tier is always
+        # trusted as-is.
+        _live_news_score = (
+            submission.live_news_score if submission.live_news_score is not None else 0
+        )
+        _liveness_tier = (
+            submission.liveness_tier
+            if submission.liveness_tier is not None
+            else _derive_tier_from_score(_live_news_score)
+        )
+
+        # Prepare staging data
+        staging_data = {
+            "item_id": item_id,
+            "title": submission.title,
+            "content": submission.content,
+            "source_url": submission.source_url,
+            "source_name": submission.source_name,
+            "category": submission.category,
+            "relevance_score": submission.relevance_score,
+            "published_at": submission.published_at or "unknown",
+            "extraction_method": submission.extraction_method,
+            "tier": submission.tier,
+            "intel_type": intel_type,
+            "status": "pending",
+            "detection_type": "scraper_auto",
+            "detected_at": datetime.now(timezone.utc).isoformat(),
+            "live_news_score": _live_news_score,
+            "liveness_tier": _liveness_tier,
+            "live_news_reasons": [r.strip()[:200] for r in (submission.live_news_reasons or [])][
+                :3
+            ],
+            # WR2 enrichment passthrough (scar family #9): carry the full
+            # structured enricher object into staging so it survives to
+            # wr2_topic_selector via list_pending_items' projection. Default
+            # {} preserves today's behavior for legacy/partial-deploy
+            # scrapers that don't send it yet.
+            "enrichment": submission.enrichment or {},
+        }
+
+        if submission.cover_image:
+            staging_data["cover_image"] = submission.cover_image
+
+        # Upload cover image to Google Drive if base64 provided
+        if submission.cover_image_base64:
+            try:
+                from backend.services.integrations.service_account_drive_service import (
+                    ServiceAccountDriveService,
+                )
+
+                drive_svc = ServiceAccountDriveService()
+                if drive_svc.service:
+                    image_bytes = base64.b64decode(submission.cover_image_base64)
+                    # Use Intel_Images folder on Drive (create if needed)
+                    intel_images_folder_id = os.getenv("INTEL_IMAGES_DRIVE_FOLDER_ID", "root")
+                    file_ext = (
+                        "png" if len(image_bytes) > 0 and image_bytes[:4] == b"\x89PNG" else "jpg"
+                    )
+                    drive_result = await drive_svc.upload_file_to_folder(
+                        folder_id=intel_images_folder_id,
+                        file_content=image_bytes,
+                        file_name=f"{item_id}.{file_ext}",
+                        mime_type=f"image/{file_ext}",
+                    )
+                    staging_data["image_drive_file_id"] = drive_result.get("id")
+                    staging_data["image_drive_url"] = drive_result.get("webViewLink")
+                    logger.info(
+                        "Cover image uploaded to Drive",
+                        extra={
+                            "item_id": item_id,
+                            "drive_file_id": drive_result.get("id"),
+                        },
+                    )
+                else:
+                    logger.warning("Drive service not configured, skipping image upload")
+            except Exception as e:
+                logger.warning(
+                    "Failed to upload cover image to Drive: %s",
+                    e,
+                    extra={"item_id": item_id},
+                )
+
+        # Save to staging using service
+        staging_file = staging_service.save_staging_item(intel_type, item_id, staging_data)
+
+        # Metrics
+        intel_articles_submitted.labels(
+            scraper_type=submission.source_name,
+            intel_type=intel_type,
+            tier=submission.tier,
+        ).inc()
+        intel_scraper_latency.labels(scraper_type=submission.source_name).observe(
+            time.time() - start_time,
+        )
+        staging_service.update_staging_queue_metrics()
+
+        logger.info(
+            "Article submitted from scraper",
+            extra={
+                "item_id": item_id,
+                "intel_type": intel_type,
+                "title": submission.title[:50],
+                "source": submission.source_name,
+                "score": submission.relevance_score,
+            },
+        )
+
+        await invalidate_cache("zantara:intel_scraper:*")
+        return {
+            "success": True,
+            "message": f"Article saved to {intel_type} staging",
+            "item_id": item_id,
+            "intel_type": intel_type,
+            "staging_path": str(staging_file),
+            "duplicate": False,
+        }
+
+    except Exception as e:
+        logger.exception("Failed to submit article from scraper: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+async def ingest_intel_to_qdrant(item_id: str, intel_type: str) -> bool:
+    """
+    Ingest a staging item into the appropriate Qdrant collection.
+
+    Args:
+        item_id: Unique item identifier
+        intel_type: "news", "visa", etc.
+
+    Returns:
+        True if ingestion succeeded
+    """
+    try:
+        data = staging_service.load_staging_item(intel_type, item_id)
+        if not data:
+            logger.error(
+                "Qdrant ingestion failed - item not found",
+                extra={"item_id": item_id, "intel_type": intel_type},
+            )
+            return False
+
+        collection_name = INTEL_COLLECTIONS.get(intel_type)
+        if not collection_name:
+            logger.error(
+                "No Qdrant collection mapped for intel_type=%s",
+                intel_type,
+                extra={"item_id": item_id, "intel_type": intel_type},
+            )
+            return False
+
+        title = data.get("title", "Untitled")
+        content = data.get("content", "")
+        source_url = data.get("source_url", data.get("url", ""))
+        category = data.get("category", intel_type)
+
+        # Build text for embedding
+        embed_text = f"{title}\n\n{content}"
+
+        # Generate embedding using text-embedding-3-small
+        embedding = await get_embedder().generate_single_embedding(embed_text)
+
+        # Build metadata
+        metadata = {
+            "title": title,
+            "source_url": source_url,
+            "category": category,
+            "intel_type": intel_type,
+            "published_at": datetime.now(timezone.utc).isoformat(),
+            "source_name": data.get("source_name", ""),
+            "relevance_score": data.get("relevance_score", 0),
+        }
+
+        # Upsert to Qdrant
+        client = QdrantClient(collection_name=collection_name)
+        await client.upsert_documents(
+            chunks=[embed_text],
+            embeddings=[embedding],
+            metadatas=[metadata],
+            ids=[item_id],
+        )
+
+        logger.info(
+            "Article ingested to Qdrant",
+            extra={
+                "item_id": item_id,
+                "intel_type": intel_type,
+                "collection": collection_name,
+                "title": title,
+            },
+        )
+        return True
+
+    except Exception as e:
+        logger.error(
+            "Qdrant ingestion failed: %s",
+            e,
+            exc_info=True,
+            extra={"item_id": item_id, "intel_type": intel_type},
+        )
+        return False
+
+
+@router.post("/api/intel/staging/publish/{type}/{item_id}")
+async def publish_staging_item(
+    type: str,
+    item_id: str,
+    body: PublishToSiteRequest | None = None,
+    request: Request = None,
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """
+    Publish approved item to Qdrant knowledge base and register in anti-duplicate system.
+
+    News Room requests must carry an explicit body such as
+    ``{"position": "hero_main"}``; there is no editorial placement default.
+
+    This endpoint:
+    1. Ingests article to Qdrant (knowledge base)
+    2. Registers article in anti-duplicate system
+    3. Archives to published folder
+
+    Admin-only: publishing pushes the article to the PUBLIC website
+    (balizero.com) via a GitHub PR, so it is an R3 (world-visible) action.
+    Being an authenticated team member is not enough.
+
+    Internal callers that carry their own authorization (e.g. the Telegram
+    approval quorum) must call :func:`publish_staging_item_internal` instead,
+    which names the actor explicitly rather than bypassing the gate.
+    """
+    _require_publish_admin(current_user)
+    if type == "news" and body is None:
+        raise HTTPException(
+            status_code=422,
+            detail="News Room publication requires an explicit homepage position",
+        )
+    return await _publish_staging_item(
+        type=type,
+        item_id=item_id,
+        body=body,
+        request=request,
+        actor=(current_user.get("email") or "unknown"),
+        allow_generated_cover=True,
+    )
+
+
+async def publish_staging_item_internal(
+    intel_type: str,
+    item_id: str,
+    actor: str,
+    allow_generated_cover: bool = True,
+    position: str = "latest",
+    *,
+    pool: Any | None = None,
+) -> dict[str, Any]:
+    """Publish path for internal callers that carry their own authorization.
+
+    ``actor`` names the authority that approved the publish (e.g.
+    ``"telegram:quorum"``) and is written to the audit log. It is NOT a
+    bypass hatch: only add a caller here when the caller itself gates the
+    action, and say so at the call site.
+    """
+    return await _publish_staging_item(
+        type=intel_type,
+        item_id=item_id,
+        body=PublishToSiteRequest(position=position),
+        request=None,
+        actor=actor,
+        allow_generated_cover=allow_generated_cover,
+        pool=pool,
+    )
+
+
+def _resolve_publish_pool(pool: Any | None, request: Request | None) -> Any | None:
+    """Prefer an explicitly supplied pool for internal publish callers."""
+    if pool is not None:
+        return pool
+    return getattr(request.app.state, "db_pool", None) if request else None
+
+
+_GUARDED_STAGING_FIELDS = (
+    "title",
+    "headline",
+    "summary",
+    "content",
+    "seo_title",
+    "seo_description",
+    "cover_image_alt",
+    "ai_summary",
+)
+
+
+def _staging_guard_fields(data: dict[str, Any]) -> dict[str, object]:
+    """Public-facing string fields of a raw staging item, one entry per field."""
+    fields: dict[str, object] = {k: data.get(k) for k in _GUARDED_STAGING_FIELDS}
+    brief = data.get("brief")
+    if isinstance(brief, dict):
+        fields.update({f"brief.{k}": v for k, v in brief.items()})
+    return fields
+
+
+def _build_enriched_article(data: dict[str, Any]) -> Any:
+    """Staging item -> EnrichedArticle; the one conversion publish and the guard share."""
+    from backend.app.routers.article_composer import (
+        BaliZeroTake,
+        EnrichedArticle,
+        ExtraSection,
+        NextSteps,
+        TLDRSection,
+    )
+
+    enriched_dict = convert_staging_to_enriched_article(data)
+    return EnrichedArticle(
+        title=enriched_dict["title"],
+        headline=enriched_dict["headline"],
+        tldr=TLDRSection(**enriched_dict["tldr"]),
+        facts=enriched_dict["facts"],
+        bali_zero_take=BaliZeroTake(**enriched_dict["bali_zero_take"]),
+        next_steps=NextSteps(**enriched_dict["next_steps"]),
+        category=enriched_dict["category"],
+        priority=enriched_dict["priority"],
+        relevance_score=enriched_dict["relevance_score"],
+        ai_summary=enriched_dict["ai_summary"],
+        ai_tags=enriched_dict["ai_tags"],
+        suggested_components=enriched_dict["suggested_components"],
+        cover_image=enriched_dict.get("cover_image"),
+        source=enriched_dict["source"],
+        source_url=enriched_dict["source_url"],
+        enriched_at=enriched_dict["enriched_at"],
+        seo_title=enriched_dict.get("seo_title"),
+        seo_description=enriched_dict.get("seo_description"),
+        cover_image_alt=enriched_dict.get("cover_image_alt"),
+        extra_sections=[
+            ExtraSection(**section) for section in enriched_dict.get("extra_sections", [])
+        ],
+    )
+
+
+def enforce_staging_guards(data: dict[str, Any], item_id: str) -> None:
+    """Run every guard input the publish path will see, before any side effect.
+
+    Raw staging fields and the Qdrant embed text, plus the rendered MDX built through
+    the same conversion and renderer ``publish_article_internal`` uses, so anything
+    the MDX hook would block is blocked here. The cover path only varies the image
+    URL in the MDX; each path the publish step can choose is rendered.
+    """
+    from backend.app.routers.article_composer import (
+        article_guard_inputs,
+        generate_mdx_content,
+        generate_slug,
+    )
+
+    fields = _staging_guard_fields(data)
+    fields["qdrant_embed_text"] = f"{data.get('title', 'Untitled')}\n\n{data.get('content', '')}"
+    try:
+        article = _build_enriched_article(data)
+    except Exception as exc:
+        logger.warning(
+            "article_guard staging render skipped: %s", exc, extra={"item_id": item_id}
+        )
+        enforce_public_article(fields)
+        return
+    slug = data.get("slug") or generate_slug(article.headline)
+    cover_slug = (data.get("slug") or "").strip() or generate_slug(data.get("title", "Untitled"))
+    for cover_path in (None, f"/static/news/{cover_slug}.jpg", f"/static/news/{item_id}_cover.jpg"):
+        mdx = generate_mdx_content(article, slug, cover_path)
+        enforce_public_article({**fields, **article_guard_inputs(mdx)})
+
+
+async def _publish_staging_item(
+    type: str,
+    item_id: str,
+    body: PublishToSiteRequest | None,
+    request: Request | None,
+    actor: str,
+    allow_generated_cover: bool = True,
+    *,
+    pool: Any | None = None,
+) -> dict[str, Any]:
+    """Publish implementation. Callers are responsible for authorization."""
+    # Single funnel-in for both callers (the admin HTTP endpoint and the Telegram
+    # quorum), so the id is judged once for the whole publish path.
+    #
+    # Honest statement of what this changes: the `staging_dir / f"{item_id}.json"`
+    # write ~450 lines below is NOT reachable today with a malformed id, because
+    # `load_staging_item` (7 lines down) rejects one by returning None and this
+    # function 404s. That defense is real but REMOTE — it lives in another module and
+    # is a side effect of a read's not-found contract, not a statement about the
+    # write. This makes the invariant local and explicit; it is what a refactor of
+    # that contract would otherwise silently remove.
+    try:
+        assert_valid_item_id(item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    logger.info(
+        "Publish request received",
+        extra={
+            "type": type,
+            "item_id": item_id,
+            "endpoint": "/api/intel/staging/publish",
+            "actor": actor,
+        },
+    )
+
+    intel_user_actions_total.labels(intel_type=type, action="publish").inc()
+
+    data = staging_service.load_staging_item(type, item_id)
+    if not data:
+        logger.warning(
+            "Publish failed - item not found",
+            extra={"type": type, "item_id": item_id},
+        )
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    try:
+        enforce_staging_guards(data, item_id)
+    except ArticleGuardViolation as exc:
+        logger.warning(
+            "article_guard block",
+            extra={"type": type, "item_id": item_id, "stage": "staging", **exc.log_extra()},
+        )
+        raise HTTPException(status_code=409, detail=exc.detail()) from exc
+    logger.info("article_guard pass", extra={"type": type, "item_id": item_id, "stage": "staging"})
+
+    try:
+        title = data.get("title", "Untitled")
+        data.get("source_url", data.get("url", ""))
+        category = data.get("category", type)
+
+        logger.info("Publishing article", extra={"type": type, "item_id": item_id, "title": title})
+
+        # Step 1: Ingest to Qdrant (knowledge base)
+        ingestion_success = await ingest_intel_to_qdrant(item_id, type)
+
+        if not ingestion_success:
+            logger.error(
+                "Publish failed - Qdrant ingestion error",
+                extra={"type": type, "item_id": item_id, "title": title},
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to ingest article to knowledge base",
+            )
+
+        logger.info(
+            "✅ Article ingested to Qdrant",
+            extra={"type": type, "item_id": item_id, "title": title},
+        )
+
+        # Step 2: Register in anti-duplicate system
+        try:
+            from claude_validator import ClaudeValidator
+
+            published_url = f"{settings.balizero_website_url}/{served_category(category)}/{item_id}"
+
+            ClaudeValidator.add_published_article(
+                title=title,
+                url=published_url,
+                category=category,
+                published_at=datetime.now(timezone.utc).isoformat(),
+            )
+
+            logger.info(
+                "✅ Article registered in anti-duplicate system",
+                extra={"type": type, "item_id": item_id, "title": title, "url": published_url},
+            )
+
+        except ImportError:
+            logger.warning(
+                "⚠️ ClaudeValidator not available - skipping duplicate registration",
+                extra={"type": type, "item_id": item_id},
+            )
+        except Exception as e:
+            logger.error(
+                "⚠️ Failed to register in anti-duplicate system: %s",
+                e,
+                exc_info=True,
+                extra={"type": type, "item_id": item_id},
+            )
+
+        # Step 3: Publish to GitHub/Vercel → balizero.com
+        published_url = f"{settings.balizero_website_url}/{served_category(category)}/{item_id}"
+        github_commit_sha = None
+        mdx_path = None
+        article_slug = item_id  # fallback: use item_id if GitHub publish fails
+        publish_result = None
+        github_error: str | None = None
+
+        try:
+            from backend.app.routers.article_composer import (
+                PublishRequest,
+                generate_slug,
+            )
+
+            enriched_article = _build_enriched_article(data)
+
+            # Prepare cover image if available
+            cover_image_base64 = None
+            cover_image_filename = None
+            cover_slug = (data.get("slug") or "").strip() or generate_slug(title)
+
+            # Priority 1: Download from Google Drive (uploaded by scraper)
+            if data.get("image_drive_file_id"):
+                try:
+                    from backend.services.integrations.service_account_drive_service import (
+                        ServiceAccountDriveService,
+                    )
+
+                    drive_svc = ServiceAccountDriveService()
+                    if drive_svc.service:
+                        file_id = data["image_drive_file_id"]
+                        # Download file content from Drive
+                        request = drive_svc.service.files().get_media(fileId=file_id)
+                        image_bytes = await asyncio.to_thread(request.execute)
+                        cover_image_base64 = base64.b64encode(_cover_as_jpeg(image_bytes)).decode(
+                            "utf-8"
+                        )
+                        cover_image_filename = f"{cover_slug}.jpg"
+                        logger.info(
+                            "Cover image downloaded from Drive",
+                            extra={
+                                "type": type,
+                                "item_id": item_id,
+                                "drive_file_id": file_id,
+                                "size_bytes": len(image_bytes),
+                            },
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to download cover image from Drive: %s",
+                        e,
+                        extra={
+                            "type": type,
+                            "item_id": item_id,
+                            "drive_file_id": data.get("image_drive_file_id"),
+                        },
+                    )
+
+            # Priority 2: Try local filesystem (legacy path)
+            if not cover_image_base64 and data.get("cover_image"):
+                try:
+                    cover_image_path = data["cover_image"]
+                    if not os.path.isabs(cover_image_path):
+                        staging_dir = staging_service.get_staging_dir(type)
+                        cover_image_path = staging_dir / cover_image_path
+                    else:
+                        cover_image_path = PathLib(cover_image_path)
+
+                    if cover_image_path.exists():
+                        image_bytes = cover_image_path.read_bytes()
+                        cover_image_base64 = base64.b64encode(_cover_as_jpeg(image_bytes)).decode("utf-8")
+                        cover_image_filename = f"{cover_slug}.jpg"
+                        logger.info(
+                            "Cover image found on local filesystem",
+                            extra={
+                                "type": type,
+                                "item_id": item_id,
+                                "cover_image_path": str(cover_image_path),
+                            },
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to read cover image from filesystem: %s",
+                        e,
+                        extra={
+                            "type": type,
+                            "item_id": item_id,
+                            "cover_image": data.get("cover_image"),
+                        },
+                    )
+
+            # Priority 3: Generate on-demand via Fireworks.ai Flux.1 Dev.
+            # The Damar workspace route disables this fallback so its static images
+            # remain native-ImageGen assets prepared before publication.
+            if not cover_image_base64 and not allow_generated_cover:
+                raise HTTPException(
+                    status_code=409,
+                    detail="A readable pre-generated cover image is required",
+                )
+            if not cover_image_base64 and allow_generated_cover:
+                fireworks_key = os.environ.get("FIREWORKS_API_KEY", "")
+                if fireworks_key:
+                    try:
+                        import urllib.error
+                        import urllib.parse
+                        import urllib.request
+
+                        # Build editorial prompt (inline — no scraper dependency)
+                        _headline = title
+                        _category = category
+                        _summary = data.get("content", "")[:500]
+                        _prompt = (
+                            f"Cinematic editorial photograph for a news article titled '{_headline}'. "
+                            f"Category: {_category}. "
+                            f"Scene: {_summary[:200] if _summary else 'Indonesian business and lifestyle in Bali'}. "
+                            "Shot on ARRI Qusoc Mini LF 35mm lens, teal and amber color grading, "
+                            "golden hour light, hyper-realistic, film grain, no text, no watermarks, "
+                            "purely visual scene."
+                        )
+                        _negative = (
+                            "text, watermark, logo, signature, caption, illustration, cartoon, "
+                            "anime, flat design, 3D render, CGI, neon colors, cyberpunk, "
+                            "smiling businesspeople, handshake, stock photo, blurry, low quality"
+                        )
+                        _fw_url = (
+                            "https://api.fireworks.ai/inference/v1/workflows/"
+                            "accounts/fireworks/models/flux-1-dev-fp8/text_to_image"
+                        )
+                        _payload = json.dumps(
+                            {
+                                "prompt": _prompt,
+                                "negative_prompt": _negative,
+                                "width": 1344,
+                                "height": 768,
+                                "steps": 28,
+                                "cfg_scale": 3.5,
+                            }
+                        ).encode()
+                        _req = urllib.request.Request(
+                            _fw_url,
+                            data=_payload,
+                            headers={
+                                "Content-Type": "application/json",
+                                "Authorization": f"Bearer {fireworks_key}",
+                                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                                "Accept": "*/*",
+                                "Origin": "https://fireworks.ai",
+                                "Referer": "https://fireworks.ai/",
+                            },
+                        )
+                        _resp = await asyncio.to_thread(
+                            urllib.request.urlopen,
+                            _req,
+                            None,
+                            60,  # 60s timeout
+                        )
+                        _img_bytes = await asyncio.to_thread(_resp.read)
+                        if len(_img_bytes) > 5000:
+                            cover_image_base64 = base64.b64encode(_img_bytes).decode("utf-8")
+                            cover_image_filename = f"{item_id}_cover.png"
+                            logger.info(
+                                "✅ Cover image generated via Fireworks.ai Flux.1 Dev",
+                                extra={
+                                    "type": type,
+                                    "item_id": item_id,
+                                    "size_bytes": len(_img_bytes),
+                                },
+                            )
+                        else:
+                            logger.warning(
+                                "Fireworks image response too small — skipping",
+                                extra={"type": type, "item_id": item_id},
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            "Cover image generation via Fireworks failed (non-blocking): %s",
+                            e,
+                            extra={"type": type, "item_id": item_id},
+                        )
+                else:
+                    logger.info(
+                        "FIREWORKS_API_KEY not set — publishing without cover image",
+                        extra={"type": type, "item_id": item_id},
+                    )
+
+            # Create publish request
+            publish_request = PublishRequest(
+                article=enriched_article,
+                cover_image_base64=cover_image_base64,
+                cover_image_filename=cover_image_filename,
+                position=body.position if body else "latest",
+                slug=data.get("slug"),
+                publication_key=item_id,
+            )
+
+            # This path is already admin-gated at the endpoint above, so it calls
+            # the implementation directly rather than the gated HTTP endpoint
+            # (whose Depends() would not resolve on a direct Python call).
+            from backend.app.routers.article_composer import publish_article_internal
+
+            # Publish to GitHub/Vercel
+            publish_result = await publish_article_internal(publish_request)
+
+            if publish_result.success:
+                # Update with actual published URL
+                published_url = publish_result.article_url or published_url
+                github_commit_sha = publish_result.commit_sha
+                mdx_path = publish_result.mdx_path
+
+                # Derive real MDX slug (e.g. "my-slug.mdx" -> "my-slug")
+                if publish_result.mdx_path:
+                    article_slug = publish_result.mdx_path.rsplit("/", 1)[-1].replace(".mdx", "")
+                elif publish_result.article_url:
+                    article_slug = publish_result.article_url.rstrip("/").rsplit("/", 1)[-1]
+
+                logger.info(
+                    "✅ Article published to GitHub/Vercel",
+                    extra={
+                        "type": type,
+                        "item_id": item_id,
+                        "article_slug": article_slug,
+                        "title": title,
+                        "published_url": published_url,
+                        "commit_sha": github_commit_sha,
+                    },
+                )
+
+            else:
+                github_error = publish_result.error or publish_result.message
+                logger.error(
+                    f"⚠️ Failed to publish to GitHub/Vercel: {publish_result.error}",
+                    extra={"type": type, "item_id": item_id, "title": title},
+                )
+                # Don't block publication if GitHub fails
+                # Article is already in Qdrant
+
+        except HTTPException:
+            raise
+        except ArticleGuardViolation as exc:
+            logger.warning(
+                "article_guard block",
+                extra={"type": type, "item_id": item_id, "stage": "mdx", **exc.log_extra()},
+            )
+            raise HTTPException(status_code=409, detail=exc.detail()) from exc
+        except ImportError as e:
+            logger.warning(
+                "⚠️ Article composer not available - skipping GitHub publish: %s",
+                e,
+                extra={"type": type, "item_id": item_id},
+            )
+        except Exception as e:
+            # NOTE: `type` is the route parameter (str) in this function scope,
+            # not the builtin — use e.__class__.__name__ instead of type(e).
+            github_error = f"{e.__class__.__name__}: {e}"
+            logger.error(
+                "⚠️ Failed to publish to GitHub/Vercel: %s",
+                e,
+                exc_info=True,
+                extra={"type": type, "item_id": item_id, "title": title},
+            )
+            # Don't block publication if GitHub fails
+            # Article is already in Qdrant
+
+        # Step 4: Write to news_items table (serves /api/news for balizero.com frontend)
+        try:
+            publish_pool = _resolve_publish_pool(pool, request)
+            if publish_pool:
+                slug = article_slug or item_id
+                summary = (data.get("content") or "")[:500]
+                content_full = data.get("content") or ""
+                ai_summary = (
+                    data.get("brief", {}).get("what", "")
+                    if isinstance(data.get("brief"), dict)
+                    else ""
+                )
+                ai_tags = data.get("tags") or []
+                if (
+                    (
+                        publish_result is not None
+                        and publish_result.success
+                        and publish_result.image_path
+                    )
+                    or data.get("published_cover_path")
+                ):
+                    image_url = f"/static/news/{slug}.jpg"
+                else:
+                    image_url = data.get("image_url") or data.get("cover_image")
+                priority_val = data.get("priority", "medium")
+                if priority_val not in ("high", "medium", "low"):
+                    priority_val = "medium"
+
+                # Map category to valid news_items constraint values
+                valid_categories = {
+                    "immigration",
+                    "business",
+                    "tax",
+                    "property",
+                    "lifestyle",
+                    "tech",
+                    "legal",
+                }
+                news_category = category if category in valid_categories else "business"
+
+                # news_items.slug has no unique constraint on prod (only a plain
+                # index), so ON CONFLICT (slug) raises; guard by existence instead.
+                async with publish_pool.acquire() as conn:
+                    await conn.execute(
+                        """
+                        INSERT INTO news_items (
+                            title, slug, summary, content, source, source_url,
+                            category, priority, status, image_url, published_at,
+                            ai_summary, ai_tags, external_id
+                        )
+                        SELECT $1, $2, $3, $4, $5, $6, $7, $8, 'approved', $9, NOW(), $10, $11, $12
+                        WHERE NOT EXISTS (SELECT 1 FROM news_items WHERE slug = $2)
+                        """,
+                        title,
+                        slug,
+                        summary,
+                        content_full,
+                        data.get("source_name", ""),
+                        data.get("source_url", data.get("url", "")),
+                        news_category,
+                        priority_val,
+                        image_url,
+                        ai_summary,
+                        ai_tags,
+                        item_id,
+                    )
+
+                logger.info(
+                    "Article written to news_items table",
+                    extra={"type": type, "item_id": item_id, "slug": slug},
+                )
+        except Exception as e:
+            logger.warning(
+                "Failed to write to news_items (non-blocking): %s",
+                e,
+                extra={"type": type, "item_id": item_id},
+            )
+
+        # Step 4b: Enqueue for post-processing (translate + image + SEO) — DB-backed
+        try:
+            publish_pool = _resolve_publish_pool(pool, request)
+            if not publish_pool:
+                raise RuntimeError("No DB pool available")
+            async with publish_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO post_publish_queue (slug, category, source)
+                    VALUES ($1, $2, 'intel')
+                    ON CONFLICT (slug) DO NOTHING
+                    """,
+                    article_slug,
+                    category,
+                )
+            logger.info(
+                "📥 Enqueued for post-processing",
+                extra={"slug": article_slug, "category": category},
+            )
+        except Exception as e:
+            logger.warning("Failed to enqueue post-processing (non-blocking): %s", e)
+
+        # Step 5: Persist the publication attempt without turning a failed
+        # GitHub write into an unretryable, falsely-published staging item.
+        github_published = bool(github_commit_sha)
+        attempt_at = datetime.now(timezone.utc).isoformat()
+        if github_published:
+            data["publication_requested_at"] = attempt_at
+            data["published_url"] = published_url
+            data["status"] = "publication_pending"
+            data["publish_position"] = body.position if body else "latest"
+            data["github_commit_sha"] = github_commit_sha
+            if publish_result is not None:
+                data["pull_request_number"] = publish_result.pull_request_number
+                data["auto_merge_enabled"] = publish_result.auto_merge_enabled
+            if mdx_path:
+                data["mdx_path"] = mdx_path
+            if publish_result is not None and publish_result.image_path:
+                data["published_cover_path"] = publish_result.image_path
+            data.pop("last_publication_failed_at", None)
+            data.pop("publication_lease_until", None)
+        else:
+            data["status"] = "pending"
+            data["last_publication_failed_at"] = attempt_at
+            data.pop("published_at", None)
+            data.pop("published_url", None)
+            data.pop("publication_requested_at", None)
+            data.pop("publication_lease_until", None)
+
+        # Persist the honest intermediate state. The external live verifier is
+        # the only component allowed to transition this item to ``published``.
+        try:
+            staging_service.save_staging_item(type, item_id, data)
+            logger.info("Staging publication state updated: %s", item_id)
+        except Exception as e:
+            logger.error("Failed to persist publication state: %s", e)
+            raise HTTPException(
+                status_code=500,
+                detail="Publication request opened but staging state could not be persisted",
+            ) from e
+
+        if github_published:
+            logger.info(
+                "✅ Publish completed (article PR opened, merges after CI passes)",
+                extra={
+                    "type": type,
+                    "item_id": item_id,
+                    "title": title,
+                    "published_url": published_url,
+                    "github_published": True,
+                },
+            )
+            message = (
+                "Article queued for publication — pull request opened, "
+                "will be live on the site after CI checks pass."
+            )
+        else:
+            # The article is in Qdrant but the MDX never reached GitHub, so it
+            # will NOT appear on the website. Surface this honestly to the
+            # News Room instead of reporting a false success.
+            logger.error(
+                "⚠️ Publish incomplete: article ingested to Qdrant but NOT published to "
+                "GitHub (MDX not committed) — it will not appear on the website",
+                extra={
+                    "type": type,
+                    "item_id": item_id,
+                    "title": title,
+                    "github_published": False,
+                },
+            )
+            message = (
+                "Article saved to search index but NOT published to the website "
+                "(GitHub publish failed). Check backend logs and retry."
+            )
+            if github_error:
+                message = f"{message} Cause: {github_error[:300]}"
+
+        await invalidate_cache("zantara:intel_scraper:*")
+        return {
+            "success": github_published,
+            "github_published": github_published,
+            "status": data["status"],
+            "message": message,
+            "id": item_id,
+            "title": title,
+            "published_url": published_url if github_published else None,
+            "published_at": None,
+            "publication_requested_at": data.get("publication_requested_at"),
+            "collection": "visa_oracle" if type == "visa" else "bali_intel_bali_news",
+            "github_commit_sha": github_commit_sha,
+            "pull_request_number": data.get("pull_request_number"),
+            "auto_merge_enabled": data.get("auto_merge_enabled"),
+            "mdx_path": mdx_path,
+            "published_cover_path": data.get("published_cover_path"),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Publish failed: %s",
+            e,
+            exc_info=True,
+            extra={"type": type, "item_id": item_id},
+        )
+        raise HTTPException(status_code=500, detail=str(e)) from e

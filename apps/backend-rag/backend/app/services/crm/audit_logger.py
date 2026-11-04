@@ -1,0 +1,412 @@
+"""
+CRM Audit Logging System
+Tracks all state changes with user attribution and timestamps
+"""
+
+import functools
+import inspect
+from datetime import datetime, timezone
+from typing import Any
+
+import asyncpg
+import orjson
+
+from backend.app.utils.logging_utils import get_logger
+
+logger = get_logger(__name__)
+
+
+async def get_database_pool() -> asyncpg.Pool:
+    """Patchable fallback used when the service was not explicitly initialized."""
+    raise RuntimeError(
+        "CRMAuditLogger not initialized with pool. Call .initialize(pool) first.",
+    )
+
+
+class CRMAuditLogger:
+    """Centralized audit logging for CRM operations"""
+
+    def __init__(self) -> None:
+        self.pool = None
+
+    def initialize(self, pool: asyncpg.Pool) -> Any:
+        """Initialize with a database pool"""
+        self.pool = pool
+        logger.info("✅ CRMAuditLogger initialized with database pool")
+
+    async def _get_pool(self):
+        """Get database pool connection"""
+        if not self.pool:
+            self.pool = await get_database_pool()
+        return self.pool
+
+    async def log_state_change(
+        self,
+        entity_type: str,
+        entity_id: int,
+        old_state: dict[str, Any],
+        new_state: dict[str, Any],
+        user_email: str,
+        change_type: str = "status_change",
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        """
+        Log a state change for audit purposes
+
+        Args:
+            entity_type: Type of entity (client, case, interaction)
+            entity_id: ID of the entity
+            old_state: Previous state values
+            new_state: New state values
+            user_email: User making the change
+            change_type: Type of change (status_change, update, create, delete)
+            metadata: Additional context data
+        """
+        try:
+            pool = await self._get_pool()
+
+            # Detect what changed
+            changes = self._detect_changes(old_state, new_state)
+
+            if not changes:
+                logger.warning("No changes detected for %s %s", entity_type, entity_id)
+                return True
+
+            async with pool.acquire() as conn:
+                # Insert audit record
+                await conn.execute(
+                    """
+                    INSERT INTO crm_audit_log (
+                        entity_type, entity_id, change_type, user_email,
+                        old_state, new_state, changes, metadata, timestamp
+                    ) VALUES ($1, $2, $3, $4, $5::text::jsonb, $6::text::jsonb, $7::text::jsonb, $8::text::jsonb, $9)
+                    """,
+                    entity_type,
+                    entity_id,
+                    change_type,
+                    user_email,
+                    # orjson 3-10x faster; .decode() to text, then ::text::jsonb
+                    # server-side cast. These columns ARE jsonb in prod (the old
+                    # comment claiming "TEXT not JSONB" was stale/wrong — 713/713
+                    # rows were jsonb string scalars, live-probe 2026-07-16). With
+                    # no cast, asyncpg infers the param type from the jsonb column
+                    # and the pool's jsonb codec (encoder=json.dumps) re-encodes
+                    # this already-serialized string a second time.
+                    orjson.dumps(old_state, default=str).decode(),
+                    orjson.dumps(new_state, default=str).decode(),
+                    orjson.dumps(changes, default=str).decode(),
+                    orjson.dumps(metadata or {}, default=str).decode(),
+                    datetime.now(tz=timezone.utc),
+                )
+
+            # Log structured message
+            logger.info(
+                f"🔍 [CRM AUDIT] {entity_type.title()} {entity_id} {change_type} by {user_email}",
+                extra={
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "change_type": change_type,
+                    "user_email": user_email,
+                    "changes": changes,
+                    "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                },
+            )
+
+            return True
+
+        except Exception as e:
+            logger.error("Failed to log audit entry: %s", e, exc_info=True)
+            return False
+
+    def _detect_changes(
+        self,
+        old_state: dict[str, Any],
+        new_state: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Detect what changed between old and new state"""
+        changes = {}
+
+        # Check all fields in new state
+        for key, new_value in new_state.items():
+            old_value = old_state.get(key)
+
+            if old_value != new_value:
+                changes[key] = {
+                    "old": str(old_value) if old_value is not None else None,
+                    "new": str(new_value) if new_value is not None else None,
+                    "changed_at": datetime.now(tz=timezone.utc).isoformat(),
+                }
+
+        # Check for removed fields
+        for key in old_state:
+            if key not in new_state:
+                changes[key] = {
+                    "old": str(old_state[key]) if old_state[key] is not None else None,
+                    "new": None,
+                    "removed": True,
+                    "changed_at": datetime.now(tz=timezone.utc).isoformat(),
+                }
+
+        return changes
+
+    async def log_client_status_change(
+        self,
+        client_id: int,
+        old_status: str,
+        new_status: str,
+        user_email: str,
+        additional_data: dict[str, Any] | None = None,
+    ) -> bool:
+        """
+        Log client status change specifically
+        """
+        old_state = {"status": old_status}
+        new_state = {"status": new_status}
+
+        if additional_data:
+            old_state.update(additional_data.get("old", {}))
+            new_state.update(additional_data.get("new", {}))
+
+        metadata = {
+            "change_reason": additional_data.get("reason") if additional_data else None,
+            "previous_status": old_status,
+            "new_status": new_status,
+            "client_id": client_id,
+        }
+
+        return await self.log_state_change(
+            entity_type="client",
+            entity_id=client_id,
+            old_state=old_state,
+            new_state=new_state,
+            user_email=user_email,
+            change_type="status_change",
+            metadata=metadata,
+        )
+
+    async def log_case_progression(
+        self,
+        case_id: int,
+        old_stage: str,
+        new_stage: str,
+        user_email: str,
+        notes: str | None = None,
+    ) -> bool:
+        """
+        Log case progression through stages
+        """
+        old_state = {"stage": old_stage}
+        new_state = {"stage": new_stage}
+
+        metadata = {
+            "case_id": case_id,
+            "previous_stage": old_stage,
+            "new_stage": new_stage,
+            "notes": notes,
+        }
+
+        return await self.log_state_change(
+            entity_type="case",
+            entity_id=case_id,
+            old_state=old_state,
+            new_state=new_state,
+            user_email=user_email,
+            change_type="stage_progression",
+            metadata=metadata,
+        )
+
+    async def get_audit_trail(
+        self,
+        entity_type: str | None = None,
+        entity_id: int | None = None,
+        user_email: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """
+        Retrieve audit trail with filters
+        """
+        try:
+            pool = await self._get_pool()
+
+            async with pool.acquire() as conn:
+                query_parts = [
+                    """
+                    SELECT entity_type, entity_id, change_type, user_email,
+                           old_state, new_state, changes, metadata, timestamp
+                    FROM crm_audit_log
+                    WHERE 1=1
+                    """,
+                ]
+                params = []
+                param_index = 1
+
+                if entity_type:
+                    query_parts.append(f" AND entity_type = ${param_index}")
+                    params.append(entity_type)
+                    param_index += 1
+
+                if entity_id:
+                    query_parts.append(f" AND entity_id = ${param_index}")
+                    params.append(entity_id)
+                    param_index += 1
+
+                if user_email:
+                    query_parts.append(f" AND user_email = ${param_index}")
+                    params.append(user_email)
+                    param_index += 1
+
+                if start_date:
+                    query_parts.append(f" AND timestamp >= ${param_index}")
+                    params.append(start_date)
+                    param_index += 1
+
+                if end_date:
+                    query_parts.append(f" AND timestamp <= ${param_index}")
+                    params.append(end_date)
+                    param_index += 1
+
+                query_parts.append(f" ORDER BY timestamp DESC LIMIT ${param_index}")
+                params.append(limit)
+
+                query = " ".join(query_parts)
+                rows = await conn.fetch(query, *params)
+
+                return [dict(row) for row in rows]
+
+        except Exception as e:
+            logger.error("Failed to retrieve audit trail: %s", e, exc_info=True)
+            return []
+
+
+# Global audit logger instance
+audit_logger = CRMAuditLogger()
+
+
+# Decorator for automatic audit logging
+def audit_change(entity_type: str, change_type: str = "update") -> Any:
+    """
+    Decorator to automatically log changes to CRM entities
+    """
+
+    def decorator(func: Any) -> Any:
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            # Resolve positional args to named params so we can find
+            # FastAPI-injected dependencies (current_user, db_pool, etc.)
+            sig = inspect.signature(func)
+            bound = sig.bind_partial(*args, **kwargs)
+            bound.apply_defaults()
+            all_params = bound.arguments
+
+            # Extract user email — FastAPI injects current_user as positional arg
+            user_email = all_params.get("user_email")
+            if not user_email:
+                current_user = all_params.get("current_user", {})
+                if isinstance(current_user, dict):
+                    user_email = current_user.get("email")
+            if not user_email:
+                request = all_params.get("request")
+                if request and hasattr(request, "state"):
+                    user_email = getattr(request.state, "user", {}).get("email")
+            entity_id = (
+                all_params.get("client_id") or all_params.get("case_id") or all_params.get("id")
+            )
+
+            # Get old state before change
+            old_state = {}
+            should_log = True
+            if entity_id and entity_type == "client":
+                # Fetch current client state
+                try:
+                    # Get pool from resolved params, global instance, or patchable fallback.
+                    pool = all_params.get("db_pool") or audit_logger.pool
+                    if not pool:
+                        pool = await get_database_pool()
+                    async with pool.acquire() as conn:
+                        row = await conn.fetchrow(
+                            "SELECT * FROM clients WHERE id = $1",
+                            entity_id,
+                        )
+                        if row and hasattr(row, "items"):
+                            old_state = dict(row)
+                        elif row:
+                            # If it's a real record but doesn't have items() (unlikely for asyncpg)
+                            old_state = dict(row)
+                except Exception as e:
+                    should_log = False
+                    logger.error("Failed to fetch client state: %s", e, exc_info=True)
+
+            # Execute the function
+            result = await func(*args, **kwargs)
+
+            # Log the change
+            new_state = {}
+            if isinstance(result, dict):
+                new_state = result
+            elif hasattr(result, "model_dump"):
+                new_state = result.model_dump()
+            elif hasattr(result, "dict"):
+                new_state = result.dict()
+
+            # For CREATE: entity_id comes from result, old_state is empty
+            if not entity_id and change_type == "create" and new_state:
+                entity_id = new_state.get("id")
+
+            if should_log and entity_id and user_email:
+                await audit_logger.log_state_change(
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    old_state=old_state,
+                    new_state=new_state,
+                    user_email=user_email,
+                    change_type=change_type,
+                )
+
+            return result
+
+        return wrapper
+
+    return decorator
+
+
+# Migration script to create audit log table
+async def create_audit_log_table(pool: asyncpg.Pool | None = None):
+    """Create the CRM audit log table"""
+    if not pool:
+        pool = audit_logger.pool
+
+    if not pool:
+        try:
+            pool = await get_database_pool()
+        except Exception:
+            pool = None
+
+    if not pool:
+        logger.error("❌ Cannot create audit log table: no database pool available")
+        return
+
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS crm_audit_log (
+                id SERIAL PRIMARY KEY,
+                entity_type VARCHAR(50) NOT NULL,
+                entity_id INTEGER NOT NULL,
+                change_type VARCHAR(50) NOT NULL,
+                user_email VARCHAR(255) NOT NULL,
+                old_state JSONB,
+                new_state JSONB,
+                changes JSONB,
+                metadata JSONB,
+                timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_crm_audit_entity ON crm_audit_log(entity_type, entity_id);
+            CREATE INDEX IF NOT EXISTS idx_crm_audit_user ON crm_audit_log(user_email);
+            CREATE INDEX IF NOT EXISTS idx_crm_audit_timestamp ON crm_audit_log(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_crm_audit_changes ON crm_audit_log USING GIN(changes);
+        """)
+
+    logger.info("CRM audit log table created successfully")

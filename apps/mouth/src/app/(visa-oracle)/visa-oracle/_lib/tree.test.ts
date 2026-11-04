@@ -1,0 +1,402 @@
+import { describe, expect, it } from "vitest";
+import * as treeRegistry from "./tree";
+import { getCategoryQuestionIds } from "./flow";
+import { translate, type I18nKey } from "./i18n";
+import {
+  CATEGORY_KEYS,
+  QUESTIONS,
+  STAY_PERMIT_CODES,
+  daysRemaining,
+  formatIsoDateForDisplay,
+  getLane,
+  parseIsoDateUtc,
+} from "./tree";
+
+describe("tree.ts — interview registry only", () => {
+  it("exports no frontend visa catalog or volatile display facts", () => {
+    expect("MOCK_CATALOG" in treeRegistry).toBe(false);
+    expect("MockVisaCard" in treeRegistry).toBe(false);
+  });
+
+  it("every question option has a resolvable i18n key shape", () => {
+    for (const question of Object.values(QUESTIONS)) {
+      for (const option of question.options) {
+        expect(option.labelI18nKey.length).toBeGreaterThan(0);
+      }
+    }
+  });
+});
+
+describe("tree.ts — interview decision boundary", () => {
+  it("has unique ids that exactly match their registry keys", () => {
+    const entries = Object.entries(QUESTIONS);
+    expect(new Set(entries.map(([, question]) => question.id)).size).toBe(
+      entries.length,
+    );
+    for (const [key, question] of entries) {
+      expect(question.id).toBe(key);
+    }
+  });
+
+  it("documents every question as an exact fact, review-only, or human context", () => {
+    for (const question of Object.values(QUESTIONS)) {
+      expect(["FACT", "REVIEW_ONLY", "HUMAN_CONTEXT"]).toContain(
+        question.decisionMapping.kind,
+      );
+      if (question.decisionMapping.kind !== "HUMAN_CONTEXT") {
+        expect(question.decisionMapping.factPaths.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("uses only the verified current-status values read by the production pack", () => {
+    expect(QUESTIONS.current_status_code.options.map(({ key }) => key)).toEqual(
+      [
+        "A1",
+        "C1",
+        "C2",
+        "C6",
+        "ITK_FROM_BVK",
+        "ITK_FROM_VISIT_C",
+        "ITK_FROM_VISIT_D",
+        "ITK_PERALIHAN",
+        "other",
+      ],
+    );
+    expect(QUESTIONS.current_status_code.kind).toBe("choice");
+  });
+
+  it("bounds active overstay at the API-safe 0..36500 range", () => {
+    expect(QUESTIONS.overstay_days.numberInput).toMatchObject({
+      min: 0,
+      max: 36_500,
+      step: 1,
+    });
+  });
+
+  it("keeps the other_purpose catch-all outside engine facts", () => {
+    expect(QUESTIONS.other_purpose.decisionMapping.kind).toBe("HUMAN_CONTEXT");
+    // Slice A6-1: Group A (no `factPaths`), tag "no-fact-path".
+    expect(QUESTIONS.other_purpose.notSure).toEqual({
+      mode: "human-review",
+      because: "no-fact-path",
+    });
+  });
+
+  // PR-D4c-2 (imperator's ruling): the currency question's "not sure" must
+  // cost ZERO holds. `mapDisclosedReviewFlags` (fact-mapper.ts) raises
+  // NOT_CERTAIN on the exact-equality literal "unsure" — a `notSure: {
+  // mode: "human-review" }` on this question would let the applicant answer
+  // that literal and trip the flag on every walk that uses it, silently
+  // turning the cost from zero into one hold per walk. This guard goes red
+  // the moment someone re-attaches it.
+  it("omits notSure entirely on investment_currency — the mechanism that keeps its 'I can't say yet' answer at zero review cost", () => {
+    expect(QUESTIONS.investment_currency.notSure).toBeUndefined();
+    expect(QUESTIONS.investment_currency.options.map(({ key }) => key)).toEqual(
+      ["idr", "usd", "still_unsure"],
+    );
+  });
+
+  // D4a (owner ruling SHWEB-20260911): promoted from HUMAN_CONTEXT/free-text
+  // to a closed FACT question — see `mapFamilySponsorStatus` (fact-mapper.ts)
+  // for the closed-catalogue trust argument this promotion had to clear.
+  it("promotes family_sponsor_status_code to a closed FACT question over the signed catalogue (D4a)", () => {
+    expect(QUESTIONS.family_sponsor_status_code.kind).toBe("choice");
+    expect(QUESTIONS.family_sponsor_status_code.decisionMapping).toEqual({
+      kind: "FACT",
+      factPaths: ["family.sponsor_status_code"],
+    });
+    expect(
+      QUESTIONS.family_sponsor_status_code.options.map(({ key }) => key),
+    ).toEqual([...STAY_PERMIT_CODES]);
+    // Same closed catalogue as `stay_permit_code`, not a second hand-typed
+    // copy of it.
+    expect(QUESTIONS.family_sponsor_status_code.options).toEqual(
+      QUESTIONS.stay_permit_code.options,
+    );
+  });
+
+  // 2026-08-23: `family_sponsor_permit_basis` shipped as FACT in PR #4650,
+  // one increment before this fix — self-declaring a Pasal 33(2) legal
+  // category into engine trust, the same defect this file's sibling
+  // assertion above exists to prevent. Corrected to mirror
+  // `family_sponsor_status_code` exactly. See `mapFamilySponsorPermitBasis`
+  // in fact-mapper.ts for the full reasoning.
+  it("keeps self-declared sponsor permit basis outside engine facts too", () => {
+    expect(QUESTIONS.family_sponsor_permit_basis.decisionMapping).toEqual({
+      kind: "HUMAN_CONTEXT",
+    });
+  });
+
+  // 2026-09-06 decisiveness wave (PR-3).
+  it("offers STEPCHILD, the relation flow.ts has branched on since 2026-08-23", () => {
+    // Guilt: the wire vocabulary, both i18n labels and the
+    // `getCategoryQuestionIds` branch all landed in the 2026-08-23 ruling
+    // — this option row did not, so E31D was unreachable from any
+    // interview. Innocence: the rest of the closed vocabulary is intact
+    // and in its `FAMILY_RELATIONS` (fact-mapper.ts) order.
+    expect(QUESTIONS.family_relation.options.map(({ key }) => key)).toEqual([
+      "SPOUSE",
+      "CHILD",
+      "PARENT",
+      "SIBLING",
+      "DEPENDENT",
+      "STEPCHILD",
+      "OTHER",
+    ]);
+  });
+
+  // The rule pack reads `family.relation_to_sponsor` from the SPONSOR's side
+  // (PARENT -> E31E "child of a holder"; CHILD -> E31H "parent of a holder";
+  // STEPCHILD -> E31D, from the applicant's side). A child applicant must
+  // therefore pick the key PARENT ("my sponsor is my parent"). The labels
+  // are worded from the applicant's seat so no one picks the wrong key.
+  it("words each relation option from the applicant's side, keys unchanged", () => {
+    const label = (language: "en" | "id", key: string) => {
+      const option = QUESTIONS.family_relation.options.find(
+        (o) => o.key === key,
+      );
+      return translate(language, option!.labelI18nKey as I18nKey);
+    };
+    expect(translate("en", QUESTIONS.family_relation.i18nKey as I18nKey)).toBe(
+      "Who is your sponsor to you?",
+    );
+    expect(label("en", "PARENT")).toBe("My parent");
+    expect(label("en", "CHILD")).toBe("My child");
+    expect(label("en", "SPOUSE")).toBe("My spouse");
+    expect(label("en", "SIBLING")).toBe("My sibling");
+    expect(label("en", "STEPCHILD")).toBe(
+      "My step-parent (I am the sponsor's stepchild)",
+    );
+    expect(label("id", "PARENT")).toBe("Orang tua saya");
+    expect(label("id", "CHILD")).toBe("Anak saya");
+    expect(label("id", "STEPCHILD")).toBe(
+      "Orang tua tiri saya (saya anak tiri sponsor)",
+    );
+  });
+
+  it("no longer carries work_role (owner ruling 6, 2026-09-06)", () => {
+    // It was HUMAN_CONTEXT — no FactPath, so no signed rule could read it
+    // — and its only live effect was the presence-triggered
+    // ACTIVITY_BOUNDARY flag that suppressed E23 for every employment
+    // interview. Guilt: re-adding the id must fail here.
+    expect(Object.prototype.hasOwnProperty.call(QUESTIONS, "work_role")).toBe(
+      false,
+    );
+  });
+
+  it("routes Second Home as its own tile, not a retirement sub-branch (owner ruling 3)", () => {
+    expect(CATEGORY_KEYS).toContain("second_home");
+    // The router itself is HUMAN_CONTEXT: it selects which evidence
+    // questions follow, and the evidence questions carry the signed
+    // `secondhome.*` facts the E33 rules actually read.
+    expect(QUESTIONS.secondhome_basis.decisionMapping).toEqual({
+      kind: "HUMAN_CONTEXT",
+    });
+    expect(QUESTIONS.secondhome_basis.options.map(({ key }) => key)).toEqual([
+      "bank_deposit",
+      "property",
+    ]);
+  });
+
+  it("no longer serializes any category option as UNKNOWN (owner ruling 4)", () => {
+    // `unknownValues: ["diaspora"]` is gone: every tile now maps to a real
+    // VisaPurpose (`CATEGORY_TO_PURPOSE`, fact-mapper.ts), so no answer to
+    // this question is a deliberate UNKNOWN any more.
+    expect(QUESTIONS.category.decisionMapping).toEqual({
+      kind: "FACT",
+      factPaths: ["intent.purposes"],
+    });
+    expect(QUESTIONS.category.options.map(({ key }) => key)).toEqual([
+      ...CATEGORY_KEYS,
+    ]);
+  });
+
+  it("does not carry the 2 dead legacy nodes (E4 slice — question-registry-audit.md §2)", () => {
+    // Both were unreachable in the live graph (flow.ts's dispatch never
+    // routed to them from any FIXED_CATEGORY_QUESTIONS or dynamic branch
+    // sequence) and are named verbatim, deleted here, in the audit. Guilt:
+    // re-adding either id must fail this test.
+    expect(
+      Object.prototype.hasOwnProperty.call(QUESTIONS, "tourism_duration"),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(QUESTIONS, "remote_income"),
+    ).toBe(false);
+  });
+});
+
+describe("tree.ts — daysRemaining / getLane", () => {
+  const today = new Date(Date.UTC(2026, 6, 17)); // 2026-07-17
+
+  it("computes whole-day differences across the UTC boundary", () => {
+    expect(daysRemaining("2026-07-17", today)).toBe(0);
+    expect(daysRemaining("2026-07-18", today)).toBe(1);
+    expect(daysRemaining("2026-07-16", today)).toBe(-1);
+  });
+
+  it("returns null when offshore or unanswered", () => {
+    expect(getLane({}, today)).toBeNull();
+    expect(getLane({ in_indonesia: "no" }, today)).toBeNull();
+    expect(
+      getLane({ in_indonesia: "unsure", permit_expiry: "2026-07-18" }, today),
+    ).toBeNull();
+    expect(getLane({ in_indonesia: "yes" }, today)).toBeNull();
+  });
+
+  it("routes the four onshore lanes per design doc §4 table", () => {
+    expect(
+      getLane({ in_indonesia: "yes", permit_expiry: "2026-07-10" }, today),
+    ).toBe("expired");
+    expect(
+      getLane({ in_indonesia: "yes", permit_expiry: "2026-07-18" }, today),
+    ).toBe("urgent");
+    expect(
+      getLane({ in_indonesia: "yes", permit_expiry: "2026-07-19" }, today),
+    ).toBe("urgent");
+    expect(
+      getLane({ in_indonesia: "yes", permit_expiry: "2026-07-22" }, today),
+    ).toBe("bridging");
+    expect(
+      getLane({ in_indonesia: "yes", permit_expiry: "2026-08-10" }, today),
+    ).toBe("extend");
+    expect(
+      getLane({ in_indonesia: "yes", permit_expiry: "2026-12-01" }, today),
+    ).toBe("planning");
+  });
+
+  it("never routes a 1-2 day case into bridging (R1 adversarial fix, design doc §4)", () => {
+    const lane = getLane(
+      { in_indonesia: "yes", permit_expiry: "2026-07-19" },
+      today,
+    );
+    expect(lane).not.toBe("bridging");
+  });
+});
+
+describe("tree.ts — strict date parsing (finding #8, adversarial review 2026-07-17)", () => {
+  const today = new Date(Date.UTC(2026, 6, 17));
+
+  it("rejects calendar-invalid dates that would otherwise silently normalize", () => {
+    // 2026-02-30 doesn't exist — a naive `new Date(...)` normalizes it to
+    // 2026-03-02 instead of rejecting it. parseIsoDateUtc must reject.
+    expect(parseIsoDateUtc("2026-02-30")).toBeNull();
+    expect(parseIsoDateUtc("2026-13-01")).toBeNull();
+    expect(parseIsoDateUtc("not-a-date")).toBeNull();
+    expect(parseIsoDateUtc("2026-7-4")).toBeNull(); // not zero-padded — reject, don't guess
+  });
+
+  it("accepts a real calendar date and round-trips it", () => {
+    expect(parseIsoDateUtc("2026-07-17")).toBe(Date.UTC(2026, 6, 17));
+  });
+
+  it("daysRemaining and getLane treat an invalid date as unanswered, never a lane", () => {
+    expect(daysRemaining("2026-02-30", today)).toBeNull();
+    expect(
+      getLane({ in_indonesia: "yes", permit_expiry: "2026-02-30" }, today),
+    ).toBeNull();
+  });
+
+  it("formatIsoDateForDisplay renders in UTC so a negative-offset viewer never rolls the date back a day", () => {
+    // en-GB dateStyle:"medium" — asserting only the day/year survives
+    // verbatim (not asserting on the exact locale string format), which is
+    // the finding: the calendar day the user TYPED must be the calendar
+    // day DISPLAYED, regardless of the viewer's local timezone offset.
+    const display = formatIsoDateForDisplay("2026-07-17", "en-GB");
+    expect(display).toContain("17");
+    expect(display).toContain("2026");
+  });
+
+  it("formatIsoDateForDisplay falls back to the raw string on an invalid date rather than throwing", () => {
+    expect(formatIsoDateForDisplay("not-a-date", "en-GB")).toBe("not-a-date");
+  });
+
+  // Slice A6-1 (DRAFT-SPEC-A6-1.v3.md §2.4): `because` is now REQUIRED on
+  // every `mode: "human-review"` `notSure` block. GUILT-b: a block whose
+  // `because` is missing (deleted, or dodged by writing
+  // `{ mode: "conservative" }` with no real conservative value) reddens
+  // here even though `tsc` alone cannot enforce it inside `vitest`
+  // (esbuild transpiles the file, it does not typecheck it). Both
+  // cardinalities are LITERAL, never derived from the table under test
+  // (GATE-A2G OBS-A2g-4): Slice A6-2 moved exactly seven branches to
+  // `conservative`; slice A6-bis (`diaspora_documents`, `retirement_basis`
+  // — both Group A, "no-fact-path") moves two more; PR-M adds
+  // `retirement_penjamin_confirmed` (E33F penjamin sibling, conservative
+  // "no", owner ruling 2026-09-27) — leaving 45 `human-review` blocks and
+  // 10 `conservative` ones.
+  it("every human-review notSure block declares a because, and the A6-2 cardinality is pinned", () => {
+    const entries = Object.entries(QUESTIONS);
+    expect(
+      entries.filter(
+        ([, q]) =>
+          q.notSure?.mode === "human-review" &&
+          (q.notSure as { because?: string }).because === undefined,
+      ),
+    ).toEqual([]);
+    expect(
+      entries.filter(([, q]) => q.notSure?.mode === "human-review"),
+    ).toHaveLength(45);
+    expect(
+      entries.filter(([, q]) => q.notSure?.mode === "conservative"),
+    ).toHaveLength(10);
+  });
+
+  // INNOCENCE (FIX-B, spec F2): exactly 17 questions declare no `notSure`
+  // at all — six literal ids plus the ten `qualificationQuestion(...)`-
+  // built ones. The qualifications and annual-income question omit it
+  // DELIBERATELY (`tree.ts:182-189`: "a 'not
+  // sure' would map to UNKNOWN and the engine would ask the same question
+  // again: a loop, not an answer"). Giving any of these questions a
+  // `notSure` would add an `"unsure"` edge and move the pinned 256-walk
+  // covering subset (`enumerate-interview-space.test.ts`) — that is a RED to
+  // report, never a fix.
+  it("holds exactly 17 questions with no notSure at all, named (A6-1/A7-M/seq-28 B/E28A B)", () => {
+    expect(
+      Object.entries(QUESTIONS)
+        .filter(([, q]) => q.notSure === undefined)
+        .map(([id]) => id)
+        .sort(),
+    ).toEqual(
+      [
+        "guardian_consent",
+        "investment_currency",
+        "retirement_age_notice",
+        "remote_annual_income_usd",
+        "investment_own_shareholding_idr",
+        "retirement_undecided_basis",
+        "review_gate",
+        "sponsor_government_invitation",
+        "sponsor_government_collaboration",
+        "sponsor_world_figure_invitation",
+        "sponsor_diplomatic_household",
+        "sponsor_trade_office",
+        "investment_establishes_company",
+        "investment_capital_market_only",
+        "investment_foreign_branch",
+        "investment_ikn_subsidiary",
+        "investment_meets_threshold",
+      ].sort(),
+    );
+    expect(
+      Object.entries(QUESTIONS).filter(([, q]) => q.notSure === undefined),
+    ).toHaveLength(17);
+  });
+});
+
+describe("R2 · retirement_age_notice is registered as a notice, not a fact", () => {
+  it("is HUMAN_CONTEXT with `continue` as its only option", () => {
+    const notice = QUESTIONS.retirement_age_notice;
+    expect(notice).toBeDefined();
+    expect(notice.decisionMapping).toEqual({ kind: "HUMAN_CONTEXT" });
+    expect(notice.options.map((option) => option.key)).toEqual(["continue"]);
+    expect(notice.notSure).toBeUndefined();
+  });
+
+  it("is not part of any category sequence: only computeNextNode routes to it", () => {
+    for (const category of CATEGORY_KEYS) {
+      expect(getCategoryQuestionIds({ category })).not.toContain(
+        "retirement_age_notice",
+      );
+    }
+  });
+});

@@ -1,0 +1,117 @@
+import Link from "next/link";
+import { PMABadge } from "./PMABadge";
+import { RiskBadge } from "./RiskBadge";
+import {
+  isLicensingVerificationPending,
+  isPmaVerdictVerified,
+} from "@/lib/kbli-provenance";
+import { TransitionBadge } from "./TransitionBadge";
+import { BaliStatusBadge } from "./BaliStatusBadge";
+import type { KBLICode } from "@/lib/kbli-types";
+
+interface KBLICardProps {
+  code: KBLICode;
+  showTransition?: boolean;
+}
+
+export function KBLICard({ code, showTransition = false }: KBLICardProps) {
+  const isGold = code.tier === "gold";
+  const pmaVerified = isPmaVerdictVerified(code);
+  return (
+    <Link
+      href={`/kbli/${code.code}`}
+      className={`group block rounded-2xl border p-5 transition-all duration-300 backdrop-blur-xl
+                 hover:-translate-y-1 hover:border-accent-sand hover:bg-white/5
+                 
+                 ${
+                   isGold
+                     ? "border-[rgba(212,132,90,0.2)] bg-[var(--kbli-bg-surface)]"
+                     : "border-[var(--border)] bg-[var(--kbli-bg-surface)]"
+                 }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          {/* Code + Section */}
+          <div className="mb-1.5 flex items-center gap-2">
+            <span className="font-mono text-sm font-bold text-[var(--kbli-accent)]">
+              {code.code}
+            </span>
+            <span className="text-xs text-[var(--foreground-muted)]">
+              Section {code.section}
+            </span>
+            {isGold && (
+              <span
+                className="text-xs text-[var(--kbli-accent)]"
+                title="Curated content available"
+                aria-label="Curated content available"
+              >
+                ★
+              </span>
+            )}
+          </div>
+
+          {/* Title */}
+          <h3
+            className="text-base font-semibold leading-snug text-[var(--foreground)]
+                        transition-colors group-hover:text-[var(--kbli-accent)]"
+          >
+            {code.titleEn}
+          </h3>
+          <p className="mt-0.5 text-sm text-[var(--foreground-muted)] line-clamp-1">
+            {code.titleId}
+          </p>
+        </div>
+
+        {/* Arrow */}
+        <span
+          className="mt-1 shrink-0 text-[var(--foreground-muted)]
+                     transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--kbli-accent)]"
+        >
+          →
+        </span>
+      </div>
+
+      {/* Badges */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {/* Bali L4 status first — national openness (PMA) != Bali registrability.
+            A card showing only "Open · 100% Foreign" would teach the national truth
+            and hide the Bali moratorium block. Show the Bali verdict up front. */}
+        {code.baliL4?.status && (
+          <BaliStatusBadge
+            status={code.baliL4.status}
+            confidence={code.baliL4.confidence}
+            needsReview={code.baliL4.needsReview}
+            pmaStatus={pmaVerified ? code.pma.status : "unknown"}
+            scope={code.baliL4.closure?.scopeQualifier}
+            size="sm"
+          />
+        )}
+        {/* capSpecial/capVerified are forwarded, not left to the component's
+            defaults (false/true). Without them the card silently ASSERTS a cap
+            it was never told is verified, and loses the special-distribution
+            regime entirely — the detail page passes both, so the same code read
+            two different things depending on which surface you were looking at.
+            Found by adversarial review: the badge's own tests pass these props
+            by hand, so they exercised a call shape no page actually used. */}
+        <PMABadge
+          status={code.pma.status}
+          maxForeign={code.pma.maxForeign}
+          verdictVerified={pmaVerified}
+          capSpecial={code.pma.capSpecial}
+          capVerified={code.pma.capVerified}
+          baliBlocked={code.baliL4?.blocked === true}
+          baliAttentionFascia={code.baliL4?.status === "ATTENZIONE_FASCIA_BALI"}
+          size="sm"
+        />
+        {code.licensing[0] && (
+          <RiskBadge
+            riskCategory={code.licensing[0].riskCategory}
+            size="sm"
+            verificationPending={isLicensingVerificationPending(code)}
+          />
+        )}
+        {showTransition && <TransitionBadge transition={code.transition} />}
+      </div>
+    </Link>
+  );
+}

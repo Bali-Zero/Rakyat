@@ -1,0 +1,291 @@
+{
+  "code": "A1",
+  "official_name_id": "A1 Bebas Visa Wisata",
+  "source_url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/A1",
+  "retrieved_at": "2026-10-17T13:27:31Z",
+  "page_sha256": "a9a994c0133a98365ad47741ef70ec7b2ed5a7a1e03bede0363a8733380b9c92",
+  "definition_verbatim": "berwisata, mengunjungi keluarga, menghadiri pertemuan, insentif, konvensi, dan pameran atau acara sejenis lainnya, serta transit di Indonesia untuk ke negara lain.",
+  "jenis_visa_verbatim": "Fasilitas Bebas Visa merupakan merupakan kategori bebas visa yang diperuntukkan bagi warga negara tertentu untuk satu kali masuk ke Indonesia dengan izin tinggal maksimal 30 hari, dihitung sejak tanggal kedatangan. Izin Tinggal dari fasilitas bebas visa ini tidak dapat diperpanjang dan tidak dapat dialihkan menjadi izin tinggal lain.",
+  "stay_days": [
+    "Anda dapat tinggal di Indonesia maksimal 30 hari, dihitung sejak tanggal kedatangan."
+  ],
+  "extendable": [
+    "Anda tidak dapat memperpanjang izin tinggal ini.",
+    "Izin Tinggal dari fasilitas bebas visa ini tidak dapat diperpanjang dan tidak dapat dialihkan menjadi izin tinggal lain."
+  ],
+  "entry": "single",
+  "where_to_apply": "Saat Kedatangan\nPra Kedatangan (elektronik)",
+  "sponsor_required": {
+    "as_stated_boolean": false,
+    "verbatim": [
+      "Anda tidak membutuhkan penjamin/sponsor untuk mengajukan fasiltas bebas visa ini."
+    ],
+    "invitation_requirement_see": "requirements_verbatim (Persyaratan Khusus)"
+  },
+  "requirements_verbatim": [
+    {
+      "n": 1,
+      "section": "Pengajuan visa / Saat Kedatangan",
+      "text": "paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis"
+    },
+    {
+      "n": 2,
+      "section": "Pengajuan visa / Saat Kedatangan",
+      "text": "tiket kembali atau tiket terusan ke negara lain, kecuali bagi awak alat angkut yang akan singgah untuk bergabung dengan kapalnya dan melanjutkan perjalanan ke negara lain"
+    },
+    {
+      "n": 3,
+      "section": "Pengajuan visa / Saat Kedatangan",
+      "text": "petugas pada konter imigrasi akan menerakan izin masuk yang sekaligus merupakan izin tinggal."
+    },
+    {
+      "n": 4,
+      "section": "Pengajuan visa / Pra Kedatangan (elektronik)",
+      "text": "anda harus mengisi formulir elektronik di evisa.imigrasi.go.id"
+    },
+    {
+      "n": 5,
+      "section": "Pengajuan visa / Pra Kedatangan (elektronik)",
+      "text": "anda akan menerima tanda masuk elektronik yang sekaligus merupakan izin tinggal dan bisa digunakan untuk melintasi autogate pada tempat pemeriksaan imigrasi."
+    }
+  ],
+  "pengajuan_intro_verbatim": null,
+  "allowed_activities": "berwisata, mengunjungi keluarga, menghadiri pertemuan, insentif, konvensi, dan pameran atau acara sejenis lainnya, serta transit di Indonesia untuk ke negara lain.",
+  "prohibited_or_conditions_verbatim": [
+    "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa paspor sementara, paspor darurat, titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya tidak diizinkan mengajukan fasilitas bebas visa.",
+    "Orang Asing dengan izin tinggal dari fasilitas bebas visa dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+  ],
+  "ketentuan_lain_verbatim": [
+    "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa paspor sementara, paspor darurat, titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya tidak diizinkan mengajukan fasilitas bebas visa.",
+    "Orang Asing dengan izin tinggal dari fasilitas bebas visa dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+  ],
+  "pnbp_verbatim_for_reference_only": [
+    "- Biaya Rp0",
+    "- Biaya Verifikasi I/II Rp 0"
+  ],
+  "itap_verbatim": [
+    {
+      "text": "Izin Tinggal dari fasilitas bebas visa ini tidak dapat diperpanjang dan tidak dapat dialihkan menjadi izin tinggal lain.",
+      "url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/A1"
+    }
+  ],
+  "itap_eligibility_as_stated": null,
+  "total_max_verbatim": [
+    "Anda dapat tinggal di Indonesia maksimal 30 hari, dihitung sejak tanggal kedatangan."
+  ],
+  "notes": [
+    "PNBP is official-source reference only; never a client price.",
+    "VERIFIED_FROM_SOURCE confirms extraction, not resolution of contradictions or legal eligibility.",
+    "Requirement numbers follow source order; nested alternatives remain verbatim. A/B counts include the application steps listed by the source."
+  ],
+  "status": "VERIFIED_FROM_SOURCE",
+  "to_verify": [],
+  "conflicts": [],
+  "source_http_status": 200,
+  "source_raw_path": "raw/A1.html",
+  "source_sections_verbatim": [
+    {
+      "heading": "Dengan fasilitas bebas visa A1, anda dapat",
+      "text": "berwisata, mengunjungi keluarga, menghadiri pertemuan, insentif, konvensi, dan pameran atau acara sejenis lainnya, serta transit di Indonesia untuk ke negara lain."
+    },
+    {
+      "heading": "Jenis visa",
+      "text": "Fasilitas Bebas Visa merupakan merupakan kategori bebas visa yang diperuntukkan bagi warga negara tertentu untuk satu kali masuk ke Indonesia dengan izin tinggal maksimal 30 hari, dihitung sejak tanggal kedatangan. Izin Tinggal dari fasilitas bebas visa ini tidak dapat diperpanjang dan tidak dapat dialihkan menjadi izin tinggal lain."
+    },
+    {
+      "heading": "Masa tinggal",
+      "text": "Anda dapat tinggal di Indonesia maksimal 30 hari, dihitung sejak tanggal kedatangan.\nAnda tidak dapat memperpanjang izin tinggal ini."
+    },
+    {
+      "heading": "Biaya (PNBP)",
+      "text": "Biaya Rp0\nBiaya Verifikasi I/II Rp 0"
+    },
+    {
+      "heading": "Penjamin (Sponsor)",
+      "text": "Anda tidak membutuhkan penjamin/sponsor untuk mengajukan fasiltas bebas visa ini."
+    },
+    {
+      "heading": "Pengajuan visa",
+      "text": "Saat Kedatangan\nanda harus menunjukkan:\npaspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis\ntiket kembali atau tiket terusan ke negara lain, kecuali bagi awak alat angkut yang akan singgah untuk bergabung dengan kapalnya dan melanjutkan perjalanan ke negara lain\npetugas pada konter imigrasi akan menerakan izin masuk yang sekaligus merupakan izin tinggal.\nPra Kedatangan (elektronik)\nanda harus mengisi formulir elektronik di evisa.imigrasi.go.id\nanda akan menerima tanda masuk elektronik yang sekaligus merupakan izin tinggal dan bisa digunakan untuk melintasi autogate pada tempat pemeriksaan imigrasi."
+    },
+    {
+      "heading": "Ketentuan lain",
+      "text": "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa paspor sementara, paspor darurat, titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya tidak diizinkan mengajukan fasilitas bebas visa.\nOrang Asing dengan izin tinggal dari fasilitas bebas visa dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+    },
+    {
+      "heading": "Dasar hukum",
+      "text": "Peraturan Pemerintah Nomor 45 tahun 2024 tentang Tarif PNBP di Lingkungan Kementerian Hukum dan HAM RI\nPeraturan Menteri Hukum dan HAM RI Nomor 11 Tahun 2024 tentang Visa dan Izin Tinggal\nPeraturan Menteri Hukum dan HAM RI Nomor 22 tahun 2023 tentang Visa dan Izin Tinggal\nKeputusan Menteri Imigrasi dan Pemasyarakatan Nomor M.IP-08.GR.01.01 tahun 2025 tentang Klasifikasi Visa\nPeraturan Menteri Keuangan RI Nomor 9/PMK.02/2022 tentang Jenis dan Tarif PNBP Kebutuhan Mendesak atas Pelayanan Keimigrasian yang berlaku pada Kemenkumham RI\nPeraturan Menteri Keuangan RI Nomor 82 Tahun 2023 tentang Jenis dan Tarif atas Jenis PNBP Kebutuhan Mendesak atas Pelayanan Golden Visa yang berlaku pada Kemenkumham RI"
+    }
+  ],
+  "application_routes_verbatim": [
+    {
+      "heading": "Saat Kedatangan",
+      "text": "anda harus menunjukkan:\npaspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis\ntiket kembali atau tiket terusan ke negara lain, kecuali bagi awak alat angkut yang akan singgah untuk bergabung dengan kapalnya dan melanjutkan perjalanan ke negara lain\npetugas pada konter imigrasi akan menerakan izin masuk yang sekaligus merupakan izin tinggal."
+    },
+    {
+      "heading": "Pra Kedatangan (elektronik)",
+      "text": "anda harus mengisi formulir elektronik di evisa.imigrasi.go.id\nanda akan menerima tanda masuk elektronik yang sekaligus merupakan izin tinggal dan bisa digunakan untuk melintasi autogate pada tempat pemeriksaan imigrasi."
+    }
+  ],
+  "itap_explicit_on_visa_page": false,
+  "eligible_nationalities": {
+    "authority_type": "REGULATION",
+    "not_page_verbatim": true,
+    "note": "Regulation-sourced list kept separate from the page verbatim, which says only 'warga negara tertentu'. 13 states/SARs from Perpres 95/2024 Lampiran A and 6 added by Permenimipas 10/2026 Lampiran; the official BVK portal page shows the same 19. Added under OWNER RULING 2026-10-19.",
+    "retrieved_at": "2026-10-19",
+    "sources": [
+      {
+        "id": "perpres-95-2024",
+        "url": "https://peraturan.go.id/files/perpres-no-95-tahun-2024.pdf",
+        "type": "PRESIDENTIAL_REGULATION",
+        "retrieved": "2026-10-19",
+        "note": "Bebas Visa Kunjungan; Lampiran A 13 states/SAR, Lampiran B Singapore certain-permit holders"
+      },
+      {
+        "id": "permenimipas-10-2026",
+        "url": "https://peraturan.bpk.go.id/Download/416328/Permen_Nomor10_Tahun2026.pdf",
+        "type": "IMPLEMENTING_REGULATION",
+        "retrieved": "2026-10-19",
+        "note": "Ditetapkan 2026-07-07; diundangkan 2026-07-09 (BN 2026 No. 463 per press; PDF placeholder unfilled); adds TR BR PE KZ MO BY; Pasal 4 revokes Permenimipas 10/2025 (BN 2025 No. 594)"
+      },
+      {
+        "id": "imigrasi-bvk-page",
+        "url": "https://www.imigrasi.go.id/wna/daftar-negara-voa-bvk-calling-visa/daftar-negara-bebas-visa-kunjungan",
+        "type": "OFFICIAL_PORTAL",
+        "retrieved": "2026-10-19",
+        "note": "19 entries + Singapore permanent-resident holders"
+      }
+    ],
+    "entries": [
+      {
+        "iso2": "BN",
+        "name": "Brunei Darussalam",
+        "basis": "Perpres 95/2024 Lampiran A.1",
+        "group": "ASEAN"
+      },
+      {
+        "iso2": "PH",
+        "name": "Philippines",
+        "basis": "Perpres 95/2024 Lampiran A.2",
+        "group": "ASEAN"
+      },
+      {
+        "iso2": "KH",
+        "name": "Cambodia",
+        "basis": "Perpres 95/2024 Lampiran A.3",
+        "group": "ASEAN"
+      },
+      {
+        "iso2": "LA",
+        "name": "Laos",
+        "basis": "Perpres 95/2024 Lampiran A.4",
+        "group": "ASEAN"
+      },
+      {
+        "iso2": "MY",
+        "name": "Malaysia",
+        "basis": "Perpres 95/2024 Lampiran A.5",
+        "group": "ASEAN"
+      },
+      {
+        "iso2": "MM",
+        "name": "Myanmar",
+        "basis": "Perpres 95/2024 Lampiran A.6",
+        "group": "ASEAN"
+      },
+      {
+        "iso2": "SG",
+        "name": "Singapore",
+        "basis": "Perpres 95/2024 Lampiran A.7",
+        "group": "ASEAN"
+      },
+      {
+        "iso2": "TH",
+        "name": "Thailand",
+        "basis": "Perpres 95/2024 Lampiran A.8",
+        "group": "ASEAN"
+      },
+      {
+        "iso2": "VN",
+        "name": "Vietnam",
+        "basis": "Perpres 95/2024 Lampiran A.9",
+        "group": "ASEAN"
+      },
+      {
+        "iso2": "TL",
+        "name": "Timor-Leste",
+        "basis": "Perpres 95/2024 Lampiran A.10",
+        "group": "ASEAN (member since 2025-10-26)"
+      },
+      {
+        "iso2": "SR",
+        "name": "Suriname",
+        "basis": "Perpres 95/2024 Lampiran A.11",
+        "group": "non-ASEAN"
+      },
+      {
+        "iso2": "CO",
+        "name": "Colombia",
+        "basis": "Perpres 95/2024 Lampiran A.12",
+        "group": "non-ASEAN"
+      },
+      {
+        "iso2": "HK",
+        "name": "Hong Kong SAR",
+        "basis": "Perpres 95/2024 Lampiran A.13",
+        "group": "non-ASEAN"
+      },
+      {
+        "iso2": "TR",
+        "name": "Turkiye",
+        "basis": "Permenimipas 10/2026 Lampiran 1",
+        "group": "non-ASEAN"
+      },
+      {
+        "iso2": "BR",
+        "name": "Brazil",
+        "basis": "Permenimipas 10/2026 Lampiran 2",
+        "group": "non-ASEAN"
+      },
+      {
+        "iso2": "PE",
+        "name": "Peru",
+        "basis": "Permenimipas 10/2026 Lampiran 3",
+        "group": "non-ASEAN"
+      },
+      {
+        "iso2": "KZ",
+        "name": "Kazakhstan",
+        "basis": "Permenimipas 10/2026 Lampiran 4",
+        "group": "non-ASEAN"
+      },
+      {
+        "iso2": "MO",
+        "name": "Macao SAR",
+        "basis": "Permenimipas 10/2026 Lampiran 5",
+        "group": "non-ASEAN"
+      },
+      {
+        "iso2": "BY",
+        "name": "Belarus",
+        "basis": "Permenimipas 10/2026 Lampiran 6",
+        "group": "non-ASEAN"
+      }
+    ],
+    "permit_holder_route": {
+      "basis": "Perpres 95/2024 Lampiran B",
+      "text_id": "Pemegang izin tinggal tertentu dari negara Singapura",
+      "scope": "Holders of certain Singapore stay permits (the imigrasi.go.id BVK page: Singapore permanent-resident holders arriving through certain TPI). Not nationality-based.",
+      "to_verify": "The revoked Permenimipas 10/2025 title covered 'atau Pemegang Izin Tinggal Tertentu'; the 10/2026 title drops that phrase. Perpres 95/2024 Lampiran B and the portal page still state the route. NB-2 (council ground truth, 2026-10-19) says the Lampiran B route applies only at certain entry points in Kepulauan Riau; not verified against the instrument. A holder answering yes gets TO_VERIFY, never OK.",
+      "guide_verdict": "TO_VERIFY"
+    },
+    "b1_overlap_note": "18 of the 19 listed nationalities (all except MO) are also on the B1 visa-on-arrival list; A1 eligibility never excludes B1."
+  },
+  "owner_rulings": [
+    {
+      "date": "2026-10-19",
+      "topic": "eligible_nationalities",
+      "ruling": "A1 eligibility is decided from the 19-entry regulation list (Perpres 95/2024 Lampiran A + Permenimipas 10/2026 Lampiran) plus the Singapore permit-holder route (Perpres 95/2024 Lampiran B), not from a bare self-confirmation. A yes on the Singapore permit-holder route gives TO_VERIFY (gate 2026-10-19)."
+    }
+  ]
+}

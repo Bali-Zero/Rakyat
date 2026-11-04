@@ -1,0 +1,366 @@
+"""
+Standardized logging utilities for routers.
+
+Provides consistent logging patterns across all API endpoints
+with structured context support for observability.
+"""
+
+import logging
+import re
+import time
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
+from functools import wraps
+from typing import Any, TypeVar
+
+logger = logging.getLogger(__name__)
+
+# Standard log levels
+LOG_LEVELS = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
+
+_MAGIC_LINK_VERIFY_PREFIX = "/api/auth/verify-magic/"
+_MAGIC_LINK_VERIFY_PATTERN = re.compile(
+    r"^/+api/+auth/+verify-magic(?:/+|%2f)",
+    flags=re.IGNORECASE,
+)
+
+
+def sanitize_log_path(path: str) -> str:
+    """Redact credentials embedded in route path parameters before logging."""
+    path_text = str(path)
+    if _MAGIC_LINK_VERIFY_PATTERN.match(path_text):
+        return f"{_MAGIC_LINK_VERIFY_PREFIX}[REDACTED]"
+    return path_text
+
+
+# CWE-117 log forging: every character str.splitlines() treats as a line
+# boundary (CR, LF, VT, FF, FS, GS, RS, NEL, U+2028, U+2029) becomes a space,
+# so a log viewer or aggregator that splits on any of them still sees one line.
+_LOG_LINE_BREAK_RE = re.compile("[\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029]")
+
+# Any remaining C0 control character, DEL and the C1 range are dropped.
+_LOG_CONTROL_CHARS_RE = re.compile("[\x00-\x08\x0e-\x1f\x7f-\x9f]")
+
+
+def sanitize_for_log(value: Any, max_len: int = 200) -> str:
+    """Neutralize a value before it is interpolated into a log message.
+
+    A value that reaches a log call unmodified lets whoever controls it
+    forge fake log lines (CWE-117 / CWE-93): embed `\\r\\n` and the next
+    "line" of the log reads as a separate, attacker-authored entry. In this
+    codebase every `logger.*` call is also a Sentry breadcrumb, and Sentry's
+    PII redaction is per-KEY — it does not scrub the message text — so an
+    unsanitized interpolation is a route for injected content (and any PII
+    riding along with it) to leave the machine unredacted.
+
+    Replaces every str.splitlines() line boundary (CR/LF, VT, FF, FS/GS/RS, NEL,
+    U+2028/U+2029) with a space, drops other C0/C1/DEL control characters, then truncates so one field can't blow out a log line.
+    Never raises: takes any value, coerces via `str()`, returns `"None"` for
+    `None` rather than the string `"None"`-via-str (same result, explicit).
+
+    Args:
+        value: The value about to be interpolated into a log message.
+        max_len: Truncate to this length (default 200 — long enough for a
+            useful log line, short enough to bound PII/log-forgery blast
+            radius). Pass a smaller value for fields you only log a preview
+            of (e.g. free-text search queries, message subjects).
+
+    Returns:
+        A single-line, length-bounded string safe to interpolate into a log
+        message.
+    """
+    text = "None" if value is None else str(value)
+    text = text.replace("\r\n", " ")
+    text = _LOG_LINE_BREAK_RE.sub(" ", text)
+    text = _LOG_CONTROL_CHARS_RE.sub("", text)
+    if len(text) > max_len:
+        text = text[: max_len - 3] + "..."
+    return text
+
+
+def get_logger(name: str) -> logging.Logger:
+    """
+    Get a logger instance for a module.
+
+    Args:
+        name: Module name (usually __name__)
+
+    Returns:
+        Logger instance configured for the module
+    """
+    return logging.getLogger(name)
+
+
+def log_endpoint_call(
+    logger: logging.Logger,
+    endpoint: str,
+    method: str,
+    user_email: str | None = None,
+    correlation_id: str | None = None,
+    **kwargs: Any,
+) -> None:
+    """
+    Log an endpoint call with consistent format.
+
+    Args:
+        logger: Logger instance
+        endpoint: Endpoint path
+        method: HTTP method
+        user_email: Optional user email
+        correlation_id: Optional correlation ID
+        **kwargs: Additional context to log
+    """
+    context: dict[str, Any] = {
+        "endpoint": endpoint,
+        "method": method,
+    }
+    if user_email:
+        context["user"] = user_email
+    if kwargs:
+        context.update(kwargs)
+
+    extra: dict[str, Any] = {"context": context}
+    if correlation_id:
+        extra["correlation_id"] = correlation_id
+    if user_email:
+        extra["user_email"] = user_email
+
+    logger.info(f"{method} {endpoint}", extra=extra)
+
+
+def log_success(
+    logger: logging.Logger,
+    message: str,
+    duration_ms: float | None = None,
+    **kwargs: Any,
+) -> None:
+    """
+    Log a successful operation.
+
+    Args:
+        logger: Logger instance
+        message: Success message
+        duration_ms: Optional duration in milliseconds
+        **kwargs: Additional context
+    """
+    extra: dict[str, Any] = {}
+    if kwargs:
+        extra["context"] = kwargs
+    if duration_ms is not None:
+        extra["duration_ms"] = duration_ms
+
+    logger.info(message, extra=extra if extra else None)
+
+
+def log_success_simple(message: str, **kwargs: Any) -> None:
+    """
+    Simplified success logger that uses the module-level logger.
+    Useful for services that import this module.
+    """
+    logger.info("✅ %s", message, extra={"context": kwargs} if kwargs else None)
+
+
+def log_error(
+    logger: logging.Logger,
+    message: str,
+    error: Exception | None = None,
+    exc_info: bool = True,
+    **kwargs: Any,
+) -> None:
+    """
+    Log an error with consistent format.
+
+    Args:
+        logger: Logger instance
+        message: Error message
+        error: Optional exception object
+        exc_info: Whether to include exception info
+        **kwargs: Additional context
+    """
+    context: dict[str, Any] = {}
+    if error:
+        context["error"] = str(error)
+        context["error_type"] = type(error).__name__
+    if kwargs:
+        context.update(kwargs)
+
+    logger.error(
+        message,
+        exc_info=exc_info if error else False,
+        extra={"context": context} if context else None,
+    )
+
+
+def log_warning(
+    logger: logging.Logger,
+    message: str,
+    **kwargs: Any,
+) -> None:
+    """
+    Log a warning.
+
+    Args:
+        logger: Logger instance
+        message: Warning message
+        **kwargs: Additional context
+    """
+    logger.warning(message, extra={"context": kwargs} if kwargs else None)
+
+
+def log_database_operation(
+    logger: logging.Logger,
+    operation: str,
+    table: str,
+    record_id: int | str | None = None,
+    duration_ms: float | None = None,
+    **kwargs: Any,
+) -> None:
+    """
+    Log a database operation.
+
+    Args:
+        logger: Logger instance
+        operation: Operation type (CREATE, UPDATE, DELETE, SELECT)
+        table: Table name
+        record_id: Optional record ID
+        duration_ms: Optional duration in milliseconds
+        **kwargs: Additional context
+    """
+    context: dict[str, Any] = {"operation": operation, "table": table}
+    if record_id:
+        context["record_id"] = record_id
+    if kwargs:
+        context.update(kwargs)
+
+    extra: dict[str, Any] = {"context": context}
+    if duration_ms is not None:
+        extra["duration_ms"] = duration_ms
+
+    logger.debug(f"{operation} {table}", extra=extra)
+
+
+@contextmanager
+def log_operation(
+    logger: logging.Logger,
+    operation_name: str,
+    **initial_context: Any,
+) -> Generator[dict[str, Any], None, None]:
+    """
+    Context manager for logging operations with timing.
+
+    Usage:
+        with log_operation(logger, "fetch_user", user_id=123) as ctx:
+            user = fetch_user(123)
+            ctx["user_name"] = user.name  # Add more context
+
+    Args:
+        logger: Logger instance
+        operation_name: Name of the operation
+        **initial_context: Initial context to log
+
+    Yields:
+        Mutable context dict that can be updated during the operation
+    """
+    context = dict(initial_context)
+    start_time = time.perf_counter()
+
+    try:
+        yield context
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        log_success(logger, f"{operation_name} completed", duration_ms=duration_ms, **context)
+    except Exception as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        context["duration_ms"] = duration_ms
+        log_error(logger, f"{operation_name} failed", error=e, **context)
+        raise
+
+
+T = TypeVar("T", bound=Callable[..., Any])
+
+
+def log_function_call(logger: logging.Logger) -> Callable[[T], T]:
+    """
+    Decorator to log function calls with timing.
+
+    Usage:
+        @log_function_call(logger)
+        async def my_function(arg1, arg2):
+            ...
+
+    Args:
+        logger: Logger instance
+
+    Returns:
+        Decorator function
+    """
+
+    def decorator(func: T) -> T:
+        @wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            start_time = time.perf_counter()
+            func_name = func.__name__
+            logger.debug("Calling %s", func_name, extra={"context": {"args_count": len(args)}})
+
+            try:
+                result = await func(*args, **kwargs)
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                logger.debug(
+                    "%s completed",
+                    func_name,
+                    extra={"duration_ms": duration_ms, "context": {"success": True}},
+                )
+                return result
+            except Exception as e:
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                logger.error(
+                    "%s failed",
+                    func_name,
+                    exc_info=True,
+                    extra={
+                        "duration_ms": duration_ms,
+                        "context": {"error": str(e), "error_type": type(e).__name__},
+                    },
+                )
+                raise
+
+        @wraps(func)
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+            start_time = time.perf_counter()
+            func_name = func.__name__
+            logger.debug("Calling %s", func_name, extra={"context": {"args_count": len(args)}})
+
+            try:
+                result = func(*args, **kwargs)
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                logger.debug(
+                    "%s completed",
+                    func_name,
+                    extra={"duration_ms": duration_ms, "context": {"success": True}},
+                )
+                return result
+            except Exception as e:
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                logger.error(
+                    "%s failed",
+                    func_name,
+                    exc_info=True,
+                    extra={
+                        "duration_ms": duration_ms,
+                        "context": {"error": str(e), "error_type": type(e).__name__},
+                    },
+                )
+                raise
+
+        import asyncio
+
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper  # type: ignore
+        return sync_wrapper  # type: ignore
+
+    return decorator

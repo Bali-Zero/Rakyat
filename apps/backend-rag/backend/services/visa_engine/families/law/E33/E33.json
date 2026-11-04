@@ -1,0 +1,174 @@
+{
+  "code": "E33",
+  "official_name_id": "E33 Visa Rumah Kedua",
+  "source_url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/E33",
+  "retrieved_at": "2026-10-17T13:27:13Z",
+  "page_sha256": "302006a30d9470cefc218779d07d464f041f3e47fe49348a8cf8f004c10d07ce",
+  "definition_verbatim": "Visa Indeks E33 diperuntukkan bagi orang asing yang ingin tinggal dan menetap di Indonesia tanpa memerlukan penjamin, baik perorangan maupun perusahaan, dengan ketentuan menggunakan jaminan keimigrasian.",
+  "jenis_visa_verbatim": "Visa Tinggal Terbatas untuk masuk ke Indonesia yang memungkinkan Anda untuk masuk dan keluar Indonesia dalam jangka waktu tertentu. Izin Tinggal ini dapat diperpanjang dengan ketentuan keseluruhan Izin Tinggal di Wilayah Indonesia tidak lebih dari 10 (sepuluh) tahun dan dapat dialihkan menjadi izin tinggal lainnya",
+  "stay_days": [
+    "Anda diberikan izin tinggal pertama dengan masa berlaku paling lama 5 tahun dan dapat diperpanjang dengan ketentuan keseluruhan Izin Tinggal di Wilayah Indonesia tidak lebih dari 10 (sepuluh) tahun."
+  ],
+  "extendable": [
+    "Izin Tinggal ini dapat diperpanjang dengan ketentuan keseluruhan Izin Tinggal di Wilayah Indonesia tidak lebih dari 10 (sepuluh) tahun dan dapat dialihkan menjadi izin tinggal lainnya",
+    "Anda diberikan izin tinggal pertama dengan masa berlaku paling lama 5 tahun dan dapat diperpanjang dengan ketentuan keseluruhan Izin Tinggal di Wilayah Indonesia tidak lebih dari 10 (sepuluh) tahun.",
+    "Permohonan perpanjangan dapat diajukan secara online melalui evisa.imigrasi.go.id"
+  ],
+  "entry": "multiple",
+  "where_to_apply": null,
+  "sponsor_required": {
+    "as_stated_boolean": false,
+    "verbatim": [
+      "Anda tidak membutuhkan penjamin/sponsor untuk mengajukan visa ini."
+    ],
+    "invitation_requirement_see": "requirements_verbatim (Persyaratan Khusus)"
+  },
+  "requirements_verbatim": [
+    {
+      "n": 1,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "Paspor kebangsaan yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis,"
+    },
+    {
+      "n": 2,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "rekening koran pribadi dengan jumlah minimal USD $2000 (dua ribu Dolar Amerika Serikat) atau jumlah yang setara dalam kurun waktu 3 bulan terakhir (termasuk nama, tanggal periode, dan saldo rekening)."
+    },
+    {
+      "n": 3,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "pasfoto berwarna terbaru (setahun terakhir). Detail"
+    },
+    {
+      "n": 4,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "Daftar riwayat hidup"
+    },
+    {
+      "n": 5,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "Riwayat perjalanan dan rencana perjalanan (itinerary)."
+    },
+    {
+      "n": 6,
+      "section": "Persyaratan Khusus",
+      "text": "Jaminan Keimigrasian dengan melampirkan Surat Pernyataan Komitmen akan menanamkan investasi di Indonesia sebagai berikut:"
+    },
+    {
+      "n": 7,
+      "section": "Persyaratan Khusus",
+      "text": "pernyataan komitmen akan menyimpan dana pada rekening atas nama sendiri pada bank milik negara senilai paling sedikit US$130.000 (seratus tiga puluh ribu dolar Amerika) atau setara; atau"
+    },
+    {
+      "n": 8,
+      "section": "Persyaratan Khusus",
+      "text": "Pernyataan komitmen akan membeli properti berupa rumah susun atau apartemen di Indonesia senilai paling sedikit US$1.000.000 (satu juta dolar Amerika) atau setara,"
+    },
+    {
+      "n": 9,
+      "section": "Persyaratan Khusus",
+      "text": "Pernyataan Komitmen diatas, harus dipenuhi dan dilaporkan ke Kantor Imigrasi yang menerbitkan Izin Tinggal Terbatas dalam waktu paling lama 90 hari terhitung sejak tanggal masuk ke Indonesia dengan melampirkan:"
+    },
+    {
+      "n": 10,
+      "section": "Persyaratan Khusus",
+      "text": "Bukti kepemilihan dana pada rekening atas nama sendiri pada bank milik negara senilai paling sedikit US$130.000 (seratus tiga puluh ribu dolar Amerika) atau setara; atau"
+    },
+    {
+      "n": 11,
+      "section": "Persyaratan Khusus",
+      "text": "Bukti kepemilihan properti berupa rumah susun atau apartemen di Indonesia senilai paling sedikit US$1.000.000 (satu juta dolar Amerika) atau setara."
+    }
+  ],
+  "pengajuan_intro_verbatim": "Penjamin (sponsor) harus memiliki akun di evisa.imigrasi.go.id sebelum mengajukan visa bagi Orang Asing yang dia sponsori.\nSetelah memiliki akun, penjamin dapat mengajukan visa bagi Orang Asing setelah login di evisa.imigrasi.go.id dengan menyiapkan berkas elektronik (file PDF atau JPEG) Orang Asing antara lain:",
+  "allowed_activities": "Melakukan kegiatan yang berhubungan dengan wisata, pembelian barang, serta mengunjungi keluarga dan teman. Selain itu, anda juga dapat melakukan kegiatan bekerja, menempuh pendidikan atau kegiatan lainnya dengan melakukan pelaporan rangkap kegiatan ke kantor imigrasi yang menerbitkan izin tinggal. Selama di Indonesia, anda dapat membawa keluarga untuk tinggal di Indonesia sepanjang memenuhi ketentuan peraturan perundang-undangan di bidang keimigrasian. Anda juga dapat masuk dan keluar wilayah Indonesia selama Izin Tinggal masih berlaku tanpa harus mengajukan Visa baru.",
+  "prohibited_or_conditions_verbatim": [
+    "Anda dilarang tinggal di wilayah Indonesia melebihi jangka waktu izin tinggal, melakukan pekerjaan yang tidak sesuai dengan izin tinggal, melakukan penjualan barang atau jasa, terkecuali diperlukan dalam pekerjaannya",
+    "Nilai Jaminan Keimigrasian harus dipertahankan paling sedikit sesuai dengan surat pernyataan komitmen pada saat permohonan visa selama izin tinggalnya masih berlaku"
+  ],
+  "ketentuan_lain_verbatim": [
+    "Masa berlaku visa adalah 90 hari sejak diterbitkan. Jika tidak digunakan setelah jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.",
+    "Harap diperhatikan bahwa masa berlaku visa berbeda dengan masa tinggal, silakan periksa visa Anda untuk informasi tentang lama izin tinggal.",
+    "Izin Tinggal Terbatas dan Izin Masuk Kembali akan terbit secara otomatis begitu Anda diizinkan masuk oleh petugas pada Tempat Pemeriksaan Imigrasi.",
+    "Anda dilarang tinggal di wilayah Indonesia melebihi jangka waktu izin tinggal, melakukan pekerjaan yang tidak sesuai dengan izin tinggal, melakukan penjualan barang atau jasa, terkecuali diperlukan dalam pekerjaannya",
+    "Nilai Jaminan Keimigrasian harus dipertahankan paling sedikit sesuai dengan surat pernyataan komitmen pada saat permohonan visa selama izin tinggalnya masih berlaku"
+  ],
+  "pnbp_verbatim_for_reference_only": [
+    "Masa tinggal hingga 5 tahun : Rp13.000.000, terdiri atas:",
+    "- Biaya Visa tinggal terbatas",
+    ": Rp. 500.000,-",
+    "- Biaya Verifikasi Visa",
+    ": Rp. 2.000.000,-",
+    "- Biaya Izin Tinggal Terbatas (ITAS) masa berlaku 5 Tahun",
+    ": Rp. 7.000.000,-",
+    "- Biaya Izin Masuk Kembali (IMK) masa berlaku 5 Tahun",
+    ": Rp. 3.500.000,-",
+    "Semua pembayaran (PNBP) dapat dilakukan melalui beberapa bank yang telah ditunjuk. Silakan lihat kode billing yang muncul di sistem setelah pengajuan visa. Jika permohonan ditolak, maka PNBP/Biaya Imigrasi yang telah dibayarkan tidak dapat dikembalikan."
+  ],
+  "notes": [
+    "VERIFIED_FROM_SOURCE means faithful extraction, not resolution of legal inconsistencies. Whitespace and HTML list markers are normalized; source wording, spelling, punctuation and alternatives are retained.",
+    "stay_days retains source year-based sentences; no conversion of years into days. entry=multiple derives only from the explicit entry/exit wording. where_to_apply is null: no explicit offshore/onshore rule is stated.",
+    "Requirements are numbered in source order. Counts include parent bullets and alternative bullets; they are not a count of simultaneously mandatory documents. Scope labels and the full Persyaratan khusus text preserve conditional context. Reference directories are retained separately and excluded from the count.",
+    "ITAP stage (owner ruling 2026-10-18 'segui la legge'): Permenkumham 22/2023 Pasal 173 huruf f angka 1 lets a holder of this rumah-kedua ITAS convert to ITAP; mapping by name 'Visa Rumah Kedua' (rumah kedua). Pasal 179 ayat (1): at least 3 consecutive years in Indonesia from the grant of the ITAS. Pasal 178: no conversion while the commitment required at the first ITAS is unfulfilled. Pasal 173 as amended by Permenkumham 11/2024 sets the senior age at 55 (the imigrasi.go.id ITAP page still says 60). The conversion is a legal-text finding; the visa page does not itself name ITAP. See ITAP.json. Status LAW_MAPPED_BY_DEFINITION: the law lists activities (Pasal 173 huruf f angka 1-4); the link from this code to the activity is an inference from its official name/definition.",
+    "PNBP text is official reference only, never a client price.",
+    "TO_VERIFY: initial-duration options on this visa page differ from the general official ITAS table; supplementary_stay_evidence retains that separate source. The visa-page values are not overwritten.",
+    "INTERNAL INCONSISTENCY: Penjamin says no sponsor, but Pengajuan visa instructs a sponsor to hold an account and apply. Both are retained; no sponsor requirement is silently added."
+  ],
+  "status": "VERIFIED_FROM_SOURCE",
+  "itap_verbatim": [
+    {
+      "text": "Izin Tinggal ini dapat diperpanjang dengan ketentuan keseluruhan Izin Tinggal di Wilayah Indonesia tidak lebih dari 10 (sepuluh) tahun dan dapat dialihkan menjadi izin tinggal lainnya",
+      "url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/E33",
+      "section": "Jenis visa"
+    },
+    {
+      "text": "Alih status Izin Tinggal Terbatas menjadi Izin Tinggal Tetap dapat diberikan kepada Orang Asing yang merupakan pemegang Izin Tinggal Terbatas yang melakukan kegiatan: ... f. rumah kedua, yang terdiri atas: 1. rumah kedua;",
+      "url": "https://peraturan.go.id/id/permenkumham-no-22-tahun-2023",
+      "section": "Permenkumham 22/2023 Pasal 173 huruf f angka 1 (Pasal 173 as amended by Permenkumham 11/2024 angka 36; url of 22/2023, amendment at https://peraturan.go.id/id/permenkumham-no-11-tahun-2024)"
+    },
+    {
+      "text": "Pasal 178: Izin Tinggal Terbatas tidak dapat dialihstatuskan menjadi Izin Tinggal Tetap, jika ketentuan pemenuhan komitmen yang dipersyaratkan saat pengajuan Izin Tinggal Terbatas pertama kali yang berasal dari Visa Tinggal Terbatas, alih status, atau peralihan belum dilaksanakan. Pasal 179 (1) Alih status Izin Tinggal Terbatas menjadi Izin Tinggal Tetap bagi Orang Asing sebagaimana dimaksud dalam Pasal 173 huruf a, huruf b, huruf c, dan huruf f diberikan dengan ketentuan Orang Asing yang bersangkutan telah berada di Wilayah Indonesia paling singkat 3 (tiga) tahun berturut-turut sejak tanggal diberikannya Izin Tinggal Terbatas.",
+      "url": "https://peraturan.go.id/id/permenkumham-no-22-tahun-2023",
+      "section": "Permenkumham 22/2023 Pasal 178 and Pasal 179 ayat (1) (Pasal 173 huruf f is within the scope of Pasal 179 ayat (1))"
+    }
+  ],
+  "itap_eligibility_as_stated_boolean": true,
+  "itap_status": "LAW_MAPPED_BY_DEFINITION",
+  "itap_family_evidence": "ITAP.json",
+  "total_max_stay_verbatim": [
+    "Izin Tinggal ini dapat diperpanjang dengan ketentuan keseluruhan Izin Tinggal di Wilayah Indonesia tidak lebih dari 10 (sepuluh) tahun dan dapat dialihkan menjadi izin tinggal lainnya",
+    "Anda diberikan izin tinggal pertama dengan masa berlaku paling lama 5 tahun dan dapat diperpanjang dengan ketentuan keseluruhan Izin Tinggal di Wilayah Indonesia tidak lebih dari 10 (sepuluh) tahun."
+  ],
+  "http_status": 200,
+  "raw_path": "raw/E33.html",
+  "to_verify": [
+    "where_to_apply",
+    "visa_page_vs_general_table_initial_duration",
+    "sponsor_application_inconsistency",
+    "commitment_deadline_start_event"
+  ],
+  "masa_tinggal_verbatim": "Anda diberikan izin tinggal pertama dengan masa berlaku paling lama 5 tahun dan dapat diperpanjang dengan ketentuan keseluruhan Izin Tinggal di Wilayah Indonesia tidak lebih dari 10 (sepuluh) tahun. Permohonan perpanjangan dapat diajukan secara online melalui evisa.imigrasi.go.id",
+  "persyaratan_khusus_verbatim": "Memenuhi Bukti Jaminan Keimigrasian dalam jangka waktu paling lama 90 hari terhitung sejak tanggal diberikannya Izin Tinggal Terbatas, berupa:\n- Jaminan Keimigrasian dengan melampirkan Surat Pernyataan Komitmen akan menanamkan investasi di Indonesia sebagai berikut:\n- pernyataan komitmen akan menyimpan dana pada rekening atas nama sendiri pada bank milik negara senilai paling sedikit US$130.000 (seratus tiga puluh ribu dolar Amerika) atau setara; atau\n- Pernyataan komitmen akan membeli properti berupa rumah susun atau apartemen di Indonesia senilai paling sedikit US$1.000.000 (satu juta dolar Amerika) atau setara,\n- Pernyataan Komitmen diatas, harus dipenuhi dan dilaporkan ke Kantor Imigrasi yang menerbitkan Izin Tinggal Terbatas dalam waktu paling lama 90 hari terhitung sejak tanggal masuk ke Indonesia dengan melampirkan:\n- Bukti kepemilihan dana pada rekening atas nama sendiri pada bank milik negara senilai paling sedikit US$130.000 (seratus tiga puluh ribu dolar Amerika) atau setara; atau\n- Bukti kepemilihan properti berupa rumah susun atau apartemen di Indonesia senilai paling sedikit US$1.000.000 (satu juta dolar Amerika) atau setara.",
+  "persyaratan_khusus_context_verbatim": [
+    "Memenuhi Bukti Jaminan Keimigrasian dalam jangka waktu paling lama 90 hari terhitung sejak tanggal diberikannya Izin Tinggal Terbatas, berupa:"
+  ],
+  "reference_lists_verbatim": null,
+  "proses_pengajuan_verbatim": "Pengajuan Visa di Direktorat Jenderal Imigrasi:\n- pemeriksaan kelengkapan persyaratan;\n- verifikasi pembayaran biaya imigrasi sesuai dengan ketentuan peraturan perundang-undangan;\n- pembuatan profil dan verifikasi;\n- persetujuan;\n- penerbitan visa.\nWaktu proses empat hari kerja setelah pembayaran visa diterima.",
+  "dasar_hukum_verbatim": [
+    "Undang-Undang Nomor 6 Tahun 2011 tentang Keimigrasian sebagaimana telah beberapa kali diubah terakhir dengan Undang-Undang Nomor 63 Tahun 2024 tentang Perubahan Ketiga Undang-Undang Nomor 6 Tahun 2011 tentang Keimigrasian;",
+    "Peraturan Pemerintah Nomor 31 Tahun 2013 tentang Peraturan Pelaksanaan Undang-Undang Nomor 6 Tahun 2011 tentang Keimigrasian sebagaimana telah diubah beberapa kali terakhir dengan Peraturan Pemerintah Nomor 40 Tahun 2023 tentang Perubahan Keempat Peraturan Pemerintah Nomor 31 Tahun 2013 tentang Peraturan Pelaksanaan Undang-Undang Nomor 6 Tahun 2011 tentang Keimigrasian;",
+    "Peraturan Pemerintah Republik Indonesia Nomor 45 Tahun 2024 tentang Jenis dan Tarif Atas Jenis Penerimaan Negara Bukan Pajak yang berlaku pada Kementerian Hukum dan Hak Asasi Manusia;",
+    "Peraturan Menteri Hukum dan Hak Asasi Manusia Nomor 22 Tahun 2023 tentang Visa dan Izin Tinggal sebagaimana telah diubah dengan Peraturan Menteri Hukum dan Hak Asasi Manusia Nomor 11 Tahun 2024 tentang Perubahan Atas Peraturan Menteri Hukum dan Hak Asasi Manusia Nomor 22 Tahun 2023 tentang Visa dan Izin Tinggal; dan",
+    "Keputusan Menteri Imigrasi dan Pemasyarakatan RI Nomor M.IP-08.GR.01.01 Tahun 2025 tentang Klasifikasi Visa."
+  ],
+  "supplementary_stay_evidence": {
+    "source_url": "https://www.imigrasi.go.id/wna/izin-tinggal-keimigrasian/izin-tinggal-tetap",
+    "retrieved_at": "2026-10-17T13:27:38Z",
+    "page_sha256": "e429a98710f6743ee94c717f4b29a686044bc49bcd11718c7c2e8db1f041d28e",
+    "raw_path": "raw/ITAP-central-detail.html",
+    "code_name_verbatim": "Visa Tinggal Terbatas Rumah Kedua (E33)",
+    "initial_stay_verbatim": "5 tahun\n10 tahun",
+    "extension_verbatim": "Orang Asing dengan Izin Tinggal pertama paling singkat 5 tahun dapat diberikan perpanjangan Izin Tinggal Terbatas untuk jangka waktu tidak melebihi jangka waktu pemberian Izin Tinggal Terbatas pertama dengan ketentuan keseluruhan Izin Tinggal Terbatas tidak lebih dari 10 tahun.",
+    "scope": "ITAS duration/extension table; not an ITAP conversion entitlement."
+  }
+}

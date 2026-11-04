@@ -1,0 +1,1010 @@
+"""Tests for ``backend.services.visa_engine.fact_registry``.
+
+Covers: the default catalog is seeded 1:1 with ``enums.FactPath`` (63
+entries, 59 applicant + 4 derived); ``spec()``/``missing_paths()`` behavior
+(the PR1 brief's "required_facts subset-of registry" primitive); commercial
+classification exactly matches ``enums.COMMERCIAL_FACT_PATHS``; PII
+classification spot-checks per this module's own documented rationale;
+duplicate-path construction rejected. PR3 additions at the bottom:
+``FactRegistry.derive()`` (wire ``ApplicantFacts`` -> runtime
+``FactSnapshot``) and ``canonical_fact_payload()``.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from typing import Any
+
+import pytest
+
+from backend.services.visa_engine.ast import KnownFact, UnknownFact
+from backend.services.visa_engine.enums import (
+    COMMERCIAL_FACT_PATHS,
+    DERIVED_FACT_PATHS,
+    FactPath,
+    FactValueKind,
+    PiiClass,
+)
+from backend.services.visa_engine.errors import FactValidationError
+from backend.services.visa_engine.fact_registry import (
+    DEFAULT_FACT_REGISTRY,
+    FactRegistry,
+    FactSpec,
+    canonical_fact_payload,
+)
+from backend.services.visa_engine.models import ApplicantFacts
+from backend.tests.services.visa_engine.conftest import GOLD_EFFECTIVE_AT
+
+
+class TestDefaultCatalogCompleteness:
+    def test_every_fact_path_has_a_spec(self) -> None:
+        for path in list(FactPath):
+            spec = DEFAULT_FACT_REGISTRY.spec(path)
+            assert spec.path is path
+
+    def test_catalog_has_exactly_60_entries(self) -> None:
+        assert len(DEFAULT_FACT_REGISTRY.all_paths()) == 63
+
+    def test_all_paths_matches_fact_path_enum(self) -> None:
+        assert DEFAULT_FACT_REGISTRY.all_paths() == frozenset(FactPath)
+
+    def test_derived_facts_flagged_derived(self) -> None:
+        for path in DERIVED_FACT_PATHS:
+            assert DEFAULT_FACT_REGISTRY.spec(path).derived is True
+
+    def test_applicant_facts_not_flagged_derived(self) -> None:
+        for path in list(FactPath):
+            if path in DERIVED_FACT_PATHS:
+                continue
+            assert DEFAULT_FACT_REGISTRY.spec(path).derived is False
+
+
+class TestUnknownPathHandling:
+    def test_spec_raises_on_unknown_path(self) -> None:
+        with pytest.raises(FactValidationError):
+            DEFAULT_FACT_REGISTRY.spec("not.a.real.path")
+
+    def test_spec_accepts_string_or_enum(self) -> None:
+        by_string = DEFAULT_FACT_REGISTRY.spec("person.birth_date")
+        by_enum = DEFAULT_FACT_REGISTRY.spec(FactPath.PERSON_BIRTH_DATE)
+        assert by_string is by_enum
+
+
+class TestMissingPaths:
+    def test_missing_paths_empty_for_valid_subset(self) -> None:
+        missing = DEFAULT_FACT_REGISTRY.missing_paths(["person.birth_date", "intent.purposes"])
+        assert missing == frozenset()
+
+    def test_missing_paths_reports_unknown_entries(self) -> None:
+        missing = DEFAULT_FACT_REGISTRY.missing_paths(
+            ["person.birth_date", "bogus.field", "another.bogus"]
+        )
+        assert missing == frozenset({"bogus.field", "another.bogus"})
+
+    def test_missing_paths_empty_iterable(self) -> None:
+        assert DEFAULT_FACT_REGISTRY.missing_paths([]) == frozenset()
+
+
+class TestCommercialClassification:
+    def test_commercial_paths_match_enums_constant(self) -> None:
+        for path in list(FactPath):
+            expected = path in COMMERCIAL_FACT_PATHS
+            assert DEFAULT_FACT_REGISTRY.is_commercial(path) is expected
+
+    def test_service_fee_budget_is_commercial(self) -> None:
+        assert DEFAULT_FACT_REGISTRY.is_commercial(FactPath.COMMERCIAL_SERVICE_FEE_BUDGET_IDR)
+
+    def test_intent_purposes_is_not_commercial(self) -> None:
+        assert not DEFAULT_FACT_REGISTRY.is_commercial(FactPath.INTENT_PURPOSES)
+
+
+class TestPiiClassification:
+    def test_violation_history_is_sensitive(self) -> None:
+        spec = DEFAULT_FACT_REGISTRY.spec(FactPath.IMMIGRATION_VIOLATION_HISTORY)
+        assert spec.pii_class is PiiClass.SENSITIVE
+
+    def test_investment_capital_is_sensitive(self) -> None:
+        spec = DEFAULT_FACT_REGISTRY.spec(FactPath.INVESTMENT_INVESTMENT_CAPITAL_IDR)
+        assert spec.pii_class is PiiClass.SENSITIVE
+
+    def test_derived_facts_are_pii_none(self) -> None:
+        for path in DERIVED_FACT_PATHS:
+            assert DEFAULT_FACT_REGISTRY.spec(path).pii_class is PiiClass.NONE
+
+    def test_process_application_channel_is_pii_none(self) -> None:
+        spec = DEFAULT_FACT_REGISTRY.spec(FactPath.PROCESS_APPLICATION_CHANNEL)
+        assert spec.pii_class is PiiClass.NONE
+
+
+class TestValueKind:
+    def test_boolean_facts_have_boolean_kind(self) -> None:
+        spec = DEFAULT_FACT_REGISTRY.spec(FactPath.WORK_EMPLOYER_IS_INDONESIAN_ENTITY)
+        assert spec.kind is FactValueKind.BOOLEAN
+
+    def test_guardian_consent_has_boolean_kind(self) -> None:
+        spec = DEFAULT_FACT_REGISTRY.spec(FactPath.PERSON_GUARDIAN_CONSENT)
+        assert spec.kind is FactValueKind.BOOLEAN
+
+    def test_set_valued_facts_have_string_set_kind(self) -> None:
+        spec = DEFAULT_FACT_REGISTRY.spec(FactPath.INTENT_PURPOSES)
+        assert spec.kind is FactValueKind.STRING_SET
+
+    def test_money_facts_have_integer_kind(self) -> None:
+        spec = DEFAULT_FACT_REGISTRY.spec(FactPath.INVESTMENT_PAID_UP_CAPITAL_IDR)
+        assert spec.kind is FactValueKind.INTEGER
+
+
+class TestRegistryImmutability:
+    def test_specs_mapping_cannot_be_cleared(self) -> None:
+        # Codex finding 9, exact counterexample: `registry._specs.clear()`
+        # must be impossible, not merely type-annotated as read-only.
+        with pytest.raises(AttributeError):
+            DEFAULT_FACT_REGISTRY._specs.clear()  # type: ignore[attr-defined]
+        assert len(DEFAULT_FACT_REGISTRY.all_paths()) == 63
+
+    def test_specs_mapping_cannot_be_item_assigned(self) -> None:
+        with pytest.raises(TypeError):
+            DEFAULT_FACT_REGISTRY._specs[FactPath.PERSON_BIRTH_DATE] = None  # type: ignore[index]
+
+
+class TestValueFormat:
+    """Hotfix (2026-07-18, Gap A/D): the ``value_format`` axis on
+    ``FactSpec`` — ``None`` by default, ``"date"``/``"country_code"`` for
+    the facts ``compiler.py`` must shape-check beyond bare ``kind``.
+    """
+
+    def test_birth_date_has_date_format(self) -> None:
+        spec = DEFAULT_FACT_REGISTRY.spec(FactPath.PERSON_BIRTH_DATE)
+        assert spec.value_format == "date"
+
+    def test_marital_status_has_no_value_format(self) -> None:
+        # Enum-ish free-form STRING facts (already covered by
+        # `allowed_values`) get no extra shape check.
+        spec = DEFAULT_FACT_REGISTRY.spec(FactPath.PERSON_MARITAL_STATUS)
+        assert spec.value_format is None
+
+    def test_employer_country_code_has_country_code_format(self) -> None:
+        spec = DEFAULT_FACT_REGISTRY.spec(FactPath.WORK_EMPLOYER_COUNTRY_CODE)
+        assert spec.value_format == "country_code"
+
+    def test_nationalities_set_has_country_code_format(self) -> None:
+        spec = DEFAULT_FACT_REGISTRY.spec(FactPath.PERSON_NATIONALITIES)
+        assert spec.value_format == "country_code"
+
+
+class TestValueFormatKindConsistency:
+    """PR1b item 5: ``value_format`` used to be a purely static hint — a
+    future ``FactSpec(kind=INTEGER, value_format="date")`` would silently
+    disable ``compiler.py``'s date-shape check instead of failing loud at
+    construction, the one place the mismatch is actually introduced.
+    """
+
+    def test_date_format_on_integer_kind_rejected(self) -> None:
+        with pytest.raises(ValueError, match="value_format='date'"):
+            FactSpec(
+                path=FactPath.INTENT_STAY_DAYS,
+                kind=FactValueKind.INTEGER,
+                value_type="date",
+                derived=False,
+                value_format="date",
+            )
+
+    def test_date_format_on_string_set_kind_rejected(self) -> None:
+        with pytest.raises(ValueError, match="value_format='date'"):
+            FactSpec(
+                path=FactPath.INTENT_PURPOSES,
+                kind=FactValueKind.STRING_SET,
+                value_type="date_set",
+                derived=False,
+                value_format="date",
+            )
+
+    def test_country_code_format_on_boolean_kind_rejected(self) -> None:
+        with pytest.raises(ValueError, match="value_format='country_code'"):
+            FactSpec(
+                path=FactPath.WORK_EMPLOYER_IS_INDONESIAN_ENTITY,
+                kind=FactValueKind.BOOLEAN,
+                value_type="boolean",
+                derived=False,
+                value_format="country_code",
+            )
+
+    def test_country_code_format_on_integer_kind_rejected(self) -> None:
+        with pytest.raises(ValueError, match="value_format='country_code'"):
+            FactSpec(
+                path=FactPath.INTENT_STAY_DAYS,
+                kind=FactValueKind.INTEGER,
+                value_type="non_negative_integer",
+                derived=False,
+                value_format="country_code",
+            )
+
+    def test_date_format_on_string_kind_is_innocent(self) -> None:
+        spec = FactSpec(
+            path=FactPath.PERSON_BIRTH_DATE,
+            kind=FactValueKind.STRING,
+            value_type="date",
+            derived=False,
+            value_format="date",
+        )
+        assert spec.value_format == "date"
+
+    def test_country_code_format_on_string_kind_is_innocent(self) -> None:
+        spec = FactSpec(
+            path=FactPath.WORK_EMPLOYER_COUNTRY_CODE,
+            kind=FactValueKind.STRING,
+            value_type="country_code",
+            derived=False,
+            value_format="country_code",
+        )
+        assert spec.value_format == "country_code"
+
+    def test_country_code_format_on_string_set_kind_is_innocent(self) -> None:
+        spec = FactSpec(
+            path=FactPath.PERSON_NATIONALITIES,
+            kind=FactValueKind.STRING_SET,
+            value_type="country_code_set",
+            derived=False,
+            value_format="country_code",
+        )
+        assert spec.value_format == "country_code"
+
+    def test_none_format_always_accepted_regardless_of_kind(self) -> None:
+        for kind in list(FactValueKind):
+            spec = FactSpec(
+                path=FactPath.PERSON_MARITAL_STATUS,
+                kind=kind,
+                value_type="whatever",
+                derived=False,
+                value_format=None,
+            )
+            assert spec.value_format is None
+
+    def test_default_registry_specs_all_construct_cleanly(self) -> None:
+        # Every entry in the real catalog satisfies its own invariant — the
+        # hotfix's __post_init__ addition must not retroactively break
+        # _DEFAULT_SPECS (module import already proves this at collection
+        # time; this is the explicit, readable assertion of it).
+        assert len(DEFAULT_FACT_REGISTRY.all_paths()) == 63
+
+
+class TestRegistryConstruction:
+    def test_duplicate_spec_path_rejected(self) -> None:
+        spec_a = FactSpec(
+            path=FactPath.PERSON_BIRTH_DATE,
+            kind=FactValueKind.STRING,
+            value_type="date",
+            derived=False,
+        )
+        spec_b = FactSpec(
+            path=FactPath.PERSON_BIRTH_DATE,
+            kind=FactValueKind.STRING,
+            value_type="date",
+            derived=False,
+        )
+        with pytest.raises(FactValidationError):
+            FactRegistry([spec_a, spec_b])
+
+    def test_custom_registry_is_independent_of_default(self) -> None:
+        custom = FactRegistry(
+            [
+                FactSpec(
+                    path=FactPath.PERSON_BIRTH_DATE,
+                    kind=FactValueKind.STRING,
+                    value_type="date",
+                    derived=False,
+                )
+            ]
+        )
+        assert custom.all_paths() == frozenset({FactPath.PERSON_BIRTH_DATE})
+        assert len(DEFAULT_FACT_REGISTRY.all_paths()) == 63
+
+
+_UNKNOWN_WIRE = {"status": "UNKNOWN", "reason": "NOT_ASKED"}
+
+
+def _applicant_facts(overrides: dict[str, Any], *, assessment_id: uuid.UUID | None = None) -> ApplicantFacts:
+    """Build an ``ApplicantFacts`` with every one of the 46 required
+    applicant paths defaulted to UNKNOWN, then override the given wire keys
+    with KNOWN wire values —
+    the minimal builder ``derive()``'s tests need (distinct from
+    ``conftest.make_applicant_facts``, which is all-UNKNOWN with no override
+    knob)."""
+
+    facts: dict[str, object] = {
+        "person.birth_date": _UNKNOWN_WIRE,
+        "person.nationalities": _UNKNOWN_WIRE,
+        "person.marital_status": _UNKNOWN_WIRE,
+        "immigration.currently_in_indonesia": _UNKNOWN_WIRE,
+        "immigration.current_status_code": _UNKNOWN_WIRE,
+        "immigration.current_status_expiry": _UNKNOWN_WIRE,
+        "immigration.last_entry_date": _UNKNOWN_WIRE,
+        "immigration.overstay_days": _UNKNOWN_WIRE,
+        "immigration.violation_history": _UNKNOWN_WIRE,
+        "intent.purposes": _UNKNOWN_WIRE,
+        "intent.stay_days": _UNKNOWN_WIRE,
+        "intent.desired_entry_date": _UNKNOWN_WIRE,
+        "intent.entry_pattern": _UNKNOWN_WIRE,
+        "intent.requested_product_code": _UNKNOWN_WIRE,
+        "work.employer_country_code": _UNKNOWN_WIRE,
+        "work.employer_is_indonesian_entity": _UNKNOWN_WIRE,
+        "work.serves_indonesian_clients": _UNKNOWN_WIRE,
+        "work.indonesia_source_compensation": _UNKNOWN_WIRE,
+        "work.indonesian_work_sponsor_confirmed": _UNKNOWN_WIRE,
+        "work.annual_foreign_income_usd": _UNKNOWN_WIRE,
+        "investment.pt_pma_committed": _UNKNOWN_WIRE,
+        "investment.investment_capital_idr": _UNKNOWN_WIRE,
+        "investment.paid_up_capital_idr": _UNKNOWN_WIRE,
+        "investment.proposed_role": _UNKNOWN_WIRE,
+        "investment.investment_amount_usd": _UNKNOWN_WIRE,
+        "family.relation_to_sponsor": _UNKNOWN_WIRE,
+        "family.sponsor_nationalities": _UNKNOWN_WIRE,
+        "family.sponsor_status_code": _UNKNOWN_WIRE,
+        "family.marriage_registered": _UNKNOWN_WIRE,
+        "family.sponsor_confirmed": _UNKNOWN_WIRE,
+        "study.level": _UNKNOWN_WIRE,
+        "study.admission_confirmed": _UNKNOWN_WIRE,
+        "study.sponsor_confirmed": _UNKNOWN_WIRE,
+        "sponsor.type": _UNKNOWN_WIRE,
+        "secondhome.bank_deposit_usd": _UNKNOWN_WIRE,
+        "secondhome.bank_deposit_at_state_bank": _UNKNOWN_WIRE,
+        "secondhome.bank_deposit_in_own_name": _UNKNOWN_WIRE,
+        "secondhome.qualifying_property_value_usd": _UNKNOWN_WIRE,
+        "secondhome.passive_monthly_income_usd": _UNKNOWN_WIRE,
+        "process.application_channel": _UNKNOWN_WIRE,
+        "process.wants_onshore_conversion": _UNKNOWN_WIRE,
+        "commercial.service_fee_budget_idr": _UNKNOWN_WIRE,
+        "commercial.wants_quote": _UNKNOWN_WIRE,
+        "family.stepchild_marriage_certificate_confirmed": _UNKNOWN_WIRE,
+        "family.stepchild_birth_certificate_confirmed": _UNKNOWN_WIRE,
+        "family.sponsor_permit_basis": _UNKNOWN_WIRE,
+        "immigration.renewal_paid": _UNKNOWN_WIRE,
+    }
+    facts.update(overrides)
+    return ApplicantFacts(
+        schema_version="1.0.0",
+        assessment_id=assessment_id or uuid.uuid4(),
+        collected_at=GOLD_EFFECTIVE_AT,
+        facts=facts,
+    )
+
+
+class TestDeriveRequiresAwareEffectiveAt:
+    """F3 (2-seat review, 2026-07-18): a naive ``effective_at`` is ambiguous
+    (which timezone?) and could silently shift the derived age by up to a
+    day — ``derive()`` now fails loud instead of guessing.
+    """
+
+    def test_naive_effective_at_raises(self) -> None:
+        # Guilt: no tzinfo at all.
+        naive = datetime(2026, 7, 17, 0, 0, 0)
+        with pytest.raises(FactValidationError, match="timezone-aware"):
+            DEFAULT_FACT_REGISTRY.derive(_applicant_facts({}), effective_at=naive)
+
+    def test_aware_utc_effective_at_still_works(self) -> None:
+        # Innocence: an ordinary aware-UTC effective_at is unaffected.
+        snapshot = DEFAULT_FACT_REGISTRY.derive(_applicant_facts({}), effective_at=GOLD_EFFECTIVE_AT)
+        assert frozenset(snapshot.values) == frozenset(FactPath)
+
+
+class TestDeriveWireToRuntime:
+    def test_every_one_of_48_paths_present_in_snapshot(self) -> None:
+        snapshot = DEFAULT_FACT_REGISTRY.derive(_applicant_facts({}), effective_at=GOLD_EFFECTIVE_AT)
+        assert frozenset(snapshot.values) == frozenset(FactPath)
+
+    def test_unknown_wire_fact_becomes_unknown_fact_with_reason(self) -> None:
+        snapshot = DEFAULT_FACT_REGISTRY.derive(_applicant_facts({}), effective_at=GOLD_EFFECTIVE_AT)
+        stay_days = snapshot.values[FactPath.INTENT_STAY_DAYS]
+        assert isinstance(stay_days, UnknownFact)
+        assert stay_days.reason.value == "NOT_ASKED"
+
+    def test_known_scalar_wire_fact_becomes_known_fact(self) -> None:
+        facts = _applicant_facts({"intent.stay_days": {"status": "KNOWN", "value": 30}})
+        snapshot = DEFAULT_FACT_REGISTRY.derive(facts, effective_at=GOLD_EFFECTIVE_AT)
+        assert snapshot.values[FactPath.INTENT_STAY_DAYS] == KnownFact(value=30)
+
+    def test_known_set_valued_wire_fact_becomes_frozenset(self) -> None:
+        facts = _applicant_facts(
+            {"intent.purposes": {"status": "KNOWN", "value": ["TOURISM", "STUDY"]}}
+        )
+        snapshot = DEFAULT_FACT_REGISTRY.derive(facts, effective_at=GOLD_EFFECTIVE_AT)
+        purposes = snapshot.values[FactPath.INTENT_PURPOSES]
+        assert isinstance(purposes, KnownFact)
+        assert purposes.value == frozenset({"TOURISM", "STUDY"})
+
+    def test_known_date_wire_fact_stays_iso_string(self) -> None:
+        facts = _applicant_facts({"person.birth_date": {"status": "KNOWN", "value": "2000-07-19"}})
+        snapshot = DEFAULT_FACT_REGISTRY.derive(facts, effective_at=GOLD_EFFECTIVE_AT)
+        assert snapshot.values[FactPath.PERSON_BIRTH_DATE] == KnownFact(value="2000-07-19")
+
+
+class TestDeriveAgeYears:
+    def test_age_computed_from_birth_date(self) -> None:
+        facts = _applicant_facts({"person.birth_date": {"status": "KNOWN", "value": "2000-07-19"}})
+        snapshot = DEFAULT_FACT_REGISTRY.derive(
+            facts, effective_at=datetime(2026, 7, 18, tzinfo=timezone.utc)
+        )
+        # Birthday is 2000-07-19; effective_at is one day BEFORE the 2026
+        # birthday, so the applicant has not yet turned 26 -> 25.
+        assert snapshot.values[FactPath.DERIVED_AGE_YEARS] == KnownFact(value=25)
+
+    def test_age_rolls_over_on_birthday(self) -> None:
+        facts = _applicant_facts({"person.birth_date": {"status": "KNOWN", "value": "2000-07-19"}})
+        snapshot = DEFAULT_FACT_REGISTRY.derive(
+            facts, effective_at=datetime(2026, 7, 19, tzinfo=timezone.utc)
+        )
+        assert snapshot.values[FactPath.DERIVED_AGE_YEARS] == KnownFact(value=26)
+
+    @pytest.mark.parametrize(
+        ("birth", "effective", "years"),
+        [
+            # The day before the 55th birthday is still 54; the birthday itself is 55
+            # (`hf.e33e.age-below-55` is `derived.age_years < 55`, so the floor flips on
+            # exactly this day).
+            ("1971-09-06", datetime(2026, 9, 5, tzinfo=timezone.utc), 54),
+            ("1971-09-06", datetime(2026, 9, 6, tzinfo=timezone.utc), 55),
+            # Leap-day birth, non-leap reference year: the birthday falls on 1 March.
+            ("1972-02-29", datetime(2027, 2, 28, tzinfo=timezone.utc), 54),
+            ("1972-02-29", datetime(2027, 3, 1, tzinfo=timezone.utc), 55),
+            # Leap-day birth, leap reference year: 29 February itself is the birthday.
+            ("1972-02-29", datetime(2028, 2, 28, tzinfo=timezone.utc), 55),
+            ("1972-02-29", datetime(2028, 2, 29, tzinfo=timezone.utc), 56),
+        ],
+    )
+    def test_age_55_boundary_is_birthday_inclusive(
+        self, birth: str, effective: datetime, years: int
+    ) -> None:
+        facts = _applicant_facts({"person.birth_date": {"status": "KNOWN", "value": birth}})
+        snapshot = DEFAULT_FACT_REGISTRY.derive(facts, effective_at=effective)
+        assert snapshot.values[FactPath.DERIVED_AGE_YEARS] == KnownFact(value=years)
+
+    def test_age_unknown_when_birth_date_unknown(self) -> None:
+        snapshot = DEFAULT_FACT_REGISTRY.derive(_applicant_facts({}), effective_at=GOLD_EFFECTIVE_AT)
+        assert isinstance(snapshot.values[FactPath.DERIVED_AGE_YEARS], UnknownFact)
+
+    def test_future_birth_date_yields_unknown_not_definite_age(self) -> None:
+        # Guilt (F2, 2-seat review 2026-07-18): a birth_date AFTER
+        # effective_at is contradictory evidence — it must never be silently
+        # turned into a definite age/minor boolean (e.g. a negative age
+        # rolling into "not yet 18" -> is_minor=True would be a wrong
+        # DEFINITE answer on a client-facing "zero wrong answers" engine).
+        facts = _applicant_facts(
+            {"person.birth_date": {"status": "KNOWN", "value": "2027-01-01"}}
+        )
+        snapshot = DEFAULT_FACT_REGISTRY.derive(facts, effective_at=GOLD_EFFECTIVE_AT)
+        age = snapshot.values[FactPath.DERIVED_AGE_YEARS]
+        is_minor = snapshot.values[FactPath.DERIVED_IS_MINOR]
+        assert isinstance(age, UnknownFact)
+        assert age.reason.value == "CONFLICTING"
+        assert isinstance(is_minor, UnknownFact)
+
+    def test_birth_date_equal_to_reference_date_is_age_zero(self) -> None:
+        # Innocence: born exactly ON effective_at's date is NOT "future" —
+        # must still resolve to a definite age (0), not UNKNOWN.
+        facts = _applicant_facts(
+            {"person.birth_date": {"status": "KNOWN", "value": "2026-07-17"}}
+        )
+        snapshot = DEFAULT_FACT_REGISTRY.derive(facts, effective_at=GOLD_EFFECTIVE_AT)
+        assert snapshot.values[FactPath.DERIVED_AGE_YEARS] == KnownFact(value=0)
+
+    def test_ordinary_past_birth_date_still_derives_correct_age(self) -> None:
+        # Innocence: an unremarkable past birth date is unaffected by the
+        # new future-date guard.
+        facts = _applicant_facts(
+            {"person.birth_date": {"status": "KNOWN", "value": "2000-07-19"}}
+        )
+        snapshot = DEFAULT_FACT_REGISTRY.derive(
+            facts, effective_at=datetime(2026, 7, 18, tzinfo=timezone.utc)
+        )
+        assert snapshot.values[FactPath.DERIVED_AGE_YEARS] == KnownFact(value=25)
+
+
+class TestDeriveIsMinor:
+    def test_minor_true_under_18(self) -> None:
+        facts = _applicant_facts({"person.birth_date": {"status": "KNOWN", "value": "2015-01-01"}})
+        snapshot = DEFAULT_FACT_REGISTRY.derive(
+            facts, effective_at=datetime(2026, 7, 18, tzinfo=timezone.utc)
+        )
+        assert snapshot.values[FactPath.DERIVED_IS_MINOR] == KnownFact(value=True)
+
+    def test_minor_false_at_18_or_over(self) -> None:
+        facts = _applicant_facts({"person.birth_date": {"status": "KNOWN", "value": "2000-07-19"}})
+        snapshot = DEFAULT_FACT_REGISTRY.derive(
+            facts, effective_at=datetime(2026, 7, 18, tzinfo=timezone.utc)
+        )
+        assert snapshot.values[FactPath.DERIVED_IS_MINOR] == KnownFact(value=False)
+
+    def test_minor_unknown_when_birth_date_unknown(self) -> None:
+        snapshot = DEFAULT_FACT_REGISTRY.derive(_applicant_facts({}), effective_at=GOLD_EFFECTIVE_AT)
+        assert isinstance(snapshot.values[FactPath.DERIVED_IS_MINOR], UnknownFact)
+
+
+class TestDeriveHasIndonesianCitizenship:
+    def test_true_when_id_in_nationalities(self) -> None:
+        facts = _applicant_facts(
+            {"person.nationalities": {"status": "KNOWN", "value": ["IT", "ID"]}}
+        )
+        snapshot = DEFAULT_FACT_REGISTRY.derive(facts, effective_at=GOLD_EFFECTIVE_AT)
+        assert snapshot.values[FactPath.DERIVED_HAS_INDONESIAN_CITIZENSHIP] == KnownFact(value=True)
+
+    def test_false_when_id_absent_from_nationalities(self) -> None:
+        facts = _applicant_facts({"person.nationalities": {"status": "KNOWN", "value": ["IT"]}})
+        snapshot = DEFAULT_FACT_REGISTRY.derive(facts, effective_at=GOLD_EFFECTIVE_AT)
+        assert snapshot.values[FactPath.DERIVED_HAS_INDONESIAN_CITIZENSHIP] == KnownFact(
+            value=False
+        )
+
+    def test_unknown_when_nationalities_unknown(self) -> None:
+        snapshot = DEFAULT_FACT_REGISTRY.derive(_applicant_facts({}), effective_at=GOLD_EFFECTIVE_AT)
+        assert isinstance(
+            snapshot.values[FactPath.DERIVED_HAS_INDONESIAN_CITIZENSHIP], UnknownFact
+        )
+
+
+class TestCanonicalFactPayload:
+    def test_keys_are_sorted(self) -> None:
+        payload = canonical_fact_payload(_applicant_facts({}))
+        assert list(payload.keys()) == sorted(payload.keys())
+
+    def test_covers_all_59_applicant_paths(self) -> None:
+        payload = canonical_fact_payload(_applicant_facts({}))
+        assert len(payload) == 59
+
+    def test_is_json_serializable(self) -> None:
+        import json
+
+        payload = canonical_fact_payload(_applicant_facts({}))
+        serialized = json.dumps(payload)
+        assert json.loads(serialized) == payload
+
+    def test_deterministic_for_same_input(self) -> None:
+        assessment_id = uuid.uuid4()
+        facts = _applicant_facts(
+            {"intent.stay_days": {"status": "KNOWN", "value": 30}}, assessment_id=assessment_id
+        )
+        payload_a = canonical_fact_payload(facts)
+        payload_b = canonical_fact_payload(facts)
+        assert payload_a == payload_b
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-23 fact vocabulary extension — three owner rulings (stepchild
+# evidence, sponsor permit basis, active stay permit).
+# ---------------------------------------------------------------------------
+
+
+class TestStepchildEvidenceFactSpecs:
+    """``family.stepchild_marriage_certificate_confirmed`` / ``family.
+    stepchild_birth_certificate_confirmed`` — modeled exactly like
+    ``family.marriage_registered`` / ``family.sponsor_confirmed``: plain
+    booleans, PERSONAL pii_class, no allowed_values.
+    """
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            FactPath.FAMILY_STEPCHILD_MARRIAGE_CERTIFICATE_CONFIRMED,
+            FactPath.FAMILY_STEPCHILD_BIRTH_CERTIFICATE_CONFIRMED,
+        ],
+    )
+    def test_is_boolean_personal_not_derived(self, path: FactPath) -> None:
+        spec = DEFAULT_FACT_REGISTRY.spec(path)
+        assert spec.kind is FactValueKind.BOOLEAN
+        assert spec.pii_class is PiiClass.PERSONAL
+        assert spec.derived is False
+        assert spec.allowed_values is None
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "family.stepchild_marriage_certificate_confirmed",
+            "family.stepchild_birth_certificate_confirmed",
+        ],
+    )
+    def test_round_trips_known_true_through_derive(self, path: str) -> None:
+        facts = _applicant_facts({path: {"status": "KNOWN", "value": True}})
+        snapshot = DEFAULT_FACT_REGISTRY.derive(facts, effective_at=GOLD_EFFECTIVE_AT)
+        assert snapshot.values[FactPath(path)] == KnownFact(value=True)
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "family.stepchild_marriage_certificate_confirmed",
+            "family.stepchild_birth_certificate_confirmed",
+        ],
+    )
+    def test_unknown_when_not_asked(self, path: str) -> None:
+        snapshot = DEFAULT_FACT_REGISTRY.derive(_applicant_facts({}), effective_at=GOLD_EFFECTIVE_AT)
+        fact = snapshot.values[FactPath(path)]
+        assert isinstance(fact, UnknownFact)
+        assert fact.reason.value == "NOT_ASKED"
+
+
+class TestRelationTypeStepchild:
+    """``RelationType.STEPCHILD`` widens ``family.relation_to_sponsor``'s
+    closed enum (2026-08-23 owner ruling — see ``enums.RelationType``'s
+    docstring for the E31D grounding).
+    """
+
+    def test_stepchild_is_an_allowed_relation_value(self) -> None:
+        spec = DEFAULT_FACT_REGISTRY.spec(FactPath.FAMILY_RELATION_TO_SPONSOR)
+        assert spec.allowed_values is not None
+        assert "STEPCHILD" in spec.allowed_values
+
+    def test_existing_relation_values_still_allowed(self) -> None:
+        # Innocence: widening the set must not drop any existing member.
+        spec = DEFAULT_FACT_REGISTRY.spec(FactPath.FAMILY_RELATION_TO_SPONSOR)
+        for value in ("SPOUSE", "CHILD", "PARENT", "SIBLING", "DEPENDENT", "OTHER"):
+            assert value in spec.allowed_values
+
+    def test_known_relation_model_accepts_stepchild(self) -> None:
+        from backend.services.visa_engine.models import KnownRelation
+
+        fact = KnownRelation(status="KNOWN", value="STEPCHILD")
+        assert fact.value.value == "STEPCHILD"
+
+
+class TestSponsorPermitBasisFact:
+    """``family.sponsor_permit_basis`` — closed enum transcribed from
+    Permenkumham 11/2024 Pasal 33 ayat (2) huruf a-l (see ``enums.
+    SponsorPermitBasis``'s docstring for the verbatim ayat (7) exclusion
+    this fact exists to make expressible).
+    """
+
+    _GROUNDED_VALUES = (
+        "EXPERT",
+        "WORKER",
+        "MARITIME_CREW",
+        "CLERGY",
+        "FOREIGN_INVESTMENT",
+        "SCIENTIFIC_RESEARCH",
+        "EDUCATION",
+        "FAMILY_REUNIFICATION",
+        "REPATRIATION",
+        "SECOND_HOME",
+        "MEDICAL_TREATMENT",
+        "WORKING_HOLIDAY",
+        "OTHER",
+    )
+
+    def test_is_string_with_the_thirteen_grounded_values(self) -> None:
+        spec = DEFAULT_FACT_REGISTRY.spec(FactPath.FAMILY_SPONSOR_PERMIT_BASIS)
+        assert spec.kind is FactValueKind.STRING
+        assert spec.allowed_values == frozenset(self._GROUNDED_VALUES)
+
+    def test_not_flagged_derived_and_not_pii_sensitive(self) -> None:
+        spec = DEFAULT_FACT_REGISTRY.spec(FactPath.FAMILY_SPONSOR_PERMIT_BASIS)
+        assert spec.derived is False
+        assert spec.pii_class is PiiClass.PERSONAL
+
+    def test_family_reunification_round_trips_through_derive(self) -> None:
+        facts = _applicant_facts(
+            {"family.sponsor_permit_basis": {"status": "KNOWN", "value": "FAMILY_REUNIFICATION"}}
+        )
+        snapshot = DEFAULT_FACT_REGISTRY.derive(facts, effective_at=GOLD_EFFECTIVE_AT)
+        assert snapshot.values[FactPath.FAMILY_SPONSOR_PERMIT_BASIS] == KnownFact(
+            value="FAMILY_REUNIFICATION"
+        )
+
+    def test_a_value_outside_the_enum_is_rejected_at_the_model_layer(self) -> None:
+        from pydantic import ValidationError
+
+        from backend.services.visa_engine.models import KnownSponsorPermitBasis
+
+        with pytest.raises(ValidationError):
+            KnownSponsorPermitBasis(status="KNOWN", value="BENEFACTOR")  # type: ignore[arg-type]
+
+    def test_unknown_when_not_asked(self) -> None:
+        snapshot = DEFAULT_FACT_REGISTRY.derive(_applicant_facts({}), effective_at=GOLD_EFFECTIVE_AT)
+        fact = snapshot.values[FactPath.FAMILY_SPONSOR_PERMIT_BASIS]
+        assert isinstance(fact, UnknownFact)
+        assert fact.reason.value == "NOT_ASKED"
+
+
+class TestDeriveHasActiveStayPermit:
+    """``derived.has_active_stay_permit`` — owner ruling: an applicant WITH
+    an active KITAS is excluded from D12. Exhaustive tri-state truth table
+    per the mandate: known-active / known-expired / unknown-code /
+    unknown-expiry / both-unknown, plus the visit-class and unclassifiable
+    code paths the classification is grounded on.
+    """
+
+    def _snapshot(
+        self,
+        code,
+        expiry,
+        *,
+        renewal_paid: dict[str, object] | None = None,
+        effective_at: datetime = GOLD_EFFECTIVE_AT,
+    ):
+        overrides = {
+            "immigration.current_status_code": code,
+            "immigration.current_status_expiry": expiry,
+        }
+        if renewal_paid is not None:
+            overrides["immigration.renewal_paid"] = renewal_paid
+        facts = _applicant_facts(overrides)
+        return DEFAULT_FACT_REGISTRY.derive(facts, effective_at=effective_at)
+
+    @staticmethod
+    def _known(value: object) -> dict[str, object]:
+        return {"status": "KNOWN", "value": value}
+
+    @staticmethod
+    def _unknown(reason: str = "NOT_ASKED") -> dict[str, object]:
+        return {"status": "UNKNOWN", "reason": reason}
+
+    # -- known-active ------------------------------------------------------
+
+    def test_known_active_permit_code_with_future_expiry_is_true(self) -> None:
+        snapshot = self._snapshot(
+            self._known("E23"),
+            self._known("2030-01-01"),
+            effective_at=datetime(2026, 8, 23, tzinfo=timezone.utc),
+        )
+        assert snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT] == KnownFact(value=True)
+
+    def test_expiry_on_the_reference_date_itself_is_still_active(self) -> None:
+        # Inclusive boundary, same convention as _derive_age_years.
+        snapshot = self._snapshot(
+            self._known("E33"),
+            self._known("2026-08-23"),
+            effective_at=datetime(2026, 8, 23, tzinfo=timezone.utc),
+        )
+        assert snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT] == KnownFact(value=True)
+
+    # -- known-expired -------------------------------------------------------
+
+    def test_known_expired_permit_is_false_not_unknown(self) -> None:
+        # Owner ruling: an EXPIRED permit is "no active permit" — that
+        # person CAN apply for D12. A real, tested, POSITIVE False.
+        snapshot = self._snapshot(
+            self._known("E28A"),
+            self._known("2020-01-01"),
+            effective_at=datetime(2026, 8, 23, tzinfo=timezone.utc),
+        )
+        assert snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT] == KnownFact(value=False)
+
+    def test_expiry_one_day_before_reference_date_is_expired(self) -> None:
+        snapshot = self._snapshot(
+            self._known("E31B"),
+            self._known("2026-08-22"),
+            effective_at=datetime(2026, 8, 23, tzinfo=timezone.utc),
+        )
+        assert snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT] == KnownFact(value=False)
+
+    # -- unknown-code ---------------------------------------------------------
+
+    def test_unknown_current_status_code_yields_unknown_never_false(self) -> None:
+        snapshot = self._snapshot(self._unknown(), self._known("2030-01-01"))
+        fact = snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT]
+        assert isinstance(fact, UnknownFact)
+
+    # -- unknown-expiry ---------------------------------------------------------
+
+    def test_unknown_expiry_with_permit_shaped_code_yields_unknown_never_false(self) -> None:
+        # The whole point of the tri-state rule: a permit-shaped code with
+        # UNKNOWN expiry must NEVER resolve to False (False would wrongly
+        # ADMIT this applicant to D12).
+        snapshot = self._snapshot(self._known("E31B"), self._unknown())
+        fact = snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT]
+        assert isinstance(fact, UnknownFact)
+
+    # -- both-unknown ---------------------------------------------------------
+
+    def test_both_unknown_yields_unknown(self) -> None:
+        snapshot = self._snapshot(self._unknown(), self._unknown())
+        fact = snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT]
+        assert isinstance(fact, UnknownFact)
+
+    # -- grounding: visit-class codes are a real, positive False -----------
+
+    @pytest.mark.parametrize(
+        "code",
+        ["A1", "C1", "C2", "C6", "ITK_FROM_BVK", "ITK_FROM_VISIT_C", "ITK_FROM_VISIT_D", "ITK_PERALIHAN"],
+    )
+    def test_every_frontend_offered_visit_class_code_is_false_regardless_of_expiry(
+        self, code: str
+    ) -> None:
+        # Innocence sweep over every value the current interview can ever
+        # send as KNOWN (tree.ts's current_status_code options). None of
+        # them is an ITAS/ITAP-class permit; expiry is irrelevant to a code
+        # that was never a residence permit in the first place, so this
+        # stays False even with a far-future expiry.
+        snapshot = self._snapshot(self._known(code), self._known("2099-01-01"))
+        assert snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT] == KnownFact(value=False)
+
+    def test_visit_class_code_is_false_even_when_expiry_is_unknown(self) -> None:
+        # A visit-class code short-circuits before ever consulting expiry.
+        snapshot = self._snapshot(self._known("C1"), self._unknown())
+        assert snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT] == KnownFact(value=False)
+
+    # -- grounding: NO_STAY_PERMIT, the offshore convergence sentinel ------
+
+    def test_no_stay_permit_sentinel_is_a_definite_false_the_reachability_proof_for_pr_4727(
+        self,
+    ) -> None:
+        # This is the backend half of the P0 offshore-reachability fix's
+        # own reachability proof (team-lead review, PR #4727): NOT one of
+        # tree.ts's 8 real current_status_code options — it is a value
+        # apps/mouth's fact-mapper.ts synthesizes directly, without asking
+        # a question, when an OFFSHORE applicant answers the existing
+        # `holds_stay_permit` gate "no" (flow.test.ts and
+        # fact-mapper.test.ts on that PR prove the frontend reaches this
+        # value with zero further questions). This test proves the OTHER
+        # half: the wire value the frontend actually sends resolves the
+        # fact DEFINITELY on the real derivation, not to UNKNOWN — the
+        # exact failure mode the original P0 exposed at the flow-graph
+        # level with no backend fact ever reachable at all. Expiry is
+        # irrelevant here for the same reason as every other visit-class
+        # code: a NO_STAY_PERMIT applicant was never a residence-permit
+        # holder in the first place.
+        snapshot = self._snapshot(self._known("NO_STAY_PERMIT"), self._unknown())
+        assert snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT] == KnownFact(value=False)
+
+    def test_no_stay_permit_sentinel_is_false_even_with_renewal_paid_true(self) -> None:
+        # The joint case team-lead's #4719 re-grade flagged (2026-08-24):
+        # merging PR #4727's sentinel with this PR's F4 rework produced two
+        # correct changes composed in the right order, but no single test
+        # named BOTH `NO_STAY_PERMIT` and `renewal_paid` — so
+        # `NO_STAY_PERMIT + renewal_paid=True -> False` held only by
+        # ordering (the sentinel check runs before `renewal_paid` is ever
+        # read), pinned by nothing. Unreachable through today's funnel
+        # (the sentinel only arises from `holds_stay_permit === "no"`, and
+        # the planned interview question only asks `renewal_paid` after
+        # `stay_permit_code`, which the sentinel branch never reaches) —
+        # but the engine accepts direct payloads, and a future edit that
+        # moved `renewal_paid` above the sentinel check would invert this
+        # silently: the existing renewal_paid tests would still show their
+        # three reds (they never touch NO_STAY_PERMIT), and this is the
+        # only test that would catch it. A person who told the interview
+        # directly "I hold no permit at all" must never be turned into an
+        # active-permit holder by an unrelated payment flag — that would
+        # admit a fabricated case (there is nothing here to renew) to
+        # exactly the outcome a NO_STAY_PERMIT applicant should never
+        # reach, real KITAS or not.
+        snapshot = self._snapshot(
+            self._known("NO_STAY_PERMIT"),
+            self._unknown(),
+            renewal_paid=self._known(True),
+        )
+        assert snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT] == KnownFact(value=False)
+
+    # -- grounding: an unclassifiable code is honestly UNKNOWN, never a guess --
+
+    @pytest.mark.parametrize("code", ["XYZ", "other", "B211", "NONE_ISSUED"])
+    def test_unclassifiable_code_is_unknown_not_a_guess(self, code: str) -> None:
+        # "NONE_ISSUED" included deliberately: it is a gold-fixture-local
+        # sentinel (`_gold_fixtures.py`'s baseline persona), not a value
+        # this fact's grounding recognizes — proving the classification
+        # never special-cases a sibling fixture's private convention.
+        snapshot = self._snapshot(self._known(code), self._known("2030-01-01"))
+        fact = snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT]
+        assert isinstance(fact, UnknownFact)
+        assert fact.reason.value == "UNVERIFIED"
+
+    # -- F4 (2026-08-24): renewal_paid can turn a stay-permit-shaped code's --
+    # -- expired verdict into True — nothing else -----------------------
+    #
+    # Owner ruling, verbatim: "chi ha un kitas scaduto e il pagamento del
+    # rinnovo e' avvenuto prima della scadenza, se verra accettato non ci
+    # sono penali. se lo ha pagato dopo la scadenza, si conteranno i giorni
+    # tra scadenza e pagamento. In ogni caso resta sul visa che ha esteso,
+    # non va su un altro" — clarified further, verbatim: "esatto il rinno si
+    # considera depositato se ce stato pagamento".
+    #
+    # REWORKED 2026-08-24 (team-lead review, second pass): the first version
+    # checked renewal_paid before code was even read, so it overrode EVERY
+    # code unconditionally — including a real, correctly-recorded
+    # visit-class code (a C1 tourist with renewal_paid=True would have
+    # wrongly resolved True). Corrected: renewal_paid is now consulted only
+    # once the code is confirmed KNOWN and stay-permit-SHAPED — see the
+    # derivation's own 2026-08-24 REWORKED docstring note for the full
+    # reasoning, including why code-UNKNOWN + renewal_paid=True resolves
+    # UNKNOWN, not True.
+
+    def test_renewal_paid_true_turns_an_expired_stay_permit_shaped_code_active(
+        self,
+    ) -> None:
+        # "the applicant the ruling names": an expired KITAS with a paid,
+        # in-flight renewal — today's pre-F4 behaviour was a wrongly-admitting
+        # False. This is the case F4 exists to reverse.
+        snapshot = self._snapshot(
+            self._known("E23"),
+            self._known("2020-01-01"),  # expired years ago on the printed card
+            renewal_paid=self._known(True),
+            effective_at=datetime(2026, 8, 24, tzinfo=timezone.utc),
+        )
+        assert snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT] == KnownFact(value=True)
+
+    def test_renewal_paid_true_does_not_rescue_a_real_visit_class_code(self) -> None:
+        # The corrected claim (was the opposite pre-rework): a REAL,
+        # grounded member of _VISIT_CLASS_STATUS_CODES (ITK_PERALIHAN) is
+        # NOT a KITAS being renewed — it is a different permit class
+        # entirely, and the ruling presupposes "chi ha un kitas", not
+        # "anyone who has paid something". Payment must never rescue a code
+        # this registry has positively classified as non-residence.
+        snapshot = self._snapshot(
+            self._known("ITK_PERALIHAN"),
+            self._known("2020-01-01"),
+            renewal_paid=self._known(True),
+            effective_at=datetime(2026, 8, 24, tzinfo=timezone.utc),
+        )
+        assert snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT] == KnownFact(value=False)
+
+    def test_renewal_paid_true_with_stay_permit_shaped_code_and_unknown_expiry_is_still_true(
+        self,
+    ) -> None:
+        # The placement claim: renewal_paid is checked BEFORE the expiry
+        # comparison, not after, because "in ogni caso" makes the expiry
+        # date irrelevant once the code is confirmed stay-permit-shaped —
+        # the applicant stays on the extended visa whether or not this
+        # snapshot happens to also know its old printed expiry date.
+        snapshot = self._snapshot(
+            self._known("E23"),
+            self._unknown(),
+            renewal_paid=self._known(True),
+            effective_at=datetime(2026, 8, 24, tzinfo=timezone.utc),
+        )
+        assert snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT] == KnownFact(value=True)
+
+    def test_renewal_paid_true_with_unknown_code_is_unknown_not_true(self) -> None:
+        # The case the reviewer explicitly could not settle in advance,
+        # resolved by the rework's placement: with no code at all, the
+        # ruling's own premise ("chi ha un kitas") cannot be confirmed — we
+        # would not know WHAT permit class was extended. Guessing True here
+        # would repeat, one layer up, the exact defect this rework fixes.
+        snapshot = self._snapshot(
+            self._unknown(),
+            self._unknown(),
+            renewal_paid=self._known(True),
+        )
+        fact = snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT]
+        assert isinstance(fact, UnknownFact)
+
+    def test_renewal_paid_true_with_unclassifiable_code_is_unknown_not_true(self) -> None:
+        # Same reasoning, the unclassifiable-shape case: we have a code, but
+        # cannot confirm it is a real stay-permit code, so renewal_paid is
+        # never consulted for it either.
+        snapshot = self._snapshot(
+            self._known("XYZ"),
+            self._known("2020-01-01"),
+            renewal_paid=self._known(True),
+            effective_at=datetime(2026, 8, 24, tzinfo=timezone.utc),
+        )
+        fact = snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT]
+        assert isinstance(fact, UnknownFact)
+        assert fact.reason.value == "UNVERIFIED"
+
+    def test_renewal_paid_false_does_not_change_pre_f4_behaviour(self) -> None:
+        # A KNOWN False (unpaid, or no renewal at all) is a real answer, but
+        # it must fall through to the exact pre-F4 logic unchanged — an
+        # expired code still resolves False.
+        snapshot = self._snapshot(
+            self._known("E23"),
+            self._known("2020-01-01"),
+            renewal_paid=self._known(False),
+            effective_at=datetime(2026, 8, 24, tzinfo=timezone.utc),
+        )
+        assert snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT] == KnownFact(value=False)
+
+    def test_renewal_paid_unknown_default_does_not_change_pre_f4_behaviour(self) -> None:
+        # The rollout-default case: no interview has asked this yet, so
+        # every pre-existing caller omits the key and gets UNKNOWN here —
+        # proving F4 shipped with ZERO behaviour change for any client that
+        # has not adopted the new question yet (fail-safe by construction,
+        # same guarantee the rollout-default mechanism exists to provide).
+        snapshot = self._snapshot(
+            self._known("E23"),
+            self._known("2020-01-01"),
+            effective_at=datetime(2026, 8, 24, tzinfo=timezone.utc),
+        )
+        assert snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT] == KnownFact(value=False)
+
+    def test_renewal_paid_unknown_does_not_mask_an_otherwise_unknown_code(self) -> None:
+        # UNKNOWN renewal_paid must not manufacture certainty the code/expiry
+        # logic itself would not have reached.
+        snapshot = self._snapshot(self._unknown(), self._known("2030-01-01"))
+        fact = snapshot.values[FactPath.DERIVED_HAS_ACTIVE_STAY_PERMIT]
+        assert isinstance(fact, UnknownFact)

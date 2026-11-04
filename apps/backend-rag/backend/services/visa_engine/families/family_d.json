@@ -1,0 +1,212 @@
+{
+  "family": "D",
+  "name": "Multiple-entry visit visas",
+  "category": "Visit Visa",
+  "permit_class": "VISIT_MULTIPLE",
+  "entry_type": "MULTIPLE",
+  "law_dir": "law/D",
+  "questions": {
+    "activity": {
+      "text_en": "What is the main purpose of your repeated visits?",
+      "options": {
+        "holiday_family_events_transit": "D1",
+        "business_meetings_negotiations_purchases": "D2",
+        "medical_treatment": "D3",
+        "arts_cultural_performance": "D7",
+        "pre_investment_surveys": "D12",
+        "film_production": "D14",
+        "company_branch_audit_inspection": "D17"
+      },
+      "labels_en": {
+        "holiday_family_events_transit": "Tourism, family visits, participation in meetings, incentives, conventions, exhibitions or transit.",
+        "business_meetings_negotiations_purchases": "Business meetings, negotiations, agreements, purchasing goods or checking goods; no continuous supervision of production or sales.",
+        "medical_treatment": "Undergo medical treatment in Indonesia.",
+        "arts_cultural_performance": "Perform arts or cultural works, including theatre or circus; no employment relationship with an Indonesian individual or corporation.",
+        "pre_investment_surveys": "Pre-investment or starting-business visits for field surveys or feasibility studies.",
+        "film_production": "Produce films, music videos, reality shows, documentaries, television, radio or similar programmes using Indonesian locations.",
+        "company_branch_audit_inspection": "Audit, production quality control or inspection of a company branch in Indonesia."
+      }
+    },
+    "stay_days": {
+      "text_en": "How many days do you need to stay on each entry?",
+      "kind": "integer"
+    }
+  },
+  "visas": {
+    "D1": {
+      "sponsor_required": false,
+      "sponsor": "CONDITIONAL",
+      "is_sold": true,
+      "stay_days": 60,
+      "stay_options": [
+        {
+          "value": 60,
+          "unit": "DAY"
+        }
+      ],
+      "extendable": true,
+      "max_total_days": 180,
+      "price_keys": [
+        {
+          "category": "multiple_entry_visas",
+          "item_key": "D1 Tourism (1 Year)"
+        },
+        {
+          "category": "multiple_entry_visas",
+          "item_key": "D1 Tourism (2 Years)"
+        },
+        {
+          "category": "multiple_entry_visas",
+          "item_key": "D1 Tourism (5 Years)"
+        }
+      ]
+    },
+    "D2": {
+      "sponsor_required": false,
+      "sponsor": "CONDITIONAL",
+      "is_sold": true,
+      "stay_days": 60,
+      "stay_options": [
+        {
+          "value": 60,
+          "unit": "DAY"
+        }
+      ],
+      "extendable": true,
+      "max_total_days": 180,
+      "price_keys": [
+        {
+          "category": "multiple_entry_visas",
+          "item_key": "D2 Business (1 Year)"
+        },
+        {
+          "category": "multiple_entry_visas",
+          "item_key": "D2 Business (2 Years)"
+        },
+        {
+          "category": "multiple_entry_visas",
+          "item_key": "D2 Business (5 Years)"
+        }
+      ]
+    },
+    "D3": {
+      "sponsor_required": true,
+      "sponsor": "REQUIRED",
+      "is_sold": null,
+      "stay_days": 60,
+      "stay_options": [
+        {
+          "value": 60,
+          "unit": "DAY"
+        }
+      ],
+      "extendable": true,
+      "max_total_days": 180,
+      "price_keys": []
+    },
+    "D7": {
+      "sponsor_required": true,
+      "sponsor": "REQUIRED",
+      "is_sold": null,
+      "stay_days": 30,
+      "stay_options": [
+        {
+          "value": 30,
+          "unit": "DAY"
+        }
+      ],
+      "extendable": false,
+      "max_total_days": 30,
+      "price_keys": []
+    },
+    "D12": {
+      "sponsor_required": false,
+      "sponsor": "NOT_REQUIRED",
+      "is_sold": true,
+      "stay_days": 180,
+      "stay_options": [
+        {
+          "value": 180,
+          "unit": "DAY"
+        }
+      ],
+      "extendable": true,
+      "max_total_days": 180,
+      "price_keys": [
+        {
+          "category": "multiple_entry_visas",
+          "item_key": "D12 Business Investigation (1 Year)"
+        },
+        {
+          "category": "multiple_entry_visas",
+          "item_key": "D12 Business Investigation (2 Years)"
+        }
+      ]
+    },
+    "D14": {
+      "sponsor_required": true,
+      "sponsor": "REQUIRED",
+      "is_sold": null,
+      "stay_days": 60,
+      "stay_options": [
+        {
+          "value": 60,
+          "unit": "DAY"
+        }
+      ],
+      "extendable": true,
+      "max_total_days": 180,
+      "price_keys": []
+    },
+    "D17": {
+      "sponsor_required": true,
+      "sponsor": "REQUIRED",
+      "is_sold": null,
+      "stay_days": 60,
+      "stay_options": [
+        {
+          "value": 60,
+          "unit": "DAY"
+        }
+      ],
+      "extendable": true,
+      "max_total_days": 180,
+      "price_keys": []
+    },
+    "D4": {
+      "sponsor_required": null,
+      "sponsor": null,
+      "entry_type": null,
+      "is_sold": null,
+      "stay_days": null,
+      "stay_options": null,
+      "extendable": null,
+      "max_total_days": null,
+      "price_keys": []
+    },
+    "D8": {
+      "sponsor_required": null,
+      "sponsor": null,
+      "entry_type": null,
+      "is_sold": null,
+      "stay_days": null,
+      "stay_options": null,
+      "extendable": null,
+      "max_total_days": null,
+      "price_keys": []
+    }
+  },
+  "notes": [
+    "Duration means days per entry; a visa valid for 1, 2 or 5 years does not permit an uninterrupted stay of that length. Initial options remain DAY, never YEAR.",
+    "D1/D2/D3/D14/D17: 60 DAY initial stay, extendable up to 180 days. Owner ruling 2026-10-19, specifically for D1/D2 one-year visas: two extensions of 60 days per entry. The Law says several extensions; it is kept verbatim.",
+    "D7: 30 DAY per entry, no extension or conversion. The page permits remuneration/facilities for the activity but forbids employment with Indonesian individuals or corporations; no blanket unpaid-only rule is invented.",
+    "D12: 180 DAY initial stay. The page says another 180 days in Jenis visa but 12 months or 2 years in Masa tinggal depending on visa duration; both passages stay quoted in the card. OWNER RULING 2026-10-19 (not verbatim Law): the maximum stay is 180 days per entry, with visa validity of 1 or 2 years; max_total_days is 180 (per entry) and max_total_months stays null. A request above 180 days per entry returns STAY_TOO_LONG.",
+    "D1/D2 have a nationality-dependent sponsor exception in the Law (sponsor_required.verbatim; the linked country list is a separate source). No country list or non-national-document sponsorship requirement is inferred. Other-document return-entry permission and tickets remain the checklist.",
+    "D12 says no sponsor for application; D1/D2 say no sponsor except listed nationalities. All three extension instructions name a sponsor. The Law inconsistency is kept in the cards; the agency-sponsor ruling below makes it moot for the Guide.",
+    "D4/D8 official pages contain Data Belum Tersedia. Their cards remain secondary, TO_VERIFY, with unknown permit, entry, sponsor, stay and sale fields; no Guide option reaches them.",
+    "Only exact D1/D2 (1, 2, 5 years) and D12 (1, 2 years) commercial keys are linked. No exact key exists for D3/D7/D14/D17, so is_sold is null. PNBP is reference only.",
+    "Application location is not stated on any substantive D page: apply_channel stays null. No ITAP entitlement is inferred from visit permits or generic conversion language; DB itap stays null.",
+    "OWNER RULING 2026-10-19 (agency_sponsors, not verbatim Law): Bali Zero is an agency and can always act as sponsor. The Guide never asks a sponsor or sponsor-exception question for D codes and never returns NEEDS_SPONSOR. The DB sponsor column keeps the Law value (REQUIRED / CONDITIONAL / NOT_REQUIRED)."
+  ],
+  "agency_sponsors": true
+}

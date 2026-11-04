@@ -1,0 +1,80 @@
+# syntax=docker/dockerfile:1.7
+
+# ============================================
+# Stage 1: Dependencies
+# ============================================
+FROM node:20-alpine AS deps
+WORKDIR /app
+
+# Install dependencies needed for native modules
+RUN apk add --no-cache libc6-compat
+
+# Copy package files
+COPY package.json ./
+
+# Install dependencies (using npm install for monorepo compatibility)
+# BuildKit cache mount (added 2026-05-18): persists npm cache (/root/.npm)
+# across builds. --prefer-offline tells npm to use cached tarballs first
+# (synergy with the cache mount). Keep --legacy-peer-deps + --ignore-scripts
+# (existing monorepo compat behavior, unchanged).
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm install --legacy-peer-deps --ignore-scripts --prefer-offline
+
+# ============================================
+# Stage 2: Builder
+# ============================================
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+# Copy dependencies from deps stage
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+# Set environment variables for build
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+
+# Build the application
+RUN npm run build
+
+# ============================================
+# Stage 3: Runner
+# ============================================
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Create non-root user for security
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# Copy built assets
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+
+# Copy MDX content files for blog articles
+COPY --from=builder /app/src/content ./src/content
+
+# Copy news data file
+COPY --from=builder /app/src/data ./src/data
+
+# Create cache directory with correct permissions for image optimization
+RUN mkdir -p .next/cache
+
+# Set correct permissions for content files, data files, and cache
+RUN chown -R nextjs:nodejs ./src/content ./src/data ./.next
+
+# Switch to non-root user
+USER nextjs
+
+# Expose port
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+# Start the application - explicitly bind to 0.0.0.0
+CMD ["node", "server.js", "-H", "0.0.0.0"]

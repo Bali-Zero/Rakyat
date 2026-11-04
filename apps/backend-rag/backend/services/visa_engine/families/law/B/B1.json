@@ -1,0 +1,708 @@
+{
+  "code": "B1",
+  "official_name_id": "B1 Visa Kunjungan Wisata",
+  "source_url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/B1",
+  "retrieved_at": "2026-10-17T13:27:30Z",
+  "page_sha256": "45c38dc51ce2ebca3643b37366626b81c82cc25ce6d8fc3b7e077ca6958664ce",
+  "definition_verbatim": "berwisata\nmengunjungi keluarga\nmenghadiri : pertemuan, insentif, konvensi, dan pameran atau acara sejenis lainnya\nserta transit di Indonesia untuk ke negara lain.",
+  "jenis_visa_verbatim": "Visa B1 merupakan Visa Kunjungan Saat Kedatangan (Visa on Arrival) bagi negara subjek visa kunjungan saat kedatangan untuk satu kali masuk ke Indonesia dengan izin tinggal pertama kali maksimal 30 hari, dihitung sejak tanggal kedatangan. Izin Tinggal ini dapat diperpanjang satu kali dan dapat dialihkan menjadi izin tinggal lain melalui mekanisme bridging visa.",
+  "stay_days": [
+    "Anda dapat tinggal di Indonesia maksimal 30 hari, dihitung sejak tanggal kedatangan."
+  ],
+  "extendable": [
+    "Anda dapat memperpanjang izin tinggal ini satu kali hingga (keseluruhan masa tinggal) maksimal 60 hari.",
+    "Bagi pemegang e-VoA (visa kunjungan saat kedatangan elektronik), perpanjangan izin tinggal dapat dilakukan secara online melalui evisa.imigrasi.go.id atau dapat melalui indonesiavoa.vfsevisa.id",
+    "Bagi pemegang VoA nonelektronik, perpanjangan izin tinggal dapat dilakukan di kantor imigrasi terdekat dari domisili anda.",
+    "Izin Tinggal ini dapat diperpanjang satu kali dan dapat dialihkan menjadi izin tinggal lain melalui mekanisme bridging visa."
+  ],
+  "entry": "single",
+  "where_to_apply": "Permohonan dan Pembayaran Pra Kedatangan\nPermohonan Pra Kedatangan dan Pembayaran Saat Kedatangan\nPermohonan dan Pembayaran Saat Kedatangan",
+  "sponsor_required": {
+    "as_stated_boolean": false,
+    "verbatim": [
+      "Anda tidak membutuhkan penjamin/sponsor untuk mengajukan visa ini."
+    ],
+    "invitation_requirement_see": "requirements_verbatim (Persyaratan Khusus)"
+  },
+  "requirements_verbatim": [
+    {
+      "n": 1,
+      "section": "Pengajuan visa / Permohonan dan Pembayaran Pra Kedatangan",
+      "text": "mengajukan permohonan melalui evisa.imigrasi.go.id atau dapat melalui indonesiavoa.vfsevisa.id"
+    },
+    {
+      "n": 2,
+      "section": "Pengajuan visa / Permohonan dan Pembayaran Pra Kedatangan",
+      "text": "mengisi formulir dan mengunggah berkas secara elektronik, antara lain:\na. halaman biodata paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis (untuk pemegang dokumen perjalanan selain paspor kebangsaan seperti paspor darurat (emergency passport) atau paspor sementara (temporary passport) dll harus berlaku selama 12 bulan)\nb. pasfoto berwarna terbaru (setahun terakhir). Detail\nc. tiket kembali atau tiket terusan ke negara lain, kecuali bagi awak alat angkut yang akan singgah untuk bergabung dengan kapalnya dan melanjutkan perjalanan ke negara lain"
+    },
+    {
+      "n": 3,
+      "section": "Pengajuan visa / Permohonan dan Pembayaran Pra Kedatangan",
+      "text": "membayar menggunakan metode pembayaran digital melalui kartu debit/kredit"
+    },
+    {
+      "n": 4,
+      "section": "Pengajuan visa / Permohonan dan Pembayaran Pra Kedatangan",
+      "text": "mengecek dalam akun evisa dan email, karena visa kunjungan saat kedatangan elektronik akan dikirimkan oleh sistem dalam waktu 1x24 jam."
+    },
+    {
+      "n": 5,
+      "section": "Pengajuan visa / Permohonan Pra Kedatangan dan Pembayaran Saat Kedatangan",
+      "text": "mengajukan permohonan melalui evisa.imigrasi.go.id"
+    },
+    {
+      "n": 6,
+      "section": "Pengajuan visa / Permohonan Pra Kedatangan dan Pembayaran Saat Kedatangan",
+      "text": "mengisi formulir dan mengunggah berkas secara elektronik, antara lain:\na. halaman biodata paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis\n(untuk pemegang dokumen perjalanan selain paspor kebangsaan seperti paspor darurat (emergency passport) atau paspor sementara (temporary passport) dll harus berlaku selama 12 bulan)\nb. pasfoto berwarna terbaru (setahun terakhir). Detail\nc. tiket kembali atau tiket terusan ke negara lain, kecuali bagi awak alat angkut yang akan singgah untuk bergabung dengan kapalnya dan melanjutkan perjalanan ke negara lain"
+    },
+    {
+      "n": 7,
+      "section": "Pengajuan visa / Permohonan Pra Kedatangan dan Pembayaran Saat Kedatangan",
+      "text": "membayar menggunakan metode pembayaran digital melalui kartu debit/kredit"
+    },
+    {
+      "n": 8,
+      "section": "Pengajuan visa / Permohonan Pra Kedatangan dan Pembayaran Saat Kedatangan",
+      "text": "mengambil visa kunjungan saat kedatangan elektronik di konter visa."
+    },
+    {
+      "n": 9,
+      "section": "Pengajuan visa / Permohonan dan Pembayaran Saat Kedatangan",
+      "text": "melakukan pembayaran Visa Kunjungan Saat Kedatangan di konter Bank yang ditunjuk pada area imigrasi bandar udara/pelabuhan dengan menunjukkan paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis kepada petugas (untuk pemegang dokumen perjalanan selain paspor kebangsaan seperti paspor darurat (emergency passport) atau paspor sementara (temporary passport) dll harus berlaku selama 12 bulan)"
+    },
+    {
+      "n": 10,
+      "section": "Pengajuan visa / Permohonan dan Pembayaran Saat Kedatangan",
+      "text": "memperoleh Vaucer Visa, kertas sekuriti sebagai tanda bukti pembayaran Visa kunjungan saat kedatangan"
+    },
+    {
+      "n": 11,
+      "section": "Pengajuan visa / Permohonan dan Pembayaran Saat Kedatangan",
+      "text": "menunjukkan Vaucer Visa kepada petugas imigrasi pada konter Visa Kunjungan Saat Kedatangan"
+    },
+    {
+      "n": 12,
+      "section": "Pengajuan visa / Permohonan dan Pembayaran Saat Kedatangan",
+      "text": "memperoleh stiker Visa Kunjungan Saat Kedatangan yang ditempelkan pada paspor serta tanda masuk elektronik."
+    }
+  ],
+  "pengajuan_intro_verbatim": null,
+  "allowed_activities": "berwisata\nmengunjungi keluarga\nmenghadiri : pertemuan, insentif, konvensi, dan pameran atau acara sejenis lainnya\nserta transit di Indonesia untuk ke negara lain.",
+  "prohibited_or_conditions_verbatim": [
+    "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya tidak diizinkan mengajukan visa kunjungan saat kedatangan.",
+    "Masa berlaku visa kunjungan saat kedatangan elektronik (e-voa) adalah 90 hari sejak diterbitkan. Jika tidak digunakan dalam jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.",
+    "Orang Asing dengan izin tinggal dari Visa B1 dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+  ],
+  "ketentuan_lain_verbatim": [
+    "Orang Asing pemegang dokumen perjalanan bukan paspor kebangsaan berupa paspor sementara (temporary passport) dan paspor darurat (emergency passport) diizinkan mengajukan visa kunjungan saat kedatangan",
+    "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya tidak diizinkan mengajukan visa kunjungan saat kedatangan.",
+    "Masa berlaku visa kunjungan saat kedatangan elektronik (e-voa) adalah 90 hari sejak diterbitkan. Jika tidak digunakan dalam jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.",
+    "Visa kunjungan saat kedatangan nonelektronik langsung digunakan setelah terbit",
+    "Harap diperhatikan bahwa masa berlaku visa berbeda dengan masa tinggal, silakan periksa visa Anda untuk informasi tentang lama izin tinggal.",
+    "Orang Asing dengan izin tinggal dari Visa B1 dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+  ],
+  "pnbp_verbatim_for_reference_only": [
+    "- Biaya visa B1 Rp 500.000 (untuk 30 hari)",
+    "- Biaya Verifikasi I/II Rp 0",
+    "- Pembayaran Visa Kunjungan Saat Kedatangan elektronik (e-VoA): pembayaran digital dengan kartu debit/kredit",
+    "- Pembayaran Visa Kunjungan Saat Kedatangan nonelektronik: Konter bank yang ditunjuk pada area pemeriksaan imigrasi"
+  ],
+  "itap_verbatim": [
+    {
+      "text": "Izin Tinggal ini dapat diperpanjang satu kali dan dapat dialihkan menjadi izin tinggal lain melalui mekanisme bridging visa.",
+      "url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/B1"
+    }
+  ],
+  "itap_eligibility_as_stated": null,
+  "total_max_verbatim": [
+    "Anda dapat memperpanjang izin tinggal ini satu kali hingga (keseluruhan masa tinggal) maksimal 60 hari."
+  ],
+  "notes": [
+    "PNBP is official-source reference only; never a client price.",
+    "VERIFIED_FROM_SOURCE confirms extraction, not resolution of contradictions or legal eligibility.",
+    "Requirement numbers follow source order; nested alternatives remain verbatim. A/B counts include the application steps listed by the source."
+  ],
+  "status": "VERIFIED_FROM_SOURCE",
+  "to_verify": [],
+  "conflicts": [],
+  "source_http_status": 200,
+  "source_raw_path": "raw/B1.html",
+  "source_sections_verbatim": [
+    {
+      "heading": "Dengan visa B1, anda dapat",
+      "text": "berwisata\nmengunjungi keluarga\nmenghadiri : pertemuan, insentif, konvensi, dan pameran atau acara sejenis lainnya\nserta transit di Indonesia untuk ke negara lain."
+    },
+    {
+      "heading": "Jenis visa",
+      "text": "Visa B1 merupakan Visa Kunjungan Saat Kedatangan (Visa on Arrival) bagi negara subjek visa kunjungan saat kedatangan untuk satu kali masuk ke Indonesia dengan izin tinggal pertama kali maksimal 30 hari, dihitung sejak tanggal kedatangan. Izin Tinggal ini dapat diperpanjang satu kali dan dapat dialihkan menjadi izin tinggal lain melalui mekanisme bridging visa."
+    },
+    {
+      "heading": "Masa tinggal",
+      "text": "Anda dapat tinggal di Indonesia maksimal 30 hari, dihitung sejak tanggal kedatangan.\nAnda dapat memperpanjang izin tinggal ini satu kali hingga (keseluruhan masa tinggal) maksimal 60 hari.\nBagi pemegang e-VoA (visa kunjungan saat kedatangan elektronik), perpanjangan izin tinggal dapat dilakukan secara online melalui evisa.imigrasi.go.id atau dapat melalui indonesiavoa.vfsevisa.id\nBagi pemegang VoA nonelektronik, perpanjangan izin tinggal dapat dilakukan di kantor imigrasi terdekat dari domisili anda."
+    },
+    {
+      "heading": "Biaya (PNBP)",
+      "text": "Biaya visa B1 Rp 500.000 (untuk 30 hari)\nBiaya Verifikasi I/II Rp 0\nPembayaran Visa Kunjungan Saat Kedatangan elektronik (e-VoA): pembayaran digital dengan kartu debit/kredit\nPembayaran Visa Kunjungan Saat Kedatangan nonelektronik: Konter bank yang ditunjuk pada area pemeriksaan imigrasi"
+    },
+    {
+      "heading": "Penjamin (Sponsor)",
+      "text": "Anda tidak membutuhkan penjamin/sponsor untuk mengajukan visa ini."
+    },
+    {
+      "heading": "Pengajuan visa",
+      "text": "Permohonan dan Pembayaran Pra Kedatangan\nOrang asing dari negara subjek visa kunjungan saat kedatangan harus:\nmengajukan permohonan melalui evisa.imigrasi.go.id atau dapat melalui indonesiavoa.vfsevisa.id\nmengisi formulir dan mengunggah berkas secara elektronik, antara lain:\na. halaman biodata paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis (untuk pemegang dokumen perjalanan selain paspor kebangsaan seperti paspor darurat (emergency passport) atau paspor sementara (temporary passport) dll harus berlaku selama 12 bulan)\nb. pasfoto berwarna terbaru (setahun terakhir). Detail\nc. tiket kembali atau tiket terusan ke negara lain, kecuali bagi awak alat angkut yang akan singgah untuk bergabung dengan kapalnya dan melanjutkan perjalanan ke negara lain\nmembayar menggunakan metode pembayaran digital melalui kartu debit/kredit\nmengecek dalam akun evisa dan email, karena visa kunjungan saat kedatangan elektronik akan dikirimkan oleh sistem dalam waktu 1x24 jam.\nPermohonan Pra Kedatangan dan Pembayaran Saat Kedatangan\nOrang asing dari negara subjek visa kunjungan saat kedatangan harus:\nmengajukan permohonan melalui evisa.imigrasi.go.id\nmengisi formulir dan mengunggah berkas secara elektronik, antara lain:\na. halaman biodata paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis\n(untuk pemegang dokumen perjalanan selain paspor kebangsaan seperti paspor darurat (emergency passport) atau paspor sementara (temporary passport) dll harus berlaku selama 12 bulan)\nb. pasfoto berwarna terbaru (setahun terakhir). Detail\nc. tiket kembali atau tiket terusan ke negara lain, kecuali bagi awak alat angkut yang akan singgah untuk bergabung dengan kapalnya dan melanjutkan perjalanan ke negara lain\nmembayar menggunakan metode pembayaran digital melalui kartu debit/kredit\nmengambil visa kunjungan saat kedatangan elektronik di konter visa.\nPermohonan dan Pembayaran Saat Kedatangan\nOrang asing dari negara subjek visa kunjungan saat kedatangan akan:\nmelakukan pembayaran Visa Kunjungan Saat Kedatangan di konter Bank yang ditunjuk pada area imigrasi bandar udara/pelabuhan dengan menunjukkan paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis kepada petugas (untuk pemegang dokumen perjalanan selain paspor kebangsaan seperti paspor darurat (emergency passport) atau paspor sementara (temporary passport) dll harus berlaku selama 12 bulan)\nmemperoleh Vaucer Visa, kertas sekuriti sebagai tanda bukti pembayaran Visa kunjungan saat kedatangan\nmenunjukkan Vaucer Visa kepada petugas imigrasi pada konter Visa Kunjungan Saat Kedatangan\nmemperoleh stiker Visa Kunjungan Saat Kedatangan yang ditempelkan pada paspor serta tanda masuk elektronik."
+    },
+    {
+      "heading": "Ketentuan lain",
+      "text": "Orang Asing pemegang dokumen perjalanan bukan paspor kebangsaan berupa paspor sementara (temporary passport) dan paspor darurat (emergency passport) diizinkan mengajukan visa kunjungan saat kedatangan\nOrang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya tidak diizinkan mengajukan visa kunjungan saat kedatangan.\nMasa berlaku visa kunjungan saat kedatangan elektronik (e-voa) adalah 90 hari sejak diterbitkan. Jika tidak digunakan dalam jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.\nVisa kunjungan saat kedatangan nonelektronik langsung digunakan setelah terbit\nHarap diperhatikan bahwa masa berlaku visa berbeda dengan masa tinggal, silakan periksa visa Anda untuk informasi tentang lama izin tinggal.\nOrang Asing dengan izin tinggal dari Visa B1 dilarang menjual barang atau jasa atau menerima imbalan, upah, atau sejenisnya atas kerja/usahanya dari perorangan atau korporasi di Indonesia."
+    },
+    {
+      "heading": "Dasar hukum",
+      "text": "Peraturan Pemerintah Nomor 45 tahun 2024 tentang Tarif PNBP di Lingkungan Kementerian Hukum dan HAM RI\nPeraturan Menteri Hukum dan HAM RI Nomor 11 Tahun 2024 tentang Visa dan Izin Tinggal\nPeraturan Menteri Hukum dan HAM RI Nomor 22 tahun 2023 tentang Visa dan Izin Tinggal\nKeputusan Menteri Imigrasi dan Pemasyarakatan Nomor M.IP-08.GR.01.01 tahun 2025 tentang Klasifikasi Visa\nPeraturan Menteri Keuangan RI Nomor 9/PMK.02/2022 tentang Jenis dan Tarif PNBP Kebutuhan Mendesak atas Pelayanan Keimigrasian yang berlaku pada Kemenkumham RI\nPeraturan Menteri Keuangan RI Nomor 82 Tahun 2023 tentang Jenis dan Tarif atas Jenis PNBP Kebutuhan Mendesak atas Pelayanan Golden Visa yang berlaku pada Kemenkumham RI"
+    }
+  ],
+  "application_routes_verbatim": [
+    {
+      "heading": "Permohonan dan Pembayaran Pra Kedatangan",
+      "text": "Orang asing dari negara subjek visa kunjungan saat kedatangan harus:\nmengajukan permohonan melalui evisa.imigrasi.go.id atau dapat melalui indonesiavoa.vfsevisa.id\nmengisi formulir dan mengunggah berkas secara elektronik, antara lain:\na. halaman biodata paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis (untuk pemegang dokumen perjalanan selain paspor kebangsaan seperti paspor darurat (emergency passport) atau paspor sementara (temporary passport) dll harus berlaku selama 12 bulan)\nb. pasfoto berwarna terbaru (setahun terakhir). Detail\nc. tiket kembali atau tiket terusan ke negara lain, kecuali bagi awak alat angkut yang akan singgah untuk bergabung dengan kapalnya dan melanjutkan perjalanan ke negara lain\nmembayar menggunakan metode pembayaran digital melalui kartu debit/kredit\nmengecek dalam akun evisa dan email, karena visa kunjungan saat kedatangan elektronik akan dikirimkan oleh sistem dalam waktu 1x24 jam."
+    },
+    {
+      "heading": "Permohonan Pra Kedatangan dan Pembayaran Saat Kedatangan",
+      "text": "Orang asing dari negara subjek visa kunjungan saat kedatangan harus:\nmengajukan permohonan melalui evisa.imigrasi.go.id\nmengisi formulir dan mengunggah berkas secara elektronik, antara lain:\na. halaman biodata paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis\n(untuk pemegang dokumen perjalanan selain paspor kebangsaan seperti paspor darurat (emergency passport) atau paspor sementara (temporary passport) dll harus berlaku selama 12 bulan)\nb. pasfoto berwarna terbaru (setahun terakhir). Detail\nc. tiket kembali atau tiket terusan ke negara lain, kecuali bagi awak alat angkut yang akan singgah untuk bergabung dengan kapalnya dan melanjutkan perjalanan ke negara lain\nmembayar menggunakan metode pembayaran digital melalui kartu debit/kredit\nmengambil visa kunjungan saat kedatangan elektronik di konter visa."
+    },
+    {
+      "heading": "Permohonan dan Pembayaran Saat Kedatangan",
+      "text": "Orang asing dari negara subjek visa kunjungan saat kedatangan akan:\nmelakukan pembayaran Visa Kunjungan Saat Kedatangan di konter Bank yang ditunjuk pada area imigrasi bandar udara/pelabuhan dengan menunjukkan paspor yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis kepada petugas (untuk pemegang dokumen perjalanan selain paspor kebangsaan seperti paspor darurat (emergency passport) atau paspor sementara (temporary passport) dll harus berlaku selama 12 bulan)\nmemperoleh Vaucer Visa, kertas sekuriti sebagai tanda bukti pembayaran Visa kunjungan saat kedatangan\nmenunjukkan Vaucer Visa kepada petugas imigrasi pada konter Visa Kunjungan Saat Kedatangan\nmemperoleh stiker Visa Kunjungan Saat Kedatangan yang ditempelkan pada paspor serta tanda masuk elektronik."
+    }
+  ],
+  "itap_explicit_on_visa_page": false,
+  "eligible_nationalities": {
+    "authority_type": "OFFICIAL_PORTAL",
+    "instrument": {
+      "title": "Keputusan Menteri Hukum dan Hak Asasi Manusia Nomor M.HH-02.GR.01.06 Tahun 2024 tentang Daftar Negara, Pemerintah dari Daerah Administrasi Khusus Suatu Negara, dan Entitas Tertentu yang Warga Negaranya Dapat Diberikan Visa Kunjungan Saat Kedatangan",
+      "number": "M.HH-02.GR.01.06 Tahun 2024",
+      "ditetapkan": "2024-01-09",
+      "revokes": "M.HH-04.GR.01.06 Tahun 2023",
+      "secondary_source": {
+        "url": "https://bengkalis.imigrasi.go.id",
+        "page_date": "2024-01-16",
+        "note": "Kanim Bengkalis news page of 2024-01-16 reporting the decree; secondary source, the decree text itself was not retrieved here."
+      },
+      "to_verify": "The decree's annex is not confirmed to equal today's 97-entry portal list."
+    },
+    "not_page_verbatim": true,
+    "note": "Official-portal list kept separate from the B1 page verbatim. The portal page cites no instrument; the instrument is recorded from a secondary source (gate 2026-10-19): Kepmenkumham M.HH-02.GR.01.06 Tahun 2024. Whether its annex equals the 97 entries is TO_VERIFY. Added under OWNER RULING 2026-10-19.",
+    "retrieved_at": "2026-10-19",
+    "sources": [
+      {
+        "id": "imigrasi-voa-page",
+        "url": "https://www.imigrasi.go.id/wna/daftar-negara-voa-bvk-calling-visa/daftar-negara-subjek-visa-on-arrival",
+        "type": "OFFICIAL_PORTAL",
+        "retrieved": "2026-10-19",
+        "note": "97 entries; the page itself cites no legal instrument"
+      },
+      {
+        "id": "imigrasi-b1-page",
+        "url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/B1",
+        "type": "OFFICIAL_PORTAL",
+        "retrieved": "2026-10-19",
+        "note": "Dasar hukum lists PP 45/2024, Permenkumham 11/2024, Permenkumham 22/2023, Kepmen Imipas M.IP-08.GR.01.01 Tahun 2025, PMK 9/PMK.02/2022, PMK 82/2023; none is a country-list instrument"
+      }
+    ],
+    "entries": [
+      {
+        "iso2": "ZA",
+        "name": "South Africa",
+        "name_id": "Afrika Selatan"
+      },
+      {
+        "iso2": "AL",
+        "name": "Albania",
+        "name_id": "Albania"
+      },
+      {
+        "iso2": "US",
+        "name": "United States",
+        "name_id": "Amerika Serikat"
+      },
+      {
+        "iso2": "AD",
+        "name": "Andorra",
+        "name_id": "Andorra"
+      },
+      {
+        "iso2": "SA",
+        "name": "Saudi Arabia",
+        "name_id": "Arab Saudi"
+      },
+      {
+        "iso2": "AR",
+        "name": "Argentina",
+        "name_id": "Argentina"
+      },
+      {
+        "iso2": "AM",
+        "name": "Armenia",
+        "name_id": "Armenia"
+      },
+      {
+        "iso2": "AU",
+        "name": "Australia",
+        "name_id": "Australia"
+      },
+      {
+        "iso2": "AT",
+        "name": "Austria",
+        "name_id": "Austria"
+      },
+      {
+        "iso2": "AZ",
+        "name": "Azerbaijan",
+        "name_id": "Azerbaijan"
+      },
+      {
+        "iso2": "BH",
+        "name": "Bahrain",
+        "name_id": "Bahrain"
+      },
+      {
+        "iso2": "NL",
+        "name": "Netherlands",
+        "name_id": "Belanda"
+      },
+      {
+        "iso2": "BY",
+        "name": "Belarus",
+        "name_id": "Belarus"
+      },
+      {
+        "iso2": "BE",
+        "name": "Belgium",
+        "name_id": "Belgia"
+      },
+      {
+        "iso2": "BR",
+        "name": "Brazil",
+        "name_id": "Brazil"
+      },
+      {
+        "iso2": "BN",
+        "name": "Brunei Darussalam",
+        "name_id": "Brunei Darussalam"
+      },
+      {
+        "iso2": "BA",
+        "name": "Bosnia and Herzegovina",
+        "name_id": "Bosnia Herzegovina"
+      },
+      {
+        "iso2": "BG",
+        "name": "Bulgaria",
+        "name_id": "Bulgaria"
+      },
+      {
+        "iso2": "CZ",
+        "name": "Czechia",
+        "name_id": "Ceko"
+      },
+      {
+        "iso2": "CL",
+        "name": "Chile",
+        "name_id": "Chile"
+      },
+      {
+        "iso2": "DK",
+        "name": "Denmark",
+        "name_id": "Denmark"
+      },
+      {
+        "iso2": "EC",
+        "name": "Ecuador",
+        "name_id": "Ekuador"
+      },
+      {
+        "iso2": "EE",
+        "name": "Estonia",
+        "name_id": "Estonia"
+      },
+      {
+        "iso2": "PH",
+        "name": "Philippines",
+        "name_id": "Filipina"
+      },
+      {
+        "iso2": "FI",
+        "name": "Finland",
+        "name_id": "Finlandia"
+      },
+      {
+        "iso2": "GT",
+        "name": "Guatemala",
+        "name_id": "Guatemala"
+      },
+      {
+        "iso2": "HK",
+        "name": "Hong Kong SAR",
+        "name_id": "Hongkong"
+      },
+      {
+        "iso2": "HU",
+        "name": "Hungary",
+        "name_id": "Hungaria"
+      },
+      {
+        "iso2": "IN",
+        "name": "India",
+        "name_id": "India"
+      },
+      {
+        "iso2": "GB",
+        "name": "United Kingdom",
+        "name_id": "Inggris"
+      },
+      {
+        "iso2": "IE",
+        "name": "Ireland",
+        "name_id": "Irlandia"
+      },
+      {
+        "iso2": "IT",
+        "name": "Italy",
+        "name_id": "Italia"
+      },
+      {
+        "iso2": "IS",
+        "name": "Iceland",
+        "name_id": "Islandia"
+      },
+      {
+        "iso2": "JP",
+        "name": "Japan",
+        "name_id": "Jepang"
+      },
+      {
+        "iso2": "DE",
+        "name": "Germany",
+        "name_id": "Jerman"
+      },
+      {
+        "iso2": "KH",
+        "name": "Cambodia",
+        "name_id": "Kamboja"
+      },
+      {
+        "iso2": "CA",
+        "name": "Canada",
+        "name_id": "Kanada"
+      },
+      {
+        "iso2": "KZ",
+        "name": "Kazakhstan",
+        "name_id": "Kazakhstan"
+      },
+      {
+        "iso2": "KE",
+        "name": "Kenya",
+        "name_id": "Kenya"
+      },
+      {
+        "iso2": "CO",
+        "name": "Colombia",
+        "name_id": "Kolombia"
+      },
+      {
+        "iso2": "KR",
+        "name": "South Korea",
+        "name_id": "Korea Selatan"
+      },
+      {
+        "iso2": "HR",
+        "name": "Croatia",
+        "name_id": "Kroasia"
+      },
+      {
+        "iso2": "KW",
+        "name": "Kuwait",
+        "name_id": "Kuwait"
+      },
+      {
+        "iso2": "LA",
+        "name": "Laos",
+        "name_id": "Laos"
+      },
+      {
+        "iso2": "LV",
+        "name": "Latvia",
+        "name_id": "Latvia"
+      },
+      {
+        "iso2": "LI",
+        "name": "Liechtenstein",
+        "name_id": "Liechtenstein"
+      },
+      {
+        "iso2": "LT",
+        "name": "Lithuania",
+        "name_id": "Lithuania"
+      },
+      {
+        "iso2": "LU",
+        "name": "Luxembourg",
+        "name_id": "Luksemburg"
+      },
+      {
+        "iso2": "MV",
+        "name": "Maldives",
+        "name_id": "Maladewa"
+      },
+      {
+        "iso2": "MY",
+        "name": "Malaysia",
+        "name_id": "Malaysia"
+      },
+      {
+        "iso2": "MT",
+        "name": "Malta",
+        "name_id": "Malta"
+      },
+      {
+        "iso2": "MA",
+        "name": "Morocco",
+        "name_id": "Maroko"
+      },
+      {
+        "iso2": "MU",
+        "name": "Mauritius",
+        "name_id": "Mauritius"
+      },
+      {
+        "iso2": "MX",
+        "name": "Mexico",
+        "name_id": "Meksiko"
+      },
+      {
+        "iso2": "EG",
+        "name": "Egypt",
+        "name_id": "Mesir"
+      },
+      {
+        "iso2": "MC",
+        "name": "Monaco",
+        "name_id": "Monako"
+      },
+      {
+        "iso2": "MN",
+        "name": "Mongolia",
+        "name_id": "Mongolia"
+      },
+      {
+        "iso2": "MZ",
+        "name": "Mozambique",
+        "name_id": "Mozambik"
+      },
+      {
+        "iso2": "MM",
+        "name": "Myanmar",
+        "name_id": "Myanmar"
+      },
+      {
+        "iso2": "NO",
+        "name": "Norway",
+        "name_id": "Norwegia"
+      },
+      {
+        "iso2": "OM",
+        "name": "Oman",
+        "name_id": "Oman"
+      },
+      {
+        "iso2": "PS",
+        "name": "Palestine",
+        "name_id": "Palestina"
+      },
+      {
+        "iso2": "PG",
+        "name": "Papua New Guinea",
+        "name_id": "Papua Nugini"
+      },
+      {
+        "iso2": "FR",
+        "name": "France",
+        "name_id": "Perancis"
+      },
+      {
+        "iso2": "PE",
+        "name": "Peru",
+        "name_id": "Peru"
+      },
+      {
+        "iso2": "PL",
+        "name": "Poland",
+        "name_id": "Polandia"
+      },
+      {
+        "iso2": "PT",
+        "name": "Portugal",
+        "name_id": "Portugal"
+      },
+      {
+        "iso2": "QA",
+        "name": "Qatar",
+        "name_id": "Qatar"
+      },
+      {
+        "iso2": "RO",
+        "name": "Romania",
+        "name_id": "Rumania"
+      },
+      {
+        "iso2": "RU",
+        "name": "Russia",
+        "name_id": "Rusia"
+      },
+      {
+        "iso2": "RW",
+        "name": "Rwanda",
+        "name_id": "Rwanda"
+      },
+      {
+        "iso2": "NZ",
+        "name": "New Zealand",
+        "name_id": "Selandia Baru"
+      },
+      {
+        "iso2": "RS",
+        "name": "Serbia",
+        "name_id": "Serbia"
+      },
+      {
+        "iso2": "SC",
+        "name": "Seychelles",
+        "name_id": "Seychelles"
+      },
+      {
+        "iso2": "SG",
+        "name": "Singapore",
+        "name_id": "Singapura"
+      },
+      {
+        "iso2": "CY",
+        "name": "Cyprus",
+        "name_id": "Siprus"
+      },
+      {
+        "iso2": "SK",
+        "name": "Slovakia",
+        "name_id": "Slovakia"
+      },
+      {
+        "iso2": "SI",
+        "name": "Slovenia",
+        "name_id": "Slovenia"
+      },
+      {
+        "iso2": "ES",
+        "name": "Spain",
+        "name_id": "Spanyol"
+      },
+      {
+        "iso2": "SR",
+        "name": "Suriname",
+        "name_id": "Suriname"
+      },
+      {
+        "iso2": "SE",
+        "name": "Sweden",
+        "name_id": "Swedia"
+      },
+      {
+        "iso2": "CH",
+        "name": "Switzerland",
+        "name_id": "Swiss"
+      },
+      {
+        "iso2": "TW",
+        "name": "Taiwan",
+        "name_id": "Taiwan"
+      },
+      {
+        "iso2": "TZ",
+        "name": "Tanzania",
+        "name_id": "Tanzania"
+      },
+      {
+        "iso2": "TH",
+        "name": "Thailand",
+        "name_id": "Thailand"
+      },
+      {
+        "iso2": "TL",
+        "name": "Timor-Leste",
+        "name_id": "Timor Leste"
+      },
+      {
+        "iso2": "CN",
+        "name": "China",
+        "name_id": "Tiongkok"
+      },
+      {
+        "iso2": "TN",
+        "name": "Tunisia",
+        "name_id": "Tunisia"
+      },
+      {
+        "iso2": "TR",
+        "name": "Turkiye",
+        "name_id": "Turki"
+      },
+      {
+        "iso2": "AE",
+        "name": "United Arab Emirates",
+        "name_id": "Uni Emirat Arab"
+      },
+      {
+        "iso2": "UZ",
+        "name": "Uzbekistan",
+        "name_id": "Uzbekistan"
+      },
+      {
+        "iso2": "UA",
+        "name": "Ukraine",
+        "name_id": "Ukraina"
+      },
+      {
+        "iso2": "VA",
+        "name": "Holy See (Vatican)",
+        "name_id": "Vatikan"
+      },
+      {
+        "iso2": "VE",
+        "name": "Venezuela",
+        "name_id": "Venezuela"
+      },
+      {
+        "iso2": "VN",
+        "name": "Vietnam",
+        "name_id": "Vietnam"
+      },
+      {
+        "iso2": "JO",
+        "name": "Jordan",
+        "name_id": "Yordania"
+      },
+      {
+        "iso2": "GR",
+        "name": "Greece",
+        "name_id": "Yunani"
+      }
+    ],
+    "a1_overlap_note": "18 A1 nationalities are also listed here; they remain B1-eligible."
+  },
+  "owner_rulings": [
+    {
+      "date": "2026-10-19",
+      "topic": "eligible_nationalities",
+      "ruling": "B1 eligibility is decided from the 97-entry official-portal list, not from a bare self-confirmation. Instrument: Kepmenkumham M.HH-02.GR.01.06 Tahun 2024 (annex identity with the portal list TO_VERIFY). Nationals also eligible for A1 are not excluded from B1."
+    }
+  ]
+}

@@ -1,0 +1,191 @@
+{
+  "code": "BRIDGING",
+  "official_name_id": "Izin Tinggal Peralihan",
+  "source_url": "https://depok.imigrasi.go.id/direktorat-jenderal-imigrasi-berlakukan-bridging-visa/",
+  "retrieved_at": "2026-10-17T13:29:36Z",
+  "page_sha256": "4504bdf2fb3576da5e3513d12540477a2e355bfd24ca757fb27246654cdcad63",
+  "definition_verbatim": "JAKARTA – Direktorat Jenderal Imigrasi Kementerian Hukum dan HAM memberlakukan kebijakan Izin Tinggal Peralihan, yang juga dikenal sebagai Bridging Visa. Izin tinggal tersebut menjadi ‘jembatan’ antara izin tinggal sebelumnya untuk memperoleh izin tinggal baru.",
+  "jenis_visa_verbatim": null,
+  "stay_days": [
+    "Masa berlaku Izin Tinggal Peralihan yakni 60 hari dan hanya berlaku secara onshore, yakni bagi WNA yang sudah berada di wilayah Indonesia."
+  ],
+  "extendable": null,
+  "entry": null,
+  "where_to_apply": "Masa berlaku Izin Tinggal Peralihan yakni 60 hari dan hanya berlaku secara onshore, yakni bagi WNA yang sudah berada di wilayah Indonesia.",
+  "sponsor_required": {
+    "as_stated_boolean": null,
+    "verbatim": [
+      "· Pendaftaran online pada laman https://evisa.imigrasi.go.id/ (harus menggunakan akun penjamin)",
+      "· Surat permohonan perihal Bridging Stay Permit dari Sponsor (ditunjukan kepada kepala kanator Imigrasi Kelas I Non TPI Jakarta Pusat)",
+      "· Surat Pernyataan dan Jaminan dari Sponsor (bermaterai Rp. 10.000,-)"
+    ],
+    "invitation_requirement_see": "requirements_verbatim (Persyaratan Khusus)",
+    "source_url": "https://jakartapusat.imigrasi.go.id/index.php/layanan/warga-negara-asing-wna/izin-tinggal-keimigrasian/bridging-staypermit"
+  },
+  "requirements_verbatim": [
+    {
+      "n": 1,
+      "section": "BRIDGING_DEPOK / Siaran pers",
+      "text": "Warga negara asing yang ingin menggunakan Izin Tinggal Peralihan harus mengajukan permohonan melalui laman evisa.imigrasi.go.id dan melakukan pembayaran biaya keimigrasian paling lambat 3 (tiga) hari sebelum masa berlaku izin tinggal sebelumnya habis."
+    },
+    {
+      "n": 2,
+      "section": "BRIDGING_JAKARTA_PUSAT / Persyaratan",
+      "text": "Pendaftaran online pada laman https://evisa.imigrasi.go.id/ (harus menggunakan akun penjamin)",
+      "source_url": "https://jakartapusat.imigrasi.go.id/index.php/layanan/warga-negara-asing-wna/izin-tinggal-keimigrasian/bridging-staypermit"
+    },
+    {
+      "n": 3,
+      "section": "BRIDGING_JAKARTA_PUSAT / Persyaratan",
+      "text": "Surat permohonan perihal Bridging Stay Permit dari Sponsor (ditunjukan kepada kepala kanator Imigrasi Kelas I Non TPI Jakarta Pusat)",
+      "source_url": "https://jakartapusat.imigrasi.go.id/index.php/layanan/warga-negara-asing-wna/izin-tinggal-keimigrasian/bridging-staypermit"
+    },
+    {
+      "n": 4,
+      "section": "BRIDGING_JAKARTA_PUSAT / Persyaratan",
+      "text": "Surat Pernyataan dan Jaminan dari Sponsor (bermaterai Rp. 10.000,-)",
+      "source_url": "https://jakartapusat.imigrasi.go.id/index.php/layanan/warga-negara-asing-wna/izin-tinggal-keimigrasian/bridging-staypermit"
+    },
+    {
+      "n": 5,
+      "section": "BRIDGING_JAKARTA_PUSAT / Persyaratan",
+      "text": "KTP Sponsor",
+      "source_url": "https://jakartapusat.imigrasi.go.id/index.php/layanan/warga-negara-asing-wna/izin-tinggal-keimigrasian/bridging-staypermit"
+    },
+    {
+      "n": 6,
+      "section": "BRIDGING_JAKARTA_PUSAT / Persyaratan",
+      "text": "Paspor & Pas Photo WNA",
+      "source_url": "https://jakartapusat.imigrasi.go.id/index.php/layanan/warga-negara-asing-wna/izin-tinggal-keimigrasian/bridging-staypermit"
+    },
+    {
+      "n": 7,
+      "section": "BRIDGING_JAKARTA_PUSAT / Persyaratan",
+      "text": "Izin Tinggal terakhir WNA",
+      "source_url": "https://jakartapusat.imigrasi.go.id/index.php/layanan/warga-negara-asing-wna/izin-tinggal-keimigrasian/bridging-staypermit"
+    },
+    {
+      "n": 8,
+      "section": "BRIDGING_JAKARTA_PUSAT / Persyaratan",
+      "text": "Statement Letter (Form E02) bermaterai yang di ttd WNA",
+      "source_url": "https://jakartapusat.imigrasi.go.id/index.php/layanan/warga-negara-asing-wna/izin-tinggal-keimigrasian/bridging-staypermit"
+    },
+    {
+      "n": 9,
+      "section": "BRIDGING_JAKARTA_PUSAT / Persyaratan",
+      "text": "*Jika sposnsor dikuasakan maka harus melampirkan Suarat Kuasa bermaterai Rp 10.000,- & KTP Peneria Kuasa",
+      "source_url": "https://jakartapusat.imigrasi.go.id/index.php/layanan/warga-negara-asing-wna/izin-tinggal-keimigrasian/bridging-staypermit"
+    }
+  ],
+  "pengajuan_intro_verbatim": "Warga negara asing yang ingin menggunakan Izin Tinggal Peralihan harus mengajukan permohonan melalui laman evisa.imigrasi.go.id dan melakukan pembayaran biaya keimigrasian paling lambat 3 (tiga) hari sebelum masa berlaku izin tinggal sebelumnya habis.",
+  "allowed_activities": "“Dengan begitu, warga negara asing pemegang Izin Tinggal Kunjungan yang diajukan melalui evisa.imigrasi.go.id dimungkinkan untuk memperoleh Izin Tinggal Terbatas tanpa harus keluar wilayah Indonesia. Begitu juga pemegang Izin Tinggal Terbatas dan Izin Tinggal Tetap yang sudah tidak bisa lagi diperpanjang, dapat memperoleh Izin Tinggal baru tanpa harus keluar wilayah Indonesia” tutur Direktur Jenderal Imigrasi, Silmy Karim.\nIzin tinggal tersebut dapat digunakan oleh WNA yang akan mengajukan alih status ke Izin Tinggal Terbatas. Warga negara asing pemegang Izin Tinggal Peralihan tidak dikenakan overstay jika permohonan Izin Tinggal Peralihannya disetujui setelah masa berlaku izin tinggal sebelumnya berakhir.",
+  "prohibited_or_conditions_verbatim": [
+    "Pelaksanaan Izin Tinggal Peralihan diatur dalam Peraturan Menteri Hukum dan HAM (Permenkumham) Nomor 11 Tahun 2024 yang disahkan pada 1 April 2024. Masa berlaku Izin Tinggal Peralihan yakni 60 hari dan hanya berlaku secara onshore, yakni bagi WNA yang sudah berada di wilayah Indonesia. Izin tinggal ini tidak berlaku lagi apabila WNA keluar wilayah Indonesia.",
+    "Izin tinggal tersebut dapat digunakan oleh WNA yang akan mengajukan alih status ke Izin Tinggal Terbatas. Warga negara asing pemegang Izin Tinggal Peralihan tidak dikenakan overstay jika permohonan Izin Tinggal Peralihannya disetujui setelah masa berlaku izin tinggal sebelumnya berakhir.",
+    "Warga negara asing yang ingin menggunakan Izin Tinggal Peralihan harus mengajukan permohonan melalui laman evisa.imigrasi.go.id dan melakukan pembayaran biaya keimigrasian paling lambat 3 (tiga) hari sebelum masa berlaku izin tinggal sebelumnya habis."
+  ],
+  "ketentuan_lain_verbatim": [
+    "“Dengan begitu, warga negara asing pemegang Izin Tinggal Kunjungan yang diajukan melalui evisa.imigrasi.go.id dimungkinkan untuk memperoleh Izin Tinggal Terbatas tanpa harus keluar wilayah Indonesia. Begitu juga pemegang Izin Tinggal Terbatas dan Izin Tinggal Tetap yang sudah tidak bisa lagi diperpanjang, dapat memperoleh Izin Tinggal baru tanpa harus keluar wilayah Indonesia” tutur Direktur Jenderal Imigrasi, Silmy Karim.",
+    "Pelaksanaan Izin Tinggal Peralihan diatur dalam Peraturan Menteri Hukum dan HAM (Permenkumham) Nomor 11 Tahun 2024 yang disahkan pada 1 April 2024. Masa berlaku Izin Tinggal Peralihan yakni 60 hari dan hanya berlaku secara onshore, yakni bagi WNA yang sudah berada di wilayah Indonesia. Izin tinggal ini tidak berlaku lagi apabila WNA keluar wilayah Indonesia.",
+    "Izin tinggal tersebut dapat digunakan oleh WNA yang akan mengajukan alih status ke Izin Tinggal Terbatas. Warga negara asing pemegang Izin Tinggal Peralihan tidak dikenakan overstay jika permohonan Izin Tinggal Peralihannya disetujui setelah masa berlaku izin tinggal sebelumnya berakhir.",
+    "Warga negara asing yang ingin menggunakan Izin Tinggal Peralihan harus mengajukan permohonan melalui laman evisa.imigrasi.go.id dan melakukan pembayaran biaya keimigrasian paling lambat 3 (tiga) hari sebelum masa berlaku izin tinggal sebelumnya habis."
+  ],
+  "pnbp_verbatim_for_reference_only": [],
+  "itap_verbatim": null,
+  "itap_eligibility_as_stated": null,
+  "total_max_verbatim": null,
+  "notes": [
+    "Requested central press URL returned HTTP 404; raw/BRIDGING.html and its metadata preserve that failed attempt.",
+    "The main source is an official Depok republication of the 23 April 2024 announcement. Supplementary Jakarta Pusat checklist retains original spelling.",
+    "Yogyakarta republication contains mojibake in its source; raw bytes are preserved without repair.",
+    "PNBP is reference only; no client price is supplied."
+  ],
+  "status": "VERIFIED_FROM_SOURCE",
+  "to_verify": [
+    "total_max_verbatim: null + TO_VERIFY; 60-day validity is stated, no aggregate maximum or extension rule.",
+    "entry: null + TO_VERIFY; this is an onshore stay permit, not a stated entry entitlement.",
+    "sponsor_required.as_stated_boolean: null + TO_VERIFY; Jakarta Pusat requires a sponsor account, but no nationwide blanket Boolean sentence was found.",
+    "PNBP amount: not stated in retrieved bridging pages. Stamp duties in the local checklist are not a PNBP quote.",
+    "Jakarta Pusat checklist is office-specific; applicability elsewhere requires verification."
+  ],
+  "conflicts": [],
+  "source_http_status": 200,
+  "source_raw_path": "raw/BRIDGING_DEPOK.html",
+  "source_documents": [
+    {
+      "source_url": "https://www.imigrasi.go.id/siaran_pers/2024/04/23/izin-tinggal-peralihan-jembatani-proses-transisi-izin-tinggal",
+      "effective_url": "https://www.imigrasi.go.id/siaran_pers/2024/04/23/izin-tinggal-peralihan-jembatani-proses-transisi-izin-tinggal",
+      "retrieved_at": "2026-10-17T13:27:35Z",
+      "http_status": 404,
+      "curl_exit_code": 0,
+      "byte_count": 889855,
+      "page_sha256": "41e38eb125aafa921a6b62a5b2402a55a712bdb2442239dd71d3d2cc8423d88d",
+      "raw_path": "raw/BRIDGING.html"
+    },
+    {
+      "source_url": "https://depok.imigrasi.go.id/direktorat-jenderal-imigrasi-berlakukan-bridging-visa/",
+      "effective_url": "https://depok.imigrasi.go.id/direktorat-jenderal-imigrasi-berlakukan-bridging-visa/",
+      "retrieved_at": "2026-10-17T13:29:36Z",
+      "http_status": 200,
+      "curl_exit_code": 0,
+      "byte_count": 91324,
+      "page_sha256": "4504bdf2fb3576da5e3513d12540477a2e355bfd24ca757fb27246654cdcad63",
+      "raw_path": "raw/BRIDGING_DEPOK.html"
+    },
+    {
+      "source_url": "https://jogja.imigrasi.go.id/izin-tinggal-peralihan-jembatani-proses-transisi-izin-tinggal-wna-di-ri/",
+      "effective_url": "https://jogja.imigrasi.go.id/izin-tinggal-peralihan-jembatani-proses-transisi-izin-tinggal-wna-di-ri/",
+      "retrieved_at": "2026-10-17T13:28:02Z",
+      "http_status": 200,
+      "curl_exit_code": 0,
+      "byte_count": 140303,
+      "page_sha256": "a872f43e0a77b76a58938c3549c356f04a5197bf0f9d258d65b80e16c0bd6f09",
+      "raw_path": "raw/BRIDGING_JOGJA.html"
+    },
+    {
+      "source_url": "https://jakartapusat.imigrasi.go.id/index.php/layanan/warga-negara-asing-wna/izin-tinggal-keimigrasian/bridging-staypermit",
+      "effective_url": "https://jakartapusat.imigrasi.go.id/index.php/layanan/warga-negara-asing-wna/izin-tinggal-keimigrasian/bridging-staypermit",
+      "retrieved_at": "2026-10-17T13:28:33Z",
+      "http_status": 200,
+      "curl_exit_code": 0,
+      "byte_count": 58325,
+      "page_sha256": "88e5ad6a6cbded85e18e4bd24f8d4c14b9040b3f3d53d98be7a9c40319ee44b3",
+      "raw_path": "raw/BRIDGING_JAKARTA_PUSAT.html"
+    }
+  ],
+  "source_sections_verbatim": [
+    {
+      "heading": "Siaran pers",
+      "text": "JAKARTA – Direktorat Jenderal Imigrasi Kementerian Hukum dan HAM memberlakukan kebijakan Izin Tinggal Peralihan, yang juga dikenal sebagai Bridging Visa. Izin tinggal tersebut menjadi ‘jembatan’ antara izin tinggal sebelumnya untuk memperoleh izin tinggal baru.\n“Dengan begitu, warga negara asing pemegang Izin Tinggal Kunjungan yang diajukan melalui evisa.imigrasi.go.id dimungkinkan untuk memperoleh Izin Tinggal Terbatas tanpa harus keluar wilayah Indonesia. Begitu juga pemegang Izin Tinggal Terbatas dan Izin Tinggal Tetap yang sudah tidak bisa lagi diperpanjang, dapat memperoleh Izin Tinggal baru tanpa harus keluar wilayah Indonesia” tutur Direktur Jenderal Imigrasi, Silmy Karim.\nPelaksanaan Izin Tinggal Peralihan diatur dalam Peraturan Menteri Hukum dan HAM (Permenkumham) Nomor 11 Tahun 2024 yang disahkan pada 1 April 2024. Masa berlaku Izin Tinggal Peralihan yakni 60 hari dan hanya berlaku secara onshore, yakni bagi WNA yang sudah berada di wilayah Indonesia. Izin tinggal ini tidak berlaku lagi apabila WNA keluar wilayah Indonesia.\nIzin tinggal tersebut dapat digunakan oleh WNA yang akan mengajukan alih status ke Izin Tinggal Terbatas. Warga negara asing pemegang Izin Tinggal Peralihan tidak dikenakan overstay jika permohonan Izin Tinggal Peralihannya disetujui setelah masa berlaku izin tinggal sebelumnya berakhir.\nWarga negara asing yang ingin menggunakan Izin Tinggal Peralihan harus mengajukan permohonan melalui laman evisa.imigrasi.go.id dan melakukan pembayaran biaya keimigrasian paling lambat 3 (tiga) hari sebelum masa berlaku izin tinggal sebelumnya habis.\nSilmy menyebut, dengan Izin Tinggal Peralihan, WNA dapat menghemat waktu, tenaga dan biaya akomodasi yang seharusnya dikeluarkan apabila Orang Asing harus keluar dari wilayah Indonesia dalam rangka mengajukan permohonan dan menunggu persetujuan visa baru.\n“Pemberlakuan Izin Tinggal Peralihan merupakan upaya Direktorat Jenderal Imigrasi dalam menciptakan kepastian hukum bagi warga negara asing yang berada di wilayah Indonesia serta kemudahan dalam pelayanan,” pungkasnya."
+    },
+    {
+      "heading": "Persyaratan / Jakarta Pusat",
+      "text": "· Pendaftaran online pada laman https://evisa.imigrasi.go.id/ (harus menggunakan akun penjamin)\n· Surat permohonan perihal Bridging Stay Permit dari Sponsor (ditunjukan kepada kepala kanator Imigrasi Kelas I Non TPI Jakarta Pusat)\n· Surat Pernyataan dan Jaminan dari Sponsor (bermaterai Rp. 10.000,-)\n· KTP Sponsor\n· Paspor & Pas Photo WNA\n· Izin Tinggal terakhir WNA\n· Statement Letter (Form E02) bermaterai yang di ttd WNA\n*Jika sposnsor dikuasakan maka harus melampirkan Suarat Kuasa bermaterai Rp 10.000,- & KTP Peneria Kuasa",
+      "source_url": "https://jakartapusat.imigrasi.go.id/index.php/layanan/warga-negara-asing-wna/izin-tinggal-keimigrasian/bridging-staypermit"
+    }
+  ],
+  "regulation_verbatim": [
+    {
+      "instrument": "Permenkumham 11/2024 (amending Permenkumham 22/2023), angka 23",
+      "article": "Pasal 86A ayat (1)",
+      "text": "Izin Tinggal Kunjungan bagi Orang Asing dalam rangka peralihan Izin Tinggal Keimigrasian sebagaimana dimaksud dalam Pasal 80 ayat (3) huruf f dan ayat (4) huruf d diberikan untuk jangka waktu paling lama 60 (enam puluh) hari dan tidak dapat diperpanjang.",
+      "url": "https://peraturan.go.id/files/permenkumham-no-11-tahun-2024.pdf",
+      "retrieved_at": "2026-10-19",
+      "not_page_verbatim": true
+    }
+  ],
+  "owner_rulings": [
+    {
+      "date": "2026-10-19",
+      "topic": "extendable",
+      "ruling": "Not extendable: extendable=false, per Permenkumham 11/2024 Pasal 86A ayat (1) 'paling lama 60 (enam puluh) hari dan tidak dapat diperpanjang'.",
+      "history": "The page extraction's own extendable field stays null; the regulation text is kept in regulation_verbatim.",
+      "resolves_to_verify": [
+        {
+          "index": 0,
+          "item": "extendable: null + TO_VERIFY; no explicit extension rule in retrieved sources."
+        }
+      ]
+    }
+  ]
+}

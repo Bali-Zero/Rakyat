@@ -1,0 +1,1584 @@
+/**
+ * Generator for the interview-walk corpus consumed by the backend census test
+ * `apps/backend-rag/backend/tests/services/visa_engine/test_interview_walk_census.py`.
+ *
+ * The corpus is DATA, never hand-written: it is produced by driving the REAL
+ * interview state machine — `computeNextNode` from `flow.ts` (which itself
+ * calls `getCategoryQuestionIds` to expand each category branch) and the REAL
+ * `mapOracleFactsToApplicantFacts` from `fact-mapper.ts`. Every question a
+ * scenario does not OVERRIDE is answered with its FIRST option; typed
+ * questions get one fixed synthetic identity (see `answerFor`), notably 121
+ * stay-days, so a walk that overrides nothing depends only on the tree. What
+ * a scenario DOES override is the answer that product's rules read, and the
+ * override list is the walk's whole content — see the W-VO-E block below.
+ *
+ * The enumerated scenarios are the two-arm spine (offshore / onshore) crossed
+ * with the eleven `CATEGORY_KEYS`, plus the sub-branches that exist today
+ * (`invest` × 6 vehicles, `retirement` × 5 bases, `second_home` × 2 bases,
+ * and — because `getCategoryQuestionIds` now serves `familyQuestionIds`
+ * VERBATIM on both tiles — `family` AND `diaspora`, each × 7 relations × 2
+ * sponsor nationalities), plus the three `holds_stay_permit = yes` walks,
+ * plus 6 more `retirement` walks (the 5 offshore bases + the one onshore
+ * neutral walk) re-run at `RETIREMENT_AGE_64_BIRTH_DATE` — every other walk
+ * still applies at `YOUNG_APPLICANT_BIRTH_DATE`, since `birth_date` is a
+ * spine question no branch reads (see `answerFor`).
+ *
+ * The last block (W-VO-E, 2026-09-13) adds ten walks that answer something
+ * other than a question's FIRST option: a first option is an answer, not a
+ * neutral value, and eleven products with a SUPPORT rule in the signed pack
+ * were named by no walk purely because the default answer excluded them.
+ * Each of those ten names the pack rule it exists to exercise.
+ *
+ * Diaspora is crossed rather than sampled once because its wire facts are
+ * NOT a copy of the family arm's: `mapDisclosureFlags` adds
+ * `ACTIVITY_BOUNDARY` on `category === "diaspora"` alone, so the two tiles
+ * can reach different outcomes from the same relation. A tile that shares a
+ * branch still needs its own walks.
+ *
+ * Regenerate with:
+ *
+ *     npm run visa-oracle:walk-corpus -w apps/mouth
+ *
+ * A PR that changes the interview tree (a new question, a new branch, a
+ * reordered spine) MUST regenerate the corpus in that same PR and update
+ * `EXPECTED_OUTCOME` / `WALK_DEAD_END_ALLOWLIST` / the disclosure-flag tables
+ * in the census test to match. `walk-corpus-determinism.test.ts` fails
+ * whenever the committed corpus and this generator's output disagree by a
+ * single byte.
+ *
+ * A fixture carries BOTH halves of the wire request: the mapped facts
+ * (`overrides`) and the disclosure flags the same walk raises
+ * (`disclosed_review_flags`, omitted when empty — see `WalkFixture`). The
+ * flags half was added 2026-09-13 because the census could not see the layer
+ * that produces human review at all: it reported 0 HUMAN_REVIEW_REQUIRED over
+ * a corpus whose flags rewrite 8 walks.
+ */
+
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { format } from "prettier";
+
+import {
+  CATEGORY_KEYS,
+  QUESTIONS,
+  type OracleFacts,
+} from "../../src/app/(visa-oracle)/visa-oracle/_lib/tree";
+import {
+  channelConflictsWithOnshoreIntent,
+  computeNextNode,
+  type OracleNode,
+} from "../../src/app/(visa-oracle)/visa-oracle/_lib/flow";
+import {
+  mapOracleFactsToApplicantFacts,
+  type DisclosedReviewFlagWire,
+} from "../../src/app/(visa-oracle)/visa-oracle/_lib/fact-mapper";
+
+/**
+ * Frozen interview clock. NOT the wall clock: `computeNextNode` compares
+ * `permit_expiry` against it to decide the expired/current permit arm, so a
+ * moving clock would silently re-shape two of the 43 walks.
+ */
+export const CORPUS_TODAY = new Date("2026-09-06T00:00:00Z");
+
+/** Fixed synthetic assessment id — the mapper needs one and never emits it. */
+const ASSESSMENT_ID = "x";
+
+/**
+ * The synthetic identity's birth date for every walk except the age-64
+ * retirement variants below: 25 on `CORPUS_TODAY`, comfortably clear of
+ * every age-gated rule in the pack.
+ */
+const YOUNG_APPLICANT_BIRTH_DATE = "2000-11-11";
+
+/**
+ * Birth date for the age-64 retirement walks. `_derive_age_years`
+ * (`fact_registry.py`) is birthday-inclusive against `effective_at`; both
+ * `CORPUS_TODAY` and the highest signed pack's `signed_at` land on
+ * 2026-09-06, so this clears the `hf.e33e.age-below-55` /
+ * `hf.e33f.age-below-55` floor with margin while staying deliberately OUTSIDE
+ * `el.e33e.age-55-59-disputed-band` (55-59) — that band carries its own
+ * reason code and its own legal claim, and deserves a walk of its own rather
+ * than a silent absorption into this one.
+ */
+const RETIREMENT_AGE_64_BIRTH_DATE = "1961-11-11";
+
+/**
+ * Birth date for the ONE minor walk (W-VO-E): 13 on `CORPUS_TODAY`, well
+ * inside `el.e31e-child-itas-support`'s `derived.age_years < 18` gate and
+ * far from its edge, so a future birthday-inclusive change to
+ * `_derive_age_years` cannot flip this walk by a day.
+ */
+const MINOR_APPLICANT_BIRTH_DATE = "2012-11-11";
+
+/** Runaway guard: no real walk is anywhere near this long. */
+const MAX_STEPS = 200;
+
+export interface WalkFixture {
+  /** Human-readable walk path, e.g. `offshore/family/SPOUSE/spNat=IT`. */
+  label: string;
+  /** Question ids in the order `computeNextNode` asked them. */
+  asked: string[];
+  /** The exact wire facts this walk produced, straight from the mapper. */
+  overrides: Record<string, unknown>;
+  /**
+   * The disclosure flags THIS walk raises, straight from
+   * `mapDisclosedReviewFlags` — the other half of the wire request the browser
+   * actually sends, and until now the half the corpus threw away. A fixture
+   * carrying facts only is evaluated with `disclosed_review_flags = ()`, so
+   * `evaluate_path.py::_apply_disclosed_review_flags` — monotone, and
+   * unconditional for any decision the engine actually produces — was
+   * invisible to the census: it reported 0 HUMAN_REVIEW_REQUIRED for a funnel
+   * that produces it.
+   *
+   * OMITTED when the walk raises no flag, and that absence is the empty tuple,
+   * not an unknown: it mirrors `api_models.py::VisaOracleEvaluateRequest`,
+   * whose own `disclosed_review_flags` field defaults to `()` so a request
+   * without the key stays wire-compatible. Two guards keep the absence honest
+   * rather than silent — `walk-corpus-determinism.test.ts` binds every
+   * committed byte to this generator's output, and the census test pins the
+   * EXACT set of flag-carrying walks (`EXPECTED_DISCLOSED_REVIEW_FLAGS`), so a
+   * flag that appears, disappears or changes name goes red on both sides.
+   */
+  disclosed_review_flags?: DisclosedReviewFlagWire[];
+}
+
+interface Scenario {
+  label: string;
+  overrides: Record<string, string>;
+}
+
+/**
+ * The single-shot version of `answerFor` below: overrides win, otherwise a
+ * typed question gets its fixed synthetic value and every other question
+ * gets its FIRST option. Never consults `facts` — that check lives in
+ * `answerFor` itself, so this stays the plain "what would this driver
+ * normally say" computation for every question kind, `application_channel`
+ * included.
+ */
+function ordinaryAnswerFor(
+  id: string,
+  overrides: Record<string, string>,
+): string {
+  if (overrides[id] !== undefined) return overrides[id];
+  const question = QUESTIONS[id];
+  if (!question) throw new Error(`unknown question ${id}`);
+  if (question.kind === "date") {
+    return id === "birth_date" ? YOUNG_APPLICANT_BIRTH_DATE : "2026-12-31";
+  }
+  if (question.kind === "number") {
+    if (id === "overstay_days") return "0";
+    if (id === "stay_days") return "121";
+    // E28A own shareholding: the rule's own bound (IDR 10,000,000,000), so a
+    // walk that reaches the question qualifies unless it says otherwise; the
+    // two boundary witnesses override it.
+    if (id === "investment_own_shareholding_idr") return "10000000000";
+    return "9900000019";
+  }
+  if (question.kind === "country-codes") return "IT";
+  if (question.kind === "status-code") return "E31A";
+  if (question.kind === "review-gate") return "none";
+  return question.options[0].key;
+}
+
+/**
+ * The answer this driver gives to `id`. Scenario overrides win; otherwise a
+ * typed question gets its fixed synthetic value and every other question gets
+ * its FIRST option — see `ordinaryAnswerFor`. `facts` is OPTIONAL (defaults
+ * to `{}`) so `flow.test.ts:1934`'s existing two-argument call stays
+ * byte-identical: with no facts, `channelConflictsWithOnshoreIntent` always
+ * returns `false` (its own guard clause — `wantsOnshoreConversion ===
+ * undefined`), so the branch below never fires.
+ *
+ * For `application_channel` ONLY (Slice B5-1, mirrors `answersFor` in
+ * `enumerate-interview-space.ts` and both `flow.ts` reducer call sites,
+ * `:1317`/`:327`): if the ordinary answer conflicts with `facts.
+ * wants_onshore_conversion` — the SAME guard `flowReducer` applies before
+ * recording an `ANSWER` — this returns the first declared option the live
+ * interview WOULD accept instead, exactly as an applicant steered off a
+ * blocked choice would end up picking something else. `runWalk` passes its
+ * own accumulating `facts`, so by the time `application_channel` is asked,
+ * `facts.wants_onshore_conversion` already holds whatever THIS walk
+ * actually answered for it, never a stale default.
+ */
+export function answerFor(
+  id: string,
+  overrides: Record<string, string>,
+  facts: Record<string, string> = {},
+): string {
+  const ordinary = ordinaryAnswerFor(id, overrides);
+  if (
+    id !== "application_channel" ||
+    !channelConflictsWithOnshoreIntent(facts.wants_onshore_conversion, ordinary)
+  ) {
+    return ordinary;
+  }
+  const question = QUESTIONS[id];
+  const accepted = question.options.find(
+    (option) =>
+      !channelConflictsWithOnshoreIntent(
+        facts.wants_onshore_conversion,
+        option.key,
+      ),
+  );
+  if (!accepted) {
+    throw new Error(
+      `answerFor: no accepted application_channel option for ` +
+        `wants_onshore_conversion=${facts.wants_onshore_conversion}`,
+    );
+  }
+  return accepted.key;
+}
+
+/** Drive one walk from the framing node to whatever terminal node it reaches. */
+export function runWalk(overrides: Record<string, string>): {
+  asked: string[];
+  facts: OracleFacts;
+} {
+  const facts: OracleFacts = {};
+  const asked: string[] = [];
+  let node: OracleNode = { kind: "framing" };
+  for (let step = 0; step < MAX_STEPS; step += 1) {
+    node = computeNextNode(node, facts, CORPUS_TODAY);
+    if (node.kind !== "question") break;
+    asked.push(node.questionId);
+    facts[node.questionId] = answerFor(node.questionId, overrides, facts);
+  }
+  return { asked, facts };
+}
+
+/**
+ * Every distinct walk through the tree AS IT IS TODAY. Adding a branch to
+ * `tree.ts` / `getCategoryQuestionIds` means adding it here too — the corpus
+ * is only as complete as this enumeration.
+ */
+export function enumerateScenarios(): Scenario[] {
+  const scenarios: Scenario[] = [];
+
+  const INVESTMENT_VEHICLES = [
+    "pt_pma",
+    "property",
+    "bank_deposit",
+    "merit",
+    "family",
+    "capital_market",
+    "undecided",
+  ] as const;
+  const RETIREMENT_BASES = [
+    "bank_deposit",
+    "property",
+    "passive_income",
+    "family_sponsor",
+    "undecided",
+  ] as const;
+  // `second_home` offers exactly the two bases E33 has support rules for
+  // (`el.e33.deposit-basis`, `el.e33.property-basis`) — see the
+  // `secondhome_basis` question in tree.ts.
+  const SECOND_HOME_BASES = ["bank_deposit", "property"] as const;
+  const FAMILY_RELATIONS = [
+    "SPOUSE",
+    "CHILD",
+    "PARENT",
+    "SIBLING",
+    "DEPENDENT",
+    // STEPCHILD's option row landed in tree.ts on 2026-09-06; the branch in
+    // `getCategoryQuestionIds` (its two evidence questions) had shipped in
+    // 2026-08 already, so until now this relation was enumerable here only
+    // in theory — the interview could never reach it.
+    "STEPCHILD",
+    "OTHER",
+  ] as const;
+  const SPONSOR_NATIONALITIES = ["IT", "ID"] as const;
+
+  for (const category of CATEGORY_KEYS) {
+    const base = {
+      in_indonesia: "no",
+      holds_stay_permit: "no",
+      category,
+    };
+    if (category === "invest") {
+      for (const vehicle of INVESTMENT_VEHICLES) {
+        scenarios.push({
+          label: `offshore/${category}/${vehicle}`,
+          overrides: { ...base, investment_vehicle: vehicle },
+        });
+      }
+    } else if (category === "retirement") {
+      for (const basis of RETIREMENT_BASES) {
+        scenarios.push({
+          label: `offshore/${category}/${basis}`,
+          overrides: { ...base, retirement_basis: basis },
+        });
+      }
+      // Age dimension (owner mandate, 2026-09-07): the same 5 bases, replayed
+      // at RETIREMENT_AGE_64_BIRTH_DATE. `AGE_BELOW_55` excluded E33E/E33F on
+      // every walk above regardless of basis, so those 5 never exercised
+      // either product's actual eligibility rule — E33E and E33F were never
+      // exercised at an age that clears the hard filter.
+      for (const basis of RETIREMENT_BASES) {
+        scenarios.push({
+          label: `offshore/${category}/${basis}/age64`,
+          overrides: {
+            ...base,
+            retirement_basis: basis,
+            birth_date: RETIREMENT_AGE_64_BIRTH_DATE,
+          },
+        });
+      }
+    } else if (category === "second_home") {
+      for (const basis of SECOND_HOME_BASES) {
+        scenarios.push({
+          label: `offshore/${category}/${basis}`,
+          overrides: { ...base, secondhome_basis: basis },
+        });
+      }
+    } else if (category === "family" || category === "diaspora") {
+      for (const relation of FAMILY_RELATIONS) {
+        for (const nationality of SPONSOR_NATIONALITIES) {
+          scenarios.push({
+            label: `offshore/${category}/${relation}/spNat=${nationality}`,
+            overrides: {
+              ...base,
+              family_relation: relation,
+              family_sponsor_nationalities: nationality,
+            },
+          });
+        }
+      }
+    } else {
+      scenarios.push({ label: `offshore/${category}`, overrides: base });
+    }
+  }
+
+  // Onshore arm: one neutral walk per category.
+  for (const category of CATEGORY_KEYS) {
+    scenarios.push({
+      label: `onshore/${category}`,
+      overrides: {
+        in_indonesia: "yes",
+        holds_stay_permit: "no",
+        category,
+      },
+    });
+    // Age dimension (owner mandate, 2026-09-07): the onshore retirement walk
+    // gets its own age-64 sibling too, same reasoning as the offshore loop
+    // above.
+    if (category === "retirement") {
+      scenarios.push({
+        label: `onshore/${category}/age64`,
+        overrides: {
+          in_indonesia: "yes",
+          holds_stay_permit: "no",
+          category,
+          birth_date: RETIREMENT_AGE_64_BIRTH_DATE,
+        },
+      });
+    }
+  }
+
+  // The three walks that already hold a stay permit: expired vs current,
+  // onshore vs offshore.
+  scenarios.push({
+    label: "onshore/holdsPermit/expired/tourism",
+    overrides: {
+      in_indonesia: "yes",
+      holds_stay_permit: "yes",
+      permit_expiry: "2026-01-01",
+      category: "tourism",
+    },
+  });
+  scenarios.push({
+    label: "onshore/holdsPermit/current/tourism",
+    overrides: {
+      in_indonesia: "yes",
+      holds_stay_permit: "yes",
+      permit_expiry: "2027-01-01",
+      category: "tourism",
+    },
+  });
+  scenarios.push({
+    label: "offshore/holdsPermit/current/tourism",
+    overrides: {
+      in_indonesia: "no",
+      holds_stay_permit: "yes",
+      permit_expiry: "2027-01-01",
+      category: "tourism",
+    },
+  });
+
+  // D3-3/D3-4 (PR-D3, owner ruling SHWEB-20260911): a walk per new branch
+  // (spec §3), covering the gate conditions half-1 (D3-1/D3-2) owed and the
+  // two new questions this PR adds.
+  const base = { in_indonesia: "no", holds_stay_permit: "no" } as const;
+
+  // C1: half-1's `invest` re-route, below the E33 threshold (walks 2/4,
+  // 23-PR-D3-SPEC §walk-list). Above-threshold is already the corpus's
+  // existing default for `offshore/invest/property`/`bank_deposit`.
+  // `birth_date` overridden past 55 on BOTH (owner escalation, 2026-09-13
+  // gate finding): at the corpus-wide default age 25, `hf.e33e.age-below-55`
+  // fires independently of the threshold this walk exists to prove, masking
+  // it behind an unrelated AGE_BELOW_55 reason — these two walks are the
+  // ONLY thing that tests the threshold path itself, so they must not be
+  // confounded by it. `RETIREMENT_AGE_64_BIRTH_DATE` is a spine question no
+  // branch reads, same reasoning as the retirement age-64 walks below.
+  scenarios.push({
+    label: "offshore/invest/property/below_threshold",
+    overrides: {
+      ...base,
+      category: "invest",
+      investment_vehicle: "property",
+      secondhome_property_value_usd: "500000",
+      birth_date: RETIREMENT_AGE_64_BIRTH_DATE,
+    },
+  });
+  scenarios.push({
+    label: "offshore/invest/bank_deposit/below_threshold",
+    overrides: {
+      ...base,
+      category: "invest",
+      investment_vehicle: "bank_deposit",
+      secondhome_deposit_usd: "50000",
+      birth_date: RETIREMENT_AGE_64_BIRTH_DATE,
+    },
+  });
+
+  // C1: half-1's declared-paid-activity route (D3-2), the two negative facts
+  // and the negative branch C2 says should deliver C6.
+  scenarios.push({
+    label: "offshore/other/paid/employer_no",
+    overrides: {
+      ...base,
+      category: "other",
+      other_paid_activity: "yes",
+      work_payer: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/other/paid/sponsor_unsure",
+    overrides: {
+      ...base,
+      category: "other",
+      other_paid_activity: "yes",
+      work_payer: "yes",
+      work_sponsor_confirmed: "unsure",
+    },
+  });
+  // C2: the `paid = no` walk that must actually yield C6 (13 → 14 distinct
+  // products) — `offshore/other`'s own default now answers `yes` (D3-2), so
+  // this is a NEW walk, not a rewording of the existing one.
+  scenarios.push({
+    label: "offshore/other/no_paid_activity",
+    overrides: { ...base, category: "other", other_paid_activity: "no" },
+  });
+
+  // D3-3: retirement branches that used to dead-end. `property`'s negative
+  // sponsor answer (PR-M: the penjamin wording, `retirement_penjamin_confirmed`;
+  // the age64/penjamin=yes walk is already the corpus's
+  // regenerated default for `offshore/retirement/property/age64`).
+  scenarios.push({
+    label: "offshore/retirement/property/age64/sponsor_no",
+    overrides: {
+      ...base,
+      category: "retirement",
+      retirement_basis: "property",
+      birth_date: RETIREMENT_AGE_64_BIRTH_DATE,
+      retirement_penjamin_confirmed: "no",
+    },
+  });
+  // `bank_deposit` was the funnel census's LARGEST dead end (30 production
+  // walks) — below both the deposit and passive-income thresholds, cured
+  // only by the family-sponsor fallback this PR adds.
+  scenarios.push({
+    label: "offshore/retirement/bank_deposit/age64/below_threshold",
+    overrides: {
+      ...base,
+      category: "retirement",
+      retirement_basis: "bank_deposit",
+      birth_date: RETIREMENT_AGE_64_BIRTH_DATE,
+      secondhome_deposit_usd: "1000",
+      // Above el.e33f.retirement's own USD 3,000 floor (fact-mapper.ts
+      // comment on ACTIVITY_BOUNDARY_DECIDABLE_ANSWERS.retirement_basis) —
+      // deliberately NOT below it, so this walk proves the E33F fallback
+      // cures the deposit-below-threshold dead end rather than merely
+      // failing both products.
+      secondhome_passive_income_usd: "5000",
+      retirement_penjamin_confirmed: "yes",
+    },
+  });
+  // `undecided` becomes a real question. `deposit_or_income` is already the
+  // corpus's regenerated default for `offshore/retirement/undecided/age64`
+  // (first option); these are its other two answers.
+  scenarios.push({
+    label: "offshore/retirement/undecided/age64/family_sponsor",
+    overrides: {
+      ...base,
+      category: "retirement",
+      retirement_basis: "undecided",
+      birth_date: RETIREMENT_AGE_64_BIRTH_DATE,
+      retirement_undecided_basis: "family_sponsor",
+    },
+  });
+  scenarios.push({
+    label: "offshore/retirement/undecided/age64/still_unsure",
+    overrides: {
+      ...base,
+      category: "retirement",
+      retirement_basis: "undecided",
+      birth_date: RETIREMENT_AGE_64_BIRTH_DATE,
+      retirement_undecided_basis: "still_unsure",
+    },
+  });
+
+  // PR-11 (Visa Oracle retirement audit, 2026-10-11): the walks above leave
+  // every money answer at the corpus-wide synthetic default (USD
+  // 1,000,000,000 deposit, state bank and own name "yes", income
+  // 1,000,000,000), so the retirement outcomes sit far from every bound the
+  // pack actually draws: `el.e33e.retirement` needs deposit >= 50,000 AND a
+  // state bank AND the applicant's own name AND income >= 3,000, and
+  // `el.e33f.retirement` needs income >= 3,000 alone. One row per side of each
+  // bound, all at RETIREMENT_AGE_64_BIRTH_DATE (a year-wide margin from the
+  // 55 floor, which the census clock moves with every pack signature).
+  const retirementAge64 = (
+    label: string,
+    answers: Record<string, string>,
+  ): void => {
+    scenarios.push({
+      label: `offshore/retirement/${label}`,
+      overrides: {
+        ...base,
+        category: "retirement",
+        birth_date: RETIREMENT_AGE_64_BIRTH_DATE,
+        ...answers,
+      },
+    });
+  };
+  const DEPOSIT_PASSING = {
+    retirement_basis: "bank_deposit",
+    secondhome_deposit_usd: "100000",
+    secondhome_state_bank: "yes",
+    secondhome_own_name: "yes",
+    secondhome_passive_income_usd: "5000",
+    retirement_penjamin_confirmed: "yes",
+  };
+  retirementAge64("bank_deposit/age64/deposit_passing", DEPOSIT_PASSING);
+  retirementAge64("bank_deposit/age64/deposit_49999", {
+    ...DEPOSIT_PASSING,
+    secondhome_deposit_usd: "49999",
+  });
+  retirementAge64("bank_deposit/age64/deposit_50000", {
+    ...DEPOSIT_PASSING,
+    secondhome_deposit_usd: "50000",
+  });
+  retirementAge64("bank_deposit/age64/state_bank_no", {
+    ...DEPOSIT_PASSING,
+    secondhome_state_bank: "no",
+  });
+  retirementAge64("bank_deposit/age64/own_name_no", {
+    ...DEPOSIT_PASSING,
+    secondhome_own_name: "no",
+  });
+  retirementAge64("bank_deposit/age64/income_3000", {
+    ...DEPOSIT_PASSING,
+    secondhome_passive_income_usd: "3000",
+  });
+  retirementAge64("bank_deposit/age64/income_2999", {
+    ...DEPOSIT_PASSING,
+    secondhome_passive_income_usd: "2999",
+  });
+  retirementAge64("passive_income/age64/income_3000", {
+    retirement_basis: "passive_income",
+    secondhome_passive_income_usd: "3000",
+    retirement_penjamin_confirmed: "yes",
+  });
+  retirementAge64("passive_income/age64/income_2999", {
+    retirement_basis: "passive_income",
+    secondhome_passive_income_usd: "2999",
+    retirement_penjamin_confirmed: "yes",
+  });
+  retirementAge64("property/age64/income_3000", {
+    retirement_basis: "property",
+    secondhome_property_value_usd: "500000",
+    secondhome_passive_income_usd: "3000",
+    retirement_penjamin_confirmed: "yes",
+  });
+  retirementAge64("family_sponsor/age64/income_3000", {
+    retirement_basis: "family_sponsor",
+    secondhome_passive_income_usd: "3000",
+    retirement_penjamin_confirmed: "yes",
+  });
+  retirementAge64("family_sponsor/age64/income_2999", {
+    retirement_basis: "family_sponsor",
+    secondhome_passive_income_usd: "2999",
+    retirement_penjamin_confirmed: "yes",
+  });
+  retirementAge64("undecided/age64/deposit_or_income_passing", {
+    retirement_basis: "undecided",
+    retirement_undecided_basis: "deposit_or_income",
+    secondhome_deposit_usd: "100000",
+    secondhome_state_bank: "yes",
+    secondhome_own_name: "yes",
+    secondhome_passive_income_usd: "5000",
+    retirement_penjamin_confirmed: "yes",
+  });
+
+  // D3-4's two STEPCHILD sponsor-permit walks (`sponsor_permit_no`/
+  // `sponsor_permit_unsure`) were REMOVED (owner ruling SHWEB-20260911,
+  // 2026-09-13, fresh grader review) along with the hold and the question
+  // they exercised (`family_stepchild_sponsor_permit_confirmed` — no pack
+  // requirement for the sponsor's own permit exists for E31D). They would
+  // now be byte-identical to the base STEPCHILD walk below.
+
+  // PR-D4d: seq-21 (unsigned — see the PR body's activation caveat) gives
+  // E33A/E33B/E33C/E23U/E23V their first SUPPORT/HARD_FILTER rules on
+  // `sponsor.type`, and every one of them was previously exercised by no
+  // walk at all: the corpus's only reaching-tile walks answer this fact's
+  // FIRST option, `NONE` (`offshore/work` unchanged above). One walk per
+  // product with the value that product's rule requires (evidence brief
+  // table): `el.e33a`/`el.e33b`/`el.e23v` share an IDENTICAL condition
+  // (`intersects EMPLOYMENT AND sponsor.type eq GOVERNMENT`), so a single
+  // `work` walk answering GOVERNMENT exercises all three; `el.e23u` needs
+  // INDIVIDUAL instead (E23U is the diplomat's household assistant, not a
+  // `DIPLOMATIC` sponsor value — no such value exists); `el.e33c` needs
+  // INVESTMENT purpose, not EMPLOYMENT, so it is reached via `invest` with
+  // a non-Second-Home vehicle (`pt_pma`, the corpus's own first vehicle)
+  // instead of `work`.
+  scenarios.push({
+    label: "offshore/work/sponsor_government",
+    overrides: { ...base, category: "work", sponsor_category: "GOVERNMENT" },
+  });
+  scenarios.push({
+    label: "offshore/work/sponsor_individual",
+    overrides: { ...base, category: "work", sponsor_category: "INDIVIDUAL" },
+  });
+  scenarios.push({
+    label: "offshore/invest/pt_pma/sponsor_government",
+    overrides: {
+      ...base,
+      category: "invest",
+      investment_vehicle: "pt_pma",
+      sponsor_category: "GOVERNMENT",
+    },
+  });
+
+  // Work item 1 end to end: before this PR, `other_paid_activity === "yes"`
+  // never asked `sponsor_category` at all — `offshore/other/paid/
+  // employer_no` (added PR-D3) is the walk the PR-D4b pre-sign review named
+  // as the one that dead-ended on this exact gap (cured there by widening
+  // `on_unknown` to `NO_EFFECT`, not by adding a question). This walk
+  // answers GOVERNMENT down the branch work item 1 adds — the SECOND
+  // reachable path (besides `work`) into E33A/E33B/E23V — proving the new
+  // question is not just present but actually answerable end to end.
+  scenarios.push({
+    label: "offshore/other/paid/sponsor_government",
+    overrides: {
+      ...base,
+      category: "other",
+      other_paid_activity: "yes",
+      sponsor_category: "GOVERNMENT",
+    },
+  });
+
+  // Work item 2, third/fourth bullets. The honest-negative half (`NONE`
+  // giving a decisive non-hold result) is already proven by `offshore/work`
+  // above — the corpus's own unmodified default walk, sponsor_category's
+  // first option — so it is measured, not duplicated, in the PR body. This
+  // walk proves the other half: leaving the fact genuinely UNRESOLVED
+  // (`unsure` -> UNVERIFIED) on a reaching tile must be silence under
+  // seq-21's `on_unknown: NO_EFFECT` (the D4b cure), never a NEEDS_INPUT
+  // hold.
+  scenarios.push({
+    label: "offshore/work/sponsor_unsure",
+    overrides: { ...base, category: "work", sponsor_category: "unsure" },
+  });
+
+  // C6 regression walk (coordinator-authorised scope addition, 2026-09-13).
+  // PR-D4a changed `other_purpose = "transit"` to map to the TRANSIT
+  // purpose instead of OTHER. The corpus's only `other_purpose` walk,
+  // `offshore/other/no_paid_activity`, answers `transit` by default (first
+  // option) — `test_d4a_transit_purpose_positively_reaches_d1` now pins
+  // exactly that route to D1, so it must not be repurposed here — which
+  // means no walk any longer exercises `el.c6.social` (unchanged, still
+  // SUPPORTED on `intent.purposes ∩ OTHER`). `medical` is the next
+  // `other_purpose` option: no special-case mapping anywhere in
+  // fact-mapper.ts reads it (only `transit` does), so it falls through to
+  // the plain OTHER purpose, and it is a natural, honest interview answer
+  // ("here for medical treatment, not employed"). `other_paid_activity:
+  // "no"` is required too — the branch this PR's work item 1 changed does
+  // NOT touch this one (verified: `other_paid_activity === "yes"` is a
+  // disjoint arm from this walk's "no") — keeping the purpose OTHER (D3-2),
+  // which is what makes `el.c6.social` reachable at all.
+  scenarios.push({
+    label: "offshore/other/no_paid_activity/medical",
+    overrides: {
+      ...base,
+      category: "other",
+      other_paid_activity: "no",
+      other_purpose: "medical",
+    },
+  });
+
+  // PR-D4c-2 (owner ruling SHWEB-20260911): the currency-bound
+  // `investment.investment_amount_usd` fact, asked only on the
+  // `merit`/`family`/`undecided` investment-vehicle branches — `pt_pma` is
+  // deliberately untouched (E28A's IDR-bound rules, see tree.ts's
+  // `investment_currency` doc comment). The three unmodified vehicle walks
+  // above (`offshore/invest/merit`/`family`/`undecided`) now also exercise
+  // the IDR side for free: `investment_currency` is the branch's new first
+  // question, its first OPTION is `idr` (tree.ts), so `answerFor`'s
+  // untouched default takes it, then answers the now-reachable
+  // `investment_capital_idr` with the generic number default. These two new
+  // walks cover the other two cells this PR must prove: an explicit USD
+  // answer, and the explicit "I can't say yet" — the one measured (PR body)
+  // to cost zero review holds, since its value is the literal
+  // `still_unsure`, never the `"unsure"` string
+  // `mapDisclosedReviewFlags`'s NOT_CERTAIN scan matches.
+  scenarios.push({
+    label: "offshore/invest/merit/currency_usd",
+    overrides: {
+      ...base,
+      category: "invest",
+      investment_vehicle: "merit",
+      investment_currency: "usd",
+    },
+  });
+  scenarios.push({
+    label: "offshore/invest/undecided/currency_still_unsure",
+    overrides: {
+      ...base,
+      category: "invest",
+      investment_vehicle: "undecided",
+      investment_currency: "still_unsure",
+    },
+  });
+
+  // W-VO-E ("every product the engine knows can be reached by an
+  // interview"). Eleven products carried a SUPPORT rule in the highest
+  // signed pack and were named on ZERO walks, so nothing in the repository
+  // could tell a product the funnel cannot reach from one it simply never
+  // exercised. Measured 2026-09-13 on rulepack-prod-020.signed.json: none
+  // of the eleven needed a new question — every fact their rules read is
+  // already collected by a branch the applicant can walk today. What was
+  // missing is the corpus (and the guard that now binds it,
+  // `test_every_support_bearing_product_is_named_by_some_walk`). Each walk
+  // below is one ordinary applicant, and names the pack rule it exercises.
+
+  // `el.a1.tourism`: TOURISM/TRANSIT, a visa-free nationality, 30 days or
+  // fewer. The corpus-wide defaults (IT, 121 days) clear neither bound, so
+  // the visa-free arm had never been walked. `el.b1.tourism` (60 days,
+  // wider nationality list) fires on the same answers.
+  scenarios.push({
+    label: "offshore/tourism/visa_free_30d",
+    overrides: {
+      ...base,
+      category: "tourism",
+      nationalities: "SG",
+      stay_days: "21",
+    },
+  });
+  // `el.b1.tourism` alone: the default nationality with a stay inside the
+  // 60-day Visa-on-Arrival bound but outside A1's 30-day one.
+  scenarios.push({
+    label: "offshore/tourism/voa_60d",
+    overrides: { ...base, category: "tourism", stay_days: "45" },
+  });
+  // `el.d1-multi-entry-support`: the `entry_pattern` question has been on
+  // the tourism branch all along; every walk answered its FIRST option
+  // (SINGLE), so the multiple-entry product was unreachable by default
+  // alone. This is the applicant-driven twin of
+  // `test_d4a_transit_purpose_positively_reaches_d1`, which proves the same
+  // gate by patching the wire fact instead of answering the question.
+  scenarios.push({
+    label: "offshore/tourism/multiple_entry",
+    overrides: { ...base, category: "tourism", entry_pattern: "MULTIPLE" },
+  });
+  // `el.d2-multi-entry-support`: business meetings, 180 days or fewer. The
+  // plain `offshore/business` walk answers `work_indonesia_compensation`'s
+  // first option (`yes`), and `hf.*` then excludes every product on
+  // BUSINESS_LOCAL_COMPENSATION_NOT_ALLOWED — a correct answer to a
+  // different question. A business visitor paid from abroad is the normal
+  // case and had no walk.
+  scenarios.push({
+    label: "offshore/business/no_local_compensation",
+    overrides: {
+      ...base,
+      category: "business",
+      work_indonesia_compensation: "no",
+    },
+  });
+  // `el.d12-*`: INVESTMENT, 360 days or fewer, and NOT converting status
+  // onshore — `hf.d12-onshore-conversion-excluded` is the gate the
+  // `wants_onshore_conversion` question was added for (flow.ts, 2026-09-06),
+  // and the corpus only ever answered its first option (`yes`), which
+  // excludes D12 by regulation.
+  scenarios.push({
+    label: "offshore/invest/pt_pma/offshore_application",
+    overrides: {
+      ...base,
+      category: "invest",
+      investment_vehicle: "pt_pma",
+      wants_onshore_conversion: "no",
+    },
+  });
+  // `el.e28a.investment`: the same investor, with the capital figures the
+  // rule actually reads (IDR 10,000,000,000 investment plan and IDR
+  // 2,500,000,000 paid-up — the rule's own bounds, not a figure this file
+  // invents). `answerFor`'s generic numeric default is IDR 1,000,000,000,
+  // under BOTH bounds (a tenth of the first, and under half the second), so
+  // the Investor KITAS was unreachable through the corpus while being
+  // perfectly reachable through the interview.
+  scenarios.push({
+    label: "offshore/invest/pt_pma/full_capital",
+    overrides: {
+      ...base,
+      category: "invest",
+      investment_vehicle: "pt_pma",
+      wants_onshore_conversion: "no",
+      investment_capital_idr: "10000000000",
+      investment_paid_up_capital_idr: "9900000026",
+    },
+  });
+  // E28A own-shareholding step B (owner ruling 2026-10-15): boundary witnesses
+  // for the applicant's own shareholding, IDR 10,000,000,000 (the value the
+  // seq-31 pack will gate on) and one rupiah under it. Every signed pack up to
+  // seq-30 ignores the fact, so both answer like `full_capital`.
+  for (const [suffix, value] of [
+    ["9999999999", "9999999999"],
+    ["10000000000", "10000000000"],
+  ] as const) {
+    scenarios.push({
+      label: `offshore/invest/pt_pma/own_shareholding_${suffix}`,
+      overrides: {
+        ...base,
+        category: "invest",
+        investment_vehicle: "pt_pma",
+        wants_onshore_conversion: "no",
+        investment_capital_idr: "10000000000",
+        investment_paid_up_capital_idr: "9900000026",
+        investment_own_shareholding_idr: value,
+      },
+    });
+  }
+  // `el.e30e-student-support` / `el.e30f-student-support`: both read
+  // `sponsor.type`, and the study branch has asked `sponsor_category` all
+  // along — the corpus just never answered anything but its first option
+  // (`NONE`). EDUCATION reaches both; INDIVIDUAL would reach E30E only.
+  scenarios.push({
+    label: "offshore/study/education_sponsor",
+    overrides: { ...base, category: "study", sponsor_category: "EDUCATION" },
+  });
+  // `el.e30b-izin-belajar`: E30B shares the student SUPPORT rule with
+  // E30/E30A but carries its own `hf.e30b-level-band` HARD FILTER, which
+  // (seq-32) excludes every study level outside UNDERGRADUATE/POSTGRADUATE.
+  // `study_level`'s first option is PRIMARY, so E30B was excluded on every
+  // default study walk and needs its own walk.
+  scenarios.push({
+    label: "offshore/study/undergraduate/education_sponsor",
+    overrides: {
+      ...base,
+      category: "study",
+      sponsor_category: "EDUCATION",
+      study_level: "UNDERGRADUATE",
+    },
+  });
+  // VOCATIONAL stays with the generic E30 on purpose (seq-32: the E30 Guide
+  // offers no vocational product, so `hf.e30-generic-yields-to-level-band`
+  // does not list it and `hf.e30b-level-band` no longer admits it). Before
+  // seq-32 this walk was the one that reached E30B.
+  scenarios.push({
+    label: "offshore/study/vocational/education_sponsor",
+    overrides: {
+      ...base,
+      category: "study",
+      sponsor_category: "EDUCATION",
+      study_level: "VOCATIONAL",
+    },
+  });
+  // `el.e33g.remote-work`: the digital-nomad product. Its three negative
+  // facts (no Indonesian employer, no Indonesian clients, no
+  // Indonesia-source pay) are asked by the `remote` branch, and `hf.e33g.*`
+  // also excludes local company ownership. `remote_clients`'s first option
+  // is already `foreign`, but the other three questions default to `yes`
+  // and each one alone excludes the product — so the highest-demand public
+  // product was named by no walk at all.
+  scenarios.push({
+    label: "offshore/remote/foreign_only",
+    overrides: {
+      ...base,
+      category: "remote",
+      remote_compensation: "no",
+      work_payer: "no",
+      remote_pt_pma: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/remote/foreign_only/income_59999",
+    overrides: {
+      ...base,
+      category: "remote",
+      remote_compensation: "no",
+      work_payer: "no",
+      remote_annual_income_usd: "59999",
+      remote_pt_pma: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/remote/foreign_only/income_60000",
+    overrides: {
+      ...base,
+      category: "remote",
+      remote_compensation: "no",
+      work_payer: "no",
+      remote_annual_income_usd: "60000",
+      remote_pt_pma: "no",
+    },
+  });
+  // `el.e31e-child-itas-support`: a minor joining a parent who holds a
+  // stay permit. Every other family/diaspora walk uses the corpus's
+  // 25-year-old identity, so the `derived.age_years < 18` gate could never
+  // clear. This walk does not override `guardian_consent`, so `answerFor`
+  // gives it the new question's FIRST option (`"yes"`) — under A7-B/A7-M's
+  // truth table that leaves `_apply_minor_privacy_hold`'s hold arm UNTOUCHED
+  // (Slice A7-B narrowed the unconditional Privacy Policy V1 hold to fire
+  // only on a declared or unknown guardian; `true` passes through). MEASURED
+  // engine outcome: SUPPORTED_CANDIDATES `["C1", "E31E"]` (never assume —
+  // see the census test's pin). The sibling walk below, which declares
+  // `guardian_consent: "no"`, is now the ONE in the corpus whose PUBLIC
+  // outcome is the guardian-privacy hold.
+  scenarios.push({
+    label: "offshore/family/PARENT/spNat=IT/minor",
+    overrides: {
+      ...base,
+      category: "family",
+      family_relation: "PARENT",
+      family_sponsor_nationalities: "IT",
+      birth_date: MINOR_APPLICANT_BIRTH_DATE,
+    },
+  });
+  // Slice A7-M: the same walk with a declared `guardian_consent: "no"` —
+  // same facts otherwise, so the ONLY thing that moves is the fact this PR
+  // adds. `_apply_minor_privacy_hold`'s narrowed hold arm fires:
+  // HUMAN_REVIEW_REQUIRED on `MINOR_GUARDIAN_PRIVACY_REVIEW` (measured;
+  // verified unchanged whether or not `holds_stay_permit` differs from the
+  // sibling walk above, since the adapter's guilt/innocence never reads it).
+  scenarios.push({
+    label: "offshore/family/PARENT/spNat=IT/minor/guardian=no",
+    overrides: {
+      ...base,
+      category: "family",
+      family_relation: "PARENT",
+      family_sponsor_nationalities: "IT",
+      birth_date: MINOR_APPLICANT_BIRTH_DATE,
+      guardian_consent: "no",
+    },
+  });
+  // seq-29 `hf.e31j-adult-excluded`: E31J is for a minor joining a sibling who holds a stay
+  // permit. The corpus's 25-year-old identity is an adult, so once the pack excludes adult
+  // siblings the two adult SIBLING walks stop naming E31J; this minor walk keeps the product
+  // reachable for the reachability guard. Guardian consent is left to `answerFor` (first
+  // option, "yes"), exactly as the PARENT minor walk above.
+  scenarios.push({
+    label: "offshore/family/SIBLING/spNat=IT/minor",
+    overrides: {
+      ...base,
+      category: "family",
+      family_relation: "SIBLING",
+      family_sponsor_nationalities: "IT",
+      birth_date: MINOR_APPLICANT_BIRTH_DATE,
+    },
+  });
+
+  // W-VO-Q (mission SAETTA-VO3): the ten seq-21 qualification questions.
+  // Their FIRST option is "yes", so the corpus's own default walks already
+  // answer them the way that names the product on the branches that ask
+  // them: `offshore/work` (NONE) reaches `el.e33b.government-collaboration`,
+  // `offshore/work/sponsor_government` reaches `el.e33a.government-
+  // invitation` AND `el.e23v.trade-office`, `offshore/work/sponsor_
+  // individual` reaches `el.e23u.diplomatic-household`, `offshore/invest/
+  // pt_pma/sponsor_government` reaches `el.e33c.world-figure-invitation`,
+  // and every INVESTMENT-purpose `invest` walk reaches `el.e28b/d/f.*`.
+  // The walks below are the ones a default cannot produce: one product per
+  // walk, where the shared defaults name several at once, and the honest
+  // "no" on each question, which must end on a decided outcome and never on
+  // the same question asked again.
+  scenarios.push({
+    label: "offshore/work/sponsor_government/invitation_only",
+    overrides: {
+      ...base,
+      category: "work",
+      sponsor_category: "GOVERNMENT",
+      sponsor_trade_office: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/work/sponsor_government/trade_office_only",
+    overrides: {
+      ...base,
+      category: "work",
+      sponsor_category: "GOVERNMENT",
+      sponsor_government_invitation: "no",
+    },
+  });
+  // E23V-DEFECT (seq-22): the same trade-office branch, but the applicant's
+  // employer is the foreign trade office itself — genuinely NOT an
+  // Indonesian entity, the fact `el.e23v.trade-office`'s own qualification
+  // (`sponsor.trade_office`) already establishes. `work_payer` is asked on
+  // every `work`-category walk regardless of `sponsor_category`
+  // (`FIXED_CATEGORY_QUESTIONS.work`), so this branch is reachable today; no
+  // existing walk answers it "no" here, which is exactly why
+  // `hf.employment-without-indonesian-sponsor` (fold_pack_seq21.py) sweeping
+  // E23V into its EXCLUDE list went unnoticed — see
+  // `fold_pack_seq22.py` for the cure.
+  scenarios.push({
+    label: "offshore/work/sponsor_government/trade_office_only/employer_no",
+    overrides: {
+      ...base,
+      category: "work",
+      sponsor_category: "GOVERNMENT",
+      sponsor_government_invitation: "no",
+      work_payer: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/work/sponsor_government/neither",
+    overrides: {
+      ...base,
+      category: "work",
+      sponsor_category: "GOVERNMENT",
+      sponsor_government_invitation: "no",
+      sponsor_trade_office: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/work/sponsor_individual/not_diplomatic",
+    overrides: {
+      ...base,
+      category: "work",
+      sponsor_category: "INDIVIDUAL",
+      sponsor_diplomatic_household: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/work/no_government_collaboration",
+    overrides: {
+      ...base,
+      category: "work",
+      sponsor_government_collaboration: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/invest/pt_pma/company_only",
+    overrides: {
+      ...base,
+      category: "invest",
+      investment_vehicle: "pt_pma",
+      investment_foreign_branch: "no",
+      investment_ikn_subsidiary: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/invest/pt_pma/foreign_branch_only",
+    overrides: {
+      ...base,
+      category: "invest",
+      investment_vehicle: "pt_pma",
+      investment_establishes_company: "no",
+      investment_capital_market_only: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/invest/pt_pma/ikn_subsidiary",
+    overrides: {
+      ...base,
+      category: "invest",
+      investment_vehicle: "pt_pma",
+      investment_foreign_branch: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/invest/capital_market/capital_market_only",
+    overrides: {
+      ...base,
+      category: "invest",
+      investment_vehicle: "capital_market",
+      investment_establishes_company: "no",
+      investment_foreign_branch: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/invest/pt_pma/below_published_threshold",
+    overrides: {
+      ...base,
+      category: "invest",
+      investment_vehicle: "pt_pma",
+      investment_meets_threshold: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/invest/pt_pma/no_route",
+    overrides: {
+      ...base,
+      category: "invest",
+      investment_vehicle: "pt_pma",
+      investment_establishes_company: "no",
+      investment_foreign_branch: "no",
+      investment_capital_market_only: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/invest/pt_pma/sponsor_government/not_world_figure",
+    overrides: {
+      ...base,
+      category: "invest",
+      investment_vehicle: "pt_pma",
+      sponsor_category: "GOVERNMENT",
+      sponsor_world_figure_invitation: "no",
+    },
+  });
+
+  // W-VO-Q item 7 (owner ruling 2026-09-14): the business visitor exploring
+  // whether to invest or open a business — INVESTMENT purpose, the one
+  // `el.d12-*` covers. The default walk answers the conversion question's
+  // first option (`yes`), which excludes D12 by regulation and asks the
+  // investor facts instead; the `offshore_application` walks are the
+  // explorer D12 exists for, with and without a sponsor (a "no" must still
+  // end on a product); the last is the explorer who converts onshore and
+  // answers "no" to every investor route, which must end on a named cause.
+  scenarios.push({
+    label: "offshore/business/exploring",
+    overrides: {
+      ...base,
+      category: "business",
+      business_activity: "exploring",
+    },
+  });
+  scenarios.push({
+    label: "offshore/business/exploring/offshore_application",
+    overrides: {
+      ...base,
+      category: "business",
+      business_activity: "exploring",
+      wants_onshore_conversion: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/business/exploring/offshore_application/sponsor_no",
+    overrides: {
+      ...base,
+      category: "business",
+      business_activity: "exploring",
+      business_sponsor_confirmed: "no",
+      wants_onshore_conversion: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/business/exploring/sponsor_no/no_route",
+    overrides: {
+      ...base,
+      category: "business",
+      business_activity: "exploring",
+      business_sponsor_confirmed: "no",
+      investment_pt_pma: "no",
+      investment_establishes_company: "no",
+      investment_foreign_branch: "no",
+      investment_capital_market_only: "no",
+    },
+  });
+
+  // A4 ("every DisclosedReviewFlag member is raised by at least one walk").
+  // Twelve of the fourteen enum members were raised by no corpus walk before
+  // this block: the eleven `REVIEW_GATE_ITEMS` mapped flags plus
+  // `MULTI_PURPOSE_TRIP` had never been disclosed, because `answerFor`
+  // answers `review_gate` with `"none"` unless a scenario overrides it
+  // (`:181`). `review_gate` is a comma-joined SET (`fact-mapper.ts:406`), so
+  // one walk can carry many items at once — three new walks close all
+  // twelve, not twelve new walks. The fourteenth member,
+  // `CONFLICTING_IMMIGRATION_STATUS`, is impossible from the OFFSHORE
+  // interview by construction (an offshore walk never asks `overstay_days`,
+  // so its `immigration.overstay_days` is `KNOWN 0`; the onshore overstay
+  // walks of PR-13 do answer it, and are measured, not assumed, to leave the
+  // flag unraised) and is covered instead by an allowlist row in the census,
+  // citing `test_evaluate_endpoint.py::test_condition_notice_order_is_canonical_not_request_order`
+  // and `::test_condition_notice_order_covers_the_three_new_flags`.
+  scenarios.push({
+    // The nine conditioning gate items in one walk: `CRIMINAL_RECORD` and
+    // `ACTIVITY_BOUNDARY` are HOLDING flags (they empty candidates), so they
+    // are excluded here to keep this walk `SUPPORTED_CANDIDATES` and let it
+    // exercise every non-holding condition code at once. Item order is the
+    // items sorted alphabetically by key — that is the exact string the
+    // browser persists (`QuestionScreen.tsx` `serializeReviewGateAnswer`),
+    // never `REVIEW_GATE_ITEMS` declaration order.
+    label: "offshore/tourism/disclosed_conditions",
+    overrides: {
+      ...base,
+      category: "tourism",
+      review_gate: [
+        "ambiguous_sponsor",
+        "blacklist",
+        "diplomatic_passport",
+        "health_flag",
+        "immigration_investigation",
+        "overstay",
+        "pep_or_sanctions",
+        "prior_refusal",
+        "source_of_funds_unclear",
+      ].join(","),
+    },
+  });
+  scenarios.push({
+    // `criminal_record` ALONE: it HOLDS and empties candidates
+    // (`HOLDING_DISCLOSED_FLAGS`, `evaluate_path.py:1031-1033`), so it cannot
+    // share a walk with the nine conditioning items above without hiding
+    // their condition codes behind the hold. A `HUMAN_REVIEW_REQUIRED`
+    // fixture by design, not a regression.
+    label: "offshore/tourism/disclosed_criminal",
+    overrides: { ...base, category: "tourism", review_gate: "criminal_record" },
+  });
+  scenarios.push({
+    // `trip_scope: "multiple"` raises `MULTI_PURPOSE_TRIP`
+    // (`fact-mapper.ts:589`) and nothing else changes: the flow branch after
+    // `trip_scope` ignores its value (`flow.ts:611-613`), and
+    // `intent.entry_pattern` comes from the separate `entry_pattern`
+    // question. This walk's `asked` and every other override are
+    // byte-identical to `offshore/tourism`'s.
+    label: "offshore/tourism/multi_purpose",
+    overrides: { ...base, category: "tourism", trip_scope: "multiple" },
+  });
+
+  // PR-12 (visa-night work family, 2026-10-13): the E23-family work-tile
+  // variants no walk answered. Every row below changes ONE answer of the
+  // default `offshore/work` walk (or of its `onshore`/`other` sibling) so the
+  // walk's whole content is that answer: the payer, the Indonesian-sponsor
+  // confirmation, the sponsor category, and the arm. `work_payer` and
+  // `work_sponsor_confirmed` are asked on every employment-purpose walk, so
+  // each is reachable through the real tree; the household and trade-office
+  // "unsure" answers are NOT walks because their questions are asked only
+  // after a `yes`/`no` sponsor answer and offer no unsure option to the walk.
+  const workWalks: Array<[string, Record<string, string>]> = [
+    ["offshore/work/payer_no", { work_payer: "no" }],
+    ["offshore/work/payer_unsure", { work_payer: "unsure" }],
+    [
+      "offshore/work/no_government_collaboration/payer_unsure",
+      { sponsor_government_collaboration: "no", work_payer: "unsure" },
+    ],
+    [
+      "offshore/work/no_government_collaboration/sponsor_confirmed_unsure",
+      {
+        sponsor_government_collaboration: "no",
+        work_sponsor_confirmed: "unsure",
+      },
+    ],
+    [
+      "offshore/work/no_government_collaboration/sponsor_confirmed_no",
+      { sponsor_government_collaboration: "no", work_sponsor_confirmed: "no" },
+    ],
+    ["offshore/work/sponsor_employer", { sponsor_category: "EMPLOYER" }],
+    [
+      "offshore/work/sponsor_employer/employer_no",
+      { sponsor_category: "EMPLOYER", work_payer: "no" },
+    ],
+    [
+      "offshore/work/sponsor_employer/sponsor_confirmed_no",
+      { sponsor_category: "EMPLOYER", work_sponsor_confirmed: "no" },
+    ],
+    [
+      "offshore/work/sponsor_individual/employer_no",
+      { sponsor_category: "INDIVIDUAL", work_payer: "no" },
+    ],
+  ];
+  for (const [label, answers] of workWalks) {
+    scenarios.push({
+      label,
+      overrides: {
+        in_indonesia: "no",
+        holds_stay_permit: "no",
+        category: "work",
+        ...answers,
+      },
+    });
+  }
+  scenarios.push({
+    label: "onshore/work/sponsor_individual",
+    overrides: {
+      in_indonesia: "yes",
+      holds_stay_permit: "no",
+      category: "work",
+      sponsor_category: "INDIVIDUAL",
+    },
+  });
+  scenarios.push({
+    label: "onshore/work/sponsor_government/trade_office_only",
+    overrides: {
+      in_indonesia: "yes",
+      holds_stay_permit: "no",
+      category: "work",
+      sponsor_category: "GOVERNMENT",
+      sponsor_government_invitation: "no",
+    },
+  });
+  scenarios.push({
+    label: "offshore/other/paid/sponsor_individual",
+    overrides: {
+      in_indonesia: "no",
+      holds_stay_permit: "no",
+      category: "other",
+      other_paid_activity: "yes",
+      sponsor_category: "INDIVIDUAL",
+    },
+  });
+
+  // T06 (visa-night visit family, 2026-10-14): the stay bounds and entry
+  // patterns of the visit rules, one walk per side of each bound the pack
+  // draws, plus the answers of `business_activity` / `other_purpose` that no
+  // walk gave. Every row changes ONLY the listed answers of the default
+  // offshore walk of its tile; each is reachable through the real tree
+  // (`stay_days` accepts 1..36,500; the other answers are option keys). The
+  // `other` rows answer `other_paid_activity = no`: its first option (`yes`)
+  // turns the walk into EMPLOYMENT, where the purpose and the stay bound of
+  // an OTHER visit are no longer what the walk exercises.
+  // Bounds (rulepack-prod-029 source): A1 SG tourism/transit <= 30 days; B1
+  // tourism <= 60 (the default IT is on its list); C1 tourism/family <= 180;
+  // D2 business meetings <= 180; C2/C6 <= 180 with a confirmed sponsor; D12
+  // investment <= 360 (needs `wants_onshore_conversion = no`); D1 MULTIPLE
+  // entry <= 180 on tourism/transit/business. Global-filter walks
+  // (nationality, calling visa, overstay, minor, criminal record) follow in
+  // the PR-13 block below.
+  const visitWalks: Array<[string, Record<string, string>]> = [
+    ["offshore/tourism/sg/stay_30", { nationalities: "SG", stay_days: "30" }],
+    ["offshore/tourism/sg/stay_31", { nationalities: "SG", stay_days: "31" }],
+    ["offshore/tourism/stay_60", { stay_days: "60" }],
+    ["offshore/tourism/stay_61", { stay_days: "61" }],
+    ["offshore/tourism/stay_180", { stay_days: "180" }],
+    ["offshore/tourism/stay_181", { stay_days: "181" }],
+    [
+      "offshore/tourism/voa_60d/multiple",
+      { stay_days: "45", entry_pattern: "MULTIPLE" },
+    ],
+    [
+      "offshore/tourism/stay_180/multiple",
+      { stay_days: "180", entry_pattern: "MULTIPLE" },
+    ],
+    [
+      "offshore/tourism/stay_181/multiple",
+      { stay_days: "181", entry_pattern: "MULTIPLE" },
+    ],
+    ...(["180", "181"] as const).map(
+      (days): [string, Record<string, string>] => [
+        `offshore/business/no_local_compensation/stay_${days}`,
+        {
+          category: "business",
+          work_indonesia_compensation: "no",
+          stay_days: days,
+        },
+      ],
+    ),
+    [
+      "offshore/business/no_local_compensation/multiple",
+      {
+        category: "business",
+        work_indonesia_compensation: "no",
+        entry_pattern: "MULTIPLE",
+      },
+    ],
+    ...(["negotiation", "conference", "training", "other"] as const).map(
+      (activity): [string, Record<string, string>] => [
+        `offshore/business/${activity}/no_local_compensation`,
+        {
+          category: "business",
+          business_activity: activity,
+          work_indonesia_compensation: "no",
+        },
+      ],
+    ),
+    ...(["180", "181"] as const).map(
+      (days): [string, Record<string, string>] => [
+        `offshore/business/exploring/offshore_application/stay_${days}`,
+        {
+          category: "business",
+          business_activity: "exploring",
+          wants_onshore_conversion: "no",
+          stay_days: days,
+        },
+      ],
+    ),
+    [
+      "offshore/other/transit/multiple",
+      {
+        category: "other",
+        other_paid_activity: "no",
+        entry_pattern: "MULTIPLE",
+      },
+    ],
+    ...(["180", "181"] as const).map(
+      (days): [string, Record<string, string>] => [
+        `offshore/other/medical/stay_${days}`,
+        {
+          category: "other",
+          other_purpose: "medical",
+          other_paid_activity: "no",
+          stay_days: days,
+        },
+      ],
+    ),
+    ...(
+      [
+        "volunteer",
+        "religious",
+        "arts_sport",
+        "journalism",
+        "crew",
+        "other",
+      ] as const
+    ).map((purpose): [string, Record<string, string>] => [
+      `offshore/other/${purpose}`,
+      { category: "other", other_purpose: purpose, other_paid_activity: "no" },
+    ]),
+  ];
+  for (const [label, answers] of visitWalks) {
+    scenarios.push({
+      label,
+      overrides: {
+        in_indonesia: "no",
+        holds_stay_permit: "no",
+        category: "tourism",
+        ...answers,
+      },
+    });
+  }
+
+  // PR-13 (visa-night work family, 2026-10-15): the global filters no walk
+  // answered on the employment tile, now that the backend names a no-path
+  // cause for the filters that end a walk (E31-B01; the minor, guardian,
+  // criminal-record and paid-medical walks end in a question or a hold, and
+  // the census pins which). Every row changes ONLY the listed answers of
+  // the default `offshore/work` walk (or its `onshore` / paid-`other`
+  // sibling), so the walk's whole content is that answer. `overstay_days` is
+  // asked ONLY on the onshore arm (flow.ts: offshore skips it), so the
+  // overstay rows are onshore by necessity; `nationalities` and the birth
+  // date are spine questions, asked on every walk; `guardian_consent` is
+  // asked only when the birth date makes the applicant a minor.
+  const globalFilterWalks: Array<[string, Record<string, string>]> = [
+    ["offshore/work/nationality_id", { nationalities: "ID" }],
+    // AF is on the calling-visa list the engine does not assess.
+    ["offshore/work/nationality_calling_visa", { nationalities: "AF" }],
+    ["onshore/work/overstay_30", { in_indonesia: "yes", overstay_days: "30" }],
+    ["onshore/work/overstay_61", { in_indonesia: "yes", overstay_days: "61" }],
+    ["offshore/work/minor", { birth_date: MINOR_APPLICANT_BIRTH_DATE }],
+    [
+      "offshore/work/minor/guardian_no",
+      { birth_date: MINOR_APPLICANT_BIRTH_DATE, guardian_consent: "no" },
+    ],
+    ["offshore/work/disclosed_criminal", { review_gate: "criminal_record" }],
+    [
+      "onshore/work/sponsor_government/trade_office_only/overstay_61",
+      {
+        in_indonesia: "yes",
+        overstay_days: "61",
+        sponsor_category: "GOVERNMENT",
+        sponsor_government_invitation: "no",
+      },
+    ],
+    [
+      "offshore/other/paid/medical",
+      {
+        category: "other",
+        other_paid_activity: "yes",
+        other_purpose: "medical",
+      },
+    ],
+  ];
+  for (const [label, answers] of globalFilterWalks) {
+    scenarios.push({
+      label,
+      overrides: {
+        in_indonesia: "no",
+        holds_stay_permit: "no",
+        category: "work",
+        ...answers,
+      },
+    });
+  }
+
+  return scenarios;
+}
+
+/** `offshore/family/SPOUSE/spNat=IT` -> `offshore_family_SPOUSE_spNat_IT`. */
+export function fileNameFor(label: string): string {
+  return `${label.replace(/[^A-Za-z0-9_]+/g, "_")}.json`;
+}
+
+/** The whole corpus as objects, keyed by file name, sorted by file name. */
+export function buildWalkCorpus(): Map<string, WalkFixture> {
+  const corpus = new Map<string, WalkFixture>();
+  for (const scenario of enumerateScenarios()) {
+    const { asked, facts } = runWalk(scenario.overrides);
+    const wire = mapOracleFactsToApplicantFacts(facts, {
+      assessmentId: ASSESSMENT_ID,
+      collectedAt: CORPUS_TODAY,
+    });
+    const name = fileNameFor(scenario.label);
+    if (corpus.has(name)) {
+      throw new Error(`duplicate walk file name ${name} (${scenario.label})`);
+    }
+    // Key order is the file's line order (prettier preserves it), so the flag
+    // list goes LAST: the 86 walks that raise none keep byte-identical
+    // fixtures, and only the walks that actually carry the layer change.
+    // (86 of 94 as of W-VO-E — none of that window's ten new walks raises a
+    // flag; the comment said 76, the 84-walk figure, until council round 4.)
+    corpus.set(name, {
+      label: scenario.label,
+      asked,
+      overrides: wire.facts as unknown as Record<string, unknown>,
+      ...(wire.disclosed_review_flags.length > 0
+        ? { disclosed_review_flags: [...wire.disclosed_review_flags] }
+        : {}),
+    });
+  }
+  return new Map([...corpus].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
+/**
+ * The corpus as the exact file BYTES. Prettier is called with an explicit
+ * option set and no config resolution, so the rendering does not depend on
+ * which directory the files are written to — the determinism test writes them
+ * to a temp dir outside the repo and still gets byte-identical output.
+ *
+ * The input is COMPACT `JSON.stringify` on purpose. Prettier's json printer
+ * preserves an object's first line break, so feeding it pre-indented JSON
+ * would freeze every fact envelope in expanded form; from one line, printWidth
+ * alone decides, which is what `npm run format:check` at the repo root expects.
+ */
+export async function renderWalkCorpus(): Promise<Map<string, string>> {
+  const rendered = new Map<string, string>();
+  for (const [name, fixture] of buildWalkCorpus()) {
+    rendered.set(
+      name,
+      await format(JSON.stringify(fixture), { parser: "json" }),
+    );
+  }
+  return rendered;
+}
+
+export interface WriteResult {
+  written: string[];
+  /** `.json` files already in `outDir` that this generator no longer emits. */
+  orphans: string[];
+}
+
+/** Render the corpus and write it to `outDir`, creating the dir if needed. */
+export async function writeWalkCorpus(outDir: string): Promise<WriteResult> {
+  const rendered = await renderWalkCorpus();
+  mkdirSync(outDir, { recursive: true });
+  const written: string[] = [];
+  for (const [name, text] of rendered) {
+    writeFileSync(join(outDir, name), text, "utf8");
+    written.push(name);
+  }
+  const existing = readdirSync(outDir).filter((f) => f.endsWith(".json"));
+  const orphans = existing.filter((f) => !rendered.has(f)).sort();
+  return { written, orphans };
+}
+
+// CLI entry point (`main`, `DEFAULT_OUT_DIR`, the module-URL CLI guard)
+// lives in `generate-walk-corpus.cli.ts` — Slice B5-2 split, so this module
+// stays a plain library a Playwright spec can import directly (see that
+// file's docstring for the CJS transform this fixes).

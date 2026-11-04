@@ -1,0 +1,36 @@
+{
+  "code": "D8",
+  "official_name_id": "D8 Visa Kunjungan Kegiatan Olahraga",
+  "source_url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/D8",
+  "retrieved_at": "2026-10-17T13:27:32Z",
+  "page_sha256": "82f129b6004f93602d2e4308115ee934f50ff4a8160507dbaab2cf39d2f61f77",
+  "definition_verbatim": null,
+  "jenis_visa_verbatim": null,
+  "stay_days": null,
+  "extendable": null,
+  "entry": null,
+  "where_to_apply": null,
+  "sponsor_required": {
+    "as_stated_boolean": null,
+    "verbatim": null,
+    "invitation_requirement_see": "requirements_verbatim (Persyaratan Khusus)"
+  },
+  "requirements_verbatim": [],
+  "pengajuan_intro_verbatim": null,
+  "allowed_activities": null,
+  "prohibited_or_conditions_verbatim": [],
+  "ketentuan_lain_verbatim": [],
+  "pnbp_verbatim_for_reference_only": [],
+  "itap_verbatim": null,
+  "itap_eligibility_as_stated": null,
+  "total_max_verbatim": null,
+  "notes": [
+    "HTTP 200 with a title alone does not constitute a populated visa page."
+  ],
+  "status": "NOT_FOUND",
+  "to_verify": ["Source content unavailable; no requirements inferred."],
+  "conflicts": [],
+  "source_http_status": 200,
+  "source_raw_path": "raw/D8.html",
+  "not_found_reason": "Data Belum Tersedia"
+}

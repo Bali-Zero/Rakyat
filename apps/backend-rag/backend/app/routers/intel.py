@@ -1,0 +1,1631 @@
+"""
+Intel News API - Search and manage Bali intelligence news
+
+Refactored router using service layer architecture.
+"""
+
+import base64
+import hmac
+import importlib.util
+import logging
+import os
+import re
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path as PathLib
+from typing import Any, Literal
+from urllib.parse import urlsplit, urlunsplit
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
+
+from backend.app.core.config import settings
+from backend.app.core.constants import IntelConstants
+from backend.app.dependencies import get_current_user
+from backend.app.metrics import (
+    intel_bulk_operation_items,
+    intel_bulk_operations_total,
+    intel_items_approved,
+    intel_items_rejected,
+    intel_user_actions_total,
+)
+from backend.app.utils.internal_api_auth import verify_internal_api_key
+from backend.core.embeddings import create_embeddings_generator
+from backend.services.content_guards import GUARD_IDS
+from backend.services.intel import (
+    IntelAnalyticsService,
+    IntelApprovalService,
+    IntelClassificationService,
+    IntelStagingService,
+)
+from backend.services.intel.intel_staging_service import assert_valid_item_id
+
+# Add scraper scripts to path for ClaudeValidator import
+scraper_scripts_path = (
+    PathLib(__file__).parent.parent.parent.parent.parent / "bali-intel-scraper" / "scripts"
+)
+if scraper_scripts_path.exists():
+    sys.path.insert(0, str(scraper_scripts_path))
+
+router = APIRouter()
+logger = logging.getLogger(__name__)
+
+_embedder = None
+
+
+def get_embedder() -> Any:
+    global _embedder
+    if _embedder is None:
+        _embedder = create_embeddings_generator(api_key=os.getenv("OPENAI_API_KEY"))
+    return _embedder
+
+
+# Qdrant collections for intel (from constants)
+INTEL_COLLECTIONS = IntelConstants.COLLECTIONS
+
+# Initialize services
+classification_service = IntelClassificationService()
+staging_service = IntelStagingService()
+
+# Cover uploads write `f"{item_id}{ext}"`. BOTH halves are caller-supplied, so both are
+# constrained: the id by the shared validator, the extension by this list.
+_ALLOWED_COVER_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
+approval_service = IntelApprovalService()
+analytics_service = IntelAnalyticsService(staging_service)
+
+# --- PYDANTIC MODELS ---
+
+
+class ScraperSubmission(BaseModel):
+    """Article submission from bali-intel-scraper"""
+
+    title: str = Field(..., min_length=1, description="Article title (cannot be empty)")
+    content: str = Field(..., min_length=1, description="Article content (cannot be empty)")
+    source_url: str
+    source_name: str
+    category: str  # visa, immigration, news, etc.
+    relevance_score: int  # 0-100
+    published_at: str | None = None
+    extraction_method: str | None = IntelConstants.DEFAULT_EXTRACTION_METHOD
+    tier: str = IntelConstants.DEFAULT_TIER  # T1, T2, T3
+    cover_image: str | None = Field(
+        None,
+        description="Cover image URL/path (optional, generated later by enricher)",
+    )
+    cover_image_base64: str | None = Field(
+        None,
+        description="Cover image as base64 string (uploaded to Drive on submit)",
+    )
+    # WR2 liveness rewire (SPRINT B1, scar family #9): the enricher
+    # (claude_cli_enricher._normalize_live_news_fields) already computes
+    # these three — carry them through so the WR2 topic selector and News
+    # Room UI see something other than always-0. All optional: legacy
+    # scrapers/callers that don't send them must keep working unchanged.
+    live_news_score: int | None = Field(
+        None,
+        ge=0,
+        le=100,
+        description="Enricher live-news score 0-100",
+    )
+    liveness_tier: Literal["breaking", "developing", "evergreen"] | None = None
+    live_news_reasons: list[str] | None = Field(None, max_length=3)
+    # WR2 enrichment passthrough (scar family #9, state-schema mutation
+    # drift): the intel enricher produces a full structured object
+    # (the_facts/bali_zero_take/in_practice/next_steps/faq/
+    # thirty_second_brief/metadata, ~1400-2000 words) but it was lost
+    # before reaching WR2 drafts — wr2_topic_selector wrote enrichment: {}
+    # into every draft's brief_json (verified 2026-06-24: {} on 12/12
+    # drafts). Carried through so the topic selector gets structured
+    # ground truth, not just truncated content. Optional: legacy
+    # callers/scrapers that don't send it keep working unchanged.
+    enrichment: dict | None = Field(
+        None,
+        description=(
+            "Full structured enricher object (the_facts/bali_zero_take/"
+            "in_practice/next_steps/faq/thirty_second_brief/metadata) — "
+            "carried through so wr2_topic_selector gets structured ground "
+            "truth, not just truncated content. Optional: legacy callers "
+            "unaffected (scar #9)."
+        ),
+    )
+
+
+class ApprovalRequest(BaseModel):
+    """Request body for staging approval with optional enrichment data"""
+
+    intel_type: str | None = None
+    item_id: str | None = None
+    item_data: dict | None = None
+    enriched_data: dict | None = None
+    image_path: str | None = None
+
+
+class IntelSearchRequest(BaseModel):
+    query: str
+    category: str | None = None
+    date_range: str = "last_7_days"
+    tier: list[str] = ["T1", "T2", "T3"]
+    impact_level: str | None = None
+    limit: int = 20
+
+
+class IntelStoreRequest(BaseModel):
+    collection: str
+    id: str
+    document: str
+    embedding: list[float]
+    metadata: dict
+    full_data: dict
+
+
+class EditStagingItemRequest(BaseModel):
+    """Request body for editing staging item"""
+
+    title: str | None = None
+    content: str | None = None
+    category: str | None = None
+
+
+class CoverImageUploadRequest(BaseModel):
+    """Request body for cover image upload"""
+
+    cover_image_base64: str = Field(..., description="Base64 encoded image")
+    cover_image_filename: str | None = Field(None, description="Image filename (optional)")
+
+
+class RegisterNotificationRequest(BaseModel):
+    """Register Telegram message_id → staging item mapping for cover image uploads."""
+
+    telegram_message_id: int = Field(..., description="Telegram message_id sent to Damar")
+    chat_id: int = Field(..., description="Damar's Telegram chat_id")
+    intel_type: str = Field(..., description="news or visa")
+    item_id: str = Field(..., description="Staging item ID")
+    title: str = Field("", description="Article title for display")
+
+
+HomepagePosition = Literal[
+    "latest",
+    "hero_main",
+    "hero_2",
+    "hero_3",
+    "hero_4",
+    "hero_5",
+    "insight_1",
+    "insight_2",
+    "insight_3",
+]
+
+
+class PublishToSiteRequest(BaseModel):
+    """Explicit homepage position for a publication request."""
+
+    position: HomepagePosition = Field(
+        ...,
+        description="Homepage position: hero_main, hero_2-5, insight_1-3, or latest",
+    )
+
+
+class WorkspaceNewsPublishRequest(BaseModel):
+    """Explicit authorization carried by the Damar workspace agent."""
+
+    confirmation: Literal["DAMAR_CONFIRMED"]
+    position: HomepagePosition
+
+
+class WorkspaceNewsUpdateRequest(BaseModel):
+    """Public editorial fields the Damar agent may update before review."""
+
+    title: str = Field(..., min_length=8, max_length=200)
+    # Keep the writable maximum aligned with the Bridge's public/fact-gate
+    # projection so no unreviewed tail can be published.
+    content: str = Field(..., min_length=200, max_length=12_000)
+    category: Literal["immigration", "business", "tax", "property", "lifestyle", "tech", "legal"]
+    seo_title: str = Field(..., min_length=8, max_length=60)
+    seo_description: str = Field(..., min_length=40, max_length=155)
+    slug: str = Field(..., min_length=3, max_length=80)
+    cover_image_alt: str = Field(..., min_length=8, max_length=160)
+
+
+class WorkspaceNewsCoverRequest(BaseModel):
+    cover_image_base64: str = Field(..., min_length=100, max_length=16_000_000)
+    cover_image_filename: str = Field(..., min_length=5, max_length=160)
+
+
+class WorkspacePublicationConfirmedRequest(BaseModel):
+    """Durable transition allowed only after the MCP live verifier passes."""
+
+    confirmation: Literal["LIVE_VERIFIED"]
+
+
+VALID_HOMEPAGE_POSITIONS = {
+    "hero_main",
+    "hero_2",
+    "hero_3",
+    "hero_4",
+    "hero_5",
+    "insight_1",
+    "insight_2",
+    "insight_3",
+}
+
+_WORKSPACE_CATEGORY_FOLDERS = {
+    "immigration": "immigration",
+    "business": "business",
+    "tax": "tax-legal",
+    "property": "property",
+    "lifestyle": "lifestyle",
+    "tech": "tech",
+    "legal": "tax-legal",
+}
+
+
+def _workspace_article_path(category: str, slug: str) -> str:
+    folder = _WORKSPACE_CATEGORY_FOLDERS.get(category, category)
+    return f"apps/mouth/src/content/articles/{folder}/{slug}.mdx"
+
+
+# HELPER FUNCTIONS & SCRAPER → intel_scraper.py
+# ANALYTICS → intel_analytics.py
+
+# --- STAGING ENDPOINTS ---
+
+
+def require_workspace_marketing_key(request: Request) -> None:
+    """Accept only the dedicated, route-scoped workspace credential."""
+
+    configured = settings.workspace_marketing_api_key
+    provided = request.headers.get("X-Workspace-Marketing-Key", "")
+    if (
+        not configured
+        or not provided
+        or not hmac.compare_digest(
+            provided.encode("utf-8", "surrogateescape"),
+            configured.encode("utf-8", "surrogateescape"),
+        )
+    ):
+        logger.warning(
+            "Workspace marketing route authentication rejected",
+            extra={"method": request.method},
+        )
+        raise HTTPException(status_code=401, detail="Workspace marketing key required")
+
+
+_WORKSPACE_OMIT = object()
+
+
+def _workspace_text(value: Any, *, max_chars: int = 50_000) -> str | object:
+    """Admit text only; arbitrary nested input is structurally unreachable."""
+
+    return value[:max_chars] if isinstance(value, str) else _WORKSPACE_OMIT
+
+
+def _workspace_text_list(
+    value: Any,
+    *,
+    max_items: int = 25,
+    max_chars: int = 5_000,
+) -> list[str] | object:
+    if not isinstance(value, list):
+        return _WORKSPACE_OMIT
+    return [entry[:max_chars] for entry in value[:max_items] if isinstance(entry, str)]
+
+
+def _workspace_brief(value: Any) -> str | dict[str, str] | object:
+    scalar = _workspace_text(value, max_chars=5_000)
+    if scalar is not _WORKSPACE_OMIT:
+        return scalar
+    if not isinstance(value, dict):
+        return _WORKSPACE_OMIT
+    public: dict[str, str] = {}
+    for field in ("what", "why_it_matters", "who", "risk_level"):
+        safe = _workspace_text(value.get(field), max_chars=2_000)
+        if isinstance(safe, str):
+            public[field] = safe
+    return public
+
+
+def _workspace_faq(value: Any) -> list[dict[str, str]] | object:
+    if not isinstance(value, list):
+        return _WORKSPACE_OMIT
+    public: list[dict[str, str]] = []
+    for entry in value[:10]:
+        if not isinstance(entry, dict):
+            continue
+        question = _workspace_text(entry.get("question", entry.get("q")), max_chars=2_000)
+        answer = _workspace_text(entry.get("answer", entry.get("a")), max_chars=5_000)
+        if isinstance(question, str) and isinstance(answer, str):
+            public.append({"question": question, "answer": answer})
+    return public
+
+
+def _workspace_bali_zero_take(value: Any) -> str | dict[str, str] | object:
+    scalar = _workspace_text(value)
+    if scalar is not _WORKSPACE_OMIT:
+        return scalar
+    if not isinstance(value, dict):
+        return _WORKSPACE_OMIT
+    public: dict[str, str] = {}
+    for field in ("hidden_insight", "our_analysis", "our_advice"):
+        safe = _workspace_text(value.get(field))
+        if isinstance(safe, str):
+            public[field] = safe
+    return public
+
+
+def _workspace_next_steps(value: Any) -> str | dict[str, list[str]] | object:
+    scalar = _workspace_text(value)
+    if scalar is not _WORKSPACE_OMIT:
+        return scalar
+    if not isinstance(value, dict):
+        return _WORKSPACE_OMIT
+    public: dict[str, list[str]] = {}
+    for audience in ("expat", "investor"):
+        safe = _workspace_text_list(value.get(audience), max_items=10)
+        if isinstance(safe, list):
+            public[audience] = safe
+    return public
+
+
+def _workspace_marketing_summary(item: dict[str, Any]) -> dict[str, Any]:
+    fields = (
+        "id",
+        "item_id",
+        "title",
+        "category",
+        "status",
+        "detected_at",
+        "published_at",
+        "source_name",
+    )
+    public: dict[str, Any] = {}
+    for field in fields:
+        if field not in item:
+            continue
+        safe = item[field]
+        if safe is None or isinstance(safe, (str, int, float, bool)):
+            public[field] = safe
+    return public
+
+
+def _workspace_marketing_article(item: dict[str, Any]) -> dict[str, Any]:
+    public = _workspace_marketing_summary(item)
+    for field in ("seo_title", "seo_description", "slug", "cover_image_alt"):
+        if field in item:
+            safe_field = _workspace_text(item[field], max_chars=500)
+            if safe_field is not _WORKSPACE_OMIT:
+                public[field] = safe_field
+    if "content" in item:
+        safe_content = _workspace_text(item["content"])
+        if safe_content is not _WORKSPACE_OMIT:
+            public["content"] = safe_content
+    source_url = item.get("source_url")
+    if isinstance(source_url, str):
+        parsed = urlsplit(source_url)
+        if (
+            parsed.scheme == "https"
+            and parsed.hostname
+            and not parsed.username
+            and not parsed.password
+        ):
+            public["source_url"] = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+    enrichment = item.get("enrichment")
+    if isinstance(enrichment, dict):
+        projectors = {
+            "headline": lambda value: _workspace_text(value, max_chars=500),
+            "thirty_second_brief": _workspace_brief,
+            "the_facts": _workspace_text,
+            "in_practice": _workspace_text,
+            "next_steps": _workspace_next_steps,
+            "bali_zero_take": _workspace_bali_zero_take,
+            "faq": _workspace_faq,
+        }
+        safe_enrichment: dict[str, Any] = {}
+        for field, projector in projectors.items():
+            if field not in enrichment:
+                continue
+            safe = projector(enrichment[field])
+            if safe is not _WORKSPACE_OMIT:
+                safe_enrichment[field] = safe
+        public["enrichment"] = safe_enrichment
+    return public
+
+
+@router.get(
+    "/api/workspace-marketing/capabilities",
+    dependencies=[Depends(require_workspace_marketing_key)],
+)
+async def workspace_marketing_capabilities() -> dict[str, Any]:
+    """Describe the deployed, route-scoped marketing contract."""
+
+    from backend.services.integrations.github_publisher import github_publisher
+
+    staging_readable = staging_service.news_staging_dir.is_dir()
+    staging_writable = staging_readable and os.access(
+        staging_service.news_staging_dir, os.W_OK
+    )
+    publisher_ready = github_publisher.is_configured
+    pillow_available = importlib.util.find_spec("PIL") is not None
+    write_ready = staging_writable and publisher_ready
+    cover_ready = write_ready and pillow_available
+
+    return {
+        "contract": "newsroom-publication-v2",
+        "ready": write_ready and cover_ready,
+        "capabilities": {
+            "list_pending": "ready" if staging_readable else "unavailable",
+            "get_article": "ready" if staging_readable else "unavailable",
+            "update_article": "ready" if write_ready else "unavailable",
+            "attach_cover": "ready" if cover_ready else "unavailable",
+            "publish": "ready" if write_ready else "unavailable",
+            "publication_status": "ready" if staging_readable else "unavailable",
+            "confirm_live": "ready" if write_ready else "unavailable",
+        },
+        "content_guards": list(GUARD_IDS),
+        "prerequisites": {
+            "staging_readable": staging_readable,
+            "staging_writable": staging_writable,
+            "github_publisher_configured": publisher_ready,
+            "pillow_available": pillow_available,
+        },
+    }
+
+
+@router.get(
+    "/api/workspace-marketing/news/pending",
+    dependencies=[Depends(require_workspace_marketing_key)],
+)
+async def workspace_marketing_pending_news(
+    limit: int = 100,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Return a bounded News Room projection to the private marketing bridge."""
+
+    bounded_limit = max(1, min(limit, 500))
+    bounded_offset = max(0, min(offset, 100_000))
+    payload = staging_service.list_pending_items(
+        intel_type="news",
+        filter_type=None,
+        sort_type=None,
+        search=None,
+        include_enrichment=False,
+    )
+    raw_items = payload.get("items", []) if isinstance(payload, dict) else []
+    items = raw_items if isinstance(raw_items, list) else []
+    pending_items = [
+        item
+        for item in items
+        if (
+            isinstance(item, dict)
+            and item.get("status", "pending") == "pending"
+            and not item.get("published_url")
+        )
+    ]
+    page = pending_items[bounded_offset : bounded_offset + bounded_limit]
+    projected = [_workspace_marketing_summary(item) for item in page]
+    detected_times = [
+        item.get("detected_at")
+        for item in pending_items
+        if isinstance(item.get("detected_at"), str) and item.get("detected_at")
+    ]
+    next_offset = bounded_offset + len(projected)
+    if next_offset >= len(pending_items):
+        next_offset = None
+    return {
+        "count": len(projected),
+        "total": len(pending_items),
+        "offset": bounded_offset,
+        "next_offset": next_offset,
+        "complete": next_offset is None,
+        "latest_item_at": max(detected_times) if detected_times else None,
+        "items": projected,
+    }
+
+
+@router.put(
+    "/api/workspace-marketing/news/{item_id}/editorial",
+    dependencies=[Depends(require_workspace_marketing_key)],
+)
+async def workspace_marketing_update_news(
+    item_id: str,
+    body: WorkspaceNewsUpdateRequest,
+) -> dict[str, Any]:
+    """Replace the public editorial package for one still-pending article."""
+
+    try:
+        assert_valid_item_id(item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Item not found") from exc
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", body.slug):
+        raise HTTPException(status_code=422, detail="Slug must be lowercase kebab-case")
+    item = staging_service.load_staging_item("news", item_id)
+    if not isinstance(item, dict):
+        raise HTTPException(status_code=404, detail="Item not found")
+    if item.get("status", "pending") != "pending" or item.get("published_url"):
+        raise HTTPException(status_code=409, detail="Article is not editable")
+    from backend.services.integrations.github_publisher import github_publisher
+
+    if not github_publisher.is_configured:
+        raise HTTPException(status_code=503, detail="Publication Bridge is not configured")
+    public_path = _workspace_article_path(body.category, body.slug)
+    if await github_publisher.check_file_exists(public_path, branch="main"):
+        raise HTTPException(
+            status_code=409,
+            detail="Slug already belongs to a public article",
+        )
+    item.update(body.model_dump())
+    staging_service.save_staging_item("news", item_id, item)
+    return {
+        "success": True,
+        "item_id": item_id,
+        "updated": list(type(body).model_fields),
+    }
+
+
+@router.post(
+    "/api/workspace-marketing/news/{item_id}/cover",
+    dependencies=[Depends(require_workspace_marketing_key)],
+)
+async def workspace_marketing_attach_cover(
+    item_id: str,
+    body: WorkspaceNewsCoverRequest,
+) -> dict[str, Any]:
+    """Attach one native-ImageGen cover to a still-pending article."""
+
+    item = staging_service.load_staging_item("news", item_id)
+    if not isinstance(item, dict):
+        raise HTTPException(status_code=404, detail="Item not found")
+    if item.get("status", "pending") != "pending" or item.get("published_url"):
+        raise HTTPException(status_code=409, detail="Article cover is not editable")
+    try:
+        image_bytes = base64.b64decode(body.cover_image_base64, validate=True)
+    except (ValueError, base64.binascii.Error) as exc:
+        raise HTTPException(status_code=422, detail="Cover image is not valid base64") from exc
+    is_supported_image = (
+        image_bytes.startswith(b"\xff\xd8\xff")
+        or image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+        or (image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP")
+    )
+    if len(image_bytes) < 5_000 or not is_supported_image:
+        raise HTTPException(
+            status_code=422, detail="Cover must be a valid JPEG, PNG, or WebP image"
+        )
+    try:
+        from io import BytesIO
+
+        from PIL import Image, UnidentifiedImageError
+
+        with Image.open(BytesIO(image_bytes)) as image:
+            width, height = image.size
+            image_format = str(image.format or "").upper()
+            if width * height > 40_000_000:
+                raise ValueError("cover exceeds pixel limit")
+            image.verify()
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Cover image is corrupt") from exc
+    expected_suffixes = {
+        "JPEG": {".jpg", ".jpeg"},
+        "PNG": {".png"},
+        "WEBP": {".webp"},
+    }
+    suffix = PathLib(body.cover_image_filename).suffix.lower()
+    if suffix not in expected_suffixes.get(image_format, set()):
+        raise HTTPException(
+            status_code=422,
+            detail="Cover filename extension does not match the image format",
+        )
+    if width < 1200 or height < 630 or width * height > 40_000_000:
+        raise HTTPException(
+            status_code=422,
+            detail="Cover dimensions must be at least 1200x630 and at most 40 megapixels",
+        )
+
+    result = await upload_cover_image(
+        "news",
+        item_id,
+        CoverImageUploadRequest(
+            cover_image_base64=body.cover_image_base64,
+            cover_image_filename=body.cover_image_filename,
+        ),
+    )
+    return {"success": result.get("success") is True, "item_id": item_id}
+
+
+@router.get(
+    "/api/workspace-marketing/news/{item_id}",
+    dependencies=[Depends(require_workspace_marketing_key)],
+)
+async def workspace_marketing_news_article(item_id: str) -> dict[str, Any]:
+    """Return one field-projected News Room article to the private bridge."""
+
+    try:
+        assert_valid_item_id(item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Item not found") from exc
+    item = staging_service.load_staging_item("news", item_id)
+    if not isinstance(item, dict):
+        raise HTTPException(status_code=404, detail="Item not found")
+    if item.get("status", "pending") != "pending" or item.get("published_url"):
+        raise HTTPException(status_code=404, detail="Item not found")
+    return _workspace_marketing_article(item)
+
+
+def _workspace_publish_blockers(item: dict[str, Any]) -> list[str]:
+    """Return public editorial requirements that are still missing."""
+
+    blockers: list[str] = []
+    required_text = {
+        "title": 8,
+        "content": 200,
+        "category": 2,
+    }
+    for field, minimum in required_text.items():
+        value = item.get(field)
+        if not isinstance(value, str) or len(value.strip()) < minimum:
+            blockers.append(field)
+
+    source_url = item.get("source_url")
+    try:
+        source = urlsplit(source_url.strip()) if isinstance(source_url, str) else None
+    except ValueError:
+        source = None
+    if (
+        source is None
+        or source.scheme != "https"
+        or not source.hostname
+        or source.username
+        or source.password
+    ):
+        blockers.append("source_url")
+
+    cover_reference = item.get("image_drive_file_id") or item.get("cover_image")
+    if not isinstance(cover_reference, str) or not cover_reference.strip():
+        blockers.append("cover_image")
+    return blockers
+
+
+@router.post(
+    "/api/workspace-marketing/news/{item_id}/publish",
+    dependencies=[Depends(require_workspace_marketing_key)],
+)
+async def workspace_marketing_publish_news(
+    item_id: str,
+    body: WorkspaceNewsPublishRequest,
+    request: Request = None,  # type: ignore
+) -> dict[str, Any]:
+    """Publish one ready News Room item after Damar explicitly confirms."""
+
+    try:
+        assert_valid_item_id(item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Item not found") from exc
+    item = staging_service.load_staging_item("news", item_id)
+    if not isinstance(item, dict):
+        raise HTTPException(status_code=404, detail="Item not found")
+    current_status = str(item.get("status", "pending"))
+    if current_status in {"publication_pending", "published"}:
+        if item.get("publish_position", "latest") != body.position:
+            raise HTTPException(
+                status_code=409,
+                detail="Article was already submitted with a different position",
+            )
+        return {
+            "success": True,
+            "github_published": True,
+            "item_id": item_id,
+            "title": item.get("title"),
+            "published_url": item.get("published_url"),
+            "published_at": item.get("published_at"),
+            "publication_requested_at": item.get("publication_requested_at"),
+            "message": "Publication request already exists",
+            "position": body.position,
+            "status": current_status,
+            "idempotent": True,
+        }
+    recovering = False
+    now = datetime.now(timezone.utc)
+    if current_status == "publishing":
+        if item.get("publish_position", "latest") != body.position:
+            raise HTTPException(
+                status_code=409,
+                detail="Article is already publishing with a different position",
+            )
+        raw_lease = item.get("publication_lease_until")
+        try:
+            lease_until = datetime.fromisoformat(str(raw_lease))
+            if lease_until.tzinfo is None:
+                lease_until = lease_until.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            lease_until = datetime.min.replace(tzinfo=timezone.utc)
+        if lease_until > now:
+            raise HTTPException(
+                status_code=409,
+                detail="Article publication is currently in progress",
+            )
+        recovering = True
+    elif current_status != "pending" or item.get("published_url"):
+        raise HTTPException(status_code=409, detail="Article is not pending publication")
+    blockers = _workspace_publish_blockers(item)
+    if blockers:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Article is not ready for publication",
+                "missing": blockers,
+            },
+        )
+
+    lease_until = (now + timedelta(minutes=10)).isoformat()
+    transitioned, current = staging_service.compare_and_set_status(
+        "news",
+        item_id,
+        expected={"publishing" if recovering else "pending"},
+        new_status="publishing",
+        updates={
+            "publication_requested_at": now.isoformat(),
+            "publish_position": body.position,
+            "publication_operation_id": item_id,
+            "publication_lease_until": lease_until,
+        },
+        expected_values=(
+            {"publication_lease_until": item.get("publication_lease_until")}
+            if recovering
+            else None
+        ),
+    )
+    if not transitioned:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Article publication is already in state {(current or {}).get('status')}",
+        )
+
+    from backend.app.routers.intel_scraper import publish_staging_item_internal
+
+    try:
+        # Internal publishing has no request context, so preserve the route pool explicitly.
+        result = await publish_staging_item_internal(
+            "news",
+            item_id,
+            actor="workspace-agent:damar",
+            allow_generated_cover=False,
+            position=body.position,
+            pool=getattr(request.app.state, "db_pool", None) if request else None,
+        )
+    except Exception:
+        staging_service.compare_and_set_status(
+            "news",
+            item_id,
+            expected={"publishing"},
+            new_status="pending",
+            updates={
+                "last_publication_failed_at": datetime.now(timezone.utc).isoformat(),
+                "publication_lease_until": None,
+            },
+        )
+        raise
+    return {
+        "success": result.get("success") is True,
+        "github_published": result.get("github_published") is True,
+        "item_id": item_id,
+        "title": result.get("title"),
+        "published_url": result.get("published_url"),
+        "published_at": result.get("published_at"),
+        "publication_requested_at": result.get("publication_requested_at"),
+        "message": result.get("message"),
+        "position": body.position,
+        "status": "publication_pending" if result.get("success") else "pending",
+        "pull_request_number": result.get("pull_request_number"),
+        "auto_merge_enabled": result.get("auto_merge_enabled"),
+    }
+
+
+@router.get(
+    "/api/workspace-marketing/news/{item_id}/publication-status",
+    dependencies=[Depends(require_workspace_marketing_key)],
+)
+async def workspace_marketing_publication_status(item_id: str) -> dict[str, Any]:
+    """Return only the public publication proof fields retained in staging."""
+
+    try:
+        assert_valid_item_id(item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Item not found") from exc
+    item = staging_service.load_staging_item("news", item_id)
+    if not isinstance(item, dict):
+        raise HTTPException(status_code=404, detail="Item not found")
+    public_source_url = _workspace_marketing_article(item).get("source_url")
+    return {
+        "item_id": item_id,
+        "title": item.get("title"),
+        "status": item.get("status"),
+        "published_url": item.get("published_url"),
+        "published_at": item.get("published_at"),
+        "publication_requested_at": item.get("publication_requested_at"),
+        "live_verified_at": item.get("live_verified_at"),
+        "position": item.get("publish_position", "latest"),
+        "github_commit_sha": item.get("github_commit_sha"),
+        "published_cover_path": item.get("published_cover_path"),
+        "seo_title": item.get("seo_title"),
+        "seo_description": item.get("seo_description"),
+        "cover_image_alt": item.get("cover_image_alt"),
+        "pull_request_number": item.get("pull_request_number"),
+        "auto_merge_enabled": item.get("auto_merge_enabled"),
+        "source_url": public_source_url,
+    }
+
+
+@router.post(
+    "/api/workspace-marketing/news/{item_id}/confirm-live",
+    dependencies=[Depends(require_workspace_marketing_key)],
+)
+async def workspace_marketing_confirm_live(
+    item_id: str,
+    body: WorkspacePublicationConfirmedRequest,
+) -> dict[str, Any]:
+    """Persist ``published`` only after the external live proof has passed."""
+
+    try:
+        assert_valid_item_id(item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Item not found") from exc
+    item = staging_service.load_staging_item("news", item_id)
+    if not isinstance(item, dict):
+        raise HTTPException(status_code=404, detail="Item not found")
+    if item.get("status") == "published":
+        return {
+            "success": True,
+            "item_id": item_id,
+            "status": "published",
+            "published_at": item.get("published_at"),
+            "idempotent": True,
+        }
+    now = datetime.now(timezone.utc).isoformat()
+    transitioned, current = staging_service.compare_and_set_status(
+        "news",
+        item_id,
+        expected={"publication_pending"},
+        new_status="published",
+        updates={"published_at": now, "live_verified_at": now},
+    )
+    if not transitioned:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Article cannot be confirmed from state {(current or {}).get('status')}",
+        )
+    return {
+        "success": True,
+        "item_id": item_id,
+        "status": "published",
+        "published_at": now,
+        "idempotent": False,
+    }
+
+
+@router.get("/api/intel/staging/pending")
+async def list_pending_items(
+    type: str = "all",
+    filter_type: str | None = None,
+    sort_type: str | None = None,
+    search: str | None = None,
+    include_enrichment: bool = False,
+) -> Any:
+    """List items pending approval in staging area with filtering and sorting.
+
+    include_enrichment (round-2 red-team MUST-FIX #1, scar family #9):
+    opt-in only. This route has no pagination and the default projection
+    would otherwise ship the full ~1400-2000 word enrichment object on
+    EVERY pending item to EVERY consumer (News Room UI, Visa Oracle UI, MCP
+    tool) — only scripts/wr2_topic_selector.py actually reads it, and only
+    from the single ranked top item. Default False keeps the payload lean.
+    """
+    logger.info(
+        "Listing pending items",
+        extra={
+            "type": type,
+            "filter_type": filter_type,
+            "sort_type": sort_type,
+            "has_search": bool(search),
+            "include_enrichment": include_enrichment,
+            "endpoint": "/api/intel/staging/pending",
+        },
+    )
+
+    return staging_service.list_pending_items(
+        type,
+        filter_type,
+        sort_type,
+        search,
+        include_enrichment=include_enrichment,
+    )
+
+
+@router.get("/api/intel/staging/preview/{type}/{item_id}")
+async def preview_staging_item(type: str, item_id: str) -> Any:
+    """Get full content of a staging item"""
+    logger.info(
+        "Preview staging item requested",
+        extra={"type": type, "item_id": item_id, "endpoint": "/api/intel/staging/preview"},
+    )
+
+    intel_user_actions_total.labels(intel_type=type, action="preview").inc()
+
+    data = staging_service.load_staging_item(type, item_id)
+    if not data:
+        logger.warning(
+            "Preview item not found",
+            extra={"type": type, "item_id": item_id},
+        )
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    logger.info(
+        "Preview loaded successfully",
+        extra={"type": type, "item_id": item_id, "title": data.get("title", "Untitled")},
+    )
+    return data
+
+
+@router.post("/api/intel/staging/bulk-approve/{type}")
+async def bulk_approve_items(
+    type: str,
+    item_ids: list[str],
+    user: dict = Depends(get_current_user),
+) -> Any:
+    """Bulk approve multiple items (admin only — feeds the public-site publish pipeline)."""
+    _require_intel_admin(user)
+    logger.info(
+        "Bulk approval requested",
+        extra={"type": type, "count": len(item_ids), "endpoint": "/api/intel/staging/bulk-approve"},
+    )
+
+    intel_bulk_operations_total.labels(intel_type=type, operation="approve").inc()
+    intel_bulk_operation_items.labels(intel_type=type, operation="approve").observe(len(item_ids))
+
+    results = {"success": 0, "failed": 0, "errors": []}
+
+    for item_id in item_ids:
+        try:
+            data = staging_service.load_staging_item(type, item_id)
+            if not data:
+                results["failed"] += 1
+                results["errors"].append(f"{item_id}: not found")
+                continue
+
+            # Archive item
+            staging_service.archive_item(type, item_id, "approved")
+            results["success"] += 1
+            intel_items_approved.labels(intel_type=type).inc()
+            intel_user_actions_total.labels(intel_type=type, action="approve").inc()
+
+        except Exception as e:
+            results["failed"] += 1
+            results["errors"].append(f"{item_id}: {e!s}")
+            logger.error("Bulk approve failed for %s: %s", item_id, e, exc_info=True)
+
+    staging_service.update_staging_queue_metrics()
+    return results
+
+
+@router.post("/api/intel/staging/bulk-reject/{type}")
+async def bulk_reject_items(type: str, item_ids: list[str]) -> Any:
+    """Bulk reject multiple items"""
+    logger.info(
+        "Bulk rejection requested",
+        extra={"type": type, "count": len(item_ids), "endpoint": "/api/intel/staging/bulk-reject"},
+    )
+
+    intel_bulk_operations_total.labels(intel_type=type, operation="reject").inc()
+    intel_bulk_operation_items.labels(intel_type=type, operation="reject").observe(len(item_ids))
+
+    results = {"success": 0, "failed": 0, "errors": []}
+
+    for item_id in item_ids:
+        try:
+            data = staging_service.load_staging_item(type, item_id)
+            if not data:
+                results["failed"] += 1
+                results["errors"].append(f"{item_id}: not found")
+                continue
+
+            # Archive item
+            staging_service.archive_item(type, item_id, "rejected")
+            results["success"] += 1
+            intel_items_rejected.labels(intel_type=type).inc()
+            intel_user_actions_total.labels(intel_type=type, action="reject").inc()
+
+        except Exception as e:
+            results["failed"] += 1
+            results["errors"].append(f"{item_id}: {e!s}")
+            logger.error("Bulk reject failed for %s: %s", item_id, e, exc_info=True)
+
+    staging_service.update_staging_queue_metrics()
+    return results
+
+
+@router.post("/api/intel/staging/approve/{type}/{item_id}")
+async def approve_staging_item(
+    type: str,
+    item_id: str,
+    request: ApprovalRequest | None = None,
+    _api_key_verified=Depends(verify_internal_api_key),
+) -> dict[str, Any]:
+    """
+    Initiate approval process by sending Telegram notification to team.
+
+    Now supports ENRICHED content with AI-generated images!
+
+    This endpoint triggers the voting process. The actual ingestion happens
+    when the team reaches majority (2/3) via Telegram callback.
+
+    Request body (optional):
+    {
+        "enriched_data": {...},  # From ArticleEnrichmentService
+        "image_path": "/path/to/image.jpg"  # From Gemini image generation
+    }
+    """
+    logger.info(
+        "Approval request received - initiating Telegram voting",
+        extra={
+            "type": type,
+            "item_id": item_id,
+            "endpoint": "/api/intel/staging/approve",
+            "has_enrichment": bool(request and request.enriched_data),
+            "has_image": bool(request and request.image_path),
+        },
+    )
+
+    data = staging_service.load_staging_item(type, item_id)
+    if not data:
+        logger.warning(
+            "Approval failed - item not found",
+            extra={"type": type, "item_id": item_id},
+        )
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    title = data.get("title", "Untitled")
+    logger.info(
+        "Loaded staging item for approval",
+        extra={"type": type, "item_id": item_id, "title": title},
+    )
+
+    # Extract enrichment data if provided
+    enriched_data = request.enriched_data if request else None
+    image_path = request.image_path if request else None
+
+    # Send Telegram notification using approval service
+    notification_sent = await approval_service.send_approval_notification(
+        type,
+        item_id,
+        data,
+        enriched_data,
+        image_path,
+    )
+
+    if not notification_sent:
+        logger.error(
+            "Failed to send Telegram notification",
+            extra={"type": type, "item_id": item_id, "title": title},
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to send approval notification. Check team configuration.",
+        )
+
+    logger.info(
+        "Telegram voting initiated successfully",
+        extra={"type": type, "item_id": item_id, "title": title},
+    )
+
+    return {
+        "success": True,
+        "message": "Approval voting initiated. Team notified via Telegram.",
+        "id": item_id,
+        "voting_status": "pending",
+    }
+
+
+@router.put("/api/intel/staging/{type}/{item_id}")
+async def edit_staging_item(
+    type: str,
+    item_id: str,
+    request: EditStagingItemRequest,
+) -> dict[str, Any]:
+    """
+    Edit staging item (title, content, category).
+
+    Only updates provided fields (partial update).
+    """
+    logger.info(
+        "Edit staging item requested",
+        extra={"type": type, "item_id": item_id, "endpoint": "/api/intel/staging/edit"},
+    )
+
+    intel_user_actions_total.labels(intel_type=type, action="edit").inc()
+
+    # Load existing staging item
+    data = staging_service.load_staging_item(type, item_id)
+    if not data:
+        logger.warning(
+            "Edit failed - item not found",
+            extra={"type": type, "item_id": item_id},
+        )
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    # Update only provided fields
+    updated_fields = {}
+    if request.title is not None:
+        data["title"] = request.title
+        updated_fields["title"] = request.title
+    if request.content is not None:
+        data["content"] = request.content
+        updated_fields["content"] = request.content
+    if request.category is not None:
+        data["category"] = request.category
+        updated_fields["category"] = request.category
+
+    # Save updated staging item
+    staging_service.save_staging_item(type, item_id, data)
+
+    logger.info(
+        "Edit completed successfully",
+        extra={
+            "type": type,
+            "item_id": item_id,
+            "updated_fields": list(updated_fields.keys()),
+        },
+    )
+
+    return {
+        "success": True,
+        "message": "Item updated successfully",
+        "id": item_id,
+        "updated_fields": updated_fields,
+    }
+
+
+@router.post("/api/intel/staging/{type}/{item_id}/cover")
+async def upload_cover_image(
+    type: str,
+    item_id: str,
+    request: CoverImageUploadRequest,
+) -> dict[str, Any]:
+    """
+    Upload cover image for staging item.
+
+    Saves image to data/staging/{type}/covers/{item_id}.{ext}
+    Updates staging JSON with cover_image path.
+    """
+    # This is a WRITE whose path, EXTENSION and CONTENT are all caller-supplied:
+    # item_id is a path param, ext is the suffix of a caller-named filename, and the
+    # bytes are base64 from the body. `assert_valid_item_id` is imported from the
+    # staging service rather than re-typed, so this and the other guarded sinks cannot
+    # drift apart. Found by class-audit, not by the scanner: CodeQL flags the Telegram
+    # cover handler (already guarded) and misses this HTTP twin entirely.
+    try:
+        assert_valid_item_id(item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    logger.info(
+        "Cover image upload requested",
+        extra={"type": type, "item_id": item_id, "endpoint": "/api/intel/staging/cover"},
+    )
+
+    intel_user_actions_total.labels(intel_type=type, action="upload_cover").inc()
+
+    # Load existing staging item
+    data = staging_service.load_staging_item(type, item_id)
+    if not data:
+        logger.warning(
+            "Cover upload failed - item not found",
+            extra={"type": type, "item_id": item_id},
+        )
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    # Decode base64 image
+    try:
+        image_data = base64.b64decode(request.cover_image_base64)
+    except Exception as e:
+        logger.error(
+            "Invalid base64 image: %s",
+            e,
+            extra={"type": type, "item_id": item_id},
+        )
+        raise HTTPException(status_code=400, detail=f"Invalid base64 image: {e}") from e
+
+    # Determine file extension. A validated item_id alone is not enough: the extension
+    # is a SECOND caller-controlled component of the same filename, and `.suffix` of an
+    # arbitrary string is an arbitrary string — ".py", ".json", ".env" all pass through
+    # it. Allow-list, because this endpoint exists to store a cover IMAGE.
+    filename = request.cover_image_filename or f"{item_id}.jpg"
+    ext = PathLib(filename).suffix.lower() or ".jpg"
+    if ext not in _ALLOWED_COVER_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported cover image extension: {ext}",
+        )
+
+    # Save cover image
+    covers_dir = staging_service.get_staging_dir(type) / "covers"
+    covers_dir.mkdir(parents=True, exist_ok=True)
+
+    cover_path = covers_dir / f"{item_id}{ext}"
+    cover_path.write_bytes(image_data)
+
+    # Update staging JSON
+    data["cover_image"] = str(cover_path.relative_to(staging_service.get_staging_dir(type)))
+    staging_service.save_staging_item(type, item_id, data)
+
+    logger.info(
+        "Cover image uploaded successfully",
+        extra={
+            "type": type,
+            "item_id": item_id,
+            "cover_image_path": str(cover_path),
+        },
+    )
+
+    return {
+        "success": True,
+        "message": "Cover image uploaded successfully",
+        "id": item_id,
+        "cover_image_path": str(cover_path),
+        "cover_image_url": f"/api/intel/staging/{type}/{item_id}/cover/preview",
+    }
+
+
+@router.post("/api/intel/staging/reject/{type}/{item_id}")
+async def reject_staging_item(type: str, item_id: str) -> dict[str, Any]:
+    """Reject item and move to archive"""
+    logger.info(
+        "Rejection started",
+        extra={"type": type, "item_id": item_id, "endpoint": "/api/intel/staging/reject"},
+    )
+
+    data = staging_service.load_staging_item(type, item_id)
+    if not data:
+        logger.warning(
+            "Rejection failed - item not found",
+            extra={"type": type, "item_id": item_id},
+        )
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    try:
+        title = data.get("title", "Untitled")
+
+        # Archive item using service
+        archive_path = staging_service.archive_item(type, item_id, "rejected")
+
+        logger.info(
+            "Rejection completed successfully",
+            extra={
+                "type": type,
+                "item_id": item_id,
+                "title": title,
+                "archive_path": str(archive_path),
+            },
+        )
+
+        return {"success": True, "message": "Item rejected and archived", "id": item_id}
+    except Exception as e:
+        logger.error(
+            "Rejection failed: %s",
+            e,
+            exc_info=True,
+            extra={"type": type, "item_id": item_id},
+        )
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# INGEST & PUBLISH → intel_scraper.py
+
+# ─── Post-publish queue (PostgreSQL-backed, survives deploys) ────────────────
+
+from backend.app.dependencies import get_database_pool  # noqa: E402
+
+
+@router.post("/api/intel/post-publish-queue")
+async def enqueue_post_publish(
+    request: Request,
+    pool: Any = Depends(get_database_pool),
+) -> dict:
+    """Internal: add a slug to the post-processing queue (translate + image + SEO).
+
+    `force: true` is the reconciliation path (2026-07-17): a batch flush lost
+    mid-run leaves `completed_steps.image=true` recorded even though the cover
+    never landed on GitHub — the default ON CONFLICT below only resets 'failed'
+    rows, so a 'done' item with a missing cover would never be re-run. `force`
+    unconditionally resets status/attempts/completed_steps regardless of the
+    row's current status.
+    """
+    body = await request.json()
+    slug = body.get("slug", "")
+    category = body.get("category", "business")
+    source = body.get("source", "intel")
+    article_id = body.get("article_id")
+    title = body.get("title")
+    force = bool(body.get("force", False))
+    if not slug:
+        raise HTTPException(status_code=400, detail="slug required")
+    async with pool.acquire() as conn:
+        if force:
+            await conn.execute(
+                """
+                INSERT INTO post_publish_queue (slug, title, category, source, article_id)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (slug) DO UPDATE SET
+                    status = 'pending',
+                    attempts = 0,
+                    completed_steps = '{}'::jsonb,
+                    error_message = NULL
+                """,
+                slug,
+                title,
+                category,
+                source,
+                article_id,
+            )
+        else:
+            await conn.execute(
+                """
+                INSERT INTO post_publish_queue (slug, title, category, source, article_id)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (slug) DO UPDATE SET
+                    status = CASE WHEN post_publish_queue.status = 'failed'
+                                  THEN 'pending' ELSE post_publish_queue.status END,
+                    attempts = CASE WHEN post_publish_queue.status = 'failed'
+                                    THEN 0 ELSE post_publish_queue.attempts END,
+                    error_message = NULL
+                """,
+                slug,
+                title,
+                category,
+                source,
+                article_id,
+            )
+    logger.info(
+        "📥 Post-publish queue: added",
+        extra={"slug": slug, "category": category, "source": source, "force": force},
+    )
+    return {"ok": True, "slug": slug}
+
+
+@router.get("/api/intel/post-publish-queue/pending")
+async def get_pending_queue(
+    request: Request,
+    pool: Any = Depends(get_database_pool),
+) -> dict:
+    """Poller endpoint: returns pending slugs for post-processing."""
+    api_key = request.headers.get("X-API-Key")
+    if api_key != settings.intel_scraper_api_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    async with pool.acquire() as conn:
+        # Stale-claim reaper: a poller that dies/times out mid-batch leaves items
+        # stuck in 'processing' forever (no reaper existed — 26 corpses found in
+        # prod, 22 from 2026-07-11). Re-queue anything claimed >2h ago; attempts
+        # is left untouched (it already incremented at claim time).
+        await conn.execute(
+            """
+            UPDATE post_publish_queue
+            SET status = 'pending'
+            WHERE status = 'processing' AND started_at < NOW() - INTERVAL '2 hours'
+            """,
+        )
+        # Failed re-pick: items marked 'failed' were never re-queued automatically
+        # — the only path back was enqueue_post_publish's ON CONFLICT, which never
+        # fires for slugs no longer being re-published (87 items stuck at
+        # attempts=1). Re-queue anything still under the attempt cap so the
+        # documented "max 5 attempts then dead" design actually happens.
+        await conn.execute(
+            """
+            UPDATE post_publish_queue
+            SET status = 'pending'
+            WHERE status = 'failed' AND attempts < 5
+            """,
+        )
+        # Mark as processing and return (max 5 attempts, then dead-letter)
+        await conn.execute(
+            """
+            UPDATE post_publish_queue
+            SET status = 'dead'
+            WHERE status = 'pending' AND attempts >= 5
+            """,
+        )
+        rows = await conn.fetch(
+            """
+            UPDATE post_publish_queue
+            SET status = 'processing', started_at = NOW(), attempts = attempts + 1
+            WHERE status = 'pending' AND attempts < 5
+            RETURNING slug, title, category, source, article_id, created_at,
+                      completed_steps, attempts
+            """,
+        )
+        pending = [
+            {
+                "slug": r["slug"],
+                "title": r["title"],
+                "category": r["category"],
+                "source": r["source"],
+                "article_id": r["article_id"],
+                "queued_at": r["created_at"].isoformat() if r["created_at"] else None,
+                "completed_steps": r["completed_steps"] or {},
+                "attempts": r["attempts"],
+            }
+            for r in rows
+        ]
+    return {"pending": pending, "count": len(pending)}
+
+
+@router.post("/api/intel/post-publish-queue/done")
+async def mark_queue_done(
+    request: Request,
+    pool: Any = Depends(get_database_pool),
+) -> dict:
+    """Poller endpoint: mark slugs as processed."""
+    api_key = request.headers.get("X-API-Key")
+    if api_key != settings.intel_scraper_api_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    body = await request.json()
+    slugs = body.get("slugs", [])
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE post_publish_queue
+            SET status = 'done', completed_at = NOW()
+            WHERE slug = ANY($1::text[])
+            """,
+            slugs,
+        )
+    logger.info("✅ Post-publish queue: marked done", extra={"slugs": slugs})
+    return {"ok": True, "removed": slugs}
+
+
+@router.post("/api/intel/post-publish-queue/failed")
+async def mark_queue_failed(
+    request: Request,
+    pool: Any = Depends(get_database_pool),
+) -> dict:
+    """Poller endpoint: mark slugs as failed with error message."""
+    api_key = request.headers.get("X-API-Key")
+    if api_key != settings.intel_scraper_api_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    body = await request.json()
+    slugs = body.get("slugs", [])
+    error = body.get("error", "Unknown error")
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE post_publish_queue
+            SET status = 'failed', error_message = $2
+            WHERE slug = ANY($1::text[])
+            """,
+            slugs,
+            error,
+        )
+    logger.info("❌ Post-publish queue: marked failed", extra={"slugs": slugs, "error": error})
+    return {"ok": True, "failed": slugs}
+
+
+@router.post("/api/intel/post-publish-queue/step-done")
+async def mark_step_done(
+    request: Request,
+    pool: Any = Depends(get_database_pool),
+) -> dict:
+    """Poller endpoint: mark a specific step as completed for a slug."""
+    api_key = request.headers.get("X-API-Key")
+    if api_key != settings.intel_scraper_api_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    body = await request.json()
+    slug = body.get("slug", "")
+    step = body.get("step", "")
+    if not slug or not step:
+        raise HTTPException(status_code=400, detail="slug and step required")
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE post_publish_queue
+            SET completed_steps = COALESCE(completed_steps, '{}'::jsonb) || jsonb_build_object($2::text, true)
+            WHERE slug = $1
+            """,
+            slug,
+            step,
+        )
+    return {"ok": True, "slug": slug, "step": step}
+
+
+# METRICS, SEARCH, TRENDS → intel_analytics.py
+
+# ─── Intel validation endpoints (admin-only) ─────────────────────────────────
+
+from fastapi import status as http_status  # noqa: E402
+from pydantic import BaseModel as _BaseModel  # noqa: E402 — alias avoids redefinition
+
+# get_current_user imported at top of module (line 26 — needed by bulk_approve_items above)
+
+
+def _require_intel_admin(user: dict[str, Any]) -> None:
+    if (user.get("email") or "").lower() not in settings.admin_emails_set:
+        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="admin only")
+
+
+class RevalidateBody(_BaseModel):
+    tier: str | None = None
+
+
+@router.get("/api/intel/staging/{staging_id}/validation")
+async def get_staging_validation(
+    staging_id: int,
+    user: dict = Depends(get_current_user),
+    pool: Any = Depends(get_database_pool),
+) -> dict:
+    """Admin-only: return per-tier validation breakdown for a staging document."""
+    _require_intel_admin(user)
+
+    async with pool.acquire() as conn:
+        tiers = await conn.fetch(
+            """
+            SELECT validator_tier, result, score, details, checked_at
+            FROM intel_validator_log
+            WHERE staging_id = $1
+            ORDER BY checked_at DESC
+            """,
+            staging_id,
+        )
+        staging = await conn.fetchrow(
+            "SELECT id, status, score FROM intel_staging WHERE id = $1",
+            staging_id,
+        )
+
+    if staging is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail=f"staging item {staging_id} not found",
+        )
+
+    return {
+        "staging_id": staging_id,
+        "status": staging["status"],
+        "final_score": float(staging["score"] or 0),
+        "tiers": [dict(t) for t in tiers],
+    }
+
+
+@router.post("/api/intel/staging/{staging_id}/revalidate")
+async def post_revalidate_staging(
+    staging_id: int,
+    body: RevalidateBody,
+    user: dict = Depends(get_current_user),
+    pool: Any = Depends(get_database_pool),
+) -> dict:
+    """Admin-only: trigger manual (re-)validation of a staging document.
+
+    Optional body.tier filters to a single tier; omit to run all tiers.
+    Full revalidation delegates to IntelStagingService if the staging row
+    exists. Currently returns a stub response — full wiring is done when
+    intel_staging_service._post_ingest_validate is hooked.
+    """
+    _require_intel_admin(user)
+
+    async with pool.acquire() as conn:
+        staging = await conn.fetchrow(
+            "SELECT id, status FROM intel_staging WHERE id = $1",
+            staging_id,
+        )
+
+    if staging is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail=f"staging item {staging_id} not found",
+        )
+
+    logger.info(
+        "Revalidation requested",
+        extra={"staging_id": staging_id, "tier": body.tier, "user": user.get("email")},
+    )
+
+    raise HTTPException(
+        http_status.HTTP_501_NOT_IMPLEMENTED,
+        detail={
+            "staging_id": staging_id,
+            "message": "full revalidation not yet wired (hook into intel_staging_service pending)",
+            "tier": body.tier,
+        },
+    )

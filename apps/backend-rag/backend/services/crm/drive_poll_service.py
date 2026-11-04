@@ -1,0 +1,822 @@
+"""
+Drive Changes Polling Service
+
+Polls Google Drive for new files added to client folders,
+then dispatches OCR via the central dispatcher.
+
+Runs every 5 minutes via the autonomous scheduler.
+"""
+
+import hashlib
+import logging
+import os
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+import asyncpg
+from googleapiclient.errors import HttpError
+
+from backend.core.cache import invalidate_crm_stats
+from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.services.crm.document_categorizer import auto_categorize_document
+from backend.services.crm.drive_registration_visibility import drive_default_client_visible
+from backend.services.crm_guardian.summary_queue import (
+    enqueue_client,
+    enqueue_clients_for_company_folder,
+)
+
+install_telegram_token_redaction()
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DriveCircuitBreaker:
+    """
+    Circuit breaker per il Drive polling.
+
+    Stati:
+    - closed: normale, poll eseguito
+    - open: troppi errori consecutivi, poll saltato
+    - half-open: tentativo di recovery dopo timeout
+
+    Invia alert Telegram quando il circuit si apre.
+    """
+
+    failure_threshold: int = 3
+    recovery_timeout: int = 300  # 5 minuti
+    _failures: int = field(default=0, init=False)
+    _last_failure_time: float = field(default=0.0, init=False)
+    _state: str = field(default="closed", init=False)
+
+    @property
+    def state(self) -> str:
+        if self._state == "open":
+            if time.time() - self._last_failure_time > self.recovery_timeout:
+                self._state = "half-open"
+        return self._state
+
+    def record_success(self) -> None:
+        self._failures = 0
+        self._state = "closed"
+
+    def record_failure(self) -> None:
+        self._failures += 1
+        self._last_failure_time = time.time()
+        if self._failures >= self.failure_threshold:
+            if self._state != "open":
+                logger.error(f"Drive circuit breaker OPEN dopo {self._failures} errori consecutivi")
+            self._state = "open"
+
+    async def call(
+        self,
+        fn: Callable[[], Awaitable[dict[str, Any]]],
+        on_open: Callable[[str], None] | None = None,
+    ) -> dict[str, Any] | None:
+        """
+        Esegue fn() se il circuit è closed/half-open.
+        Ritorna None se il circuit è open (poll saltato silenziosamente).
+        """
+        current = self.state
+        if current == "open":
+            logger.warning("Drive circuit OPEN — poll saltato")
+            return None
+
+        try:
+            result = await fn()
+            self.record_success()
+            if current == "half-open":
+                logger.info("Drive circuit breaker: recovery OK — tornato CLOSED")
+            return result
+        except Exception as e:
+            self.record_failure()
+            if self._state == "open" and on_open:
+                on_open(str(e))
+            raise
+
+
+# Singleton circuit breaker (persiste tra i poll della stessa sessione)
+_drive_circuit_breaker = DriveCircuitBreaker()
+_DRIVE_POLL_ADVISORY_LOCK_ID = 614_238_904_711
+_DEFAULT_DRIVE_POLL_PAGE_SIZE = 10
+_DEFAULT_DRIVE_POLL_MAX_PAGES_PER_CYCLE = 1
+
+
+def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    """Read a bounded positive integer from env without making startup fragile."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s must be an integer; using default %s", name, default)
+        return default
+    if value < minimum or value > maximum:
+        bounded = max(minimum, min(value, maximum))
+        logger.warning("%s=%s outside [%s,%s]; using %s", name, value, minimum, maximum, bounded)
+        return bounded
+    return value
+
+
+def _drive_poll_page_size() -> int:
+    return _env_int(
+        "DRIVE_POLL_PAGE_SIZE",
+        _DEFAULT_DRIVE_POLL_PAGE_SIZE,
+        minimum=1,
+        maximum=1000,
+    )
+
+
+def _drive_poll_max_pages_per_cycle() -> int:
+    return _env_int(
+        "DRIVE_POLL_MAX_PAGES_PER_CYCLE",
+        _DEFAULT_DRIVE_POLL_MAX_PAGES_PER_CYCLE,
+        minimum=1,
+        maximum=50,
+    )
+
+
+def _send_telegram_alert(message: str) -> None:
+    """Invia alert Telegram quando il circuit breaker si apre."""
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_OWNER_CHAT_ID", "").strip()
+    if not bot_token:
+        logger.warning("TELEGRAM_BOT_TOKEN non trovato — skip alert circuit breaker")
+        return
+    if not chat_id:
+        logger.warning("TELEGRAM_OWNER_CHAT_ID non impostato — skip alert circuit breaker")
+        return
+    try:
+        data = urllib.parse.urlencode(
+            {
+                "chat_id": chat_id,
+                "text": message,
+                "parse_mode": "HTML",
+            },
+        ).encode()
+        urllib.request.urlopen(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            data,
+            timeout=10,
+        )
+        logger.info("Telegram alert circuit breaker inviato")
+    except (urllib.error.URLError, OSError, ValueError) as ex:
+        logger.warning("Telegram alert fallito: %s", ex)
+    except Exception:
+        logger.exception("Telegram alert fallito con errore inatteso")
+
+
+def _new_guardian_queue_counters() -> dict[str, int]:
+    """Counters for best-effort CRM Guardian enqueue side effects."""
+    return {
+        "inserted": 0,
+        "already_pending": 0,
+        "skipped_disabled": 0,
+        "client_not_found": 0,
+        "company_no_clients": 0,
+        "error": 0,
+    }
+
+
+def _record_guardian_enqueue_result(
+    counters: dict[str, int],
+    result: dict[str, Any],
+) -> None:
+    action = str(result.get("action") or "error")
+    counters[action] = counters.get(action, 0) + 1
+
+
+async def _enqueue_guardian_client(
+    db_pool: Any,
+    client_id: int,
+    *,
+    enqueued_by: str,
+    counters: dict[str, int],
+) -> None:
+    """Best-effort enqueue for a client summary refresh.
+
+    Drive polling must never fail just because Guardian queueing failed. The
+    summary queue is idempotent, so repeated Drive changes collapse into one
+    pending/running row per client.
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            result = await enqueue_client(
+                conn,
+                client_id,
+                enqueued_by=enqueued_by,
+            )
+        _record_guardian_enqueue_result(counters, result)
+    except Exception:
+        counters["error"] = counters.get("error", 0) + 1
+        logger.exception(
+            "Drive poll: CRM Guardian enqueue failed for client %s",
+            client_id,
+        )
+
+
+async def _enqueue_guardian_company_folder(
+    db_pool: Any,
+    drive_folder_id: str,
+    *,
+    enqueued_by: str,
+    counters: dict[str, int],
+) -> None:
+    """Best-effort cascade enqueue for clients linked to a company folder."""
+    try:
+        async with db_pool.acquire() as conn:
+            results = await enqueue_clients_for_company_folder(
+                conn,
+                drive_folder_id,
+                enqueued_by=enqueued_by,
+            )
+        if not results:
+            counters["company_no_clients"] = counters.get("company_no_clients", 0) + 1
+            return
+        for result in results:
+            _record_guardian_enqueue_result(counters, result)
+    except Exception:
+        counters["error"] = counters.get("error", 0) + 1
+        logger.exception(
+            "Drive poll: CRM Guardian cascade enqueue failed for folder %s",
+            drive_folder_id,
+        )
+
+
+async def poll_drive_changes(
+    *,
+    inline_ocr: bool = True,
+    acquire_advisory_lock: bool = True,
+) -> dict[str, Any]:
+    """
+    Poll Google Drive for new files in client folders.
+
+    1. Read page_token from system_settings
+    2. Call Drive Changes API
+    3. For each new file in a client subfolder, dispatch OCR
+    4. Save new page_token
+
+    Returns summary of what was processed.
+    Gestito da DriveCircuitBreaker: si apre dopo 3 errori consecutivi.
+    """
+
+    def _on_circuit_open(error: str) -> None:
+        alert_msg = (
+            f"⚠️ <b>Drive Polling</b>: circuit breaker APERTO\n"
+            f"Dopo {_drive_circuit_breaker.failure_threshold} errori consecutivi.\n"
+            f"Ultimo errore: <code>{error[:200]}</code>\n"
+            f"Recovery automatico in {_drive_circuit_breaker.recovery_timeout // 60} minuti."
+        )
+        _send_telegram_alert(alert_msg)
+
+    try:
+        async def _run_poll() -> dict[str, Any]:
+            return await _do_poll_drive_changes(
+                inline_ocr=inline_ocr,
+                acquire_advisory_lock=acquire_advisory_lock,
+            )
+
+        result = await _drive_circuit_breaker.call(_run_poll, on_open=_on_circuit_open)
+        if result is None:
+            return {"status": "circuit_open", "processed": 0}
+        return result
+    except (HttpError, asyncpg.PostgresError, OSError) as e:
+        logger.warning("Drive poll failed with known error: %s", e)
+        return {"status": "error", "error": str(e)}
+    except Exception as e:
+        logger.exception("Drive poll failed with unexpected error")
+        return {"status": "error", "error": str(e)}
+
+
+async def _do_poll_drive_changes(
+    *,
+    inline_ocr: bool = True,
+    acquire_advisory_lock: bool = True,
+) -> dict[str, Any]:
+    """Logica effettiva del polling — chiamata tramite circuit breaker."""
+    db_pool = None
+    lock_conn = None
+    lock_acquired = False
+    try:
+        from backend.services.integrations.service_account_drive_service import (
+            ServiceAccountDriveService,
+        )
+
+        ocr_dispatcher = None
+        if inline_ocr:
+            from backend.app.routers.crm_enhanced import (
+                _dispatch_ocr_by_folder as ocr_dispatcher,
+            )
+
+        db_pool = await asyncpg.create_pool(
+            os.environ["DATABASE_URL"],
+            min_size=1,
+            max_size=2,
+        )
+
+        if acquire_advisory_lock:
+            lock_conn = await db_pool.acquire()
+            lock_acquired = bool(
+                await lock_conn.fetchval(
+                    "SELECT pg_try_advisory_lock($1)",
+                    _DRIVE_POLL_ADVISORY_LOCK_ID,
+                ),
+            )
+            if not lock_acquired:
+                logger.warning("Drive poll skipped: another poll already holds the lock")
+                return {
+                    "status": "already_running",
+                    "processed": 0,
+                    "skipped": 0,
+                    "inline_ocr": inline_ocr,
+                    "ocr_dispatched": 0,
+                }
+
+        drive_service = ServiceAccountDriveService()
+
+        # 1. Get or initialize page token
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT value FROM system_settings WHERE key = 'drive_poll_page_token'",
+            )
+            if row:
+                page_token = row["value"]
+            else:
+                # First run: get current token (won't return historical changes)
+                page_token = await drive_service.get_start_page_token()
+                await conn.execute(
+                    """INSERT INTO system_settings (key, value, updated_at)
+                    VALUES ('drive_poll_page_token', $1, NOW())""",
+                    page_token,
+                )
+                logger.info("Drive poll: initialized page token %s", page_token)
+                return {
+                    "status": "initialized",
+                    "processed": 0,
+                    "inline_ocr": inline_ocr,
+                    "ocr_dispatched": 0,
+                }
+
+        # 2. Get a bounded slice of changes since last poll. If Drive returns
+        # nextPageToken, persist that token after this slice is processed so the
+        # worker drains a large backlog across short cycles instead of timing out.
+        page_size = _drive_poll_page_size()
+        max_pages = _drive_poll_max_pages_per_cycle()
+        logger.info(
+            "Drive poll: fetching changes page_token=%s page_size=%s max_pages=%s",
+            page_token,
+            page_size,
+            max_pages,
+        )
+        result = await drive_service.list_changes_since(
+            page_token,
+            max_pages=max_pages,
+            page_size=page_size,
+        )
+        changes = result["changes"]
+        new_token = result["new_page_token"]
+        more_pages = bool(result.get("more_pages"))
+        pages_fetched = int(result.get("pages_fetched") or 0)
+
+        if not changes:
+            # Save new token even if no changes
+            async with db_pool.acquire() as conn:
+                await conn.execute(
+                    """UPDATE system_settings SET value = $1, updated_at = NOW()
+                    WHERE key = 'drive_poll_page_token'""",
+                    new_token,
+                )
+            return {
+                "status": "partial" if more_pages else "no_changes",
+                "processed": 0,
+                "changes": 0,
+                "skipped": 0,
+                "inline_ocr": inline_ocr,
+                "ocr_dispatched": 0,
+                "more_pages": more_pages,
+                "pages_fetched": pages_fetched,
+                "page_size": page_size,
+            }
+
+        # 3. Build lookup maps: subfolder_id → (client_id, subfolder_name)
+        # Includes BOTH top-level (00_Profile) AND nested (02_Company/AKTA) subfolders
+        guardian_queue = _new_guardian_queue_counters()
+        async with db_pool.acquire() as conn:
+            subfolders = await conn.fetch(
+                "SELECT client_id, subfolder_name, subfolder_id FROM client_drive_subfolders",
+            )
+
+        subfolder_map: dict[str, tuple[int, str]] = {}
+        for sf in subfolders:
+            subfolder_map[sf["subfolder_id"]] = (sf["client_id"], sf["subfolder_name"])
+
+        # Also build client root folder → client_id map (for fallback resolution)
+        async with db_pool.acquire() as conn:
+            clients_with_folders = await conn.fetch(
+                "SELECT id, google_drive_folder_id FROM clients WHERE google_drive_folder_id IS NOT NULL",
+            )
+
+        root_folder_map: dict[str, int] = {}
+        for c in clients_with_folders:
+            root_folder_map[c["google_drive_folder_id"]] = c["id"]
+
+        # Company folders are not inserted into client documents here, but a
+        # company-level Drive change invalidates every linked client summary.
+        async with db_pool.acquire() as conn:
+            company_folders = await conn.fetch(
+                """
+                SELECT id, company_name, google_drive_folder_id, tax_dept_folder_id
+                FROM companies
+                WHERE google_drive_folder_id IS NOT NULL
+                   OR tax_dept_folder_id IS NOT NULL
+                """,
+            )
+
+        company_folder_map: dict[str, tuple[int, str]] = {}
+        for company in company_folders:
+            for folder_key in ("google_drive_folder_id", "tax_dept_folder_id"):
+                folder_id = company[folder_key]
+                if folder_id:
+                    company_folder_map[folder_id] = (
+                        company["id"],
+                        company["company_name"],
+                    )
+
+        # 4. Process new files
+        processed = 0
+        ocr_dispatched = 0
+        skipped = 0
+        for change in changes:
+            if change.get("removed"):
+                continue
+
+            file_info = change.get("file")
+            if not file_info or file_info.get("trashed"):
+                continue
+
+            # Skip folders
+            if file_info.get("mimeType") == "application/vnd.google-apps.folder":
+                continue
+
+            file_id = file_info["id"]
+            file_name = file_info.get("name", "")
+            parents = file_info.get("parents", [])
+
+            if not parents:
+                continue
+
+            parent_id = parents[0]
+
+            # Check if parent is a known subfolder (top-level OR nested)
+            if parent_id in subfolder_map:
+                client_id, folder_name = subfolder_map[parent_id]
+            elif parent_id in root_folder_map:
+                # File in client root folder — skip document insert, but the
+                # Drive inventory changed so the semantic summary is stale.
+                await _enqueue_guardian_client(
+                    db_pool,
+                    root_folder_map[parent_id],
+                    enqueued_by="drive_poll_service:client_root_file",
+                    counters=guardian_queue,
+                )
+                skipped += 1
+                continue
+            elif parent_id in company_folder_map:
+                # File in company/tax root folder — cascade summary refresh to
+                # all active linked clients. Company document ingestion is a
+                # separate path; this poller stays client-document focused.
+                await _enqueue_guardian_company_folder(
+                    db_pool,
+                    parent_id,
+                    enqueued_by="drive_poll_service:company_root_file",
+                    counters=guardian_queue,
+                )
+                skipped += 1
+                continue
+            else:
+                # Unknown parent — try to resolve via Drive API
+                # This catches nested folders not yet in client_drive_subfolders
+                try:
+                    parent_info = await drive_service.get_file_metadata(parent_id)
+                    parent_name = parent_info.get("name", "")
+                    parent_parents = parent_info.get("parents", [])
+
+                    # Check if grandparent is a known subfolder (nested case)
+                    if parent_parents and parent_parents[0] in subfolder_map:
+                        client_id, _ = subfolder_map[parent_parents[0]]
+                        folder_name = parent_name.lower()
+                        # Register this nested folder for future polls
+                        async with db_pool.acquire() as conn:
+                            await conn.execute(
+                                """INSERT INTO client_drive_subfolders
+                                (client_id, subfolder_name, subfolder_id)
+                                VALUES ($1, $2, $3)
+                                ON CONFLICT (subfolder_id) DO NOTHING""",
+                                client_id,
+                                parent_name,
+                                parent_id,
+                            )
+                        subfolder_map[parent_id] = (client_id, folder_name)
+                        logger.info(
+                            "Drive poll: registered nested folder '%s' for client %s",
+                            parent_name,
+                            client_id,
+                        )
+                    elif parent_parents and parent_parents[0] in company_folder_map:
+                        await _enqueue_guardian_company_folder(
+                            db_pool,
+                            parent_parents[0],
+                            enqueued_by="drive_poll_service:company_nested_file",
+                            counters=guardian_queue,
+                        )
+                        skipped += 1
+                        continue
+                    else:
+                        skipped += 1
+                        continue
+                except (HttpError, asyncpg.PostgresError, KeyError) as e:
+                    logger.debug("Drive poll: could not resolve parent %s: %s", parent_id, e)
+                    skipped += 1
+                    continue
+                except Exception:
+                    logger.exception("Drive poll: unexpected error resolving parent %s", parent_id)
+                    skipped += 1
+                    continue
+
+            # Deduplicate: skip if file_id already in documents
+            async with db_pool.acquire() as conn:
+                existing = await conn.fetchval(
+                    "SELECT id FROM documents WHERE file_id = $1",
+                    file_id,
+                )
+                if existing:
+                    skipped += 1
+                    continue
+
+            # Level 2 dedup: content hash (same file content uploaded with different file_id)
+            content_hash = None
+            try:
+                file_metadata = await drive_service.get_file_metadata(file_id)
+                file_size = int(file_metadata.get("size", 0))
+                # Only hash files under 20MB to avoid memory issues
+                if file_size > 0 and file_size < 20 * 1024 * 1024:
+                    request = drive_service.service.files().get_media(fileId=file_id)
+                    import asyncio
+
+                    file_content = await asyncio.to_thread(request.execute)
+                    content_hash = hashlib.md5(file_content).hexdigest()
+
+                    async with db_pool.acquire() as conn:
+                        hash_dup = await conn.fetchval(
+                            """SELECT id FROM documents
+                               WHERE client_id = $1 AND content_hash = $2
+                                 AND created_at > NOW() - INTERVAL '30 days'""",
+                            client_id,
+                            content_hash,
+                        )
+                        if hash_dup:
+                            logger.info(
+                                "Drive poll: skipped duplicate content hash for %s (matches doc %s)",
+                                file_name,
+                                hash_dup,
+                            )
+                            skipped += 1
+                            continue
+            except (HttpError, asyncpg.PostgresError, OSError) as e:
+                logger.debug("Could not compute content hash for %s: %s", file_name, e)
+            except Exception:
+                logger.exception("Unexpected error computing content hash for %s", file_name)
+
+            logger.info(
+                "Drive poll: new file '%s' in %s for client %s",
+                file_name,
+                folder_name,
+                client_id,
+            )
+
+            # Create document record with auto-categorization
+            cat_result = auto_categorize_document(file_name)
+            doc_category = cat_result["document_category"]
+
+            # Folder hint: if categorizer returns "other" but file is in immigration folder,
+            # re-categorize as immigration (conservative — only for "other", not specific categories)
+            if doc_category == "other" and isinstance(folder_name, str):
+                folder_lower = folder_name.lower()
+                if (
+                    folder_lower in ("01_immigration", "actual visa", "previous visa")
+                    or "immigration" in folder_lower
+                ):
+                    doc_category = "immigration"
+                    logger.info(
+                        "Drive poll: folder hint upgraded '%s' from 'other' to 'immigration'",
+                        file_name,
+                    )
+
+            # Detect if file is in Actual Visa / Previous Visa subfolder
+            subfolder_value = None
+            parent_name_lower = folder_name.lower() if isinstance(folder_name, str) else ""
+            if parent_name_lower in ("actual visa", "previous visa"):
+                subfolder_value = (
+                    "Actual Visa" if "actual" in parent_name_lower else "Previous Visa"
+                )
+                doc_category = "immigration"
+
+                # Visa rotation: if new file in Actual Visa, archive the old one
+                if subfolder_value == "Actual Visa":
+                    async with db_pool.acquire() as conn:
+                        old_actual = await conn.fetchrow(
+                            """SELECT id FROM documents
+                               WHERE client_id = $1 AND subfolder = 'Actual Visa'
+                                 AND (is_archived IS NOT TRUE)
+                               ORDER BY created_at DESC LIMIT 1""",
+                            client_id,
+                        )
+                        if old_actual:
+                            await conn.execute(
+                                "UPDATE documents SET subfolder = 'Previous Visa', updated_at = NOW() WHERE id = $1",
+                                old_actual["id"],
+                            )
+                            logger.info(
+                                f"Drive poll: rotated doc {old_actual['id']} to Previous Visa"
+                            )
+
+            async with db_pool.acquire() as conn:
+                doc_id = await conn.fetchval(
+                    """INSERT INTO documents (
+                        client_id, document_type, document_category, file_name, file_id,
+                        status, storage_type, ocr_status, subfolder, content_hash,
+                        client_visible
+                    ) VALUES ($1, $2, $3, $4, $5, 'active', 'google_drive', 'pending', $6, $7, $8)
+                    RETURNING id""",
+                    client_id,
+                    _infer_document_type(file_name, folder_name),
+                    doc_category,
+                    file_name,
+                    file_id,
+                    subfolder_value,
+                    content_hash,
+                    drive_default_client_visible(file_name),
+                )
+            await invalidate_crm_stats()  # F32
+
+            # Touch client updated_at so CRM reflects new document
+            async with db_pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE clients SET updated_at = NOW() WHERE id = $1",
+                    client_id,
+                )
+
+            await _enqueue_guardian_client(
+                db_pool,
+                client_id,
+                enqueued_by="drive_poll_service:client_document",
+                counters=guardian_queue,
+            )
+            processed += 1
+
+            # Dispatch OCR
+            if not inline_ocr:
+                logger.info(
+                    "Drive poll: inline OCR disabled for '%s'; document %s remains pending",
+                    file_name,
+                    doc_id,
+                )
+                continue
+
+            try:
+                await ocr_dispatcher(
+                    db_pool=db_pool,
+                    client_id=client_id,
+                    file_id=file_id,
+                    folder_name=folder_name,
+                    filename=file_name,
+                    doc_id=doc_id,
+                    document_type=_infer_document_type(file_name, folder_name),
+                )
+                ocr_dispatched += 1
+            except (HttpError, asyncpg.PostgresError, OSError) as e:
+                logger.warning("Drive poll: OCR dispatch failed for %s: %s", file_name, e)
+            except Exception:
+                logger.exception("Drive poll: OCR dispatch failed unexpectedly for %s", file_name)
+
+        # 5. Save new page token
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE system_settings SET value = $1, updated_at = NOW()
+                WHERE key = 'drive_poll_page_token'""",
+                new_token,
+            )
+
+        logger.info(
+            "Drive poll: status=%s processed=%s skipped=%s ocr_dispatched=%s inline_ocr=%s "
+            "guardian_queue=%s from %s changes pages_fetched=%s more_pages=%s",
+            "partial" if more_pages else "ok",
+            processed,
+            skipped,
+            ocr_dispatched,
+            inline_ocr,
+            guardian_queue,
+            len(changes),
+            pages_fetched,
+            more_pages,
+        )
+        return {
+            "status": "partial" if more_pages else "ok",
+            "changes": len(changes),
+            "processed": processed,
+            "skipped": skipped,
+            "inline_ocr": inline_ocr,
+            "ocr_dispatched": ocr_dispatched,
+            "guardian_queue": guardian_queue,
+            "more_pages": more_pages,
+            "pages_fetched": pages_fetched,
+            "page_size": page_size,
+        }
+
+    except (HttpError, asyncpg.PostgresError, OSError, KeyError) as e:
+        logger.warning("Drive poll failed: %s", e)
+        raise  # ri-duqebo per permettere al circuit breaker di contare i failures
+    except Exception:
+        logger.exception("Drive poll failed with unexpected error")
+        raise  # ri-duqebo per permettere al circuit breaker di contare i failures
+    finally:
+        if db_pool and lock_conn is not None:
+            try:
+                if lock_acquired:
+                    await lock_conn.execute(
+                        "SELECT pg_advisory_unlock($1)",
+                        _DRIVE_POLL_ADVISORY_LOCK_ID,
+                    )
+            except Exception:
+                logger.warning("Drive poll: failed to release advisory lock", exc_info=True)
+            try:
+                await db_pool.release(lock_conn)
+            except Exception:
+                logger.warning("Drive poll: failed to release lock connection", exc_info=True)
+        if db_pool:
+            await db_pool.close()
+
+
+def _infer_document_type(filename: str, folder_name: str) -> str:
+    """Infer document type from filename and folder name.
+
+    Matches the official folder schema:
+    - 00_Profile: passport, foto, address
+    - 01_Immigration: e-visa, IMK/ITK, KITAS (NOT passport)
+    - 02_Company: AKTA, NIB, NPWP company, Profile Perseroan
+    - 03_Tax: SPT, LKPM, NPWP personal
+    - 04_Family: passport/visa/kitas of family members
+    - 99_Misc: everything else
+    """
+    fn = filename.lower()
+    fl = folder_name.lower()
+
+    # Keyword-based detection (priority order)
+    if "passport" in fn or "paspor" in fn:
+        return "passport"
+    if any(kw in fn for kw in ["kitas", "kitap", "itas"]):
+        return "kitas"
+    if any(kw in fn for kw in ["visa", "voa", "b211", "evisa", "e-visa"]):
+        return "visa"
+    if "imk" in fn or "reentry" in fn:
+        return "imk"
+    if "itk" in fn:
+        return "itk"
+    if "akta" in fn:
+        return "akta"
+    if "nib" in fn or "berusaha" in fn or "oss" in fn:
+        return "nib"
+    if "npwp" in fn:
+        return "npwp"
+    if "spt" in fn:
+        return "spt"
+    if "lkpm" in fn:
+        return "lkpm"
+    if "profile perseroan" in fn or "company profile" in fn:
+        return "profile_perseroan"
+
+    # Fallback by folder (supports nested: "02_company/akta" → "akta")
+    folder_map = {
+        "00_profile": "profile_document",
+        "01_immigration": "immigration_document",
+        "02_company": "company_document",
+        "03_tax": "tax_document",
+        "04_family": "family_document",
+        "99_misc": "misc_document",
+        # Nested subfolders
+        "akta": "akta",
+        "nib": "nib",
+        "npwp": "npwp",
+        "profile perseroan": "profile_perseroan",
+        "spt company": "spt_company",
+        "spt personal": "spt_personal",
+        "lkpm reports": "lkpm",
+        "npwp personal": "npwp_personal",
+    }
+    return folder_map.get(fl, "other")

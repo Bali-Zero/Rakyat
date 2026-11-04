@@ -1,0 +1,415 @@
+#!/usr/bin/env python3
+"""
+One-off import: 59 LKPM Q1 2026 rows from Lori's PDF.
+
+What it does:
+1. For each of the 59 PMA in LORI_59:
+   - Resolves company_id (54 pre-mapped, 5 minimal auto-create).
+   - Upserts lkpm_client_config with OSS credentials.
+   - Upserts lkpm_reports with Q1 2026, status='draft', lkpm_assigned_to=NULL.
+
+SECRET HANDLING (2026-09-27, incident fix): OSS credentials used to be a
+plaintext literal in this file, on public origin/main since 2026-04-07
+(commit 38de0a686c) — burned. They must be rotated by the owner (pending);
+exposure window 2026-04-07 -> this removal. Credentials are now loaded at
+runtime from an UNTRACKED, gitignored JSON file (see
+`_load_oss_credentials()` below); this script fails closed with no fallback
+if that file is absent.
+
+2. Idempotent: safe to re-run. UNIQUE constraints on
+   (client_id) for lkpm_client_config and (client_id, quarter, year) for
+   lkpm_reports guarantee no duplicates.
+
+3. client_id source: lkpm_client_config uses the COMPANY id as client_id —
+   that's how existing LKPM rows were set up (see recon: the only existing row
+   has client_id=10889 which is actually a company_id in lkpm_client_config).
+   Wait — NO. Verify first: re-read recon. Existing row: lkpm_client_config has
+   client_id=1 (integer, no FK). The LKPM system treats client_id as an
+   opaque integer — we use company_id here because Lori's list is all PMAs
+   (companies), not individual clients.
+
+4. DRY-RUN by default. Pass --commit to actually write.
+
+Usage:
+    cd apps/backend-rag
+    source .venv/bin/activate
+    DATABASE_URL=... PYTHONPATH=. python scripts/import_lkpm_q1_2026.py --dry-run
+    DATABASE_URL=... PYTHONPATH=. python scripts/import_lkpm_q1_2026.py --commit
+
+Non-derivable knowledge:
+- #56 "PT The Nadc Group" in Lori's PDF has a typo; the real DB record is
+  "PT The Nandc Group" (id=2624). Confirmed by the user.
+- #28 "PT Zunoh Are Live" is also a typo; real name is "PT Zunoh Xan Juva"
+  (id=2477). Not a company mismatch — just a spelling.
+- 5 PMAs had no match in DB and no Profil Perseroan available on 2026-04-07:
+  Atlas Property Management, Alis Vloat Propertiis, Gharsat All Barakah,
+  Canna Bali Piwiho, World Obiac Cernandes. These are created minimal here
+  (name + type='PT PMA' only). Fully populating them is a separate task.
+"""
+
+import argparse
+import asyncio
+import json
+import logging
+import os
+import sys
+from pathlib import Path
+
+import asyncpg
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+# Untracked, gitignored (matches `*credentials*.json` in .gitignore) local
+# file — never committed. Populate it as:
+#   {"<pdf_row>": ["<oss_username>", "<oss_password>"], ...}
+# using the ROTATED credentials (the 2026-04-07 set is burned — public repo).
+OSS_CREDENTIALS_FILE = Path(__file__).with_name(".lkpm_credentials.json")
+
+
+def _load_oss_credentials() -> dict[int, tuple[str, str]]:
+    """Load {pdf_row: (oss_username, oss_password)} from the local secret file.
+
+    Fails closed: no embedded fallback, no default credentials. Rows absent
+    from the file (or the whole file absent) get (None, None) — same
+    behavior as the 2 originally-credential-less rows (#58, #59).
+    """
+    if not OSS_CREDENTIALS_FILE.exists():
+        raise SystemExit(
+            f"OSS credential file not found: {OSS_CREDENTIALS_FILE}\n"
+            "This script no longer stores OSS credentials inline (incident "
+            "fix, 2026-09-27 — the old table was public on origin/main since "
+            "2026-04-07; it must be rotated by the owner (pending), exposure "
+            "window 2026-04-07 -> this removal). Create the file as JSON: "
+            '{"<pdf_row>": ["<oss_username>", "<oss_password>"]} with the '
+            "current rotated credentials, then re-run.",
+        )
+    raw = json.loads(OSS_CREDENTIALS_FILE.read_text())
+    return {int(k): (v[0], v[1]) for k, v in raw.items()}
+
+
+# 59 PMA from Lori's PDF (Client LKPM Report Bose Antonello 2026.pdf, 2 pages).
+# Each tuple: (pdf_row, pdf_name, company_id_or_None). OSS credentials are
+# NOT stored here — see _load_oss_credentials() below.
+# company_id_or_None is None for the 5 minimal-create cases.
+LORI_59: list[tuple[int, str, int | None]] = [
+    (1, 'PT Meraki Creation Bali', 3097),
+    (2, 'PT Amberger Holistic Support', 4066),
+    (3, 'PT Xafo Xilano Piq', 2277),
+    (4, 'PT Paradise Beach Brothers', 2962),
+    (5, 'PT Nayat Ibiza Beauty', 3037),
+    (6, 'PT Bali Accommodation Management', 16),
+    (7, 'PT Atlas Property Management', None),
+    (8, 'PT Jebote Muvih Ruzon', 1978),
+    (9, 'PT BIMALA INVESTMENTS BALI', 1467),
+    (10, 'PT MINGGU DIGITAL STUDIO', 4065),
+    (11, 'PT Royal Aura Brands', 2380),
+    (12, 'PT Karta Developers Paradise', 1999),
+    (13, 'PT Cibowin Pifixu Bojilag', 2375),
+    (14, 'PT Bali Nea Karma', 1382),
+    (15, 'PT Urban Jungle Bali', 2520),
+    (16, 'PT KHALI BALI UBUD', 2020),
+    (17, 'PT Future Textile Solutions', 1770),
+    (18, 'PT Fapepo Tixomofo Bali', 2399),
+    (19, 'PT Fashion Trading Center', 1734),
+    (20, 'PT Karta Entertainment Found', 2000),
+    (21, 'PT Triple Peak Properties', 2359),
+    (22, 'PT Megah Sentosa Properti', 2170),
+    (23, 'PT Berkualitas Lestari Properti', 1455),
+    (24, 'PT Kinoh Real Estate', 2024),
+    (25, 'PT Oceane Group Bali', 3005),
+    (26, 'PT Hinexeco Jerihu Miwaf', 2959),
+    (27, 'PT Super Bagus Labs', 2685),
+    (28, 'PT Zunoh Xan Juva', 2477),
+    # ---- page 2 ----
+    (29, 'PT Alis Vloat Propertiis', None),
+    (30, 'PT Ichnos West Sumbawa', 1897),
+    (31, 'PT Sette Bello Labs', 2768),
+    (32, 'PT Pijar Cerah Dunia', 2942),
+    (33, 'PT Gharsat All Barakah', None),
+    (34, 'PT Canna Bali Dreams', None),
+    (35, 'PT Disruptives Idea Indonesia', 1638),
+    (36, 'PT Raborukel Muw Bali', 2060),
+    (37, 'PT Bali Social Raket', 2316),
+    (38, 'PT Nepu Global Invest', 2345),
+    (39, 'PT Cirera and Nello Investments', 2349),
+    (40, 'PT Happy Events Bali Travel', 3135),
+    (41, 'PT Chloe Nature Escape', 3203),
+    (42, 'PT World Obiac Cernandes', None),
+    (43, 'PT Bayu Bali Nol', 98),
+    (44, 'PT Rocco Leo Cecilia', 2840),
+    (45, 'PT Litovub kiv Zahasi', 1764),
+    (46, 'PT Bali Bliss Travel', 2336),
+    (47, 'PT NIKIKI SIBE QARUVEZ', 4067),
+    (48, 'PT Jikib Gafobekozoz Bali', 2758),
+    (49, 'PT Kuc Caraqar Zebafexo', 2625),
+    (50, 'PT Gosas Cizo Consulting', 1478),
+    (51, 'PT Talodopo Zaso Group', 2467),
+    (52, 'PT Villa Stella Belle', 2498),
+    (53, 'PT Bale Glory Home', 15),
+    (54, 'PT Domus Dei Amare', 1645),
+    (55, 'PT Sea Vista Travel', 2797),
+    (56, 'PT The Nandc Group', 2624),
+    (57, 'PT Xacu Supidegiru Studio', 2366),
+    (58, 'PT The Ping Group', 2612),
+    (59, 'PT Indo Mita Consulting', 1906),
+]
+
+MARKER_CREATED_BY = "lkpm_q1_2026_minimal_import"
+MARKER_UPDATED_BY = "lkpm_q1_2026_import"
+
+
+async def create_minimal_company(conn: asyncpg.Connection, name: str) -> int:
+    """Create a minimal PT PMA row for an unresolved PMA."""
+    cid = await conn.fetchval(
+        """
+        INSERT INTO companies (
+            company_name, company_type, status,
+            created_at, created_by, updated_at, updated_by
+        ) VALUES (
+            $1, 'PT PMA', 'active',
+            NOW(), $2, NOW(), $2
+        )
+        RETURNING id
+        """,
+        name,
+        MARKER_CREATED_BY,
+    )
+    logger.info(f"  + MINIMAL company created: id={cid}  {name}")
+    return cid
+
+
+async def upsert_lkpm_config(
+    conn: asyncpg.Connection,
+    client_id: int,
+    company_name: str,
+    oss_username: str | None,
+    oss_password: str | None,
+) -> tuple[str, int]:
+    """
+    Upsert into lkpm_client_config. Returns ('inserted'|'updated', id).
+    UNIQUE constraint: uq_lkpm_client on (client_id).
+    """
+    existing = await conn.fetchrow(
+        "SELECT id FROM lkpm_client_config WHERE client_id = $1",
+        client_id,
+    )
+    if existing:
+        # UPDATE only OSS credentials + touch updated_at (don't overwrite plan fields)
+        if oss_username is not None or oss_password is not None:
+            await conn.execute(
+                """
+                UPDATE lkpm_client_config SET
+                    oss_username = COALESCE($2, oss_username),
+                    oss_password = COALESCE($3, oss_password),
+                    oss_creds_updated_at = NOW(),
+                    oss_creds_updated_by = $4,
+                    updated_at = NOW()
+                WHERE id = $1
+                """,
+                existing["id"],
+                oss_username,
+                oss_password,
+                MARKER_UPDATED_BY,
+            )
+        return "updated", existing["id"]
+    new_id = await conn.fetchval(
+        """
+        INSERT INTO lkpm_client_config (
+            client_id, company_name,
+            oss_username, oss_password,
+            oss_creds_updated_at, oss_creds_updated_by,
+            created_at, updated_at
+        ) VALUES (
+            $1, $2,
+            $3, $4,
+            NOW(), $5,
+            NOW(), NOW()
+        )
+        RETURNING id
+        """,
+        client_id,
+        company_name,
+        oss_username,
+        oss_password,
+        MARKER_UPDATED_BY,
+    )
+    return "inserted", new_id
+
+
+async def upsert_lkpm_report(
+    conn: asyncpg.Connection,
+    client_id: int,
+    quarter: str = "Q1",
+    year: int = 2026,
+) -> tuple[str, int]:
+    """
+    Upsert a draft LKPM report for Q1 2026.
+    UNIQUE: uq_lkpm_report on (client_id, quarter, year).
+    """
+    existing = await conn.fetchrow(
+        """
+        SELECT id FROM lkpm_reports
+        WHERE client_id = $1 AND quarter = $2 AND year = $3
+        """,
+        client_id,
+        quarter,
+        year,
+    )
+    if existing:
+        return "exists", existing["id"]
+    new_id = await conn.fetchval(
+        """
+        INSERT INTO lkpm_reports (
+            client_id, quarter, year, status,
+            created_at, updated_at
+        ) VALUES (
+            $1, $2, $3, 'draft',
+            NOW(), NOW()
+        )
+        RETURNING id
+        """,
+        client_id,
+        quarter,
+        year,
+    )
+    return "inserted", new_id
+
+
+async def _process_rows(
+    conn: asyncpg.Connection,
+    stats: dict[str, int],
+    oss_credentials: dict[int, tuple[str, str]],
+) -> None:
+    """Core loop: process all 59 rows. Caller owns the transaction."""
+    for pdf_row, pdf_name, cid in LORI_59:
+        oss_user, oss_pass = oss_credentials.get(pdf_row, (None, None))
+        try:
+            # Resolve company
+            if cid is None:
+                cid = await create_minimal_company(conn, pdf_name)
+                stats["companies_minimal_created"] += 1
+            else:
+                real_name = await conn.fetchval(
+                    "SELECT company_name FROM companies WHERE id = $1",
+                    cid,
+                )
+                if not real_name:
+                    logger.error(
+                        f"  ✗ row {pdf_row}: company_id={cid} NOT FOUND in DB — skip",
+                    )
+                    stats["errors"] += 1
+                    continue
+
+            cfg_action, _ = await upsert_lkpm_config(
+                conn, cid, pdf_name, oss_user, oss_pass,
+            )
+            stats[f"lkpm_config_{cfg_action}"] += 1
+
+            rep_action, _ = await upsert_lkpm_report(conn, cid, "Q1", 2026)
+            stats[f"lkpm_reports_{rep_action}"] += 1
+
+            oss_marker = ""
+            if oss_user and oss_pass:
+                oss_marker = "  OSS=set"  # presence only — never the value (R4 cure, 2026-09-27)
+            logger.info(
+                f"  {pdf_row:2d} ✓ company={cid:>5}  cfg={cfg_action}  rep={rep_action}  {pdf_name}{oss_marker}",
+            )
+        except Exception as e:
+            logger.error(f"  ✗ row {pdf_row}: {pdf_name} — {e}")
+            stats["errors"] += 1
+
+
+async def main(dry_run: bool) -> int:
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        logger.error("DATABASE_URL not set")
+        return 2
+
+    oss_credentials = _load_oss_credentials()
+
+    logger.info("=" * 70)
+    logger.info(f"LKPM Q1 2026 import (dry_run={dry_run})")
+    logger.info("=" * 70)
+    logger.info(f"Total PDF rows: {len(LORI_59)}")
+
+    stats = {
+        "companies_minimal_created": 0,
+        "lkpm_config_inserted": 0,
+        "lkpm_config_updated": 0,
+        "lkpm_reports_inserted": 0,
+        "lkpm_reports_exists": 0,
+        "errors": 0,
+    }
+
+    conn = await asyncpg.connect(dsn, timeout=15)
+    try:
+        if dry_run:
+            # Run inside transaction, then force rollback.
+            try:
+                async with conn.transaction():
+                    await _process_rows(conn, stats, oss_credentials)
+                    logger.info("\n⏪ DRY RUN — rolling back transaction (no changes saved)")
+                    raise _DryRunRollback()
+            except _DryRunRollback:
+                pass  # expected
+        else:
+            async with conn.transaction():
+                await _process_rows(conn, stats, oss_credentials)
+
+        logger.info("\n" + "=" * 70)
+        logger.info("STATS")
+        logger.info("=" * 70)
+        for k, v in stats.items():
+            logger.info(f"  {k}: {v}")
+
+        if not dry_run:
+            logger.info("\n" + "=" * 70)
+            logger.info("POST-COMMIT VERIFICATION")
+            logger.info("=" * 70)
+            total_cfg = await conn.fetchval(
+                "SELECT count(*) FROM lkpm_client_config WHERE oss_creds_updated_by = $1",
+                MARKER_UPDATED_BY,
+            )
+            total_rep = await conn.fetchval(
+                "SELECT count(*) FROM lkpm_reports WHERE quarter = 'Q1' AND year = 2026",
+            )
+            total_min_co = await conn.fetchval(
+                "SELECT count(*) FROM companies WHERE created_by = $1",
+                MARKER_CREATED_BY,
+            )
+            logger.info(f"  lkpm_client_config rows touched this import: {total_cfg}")
+            logger.info(f"  lkpm_reports Q1 2026 total: {total_rep}")
+            logger.info(f"  minimal companies created: {total_min_co}")
+    finally:
+        await conn.close()
+
+    total_ok = stats["lkpm_reports_inserted"] + stats["lkpm_reports_exists"]
+    logger.info(
+        f"\n{'DRY-RUN' if dry_run else 'COMMIT'} complete: {total_ok}/{len(LORI_59)} rows processed",
+    )
+    return 0 if stats["errors"] == 0 else 1
+
+
+class _DryRunRollback(Exception):
+    """Sentinel to abort dry-run transaction cleanly."""
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Import 59 LKPM Q1 2026 rows")
+    parser.add_argument(
+        "--commit",
+        action="store_true",
+        help="Actually write to DB. Default is dry-run.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Rollback after pretending to write (default).",
+    )
+    args = parser.parse_args()
+    dry = not args.commit
+    sys.exit(asyncio.run(main(dry_run=dry)))

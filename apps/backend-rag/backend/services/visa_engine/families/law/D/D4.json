@@ -1,0 +1,36 @@
+{
+  "code": "D4",
+  "official_name_id": "D4 Visa Kunjungan Penugasan Pemerintah",
+  "source_url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/D4",
+  "retrieved_at": "2026-10-17T13:27:31Z",
+  "page_sha256": "d1b158d17ebd5f211aeb3ac42d23a4c3bb40c843f726f1512eb007d9314e6b3b",
+  "definition_verbatim": null,
+  "jenis_visa_verbatim": null,
+  "stay_days": null,
+  "extendable": null,
+  "entry": null,
+  "where_to_apply": null,
+  "sponsor_required": {
+    "as_stated_boolean": null,
+    "verbatim": null,
+    "invitation_requirement_see": "requirements_verbatim (Persyaratan Khusus)"
+  },
+  "requirements_verbatim": [],
+  "pengajuan_intro_verbatim": null,
+  "allowed_activities": null,
+  "prohibited_or_conditions_verbatim": [],
+  "ketentuan_lain_verbatim": [],
+  "pnbp_verbatim_for_reference_only": [],
+  "itap_verbatim": null,
+  "itap_eligibility_as_stated": null,
+  "total_max_verbatim": null,
+  "notes": [
+    "HTTP 200 with a title alone does not constitute a populated visa page."
+  ],
+  "status": "NOT_FOUND",
+  "to_verify": ["Source content unavailable; no requirements inferred."],
+  "conflicts": [],
+  "source_http_status": 200,
+  "source_raw_path": "raw/D4.html",
+  "not_found_reason": "Data Belum Tersedia"
+}

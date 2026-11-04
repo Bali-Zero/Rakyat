@@ -1,0 +1,139 @@
+{
+  "code": "E33G",
+  "official_name_id": "E33G Visa Rumah Kedua Pekerja Jarak Jauh",
+  "source_url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/E33G",
+  "retrieved_at": "2026-10-17T13:27:14Z",
+  "page_sha256": "686b6e085d31f2c51f188586ba2ddc4a3b21aff0a1829fa6e05f378e8d942be2",
+  "definition_verbatim": "Tinggal di Indonesia untuk melaksanakan tugas dari perusahaan luar negeri.\nSelama Izin Masuk Kembali masih berlaku, Anda diizinkan untuk masuk dan keluar wilayah Indonesia. Selain itu, Anda juga dapat melakukan aktivitas yang berhubungan dengan wisata, mengunjungi teman atau keluarga",
+  "jenis_visa_verbatim": "Visa Tinggal Terbatas untuk masuk ke Indonesia yang memungkinkan Anda untuk masuk dan keluar Indonesia dalam jangka waktu tertentu.\nIzin Tinggal dari jenis visa ini dapat diperpanjang dan dapat dialihkan menjadi izin tinggal lainnya.",
+  "stay_days": ["Anda dapat tinggal di Indonesia selama 1 tahun."],
+  "extendable": [
+    "Izin Tinggal dari jenis visa ini dapat diperpanjang dan dapat dialihkan menjadi izin tinggal lainnya.",
+    "Perpanjangan izin tinggal dapat dilakukan secara online melalui evisa.imigrasi.go.id"
+  ],
+  "entry": "multiple",
+  "where_to_apply": null,
+  "sponsor_required": {
+    "as_stated_boolean": false,
+    "verbatim": [
+      "Anda tidak membutuhkan penjamin/sponsor untuk mengajukan visa ini."
+    ],
+    "invitation_requirement_see": "requirements_verbatim (Persyaratan Khusus)"
+  },
+  "requirements_verbatim": [
+    {
+      "n": 1,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "Paspor kebangsaan yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis,"
+    },
+    {
+      "n": 2,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "bukti memiliki biaya hidup selama berada di wilayah Indonesia berupa rekening koran 3 bulan terakhir atas nama Orang Asing atau penjamin dengan jumlah minimal USD $2000 (dua ribu Dolar Amerika Serikat) atau jumlah yang setara"
+    },
+    {
+      "n": 3,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "pasfoto berwarna terbaru (setahun terakhir). Detail"
+    },
+    {
+      "n": 4,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "Daftar riwayat hidup"
+    },
+    {
+      "n": 5,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "Riwayat perjalanan (itinerary)"
+    },
+    {
+      "n": 6,
+      "section": "Persyaratan Khusus",
+      "text": "Rekening bank yang membuktikan penghasilan berupa gaji atau penghasilan senilai paling sedikit US$60.000 per tahun;"
+    },
+    {
+      "n": 7,
+      "section": "Persyaratan Khusus",
+      "text": "Perjanjian kerja dengan perusahaan yang didirikan di luar Wilayah Indonesia."
+    }
+  ],
+  "pengajuan_intro_verbatim": "Anda harus memiliki akun di evisa.imigrasi.go.id sebelum mengajukan visa.\nSetelah memiliki akun, Anda dapat mengajukan visa setelah login di evisa.imigrasi.go.id dengan menyiapkan berkas elektronik (file PDF atau JPEG) Orang Asing antara lain:",
+  "allowed_activities": "Tinggal di Indonesia untuk melaksanakan tugas dari perusahaan luar negeri.\nSelama Izin Masuk Kembali masih berlaku, Anda diizinkan untuk masuk dan keluar wilayah Indonesia. Selain itu, Anda juga dapat melakukan aktivitas yang berhubungan dengan wisata, mengunjungi teman atau keluarga",
+  "prohibited_or_conditions_verbatim": [
+    "Anda dilarang tinggal di wilayah Indonesia melebihi jangka waktu izin tinggal, melakukan pekerjaan yang tidak sesuai dengan izin tinggal, melakukan penjualan barang atau jasa, terkecuali diperlukan dalam pekerjaannya"
+  ],
+  "ketentuan_lain_verbatim": [
+    "Masa berlaku visa adalah 90 hari sejak diterbitkan. Jika tidak digunakan setelah jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.",
+    "Harap diperhatikan bahwa masa berlaku visa berbeda dengan masa tinggal, silakan periksa visa Anda untuk informasi tentang lama izin tinggal.",
+    "Izin Tinggal Terbatas dan Izin Masuk Kembali akan terbit secara otomatis begitu Anda diizinkan masuk oleh petugas pada Tempat Pemeriksaan Imigrasi.",
+    "Anda dilarang tinggal di wilayah Indonesia melebihi jangka waktu izin tinggal, melakukan pekerjaan yang tidak sesuai dengan izin tinggal, melakukan penjualan barang atau jasa, terkecuali diperlukan dalam pekerjaannya"
+  ],
+  "pnbp_verbatim_for_reference_only": [
+    "- Masa tinggal 1 tahun: Rp.7.000.000,-",
+    "Visa Tinggal Terbatas: Rp500.000,00",
+    "Biaya Verifikasi Visa Kategori II: Rp2.000.000,00",
+    "Izin Tinggal Terbatas paling lama 1 tahun: Rp3.000.000,00",
+    "Izin Masuk Kembali paling lama 1 tahun: Rp1.500.000,00"
+  ],
+  "notes": [
+    "VERIFIED_FROM_SOURCE means faithful extraction, not resolution of legal inconsistencies. Whitespace and HTML list markers are normalized; source wording, spelling, punctuation and alternatives are retained.",
+    "stay_days retains source year-based sentences; no conversion of years into days. entry=multiple derives only from the explicit entry/exit wording. where_to_apply is null: no explicit offshore/onshore rule is stated.",
+    "Requirements are numbered in source order. Counts include parent bullets and alternative bullets; they are not a count of simultaneously mandatory documents. Scope labels and the full Persyaratan khusus text preserve conditional context. Reference directories are retained separately and excluded from the count.",
+    "ITAP stage (owner ruling 2026-10-18 'segui la legge'): none. The remote-worker ITAS is limited to 1 year (Permenkumham 22/2023 Pasal 105 ayat (10) huruf e) and remote worker is not an activity listed in Pasal 173 huruf f, so no alih status to ITAP exists for it. See ITAP.json. Status LAW_MAPPED_BY_DEFINITION: the law lists activities (Pasal 173 huruf f angka 1-4); the link from this code to the activity is an inference from its official name/definition.",
+    "PNBP text is official reference only, never a client price.",
+    "Commentary on itap_verbatim: remote worker appears in Pasal 33 ayat (2) huruf j angka 5 (visa level), Pasal 101 ayat (4) huruf j angka 5 and Pasal 105 ayat (10) huruf e (1-year ITAS); it is absent from Pasal 173 huruf f, so the card records no ITAP. The false value rests on that absence."
+  ],
+  "status": "VERIFIED_FROM_SOURCE",
+  "itap_verbatim": [
+    {
+      "text": "Izin Tinggal dari jenis visa ini dapat diperpanjang dan dapat dialihkan menjadi izin tinggal lainnya.",
+      "url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/E33G",
+      "section": "Jenis visa"
+    },
+    {
+      "text": "Orang Asing pekerja jarak jauh (remote worker) yang terikat hubungan kerja dengan perusahaan di luar Wilayah Indonesia untuk jangka waktu paling lama 1 (satu) tahun.",
+      "url": "https://peraturan.go.id/id/permenkumham-no-22-tahun-2023",
+      "section": "Permenkumham 22/2023 Pasal 105 ayat (10) huruf e (restated by Permenkumham 11/2024 angka 28)"
+    },
+    {
+      "text": "j. rumah kedua, yang terdiri atas: 1. rumah kedua; 2. keahlian khusus; 3. tokoh dunia; 4. lanjut usia berusia 55 (lima puluh lima) tahun atau lebih; dan 5. pekerja jarak jauh (remote worker) yang terikat hubungan kerja dengan perusahaan di luar Wilayah Indonesia.",
+      "url": "https://peraturan.go.id/id/permenkumham-no-11-tahun-2024",
+      "section": "Permenkumham 11/2024 angka 27, Pasal 101 ayat (4) huruf j"
+    },
+    {
+      "text": "f. rumah kedua, yang terdiri atas: 1. rumah kedua; 2. keahlian khusus; 3. tokoh dunia; dan 4. lanjut usia berusia 55 (lima puluh lima) tahun atau lebih.",
+      "url": "https://peraturan.go.id/id/permenkumham-no-11-tahun-2024",
+      "section": "Permenkumham 11/2024 angka 36, Pasal 173 huruf f (no remote worker)"
+    }
+  ],
+  "itap_eligibility_as_stated_boolean": false,
+  "itap_status": "LAW_MAPPED_BY_DEFINITION",
+  "itap_family_evidence": "ITAP.json",
+  "total_max_stay_verbatim": null,
+  "http_status": 200,
+  "raw_path": "raw/E33G.html",
+  "to_verify": ["where_to_apply", "total_max_stay_verbatim"],
+  "masa_tinggal_verbatim": "Anda dapat tinggal di Indonesia selama 1 tahun. Perpanjangan izin tinggal dapat dilakukan secara online melalui evisa.imigrasi.go.id",
+  "persyaratan_khusus_verbatim": "- Rekening bank yang membuktikan penghasilan berupa gaji atau penghasilan senilai paling sedikit US$60.000 per tahun;\n- Perjanjian kerja dengan perusahaan yang didirikan di luar Wilayah Indonesia.",
+  "persyaratan_khusus_context_verbatim": null,
+  "reference_lists_verbatim": null,
+  "proses_pengajuan_verbatim": "Pengajuan Visa di Direktorat Jenderal Imigrasi:\n- pemeriksaan kelengkapan persyaratan;\n- verifikasi pembayaran biaya imigrasi sesuai dengan ketentuan peraturan perundang-undangan;\n- pembuatan profil dan verifikasi;\n- persetujuan;\n- penerbitan visa.\nWaktu proses lima hari kerja setelah pembayaran visa diterima.",
+  "dasar_hukum_verbatim": [
+    "Peraturan Pemerintah Nomor 45 tahun 2024 tentang Tarif PNBP di Lingkungan Kementerian Hukum dan HAM RI tentang Tarif PNBP di Lingkungan Kementerian Hukum dan HAM",
+    "Peraturan Menteri Hukum dan HAM RI Nomor 22 Tahun 2023 tentang Visa dan Izin Tinggal",
+    "Peraturan Menteri Hukum dan HAM RI Nomor 11 Tahun 2024 tentang Visa dan Izin Tinggal",
+    "Keputusan Menteri Imigrasi dan Pemasyarakatan RI Nomor M.IP-08.GR.01.01 tahun 2025 tentang Klasifikasi Visa",
+    "Peraturan Menteri Keuangan RI Nomor 9/PMK.02/2022 tentang Jenis dan Tarif PNBP Kebutuhan Mendesak atas Pelayanan Keimigrasian yang berlaku pada Kemenkumham RI",
+    "Peraturan Menteri Keuangan RI Nomor 82 Tahun 2023 tentang Jenis dan Tarif atas Jenis PNBP Kebutuhan Mendesak atas Pelayanan Golden Visa yang berlaku pada Kemenkumham RI"
+  ],
+  "supplementary_stay_evidence": {
+    "source_url": "https://www.imigrasi.go.id/wna/izin-tinggal-keimigrasian/izin-tinggal-tetap",
+    "retrieved_at": "2026-10-17T13:27:38Z",
+    "page_sha256": "e429a98710f6743ee94c717f4b29a686044bc49bcd11718c7c2e8db1f041d28e",
+    "raw_path": "raw/ITAP-central-detail.html",
+    "code_name_verbatim": "Visa Tinggal Terbatas untuk Pekerja Jarak Jauh (E33G)",
+    "initial_stay_verbatim": "1 tahun",
+    "extension_verbatim": "Dapat diberikan perpanjangan ITAS untuk jangka waktu tidak melebihi jangka waktu pemberian ITAS pertama dengan ketentuan keseluruhan ITAS tidak lebih dari 6 tahun.",
+    "scope": "ITAS duration/extension table; not an ITAP conversion entitlement."
+  }
+}

@@ -1,0 +1,1898 @@
+/**
+ * Visa Oracle v2 — language-neutral interview registry.
+ *
+ * Pure, typed, deterministic. No fetch, no side effects. Every answer is an
+ * option KEY (language-agnostic by construction — spec §hard-constraint 3),
+ * never localized/free text. Mirrors design doc §4 "The interview" and
+ * spec item 26.
+ *
+ * The question registry collects exact engine facts or explicitly labelled
+ * human context. It does not evaluate, rank, add, or remove visa paths. No
+ * price, timeline, document, or visa-candidate catalog belongs in this file.
+ */
+
+/** A single selectable option on a question. `key` is the only thing ever
+ * persisted to facts/state — `labelI18nKey` looks up the display copy. */
+export interface OracleOption {
+  key: string;
+  labelI18nKey: string;
+  hintI18nKey?: string;
+}
+
+/** Why a "Not sure?" answer is held for human review instead of taking a
+ * conservative default (slice A6, spec `kit/DRAFT-SPEC-A6-1.v3.md` §2.2/§2.4).
+ * The 55 `notSure`-bearing questions in `QUESTIONS` partition into three
+ * groups, computed from each question's `decisionMapping.factPaths` against
+ * `rulepack-prod-022.signed.json`'s `required_facts`/`on_unknown`, never
+ * hand-copied:
+ *  - Group A, 9 questions (11 before slice A6-bis moved `diaspora_documents`
+ *    and `retirement_basis` to `conservative`), `kind: "HUMAN_CONTEXT"` — no
+ *    factPaths exist for `resolveConservativeAnswers` to reach. Tag
+ *    `"no-fact-path"`.
+ *  - Group B, 6 questions — every consuming rule declares
+ *    `on_unknown: "NO_EFFECT"` (or no rule consumes the path at all): the
+ *    fact is pack-inert. Tag `"unknown-is-inert"`.
+ *  - Group C, 37 questions — the pack reads the fact with
+ *    `on_unknown != "NO_EFFECT"`, so no value is safe to assume by default.
+ *    `"direction-unproven"` (`in_indonesia`: the only fact where the pack
+ *    proof in §2.3 shows a concrete value could as easily ADD a candidate as
+ *    REMOVE a condition — the safe direction cannot be determined);
+ *    `"history-not-assumable"` (`birth_date`, `overstay_days`,
+ *    `nationalities` — OD-10: immutable historical facts, never safely
+ *    assumed in either direction); `"activity-boundary-a3prime"`
+ *    (`current_status_code`/`stay_permit_code`/`wants_onshore_conversion` —
+ *    consumed by the pack's `hf.bridging.*`/`hf.d12-*` status-boundary
+ *    rules); `"money-payer-clients"` (the remaining 30 — compensation,
+ *    sponsor/employer identity, financial capital and the other
+ *    qualification facts the pack cannot assume either, the original,
+ *    load-bearing reason this mode existed before A6 gave it siblings). */
+export type NotSureHoldReason =
+  | "money-payer-clients"
+  | "history-not-assumable"
+  | "activity-boundary-a3prime"
+  | "unknown-is-inert"
+  | "direction-unproven"
+  | "no-fact-path";
+
+/** How a question's "Not sure?" affordance resolves (design doc §3/§4):
+ * either it forces HUMAN_REVIEW_REQUIRED — and `because` NAMES why no
+ * conservative default exists for this fact (`NotSureHoldReason`; A3'
+ * (slice A3'-B) turns the `"activity-boundary-a3prime"` reason into a dead
+ * end instead, `NO_SUPPORTED_PATH`, not a hold) — or it takes a named
+ * conservative branch and the assumption is visibly logged.
+ * Absent = no NotSure affordance rendered. */
+export type NotSureBehavior =
+  | { mode: "human-review"; because: NotSureHoldReason }
+  | { mode: "conservative"; conservativeValue: string };
+
+export type QuestionDecisionMapping =
+  | {
+      kind: "FACT";
+      factPaths: readonly string[];
+      /** UI values which intentionally serialize as UNKNOWN, never KNOWN. */
+      unknownValues?: readonly string[];
+    }
+  | { kind: "HUMAN_CONTEXT" }
+  | { kind: "REVIEW_ONLY"; factPaths: readonly string[] };
+
+export type QuestionGroup =
+  "location" | "identity" | "intent" | "details" | "review";
+
+export interface OracleQuestion {
+  id: string;
+  i18nKey: string;
+  kind:
+    | "branch"
+    | "date"
+    | "number"
+    | "country-codes"
+    | "status-code"
+    | "tiles"
+    | "choice"
+    | "review-gate";
+  options: OracleOption[];
+  group: QuestionGroup;
+  /** Explicit decision boundary. HUMAN_CONTEXT values may be shown to a
+   * person but must never be mapped into an engine FactPath. */
+  decisionMapping: QuestionDecisionMapping;
+  /** Input-sanity bounds only. They are never legal thresholds and are not
+   * used to select, rank, or remove a visa path. */
+  numberInput?: {
+    min: number;
+    max: number;
+    step: number;
+    labelI18nKey: string;
+    unitI18nKey: string;
+  };
+  dateInput?: {
+    labelI18nKey: string;
+    maxToday?: boolean;
+  };
+  codeInput?: {
+    labelI18nKey: string;
+    multiple: boolean;
+    maxLength?: number;
+    maxSelections?: number;
+  };
+  /** Present only on sensitive questions (design doc §3 "why we ask" — the
+   * gov-demo armor). Optional by construction: not every question is
+   * sensitive enough to warrant a disclosure glyph. */
+  whyWeAsk?: { i18nKey: string };
+  notSure?: NotSureBehavior;
+}
+
+/** Answers, keyed by question id. Values are option keys OR, for the one
+ * `kind: "date"` question, an ISO-8601 date string (still not free text —
+ * a date picker's value, not typed prose). The reserved value `"unsure"`
+ * means the NotSure affordance was used on that question. */
+export type OracleFacts = Record<string, string>;
+
+export const CATEGORY_KEYS = [
+  "tourism",
+  "business",
+  "work",
+  "invest",
+  "remote",
+  "family",
+  "retirement",
+  // Second Home is its OWN tile, not a retirement sub-branch (owner ruling
+  // 3, 2026-09-06). `intent.purposes` must carry `SECOND_HOME` ALONE:
+  // every E33 support rule is gated on `intent.purposes ∩ SECOND_HOME`
+  // while `hit_policy.eligibility = COVER_ALL_DECLARED_PURPOSES` drops the
+  // product the moment a second purpose rides along — so routing second
+  // home through `retirement` (which emits `RETIREMENT`) could never
+  // recommend it, no matter how the `secondhome.*` facts were answered.
+  // Measured 2026-09-06: `purposes = ["SECOND_HOME"]` + a USD 2M property
+  // returns `SUPPORTED_CANDIDATES [E33]` on the signed seq-19 pack, while
+  // the same evidence under `RETIREMENT` returns no path.
+  "second_home",
+  "study",
+  "diaspora",
+  "other",
+] as const;
+export type CategoryKey = (typeof CATEGORY_KEYS)[number];
+
+/**
+ * 29 real ITAS/ITAP product codes — every one `category: "LIMITED_STAY"` in
+ * the signed pack, i.e. an actual stay permit a person can currently hold,
+ * not merely a visa product applied for. Verbatim from
+ * `rulepack-prod-007.source.json` (`products[].product_code`, filtered to
+ * `E`-prefix) and re-verified against the CURRENT signed pack
+ * (`rulepack-prod-020.source.json`, 2026-09-13): all 9
+ * `family.sponsor_status_code` rules (`el.e31{b,e,h,j}-*`) read this exact
+ * 29-value set via `op:"in"`, byte-identical to this list — see
+ * `fact-mapper.test.ts`'s "sponsor status code catalogue tracks the signed
+ * pack" for the test that pins the two together.
+ *
+ * Single source of truth for THREE consumers: `stay_permit_code`'s options
+ * (the applicant's own permit), `family_sponsor_status_code`'s options
+ * (D4a, owner ruling SHWEB-20260911, added 2026-09-13 — the sponsor's
+ * permit) and that same question's closed-catalogue trust decision in
+ * `mapFamilySponsorStatus` (fact-mapper.ts). "I'm not sure" is the existing
+ * universal `notSure` affordance on both questions, not a listed option —
+ * `enumFact()` already resolves the literal string "unsure" to
+ * UNKNOWN(UNVERIFIED), never a guessed KNOWN.
+ */
+export const STAY_PERMIT_CODES = [
+  "E23",
+  "E23U",
+  "E23V",
+  "E28A",
+  "E28B",
+  "E28C",
+  "E28D",
+  "E28F",
+  "E30",
+  "E30A",
+  "E30B",
+  "E30E",
+  "E30F",
+  "E31A",
+  "E31B",
+  "E31C",
+  "E31D",
+  "E31E",
+  "E31F",
+  "E31G",
+  "E31H",
+  "E31J",
+  "E33",
+  "E33A",
+  "E33B",
+  "E33C",
+  "E33E",
+  "E33F",
+  "E33G",
+] as const;
+
+/**
+ * W-VO-Q (mission SAETTA-VO3): one yes/no question carrying exactly ONE of
+ * the ten seq-21 qualification facts (`rulepack-prod-021.source.json`; the
+ * fact -> question map is `evidence/2026-09/agent-air-m5-backend-rag-vo-s21-
+ * freeze/FACTS-FOR-THE-TREE.md`). Where each one is asked is decided in
+ * `getCategoryQuestionIds` (flow.ts), never here.
+ *
+ * `notSure` is DELIBERATELY OMITTED (same idiom as `investment_currency`):
+ * each question asks about a document, a relationship or a route the
+ * applicant either has or does not, so "no" is the honest answer to "I do
+ * not have it", and `booleanFact` maps it to KNOWN(false) — the rule is then
+ * DEFINITELY FALSE and the product is simply not offered. A "not sure" would
+ * map to UNKNOWN, and on these `on_unknown: NEEDS_INPUT` rules the engine
+ * would ask the same question again: a loop, not an answer.
+ */
+function qualificationQuestion(id: string, factPath: string): OracleQuestion {
+  return {
+    id,
+    i18nKey: `q.${id}`,
+    kind: "branch",
+    group: "details",
+    decisionMapping: { kind: "FACT", factPaths: [factPath] },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: `why.${id}` },
+  };
+}
+
+export const QUESTIONS: Record<string, OracleQuestion> = {
+  in_indonesia: {
+    id: "in_indonesia",
+    i18nKey: "q.in_indonesia",
+    kind: "branch",
+    group: "location",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["immigration.currently_in_indonesia"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.in_indonesia.opt.yes" },
+      { key: "no", labelI18nKey: "q.in_indonesia.opt.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.in_indonesia" },
+    notSure: { mode: "human-review", because: "direction-unproven" },
+  },
+  permit_expiry: {
+    id: "permit_expiry",
+    i18nKey: "q.permit_expiry",
+    kind: "date",
+    group: "location",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["immigration.current_status_expiry"],
+    },
+    options: [],
+    dateInput: { labelI18nKey: "q.permit_expiry.label" },
+    whyWeAsk: { i18nKey: "why.permit_expiry" },
+    notSure: { mode: "human-review", because: "unknown-is-inert" },
+  },
+  current_status_code: {
+    id: "current_status_code",
+    i18nKey: "q.current_status_code",
+    kind: "choice",
+    group: "location",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["immigration.current_status_code"],
+    },
+    options: [
+      { key: "A1", labelI18nKey: "q.current_status_code.opt.A1" },
+      { key: "C1", labelI18nKey: "q.current_status_code.opt.C1" },
+      { key: "C2", labelI18nKey: "q.current_status_code.opt.C2" },
+      { key: "C6", labelI18nKey: "q.current_status_code.opt.C6" },
+      {
+        key: "ITK_FROM_BVK",
+        labelI18nKey: "q.current_status_code.opt.ITK_FROM_BVK",
+      },
+      {
+        key: "ITK_FROM_VISIT_C",
+        labelI18nKey: "q.current_status_code.opt.ITK_FROM_VISIT_C",
+      },
+      {
+        key: "ITK_FROM_VISIT_D",
+        labelI18nKey: "q.current_status_code.opt.ITK_FROM_VISIT_D",
+      },
+      {
+        key: "ITK_PERALIHAN",
+        labelI18nKey: "q.current_status_code.opt.ITK_PERALIHAN",
+      },
+      { key: "other", labelI18nKey: "q.current_status_code.opt.other" },
+    ],
+    whyWeAsk: { i18nKey: "why.current_status_code" },
+    notSure: { mode: "human-review", because: "activity-boundary-a3prime" },
+  },
+  // Two-step gate (2026-08-23 owner ruling, D12/derived.has_active_stay_permit
+  // reachability): `derived.has_active_stay_permit`'s `KNOWN(True)` branch
+  // requires an E-prefix `current_status_code`, which the 8-code list above
+  // never offers — the positive path was dormant since PR #4650. Ruled
+  // against an umbrella sentinel (would require editing the freshly-merged
+  // backend derivation, the MORE invasive option, and discards the specific
+  // code other rules will want) and against discrete-codes-only with no gate
+  // (asks precision a layperson may not have; a guessed answer would resolve
+  // KNOWN and be trusted). This gate asks first, then the code is a
+  // TRANSCRIPTION of what's printed on the applicant's own card — not recall
+  // of a legal taxonomy, a materially different trust class from
+  // `family_sponsor_permit_basis` (see `mapFamilySponsorPermitBasis` in
+  // fact-mapper.ts), which is exactly why that fact needed a wall and this
+  // one does not.
+  holds_stay_permit: {
+    id: "holds_stay_permit",
+    i18nKey: "q.holds_stay_permit",
+    kind: "branch",
+    group: "location",
+    decisionMapping: { kind: "HUMAN_CONTEXT" },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.holds_stay_permit" },
+    notSure: { mode: "human-review", because: "no-fact-path" },
+  },
+  // Options derived from `STAY_PERMIT_CODES` above — see that constant's
+  // doc comment for provenance and the sibling consumers.
+  stay_permit_code: {
+    id: "stay_permit_code",
+    i18nKey: "q.stay_permit_code",
+    kind: "choice",
+    group: "location",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["immigration.current_status_code"],
+    },
+    options: STAY_PERMIT_CODES.map((key) => ({
+      key,
+      labelI18nKey: `q.stay_permit_code.opt.${key}`,
+    })),
+    whyWeAsk: { i18nKey: "why.stay_permit_code" },
+    notSure: { mode: "human-review", because: "activity-boundary-a3prime" },
+  },
+  // Gated in flow.ts (`computeNextNode`'s `stay_permit_code` case): asked
+  // only when the applicant holds a stay permit (`holds_stay_permit ===
+  // "yes"`) AND `permit_expiry` is either KNOWN-and-in-the-past or itself
+  // UNKNOWN ("not sure") — never for a known-current permit. F4, 2026-08-24
+  // (owner ruling): payment, not filing, is the determinant — "il rinnovo
+  // si considera depositato se c'e stato pagamento". A renewal-in-process
+  // holder stays on the permit they extended and is excluded from D12 the
+  // same as any other active-permit holder. "Not sure" resolves to an
+  // UnknownFact via the shared `notSure`/`booleanFact` path (never a
+  // guessed `false`) — see fact-mapper.ts's `"immigration.renewal_paid"`
+  // mapping.
+  renewal_paid: {
+    id: "renewal_paid",
+    i18nKey: "q.renewal_paid",
+    kind: "branch",
+    group: "location",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["immigration.renewal_paid"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.renewal_paid" },
+    notSure: { mode: "human-review", because: "unknown-is-inert" },
+  },
+  overstay_days: {
+    id: "overstay_days",
+    i18nKey: "q.overstay_days",
+    kind: "number",
+    group: "location",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["immigration.overstay_days"],
+    },
+    options: [],
+    numberInput: {
+      min: 0,
+      max: 36_500,
+      step: 1,
+      labelI18nKey: "q.overstay_days.label",
+      unitI18nKey: "q.stay_days.unit",
+    },
+    whyWeAsk: { i18nKey: "why.overstay_days" },
+    notSure: { mode: "human-review", because: "history-not-assumable" },
+  },
+  wants_onshore_conversion: {
+    id: "wants_onshore_conversion",
+    i18nKey: "q.wants_onshore_conversion",
+    kind: "branch",
+    group: "location",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["process.wants_onshore_conversion"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.wants_onshore_conversion" },
+    notSure: { mode: "human-review", because: "activity-boundary-a3prime" },
+  },
+  application_channel: {
+    id: "application_channel",
+    i18nKey: "q.application_channel",
+    kind: "choice",
+    group: "location",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["process.application_channel"],
+    },
+    options: [
+      { key: "OFFSHORE", labelI18nKey: "q.application_channel.opt.OFFSHORE" },
+      {
+        key: "ONSHORE_CONVERSION",
+        labelI18nKey: "q.application_channel.opt.ONSHORE_CONVERSION",
+      },
+      {
+        key: "STATUS_BRIDGING",
+        labelI18nKey: "q.application_channel.opt.STATUS_BRIDGING",
+      },
+    ],
+    whyWeAsk: { i18nKey: "why.application_channel" },
+    notSure: { mode: "human-review", because: "unknown-is-inert" },
+  },
+  nationalities: {
+    id: "nationalities",
+    i18nKey: "q.nationalities",
+    kind: "country-codes",
+    group: "identity",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["person.nationalities"],
+    },
+    options: [],
+    codeInput: {
+      labelI18nKey: "q.nationalities.label",
+      multiple: true,
+      maxSelections: 4,
+    },
+    whyWeAsk: { i18nKey: "why.nationalities" },
+    notSure: { mode: "human-review", because: "history-not-assumable" },
+  },
+  birth_date: {
+    id: "birth_date",
+    i18nKey: "q.birth_date",
+    kind: "date",
+    group: "identity",
+    decisionMapping: { kind: "FACT", factPaths: ["person.birth_date"] },
+    options: [],
+    dateInput: { labelI18nKey: "q.birth_date.label", maxToday: true },
+    whyWeAsk: { i18nKey: "why.birth_date" },
+    notSure: { mode: "human-review", because: "history-not-assumable" },
+  },
+  guardian_consent: {
+    id: "guardian_consent",
+    i18nKey: "q.guardian_consent",
+    kind: "branch",
+    group: "identity",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["person.guardian_consent"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.guardian_consent" },
+    // A missing guardian is an explicit "no": UNKNOWN would only re-ask it.
+  },
+  // R2 (owner decision 2026-10-11): a notice, not a question. Shown right
+  // after the purpose answers when the retirement tile is chosen with a date
+  // of birth below RETIREMENT_MIN_AGE (flow.ts). HUMAN_CONTEXT: its only
+  // recorded value, `continue`, maps to no engine fact — the pack still
+  // decides on `derived.age_years`. "Look at Second Home" and "Change my
+  // answers" are navigation, rendered by OracleShell as secondary actions —
+  // deliberately NOT options, so no walk (and no enumerated path) ever
+  // records them as an answer. No `notSure`
+  // (nothing to be unsure about) and no `whyWeAsk` (nothing is collected).
+  retirement_age_notice: {
+    id: "retirement_age_notice",
+    i18nKey: "q.retirement_age_notice",
+    kind: "branch",
+    group: "identity",
+    decisionMapping: { kind: "HUMAN_CONTEXT" },
+    options: [
+      {
+        key: "continue",
+        labelI18nKey: "q.retirement_age_notice.opt.continue",
+      },
+    ],
+  },
+  category: {
+    id: "category",
+    i18nKey: "q.category",
+    kind: "tiles",
+    group: "intent",
+    // `unknownValues: ["diaspora"]` removed 2026-09-06 (owner ruling 4):
+    // diaspora now maps to the `FAMILY` purpose like any other tile — see
+    // `CATEGORY_TO_PURPOSE` in fact-mapper.ts. Every tile now yields a
+    // KNOWN `intent.purposes`, so no option on this question serializes as
+    // UNKNOWN any more.
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["intent.purposes"],
+    },
+    whyWeAsk: { i18nKey: "why.category" },
+    options: CATEGORY_KEYS.map((key) => ({
+      key,
+      labelI18nKey: `q.category.opt.${key}`,
+    })),
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  trip_scope: {
+    id: "trip_scope",
+    i18nKey: "q.trip_scope",
+    kind: "branch",
+    group: "intent",
+    decisionMapping: { kind: "HUMAN_CONTEXT" },
+    options: [
+      { key: "single", labelI18nKey: "q.trip_scope.opt.single" },
+      { key: "multiple", labelI18nKey: "q.trip_scope.opt.multiple" },
+    ],
+    whyWeAsk: { i18nKey: "why.trip_scope" },
+    notSure: { mode: "human-review", because: "no-fact-path" },
+  },
+  entry_pattern: {
+    id: "entry_pattern",
+    i18nKey: "q.entry_pattern",
+    kind: "choice",
+    group: "details",
+    decisionMapping: { kind: "FACT", factPaths: ["intent.entry_pattern"] },
+    options: [
+      { key: "SINGLE", labelI18nKey: "q.entry_pattern.opt.SINGLE" },
+      { key: "MULTIPLE", labelI18nKey: "q.entry_pattern.opt.MULTIPLE" },
+    ],
+    whyWeAsk: { i18nKey: "why.entry_pattern" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  /** WHO sponsors the stay, as a category. This is distinct from the
+   * family/work/study "is the sponsor confirmed?" booleans elsewhere in
+   * this file, and it is not the sponsor's identity either — just the
+   * category. Maps to the single optional `sponsor.type`
+   * FactPath (spec staged-rollout field). Corrected PR-D4d: the prior
+   * claim here ("no rule in the currently active pack reads it yet") was
+   * false — the ACTIVE pack (rulepack-prod-020.signed.json) already carries
+   * five conditions on `sponsor.type` (`el.e30e/e30f-student-support`,
+   * `hf.e33a/b/c`), and a draft pack (seq-21, unsigned) adds seven more.
+   * Asked only where the category makes the sponsor discriminating — see
+   * `FIXED_CATEGORY_QUESTIONS`/`getCategoryQuestionIds` in flow.ts for
+   * exactly which categories include it. */
+  sponsor_category: {
+    id: "sponsor_category",
+    i18nKey: "q.sponsor_category",
+    kind: "choice",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["sponsor.type"],
+    },
+    options: [
+      { key: "NONE", labelI18nKey: "q.sponsor_category.opt.NONE" },
+      {
+        key: "INDIVIDUAL",
+        labelI18nKey: "q.sponsor_category.opt.INDIVIDUAL",
+      },
+      { key: "EMPLOYER", labelI18nKey: "q.sponsor_category.opt.EMPLOYER" },
+      {
+        key: "EDUCATION",
+        labelI18nKey: "q.sponsor_category.opt.EDUCATION",
+      },
+      {
+        key: "INVESTMENT",
+        labelI18nKey: "q.sponsor_category.opt.INVESTMENT",
+      },
+      {
+        key: "GOVERNMENT",
+        labelI18nKey: "q.sponsor_category.opt.GOVERNMENT",
+      },
+    ],
+    whyWeAsk: { i18nKey: "why.sponsor_category" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  // W-VO-Q (mission SAETTA-VO3): the five seq-21 SPONSOR qualification
+  // facts, one fact per question, each the ONE conjunct that makes its
+  // product's SUPPORT rule fire (`rulepack-prod-021.source.json`; the map is
+  // `evidence/2026-09/agent-air-m5-backend-rag-vo-s21-freeze/
+  // FACTS-FOR-THE-TREE.md`). Each is asked only on the `sponsor_category`
+  // answer its rule's own `sponsor.type` premise names, and only on a branch
+  // whose purpose the rule covers (`getCategoryQuestionIds`, flow.ts) — a
+  // tourist is never asked about a diplomatic household.
+  //
+  // `el.e33a.government-invitation` — EMPLOYMENT, `sponsor.type =
+  // GOVERNMENT`.
+  sponsor_government_invitation: qualificationQuestion(
+    "sponsor_government_invitation",
+    "sponsor.government_invitation",
+  ),
+  // `el.e33b.government-collaboration` — EMPLOYMENT, `sponsor.type = NONE`.
+  sponsor_government_collaboration: qualificationQuestion(
+    "sponsor_government_collaboration",
+    "sponsor.government_collaboration",
+  ),
+  // `el.e33c.world-figure-invitation` — INVESTMENT, `sponsor.type =
+  // GOVERNMENT`.
+  sponsor_world_figure_invitation: qualificationQuestion(
+    "sponsor_world_figure_invitation",
+    "sponsor.world_figure_invitation",
+  ),
+  // `el.e23u.diplomatic-household` — EMPLOYMENT, `sponsor.type = INDIVIDUAL`.
+  sponsor_diplomatic_household: qualificationQuestion(
+    "sponsor_diplomatic_household",
+    "sponsor.diplomatic_household",
+  ),
+  // `el.e23v.trade-office` — EMPLOYMENT, `sponsor.type = GOVERNMENT`.
+  sponsor_trade_office: qualificationQuestion(
+    "sponsor_trade_office",
+    "sponsor.trade_office",
+  ),
+  business_activity: {
+    id: "business_activity",
+    i18nKey: "q.business_activity",
+    kind: "choice",
+    group: "details",
+    decisionMapping: { kind: "HUMAN_CONTEXT" },
+    options: [
+      { key: "meetings", labelI18nKey: "q.business_activity.opt.meetings" },
+      {
+        key: "negotiation",
+        labelI18nKey: "q.business_activity.opt.negotiation",
+      },
+      {
+        key: "conference",
+        labelI18nKey: "q.business_activity.opt.conference",
+      },
+      // W-VO-Q item 7 (owner ruling 2026-09-14: "not only an investor, also
+      // a person who wants to look around for business"): the explorer is
+      // an INVESTMENT-purpose visitor (`mapPurposes`, fact-mapper.ts), the
+      // purpose `el.d12-*` covers, and asks its own short sequence
+      // (`businessExplorerQuestionIds`, flow.ts). Never the first option,
+      // so the corpus's default business walks are unchanged.
+      {
+        key: "exploring",
+        labelI18nKey: "q.business_activity.opt.exploring",
+      },
+      { key: "training", labelI18nKey: "q.business_activity.opt.training" },
+      { key: "other", labelI18nKey: "q.business_activity.opt.other" },
+    ],
+    whyWeAsk: { i18nKey: "why.business_activity" },
+    notSure: { mode: "human-review", because: "no-fact-path" },
+  },
+  work_payer: {
+    id: "work_payer",
+    i18nKey: "q.work_payer",
+    kind: "branch",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["work.employer_is_indonesian_entity"],
+    },
+    whyWeAsk: { i18nKey: "why.work_payer" },
+    options: [
+      { key: "yes", labelI18nKey: "q.work_payer.opt.yes" },
+      { key: "no", labelI18nKey: "q.work_payer.opt.no" },
+    ],
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  work_indonesia_compensation: {
+    id: "work_indonesia_compensation",
+    i18nKey: "q.work_indonesia_compensation",
+    kind: "branch",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["work.indonesia_source_compensation"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.work_indonesia_compensation" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  work_sponsor_confirmed: {
+    id: "work_sponsor_confirmed",
+    i18nKey: "q.work_sponsor_confirmed",
+    kind: "branch",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["work.indonesian_work_sponsor_confirmed"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.work_sponsor_confirmed" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  // `work_role` deleted 2026-09-06 (owner ruling 6, overruling
+  // `research/visa/doctrine-factory/e4/question-registry-audit.md` §3's
+  // REVIEW_ONLY disposition). It was `HUMAN_CONTEXT`: it mapped to no
+  // FactPath, so no rule in any signed pack could read it — the E23 support
+  // rule `el.e23-employment-support` requires only `intent.purposes`,
+  // `work.employer_is_indonesian_entity` and
+  // `work.indonesian_work_sponsor_confirmed`, and the one rule that does
+  // read a role (`el.e23-operational-work-boundary` →
+  // `investment.proposed_role`) is written from the INVEST branch's
+  // `investment_role`, never from here. Its only live effect was the
+  // presence-triggered `ACTIVITY_BOUNDARY` disclosure flag in
+  // fact-mapper.ts, which — because it sat fifth in the fixed `work`
+  // sequence and was therefore ALWAYS answered — suppressed E23 for 100%
+  // of employment interviews. A question that costs the user time and
+  // whose only effect is to hide the answer is worse than no question.
+  remote_clients: {
+    id: "remote_clients",
+    i18nKey: "q.remote_clients",
+    kind: "choice",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["work.serves_indonesian_clients"],
+    },
+    whyWeAsk: { i18nKey: "why.remote_clients" },
+    options: [
+      { key: "foreign", labelI18nKey: "q.remote_clients.opt.foreign" },
+      { key: "indonesian", labelI18nKey: "q.remote_clients.opt.indonesian" },
+      { key: "mixed", labelI18nKey: "q.remote_clients.opt.mixed" },
+    ],
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  remote_compensation: {
+    id: "remote_compensation",
+    i18nKey: "q.remote_compensation",
+    kind: "branch",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["work.indonesia_source_compensation"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.remote_compensation" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  remote_employer_country: {
+    id: "remote_employer_country",
+    i18nKey: "q.remote_employer_country",
+    kind: "country-codes",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["work.employer_country_code"],
+    },
+    options: [],
+    codeInput: {
+      labelI18nKey: "q.remote_employer_country.label",
+      multiple: false,
+    },
+    whyWeAsk: { i18nKey: "why.remote_employer_country" },
+    notSure: { mode: "human-review", because: "unknown-is-inert" },
+  },
+  remote_annual_income_usd: {
+    id: "remote_annual_income_usd",
+    i18nKey: "q.remote_annual_income_usd",
+    kind: "number",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["work.annual_foreign_income_usd"],
+    },
+    options: [],
+    numberInput: {
+      min: 0,
+      max: Number.MAX_SAFE_INTEGER,
+      step: 1,
+      labelI18nKey: "q.remote_annual_income_usd.label",
+      unitI18nKey: "q.unit.usd_year",
+    },
+    whyWeAsk: { i18nKey: "why.remote_annual_income_usd" },
+    // `el.e33g.remote-work` (seq-28) requires it with on_unknown
+    // NEEDS_INPUT; notSure deliberately omitted -- same idiom as the
+    // qualification questions above: an unknown answer would only make the
+    // engine ask this same question again.
+  },
+  remote_pt_pma: {
+    id: "remote_pt_pma",
+    i18nKey: "q.remote_pt_pma",
+    kind: "branch",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["investment.pt_pma_committed"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.remote_pt_pma" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  investment_vehicle: {
+    id: "investment_vehicle",
+    i18nKey: "q.investment_vehicle",
+    kind: "choice",
+    group: "details",
+    decisionMapping: { kind: "HUMAN_CONTEXT" },
+    options: [
+      { key: "pt_pma", labelI18nKey: "q.investment_vehicle.opt.pt_pma" },
+      { key: "property", labelI18nKey: "q.investment_vehicle.opt.property" },
+      {
+        key: "bank_deposit",
+        labelI18nKey: "q.investment_vehicle.opt.bank_deposit",
+      },
+      { key: "merit", labelI18nKey: "q.investment_vehicle.opt.merit" },
+      { key: "family", labelI18nKey: "q.investment_vehicle.opt.family" },
+      // W-VO-Q: `el.e28c.capital-market` (seq-21) decides an investment held
+      // only in capital-market instruments. Without this option such an
+      // applicant could only answer `undecided`, which raises
+      // ACTIVITY_BOUNDARY and deletes the E28C the pack had proven.
+      {
+        key: "capital_market",
+        labelI18nKey: "q.investment_vehicle.opt.capital_market",
+      },
+      {
+        key: "undecided",
+        labelI18nKey: "q.investment_vehicle.opt.undecided",
+      },
+    ],
+    whyWeAsk: { i18nKey: "why.investment_vehicle" },
+    notSure: { mode: "human-review", because: "no-fact-path" },
+  },
+  investment_pt_pma: {
+    id: "investment_pt_pma",
+    i18nKey: "q.investment_pt_pma",
+    kind: "branch",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["investment.pt_pma_committed"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.investment_pt_pma" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  investment_capital_idr: {
+    id: "investment_capital_idr",
+    i18nKey: "q.investment_capital_idr",
+    kind: "number",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["investment.investment_capital_idr"],
+    },
+    options: [],
+    numberInput: {
+      min: 0,
+      max: Number.MAX_SAFE_INTEGER,
+      step: 1,
+      labelI18nKey: "q.investment_capital_idr.label",
+      unitI18nKey: "q.unit.idr",
+    },
+    whyWeAsk: { i18nKey: "why.investment_capital_idr" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  // PR-D4c-2 (owner ruling SHWEB-20260911): router for the `merit`/`family`/
+  // `undecided` investment-vehicle branches ONLY — deliberately never added
+  // to `pt_pma` (see `getCategoryQuestionIds` in flow.ts for the reachability
+  // argument: `pt_pma` already collects `investment_capital_idr` unconditionally,
+  // and E28A's three rules all read it with `on_unknown: NEEDS_INPUT`, so
+  // making it UNKNOWN there would dead-end the exact applicants that branch
+  // serves — the defect PR-D4b already had to cure once). HUMAN_CONTEXT, same
+  // idiom as its `investment_vehicle`/`retirement_basis`/`secondhome_basis`
+  // siblings: it selects which evidence question follows next
+  // (`investment_capital_idr` for `idr`, `investment_amount_usd` for `usd`,
+  // neither for `still_unsure`) and is never itself sent as an engine fact.
+  //
+  // `notSure` is DELIBERATELY OMITTED (imperator's ruling: the "not sure"
+  // answer here must cost zero holds). `mapDisclosedReviewFlags`
+  // (fact-mapper.ts) raises `NOT_CERTAIN` on the exact-equality literal
+  // `"unsure"` over every fact value; `still_unsure` is a REAL third option
+  // (`"still_unsure" !== "unsure"`), not the generic NotSure affordance —
+  // same shape as `retirement_undecided_basis` immediately below, which is
+  // the shipped precedent this mirrors. Choosing it asks no amount question,
+  // so both `investment.investment_capital_idr` and
+  // `investment.investment_amount_usd` stay genuinely UNKNOWN(NOT_ASKED) —
+  // the honest state, not a guess.
+  investment_currency: {
+    id: "investment_currency",
+    i18nKey: "q.investment_currency",
+    kind: "choice",
+    group: "details",
+    decisionMapping: { kind: "HUMAN_CONTEXT" },
+    options: [
+      { key: "idr", labelI18nKey: "q.investment_currency.opt.idr" },
+      { key: "usd", labelI18nKey: "q.investment_currency.opt.usd" },
+      {
+        key: "still_unsure",
+        labelI18nKey: "q.investment_currency.opt.still_unsure",
+      },
+    ],
+    whyWeAsk: { i18nKey: "why.investment_currency" },
+  },
+  // PR-D4c-2: the USD sibling of `investment_capital_idr` above, asked only
+  // once `investment_currency === "usd"` (see `getCategoryQuestionIds`).
+  // Modeled on `investment_capital_idr` exactly — same bounds, same
+  // sensitivity, same `notSure` (unlike the currency router above, THIS
+  // question's own "not sure" is the ordinary human-review hold: not
+  // knowing the EXACT amount, once a currency has been chosen, is a real
+  // disclosed uncertainty, not the zero-cost case). No conversion is ever
+  // performed on this value — `investment.investment_amount_usd` is a plain
+  // `integerFact`, currency encoded in the fact NAME alone (the existing
+  // `investment.*_idr` / `secondhome.*_usd` convention), never an
+  // `{amount, currency}` pair.
+  investment_amount_usd: {
+    id: "investment_amount_usd",
+    i18nKey: "q.investment_amount_usd",
+    kind: "number",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["investment.investment_amount_usd"],
+    },
+    options: [],
+    numberInput: {
+      min: 0,
+      max: Number.MAX_SAFE_INTEGER,
+      step: 1,
+      labelI18nKey: "q.investment_amount_usd.label",
+      unitI18nKey: "q.unit.usd",
+    },
+    whyWeAsk: { i18nKey: "why.investment_amount_usd" },
+    notSure: { mode: "human-review", because: "unknown-is-inert" },
+  },
+  investment_paid_up_capital_idr: {
+    id: "investment_paid_up_capital_idr",
+    i18nKey: "q.investment_paid_up_capital_idr",
+    kind: "number",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["investment.paid_up_capital_idr"],
+    },
+    options: [],
+    numberInput: {
+      min: 0,
+      max: Number.MAX_SAFE_INTEGER,
+      step: 1,
+      labelI18nKey: "q.investment_paid_up_capital_idr.label",
+      unitI18nKey: "q.unit.idr",
+    },
+    whyWeAsk: { i18nKey: "why.investment_paid_up_capital_idr" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  investment_own_shareholding_idr: {
+    id: "investment_own_shareholding_idr",
+    i18nKey: "q.investment_own_shareholding_idr",
+    kind: "number",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["investment.own_shareholding_idr"],
+    },
+    options: [],
+    numberInput: {
+      min: 0,
+      max: Number.MAX_SAFE_INTEGER,
+      step: 1,
+      labelI18nKey: "q.investment_own_shareholding_idr.label",
+      unitI18nKey: "q.unit.idr",
+    },
+    whyWeAsk: { i18nKey: "why.investment_own_shareholding_idr" },
+    // E28A (owner ruling 2026-10-15): the applicant's OWN shareholding in the
+    // sponsoring company is a rule input; notSure deliberately omitted -- same
+    // idiom as `remote_annual_income_usd`: an unknown answer would only make
+    // the engine ask this same question again. No threshold in the copy
+    // (anti-anchoring).
+  },
+  investment_role: {
+    id: "investment_role",
+    i18nKey: "q.investment_role",
+    kind: "choice",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["investment.proposed_role"],
+    },
+    options: [
+      {
+        key: "SHAREHOLDER_DIRECTOR",
+        labelI18nKey: "q.investment_role.opt.SHAREHOLDER_DIRECTOR",
+      },
+      {
+        key: "SHAREHOLDER_COMMISSIONER",
+        labelI18nKey: "q.investment_role.opt.SHAREHOLDER_COMMISSIONER",
+      },
+      { key: "EMPLOYEE", labelI18nKey: "q.investment_role.opt.EMPLOYEE" },
+      {
+        key: "NO_OPERATIONAL_ROLE",
+        labelI18nKey: "q.investment_role.opt.NO_OPERATIONAL_ROLE",
+      },
+      { key: "OTHER", labelI18nKey: "q.investment_role.opt.OTHER" },
+    ],
+    whyWeAsk: { i18nKey: "why.investment_role" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  // W-VO-Q: the five seq-21 INVESTMENT route facts (`el.e28b/c/d/f.*`). Every
+  // one of the four rules reads `intent.purposes ∩ INVESTMENT`, its own
+  // route fact, and `investment.meets_published_threshold`; none reads
+  // `sponsor.type`. Asked on the INVESTMENT-purpose `invest` vehicles only
+  // (`getCategoryQuestionIds`, flow.ts). No figure appears in any of this
+  // copy: no source record in the seq-21 pack states the published minimums
+  // (FACTS-FOR-THE-TREE.md, fact 10), so the question names the threshold
+  // and never a number.
+  // `el.e28b.company-establishment`.
+  investment_establishes_company: qualificationQuestion(
+    "investment_establishes_company",
+    "investment.establishes_indonesian_company",
+  ),
+  // `el.e28c.capital-market` — asked only when the applicant is NOT
+  // establishing a company: its own wording ("without establishing a
+  // company") is the negation of the question above, so asking it after a
+  // "yes" there would ask the applicant to contradict themselves.
+  investment_capital_market_only: qualificationQuestion(
+    "investment_capital_market_only",
+    "investment.capital_market_only",
+  ),
+  // `el.e28d.branch-or-subsidiary`.
+  investment_foreign_branch: qualificationQuestion(
+    "investment_foreign_branch",
+    "investment.foreign_branch_or_subsidiary",
+  ),
+  // `el.e28f.ikn-subsidiary` — asked only after `investment_establishes_
+  // company = yes`, because its wording is about "the company you are
+  // establishing"; after a "no", fact-mapper.ts sends it KNOWN(false) (see
+  // `investmentRouteQuestionIds`, flow.ts, for the dead end that avoids).
+  investment_ikn_subsidiary: qualificationQuestion(
+    "investment_ikn_subsidiary",
+    "investment.ikn_subsidiary",
+  ),
+  // The conjunct all four `el.e28*` rules share. Asked ONCE, and only when
+  // at least one route above was answered "yes" — with every route "no",
+  // all four rules are already DEFINITELY FALSE on their route conjunct, and
+  // a threshold question would collect an answer no rule can use.
+  investment_meets_threshold: qualificationQuestion(
+    "investment_meets_threshold",
+    "investment.meets_published_threshold",
+  ),
+  family_relation: {
+    id: "family_relation",
+    i18nKey: "q.family_relation",
+    kind: "choice",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["family.relation_to_sponsor"],
+    },
+    options: [
+      { key: "SPOUSE", labelI18nKey: "q.family_relation.opt.SPOUSE" },
+      { key: "CHILD", labelI18nKey: "q.family_relation.opt.CHILD" },
+      { key: "PARENT", labelI18nKey: "q.family_relation.opt.PARENT" },
+      { key: "SIBLING", labelI18nKey: "q.family_relation.opt.SIBLING" },
+      { key: "DEPENDENT", labelI18nKey: "q.family_relation.opt.DEPENDENT" },
+      // STEPCHILD was half-shipped by the 2026-08-23 owner ruling: the
+      // wire vocabulary (`FAMILY_RELATIONS` in fact-mapper.ts), the two
+      // evidence questions, the branch in `getCategoryQuestionIds`
+      // (flow.ts) and BOTH i18n labels all landed — but this option row
+      // never did, so the branch was unreachable and E31D could not be
+      // named by any interview. Added 2026-09-06.
+      { key: "STEPCHILD", labelI18nKey: "q.family_relation.opt.STEPCHILD" },
+      { key: "OTHER", labelI18nKey: "q.family_relation.opt.OTHER" },
+    ],
+    whyWeAsk: { i18nKey: "why.family_relation" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  marital_status: {
+    id: "marital_status",
+    i18nKey: "q.marital_status",
+    kind: "choice",
+    group: "details",
+    decisionMapping: { kind: "FACT", factPaths: ["person.marital_status"] },
+    options: [
+      { key: "SINGLE", labelI18nKey: "q.marital_status.opt.SINGLE" },
+      { key: "MARRIED", labelI18nKey: "q.marital_status.opt.MARRIED" },
+      { key: "DIVORCED", labelI18nKey: "q.marital_status.opt.DIVORCED" },
+      { key: "WIDOWED", labelI18nKey: "q.marital_status.opt.WIDOWED" },
+      { key: "OTHER", labelI18nKey: "q.marital_status.opt.OTHER" },
+    ],
+    whyWeAsk: { i18nKey: "why.marital_status" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  family_sponsor_nationalities: {
+    id: "family_sponsor_nationalities",
+    i18nKey: "q.family_sponsor_nationalities",
+    kind: "country-codes",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["family.sponsor_nationalities"],
+    },
+    options: [],
+    codeInput: {
+      labelI18nKey: "q.family_sponsor_nationalities.label",
+      multiple: true,
+      maxSelections: 4,
+    },
+    whyWeAsk: { i18nKey: "why.family_sponsor_nationalities" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  // D4a (owner ruling SHWEB-20260911, 2026-09-13): closed SELECT over the
+  // same signed catalogue as `stay_permit_code` above (`STAY_PERMIT_CODES`),
+  // replacing the old free-text `codeInput`. The question NAMES the
+  // product (Zero's D4 ruling: the Oracle says the product, it never asks
+  // which visa the applicant wants) via the same `q.stay_permit_code.opt.*`
+  // labels `stay_permit_code` already uses ("E23 — Working Visa", etc.) —
+  // reused rather than re-typed so the two catalogues can never drift apart
+  // on label text either. "I'm not sure" stays the universal `notSure`
+  // affordance, unchanged.
+  //
+  // Promoted to `FACT`/`family.sponsor_status_code` from `HUMAN_CONTEXT`.
+  // See `mapFamilySponsorStatus` (fact-mapper.ts) for the closed-catalogue
+  // trust argument, and
+  // `research/visa/doctrine-factory/e5/inc6-pack-edits/
+  // HELD-fix4-sponsor-status-2026-08-23.json` for the fail-open history
+  // this promotion had to reason past before it was safe.
+  family_sponsor_status_code: {
+    id: "family_sponsor_status_code",
+    i18nKey: "q.family_sponsor_status_code",
+    kind: "choice",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["family.sponsor_status_code"],
+    },
+    options: STAY_PERMIT_CODES.map((key) => ({
+      key,
+      labelI18nKey: `q.stay_permit_code.opt.${key}`,
+    })),
+    whyWeAsk: { i18nKey: "why.family_sponsor_status_code" },
+    notSure: { mode: "human-review", because: "unknown-is-inert" },
+  },
+  family_marriage_registered: {
+    id: "family_marriage_registered",
+    i18nKey: "q.family_marriage_registered",
+    kind: "choice",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["family.marriage_registered"],
+      unknownValues: ["not_applicable"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+      {
+        key: "not_applicable",
+        labelI18nKey: "q.boolean.not_applicable",
+      },
+    ],
+    whyWeAsk: { i18nKey: "why.family_marriage_registered" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  family_sponsor_confirmed: {
+    id: "family_sponsor_confirmed",
+    i18nKey: "q.family_sponsor_confirmed",
+    kind: "branch",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["family.sponsor_confirmed"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.family_sponsor_confirmed" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  // D12-only sibling of `family_sponsor_confirmed` (Zero decision
+  // 2026-09-16, mandate SAETTA R2). `businessExplorerQuestionIds`
+  // (flow.ts) asks THIS id — never `family_sponsor_confirmed` — on the
+  // business/investment explorer branch (`category === "business" &&
+  // business_activity === "exploring"`), whose target population is a
+  // company or guarantor sponsoring the applicant's stay, not a family
+  // member. Same engine fact as its sibling (`el.c2.business` reads
+  // `family.sponsor_confirmed` regardless of which question asked it —
+  // `fact-mapper.ts` merges both ids with `pairedBooleanFact`, the same
+  // pattern `investment.pt_pma_committed` uses for
+  // `investment_pt_pma`/`remote_pt_pma`), so this is copy-only: no new
+  // fact, no new rule, no behavior change for any other branch.
+  business_sponsor_confirmed: {
+    id: "business_sponsor_confirmed",
+    i18nKey: "q.business_sponsor_confirmed",
+    kind: "branch",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["family.sponsor_confirmed"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.business_sponsor_confirmed" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  // E33F-only sibling of `family_sponsor_confirmed` (owner ruling 2026-09-27,
+  // PR-M): the retirement branch (`category === "retirement"`, flow.ts) asks
+  // THIS id — never `family_sponsor_confirmed` — because an E33F needs a
+  // penjamin (a licensed visa agency or a person), not a family sponsor.
+  // Same engine fact as its siblings (`el.e33f.retirement` reads `family.
+  // sponsor_confirmed` regardless of which question asked it — fact-mapper.ts
+  // merges all three ids with `pairedBooleanFact`), so this is copy-only: no
+  // new fact, no new rule, no behavior change for any other branch. NotSure
+  // is CONSERVATIVE ("no"), unlike both human-review siblings: with rule pack
+  // seq-24 the retiree who answers "no"/"not sure" is still an E33F candidate
+  // (the verdict carries the penjamin note instead), so an unresolved answer
+  // must map to KNOWN(false) — feeding UNVERIFIED here would make the engine
+  // ask the question the applicant just answered. A "not sure" retiree is not
+  // ambiguous either: `mapDisclosedReviewFlags` deliberately does NOT raise
+  // AMBIGUOUS_SPONSOR for this id — they simply do not have a penjamin yet.
+  retirement_penjamin_confirmed: {
+    id: "retirement_penjamin_confirmed",
+    i18nKey: "q.retirement_penjamin_confirmed",
+    kind: "branch",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["family.sponsor_confirmed"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.retirement_penjamin_confirmed" },
+    // seq-24 (separate backend PR): a missing penjamin no longer kills E33F
+    // — the conservative "no" keeps the fact KNOWN(false) and lets the
+    // verdict render the penjamin note. See the ruling block above.
+    notSure: { mode: "conservative", conservativeValue: "no" },
+  },
+  // Stepchild route (2026-08-23 owner ruling — the E31D stepchild-of-a-
+  // mixed-marriage product exists in the catalog, but every one of its
+  // rules could previously only read `intent.purposes ∩ FAMILY`; the
+  // contract had no way to say "stepchild" at all. Both evidence facts
+  // follow `family_marriage_registered`'s branch idiom exactly — two plain
+  // yes/no confirmations, sensitive (documentary evidence of a personal
+  // relationship), NotSure → human-review same as every sibling in this
+  // group. See `research/visa/2026-08-15-gold-family-refuter.md`.
+  family_stepchild_marriage_certificate_confirmed: {
+    id: "family_stepchild_marriage_certificate_confirmed",
+    i18nKey: "q.family_stepchild_marriage_certificate_confirmed",
+    kind: "branch",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["family.stepchild_marriage_certificate_confirmed"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: {
+      i18nKey: "why.family_stepchild_marriage_certificate_confirmed",
+    },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  family_stepchild_birth_certificate_confirmed: {
+    id: "family_stepchild_birth_certificate_confirmed",
+    i18nKey: "q.family_stepchild_birth_certificate_confirmed",
+    kind: "branch",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["family.stepchild_birth_certificate_confirmed"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.family_stepchild_birth_certificate_confirmed" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  // D3-4 (PR-D3, owner ruling SHWEB-20260911) had added
+  // `family_stepchild_sponsor_permit_confirmed` here — "does your sponsor
+  // hold a valid KITAS/KITAP of their own?", holding on `no`/`unsure`
+  // (`mapDisclosedReviewFlags`, fact-mapper.ts). REMOVED (owner ruling
+  // SHWEB-20260911, 2026-09-13, fresh grader review): no such requirement
+  // exists for E31D. Permenkumham 11/2024 Pasal 33 ayat (2) huruf h names
+  // no permit at all for E31D's entry, unlike its E31E neighbour, which
+  // explicitly requires the sponsor to hold an "Izin Tinggal Terbatas atau
+  // Izin Tinggal Tetap" — and Pasal 193 makes E31D's guarantor an
+  // Indonesian-citizen (WNI) *Penanggung Jawab*, who cannot hold a
+  // KITAS/KITAP by definition. Asking the question was the same OVER-match
+  // shape NARROW-1 (fact-mapper.ts) cured elsewhere: a hold with nothing in
+  // the pack behind it. `el.e31d-stepchild-support` is untouched — it still
+  // reads `family.relation_to_sponsor` / `family.sponsor_confirmed` / the
+  // two stepchild certificates above, never a sponsor permit fact.
+  // Sponsor permit basis (2026-08-23 owner ruling — Permenkumham 11/2024
+  // Pasal 33 ayat (7) blocks family-reunification chaining for four
+  // specific ayat (2) huruf h categories; `family.sponsor_status_code` is
+  // free-form STRING and can only express validity, never purpose. Options
+  // mirror the closed `SponsorPermitBasis` enum 1:1 — 13 values grounded in
+  // Pasal 33 ayat (2) huruf a-l, verbatim quote in `why.family_sponsor_permit_basis`.
+  //
+  // HUMAN_CONTEXT, not FACT (corrected 2026-08-23, one increment after
+  // this question shipped as FACT in PR #4650): this asks the applicant/
+  // sponsor to classify the sponsor's OWN permit into this same legal
+  // taxonomy, the identical trust problem `family_sponsor_status_code`
+  // (immediately above) already solved by staying out of engine facts.
+  // Mirrors that sibling exactly — see `mapFamilySponsorPermitBasis` in
+  // fact-mapper.ts for the full reasoning.
+  family_sponsor_permit_basis: {
+    id: "family_sponsor_permit_basis",
+    i18nKey: "q.family_sponsor_permit_basis",
+    kind: "choice",
+    group: "details",
+    decisionMapping: {
+      kind: "HUMAN_CONTEXT",
+    },
+    options: [
+      {
+        key: "EXPERT",
+        labelI18nKey: "q.family_sponsor_permit_basis.opt.EXPERT",
+      },
+      {
+        key: "WORKER",
+        labelI18nKey: "q.family_sponsor_permit_basis.opt.WORKER",
+      },
+      {
+        key: "MARITIME_CREW",
+        labelI18nKey: "q.family_sponsor_permit_basis.opt.MARITIME_CREW",
+      },
+      {
+        key: "CLERGY",
+        labelI18nKey: "q.family_sponsor_permit_basis.opt.CLERGY",
+      },
+      {
+        key: "FOREIGN_INVESTMENT",
+        labelI18nKey: "q.family_sponsor_permit_basis.opt.FOREIGN_INVESTMENT",
+      },
+      {
+        key: "SCIENTIFIC_RESEARCH",
+        labelI18nKey: "q.family_sponsor_permit_basis.opt.SCIENTIFIC_RESEARCH",
+      },
+      {
+        key: "EDUCATION",
+        labelI18nKey: "q.family_sponsor_permit_basis.opt.EDUCATION",
+      },
+      {
+        key: "FAMILY_REUNIFICATION",
+        labelI18nKey: "q.family_sponsor_permit_basis.opt.FAMILY_REUNIFICATION",
+      },
+      {
+        key: "REPATRIATION",
+        labelI18nKey: "q.family_sponsor_permit_basis.opt.REPATRIATION",
+      },
+      {
+        key: "SECOND_HOME",
+        labelI18nKey: "q.family_sponsor_permit_basis.opt.SECOND_HOME",
+      },
+      {
+        key: "MEDICAL_TREATMENT",
+        labelI18nKey: "q.family_sponsor_permit_basis.opt.MEDICAL_TREATMENT",
+      },
+      {
+        key: "WORKING_HOLIDAY",
+        labelI18nKey: "q.family_sponsor_permit_basis.opt.WORKING_HOLIDAY",
+      },
+      { key: "OTHER", labelI18nKey: "q.family_sponsor_permit_basis.opt.OTHER" },
+    ],
+    whyWeAsk: { i18nKey: "why.family_sponsor_permit_basis" },
+    notSure: { mode: "human-review", because: "no-fact-path" },
+  },
+  retirement_basis: {
+    id: "retirement_basis",
+    i18nKey: "q.retirement_basis",
+    kind: "choice",
+    group: "details",
+    decisionMapping: { kind: "HUMAN_CONTEXT" },
+    options: [
+      {
+        key: "bank_deposit",
+        labelI18nKey: "q.retirement_basis.opt.bank_deposit",
+      },
+      { key: "property", labelI18nKey: "q.retirement_basis.opt.property" },
+      {
+        key: "passive_income",
+        labelI18nKey: "q.retirement_basis.opt.passive_income",
+      },
+      {
+        key: "family_sponsor",
+        labelI18nKey: "q.retirement_basis.opt.family_sponsor",
+      },
+      {
+        key: "undecided",
+        labelI18nKey: "q.retirement_basis.opt.undecided",
+      },
+    ],
+    whyWeAsk: { i18nKey: "why.retirement_basis" },
+    // Slice A6-bis: no rule reads this raw answer directly (only the
+    // derived `depositBasisDecisivelyNotChosen`/`propertyBasisDecisively
+    // NotChosen` helpers in fact-mapper.ts do, and `"undecided"` is already
+    // one of the five decidable values `ACTIVITY_BOUNDARY_DECIDABLE_ANSWERS`
+    // lists for this question) — holding on the bare "not sure" only
+    // deletes a candidate the pack could still assess. `"undecided"` is
+    // the honest conservative value: it is what the applicant would have
+    // picked to mean the same thing.
+    notSure: { mode: "conservative", conservativeValue: "undecided" },
+  },
+  // D3-3 (PR-D3, owner ruling SHWEB-20260911): `undecided` stopped being a
+  // dead end. Instead of holding on the bare label, this presents the two
+  // bases the pack can actually decide (`el.e33e.retirement`'s deposit/
+  // passive-income facts, `el.e33f.retirement`'s family-sponsor fact) and
+  // routes to whichever's evidence questions. `still_unsure` is a REAL third
+  // option, not the generic NotSure affordance (deliberately absent here):
+  // choosing it asks no further evidence question, so `family.
+  // sponsor_confirmed` stays genuinely UNKNOWN and the engine's own
+  // `on_unknown: NEEDS_INPUT` on `el.e33f.retirement` fires — NEEDS_INPUT,
+  // never HUMAN_REVIEW, and `engine-adapter.ts`'s `questionForFact` already
+  // names `family_sponsor_confirmed`'s own question in that message.
+  retirement_undecided_basis: {
+    id: "retirement_undecided_basis",
+    i18nKey: "q.retirement_undecided_basis",
+    kind: "choice",
+    group: "details",
+    decisionMapping: { kind: "HUMAN_CONTEXT" },
+    options: [
+      {
+        key: "deposit_or_income",
+        labelI18nKey: "q.retirement_undecided_basis.opt.deposit_or_income",
+      },
+      {
+        key: "family_sponsor",
+        labelI18nKey: "q.retirement_undecided_basis.opt.family_sponsor",
+      },
+      {
+        key: "still_unsure",
+        labelI18nKey: "q.retirement_undecided_basis.opt.still_unsure",
+      },
+    ],
+    whyWeAsk: { i18nKey: "why.retirement_undecided_basis" },
+  },
+  // Router for the `second_home` category (owner ruling 3, 2026-09-06).
+  // HUMAN_CONTEXT on purpose, exactly like its `retirement_basis` sibling:
+  // it selects which evidence questions follow, and the evidence questions
+  // themselves — not this one — carry the signed `secondhome.*` facts the
+  // E33 rules read. Only the two bases E33 actually has support rules for
+  // are offered (`el.e33.deposit-basis`, `el.e33.property-basis`); a third
+  // "neither" option would collect an answer no rule could use.
+  secondhome_basis: {
+    id: "secondhome_basis",
+    i18nKey: "q.secondhome_basis",
+    kind: "choice",
+    group: "details",
+    decisionMapping: { kind: "HUMAN_CONTEXT" },
+    options: [
+      {
+        key: "bank_deposit",
+        labelI18nKey: "q.secondhome_basis.opt.bank_deposit",
+      },
+      { key: "property", labelI18nKey: "q.secondhome_basis.opt.property" },
+    ],
+    whyWeAsk: { i18nKey: "why.secondhome_basis" },
+    notSure: { mode: "human-review", because: "no-fact-path" },
+  },
+  secondhome_deposit_usd: {
+    id: "secondhome_deposit_usd",
+    i18nKey: "q.secondhome_deposit_usd",
+    kind: "number",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["secondhome.bank_deposit_usd"],
+    },
+    options: [],
+    numberInput: {
+      min: 0,
+      max: Number.MAX_SAFE_INTEGER,
+      step: 1,
+      labelI18nKey: "q.secondhome_deposit_usd.label",
+      unitI18nKey: "q.unit.usd",
+    },
+    whyWeAsk: { i18nKey: "why.secondhome_deposit_usd" },
+    // `el.e33.deposit-basis` / `el.e33e.retirement` require the deposit;
+    // `review.e33.below-threshold-studio` may add a condition below threshold.
+    notSure: { mode: "conservative", conservativeValue: "0" },
+  },
+  secondhome_state_bank: {
+    id: "secondhome_state_bank",
+    i18nKey: "q.secondhome_state_bank",
+    kind: "branch",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["secondhome.bank_deposit_at_state_bank"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.secondhome_state_bank" },
+    // `el.e33.deposit-basis` / `el.e33e.retirement` require a state-bank deposit.
+    notSure: { mode: "conservative", conservativeValue: "no" },
+  },
+  secondhome_own_name: {
+    id: "secondhome_own_name",
+    i18nKey: "q.secondhome_own_name",
+    kind: "branch",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["secondhome.bank_deposit_in_own_name"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.secondhome_own_name" },
+    // `el.e33.deposit-basis` / `el.e33e.retirement` require the applicant's own name.
+    notSure: { mode: "conservative", conservativeValue: "no" },
+  },
+  secondhome_property_value_usd: {
+    id: "secondhome_property_value_usd",
+    i18nKey: "q.secondhome_property_value_usd",
+    kind: "number",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["secondhome.qualifying_property_value_usd"],
+    },
+    options: [],
+    numberInput: {
+      min: 0,
+      max: Number.MAX_SAFE_INTEGER,
+      step: 1,
+      labelI18nKey: "q.secondhome_property_value_usd.label",
+      unitI18nKey: "q.unit.usd",
+    },
+    whyWeAsk: { i18nKey: "why.secondhome_property_value_usd" },
+    // `el.e33.property-basis` / `el.e33.property-qualification` require value;
+    // `review.e33.below-threshold-studio` may add a condition below threshold.
+    notSure: { mode: "conservative", conservativeValue: "0" },
+  },
+  secondhome_passive_income_usd: {
+    id: "secondhome_passive_income_usd",
+    i18nKey: "q.secondhome_passive_income_usd",
+    kind: "number",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["secondhome.passive_monthly_income_usd"],
+    },
+    options: [],
+    numberInput: {
+      min: 0,
+      max: Number.MAX_SAFE_INTEGER,
+      step: 1,
+      labelI18nKey: "q.secondhome_passive_income_usd.label",
+      unitI18nKey: "q.unit.usd_month",
+    },
+    whyWeAsk: { i18nKey: "why.secondhome_passive_income_usd" },
+    // `el.e33e.retirement` / `el.e33f.retirement` require USD 3,000 monthly income.
+    notSure: { mode: "conservative", conservativeValue: "0" },
+  },
+  study_level: {
+    id: "study_level",
+    i18nKey: "q.study_level",
+    kind: "choice",
+    group: "details",
+    decisionMapping: { kind: "FACT", factPaths: ["study.level"] },
+    options: [
+      { key: "PRIMARY", labelI18nKey: "q.study_level.opt.PRIMARY" },
+      { key: "SECONDARY", labelI18nKey: "q.study_level.opt.SECONDARY" },
+      { key: "VOCATIONAL", labelI18nKey: "q.study_level.opt.VOCATIONAL" },
+      {
+        key: "UNDERGRADUATE",
+        labelI18nKey: "q.study_level.opt.UNDERGRADUATE",
+      },
+      {
+        key: "POSTGRADUATE",
+        labelI18nKey: "q.study_level.opt.POSTGRADUATE",
+      },
+      { key: "RESEARCH", labelI18nKey: "q.study_level.opt.RESEARCH" },
+      { key: "OTHER", labelI18nKey: "q.study_level.opt.OTHER" },
+    ],
+    whyWeAsk: { i18nKey: "why.study_level" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  study_admission_confirmed: {
+    id: "study_admission_confirmed",
+    i18nKey: "q.study_admission_confirmed",
+    kind: "branch",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["study.admission_confirmed"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.study_admission_confirmed" },
+    // The `el.e30-*` SUPPORT family requires confirmed admission.
+    notSure: { mode: "conservative", conservativeValue: "no" },
+  },
+  study_sponsor_confirmed: {
+    id: "study_sponsor_confirmed",
+    i18nKey: "q.study_sponsor_confirmed",
+    kind: "branch",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["study.sponsor_confirmed"],
+    },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.study_sponsor_confirmed" },
+    // The `el.e30-*` SUPPORT family requires a confirmed sponsor.
+    notSure: { mode: "conservative", conservativeValue: "no" },
+  },
+  diaspora_connection: {
+    id: "diaspora_connection",
+    i18nKey: "q.diaspora_connection",
+    kind: "choice",
+    group: "details",
+    decisionMapping: { kind: "HUMAN_CONTEXT" },
+    options: [
+      {
+        key: "former_wni",
+        labelI18nKey: "q.diaspora_connection.opt.former_wni",
+      },
+      {
+        key: "descendant",
+        labelI18nKey: "q.diaspora_connection.opt.descendant",
+      },
+      { key: "dual", labelI18nKey: "q.diaspora_connection.opt.dual" },
+      { key: "family", labelI18nKey: "q.diaspora_connection.opt.family" },
+      { key: "other", labelI18nKey: "q.diaspora_connection.opt.other" },
+    ],
+    whyWeAsk: { i18nKey: "why.diaspora_connection" },
+    notSure: { mode: "human-review", because: "no-fact-path" },
+  },
+  diaspora_documents: {
+    id: "diaspora_documents",
+    i18nKey: "q.diaspora_documents",
+    kind: "branch",
+    group: "details",
+    decisionMapping: { kind: "HUMAN_CONTEXT" },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.diaspora_documents" },
+    // Slice A6-bis: no rule reads this fact at all (HUMAN_CONTEXT, and
+    // `fact-mapper.ts` maps it to nothing) — the ACTIVITY_BOUNDARY hold
+    // was pack-inert, deleting a candidate the pack never needed this
+    // answer to reach. "no" is the honest conservative default: it is the
+    // answer that asks the consultant to confirm rather than assuming
+    // documentation exists.
+    notSure: { mode: "conservative", conservativeValue: "no" },
+  },
+  other_purpose: {
+    id: "other_purpose",
+    i18nKey: "q.other_purpose",
+    kind: "choice",
+    group: "details",
+    decisionMapping: { kind: "HUMAN_CONTEXT" },
+    options: [
+      { key: "transit", labelI18nKey: "q.other_purpose.opt.transit" },
+      { key: "medical", labelI18nKey: "q.other_purpose.opt.medical" },
+      { key: "volunteer", labelI18nKey: "q.other_purpose.opt.volunteer" },
+      { key: "religious", labelI18nKey: "q.other_purpose.opt.religious" },
+      { key: "arts_sport", labelI18nKey: "q.other_purpose.opt.arts_sport" },
+      { key: "journalism", labelI18nKey: "q.other_purpose.opt.journalism" },
+      { key: "crew", labelI18nKey: "q.other_purpose.opt.crew" },
+      { key: "other", labelI18nKey: "q.other_purpose.opt.other" },
+    ],
+    whyWeAsk: { i18nKey: "why.other_purpose" },
+    notSure: { mode: "human-review", because: "no-fact-path" },
+  },
+  other_paid_activity: {
+    id: "other_paid_activity",
+    i18nKey: "q.other_paid_activity",
+    kind: "branch",
+    group: "details",
+    decisionMapping: { kind: "HUMAN_CONTEXT" },
+    options: [
+      { key: "yes", labelI18nKey: "q.boolean.yes" },
+      { key: "no", labelI18nKey: "q.boolean.no" },
+    ],
+    whyWeAsk: { i18nKey: "why.other_paid_activity" },
+    notSure: { mode: "human-review", because: "no-fact-path" },
+  },
+  stay_days: {
+    id: "stay_days",
+    i18nKey: "q.stay_days",
+    kind: "number",
+    group: "details",
+    decisionMapping: { kind: "FACT", factPaths: ["intent.stay_days"] },
+    options: [],
+    numberInput: {
+      min: 1,
+      max: 36_500,
+      step: 1,
+      labelI18nKey: "q.stay_days.label",
+      unitI18nKey: "q.stay_days.unit",
+    },
+    whyWeAsk: { i18nKey: "why.stay_days" },
+    notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  review_gate: {
+    id: "review_gate",
+    i18nKey: "q.review_gate",
+    kind: "review-gate",
+    group: "review",
+    decisionMapping: {
+      kind: "REVIEW_ONLY",
+      factPaths: ["immigration.violation_history"],
+    },
+    whyWeAsk: { i18nKey: "why.review_gate" },
+    options: [
+      { key: "none", labelI18nKey: "q.review_gate.opt.none" },
+      { key: "flagged", labelI18nKey: "q.review_gate.opt.flagged" },
+    ],
+  },
+};
+
+/**
+ * The prompt to render for `question` given the answers so far.
+ *
+ * Almost every question has exactly one prompt and this returns
+ * `question.i18nKey` unchanged. The exception is
+ * `wants_onshore_conversion`, which two different walks ask from opposite
+ * standpoints: onshore it is about a status change from inside the
+ * country, offshore it is a plan for after arrival. Adversarial review
+ * 2026-09-06 (finding 9) accepted the offshore wording as a fix — asked in
+ * the present tense, it puts an applicant who is not in Indonesia in the
+ * position of answering about a country they have not reached. The
+ * question id, the option keys and the fact sent to the engine are
+ * identical on both walks; only the sentence changes.
+ *
+ * The hint follows the prompt: callers derive it as `<key>.hint`, so the
+ * offshore variant carries its own.
+ */
+export function questionPromptI18nKey(
+  question: OracleQuestion,
+  facts: OracleFacts,
+): string {
+  if (
+    question.id === "wants_onshore_conversion" &&
+    facts.in_indonesia === "no"
+  ) {
+    return "q.wants_onshore_conversion.offshore";
+  }
+  return question.i18nKey;
+}
+
+/** Sub-items shown inside the review-gate checklist (design doc §4 shared
+ * review-gate). Finding #5 (adversarial review 2026-07-17): "None of
+ * these" is now an EXPLICIT, mutually-exclusive item — the checklist can
+ * no longer be silently defaulted to "none" by pressing Continue without
+ * choosing anything. The persisted fact is the sorted, comma-joined set
+ * of selected item keys (still option keys, never free text); "none" can
+ * never co-occur with a real flag. */
+export const REVIEW_GATE_ITEMS = [
+  "none",
+  "criminal_record",
+  "health_flag",
+  "prior_refusal",
+  "overstay",
+  "blacklist",
+  "immigration_investigation",
+  "pep_or_sanctions",
+  "source_of_funds_unclear",
+  "diplomatic_passport",
+  "ambiguous_sponsor",
+  "activity_boundary",
+  "not_certain",
+] as const;
+export type ReviewGateItem = (typeof REVIEW_GATE_ITEMS)[number];
+
+/** Onshore urgency lanes off the Q0 date question (design doc §4 table). */
+export type Lane = "expired" | "urgent" | "bridging" | "extend" | "planning";
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Parse a strict `YYYY-MM-DD` string to a UTC-midnight epoch, or `null` if
+ * the string isn't that exact shape OR doesn't round-trip to a real
+ * calendar date (rejects `2026-02-30`, `2026-13-01`, etc.).
+ *
+ * Finding #8 (adversarial review 2026-07-17): the previous implementation
+ * used `new Date(dateString)`, which (a) silently accepted non-ISO input
+ * and produced `NaN` that downstream comparisons coerced into "planning"
+ * rather than "unanswered", and (b) for a date-only string is parsed as
+ * UTC midnight by spec — fine for arithmetic, but wrong for DISPLAY in a
+ * western (negative-offset) timezone, where `.format()` in the viewer's
+ * local zone rolls it back a day. This function owns validation +
+ * canonical UTC-midnight parsing; `formatIsoDateForDisplay` below always
+ * renders with an explicit `timeZone: "UTC"` so display never drifts.
+ */
+export function parseIsoDateUtc(iso: string): number | null {
+  if (!ISO_DATE_RE.test(iso)) return null;
+  const [y, m, d] = iso.split("-").map(Number);
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+  const ms = Date.UTC(y, m - 1, d);
+  const roundTrip = new Date(ms);
+  if (
+    roundTrip.getUTCFullYear() !== y ||
+    roundTrip.getUTCMonth() !== m - 1 ||
+    roundTrip.getUTCDate() !== d
+  ) {
+    return null; // e.g. 2026-02-30 normalizes to 2026-03-02 — reject it.
+  }
+  return ms;
+}
+
+/**
+ * `today`'s calendar date, taken from its LOCAL wall-clock components
+ * (never `getUTC*`), then re-expressed as a UTC-midnight epoch. This is
+ * the fix for the midnight-WITA edge (finding #8): reading `today` via
+ * `getFullYear/getMonth/getDate` (local) instead of `getUTCFullYear/...`
+ * means "which calendar day is it" no longer depends on the process's
+ * timezone offset from UTC — 00:30 WITA on 17 July is unambiguously the
+ * 17th, everywhere this runs, regardless of the host's configured TZ.
+ */
+function localCalendarUtcMidnight(d: Date): number {
+  return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/** Days remaining on the current permit, computed against `today` (default
+ * `new Date()`, overridable for deterministic tests). `null` if
+ * `permitExpiryIso` isn't a valid `YYYY-MM-DD` calendar date — callers
+ * must treat that as "unanswered", never coerce to a lane. Pure. */
+export function daysRemaining(
+  permitExpiryIso: string,
+  today: Date = new Date(),
+): number | null {
+  const expiryMs = parseIsoDateUtc(permitExpiryIso);
+  if (expiryMs === null) return null;
+  const msPerDay = 24 * 60 * 60 * 1000;
+  return Math.round((expiryMs - localCalendarUtcMidnight(today)) / msPerDay);
+}
+
+/** Which onshore lane the user is in, or null if not yet determinable
+ * (offshore, date not yet answered, unsure, or invalid). Pure.
+ *
+ * Finding #2 (adversarial review 2026-07-17): normalized ONCE, here —
+ * UNKNOWN location never becomes a KNOWN onshore fact. A visual lane is
+ * available only after an explicit onshore answer and an exact expiry date.
+ */
+export function getLane(
+  facts: OracleFacts,
+  today: Date = new Date(),
+): Lane | null {
+  if (facts.in_indonesia !== "yes") return null;
+  if (!facts.permit_expiry || facts.permit_expiry === "unsure") return null;
+  const remaining = daysRemaining(facts.permit_expiry, today);
+  if (remaining === null) return null;
+  if (remaining < 0) return "expired";
+  if (remaining <= 2) return "urgent";
+  if (remaining <= 7) return "bridging";
+  if (remaining <= 60) return "extend";
+  return "planning";
+}
+
+/** Format an already-validated `YYYY-MM-DD` string for display, always in
+ * UTC so the calendar date the user typed never shifts for viewers in a
+ * negative-offset timezone (finding #8). Falls back to the raw string if
+ * it isn't a valid date — display should never throw. */
+export function formatIsoDateForDisplay(
+  iso: string,
+  locale: string,
+  options: Intl.DateTimeFormatOptions = { dateStyle: "medium" },
+): string {
+  const ms = parseIsoDateUtc(iso);
+  if (ms === null) return iso;
+  return new Intl.DateTimeFormat(locale, {
+    ...options,
+    timeZone: "UTC",
+  }).format(new Date(ms));
+}

@@ -1,0 +1,251 @@
+/**
+ * The committed interview-walk corpus is REPRODUCIBLE, byte for byte.
+ *
+ * `apps/backend-rag/.../gold_coverage/fixtures/walks/*.json` is generated data
+ * (see `apps/mouth/scripts/visa-oracle/generate-walk-corpus.ts`), and the
+ * backend census test `test_interview_walk_census.py` pins an outcome table on
+ * top of it. Generated data that nobody can regenerate is hand-written data
+ * with extra steps: the moment `flow.ts`, `tree.ts` or `fact-mapper.ts` moves,
+ * the corpus is stale and the census is measuring a funnel that no longer
+ * exists.
+ *
+ * So this test runs the REAL generator into a temp dir and compares every byte
+ * against what is committed. It goes red on three distinct drifts:
+ *   1. the tree/mapper changed and the corpus was not regenerated,
+ *   2. a fixture was hand-edited,
+ *   3. a walk was added or removed (the file SET is compared too).
+ *
+ * The cure for a red is always `npm run visa-oracle:walk-corpus`, followed by
+ * updating `EXPECTED_OUTCOME` / `WALK_DEAD_END_ALLOWLIST` in the census test.
+ */
+
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { QUESTIONS } from "./tree";
+
+import {
+  enumerateScenarios,
+  runWalk,
+  writeWalkCorpus,
+} from "../../../../../scripts/visa-oracle/generate-walk-corpus";
+import { DEFAULT_OUT_DIR } from "../../../../../scripts/visa-oracle/generate-walk-corpus.cli";
+
+/** The corpus size as committed. A PR that adds an interview branch — or, as
+ * of PR-5, a new DIMENSION replayed over existing branches — moves it.
+ * 43 → 61 on 2026-09-06: `second_home` (2 offshore bases + 1 onshore),
+ * `STEPCHILD` (×2 sponsor nationalities), and `diaspora` crossed like the
+ * family tile now that it serves the same question sequence (14 walks
+ * replacing one). 61 → 67 on PR-5 (2026-09-07): the 5 offshore `retirement`
+ * bases plus the onshore neutral `retirement` walk, each replayed a second
+ * time at `RETIREMENT_AGE_64_BIRTH_DATE` (age 64) instead of the corpus-wide
+ * default 25 — no new tree branch, the same 6 walks answered twice. 67 → 78
+ * on PR-D3 (2026-09-13): 11 new walks — the two invest-vehicle
+ * below-threshold routes, the three declared-paid-activity branches
+ * (employer=no / sponsor=unsure / paid=no), the retirement property/
+ * bank_deposit/undecided branches that used to dead-end, and the two
+ * STEPCHILD sponsor-permit answers (no/unsure) — see generate-walk-corpus.ts.
+ * 78 → 76 on D4a (owner ruling SHWEB-20260911, 2026-09-13): those same two
+ * STEPCHILD sponsor-permit walks are retired — no pack requirement for the
+ * sponsor's own permit exists for E31D (fresh grader review), so the
+ * question and hold they exercised are gone. 76 → 82 on PR-D4d
+ * (2026-09-13): 6 new walks — one per seq-21 product with the sponsor.type
+ * value that product's rule requires (`offshore/work/sponsor_government`
+ * covers E33A/E33B/E23V at once, `offshore/work/sponsor_individual` covers
+ * E23U, `offshore/invest/pt_pma/sponsor_government` covers E33C), one
+ * proving work item 1's new `other`+paid question end to end
+ * (`offshore/other/paid/sponsor_government`), one proving an unresolved
+ * answer is silence not a hold (`offshore/work/sponsor_unsure`), and the
+ * C6 regression walk (`offshore/other/no_paid_activity/medical`) — see
+ * generate-walk-corpus.ts. 82 → 84 on PR-D4c-2 (2026-09-13): 2 new walks —
+ * `offshore/invest/merit/currency_usd` (an explicit USD answer) and
+ * `offshore/invest/undecided/currency_still_unsure` (the "I can't say yet"
+ * option, measured in the PR body to cost zero review holds). The three
+ * unmodified `offshore/invest/merit`/`family`/`undecided` walks change BYTES
+ * only, not count or state: `investment_currency` is now the branch's first
+ * question and its first option is `idr` (tree.ts), so the untouched
+ * defaults now also answer the now-reachable `investment_capital_idr` —
+ * `investment.investment_capital_idr` moves UNKNOWN(NOT_ASKED) ->
+ * KNOWN(9900000019) on all three, `pt_pma`/`property`/`bank_deposit` stay
+ * byte-identical (that branch, and the E28A rules that read it, are
+ * deliberately untouched). See generate-walk-corpus.ts.
+ *
+ * 84 → 94 on W-VO-E (2026-09-13): ten walks that answer an EXISTING question
+ * with something other than its first option, together covering the eleven
+ * products the signed pack supports and no walk could name (several walks
+ * name more than one of them) — the visa-free and Visa-on-Arrival
+ * stays, MULTIPLE entry, business pay from abroad, the offshore investment
+ * application and its capital figures, an education sponsor, a vocational
+ * study level, a fully offshore remote worker, and a minor joining a parent.
+ * No existing fixture changes by a byte: the interview tree is untouched.
+ *
+ * 94 → 111 on W-VO-Q (mission SAETTA-VO3): the tree asks the ten seq-21
+ * qualification facts. Their first option is "yes", so the existing default
+ * walks on the `work`, `invest` and paid-`other` branches change BYTES (the
+ * new questions in `asked`, the ten facts KNOWN in `overrides`); the
+ * seventeen new walks are the new `capital_market` vehicle's default walk,
+ * one product per walk, the honest "no" on each question, and four business
+ * explorers (`business_activity = exploring`, the D12 sequence).
+ * See generate-walk-corpus.ts.
+ *
+ * 111 → 112 on E23V-DEFECT (mission seq-22): one new walk,
+ * `offshore/work/sponsor_government/trade_office_only/employer_no` — the
+ * `trade_office_only` branch's own `work_payer` answered "no" instead of the
+ * corpus-wide default "yes", the honest trade-office employee whose employer
+ * is not an Indonesian entity. No existing fixture changes a byte.
+ *
+ * 112 → 115 on A4 (slice A4, mission VISA-ORACLE-DW): three new walks close
+ * twelve of the fourteen `DisclosedReviewFlag` members that no corpus walk
+ * had ever raised — `review_gate` is a comma-joined SET
+ * (`fact-mapper.ts:406`), so `offshore/tourism/disclosed_conditions` carries
+ * nine conditioning items (every mapped, non-holding flag plus the three
+ * live since #6998) in one walk, `offshore/tourism/disclosed_criminal`
+ * carries `criminal_record` ALONE because it HOLDS and empties candidates,
+ * and `offshore/tourism/multi_purpose` answers `trip_scope: "multiple"` for
+ * `MULTI_PURPOSE_TRIP`. The fourteenth member, `CONFLICTING_IMMIGRATION_STATUS`,
+ * is impossible from the interview by construction and is covered by a
+ * census allowlist row instead. No existing fixture changes a byte. See
+ * generate-walk-corpus.ts.
+ *
+ * 115 → 115, BYTES ONLY, on Slice B5-1 (mission VISA-ORACLE-DW,
+ * R-REACH): `answerFor` in `generate-walk-corpus.ts` now asks
+ * `channelConflictsWithOnshoreIntent` (imported from `flow.ts`) before
+ * answering `application_channel`, exactly mirroring the live reducer's own
+ * guard — an unoverridden `application_channel` on a walk whose
+ * `wants_onshore_conversion` already resolved to its own default ("yes")
+ * used to answer with the driver's generic first-option default
+ * ("OFFSHORE"), a combination `flowReducer` refuses in the real interview
+ * (`flow.ts:1317`). It now falls back to the first option the live
+ * interview WOULD accept instead ("ONSHORE_CONVERSION"). The 14 onshore
+ * walks that never deliberately override `application_channel` move exactly
+ * that one field, one line each; no walk is added or removed, no other
+ * field moves. See `enumerate-interview-space.ts`'s module docstring and
+ * `PROMPT-builder-b5-1.md` for the enumerator half of the same fix.
+ *
+ * Slice A7-M (2026-09-22): +1, 115 -> 116 —
+ * `offshore/family/PARENT/spNat=IT/minor/guardian=no`, the same facts as
+ * the sibling `offshore/family/PARENT/spNat=IT/minor` walk with
+ * `guardian_consent: "no"` declared, exercising the earned privacy hold's
+ * `false` arm by a real walk.
+ *
+ * PR-11 (2026-10-11): +13, 116 -> 129 — age-64 retirement walks with explicit
+ * money answers on either side of the E33E/E33F bounds (deposit 49,999 /
+ * 50,000, state bank, own name, income 2,999 / 3,000); no existing fixture
+ * moves.
+ *
+ * Seq-28 Step B (2026-10-11): +2, 129 -> 131 — the E33G annual-income
+ * boundary witnesses 59,999 and 60,000. The active seq-27 pack does not read
+ * the fact, so both remain E33G candidates.
+ *
+ * Seq-29 (2026-10-12): +1, 131 -> 132 — `offshore/family/SIBLING/spNat=IT/minor`,
+ * the one minor sibling that keeps E31J named once the pack excludes adults.
+ *
+ * PR-12 (2026-10-13): +12, 132 -> 144 — the E23-family work-tile variants:
+ * the payer, the Indonesian-sponsor confirmation and the sponsor category
+ * answered away from the default, on the offshore and onshore arms and the
+ * paid-activity `other` branch; no existing fixture moves.
+ *
+ * T06 (2026-10-14): +27, 144 -> 171 — the visit stay bounds (30/31, 60/61,
+ * 180/181, 360/361), the MULTIPLE entry walks, and every `business_activity`
+ * and `other_purpose` answer no walk gave; no existing fixture moves.
+ *
+ * PR-13 (2026-10-15): +9, 171 -> 180 — the global filters on the employment
+ * tile (Indonesian nationality, a calling-visa nationality, onshore overstay
+ * 30/61, a minor with and without guardian consent, a disclosed criminal
+ * record, the trade-office walk past the overstay cap, and the paid `other`
+ * walk answering `medical`); no existing fixture moves.
+ *
+ * E28A own-shareholding step B (2026-10-17): +2, 180 -> 182 — the own
+ * shareholding boundary witnesses 9,999,999,999 and 10,000,000,000. Every
+ * signed pack up to seq-30 ignores the fact, so both stay as `full_capital`.
+ *
+ * Seq-32 (E30 level bands, D12 180 days per entry): +1, 182 -> 183 — the
+ * `offshore/study/undergraduate/education_sponsor` walk that keeps E30B
+ * reachable; and the D12 explorer boundary pair moves 360/361 -> 180/181
+ * (`D12_MAX_STAY_DAYS` is 180), so two fixtures are renamed, not added.
+ */
+const EXPECTED_WALK_COUNT = 183;
+
+function jsonFilesIn(dir: string): string[] {
+  return readdirSync(dir)
+    .filter((name) => name.endsWith(".json"))
+    .sort();
+}
+
+describe("interview-walk corpus is regenerable byte-for-byte", () => {
+  const committedDir = DEFAULT_OUT_DIR;
+  const committed = jsonFilesIn(committedDir);
+  let generatedDir = "";
+  let generated: string[] = [];
+
+  beforeAll(async () => {
+    generatedDir = mkdtempSync(join(tmpdir(), "visa-oracle-walk-corpus-"));
+    await writeWalkCorpus(generatedDir);
+    generated = jsonFilesIn(generatedDir);
+  }, 60_000);
+
+  afterAll(() => {
+    // Only ever the mkdtemp dir this file created — never the committed corpus.
+    if (generatedDir) rmSync(generatedDir, { recursive: true, force: true });
+  });
+
+  it(`commits ${EXPECTED_WALK_COUNT} walks`, () => {
+    expect(committed).toHaveLength(EXPECTED_WALK_COUNT);
+  });
+
+  it("generates exactly the committed set of walk files", () => {
+    expect(generated).toEqual(committed);
+  });
+
+  it.each(committed)(
+    "%s is byte-identical to the generator's output",
+    (name) => {
+      const fromRepo = readFileSync(join(committedDir, name));
+      const fromGenerator = readFileSync(join(generatedDir, name));
+      // Compare as text first: a mismatch then prints the offending lines rather
+      // than two opaque buffers.
+      expect(fromGenerator.toString("utf8")).toBe(fromRepo.toString("utf8"));
+      expect(fromGenerator.equals(fromRepo)).toBe(true);
+    },
+  );
+});
+
+/**
+ * T06: `business_activity` and `other_purpose` are context questions, so their
+ * options share the wire facts and the per-option walks differ by label only.
+ * Byte-identity cannot tell a dropped or duplicated option from a kept one, so
+ * this binds the corpus to the OPTION LIST of the real tree: every key must be
+ * the answer of at least one walk (the default first option included).
+ */
+describe("every business_activity and other_purpose option is some walk's answer", () => {
+  const answered = (
+    question: string,
+    keep: (overrides: Record<string, string>) => boolean,
+  ): Set<string> =>
+    new Set(
+      enumerateScenarios()
+        .filter((scenario) => keep(scenario.overrides))
+        .map((scenario) => runWalk(scenario.overrides).facts[question]),
+    );
+
+  it("business_activity", () => {
+    const keys = QUESTIONS.business_activity.options.map((o) => o.key);
+    const seen = answered(
+      "business_activity",
+      (o) => o.category === "business",
+    );
+    expect(keys.filter((key) => !seen.has(key))).toEqual([]);
+  });
+
+  it("other_purpose, on the unpaid branch where it decides the purpose", () => {
+    const keys = QUESTIONS.other_purpose.options.map((o) => o.key);
+    const seen = answered(
+      "other_purpose",
+      (o) => o.category === "other" && o.other_paid_activity === "no",
+    );
+    expect(keys.filter((key) => !seen.has(key))).toEqual([]);
+  });
+});

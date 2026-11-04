@@ -1,0 +1,333 @@
+"use client";
+
+import * as React from "react";
+import { Search, Loader2, X, ChevronRight, AlertTriangle } from "lucide-react";
+import {
+  apiPmaStatusLabel,
+  isApiPmaVerdictVerified,
+  kbliApi,
+  KBLISearchResult,
+} from "@/lib/api/kbli.api";
+import { cn } from "@/lib/utils";
+import { useRouter } from "next/navigation";
+import { logger } from "@/lib/logger";
+import { trackKBLISearch } from "@/lib/analytics";
+
+interface Props {
+  navigateOnSubmit?: boolean;
+  autoFocus?: boolean;
+  className?: string;
+  placeholder?: string;
+  /** Pre-fill the search input from ?q= URL param (homepage → KBLI deep-link). */
+  initialQuery?: string;
+  /**
+   * One-tap starting points rendered under the input. Clicking one writes the
+   * term into the query, which is what actually runs the search — the chips
+   * own no state of their own.
+   */
+  quickFilters?: string[];
+}
+
+export function KBLISearch({
+  navigateOnSubmit = true,
+  autoFocus = false,
+  className,
+  placeholder = "Search KBLI codes (e.g. restaurant, villas, consulting)...",
+  initialQuery = "",
+  quickFilters,
+}: Props) {
+  const [query, setQuery] = React.useState(initialQuery);
+  const [results, setResults] = React.useState<KBLISearchResult[]>([]);
+  const [isLoading, setIsLoading] = React.useState(false);
+  const [isOpen, setIsOpen] = React.useState(false);
+  const [activeIndex, setActiveIndex] = React.useState(-1);
+  const [searchError, setSearchError] = React.useState<string | null>(null);
+  const router = useRouter();
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  // useId, not a literal: this component is rendered more than once per page
+  // (hero + inline), and two listboxes sharing an id would make every
+  // aria-controls / aria-activedescendant reference point at the first one.
+  const listboxId = React.useId();
+  const optionId = (index: number) => `${listboxId}-option-${index}`;
+
+  // Sync initialQuery on mount only (URL ?q= pre-fill).
+  // Not in dep array — intentional: user can freely edit after mount.
+  React.useEffect(() => {
+    if (initialQuery) setQuery(initialQuery);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Focus after hydration instead of via the HTML autofocus attribute. The
+  // attribute is present in the server-rendered markup, so the browser focuses
+  // the input while parsing and scrolls to it — which skipped the page hero on
+  // every first visit. preventScroll keeps the caret without moving the page.
+  React.useEffect(() => {
+    if (autoFocus) inputRef.current?.focus({ preventScroll: true });
+  }, [autoFocus]);
+
+  // Close dropdown when clicking outside
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node)
+      ) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Debounced search
+  React.useEffect(() => {
+    if (!query.trim() || query.length < 2) {
+      setResults([]);
+      setSearchError(null);
+      setIsOpen(false);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setIsLoading(true);
+      setSearchError(null);
+      try {
+        const data = await kbliApi.search(query);
+        setResults(data || []);
+        setIsOpen(true);
+        setActiveIndex(-1);
+      } catch (err) {
+        logger.error("KBLI search failed:", err as Record<string, unknown>);
+        setResults([]);
+
+        // ApiClientBase throws Error(error.detail || `HTTP ${status}`).
+        // 503 from a gateway/proxy may return non-JSON → detail falls back to
+        // "Request failed" (client.ts L353). We treat both as service-down.
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const isServiceDown =
+          errMsg.includes("503") || errMsg.includes("Request failed");
+
+        setSearchError(
+          isServiceDown
+            ? "Search is temporarily unavailable. Try asking Zantara below!"
+            : "Search failed. Please try again.",
+        );
+        setIsOpen(true); // Keep dropdown open to show error banner
+
+        // Pulse ZantaraFAB to draw attention to the AI fallback
+        if (isServiceDown && typeof document !== "undefined") {
+          const fab = document.getElementById("zantara-fab");
+          if (fab) {
+            fab.classList.add("animate-pulse");
+            setTimeout(() => fab.classList.remove("animate-pulse"), 3000);
+          }
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const handleSelect = (code: string) => {
+    setIsOpen(false);
+    trackKBLISearch(query, results.length);
+    if (navigateOnSubmit) {
+      router.push(`/kbli/${code}`);
+    }
+  };
+
+  /**
+   * Quick chip → the query itself. The debounced effect above sees the new
+   * query and runs the same search a typed term would, so there is exactly one
+   * search path, not two.
+   */
+  const handleQuickFilter = (term: string) => {
+    setQuery(term);
+    setActiveIndex(-1);
+    inputRef.current?.focus();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIndex((prev) => Math.min(prev + 1, results.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIndex((prev) => Math.max(prev - 1, 0));
+    } else if (e.key === "Enter") {
+      if (activeIndex >= 0 && results[activeIndex]) {
+        handleSelect(results[activeIndex].code);
+      } else if (navigateOnSubmit && query.trim()) {
+        trackKBLISearch(query, results.length);
+        router.push(`/kbli?q=${encodeURIComponent(query)}`);
+      }
+    } else if (e.key === "Escape") {
+      setIsOpen(false);
+    }
+  };
+
+  // The dropdown shows for results OR for the error banner, and the listbox
+  // node lives inside it in both cases — so aria-controls resolves whenever
+  // aria-expanded is true.
+  const isDropdownOpen = isOpen && (results.length > 0 || Boolean(searchError));
+
+  return (
+    <div ref={containerRef} className={cn("relative w-full", className)}>
+      <div className="relative group">
+        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400 group-focus-within:text-zinc-300 transition-colors">
+          {isLoading ? (
+            <Loader2 className="w-5 h-5 animate-spin" />
+          ) : (
+            <Search className="w-5 h-5" />
+          )}
+        </div>
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={() => query.length >= 2 && setIsOpen(true)}
+          placeholder={placeholder}
+          aria-label={placeholder || "Search KBLI"}
+          role="combobox"
+          aria-expanded={isDropdownOpen}
+          aria-controls={listboxId}
+          aria-autocomplete="list"
+          aria-activedescendant={
+            activeIndex >= 0 ? optionId(activeIndex) : undefined
+          }
+          className={cn(
+            "w-full pl-12 pr-10 py-4 bg-[var(--kbli-bg-surface)] backdrop-blur-xl border border-[var(--border)] rounded-2xl text-white placeholder-zinc-400",
+            "",
+            "focus:outline-none focus:ring-2 focus:ring-[#dc2626] focus:border-white/[0.15] transition-all text-lg",
+          )}
+        />
+        {query && (
+          <button
+            onClick={() => {
+              setQuery("");
+              setResults([]);
+            }}
+            className="absolute right-4 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-white/[0.08] text-zinc-500"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+
+      <div className="sr-only" role="status" aria-live="polite">
+        {isDropdownOpen && results.length > 0
+          ? `${results.length} KBLI codes found`
+          : ""}
+      </div>
+
+      {quickFilters && quickFilters.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-2 justify-center lg:justify-start">
+          <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mr-2">
+            Quick:
+          </span>
+          {quickFilters.map((filter) => (
+            <button
+              key={filter}
+              type="button"
+              onClick={() => handleQuickFilter(filter)}
+              aria-label={`Search ${filter}`}
+              aria-pressed={query === filter}
+              className={cn(
+                "px-3.5 py-1.5 rounded-full text-xs font-medium backdrop-blur-md border transition-all duration-300",
+                query === filter
+                  ? "text-white bg-[var(--kbli-bg-surface)] border-red-500/30 shadow-[0_0_20px_rgba(220,38,38,0.08),inset_0_1px_0_rgba(255,255,255,0.06)]"
+                  : "text-zinc-400 bg-[var(--kbli-bg-surface)] border-[var(--border)] hover:bg-white/[0.07] hover:text-white hover:border-accent-sand ",
+              )}
+            >
+              {filter}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Results dropdown — also shown when there is a search error */}
+      {isDropdownOpen && (
+        <div className="absolute z-50 w-full mt-2 bg-[#1c1c1f]/95 backdrop-blur-2xl border border-[var(--border)] rounded-xl shadow-[0_16px_48px_rgba(0,0,0,0.5)] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+          {/* Error banner — shown above results when search fails */}
+          {searchError && (
+            <div className="flex items-start gap-2 px-4 py-3 text-sm border-b border-amber-500/20 bg-amber-500/[0.08]">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-400" />
+              <span className="text-amber-300">{searchError}</span>
+            </div>
+          )}
+          <div
+            id={listboxId}
+            role="listbox"
+            aria-label="KBLI search results"
+            className="max-h-[400px] overflow-y-auto"
+          >
+            {results.map((result, index) => (
+              <button
+                key={result.code}
+                id={optionId(index)}
+                role="option"
+                aria-selected={index === activeIndex}
+                onClick={() => handleSelect(result.code)}
+                onMouseEnter={() => setActiveIndex(index)}
+                className={cn(
+                  "w-full flex items-start gap-4 px-4 py-3 text-left transition-all duration-200",
+                  index === activeIndex
+                    ? "bg-[var(--kbli-bg-secondary)]"
+                    : "hover:bg-white/[0.04]",
+                )}
+              >
+                <div className="flex-shrink-0 w-12 h-12 bg-[#dc2626]/10 rounded-lg flex items-center justify-center font-bold text-[#fca5a5] border border-[#dc2626]/20 text-xs">
+                  {result.code}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold truncate text-white">
+                    {result.title}
+                  </div>
+                  <div className="text-sm text-zinc-400 line-clamp-1">
+                    {result.description}
+                  </div>
+                  <div className="flex gap-2 mt-1">
+                    <span
+                      className={cn(
+                        "text-[11px] px-1.5 py-0.5 rounded font-medium",
+                        isApiPmaVerdictVerified(result)
+                          ? "bg-emerald-500/10 text-emerald-400"
+                          : "bg-zinc-500/10 text-zinc-400",
+                      )}
+                    >
+                      {apiPmaStatusLabel(result)}
+                    </span>
+                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-medium">
+                      {result.risk_category}
+                    </span>
+                  </div>
+                </div>
+                <ChevronRight
+                  className={cn(
+                    "w-4 h-4 self-center text-zinc-400",
+                    index === activeIndex && "text-[#fca5a5] animate-pulse",
+                  )}
+                />
+              </button>
+            ))}
+          </div>
+          <div className="p-3 bg-white/[0.02] border-t border-[var(--border)] flex justify-between items-center text-[11px] text-zinc-400 uppercase tracking-widest font-bold">
+            <span>{results.length} KBLI codes found</span>
+            <span className="flex items-center gap-1">
+              Press{" "}
+              <kbd className="bg-[var(--kbli-bg-surface)] px-1.5 py-0.5 rounded border border-[color:var(--border-strong)] text-zinc-400">
+                ENTER
+              </kbd>{" "}
+              to see all
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

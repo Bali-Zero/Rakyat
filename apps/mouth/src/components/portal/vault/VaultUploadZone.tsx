@@ -1,0 +1,167 @@
+"use client";
+import { useRef, useState, useEffect } from "react";
+import { Upload } from "lucide-react";
+import { useVaultUpload } from "@/hooks/useVaultUpload";
+import {
+  MAX_SIZE_BYTES,
+  UPLOAD_ACCEPT,
+  UPLOAD_FORMAT_LABEL,
+} from "@/lib/vault/uploadLimits";
+import { shrinkImage } from "@/lib/vault/shrinkImage";
+
+interface Props {
+  practiceId?: number | string | null;
+  onDone?: () => void;
+  /** Blocks choosing/dropping a file; `disabledReason` tells the client why. */
+  disabled?: boolean;
+  disabledReason?: string;
+}
+
+export function VaultUploadZone({
+  practiceId,
+  onDone,
+  disabled = false,
+  disabledReason,
+}: Props) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [purpose, setPurpose] = useState("");
+  const { state, upload, reset, retry, canRetry } = useVaultUpload();
+
+  useEffect(() => {
+    if (state.status === "done") {
+      onDone?.();
+      const t = setTimeout(() => {
+        reset();
+        setPurpose("");
+      }, 3000);
+      return () => clearTimeout(t);
+    }
+  }, [state, onDone, reset]);
+
+  const handleFiles = (files: FileList | null) => {
+    if (disabled || !files || files.length === 0) return;
+    const file = files[0];
+    const options = { practiceId, purpose };
+    if (
+      file.size > MAX_SIZE_BYTES &&
+      (file.type === "image/jpeg" || file.type === "image/png")
+    ) {
+      // A phone photo is often above the upload proxy's limit: re-encode it
+      // in the browser first. If that fails, upload() refuses it with the
+      // size message instead of the platform dropping the request.
+      void shrinkImage(file, MAX_SIZE_BYTES).then((smaller) =>
+        upload(smaller ?? file, options),
+      );
+      return;
+    }
+    upload(file, options);
+  };
+
+  return (
+    <div className="space-y-2">
+      <div>
+        <label
+          htmlFor="vault-upload-purpose"
+          className="block text-[10px] uppercase tracking-[2px] text-[var(--bz-text-3)] mb-1"
+        >
+          What is this document for? (optional)
+        </label>
+        <input
+          id="vault-upload-purpose"
+          type="text"
+          value={purpose}
+          maxLength={500}
+          onChange={(e) => setPurpose(e.target.value)}
+          placeholder="e.g. Passport for KITAS renewal"
+          className="w-full rounded-lg border border-[var(--bz-border)] bg-[var(--bz-card)] px-3 py-2 text-sm text-[var(--bz-text-1)] placeholder:text-[var(--bz-text-3)] focus:border-[var(--bz-focus-ring)] focus:outline-none"
+        />
+      </div>
+      <div
+        data-testid="vault-upload-zone"
+        data-drag-over={dragOver ? "true" : "false"}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          handleFiles(e.dataTransfer.files);
+        }}
+        aria-disabled={disabled || undefined}
+        className={`rounded-lg border-2 border-dashed p-6 text-center transition ${
+          disabled ? "opacity-60" : ""
+        } ${
+          dragOver
+            ? "border-[var(--bz-copper-text)] bg-[var(--surface-raised)]"
+            : "border-[var(--bz-border-hover)]"
+        }`}
+      >
+        <Upload
+          aria-hidden
+          className="w-6 h-6 mx-auto text-[var(--bz-accent-warm)] mb-2"
+        />
+        <p className="text-sm text-[var(--bz-text-2)] mb-3">
+          Drag & drop here, or
+        </p>
+        <p
+          id="vault-upload-formats"
+          className="text-xs text-[var(--bz-text-3)] mb-3"
+        >
+          {UPLOAD_FORMAT_LABEL}
+        </p>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => inputRef.current?.click()}
+          className="text-xs uppercase tracking-[2px] text-[var(--bz-copper-text)] hover:underline"
+        >
+          Choose file
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept={UPLOAD_ACCEPT}
+          className="sr-only"
+          onChange={(e) => handleFiles(e.target.files)}
+          disabled={disabled}
+          aria-label="Choose file to upload"
+          aria-describedby="vault-upload-formats"
+        />
+        {disabled && disabledReason && (
+          <p role="status" className="text-xs text-[var(--bz-text-2)] mt-3">
+            {disabledReason}
+          </p>
+        )}
+        {state.status === "uploading" && (
+          <p role="status" className="text-xs text-[var(--bz-text-2)] mt-3">
+            Uploading… {Math.round(state.progress)}%
+          </p>
+        )}
+        {state.status === "error" && (
+          <div role="alert" className="mt-3 space-y-2">
+            <p className="text-xs text-[var(--state-danger)]">
+              {state.message}
+            </p>
+            {canRetry && (
+              <button
+                type="button"
+                onClick={retry}
+                className="text-xs font-medium text-[var(--bz-copper-text)] underline underline-offset-2"
+              >
+                Retry upload
+              </button>
+            )}
+          </div>
+        )}
+        {state.status === "done" && (
+          <p role="status" className="text-xs text-[var(--state-success)] mt-3">
+            Uploaded: {state.file.name}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}

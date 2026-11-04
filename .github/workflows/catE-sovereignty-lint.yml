@@ -1,0 +1,84 @@
+name: catE-sovereignty-lint
+
+# Reduced for the public production repository. Judges prod code only:
+#   #40  no NEW paid per-token Anthropic constructor (budget is ZERO)
+#   #40b no export/setenv assigning a value to the paid-key variable
+#   #44  no group/world-readable apps/*/.env
+# The two greps scan apps/ and packages/ and refuse to pass if they scanned
+# nothing. No paths filter: this is a required context and must always report.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catE-sovereignty-lint-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+
+jobs:
+  catE-sovereignty-lint:
+    name: catE-sovereignty-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # ── #40 — ban the PAID Anthropic endpoint (per-token duplication) ───────
+      # OK: Anthropic(auth_token=...) (OAuth Bearer). Banned: the constructor,
+      # sync or async, taking a per-token credential keyword argument.
+      # Budget is fixed at ZERO: any hit is red.
+      - name: Ban paid Anthropic constructor (budget zero)
+        run: |
+          set -uo pipefail
+          SCANNED=$(find apps packages -type f -name '*.py' -not -path '*/node_modules/*' -not -path '*/.venv/*' | wc -l)
+          if [ "$SCANNED" -lt 1 ]; then
+            echo "::error::no python files found under apps/ packages/ — refusing a vacuous pass."
+            exit 1
+          fi
+          HITS=$(grep -rnE 'Anthropic\(\s*api_key' --include='*.py' apps packages \
+            | grep -vE '\.venv/|node_modules/|/\.git/|tests/|test_' || true)
+          if [ -n "$HITS" ]; then
+            echo "::error::paid Anthropic constructor found. Use the claude CLI (CLAUDE_CODE_OAUTH_TOKEN) or Anthropic(auth_token=...)."
+            echo "$HITS"
+            exit 1
+          fi
+          echo "OK: no paid-constructor hit ($SCANNED python files scanned)."
+
+      # ── #40b — ban ASSIGNING a value into ANTHROPIC_API_KEY (export/setenv) ──
+      # Allowed: unset / del / .pop / ="" / =None (defensive strips).
+      # `\bsetenv\(` keeps `os.unsetenv(...)` from matching.
+      - name: Ban ANTHROPIC_API_KEY=<value> assignment
+        run: |
+          set -uo pipefail
+          SCANNED=$(find apps packages -type f \( -name '*.py' -o -name '*.sh' \) -not -path '*/node_modules/*' -not -path '*/.venv/*' | wc -l)
+          if [ "$SCANNED" -lt 1 ]; then
+            echo "::error::no .py/.sh files found under apps/ packages/ — refusing a vacuous pass."
+            exit 1
+          fi
+          HITS=$(grep -rnE 'export[[:space:]]+ANTHROPIC_API_KEY=[^"'"'"'[:space:]]|\bsetenv\([[:space:]]*["'"'"']ANTHROPIC_API_KEY' \
+            --include='*.py' --include='*.sh' apps packages \
+            | grep -vE '\.venv/|node_modules/|/\.git/|tests/|test_|examples/|vendor/' || true)
+          if [ -n "$HITS" ]; then
+            echo "::error::ANTHROPIC_API_KEY assigned a value (paid path):"
+            echo "$HITS"
+            exit 1
+          fi
+          echo "OK: no ANTHROPIC_API_KEY value assignment ($SCANNED files scanned)."
+
+      # ── #44 — apps/*/.env must NOT be group/world-readable ──────────────────
+      - name: Ban world-readable apps/*/.env (perm > 0600)
+        run: |
+          set -uo pipefail
+          BAD=$(find apps -maxdepth 2 -name '.env' -perm /044 2>/dev/null || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::apps/*/.env with group/world-read bits (chmod 600):"
+            echo "$BAD"
+            exit 1
+          fi
+          echo "OK: no group/world-readable apps/*/.env."

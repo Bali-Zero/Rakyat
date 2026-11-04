@@ -1,0 +1,149 @@
+{
+  "family": "E23",
+  "name": "Work visas",
+  "category": "KITAS/Limited Stay",
+  "permit_class": "ITAS",
+  "entry_type": null,
+  "law_dir": "law/E23",
+  "questions": {
+    "activity": {
+      "text_en": "What will you do in Indonesia?",
+      "options": {
+        "employment": "E23"
+      },
+      "labels_en": {
+        "employment": "Work in Indonesia"
+      }
+    },
+    "sponsor": {
+      "text_en": "Do you have a sponsor in Indonesia who will provide your work?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "initial_stay": {
+      "text_en": "Which initial stay do you need?",
+      "options": {
+        "180_days": {
+          "value": 180,
+          "unit": "DAY"
+        },
+        "1_year": {
+          "value": 1,
+          "unit": "YEAR"
+        },
+        "2_years": {
+          "value": 2,
+          "unit": "YEAR"
+        }
+      },
+      "labels_en": {
+        "180_days": "180 days",
+        "1_year": "1 year",
+        "2_years": "2 years"
+      }
+    }
+  },
+  "visas": {
+    "E23": {
+      "sponsor_required": true,
+      "sponsor": "REQUIRED",
+      "entry_type": "MULTIPLE",
+      "is_sold": true,
+      "extendable": true,
+      "stay_options": [
+        {
+          "value": 180,
+          "unit": "DAY"
+        },
+        {
+          "value": 1,
+          "unit": "YEAR"
+        },
+        {
+          "value": 2,
+          "unit": "YEAR"
+        }
+      ],
+      "stay_question": "initial_stay",
+      "price_keys": [
+        {
+          "category": "kitas_permits",
+          "item_key": "Working KITAS (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Working KITAS (Offshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Working KITAS (Extend)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Freelance E23 (Altus/Onshore)"
+        },
+        {
+          "category": "kitas_permits",
+          "item_key": "Freelance E23 (Offshore)"
+        }
+      ]
+    },
+    "E23A": {
+      "sponsor_required": null,
+      "sponsor": null,
+      "entry_type": null,
+      "is_sold": null,
+      "extendable": null,
+      "stay_options": null,
+      "price_keys": []
+    },
+    "E23U": {
+      "sponsor_required": null,
+      "sponsor": null,
+      "entry_type": null,
+      "is_sold": null,
+      "extendable": null,
+      "stay_options": null,
+      "price_keys": []
+    },
+    "E23V": {
+      "sponsor_required": null,
+      "sponsor": null,
+      "entry_type": null,
+      "is_sold": null,
+      "extendable": null,
+      "stay_options": null,
+      "price_keys": []
+    },
+    "E23X": {
+      "sponsor_required": null,
+      "sponsor": null,
+      "entry_type": null,
+      "is_sold": null,
+      "extendable": null,
+      "stay_options": null,
+      "price_keys": []
+    },
+    "E23Y": {
+      "sponsor_required": null,
+      "sponsor": null,
+      "entry_type": null,
+      "is_sold": null,
+      "extendable": null,
+      "stay_options": null,
+      "price_keys": []
+    }
+  },
+  "notes": [
+    "Only E23 has substantive official content. E23A/U/V/X/Y are NOT_FOUND secondary cards: TO_VERIFY, permit_class NULL, all unstated legal and commercial fields NULL, excluded from the Guide.",
+    "Three questions: work activity, sponsor providing work, exact initial stay. Documents, including the Ministry of Manpower work permission, remain the verbatim checklist; no document-possession question is added.",
+    "Initial stays are exactly 180 DAY, 1 YEAR or 2 YEAR. The optional stay_question selects one stated option without calendar conversion. 180 days is never treated as six months. Numeric stay_days/stay_months answers cannot replace an initial_stay choice.",
+    "Extension is explicitly allowed through the sponsor, but no cumulative maximum, extension increment or renewal count is stated. Both maxima remain NULL; this Guide assesses the selected initial permit only and offers no unverified extension-duration calculation.",
+    "The five exact kitas_permits keys cover Working KITAS and Freelance E23. These are commercial references for E23, not legal permission for unsponsored freelance work or a price quote for every stay tier. Working initial products say 1 year; Freelance products say 6 months, which is not equated to the Law card's 180 days. No 2-year price is invented.",
+    "E23-FREELANCE is legacy-only, without an official code card; no new code or separate Guide route is created.",
+    "ITAP.json states no per-code ITAP eligibility. Each card retains its exact visa_page_itap_verbatim, with itap_eligibility_as_stated_boolean NULL and itap_status TO_VERIFY. The general worker-category text does not establish an E23-code mapping. DB itap remains NULL; no ITAP question or KITAP price is offered.",
+    "Application location remains NULL for every code. Offshore/onshore commercial key labels do not establish a legal application-channel rule. VERIFIED means faithful source extraction, not full legal eligibility."
+  ]
+}

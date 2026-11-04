@@ -1,0 +1,574 @@
+"""
+ZANTARA RAG - Document Parsers
+Extract text from PDF and EPUB files
+"""
+
+import asyncio
+import logging
+import os
+from pathlib import Path
+
+try:
+    from PyPDF2 import PdfReader
+except ImportError:
+    from pypdf import PdfReader
+
+try:
+    from docx import Document
+except ImportError:
+    Document = None
+
+import ebooklib
+from bs4 import BeautifulSoup
+from ebooklib import epub
+
+logger = logging.getLogger(__name__)
+
+# Separator used between PDF pages. Kept as a module-level constant so
+# `chunk_by_pages` can recompute identical offsets from any text produced
+# by `extract_text_from_pdf(..., return_page_markers=True)`.
+PDF_PAGE_SEPARATOR = "\n\n"
+
+
+class DocumentParseError(Exception):
+    """Custom exception for document parsing errors"""
+
+    pass
+
+
+def _join_pages_with_markers(text_parts: list[str]) -> tuple[str, list[int]]:
+    """Join per-page text fragments and record the character offset where each
+    page starts in the joined string.
+
+    Uses the module-level PDF_PAGE_SEPARATOR so page boundaries remain
+    consistent with the single-string path. Empty pages are preserved as
+    zero-length spans so every input page gets exactly one marker.
+
+    Returns:
+        (full_text, page_markers) where page_markers[i] = start offset of
+        page i+1 in full_text. len(page_markers) == len(text_parts).
+    """
+    markers: list[int] = []
+    cursor = 0
+    sep = PDF_PAGE_SEPARATOR
+    sep_len = len(sep)
+    for idx, part in enumerate(text_parts):
+        markers.append(cursor)
+        cursor += len(part)
+        if idx < len(text_parts) - 1:
+            cursor += sep_len
+    return sep.join(text_parts), markers
+
+
+async def extract_text_from_pdf_async(
+    file_path: str,
+    use_ocr: bool = False,
+    return_page_markers: bool = False,
+) -> str | tuple[str, list[int]]:
+    """
+    Async version of PDF extraction for use in async contexts.
+
+    Args:
+        file_path: Path to PDF file.
+        use_ocr: Force OCR even if text extraction succeeds.
+        return_page_markers: If True, also return a list of character offsets
+            marking where each page starts in the joined text. Backward
+            compatible default (False) returns only the text string.
+    """
+    try:
+        logger.info("Parsing PDF (async): %s", file_path)
+
+        reader = PdfReader(file_path)
+        text_parts: list[str] = []
+        extracted_pages: list[str] = []
+
+        for page_num, page in enumerate(reader.pages, 1):
+            try:
+                text = page.extract_text()
+                if text:
+                    text_parts.append(text)
+                    extracted_pages.append(text)
+                else:
+                    extracted_pages.append("")
+            except Exception as e:
+                logger.warning("Error extracting page %s: %s", page_num, e)
+                extracted_pages.append("")
+                continue
+
+        if return_page_markers:
+            full_text, page_markers = _join_pages_with_markers(extracted_pages)
+        else:
+            full_text = PDF_PAGE_SEPARATOR.join(text_parts)
+            page_markers = None
+
+        # If no text found, try OCR (for scanned PDFs)
+        if not full_text.strip() or use_ocr:
+            logger.info("No text found in PDF, attempting async OCR extraction...")
+            try:
+                ocr_text = await extract_text_from_pdf_ocr_async(file_path)
+                if ocr_text and ocr_text.strip():
+                    logger.info(f"OCR extraction successful: {len(ocr_text)} characters")
+                    if return_page_markers:
+                        # OCR path does not preserve reliable page offsets.
+                        # Return empty marker list so callers fall back to
+                        # semantic chunking (see chunker.chunk_by_pages).
+                        return ocr_text, []
+                    return ocr_text
+                if not full_text.strip():
+                    raise DocumentParseError(
+                        f"No text extracted from PDF (even with OCR/Vision): {file_path}",
+                    )
+            except DocumentParseError:
+                raise
+            except Exception as ocr_error:
+                logger.warning("OCR extraction failed: %s", ocr_error)
+                if not full_text.strip():
+                    raise DocumentParseError(f"No text extracted from PDF: {file_path}")
+
+        if not full_text.strip():
+            raise DocumentParseError(f"No text extracted from PDF: {file_path}")
+
+        logger.info(f"Successfully extracted {len(full_text)} characters from PDF")
+        if return_page_markers:
+            return full_text, page_markers
+        return full_text
+
+    except DocumentParseError:
+        raise
+    except Exception as e:
+        raise DocumentParseError(f"Failed to parse PDF {file_path}: {e!s}") from e
+
+
+def extract_text_from_pdf(
+    file_path: str,
+    use_ocr: bool = False,
+    return_page_markers: bool = False,
+) -> str | tuple[str, list[int]]:
+    """
+    Extract text content from PDF file.
+    Falls back to OCR if no text is found (for scanned PDFs).
+
+    Args:
+        file_path: Path to PDF file
+        use_ocr: Force OCR even if text extraction succeeds
+        return_page_markers: If True, also return a list of character offsets
+            marking where each page starts in the joined text. Backward
+            compatible default (False) returns only the text string, which
+            keeps existing callers unchanged.
+
+    Returns:
+        When return_page_markers is False (default): extracted text as string.
+        When True: tuple of (text, page_markers). OCR/Vision fallback paths
+        return [] for page_markers since per-page offsets are not reliable
+        there; callers should then fall back to semantic chunking.
+
+    Raises:
+        DocumentParseError: If parsing fails
+    """
+    try:
+        logger.info("Parsing PDF: %s", file_path)
+
+        reader = PdfReader(file_path)
+        text_parts: list[str] = []
+        extracted_pages: list[str] = []
+
+        for page_num, page in enumerate(reader.pages, 1):
+            try:
+                text = page.extract_text()
+                if text:
+                    text_parts.append(text)
+                    extracted_pages.append(text)
+                else:
+                    extracted_pages.append("")
+            except Exception as e:
+                logger.warning("Error extracting page %s: %s", page_num, e)
+                extracted_pages.append("")
+                continue
+
+        if return_page_markers:
+            full_text, page_markers = _join_pages_with_markers(extracted_pages)
+        else:
+            full_text = PDF_PAGE_SEPARATOR.join(text_parts)
+            page_markers = None
+
+        # If no text found, try OCR (for scanned PDFs)
+        if not full_text.strip() or use_ocr:
+            logger.info("No text found in PDF, attempting OCR extraction...")
+            try:
+                ocr_text = extract_text_from_pdf_ocr(file_path)
+                if ocr_text and ocr_text.strip():
+                    logger.info(f"OCR extraction successful: {len(ocr_text)} characters")
+                    if return_page_markers:
+                        return ocr_text, []
+                    return ocr_text
+                if not full_text.strip():
+                    # Last resort: try vision model (skip if already in async context)
+                    logger.info("OCR failed, trying vision model as last resort...")
+                    try:
+                        from backend.services.multimodal.pdf_vision_service import (
+                            IncompleteTranscriptionError,
+                            PDFVisionService,
+                        )
+
+                        vision_service = PDFVisionService()
+                        # Check if we're in an async context
+                        try:
+                            asyncio.get_running_loop()
+                            # We're in async context, can't use asyncio.run()
+                            logger.warning("Cannot use vision model in async context - OCR skipped")
+                        except RuntimeError:
+                            # No running loop, safe to use asyncio.run().
+                            # CORRECTED 2026-08-25: this used to call
+                            # `vision_service.extract_text(pdf_bytes)`, which is
+                            # declared "(for test compatibility)" and re-reads
+                            # the PDF with PyMuPDF -- the step that had just
+                            # returned nothing. It never rendered a page and
+                            # never reached a vision model, so no scanned PDF
+                            # could ever be read, and the failure was reported
+                            # as "even with OCR/Vision".
+                            vision_text = asyncio.run(
+                                vision_service.transcribe_scanned_pdf(file_path),
+                            )
+                            if vision_text and vision_text.strip():
+                                logger.info(
+                                    f"Vision extraction successful: {len(vision_text)} characters",
+                                )
+                                if return_page_markers:
+                                    return vision_text, []
+                                return vision_text
+                    except IncompleteTranscriptionError as vision_err:
+                        # A partially transcribed document must not fall through
+                        # to the generic "No text extracted" below: that message
+                        # would report the opposite of what happened and hide
+                        # which pages are missing.
+                        logger.error("%s", vision_err)
+                        raise DocumentParseError(str(vision_err)) from vision_err
+                    except Exception as vision_err:
+                        logger.warning("Vision extraction failed: %s", vision_err)
+
+                    raise DocumentParseError(
+                        f"No text extracted from PDF (even with OCR/Vision): {file_path}",
+                    )
+            except DocumentParseError:
+                raise
+            except Exception as ocr_error:
+                logger.warning("OCR extraction failed: %s", ocr_error)
+                if not full_text.strip():
+                    raise DocumentParseError(f"No text extracted from PDF: {file_path}")
+
+        if not full_text.strip():
+            raise DocumentParseError(f"No text extracted from PDF: {file_path}")
+
+        logger.info(f"Successfully extracted {len(full_text)} characters from PDF")
+        if return_page_markers:
+            return full_text, page_markers
+        return full_text
+
+    except DocumentParseError:
+        raise
+    except Exception as e:
+        raise DocumentParseError(f"Failed to parse PDF {file_path}: {e!s}") from e
+
+
+async def extract_text_from_pdf_ocr_async(file_path: str) -> str:
+    """Async OCR for a scanned PDF, local Ollama vision first.
+
+    CORRECTED 2026-08-25. This function used to gate itself on
+    ``PDFVisionService._available``, a property that consults the GEMINI client
+    only. With cloud vision unconfigured -- the default posture, since
+    cross-border vision is gated under UU PDP Art. 56 -- it returned "" without
+    ever asking the local Ollama engine, which was armed and working. It also
+    appended whatever ``analyze_page`` returned, and that method reports failure
+    by returning a STRING ("Error analyzing page: ..."), so a failed page could
+    enter the corpus as the document's own text.
+
+    Both problems are gone by delegating to the one real implementation.
+    """
+    from backend.services.multimodal.pdf_vision_service import (
+        IncompleteTranscriptionError,
+        PDFVisionService,
+    )
+
+    try:
+        text = await PDFVisionService().transcribe_scanned_pdf(file_path)
+        return text or ""
+    except IncompleteTranscriptionError as e:
+        # ADDED 2026-08-25. Everything else here degrades to "" on purpose, and
+        # that is right for a page we could not read at all. It is WRONG for a
+        # document we read in part: returning "" would report "nothing found"
+        # while returning the survivors would store an amputated law as if it
+        # were whole. Only a typed refusal carries the truth upward.
+        logger.error("%s", e)
+        raise DocumentParseError(str(e)) from e
+    except Exception as e:
+        logger.error("Vision OCR extraction failed: %s", e)
+        return ""
+
+
+def extract_text_from_pdf_ocr(file_path: str) -> str:
+    """
+    Extract text from scanned PDF using OCR (PyMuPDF with OCR support).
+
+    Args:
+        file_path: Path to PDF file
+
+    Returns:
+        Extracted text as string
+    """
+    try:
+        import fitz  # PyMuPDF
+
+        logger.info("Attempting OCR extraction from PDF: %s", file_path)
+        doc = fitz.open(file_path)
+        text_parts = []
+
+        for page_num, page in enumerate(doc, 1):
+            try:
+                # Try OCR if available (requires PyMuPDF with OCR support)
+                # PyMuPDF can use Tesseract if available
+                text = page.get_text("text")
+
+                # If no text, try OCR mode
+                if not text.strip():
+                    # PyMuPDF OCR requires Tesseract
+                    # Fallback: use page.get_text() with OCR flag if available
+                    try:
+                        # Try with OCR flag (if PyMuPDF was compiled with OCR support)
+                        text = page.get_text("text", flags=11)  # OCR flag
+                    except Exception:
+                        # If OCR not available, try alternative extraction
+                        logger.warning(
+                            "OCR not available for page %s, trying alternative extraction",
+                            page_num,
+                        )
+                        # Convert page to image and use vision model as fallback
+                        page.get_pixmap()
+                        # For now, return empty - can be enhanced with vision model
+                        text = ""
+
+                if text:
+                    text_parts.append(text)
+            except Exception as e:
+                logger.warning("Error extracting page %s with OCR: %s", page_num, e)
+                continue
+
+        doc.close()
+        return "\n\n".join(text_parts)
+
+    except ImportError:
+        logger.warning("PyMuPDF (fitz) not available for OCR extraction")
+        return ""
+    except Exception as e:
+        logger.error("OCR extraction failed: %s", e)
+        return ""
+
+
+def extract_text_from_docx(file_path: str) -> str:
+    """
+    Extract text content from DOCX file.
+
+    Args:
+        file_path: Path to DOCX file
+
+    Returns:
+        Extracted text as string
+
+    Raises:
+        DocumentParseError: If parsing fails
+    """
+    if Document is None:
+        raise DocumentParseError("python-docx not installed. Install with: pip install python-docx")
+
+    try:
+        logger.info("Parsing DOCX: %s", file_path)
+
+        doc = Document(file_path)
+        text_parts = []
+
+        # Extract text from paragraphs
+        for paragraph in doc.paragraphs:
+            if paragraph.text.strip():
+                text_parts.append(paragraph.text)
+
+        # Extract text from tables
+        for table in doc.tables:
+            for row in table.rows:
+                row_text = []
+                for cell in row.cells:
+                    if cell.text.strip():
+                        row_text.append(cell.text.strip())
+                if row_text:
+                    text_parts.append(" | ".join(row_text))
+
+        full_text = "\n\n".join(text_parts)
+
+        if not full_text.strip():
+            raise DocumentParseError(f"No text extracted from DOCX: {file_path}")
+
+        logger.info(f"Successfully extracted {len(full_text)} characters from DOCX")
+        return full_text
+
+    except Exception as e:
+        raise DocumentParseError(f"Failed to parse DOCX {file_path}: {e!s}") from e
+
+
+def extract_text_from_epub(file_path: str) -> str:
+    """
+    Extract text content from EPUB file.
+
+    Args:
+        file_path: Path to EPUB file
+
+    Returns:
+        Extracted text as string
+
+    Raises:
+        DocumentParseError: If parsing fails
+    """
+    try:
+        logger.info("Parsing EPUB: %s", file_path)
+
+        book = epub.read_epub(file_path)
+        text_parts = []
+
+        # Extract text from each chapter
+        for item in book.get_items():
+            if item.get_type() == ebooklib.ITEM_DOCUMENT:
+                try:
+                    content = item.get_content().decode("utf-8")
+                    soup = BeautifulSoup(content, "html.parser")
+                    text = soup.get_text(separator="\n", strip=True)
+
+                    if text:
+                        text_parts.append(text)
+                except Exception as e:
+                    logger.warning("Error extracting chapter: %s", e)
+                    continue
+
+        full_text = "\n\n".join(text_parts)
+
+        if not full_text.strip():
+            raise DocumentParseError(f"No text extracted from EPUB: {file_path}")
+
+        logger.info(f"Successfully extracted {len(full_text)} characters from EPUB")
+        return full_text
+
+    except Exception as e:
+        raise DocumentParseError(f"Failed to parse EPUB {file_path}: {e!s}") from e
+
+
+def extract_text_from_txt(file_path: str) -> str:
+    """
+    Extract text content from TXT file.
+
+    Args:
+        file_path: Path to TXT file
+
+    Returns:
+        Extracted text as string
+
+    Raises:
+        DocumentParseError: If parsing fails
+    """
+    try:
+        logger.info("Reading TXT: %s", file_path)
+        with open(file_path, encoding="utf-8") as f:
+            text = f.read()
+
+        if not text.strip():
+            raise DocumentParseError(f"No text extracted from TXT: {file_path}")
+
+        logger.info(f"Successfully extracted {len(text)} characters from TXT")
+        return text
+
+    except Exception as e:
+        raise DocumentParseError(f"Failed to read TXT {file_path}: {e!s}") from e
+
+
+def auto_detect_and_parse(file_path: str, use_ocr: bool = False) -> str:
+    """
+    Auto-detect file type and parse accordingly.
+
+    Args:
+        file_path: Path to document file
+        use_ocr: Force OCR for PDFs (for scanned documents)
+
+    Returns:
+        Extracted text as string
+
+    Raises:
+        DocumentParseError: If file type unsupported or parsing fails
+    """
+    if not os.path.exists(file_path):
+        raise DocumentParseError(f"File not found: {file_path}")
+
+    file_ext = Path(file_path).suffix.lower()
+
+    if file_ext == ".pdf":
+        return extract_text_from_pdf(file_path, use_ocr=use_ocr)
+    if file_ext == ".docx":
+        return extract_text_from_docx(file_path)
+    if file_ext == ".epub":
+        return extract_text_from_epub(file_path)
+    if file_ext == ".txt":
+        return extract_text_from_txt(file_path)
+    if file_ext == ".md":
+        return extract_text_from_txt(file_path)  # Markdown is plain text
+    raise DocumentParseError(
+        f"Unsupported file type: {file_ext}. Supported formats: .pdf, .docx, .epub, .txt, .md",
+    )
+
+
+def get_document_info(file_path: str) -> dict:
+    """
+    Extract basic metadata from document.
+
+    Args:
+        file_path: Path to document
+
+    Returns:
+        Dictionary with document metadata
+    """
+    info = {
+        "file_name": Path(file_path).name,
+        "file_size_mb": os.path.getsize(file_path) / (1024 * 1024),
+        "file_type": Path(file_path).suffix.lower(),
+        "file_path": file_path,
+    }
+
+    try:
+        if info["file_type"] == ".pdf":
+            reader = PdfReader(file_path)
+            info["pages"] = len(reader.pages)
+
+            # Try to get PDF metadata
+            if reader.metadata:
+                info["title"] = reader.metadata.get("/Title", "")
+                info["author"] = reader.metadata.get("/Author", "")
+
+        elif info["file_type"] == ".docx":
+            if Document is None:
+                logger.warning("python-docx not available for DOCX metadata extraction")
+            else:
+                doc = Document(file_path)
+                # Try to get document properties
+                props = doc.core_properties
+                info["title"] = props.title or ""
+                info["author"] = props.author or ""
+                info["pages"] = len(doc.paragraphs)  # Approximate page count
+
+        elif info["file_type"] == ".epub":
+            book = epub.read_epub(file_path)
+            info["title"] = (
+                book.get_metadata("DC", "title")[0][0] if book.get_metadata("DC", "title") else ""
+            )
+            info["author"] = (
+                book.get_metadata("DC", "creator")[0][0]
+                if book.get_metadata("DC", "creator")
+                else ""
+            )
+
+    except Exception as e:
+        logger.warning("Could not extract metadata from %s: %s", file_path, e)
+
+    return info

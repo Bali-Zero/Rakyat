@@ -1,0 +1,1355 @@
+"""
+Portal documents mixin.
+
+Handles the client-portal document pipeline:
+- list documents with filters (get_documents)
+- upload with virus scan, OCR, expiry extraction, Google Drive push
+  (upload_document + _upload_to_drive / _upload_with_service_account /
+  _get_or_create_drive_folder / _notify_lead_about_document)
+
+Also owns the filename / category / Drive-folder classification helpers
+used exclusively by the upload path.
+
+Depends on PortalService for:
+- self.pool                         (asyncpg pool)
+- self._metrics                     (upload counters dict)
+- self._upload_rate_limits          (rate-limit state)
+- self.MAX_UPLOADS_PER_WINDOW / self.RATE_WINDOW_SECONDS
+- self._is_undefined_column_error / _is_undefined_table_error
+"""
+
+import asyncio
+import re
+from datetime import datetime, timezone
+from typing import Any
+
+import asyncpg
+
+from backend.app.utils.logging_utils import get_logger
+from backend.services.common.background import spawn
+from backend.services.common.cache import cache_invalidating
+from backend.services.pii.violation_store import hash_subject
+from backend.services.portal._document_visibility import document_visibility_clause
+from backend.services.portal._drive_fetch import fetch_drive_file
+from backend.services.portal._rbac import ClientContext, require_client_access
+from backend.services.portal.document_processing import (
+    DocumentOCR,
+    ExpiryDetector,
+    VirusScanner,
+)
+from backend.services.portal.gate_notice_adapter import GateNoticeClient
+from backend.services.portal.gate_upload_adapter import GateUploadClient
+from backend.services.portal.upload_validation import DuplicateDocumentError
+
+logger = get_logger(__name__)
+
+
+class PortalDocumentsMixin:
+    """Client-portal document listing + upload pipeline (Drive / OCR / virus scan)."""
+
+    _CLIENT_UPLOAD_RESPONSE_FIELDS = (
+        "id",
+        "type",
+        "name",
+        "status",
+        "size_kb",
+        "created_at",
+        "expiry_date",
+    )
+
+    pool: asyncpg.Pool
+    _metrics: dict[str, int]
+    _upload_rate_limits: dict[int, list[float]]
+    MAX_UPLOADS_PER_WINDOW: int
+    RATE_WINDOW_SECONDS: int
+
+    @staticmethod
+    def _sanitize_filename(filename: str) -> str:
+        """Sanitize filename to prevent path traversal and unsafe chars."""
+        import re
+
+        # Remove path components
+        filename = filename.replace("\\", "/").split("/")[-1]
+        # Remove unsafe characters
+        filename = re.sub(r"[^\w\-\.]", "_", filename)
+        # Limit length
+        if len(filename) > 200:
+            name, ext = filename.rsplit(".", 1) if "." in filename else (filename, "")
+            filename = name[:195] + ("." + ext if ext else "")
+        return filename
+
+    @classmethod
+    def _client_safe_upload_response(cls, result: dict[str, Any]) -> dict[str, Any]:
+        """Project an upload result onto the fields safe for portal clients."""
+        return {key: result[key] for key in cls._CLIENT_UPLOAD_RESPONSE_FIELDS if key in result}
+
+    @staticmethod
+    def _classify_document_category(document_type: str, file_name: str) -> str:
+        """Auto-classify document_category from document_type and filename."""
+        dt = (document_type or "").lower()
+        fn = (file_name or "").lower()
+        combined = f"{dt} {fn}"
+
+        # Immigration
+        if any(
+            k in combined
+            for k in (
+                "kitas",
+                "kitap",
+                "visa",
+                "evisa",
+                "voa",
+                "permit",
+                "imta",
+                "rptka",
+                "itas",
+            )
+        ):
+            return "immigration"
+
+        # Personal
+        if any(
+            k in combined
+            for k in (
+                "passport",
+                "paspor",
+                "ktp",
+                "photo",
+                "foto",
+                "cv ",
+                "resume",
+                "domisili",
+                "skck",
+                "surat keterangan",
+            )
+        ):
+            return "personal"
+
+        # Company / PMA
+        if any(
+            k in combined
+            for k in (
+                "akta",
+                "pendirian",
+                "perubahan",
+                "nib",
+                "npwp",
+                "sk ",
+                "profil perseroan",
+                "sertifikat standar",
+                "kbli",
+                "sppl",
+                "pks",
+                "kontrak",
+                "contract",
+            )
+        ):
+            return "pma"
+
+        # Tax
+        if any(k in combined for k in ("tax", "pajak", "spt", "efin", "pph", "ppn")):
+            return "tax"
+
+        # Family
+        if any(k in combined for k in ("akte lahir", "akta lahir", "birth", "nikah", "marriage")):
+            return "family"
+
+        return "other"
+
+    @staticmethod
+    def _get_drive_folder_for_category(category: str) -> str:
+        """Map document category to Drive folder name for OCR dispatch."""
+        category_map = {
+            "immigration": "01_Immigration",
+            "personal": "00_Profile",
+            "pma": "02_Company",
+            "tax": "03_Tax",
+            "family": "04_Family",
+        }
+        return category_map.get((category or "").lower(), "99_Misc")
+
+    @staticmethod
+    def _extract_drive_file_id(url: str | None) -> str | None:
+        """Extract a Google Drive file id from a stored Drive URL."""
+        if not url:
+            return None
+
+        match = re.search(r"/file/d/([^/]+)", url)
+        if match:
+            return match.group(1)
+
+        match = re.search(r"[?&]id=([^&]+)", url)
+        if match:
+            return match.group(1)
+
+        return None
+
+    # ================================================
+    # DOCUMENTS
+    # ================================================
+
+    @require_client_access
+    async def get_documents(
+        self,
+        client_id: int,
+        document_type: str | None = None,
+        *,
+        current_user: ClientContext,
+    ) -> list[dict[str, Any]]:
+        """Get all client-visible documents."""
+        async with self.pool.acquire() as conn:
+            query = f"""
+                SELECT d.id, d.document_type, d.file_name, d.status,
+                       d.expiry_date, d.file_url, d.file_id, d.file_size_kb, d.created_at,
+                       d.document_purpose,
+                       p.id as practice_id, pt.name as practice_name
+                FROM documents d
+                LEFT JOIN practices p ON p.id = d.practice_id
+                LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
+                WHERE d.client_id = $1
+                AND {document_visibility_clause("d")}
+            """
+            params = [client_id]
+
+            if document_type:
+                query += " AND d.document_type = $2"
+                params.append(document_type)
+
+            query += " ORDER BY d.created_at DESC"
+
+            documents = await conn.fetch(query, *params)
+
+            return [
+                {
+                    "id": d["id"],
+                    "type": d["document_type"],
+                    "name": d["file_name"],
+                    "status": d["status"],
+                    "expiry_date": d["expiry_date"].isoformat() if d["expiry_date"] else None,
+                    "size_kb": d["file_size_kb"],
+                    "practice_id": d["practice_id"],
+                    "practice_name": d["practice_name"],
+                    "downloadable": d["file_url"] is not None or d["file_id"] is not None,
+                    "created_at": d["created_at"].isoformat(),
+                    "purpose": d["document_purpose"],
+                }
+                for d in documents
+            ]
+
+    @require_client_access
+    async def download_document(
+        self,
+        client_id: int,
+        document_id: int,
+        *,
+        current_user: ClientContext,
+    ) -> dict[str, Any] | None:
+        """Download a client-visible document through the portal proxy."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"""
+                SELECT id, file_name, file_id, file_url, mime_type, status, storage_type
+                FROM documents
+                WHERE id = $1
+                  AND client_id = $2
+                  AND {document_visibility_clause()}
+                LIMIT 1
+                """,
+                document_id,
+                client_id,
+            )
+
+        if not row:
+            return None
+
+        if (row.get("storage_type") or "google_drive") == "qa_sink":
+            qa_sink = GateUploadClient.from_environment()
+            if qa_sink is None or not row["file_id"]:
+                raise RuntimeError("Portal QA document storage is unavailable")
+            content = await qa_sink.download(row["file_id"])
+            if content is None:
+                return None
+            return {
+                "content": content,
+                "file_name": row["file_name"] or "document.pdf",
+                "mime_type": row["mime_type"] or "application/pdf",
+            }
+
+        file_id = row["file_id"] or self._extract_drive_file_id(row["file_url"])
+        if not file_id:
+            return None
+
+        drive_file = await fetch_drive_file(
+            file_id,
+            fallback_file_name=row["file_name"] or "document",
+            fallback_mime_type=row["mime_type"] or "application/octet-stream",
+            what="document",
+        )
+        if drive_file is None:
+            return None
+
+        return {
+            "content": drive_file.content,
+            "file_name": drive_file.file_name,
+            "mime_type": drive_file.mime_type,
+        }
+
+    async def _record_timeline_event(
+        self,
+        client_id: int,
+        *,
+        title: str,
+        description: str,
+        color: str,
+    ) -> None:
+        """Best-effort audit log on a SEPARATE connection (Bug D).
+
+        Written AFTER the mutating transaction has committed, on its own
+        connection, so a failure here can never roll back the caller's mutation.
+        event_type is 'status_change' — a value allowed by the
+        chk_timeline_event_type CHECK constraint (document_removed /
+        document_restored are NOT allowed and previously aborted the txn).
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO timeline_events (
+                        client_id, event_type, title,
+                        description, event_date, client_visible, color
+                    )
+                    VALUES ($1, 'status_change', $2, $3, NOW(), true, $4)
+                    """,
+                    client_id,
+                    title,
+                    description,
+                    color,
+                )
+        except Exception as e:
+            if not self._is_undefined_table_error(e):
+                logger.warning("Could not create timeline event (%s): %s", title, e)
+
+    @cache_invalidating(
+        [
+            lambda _self, client_id, *_a, **_k: f"zantara:portal_documents:{client_id}:*",
+            "zantara:portal_documents:*",
+            "zantara:portal_timeline:*",
+        ]
+    )
+    @require_client_access
+    async def soft_delete_document(
+        self,
+        client_id: int,
+        document_id: int,
+        *,
+        current_user: ClientContext,
+    ) -> dict[str, Any] | None:
+        """Soft-delete a client-visible document (recoverable for 30 days).
+
+        Sets deleted_at / deleted_by. The file stays in Google Drive and the DB
+        row is preserved — only get_documents / download_document hide it. A
+        timeline event records the action for the case officer.
+        """
+        deleted_by = current_user.get("email") or f"client:{client_id}"
+        # The soft-delete UPDATE commits ON ITS OWN. The timeline INSERT is a
+        # best-effort audit log written on a SEPARATE connection AFTER the commit,
+        # so it can NEVER roll back the deletion. (Bug D: it used to share the same
+        # transaction AND used event_type='document_removed', which violates the
+        # chk_timeline_event_type CHECK constraint — the violation aborted the txn
+        # and silently rolled the UPDATE back while returning 200 "deleted: true".)
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    f"""
+                    UPDATE documents
+                    SET deleted_at = NOW(), deleted_by = $3
+                    WHERE id = $1
+                      AND client_id = $2
+                      AND {document_visibility_clause()}
+                    RETURNING id, file_name, document_type
+                    """,
+                    document_id,
+                    client_id,
+                    deleted_by,
+                )
+                if not row:
+                    return None
+
+        # Audit log — separate connection, after the delete has committed.
+        await self._record_timeline_event(
+            client_id,
+            title="Document removed",
+            description=f"{row['file_name']} removed by client (recoverable for 30 days)",
+            color="warning",
+        )
+
+        logger.info(
+            "🗑️ Document %s soft-deleted by %s (client %s)",
+            document_id,
+            hash_subject(deleted_by) or f"client:{client_id}",
+            client_id,
+        )
+        return {
+            "id": row["id"],
+            "name": row["file_name"],
+            "type": row["document_type"],
+            "deleted": True,
+        }
+
+    @cache_invalidating(
+        [
+            lambda _self, client_id, *_a, **_k: f"zantara:portal_documents:{client_id}:*",
+            "zantara:portal_documents:*",
+            "zantara:portal_timeline:*",
+        ]
+    )
+    @require_client_access
+    async def restore_document(
+        self,
+        client_id: int,
+        document_id: int,
+        *,
+        current_user: ClientContext,
+    ) -> dict[str, Any] | None:
+        """Restore a previously soft-deleted document (recovery path)."""
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """
+                    UPDATE documents
+                    SET deleted_at = NULL, deleted_by = NULL
+                    WHERE id = $1
+                      AND client_id = $2
+                      AND client_visible = true
+                      AND deleted_at IS NOT NULL
+                      AND COALESCE(is_archived, FALSE) = FALSE
+                    RETURNING id, file_name, document_type
+                    """,
+                    document_id,
+                    client_id,
+                )
+                if not row:
+                    return None
+
+        # Audit log — separate connection, after the restore has committed (Bug D).
+        await self._record_timeline_event(
+            client_id,
+            title="Document restored",
+            description=f"{row['file_name']} restored by client",
+            color="success",
+        )
+
+        logger.info(
+            "♻️ Document %s restored by %s (client %s)",
+            document_id,
+            hash_subject(current_user.get("email")) or f"client:{client_id}",
+            client_id,
+        )
+        return {
+            "id": row["id"],
+            "name": row["file_name"],
+            "type": row["document_type"],
+            "deleted": False,
+        }
+
+    @cache_invalidating(
+        [
+            lambda _self, client_id, *_a, **_k: f"zantara:portal_documents:{client_id}:*",
+            "zantara:portal_documents:*",
+            "zantara:portal_timeline:*",
+        ]
+    )
+    @require_client_access
+    async def upload_document(
+        self,
+        client_id: int,
+        file_content: bytes,
+        file_name: str,
+        document_type: str,
+        mime_type: str | None = None,
+        practice_id: int | None = None,
+        document_purpose: str | None = None,
+        *,
+        current_user: ClientContext,
+    ) -> dict[str, Any]:
+        """
+        Upload a document for a client with full processing:
+        - Virus scanning
+        - Google Drive upload with folder structure
+        - OCR text extraction
+        - Expiry date detection
+        - Email notification to assigned lead
+        """
+        processing_results = {
+            "virus_scan": None,
+            "drive_upload": None,
+            "ocr": None,
+            "expiry_detection": None,
+        }
+
+        # =========================================================================
+        # STEP 1: VIRUS SCAN
+        # =========================================================================
+        scan_result = VirusScanner.scan(file_content, file_name)
+        processing_results["virus_scan"] = scan_result
+
+        if not scan_result["clean"]:
+            logger.warning(
+                f"🚨 THREAT DETECTED in upload from client {client_id}: "
+                f"{file_name} - Threats: {scan_result['threats']}",
+            )
+            raise ValueError(
+                f"Security threat detected in file: {', '.join(scan_result['threats'])}. "
+                "Upload blocked for security reasons.",
+            )
+
+        logger.info("✅ Virus scan passed for %s", file_name)
+
+        # Calculate file size
+        file_size_kb = len(file_content) // 1024
+
+        # Memory optimization: skip OCR for very large files (> 50MB)
+        skip_ocr = file_size_kb > 51200  # 50MB
+        if skip_ocr:
+            logger.warning("File too large for OCR (%sKB), skipping: %s", file_size_kb, file_name)
+
+        # =========================================================================
+        # STEP 0: RATE LIMITING & VALIDATION
+        # =========================================================================
+        # Check rate limit
+        now = datetime.now(timezone.utc).timestamp()
+        client_uploads = self._upload_rate_limits.get(client_id, [])
+        # Clean old entries outside window
+        client_uploads = [t for t in client_uploads if now - t < self.RATE_WINDOW_SECONDS]
+        if len(client_uploads) >= self.MAX_UPLOADS_PER_WINDOW:
+            raise ValueError(
+                f"Rate limit exceeded: max {self.MAX_UPLOADS_PER_WINDOW} uploads per 15 minutes",
+            )
+        client_uploads.append(now)
+        self._upload_rate_limits[client_id] = client_uploads
+
+        # Validate MIME type
+        if mime_type and not VirusScanner.validate_mime_type(mime_type):
+            raise ValueError(f"File type not allowed: {mime_type}")
+
+        # Sanitize filename
+        file_name = self._sanitize_filename(file_name)
+
+        async with self.pool.acquire() as conn:
+            # Check for duplicate file (same name, same client, last 1 hour).
+            # Soft-deleted rows are NOT duplicates: a client who removes a file
+            # from the vault and uploads it again is doing the one thing the
+            # Remove button invites — before 2026-09-11 that re-upload was
+            # rejected here and surfaced as 404 "Client not found".
+            duplicate = await conn.fetchrow(
+                """
+                SELECT id, file_name, created_at
+                FROM documents
+                WHERE client_id = $1
+                AND file_name LIKE $2
+                AND deleted_at IS NULL
+                AND created_at > NOW() - INTERVAL '1 hour'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                client_id,
+                f"%{file_name}%",
+            )
+            if duplicate:
+                logger.info(
+                    f"Duplicate file detected: {file_name} uploaded at {duplicate['created_at']}",
+                )
+                raise DuplicateDocumentError(
+                    f"File already uploaded recently at {duplicate['created_at']}"
+                )
+
+            # Verify practice belongs to client if provided
+            if practice_id:
+                practice = await conn.fetchrow(
+                    "SELECT id FROM practices WHERE id = $1 AND client_id = $2",
+                    practice_id,
+                    client_id,
+                )
+                if not practice:
+                    raise ValueError("Practice not found or not accessible")
+
+            # Get client info
+            client = await conn.fetchrow(
+                "SELECT email, full_name, assigned_to FROM clients WHERE id = $1 AND deleted_at IS NULL",
+                client_id,
+            )
+
+            if not client:
+                raise ValueError(f"Client {client_id} not found")
+
+            # =========================================================================
+            # STEP 2: DURABLE STORAGE (Drive, or strict synthetic QA sink)
+            # =========================================================================
+            qa_sink = GateUploadClient.from_environment()
+            gate_notice_adapter = (
+                GateNoticeClient.from_environment() if qa_sink is not None else None
+            )
+            if qa_sink is not None:
+                qa_sink.validate_synthetic_upload(
+                    email=client["email"],
+                    file_name=file_name,
+                    mime_type=mime_type,
+                )
+                drive_result = await qa_sink.upload(
+                    content=file_content,
+                    file_name=file_name,
+                )
+                storage_type = "qa_sink"
+            else:
+                drive_result = await self._upload_to_drive(
+                    conn=conn,
+                    client_id=client_id,
+                    client_name=client["full_name"],
+                    document_type=document_type,
+                    file_content=file_content,
+                    file_name=file_name,
+                    mime_type=mime_type,
+                )
+                storage_type = "google_drive"
+            processing_results["drive_upload"] = drive_result
+            if not drive_result.get("success") or not drive_result.get("file_id"):
+                raise RuntimeError("Document storage is unavailable")
+
+            # =========================================================================
+            # STEP 3: OCR TEXT EXTRACTION (using Gemini Vision - same as passport box)
+            # =========================================================================
+            if qa_sink is not None:
+                ocr_result = {
+                    "text": "",
+                    "pages": 0,
+                    "success": False,
+                    "error": "Disabled for synthetic QA storage",
+                }
+            elif skip_ocr:
+                ocr_result = {
+                    "text": "",
+                    "pages": 0,
+                    "success": False,
+                    "error": "File too large for OCR (>50MB)",
+                }
+            else:
+                ocr_result = await DocumentOCR.extract_text(
+                    file_content=file_content,
+                    file_name=file_name,
+                    mime_type=mime_type,
+                )
+            processing_results["ocr"] = ocr_result
+
+            if ocr_result["success"]:
+                logger.info(
+                    f"📄 OCR extracted {len(ocr_result['text'])} chars "
+                    f"from {file_name} ({ocr_result['pages']} pages)",
+                )
+            else:
+                logger.warning(f"⚠️ OCR failed for {file_name}: {ocr_result.get('error')}")
+
+            # =========================================================================
+            # STEP 4: EXPIRY DATE DETECTION
+            # =========================================================================
+            expiry_result = ExpiryDetector.detect_expiry(
+                text=ocr_result.get("text", ""),
+                document_type=document_type,
+            )
+            processing_results["expiry_detection"] = expiry_result
+
+            if expiry_result["expiry_date"]:
+                logger.info(
+                    f"📅 Expiry date detected for {document_type}: "
+                    f"{expiry_result['expiry_date']} (confidence: {expiry_result['confidence']})",
+                )
+
+            # =========================================================================
+            # STEP 5: SAVE TO DATABASE (with transaction)
+            # =========================================================================
+            # Auto-classify document_category from document_type
+            doc_category = self._classify_document_category(document_type, file_name)
+
+            async with conn.transaction():
+                try:
+                    doc = await conn.fetchrow(
+                        """
+                        INSERT INTO documents (
+                            client_id, practice_id, document_type, document_category, file_name,
+                            status, uploaded_by, uploaded_source, file_size_kb, mime_type,
+                            storage_type, file_id, file_url,
+                            expiry_date, document_purpose,
+                            client_visible, created_at
+                        )
+                        VALUES (
+                            $1, $2, $3, $11, $4, 'received', $5, 'client', $6, $7,
+                            $13, $8, $9,
+                            $10, $12,
+                            true, NOW()
+                        )
+                        RETURNING id, document_type, file_name, status, created_at, expiry_date
+                        """,
+                        client_id,
+                        practice_id,
+                        document_type,
+                        file_name,
+                        client["email"],
+                        file_size_kb,
+                        mime_type,
+                        drive_result.get("file_id"),
+                        drive_result.get("file_url"),
+                        expiry_result.get("expiry_date"),
+                        doc_category,
+                        document_purpose,
+                        storage_type,
+                    )
+                except Exception as e:
+                    # Backward compatibility: try without new columns
+                    if self._is_undefined_column_error(e):
+                        doc = await conn.fetchrow(
+                            """
+                            INSERT INTO documents (
+                                client_id, practice_id, document_type, file_name,
+                                status, uploaded_by, file_size_kb, mime_type,
+                                storage_type, client_visible
+                        )
+                        VALUES ($1, $2, $3, $4, 'received', $5, $6, $7, $8, true)
+                        RETURNING id, document_type, file_name, status, created_at, expiry_date
+                        """,
+                            client_id,
+                            practice_id,
+                            document_type,
+                            file_name,
+                            client["email"],
+                            file_size_kb,
+                            mime_type,
+                            storage_type,
+                        )
+                    else:
+                        raise
+
+            # =========================================================================
+            # STEP 6: CREATE TIMELINE EVENT
+            # =========================================================================
+            try:
+                timeline_desc = f"{file_name} uploaded successfully"
+                if expiry_result.get("expiry_date"):
+                    timeline_desc += f" (Expiry detected: {expiry_result['expiry_date']})"
+
+                await conn.execute(
+                    """
+                    INSERT INTO timeline_events (
+                        client_id, practice_id, event_type, title,
+                        description, event_date, client_visible, color
+                    )
+                    VALUES ($1, $2, 'document_received', 'Document received',
+                            $3, NOW(), true, 'success')
+                    """,
+                    client_id,
+                    practice_id,
+                    timeline_desc,
+                )
+            except Exception as e:
+                if not self._is_undefined_table_error(e):
+                    logger.warning("Could not create timeline event for upload: %s", e)
+
+            logger.info(
+                f"✅ Document processed and stored: {file_name} for client {client_id}, "
+                f"size: {file_size_kb}KB, type: {document_type}, "
+                f"storage_type: {storage_type}",
+            )
+
+            # =========================================================================
+            # STEP 6b: SMART OCR DISPATCH (passport/visa/npwp/nib extraction)
+            # =========================================================================
+            if qa_sink is None:
+                try:
+                    from backend.services.documents.ocr_dispatcher_service import (
+                        dispatch_ocr_by_folder,
+                    )
+
+                    file_id_for_ocr = drive_result.get("file_id")
+                    if file_id_for_ocr:
+                        doc_category = self._classify_document_category(
+                            document_type,
+                            file_name,
+                        )
+                        folder_hint = self._get_drive_folder_for_category(doc_category)
+                        spawn(
+                            dispatch_ocr_by_folder(
+                                db_pool=self.pool,
+                                client_id=client_id,
+                                file_id=file_id_for_ocr,
+                                folder_name=folder_hint,
+                                filename=file_name,
+                                doc_id=doc["id"],
+                                document_type=document_type,
+                            ),
+                        )
+                        logger.info(
+                            "Smart OCR dispatch triggered for portal upload: %s",
+                            file_name,
+                        )
+                except Exception as e:
+                    logger.error(
+                        "Smart OCR dispatch failed for portal upload %s: %s",
+                        file_name,
+                        e,
+                    )
+
+            # =========================================================================
+            # STEP 7: NOTIFY ASSIGNED LEAD
+            # =========================================================================
+            if gate_notice_adapter is not None:
+                await self._notify_lead_about_document(
+                    client_id=client_id,
+                    document_name=file_name,
+                    document_type=document_type,
+                    expiry_date=expiry_result.get("expiry_date"),
+                    drive_url=drive_result.get("file_url"),
+                    gate_notice_adapter=gate_notice_adapter,
+                )
+            elif qa_sink is None:
+                spawn(
+                    self._notify_lead_about_document(
+                        client_id=client_id,
+                        document_name=file_name,
+                        document_type=document_type,
+                        expiry_date=expiry_result.get("expiry_date"),
+                        drive_url=drive_result.get("file_url"),
+                    ),
+                )
+
+            # Update metrics
+            self._metrics["uploads_total"] += 1
+            if storage_type == "google_drive" and drive_result.get("success"):
+                self._metrics["drive_uploads"] += 1
+            if ocr_result.get("success"):
+                self._metrics["ocr_processed"] += 1
+
+            return self._client_safe_upload_response(
+                {
+                    "id": doc["id"],
+                    "type": doc["document_type"],
+                    "name": doc["file_name"],
+                    "status": doc["status"],
+                    "size_kb": file_size_kb,
+                    "created_at": doc["created_at"].isoformat(),
+                    "expiry_date": expiry_result.get("expiry_date"),
+                }
+            )
+
+    async def _upload_to_drive(
+        self,
+        conn: asyncpg.Connection,
+        client_id: int,
+        client_name: str,
+        document_type: str,
+        file_content: bytes,
+        file_name: str,
+        mime_type: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Upload file to Google Drive with organized folder structure.
+
+        Folder structure:
+        Zantara Portal Uploads/
+        └── {client_id}_{client_name}/
+            └── {document_type}/
+                └── {timestamp}_{file_name}
+
+        Returns:
+            {
+                "success": bool,
+                "file_id": str | None,
+                "file_url": str | None,
+                "folder_path": str,
+                "error": str | None
+            }
+        """
+        result = {
+            "success": False,
+            "file_id": None,
+            "file_url": None,
+            "folder_path": "",
+            "error": None,
+        }
+
+        try:
+            from backend.app.core.config import settings
+            from backend.services.integrations.google_drive_service import GoogleDriveService
+            from backend.services.integrations.team_drive_service import TeamDriveService
+
+            # Try OAuth first, fallback to Service Account
+            drive_service = GoogleDriveService(self.pool)
+            use_service_account = False
+
+            # Check if Drive is configured
+            if not drive_service.is_configured():
+                logger.warning("OAuth not configured, trying Service Account...")
+                use_service_account = True
+            else:
+                # Check if we have a valid token
+                token = await drive_service.get_valid_token("SYSTEM")
+                if not token:
+                    logger.warning("No valid OAuth token, trying Service Account...")
+                    use_service_account = True
+
+            # Use Service Account if OAuth unavailable
+            if use_service_account:
+                team_drive = TeamDriveService(db_pool=self.pool)
+                if not team_drive.service_account_available:
+                    logger.error("Service Account also not available")
+                    result["error"] = "No Drive authentication available"
+                    return result
+                # Use Service Account for upload
+                return await self._upload_with_service_account(
+                    conn,
+                    client_id,
+                    client_name,
+                    document_type,
+                    file_content,
+                    file_name,
+                    mime_type,
+                    result,
+                )
+
+            # Continue with OAuth
+            user_id = "SYSTEM"
+
+            # Get or create root folder for portal uploads
+            root_folder_id = await self._get_or_create_drive_folder(
+                drive_service,
+                user_id,
+                folder_name="Zantara Portal Uploads",
+                parent_id=settings.google_drive_root_folder_id or "root",
+            )
+
+            if not root_folder_id:
+                result["error"] = "Failed to create root folder"
+                return result
+
+            # Create/get client folder
+            safe_client_name = "".join(
+                c for c in client_name if c.isalnum() or c in (" ", "_")
+            ).rstrip()
+            client_folder_name = f"{client_id}_{safe_client_name[:30]}"  # Limit name length
+
+            client_folder_id = await self._get_or_create_drive_folder(
+                drive_service,
+                user_id,
+                folder_name=client_folder_name,
+                parent_id=root_folder_id,
+            )
+
+            if not client_folder_id:
+                result["error"] = "Failed to create client folder"
+                return result
+
+            # Create/get document type folder
+            type_folder_name = document_type.replace("_", " ").title()
+            type_folder_id = await self._get_or_create_drive_folder(
+                drive_service,
+                user_id,
+                folder_name=type_folder_name,
+                parent_id=client_folder_id,
+            )
+
+            if not type_folder_id:
+                result["error"] = "Failed to create type folder"
+                return result
+
+            # Add timestamp to filename to avoid collisions
+            timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+            drive_file_name = f"{timestamp}_{file_name}"
+
+            # Upload file with retry logic
+            max_retries = 3
+            upload_result = None
+
+            for attempt in range(max_retries):
+                try:
+                    upload_result = await drive_service.upload_file_to_folder(
+                        user_id=user_id,
+                        folder_id=type_folder_id,
+                        file_content=file_content,
+                        file_name=drive_file_name,
+                        mime_type=mime_type,
+                    )
+                    break  # Success, exit retry loop
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        wait_time = 2**attempt  # Exponential backoff: 1s, 2s, 4s
+                        logger.warning(
+                            f"Drive upload attempt {attempt + 1} failed, retrying in {wait_time}s: {e}",
+                        )
+                        await asyncio.sleep(wait_time)
+                    else:
+                        raise  # All retries exhausted
+
+            if upload_result:
+                result["success"] = True
+                result["file_id"] = upload_result.get("id")
+                result["file_url"] = (
+                    upload_result.get("webViewLink")
+                    or f"https://drive.google.com/file/d/{upload_result.get('id')}/view"
+                )
+                result["folder_path"] = (
+                    f"Zantara Portal Uploads/{client_folder_name}/{type_folder_name}"
+                )
+
+                logger.info(
+                    f"📁 File uploaded to Drive: {drive_file_name} (ID: {upload_result.get('id')})",
+                )
+            else:
+                result["error"] = "Upload failed after all retries"
+
+        except Exception as e:
+            logger.error("Failed to upload to Google Drive: %s", e, exc_info=True)
+            result["error"] = str(e)
+
+        return result
+
+    async def _resolve_client_drive_folder(
+        self,
+        conn: asyncpg.Connection,
+        sa_drive: Any,
+        client_id: int,
+        client_name: str,
+        category_folder: str,
+    ) -> str:
+        """Resolve the client's OWN Drive folder + category subfolder id.
+
+        Same tree the CRM upload path files into
+        (`crm_enhanced_documents.py`: `clients.google_drive_folder_id` +
+        a `CATEGORY_TO_FOLDER`-named subfolder), so a team member browsing a
+        client's Drive folder from the CRM sees portal uploads too.
+
+        Root creation goes through the idempotent
+        `ensure_client_folder` chokepoint (advisory lock, one root per
+        client). Raises on failure — filing a client document into a folder
+        that is not that client's is worse than refusing the upload.
+        """
+        row = await conn.fetchrow(
+            "SELECT google_drive_folder_id, client_type FROM clients WHERE id = $1",
+            client_id,
+        )
+        root_folder_id = row["google_drive_folder_id"] if row else None
+        if not root_folder_id:
+            ensure_result = await sa_drive.ensure_client_folder(
+                client_id=client_id,
+                client_name=client_name,
+                client_type=(row["client_type"] if row else None) or "individual",
+                db_pool=self.pool,
+            )
+            root_folder_id = ensure_result["root_folder_id"]
+        if not root_folder_id:
+            raise RuntimeError(f"No Drive root folder for client {client_id}")
+
+        # The subfolder ids created by ensure_client_folder are persisted in
+        # client_drive_subfolders (that is how DrivePollService matches a
+        # dropped file back to a client) — prefer that read over a Drive list.
+        subfolder_id = await conn.fetchval(
+            """
+            SELECT subfolder_id
+              FROM client_drive_subfolders
+             WHERE client_id = $1 AND subfolder_name = $2
+             LIMIT 1
+            """,
+            client_id,
+            category_folder,
+        )
+        if subfolder_id:
+            return subfolder_id
+
+        found = await sa_drive.find_folder(category_folder, root_folder_id)
+        if found:
+            return found["id"]
+
+        created = await sa_drive.create_folder(
+            name=category_folder,
+            parent_id=root_folder_id,
+        )
+        return created["id"]
+
+    async def _upload_with_service_account(
+        self,
+        conn: asyncpg.Connection,
+        client_id: int,
+        client_name: str,
+        document_type: str,
+        file_content: bytes,
+        file_name: str,
+        mime_type: str | None,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Upload file using Service Account (fallback when OAuth fails).
+
+        Routes through ServiceAccountDriveService — the component that
+        actually owns a Drive API client built from the same
+        settings.google_credentials_json that
+        TeamDriveService.service_account_available checks — instead of a
+        `team_drive.drive_service` attribute TeamDriveService never defined.
+        That attribute meant this branch raised AttributeError on every real
+        invocation (production and test alike); see cicatrix BUG C.
+
+        Files into the CLIENT's own Drive folder. Until 2026-09-11 this
+        branch — the one live in production — passed
+        `folder_id=settings.google_drive_root_folder_id`, the flat global
+        root shared by every client, while computing a `folder_path` string
+        it never handed to the API: a team member opening a client's Drive
+        folder from the CRM could not see anything that client had uploaded
+        through the portal.
+        """
+        try:
+            from datetime import datetime
+
+            from backend.services.integrations.service_account_drive_service import (
+                ServiceAccountDriveService,
+            )
+
+            timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+            drive_file_name = f"{timestamp}_{file_name}"
+
+            # The SAME category folder the OCR dispatch already tells the
+            # pipeline this file lives in (`folder_hint`, STEP 6b) — so the
+            # hint and the physical location can no longer disagree.
+            category_folder = self._get_drive_folder_for_category(
+                self._classify_document_category(document_type, file_name),
+            )
+
+            # Upload using Service Account. ServiceAccountDriveService wraps
+            # the (synchronous) googleapiclient .execute() call in
+            # asyncio.to_thread internally, so this does not block the
+            # event loop the way the old team_drive.drive_service.files()...
+            # .execute() call would have (never reached in practice).
+            sa_drive = ServiceAccountDriveService()
+            target_folder_id = await self._resolve_client_drive_folder(
+                conn=conn,
+                sa_drive=sa_drive,
+                client_id=client_id,
+                client_name=client_name,
+                category_folder=category_folder,
+            )
+            folder_path = f"{client_id}_{client_name}/{category_folder}"
+            uploaded_file = await sa_drive.upload_file_to_folder(
+                folder_id=target_folder_id,
+                file_content=file_content,
+                file_name=drive_file_name,
+                mime_type=mime_type,
+            )
+
+            result["success"] = True
+            result["file_id"] = uploaded_file.get("id")
+            result["file_url"] = uploaded_file.get(
+                "webViewLink",
+                f"https://drive.google.com/file/d/{uploaded_file.get('id')}/view",
+            )
+            result["folder_path"] = folder_path
+            result["method"] = "service_account"
+
+            logger.info(
+                f"📁 File uploaded via Service Account: {drive_file_name} (ID: {uploaded_file.get('id')})",
+            )
+
+        except Exception as e:
+            logger.error("Service Account upload failed: %s", e, exc_info=True)
+            result["error"] = f"Service Account upload failed: {e!s}"
+
+        return result
+
+    async def _get_or_create_drive_folder(
+        self,
+        drive_service: Any,
+        user_id: str,
+        folder_name: str,
+        parent_id: str = "root",
+    ) -> str | None:
+        """
+        Get existing folder or create new one in Google Drive.
+
+        Returns:
+            Folder ID or None if failed
+        """
+        try:
+            # Search for existing folder using list_files with filter
+            files_result = await drive_service.list_files(
+                user_id=user_id,
+                folder_id=parent_id,
+                page_size=100,
+            )
+
+            for file in files_result.get("files", []):
+                if (
+                    file.get("name") == folder_name
+                    and file.get("mimeType") == "application/vnd.google-apps.folder"
+                ):
+                    logger.debug(f"Found existing folder '{folder_name}' with ID: {file['id']}")
+                    return file["id"]
+
+            # Create new folder
+            new_folder = await drive_service.create_folder(
+                user_id=user_id,
+                name=folder_name,
+                parent_id=parent_id,
+            )
+
+            logger.info(f"Created new folder '{folder_name}' with ID: {new_folder.get('id')}")
+            return new_folder.get("id")
+
+        except Exception as e:
+            logger.error("Failed to get/create folder '%s': %s", folder_name, e)
+            return None
+
+    async def _notify_lead_about_document(
+        self,
+        client_id: int,
+        document_name: str,
+        document_type: str,
+        expiry_date: str | None = None,
+        drive_url: str | None = None,
+        gate_notice_adapter: GateNoticeClient | None = None,
+    ) -> None:
+        """
+        Send email notification to assigned lead when client uploads a document.
+
+        Production calls this fire-and-forget. The explicit synthetic QA sink
+        is awaited so the browser gate can verify a deterministic receipt.
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                # Get client name and assigned lead
+                client = await conn.fetchrow(
+                    """
+                    SELECT c.full_name, c.assigned_to
+                    FROM clients c
+                    WHERE c.id = $1
+                    """,
+                    client_id,
+                )
+
+                if not client:
+                    logger.debug("Client %s not found, skipping notification", client_id)
+                    return
+
+                # Fallback to admin if no assigned lead
+                lead_email = client["assigned_to"] or "zero@balizero.com"
+
+                # Build email content
+                doc_type_display = document_type.replace("_", " ").title()
+
+                subject = f"📄 New Document Uploaded - {client['full_name']}"
+
+                # Build extra info section
+                extra_info = ""
+                if expiry_date:
+                    extra_info += f"• Detected Expiry Date: {expiry_date}\n"
+                if drive_url:
+                    extra_info += f"• Drive Link: {drive_url}\n"
+
+                body = f"""Hello,
+
+Client {client["full_name"]} has uploaded a new document to the portal.
+
+Details:
+• File: {document_name}
+• Type: {doc_type_display}
+• Client: {client["full_name"]}
+{extra_info}
+Open the workspace to review and verify the document:
+https://kita.balizero.com/clients/{client_id}
+
+---
+This is an automated notification from Bali Zero CRM.
+"""
+
+                # Primary: Brevo
+                sent = False
+                if gate_notice_adapter is not None:
+                    await gate_notice_adapter.send_document_notification(
+                        recipient=lead_email,
+                        subject=subject,
+                        html_body=body.replace("\n", "<br>"),
+                    )
+                    sent = True
+                    logger.info("Document upload notification captured by the portal QA sink")
+                else:
+                    import os
+
+                    import httpx
+
+                    try:
+                        _api_url = os.getenv(
+                            "INTERNAL_EMAIL_API_URL",
+                            "https://nuzantara-rag.fly.dev/api/notifications/send-email",
+                        )
+                        _api_key = os.getenv("NUZANTARA_API_KEY", "")
+                        html_body = body.replace("\n", "<br>")
+                        async with httpx.AsyncClient(timeout=30.0) as http_client:
+                            resp = await http_client.post(
+                                _api_url,
+                                headers={"X-API-Key": _api_key},
+                                json={"to": lead_email, "subject": subject, "body": html_body},
+                            )
+                            resp.raise_for_status()
+                        sent = True
+                        logger.info(
+                            "📧 Document upload notification sent to %s via Brevo",
+                            lead_email,
+                        )
+                    except Exception as brevo_err:
+                        logger.warning(
+                            "Brevo failed for doc notification, trying Zoho: %s", brevo_err
+                        )
+
+                # Fallback: Zoho
+                if not sent and gate_notice_adapter is None:
+                    from backend.services.integrations.zoho_email_service import ZohoEmailService
+
+                    zoho_service = ZohoEmailService(self.pool)
+                    await zoho_service.send_email(
+                        to_email=lead_email,
+                        subject=subject,
+                        body=body,
+                    )
+                    logger.info(
+                        "📧 Document upload notification sent to %s via Zoho",
+                        lead_email,
+                    )
+
+                # Also insert CRM notification alert for the bell.
+                #
+                # `uq_notification_alert_daily` is a plain CREATE UNIQUE INDEX
+                # (migration_071_notification_alerts.py:34), not a named
+                # constraint — `ON CONFLICT ON CONSTRAINT <name>` only accepts
+                # an actual unique/exclusion constraint, so that form raised on
+                # every call and this insert never once landed (silently
+                # swallowed by the except below, logged at DEBUG). The
+                # column-list form matches any unique index on those columns,
+                # constraint or not — same form already used by the two other
+                # writers of this table: welcome_email_service.py:287 and the
+                # profile-update path pinned by
+                # test_portal_profile_update.py:82.
+                try:
+                    await conn.execute(
+                        """
+                        INSERT INTO notification_alerts
+                            (client_id, alert_type, status, message, email_subject)
+                        VALUES ($1, 'portal_document_upload', 'sent', $2, $3)
+                        ON CONFLICT (client_id, alert_type, created_date) DO NOTHING
+                        """,
+                        client_id,
+                        f"{client['full_name']} uploaded {document_type.replace('_', ' ')} via portal",
+                        f"[Portal] {client['full_name']} uploaded {document_type.replace('_', ' ').title()}",
+                    )
+                except Exception as alert_err:
+                    # This used to be logger.debug — an exception that fires on
+                    # EVERY call (see above) is invisible by construction at
+                    # DEBUG. Warning so a future regression here is seen.
+                    logger.warning("CRM alert insert failed (non-critical): %s", alert_err)
+
+        except Exception as e:
+            # Don't fail upload if notification fails
+            logger.error("Failed to send document upload notification: %s", e, exc_info=True)
+
+
+__all__ = ["PortalDocumentsMixin"]

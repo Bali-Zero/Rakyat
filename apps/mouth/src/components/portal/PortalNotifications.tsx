@@ -1,0 +1,371 @@
+"use client";
+
+import React, { useState, useRef, useEffect } from "react";
+import {
+  Bell,
+  Check,
+  CheckCheck,
+  FileText,
+  RefreshCw,
+  AlertTriangle,
+  MessageCircle,
+} from "lucide-react";
+import { usePortalUnreadMessages } from "@/hooks/usePortalUnreadMessages";
+import { PortalMessageNotice } from "./PortalMessageNotice";
+import { usePortalNotifications } from "@/hooks/usePortalNotifications";
+import type { PortalNotification } from "@/lib/api/portal/portal.types";
+import { usePortalDateFormat } from "@/lib/format/usePortalDateFormat";
+
+function getNotificationIcon(type: string) {
+  switch (type) {
+    case "document_verified":
+    case "document_uploaded":
+      return <FileText className="w-4 h-4" />;
+    case "status_changed":
+      return <RefreshCw className="w-4 h-4" />;
+    case "message_received":
+      return <MessageCircle className="w-4 h-4" />;
+    case "deadline_approaching":
+      return <AlertTriangle className="w-4 h-4" />;
+    default:
+      return <Bell className="w-4 h-4" />;
+  }
+}
+
+function timeAgo(
+  dateStr: string | null,
+  formatDate: (
+    value: string | Date | null | undefined,
+    options?: Intl.DateTimeFormatOptions,
+  ) => string,
+): string {
+  if (!dateStr) return "";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return formatDate(dateStr, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+export function PortalNotificationBadge({ count }: { count: number }) {
+  if (count === 0) return null;
+  return (
+    <span
+      className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center"
+      style={{ background: "var(--bz-accent-warm)", color: "#0c0c0e" }}
+    >
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
+
+export function PortalNotificationsList({
+  notifications,
+  onMarkRead,
+  onMarkAllRead,
+  isMarkingRead,
+  isMarkingAllRead,
+  isMarkReadError,
+  isMarkAllReadError,
+  onRetryMarkRead,
+  onRetryMarkAllRead,
+}: {
+  notifications: PortalNotification[];
+  onMarkRead: (id: number) => void;
+  onMarkAllRead: () => void;
+  isMarkingRead?: boolean;
+  isMarkingAllRead?: boolean;
+  isMarkReadError?: boolean;
+  isMarkAllReadError?: boolean;
+  onRetryMarkRead?: () => void;
+  onRetryMarkAllRead?: () => void;
+}) {
+  const { formatDate } = usePortalDateFormat();
+  const unread = notifications.filter((n) => !n.read);
+
+  return (
+    <div className="w-80 max-h-96 overflow-y-auto">
+      {/* Header */}
+      <div
+        className="flex items-center justify-between px-4 py-3 border-b"
+        style={{ borderColor: "rgba(255,255,255,0.05)" }}
+      >
+        <span className="text-sm font-semibold">Notifications</span>
+        {unread.length > 0 && (
+          <button
+            type="button"
+            onClick={onMarkAllRead}
+            disabled={isMarkingAllRead}
+            className="text-xs flex items-center gap-1 transition-opacity hover:opacity-80 focus-ring rounded disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ color: "var(--bz-accent-warm)" }}
+          >
+            <CheckCheck
+              className={`w-3 h-3 ${isMarkingAllRead ? "animate-spin" : ""}`}
+            />
+            Mark all read
+          </button>
+        )}
+      </div>
+
+      {isMarkReadError && (
+        <div
+          role="alert"
+          className="border-b px-4 py-3 text-xs"
+          style={{ borderColor: "rgba(255,255,255,0.05)" }}
+        >
+          <p style={{ color: "var(--bz-text-2)" }}>
+            Couldn&apos;t mark the notification as read.
+          </p>
+          <button
+            type="button"
+            onClick={onRetryMarkRead}
+            className="mt-2 rounded focus-ring"
+            style={{ color: "var(--bz-accent-warm)" }}
+            aria-label="Retry mark as read"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {isMarkAllReadError && (
+        <div
+          role="alert"
+          className="border-b px-4 py-3 text-xs"
+          style={{ borderColor: "rgba(255,255,255,0.05)" }}
+        >
+          <p style={{ color: "var(--bz-text-2)" }}>
+            Couldn&apos;t mark all notifications as read.
+          </p>
+          <button
+            type="button"
+            onClick={onRetryMarkAllRead}
+            className="mt-2 rounded focus-ring"
+            style={{ color: "var(--bz-accent-warm)" }}
+            aria-label="Retry mark all as read"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* List */}
+      {notifications.length === 0 ? (
+        <div className="px-4 py-8 text-center">
+          <Bell
+            className="w-8 h-8 mx-auto mb-2 opacity-20"
+            style={{ color: "var(--bz-text-2)" }}
+          />
+          <p className="text-xs" style={{ color: "var(--bz-text-3)" }}>
+            No notifications yet
+          </p>
+        </div>
+      ) : (
+        <div
+          className="divide-y"
+          style={{ borderColor: "rgba(255,255,255,0.03)" }}
+        >
+          {notifications.map((notif) => (
+            <div
+              key={notif.id}
+              className="px-4 py-3 flex items-start gap-3 transition-colors hover:bg-[var(--surface-raised)]"
+              style={
+                !notif.read ? { background: "rgba(201,169,110,0.04)" } : {}
+              }
+            >
+              <div
+                className="p-1.5 rounded-md mt-0.5 flex-shrink-0"
+                style={{
+                  background: notif.read
+                    ? "rgba(255,255,255,0.03)"
+                    : "rgba(201,169,110,0.12)",
+                }}
+              >
+                {React.cloneElement(getNotificationIcon(notif.type), {
+                  style: {
+                    color: notif.read
+                      ? "var(--bz-text-3)"
+                      : "var(--bz-accent-warm)",
+                  },
+                })}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className={`text-xs ${notif.read ? "" : "font-semibold"}`}>
+                  {notif.title}
+                </p>
+                {notif.body && (
+                  <p
+                    className="text-xs mt-0.5 line-clamp-2"
+                    style={{ color: "var(--bz-text-3)" }}
+                  >
+                    {notif.body}
+                  </p>
+                )}
+                <p
+                  className="text-[11px] mt-1"
+                  style={{ color: "var(--bz-text-3)" }}
+                  suppressHydrationWarning
+                >
+                  {timeAgo(notif.created_at, formatDate)}
+                </p>
+              </div>
+              {!notif.read && (
+                <button
+                  type="button"
+                  onClick={() => onMarkRead(notif.id)}
+                  disabled={isMarkingRead}
+                  className="p-1 rounded-md mt-0.5 flex-shrink-0 transition-opacity hover:opacity-80 focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ color: "var(--bz-accent-warm)" }}
+                  aria-label="Mark as read"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function PortalNotificationsPopover() {
+  const { data: messageCount = 0 } = usePortalUnreadMessages();
+  const {
+    notifications,
+    unreadCount,
+    markRead,
+    markAllRead,
+    isLoading,
+    isError,
+    isRetrying,
+    isMarkingRead,
+    isMarkingAllRead,
+    isMarkReadError,
+    isMarkAllReadError,
+    retry,
+    retryMarkRead,
+    retryMarkAllRead,
+  } = usePortalNotifications();
+  // Prioritise real messages; keep the server total for other notifications.
+  // Never add counts from two stores that can contain overlapping events.
+  const alertCount = messageCount > 0 ? messageCount : unreadCount;
+  const [isOpen, setIsOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      dialogRef.current?.focus();
+    }
+  }, [isOpen]);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [isOpen]);
+
+  // Close on Escape
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [isOpen]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="relative p-2 rounded-lg transition-colors hover:bg-[var(--surface-raised)] focus-ring"
+        aria-label={`Notifications${alertCount > 0 ? ` (${alertCount} unread${messageCount > 0 ? " messages" : ""})` : ""}`}
+        aria-haspopup="dialog"
+        aria-expanded={isOpen}
+        aria-controls="portal-notifications-popover"
+      >
+        <Bell className="w-5 h-5" style={{ color: "var(--bz-text-2)" }} />
+        <PortalNotificationBadge count={alertCount} />
+      </button>
+
+      {isOpen && (
+        <div
+          ref={dialogRef}
+          id="portal-notifications-popover"
+          role="dialog"
+          aria-label="Notifications"
+          aria-busy={isLoading || isRetrying}
+          tabIndex={-1}
+          className="absolute right-0 top-full mt-2 rounded-xl border shadow-2xl z-50 overflow-hidden"
+          style={{
+            background: "rgba(24,24,28,0.95)",
+            borderColor: "rgba(255,255,255,0.08)",
+            backdropFilter: "blur(24px)",
+          }}
+        >
+          <PortalMessageNotice compact />
+          {isLoading ? (
+            <div
+              role="status"
+              className="w-80 px-4 py-8 text-center text-xs"
+              style={{ color: "var(--bz-text-3)" }}
+            >
+              Loading notifications...
+            </div>
+          ) : isError ? (
+            <div
+              role="alert"
+              className="w-80 px-4 py-8 text-center text-xs"
+              style={{ color: "var(--bz-text-3)" }}
+            >
+              <p>Notifications are unavailable.</p>
+              <button
+                type="button"
+                onClick={retry}
+                disabled={isRetrying}
+                className="mt-3 rounded px-3 py-1.5 focus-ring"
+                style={{ color: "var(--bz-accent-warm)" }}
+                aria-label="Retry notifications"
+              >
+                {isRetrying ? "Retrying..." : "Retry"}
+              </button>
+            </div>
+          ) : (
+            <PortalNotificationsList
+              notifications={notifications}
+              onMarkRead={(id) => markRead(id)}
+              onMarkAllRead={() => markAllRead()}
+              isMarkingRead={isMarkingRead}
+              isMarkingAllRead={isMarkingAllRead}
+              isMarkReadError={isMarkReadError}
+              isMarkAllReadError={isMarkAllReadError}
+              onRetryMarkRead={retryMarkRead}
+              onRetryMarkAllRead={retryMarkAllRead}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

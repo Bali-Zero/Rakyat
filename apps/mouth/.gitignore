@@ -1,0 +1,32 @@
+# Next.js build output
+.next/
+out/
+build/
+dist/
+
+# Playwright
+/playwright-report/
+/test-results/
+/playwright/.cache/
+e2e/.auth/
+# JSON reports + screenshots from playwright.prodlike.config.ts and
+# playwright.production.config.ts (both write under output/playwright/) —
+# regenerated on every run, was previously untracked-but-not-ignored.
+/output/
+
+# Environment variables (never commit!)
+.env.local
+.env*.local
+
+# TypeScript
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+next-env.d.ts
+.vercel
+apps/backend-rag/scripts/generate_oauth_token.py
+apps/backend-rag/scripts/setup_oauth_token.py
+apps/backend-rag/oauth_tokens.json
+apps/backend-rag/scripts/generate_oauth_token.py
+apps/backend-rag/scripts/setup_oauth_token.py
+apps/backend-rag/oauth_tokens.json
+.tmp.driveupload/

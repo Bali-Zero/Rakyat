@@ -1,0 +1,1207 @@
+"""
+Article Composer API - Manual article creation with Bali Style enrichment
+
+Best Practices 2026 Implementation:
+- Retry logic with exponential backoff
+- Rate limiting
+- Structured error handling
+- Input validation
+- Caching
+- Circuit breaker
+- Dependency injection
+- Background tasks
+- Improved logging
+
+For marketing team to create articles manually with:
+- Claude enrichment via the OAuth door (``claude_client``, model ``ARTICLE_COMPOSER_MODEL``)
+- Image generation
+- SEO optimization
+"""
+
+import json
+import logging
+import os
+import re
+import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Literal
+from urllib.parse import urlsplit, urlunsplit
+
+import httpx
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from prometheus_client import REGISTRY, Counter, Histogram
+from pydantic import BaseModel, Field
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+from backend.app.core.config import settings
+from backend.app.dependencies import get_current_user
+from backend.llm.claude_oauth_client import ClaudeOAuthNotAvailable
+from backend.services.article_composer import (
+    APIError,
+    ComposeRequestValidator,
+    ErrorCode,
+    cache_service,
+    call_claude_with_retry,
+    handle_anthropic_error,
+    handle_json_error,
+    log_error_with_context,
+)
+from backend.services.article_composer.claude_client import (
+    ARTICLE_COMPOSER_MODEL,
+    ClaudeClientError,
+    get_llm_health,
+    oauth_configured,
+)
+from backend.services.content_guards import ArticleGuardViolation, enforce_public_article
+from backend.services.cover_images import _cover_as_jpeg, cover_card_as_jpeg
+
+router = APIRouter(prefix="/api/articles", tags=["Article Composer"])
+logger = logging.getLogger(__name__)
+
+# Rate limiter setup
+limiter = Limiter(key_func=get_remote_address)
+
+# --- PROMETHEUS METRICS ---
+
+
+def get_or_create_metric(
+    metric_class: Any,
+    name: Any,
+    documentation: Any,
+    labelnames: Any = (),
+    **kwargs,
+) -> Any:
+    """Helper to avoid duplicate registration in tests"""
+    # Check if metric already exists in the registry
+    for collector in REGISTRY._collector_to_names:
+        if hasattr(collector, "_name") and collector._name == name:
+            return collector
+    return metric_class(name, documentation, labelnames, **kwargs)
+
+
+article_compose_payloads = get_or_create_metric(
+    Counter,
+    "article_compose_payloads_total",
+    "Total article compose requests",
+    ["status", "category"],
+)
+
+article_compose_duration = get_or_create_metric(
+    Histogram,
+    "article_compose_duration_seconds",
+    "Article composition duration",
+    buckets=[1.0, 2.0, 5.0, 10.0, 30.0],
+)
+
+article_enrichment_word_count = get_or_create_metric(
+    Histogram,
+    "article_enrichment_word_count",
+    "Word count in facts section",
+    ["priority"],
+    buckets=[300, 400, 500, 600, 700],
+)
+
+article_publish_requests = get_or_create_metric(
+    Counter,
+    "article_publish_requests_total",
+    "Total article publish requests",
+    ["status", "has_cover_image"],
+)
+
+claude_api_cost_cents = get_or_create_metric(
+    Histogram,
+    "claude_api_cost_cents",
+    "Claude API cost per article (cents)",
+    buckets=[1, 2, 5, 10, 20, 50],
+)
+
+article_cache_hits = get_or_create_metric(
+    Counter,
+    "article_cache_hits_total",
+    "Total cache hits",
+    ["operation"],
+)
+
+article_cache_misses = get_or_create_metric(
+    Counter,
+    "article_cache_misses_total",
+    "Total cache misses",
+    ["operation"],
+)
+
+# --- PYDANTIC MODELS ---
+
+
+# ComposeRequest is now ComposeRequestValidator (imported from validators)
+# Keeping alias for backward compatibility
+ComposeRequest = ComposeRequestValidator
+
+
+class TLDRSection(BaseModel):
+    what: str
+    # Reader-facing claims. None means the source did not say it, and the MDX
+    # drops the row instead of inventing one: on 2026-09-24 an editorial
+    # relevance score rendered as "Risk Level: High" for expats on a tax rule
+    # that binds only multinational groups.
+    should_worry: str | None = None
+    who: str | None = None
+    when: str | None = None
+    risk_level: str | None = None
+
+
+class BaliZeroTake(BaseModel):
+    hidden_insight: str
+    our_analysis: str
+    our_advice: str
+
+
+class NextSteps(BaseModel):
+    expat: list[str] = Field(default_factory=list)
+    investor: list[str] = Field(default_factory=list)
+    # A draft with no "For Expats"/"For Investors" subsections states one
+    # audience-neutral list. It belongs here, not split 50/50 between expat
+    # and investor — that fabricates an audience the draft never named
+    # (2026-09-23 GloBE regression).
+    general: list[str] = Field(default_factory=list)
+
+
+class ExtraSection(BaseModel):
+    """A draft ``##`` section the converter does not map to a dedicated
+    EnrichedArticle field (e.g. "In Practice", "Sources"). Preserved
+    verbatim instead of being silently dropped (2026-09-23 GloBE
+    regression)."""
+
+    heading: str
+    body: str
+    # Which rendered section this immediately followed in the draft, so the
+    # MDX renderer can slot it back after that section. A section that came
+    # before Facts is anchored to "facts" and lands right after it — there
+    # is no slot before Facts.
+    insert_after: Literal["facts", "bali_zero_take", "next_steps"] = "next_steps"
+
+
+class EnrichedArticle(BaseModel):
+    """Enriched article ready for publication"""
+
+    title: str
+    headline: str
+    tldr: TLDRSection
+    facts: str
+    bali_zero_take: BaliZeroTake
+    next_steps: NextSteps
+    category: str
+    priority: str
+    relevance_score: int
+    ai_summary: str
+    ai_tags: list[str]
+    suggested_components: list[str]
+    cover_image: str | None = None
+    source: str
+    source_url: str | None
+    enriched_at: str
+    seo_title: str | None = None
+    seo_description: str | None = None
+    cover_image_alt: str | None = None
+    extra_sections: list[ExtraSection] = Field(default_factory=list)
+
+
+class ComposeResponse(BaseModel):
+    """Response from compose endpoint"""
+
+    success: bool
+    article: EnrichedArticle | None = None
+    error: APIError | str | None = (
+        None  # Support both APIError and string for backward compatibility
+    )
+    api_cost_cents: float = 0
+    cached: bool = False
+    request_id: str | None = None
+
+
+# --- ENRICHMENT PROMPT ---
+
+BALIZERO_SYSTEM_PROMPT = """You are the Senior Editor at Bali Zero, an Intelligent Business Operating System for expats and investors in Indonesia.
+
+ROLE:
+- You are "L'Insider Intelligente" - the trusted expert who reads boring laws and tells readers only what actually matters
+- Think: experienced legal advisor having coffee with a client
+- NOT a generic news aggregator or chatbot
+
+AUDIENCE:
+- Smart, busy expats and investors in Indonesia
+- They hate bureaucracy and want actionable insights
+- They ask: "What does this mean for ME?"
+
+TONE GUIDELINES:
+- Authoritative but accessible ("Autorevolezza Rilassata")
+- Cut the fluff. No "In today's rapidly changing world...". Start with the news.
+- Be specific with numbers, dates, requirements
+- Add genuine strategic insight, not generic advice
+
+OUTPUT:
+You will receive raw article content and transform it into a BaliZero Executive Brief article.
+Always respond with valid JSON only (no markdown, no extra text)."""
+
+
+def build_enrichment_prompt(title: str, content: str, category: str) -> str:
+    """Build the prompt for Claude to enrich the article"""
+    return f"""{BALIZERO_SYSTEM_PROMPT}
+
+---
+
+## TASK: Transform this into a BaliZero Executive Brief
+
+**Title:** {title}
+**Category:** {category}
+
+---
+
+## RAW CONTENT:
+
+{content[:8000]}
+
+---
+
+## OUTPUT FORMAT (STRICT JSON)
+
+{{
+  "headline": "<Benefit/Risk-driven headline, max 12 words, in English>",
+
+  "tldr": {{
+    "should_worry": "<Yes|No|Depends>",
+    "what": "<One line: what happened>",
+    "who": "<Who this affects>",
+    "when": "<Effective date or timeline>",
+    "risk_level": "<High|Medium|Low>"
+  }},
+
+  "facts": "<Pure journalism section. What happened, dates, numbers, sources. No opinions. 400-600 words based on news relevance (high priority = 600 words, medium = 500, low = 400). In English.>",
+
+  "bali_zero_take": {{
+    "hidden_insight": "<What they don't tell you - 2-3 sentences>",
+    "our_analysis": "<Strategic context, non-obvious implications - 3-4 sentences>",
+    "our_advice": "<Clear actionable recommendation - 2-3 sentences>"
+  }},
+
+  "next_steps": {{
+    "expat": ["<Action 1>", "<Action 2>"],
+    "investor": ["<Action 1>", "<Action 2>"]
+  }},
+
+  "category": "<immigration|business|tax|property|lifestyle|tech|legal>",
+  "priority": "<high|medium|low>",
+  "relevance_score": <0-100>,
+
+  "ai_summary": "<Executive summary for social/preview, max 280 chars, in English>",
+  "ai_tags": ["<tag1>", "<tag2>", "<tag3>", "<tag4>", "<tag5>"],
+
+  "suggested_components": ["<component1>", "<component2>"]
+}}
+
+NOTES:
+- "suggested_components" can include: "timeline", "comparison-table", "decision-tree", "checklist", "risk-meter", "alert-box", "expert-quote"
+- For immigration/visa topics, add specific permit types affected
+- For tax topics, include specific tax codes (PPh 21, PPh 26, etc.)
+- For business topics, mention relevant government bodies (BKPM, OSS, etc.)
+- Be SPECIFIC with numbers, dates, and requirements
+"""
+
+
+# --- DEPENDENCY INJECTION ---
+
+
+def get_request_id() -> str:
+    """Generate unique request ID for tracing"""
+    return str(uuid.uuid4())
+
+
+# --- STARTUP/SHUTDOWN EVENTS ---
+
+
+@router.on_event("startup")
+async def startup_event() -> None:
+    """Initialize cache service on startup"""
+    await cache_service.initialize()
+
+
+@router.on_event("shutdown")
+async def shutdown_event() -> None:
+    """Close cache service on shutdown"""
+    await cache_service.close()
+
+
+# --- API ENDPOINTS ---
+
+
+@router.post("/compose", response_model=ComposeResponse)
+@limiter.limit("10/minute")  # Rate limiting: 10 requests per minute per IP
+async def compose_article(
+    payload: ComposeRequest,  # Body
+    request: Request = None,  # type: ignore
+    background_tasks: BackgroundTasks = None,  # type: ignore
+    request_id: str = Depends(get_request_id),
+) -> ComposeResponse:
+    """Compose/enrich an article with Bali Zero style via the Claude OAuth door.
+
+    v5 (2026-10-22): the Token Plan gateway was cancelled, so the route is
+    back on ``backend.llm.claude_oauth_client`` (MAX quota, never an API key).
+    Model: ``ARTICLE_COMPOSER_MODEL`` (default ``claude-sonnet-5``).
+    """
+    start_time = time.time()
+
+    if not oauth_configured():
+        error = APIError.create(
+            code=ErrorCode.API_KEY_NOT_CONFIGURED,
+            message="Claude OAuth token (CLAUDE_CODE_OAUTH_TOKEN) not configured",
+            request_id=request_id,
+        )
+        article_compose_payloads.labels(status="error", category=payload.category).inc()
+        raise HTTPException(status_code=500, detail=error.model_dump())
+
+    # Log request start
+    logger.info(
+        "Article composition started",
+        extra={
+            "request_id": request_id,
+            "article_title": payload.title,
+            "category": payload.category,
+            "content_length": len(payload.content),
+        },
+    )
+
+    try:
+        # Check cache first
+        cached_result = await cache_service.get_compose_cache(
+            payload.title,
+            payload.content,
+            payload.category,
+        )
+        if cached_result:
+            logger.info(
+                "Cache hit",
+                extra={"request_id": request_id, "article_title": payload.title},
+            )
+            article_cache_hits.labels(operation="compose").inc()
+            return ComposeResponse(
+                success=True,
+                article=EnrichedArticle(**cached_result["article"]),
+                api_cost_cents=cached_result.get("api_cost_cents", 0),
+                cached=True,
+                request_id=request_id,
+            )
+
+        article_cache_misses.labels(operation="compose").inc()
+
+        # Build prompt
+        prompt = build_enrichment_prompt(
+            title=payload.title,
+            content=payload.content,
+            category=payload.category,
+        )
+
+        # Call Claude with retry logic
+        logger.info(
+            "Calling Claude API",
+            extra={"request_id": request_id, "model": ARTICLE_COMPOSER_MODEL},
+        )
+        message = await call_claude_with_retry(
+            prompt=prompt,
+            model=ARTICLE_COMPOSER_MODEL,
+            max_tokens=4096,
+        )
+
+        # Extract response text
+        response_text = message.content[0].text
+
+        # Clean JSON from markdown if present
+        if "```json" in response_text:
+            json_start = response_text.find("```json") + 7
+            json_end = response_text.find("```", json_start)
+            response_text = response_text[json_start:json_end].strip()
+        elif "```" in response_text:
+            json_start = response_text.find("```") + 3
+            json_end = response_text.find("```", json_start)
+            response_text = response_text[json_start:json_end].strip()
+
+        # Parse JSON
+        try:
+            data = json.loads(response_text)
+        except json.JSONDecodeError as e:
+            error = handle_json_error(e, response_text, payload.title, request_id)
+            article_compose_payloads.labels(status="json_error", category=payload.category).inc()
+            return ComposeResponse(success=False, error=error, request_id=request_id)
+
+        # Metered-equivalent estimate only: the OAuth door runs on the MAX
+        # subscription (no per-call bill) and token counts are estimated.
+        input_tokens = message.usage.input_tokens
+        output_tokens = message.usage.output_tokens
+        cost_cents = input_tokens * 0.0003 + output_tokens * 0.0015  # cents, rough estimate
+
+        # Build enriched article
+        enriched = EnrichedArticle(
+            title=payload.title,
+            headline=data.get("headline", payload.title),
+            tldr=TLDRSection(
+                **data.get(
+                    "tldr",
+                    {"what": data.get("headline", payload.title)},
+                ),
+            ),
+            facts=data.get("facts", payload.content[:500]),
+            bali_zero_take=BaliZeroTake(
+                **data.get(
+                    "bali_zero_take",
+                    {"hidden_insight": "", "our_analysis": "", "our_advice": ""},
+                ),
+            ),
+            next_steps=NextSteps(**data.get("next_steps", {"expat": [], "investor": []})),
+            category=data.get("category", payload.category),
+            priority=data.get("priority", "medium"),
+            relevance_score=data.get("relevance_score", 50),
+            ai_summary=data.get("ai_summary", ""),
+            ai_tags=data.get("ai_tags", []),
+            suggested_components=data.get("suggested_components", []),
+            cover_image=None,  # Will be provided by frontend during publish
+            source=payload.author,
+            source_url=payload.source_url,
+            enriched_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+        # Cache result in background
+        cache_data = {
+            "article": enriched.model_dump(),
+            "api_cost_cents": cost_cents,
+        }
+        background_tasks.add_task(
+            cache_service.set_compose_cache,
+            payload.title,
+            payload.content,
+            payload.category,
+            cache_data,
+        )
+
+        # Track metrics
+        duration = time.time() - start_time
+        article_compose_payloads.labels(status="success", category=payload.category).inc()
+        article_compose_duration.observe(duration)
+        claude_api_cost_cents.observe(cost_cents)
+
+        # Track word count by priority
+        facts_word_count = len(enriched.facts.split())
+        article_enrichment_word_count.labels(priority=enriched.priority).observe(facts_word_count)
+
+        logger.info(
+            "Article enriched successfully",
+            extra={
+                "request_id": request_id,
+                "headline": enriched.headline[:50],
+                "cost_cents": cost_cents,
+                "duration_seconds": duration,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            },
+        )
+
+        return ComposeResponse(
+            success=True,
+            article=enriched,
+            api_cost_cents=round(cost_cents, 2),
+            cached=False,
+            request_id=request_id,
+        )
+
+    except (ClaudeClientError, ClaudeOAuthNotAvailable, httpx.HTTPError) as e:
+        error = handle_anthropic_error(e, payload.title, payload.category, request_id)
+        article_compose_payloads.labels(status="api_error", category=payload.category).inc()
+        log_error_with_context(
+            e,
+            {
+                "request_id": request_id,
+                "article_title": payload.title,
+                "category": payload.category,
+            },
+        )
+        raise error from e
+
+    except Exception as e:
+        error = APIError.create(
+            code=ErrorCode.ENRICHMENT_FAILED,
+            message=f"Enrichment failed: {e!s}",
+            details={
+                "request_id": request_id,
+                "article_title": payload.title,
+                "category": payload.category,
+            },
+            request_id=request_id,
+        )
+        article_compose_payloads.labels(status="error", category=payload.category).inc()
+        log_error_with_context(
+            e,
+            {
+                "request_id": request_id,
+                "article_title": payload.title,
+                "category": payload.category,
+            },
+        )
+        return ComposeResponse(success=False, error=error, request_id=request_id)
+
+
+@router.get("/compose/status")
+async def compose_status() -> dict[str, Any]:
+    """Check if article composer is properly configured"""
+    configured = oauth_configured()
+
+    return {
+        "configured": configured,
+        "api_key_set": configured,
+        "provider": "claude_oauth",
+        "gateway": "claude_cli",
+        "model": ARTICLE_COMPOSER_MODEL,
+        **get_llm_health(),
+        "estimated_cost_per_article": "MAX subscription (no per-call bill)",
+        "cache_enabled": cache_service.enabled,
+        "rate_limit": "10 requests/minute per IP",
+    }
+
+
+# --- PUBLISHING MODELS ---
+
+
+class PublishRequest(BaseModel):
+    """Request to publish an article to the site"""
+
+    article: EnrichedArticle
+    cover_image_base64: str | None = Field(
+        default=None,
+        description="Cover image as base64 encoded string",
+    )
+    cover_image_filename: str | None = Field(
+        default=None,
+        description="Cover image filename (e.g., 'article-cover.jpg')",
+    )
+    position: str = Field(default="normal", description="Position: main_featured|secondary|normal")
+    slug: str | None = Field(
+        default=None,
+        description="Custom slug, auto-generated if not provided",
+    )
+    publication_key: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="Stable internal identity used to resume the same publication PR",
+    )
+
+
+class PublishResponse(BaseModel):
+    """Response from publish endpoint"""
+
+    success: bool
+    message: str
+    article_url: str | None = None
+    mdx_path: str | None = None
+    image_path: str | None = None
+    commit_sha: str | None = None
+    pull_request_number: int | None = None
+    auto_merge_enabled: bool | None = None
+    error: str | None = None
+
+
+def generate_slug(headline: str) -> str:
+    """Generate URL-friendly slug from headline"""
+    import re
+
+    # Convert to lowercase and replace spaces with hyphens
+    slug = headline.lower()
+    # Remove special characters except hyphens
+    slug = re.sub(r"[^a-z0-9\s-]", "", slug)
+    # Replace spaces with hyphens
+    slug = re.sub(r"\s+", "-", slug)
+    # Remove multiple consecutive hyphens
+    slug = re.sub(r"-+", "-", slug)
+    # Remove leading/trailing hyphens
+    slug = slug.strip("-")
+    return slug[:120]  # Limit slug length
+
+
+# Article headings here (## Facts, ## Summary, ## Bali Zero Take, ...) are
+# generic structural section labels, never prose worth keeping in a
+# preview/SEO snippet, so the whole heading LINE is dropped — not just the
+# leading "#" marks.
+_MD_HEADING_RE = re.compile(r"(?m)^\s{0,3}#{1,6}[^\n]*\n?")
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_MD_EMPHASIS_RE = re.compile(r"(\*\*\*|\*\*|\*|___|__|_)(.+?)\1")
+_MD_INLINE_CODE_RE = re.compile(r"`([^`]*)`")
+_MD_LIST_BULLET_RE = re.compile(r"(?m)^\s{0,3}(?:[-*+]|\d+[.)])\s+")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _plain_text_snippet(text: str, limit: int) -> str:
+    """Render markdown as plain prose and truncate to a word boundary.
+
+    Drops whole heading lines (``## Facts``), bold/italic markers,
+    ``[text](url)`` links (kept as ``text``), inline code, and list
+    bullets, then collapses whitespace. The result is truncated to at
+    most ``limit`` characters, cutting only at a space so no word is
+    split, and an ellipsis (``…``) is appended only when truncation
+    actually occurred.
+    """
+    plain = str(text)
+    plain = _MD_HEADING_RE.sub("", plain)
+    plain = _MD_LINK_RE.sub(r"\1", plain)
+    plain = _MD_EMPHASIS_RE.sub(r"\2", plain)
+    plain = _MD_INLINE_CODE_RE.sub(r"\1", plain)
+    plain = _MD_LIST_BULLET_RE.sub("", plain)
+    plain = _WHITESPACE_RE.sub(" ", plain).strip()
+
+    if len(plain) <= limit:
+        return plain
+
+    truncated = plain[:limit]
+    if " " in truncated:
+        truncated = truncated.rsplit(" ", 1)[0]
+    return truncated.rstrip(" .,;:!?-") + "…"
+
+
+def generate_mdx_content(article: EnrichedArticle, slug: str, cover_image_path: str | None) -> str:
+    """Generate MDX file content from enriched article"""
+    import json as json_module
+
+    # Map category to URL-friendly format
+    category_map = {
+        "immigration": "immigration",
+        "business": "business",
+        "tax": "tax-legal",
+        "tax-legal": "tax-legal",
+        "property": "property",
+        "lifestyle": "lifestyle",
+        "tech": "tech",
+        "legal": "tax-legal",
+    }
+    category_slug = category_map.get(article.category, article.category)
+
+    def mdx_safe_markdown(text: str) -> str:
+        """Keep editorial Markdown while neutralizing executable MDX syntax."""
+
+        safe = str(text).replace("<", "&lt;").replace(">", "&gt;")
+        safe = safe.replace("{", "&#123;").replace("}", "&#125;")
+        safe = re.sub(
+            r"(?im)^(\s*)(import|export)(?=\s)",
+            lambda match: (
+                f"{match.group(1)}{match.group(2)[0]}"
+                f"&#{ord(match.group(2)[1])};{match.group(2)[2:]}"
+            ),
+            safe,
+        )
+        return re.sub(
+            r"\]\(\s*(?:javascript|data|vbscript)\s*:",
+            "](#blocked-protocol-",
+            safe,
+            flags=re.IGNORECASE,
+        )
+
+    # Generate reading time estimate (avg 200 words per minute)
+    word_count = len(article.facts.split()) + len(article.bali_zero_take.our_analysis.split())
+    reading_time = max(3, word_count // 200 + 1)
+
+    # Convert next steps to JSON strings for components
+    expat_steps_json = json_module.dumps(article.next_steps.expat)
+    investor_steps_json = json_module.dumps(article.next_steps.investor)
+    general_steps_json = json_module.dumps(article.next_steps.general)
+
+    # Cover image path (21:9 hero) + card variant (16:10 homepage thumbnail).
+    # The post-publish poller renders both: {slug}.jpg + {slug}_card.jpg.
+    cover_img = cover_image_path or f"/static/news/{slug}.jpg"
+    _card_match = re.match(r"^(/static/news/.+)\.(jpg|jpeg|png)$", cover_img, re.IGNORECASE)
+    card_img = f"{_card_match.group(1)}_card.{_card_match.group(2)}" if _card_match else cover_img
+
+    # Build conditional sections - skip empty Bali Zero Take and Next Steps
+    bali_zero_take_section = ""
+    has_bzt = (
+        article.bali_zero_take.hidden_insight.strip()
+        or article.bali_zero_take.our_analysis.strip()
+        or article.bali_zero_take.our_advice.strip()
+    )
+    if has_bzt:
+        bali_zero_take_section = "\n---\n\n## Bali Zero Take\n"
+        if article.bali_zero_take.hidden_insight.strip():
+            bali_zero_take_section += "\n### The Hidden Insight\n\n"
+            bali_zero_take_section += mdx_safe_markdown(
+                article.bali_zero_take.hidden_insight
+            )
+            bali_zero_take_section += "\n"
+        if article.bali_zero_take.our_analysis.strip():
+            bali_zero_take_section += "\n### Our Analysis\n\n"
+            bali_zero_take_section += mdx_safe_markdown(
+                article.bali_zero_take.our_analysis
+            )
+            bali_zero_take_section += "\n"
+        if article.bali_zero_take.our_advice.strip():
+            bali_zero_take_section += "\n### Our Advice\n\n"
+            bali_zero_take_section += mdx_safe_markdown(
+                article.bali_zero_take.our_advice
+            )
+            bali_zero_take_section += "\n"
+
+    # Never invent a filler action ("Review the article for specific
+    # actions") and never render an empty audience group — a group with no
+    # steps is omitted instead (2026-09-23 GloBE regression). A draft with
+    # no explicit "For Expats"/"For Investors" split states one
+    # audience-neutral list — `general` — and gets one neutral Checklist
+    # item, never a fabricated expat/investor split.
+    next_steps_items: list[str] = []
+    if article.next_steps.expat:
+        next_steps_items.append(f'{{ text: "For Expats", subItems: {expat_steps_json} }}')
+    if article.next_steps.investor:
+        next_steps_items.append(f'{{ text: "For Investors", subItems: {investor_steps_json} }}')
+    if article.next_steps.general:
+        next_steps_items.append(
+            f'{{ text: "Recommended Actions", subItems: {general_steps_json} }}'
+        )
+
+    next_steps_section = ""
+    if next_steps_items:
+        joined_items = ",\n    ".join(next_steps_items)
+        next_steps_section = f"""
+---
+
+## Next Steps
+
+<Checklist
+  title="Action Items"
+  items={{[
+    {joined_items},
+  ]}}
+/>
+"""
+
+    # Preserve every draft "##" section the converter does not map to a
+    # dedicated field (e.g. "In Practice", "Sources") instead of silently
+    # dropping it (2026-09-23 GloBE regression). Each one is slotted back in
+    # right after the mapped section it originally followed.
+    def _extra_sections_block(anchor: str) -> str:
+        block = ""
+        for section in article.extra_sections:
+            if section.insert_after != anchor:
+                continue
+            block += f"\n---\n\n## {mdx_safe_markdown(section.heading)}\n\n"
+            block += mdx_safe_markdown(section.body)
+            block += "\n"
+        return block
+
+    extra_after_facts = _extra_sections_block("facts")
+    extra_after_bzt = _extra_sections_block("bali_zero_take")
+    extra_after_next_steps = _extra_sections_block("next_steps")
+
+    # AI SEO optimization fields
+    ai_confidence = getattr(article, "ai_confidence_score", 0.85)
+    answer_snippet = getattr(article, "answer_snippet", article.ai_summary)
+    primary_question = getattr(
+        article,
+        "primary_question",
+        f"What does {article.headline} mean for expats in Bali?",
+    )
+
+    # Sanitize YAML string values — strip newlines, escape quotes, truncate
+    def yaml_safe(text: str, max_len: int = 300) -> str:
+        s = str(text).replace("\n", " ").replace("\r", " ").replace('"', '\\"').strip()
+        if len(s) > max_len:
+            s = s[:max_len].rsplit(" ", 1)[0] + "..."
+        return s
+
+    safe_headline = yaml_safe(article.headline, 200)
+    # excerpt/seoDescription/seoTitle can fall back to raw markdown content
+    # (e.g. a "## Facts" heading) when no dedicated summary/SEO field was
+    # generated — render as plain prose, word-boundary truncated, before the
+    # YAML quote-escaping pass below (generous max_len so yaml_safe's own
+    # truncation never re-fires on an already-bounded string).
+    safe_excerpt = yaml_safe(_plain_text_snippet(article.ai_summary, 280), 320)
+    safe_seo_desc = yaml_safe(
+        _plain_text_snippet(article.seo_description or article.ai_summary, 155), 190
+    )
+    safe_seo_title = yaml_safe(
+        _plain_text_snippet(article.seo_title or article.headline, 70), 100
+    )
+    safe_cover_alt = yaml_safe(article.cover_image_alt or article.headline, 160)
+    safe_answer = yaml_safe(answer_snippet, 300)
+    safe_question = yaml_safe(primary_question, 150)
+    safe_source = yaml_safe(article.source, 100)
+    safe_source_markdown = mdx_safe_markdown(article.source)[:200]
+    safe_source_url = ""
+    if article.source_url:
+        try:
+            parsed_source = urlsplit(article.source_url.strip())
+        except ValueError:
+            parsed_source = None
+        if (
+            parsed_source is not None
+            and parsed_source.scheme == "https"
+            and parsed_source.hostname
+            and not parsed_source.username
+            and not parsed_source.password
+        ):
+            # Query strings from scraped links can contain tracking or access
+            # material. Public citations use the canonical origin/path only.
+            safe_source_url = urlunsplit(
+                (
+                    parsed_source.scheme,
+                    parsed_source.netloc,
+                    parsed_source.path,
+                    "",
+                    "",
+                )
+            )
+    # JSON arrays are valid YAML and correctly escape quotes/newlines in tags.
+    tags_json = json_module.dumps(article.ai_tags, ensure_ascii=False)
+    tldr_rows = [
+        f"    {{ label: {json_module.dumps(label)}, "
+        f"value: {json_module.dumps(value.strip(), ensure_ascii=False)} }},"
+        for label, value in (
+            ("Should I Worry?", article.tldr.should_worry),
+            ("Risk Level", article.tldr.risk_level),
+            ("Who's Affected", article.tldr.who),
+            ("When", article.tldr.when),
+        )
+        if value and value.strip()
+    ]
+    tldr_card = (
+        '<InfoCard\n  title="Quick Summary"\n  items={[\n' + "\n".join(tldr_rows) + "\n  ]}\n/>\n\n"
+        if tldr_rows
+        else ""
+    )
+    safe_tldr_what = mdx_safe_markdown(article.tldr.what)
+    safe_facts = mdx_safe_markdown(article.facts)
+
+    # Entity mentions from enrichment
+    entity_mentions_yaml = ""
+    entities = getattr(article, "entity_mentions", [])
+    if entities:
+        entity_lines = []
+        for ent in entities[:5]:
+            name = ent.get("name", "") if isinstance(ent, dict) else str(ent)
+            etype = ent.get("type", "Organization") if isinstance(ent, dict) else "Organization"
+            entity_lines.append(
+                f'    - name: "{yaml_safe(name, 120)}"\n'
+                f'      type: "{yaml_safe(etype, 80)}"'
+            )
+        entity_mentions_yaml = "  entityMentions:\n" + "\n".join(entity_lines)
+
+    return f'''---
+title: "{safe_headline}"
+slug: "{slug}"
+excerpt: "{safe_excerpt}"
+coverImage: "{cover_img}"
+cardImage: "{card_img}"
+coverImageAlt: "{safe_cover_alt}"
+category: "{category_slug}"
+tags: {tags_json}
+publishedAt: "{datetime.now(timezone.utc).strftime("%Y-%m-%d")}"
+author:
+  name: "{safe_source}"
+  avatar: /static/zantara-avatar.png
+trending: {str(article.priority == "high").lower()}
+featured: false
+readingTime: {reading_time}
+difficulty: "intermediate"
+seoTitle: "{safe_seo_title}"
+seoDescription: "{safe_seo_desc}"
+aiGenerated: true
+aiConfidenceScore: {ai_confidence}
+aiOptimization:
+  answerSnippet: "{safe_answer}"
+  primaryQuestion: "{safe_question}"
+{entity_mentions_yaml}
+---
+
+## TL;DR
+
+{tldr_card}**{safe_tldr_what}**
+
+---
+
+## The Facts
+
+{safe_facts}
+{extra_after_facts}{bali_zero_take_section}{extra_after_bzt}{next_steps_section}{extra_after_next_steps}
+## Primary Source
+
+{f'[{safe_source_markdown}]({safe_source_url})' if safe_source_url else 'Source URL unavailable.'}
+
+---
+
+<AskZantara
+  question="Have questions about this topic?"
+  placeholder="Ask Zantara AI for personalized advice..."
+/>'''
+
+
+def _require_publish_admin(user: dict[str, Any]) -> None:
+    """Gate publish-to-public-website to admins. Raises 403 otherwise.
+
+    This endpoint pushes MDX to the public site repo and triggers a Vercel
+    deploy — the same R3 effect as ``/api/intel/staging/publish``. Gating only
+    the staging path would leave this one as an unlocked back door.
+    """
+    from backend.app.utils.crm_utils import is_crm_admin
+
+    if not is_crm_admin(user):
+        raise HTTPException(status_code=403, detail="Publish requires admin")
+
+
+@router.post("/publish", response_model=PublishResponse)
+async def publish_article(
+    request: PublishRequest,
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> PublishResponse:
+    """
+    Publish an enriched article to the Bali Zero website. Admin-only.
+
+    Creates MDX file and optionally uploads cover image via GitHub API.
+    Triggers Vercel auto-deploy.
+
+    Internal callers (the intel staging-publish path, itself admin-gated) must
+    use :func:`publish_article_internal` — they carry their own authorization.
+    """
+    _require_publish_admin(current_user)
+    try:
+        return await publish_article_internal(request)
+    except ArticleGuardViolation as exc:
+        raise HTTPException(status_code=409, detail=exc.detail()) from exc
+
+
+def article_guard_inputs(mdx_content: str) -> dict[str, object]:
+    """Guard input for a rendered article; staging and MDX hooks both build it here."""
+    return {"mdx_content": mdx_content}
+
+
+async def publish_article_internal(request: PublishRequest) -> PublishResponse:
+    """Publish implementation. Callers are responsible for authorization."""
+    from backend.services.integrations.github_publisher import (
+        GitHubPublisherError,
+        github_publisher,
+    )
+
+    has_cover_image = bool(request.cover_image_base64)
+
+    if not github_publisher.is_configured:
+        logger.error("GitHub publisher not configured")
+        article_publish_requests.labels(status="error", has_cover_image=str(has_cover_image)).inc()
+        return PublishResponse(
+            success=False,
+            message="GitHub API not configured",
+            error="Missing GITHUB_TOKEN environment variable",
+        )
+
+    try:
+        # Generate slug
+        slug = request.slug or generate_slug(request.article.headline)
+
+        # Map category to folder
+        category_map = {
+            "immigration": "immigration",
+            "business": "business",
+            "tax": "tax-legal",
+            "tax-legal": "tax-legal",
+            "property": "property",
+            "lifestyle": "lifestyle",
+            "tech": "tech",
+            "legal": "tax-legal",
+        }
+        category_folder = category_map.get(request.article.category, request.article.category)
+
+        # Prepare files for atomic commit
+        files_to_commit = []
+        cover_image_path = None
+
+        # 1. Handle cover image if provided
+        if request.cover_image_base64 and request.cover_image_filename:
+            import base64
+
+            # Decode base64 image
+            image_data = _cover_as_jpeg(base64.b64decode(request.cover_image_base64))
+
+            # Determine image path
+            image_filename = f"{Path(request.cover_image_filename).stem}.jpg"
+            image_git_path = f"apps/mouth/public/static/news/{image_filename}"
+            cover_image_path = f"/static/news/{image_filename}"
+            card_git_path = f"apps/mouth/public/static/news/{Path(image_filename).stem}_card.jpg"
+
+            files_to_commit.append({"path": image_git_path, "content": image_data})
+            files_to_commit.append({"path": card_git_path, "content": cover_card_as_jpeg(image_data)})
+            logger.info("Will upload cover image: %s", image_git_path)
+
+        # 2. Generate MDX content
+        mdx_content = generate_mdx_content(request.article, slug, cover_image_path)
+        mdx_git_path = f"apps/mouth/src/content/articles/{category_folder}/{slug}.mdx"
+        enforce_public_article(article_guard_inputs(mdx_content))
+        logger.info("article_guard pass", extra={"slug": slug, "stage": "mdx"})
+
+        # Never overwrite an existing public article. Idempotent News Room
+        # retries must reach the publisher first: an
+        # earlier attempt may already have merged its deterministic PR while
+        # the local process crashed before saving state. New keyed operations
+        # still cannot collide because ``must_not_exist_paths`` is asserted on
+        # the publisher's exact base SHA below.
+        if not request.publication_key and await github_publisher.check_file_exists(
+            mdx_git_path, branch="main"
+        ):
+            return PublishResponse(
+                success=False,
+                message="Article slug already exists",
+                error=f"Public article already exists at {mdx_git_path}",
+            )
+
+        files_to_commit.append({"path": mdx_git_path, "content": mdx_content})
+
+        # Homepage placement belongs to the same atomic tree as the MDX and
+        # cover. A PR must never contain the article while silently losing the
+        # position Damar selected.
+        hero_positions = {"hero_main", "hero_2", "hero_3", "hero_4", "hero_5"}
+        layout_updates = (
+            {"apps/mouth/src/content/homepage-layout.json": {request.position: slug}}
+            if request.position in hero_positions
+            else None
+        )
+
+        # 3. Commit files to GitHub via pull request + auto-merge.
+        # The target branch (main) is protected (required status checks), so a
+        # direct ref push returns HTTP 422. Publishing via PR lets the commit
+        # land on a temporary branch and auto-merge once CI passes.
+        commit_message = f"feat(article): Add article '{request.article.headline[:50]}...'\n\nCategory: {category_folder}\nPosition: {request.position}\n\n🤖 Published via Article Composer"
+
+        result = await github_publisher.create_commit_with_files(
+            files=files_to_commit,
+            message=commit_message,
+            pull_request=True,
+            idempotency_key=request.publication_key,
+            must_not_exist_paths=[mdx_git_path],
+            json_object_updates=layout_updates,
+        )
+
+        # Build article URL. The MDX lives under the CONTENT FOLDER
+        # (`category_folder`, e.g. "business_regulations"), but the site
+        # only routes the SERVED category (e.g. "business") — see
+        # backend/services/article_routes.py.
+        from backend.services.article_routes import served_category
+
+        article_url = f"https://balizero.com/{served_category(category_folder)}/{slug}"
+
+        pr_number = result.get("pull_request_number")
+        if pr_number:
+            logger.info(
+                "✅ Article PR opened: #%s (auto_merge=%s) → will be live at %s after merge",
+                pr_number,
+                result.get("auto_merge_enabled"),
+                article_url,
+            )
+        else:
+            logger.info("✅ Article published: %s", article_url)
+        logger.info(f"   Commit: {result.get('commit_sha', 'N/A')[:7]}")
+
+        # Trigger IndexNow for faster search engine indexing
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=10.0) as http_client:
+                indexnow_resp = await http_client.post(
+                    settings.indexnow_api_url,
+                    json={
+                        "host": "balizero.com",
+                        "key": "2633309a0003ec408c59ec48c952604f",
+                        "keyLocation": "https://balizero.com/2633309a0003ec408c59ec48c952604f.txt",
+                        "urlList": [article_url],
+                    },
+                )
+                logger.info(f"   IndexNow: {indexnow_resp.status_code}")
+        except Exception as e:
+            logger.warning("   IndexNow failed (non-blocking): %s", e)
+
+        # Trigger Google Indexing API for faster Google indexing
+        try:
+            google_credentials = os.getenv("GOOGLE_INDEXING_CREDENTIALS")
+            if google_credentials:
+                from google.auth.transport.requests import Request
+                from google.oauth2 import service_account
+
+                credentials = service_account.Credentials.from_service_account_info(
+                    json.loads(google_credentials),
+                    scopes=["https://www.googleapis.com/auth/indexing"],
+                )
+                credentials.refresh(Request())
+
+                async with httpx.AsyncClient(timeout=10.0) as http_client:
+                    google_resp = await http_client.post(
+                        settings.google_indexing_api_url,
+                        headers={"Authorization": f"Bearer {credentials.token}"},
+                        json={
+                            "url": article_url,
+                            "type": "URL_UPDATED",
+                        },
+                    )
+                    logger.info(f"   Google Indexing API: {google_resp.status_code}")
+            else:
+                logger.info("   Google Indexing API: skipped (no credentials)")
+        except Exception as e:
+            logger.warning("   Google Indexing API failed (non-blocking): %s", e)
+
+        # Track metrics
+        article_publish_requests.labels(
+            status="success",
+            has_cover_image=str(has_cover_image),
+        ).inc()
+
+        if result.get("pull_request_number"):
+            publish_message = (
+                f"Article pull request #{result['pull_request_number']} opened. "
+                "It auto-merges once CI checks pass, then Vercel deploys (~a few minutes)."
+            )
+        else:
+            publish_message = (
+                "Article published successfully. Vercel will auto-deploy in ~1 minute."
+            )
+
+        return PublishResponse(
+            success=True,
+            message=publish_message,
+            article_url=article_url,
+            mdx_path=mdx_git_path,
+            image_path=cover_image_path,
+            commit_sha=result.get("commit_sha"),
+            pull_request_number=result.get("pull_request_number"),
+            auto_merge_enabled=result.get("auto_merge_enabled"),
+        )
+
+    except ArticleGuardViolation:
+        article_publish_requests.labels(
+            status="guard_blocked",
+            has_cover_image=str(has_cover_image),
+        ).inc()
+        raise
+    except GitHubPublisherError as e:
+        logger.error("GitHub publish error: %s", e)
+        article_publish_requests.labels(
+            status="github_error",
+            has_cover_image=str(has_cover_image),
+        ).inc()
+        return PublishResponse(success=False, message="Failed to publish to GitHub", error=str(e))
+    except Exception as e:
+        logger.error("Publish failed: %s", e, exc_info=True)
+        article_publish_requests.labels(status="error", has_cover_image=str(has_cover_image)).inc()
+        return PublishResponse(success=False, message="Failed to publish article", error=str(e))
+
+
+@router.get("/publish/status")
+async def publish_status() -> dict[str, Any]:
+    """Check if article publishing is properly configured"""
+    from backend.app.core.config import settings
+    from backend.services.integrations.github_publisher import github_publisher
+
+    return {
+        "configured": github_publisher.is_configured,
+        "github_token_set": bool(settings.github_token),
+        "github_owner": settings.github_owner,
+        "github_repo": settings.github_repo,
+        "target_branch": "main",
+    }

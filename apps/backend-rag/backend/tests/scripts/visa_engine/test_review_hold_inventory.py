@@ -1,0 +1,210 @@
+"""Unit tests for `review_hold_inventory.py` — the PR-O1 keystone.
+
+Ground-truth strategy: the counts against the REAL signed pack are asserted
+with the sequence baked into the assertion message (a seq-23 fold that
+changes the count fails loudly, naming the sequence, instead of silently
+grading against a stale number). `test_inventory_is_a_derivation_not_a_hand_list`
+then proves this is a real derivation and not a hand list (cicatrix family
+#3's guilt-AND-innocence discipline): a synthetic pack with one extra
+HUMAN_REVIEW rule must move the count, because a hardcoded ``9`` never
+would.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+
+import pytest
+
+from backend.scripts.visa_engine.review_hold_inventory import (
+    DEFAULT_FACT_MAPPER_PATH,
+    DEFAULT_TREE_TS_PATH,
+    adapter_review_codes,
+    load_highest_signed_pack,
+    minor_privacy_review_code,
+    orphan_review_gate_items,
+    pack_review_rules,
+    pack_unknown_escalations,
+    split_disclosed_review_codes,
+)
+from backend.services.visa_engine import models as M
+from backend.services.visa_engine.api_models import DisclosedReviewFlag
+from backend.services.visa_engine.evaluate_path import (
+    DEAD_END_DISCLOSED_FLAGS,
+    HOLDING_DISCLOSED_FLAGS,
+    MINOR_GUARDIAN_PRIVACY_REVIEW_CODE,
+)
+from backend.tests.services.visa_engine.conftest import (
+    make_product,
+    make_rule_pack_payload,
+    make_source_record,
+)
+
+#: A single, fully-valid `Rule` used as the building block for the synthetic
+#: packs below — never the census's own pack, so this test never depends on
+#: what the real signed pack happens to contain today.
+_SOURCE_REF = uuid.uuid4()
+_OPEN_FROM = datetime(2026, 7, 17, 0, 0, 0, tzinfo=timezone.utc)
+
+
+def _synthetic_review_rule(rule_id: str) -> M.Rule:
+    return M.Rule(
+        rule_id=rule_id,
+        stage="HUMAN_REVIEW",
+        scope="GLOBAL",
+        product_version_ids=None,
+        priority=100,
+        valid_period={"from": _OPEN_FROM, "to": None},
+        when={"op": "intersects", "fact": "intent.purposes", "values": ["TOURISM"]},
+        effect={"type": "REQUIRE_REVIEW", "reason_code": "SYNTHETIC_TEST_REVIEW"},
+        on_unknown="NO_EFFECT",
+        required_facts=["intent.purposes"],
+        source_refs=[_SOURCE_REF],
+        explanation_key="explain.synthetic-review",
+        safety_critical=True,
+    )
+
+
+def _synthetic_payload(*, rules: list[M.Rule]) -> M.RulePackPayload:
+    source_record = make_source_record()
+    product = make_product(
+        product_version_id=uuid.uuid4(), source_refs=[source_record.source_record_id]
+    )
+    return make_rule_pack_payload(
+        rules=rules,
+        products=[product],
+        source_records=[source_record],
+        sequence=1,
+    )
+
+
+@pytest.fixture(scope="module")
+def real_pack() -> M.RulePackPayload:
+    return load_highest_signed_pack()
+
+
+def test_inventory_counts_match_the_signed_pack(real_pack: M.RulePackPayload) -> None:
+    review_rules = pack_review_rules(real_pack)
+    escalations = pack_unknown_escalations(real_pack)
+    # Printed by `review_hold_inventory --json` on the signed seq-23 tree
+    # (Slice A9.3), never typed: seq-22's 9 / 7 became 1 / 0 when seq-23
+    # retired 8 review.* rules and flipped the 4 HARD_FILTER escalations to
+    # NEEDS_INPUT — A8.4's derived target. seq-29 adds the second and last
+    # one: review.e31j-marital-status-other (E31J, marital status "other",
+    # on_unknown NO_EFFECT), printed by the same command on the signed tree.
+    assert {rule.rule_id for rule in review_rules} == {
+        "review.e33.below-threshold-studio",
+        "review.e31j-marital-status-other",
+    }, (
+        f"sequence {real_pack.sequence}: expected 2 HUMAN_REVIEW-stage rules "
+        f"(review.e33.below-threshold-studio, review.e31j-marital-status-other), "
+        f"got {len(review_rules)} — A8.4 derived exactly 1 for seq-23 and seq-29 "
+        "added the E31J marital-status review; a changed count on a later "
+        "sequence is real news, not a stale pin"
+    )
+    assert len(escalations) == 0, (
+        f"sequence {real_pack.sequence}: expected 0 on_unknown=HUMAN_REVIEW "
+        f"escalations, got {len(escalations)} — A8.4 derived 0 for seq-23 "
+        "(the 4 bridging/B1 HARD_FILTER rules now ask instead of holding)"
+    )
+
+
+def test_every_disclosed_flag_has_exactly_one_code() -> None:
+    codes = adapter_review_codes()
+    assert len(codes) == 14
+    assert set(codes) == set(DisclosedReviewFlag)
+
+
+def test_holding_split_matches_the_2026_09_13_ruling_floor() -> None:
+    """PLAN VISA-ORACLE-DW-20260919 slice A1'/A3'-B (gate vo-gate-a1, OBS-3
+    MEDIUM; Slice A3'-B): the inventory must derive holding, dead-end and
+    conditioning from `HOLDING_DISCLOSED_FLAGS`/`DEAD_END_DISCLOSED_FLAGS`
+    themselves, not hand-list the split.
+
+    Unlike `test_inventory_is_a_derivation_not_a_hand_list` below, THIS test
+    hard-pins the membership (`set(holding) == {CRIMINAL_RECORD}`,
+    `set(dead_end) == {ACTIVITY_BOUNDARY}`, `len(holding) == 1`,
+    `len(dead_end) == 1`, `len(conditioning) == 12`) — on purpose: a
+    widening or narrowing of the ruling's floor SHOULD turn this test red,
+    because `split_disclosed_review_codes` deriving its answer from those
+    two constants is what the previous gate's OBS-3 asked for, not a
+    promise that the counts float free. What this test proves instead is
+    that the split is a PARTITION of `adapter_review_codes()`'s 14 rows (no
+    code lost, none duplicated, none moved to the wrong side) rather than
+    an independent hand-list that could silently drift from the production
+    mapping — see the final two assertions below."""
+
+    codes = adapter_review_codes()
+    holding, dead_end, conditioning = split_disclosed_review_codes(codes)
+
+    assert set(holding) == HOLDING_DISCLOSED_FLAGS
+    assert set(holding) == {DisclosedReviewFlag.CRIMINAL_RECORD}
+    assert set(dead_end) == DEAD_END_DISCLOSED_FLAGS
+    assert set(dead_end) == {DisclosedReviewFlag.ACTIVITY_BOUNDARY}
+    assert len(holding) == 1
+    assert len(dead_end) == 1
+    assert len(conditioning) == 12
+    assert set(holding) | set(dead_end) | set(conditioning) == set(DisclosedReviewFlag)
+    assert set(holding) & set(dead_end) == set()
+    assert set(holding) & set(conditioning) == set()
+    assert set(dead_end) & set(conditioning) == set()
+    # Every code stays paired with its own flag across the split — the
+    # split partitions rows, it never rewrites a code.
+    assert holding == {flag: codes[flag] for flag in holding}
+    assert dead_end == {flag: codes[flag] for flag in dead_end}
+    assert conditioning == {flag: codes[flag] for flag in conditioning}
+
+
+def test_minor_privacy_code_matches_the_adapter_constant() -> None:
+    assert minor_privacy_review_code() == MINOR_GUARDIAN_PRIVACY_REVIEW_CODE
+    assert minor_privacy_review_code() == "MINOR_GUARDIAN_PRIVACY_REVIEW"
+
+
+def test_orphan_review_gate_items_are_named() -> None:
+    # Slice A3-M (DRAFT-SPEC-A3-1.v2-M §4.1, M3): `REVIEW_FLAG_MAP` in
+    # fact-mapper.ts now maps all three of these literals (M1), so the
+    # census reads a mouth tree with no orphans left — PLAN §4's intended
+    # coupling fired: this assertion went red on M1 and is updated here.
+    assert orphan_review_gate_items() == frozenset()
+
+
+def test_orphan_review_gate_items_fails_loud_on_a_missing_literal(tmp_path) -> None:
+    """Guilt: a path that does not contain the literal must raise, never
+    silently report an empty orphan set (cicatrix family #3)."""
+
+    empty_tree = tmp_path / "tree.ts"
+    empty_tree.write_text("export const SOMETHING_ELSE = 1;\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="REVIEW_GATE_ITEMS"):
+        orphan_review_gate_items(
+            tree_ts_path=empty_tree, fact_mapper_ts_path=DEFAULT_FACT_MAPPER_PATH
+        )
+
+    real_tree_text = DEFAULT_TREE_TS_PATH.read_text(encoding="utf-8")
+    tree_copy = tmp_path / "tree_copy.ts"
+    tree_copy.write_text(real_tree_text, encoding="utf-8")
+    empty_mapper = tmp_path / "fact-mapper.ts"
+    empty_mapper.write_text("export const SOMETHING_ELSE = 1;\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="REVIEW_FLAG_MAP"):
+        orphan_review_gate_items(tree_ts_path=tree_copy, fact_mapper_ts_path=empty_mapper)
+
+
+def test_inventory_is_a_derivation_not_a_hand_list() -> None:
+    """Guilt: a synthetic pack with one extra HUMAN_REVIEW rule must move
+    `pack_review_rules`'s count — proof this is a derivation, not a hardcoded
+    number that would stay 9 regardless of what the pack says."""
+
+    baseline = _synthetic_payload(rules=[_synthetic_review_rule("test.synthetic-review-a")])
+    augmented = _synthetic_payload(
+        rules=[
+            _synthetic_review_rule("test.synthetic-review-a"),
+            _synthetic_review_rule("test.synthetic-review-b"),
+        ]
+    )
+
+    baseline_count = len(pack_review_rules(baseline))
+    augmented_count = len(pack_review_rules(augmented))
+
+    assert baseline_count == 1
+    assert augmented_count == 2
+    assert augmented_count == baseline_count + 1

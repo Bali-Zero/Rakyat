@@ -1,0 +1,229 @@
+"""GET /api/pricing/service — the one pricing route the public website can reach.
+
+Before this route existed there was no pricing endpoint on the light `_API`
+process at all, so every price on balizero.com was a hand-maintained literal and
+Golden Rule #11 ("prices come from PricingTool only") was unenforceable on the
+client surface. These tests pin the three properties that make it safe to expose:
+
+  guilt      it returns the real catalogue row for an exact key
+  innocence  it refuses to guess — an almost-right key is 404, never a near-miss
+  blast      only THIS path is auth-exempt; /all, /search, /scenario are not
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from backend.app.auth.public_endpoints import PUBLIC_ENDPOINTS, find_entry
+from backend.app.routers import dynamic_pricing
+from backend.services.pricing import pricing_service
+from backend.services.pricing.pricing_service import get_pricing_service
+
+# A key that must exist in the shipped catalogue. Chosen deliberately: it is the
+# key the Second Home landing page renders, i.e. the row whose absence from any
+# public surface is what motivated this route.
+REAL_KEY = "E33 Second Home (5 Years)"
+
+
+@pytest.fixture
+def client() -> TestClient:
+    app = FastAPI()
+    app.include_router(dynamic_pricing.router)
+    return TestClient(app)
+
+
+# ── guilt ─────────────────────────────────────────────────────────────────────
+
+
+def test_returns_the_catalogue_row_for_an_exact_key(client: TestClient) -> None:
+    resp = client.get("/api/pricing/service", params={"key": REAL_KEY})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["key"] == REAL_KEY
+    assert body["price"], "a catalogue row must carry a renderable price"
+
+
+def test_price_matches_the_ssot_exactly(client: TestClient) -> None:
+    """The route must not reformat, round, or re-render the SSOT price."""
+    svc = get_pricing_service()
+    expected = svc.get_service_by_key(REAL_KEY)
+    assert expected is not None, "fixture key vanished from the catalogue"
+
+    body = client.get("/api/pricing/service", params={"key": REAL_KEY}).json()
+    assert body["price"] == expected["price"]
+
+
+# ── innocence: it refuses to guess ────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "near_miss",
+    [
+        "E33 Second Home",  # prefix of the real key
+        "E33 Second Home (5 Year)",  # one character off
+        "e33 second home (5 years)",  # case differs
+        " E33 Second Home (5 Years)",  # leading space
+        "Second Home",  # keyword a human would type into /search
+        "E33",  # the visa code alone
+    ],
+)
+def test_near_miss_keys_are_404_never_a_guessed_row(
+    client: TestClient, near_miss: str
+) -> None:
+    """`/search` scores and guesses; this route must not.
+
+    A page rendering "the price" from an approximate match would publish a
+    number for a service the visitor did not ask about. 404 lets the caller
+    fall back to its pinned literal, which is the safe failure.
+    """
+    resp = client.get("/api/pricing/service", params={"key": near_miss})
+    assert resp.status_code == 404, (
+        f"{near_miss!r} resolved to {resp.text} — the lookup guessed"
+    )
+
+
+def test_unknown_key_is_404(client: TestClient) -> None:
+    resp = client.get("/api/pricing/service", params={"key": "No Such Service 12345"})
+    assert resp.status_code == 404
+
+
+def test_empty_key_is_rejected_by_validation(client: TestClient) -> None:
+    assert client.get("/api/pricing/service", params={"key": ""}).status_code == 422
+
+
+# ── blast radius: exactly one public pricing path ─────────────────────────────
+
+
+def test_the_lookup_is_registered_public() -> None:
+    assert find_entry("/api/pricing/service") is not None
+
+
+@pytest.mark.parametrize(
+    "sibling",
+    ["/api/pricing/all", "/api/pricing/search", "/api/pricing/scenario"],
+)
+def test_sibling_pricing_routes_stay_authenticated(sibling: str) -> None:
+    """The registry entry is exact-match so the whole /api/pricing family does
+    not become anonymous. `/all` dumps the entire catalogue and `/scenario`
+    aggregates Oracle collections — neither belongs on the public surface."""
+    assert find_entry(sibling) is None, f"{sibling} became public"
+
+
+def test_no_prefix_entry_swallows_the_pricing_family() -> None:
+    """Guards the shape, not just today's paths: a later `prefix` entry on
+    /api/pricing would silently re-open the siblings this test protects."""
+    offenders = [
+        e
+        for e in PUBLIC_ENDPOINTS
+        if e.match != "exact" and "/api/pricing" in e.prefix
+    ]
+    assert not offenders, f"prefix-matched pricing entries: {offenders}"
+
+
+# ── the service-layer contract the route depends on ───────────────────────────
+
+
+def test_lookup_returns_none_when_the_catalogue_is_not_loaded() -> None:
+    """503-vs-404 hinges on this: the caller must be able to tell "no such
+    service" from "the price source is down"."""
+    svc = get_pricing_service()
+    original = svc.loaded
+    try:
+        svc.loaded = False
+        assert svc.get_service_by_key(REAL_KEY) is None
+    finally:
+        svc.loaded = original
+
+
+# ── compliance retainers: the rows the unlisted compliance page renders ───────
+#
+# No amount is typed here. Prices live in the SSOT sheet only; these tests pin
+# that the public route hands back exactly what the sheet says, in the shape the
+# mouth snapshot helper (`getExactSnapshotPrice`, EXACT_IDR_PRICE) will render.
+
+COMPLIANCE_RETAINER_KEYS = (
+    "compliance_takeover",
+    "compliance_core_retainer_monthly",
+    "compliance_employer_retainer_monthly",
+    "pse_registration_fixed",
+    "pmse_vat_assessment",
+)
+MONTHLY_RETAINER_KEYS = frozenset(
+    {"compliance_core_retainer_monthly", "compliance_employer_retainer_monthly"}
+)
+# Same pattern as apps/mouth/src/lib/pricing-snapshot.ts EXACT_IDR_PRICE: a row
+# outside this shape renders as "Contact" on the website, never as a number.
+EXACT_IDR_PRICE = re.compile(r"^(?:\d+|\d{1,3}(?:\.\d{3})+)\s+IDR$", re.IGNORECASE)
+
+
+def _sheet_row(key: str) -> dict:
+    """Read the row straight from the file the service loads, bypassing the
+    service, so the route is compared against the sheet and not against itself."""
+    sheet = Path(pricing_service.__file__).parents[2] / "data" / pricing_service._PRICING_FILENAME
+    return json.loads(sheet.read_text(encoding="utf-8"))["services"]["compliance_retainers"][key]
+
+
+@pytest.mark.parametrize("key", COMPLIANCE_RETAINER_KEYS)
+def test_compliance_retainer_key_returns_the_sheet_row(client: TestClient, key: str) -> None:
+    resp = client.get("/api/pricing/service", params={"key": key})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    row = _sheet_row(key)
+
+    assert body["key"] == key
+    assert body["category"] == "compliance_retainers"
+    assert body["name"] == row["name"]
+    assert body["price"] == row["price"]
+    assert EXACT_IDR_PRICE.match(body["price"]), body["price"]
+
+
+@pytest.mark.parametrize("key", COMPLIANCE_RETAINER_KEYS)
+def test_compliance_retainer_cadence_and_confirmed_price_notes(client: TestClient, key: str) -> None:
+    body = client.get("/api/pricing/service", params={"key": key}).json()
+
+    expected_validity = "monthly" if key in MONTHLY_RETAINER_KEYS else None
+    assert body["validity"] == expected_validity
+    # The schema has no published/test flag; the USD reference travels in
+    # `notes`. The owner confirmed these prices on 2026-09-11, so the
+    # provisional "pending owner confirmation" marker must no longer appear.
+    assert "USD reference:" in body["notes"]
+    assert "pending owner confirmation" not in body["notes"].lower()
+
+
+# ── internal catalogue rows: hidden from public route, kept in backend ────────
+
+INTERNAL_RETIREMENT_KEYS = (
+    "Retirement (Altus/Onshore)",
+    "Retirement (Offshore)",
+    "Retirement (Extend)",
+)
+
+
+@pytest.mark.parametrize("internal_key", INTERNAL_RETIREMENT_KEYS)
+def test_internal_catalogue_rows_are_404_on_public_route(
+    client: TestClient, internal_key: str
+) -> None:
+    """Rows carrying `"internal": true` in the canonical catalogue must not be
+    served by the anonymous lookup route."""
+    resp = client.get("/api/pricing/service", params={"key": internal_key})
+    assert resp.status_code == 404, (
+        f"{internal_key!r} resolved to {resp.text} — internal row leaked on public route"
+    )
+
+
+def test_internal_catalogue_rows_still_resolve_in_pricing_service() -> None:
+    """Backend innocence: `PricingService.get_service_by_key` must keep
+    resolving internal rows for backend callers (pricing_adapter, renewal_rules)."""
+    svc = get_pricing_service()
+    for internal_key in INTERNAL_RETIREMENT_KEYS:
+        entry = svc.get_service_by_key(internal_key)
+        assert entry is not None, (
+            f"{internal_key!r} stopped resolving in PricingService.get_service_by_key"
+        )
+        assert entry["key"] == internal_key

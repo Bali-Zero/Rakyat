@@ -1,0 +1,472 @@
+"""
+Tool Execution and Parsing for Agentic RAG
+
+This module handles:
+- Parsing tool calls from AI responses (native function calling or ReAct format)
+- Executing tools with rate limiting
+- Tool result handling
+- Security validation
+
+Key Features:
+- Native Gemini function calling (primary)
+- Regex ReAct parser fallback for OpenRouter/non-Gemini models
+- Rate limiting (max 10 executions per query)
+- User ID injection for admin tools
+- Error handling and logging
+- Prometheus metrics for tool call tracking
+"""
+
+import logging
+import re
+import time
+from typing import Any
+
+from backend.app.metrics import metrics_collector
+from backend.services.agents.confirmation_service import (
+    ConfirmationRedisDown,
+    ConfirmationService,
+    ConfirmationTimeout,
+)
+from backend.services.agents.tool_authorizer import ToolAuthorizer
+from backend.services.rag.agentic._tool_denial import (
+    ANONYMOUS_DENIAL_OBSERVATION,
+    denial_observation,
+)
+from backend.services.tools.definitions import BaseTool, ToolCall
+
+logger = logging.getLogger(__name__)
+
+_RESERVED_ARG_PREFIX = "_"
+
+
+def _strip_reserved_args(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Drop any LLM-supplied key that looks like a server-reserved field.
+
+    Security (P0-ARG containment, 2026-07-24): `execute_tool` injects
+    server-controlled context (`_user_id`, `_caller_profile`) into
+    `arguments` near the end, but only when ITS OWN server-derived value
+    is truthy — see the two `if ...: arguments["_..."] = ...` lines below.
+    Before this fix, if the LLM's tool-call `arguments` dict (attacker-
+    steerable via prompt injection in the conversation) already contained
+    a same-named key, that injected value survived untouched whenever the
+    server had nothing of its own to overwrite it with — a client/unknown
+    caller's crafted `_caller_profile={"role": "creator"}` argument would
+    reach `tool.execute(**arguments)` unfiltered. Stripping every leading-
+    underscore key from the LLM-supplied dict — before the authorizer even
+    sees it, AND again immediately before the trusted re-injection — makes
+    every server-injected field structurally unforgeable: no LLM-facing
+    tool schema declares a leading-underscore parameter (verified across
+    `backend/services/tools/` 2026-07-24), so this never drops a
+    legitimate argument.
+    """
+    return {k: v for k, v in arguments.items() if not k.startswith(_RESERVED_ARG_PREFIX)}
+
+
+# P0-DENY (2026-07-25): the string returned by every denial-shaped branch
+# below is a tool OBSERVATION handed straight back to the LLM, which then
+# paraphrases it to whoever is asking. For an authenticated/team caller
+# (`agent_role` resolved) that is useful — "you don't have permission to
+# call X, try Y". For a NO-PRINCIPAL caller (client / unknown WA sender /
+# public blog-ask — `agent_role is None`) it turned the assistant into a
+# probing oracle: a synthetic client-role caller asked a production bot
+# "quanti clienti attivi abbiamo adesso?" and the bot narrated back that a
+# CRM database exists and that an authorization control blocked the call.
+# The DATA never leaked (SENSITIVE_TOOLS correctly denied), but the DENIAL
+# did. This constant is the fixed, non-diagnostic string every anonymous
+# caller gets instead — it names no tool, no control, no internal system,
+# so the model has nothing interesting to narrate.
+#
+# MOVED to _tool_denial.py (2026-08-10) and re-exported here under the
+# original names, so every existing call site and test is untouched. The
+# string had to become readable by ONE MORE consumer: _reasoning_evidence,
+# which was scoring this exact denial as a successful tool call worth 0.85
+# evidence. A denial is now recognised by the module that mints it instead of
+# being guessed at from its prose — see _tool_denial.py for the measurement.
+_ANONYMOUS_DENIAL_OBSERVATION = ANONYMOUS_DENIAL_OBSERVATION
+
+
+def _denial_observation(agent_role: Any | None, detail: str) -> str:
+    """Render a denial-shaped tool observation, audience-aware.
+
+    `detail` is always the full, informative reason (never pre-redacted by
+    the caller). With a resolved `agent_role` (authenticated/team caller)
+    this returns the same `"Tool execution denied: {detail}"` shape every
+    call site returned before this fix — byte-identical, so the team
+    assistant does not regress. With `agent_role=None` (no principal) it
+    returns the fixed neutral string above, dropping `detail` entirely.
+
+    Applied uniformly to EVERY denial-shaped return in `execute_tool`
+    (not just the primary is_denied branch) so a future code path can't
+    silently reopen the leak in one of the others — this repo has been
+    bitten before by a fix applied to 1 of N equivalent paths (cicatrix
+    #3, guard-over/under-match family).
+
+    Server-side fidelity is preserved: `metrics_collector.record_tool_call`
+    and a `logger.warning`/`logger.info` call at every denial-shaped site
+    (including `is_denied`, which previously had none) still log the full
+    reason, PII-free — only the string handed back to the LLM is redacted
+    here.
+    """
+    return denial_observation(agent_role, detail)
+
+
+# Module-level singletons — set by service_initializer.py at app startup.
+# Before Phase 3 wiring, the authorizer was a bare ToolAuthorizer() with no
+# dependencies. Now it may have a ConfirmationService. Both are replaced once
+# by `configure_tool_executor()` during initialization.
+_authorizer = ToolAuthorizer()
+_confirmation_service: ConfirmationService | None = None
+
+
+def configure_tool_executor(
+    authorizer: ToolAuthorizer,
+    confirmation_service: ConfirmationService | None = None,
+) -> None:
+    """
+    Called once by service_initializer.py to inject app-scoped singletons.
+
+    This replaces the module-level defaults with properly wired instances.
+    The function exists so that tool_executor doesn't import from
+    service_initializer (which would create a circular import).
+    """
+    global _authorizer, _confirmation_service
+    _authorizer = authorizer
+    _confirmation_service = confirmation_service
+
+
+def parse_native_function_call(function_call_part: Any) -> ToolCall | None:
+    """
+    Parse native Gemini function call from response part.
+
+    This is the primary method for tool calling when using Gemini models.
+    Extracts function name and arguments from Gemini's native function_call object.
+
+    Args:
+        function_call_part: Gemini response part with function_call attribute
+
+    Returns:
+        ToolCall object if function call detected, None otherwise
+
+    Example:
+        >>> # Gemini returns: part.function_call.name = "vector_search"
+        >>> # part.function_call.args = {"query": "visa requirements", "collection": "visa_oracle"}
+        >>> tool_call = parse_native_function_call(part)
+        >>> print(tool_call.tool_name)  # "vector_search"
+    """
+    if not hasattr(function_call_part, "function_call"):
+        return None
+
+    try:
+        fc = function_call_part.function_call
+        # fc can be None even if the attribute exists
+        if fc is None:
+            return None
+        tool_name = fc.name
+        arguments = dict(fc.args) if fc.args else {}
+
+        if not tool_name:
+            logger.warning("🔧 [Native Function Call] Empty tool name detected (ignoring)")
+            return None
+
+        logger.info("🔧 [Native Function Call] Detected: %s with args: %s", tool_name, arguments)
+        return ToolCall(tool_name=tool_name, arguments=arguments)
+
+    except (AttributeError, TypeError, ValueError) as e:
+        logger.warning("Failed to parse native function call: %s", e, exc_info=True)
+        return None
+
+
+def parse_tool_call_regex(text: str) -> ToolCall | None:
+    """
+    FALLBACK: Parse ReAct-style tool calls from text using regex.
+
+    This is a legacy parser used only for OpenRouter and non-Gemini models.
+    For Gemini models, use parse_native_function_call() instead.
+
+    Args:
+        text: AI response text to parse
+
+    Returns:
+        ToolCall object if found, None otherwise
+
+    Example:
+        ACTION: vector_search(query="visa requirements", collection="visa_oracle")
+        ACTION: calculator(expression="1000001 * 0.25")
+
+    Note:
+        This parser is fragile and deprecated. Prefer native function calling.
+    """
+    logger.debug(f"[FALLBACK Regex Parser] Parsing text (first 500 chars): {text[:500]}...")
+
+    match = re.search(r"ACTION:\s*(\w+)\((.*)\)", text)
+    if match:
+        tool_name = match.group(1)
+        args_str = match.group(2)
+        try:
+            # Try to parse args as JSON-like key=value or just string
+            # This is very basic
+            if "=" in args_str:
+                args = dict(item.split("=") for item in args_str.split(","))
+                # Clean quotes
+                args = {k.strip(): v.strip().strip('"').strip("'") for k, v in args.items()}
+            else:
+                # Assume single arg 'query' or 'expression' based on tool
+                if tool_name in ["vector_search", "web_search"]:
+                    args = {"query": args_str.strip().strip('"')}
+                elif tool_name == "calculator":
+                    args = {"expression": args_str.strip().strip('"')}
+                else:
+                    args = {}
+
+            logger.info("🔧 [Regex Fallback] Parsed: %s with args: %s", tool_name, args)
+            return ToolCall(tool_name=tool_name, arguments=args)
+        except (ValueError, KeyError, AttributeError):
+            return None
+    return None
+
+
+def parse_tool_call(text_or_part: Any, use_native: bool = True) -> ToolCall | None:
+    """
+    Universal tool call parser with automatic mode detection.
+
+    Attempts native function calling first, then falls back to regex parsing.
+    This ensures compatibility with both Gemini (native) and OpenRouter (text).
+
+    Args:
+        text_or_part: Either a Gemini response part (with function_call) or text string
+        use_native: Whether to attempt native parsing first (default: True)
+
+    Returns:
+        ToolCall object if found, None otherwise
+
+    Example:
+        # Native mode (Gemini)
+        >>> tool_call = parse_tool_call(response_part, use_native=True)
+
+        # Fallback mode (OpenRouter)
+        >>> tool_call = parse_tool_call(response_text, use_native=False)
+    """
+    if use_native:
+        # Try native function calling first
+        native_call = parse_native_function_call(text_or_part)
+        if native_call:
+            return native_call
+
+    # Fallback to regex parsing (for text responses)
+    if isinstance(text_or_part, str):
+        return parse_tool_call_regex(text_or_part)
+
+    return None
+
+
+async def execute_tool(
+    tool_map: dict[str, BaseTool],
+    tool_name: str,
+    arguments: dict,
+    user_id: str | None = None,
+    tool_execution_counter: dict[str, int] | None = None,
+    agent_role: Any | None = None,
+    confirmation_emitter: Any | None = None,
+    caller_profile: dict[str, Any] | None = None,
+) -> tuple[str, float]:
+    """
+    Execute tool with rate limiting and RBAC authorization.
+
+    Args:
+        tool_map: Dictionary mapping tool names to tool instances
+        tool_name: Name of tool to execute
+        arguments: Tool arguments (LLM-supplied — must NOT contain server fields)
+        user_id: Optional user ID for admin tools
+        tool_execution_counter: Mutable dict with 'count' key for rate limiting
+        agent_role: VASSAL Phase 2. The caller's AgentRole (from
+            team_agent_config) for server-side RBAC enforcement. When None
+            (legacy /stream path, blog/marketing flows), the authorizer
+            passes through as ALLOWED. Read by reasoning.py via
+            getattr(state, "agent_role", None) at each call site.
+        confirmation_emitter: VASSAL Phase 3. Optional async callback
+            ``Callable[[dict], Awaitable[None]]`` that pushes SSE events
+            upstream to the streaming generator. Set by reasoning.py at
+            the streaming call site; None for non-streaming paths.
+            Deviation from briefing §3.2 ("no new params on execute_tool"):
+            the alternative — pre-computing confirmation needs in
+            reasoning.py — would duplicate authorizer logic and pollute
+            args. This single optional kwarg keeps the authorizer as the
+            single source of truth for confirmation decisions.
+        caller_profile: WA team-assistant Phase 2 (2026-07-20). The
+            resolved sender profile dict (`{"role": "team"|"creator", ...}`)
+            from `AgentState.caller_profile` — injected into `arguments` as
+            `_caller_profile` the SAME way `user_id` is injected as
+            `_user_id` below (after the authorizer, so neither the LLM nor
+            the authorizer ever see a server-controlled field mixed into
+            LLM-supplied args). Only `team_crm_tools.py`'s tools read it;
+            every other tool's `**kwargs` silently absorbs it as a no-op.
+
+    Returns:
+        Tuple of (tool execution result as string, execution duration in seconds)
+
+    Raises:
+        RuntimeError: If rate limit exceeded (10 per query)
+    """
+    start_time = time.time()
+
+    # P0-ARG containment: strip any LLM-supplied reserved-prefix key BEFORE
+    # anything (including the authorizer below) sees `arguments` — see
+    # `_strip_reserved_args` docstring.
+    arguments = _strip_reserved_args(arguments)
+
+    # Security: Rate limiting - max 10 tool executions per query
+    if tool_execution_counter is not None:
+        tool_execution_counter["count"] += 1
+        if tool_execution_counter["count"] > 10:
+            logger.warning(
+                f"⚠️ Tool execution limit exceeded ({tool_execution_counter['count']} > 10)",
+            )
+            metrics_collector.record_tool_call(tool_name, "rate_limited")
+            raise RuntimeError("Maximum tool executions exceeded (10 per query)")
+
+    # Unknown-tool short-circuit MUST run BEFORE authorization. There is no
+    # point asking the authorizer about a tool that doesn't exist in the
+    # registry — and the test contract (test_unknown_tool_short_circuits_before_authz)
+    # encodes this ordering explicitly.
+    if tool_name not in tool_map:
+        metrics_collector.record_tool_call(tool_name, "unknown")
+        return f"Error: Unknown tool '{tool_name}'", time.time() - start_time
+
+    tool = tool_map[tool_name]
+
+    # ── VASSAL Phase 2: RBAC chokepoint ─────────────────────────────────
+    # The authorizer is invoked BEFORE we mutate `arguments` with server
+    # fields (`_user_id`). This matters because:
+    #   1. The authorizer must see only LLM-supplied args (server fields
+    #      would confuse future client_scope checks).
+    #   2. The authorizer can mutate args (Phase 3+ may inject scope
+    #      filters); whatever it returns becomes the new authoritative
+    #      args dict.
+    # When `agent_role=None` (legacy /stream path), the authorizer's own
+    # backward-compat branch returns ALLOWED — see ToolAuthorizer.authorize().
+    auth_result = await _authorizer.authorize(
+        user_email=user_id,
+        agent_role=agent_role,
+        tool_name=tool_name,
+        args=arguments,
+    )
+    if auth_result.is_denied:
+        metrics_collector.record_tool_call(tool_name, "denied")
+        # P0-DENY audit (2026-07-25): this is the most common denial path —
+        # SENSITIVE_TOOLS hit anonymously — and this chokepoint had no
+        # logger call of its own (ToolAuthorizer._audit() does log the deny
+        # decision one layer down, but a second explicit trace here, scoped
+        # to exactly what reaches the model, is worth the redundancy — and
+        # keeps the docstring above true regardless of which authorizer is
+        # wired in). NEVER log `user_id`/`user_email` here — on the
+        # WhatsApp path it's `whatsapp_<phone>`, which is PII (UU PDP /
+        # SYMBIOSIS Law 2); `agent_role is not None` is a safe role-shape
+        # boolean, not an identifier.
+        logger.warning(
+            "tool_authz: denied %s (principal_present=%s): %s",
+            tool_name,
+            agent_role is not None,
+            auth_result.reason,
+        )
+        return (
+            _denial_observation(agent_role, auth_result.reason),
+            time.time() - start_time,
+        )
+    if auth_result.needs_confirmation:
+        # ── VASSAL Phase 3: interactive confirmation gate ────────────────
+        # The authorizer has determined that this tool requires user
+        # confirmation before execution. If a ConfirmationService is
+        # wired, we request confirmation, emit an SSE event for the
+        # frontend modal (Phase 3B), and block until the user resolves.
+        # If the service is not wired (e.g., in tests or light mode),
+        # fail-closed: treat as DENIED.
+        if _confirmation_service is None:
+            logger.warning(
+                "tool_authz: NEEDS_CONFIRMATION for %s but "
+                "ConfirmationService is not wired — treating as DENIED",
+                tool_name,
+            )
+            metrics_collector.record_tool_call(tool_name, "denied")
+            return (
+                _denial_observation(
+                    agent_role,
+                    f"confirmation service unavailable for '{tool_name}'",
+                ),
+                time.time() - start_time,
+            )
+        try:
+            approved = await _confirmation_service.request_and_wait(
+                tool_name=tool_name,
+                args=arguments,
+                user_email=user_id or "anonymous",
+                preview=auth_result.reason,
+                emitter=confirmation_emitter,
+            )
+        except ConfirmationRedisDown as exc:
+            metrics_collector.record_tool_call(tool_name, "denied")
+            logger.warning(
+                "tool_authz: confirmation Redis down for %s: %s",
+                tool_name,
+                exc,
+            )
+            return (
+                _denial_observation(
+                    agent_role,
+                    f"confirmation system unavailable (Redis down) for '{tool_name}'",
+                ),
+                time.time() - start_time,
+            )
+        except ConfirmationTimeout:
+            metrics_collector.record_tool_call(tool_name, "timeout")
+            logger.info(
+                "tool_authz: confirmation timed out for %s",
+                tool_name,
+            )
+            return (
+                _denial_observation(
+                    agent_role,
+                    f"user did not confirm '{tool_name}' within the allowed time",
+                ),
+                time.time() - start_time,
+            )
+        if not approved:
+            metrics_collector.record_tool_call(tool_name, "rejected")
+            logger.info(
+                "tool_authz: user rejected confirmation for %s",
+                tool_name,
+            )
+            return (
+                _denial_observation(agent_role, f"user rejected '{tool_name}'"),
+                time.time() - start_time,
+            )
+        metrics_collector.record_tool_call(tool_name, "confirmed")
+        logger.info("tool_authz: user confirmed %s — proceeding", tool_name)
+    # Authoritative args after the authorizer (possibly mutated in
+    # Phase 3+; Phase 2 returns args unchanged).
+    arguments = auth_result.args
+    # P0-ARG containment: strip again immediately before the trusted
+    # re-injection below — defense in depth against a future authorizer
+    # mutation accidentally echoing a reserved-looking key back unchanged.
+    arguments = _strip_reserved_args(arguments)
+
+    try:
+        # Pass user_id to tools that need it (e.g., MCPSuperTool for admin
+        # check). Injected AFTER the authorizer call so the authorizer never
+        # sees server-controlled fields mixed in with LLM-supplied args.
+        if user_id:
+            arguments["_user_id"] = user_id
+        if caller_profile:
+            arguments["_caller_profile"] = caller_profile
+        result = await tool.execute(**arguments)
+        duration = time.time() - start_time
+
+        # Record successful tool call
+        metrics_collector.record_tool_call(tool_name, "success")
+        logger.debug(f"🔧 [Tool] {tool_name} completed in {duration:.3f}s")
+
+        return result, duration
+    except (ValueError, RuntimeError, KeyError, TypeError, AttributeError) as e:
+        duration = time.time() - start_time
+        metrics_collector.record_tool_call(tool_name, "error")
+        logger.error("Tool execution failed: %s", e, exc_info=True)
+        return f"Error executing {tool_name}: {e!s}", duration

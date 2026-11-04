@@ -1,0 +1,601 @@
+"""
+Unit tests for backend/app/routers/kbli_notebook_chat.py
+Covers: helper functions, LLM gateway singleton, language detection,
+non-business query check, multi-domain check, translate, explain,
+uncertified-parent exclusion, known codes, keyword injection map.
+Direct function calls (no TestClient) for maximum coverage.
+"""
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+# ============================================================
+# Module-level LLM gateway mock
+# ============================================================
+
+_mock_llm_gateway = MagicMock()
+_mock_llm_gateway._available = True
+_mock_llm_gateway.create_chat_with_history = MagicMock(return_value=MagicMock())
+_mock_llm_gateway.send_message = AsyncMock(
+    return_value=(
+        "KBLI answer text",
+        "gemini-flash",
+        MagicMock(),
+        {},
+    )
+)
+
+_VERIFIED_PMA = {
+    "pma_status": "TERBUKA",
+    "pma_max_asing": 100,
+    "pma_verification_status": "located",
+    "pma_official_basis": "Perpres 49/2021 Lampiran III",
+    "pma_source_vintage": "2025-06-01",
+    "pma_cap_verified": True,
+}
+
+
+@pytest.fixture(autouse=True)
+def patch_llm_gateway():
+    with patch(
+        "backend.app.routers.kbli_notebook_chat._llm_gateway_instance",
+        _mock_llm_gateway,
+    ):
+        yield
+
+
+# ============================================================
+# FIXTURES
+# ============================================================
+
+
+# ============================================================
+# _detect_language — all branches
+# ============================================================
+
+
+def test_detect_language_english():
+    from backend.app.routers.kbli_notebook_chat import _detect_language
+
+    assert _detect_language("open a restaurant in Bali") == "English"
+
+
+def test_detect_language_indonesian():
+    from backend.app.routers.kbli_notebook_chat import _detect_language
+
+    assert _detect_language("apa syarat usaha buka restoran") == "Indonesian"
+
+
+def test_detect_language_italian():
+    from backend.app.routers.kbli_notebook_chat import _detect_language
+
+    assert _detect_language("goqame aprire una attivita") == "Italian"
+
+
+def test_detect_language_french():
+    from backend.app.routers.kbli_notebook_chat import _detect_language
+
+    assert _detect_language("je veux ouvrir une entreprise") == "French"
+
+
+def test_detect_language_spanish():
+    from backend.app.routers.kbli_notebook_chat import _detect_language
+
+    assert _detect_language("quiero abrir como negocio") == "Spanish"
+
+
+def test_detect_language_default_english():
+    from backend.app.routers.kbli_notebook_chat import _detect_language
+
+    assert _detect_language("xyz abc 123") == "English"
+
+
+# ============================================================
+# _is_non_business_query
+# ============================================================
+
+
+def test_is_non_business_query_true():
+    from backend.app.routers.kbli_notebook_chat import _is_non_business_query
+
+    assert _is_non_business_query("How do I get a KITAS?") is True
+    assert _is_non_business_query("visa requirements for Bali") is True
+    assert _is_non_business_query("best restaurant in Seminyak") is True
+    assert _is_non_business_query("KITAP renewal process") is True
+    assert _is_non_business_query("agente immigrazione") is True
+
+
+def test_is_non_business_query_false():
+    from backend.app.routers.kbli_notebook_chat import _is_non_business_query
+
+    assert _is_non_business_query("open a restaurant") is False
+    assert _is_non_business_query("KBLI code for e-commerce") is False
+
+
+# ============================================================
+# _is_multi_domain_query
+# ============================================================
+
+
+def test_is_multi_domain_query_true():
+    from backend.app.routers.kbli_notebook_chat import _is_multi_domain_query
+
+    assert _is_multi_domain_query("Can I open a restaurant with retirement KITAS?") is True
+    assert _is_multi_domain_query("PMA company visa requirements") is True
+
+
+def test_is_multi_domain_query_false():
+    from backend.app.routers.kbli_notebook_chat import _is_multi_domain_query
+
+    assert _is_multi_domain_query("What is KBLI 56101?") is False
+    assert _is_multi_domain_query("KITAS requirements for foreigners") is False
+
+
+def test_is_multi_domain_query_business_plus_legal():
+    from backend.app.routers.kbli_notebook_chat import _is_multi_domain_query
+
+    assert _is_multi_domain_query("PMA company tax regulation requirements") is True
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Can a foreigner own KBLI 01111?",
+        "Can I open a restaurant with a KITAS?",
+        "What ownership cap applies to this business?",
+        "Apakah usaha ini dapat dimiliki investor asing?",
+    ],
+)
+def test_sensitive_multi_domain_queries_require_the_structured_pma_gate(query):
+    from backend.app.routers.kbli_notebook_chat import _requires_structured_pma_gate
+
+    assert _requires_structured_pma_gate(query) is True
+
+
+def test_non_pma_business_tax_query_can_use_multi_domain_route():
+    from backend.app.routers.kbli_notebook_chat import _requires_structured_pma_gate
+
+    assert (
+        _requires_structured_pma_gate("What tax regulation applies to a restaurant business?")
+        is False
+    )
+
+
+# ============================================================
+# _get_llm_gateway singleton
+# ============================================================
+
+
+def test_get_llm_gateway_returns_cached():
+    from backend.app.routers.kbli_notebook_chat import _get_llm_gateway
+
+    gw = _get_llm_gateway()
+    # Should return the mocked instance
+    assert gw is _mock_llm_gateway
+
+
+def test_get_llm_gateway_creates_new():
+    with patch(
+        "backend.app.routers.kbli_notebook_chat._llm_gateway_instance",
+        None,
+    ):
+        fresh_gateway = MagicMock()
+        with patch(
+            "backend.services.rag.agentic.llm_gateway.LLMGateway",
+            return_value=fresh_gateway,
+        ):
+            from backend.app.routers.kbli_notebook_chat import _get_llm_gateway
+
+            # With the cached instance cleared, a new gateway is constructed
+            assert _get_llm_gateway() is fresh_gateway
+            # Restores instance after test via autouse fixture
+
+
+# ============================================================
+# _translate_query_for_kbli
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_translate_query_for_kbli_success():
+    from backend.app.routers.kbli_notebook_chat import _translate_query_for_kbli
+
+    _mock_llm_gateway.send_message = AsyncMock(
+        return_value=("restoran", "gemini-flash", MagicMock(), {})
+    )
+
+    with patch("backend.app.routers.kbli_notebook_chat.cached", lambda **kw: lambda f: f):
+        result = await _translate_query_for_kbli("restaurant")
+    assert isinstance(result, str)
+
+
+@pytest.mark.asyncio
+async def test_translate_query_gateway_unavailable():
+    from backend.app.routers.kbli_notebook_chat import _translate_query_for_kbli
+
+    _mock_llm_gateway._available = False
+    try:
+        with patch("backend.app.routers.kbli_notebook_chat.cached", lambda **kw: lambda f: f):
+            result = await _translate_query_for_kbli("xyzrandomtranslatetest")
+        # When gateway is unavailable, should return original query
+        assert result == "xyzrandomtranslatetest"
+    finally:
+        _mock_llm_gateway._available = True
+
+
+@pytest.mark.asyncio
+async def test_translate_query_empty_response():
+    from backend.app.routers.kbli_notebook_chat import _translate_query_for_kbli
+
+    _mock_llm_gateway.send_message = AsyncMock(return_value=("", "gemini-flash", MagicMock(), {}))
+
+    with patch("backend.app.routers.kbli_notebook_chat.cached", lambda **kw: lambda f: f):
+        result = await _translate_query_for_kbli("test")
+    assert result == "test"
+
+
+@pytest.mark.asyncio
+async def test_translate_query_exception():
+    from backend.app.routers.kbli_notebook_chat import _translate_query_for_kbli
+
+    _mock_llm_gateway.send_message = AsyncMock(side_effect=Exception("API Error"))
+
+    with patch("backend.app.routers.kbli_notebook_chat.cached", lambda **kw: lambda f: f):
+        result = await _translate_query_for_kbli("test query")
+    assert result == "test query"
+
+
+# ============================================================
+# _generate_kbli_explanation — success, empty, fallback
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_generate_kbli_explanation_no_results():
+    from backend.app.routers.kbli_notebook_chat import _generate_kbli_explanation
+
+    with patch("backend.app.routers.kbli_notebook_chat.cached", lambda **kw: lambda f: f):
+        result = await _generate_kbli_explanation("test", [])
+    assert "No matching" in result
+
+
+@pytest.mark.asyncio
+async def test_generate_kbli_explanation_success():
+    from backend.app.routers.kbli_notebook_chat import _generate_kbli_explanation
+
+    _mock_llm_gateway.send_message = AsyncMock(
+        return_value=("Detailed KBLI explanation", "gemini-flash", MagicMock(), {})
+    )
+
+    mock_result = MagicMock()
+    mock_result.code = "56101"
+    mock_result.title = "RESTORAN"
+    mock_result.description = "Restaurant activities"
+    mock_result.pma_status = "TERBUKA"
+    mock_result.risk_category = "Rendah"
+    mock_result.expert_legal = None
+
+    with patch("backend.app.routers.kbli_notebook_chat.cached", lambda **kw: lambda f: f):
+        result = await _generate_kbli_explanation("restaurant", [mock_result])
+    assert isinstance(result, str)
+    assert len(result) > 0
+
+
+def test_router_has_no_uncertified_parent_prose_path():
+    """A matching PMA tuple must not authenticate arbitrary parent content."""
+    import inspect
+
+    import backend.app.routers.kbli_notebook_chat as mod
+
+    source = inspect.getsource(mod)
+    assert "parent_docs" not in source
+    assert "_fetch_parent_documents_from_kbli_table" not in source
+    assert "SELECT kode_kbli, judul, content" not in source
+    assert "SELECT entity_id, name, description" not in source
+
+
+@pytest.mark.asyncio
+async def test_generate_kbli_explanation_never_sends_unbound_expert_data():
+    from backend.app.routers.kbli_notebook import KBLISearchResult
+    from backend.app.routers.kbli_notebook_chat import _generate_kbli_explanation
+
+    _mock_llm_gateway.send_message = AsyncMock(
+        return_value=("Answer with expert data", "gemini-flash", MagicMock(), {})
+    )
+
+    result_model = KBLISearchResult(
+        code="56101",
+        title="RESTORAN",
+        description="Restaurant",
+        score=1.0,
+        risk_category="Rendah",
+        **_VERIFIED_PMA,
+    )
+    # Simulate a stale object populated after response-model validation. The
+    # model boundary must ignore it even when the structured PMA tuple is valid.
+    result_model.expert_legal = {
+        "bab": "III",
+        "pasal": "12",
+        "pb_umku": ["PB-001"],
+        "pma_implications": "Full foreign ownership allowed",
+    }
+
+    with patch(
+        "backend.app.routers.kbli_notebook_chat._fill_bali_verdicts",
+        new=AsyncMock(),
+    ):
+        result = await _generate_kbli_explanation.__wrapped__("restaurant", [result_model])
+
+    assert isinstance(result, str)
+    message = _mock_llm_gateway.send_message.await_args.kwargs["message"]
+    assert "Full foreign ownership allowed" not in message
+    assert "PB-001" not in message
+
+
+@pytest.mark.asyncio
+async def test_generate_kbli_explanation_llm_error_fallback():
+    from backend.app.routers.kbli_notebook_chat import _generate_kbli_explanation
+
+    _mock_llm_gateway._available = False
+
+    mock_result = MagicMock()
+    mock_result.code = "56101"
+    mock_result.title = "RESTORAN"
+    mock_result.description = "Restaurant"
+    mock_result.pma_status = "TERBUKA"
+    mock_result.risk_category = "Rendah"
+    mock_result.expert_legal = None
+
+    with patch("backend.app.routers.kbli_notebook_chat.cached", lambda **kw: lambda f: f):
+        result = await _generate_kbli_explanation("restaurant", [mock_result])
+    assert "KBLI" in result or "56101" in result
+
+    _mock_llm_gateway._available = True
+
+
+@pytest.mark.asyncio
+async def test_generate_kbli_explanation_empty_response():
+    from backend.app.routers.kbli_notebook_chat import _generate_kbli_explanation
+
+    _mock_llm_gateway.send_message = AsyncMock(return_value=("", "gemini-flash", MagicMock(), {}))
+
+    mock_result = MagicMock()
+    mock_result.code = "56101"
+    mock_result.title = "RESTORAN"
+    mock_result.description = "Restaurant"
+    mock_result.pma_status = "TERBUKA"
+    mock_result.risk_category = "Rendah"
+    mock_result.expert_legal = None
+
+    with patch("backend.app.routers.kbli_notebook_chat.cached", lambda **kw: lambda f: f):
+        result = await _generate_kbli_explanation("restaurant", [mock_result])
+    # Should still return something (fallback)
+    assert isinstance(result, str)
+
+
+@pytest.mark.asyncio
+async def test_generate_kbli_explanation_indonesian_fallback():
+    from backend.app.routers.kbli_notebook_chat import _generate_kbli_explanation
+
+    _mock_llm_gateway.send_message = AsyncMock(side_effect=Exception("LLM failed"))
+
+    mock_result = MagicMock()
+    mock_result.code = "56101"
+    mock_result.title = "RESTORAN"
+    mock_result.description = "Restoran"
+    mock_result.pma_status = "TERBUKA"
+    mock_result.risk_category = "Rendah"
+    mock_result.expert_legal = None
+
+    with patch("backend.app.routers.kbli_notebook_chat.cached", lambda **kw: lambda f: f):
+        result = await _generate_kbli_explanation("apa syarat usaha restoran", [mock_result])
+    assert "Ditemukan" in result
+
+
+# ============================================================
+# KNOWN_KBLI_CODES and NON_BUSINESS_KEYWORDS
+# ============================================================
+
+
+def test_the_keyword_map_routes_without_asserting_facts():
+    """The hand-written answer table behind these two tests was deleted 2026-09-20.
+
+    What it used to be sampled for — that a keyword route resolves 47901 and 56301
+    with a PMA status the catalogue agrees with — is now answered by the stores,
+    so the structural claim left to make here is that the ROUTE exists and that
+    nothing beside it carries a verdict. Whether a routed code is legitimate is
+    asserted against canonical by
+    test_kbli_hardcoded_fallback_matches_catalogue.py, which sweeps the whole map
+    instead of sampling it.
+    """
+    import inspect
+
+    from backend.app.routers import kbli_notebook_chat
+
+    source = inspect.getsource(kbli_notebook_chat)
+    assert "_activity_keyword_map" in source
+    assert "KNOWN_KBLI_CODES" not in source
+    assert '"47901"' in source, "the e-commerce route must still name the live successor"
+    assert "_resolve_code_from_stores(pool, target_code)" in source, (
+        "the keyword route must resolve its facts through the stores"
+    )
+
+
+def test_master_prompt_does_not_override_56301_as_closed_to_pma():
+    from backend.app.routers.kbli_notebook_chat import KBLI_MASTER_PROMPT
+
+    prompt = KBLI_MASTER_PROMPT.format(lang="English")
+    assert "KBLI 56301, PMA TERTUTUP" not in prompt
+    assert "foreigners CANNOT own a bar" not in prompt
+
+
+def test_master_prompt_does_not_flatten_56101_pma_risk_to_medium_low():
+    from backend.app.routers.kbli_notebook_chat import KBLI_MASTER_PROMPT
+
+    prompt = KBLI_MASTER_PROMPT.format(lang="English")
+    assert (
+        "56101 = AKTIVITAS PENYEDIAAN MAKANAN DI BANGUNAN TETAP (RESTORAN) "
+        "— Restaurant services with permanent building. PMA: TERBUKA "
+        "(open to foreigners), Risiko: Menengah Rendah."
+    ) not in prompt
+    assert "Risk is scale-dependent" in prompt
+    assert "PMA/Besar: Menengah Tinggi" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_kbli_explanation_adds_large_scale_note_for_56101_pma():
+    from backend.app.routers.kbli_notebook_chat import _generate_kbli_explanation
+
+    _mock_llm_gateway.send_message = AsyncMock(
+        return_value=("KBLI 56101 PMA answer", "gemini-flash", MagicMock(), {})
+    )
+
+    mock_result = MagicMock()
+    mock_result.code = "56101"
+    mock_result.title = "AKTIVITAS PENYEDIAAN MAKANAN DI BANGUNAN TETAP"
+    mock_result.description = "Restaurant activities"
+    mock_result.pma_status = "TERBUKA"
+    mock_result.risk_category = "Menengah Rendah"
+    mock_result.expert_legal = None
+
+    await _generate_kbli_explanation(
+        "Tell me about KBLI 56101 for a foreign-owned restaurant in Bali.",
+        [mock_result],
+    )
+
+    message = _mock_llm_gateway.send_message.call_args.kwargs["message"]
+    assert "PMA/foreign-owned scale note" in message
+    assert "skala usaha Besar" in message
+    assert "Menengah Tinggi" in message
+    assert "Do not describe a PT PMA restaurant as Menengah Rendah" in message
+
+
+# ============================================================
+# BKPM 5/2025 capital doctrine + risk-analogy abstention
+# (FATAL-3 residual: chat_kbli generation prompt was asserting the
+# stale pre-BKPM-5/2025 Rp 10 Billion paid-up capital figure)
+# ============================================================
+
+
+def test_master_prompt_states_bkpm_5_2025_paidup_capital_correctly():
+    """Guilt check: the corrected Rp 2.5bn modal disetor figure (BKPM 5/2025,
+    effective 2025-10-02) must be present, and the OLD stale sentence that
+    called Rp 10 Billion the paid-up capital minimum must be gone."""
+    from backend.app.routers.kbli_notebook_chat import KBLI_MASTER_PROMPT
+
+    prompt = KBLI_MASTER_PROMPT.format(lang="English")
+    assert "Rp 2.5 Billion" in prompt
+    assert "BKPM 5/2025" in prompt
+    assert "2025-10-02" in prompt
+    # The old, wrong sentence must not survive anywhere in the prompt.
+    assert "Modal Disetor Minimum for PMA = Rp 10 Billion" not in prompt
+    assert "mention the Rp 10 Billion minimum Capital Paid Up requirement" not in prompt
+
+
+def test_master_prompt_distinguishes_paidup_capital_from_investment_value():
+    """The two DIFFERENT Rp thresholds (modal disetor vs minimum investment
+    value per KBLI per location) must both be present and explicitly
+    distinguished — never conflated into a single Rp 10bn 'paid-up capital'
+    claim."""
+    from backend.app.routers.kbli_notebook_chat import KBLI_MASTER_PROMPT
+
+    prompt = KBLI_MASTER_PROMPT.format(lang="English")
+    assert "Rp 2.5 Billion" in prompt
+    assert "more than Rp 10 Billion" in prompt
+    assert "NEVER present Rp 10 Billion as the modal disetor" in prompt
+
+
+def test_master_prompt_forbids_risk_tier_estimation_by_analogy():
+    """Guilt check: abstention hardening — the prompt must explicitly forbid
+    guessing a licensing risk tier for a code by analogy with other codes
+    when the context has no verified risk_category."""
+    from backend.app.routers.kbli_notebook_chat import KBLI_MASTER_PROMPT
+
+    prompt = KBLI_MASTER_PROMPT.format(lang="English")
+    assert "NEVER estimate a licensing risk tier" in prompt
+    assert "analogy with other codes" in prompt
+    assert "do not guess a plausible tier" in prompt
+
+
+def test_master_prompt_does_not_bake_source_free_code_verdicts_into_context():
+    """The master prompt is not an evidence store. Per-code ownership and risk
+    facts must arrive through the structured result gate, not static prose that
+    cannot carry its official basis and source vintage."""
+    from backend.app.routers.kbli_notebook_chat import KBLI_MASTER_PROMPT
+
+    prompt = KBLI_MASTER_PROMPT.format(lang="English")
+    assert "PMA/Besar: Menengah Tinggi" not in prompt
+    assert "56210 = AKTIVITAS JASA BOGA UNTUK ACARA TERTENTU" in prompt
+    assert "56210 PMA TERBUKA" not in prompt
+    assert "Risiko: Menengah Tinggi" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_kbli_explanation_message_states_correct_capital_thresholds():
+    """The per-call message built for the LLM (CAPITAL REQUIREMENTS line)
+    must carry the corrected doctrine, not the old stale Rp 10bn phrasing."""
+    from backend.app.routers.kbli_notebook_chat import _generate_kbli_explanation
+
+    _mock_llm_gateway.send_message = AsyncMock(
+        return_value=("PMA capital answer", "gemini-flash", MagicMock(), {})
+    )
+
+    mock_result = MagicMock()
+    mock_result.code = "56101"
+    mock_result.title = "AKTIVITAS PENYEDIAAN MAKANAN DI BANGUNAN TETAP"
+    mock_result.description = "Restaurant activities"
+    mock_result.pma_status = "TERBUKA"
+    mock_result.risk_category = "Menengah Tinggi"
+    mock_result.expert_legal = None
+
+    with patch("backend.app.routers.kbli_notebook_chat.cached", lambda **kw: lambda f: f):
+        await _generate_kbli_explanation(
+            "What is the minimum capital for a PMA restaurant?", [mock_result]
+        )
+
+    message = _mock_llm_gateway.send_message.call_args.kwargs["message"]
+    assert "Rp 2.5 Billion" in message
+    assert "more than Rp 10 Billion" in message
+    assert "Never call Rp 10 Billion the paid-up capital minimum" in message
+    assert "mention the Rp 10 Billion minimum paid-up capital" not in message
+
+
+def test_non_business_keywords_list():
+    from backend.app.routers.kbli_notebook_chat import NON_BUSINESS_KEYWORDS
+
+    assert isinstance(NON_BUSINESS_KEYWORDS, list)
+    assert "kitas" in NON_BUSINESS_KEYWORDS
+    assert "visa" in NON_BUSINESS_KEYWORDS
+    assert "best restaurant" in NON_BUSINESS_KEYWORDS
+
+
+# ============================================================
+# MIN_RELEVANCE_SCORE constant
+# ============================================================
+
+
+def test_min_relevance_score():
+    from backend.app.routers.kbli_notebook_chat import MIN_RELEVANCE_SCORE
+
+    # Recalibrated 2026-07-08 against the live prod score distribution (legit
+    # keywords bottom out at 0.18; off-domain noise tops out at ~0.16). The old
+    # 0.40 sat above the entire legit band and abstained on every natural query.
+    assert MIN_RELEVANCE_SCORE == 0.18
+
+
+# ============================================================
+# _generate_kbli_explanation_gemini delegates
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_generate_kbli_explanation_gemini_delegates():
+    from backend.app.routers.kbli_notebook_chat import _generate_kbli_explanation_gemini
+
+    with patch(
+        "backend.app.routers.kbli_notebook_chat._generate_kbli_explanation",
+        new=AsyncMock(return_value="delegated answer"),
+    ):
+        result = await _generate_kbli_explanation_gemini("test", [])
+    assert result == "delegated answer"

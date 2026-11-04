@@ -1,0 +1,41 @@
+{
+  "code": "E23Y",
+  "official_name_id": "E23Y Visa Kerja Tenaga Ahli Bidang Digital",
+  "source_url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/E23Y",
+  "retrieved_at": "2026-10-17T13:27:33Z",
+  "page_sha256": "10e6765a17b8fdd08378bce6b8e6f81f5357ee03c545d0175c97eade8b8a0a60",
+  "definition_verbatim": null,
+  "jenis_visa_verbatim": null,
+  "stay_days": null,
+  "extendable": null,
+  "entry": null,
+  "where_to_apply": null,
+  "sponsor_required": {
+    "as_stated_boolean": null,
+    "verbatim": null,
+    "invitation_requirement_see": "requirements_verbatim (Persyaratan Khusus)"
+  },
+  "requirements_verbatim": [],
+  "pengajuan_intro_verbatim": null,
+  "allowed_activities": null,
+  "prohibited_or_conditions_verbatim": [],
+  "ketentuan_lain_verbatim": [],
+  "pnbp_verbatim_for_reference_only": [],
+  "itap_verbatim": null,
+  "itap_eligibility_as_stated": null,
+  "total_max_verbatim": null,
+  "notes": [
+    "HTTP 200 with a title alone does not constitute a populated visa page."
+  ],
+  "status": "NOT_FOUND",
+  "to_verify": [
+    "Source content unavailable; no requirements inferred.",
+    "itap_verbatim and itap_eligibility_as_stated: null + TO_VERIFY; see ITAP.json."
+  ],
+  "conflicts": [],
+  "source_http_status": 200,
+  "source_raw_path": "raw/E23Y.html",
+  "not_found_reason": "Data Belum Tersedia",
+  "itap_eligibility_as_stated_boolean": null,
+  "itap_status": "TO_VERIFY"
+}

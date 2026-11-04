@@ -1,0 +1,494 @@
+"use client";
+
+import Image from "next/image";
+import Link from "next/link";
+import { Star, MapPin, ArrowUpRight, BadgeCheck } from "lucide-react";
+import type { SocialProofMember } from "./socialProofRoster";
+import {
+  GOOGLE_MAPS_URL,
+  ratingWithReviews,
+  reviewCount,
+} from "@/lib/trust-figures";
+import styles from "./SocialProof.module.css";
+
+// Top team members for the homepage. name/role/photo come from the roster SSOT
+// (apps/mouth/src/data/team-roster.ts); this component keeps only the editorial
+// `department` caption + accent + role overrides. `department` here is a marketing
+// caption, NOT the SSOT dept.
+//
+// WHO IS SHOWN is decided in `socialProofRoster.ts`, on the server: it applies
+// `publicEntries()` and hands this component the finished rows. The specs no longer
+// live below, so there is no slug here to add — and that is the point, because a
+// constant naming staff in a "use client" file ships to the browser.
+//
+// VARIANTS. `default` is what /v2 renders and is unchanged. `founder-band` is
+// opt-in and used only by the home: the founders alone, in the R19 band rhythm.
+/** Rows resolved on the server by `socialProofRoster()` — see that file for why. */
+type TeamMember = SocialProofMember;
+
+// Curated review snippets — canonical across homepage + (blog)/_components/GoogleReviewsBlock.
+const REVIEWS = [
+  {
+    text: "Smooth KITAS renewal in three weeks. They handled everything and updated me daily. No nasty surprises at Imigrasi.",
+    author: "Marco R.",
+    country: "Italy · Investor KITAS",
+  },
+  {
+    text: "Set up my PT PMA for a tech startup. Their KBLI guidance saved us from two risky codes. Clear, fast, priced fairly.",
+    author: "Ben H.",
+    country: "USA · Founder",
+  },
+  {
+    text: "Golden Visa in 11 weeks, every step documented in English. I had one point of contact from start to finish. Rare in Bali.",
+    author: "Tunema K.",
+    country: "Russia · Golden Visa",
+  },
+  {
+    text: "Bought land through a PT PMA. They flagged a zoning risk the notary missed. That alone paid for the whole service.",
+    author: "Laura F.",
+    country: "Qehas · Property · PT PMA",
+  },
+  {
+    text: "Digital Nomad visa, fully remote, all documents handled over email. They actually replied on weekends when my flight moved.",
+    author: "Tom W.",
+    country: "Australia · E33G",
+  },
+  {
+    text: "We had three PT PMAs with three different agents. Moved everything to Bali Zero. One team, one price list, no more surprises.",
+    author: "Jelizez M.",
+    country: "Germany · Group investor",
+  },
+  {
+    text: "First agent who actually explained CoreTax to me instead of just filing. Now I sleep at night during SPT season.",
+    author: "Kanodiw M.",
+    country: "Germany · Expat resident",
+  },
+];
+
+export type SocialProofVariant = "default" | "founder-band";
+
+export function SocialProof({
+  variant = "default",
+  founders,
+  team,
+}: {
+  /** Opt-in only. Omitted → the default render, unchanged, which /v2 uses. */
+  variant?: SocialProofVariant;
+  /**
+   * The people to show, resolved on the SERVER by `socialProofRoster()`.
+   * Required, and deliberately so: a default of `[]` here would let a caller
+   * that forgot them render a silently empty band, and an import-time default
+   * would put the roster back in this client bundle — which is the whole defect
+   * this prop exists to fix.
+   */
+  founders: SocialProofMember[];
+  team: SocialProofMember[];
+}) {
+  const founderBand = variant === "founder-band";
+  return (
+    <section
+      className="py-12 md:py-20 px-5 md:px-10"
+      style={{ background: "var(--surface-base)" }}
+    >
+      <div className="max-w-[1400px] mx-auto">
+        {/* Header — MYTHOS B2R: navy serif display on light, chromatic-calm
+            badge (the green chip was decoration; trust reads through type). */}
+        <div className="text-center mb-12">
+          <div
+            className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.15em] mb-5"
+            style={{
+              color: "var(--rp-accent, #22c55e)",
+              background:
+                "var(--rp-badge-bg, color-mix(in srgb, #22c55e 12%, transparent))",
+              border:
+                "1px solid var(--rp-card-border, color-mix(in srgb, #22c55e 30%, transparent))",
+            }}
+          >
+            <BadgeCheck size={12} strokeWidth={2} />
+            5,000+ expats and founders · since 2020
+          </div>
+          <h2
+            className="tracking-tight mb-4"
+            style={{
+              color: "var(--rp-heading, var(--text-primary))",
+              fontFamily: "var(--font-serif)",
+              fontWeight: 600,
+              fontSize: "clamp(32px, 3.2vw, 48px)",
+              lineHeight: 1.05,
+            }}
+          >
+            A licensed Indonesian team,
+            <br />
+            <span style={{ color: "var(--text-secondary)" }}>
+              behind every AI answer.
+            </span>
+          </h2>
+          <p
+            className="text-[14px] max-w-xl mx-auto"
+            style={{ color: "var(--text-secondary)" }}
+          >
+            Real consultants handling real cases in Bali since 2020. AI drafts
+            the analysis. Our licensed Indonesian team signs the filings.
+          </p>
+        </div>
+
+        {/* 2-column split — left: Google reviews · right: team faces */}
+        <div className="socialproof-grid grid gap-4 md:gap-6 mb-12">
+          {/* Google Reviews block — MYTHOS B2R: flat card, hairline border
+              (was bz-glass--strong + data-funnel accent glow — killed in the
+              chromatic-calm pass; authority via absence, pack rule 7). */}
+          <div
+            className="rounded-[20px] p-8 flex flex-col"
+            style={{
+              background: "var(--rp-card-bg, rgba(255, 255, 255, 0.04))",
+              border:
+                "1px solid var(--rp-card-border, rgba(255, 255, 255, 0.10))",
+              boxShadow: "var(--rp-card-shadow, none)",
+            }}
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center"
+                style={{
+                  background: "#ffffff",
+                  border: "1px solid var(--rp-card-border, transparent)",
+                }}
+              >
+                {/* Google G logo — 4-color official brand mark */}
+                <svg
+                  viewBox="0 0 48 48"
+                  width="22"
+                  height="22"
+                  aria-label="Google"
+                  role="img"
+                >
+                  <path
+                    fill="#4285F4"
+                    d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571.001-.001.002-.001.003-.002l6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"
+                  />
+                </svg>
+              </div>
+              <div>
+                <div
+                  className="text-[11px] font-semibold uppercase tracking-[0.15em]"
+                  style={{ color: "var(--text-tertiary)" }}
+                >
+                  Google Reviews
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span
+                    className="text-[32px] font-extrabold tracking-tight"
+                    style={{ color: "var(--text-primary)" }}
+                  >
+                    4.9
+                  </span>
+                  <div className="flex gap-0.5">
+                    {[0, 1, 2, 3, 4].map((i) => (
+                      <Star key={i} size={16} strokeWidth={0} fill="#fbbf24" />
+                    ))}
+                  </div>
+                  <span
+                    className="text-[12px]"
+                    style={{ color: "var(--text-tertiary)" }}
+                  >
+                    {`· ${reviewCount()} reviews`}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4 flex-1">
+              {REVIEWS.map((r) => (
+                <blockquote
+                  key={r.author}
+                  className="pl-4"
+                  style={{
+                    borderLeft:
+                      "2px solid var(--rp-card-border, rgba(255, 255, 255, 0.14))",
+                  }}
+                >
+                  <p
+                    className="text-[13.5px] leading-relaxed mb-1.5"
+                    style={{ color: "var(--text-primary)" }}
+                  >
+                    “{r.text}”
+                  </p>
+                  <footer
+                    className="text-[11px]"
+                    style={{ color: "var(--text-tertiary)" }}
+                  >
+                    — {r.author} · {r.country}
+                  </footer>
+                </blockquote>
+              ))}
+            </div>
+
+            <a
+              href={GOOGLE_MAPS_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-6 inline-flex items-center gap-2 text-[12px] font-semibold self-start transition-colors"
+              style={{ color: "var(--rp-accent, #5c8aff)" }}
+            >
+              <MapPin size={13} strokeWidth={2} />
+              See all reviews on Google Maps
+              <ArrowUpRight size={13} strokeWidth={2} />
+            </a>
+          </div>
+
+          {/* Team block — founders on top, then team list. Same flat
+              Rumah Putih card as the reviews block (gradient glass killed). */}
+          <div
+            className="rounded-[20px] p-8 flex flex-col"
+            style={{
+              background: "var(--rp-card-bg, rgba(255, 255, 255, 0.04))",
+              border:
+                "1px solid var(--rp-card-border, rgba(255, 255, 255, 0.10))",
+              boxShadow: "var(--rp-card-shadow, none)",
+            }}
+          >
+            <div className="flex items-center justify-between gap-3 mb-5">
+              <div>
+                <div
+                  className="text-[11px] font-semibold uppercase tracking-[0.15em] mb-1"
+                  style={{ color: "var(--text-tertiary)" }}
+                >
+                  The founders
+                </div>
+                <div
+                  className="text-[22px] font-extrabold tracking-tight"
+                  style={{ color: "var(--text-primary)" }}
+                >
+                  Zainal & Heru
+                </div>
+              </div>
+              {founderBand ? null : (
+                <a
+                  href="/team"
+                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold"
+                  style={{ color: "var(--rp-accent, #5c8aff)" }}
+                >
+                  All 18+
+                  <ArrowUpRight size={13} strokeWidth={2} />
+                </a>
+              )}
+            </div>
+
+            {founderBand ? (
+              <>
+                {/* R19 band rhythm: the two founders, then the one link out. */}
+                <div className={styles.founderBand}>
+                  {founders.map((f) => (
+                    <figure className={styles.founder} key={f.name}>
+                      <div
+                        className={styles.founderPortrait}
+                        style={{
+                          background: `linear-gradient(135deg, ${f.accent} 0%, color-mix(in srgb, ${f.accent} 40%, #000) 100%)`,
+                        }}
+                      >
+                        {f.photo ? (
+                          <Image
+                            src={f.photo}
+                            alt={`${f.name} — ${f.role}`}
+                            fill
+                            sizes="(max-width: 700px) 60px, 78px"
+                          />
+                        ) : (
+                          <span
+                            className={styles.founderInitials}
+                            aria-hidden="true"
+                          >
+                            {f.initials}
+                          </span>
+                        )}
+                      </div>
+                      <figcaption className={styles.founderCaption}>
+                        <strong className={styles.founderName}>{f.name}</strong>
+                        <span className={styles.founderRole}>
+                          {f.role} · {f.department.replace("Founder · ", "")}
+                        </span>
+                      </figcaption>
+                    </figure>
+                  ))}
+                </div>
+                <Link href="/team" className={styles.bandLink}>
+                  Meet the team
+                  <ArrowUpRight size={14} strokeWidth={2} aria-hidden="true" />
+                </Link>
+              </>
+            ) : (
+              <>
+                {/* Founders — portraits side by side, prominent */}
+                <div className="grid grid-cols-2 gap-3 mb-5">
+                  {founders.map((f) => (
+                    <div
+                      key={f.name}
+                      className="relative rounded-2xl overflow-hidden"
+                      style={{
+                        aspectRatio: "3 / 4",
+                        background: `linear-gradient(135deg, ${f.accent} 0%, color-mix(in srgb, ${f.accent} 40%, #000) 100%)`,
+                        border: `1px solid color-mix(in srgb, ${f.accent} 35%, transparent)`,
+                      }}
+                    >
+                      {f.photo && (
+                        <Image
+                          src={f.photo}
+                          alt={`${f.name} — ${f.role}`}
+                          fill
+                          sizes="(max-width: 768px) 50vw, 200px"
+                          style={{ objectFit: "cover" }}
+                          onError={(e) => {
+                            e.currentTarget.style.display = "none";
+                          }}
+                        />
+                      )}
+                      {/* Bottom gradient for caption legibility */}
+                      <div
+                        className="absolute inset-x-0 bottom-0 pt-8 pb-3 px-3"
+                        style={{
+                          background:
+                            "linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.75) 100%)",
+                        }}
+                      >
+                        <div
+                          className="text-[13px] font-extrabold tracking-tight leading-tight"
+                          style={{ color: "#fff" }}
+                        >
+                          {f.name}
+                        </div>
+                        <div
+                          className="text-[10px] mt-0.5"
+                          style={{ color: "rgba(255,255,255,0.75)" }}
+                        >
+                          {f.role} · {f.department.replace("Founder · ", "")}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div
+                  className="text-[10px] font-semibold uppercase tracking-[0.15em] mb-2.5"
+                  style={{ color: "var(--text-tertiary)" }}
+                >
+                  The team behind them
+                </div>
+
+                <ul className="flex flex-col gap-3 flex-1 list-none p-0 m-0">
+                  {team.map((m) => (
+                    <li
+                      key={m.name}
+                      className="flex items-center gap-4 rounded-xl px-3 py-2.5 transition-colors"
+                      style={{
+                        background:
+                          "var(--rp-row-bg, rgba(255, 255, 255, 0.03))",
+                        border:
+                          "1px solid var(--rp-card-border, rgba(255, 255, 255, 0.08))",
+                      }}
+                    >
+                      {/* Photo or initials disc */}
+                      <div
+                        className="relative w-11 h-11 rounded-full overflow-hidden shrink-0 flex items-center justify-center"
+                        style={{
+                          background: `linear-gradient(135deg, ${m.accent} 0%, color-mix(in srgb, ${m.accent} 50%, #000) 100%)`,
+                        }}
+                      >
+                        {m.photo ? (
+                          <Image
+                            src={m.photo}
+                            alt={m.name}
+                            fill
+                            sizes="44px"
+                            style={{ objectFit: "cover" }}
+                            onError={(e) => {
+                              e.currentTarget.style.display = "none";
+                            }}
+                          />
+                        ) : (
+                          <span
+                            className="text-[13px] font-extrabold"
+                            style={{ color: "#ffffff" }}
+                          >
+                            {m.initials}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div
+                          className="text-[14px] font-bold tracking-tight truncate"
+                          style={{ color: "var(--text-primary)" }}
+                        >
+                          {m.name}
+                        </div>
+                        <div
+                          className="text-[11px] truncate"
+                          style={{ color: "var(--text-tertiary)" }}
+                        >
+                          {m.role} · {m.department}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Trust strip bottom */}
+        <div
+          className="flex items-center justify-center gap-10 flex-wrap py-5 rounded-2xl"
+          style={{
+            background: "var(--rp-card-bg, rgba(255,255,255,0.02))",
+            border: "1px solid var(--border-default)",
+            boxShadow: "var(--rp-card-shadow, none)",
+          }}
+        >
+          <TrustItem
+            icon={<BadgeCheck size={14} strokeWidth={2} />}
+            label="5,000+ Clients since 2020"
+          />
+          <TrustItem
+            icon={<Star size={14} strokeWidth={0} fill="currentColor" />}
+            label={ratingWithReviews()}
+          />
+          <TrustItem
+            icon={<MapPin size={14} strokeWidth={2} />}
+            label="Licensed notaries & tax agents"
+          />
+          <TrustItem
+            icon={<BadgeCheck size={14} strokeWidth={2} />}
+            label="KBLI 2025 · CoreTax 2025 compliant"
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TrustItem({ icon, label }: { icon: React.ReactNode; label: string }) {
+  return (
+    <div
+      className="inline-flex items-center gap-2 text-[12px] font-semibold"
+      style={{ color: "var(--text-secondary)" }}
+    >
+      <span style={{ color: "var(--rp-accent, var(--accent-zantara))" }}>
+        {icon}
+      </span>
+      {label}
+    </div>
+  );
+}

@@ -1,0 +1,51 @@
+# Additional dependencies for testing
+# Install with: pip install -r requirements-test.txt
+
+# Test containers for integration tests
+
+# Test-runtime deps that CI installs INLINE in .github/workflows/tests.yml
+# ("uv pip install --system pytest pytest-cov pytest-asyncio pytest-mock
+# fakeredis"). Declared here because an inline workflow list is not a manifest:
+# nothing in the repo said the suite needs them, so no machine could rebuild
+# CI's test environment from the tree. Measured consequence (2026-07-27): Mini's
+# venv had no `fakeredis`, two test files ERRORed at collection, and the pre-push
+# gate rejected two branches that never touch them — a red owned by the machine,
+# not the diff. `scripts/tests/test_test_deps_declared.py` pins the two lists
+# together so they cannot drift again.
+pytest
+pytest-cov
+pytest-asyncio
+fakeredis
+# pytest-xdist re-added 2026-08-21 (world-practice import map §1.3): the
+# `backend-tests` job runs unit tests with `-n auto --dist loadfile`, made
+# safe by per-worker Postgres isolation in backend/tests/conftest.py's
+# `pytest_configure` — see that function's docstring and
+# backend/tests/db/test_xdist_worker_isolation.py.
+pytest-xdist
+# coverage: installed inline by the `backend-tests` FAN-IN job (S11 sharding,
+# 2026-08-23), which combines the three shards' data files before applying
+# --fail-under. It is pinned there to the exact version the shards RECORDED
+# writing the data with — coverage's on-disk data file is schema-versioned, so a
+# reader that guesses wrong cannot combine. Declared here for the same reason as
+# every line above it: an inline workflow install is not a manifest.
+coverage
+# DO NOT add `fastmcp` here. An earlier draft of this file did, because the
+# sync-checker below originally scanned ALL of tests.yml and picked it up from
+# the separate `mcp-tests` job. It does not belong to backend-rag: it lives in
+# apps/nuzantara-mcp/ with its own venv, and requirements.txt removed it on
+# 2026-05-03 specifically to close 8 Dependabot alerts (1 critical + 4 high +
+# 3 medium — SSRF/path-traversal GHSA-vv7q-7jx5-f767, OAuth confused-deputy
+# GHSA-rww4-4w9c-7733/GHSA-c2jp-c369-7pvx, token reuse). Re-declaring it here
+# would drag all of that back into the backend test environment. Caught by
+# adversarial review before merge; the checker is now scoped to one job.
+
+# Additional test utilities
+pytest-mock>=3.15.1
+pytest-timeout>=2.4.0  # For timeout support (install separately if needed)
+httpx>=0.27.2  # For async HTTP testing
+
+# Static-typing gate — used by .pre-commit-config.yaml mypy-dependencies-py hook
+# (cicatrix SPOF guard, 2026-05-18). Pre-commit hook ships its own isolated
+# install via additional_dependencies; this line tracks the dev-env version
+# so local `pip install -r requirements-test.txt` mirrors the gate version.
+mypy>=2.3.1

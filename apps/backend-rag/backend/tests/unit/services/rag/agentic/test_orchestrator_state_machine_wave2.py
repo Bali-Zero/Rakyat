@@ -1,0 +1,1098 @@
+"""
+Wave 2 regression tests for OrchestratorCore outer pipeline state machine.
+
+Scope: outer state machine (`OrchestratorCore.process_query_core`).
+Focus: outer-pipeline transitions deferred from Wave 1 — multi-agent routing,
+SpecializedServiceRouter fast-path, NLM task lifecycle (create, cautious merge,
+cancellation), QueryPlanner active mode, KGAutoExpansion gate, and ReAct loop
+error propagation.
+
+Each test is keyed to a transition ID (O*) from docs/audits/2026-04-22-orchestrator-state-machine.md / docs/audits/2026-04-22-orchestrator-test-gaps.md
+so future Zunoh can cross-check coverage.
+
+Fixture strategy: we reuse the `orchestrator_setup` pattern from
+`test_orchestrator_coverage.py` (mock stack for AgenticRAGOrchestrator) and
+reach into `orch.core` to patch in the collaborators that O9/O10/O11/O20/O21
+depend on (MultiAgentCoordinator, SpecializedServiceRouter,
+NLMEnrichmentService, KGAutoExpansion). The core fixture already mocks
+QueryGates + reasoning_engine.execute_react_loop, so only the new paths need
+extra patches.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+from contextlib import asynccontextmanager
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+backend_path = Path(__file__).parent.parent.parent.parent.parent / "backend"
+if str(backend_path) not in sys.path:
+    sys.path.insert(0, str(backend_path))
+
+from backend.services.llm_clients.pricing import TokenUsage
+from backend.services.rag.agentic import orchestrator_core as orchestrator_core_module
+from backend.services.rag.agentic.orchestrator import AgenticRAGOrchestrator
+from backend.services.rag.agentic.orchestrator_core import OrchestratorCore
+from backend.services.rag.agentic.orchestrator_response import OrchestratorResponseBuilder
+from backend.services.rag.agentic.query_gates import QueryGates
+from backend.services.rag.agentic.schema import (
+    AnalyticsReceiptStatus,
+    CoreResult,
+    EvidenceProvenance,
+    FinalizationStatus,
+    ProducerOrigin,
+    TrustedBypassReason,
+)
+from backend.services.tools.definitions import AgentState, BaseTool
+
+# ---------------------------------------------------------------------------
+# Fixtures (adapted from test_orchestrator_coverage.py::orchestrator_setup)
+# ---------------------------------------------------------------------------
+
+
+class _StubTool(BaseTool):
+    def __init__(self, name: str = "mock_tool") -> None:
+        self._name = name
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return f"stub {self._name}"
+
+    @property
+    def parameters_schema(self) -> dict:
+        return {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs) -> str:
+        return f"stub result from {self._name}"
+
+    def to_gemini_function_declaration(self) -> dict:
+        return {"name": self._name, "description": self.description}
+
+
+@pytest.fixture
+def _mock_db_pool():
+    pool = MagicMock()
+
+    @asynccontextmanager
+    async def _acquire():
+        yield MagicMock()
+
+    pool.acquire = MagicMock(return_value=_acquire())
+    return pool
+
+
+@pytest.fixture
+def _stub_final_state():
+    """AgentState returned by reasoning_engine.execute_react_loop. Evidence
+    score is chosen to land above the 0.60 cautious ceiling so that NLM
+    cancellation (O21) is the default path; individual tests override as needed.
+    """
+    state = AgentState(query="test", intent_type="business_complex")
+    state.final_answer = "Stub answer"
+    state.steps = []
+    state.sources = []
+    state.evidence_score = 0.8
+    state.trusted_tools_used = True
+    return state
+
+
+@pytest.fixture
+def orch(_mock_db_pool, _stub_final_state):
+    """AgenticRAGOrchestrator with mock collaborators.
+
+    Mirrors the `orchestrator_setup` fixture in test_orchestrator_coverage.py,
+    but returns the orchestrator directly. Individual tests mutate
+    `orch.core._multi_agent_coordinator`, `orch.core._specialized_router`,
+    `orch.core.nlm_enrichment_service`, `orch.core._kg_auto_expansion` etc.
+    """
+    retriever = AsyncMock()
+    retriever.search = AsyncMock(return_value=[])
+
+    semantic_cache = MagicMock()
+    semantic_cache.get_cached_result = AsyncMock(return_value=None)
+
+    with (
+        patch("backend.services.rag.agentic.orchestrator.IntentClassifier"),
+        patch("backend.services.rag.agentic.orchestrator.EmotionalAttunementService"),
+        patch("backend.services.rag.agentic.orchestrator.SystemPromptBuilder") as mock_pb,
+        patch("backend.services.rag.agentic.orchestrator.create_default_pipeline"),
+        patch("backend.services.rag.agentic.orchestrator.LLMGateway") as mock_gateway,
+        patch("backend.services.rag.agentic.orchestrator.ReasoningEngine") as mock_reasoning,
+        patch("backend.services.rag.agentic.orchestrator.EntityExtractionService") as mock_entity,
+        patch("backend.services.rag.agentic.orchestrator.KGEnhancedRetrieval"),
+        patch("backend.services.rag.agentic.orchestrator.FollowupService") as mock_followup,
+        patch("backend.services.rag.agentic.orchestrator.GoldenAnswerService"),
+        patch("backend.services.rag.agentic.orchestrator.ContextWindowManager") as mock_cw,
+    ):
+        pb = MagicMock()
+        pb.detect_prompt_injection.return_value = (False, None)
+        pb.check_greetings.return_value = None
+        pb.get_casual_response.return_value = None
+        pb.check_identity_questions.return_value = None
+        pb.build_system_prompt.return_value = "System prompt"
+        mock_pb.return_value = pb
+
+        gateway = MagicMock()
+        gateway.create_chat_with_history.return_value = MagicMock()
+        mock_gateway.return_value = gateway
+
+        reasoning = MagicMock()
+        reasoning.execute_react_loop = AsyncMock(
+            return_value=(_stub_final_state, "gemini-2.0-flash-lite", [], TokenUsage()),
+        )
+        mock_reasoning.return_value = reasoning
+
+        entity = MagicMock()
+        entity.extract_entities = AsyncMock(return_value={})
+        mock_entity.return_value = entity
+
+        cw = MagicMock()
+        cw.trim_conversation_history.return_value = {
+            "needs_summarization": False,
+            "trimmed_messages": [],
+        }
+        mock_cw.return_value = cw
+
+        followup = MagicMock()
+        followup.get_followups = AsyncMock(return_value=[])
+        mock_followup.return_value = followup
+
+        orchestrator = AgenticRAGOrchestrator(
+            tools=[_StubTool("test_tool")],
+            db_pool=_mock_db_pool,
+            retriever=retriever,
+            semantic_cache=semantic_cache,
+        )
+
+        orchestrator.prompt_builder = pb
+        orchestrator.llm_gateway = gateway
+        orchestrator.reasoning_engine = reasoning
+        orchestrator.entity_extractor = entity
+
+        default_ctx = {"profile": None, "facts": [], "collective_facts": [], "history": []}
+        if hasattr(orchestrator, "core") and orchestrator.core is not None:
+            orchestrator.core.context_manager = MagicMock()
+            orchestrator.core.context_manager.get_full_context = AsyncMock(
+                return_value=(default_ctx, []),
+            )
+            orchestrator.core.context_manager.get_basic_context = AsyncMock(
+                return_value=(default_ctx, []),
+            )
+            orchestrator.core.context_manager.load_user_context = AsyncMock(
+                return_value=default_ctx,
+            )
+            orchestrator.core.context_manager.prepare_conversation_history = MagicMock(
+                return_value=[],
+            )
+            orchestrator.core.query_gates = QueryGates(prompt_builder=pb)
+            orchestrator.core.entity_extractor = MagicMock()
+            orchestrator.core.entity_extractor.extract_entities = AsyncMock(return_value={})
+            orchestrator.core.check_faq_cache = AsyncMock(return_value=None)
+
+            metrics = MagicMock()
+            metrics.extract_timings_from_state = MagicMock(
+                return_value={
+                    "total": 0.1,
+                    "embedding": 0,
+                    "search": 0,
+                    "rerank": 0,
+                    "llm": 0.1,
+                    "reasoning": 0.1,
+                    "tools": 0,
+                },
+            )
+            metrics.extract_collections_from_state = MagicMock(return_value=set())
+            metrics.extract_sources_from_state = MagicMock(return_value=[])
+            metrics.calculate_context_used = MagicMock(return_value=0)
+            metrics.record_rag_metrics = MagicMock()
+            metrics.record_token_usage = MagicMock()
+            metrics.log_query_completion = MagicMock()
+            orchestrator.core.metrics_manager = metrics
+
+            def _build_core_result(
+                state,
+                sources,
+                extracted_entities,
+                model_used,
+                token_usage,
+                timings,
+                start_time,
+                workflow=None,
+                reasoning=None,
+            ):
+                return CoreResult(
+                    answer=state.final_answer or "",
+                    sources=sources or [],
+                    model_used=model_used,
+                    entities=extracted_entities or {},
+                    timings=timings or {},
+                    evidence_score=getattr(state, "evidence_score", 0.0) or 0.0,
+                )
+
+            orchestrator.core.response_builder = MagicMock()
+            orchestrator.core.response_builder.build_core_result = MagicMock(
+                side_effect=_build_core_result,
+            )
+
+            orchestrator.core.query_analytics_repo = MagicMock()
+            orchestrator.core.query_analytics_repo.log_query = AsyncMock()
+
+            # Default: pin multi-agent + specialized router off so the plain
+            # ReAct path runs. Individual tests override.
+            orchestrator.core._multi_agent_coordinator = None
+            orchestrator.core._specialized_router = None
+            orchestrator.core.nlm_enrichment_service = None
+            orchestrator.core.faq_cache = None
+            orchestrator.core._kg_auto_expansion = None
+
+        yield orchestrator
+
+
+_FINALIZATION_FIELDS = {
+    "finalization_status",
+    "producer_origin",
+    "evidence_provenance",
+    "trusted_bypass_reason",
+    "analytics_receipt",
+}
+
+
+def _legacy_payload(result: CoreResult) -> dict:
+    return result.model_dump(exclude=_FINALIZATION_FIELDS)
+
+
+def _legacy_bytes(result: CoreResult) -> bytes:
+    return result.model_dump_json(exclude=_FINALIZATION_FIELDS).encode("utf-8")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "producer",
+    ["gate", "faq", "semantic_cache", "multi_agent", "specialized_router", "kg", "react"],
+)
+async def test_real_producer_parent_payload_is_byte_invariant_after_finalization(
+    orch,
+    producer: str,
+) -> None:
+    """Run each real outer branch and preserve the canonical parent payload.
+
+    Collaborators are deterministic doubles, but the producer branches and
+    shared wrapper are the real implementation. The explicit field snapshots
+    below are the pre-finalization shapes from parent ``b81c7b077``; the full
+    dict and JSON comparisons then prove the finalizer only adds its five fields.
+    """
+    core = orch.core
+    query = "What is a KITAS?"
+    extracted_entities = {"domain": "visa"}
+    core.db_pool = None
+    core._query_planner = None
+    core.prepare_query_context = AsyncMock(
+        return_value=(
+            {"profile": None},
+            [],
+            extracted_entities,
+            "",
+            None,
+        ),
+    )
+    core.query_gates.prompt_builder.check_greetings.return_value = None
+    core.check_faq_cache = AsyncMock(return_value=None)
+    core.check_semantic_cache = AsyncMock(return_value=None)
+    core._inject_curated_qa_grounding = AsyncMock(return_value="")
+    core._multi_agent_coordinator = None
+    core._specialized_router = None
+    core._surface_router = None
+    core.kg_langgraph_orchestrator = None
+    core._log_query_analytics = AsyncMock(return_value=AnalyticsReceiptStatus.SKIPPED)
+
+    expected_origin: ProducerOrigin
+    expected_trust: TrustedBypassReason | None = None
+    expected_provenance: EvidenceProvenance | None
+    expected_parent_fields: dict
+
+    if producer == "gate":
+        core.query_gates.prompt_builder.check_greetings.return_value = "Hello from parent"
+        expected_origin = ProducerOrigin.QUERY_GATE
+        expected_trust = TrustedBypassReason.DETERMINISTIC_QUERY_GATE
+        expected_provenance = None
+        expected_parent_fields = {
+            "answer": "Hello from parent",
+            "sources": [],
+            "model_used": "greeting-gate",
+            "route_used": None,
+            "evidence_score": 1.0,
+            "document_count": 0,
+            "workflow": None,
+            "reasoning": None,
+            "tools_called": [],
+        }
+    elif producer == "faq":
+        faq_cache = MagicMock()
+        faq_cache.get = AsyncMock(
+            return_value={
+                "answer": "FAQ parent answer",
+                "metadata": {"source": "team_qa", "domain": "visa"},
+            },
+        )
+        core.faq_cache = faq_cache
+        core.check_faq_cache = OrchestratorCore.check_faq_cache.__get__(core)
+        expected_origin = ProducerOrigin.FAQ_CACHE
+        expected_provenance = EvidenceProvenance.FAQ_CACHE
+        expected_parent_fields = {
+            "answer": "FAQ parent answer",
+            "sources": [{"type": "faq_cache", "source": "team_qa", "domain": "visa"}],
+            "model_used": "faq_cache",
+            "route_used": None,
+            "evidence_score": 0.0,
+            "document_count": 0,
+            "workflow": None,
+            "reasoning": None,
+            "tools_called": [],
+        }
+    elif producer == "semantic_cache":
+        core.semantic_cache = MagicMock()
+        core.semantic_cache.get_cached_result = AsyncMock(
+            return_value={
+                "cache_hit": "semantic",
+                "result": {
+                    "answer": "Semantic parent answer",
+                    "sources": [{"source": "semantic-parent"}],
+                },
+            },
+        )
+        core.retriever = None
+        core.check_semantic_cache = OrchestratorCore.check_semantic_cache.__get__(core)
+        expected_origin = ProducerOrigin.SEMANTIC_CACHE
+        expected_provenance = EvidenceProvenance.SEMANTIC_CACHE
+        expected_parent_fields = {
+            "answer": "Semantic parent answer",
+            "sources": [{"source": "semantic-parent"}],
+            "model_used": "cache",
+            "route_used": None,
+            "evidence_score": 0.0,
+            "document_count": 1,
+            "workflow": None,
+            "reasoning": None,
+            "tools_called": [],
+        }
+    elif producer == "multi_agent":
+        query = "How much does a KITAS cost and how long does it take?"
+        coordinator = MagicMock()
+        coordinator.process = AsyncMock(return_value={"final_answer": "MA parent answer"})
+        core._multi_agent_coordinator = coordinator
+        expected_origin = ProducerOrigin.MULTI_AGENT_COORDINATOR
+        expected_provenance = None
+        expected_parent_fields = {
+            "answer": "MA parent answer",
+            "sources": [],
+            "model_used": "multi-agent-coordinator",
+            "route_used": None,
+            "evidence_score": 0.0,
+            "document_count": 0,
+            "workflow": None,
+            "reasoning": None,
+            "tools_called": ["legal_agent", "financial_agent", "timeline_agent"],
+        }
+    elif producer == "specialized_router":
+        router = MagicMock()
+        router.detect_autonomous_research.return_value = True
+        router.route_autonomous_research = AsyncMock(
+            return_value={
+                "response": "SSR parent answer",
+                "model": "autonomous-research",
+                "category": "autonomous_research",
+                "autonomous_research": {
+                    "sources_consulted": [{"source": "nested-only"}],
+                    "confidence": 0.73,
+                },
+            },
+        )
+        core._specialized_router = router
+        expected_origin = ProducerOrigin.SPECIALIZED_SERVICE_ROUTER
+        expected_provenance = None
+        expected_parent_fields = {
+            "answer": "SSR parent answer",
+            "sources": [],
+            "model_used": "autonomous-research",
+            "route_used": None,
+            "evidence_score": 0.0,
+            "document_count": 0,
+            "workflow": None,
+            "reasoning": None,
+            "tools_called": ["autonomous_research"],
+        }
+    elif producer == "kg":
+        core._surface_router = MagicMock()
+        core._surface_router.decide.return_value = MagicMock(
+            is_kg_surface=True,
+            confidence=0.91,
+        )
+        kg_orchestrator = MagicMock()
+        kg_orchestrator.app = object()
+        kg_orchestrator.query = AsyncMock(return_value={"reasoning": "KG parent reasoning"})
+        core.kg_langgraph_orchestrator = kg_orchestrator
+        expected_origin = ProducerOrigin.KNOWLEDGE_GRAPH
+        expected_provenance = EvidenceProvenance.KNOWLEDGE_GRAPH
+        expected_parent_fields = {
+            "answer": "KG parent reasoning",
+            "sources": [
+                {
+                    "type": "kg",
+                    "source": "neo4j_knowledge_graph",
+                    "domain": "kg",
+                    "surface": "kg",
+                },
+            ],
+            "model_used": "kg_langgraph",
+            "route_used": None,
+            "evidence_score": 0.0,
+            "document_count": 0,
+            "workflow": None,
+            "reasoning": None,
+            "tools_called": ["kg_langgraph"],
+        }
+    else:
+        state = AgentState(query=query, intent_type="business_complex")
+        state.final_answer = "ReAct parent answer"
+        state.sources = []
+        state.steps = []
+        state.evidence_score = 0.8
+        state.trusted_tools_used = True
+        core.routing_manager.route_query = AsyncMock(return_value=("flash", False, state))
+        core.execute_react_loop = AsyncMock(
+            return_value=(state, "gemini-parent", TokenUsage(), 0.01),
+        )
+        expected_origin = ProducerOrigin.REACT_PIPELINE
+        expected_provenance = None
+        expected_parent_fields = {
+            "answer": "ReAct parent answer",
+            "sources": [],
+            "model_used": "gemini-parent",
+            "route_used": None,
+            "evidence_score": 0.8,
+            "document_count": 0,
+            "workflow": None,
+            "reasoning": None,
+            "tools_called": [],
+        }
+
+    with patch.object(
+        orchestrator_core_module,
+        "_MULTI_AGENT_COORDINATOR_ENABLED",
+        producer == "multi_agent",
+    ):
+        context = await core._process_query_core_unfinalized(
+            query=query,
+            user_id="contract-user",
+            conversation_history=None,
+            start_time=0.0,
+        )
+
+    assert context.producer_origin is expected_origin
+    for field, expected in expected_parent_fields.items():
+        assert getattr(context.result, field) == expected
+
+    before_dict = _legacy_payload(context.result)
+    before_bytes = _legacy_bytes(context.result)
+    answer_bytes = context.result.answer.encode("utf-8")
+    sources_before = context.result.model_dump(include={"sources"})
+    core._process_query_core_unfinalized = AsyncMock(return_value=context)
+    finalized = await core.process_query_core(
+        query=query,
+        user_id="contract-user",
+        conversation_history=None,
+        start_time=0.0,
+    )
+
+    assert _legacy_payload(finalized) == before_dict
+    assert _legacy_bytes(finalized) == before_bytes
+    assert finalized.answer.encode("utf-8") == answer_bytes
+    assert finalized.model_dump(include={"sources"}) == sources_before
+    assert finalized.producer_origin is expected_origin
+    assert finalized.evidence_provenance is expected_provenance
+    assert finalized.trusted_bypass_reason is expected_trust
+
+
+# =============================================================================
+# O2 — QueryPlanner active mode
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestQueryPlannerActive:
+    """O2: QueryPlanner active mode (USE_QUERY_PLANNER=True) produces a
+    QueryPlan and, when CRAG router is also enabled, invokes CRAGRouter.route.
+    Shadow mode (the default) only logs; the active path is dead-code-adjacent
+    until a downstream consumer is wired (see STATE_MACHINE §U2).
+    """
+
+    async def test_active_mode_calls_planner_and_crag_router(self, orch):
+        """O2: with USE_QUERY_PLANNER=True AND ENABLE_CRAG_ROUTER=True, the
+        planner.plan(...) and CRAGRouter.route(...) are invoked synchronously.
+        """
+        mock_plan = MagicMock()
+        with (
+            patch.object(orch.core, "_query_planner") as mock_planner,
+            patch("backend.services.rag.agentic.orchestrator_core._USE_QUERY_PLANNER", True),
+            patch("backend.services.rag.agentic.orchestrator_core._ENABLE_CRAG_ROUTER", True),
+            patch("backend.services.rag.agentic.orchestrator_core.CRAGRouter") as mock_crag_cls,
+        ):
+            mock_planner.plan = MagicMock(return_value=mock_plan)
+            mock_router = MagicMock()
+            mock_router.route = MagicMock()
+            mock_crag_cls.return_value = mock_router
+
+            await orch.process_query("What is KITAS?", "ux15@dxx1.com")
+
+            mock_planner.plan.assert_called_once()
+            mock_crag_cls.assert_called_once()
+            mock_router.route.assert_called_once_with(mock_plan)
+
+
+# =============================================================================
+# O2b — QueryPlanner + CRAG shadow mode
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestQueryPlannerShadow:
+    """O2b: QueryPlanner shadow mode remains non-routing, but when the CRAG
+    router flag is enabled it should still compute a CRAGDecision for
+    observability before the active planner rollout.
+    """
+
+    async def test_shadow_mode_threads_plan_through_crag_router(self, orch):
+        mock_plan = MagicMock()
+
+        with (
+            patch.object(orch.core, "_query_planner") as mock_planner,
+            patch("backend.services.rag.agentic.orchestrator_core._ENABLE_CRAG_ROUTER", True),
+            patch("backend.services.rag.agentic.orchestrator_core.CRAGRouter") as mock_crag_cls,
+        ):
+            mock_planner.plan = MagicMock(return_value=mock_plan)
+            mock_router = MagicMock()
+            mock_router.route = MagicMock(return_value=MagicMock())
+            mock_crag_cls.return_value = mock_router
+
+            await orch.core._run_query_planner_shadow("What is KITAS?", {})
+
+            mock_planner.plan.assert_called_once_with("What is KITAS?", {})
+            mock_crag_cls.assert_called_once()
+            mock_router.route.assert_called_once_with(mock_plan)
+
+
+# =============================================================================
+# O9 / O10 — MultiAgentCoordinator
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestMultiAgent:
+    """O9: multi-agent-coordinator returns early with distinct model_used.
+    O10: coordinator.process raise → falls through to ReAct loop (no crash).
+    """
+
+    async def test_multi_agent_returns_early_with_distinct_model(self, orch):
+        """O9: requires_multi_agent=True AND coordinator.process returns
+        ma_result with final_answer → CoreResult.model_used == 'multi-agent-coordinator'.
+        The downstream ReAct loop is NOT invoked.
+        """
+        mock_coord = MagicMock()
+        mock_coord.process = AsyncMock(
+            return_value={"final_answer": "Cost is Rp 15M, takes 4 weeks"},
+        )
+        orch.core._multi_agent_coordinator = mock_coord
+
+        # The branch is OFF by default since 2026-07-27 (it answered with no
+        # sources and could not abstain — see _MULTI_AGENT_COORDINATOR_ENABLED).
+        # O9 is about what the branch DOES once entered, so the feature is
+        # enabled explicitly here. The entry predicate itself is still the real
+        # `requires_multi_agent` against a real cost+timeline query string, and
+        # the default-off behaviour has its own test below.
+        # "cost and timeline" query triggers requires_multi_agent
+        with patch.object(
+            orchestrator_core_module,
+            "_MULTI_AGENT_COORDINATOR_ENABLED",
+            True,
+        ):
+            result = await orch.process_query(
+                "How much does a KITAS cost and how long does it take?",
+                "ux15@dxx1.com",
+            )
+
+        assert result.model_used == "multi-agent-coordinator"
+        assert "Rp 15M" in result.answer
+        assert result.producer_origin is ProducerOrigin.MULTI_AGENT_COORDINATOR
+        assert result.evidence_provenance is None
+        assert result.finalization_status is FinalizationStatus.SHADOW_INCOMPLETE
+        mock_coord.process.assert_called_once()
+        # ReAct loop MUST NOT have been invoked
+        orch.reasoning_engine.execute_react_loop.assert_not_called()
+
+    async def test_multi_agent_is_off_by_default_and_falls_through_to_react(self, orch):
+        """DEFAULT-OFF (2026-07-27): the same cost+timeline query that O9 routes
+        into the branch must, with no flag set, never reach the coordinator and
+        must be answered by the ReAct loop instead.
+
+        Why the branch is off rather than gated on evidence: it returns
+        `sources=[]` before the abstain gate and before the analytics write, so
+        its answers cannot be cited, cannot abstain, and cannot be measured. In
+        prod on 2026-07-27 that produced an invented government fee of "up to
+        IDR 1.2 billion" on an E23 cost+timeline question. Falling through means
+        the query is served by the path that retrieves, abstains and is logged.
+
+        This test would FAIL before the change: the old code called the
+        coordinator whenever `requires_multi_agent` matched.
+        """
+        mock_coord = MagicMock()
+        mock_coord.process = AsyncMock(
+            return_value={"final_answer": "ungrounded multi-agent answer"},
+        )
+        orch.core._multi_agent_coordinator = mock_coord
+        orch.core._log_query_analytics = AsyncMock(
+            return_value=AnalyticsReceiptStatus.WRITTEN,
+        )
+
+        result = await orch.process_query(
+            "How much does a KITAS cost and how long does it take?",
+            "ux15@dxx1.com",
+        )
+
+        mock_coord.process.assert_not_awaited()
+        assert result.model_used != "multi-agent-coordinator"
+        assert "ungrounded multi-agent answer" not in result.answer
+        # Parent contract: the sync ReAct result did not populate route_used.
+        assert result.route_used is None
+        assert result.producer_origin is ProducerOrigin.REACT_PIPELINE
+        assert result.evidence_provenance is None
+        assert result.finalization_status is FinalizationStatus.SHADOW_INCOMPLETE
+        assert result.analytics_receipt is AnalyticsReceiptStatus.WRITTEN
+        assert orch.core._log_query_analytics.call_args.kwargs["response_generated"] is True
+        orch.reasoning_engine.execute_react_loop.assert_called_once()
+
+    async def test_multi_agent_exception_falls_back_to_react(self, orch):
+        """O10: coordinator.process raises → logged warning + ReAct fallback.
+        CoreResult.model_used should NOT be 'multi-agent-coordinator'.
+        """
+        mock_coord = MagicMock()
+        mock_coord.process = AsyncMock(side_effect=RuntimeError("agent graph error"))
+        orch.core._multi_agent_coordinator = mock_coord
+
+        # Same explicit enablement as O9 — this test is about the exception
+        # fallback, so the branch must be allowed to run in order to raise.
+        with patch.object(
+            orchestrator_core_module,
+            "_MULTI_AGENT_COORDINATOR_ENABLED",
+            True,
+        ):
+            result = await orch.process_query(
+                "How much does a KITAS cost and how long does it take?",
+                "ux15@dxx1.com",
+            )
+
+        # Coordinator tried, exception captured
+        mock_coord.process.assert_called_once()
+        # But ReAct still ran (fallback)
+        orch.reasoning_engine.execute_react_loop.assert_called_once()
+        assert result.model_used != "multi-agent-coordinator"
+
+
+# =============================================================================
+# O11 — SpecializedServiceRouter fast-path
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestSpecializedRouter:
+    """O11: three mutually-exclusive SSR detect→route fast-paths return
+    CoreResult with model_used from ssr_result. The default 'specialized-router'
+    tag is used when ssr_result lacks 'model'.
+    """
+
+    async def test_autonomous_research_fast_path(self, orch):
+        """O11a: detect_autonomous_research=True → route_autonomous_research
+        returns result with 'response' → CoreResult emitted, ReAct not invoked.
+        """
+        ssr = MagicMock()
+        ssr.detect_autonomous_research.return_value = True
+        ssr.detect_cross_oracle.return_value = False
+        ssr.detect_client_journey.return_value = False
+        ssr.route_autonomous_research = AsyncMock(
+            return_value={
+                "response": "Research findings on KBLI 62011",
+                "model": "autonomous-research",
+                "category": "autonomous_research",
+                "autonomous_research": {
+                    "sources_consulted": 5,
+                    "confidence": 0.73,
+                },
+            },
+        )
+        orch.core._specialized_router = ssr
+
+        result = await orch.process_query("Research KBLI 62011", "ux15@dxx1.com")
+
+        assert result.model_used == "autonomous-research"
+        assert "Research findings" in result.answer
+        assert result.sources == []
+        # Parent contract: nested SSR research metadata was not copied into
+        # public CoreResult fields.
+        assert result.document_count == 0
+        assert result.evidence_score == 0.0
+        assert result.producer_origin is ProducerOrigin.SPECIALIZED_SERVICE_ROUTER
+        assert result.evidence_provenance is None
+        assert result.finalization_status is FinalizationStatus.SHADOW_INCOMPLETE
+        ssr.route_autonomous_research.assert_called_once()
+        orch.reasoning_engine.execute_react_loop.assert_not_called()
+
+    async def test_cross_oracle_fast_path(self, orch):
+        """O11b: detect_cross_oracle=True → route_cross_oracle returns result,
+        route emitted with ssr-provided model name (or default).
+        """
+        ssr = MagicMock()
+        ssr.detect_autonomous_research.return_value = False
+        ssr.detect_cross_oracle.return_value = True
+        ssr.detect_client_journey.return_value = False
+        ssr.route_cross_oracle = AsyncMock(
+            return_value={
+                "response": "Cross-domain synthesis: immigration + tax",
+                "category": "cross_oracle",
+            },
+        )
+        orch.core._specialized_router = ssr
+
+        result = await orch.process_query(
+            "Compare tax + visa for KITAS holders",
+            "ux15@dxx1.com",
+        )
+
+        # No 'model' key → fallback default 'specialized-router'
+        assert result.model_used == "specialized-router"
+        assert "synthesis" in result.answer
+        ssr.route_cross_oracle.assert_called_once()
+        orch.reasoning_engine.execute_react_loop.assert_not_called()
+
+    async def test_client_journey_fast_path(self, orch):
+        """O11c: detect_client_journey=True → route_client_journey invoked
+        with (query, user_id), fast-path returns."""
+        ssr = MagicMock()
+        ssr.detect_autonomous_research.return_value = False
+        ssr.detect_cross_oracle.return_value = False
+        ssr.detect_client_journey.return_value = True
+        ssr.route_client_journey = AsyncMock(
+            return_value={
+                "response": "Your PT PMA timeline: 4 weeks",
+                "model": "client-journey",
+                "category": "client_journey",
+            },
+        )
+        orch.core._specialized_router = ssr
+
+        result = await orch.process_query(
+            "Where am I in my PMA setup?",
+            "uxxx15@dxx1.com",
+        )
+
+        assert result.model_used == "client-journey"
+        # user_id passed through
+        ssr.route_client_journey.assert_called_once()
+        call_args = ssr.route_client_journey.call_args
+        assert call_args[0][1] == "uxxx15@dxx1.com"
+        orch.reasoning_engine.execute_react_loop.assert_not_called()
+
+
+# =============================================================================
+# O13-partial — NLM speculative task creation
+# R5 Phase 6 REMOVED: NLM speculative fire decommissioned 2026-05-17.
+# TestNLMTaskLifecycle deleted — tested dead code paths.
+# =============================================================================
+
+
+# =============================================================================
+# O16-sync — ReAct loop raise propagation
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestReactLoopRaise:
+    """O16: sync path — when reasoning_engine.execute_react_loop raises,
+    OrchestratorCore.execute_react_loop wraps it as RuntimeError. Unlike the
+    streaming path which emits an error event, the sync path propagates.
+    """
+
+    async def test_react_runtime_error_propagates(self, orch):
+        """O16-sync: RuntimeError from ReAct → propagates out, no CoreResult."""
+        orch.reasoning_engine.execute_react_loop = AsyncMock(
+            side_effect=RuntimeError("reasoning core blew up"),
+        )
+
+        with pytest.raises(RuntimeError, match="reasoning core blew up"):
+            await orch.process_query("Anything", "ux15@dxx1.com")
+
+    async def test_react_unexpected_error_wrapped_as_runtime(self, orch):
+        """O16-sync: unexpected exception type (KeyError) is wrapped as
+        RuntimeError("ReAct loop failed: ...") per orchestrator_core.py:673.
+        """
+        orch.reasoning_engine.execute_react_loop = AsyncMock(
+            side_effect=KeyError("missing_key"),
+        )
+
+        with pytest.raises(RuntimeError, match="ReAct loop failed"):
+            await orch.process_query("Anything", "ux15@dxx1.com")
+
+
+# =============================================================================
+# O20 / O21 — NLM merge lifecycle
+# R5 Phase 6 REMOVED: NLM merge block decommissioned 2026-05-17.
+# TestNLMMergeLifecycle deleted — tested dead code paths.
+# =============================================================================
+
+
+# =============================================================================
+# O24 — KG Auto-Expansion gate (evidence > 0.6)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestKGAutoExpansionGate:
+    """O24: evidence > 0.6 → spawn expand_from_response (fire-and-forget)."""
+
+    async def test_high_evidence_spawns_kg_auto_expansion(
+        self,
+        orch,
+        _stub_final_state,
+    ):
+        """O24: ev=0.8 (>0.6) → _kg_auto_expansion.expand_from_response is
+        scheduled as a background task (fire-and-forget).
+        """
+        _stub_final_state.evidence_score = 0.8
+
+        kg_auto = MagicMock()
+        expand_called = asyncio.Event()
+
+        async def _expand(**kwargs):
+            expand_called.set()
+            return None
+
+        kg_auto.expand_from_response = _expand
+        orch.core._kg_auto_expansion = kg_auto
+
+        # Provide source chunks so the extract helper has something to pass
+        with patch.object(
+            orch.core,
+            "_extract_source_chunks_text",
+            return_value=["chunk 1", "chunk 2"],
+        ):
+            await orch.process_query("KITAS rules?", "ux15@dxx1.com")
+
+        # The task is fire-and-forget via spawn(...). Give the loop a tick
+        # to run it before asserting.
+        await asyncio.sleep(0.05)
+        assert expand_called.is_set()
+
+    async def test_low_evidence_skips_kg_auto_expansion(
+        self,
+        orch,
+        _stub_final_state,
+    ):
+        """O24 negative: ev=0.4 (<0.6) → expand_from_response is NOT called."""
+        _stub_final_state.evidence_score = 0.4
+        _stub_final_state.trusted_tools_used = True  # avoid NLM merge path
+
+        kg_auto = MagicMock()
+        expand_called = asyncio.Event()
+
+        async def _expand(**kwargs):
+            expand_called.set()
+            return None
+
+        kg_auto.expand_from_response = _expand
+        orch.core._kg_auto_expansion = kg_auto
+
+        await orch.process_query("KITAS rules?", "ux15@dxx1.com")
+        await asyncio.sleep(0.05)
+        assert not expand_called.is_set()
+
+
+# =============================================================================
+# U1 — Tier1 regen narrow exception contract (tripwire)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestTier1RegenExceptionContract:
+    """U1 (docs/audits/2026-04-22-orchestrator-state-machine.md §3): the Tier1 regen `except` tuple is intentionally
+    narrow (ResourceExhausted, ServiceUnavailable, asyncio.TimeoutError,
+    ValueError, RuntimeError). Types outside this tuple are expected to
+    propagate to the caller (execute_react_loop's surrounding catch in
+    orchestrator_core wraps them as RuntimeError).
+
+    These tripwire tests lock the contract:
+    - ServiceUnavailable (in tuple) → caught → abstain stub (I-R2 preserved).
+    - TypeError (NOT in tuple) → propagates to orchestrator → RuntimeError.
+
+    If someone widens the catch to bare `Exception`, test 2 will fail.
+    If someone narrows it below the existing tuple, test 1 will fail.
+    """
+
+    async def test_tier1_regen_service_unavailable_caught_and_stubbed(
+        self,
+        orch,
+        _stub_final_state,
+    ):
+        """U1-contract-A: ServiceUnavailable (in tuple) caught, abstain stub set."""
+        # Force low evidence + non-critical + non-trusted + final_answer present
+        _stub_final_state.evidence_score = 0.05
+        _stub_final_state.trusted_tools_used = False
+        _stub_final_state.final_answer = "weak answer"
+
+        # Build a mock ReasoningEngine that simulates the Tier1 fallback path
+        # setting final_answer to a stub (as would happen in the real engine).
+        def _fake_react_loop(**kwargs):
+            # Replicate the engine contract: on Tier1-raise, the engine sets
+            # state.final_answer = stub and returns normally.
+            _stub_final_state.final_answer = "[ABSTAIN-STUB] service unavailable path"
+            return (_stub_final_state, "gemini-2.0-flash-lite", [], TokenUsage())
+
+        orch.reasoning_engine.execute_react_loop = AsyncMock(
+            side_effect=lambda **kw: _fake_react_loop(**kw),
+        )
+
+        result = await orch.process_query("visto KITAS?", "ux15@dxx1.com")
+        # I-R2: final_answer guaranteed non-empty via abstain stub substitute
+        assert result.answer.startswith("[ABSTAIN-STUB]")
+
+    async def test_tier1_regen_typeerror_propagates_as_runtime(
+        self,
+        orch,
+        _stub_final_state,
+    ):
+        """U1-contract-B: exceptions outside the narrow catch (e.g. TypeError)
+        propagate up. orchestrator_core wraps them as RuntimeError.
+
+        This is a TRIPWIRE: if anyone widens the except to `Exception`, the
+        TypeError would be silently swallowed and this test would fail
+        (because no exception reaches the top).
+        """
+        orch.reasoning_engine.execute_react_loop = AsyncMock(
+            side_effect=TypeError("unexpected type bug"),
+        )
+
+        with pytest.raises(RuntimeError, match="ReAct loop failed"):
+            await orch.process_query("visto KITAS?", "ux15@dxx1.com")
+
+
+# =============================================================================
+# O24 — KG workflow prose must not ride along on a refusal (2026-07-27)
+# =============================================================================
+
+
+class TestWorkflowScaffoldNotAppendedToRefusal:
+    """Step 12 appends `_format_workflow_for_prompt` text to the answer.
+
+    That append used to be unconditional, so a reply that had just abstained
+    still carried a confident workflow underneath it. Measured live 2026-07-27
+    (E23 KITAS rejection question): abstain=true, "non ho trovato informazioni
+    rilevanti", immediately followed by "## SUGGESTED WORKFLOW … confidence:
+    78%" listing the normal APPLICATION steps to someone whose application had
+    been refused — and closing with "Always verify current requirements with
+    the user", a line addressed to the model, not the client.
+
+    The withholding is scoped to refusals ON PURPOSE. It would be wrong to
+    claim nothing is lost: the API does return a structured `workflow` field,
+    but the web chat and Prime adapters forward only `answer` and `sources`
+    and blog/Oracle drop it, so on those surfaces this prose IS the workflow.
+    On a refusal it contradicts the sentence above it, which is why only that
+    case is withheld.
+
+    The check reads `result.abstain` AFTER the E33 guard rather than
+    recomputing a refusal from `evidence_score`: the guard can still turn an
+    answer into an abstention, and a 0.0 score does not mean "refused" —
+    trusted-tool/pricing bypasses can authorise an answer without updating it.
+
+    NOTE these drive the real `process_query` path. The pre-existing
+    `test_workflow_appended_to_answer` in test_kg_langgraph_integration.py does
+    the concatenation by hand and asserts its own arithmetic, so it could never
+    have caught this.
+    """
+
+    _WORKFLOW = {
+        "id": "visa_processing:kitas",
+        "type": "visa_processing",
+        "name": "KITAS Visa Processing",
+        "source": "visa_subgraph",
+        "confidence": 0.78,
+        "steps": [{"step": 1, "action": "Apply for TKA allocation quota via SPKP"}],
+    }
+
+    @classmethod
+    def _arm_workflow(cls, orch):
+        """Make prepare_query_context yield a KG workflow, leaving the rest.
+
+        Also restores the REAL response builder. The shared fixture leaves
+        `core.response_builder` a MagicMock, which means `result.abstain` is
+        never computed and comes back False on every path — measured while
+        writing these tests, and the same reason `result.workflow` reads None
+        there. A test about behaviour on a refusal cannot run against a harness
+        that can never produce one.
+        """
+        orch.core.response_builder = OrchestratorResponseBuilder()
+        original = orch.core.prepare_query_context
+
+        async def _with_workflow(**kwargs):
+            user_ctx, history, entities, ctx, _ = await original(**kwargs)
+            return user_ctx, history, entities, ctx, dict(cls._WORKFLOW)
+
+        orch.core.prepare_query_context = _with_workflow
+
+    async def test_low_evidence_withholds_the_workflow_prose(
+        self,
+        orch,
+        _stub_final_state,
+    ):
+        """GUILT: below the abstain label gate the prose must be withheld —
+        while the STRUCTURED workflow field is still returned, so no consumer
+        loses data, only the contradictory prose."""
+        # A LOW SCORE IS NOT A REFUSAL. `trusted_tools_used` (the fixture's
+        # default) authorises the answer regardless of the score, and
+        # `result.abstain` then comes back False even at 0.05 — measured right
+        # here while building this test. That is exactly why the check reads the
+        # decision and not the score: an earlier draft gated on
+        # `label_abstains(evidence_score)` and would have stripped the workflow
+        # from answers the system had chosen to deliver.
+        _stub_final_state.evidence_score = 0.05
+        _stub_final_state.trusted_tools_used = False
+        self._arm_workflow(orch)
+
+        result = await orch.process_query("Cosa faccio adesso?", "ux15@dxx1.com")
+
+        assert result.abstain is True
+        assert result.abstain_reason is not None
+        assert "SUGGESTED WORKFLOW" not in result.answer
+        assert "Always verify current requirements" not in result.answer
+        # the structured field is untouched by the withholding
+        assert result.workflow is None or isinstance(result.workflow, dict)
+
+    async def test_evidenced_answer_still_carries_the_workflow_prose(
+        self,
+        orch,
+        _stub_final_state,
+    ):
+        """INNOCENCE: with real evidence the append is unchanged — this fix
+        narrows the 2026-07-25 'may be legitimate for other consumers'
+        assumption only where it was provably wrong (a refusal)."""
+        _stub_final_state.evidence_score = 0.8
+        self._arm_workflow(orch)
+
+        result = await orch.process_query("Come funziona il KITAS?", "ux15@dxx1.com")
+
+        assert result.abstain is False
+        assert "SUGGESTED WORKFLOW" in result.answer

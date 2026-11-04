@@ -1,0 +1,481 @@
+"""Universal Outbox helper for the EventBus.
+
+Foundation for the P0-2 replay-on-reconnect mechanism. EventBus uses
+PostgreSQL LISTEN/NOTIFY (cicatrix: "EventBus is PG LISTEN/NOTIFY but
+Symbiosis docs say Redis Streams (2026-04-29)"); pg_notify is volatile,
+so any event published while the listener is reconnecting (5s window in
+``event_bus.py:_RECONNECT_DELAY_S``) is silently lost.
+
+This module records every publication in the ``events_outbox`` table
+(migration 144) so the EventBus can replay missed events when its
+listener comes back online.
+
+Status (post phase-3, 2026-05-09):
+
+* Phase 1 (PR #342, migration 144): ``publish()`` + ``replay_unconsumed()``
+  callable, EventBus reconnect hook wired.
+* Phase 2 (migration 146 + ``EventBus.emit_pg`` delegation): six DB-trigger
+  functions refactored to write events_outbox FIRST, then pg_notify with
+  ``_outbox_id`` injected.
+* Phase 3 (this file as-shipped): ``replay_unconsumed()`` only acks rows
+  AFTER ``dispatch_fn`` returns successfully — handler crash leaves the
+  row unconsumed for next replay (at-least-once semantics). Consumers
+  must dedupe via ``_outbox_id``. A daily ``prune_consumed(30)`` cron
+  (LaunchAgent ``com.nuzantara.outbox-prune.daily``) keeps the table
+  bounded.
+
+Reference impl: ``apps/backend-rag/backend/services/bridge/outbox.py``
+(generalised here — bridge_outbox is a different table for Pro/Mini
+sync; events_outbox is the universal EventBus durability layer).
+(Air decommissioned 2026-05-05 — historical "Pro/Air" reference scrubbed.)
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import time
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+import asyncpg
+
+logger = logging.getLogger(__name__)
+
+# Allowed channel-name pattern: alphanumeric + underscore, 1-63 chars.
+# Matches the existing PG_CHANNEL_MAP names in event_bus.py and Postgres'
+# native identifier limit. Defense-in-depth: even though pg_notify($1, $2)
+# parameterises the channel, we reject suspect names early so a typo
+# never reaches the DB. See cicatrix scar (2026-04-29).
+_CHANNEL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+
+# Cap on a single replay batch — protects against memory blow-up after a
+# long disconnect (e.g. days). The EventBus calls replay per-channel
+# already, so 500 per channel is plenty.
+_DEFAULT_REPLAY_BATCH_SIZE = 500
+
+# W36 stale-event TTL guard (2026-05-23) — defense-in-depth on top of
+# the row-level ``created_at`` filter in :func:`replay_unconsumed`.
+# Some payloads carry their own timestamp (notably ``cell_pulse_observed``
+# which writes ``pulse_timestamp`` in ms-since-epoch in
+# ``packages/cell-core/cell_core/observatory.py``). If an event has been
+# buffered or its producing transaction committed long after the inner
+# event-time, the row may be fresh but the payload semantically stale.
+# Re-dispatching such an event from the outbox replay path can fire
+# actuators (e.g. ``fly_machines_restart`` via
+# ``apps/organism/organism/rules/base.yaml`` rule
+# ``cell_sustained_red_restart``) against a machine that has already
+# recovered. The TTL is in MINUTES and can be overridden by the env var
+# ``BRIDGE_STALE_EVENT_TTL_MIN``. Live (real-time) NOTIFY processing in
+# the listener path is NOT gated by this — only replay.
+_DEFAULT_PAYLOAD_TTL_MIN = 60
+_PAYLOAD_TTL_ENV_VAR = "BRIDGE_STALE_EVENT_TTL_MIN"
+# Fields scanned for an in-payload timestamp, in priority order. The
+# canonical one is ``pulse_timestamp`` (cell_pulse_observed); other
+# producers may use plain ``timestamp`` or ``ts``. All values are
+# expected to be ms since epoch (integer) or float seconds since epoch.
+_PAYLOAD_TIMESTAMP_FIELDS = ("pulse_timestamp", "timestamp", "ts")
+
+
+def _resolve_payload_ttl_minutes(explicit: int | None = None) -> int:
+    """Resolve the payload-TTL in minutes.
+
+    Precedence: explicit arg > ``BRIDGE_STALE_EVENT_TTL_MIN`` env > default 60.
+    Negative or non-integer env values are ignored (default used) with a
+    warning so a malformed deploy config can't silently disable the guard.
+    """
+    if explicit is not None:
+        return max(int(explicit), 0)
+    raw = os.environ.get(_PAYLOAD_TTL_ENV_VAR)
+    if raw is None or raw.strip() == "":
+        return _DEFAULT_PAYLOAD_TTL_MIN
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "events_outbox: %s=%r is not an integer — using default %dm",
+            _PAYLOAD_TTL_ENV_VAR,
+            raw,
+            _DEFAULT_PAYLOAD_TTL_MIN,
+        )
+        return _DEFAULT_PAYLOAD_TTL_MIN
+    if parsed < 0:
+        logger.warning(
+            "events_outbox: %s=%d is negative — using default %dm",
+            _PAYLOAD_TTL_ENV_VAR,
+            parsed,
+            _DEFAULT_PAYLOAD_TTL_MIN,
+        )
+        return _DEFAULT_PAYLOAD_TTL_MIN
+    return parsed
+
+
+def _payload_timestamp_seconds(payload: dict[str, Any]) -> float | None:
+    """Extract an in-payload timestamp (seconds since epoch) if present.
+
+    Returns ``None`` if the payload carries no recognised timestamp field
+    OR if the value is unparseable. The caller's convention is that
+    ``None`` means "no timestamp claim" — the event is NOT considered
+    stale on this signal alone (open-by-default; row-level ``created_at``
+    is the safety net).
+
+    Recognises both ms-since-epoch (typical for ``pulse_timestamp``) and
+    seconds-since-epoch (typical for ``timestamp``/``ts``). Heuristic:
+    values > 1e12 are assumed ms; smaller values are assumed seconds.
+    1e12 seconds is year 33658, 1e12 ms is 2001-09-09 — safe boundary.
+    """
+    if not isinstance(payload, dict):
+        return None
+    for key in _PAYLOAD_TIMESTAMP_FIELDS:
+        if key not in payload:
+            continue
+        raw = payload[key]
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if value <= 0:
+            continue
+        # Heuristic: > 1e12 → ms, else → seconds.
+        return value / 1000.0 if value > 1e12 else value
+    return None
+
+
+def _is_payload_stale(payload: dict[str, Any], ttl_minutes: int) -> bool:
+    """Return True iff payload has a timestamp field older than TTL.
+
+    Open by default: events WITHOUT a recognised timestamp field return
+    ``False`` (not stale) — the row-level ``created_at`` filter is the
+    safety net for that case. A non-positive TTL disables the check
+    (returns ``False``) so callers can opt out by passing ``0``.
+    """
+    if ttl_minutes <= 0:
+        return False
+    payload_ts_s = _payload_timestamp_seconds(payload)
+    if payload_ts_s is None:
+        return False
+    age_s = time.time() - payload_ts_s
+    return age_s > (ttl_minutes * 60)
+
+
+class InvalidChannelError(ValueError):
+    """Raised when a channel name fails ``validate_channel`` checks."""
+
+
+def validate_channel(channel: str) -> None:
+    """Raise :class:`InvalidChannelError` if ``channel`` is not a safe identifier.
+
+    Defense in depth: ``pg_notify($1, $2)`` already parameterises the
+    channel so there is no SQL injection vector, but we still reject
+    suspicious names early to avoid wasting a round-trip and to keep
+    the contract narrow.
+    """
+    if not isinstance(channel, str) or not _CHANNEL_RE.match(channel):
+        raise InvalidChannelError(f"channel name must match {_CHANNEL_RE.pattern}, got {channel!r}")
+
+
+async def publish(
+    conn: asyncpg.Connection,
+    channel: str,
+    payload: dict[str, Any],
+) -> int:
+    """Insert ``payload`` into ``events_outbox`` and fire ``pg_notify``.
+
+    Atomic with the caller's transaction: if ``conn`` is already inside
+    a transaction and the caller rolls back, the INSERT and the
+    NOTIFY both vanish (Postgres queues NOTIFY until COMMIT).
+
+    The NOTIFY payload is the original ``payload`` dict augmented with
+    ``_outbox_id`` so the consumer can call :func:`acknowledge` after
+    successful processing.
+
+    Args:
+        conn: an asyncpg connection (may or may not be in a tx).
+        channel: PG channel name; must satisfy :func:`validate_channel`.
+        payload: JSON-serialisable dict.
+
+    Returns:
+        The new ``events_outbox.id`` (BIGSERIAL).
+
+    Raises:
+        InvalidChannelError: if ``channel`` is not a safe identifier.
+    """
+    validate_channel(channel)
+
+    insert_payload_json = json.dumps(payload, ensure_ascii=False, default=str)
+    row = await conn.fetchrow(
+        """
+        INSERT INTO events_outbox (channel, payload)
+        VALUES ($1, $2::text::jsonb)
+        RETURNING id
+        """,
+        channel,
+        insert_payload_json,
+    )
+    outbox_id = int(row["id"])
+
+    # NOTIFY payload includes _outbox_id so consumers can ack idempotently.
+    notify_payload = dict(payload)
+    notify_payload["_outbox_id"] = outbox_id
+    notify_payload_json = json.dumps(notify_payload, ensure_ascii=False, default=str)
+
+    # Parameterised pg_notify — channel is a value, NOT a raw identifier.
+    # Postgres treats $1 as a string literal here, no DDL interpolation.
+    await conn.execute("SELECT pg_notify($1, $2)", channel, notify_payload_json)
+
+    logger.debug(
+        "events_outbox: published id=%d channel=%s bytes=%d",
+        outbox_id,
+        channel,
+        len(notify_payload_json),
+    )
+    return outbox_id
+
+
+async def acknowledge(
+    conn: asyncpg.Connection,
+    outbox_id: int,
+    consumer_id: str | None = None,
+) -> bool:
+    """Mark an outbox row as consumed. Idempotent.
+
+    Safe to call multiple times with the same ``outbox_id``: the
+    ``WHERE consumed_at IS NULL`` clause guards against double-acks.
+
+    Args:
+        conn: asyncpg connection.
+        outbox_id: id returned by :func:`publish`.
+        consumer_id: optional diagnostic — which handler acked the row.
+
+    Returns:
+        True if the row transitioned from unconsumed to consumed,
+        False if the row was already consumed or does not exist.
+    """
+    result = await conn.execute(
+        """
+        UPDATE events_outbox
+           SET consumed_at = NOW(),
+               consumer_id = COALESCE($2, consumer_id)
+         WHERE id = $1
+           AND consumed_at IS NULL
+        """,
+        outbox_id,
+        consumer_id,
+    )
+    # asyncpg returns "UPDATE N" — check N == 1.
+    if isinstance(result, str) and result.startswith("UPDATE "):
+        try:
+            return int(result.split()[1]) >= 1
+        except (IndexError, ValueError):
+            return False
+    return False
+
+
+async def replay_unconsumed(
+    conn: asyncpg.Connection,
+    dispatch_fn: Callable[[dict[str, Any]], Awaitable[None]],
+    *,
+    channel: str | None = None,
+    max_age_minutes: int = 60,
+    batch_size: int = _DEFAULT_REPLAY_BATCH_SIZE,
+    consumer_id: str = "outbox_replay",
+    payload_ttl_minutes: int | None = None,
+) -> int:
+    """Re-dispatch unconsumed events to ``dispatch_fn`` and ack each on success.
+
+    Called from the EventBus reconnect handler so events lost during a
+    listener-disconnect window are not silently dropped.
+
+    Phase-3 contract: each row is dispatched once, and acked only AFTER
+    ``dispatch_fn`` returns successfully. If ``dispatch_fn`` raises, the
+    exception is logged and the row stays unconsumed (retried on the
+    next replay). At-least-once semantics — handlers must dedupe via
+    ``_outbox_id`` for idempotency.
+
+    W36 stale-event TTL guard (2026-05-23): in addition to the row-level
+    ``max_age_minutes`` filter on ``created_at``, any row whose payload
+    carries an in-payload timestamp (``pulse_timestamp``, ``timestamp``
+    or ``ts``) older than ``payload_ttl_minutes`` is skipped with a
+    WARNING log and **acked anyway** so it stops re-firing on every
+    subsequent replay. Live (real-time) NOTIFY processing is not gated
+    by this; only the replay path. See cicatrix W36.
+
+    Args:
+        conn: asyncpg connection.
+        dispatch_fn: async callable receiving the payload dict (with
+            ``_outbox_id`` injected).
+        channel: optional channel filter; if ``None``, replay all channels.
+        max_age_minutes: skip rows older than this. Default 60 — long
+            enough to cover a deploy window, short enough to avoid
+            replaying days of stale events after a long outage.
+        batch_size: cap on rows fetched in a single call.
+        consumer_id: tag written into ``events_outbox.consumer_id`` on ack.
+        payload_ttl_minutes: TTL for in-payload timestamps. ``None`` →
+            resolved via :func:`_resolve_payload_ttl_minutes` (env
+            ``BRIDGE_STALE_EVENT_TTL_MIN`` or default 60). Pass ``0``
+            to disable the payload-level guard.
+
+    Returns:
+        Number of rows successfully acked (including rows acked as
+        stale-skips — the ack count is "rows removed from the
+        unconsumed backlog", not "rows successfully dispatched").
+    """
+    if channel is not None:
+        validate_channel(channel)
+
+    resolved_payload_ttl_min = _resolve_payload_ttl_minutes(payload_ttl_minutes)
+
+    where_clauses = [
+        "consumed_at IS NULL",
+        f"created_at > NOW() - INTERVAL '{int(max_age_minutes)} minutes'",
+    ]
+    params: list[Any] = []
+
+    if channel is not None:
+        where_clauses.append(f"channel = ${len(params) + 1}")
+        params.append(channel)
+
+    params.append(int(batch_size))
+    limit_param_idx = len(params)
+
+    sql = (
+        "SELECT id, channel, payload "
+        "FROM events_outbox "
+        f"WHERE {' AND '.join(where_clauses)} "
+        "ORDER BY id ASC "
+        f"LIMIT ${limit_param_idx}"
+    )
+
+    rows = await conn.fetch(sql, *params)
+
+    acked = 0
+    for row in rows:
+        outbox_id = int(row["id"])
+        raw_payload = row["payload"]
+        # asyncpg may return JSONB as already-decoded dict OR as str
+        # depending on codec config. Normalise.
+        if isinstance(raw_payload, str):
+            try:
+                payload_dict = json.loads(raw_payload)
+            except json.JSONDecodeError as exc:
+                logger.error("events_outbox: invalid JSON in row id=%d: %s", outbox_id, exc)
+                continue
+        elif isinstance(raw_payload, dict):
+            payload_dict = dict(raw_payload)
+        else:
+            logger.error(
+                "events_outbox: unexpected payload type %s for id=%d",
+                type(raw_payload).__name__,
+                outbox_id,
+            )
+            continue
+
+        payload_dict["_outbox_id"] = outbox_id
+        payload_dict["_replay"] = True
+
+        # W36 stale-event TTL guard: skip + ack rows whose in-payload
+        # timestamp is older than the configured TTL. Ack-on-skip
+        # prevents re-firing on every reconnect.
+        if _is_payload_stale(payload_dict, resolved_payload_ttl_min):
+            logger.warning(
+                "events_outbox: skipping stale-payload event id=%d channel=%s "
+                "(payload-ts older than %dm); acking to suppress further replay",
+                outbox_id,
+                row["channel"],
+                resolved_payload_ttl_min,
+            )
+            if await acknowledge(conn, outbox_id, consumer_id=f"{consumer_id}_stale_skip"):
+                acked += 1
+            continue
+
+        try:
+            await dispatch_fn(payload_dict)
+        except Exception as exc:
+            logger.error(
+                "events_outbox: dispatch failed for id=%d channel=%s: %s",
+                outbox_id,
+                row["channel"],
+                exc,
+                exc_info=True,
+            )
+            # Row stays unconsumed — retried next replay.
+            continue
+
+        if await acknowledge(conn, outbox_id, consumer_id=consumer_id):
+            acked += 1
+
+    if rows:
+        logger.info(
+            "events_outbox: replayed %d/%d rows (channel=%s, max_age=%dm)",
+            acked,
+            len(rows),
+            channel or "<all>",
+            max_age_minutes,
+        )
+    return acked
+
+
+async def prune_consumed(
+    conn: asyncpg.Connection,
+    *,
+    older_than_days: int = 30,
+) -> int:
+    """Delete consumed rows older than ``older_than_days``.
+
+    Pending (unconsumed) rows are NEVER deleted by this function — they
+    represent events that have not yet been processed. Use a separate
+    dead-letter strategy if you need to garbage-collect old pendings.
+
+    Returns:
+        Number of rows deleted (parsed from asyncpg's "DELETE N" status).
+    """
+    days = int(older_than_days)
+    sql = (
+        "DELETE FROM events_outbox "
+        "WHERE consumed_at IS NOT NULL "
+        f"AND consumed_at < NOW() - INTERVAL '{days} days'"
+    )
+    result = await conn.execute(sql)
+    if isinstance(result, str) and result.startswith("DELETE "):
+        try:
+            return int(result.split()[1])
+        except (IndexError, ValueError):
+            return 0
+    return 0
+
+
+async def get_unconsumed_count(
+    conn: asyncpg.Connection,
+    channel: str | None = None,
+) -> int:
+    """Diagnostic: count of unconsumed rows, optionally filtered by channel."""
+    if channel is None:
+        return int(
+            await conn.fetchval("SELECT COUNT(*) FROM events_outbox WHERE consumed_at IS NULL")
+        )
+    validate_channel(channel)
+    return int(
+        await conn.fetchval(
+            "SELECT COUNT(*) FROM events_outbox WHERE consumed_at IS NULL AND channel = $1",
+            channel,
+        )
+    )
+
+
+__all__ = [  # noqa: RUF022 — comment block separates W36 internals from public API
+    "InvalidChannelError",
+    "acknowledge",
+    "get_unconsumed_count",
+    "prune_consumed",
+    "publish",
+    "replay_unconsumed",
+    "validate_channel",
+    # W36 stale-event TTL guard — exported for tests + opt-in introspection.
+    "_resolve_payload_ttl_minutes",
+    "_is_payload_stale",
+    "_payload_timestamp_seconds",
+]

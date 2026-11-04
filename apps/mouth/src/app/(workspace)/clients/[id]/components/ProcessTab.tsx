@@ -1,0 +1,465 @@
+"use client";
+
+import React, { useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
+import {
+  Plus,
+  FolderOpen,
+  Calendar,
+  Eye,
+  Trash2,
+  DollarSign,
+  SlidersHorizontal,
+  User,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import { api } from "@/lib/api";
+import type { ClientProfile } from "@/lib/api/crm/crm.types";
+import { STATUS_COLORS, ALERT_COLORS } from "./constants";
+import { formatCurrency } from "./utils";
+import { AiSummaryCard } from "./AiSummaryCard";
+import { supersededVisaPracticeIds } from "./supersededVisaPractice";
+
+const PRIORITY_BADGES: Record<string, { label: string; className: string }> = {
+  urgent: {
+    label: "🔥 urgent",
+    className: "bg-[var(--state-warning)]/10 text-[var(--state-warning)]",
+  },
+  high: {
+    label: "↑ high",
+    className: "bg-[var(--state-warning)]/10 text-[var(--state-warning)]",
+  },
+};
+
+const PAYMENT_STYLES: Record<string, string> = {
+  paid: "bg-[var(--state-success)]/10 text-[var(--state-success)]",
+  partial: "bg-[var(--state-warning)]/10 text-[var(--state-warning)]",
+  unpaid: "bg-[var(--state-warning)]/10 text-[var(--state-warning)]",
+  pending: "bg-[var(--state-warning)]/10 text-[var(--state-warning)]",
+};
+
+export function ProcessTab({
+  clientId,
+  practices,
+  formatDate,
+  onRefresh,
+}: {
+  clientId: number;
+  practices: ClientProfile["practices"];
+  formatDate: (d: string) => string;
+  onRefresh: () => void;
+}) {
+  const router = useRouter();
+  const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
+  const [sortBy, setSortBy] = useState<
+    "default" | "priority" | "expiry" | "amount"
+  >("default");
+  const [filterStatus, setFilterStatus] = useState<string>("all");
+
+  const activeStatuses = Array.from(new Set(practices.map((p) => p.status)));
+
+  const revenueSummary = useMemo(() => {
+    // Mirrors backend dashboard_summary.py / crm_practices.py revenue aggregation:
+    //   total   = SUM(actual_price) where actual_price IS NOT NULL
+    //   paid    = SUM(actual_price) where payment_status='paid'
+    //   outstanding = total - paid
+    // Fallback to quoted_price only when actual_price is missing, to avoid
+    // hiding legitimate inflight revenue (same convention the BE uses
+    // implicitly through NULL → 0).
+    // Coerce with Number(): BE serializes numeric(15,2) as string, so a raw
+    // `+` would string-concat and corrupt the running sum to NaN.
+    const amountOf = (p: (typeof practices)[number]) =>
+      Number(p.actual_price ?? p.quoted_price ?? 0);
+    const total = practices.reduce((sum, p) => sum + amountOf(p), 0);
+    const paid = practices
+      .filter((p) => p.payment_status === "paid")
+      .reduce((sum, p) => sum + Number(p.paid_amount ?? amountOf(p)), 0);
+    const outstanding = total - paid;
+    return { total, paid, outstanding };
+  }, [practices]);
+
+  const supersededIds = useMemo(
+    () => supersededVisaPracticeIds(practices),
+    [practices],
+  );
+
+  const sortedPractices = useMemo(() => {
+    let list = [...practices];
+    if (filterStatus !== "all")
+      list = list.filter((p) => p.status === filterStatus);
+    if (sortBy === "priority") {
+      const order: Record<string, number> = {
+        urgent: 0,
+        high: 1,
+        medium: 2,
+        normal: 3,
+        low: 4,
+      };
+      list.sort(
+        (a, b) =>
+          (order[a.priority || "normal"] ?? 3) -
+          (order[b.priority || "normal"] ?? 3),
+      );
+    } else if (sortBy === "expiry") {
+      list.sort((a, b) => {
+        if (!a.expiry_date) return 1;
+        if (!b.expiry_date) return -1;
+        return (
+          new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime()
+        );
+      });
+    } else if (sortBy === "amount") {
+      list.sort((a, b) => {
+        const aAmt = Number(a.actual_price ?? a.quoted_price ?? 0);
+        const bAmt = Number(b.actual_price ?? b.quoted_price ?? 0);
+        return bAmt - aAmt;
+      });
+    }
+    return list;
+  }, [practices, sortBy, filterStatus]);
+
+  return (
+    <div className="space-y-4">
+      {/* AI Summary (CRM-Guardian L1 cross-folder, red flags + signals) */}
+      <AiSummaryCard clientId={clientId} section="process" />
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-[var(--bz-text-1)]">
+          All Process
+          {filterStatus !== "all" && (
+            <span className="ml-2 text-xs text-[var(--bz-text-2)] font-normal">
+              ({sortedPractices.length} of {practices.length})
+            </span>
+          )}
+        </h3>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-2 border-[var(--state-success)] bg-[var(--state-success)] text-white hover:bg-[var(--state-success)] hover:opacity-90"
+          onClick={() => router.push(`/process/new?client_id=${clientId}`)}
+        >
+          <Plus className="w-4 h-4" />
+          New Process
+        </Button>
+      </div>
+
+      {/* Revenue Summary Bar */}
+      {practices.length > 0 && revenueSummary.total > 0 && (
+        <div className="grid grid-cols-3 gap-3">
+          <div className="rounded-lg bg-[var(--bz-surface)] border border-[var(--bz-border)] p-3">
+            <p className="text-[10px] uppercase tracking-wider text-[var(--bz-text-2)] mb-0.5">
+              Total Value
+            </p>
+            <p className="text-sm font-bold text-[var(--bz-text-1)]">
+              {formatCurrency(revenueSummary.total)}
+            </p>
+          </div>
+          <div className="rounded-lg bg-[var(--state-success)]/10 border border-[var(--state-success)]/20 p-3">
+            <p className="text-[10px] uppercase tracking-wider text-[var(--state-success)] mb-0.5">
+              Paid
+            </p>
+            <p className="text-sm font-bold text-[var(--state-success)]">
+              {formatCurrency(revenueSummary.paid)}
+            </p>
+          </div>
+          <div
+            className={`rounded-lg p-3 border ${revenueSummary.outstanding > 0 ? "bg-[var(--state-warning)]/10 border-[var(--state-warning)]/20" : "bg-[var(--bz-surface)] border-[var(--bz-border)]"}`}
+          >
+            <p
+              className={`text-[10px] uppercase tracking-wider mb-0.5 ${revenueSummary.outstanding > 0 ? "text-[var(--state-warning)]" : "text-[var(--bz-text-2)]"}`}
+            >
+              Outstanding
+            </p>
+            <p
+              className={`text-sm font-bold ${revenueSummary.outstanding > 0 ? "text-[var(--state-warning)]" : "text-[var(--bz-text-1)]"}`}
+            >
+              {formatCurrency(revenueSummary.outstanding)}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {practices.length > 1 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <SlidersHorizontal className="w-3.5 h-3.5 text-[var(--bz-text-2)] shrink-0" />
+          <div className="flex items-center gap-1 flex-wrap">
+            {(["all", ...activeStatuses] as string[]).map((s) => (
+              <button
+                key={s}
+                onClick={() => setFilterStatus(s)}
+                className={`text-xs px-2 py-1 rounded-full transition-colors ${
+                  filterStatus === s
+                    ? "bg-[var(--bz-sidebar-active-fill)] text-white"
+                    : "bg-[var(--bz-surface)] text-[var(--bz-text-2)] hover:bg-[var(--bz-card)]"
+                }`}
+              >
+                {s === "all" ? "All" : s.replace(/_/g, " ")}
+              </button>
+            ))}
+          </div>
+          <div className="ml-auto flex items-center gap-1">
+            {(["default", "priority", "expiry", "amount"] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => setSortBy(s)}
+                className={`text-xs px-2 py-1 rounded transition-colors ${
+                  sortBy === s
+                    ? "bg-[var(--tx-pure)] text-[var(--bz-base)]"
+                    : "text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]"
+                }`}
+              >
+                {s === "default"
+                  ? "Date"
+                  : s.charAt(0).toUpperCase() + s.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {practices.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-[var(--bz-border)] bg-[var(--bz-card)] p-12 text-center shadow-[var(--bz-shadow-card)] space-y-2">
+          <FolderOpen className="w-12 h-12 mx-auto text-[var(--bz-text-2)] mb-3 opacity-40" />
+          <p className="text-sm font-medium text-[var(--bz-text-1)]">
+            No services yet
+          </p>
+          <p className="text-xs text-[var(--bz-text-2)] opacity-70 max-w-xs mx-auto">
+            Add a visa, company setup, tax, or other service to track progress
+            and payments.
+          </p>
+          <div className="pt-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-2 border-[var(--state-success)] bg-[var(--state-success)] text-white hover:bg-[var(--state-success)] hover:opacity-90"
+              onClick={() => router.push(`/process/new?client_id=${clientId}`)}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add first service
+            </Button>
+          </div>
+        </div>
+      ) : sortedPractices.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-[var(--bz-border)] bg-[var(--bz-card)] p-8 text-center shadow-[var(--bz-shadow-card)]">
+          <p className="text-[var(--bz-text-2)] text-sm">
+            No processes match this filter
+          </p>
+          <button
+            onClick={() => setFilterStatus("all")}
+            className="text-xs text-[var(--tx-pure)] mt-2 hover:underline"
+          >
+            Clear filter
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {sortedPractices.map((practice) => (
+            <div
+              key={practice.id}
+              className="rounded-lg border border-[var(--bz-border)] bg-[var(--bz-surface)] p-4 hover:border-[var(--line-control)] transition-colors group"
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div
+                  className="flex-1 cursor-pointer min-w-0"
+                  onClick={() => router.push(`/process/${practice.id}`)}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-[var(--bz-text-1)] truncate">
+                      {practice.practice_type_name}
+                    </span>
+                    {practice.priority &&
+                      PRIORITY_BADGES[practice.priority] && (
+                        <span
+                          className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${PRIORITY_BADGES[practice.priority].className}`}
+                        >
+                          {PRIORITY_BADGES[practice.priority].label}
+                        </span>
+                      )}
+                    <span className="text-xs text-[var(--bz-text-2)] shrink-0">
+                      #{practice.id}
+                    </span>
+                  </div>
+                  {practice.family_member_name && (
+                    <div className="mt-1 flex items-center gap-1 text-xs text-[var(--tx-secondary)]">
+                      <User className="w-3 h-3" />
+                      <span className="truncate">
+                        for {practice.family_member_name}
+                        {practice.family_member_relationship
+                          ? ` (${practice.family_member_relationship})`
+                          : ""}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span
+                    className={`text-xs px-2 py-1 rounded-full ${
+                      STATUS_COLORS[practice.status] ||
+                      "bg-[var(--bz-surface)] text-[var(--bz-text-2)]"
+                    }`}
+                  >
+                    {practice.status.replace(/_/g, " ")}
+                  </span>
+                  {/* View/Delete buttons - show on hover */}
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        router.push(`/process/${practice.id}`);
+                      }}
+                      className="p-1 rounded hover:bg-[var(--bz-card)] text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]"
+                      title="View process"
+                      aria-label="View process"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (deletingIds.has(practice.id)) return;
+                        toast(
+                          `Delete process "${practice.practice_type_name}"? This will mark it as cancelled.`,
+                          {
+                            action: {
+                              label: "Delete",
+                              onClick: async () => {
+                                setDeletingIds((prev) =>
+                                  new Set(prev).add(practice.id),
+                                );
+                                try {
+                                  const user = await api.getProfile();
+                                  await api.crm.deletePractice(
+                                    practice.id,
+                                    user.email,
+                                  );
+                                  toast.success("Process deleted");
+                                  onRefresh();
+                                } catch (err) {
+                                  toast.error("Error", {
+                                    description: (err as Error).message,
+                                  });
+                                } finally {
+                                  setDeletingIds((prev) => {
+                                    const next = new Set(prev);
+                                    next.delete(practice.id);
+                                    return next;
+                                  });
+                                }
+                              },
+                            },
+                            cancel: {
+                              label: "Cancel",
+                              onClick: () => toast.dismiss(),
+                            },
+                          },
+                        );
+                      }}
+                      disabled={deletingIds.has(practice.id)}
+                      className="p-1 rounded hover:bg-[var(--bz-card)] text-[var(--tx-secondary)] hover:text-[var(--tx-pure)] disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Delete process"
+                      aria-label="Delete process"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap mt-1">
+                {practice.expiry_date &&
+                  (() => {
+                    const daysLeft = Math.ceil(
+                      (new Date(practice.expiry_date).getTime() - Date.now()) /
+                        86400000,
+                    );
+                    const isExpired = daysLeft < 0;
+                    const isCritical = daysLeft >= 0 && daysLeft <= 14;
+                    const isWarning = daysLeft > 14 && daysLeft <= 30;
+                    // Replaced by a later visa/KITAS: neutral, no urgency.
+                    const isReplaced = supersededIds.has(practice.id);
+                    const chipClass = isReplaced
+                      ? "bg-[var(--bz-base)] text-[var(--bz-text-2)]"
+                      : isExpired
+                        ? "bg-[var(--state-warning)]/10 text-[var(--state-warning)]"
+                        : isCritical
+                          ? "bg-[var(--state-warning)]/10 text-[var(--state-warning)]"
+                          : isWarning
+                            ? "bg-[var(--state-warning)]/10 text-[var(--state-warning)]"
+                            : ALERT_COLORS[practice.alert_color || "green"];
+                    const dateLabel = isExpired
+                      ? `exp ${Math.abs(daysLeft)}d ago`
+                      : daysLeft === 0
+                        ? "expires today"
+                        : `${daysLeft}d left`;
+                    const label = isReplaced
+                      ? `replaced · ${dateLabel}`
+                      : isExpired || daysLeft === 0
+                        ? dateLabel
+                        : `⏰ ${dateLabel}`;
+                    return (
+                      <div
+                        className={`text-xs inline-flex items-center gap-1 px-2 py-0.5 rounded ${chipClass}`}
+                        title={`Expires: ${formatDate(practice.expiry_date)}`}
+                      >
+                        <Calendar className="w-3 h-3" />
+                        {label}
+                      </div>
+                    );
+                  })()}
+                {(practice.quoted_price || practice.actual_price) && (
+                  <div className="text-xs inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--bz-base)] text-[var(--bz-text-2)]">
+                    <DollarSign className="w-3 h-3" />
+                    {practice.actual_price
+                      ? formatCurrency(practice.actual_price)
+                      : formatCurrency(practice.quoted_price!)}
+                  </div>
+                )}
+                {practice.payment_status && (
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded ${
+                      PAYMENT_STYLES[practice.payment_status] ||
+                      "bg-[var(--bz-surface)] text-[var(--bz-text-2)]"
+                    }`}
+                  >
+                    {practice.payment_status}
+                  </span>
+                )}
+                {practice.updated_at &&
+                  (() => {
+                    const ageDays = Math.floor(
+                      (Date.now() - new Date(practice.updated_at!).getTime()) /
+                        86400000,
+                    );
+                    if (ageDays < 2) return null;
+                    const label =
+                      ageDays >= 30
+                        ? `${Math.floor(ageDays / 30)}mo`
+                        : ageDays >= 7
+                          ? `${Math.floor(ageDays / 7)}w`
+                          : `${ageDays}d`;
+                    return (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded tabular-nums"
+                        style={{
+                          background:
+                            ageDays > 14
+                              ? "color-mix(in srgb, var(--state-warning) 15%, transparent)"
+                              : "var(--surface-raised)",
+                          color:
+                            ageDays > 14
+                              ? "var(--state-warning)"
+                              : "var(--bz-text-2)",
+                        }}
+                        title={`Last updated ${ageDays} days ago`}
+                      >
+                        {label} ago
+                      </span>
+                    );
+                  })()}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

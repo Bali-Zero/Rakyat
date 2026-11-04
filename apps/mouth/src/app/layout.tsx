@@ -1,0 +1,320 @@
+import type { Metadata, Viewport } from "next";
+import { GoogleAnalytics } from "@next/third-parties/google";
+import Script from "next/script";
+import {
+  OrganizationJsonLd,
+  LocalBusinessJsonLd,
+  WebsiteJsonLd,
+  AggregateRatingJsonLd,
+  DynamicJsonLd,
+} from "@/components/seo";
+import { RouteChangeTracker } from "@/components/analytics/RouteChangeTracker";
+import { analyticsUrlRedactScript } from "@/lib/analytics-url";
+import { QueryProvider } from "@/components/providers/QueryProvider";
+import { ErrorBoundary } from "@/components/optimization";
+import { WebVitalsMonitor } from "@/components/providers/WebVitalsMonitor";
+import { ThemeProvider } from "@balizero/core/components/ThemeProvider";
+import { inter } from "@balizero/core/fonts/inter";
+import { cormorant } from "@balizero/core/fonts/cormorant";
+import { LazyToaster } from "@/components/providers/LazyToaster";
+import "./globals.css";
+
+// Pre-paint theme script — persona-aware, sets data-theme before React hydrates
+// to prevent FOUC. Design 2026-04-17-v2-subdomain-rollout §3 (L1/L2/L3 persona).
+// Precedence: localStorage('bz-theme') > PATH persona > hostname persona > editorial.
+//   /portal/**                    → operative-light (client portal, ANY host)
+//   kita.                         → operative-light (workspace day mode)
+//   prime.                        → operative-dark (3D workspace)
+//   my., zantara.                 → operative-light (client self-service)
+//   balizero, visa., tax., /kbli  → editorial (public funnel)
+//
+// WHY THE PATH IS CHECKED BEFORE THE HOST (measured 2026-09-10, Zero ruling):
+// persona used to be derived from the hostname ALONE, so every environment that
+// is not literally `my.` served the client portal with the editorial NIGHT
+// palette — the login screen at /portal/login-upgraded rendered dark on
+// 127.0.0.1 while production rendered it cream, and the authenticated area
+// rendered light in both because its own CSS pins operative-light. That is a
+// persona the deploy target decides, which is exactly the class of drift that
+// makes local QA disagree with production. `/portal` IS the client persona
+// wherever it is served, so the path is now the stronger signal. The client's
+// own ThemeToggle (components/ui/ThemeToggle, mounted in PortalHeader) still
+// wins over both — this fixes the DEFAULT, it does not remove the choice.
+// Must be inline; next/script strategy="beforeInteractive" is insufficient in App Router.
+const themeInitScript = `(function(){try{var stored=localStorage.getItem('bz-theme');var host=location.hostname;var path=location.pathname;var isKita=host.indexOf('kita.')===0;var isPrime=host.indexOf('prime.')===0;var isPortalPath=path==='/portal'||path.lastIndexOf('/portal/',0)===0;var isMy=isPortalPath||host.indexOf('my.')===0||host.indexOf('zantara.')===0;var product=isPortalPath?'my':(isKita||isPrime)?'kita':isMy?'my':'editorial';var t=stored;if(product!=='editorial'){if(t==='light')t='operative-light';if(t==='dark')t='operative-dark';}if(!t){if(isKita||isMy)t='operative-light';else if(isPrime)t='operative-dark';else t='editorial';}document.documentElement.dataset.product=product;document.documentElement.dataset.theme=t;}catch(e){document.documentElement.dataset.product='editorial';document.documentElement.dataset.theme='editorial';}})();`;
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  // FASE 6 PWA: status-bar / address-bar tint. Matches the portal "paper" ink.
+  themeColor: "#16213a",
+};
+
+// Production URL - uses environment variable or falls back to production domain
+const appUrl = process.env.NEXT_PUBLIC_PUBLIC_URL || "https://balizero.com";
+
+export const metadata: Metadata = {
+  metadataBase: new URL(appUrl),
+  title: {
+    default:
+      "Bali Zero | Visa, Business & Immigration Experts in Bali, Indonesia",
+    template: "%s | Bali Zero",
+  },
+  description:
+    "Bali's #1 AI-powered visa agency. KITAS, KITAP, PT PMA company setup, Golden Visa, KBLI 2025 compliance, tax consulting. Transparent pricing. Trusted by 5000+ clients since 2020.",
+  keywords: [
+    // Primary keywords
+    "bali visa",
+    "indonesia visa",
+    "kitas bali",
+    "pt pma indonesia",
+    "company setup bali",
+    "business license indonesia",
+    "golden visa indonesia",
+    // Long-tail keywords
+    "how to get kitas in bali",
+    "start business in indonesia foreigner",
+    "retirement visa indonesia",
+    "digital nomad visa bali",
+    "pt pma registration process",
+    "indonesian work permit",
+    // Local SEO
+    "bali visa agency",
+    "visa agency bali",
+    "visa agent bali",
+    "immigration consultant bali",
+    "notaris bali",
+    "tax consultant bali",
+    "company formation bali",
+    // Brand
+    "bali zero",
+    "zantara ai",
+    "bali zero team",
+  ],
+  authors: [{ name: "Bali Zero Team", url: "https://balizero.com" }],
+  creator: "Bali Zero",
+  publisher: "Bali Zero",
+  category: "Business Services",
+  // FASE 6 PWA: iOS standalone web-app shell (manifest alone doesn't cover iOS).
+  appleWebApp: {
+    capable: true,
+    title: "Bali Zero",
+    statusBarStyle: "default",
+  },
+  // Icons are auto-detected by Next.js from app/icon.png and app/apple-icon.png
+  // No explicit configuration needed - Next.js 13+ App Router handles this automatically
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    alternateLocale: ["id_ID"],
+    url: appUrl,
+    title: "Bali Zero | #1 Visa & Business Experts in Bali, Indonesia",
+    description:
+      "Bali's #1 AI-powered visa agency. KITAS, KITAP, PT PMA, Golden Visa, KBLI 2025, tax consulting. 5000+ clients since 2020.",
+    siteName: "Bali Zero",
+    images: [
+      {
+        url: "/static/og-image.jpg",
+        width: 1200,
+        height: 630,
+        alt: "Bali Zero - Visa & Business Experts in Bali",
+        type: "image/jpeg",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Bali Zero | Visa & Business Experts in Bali",
+    description:
+      "Expert visa, immigration, company setup services in Bali. Trusted by 5000+ clients.",
+    images: ["/static/og-image.jpg"],
+    creator: "@balizero",
+    site: "@balizero",
+  },
+  // index/follow are left to crawler defaults on purpose: this root layout is
+  // shared by every host, and kita.balizero.com is noindex via X-Robots-Tag
+  // (proxy.ts). Stating "index, follow" here contradicted that header.
+  robots: {
+    googleBot: {
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
+  alternates: {
+    canonical: appUrl,
+    languages: {
+      "en-US": appUrl,
+      "id-ID": appUrl,
+      "x-default": appUrl,
+    },
+    types: {
+      "application/rss+xml": "/feed",
+    },
+  },
+  verification: {
+    google: [
+      "tuGW8kCBjRE-ycNaFdotBkKfOIaunurqnj-XDAVlPWw",
+      "S0SLRaoipW1uBChMmHSEdXW4REDgOzsyUv9CbAauao0",
+      "QU1L-D6V0hYncjZHFMYrNbpqffCk8gwuvK4gTHz8Ph8",
+    ],
+    other: {
+      "msvalidate.01": process.env.BING_SITE_VERIFICATION || "",
+    },
+  },
+  other: {
+    // AI/LLM optimization - for ChatGPT, Claude, Perplexity, Gemini
+    "ai-content-declaration": "ai-assisted",
+    "llms-txt": "/llms.txt",
+    "ai-plugin": "/.well-known/ai-plugin.json",
+    // Semantic information for AI
+    subject: "Visa, Immigration, Business Consulting, Indonesia, Bali",
+    coverage: "Indonesia, Bali, Southeast Asia",
+    distribution: "Global",
+    rating: "General",
+    "revisit-after": "7 days",
+    // Business identity
+    contact: "info@balizero.com",
+    "reply-to": "info@balizero.com",
+    "geo.region": "ID-BA",
+    "geo.placename": "Bali, Indonesia",
+    "geo.position": "-8.4095;115.1889",
+    ICBM: "-8.4095, 115.1889",
+  },
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html
+      lang="en"
+      className={`${inter.variable} ${cormorant.variable}`}
+      suppressHydrationWarning
+    >
+      <head>
+        {/* Pre-paint theme init — prevents FOUC before React hydrates (design §5). */}
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+
+        {/* Google Consent Mode v2 default — MUST be in <head> BEFORE gtag.js preload
+            (which @next/third-parties injects ~byte 2132 of HTML). Without this,
+            Google Tag defaults analytics_storage="denied" → /g/collect hits arrive
+            with gcs=G100 and GA4 drops them from reports/Realtime. Empirically
+            verified 2026-05-21 (subhi-activity-log.md): Next.js App Router IGNORES
+            strategy="beforeInteractive" for <Script> rendered as <body> children,
+            so we use raw <script> in <head> for guaranteed pre-paint execution.
+            Strategy: analytics_storage=granted by legitimate interest (analytics-
+            only, no PII, no ad cookies), ad_* stay denied for GDPR/UU-PDP. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('consent','default',{'analytics_storage':'denied','ad_storage':'denied','ad_user_data':'denied','ad_personalization':'denied','wait_for_update':500});gtag('consent','update',{'analytics_storage':'granted'});",
+          }}
+        />
+
+        {/* Redact credential-bearing query params from page_location BEFORE
+            gtag.js loads. Measured 2026-09-11: /portal/register?token=… and
+            /portal/magic?token=… shipped the raw single-use token to
+            google-analytics.com/g/collect as `dl=` (HTTP 204 — accepted).
+            GA's automatic page_view reads document.location.href, so this has
+            to be queued in dataLayer ahead of gtag('config'); see
+            src/lib/analytics-url.ts. */}
+        <script
+          dangerouslySetInnerHTML={{ __html: analyticsUrlRedactScript }}
+        />
+
+        {/* ⚡ Performance: Preconnect to critical domains */}
+        <link rel="preconnect" href="https://nuzantara-rag.fly.dev" />
+        <link rel="dns-prefetch" href="https://nuzantara-rag.fly.dev" />
+
+        {/* Font preloading handled automatically by next/font. The families are
+            self-hosted from packages/core/fonts/files/ (2026-08-13) — no
+            preconnect to fonts.gstatic.com is needed, and none should be added:
+            the point of self-hosting was to remove that host from the path. */}
+
+        {/* AI Discovery Links */}
+        <link
+          rel="alternate"
+          type="text/plain"
+          href="/llms.txt"
+          title="LLM Quick Guide"
+          aria-label="LLM Quick Guide"
+        />
+        <link
+          rel="alternate"
+          type="text/plain"
+          href="/llms-full.txt"
+          title="LLM Full Context (EN)"
+          aria-label="LLM Full Context (EN)"
+        />
+        <link
+          rel="alternate"
+          type="text/plain"
+          href="/llms-id.txt"
+          title="LLM Full Context (ID)"
+          aria-label="LLM Full Context (ID)"
+        />
+        <link
+          rel="alternate"
+          type="application/xml"
+          href="/sitemap-ai.xml"
+          title="AI Sitemap"
+          aria-label="AI Sitemap"
+        />
+        <link
+          rel="alternate"
+          type="application/json"
+          href="/.well-known/ai-plugin.json"
+          title="AI Plugin"
+          aria-label="AI Plugin"
+        />
+
+        {/* Global JSON-LD for SEO */}
+        <OrganizationJsonLd />
+        <LocalBusinessJsonLd />
+        <WebsiteJsonLd />
+        {/* Google Reviews AggregateRating - always included, visible on homepage */}
+        <AggregateRatingJsonLd />
+
+        {/* Page-specific JSON-LD schemas - Client-side rendered for ISR compatibility */}
+        <DynamicJsonLd />
+      </head>
+      <body
+        className="antialiased bg-[var(--background)] text-[var(--foreground)]"
+        suppressHydrationWarning
+      >
+        <QueryProvider>
+          <ThemeProvider defaultTheme="editorial">
+            <WebVitalsMonitor />
+            <ErrorBoundary
+              fallback={
+                <div className="p-8 text-center">
+                  Something went wrong. Please refresh the page.
+                </div>
+              }
+            >
+              {children}
+            </ErrorBoundary>
+          </ThemeProvider>
+          <LazyToaster />
+        </QueryProvider>
+        {/* Service Worker Registration — safe: hardcoded static JS string, no external input */}
+        <Script
+          id="sw-register"
+          strategy="afterInteractive"
+          dangerouslySetInnerHTML={{
+            __html:
+              "if('serviceWorker'in navigator){navigator.serviceWorker.register('/sw.js').catch(function(){})}",
+          }}
+        />
+        {process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID && (
+          <>
+            <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID} />
+            <RouteChangeTracker />
+          </>
+        )}
+      </body>
+    </html>
+  );
+}

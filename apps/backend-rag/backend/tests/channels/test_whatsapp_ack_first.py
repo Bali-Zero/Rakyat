@@ -1,0 +1,249 @@
+"""WhatsApp webhook ack-first contract tests.
+
+Verifies that the WhatsApp webhook router persists the inbound payload
+to ``inbound_webhooks`` and returns 200 OK before any business processing
+runs (P0-6 from zero-crash audit 2026-04-29).
+
+This is a contract test: it asserts the router calls
+``inbound_webhook_repo.persist`` and returns 200 OK in the same async
+event tick — i.e. without `await`-ing on heavy services like
+``orchestrator.process_query``.
+"""
+
+from __future__ import annotations
+
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+
+@pytest.fixture
+def mock_db_pool():
+    """Build an asyncpg.Pool mock with acquire() context manager."""
+    conn = AsyncMock()
+    conn.execute = AsyncMock(return_value="INSERT 0 1")
+    conn.fetchrow = AsyncMock(return_value={"id": 100})
+
+    transaction_ctx = MagicMock()
+    transaction_ctx.__aenter__ = AsyncMock(return_value=None)
+    transaction_ctx.__aexit__ = AsyncMock(return_value=None)
+    conn.transaction = MagicMock(return_value=transaction_ctx)
+
+    pool = MagicMock()
+    pool._conn = conn
+
+    acquire_ctx = MagicMock()
+    acquire_ctx.__aenter__ = AsyncMock(return_value=conn)
+    acquire_ctx.__aexit__ = AsyncMock(return_value=None)
+    pool.acquire = MagicMock(return_value=acquire_ctx)
+    return pool
+
+
+@pytest.fixture
+def app(mock_db_pool):
+    from backend.app.dependencies import get_database
+    from backend.app.routers import whatsapp_chat
+
+    application = FastAPI()
+    application.include_router(whatsapp_chat.router)
+    application.dependency_overrides[get_database] = lambda: mock_db_pool
+    application.state.db_pool = mock_db_pool
+    return application
+
+
+@pytest.fixture
+def client(app: FastAPI) -> TestClient:
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _whatsapp_payload(message_id: str = "wamid.ABC123") -> dict:
+    """Standard Meta WhatsApp message payload."""
+    return {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "id": "entry_1",
+                "changes": [
+                    {
+                        "field": "messages",
+                        "value": {
+                            "contacts": [{"profile": {"name": "Test User"}}],
+                            "messages": [
+                                {
+                                    "from": "6284000220000",
+                                    "id": message_id,
+                                    "timestamp": "1700000000",
+                                    "type": "text",
+                                    "text": {"body": "Hello"},
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+
+@pytest.mark.integration
+def test_acks_in_under_200ms(client: TestClient, mock_db_pool):
+    """Webhook returns 200 OK in <200ms — measuring the ack-critical path only.
+
+    ``process_whatsapp_message_and_mark_processed`` MUST be mocked here, same
+    as in ``test_duplicate_persist_result_skips_fast_path`` below. Starlette's
+    ``Response.__call__`` awaits ``send()`` (which flushes bytes to the real
+    socket under uvicorn) BEFORE running ``BackgroundTasks``, so production
+    callers (Meta) receive the 200 ACK before background processing starts —
+    but FastAPI's ``TestClient`` runs the whole ASGI call, background task
+    included, before returning control to ``client.post()``. Left unmocked,
+    this test measured `get_orchestrator`'s lazy-singleton cold-start — the
+    first call constructs `AgenticRAGOrchestrator` — instead of the ack path
+    it claims to guard.
+
+    Measured on M5 2026-08-12, unmocked, six runs: 2454 / 2898 / 3545 / 3090
+    / 3013 / 2645 ms. Deterministic, and identical at load-average 56 and at
+    13, so it was never machine contention; it blocked every backend-suite
+    push from this machine. With the background task mocked the same call is
+    ~20ms — a 10x margin under the 200ms this test's name has always claimed.
+
+    Note the cold-start does not disappear, it RELOCATES: whichever test
+    first drives the unmocked path now pays it (measured 15.5s on
+    ``test_persists_payload_to_inbound_webhooks`` in the same run). That test
+    asserts no timing, so it is harmless there — but do not add a latency
+    assertion to a test in this file without mocking the background task
+    first, or it inherits this same trap.
+
+    Do NOT widen the 200ms again to silence a red. The threshold was already
+    widened once, to 1500ms, and that is what kept this hidden: name,
+    docstring and comment all still said 200ms, so four places disagreed and
+    the assertion was the only one that had moved. A red here means either
+    the mock was dropped or the ack path genuinely gained synchronous work.
+    """
+    payload = _whatsapp_payload()
+
+    with (
+        # Patch the signature verification to no-op (no app secret set in test)
+        patch(
+            "backend.app.routers.whatsapp_chat._verify_whatsapp_signature",
+            return_value=True,
+        ),
+        patch(
+            "backend.app.routers.whatsapp_chat.process_whatsapp_message_and_mark_processed",
+            new_callable=AsyncMock,
+        ),
+    ):
+        start = time.monotonic()
+        resp = client.post("/webhook/whatsapp", json=payload)
+        elapsed_ms = (time.monotonic() - start) * 1000
+
+    assert resp.status_code == 200
+    assert elapsed_ms < 200, f"ack took {elapsed_ms:.0f}ms — possible sync work"
+
+
+@pytest.mark.integration
+def test_persists_payload_to_inbound_webhooks(client: TestClient, mock_db_pool):
+    """Router writes payload to inbound_webhooks via persist helper."""
+    payload = _whatsapp_payload(message_id="wamid.TEST_PERSIST")
+
+    with (
+        patch(
+            "backend.app.routers.whatsapp_chat._verify_whatsapp_signature",
+            return_value=True,
+        ),
+        patch(
+            "backend.services.channels.inbound_webhook_repo.persist",
+            new_callable=AsyncMock,
+        ) as mock_persist,
+    ):
+        mock_persist.return_value = (1, True)  # (id, inserted)
+        resp = client.post("/webhook/whatsapp", json=payload)
+
+    assert resp.status_code == 200
+    mock_persist.assert_awaited()
+    # Inspect call: channel="whatsapp", dedup_key derives from message_id
+    call_kwargs = mock_persist.call_args.kwargs
+    assert call_kwargs.get("channel") == "whatsapp"
+    assert "wamid.TEST_PERSIST" in call_kwargs.get("dedup_key", "")
+    assert call_kwargs.get("recovery_after_seconds") == 30
+
+
+@pytest.mark.integration
+def test_duplicate_persist_result_skips_fast_path(client: TestClient, mock_db_pool):
+    """A duplicate Meta retry must not schedule a second WhatsApp reply."""
+    payload = _whatsapp_payload(message_id="wamid.TEST_DUPLICATE")
+
+    with (
+        patch(
+            "backend.app.routers.whatsapp_chat._verify_whatsapp_signature",
+            return_value=True,
+        ),
+        patch(
+            "backend.services.channels.inbound_webhook_repo.persist",
+            new_callable=AsyncMock,
+        ) as mock_persist,
+        patch(
+            "backend.app.routers.whatsapp_chat.process_whatsapp_message_and_mark_processed",
+            new_callable=AsyncMock,
+        ) as mock_process,
+    ):
+        mock_persist.return_value = (None, False)  # duplicate
+        resp = client.post("/webhook/whatsapp", json=payload)
+
+    assert resp.status_code == 200
+    mock_process.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fast_path_marks_inbound_webhook_processed(mock_db_pool):
+    """Fast-path completion closes the recovery row before WebhookProcessor claims it."""
+    from backend.app.routers import whatsapp_chat
+
+    request = MagicMock()
+    request.app.state.db_pool = mock_db_pool
+
+    with (
+        patch(
+            "backend.app.routers.whatsapp_chat.process_whatsapp_message",
+            new_callable=AsyncMock,
+        ) as mock_process,
+        patch(
+            "backend.services.channels.inbound_webhook_repo.mark_processed",
+            new_callable=AsyncMock,
+        ) as mock_mark_processed,
+    ):
+        await whatsapp_chat.process_whatsapp_message_and_mark_processed(
+            phone="6284000220000",
+            message_text="Hello",
+            sender_name="Test User",
+            message_id="wamid.TEST_MARK",
+            request=request,
+        )
+
+    mock_process.assert_awaited_once()
+    mock_mark_processed.assert_awaited_once_with(
+        mock_db_pool,
+        channel="whatsapp",
+        dedup_key="wamid.TEST_MARK",
+    )
+
+
+@pytest.mark.integration
+def test_invalid_signature_returns_401_without_persist(client: TestClient, mock_db_pool):
+    """Signature verification runs BEFORE persist — bad sig = no DB write."""
+    with (
+        patch(
+            "backend.app.routers.whatsapp_chat._verify_whatsapp_signature",
+            return_value=False,
+        ),
+        patch(
+            "backend.services.channels.inbound_webhook_repo.persist",
+            new_callable=AsyncMock,
+        ) as mock_persist,
+    ):
+        resp = client.post("/webhook/whatsapp", json=_whatsapp_payload())
+
+    assert resp.status_code == 401
+    mock_persist.assert_not_awaited()

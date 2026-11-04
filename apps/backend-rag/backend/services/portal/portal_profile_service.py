@@ -1,0 +1,102 @@
+"""
+Portal Profile Service — auto-creates team_members records for CRM clients.
+
+When a client is created in the CRM, this service ensures a matching
+team_members record exists with role='client' so the portal can display
+their data without waiting for a manual invite.
+
+The pin_hash is set to a placeholder. The client sets their real PIN
+when invited via the existing invite flow.
+"""
+
+import asyncpg
+
+from backend.app.utils.logging_utils import get_logger
+from backend.services.common.cache import cache_invalidating
+
+logger = get_logger(__name__)
+
+# Placeholder bcrypt hash for "$NOLOGIN$" — login attempts will never match.
+# The real pin_hash is set when the client completes registration via invite.
+#
+# PUBLIC ON PURPOSE: this value is a CONTRACT between the two halves of the
+# onboarding flow, not a private detail. `ensure_portal_profile` writes it with
+# `active=true`, and `InviteService.complete_registration` reads it back as the
+# ONLY reliable "this account has never been registered" signal — the `active`
+# flag cannot carry that meaning, because every CRM-created client is already
+# active from the moment the profile is provisioned.
+PLACEHOLDER_PIN_HASH = "$2b$12$000000000000000000000uNOLOGIN.placeholder.hash.nevermatches"
+
+
+class PortalProfileService:
+    """Creates and manages portal profiles (team_members with role='client')."""
+
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self.pool = pool
+
+    @cache_invalidating(
+        [
+            lambda self, client_id, *a, **k: f"zantara:portal_profile:{client_id}:*",
+        ]
+    )
+    async def ensure_portal_profile(
+        self,
+        client_id: int,
+        email: str | None,
+        full_name: str,
+    ) -> str | None:
+        """
+        Ensure a team_members record exists for this client.
+
+        Returns the team_member id (UUID string) or None if skipped/failed.
+        Non-blocking: DB errors are caught and logged, never raised.
+        """
+        if not email or not email.strip():
+            logger.warning(
+                "Skipping portal profile for client %s: no email",
+                client_id,
+            )
+            return None
+
+        email = email.strip().lower()
+
+        try:
+            async with self.pool.acquire() as conn:
+                member_id = await conn.fetchval(
+                    """
+                    INSERT INTO team_members (
+                        name, full_name, email, pin_hash, role,
+                        linked_client_id, portal_access, active
+                    )
+                    VALUES ($1, $1, $2, $3, 'client', $4, true, true)
+                    ON CONFLICT (email) DO UPDATE
+                        SET linked_client_id = EXCLUDED.linked_client_id,
+                            portal_access = true,
+                            name = EXCLUDED.name,
+                            full_name = COALESCE(
+                                team_members.full_name, EXCLUDED.full_name
+                            )
+                        WHERE team_members.role = 'client'
+                    RETURNING id
+                    """,
+                    full_name,
+                    email,
+                    PLACEHOLDER_PIN_HASH,
+                    client_id,
+                )
+
+                logger.info(
+                    "Portal profile ensured for client %s (member_id=%s)",
+                    client_id,
+                    member_id,
+                )
+                return member_id
+
+        except Exception as e:
+            logger.error(
+                "Failed to create portal profile for client %s: %s (sqlstate=%s)",
+                client_id,
+                type(e).__name__,
+                getattr(e, "sqlstate", None),
+            )
+            return None

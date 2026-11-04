@@ -1,0 +1,126 @@
+/**
+ * API Client Interface and Types
+ * Provides type-safe contracts for API client implementations
+ */
+
+import { UserProfile } from "@/types";
+
+/**
+ * Cookie-primary session verdict (auth-gates-cookie-primary). Distinct from
+ * the boolean `isAuthenticated` check below: that one is local-token-only
+ * and positive-only (see its docstring in client.ts). This type carries the
+ * third, honest outcome a network probe can produce — the server was never
+ * asked, or answered ambiguously — so callers are not forced to guess
+ * "anonymous" out of a value that only ever meant "unproven".
+ */
+export type SessionState = "authenticated" | "anonymous" | "unknown";
+
+/**
+ * HTTP request options
+ */
+export interface ApiRequestOptions extends Omit<RequestInit, "headers"> {
+  headers?: Record<string, string>;
+  /**
+   * Whether a 401 on this request may navigate the browser to the login page.
+   *
+   * Defaults to `true`, which is right for a call the user is waiting on: if
+   * their session died, sending them to log in again is the useful thing to do.
+   *
+   * Set it to `false` for a BACKGROUND call made from a page a visitor may
+   * legitimately be reading while logged out — an autosave, a poll, a
+   * prefetch. Such a call must never take the page away from under them.
+   * Measured 2026-08-28: `/dream` is public, its autosave hits an
+   * authenticated endpoint, and an anonymous visitor who typed one character
+   * was ejected to `kita.balizero.com/login?expired=true` within seconds.
+   */
+  redirectOnUnauthorized?: boolean;
+}
+
+/**
+ * Interface for API client implementations.
+ * Domain APIs depend on this interface, not concrete implementations.
+ */
+export interface IApiClient {
+  /**
+   * Make an HTTP request to the backend API.
+   * @param endpoint - API endpoint path (e.g., '/api/auth/login')
+   * @param options - Request options (method, body, headers)
+   * @param timeoutMs - Request timeout in milliseconds (default: 30000)
+   * @returns Promise resolving to typed response
+   */
+  request<T>(
+    endpoint: string,
+    options?: ApiRequestOptions,
+    timeoutMs?: number,
+  ): Promise<T>;
+
+  /**
+   * Get admin-specific headers for protected endpoints.
+   * Throws if user is not an admin.
+   */
+  getAdminHeaders(): Record<string, string>;
+
+  /**
+   * Get the current user profile.
+   */
+  getUserProfile(): UserProfile | null;
+
+  /**
+   * Set the current user profile.
+   */
+  setUserProfile(profile: UserProfile): void;
+
+  /**
+   * Set the authentication token.
+   */
+  setToken(token: string): void;
+
+  /**
+   * Superuser impersonation: scope all /api/portal and /api/v1/lkpm calls
+   * to the given client id via ?as_client=<id>. Pass null to disable.
+   */
+  setPortalImpersonation?(clientId: number | null): void;
+  getPortalImpersonation?(): number | null;
+
+  /**
+   * Get the current authentication token.
+   */
+  getToken(): string | null;
+
+  /**
+   * Clear authentication state (token, CSRF, profile).
+   */
+  clearToken(): void;
+
+  /**
+   * Set the CSRF token for state-changing requests.
+   */
+  setCsrfToken(token: string): void;
+
+  /**
+   * Get the current CSRF token.
+   */
+  getCsrfToken(): string | null;
+
+  /**
+   * Check if user is authenticated.
+   */
+  isAuthenticated(): boolean;
+
+  /**
+   * Cookie-primary session check (auth-gates-cookie-primary). Gates that
+   * decide whether to redirect to /login must call this, not the boolean
+   * above — see its docstring in client.ts for why.
+   */
+  hasSession(): Promise<SessionState>;
+
+  /**
+   * Check if user has admin role.
+   */
+  isAdmin(): boolean;
+
+  /**
+   * Get the base URL for API requests.
+   */
+  getBaseUrl(): string;
+}

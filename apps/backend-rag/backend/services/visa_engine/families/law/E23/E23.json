@@ -1,0 +1,144 @@
+{
+  "code": "E23",
+  "official_name_id": "E23 Visa Kerja",
+  "source_url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/E23",
+  "retrieved_at": "2026-10-17T13:27:32Z",
+  "page_sha256": "ad2585ef3ee9cf082154b4ca6858d2ed8c7f03b85e7b685081f5238139de9fbe",
+  "definition_verbatim": "bekerja dengan penjamin di Indonesia serta membawa keluarga, sesuai ketentuan peraturan keimigrasian. Visa ini juga memungkinkan Anda keluar-masuk Indonesia selama Izin Masuk Kembali masih berlaku. Anda diizinkan mengikuti pendidikan melalui mekanisme Rangkap Kegiatan Izin Tinggal. Anda juga diperkenankan melakukan aktivitas investasi, wisata, dan mengunjungi teman atau keluarga.",
+  "jenis_visa_verbatim": "Visa ini merupakan Visa Tinggal Terbatas untuk masuk ke Indonesia yang memungkinkan Anda untuk masuk dan keluar Indonesia dalam jangka waktu tertentu. Izin Tinggal ini dapat diperpanjang dan dapat dialihkan menjadi izin tinggal lainnya.",
+  "stay_days": [
+    "Anda dapat tinggal di Indonesia selama 180 hari, 1 tahun, atau 2 tahun, sesuai dengan pilihan Anda. Izin tinggal dihitung sejak tanggal kedatangan."
+  ],
+  "extendable": [
+    "Perpanjangan izin tinggal dapat dilakukan secara online oleh sponsor melalui akun yang telah terdaftar di evisa.imigrasi.go.id",
+    "Izin Tinggal ini dapat diperpanjang dan dapat dialihkan menjadi izin tinggal lainnya."
+  ],
+  "entry": "multiple",
+  "where_to_apply": null,
+  "sponsor_required": {
+    "as_stated_boolean": true,
+    "verbatim": [
+      "Anda membutuhkan penjamin/sponsor untuk mengajukan visa ini."
+    ],
+    "invitation_requirement_see": "requirements_verbatim (Persyaratan Khusus)"
+  },
+  "requirements_verbatim": [
+    {
+      "n": 1,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "surat permohonan dan surat pernyataan penjamin yang memberikan kerja bagi Orang Asing"
+    },
+    {
+      "n": 2,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "Paspor kebangsaan yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis,"
+    },
+    {
+      "n": 3,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "bukti memiliki biaya hidup selama berada di wilayah Indonesia berupa rekening koran 3 bulan terakhir atas nama Orang Asing atau penjamin sebesar minimal USD2000 atau dalam mata uang lain yang setara jumlahnya,"
+    },
+    {
+      "n": 4,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "pasfoto berwarna terbaru (setahun terakhir). Detail"
+    },
+    {
+      "n": 5,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "daftar riwayat hidup (CV)"
+    },
+    {
+      "n": 6,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "rincian perjalanan (itinerary)"
+    },
+    {
+      "n": 7,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "Izin bekerja dari Kementerian Tenaga Kerja."
+    }
+  ],
+  "pengajuan_intro_verbatim": "Penjamin (sponsor) harus memiliki akun di evisa.imigrasi.go.id sebelum mengajukan visa bagi Orang Asing yang dia sponsori. Setelah memiliki akun, penjamin dapat mengajukan visa bagi Orang Asing setelah login di evisa.imigrasi.go.id dengan menyiapkan berkas elektronik (detail format file) Orang Asing antara lain:",
+  "allowed_activities": "bekerja dengan penjamin di Indonesia serta membawa keluarga, sesuai ketentuan peraturan keimigrasian. Visa ini juga memungkinkan Anda keluar-masuk Indonesia selama Izin Masuk Kembali masih berlaku. Anda diizinkan mengikuti pendidikan melalui mekanisme Rangkap Kegiatan Izin Tinggal. Anda juga diperkenankan melakukan aktivitas investasi, wisata, dan mengunjungi teman atau keluarga.",
+  "prohibited_or_conditions_verbatim": [
+    "Masa berlaku visa adalah 90 hari sejak diterbitkan. Jika tidak digunakan setelah jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.",
+    "Anda dilarang tinggal di wilayah Indonesia melebihi jangka waktu izin tinggal yang diberikan, melakukan pekerjaan yang tidak sesuai dengan izin tinggal, melakukan penjualan barang atau jasa, kecuali diperlukan dalam pekerjaan tersebut."
+  ],
+  "ketentuan_lain_verbatim": [
+    "Masa berlaku visa adalah 90 hari sejak diterbitkan. Jika tidak digunakan setelah jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.",
+    "Harap diperhatikan bahwa masa berlaku visa berbeda dengan masa tinggal, silakan periksa visa Anda untuk informasi tentang lama izin tinggal.",
+    "Izin Tinggal Terbatas (ITAS) dan Izin Masuk Kembali akan terbit secara otomatis begitu Anda diizinkan masuk oleh petugas pada Tempat Pemeriksaan Imigrasi.",
+    "Anda dilarang tinggal di wilayah Indonesia melebihi jangka waktu izin tinggal yang diberikan, melakukan pekerjaan yang tidak sesuai dengan izin tinggal, melakukan penjualan barang atau jasa, kecuali diperlukan dalam pekerjaan tersebut."
+  ],
+  "pnbp_verbatim_for_reference_only": [
+    "Masa tinggal hingga 180 hari: Rp. 5.250.000",
+    "Masa tinggal hingga 1 tahun : Rp. 7.000.000",
+    "Masa tinggal hingga 2 tahun : Rp. 9.500.000",
+    "Semua pembayaran (PNBP) dapat dilakukan melalui beberapa bank yang telah ditunjuk. Silakan lihat kode billing yang muncul di sistem setelah pengajuan visa oleh sponsor."
+  ],
+  "itap_verbatim": [
+    {
+      "text": "Izin Tinggal ini dapat diperpanjang dan dapat dialihkan menjadi izin tinggal lainnya.",
+      "url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/E23"
+    }
+  ],
+  "itap_eligibility_as_stated": null,
+  "total_max_verbatim": null,
+  "notes": [
+    "PNBP is official-source reference only; never a client price.",
+    "VERIFIED_FROM_SOURCE confirms extraction, not resolution of contradictions or legal eligibility.",
+    "Requirement numbers follow source order; nested alternatives remain verbatim. A/B counts include the application steps listed by the source."
+  ],
+  "status": "VERIFIED_FROM_SOURCE",
+  "to_verify": [
+    "total_max_verbatim: TO_VERIFY; no overall maximum on this visa page.",
+    "itap_eligibility_as_stated: null + TO_VERIFY; generic conversion does not establish ITAP eligibility for this code.",
+    "where_to_apply: null + TO_VERIFY; no explicit offshore/onshore application rule on the visa page."
+  ],
+  "conflicts": [],
+  "source_http_status": 200,
+  "source_raw_path": "raw/E23.html",
+  "source_sections_verbatim": [
+    {
+      "heading": "Dengan visa ini, anda dapat",
+      "text": "bekerja dengan penjamin di Indonesia serta membawa keluarga, sesuai ketentuan peraturan keimigrasian. Visa ini juga memungkinkan Anda keluar-masuk Indonesia selama Izin Masuk Kembali masih berlaku. Anda diizinkan mengikuti pendidikan melalui mekanisme Rangkap Kegiatan Izin Tinggal. Anda juga diperkenankan melakukan aktivitas investasi, wisata, dan mengunjungi teman atau keluarga."
+    },
+    {
+      "heading": "Jenis visa",
+      "text": "Visa ini merupakan Visa Tinggal Terbatas untuk masuk ke Indonesia yang memungkinkan Anda untuk masuk dan keluar Indonesia dalam jangka waktu tertentu. Izin Tinggal ini dapat diperpanjang dan dapat dialihkan menjadi izin tinggal lainnya."
+    },
+    {
+      "heading": "Masa tinggal",
+      "text": "Anda dapat tinggal di Indonesia selama 180 hari, 1 tahun, atau 2 tahun, sesuai dengan pilihan Anda. Izin tinggal dihitung sejak tanggal kedatangan.\nPerpanjangan izin tinggal dapat dilakukan secara online oleh sponsor melalui akun yang telah terdaftar di evisa.imigrasi.go.id"
+    },
+    {
+      "heading": "Biaya (PNBP)",
+      "text": "Masa tinggal hingga 180 hari: Rp. 5.250.000\nMasa tinggal hingga 1 tahun : Rp. 7.000.000\nMasa tinggal hingga 2 tahun : Rp. 9.500.000\nSemua pembayaran (PNBP) dapat dilakukan melalui beberapa bank yang telah ditunjuk. Silakan lihat kode billing yang muncul di sistem setelah pengajuan visa oleh sponsor."
+    },
+    {
+      "heading": "Penjamin (Sponsor)",
+      "text": "Anda membutuhkan penjamin/sponsor untuk mengajukan visa ini."
+    },
+    {
+      "heading": "Pengajuan visa",
+      "text": "Penjamin (sponsor) harus memiliki akun di evisa.imigrasi.go.id sebelum mengajukan visa bagi Orang Asing yang dia sponsori. Setelah memiliki akun, penjamin dapat mengajukan visa bagi Orang Asing setelah login di evisa.imigrasi.go.id dengan menyiapkan berkas elektronik (detail format file) Orang Asing antara lain:\nsurat permohonan dan surat pernyataan penjamin yang memberikan kerja bagi Orang Asing\nPaspor kebangsaan yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis,\nbukti memiliki biaya hidup selama berada di wilayah Indonesia berupa rekening koran 3 bulan terakhir atas nama Orang Asing atau penjamin sebesar minimal USD2000 atau dalam mata uang lain yang setara jumlahnya,\npasfoto berwarna terbaru (setahun terakhir). Detail\ndaftar riwayat hidup (CV)\nrincian perjalanan (itinerary)\nIzin bekerja dari Kementerian Tenaga Kerja."
+    },
+    {
+      "heading": "Ketentuan lain",
+      "text": "Masa berlaku visa adalah 90 hari sejak diterbitkan. Jika tidak digunakan setelah jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.\nHarap diperhatikan bahwa masa berlaku visa berbeda dengan masa tinggal, silakan periksa visa Anda untuk informasi tentang lama izin tinggal.\nIzin Tinggal Terbatas (ITAS) dan Izin Masuk Kembali akan terbit secara otomatis begitu Anda diizinkan masuk oleh petugas pada Tempat Pemeriksaan Imigrasi.\nAnda dilarang tinggal di wilayah Indonesia melebihi jangka waktu izin tinggal yang diberikan, melakukan pekerjaan yang tidak sesuai dengan izin tinggal, melakukan penjualan barang atau jasa, kecuali diperlukan dalam pekerjaan tersebut."
+    },
+    {
+      "heading": "Proses pengajuan dan pemberian visa",
+      "text": "Pengajuan Visa di Direktorat Jenderal Imigrasi:\npemeriksaan kelengkapan persyaratan;\nverifikasi pembayaran biaya imigrasi sesuai dengan ketentuan peraturan perundang-undangan;\npembuatan profil dan verifikasi;\npersetujuan;\npenerbitan visa.\nWaktu Proses Empat hari kerja setelah pembayaran visa diterima."
+    },
+    {
+      "heading": "Dasar hukum",
+      "text": "Peraturan Pemerintah Nomor 45 tahun 2024 tentang Tarif PNBP di Lingkungan Kementerian Hukum dan HAM RI\nPeraturan Menteri Hukum dan HAM RI Nomor 11 Tahun 2024 tentang Visa dan Izin Tinggal\nPeraturan Menteri Hukum dan HAM RI Nomor 18 Tahun 2024 tentang Visa dan Izin Tinggal\nKeputusan Menteri Hukum dan HAM RI Nomor M.HH-02.GR.01.04 Tahun 2023 tentang Klasifikasi Visa\nPeraturan Menteri Keuangan RI Nomor 9/PMK.02/2022 tentang Jenis dan Tarif PNBP Kebutuhan Mendesak atas Pelayanan Keimigrasian yang berlaku pada Kemenkumham RI\nPeraturan Menteri Keuangan RI Nomor 82 Tahun 2023 tentang Jenis dan Tarif atas Jenis PNBP Kebutuhan Mendesak atas Pelayanan Golden Visa yang berlaku pada Kemenkumham RI"
+    }
+  ],
+  "itap_explicit_on_visa_page": false,
+  "itap_evidence_file": "ITAP.json",
+  "itap_eligibility_as_stated_boolean": null,
+  "itap_status": "TO_VERIFY"
+}

@@ -1,0 +1,840 @@
+"""The 20 gold personas (spec §7 First 20 personas table) as parametrized
+acceptance fixtures for ``evaluator.evaluate``.
+
+Each case asserts (per spec §7's own "every case asserts" list, narrowed to
+what PR5's scope actually produces — pack sequence/hash and quote status are
+asserted via ``rule_pack``/``quotes`` where meaningful; pricing itself is
+out of PR5 scope, see ``evaluator.py``'s module docstring divergence #4):
+
+- exact state;
+- exact candidate order (product codes, in rank order);
+- exact missing/review/no-path reason codes;
+- no candidate for any review/unknown/no-path case (enforced structurally by
+  ``models.Decision``'s own state-conditional validators — a bug here would
+  raise ``ValidationError`` inside ``evaluator.evaluate`` itself, never
+  silently pass).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field, replace
+
+import pytest
+
+from backend.services.visa_engine import evaluator
+from backend.services.visa_engine.enums import DecisionState
+from backend.tests.services.visa_engine import _gold_fixtures as gf
+
+_INV_MIN = gf.GOLD_INVESTOR_MIN_IDR
+
+
+@dataclass(frozen=True)
+class Persona:
+    id: int
+    label: str
+    overrides: dict
+    expected_state: DecisionState
+    expected_candidates: tuple[str, ...] = ()
+    expected_missing: tuple[str, ...] = ()
+    expected_review_codes: tuple[str, ...] = ()
+    expected_no_path_codes: tuple[str, ...] = ()
+    expected_notice_codes: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class ProductionReplayExpectation:
+    """Legally re-derived expectation for the signed production-pack replay.
+
+    The canonical persona assertions below intentionally exercise a synthetic
+    five-product engine fixture.  Production replay must not reuse those
+    synthetic product codes or thresholds as Indonesian legal assertions.
+    """
+
+    state: DecisionState
+    candidates: tuple[str, ...] = ()
+    missing: tuple[str, ...] = ()
+    review_codes: tuple[str, ...] = ()
+    no_path_codes: tuple[str, ...] = ()
+    notice_codes: tuple[str, ...] = ()
+    legal_citations: tuple[str, ...] = ()
+    rationale: str = ""
+
+
+PERSONAS: tuple[Persona, ...] = (
+    Persona(
+        id=1,
+        label="ID citizen excluded outright",
+        overrides={"person.nationalities": gf.known(["ID", "IT"])},
+        expected_state=DecisionState.NO_SUPPORTED_PATH,
+        expected_no_path_codes=("APPLICANT_IS_INDONESIAN_CITIZEN",),
+    ),
+    Persona(
+        id=2,
+        label="conflicting nationality evidence -> human review",
+        overrides={"person.nationalities": gf.unknown("CONFLICTING")},
+        expected_state=DecisionState.HUMAN_REVIEW_REQUIRED,
+        expected_review_codes=("CITIZENSHIP_EVIDENCE_CONFLICT",),
+    ),
+    Persona(
+        id=3,
+        label="calling-visa nationality -> human review",
+        overrides={"person.nationalities": gf.known(["AF"])},
+        expected_state=DecisionState.HUMAN_REVIEW_REQUIRED,
+        expected_review_codes=("CALLING_VISA_REVIEW",),
+    ),
+    Persona(
+        id=4,
+        label="active overstay -> human review",
+        overrides={
+            "immigration.currently_in_indonesia": gf.known(True),
+            "immigration.current_status_code": gf.known("C1"),
+            "immigration.overstay_days": gf.known(3),
+            "immigration.violation_history": gf.known(["OVERSTAY"]),
+        },
+        expected_state=DecisionState.HUMAN_REVIEW_REQUIRED,
+        expected_review_codes=("ACTIVE_OVERSTAY",),
+    ),
+    Persona(
+        id=5,
+        label="minor without confirmed guardian -> human review",
+        overrides={
+            "person.birth_date": gf.known("2012-01-01"),
+            "family.sponsor_confirmed": gf.known(False),
+        },
+        expected_state=DecisionState.HUMAN_REVIEW_REQUIRED,
+        expected_review_codes=("MINOR_WITHOUT_CONFIRMED_GUARDIAN",),
+    ),
+    Persona(
+        id=6,
+        label="minor child with confirmed family sponsor -> E31",
+        overrides={
+            "person.birth_date": gf.known("2012-01-01"),
+            "intent.purposes": gf.known(["FAMILY"]),
+            "family.relation_to_sponsor": gf.known("CHILD"),
+            "family.sponsor_status_code": gf.known("E23"),
+            "family.sponsor_confirmed": gf.known(True),
+        },
+        expected_state=DecisionState.SUPPORTED_CANDIDATES,
+        expected_candidates=("E31",),
+    ),
+    Persona(
+        id=7,
+        label="adult spouse, registered marriage, confirmed sponsor -> E31",
+        overrides={
+            "intent.purposes": gf.known(["FAMILY"]),
+            "family.relation_to_sponsor": gf.known("SPOUSE"),
+            "family.sponsor_nationalities": gf.known(["ID"]),
+            "family.marriage_registered": gf.known(True),
+            "family.sponsor_confirmed": gf.known(True),
+        },
+        expected_state=DecisionState.SUPPORTED_CANDIDATES,
+        expected_candidates=("E31",),
+    ),
+    Persona(
+        id=8,
+        label="same as #7 but marriage_registered unverified -> needs input",
+        overrides={
+            # Gate round 2 (2026-07-20) parziale item 2: this is now a
+            # genuine, PURE single-fact differential from #7 — every key
+            # here except ``family.marriage_registered`` is identical to
+            # #7's own overrides. Round 1 had ALSO added an explicit
+            # ``family.sponsor_status_code`` override here to neutralize a
+            # dead-branch unknown-fact leak (see ``_gold_fixtures.py``'s
+            # persona-8 docstring for the full history); that leak is now
+            # fixed at its root (the shared baseline's own
+            # ``family.sponsor_status_code`` default), so the override is
+            # no longer needed and has been removed.
+            "intent.purposes": gf.known(["FAMILY"]),
+            "family.relation_to_sponsor": gf.known("SPOUSE"),
+            "family.sponsor_nationalities": gf.known(["ID"]),
+            "family.marriage_registered": gf.unknown("UNVERIFIED"),
+            "family.sponsor_confirmed": gf.known(True),
+        },
+        expected_state=DecisionState.NEEDS_INPUT,
+        expected_missing=("family.marriage_registered",),
+    ),
+    Persona(
+        id=9,
+        label="investor direct onshore conversion -> unsupported",
+        overrides={
+            "immigration.currently_in_indonesia": gf.known(True),
+            "immigration.current_status_code": gf.known("C1"),
+            "intent.purposes": gf.known(["INVESTMENT"]),
+            "intent.requested_product_code": gf.known("E28A"),
+            "process.application_channel": gf.known("ONSHORE_CONVERSION"),
+            "investment.investment_capital_idr": gf.known(_INV_MIN),
+            "investment.pt_pma_committed": gf.known(True),
+            "investment.proposed_role": gf.known("SHAREHOLDER_DIRECTOR"),
+        },
+        expected_state=DecisionState.NO_SUPPORTED_PATH,
+        expected_no_path_codes=("DIRECT_ONSHORE_CONVERSION_UNSUPPORTED",),
+    ),
+    Persona(
+        id=10,
+        label="same investor facts via status bridging -> human review",
+        overrides={
+            "immigration.currently_in_indonesia": gf.known(True),
+            "immigration.current_status_code": gf.known("C1"),
+            "intent.purposes": gf.known(["INVESTMENT"]),
+            "intent.requested_product_code": gf.known("E28A"),
+            "process.application_channel": gf.known("STATUS_BRIDGING"),
+            "investment.investment_capital_idr": gf.known(_INV_MIN),
+            "investment.pt_pma_committed": gf.known(True),
+            "investment.proposed_role": gf.known("SHAREHOLDER_DIRECTOR"),
+        },
+        expected_state=DecisionState.HUMAN_REVIEW_REQUIRED,
+        expected_review_codes=("STATUS_BRIDGING_REVIEW",),
+    ),
+    Persona(
+        id=11,
+        label="clean remote worker, no local footprint -> E33G",
+        # `work.employer_country_code` is deliberately NOT wired into any
+        # rule (gate round 1 audit, 2026-07-19, see _gold_fixtures.py's
+        # module docstring) — it stays here as case-narrative context only;
+        # `work.employer_is_indonesian_entity` is the actual rule input.
+        overrides={
+            "intent.purposes": gf.known(["REMOTE_WORK"]),
+            "work.employer_country_code": gf.known("FR"),
+            "work.employer_is_indonesian_entity": gf.known(False),
+            "work.serves_indonesian_clients": gf.known(False),
+            "work.indonesia_source_compensation": gf.known(False),
+            "work.annual_foreign_income_usd": gf.known(85_000),
+        },
+        expected_state=DecisionState.SUPPORTED_CANDIDATES,
+        expected_candidates=("E33G",),
+    ),
+    Persona(
+        id=12,
+        label="remote worker serving Indonesian clients -> human review",
+        overrides={
+            "intent.purposes": gf.known(["REMOTE_WORK"]),
+            "work.employer_is_indonesian_entity": gf.known(False),
+            "work.serves_indonesian_clients": gf.known(True),
+            "work.indonesia_source_compensation": gf.known(False),
+        },
+        expected_state=DecisionState.HUMAN_REVIEW_REQUIRED,
+        expected_review_codes=("LOCAL_MARKET_ACTIVITY_REVIEW",),
+    ),
+    Persona(
+        id=13,
+        label="remote worker, local-clients fact unprovided -> needs input",
+        overrides={
+            "intent.purposes": gf.known(["REMOTE_WORK"]),
+            "work.employer_is_indonesian_entity": gf.known(False),
+            "work.serves_indonesian_clients": gf.unknown("NOT_PROVIDED"),
+            "work.indonesia_source_compensation": gf.known(False),
+            "work.annual_foreign_income_usd": gf.known(85_000),
+        },
+        expected_state=DecisionState.NEEDS_INPUT,
+        expected_missing=("work.serves_indonesian_clients",),
+    ),
+    Persona(
+        id=14,
+        label="tourism + remote-work purposes -> E33G only, never C1",
+        overrides={
+            "intent.purposes": gf.known(["TOURISM", "REMOTE_WORK"]),
+            "work.employer_is_indonesian_entity": gf.known(False),
+            "work.serves_indonesian_clients": gf.known(False),
+            "work.indonesia_source_compensation": gf.known(False),
+            "work.annual_foreign_income_usd": gf.known(85_000),
+        },
+        expected_state=DecisionState.SUPPORTED_CANDIDATES,
+        expected_candidates=("E33G",),
+    ),
+    Persona(
+        id=15,
+        label="tourism + employment purposes -> E23 only, never C1",
+        overrides={
+            "intent.purposes": gf.known(["TOURISM", "EMPLOYMENT"]),
+            "work.employer_is_indonesian_entity": gf.known(True),
+            "work.indonesian_work_sponsor_confirmed": gf.known(True),
+        },
+        expected_state=DecisionState.SUPPORTED_CANDIDATES,
+        expected_candidates=("E23",),
+    ),
+    Persona(
+        id=16,
+        label="investor capital 1 IDR below minimum -> no supported path",
+        overrides={
+            "intent.purposes": gf.known(["INVESTMENT"]),
+            "investment.investment_capital_idr": gf.known(_INV_MIN - 1),
+            "investment.pt_pma_committed": gf.known(True),
+            "investment.proposed_role": gf.known("SHAREHOLDER_DIRECTOR"),
+        },
+        expected_state=DecisionState.NO_SUPPORTED_PATH,
+        expected_no_path_codes=("INVESTMENT_CAPITAL_BELOW_FIXTURE_MINIMUM",),
+    ),
+    Persona(
+        id=17,
+        label="investor at fixture minimum, low budget never filters -> E28A",
+        overrides={
+            "intent.purposes": gf.known(["INVESTMENT"]),
+            "investment.investment_capital_idr": gf.known(_INV_MIN),
+            "investment.pt_pma_committed": gf.known(True),
+            "investment.proposed_role": gf.known("SHAREHOLDER_DIRECTOR"),
+            "commercial.service_fee_budget_idr": gf.known(1),
+        },
+        expected_state=DecisionState.SUPPORTED_CANDIDATES,
+        expected_candidates=("E28A",),
+    ),
+    Persona(
+        id=18,
+        label="obsolete code requested, purposes not provided -> needs input + notice",
+        overrides={
+            "intent.purposes": gf.unknown("NOT_PROVIDED"),
+            "intent.stay_days": gf.known(30),
+            "intent.requested_product_code": gf.known("B211A"),
+        },
+        expected_state=DecisionState.NEEDS_INPUT,
+        expected_missing=("intent.purposes",),
+        expected_notice_codes=("OBSOLETE_PRODUCT_CODE",),
+    ),
+    Persona(
+        id=19,
+        label="obsolete code requested, complete tourism facts -> C1 + notice",
+        overrides={
+            "intent.purposes": gf.known(["TOURISM"]),
+            "intent.stay_days": gf.known(30),
+            "intent.requested_product_code": gf.known("B211A"),
+        },
+        expected_state=DecisionState.SUPPORTED_CANDIDATES,
+        expected_candidates=("C1",),
+        expected_notice_codes=("OBSOLETE_PRODUCT_CODE",),
+    ),
+    Persona(
+        id=20,
+        label="onshore conversion wanted, status+overstay both unprovided",
+        overrides={
+            "immigration.currently_in_indonesia": gf.known(True),
+            "process.wants_onshore_conversion": gf.known(True),
+            "immigration.current_status_code": gf.unknown("NOT_PROVIDED"),
+            "immigration.overstay_days": gf.unknown("NOT_PROVIDED"),
+        },
+        expected_state=DecisionState.NEEDS_INPUT,
+        expected_missing=("immigration.current_status_code", "immigration.overstay_days"),
+    ),
+)
+
+assert len(PERSONAS) == 20, "gold harness must carry exactly the 20 personas from spec §7"
+assert [p.id for p in PERSONAS] == list(range(1, 21)), "persona ids must be 1..20 in order"
+
+
+# Independently re-derived from each persona's complete facts and the named
+# legal sources below.  This table is deliberately NOT generated from a
+# production evaluator run: a changed engine output remains a divergence
+# unless the cited legal reading is changed here by an independent reviewer.
+PRODUCTION_REPLAY_EXPECTATIONS: dict[int, ProductionReplayExpectation] = {
+    1: ProductionReplayExpectation(
+        # Re-derived 2026-10-08 (seq-25 replay): the state and the citizen
+        # exclusion (`hf.citizen`) were always right; what was missing is
+        # that, since seq-23 turned the review holds into named dead ends,
+        # the remaining products' own hard filters fire on the same facts
+        # too, in engine order: `hf.a1.not-bvk-nationality`,
+        # `hf.b1.voa-dual-nationality` (the persona's second nationality is
+        # not assessed for VOA) and the under-55 E33E/E33F filters.
+        # `SPONSOR_REQUIRED` left with seq-24, same as personas 3 and 4.
+        state=DecisionState.NO_SUPPORTED_PATH,
+        no_path_codes=(
+            "BVK_NATIONALITY_ONLY",
+            "APPLICANT_IS_INDONESIAN_CITIZEN",
+            "VOA_DUAL_NATIONALITY_NOT_ASSESSED",
+            "AGE_BELOW_55",
+        ),
+        legal_citations=("UU 6/2011 jo. UU 63/2024 tentang Keimigrasian",),
+        rationale="An Indonesian citizen is outside the foreign-national visa product set.",
+    ),
+    2: ProductionReplayExpectation(
+        # Re-derived 2026-09-24 (Slice A9.3): seq-23 is the highest signed
+        # pack, and DRAFT-SPEC-A8-1.v2 §1 (owner-ratified, OD-6) replaced
+        # this persona's human-review hold with `hf.calling-visa-nationality` / `hf.b1.voa-dual-nationality`, both
+        # `on_unknown: NEEDS_INPUT`: unresolved nationality evidence is asked
+        # for again rather than held.
+        state=DecisionState.NEEDS_INPUT,
+        missing=("person.nationalities",),
+        legal_citations=(
+            "Daftar Negara Calling Visa - Ditjen Imigrasi",
+            "Daftar Negara Subjek Visa on Arrival - Ditjen Imigrasi",
+        ),
+        rationale="Conflicting nationality evidence cannot resolve either country list; the applicant is asked to state it.",
+    ),
+    3: ProductionReplayExpectation(
+        # Re-derived 2026-09-24 (Slice A9.3): seq-23 is the highest signed
+        # pack, and DRAFT-SPEC-A8-1.v2 §1 (owner-ratified, OD-6) replaced
+        # this persona's human-review hold with the named dead end `hf.calling-visa-nationality`.
+        # The other three codes are the remaining products' own exclusions for
+        # a non-VOA, non-BVK, under-55 applicant, in engine order.
+        # Re-derived 2026-09-27 (seq-24 signing): seq-24 is now the highest
+        # signed pack and retires `hf.e33f.sponsor-required`, the only emitter
+        # of `SPONSOR_REQUIRED`, so that code no longer accompanies E33F's
+        # age exclusion (measured: gold_replay_driver offline report on seq-24).
+        state=DecisionState.NO_SUPPORTED_PATH,
+        no_path_codes=(
+            "BVK_NATIONALITY_ONLY",
+            "CALLING_VISA_NATIONALITY_NOT_ASSESSED",
+            "VOA_NATIONALITY_ONLY",
+            "AGE_BELOW_55",
+        ),
+        legal_citations=("Daftar Negara Calling Visa - Ditjen Imigrasi",),
+        rationale="Afghan nationality is on the Calling Visa list, which this oracle does not assess.",
+    ),
+    4: ProductionReplayExpectation(
+        # Re-derived 2026-09-24 (Slice A9.3): seq-23 is the highest signed
+        # pack, and DRAFT-SPEC-A8-1.v2 §1 (owner-ratified, OD-6) replaced
+        # this persona's human-review hold with the named dead end `hf.active-overstay`. The other
+        # two codes are the remaining products' own exclusions, in engine order.
+        # Re-derived 2026-09-27 (seq-24 signing): `SPONSOR_REQUIRED` left with
+        # the retired `hf.e33f.sponsor-required` (measured: gold_replay_driver
+        # offline report on the highest signed pack, seq-24).
+        state=DecisionState.NO_SUPPORTED_PATH,
+        no_path_codes=(
+            "BVK_NATIONALITY_ONLY",
+            "ACTIVE_OVERSTAY_SETTLE_FIRST",
+            "AGE_BELOW_55",
+        ),
+        legal_citations=("UU 6/2011 jo. UU 63/2024 tentang Keimigrasian",),
+        rationale="A disclosed active overstay must be settled before any route is recommended.",
+    ),
+    5: ProductionReplayExpectation(
+        # Re-derived 2026-09-24 (Slice A9.3): seq-23 is the highest signed
+        # pack, and DRAFT-SPEC-A8-1.v2 §1 (owner-ratified, OD-6) replaced
+        # this persona's human-review hold with `hf.minor-without-confirmed-sponsor`. With the
+        # rule-level hold gone, the A7-B guardian-consent adapter asks for
+        # the unanswered consent first, exactly as it does for persona 6.
+        state=DecisionState.NEEDS_INPUT,
+        missing=("person.guardian_consent",),
+        legal_citations=(
+            "Kepmen M.IP-08.GR.01.01/2025 - family visa classifications",
+        ),
+        rationale="A minor without a confirmed guardian gets no public recommendation; guardian consent is asked first.",
+    ),
+    6: ProductionReplayExpectation(
+        # Re-derived 2026-09-21 (Slice A7-B, OD-4b re-ruled): "the public
+        # boundary holds every minor for review" was the pre-A7-B reading —
+        # OD-4b narrows it to "holds a minor who DECLARES no guardian
+        # consent"; a minor whose consent is merely unasked/UNKNOWN (this
+        # persona's case — the fact postdates this fixture) now gets
+        # NEEDS_INPUT naming the fact, not an unconditional hold.
+        state=DecisionState.NEEDS_INPUT,
+        missing=("person.guardian_consent",),
+        legal_citations=(
+            "Kepmen M.IP-08.GR.01.01/2025 - family visa classifications",
+        ),
+        rationale=(
+            "The family route is plausible; the public boundary now asks for "
+            "guardian consent instead of holding every minor outright."
+        ),
+    ),
+    7: ProductionReplayExpectation(
+        state=DecisionState.SUPPORTED_CANDIDATES,
+        candidates=("C1", "E31A"),
+        legal_citations=(
+            "Visa Keluarga Suami/Istri WNI (E31A) - Ditjen Imigrasi",
+            "Kepmen M.IP-08.GR.01.01/2025 - C1 classification",
+        ),
+        rationale="A registered WNI marriage supports E31A; a 30-day family visit also supports C1.",
+    ),
+    8: ProductionReplayExpectation(
+        state=DecisionState.SUPPORTED_CANDIDATES,
+        candidates=("C1",),
+        legal_citations=(
+            "Visa Keluarga Suami/Istri WNI (E31A) - Ditjen Imigrasi",
+            "Kepmen M.IP-08.GR.01.01/2025 - C1 classification",
+        ),
+        rationale="Unverified marriage blocks E31A, but does not block the complete 30-day C1 visit facts.",
+    ),
+    9: ProductionReplayExpectation(
+        state=DecisionState.NO_SUPPORTED_PATH,
+        no_path_codes=("DIRECT_ONSHORE_CONVERSION_UNSUPPORTED",),
+        legal_citations=(
+            "Permenkumham 22/2023 jo. Permenkumham 11/2024 - alih status",
+        ),
+        rationale="The described direct C1-to-E28A onshore conversion is not a supported route.",
+    ),
+    10: ProductionReplayExpectation(
+        state=DecisionState.HUMAN_REVIEW_REQUIRED,
+        review_codes=("STATUS_BRIDGING_REVIEW",),
+        legal_citations=(
+            "Permenkumham 22/2023 jo. Permenkumham 11/2024 - ITK peralihan",
+        ),
+        rationale="The same investor facts through status bridging require an adviser review.",
+    ),
+    11: ProductionReplayExpectation(
+        state=DecisionState.SUPPORTED_CANDIDATES,
+        candidates=("E33G",),
+        legal_citations=(
+            "Permenkumham 22/2023 jo. Permenkumham 11/2024 Pasal 33(2)(j)",
+        ),
+        rationale="Remote work with a foreign employer and no Indonesian clients or pay supports E33G.",
+    ),
+    12: ProductionReplayExpectation(
+        # Re-derived 2026-09-24 (Slice A9.3): seq-23 is the highest signed
+        # pack, and DRAFT-SPEC-A8-1.v2 §1 (owner-ratified, OD-6) replaced
+        # this persona's human-review hold with the named dead end `hf.e33g.local-market`.
+        state=DecisionState.NO_SUPPORTED_PATH,
+        no_path_codes=("E33G_LOCAL_MARKET_NOT_ALLOWED",),
+        legal_citations=(
+            "Permenkumham 22/2023 jo. Permenkumham 11/2024 Pasal 33(2)(j)",
+        ),
+        rationale="Serving Indonesian clients crosses the clean E33G activity boundary.",
+    ),
+    13: ProductionReplayExpectation(
+        state=DecisionState.NEEDS_INPUT,
+        missing=("work.serves_indonesian_clients",),
+        legal_citations=(
+            "Permenkumham 22/2023 jo. Permenkumham 11/2024 Pasal 33(2)(j)",
+        ),
+        rationale="Local-client activity is a necessary E33G boundary fact and is unprovided.",
+    ),
+    14: ProductionReplayExpectation(
+        state=DecisionState.SUPPORTED_CANDIDATES,
+        candidates=("E33G",),
+        legal_citations=(
+            "Permenkumham 22/2023 jo. Permenkumham 11/2024 Pasal 33(2)(j)",
+        ),
+        rationale="E33G covers the declared remote-work and tourism purposes together.",
+    ),
+    15: ProductionReplayExpectation(
+        state=DecisionState.SUPPORTED_CANDIDATES,
+        candidates=("E23",),
+        legal_citations=("Kepmen M.IP-08.GR.01.01/2025 - E23 classification",),
+        rationale="Confirmed Indonesian employment sponsorship supports E23, not a C1 work route.",
+    ),
+    16: ProductionReplayExpectation(
+        state=DecisionState.SUPPORTED_CANDIDATES,
+        candidates=("D12",),
+        legal_citations=(
+            "Visa Kunjungan Pra-Investasi (D12) - Ditjen Imigrasi",
+            "Kepmen M.IP-08.GR.01.01/2025 - E28A capital thresholds",
+        ),
+        rationale="Capital below E28A's threshold still supports the described pre-investment D12 visit.",
+    ),
+    17: ProductionReplayExpectation(
+        state=DecisionState.SUPPORTED_CANDIDATES,
+        candidates=("D12",),
+        legal_citations=(
+            "Visa Kunjungan Pra-Investasi (D12) - Ditjen Imigrasi",
+            "Kepmen M.IP-08.GR.01.01/2025 - E28A paid-up capital threshold",
+        ),
+        rationale="Total capital alone does not establish E28A; the complete facts support D12 instead.",
+    ),
+    18: ProductionReplayExpectation(
+        state=DecisionState.NEEDS_INPUT,
+        missing=("intent.purposes",),
+        notice_codes=("OBSOLETE_PRODUCT_CODE",),
+        legal_citations=("Kepmen M.IP-08.GR.01.01/2025 - current visa classifications",),
+        rationale="The obsolete B211A label cannot select a route without a declared purpose.",
+    ),
+    19: ProductionReplayExpectation(
+        state=DecisionState.SUPPORTED_CANDIDATES,
+        candidates=("B1", "C1"),
+        notice_codes=("OBSOLETE_PRODUCT_CODE",),
+        legal_citations=(
+            "Daftar Negara Subjek Visa on Arrival - Ditjen Imigrasi",
+            "Kepmen M.IP-08.GR.01.01/2025 - B1 and C1 classifications",
+        ),
+        rationale="A French national's complete 30-day tourism facts support both B1 and C1 alternatives.",
+    ),
+    20: ProductionReplayExpectation(
+        # Re-derived 2026-09-24 (Slice A9.3): seq-23 is the highest signed
+        # pack, and DRAFT-SPEC-A8-1.v2 §1 (owner-ratified, OD-6) replaced
+        # this persona's human-review hold with `on_unknown: NEEDS_INPUT` on `hf.bridging.from-visit-itk`,
+        # `hf.bridging.to-bridging` and `hf.active-overstay`: the unknown
+        # facts are asked for, overstay first.
+        state=DecisionState.NEEDS_INPUT,
+        missing=("immigration.overstay_days",),
+        legal_citations=(
+            "Permenkumham 22/2023 jo. Permenkumham 11/2024 - ITK peralihan",
+        ),
+        rationale="Unknown source status and overstay cannot rule out a prohibited bridging origin; they are asked for.",
+    ),
+}
+
+# Re-derived (seq-28): the E33E/E33F ``AGE_BELOW_55`` hard filters now carry
+# an explicit RETIREMENT purpose conjunct.  Personas 1 (Indonesian citizen),
+# 3 (Calling Visa nationality) and 4 (active overstay) do not declare
+# retirement, so that reason can no longer be emitted for them.  Their state,
+# every other reason, legal basis and rationale remain unchanged.
+#
+# Re-pinned (E31-B01, owner-approved OPS-2, 2026-10-14): a no-path decision
+# caused by a GLOBAL hard filter now lists only the global causes, so the
+# per-product nationality codes (BVK_NATIONALITY_ONLY, VOA_NATIONALITY_ONLY,
+# VOA_DUAL_NATIONALITY_NOT_ASSESSED) that rode along with them are gone.
+# State and candidate set are unchanged for every persona; only the reason-code
+# list of personas 1, 3 and 4 moved.
+SEQ28_PRODUCTION_REPLAY_EXPECTATIONS: dict[int, ProductionReplayExpectation] = {
+    **PRODUCTION_REPLAY_EXPECTATIONS,
+    1: replace(
+        PRODUCTION_REPLAY_EXPECTATIONS[1],
+        no_path_codes=("APPLICANT_IS_INDONESIAN_CITIZEN",),
+    ),
+    3: replace(
+        PRODUCTION_REPLAY_EXPECTATIONS[3],
+        no_path_codes=("CALLING_VISA_NATIONALITY_NOT_ASSESSED",),
+    ),
+    4: replace(
+        PRODUCTION_REPLAY_EXPECTATIONS[4],
+        no_path_codes=("ACTIVE_OVERSTAY_SETTLE_FIRST",),
+    ),
+}
+
+
+# Re-derived (seq-32, owner ruling): ``el.c2.business`` no longer needs a sponsor, so a C2
+# business visit is now offered next to D12 to an investor who describes a pre-investment
+# visit.  Personas 16 and 17 therefore end with BOTH C2 and D12; state, reason codes, legal
+# basis and rationale are unchanged.  Personas 9 and 10 (the application-channel engine gap)
+# are NOT moved here: they stay divergent and are pinned in test_gold_replay_driver.py.
+SEQ32_PRODUCTION_REPLAY_EXPECTATIONS: dict[int, ProductionReplayExpectation] = {
+    **SEQ28_PRODUCTION_REPLAY_EXPECTATIONS,
+    16: replace(SEQ28_PRODUCTION_REPLAY_EXPECTATIONS[16], candidates=("C2", "D12")),
+    17: replace(SEQ28_PRODUCTION_REPLAY_EXPECTATIONS[17], candidates=("C2", "D12")),
+}
+
+
+def production_replay_expectations_for_sequence(
+    sequence: int,
+) -> dict[int, ProductionReplayExpectation]:
+    """The legal expectation table belonging to the pack being replayed."""
+
+    if sequence >= 32:
+        return SEQ32_PRODUCTION_REPLAY_EXPECTATIONS
+    return (
+        SEQ28_PRODUCTION_REPLAY_EXPECTATIONS if sequence >= 28 else PRODUCTION_REPLAY_EXPECTATIONS
+    )
+
+
+assert set(PRODUCTION_REPLAY_EXPECTATIONS) == set(range(1, 21))
+assert set(SEQ28_PRODUCTION_REPLAY_EXPECTATIONS) == set(range(1, 21))
+assert set(SEQ32_PRODUCTION_REPLAY_EXPECTATIONS) == set(range(1, 21))
+assert all(
+    expectation.legal_citations and expectation.rationale
+    for table in (
+        PRODUCTION_REPLAY_EXPECTATIONS,
+        SEQ28_PRODUCTION_REPLAY_EXPECTATIONS,
+        SEQ32_PRODUCTION_REPLAY_EXPECTATIONS,
+    )
+    for expectation in table.values()
+), "every production replay expectation needs a named legal citation and rationale"
+
+
+@pytest.mark.parametrize("persona_id", [1, 3, 4])
+def test_seq28_rederived_personas_only_shed_reason_codes(persona_id: int) -> None:
+    before = PRODUCTION_REPLAY_EXPECTATIONS[persona_id]
+    after = SEQ28_PRODUCTION_REPLAY_EXPECTATIONS[persona_id]
+    assert before.no_path_codes.count("AGE_BELOW_55") == 1
+    # E31-B01 (OPS-2): the per-product nationality codes that rode along with
+    # a global cause are gone too, so the list may only SHRINK from `before`
+    # minus AGE_BELOW_55; state, citations and rationale are untouched.
+    surviving = tuple(code for code in before.no_path_codes if code != "AGE_BELOW_55")
+    assert set(after.no_path_codes) <= set(surviving)
+    assert after.no_path_codes
+    assert replace(after, no_path_codes=before.no_path_codes) == before
+
+
+@pytest.fixture(scope="module")
+def compiled_gold_pack():
+    return gf.build_gold_compiled_pack()
+
+
+@pytest.mark.parametrize("persona", PERSONAS, ids=[f"persona-{p.id:02d}" for p in PERSONAS])
+def test_gold_persona(persona: Persona, compiled_gold_pack) -> None:
+    facts = gf.applicant_facts(overrides=persona.overrides)
+    decision = evaluator.evaluate(
+        facts,
+        compiled_gold_pack,
+        effective_at=gf.GOLD_EFFECTIVE_AT,
+        observed_at=gf.GOLD_EFFECTIVE_AT,
+    )
+
+    assert decision.state is persona.expected_state, (
+        f"persona {persona.id} ({persona.label}): expected {persona.expected_state}, "
+        f"got {decision.state}"
+    )
+    assert tuple(c.product_code for c in decision.candidates) == persona.expected_candidates
+    assert tuple(sorted(m.value for m in decision.missing_facts)) == tuple(
+        sorted(persona.expected_missing)
+    )
+    assert tuple(r.code for r in decision.review_reasons) == persona.expected_review_codes
+    assert tuple(r.code for r in decision.no_path_reasons) == persona.expected_no_path_codes
+    assert tuple(sorted(n.code for n in decision.notices)) == tuple(
+        sorted(persona.expected_notice_codes)
+    )
+
+    # Every candidate/reason carries at least one citation (task bar: zero
+    # uncited outputs) — the one documented exception is the evaluator's own
+    # NO_PRODUCT_SUPPORTS_DECLARED_PURPOSES fallback, never reached by any of
+    # these 20 personas (each has a named, cited rule driving its outcome).
+    for candidate in decision.candidates:
+        assert candidate.source_refs
+    for reason in (*decision.review_reasons, *decision.no_path_reasons):
+        assert reason.source_refs, f"reason {reason.code} must carry a citation"
+
+
+# ---------------------------------------------------------------------------
+# Gate round 1 (2026-07-19): metamorphic differential tests — each of these
+# takes a gold persona's own facts and flips ONLY its previously-flagged
+# "distinguishing" fact, proving the flip actually changes the outcome (the
+# gate's ask: "make each distinguishing fact actually influential"). Personas
+# 11/20 are intentionally excluded — documented as non-influential-by-design
+# / already-influential in _gold_fixtures.py's module docstring instead.
+# ---------------------------------------------------------------------------
+
+
+def test_persona_6_sponsor_status_code_is_influential(compiled_gold_pack) -> None:
+    base_overrides = PERSONAS[5].overrides  # persona id=6
+    assert base_overrides["family.sponsor_status_code"] == gf.known("E23")
+
+    facts = gf.applicant_facts(
+        overrides={**base_overrides, "family.sponsor_status_code": gf.known("C1")}
+    )
+    decision = evaluator.evaluate(
+        facts,
+        compiled_gold_pack,
+        effective_at=gf.GOLD_EFFECTIVE_AT,
+        observed_at=gf.GOLD_EFFECTIVE_AT,
+    )
+    assert decision.state is DecisionState.NO_SUPPORTED_PATH
+    assert decision.candidates == ()
+
+
+def test_persona_7_sponsor_nationalities_is_influential(compiled_gold_pack) -> None:
+    base_overrides = PERSONAS[6].overrides  # persona id=7
+    assert base_overrides["family.sponsor_nationalities"] == gf.known(["ID"])
+
+    facts = gf.applicant_facts(
+        overrides={**base_overrides, "family.sponsor_nationalities": gf.known(["US"])}
+    )
+    decision = evaluator.evaluate(
+        facts,
+        compiled_gold_pack,
+        effective_at=gf.GOLD_EFFECTIVE_AT,
+        observed_at=gf.GOLD_EFFECTIVE_AT,
+    )
+    assert decision.state is DecisionState.NO_SUPPORTED_PATH
+    assert decision.candidates == ()
+
+
+def test_persona_8_is_a_pure_single_fact_differential_from_persona_7(compiled_gold_pack) -> None:
+    """Gate round 2 (2026-07-20) parziale item 2: persona 8's own label
+    claims "same as #7 but marriage_registered unverified" — this asserts
+    that claim is now LITERALLY true at the overrides-dict level (every
+    key identical to persona 7's except ``family.marriage_registered``),
+    not just true in spirit. Round 1 had silently broken this by also
+    adding a ``family.sponsor_status_code`` override to neutralize a
+    dead-branch unknown-fact leak (see ``_gold_fixtures.py``'s persona-8
+    docstring) — fixed at the root (shared baseline default) in round 2,
+    so the override is gone and the differential is pure again.
+    """
+    persona_7_overrides = PERSONAS[6].overrides  # id=7
+    persona_8_overrides = PERSONAS[7].overrides  # id=8
+
+    differing_keys = {
+        key
+        for key in set(persona_7_overrides) | set(persona_8_overrides)
+        if persona_7_overrides.get(key) != persona_8_overrides.get(key)
+    }
+    assert differing_keys == {"family.marriage_registered"}, (
+        f"persona 8 must differ from persona 7 by exactly one fact "
+        f"(family.marriage_registered), found: {differing_keys}"
+    )
+
+
+def test_persona_17_service_fee_budget_influences_ranking_score_never_eligibility(
+    compiled_gold_pack,
+) -> None:
+    """Persona 17's own label: "low budget never filters". The gate round 1
+    fix wires `commercial.service_fee_budget_idr` into a dedicated ranking
+    rule (`rank.budget-covers-fee`) — this proves the fact IS influential
+    (on score) while the legal state/candidate stays identical either way,
+    which is a stronger demonstration of the persona's claim than an inert
+    fact would be.
+    """
+    base_overrides = PERSONAS[16].overrides  # persona id=17
+    assert base_overrides["commercial.service_fee_budget_idr"] == gf.known(1)
+
+    low_budget = gf.applicant_facts(overrides=base_overrides)
+    high_budget = gf.applicant_facts(
+        overrides={**base_overrides, "commercial.service_fee_budget_idr": gf.known(2_000_000)}
+    )
+
+    low_decision = evaluator.evaluate(
+        low_budget,
+        compiled_gold_pack,
+        effective_at=gf.GOLD_EFFECTIVE_AT,
+        observed_at=gf.GOLD_EFFECTIVE_AT,
+    )
+    high_decision = evaluator.evaluate(
+        high_budget,
+        compiled_gold_pack,
+        effective_at=gf.GOLD_EFFECTIVE_AT,
+        observed_at=gf.GOLD_EFFECTIVE_AT,
+    )
+
+    # Legal state/candidate identity untouched by budget either way.
+    assert low_decision.state is DecisionState.SUPPORTED_CANDIDATES
+    assert high_decision.state is DecisionState.SUPPORTED_CANDIDATES
+    assert [c.product_code for c in low_decision.candidates] == ["E28A"]
+    assert [c.product_code for c in high_decision.candidates] == ["E28A"]
+
+    # But the score IS influenced by the budget fact.
+    assert high_decision.candidates[0].score > low_decision.candidates[0].score
+
+
+def test_persona_20_asymmetric_influence_matrix(compiled_gold_pack) -> None:
+    """Gate round 2 (2026-07-20) parziale item 3: Codex sol xhigh's EXECUTED
+    probe found the round-1 documentation FALSE — it claimed "flipping
+    EITHER distinguishing fact to KNOWN changes the outcome away from
+    NEEDS_INPUT". The real 4-way matrix (see ``_gold_fixtures.py``'s
+    persona-20 docstring for the mechanism):
+
+    - both unknown (persona 20's own baseline) -> NEEDS_INPUT, both facts
+      missing.
+    - ``current_status_code`` known ALONE -> still NEEDS_INPUT (only
+      ``overstay_days`` remains missing) — the STATE does not change.
+    - ``overstay_days`` known ALONE (even at 0) -> SUPPORTED_CANDIDATES on
+      C1 — the STATE DOES change, with no need for ``current_status_code``
+      at all.
+    - both known -> SUPPORTED_CANDIDATES on C1 (same as overstay-only).
+    """
+    base_overrides = PERSONAS[19].overrides  # id=20
+    assert base_overrides["immigration.current_status_code"] == gf.unknown("NOT_PROVIDED")
+    assert base_overrides["immigration.overstay_days"] == gf.unknown("NOT_PROVIDED")
+
+    def _decide(overrides: dict) -> tuple[DecisionState, tuple[str, ...], tuple[str, ...]]:
+        facts = gf.applicant_facts(overrides=overrides)
+        decision = evaluator.evaluate(
+            facts,
+            compiled_gold_pack,
+            effective_at=gf.GOLD_EFFECTIVE_AT,
+            observed_at=gf.GOLD_EFFECTIVE_AT,
+        )
+        return (
+            decision.state,
+            tuple(sorted(m.value for m in decision.missing_facts)),
+            tuple(c.product_code for c in decision.candidates),
+        )
+
+    both_unknown = _decide(base_overrides)
+    status_only = _decide(
+        {**base_overrides, "immigration.current_status_code": gf.known("C1")}
+    )
+    overstay_only = _decide({**base_overrides, "immigration.overstay_days": gf.known(0)})
+    both_known = _decide(
+        {
+            **base_overrides,
+            "immigration.current_status_code": gf.known("C1"),
+            "immigration.overstay_days": gf.known(0),
+        }
+    )
+
+    assert both_unknown == (
+        DecisionState.NEEDS_INPUT,
+        ("immigration.current_status_code", "immigration.overstay_days"),
+        (),
+    )
+    assert status_only == (
+        DecisionState.NEEDS_INPUT,
+        ("immigration.overstay_days",),
+        (),
+    )
+    assert overstay_only == (DecisionState.SUPPORTED_CANDIDATES, (), ("C1",))
+    assert both_known == (DecisionState.SUPPORTED_CANDIDATES, (), ("C1",))

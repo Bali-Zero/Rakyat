@@ -1,0 +1,300 @@
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { OverviewTab } from "./OverviewTab";
+import { api } from "@/lib/api";
+import type { ClientProfile, ExpiryAlert } from "@/lib/api/crm/crm.types";
+
+// OverviewTab also mounts AiSummaryCard / WaCaseIntelligencePanel, both of
+// which fetch on mount — stub them to their real "not generated" shape so
+// they render their quiet empty state instead of throwing.
+vi.mock("@/lib/api", () => ({
+  api: {
+    crm: {
+      getClientAiSummary: vi.fn(),
+      getClientWaCaseIntelligence: vi.fn(),
+      // CRM-18: present so a test can assert this component never reaches it.
+      deleteClient: vi.fn(),
+      extractPassportForClient: vi.fn(),
+    },
+    post: vi.fn(),
+    request: vi.fn(),
+  },
+}));
+
+const client = {
+  id: 42,
+  uuid: "test-uuid",
+  full_name: "Test Client",
+  status: "active",
+  client_type: "individual",
+  date_of_birth: undefined,
+} as unknown as ClientProfile["client"];
+
+const stats = {
+  family_count: 0,
+  documents_count: 0,
+  practices_count: 0,
+  expired_count: 0,
+  red_alerts: 0,
+  yellow_alerts: 0,
+} as ClientProfile["stats"];
+
+function alert(overrides: Partial<ExpiryAlert>): ExpiryAlert {
+  return {
+    entity_type: "client",
+    entity_id: 42,
+    entity_name: "Test Client",
+    client_id: 42,
+    client_name: "Test Client",
+    document_type: "passport",
+    expiry_date: "2026-01-01",
+    days_until_expiry: 30,
+    alert_color: "red",
+    ...overrides,
+  };
+}
+
+const baseProps = {
+  client,
+  stats,
+  documents: [],
+  activePractices: [],
+  completedPractices: [],
+  formatDate: (d: string) => d,
+  formatCurrency: (n: number) => String(n),
+  onEditClick: vi.fn(),
+  // CRM-18: the delete affordance is OFF by default here, so every pre-existing
+  // case in this file keeps asserting the desk it asserted before. The two
+  // cases that care turn it on explicitly.
+  onDeleteClick: vi.fn(),
+  canDeleteClient: false,
+  isDeletingClient: false,
+  onRefresh: vi.fn().mockResolvedValue(undefined),
+  clientId: 42,
+};
+
+describe("OverviewTab — Needs attention ledger", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.crm.getClientAiSummary).mockResolvedValue({
+      status: "not_generated",
+    } as any);
+    vi.mocked(api.crm.getClientWaCaseIntelligence).mockResolvedValue({
+      status: "not_generated",
+      cases: [],
+    } as any);
+  });
+
+  it("GUILT: orders the expired alert before the expiring one, titled from real fields", async () => {
+    render(
+      <OverviewTab
+        {...baseProps}
+        expiryAlerts={[
+          alert({
+            document_type: "visa",
+            alert_color: "red",
+            days_until_expiry: 21,
+          }),
+          alert({
+            document_type: "passport",
+            alert_color: "expired",
+            days_until_expiry: -5,
+          }),
+        ]}
+        needsViewerAction={false}
+      />,
+    );
+
+    const list = await screen.findByRole("list");
+    const items = within(list).getAllByRole("listitem");
+    expect(items.map((li) => li.textContent)).toEqual([
+      expect.stringContaining("Passport expired"),
+      expect.stringContaining("Visa expires soon"),
+    ]);
+  });
+
+  it("GUILT: a row whose next actor is not the viewer renders wait, never you", () => {
+    render(
+      <OverviewTab
+        {...baseProps}
+        expiryAlerts={[alert({ alert_color: "red" })]}
+        needsViewerAction={false}
+      />,
+    );
+    expect(screen.getByText("Wait")).toBeTruthy();
+    expect(screen.queryByText("You")).toBeNull();
+  });
+
+  it("the viewer being the next actor renders you, never wait", () => {
+    render(
+      <OverviewTab
+        {...baseProps}
+        expiryAlerts={[alert({ alert_color: "red" })]}
+        needsViewerAction={true}
+      />,
+    );
+    expect(screen.getByText("You")).toBeTruthy();
+    expect(screen.queryByText("Wait")).toBeNull();
+  });
+
+  it("INNOCENCE: no alerts renders no ledger, and existing Overview content still renders", async () => {
+    render(
+      <OverviewTab
+        {...baseProps}
+        expiryAlerts={[]}
+        needsViewerAction={false}
+      />,
+    );
+    expect(screen.queryByText("Needs attention")).toBeNull();
+    expect(
+      await screen.findByText("AI Summary not generated yet"),
+    ).toBeTruthy();
+  });
+
+  it("INNOCENCE: six alerts render five rows plus a quiet Show all (6)", () => {
+    const alerts = Array.from({ length: 6 }, (_, i) =>
+      alert({
+        document_type: `doc_${i}`,
+        alert_color: "red",
+        days_until_expiry: i + 1,
+      }),
+    );
+    render(
+      <OverviewTab
+        {...baseProps}
+        expiryAlerts={alerts}
+        needsViewerAction={false}
+      />,
+    );
+    expect(screen.getAllByRole("listitem")).toHaveLength(5);
+    expect(screen.getByText("Show all (6)")).toBeTruthy();
+  });
+});
+
+/**
+ * CRM-18 — the delete affordance is rendered only when the parent says the
+ * viewer may have it. `viewerCanDeleteClient` decides that (pinned in
+ * ../__tests__/delete-client-permission.guard.test.ts); these two cases pin
+ * that OverviewTab actually obeys the answer instead of always painting the
+ * button and leaning on the backend's 403 to hide the mistake.
+ */
+describe("OverviewTab — delete client affordance", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.crm.getClientAiSummary).mockResolvedValue({
+      status: "not_generated",
+    } as any);
+    vi.mocked(api.crm.getClientWaCaseIntelligence).mockResolvedValue({
+      status: "not_generated",
+      cases: [],
+    } as any);
+  });
+
+  it("GUILT: renders no delete button when the viewer may not delete", () => {
+    render(
+      <OverviewTab
+        {...baseProps}
+        expiryAlerts={[]}
+        needsViewerAction={false}
+        canDeleteClient={false}
+      />,
+    );
+    expect(screen.queryByLabelText("Delete client")).toBeNull();
+    // The edit affordance is untouched — this gate is about one button.
+    expect(screen.getByLabelText("Edit client info")).toBeTruthy();
+  });
+
+  it("INNOCENCE: renders the delete button, and it asks the parent to confirm", () => {
+    const onDeleteClick = vi.fn();
+    render(
+      <OverviewTab
+        {...baseProps}
+        expiryAlerts={[]}
+        needsViewerAction={false}
+        canDeleteClient
+        onDeleteClick={onDeleteClick}
+      />,
+    );
+    const button = screen.getByLabelText("Delete client");
+    fireEvent.click(button);
+    // It never calls the API itself: the confirmation and the request both
+    // belong to ClientDetailClient.
+    expect(onDeleteClick).toHaveBeenCalledTimes(1);
+    expect(api.crm.deleteClient).not.toHaveBeenCalled();
+  });
+
+  it("GUILT: the button is disabled while a delete is already in flight", () => {
+    render(
+      <OverviewTab
+        {...baseProps}
+        expiryAlerts={[]}
+        needsViewerAction={false}
+        canDeleteClient
+        isDeletingClient
+      />,
+    );
+    expect(
+      screen.getByLabelText("Delete client").hasAttribute("disabled"),
+    ).toBe(true);
+  });
+});
+
+describe("OverviewTab — Company docs tile (K22)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.crm.getClientAiSummary).mockResolvedValue({
+      status: "not_generated",
+    } as any);
+    vi.mocked(api.crm.getClientWaCaseIntelligence).mockResolvedValue({
+      status: "not_generated",
+      cases: [],
+    } as any);
+  });
+
+  const tileValue = (label: string) =>
+    screen.getByText(label).closest("[title]")?.querySelector("p")?.textContent;
+
+  it("GUILT: a client with linked companies sees the company document count", () => {
+    render(
+      <OverviewTab
+        {...baseProps}
+        stats={{
+          ...stats,
+          documents_count: 3,
+          company_count: 2,
+          company_documents_count: 5,
+        }}
+        expiryAlerts={[]}
+        needsViewerAction={false}
+      />,
+    );
+    expect(tileValue("Company docs")).toBe("5");
+    // The client tile keeps its own number; the two sets are not summed.
+    expect(tileValue("Client docs")).toBe("3");
+  });
+
+  it("INNOCENCE: no linked company renders no Company docs tile", () => {
+    render(
+      <OverviewTab
+        {...baseProps}
+        stats={{ ...stats, company_count: 0, company_documents_count: 0 }}
+        expiryAlerts={[]}
+        needsViewerAction={false}
+      />,
+    );
+    expect(screen.queryByText("Company docs")).toBeNull();
+    expect(screen.getByText("Client docs")).toBeTruthy();
+  });
+
+  it("INNOCENCE: a response without the field renders no tile instead of 0", () => {
+    render(
+      <OverviewTab
+        {...baseProps}
+        stats={{ ...stats, company_count: 1 }}
+        expiryAlerts={[]}
+        needsViewerAction={false}
+      />,
+    );
+    expect(screen.queryByText("Company docs")).toBeNull();
+  });
+});

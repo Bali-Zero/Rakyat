@@ -1,0 +1,119 @@
+import { defineConfig, devices } from "@playwright/test";
+
+const E2E_PORT = process.env.BZ_E2E_PORT ?? "3000";
+
+/**
+ * Playwright Configuration for Nuzantara Frontend E2E Tests
+ *
+ * Tests critical user flows:
+ * - Authentication (Login)
+ * - Chat functionality
+ * - CRM operations
+ * - WebSocket connections
+ * - Streaming responses
+ */
+export default defineConfig({
+  testDir: "./e2e",
+  testMatch: "**/*.spec.ts",
+  testIgnore: [
+    // This fail-closed smoke requires the complete synthetic contract and is
+    // collected only by playwright.prodlike.config.ts.
+    "portal-prodlike-smoke.spec.ts",
+    // Production journey sentinels drive REAL production (balizero.com /
+    // my.balizero.com) as an anonymous visitor — never against the local
+    // build this config launches. Collected only by
+    // playwright.production.config.ts (no webServer, no mocked auth).
+    "production/**",
+    // GARUDA VOA DELIBERA fase 2: this guard needs GARUDA_PUBLIC_ENABLED set
+    // on the server it runs against (the funnel 404s fail-closed without
+    // it — src/app/visa/voa/flag.ts) — setting that here would open the
+    // funnel for every other spec sharing this webServer. Collected only by
+    // playwright.voa-tint.config.ts, whose webServer.env sets the flag.
+    "voa-tint.computed.guard.spec.ts",
+  ],
+
+  // Timeout per singolo test
+  timeout: 60 * 1000,
+
+  // Retry su CI
+  retries: process.env.CI ? 2 : 0,
+
+  // Workers per parallelizzazione
+  workers: process.env.CI ? 1 : undefined,
+
+  // Reporter
+  reporter: [
+    ["html"],
+    ["json", { outputFile: "playwright-report/results.json" }],
+    ["list"],
+  ],
+
+  // Shared settings per tutti i test
+  use: {
+    // Base URL dell'applicazione
+    baseURL: process.env.PLAYWRIGHT_BASE_URL || `http://127.0.0.1:${E2E_PORT}`,
+
+    // Screenshot su failure
+    screenshot: "only-on-failure",
+
+    // Video su failure
+    video: "retain-on-failure",
+
+    // Trace per debugging
+    trace: "on-first-retry",
+
+    // Viewport
+    viewport: { width: 1280, height: 720 },
+
+    // Action timeout
+    actionTimeout: 20 * 1000,
+  },
+
+  // Progetti per diversi browser
+  projects: [
+    {
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "firefox",
+      use: { ...devices["Desktop Firefox"] },
+    },
+    {
+      name: "webkit",
+      use: { ...devices["Desktop Safari"] },
+    },
+    // Mobile viewport
+    {
+      name: "Mobile Chrome",
+      use: { ...devices["Pixel 5"] },
+    },
+  ],
+
+  // Exercise the same optimized runtime and CSP path used in production.
+  // The development runtime requires `unsafe-eval`, which the portal policy
+  // intentionally rejects, so running `next dev` here prevents hydration and
+  // leaves the client shell stuck on its loading state.
+  //
+  // Locally, opt out by setting PLAYWRIGHT_EXTERNAL_SERVER=1 when a compatible
+  // server is already running on the configured port.
+  webServer: process.env.PLAYWRIGHT_EXTERNAL_SERVER
+    ? undefined
+    : {
+        command: `npm run build && npm run start -- --port ${E2E_PORT}`,
+        url: `http://127.0.0.1:${E2E_PORT}`,
+        env: {
+          NEXT_PUBLIC_HIDE_QUERY_DEVTOOLS: "1",
+          NEXT_PUBLIC_VISA_ORACLE_WHATSAPP_NUMBER: "628400022000",
+          // `visa/voa/**` fails CLOSED behind this flag (layout.tsx / flag.ts) —
+          // without it every e2e spec touching that segment 404s regardless of
+          // what it mocks, since the gate runs server-side before any route
+          // handler or client route-mock sees the request.
+          GARUDA_PUBLIC_ENABLED: "true",
+        },
+        reuseExistingServer: !process.env.CI,
+        timeout: 300 * 1000,
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+});

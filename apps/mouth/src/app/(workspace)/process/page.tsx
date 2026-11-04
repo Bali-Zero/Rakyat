@@ -1,0 +1,2162 @@
+"use client";
+
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+  useCallback,
+} from "react";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import {
+  FilterBar,
+  FilterSelect,
+  ListPageHeader,
+  Money,
+  SearchBox,
+  StatChips,
+} from "@balizero/core";
+import {
+  FolderKanban,
+  Filter,
+  Plus,
+  LayoutGrid,
+  List,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  User,
+  MessageCircle,
+  Mail,
+  Phone,
+  FileText,
+  MoreVertical,
+  CheckCircle,
+  CheckCircle2,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Download,
+  X,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/toast";
+import { api } from "@/lib/api";
+import { logger } from "@/lib/logger";
+import { toError } from "@/lib/types/common";
+import type { Practice } from "@/lib/api/crm/crm.types";
+import type { StatusTransition } from "@/lib/api/crm/crm.types";
+import { MonthPillTabs } from "@/components/process/MonthPillTabs";
+import { GhostCard } from "@/components/process/GhostCard";
+import {
+  COLUMN_COLORS,
+  COLUMN_ORDER,
+  getStatusColumn,
+  matchesStatusFilter,
+  type CaseStatus,
+} from "@/components/process/kanban-colors";
+import {
+  trackViewModeChange,
+  trackFilterApplied,
+  trackFilterRemoved,
+  trackSortApplied,
+  trackSearch,
+  trackCaseStatusChanged,
+  trackPaginationChange,
+  initializeAnalytics,
+} from "@/lib/analytics";
+import { useTeamMemberOptions } from "@/hooks/useTeamMembers";
+import {
+  PROCESS_VIEW_MODE_KEY,
+  loadViewMode,
+  saveViewMode,
+} from "@/lib/utils/view-mode-storage";
+
+// SIMPLIFIED WORKFLOW (Feb 2026) - 5 Steps:
+// inquiry → waiting_documents → sending_invoice → on_process → completed
+//
+// NOTE: waiting_payment, submitted_to_gov, approved are now internal substates
+// handled within the main workflow steps
+//
+// LEGACY STATUS (for backward compatibility):
+// quotation_sent, payment_pending, waiting_payment, in_progress, submitted_to_gov, approved
+
+// Backend status values mapped to frontend display names and kanban columns
+// Simplified 5-step workflow
+const STATUS_OPTIONS: { value: string; label: string; column: CaseStatus }[] = [
+  // Main workflow states (5 steps)
+  { value: "inquiry", label: "Inquiry", column: "inquiry" },
+  {
+    value: "waiting_documents",
+    label: "Waiting Documents",
+    column: "waiting_documents",
+  },
+  {
+    value: "sending_invoice",
+    label: "Sending Invoice",
+    column: "sending_invoice",
+  },
+  { value: "on_process", label: "On Process", column: "on_process" },
+  { value: "completed", label: "Completed", column: "completed" },
+  // Legacy states mapped to simplified workflow
+  {
+    value: "quotation_sent",
+    label: "Quotation Sent (Legacy)",
+    column: "sending_invoice",
+  },
+  {
+    value: "payment_pending",
+    label: "Payment Pending (Legacy)",
+    column: "sending_invoice",
+  },
+  {
+    value: "waiting_payment",
+    label: "Waiting Payment (Legacy)",
+    column: "sending_invoice",
+  },
+  {
+    value: "in_progress",
+    label: "In Progress (Legacy)",
+    column: "on_process",
+  },
+  {
+    value: "submitted_to_gov",
+    label: "Submitted to Gov (Legacy)",
+    column: "on_process",
+  },
+  {
+    value: "approved",
+    label: "Approved (Legacy)",
+    column: "on_process",
+  },
+];
+
+type ViewMode = "kanban" | "list";
+type SortField =
+  | "id"
+  | "practice_type_code"
+  | "client_name"
+  | "client_lead"
+  | "status"
+  | "priority"
+  | "created_at"
+  | "updated_at";
+type SortOrder = "asc" | "desc";
+
+// Practice type catalog — mirrors GET /api/crm/practices/types/catalog
+// (same shape consumed by process/new/page.tsx and SelectServiceCard.tsx).
+interface CatalogService {
+  code: string;
+  name: string;
+}
+
+interface CatalogCategory {
+  code: string;
+  label: string;
+  services: CatalogService[];
+}
+
+interface FilterState {
+  status: string;
+  type: string;
+  assigned_to: string;
+  payment_filter: string;
+  priority: string;
+  expiring: boolean;
+  stale: boolean;
+}
+
+const FILTER_SELECT_CLASS =
+  "border border-[var(--bz-border)] bg-[var(--bz-base)] text-[var(--bz-text-1)] focus:ring-2 focus:ring-[var(--bz-accent)]/50";
+
+// Status dot per kanban column — shared by list-view table + context menu.
+// WS2: reads the canonical column palette (kanban-colors) instead of its own
+// hardcoded Tailwind step map, so board, table and menu can never drift apart.
+const statusDotStyle = (column: CaseStatus): React.CSSProperties => ({
+  backgroundColor: COLUMN_COLORS[column].textColor,
+});
+
+function formatStatusLabel(status?: string | null): string {
+  if (!status) return "Unknown status";
+
+  return status
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+/** WhatsApp + Email quick actions — identical on kanban cards and table rows. */
+function ContactQuickActions({ practice }: { practice: Practice }) {
+  return (
+    <>
+      {practice.client_phone && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            const phone = practice.client_phone?.replace(/\D/g, "");
+            window.open(
+              `https://wa.me/${phone}?text=Hi ${practice.client_name}, regarding your process...`,
+              "_blank",
+            );
+          }}
+          className="p-1.5 rounded touch-manipulation hover:bg-[color-mix(in_srgb,var(--accent-whatsapp)_20%,transparent)] text-[var(--accent-whatsapp)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-whatsapp)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bz-card)]"
+          title="WhatsApp"
+          aria-label="Contact via WhatsApp"
+        >
+          <MessageCircle className="w-3.5 h-3.5" />
+        </button>
+      )}
+      {practice.client_email && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            window.open(`mailto:${practice.client_email}`, "_blank");
+          }}
+          className="p-1.5 rounded touch-manipulation hover:bg-[color-mix(in_srgb,var(--state-info)_20%,transparent)] text-[var(--state-info)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--state-info)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bz-card)]"
+          title="Email"
+          aria-label="Send email"
+        >
+          <Mail className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </>
+  );
+}
+
+export default function PratichePage() {
+  const router = useRouter();
+  const toast = useToast();
+  const { options: teamMemberOptions } = useTeamMemberOptions();
+  const [practices, setPractices] = useState<Practice[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  // P2.2: persist the view toggle across navigations (lazy-init + write-through)
+  const [viewMode, setViewMode] = useState<ViewMode>(() =>
+    loadViewMode(PROCESS_VIEW_MODE_KEY, ["kanban", "list"], "kanban"),
+  );
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState<FilterState>({
+    status: "",
+    type: "",
+    assigned_to: "",
+    payment_filter: "",
+    priority: "",
+    expiring: false,
+    stale: false,
+  });
+  const [sortField, setSortField] = useState<SortField>("created_at");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
+  const [currentUserEmail, setCurrentUserEmail] = useState<string>("");
+  // Process Type filter options — live catalog, replacing the migration-066
+  // legacy codes that used to empty the list on selection (kita-prune lot 6).
+  const [typeCatalog, setTypeCatalog] = useState<CatalogCategory[]>([]);
+
+  // Context Menu State
+  const [selectedPractice, setSelectedPractice] = useState<Practice | null>(
+    null,
+  );
+  const [menuPosition, setMenuPosition] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const previousFiltersRef = useRef<FilterState>(filters);
+
+  // Pagination for large datasets
+  const [listPageNumber, setListPageNumber] = useState(1);
+  const itemsPerPage = 25;
+
+  // Month navigation
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+
+  const now = new Date();
+  const currentMonthDefault = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const [selectedMonth, setSelectedMonth] = useState(
+    searchParams.get("month") || currentMonthDefault,
+  );
+  const [completedCollapsed, setCompletedCollapsed] = useState(true);
+  const [expandedGhosts, setExpandedGhosts] = useState<Record<string, boolean>>(
+    {},
+  );
+
+  const handleMonthChange = useCallback(
+    (month: string) => {
+      setSelectedMonth(month);
+      setListPageNumber(1);
+      setExpandedGhosts({});
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("month", month);
+      window.history.replaceState(null, "", `${pathname}?${params.toString()}`);
+    },
+    [searchParams, pathname],
+  );
+
+  useEffect(() => {
+    // Load current user for "My Work" filter
+    api
+      .getProfile()
+      .then((profile) => {
+        if (profile?.email) setCurrentUserEmail(profile.email);
+      })
+      .catch((err: unknown) => {
+        logger.error(
+          "[Process] Failed to load user profile",
+          {},
+          err instanceof Error ? err : new Error(String(err)),
+        );
+      });
+  }, []);
+
+  useEffect(() => {
+    // Initialize analytics on component mount
+    initializeAnalytics();
+
+    const loadPractices = async () => {
+      setIsLoading(true);
+      try {
+        // RBAC is enforced server-side (can_view_all_practices in crm_utils.py).
+        // Non-admin users automatically see only their assigned practices.
+        // Do NOT filter client-side — roles like "Founder" are admin on backend
+        // but would be incorrectly filtered here.
+        const data = await api.crm.getPractices({
+          limit: 200,
+          month: selectedMonth,
+          include_history: true,
+        });
+        setPractices(data);
+      } catch (error) {
+        logger.error(
+          "Failed to load practices",
+          { component: "Process", action: "loadPractices" },
+          toError(error),
+        );
+        toast.error("Error", "Failed to load process");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadPractices();
+  }, [selectedMonth]);
+
+  useEffect(() => {
+    // Live "Process Type" filter options — same catalog endpoint the
+    // process-creation form uses, so the dropdown never lists a code the
+    // state machine has retired.
+    api.crm
+      .getPracticeTypesCatalog()
+      .then((data) => setTypeCatalog(data.categories))
+      .catch((err: unknown) => {
+        logger.error(
+          "[Process] Failed to load practice types catalog",
+          { component: "Process", action: "loadTypeCatalog" },
+          toError(err),
+        );
+      });
+  }, []);
+
+  // Track + persist view mode changes
+  useEffect(() => {
+    trackViewModeChange(viewMode);
+    saveViewMode(PROCESS_VIEW_MODE_KEY, viewMode);
+  }, [viewMode]);
+
+  // Track filter changes
+  useEffect(() => {
+    Object.keys(filters).forEach((key) => {
+      if (
+        filters[key as keyof typeof filters] !==
+        previousFiltersRef.current[key as keyof typeof filters]
+      ) {
+        if (filters[key as keyof typeof filters]) {
+          if (key === "status" || key === "type" || key === "assigned_to") {
+            const val = filters[key as keyof typeof filters];
+            if (typeof val === "string") trackFilterApplied(key, val);
+          }
+        } else {
+          trackFilterRemoved(key);
+        }
+      }
+    });
+    previousFiltersRef.current = filters;
+  }, [filters]);
+
+  // Track sort changes
+  useEffect(() => {
+    trackSortApplied(sortField, sortOrder);
+  }, [sortField, sortOrder]);
+
+  // Track pagination changes
+  useEffect(() => {
+    if (listPageNumber > 1) {
+      trackPaginationChange(listPageNumber, itemsPerPage);
+    }
+  }, [listPageNumber]);
+
+  // Close menu when clicking outside or pressing Escape
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setSelectedPractice(null);
+        setMenuPosition(null);
+      }
+    };
+    const handleEscapeMenu = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && menuPosition) {
+        setSelectedPractice(null);
+        setMenuPosition(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscapeMenu);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscapeMenu);
+    };
+  }, [menuPosition]);
+
+  const handleStatusChange = async (practiceId: number, newStatus: string) => {
+    setUpdatingId(practiceId);
+    try {
+      const user = await api.getProfile();
+
+      // Find old status for tracking
+      const practice = practices.find((p) => p.id === practiceId);
+      const oldStatus = practice?.status || "unknown";
+
+      await api.crm.updatePractice(practiceId, { status: newStatus });
+
+      // Update local state immediately for responsiveness
+      setPractices((prev) =>
+        prev.map((p) =>
+          p.id === practiceId ? { ...p, status: newStatus } : p,
+        ),
+      );
+
+      // Track status change
+      trackCaseStatusChanged(practiceId, oldStatus, newStatus);
+
+      toast.success(
+        "Status Updated",
+        `Process moved to ${newStatus.replace(/_/g, " ")}`,
+      );
+
+      setSelectedPractice(null);
+      setMenuPosition(null);
+    } catch (error) {
+      logger.error(
+        "Failed to update status",
+        { component: "Process", action: "updateStatus" },
+        toError(error),
+      );
+      toast.error("Error", "Failed to update process status");
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleMenuClick = (e: React.MouseEvent, practice: Practice) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Position menu near the click
+    const rect = (e.target as HTMLElement).getBoundingClientRect();
+    setSelectedPractice(practice);
+    setMenuPosition({ x: rect.right - 10, y: rect.bottom + 5 });
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, practice: Practice) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedPractice(practice);
+    setMenuPosition({ x: e.clientX, y: e.clientY });
+  };
+
+  const handlePriorityChange = async (
+    practiceId: number,
+    newPriority: string,
+  ) => {
+    setUpdatingId(practiceId);
+    try {
+      const user = await api.getProfile();
+      await api.crm.updatePractice(practiceId, { priority: newPriority });
+      setPractices((prev) =>
+        prev.map((p) =>
+          p.id === practiceId ? { ...p, priority: newPriority } : p,
+        ),
+      );
+      setSelectedPractice((prev) =>
+        prev?.id === practiceId ? { ...prev, priority: newPriority } : prev,
+      );
+      toast.success("Priority Updated", `→ ${newPriority}`);
+    } catch (error) {
+      logger.error(
+        "Failed to update priority",
+        { component: "Process", action: "updatePriority" },
+        toError(error),
+      );
+      toast.error("Error", "Failed to update priority");
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handlePaymentChange = async (
+    practiceId: number,
+    newPaymentStatus: string,
+  ) => {
+    setUpdatingId(practiceId);
+    try {
+      const user = await api.getProfile();
+      await api.crm.updatePractice(practiceId, {
+        payment_status: newPaymentStatus,
+      });
+      setPractices((prev) =>
+        prev.map((p) =>
+          p.id === practiceId ? { ...p, payment_status: newPaymentStatus } : p,
+        ),
+      );
+      setSelectedPractice((prev) =>
+        prev?.id === practiceId
+          ? { ...prev, payment_status: newPaymentStatus }
+          : prev,
+      );
+      toast.success("Payment Updated", `→ ${newPaymentStatus}`);
+      setSelectedPractice(null);
+      setMenuPosition(null);
+    } catch (error) {
+      logger.error(
+        "Failed to update payment",
+        { component: "Process", action: "updatePayment" },
+        toError(error),
+      );
+      toast.error("Error", "Failed to update payment status");
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleNewCase = () => {
+    router.push("/process/new");
+  };
+
+  const clearFilters = () => {
+    setFilters({
+      status: "",
+      type: "",
+      assigned_to: "",
+      payment_filter: "",
+      priority: "",
+      expiring: false,
+      stale: false,
+    });
+  };
+
+  const toggleSort = useCallback((field: SortField) => {
+    setSortField((prevField) => {
+      if (prevField === field) {
+        setSortOrder((prevOrder) => (prevOrder === "asc" ? "desc" : "asc"));
+        return prevField;
+      } else {
+        setSortOrder("asc");
+        return field;
+      }
+    });
+  }, []);
+
+  const getGhostPractices = useCallback(
+    (columnStatus: CaseStatus) => {
+      return practices.filter((p) => {
+        const currentColumn = getStatusColumn(p.status);
+        if (currentColumn === columnStatus) return false;
+        const transitions = (p as any).status_transitions as
+          StatusTransition[] | undefined;
+        if (!transitions || transitions.length === 0) return false;
+        return transitions.some(
+          (t) => getStatusColumn(t.status) === columnStatus,
+        );
+      });
+    },
+    [practices],
+  );
+
+  const activeFiltersCount = Object.values(filters).filter(Boolean).length;
+
+  // Memoize filtered and sorted practices to avoid unnecessary recalculations
+  const filteredPractices = useMemo(
+    () =>
+      practices
+        .filter((p) => {
+          // Search filter
+          if (searchQuery) {
+            const matchesSearch =
+              p.id.toString().includes(searchQuery) ||
+              p.client_name
+                ?.toLowerCase()
+                .includes(searchQuery.toLowerCase()) ||
+              p.practice_type_code
+                ?.toLowerCase()
+                .includes(searchQuery.toLowerCase());
+            if (!matchesSearch) return false;
+          }
+
+          // Status filter
+          if (
+            filters.status &&
+            !matchesStatusFilter(p.status, filters.status)
+          ) {
+            return false;
+          }
+
+          // Type filter
+          if (filters.type && p.practice_type_code !== filters.type) {
+            return false;
+          }
+
+          // Assigned to filter
+          if (filters.assigned_to && p.client_lead !== filters.assigned_to) {
+            return false;
+          }
+
+          // Payment filter
+          if (filters.payment_filter === "unpaid") {
+            if (
+              p.payment_status !== "unpaid" &&
+              p.payment_status !== "partial"
+            ) {
+              return false;
+            }
+          }
+
+          // Priority filter
+          if (filters.priority && p.priority !== filters.priority) {
+            return false;
+          }
+
+          // Expiring soon filter (within 30 days)
+          if (filters.expiring) {
+            if (!p.expiry_date) return false;
+            const daysLeft = Math.ceil(
+              (new Date(p.expiry_date).getTime() - Date.now()) / 86400000,
+            );
+            if (daysLeft < 0 || daysLeft > 30) return false;
+          }
+
+          // Stale filter: not updated in >14 days (only non-completed)
+          if (filters.stale) {
+            if (p.status === "completed") return false;
+            if (!p.updated_at) return true;
+            const ageDays = Math.floor(
+              (Date.now() - new Date(p.updated_at).getTime()) / 86400000,
+            );
+            if (ageDays <= 14) return false;
+          }
+
+          return true;
+        })
+        .sort((a, b) => {
+          let comparison = 0;
+
+          switch (sortField) {
+            case "id":
+              comparison = (a.id || 0) - (b.id || 0);
+              break;
+            case "practice_type_code":
+              comparison = (a.practice_type_code || "").localeCompare(
+                b.practice_type_code || "",
+              );
+              break;
+            case "client_name":
+              comparison = (a.client_name || "").localeCompare(
+                b.client_name || "",
+              );
+              break;
+            case "client_lead":
+              comparison = (a.client_lead || "").localeCompare(
+                b.client_lead || "",
+              );
+              break;
+            case "status":
+              comparison = (a.status || "").localeCompare(b.status || "");
+              break;
+            case "priority": {
+              const priorityOrder: Record<string, number> = {
+                urgent: 0,
+                high: 1,
+                normal: 2,
+              };
+              comparison =
+                (priorityOrder[a.priority || "normal"] ?? 2) -
+                (priorityOrder[b.priority || "normal"] ?? 2);
+              break;
+            }
+            case "created_at":
+              comparison =
+                new Date(a.created_at || 0).getTime() -
+                new Date(b.created_at || 0).getTime();
+              break;
+            case "updated_at":
+              comparison =
+                new Date(a.updated_at || 0).getTime() -
+                new Date(b.updated_at || 0).getTime();
+              break;
+            default:
+              comparison = 0;
+          }
+
+          return sortOrder === "asc" ? comparison : -comparison;
+        }),
+    [practices, searchQuery, filters, sortField, sortOrder],
+  );
+
+  // Memoize practices by status to avoid unnecessary recalculations
+  // Simplified 5-step workflow: inquiry → waiting_documents → sending_invoice → on_process → completed
+  const practicesByStatus = useMemo(
+    () => ({
+      inquiry: filteredPractices.filter((p) => {
+        const statusColumn = getStatusColumn(p.status);
+        return statusColumn === "inquiry" || statusColumn === "unknown";
+      }),
+      waiting_documents: filteredPractices.filter(
+        (p) => getStatusColumn(p.status) === "waiting_documents",
+      ),
+      sending_invoice: filteredPractices.filter(
+        (p) => getStatusColumn(p.status) === "sending_invoice",
+      ),
+      on_process: filteredPractices.filter(
+        (p) => getStatusColumn(p.status) === "on_process",
+      ),
+      completed: filteredPractices.filter(
+        (p) => getStatusColumn(p.status) === "completed",
+      ),
+    }),
+    [filteredPractices],
+  );
+
+  // Track search operations (moved after filteredPractices declaration)
+  useEffect(() => {
+    if (searchQuery) {
+      trackSearch(searchQuery, filteredPractices.length);
+    }
+  }, [searchQuery, filteredPractices.length]);
+
+  const exportCSV = useCallback(() => {
+    const rows = filteredPractices.map((p) => ({
+      ID: p.id,
+      Client: p.client_name || "",
+      Type: p.practice_type_code || "",
+      Status: p.status || "",
+      "Assigned To":
+        (teamMemberOptions.find((m) => m.value === p.client_lead)?.label ||
+          p.client_lead?.split("@")[0]) ??
+        "",
+      "Payment Status": p.payment_status || "",
+      "Quoted Price": p.quoted_price || "",
+      "Actual Price": p.actual_price || "",
+      "Created At": p.created_at
+        ? new Date(p.created_at).toLocaleDateString("en-GB")
+        : "",
+      "Updated At": p.updated_at
+        ? new Date(p.updated_at).toLocaleDateString("en-GB")
+        : "",
+    }));
+    const headers = Object.keys(rows[0] || {});
+    const csv = [
+      headers.join(","),
+      ...rows.map((r) =>
+        headers
+          .map((h) => `"${String(r[h as keyof typeof r]).replace(/"/g, '""')}"`)
+          .join(","),
+      ),
+    ].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `processes_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Exported", `${rows.length} processes downloaded`);
+  }, [filteredPractices, toast]);
+
+  // Pagination for list view
+  const paginatedPractices = useMemo(() => {
+    const startIdx = (listPageNumber - 1) * itemsPerPage;
+    return filteredPractices.slice(startIdx, startIdx + itemsPerPage);
+  }, [filteredPractices, listPageNumber]);
+
+  const totalPages = Math.ceil(filteredPractices.length / itemsPerPage);
+
+  const SkeletonCard = () => (
+    <div className="p-3 rounded-lg border border-[var(--bz-border)] bg-[var(--bz-card)] space-y-2">
+      <div className="h-4 bg-[var(--bz-surface)] rounded w-3/4 animate-pulse" />
+      <div className="h-3 bg-[var(--bz-surface)] rounded w-1/2 animate-pulse" />
+      <div className="flex gap-2 mt-4 pt-3 border-t border-[var(--bz-border)]">
+        <div className="h-6 w-6 bg-[var(--bz-surface)] rounded animate-pulse" />
+        <div className="h-6 w-6 bg-[var(--bz-surface)] rounded animate-pulse" />
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      <ListPageHeader
+        title="Process"
+        subtitle="Manage KITAS, Visa, PT PMA, Tax and other processes"
+        actions={
+          <Button
+            className="gap-2 bg-[var(--bz-accent)] text-[var(--accent-foreground)] hover:bg-[var(--bz-accent)]/90"
+            onClick={handleNewCase}
+          >
+            <Plus className="w-4 h-4" />
+            New Process
+          </Button>
+        }
+      />
+
+      {/* Month Navigation */}
+      <MonthPillTabs
+        selectedMonth={selectedMonth}
+        onMonthChange={handleMonthChange}
+      />
+
+      {/* Quick Stats Row */}
+      {!isLoading &&
+        filteredPractices.length > 0 &&
+        (() => {
+          const active = filteredPractices.filter(
+            (p) => getStatusColumn(p.status) !== "completed",
+          ).length;
+          const completed = filteredPractices.filter(
+            (p) => getStatusColumn(p.status) === "completed",
+          ).length;
+          // Revenue — mirror backend aggregation in dashboard_summary.py.
+          // 'paid': sum paid_amount (reliable post-backfill), fallback to
+          // actual_price||quoted_price for legacy rows still missing it.
+          // 'unpaid'/'partial': use actual_price||quoted_price as invoiced.
+          // Coerce with Number(): BE serializes numeric(15,2) as string, so a
+          // raw `+` would string-concat and corrupt the running sum to NaN.
+          const amountOf = (p: Practice) =>
+            Number(p.actual_price ?? p.quoted_price ?? 0);
+          const totalRevenue = filteredPractices
+            .filter((p) => p.payment_status === "paid")
+            .reduce((s, p) => s + Number(p.paid_amount ?? amountOf(p)), 0);
+          return (
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-[var(--surface-raised)] border border-[var(--bz-border)] text-[var(--bz-text-2)]">
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--state-info)]" />
+                {active} active
+              </span>
+              <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-[var(--surface-raised)] border border-[var(--bz-border)] text-[var(--bz-text-2)]">
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--state-success)]" />
+                {completed} completed
+              </span>
+              {totalRevenue > 0 && (
+                <button
+                  onClick={() =>
+                    setFilters((f) => ({
+                      ...f,
+                      payment_filter: f.payment_filter === "paid" ? "" : "paid",
+                    }))
+                  }
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-full border transition-colors ${
+                    filters.payment_filter === "paid"
+                      ? "bg-[color-mix(in_srgb,var(--state-success)_25%,transparent)] border-[color-mix(in_srgb,var(--state-success)_50%,transparent)] text-[var(--state-success)]"
+                      : "bg-[color-mix(in_srgb,var(--state-success)_10%,transparent)] border-[color-mix(in_srgb,var(--state-success)_20%,transparent)] text-[var(--state-success)] hover:bg-[color-mix(in_srgb,var(--state-success)_20%,transparent)]"
+                  }`}
+                  title="Click to filter paid practices"
+                  aria-label="Filter paid practices"
+                >
+                  <Money compact value={totalRevenue} /> paid
+                </button>
+              )}
+            </div>
+          );
+        })()}
+
+      {/* Search & Filter Bar */}
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <SearchBox
+            value={searchQuery}
+            onValueChange={setSearchQuery}
+            placeholder="Search process… (press / to focus)"
+            ariaLabel="Search process"
+            title="Press / to focus search, Escape to clear"
+            className="border border-[var(--bz-border)] bg-[var(--bz-card)] text-[var(--bz-text-1)] placeholder:text-[var(--bz-text-2)] focus:ring-2 focus:ring-[var(--bz-accent)]/50 transition-all"
+          />
+          <div className="flex gap-2">
+            <Button
+              variant={showFilters ? "default" : "outline"}
+              className="gap-2 border-[var(--bz-border)] bg-[var(--bz-card)] text-[var(--bz-text-1)] hover:bg-[var(--bz-card-hover)]"
+              onClick={() => setShowFilters(!showFilters)}
+            >
+              <Filter className="w-4 h-4" />
+              Filters
+              {activeFiltersCount > 0 && (
+                <span className="ml-1 rounded-full bg-[var(--bz-accent)] px-1.5 py-0.5 text-xs text-[var(--accent-foreground)]">
+                  {activeFiltersCount}
+                </span>
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              className="gap-2 border-[var(--bz-border)] bg-[var(--bz-card)] text-[var(--bz-text-2)] hover:bg-[var(--bz-card-hover)] hover:text-[var(--bz-text-1)]"
+              onClick={exportCSV}
+              title={`Export ${filteredPractices.length} processes as CSV`}
+              aria-label={`Export ${filteredPractices.length} processes as CSV`}
+            >
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">Export</span>
+            </Button>
+            <div className="flex rounded-lg border border-[var(--bz-border)] bg-[var(--bz-card)] overflow-hidden">
+              {(
+                [
+                  { mode: "kanban", icon: LayoutGrid, label: "Kanban Board" },
+                  { mode: "list", icon: List, label: "List View" },
+                ] as const
+              ).map(({ mode, icon: Icon, label }) => (
+                <button
+                  key={mode}
+                  onClick={() => setViewMode(mode)}
+                  className={`p-2 transition-all ${
+                    viewMode === mode
+                      ? "bg-[var(--bz-accent)]/10 text-[var(--bz-accent)]"
+                      : "text-[var(--bz-text-2)] hover:bg-[var(--bz-card)]"
+                  }`}
+                  title={label}
+                  aria-label={label}
+                >
+                  <Icon className="w-4 h-4" />
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <StatChips
+          className="flex items-center gap-2 flex-wrap"
+          chipClassName="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-colors border"
+          items={[
+            Boolean(currentUserEmail) && {
+              key: "my-work",
+              onClick: () =>
+                setFilters((f) => ({
+                  ...f,
+                  assigned_to:
+                    f.assigned_to === currentUserEmail ? "" : currentUserEmail,
+                })),
+              className:
+                filters.assigned_to === currentUserEmail
+                  ? "bg-[var(--bz-accent)]/20 text-[var(--bz-accent)] border-[var(--bz-accent)]/40"
+                  : "bg-[var(--surface-raised)] text-[var(--bz-text-2)] border-[var(--bz-border)] hover:border-[var(--bz-accent)]/30 hover:text-[var(--bz-accent)]",
+              content: (
+                <>
+                  <User className="w-3 h-3" />
+                  My Work
+                </>
+              ),
+            },
+            {
+              key: "unpaid",
+              onClick: () =>
+                setFilters((f) => ({
+                  ...f,
+                  payment_filter: f.payment_filter === "unpaid" ? "" : "unpaid",
+                })),
+              className:
+                filters.payment_filter === "unpaid"
+                  ? "bg-[color-mix(in_srgb,var(--state-danger)_20%,transparent)] text-[var(--state-danger)] border-[color-mix(in_srgb,var(--state-danger)_40%,transparent)]"
+                  : "bg-[var(--surface-raised)] text-[var(--bz-text-2)] border-[var(--bz-border)] hover:border-[color-mix(in_srgb,var(--state-danger)_30%,transparent)] hover:text-[var(--state-danger)]",
+              content: (
+                <>
+                  <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                  Unpaid
+                </>
+              ),
+            },
+            {
+              key: "urgent",
+              onClick: () =>
+                setFilters((f) => ({
+                  ...f,
+                  priority: f.priority === "urgent" ? "" : "urgent",
+                })),
+              className:
+                filters.priority === "urgent"
+                  ? "bg-[color-mix(in_srgb,var(--state-danger)_20%,transparent)] text-[var(--state-danger)] border-[color-mix(in_srgb,var(--state-danger)_40%,transparent)]"
+                  : "bg-[var(--surface-raised)] text-[var(--bz-text-2)] border-[var(--bz-border)] hover:border-[color-mix(in_srgb,var(--state-danger)_30%,transparent)] hover:text-[var(--state-danger)]",
+              content: <>🔥 Urgent</>,
+            },
+            {
+              key: "high",
+              onClick: () =>
+                setFilters((f) => ({
+                  ...f,
+                  priority: f.priority === "high" ? "" : "high",
+                })),
+              className:
+                filters.priority === "high"
+                  ? "bg-[color-mix(in_srgb,var(--state-warning)_20%,transparent)] text-[var(--state-warning)] border-[color-mix(in_srgb,var(--state-warning)_40%,transparent)]"
+                  : "bg-[var(--surface-raised)] text-[var(--bz-text-2)] border-[var(--bz-border)] hover:border-[color-mix(in_srgb,var(--state-warning)_30%,transparent)] hover:text-[var(--state-warning)]",
+              content: <>↑ High</>,
+            },
+            {
+              key: "expiring",
+              onClick: () =>
+                setFilters((f) => ({ ...f, expiring: !f.expiring })),
+              className: filters.expiring
+                ? "bg-[color-mix(in_srgb,var(--state-warning)_20%,transparent)] text-[var(--state-warning)] border-[color-mix(in_srgb,var(--state-warning)_40%,transparent)]"
+                : "bg-[var(--surface-raised)] text-[var(--bz-text-2)] border-[var(--bz-border)] hover:border-[color-mix(in_srgb,var(--state-warning)_30%,transparent)] hover:text-[var(--state-warning)]",
+              content: <>⏰ Expiring 30d</>,
+            },
+            {
+              key: "stale",
+              onClick: () => setFilters((f) => ({ ...f, stale: !f.stale })),
+              className: filters.stale
+                ? "bg-[color-mix(in_srgb,var(--bz-neon-purple)_20%,transparent)] text-[var(--bz-neon-purple)] border-[color-mix(in_srgb,var(--bz-neon-purple)_40%,transparent)]"
+                : "bg-[var(--surface-raised)] text-[var(--bz-text-2)] border-[var(--bz-border)] hover:border-[color-mix(in_srgb,var(--bz-neon-purple)_30%,transparent)] hover:text-[var(--bz-neon-purple)]",
+              title: "Show processes not updated in >14 days",
+              ariaLabel: "Show stale processes (not updated in 14+ days)",
+              content: <>🕰 Stale 14d+</>,
+            },
+          ]}
+        />
+
+        {showFilters && (
+          <FilterBar
+            activeCount={activeFiltersCount}
+            onClearAll={clearFilters}
+            className="bz-product-panel rounded-lg"
+            gridClassName="grid grid-cols-1 sm:grid-cols-3 gap-4"
+          >
+            <FilterSelect
+              id="status-filter"
+              label="Status"
+              value={filters.status}
+              onChange={(v) => setFilters({ ...filters, status: v })}
+              selectClassName={FILTER_SELECT_CLASS}
+            >
+              <option value="">All statuses</option>
+              <option value="inquiry">Inquiry</option>
+              <option value="waiting_documents">Waiting Documents</option>
+              <option value="sending_invoice">Sending Invoice</option>
+              <option value="on_process">On Process</option>
+              <option value="completed">Completed</option>
+            </FilterSelect>
+            <FilterSelect
+              id="type-filter"
+              label="Process Type"
+              value={filters.type}
+              onChange={(v) => setFilters({ ...filters, type: v })}
+              selectClassName={FILTER_SELECT_CLASS}
+            >
+              <option value="">All types</option>
+              {typeCatalog.map((cat) => (
+                <optgroup key={cat.code} label={cat.label}>
+                  {cat.services.map((svc) => (
+                    <option key={svc.code} value={svc.code}>
+                      {svc.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </FilterSelect>
+            <FilterSelect
+              id="assigned-to-filter"
+              label="Assigned To"
+              value={filters.assigned_to}
+              onChange={(v) => setFilters({ ...filters, assigned_to: v })}
+              selectClassName={FILTER_SELECT_CLASS}
+            >
+              <option value="">All team members</option>
+              {Array.from(
+                new Set(practices.map((p) => p.client_lead).filter(Boolean)),
+              ).map((lead) => (
+                <option key={lead} value={lead || ""}>
+                  {lead?.split("@")[0]}
+                </option>
+              ))}
+            </FilterSelect>
+            <FilterSelect
+              id="priority-filter"
+              label="Priority"
+              value={filters.priority}
+              onChange={(v) => setFilters({ ...filters, priority: v })}
+              selectClassName={FILTER_SELECT_CLASS}
+            >
+              <option value="">All priorities</option>
+              <option value="urgent">🔥 Urgent</option>
+              <option value="high">↑ High</option>
+              <option value="normal">Normal</option>
+            </FilterSelect>
+          </FilterBar>
+        )}
+      </div>
+
+      {/* Kanban Board View - Simplified 5-Step Workflow */}
+      {viewMode === "kanban" && (
+        <div
+          role="region"
+          aria-label="Process board"
+          className="relative grid grid-flow-col auto-cols-[85vw] gap-4 overflow-x-auto overscroll-x-contain scroll-px-1 snap-x snap-mandatory pb-2 pt-6 sm:auto-cols-[minmax(280px,1fr)] xl:grid-flow-row xl:auto-cols-auto xl:grid-cols-5 xl:overflow-visible xl:pt-0"
+        >
+          <p className="absolute right-1 top-0 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--bz-text-2)] xl:hidden">
+            Swipe to explore stages
+            <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
+          </p>
+          {COLUMN_ORDER.map((statusKey) => {
+            const colors = COLUMN_COLORS[statusKey];
+            const columnPractices = practicesByStatus[statusKey] || [];
+            const ghosts = getGhostPractices(statusKey);
+            const isExpanded = expandedGhosts[statusKey] ?? false;
+            const visibleGhosts = isExpanded ? ghosts : ghosts.slice(0, 2);
+            const hiddenGhostCount = ghosts.length - 2;
+            const isCompleted = statusKey === "completed";
+
+            return (
+              <div
+                key={statusKey}
+                className="snap-start rounded-xl flex flex-col h-full min-h-[500px] min-w-[280px] overflow-hidden shadow-xl backdrop-blur-md xl:min-w-0"
+                style={{
+                  background: colors.tintBg,
+                  border: `1px solid var(--bz-border)`,
+                }}
+              >
+                {/* Gradient top bar */}
+                <div
+                  className="h-[3px] w-full"
+                  style={{
+                    background: `linear-gradient(90deg, ${colors.gradientStart}, ${colors.gradientEnd})`,
+                  }}
+                />
+
+                <div className="p-4 flex flex-col flex-1">
+                  {isCompleted ? (
+                    <button
+                      type="button"
+                      onClick={() => setCompletedCollapsed((value) => !value)}
+                      className="flex w-full items-center justify-between mb-3 rounded-md text-left touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--state-success)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bz-card)]"
+                      aria-expanded={!completedCollapsed}
+                      aria-controls={`process-column-${statusKey}-content`}
+                      aria-label={
+                        completedCollapsed
+                          ? "Expand completed"
+                          : "Collapse completed"
+                      }
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`w-2 h-2 rounded-full ${colors.dotColor}`}
+                        />
+                        <h3
+                          className="font-semibold text-sm uppercase tracking-wider"
+                          style={{ color: colors.textColor }}
+                        >
+                          {colors.label}
+                        </h3>
+                        <ChevronDown
+                          className={`w-3.5 h-3.5 transition-transform ${
+                            completedCollapsed ? "-rotate-90" : ""
+                          }`}
+                          style={{ color: colors.textColor }}
+                        />
+                      </div>
+                      <span
+                        className="text-xs px-2 py-1 rounded-full font-medium"
+                        style={{
+                          background: colors.badgeBg,
+                          color: colors.textColor,
+                        }}
+                      >
+                        {columnPractices.length}
+                      </span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`w-2 h-2 rounded-full ${colors.dotColor}`}
+                        />
+                        <h3
+                          className="font-semibold text-sm uppercase tracking-wider"
+                          style={{ color: colors.textColor }}
+                        >
+                          {colors.label}
+                        </h3>
+                      </div>
+                      <span
+                        className="text-xs px-2 py-1 rounded-full font-medium"
+                        style={{
+                          background: colors.badgeBg,
+                          color: colors.textColor,
+                        }}
+                      >
+                        {columnPractices.length}
+                      </span>
+                    </div>
+                  )}
+                  {columnPractices.length > 0 &&
+                    (() => {
+                      // NOTE: BE serializes numeric(15,2) as string via asyncpg+Decimal,
+                      // so `sum + p.actual_price` was string-concatenating and the next
+                      // numeric add produced NaN → rendered "RpNaN". Coerce with Number().
+                      const colRevenue = columnPractices.reduce(
+                        (sum, p) =>
+                          sum + Number(p.actual_price ?? p.quoted_price ?? 0),
+                        0,
+                      );
+                      if (!Number.isFinite(colRevenue) || colRevenue === 0)
+                        return null;
+                      return (
+                        <div
+                          className="mb-3 text-[10px] font-medium tabular-nums opacity-70"
+                          style={{ color: colors.textColor }}
+                        >
+                          <Money compact value={colRevenue} />
+                        </div>
+                      );
+                    })()}
+
+                  <div
+                    id={`process-column-${statusKey}-content`}
+                    className="flex-1 space-y-3"
+                  >
+                    {isLoading ? (
+                      <div data-testid="loading-skeleton">
+                        <SkeletonCard />
+                        <SkeletonCard />
+                        <SkeletonCard />
+                      </div>
+                    ) : isCompleted && completedCollapsed ? (
+                      <button
+                        type="button"
+                        onClick={() => setCompletedCollapsed(false)}
+                        className="w-full rounded-lg border border-dashed text-xs py-6 px-3 transition-colors hover:bg-[var(--bz-card-hover)]"
+                        style={{
+                          borderColor: colors.tintBorder,
+                          color: colors.textColor,
+                        }}
+                        aria-label="Expand completed list"
+                      >
+                        <p className="font-medium">
+                          {columnPractices.length} completed
+                        </p>
+                        <p className="opacity-70 mt-1 text-[10px]">
+                          Click to expand
+                        </p>
+                      </button>
+                    ) : columnPractices.length === 0 && ghosts.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-32 border border-dashed border-[var(--bz-border)] rounded-lg bg-[var(--bz-card)]/30">
+                        <FolderKanban className="w-8 h-8 text-[var(--bz-text-2)] opacity-20 mb-2" />
+                        <p className="text-xs text-[var(--bz-text-2)]">
+                          No process
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {columnPractices.map((practice) => {
+                          const cardIsCompleted =
+                            getStatusColumn(practice.status) === "completed";
+                          const statusColumn = getStatusColumn(practice.status);
+                          const rawStatusLabel = formatStatusLabel(
+                            practice.status,
+                          );
+                          const hasSubStatus =
+                            statusColumn === "unknown" ||
+                            rawStatusLabel !== colors.label;
+
+                          const serviceLabel =
+                            practice.practice_type_name ||
+                            practice.practice_type_code
+                              ?.replace(/_/g, " ")
+                              .replace(/\b\w/g, (c) => c.toUpperCase()) ||
+                            "Process";
+
+                          const teamLeaderLabel = practice.client_lead
+                            ? teamMemberOptions.find(
+                                (m) => m.value === practice.client_lead,
+                              )?.label || practice.client_lead.split("@")[0]
+                            : null;
+
+                          const priceValue =
+                            practice.actual_price ?? practice.quoted_price ?? 0;
+
+                          return (
+                            <div
+                              key={practice.id}
+                              className={`relative group cursor-pointer rounded-[var(--bz-product-radius)] border transition-all hover:-translate-y-0.5 ${
+                                updatingId === practice.id
+                                  ? "opacity-70 pointer-events-none"
+                                  : ""
+                              } ${
+                                selectedPractice?.id === practice.id
+                                  ? "ring-1 ring-[var(--bz-accent)]/50"
+                                  : ""
+                              }`}
+                              style={{
+                                // Status tint stays subtle; lifecycle is carried
+                                // by the label and dot, never by a saturated card.
+                                background: `linear-gradient(150deg,
+                                  color-mix(in srgb, ${colors.gradientStart} 10%, var(--bz-card)) 0%,
+                                  var(--bz-card) 72%)`,
+                                borderColor: colors.tintBorder,
+                                boxShadow: "var(--bz-shadow-card)",
+                              }}
+                              onContextMenu={(e) =>
+                                handleContextMenu(e, practice)
+                              }
+                              onClick={() =>
+                                router.push(`/process/${practice.id}`)
+                              }
+                              data-testid={`process-card-${practice.id}`}
+                            >
+                              {updatingId === practice.id && (
+                                <div className="absolute inset-0 flex items-center justify-center bg-[var(--bz-card)]/80 rounded-2xl z-10">
+                                  <Loader2 className="w-5 h-5 animate-spin text-[var(--bz-accent)]" />
+                                </div>
+                              )}
+
+                              <div className="p-4">
+                                {/* Priority / state badges above title */}
+                                {(practice.priority === "urgent" ||
+                                  practice.priority === "high" ||
+                                  cardIsCompleted ||
+                                  (practice.payment_status &&
+                                    practice.payment_status !== "paid")) && (
+                                  <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                                    {practice.priority === "urgent" && (
+                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-danger)_20%,transparent)] text-[var(--state-danger)] uppercase tracking-wide">
+                                        urgent
+                                      </span>
+                                    )}
+                                    {practice.priority === "high" && (
+                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-warning)_15%,transparent)] text-[var(--state-warning)] uppercase tracking-wide">
+                                        high
+                                      </span>
+                                    )}
+                                    {cardIsCompleted && (
+                                      <CheckCircle className="w-3.5 h-3.5 text-[var(--state-success)]" />
+                                    )}
+                                    {practice.payment_status &&
+                                      practice.payment_status !== "paid" && (
+                                        <span
+                                          className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium uppercase tracking-wide ${
+                                            practice.payment_status === "unpaid"
+                                              ? "bg-[color-mix(in_srgb,var(--state-danger)_20%,transparent)] text-[var(--state-danger)]"
+                                              : "bg-[color-mix(in_srgb,var(--state-warning)_20%,transparent)] text-[var(--state-warning)]"
+                                          }`}
+                                        >
+                                          {practice.payment_status}
+                                        </span>
+                                      )}
+                                  </div>
+                                )}
+
+                                {/* Title: CLIENT NAME — uppercase, bold, leading */}
+                                <div className="flex items-start justify-between gap-2 mb-1">
+                                  {practice.client_id ? (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        router.push(
+                                          `/clients/${practice.client_id}`,
+                                        );
+                                      }}
+                                      className="text-left text-[15px] font-bold text-[var(--bz-text-1)] leading-tight tracking-wide uppercase line-clamp-2 hover:text-[var(--bz-accent)] transition-colors pr-6"
+                                      title="Open client profile"
+                                      aria-label="Open client profile"
+                                    >
+                                      {practice.client_name || "Unknown Client"}
+                                    </button>
+                                  ) : (
+                                    <p className="text-[15px] font-bold text-[var(--bz-text-1)] leading-tight tracking-wide uppercase line-clamp-2 pr-6">
+                                      {practice.client_name || "Unknown Client"}
+                                    </p>
+                                  )}
+
+                                  <button
+                                    type="button"
+                                    className="absolute right-10 top-3 rounded-md p-1 text-[var(--bz-text-2)] opacity-100 transition-opacity hover:bg-[var(--bz-card-hover)] hover:text-[var(--bz-text-1)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bz-focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bz-card)] sm:opacity-0 sm:group-hover:opacity-100"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      router.push(`/process/${practice.id}`);
+                                    }}
+                                    title="Open process"
+                                    aria-label={`Open process ${practice.id}: ${serviceLabel}`}
+                                  >
+                                    <ChevronRight className="h-4 w-4" />
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    className="absolute right-3 top-3 rounded-md p-1 text-[var(--bz-text-2)] opacity-100 transition-opacity hover:bg-[var(--bz-card-hover)] hover:text-[var(--bz-text-1)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bz-focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bz-card)] sm:opacity-0 sm:group-hover:opacity-100"
+                                    onClick={(e) =>
+                                      handleMenuClick(e, practice)
+                                    }
+                                    title="More options"
+                                    aria-label="More options"
+                                  >
+                                    <MoreVertical className="w-4 h-4" />
+                                  </button>
+                                </div>
+
+                                {/* Subtitle: service name */}
+                                <p
+                                  className="text-xs font-medium mb-2 line-clamp-1"
+                                  style={{ color: colors.textColor }}
+                                >
+                                  {serviceLabel}
+                                </p>
+
+                                {hasSubStatus && (
+                                  <p
+                                    className={`mb-2 text-[10px] font-medium ${
+                                      statusColumn === "unknown"
+                                        ? "text-[var(--state-danger)]"
+                                        : "text-[var(--bz-text-2)]"
+                                    }`}
+                                    title={`Backend status: ${rawStatusLabel}`}
+                                  >
+                                    {statusColumn === "unknown"
+                                      ? `Needs review · ${rawStatusLabel}`
+                                      : rawStatusLabel}
+                                  </p>
+                                )}
+
+                                {/* Family-member tag */}
+                                {practice.family_member_name && (
+                                  <p className="text-[10px] text-[var(--bz-accent)] flex items-center gap-1 mb-2">
+                                    <User className="w-2.5 h-2.5" />
+                                    <span className="truncate">
+                                      for {practice.family_member_name}
+                                      {practice.family_member_relationship
+                                        ? ` (${practice.family_member_relationship})`
+                                        : ""}
+                                    </span>
+                                  </p>
+                                )}
+
+                                {/* Team leader — small muted line */}
+                                {teamLeaderLabel && (
+                                  <p className="text-[10px] text-[var(--bz-text-2)] mb-3 truncate">
+                                    {teamLeaderLabel}
+                                  </p>
+                                )}
+
+                                {/* Price — doubled size, prominent */}
+                                {priceValue ? (
+                                  <Money
+                                    compact
+                                    value={priceValue}
+                                    className={`block text-xl font-bold leading-none ${
+                                      practice.payment_status === "paid"
+                                        ? "text-[var(--state-success)]"
+                                        : "text-[var(--bz-text-1)]"
+                                    }`}
+                                  />
+                                ) : null}
+
+                                {/* Meta row: expiry + age chips */}
+                                {(practice.expiry_date ||
+                                  practice.updated_at) && (
+                                  <div className="flex items-center gap-1.5 mt-3">
+                                    {practice.expiry_date &&
+                                      (() => {
+                                        const d = Math.ceil(
+                                          (new Date(
+                                            practice.expiry_date,
+                                          ).getTime() -
+                                            Date.now()) /
+                                            86400000,
+                                        );
+                                        const expiryDateStr = new Date(
+                                          practice.expiry_date,
+                                        ).toLocaleDateString("en-GB", {
+                                          day: "2-digit",
+                                          month: "short",
+                                          year: "numeric",
+                                        });
+                                        if (d < 0)
+                                          return (
+                                            <span
+                                              className="text-[9px] px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-danger)_20%,transparent)] text-[var(--state-danger)] tabular-nums"
+                                              title={`Expired on ${expiryDateStr}`}
+                                            >
+                                              exp {Math.abs(d)}d ago
+                                            </span>
+                                          );
+                                        if (d <= 30)
+                                          return (
+                                            <span
+                                              className="text-[9px] px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-warning)_15%,transparent)] text-[var(--state-warning)] tabular-nums"
+                                              title={`Expires ${expiryDateStr}`}
+                                            >
+                                              ⏰ {d}d
+                                            </span>
+                                          );
+                                        return null;
+                                      })()}
+                                    {practice.updated_at &&
+                                      (() => {
+                                        const ageDays = Math.floor(
+                                          (Date.now() -
+                                            new Date(
+                                              practice.updated_at,
+                                            ).getTime()) /
+                                            86400000,
+                                        );
+                                        if (ageDays === 0) return null;
+                                        const label =
+                                          ageDays >= 7
+                                            ? `${Math.floor(ageDays / 7)}w`
+                                            : `${ageDays}d`;
+                                        return (
+                                          <span
+                                            className={`text-[9px] px-1.5 py-0.5 rounded tabular-nums ${
+                                              ageDays > 14
+                                                ? "bg-[color-mix(in_srgb,var(--state-danger)_15%,transparent)] text-[var(--state-danger)]"
+                                                : ageDays > 7
+                                                  ? "bg-[color-mix(in_srgb,var(--state-warning)_15%,transparent)] text-[var(--state-warning)]"
+                                                  : "text-[var(--bz-text-2)]"
+                                            }`}
+                                            title={`Last updated ${ageDays} days ago`}
+                                          >
+                                            {label}
+                                          </span>
+                                        );
+                                      })()}
+                                  </div>
+                                )}
+
+                                {/* Quick actions — hidden until hover */}
+                                <div className="flex items-center gap-1 mt-3 pt-2 border-t border-[var(--bz-border)] opacity-100 sm:opacity-0 sm:group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                                  <ContactQuickActions practice={practice} />
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      router.push(
+                                        `/clients/${practice.client_id}?tab=documents`,
+                                      );
+                                    }}
+                                    className="p-1.5 rounded touch-manipulation hover:bg-[color-mix(in_srgb,var(--state-warning)_20%,transparent)] text-[var(--state-warning)] transition-colors ml-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--state-warning)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bz-card)]"
+                                    title="View Documents"
+                                    aria-label="View documents"
+                                  >
+                                    <FileText className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {/* Ghost section */}
+                        {ghosts.length > 0 && (
+                          <>
+                            <div className="flex items-center gap-2 py-1">
+                              <div className="flex-1 border-t border-dashed border-[var(--bz-border)]" />
+                              <span className="text-[9px] uppercase tracking-wider text-[var(--bz-text-2)]/50 font-medium">
+                                passate
+                              </span>
+                              <div className="flex-1 border-t border-dashed border-[var(--bz-border)]" />
+                            </div>
+                            {visibleGhosts.map((gp) => (
+                              <GhostCard
+                                key={`ghost-${gp.id}`}
+                                practice={gp}
+                                onClick={() => router.push(`/process/${gp.id}`)}
+                              />
+                            ))}
+                            {!isExpanded && hiddenGhostCount > 0 && (
+                              <button
+                                onClick={() =>
+                                  setExpandedGhosts((prev) => ({
+                                    ...prev,
+                                    [statusKey]: true,
+                                  }))
+                                }
+                                className="w-full text-center text-[10px] text-[var(--bz-text-2)]/60 hover:text-[var(--bz-text-2)] py-1 transition-colors"
+                              >
+                                +{hiddenGhostCount} passate
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* List View */}
+      {viewMode === "list" && (
+        <div className="bz-product-panel overflow-hidden">
+          {isLoading ? (
+            <div className="p-12 text-center">
+              <div className="animate-pulse space-y-4">
+                <div className="h-4 bg-[var(--bz-card)] rounded w-1/3 mx-auto" />
+                <div className="h-4 bg-[var(--bz-card)] rounded w-1/2 mx-auto" />
+              </div>
+            </div>
+          ) : filteredPractices.length === 0 ? (
+            <div className="flex flex-col items-center justify-center p-12">
+              <FolderKanban className="w-16 h-16 text-[var(--bz-text-2)] opacity-50 mb-4" />
+              <h3 className="text-lg font-semibold text-[var(--bz-text-1)] mb-2">
+                No process found
+              </h3>
+              <p className="text-sm text-[var(--bz-text-2)] max-w-md mb-6">
+                {activeFiltersCount > 0
+                  ? "No processes match the selected filters."
+                  : searchQuery
+                    ? "No processes match your search. Try different keywords."
+                    : "Get started by creating your first process."}
+              </p>
+              {/* P2.3: empty state offers a way out (mirrors clients page) */}
+              {activeFiltersCount > 0 ? (
+                <Button
+                  variant="outline"
+                  onClick={clearFilters}
+                  className="gap-2"
+                >
+                  <X className="w-4 h-4" />
+                  Clear Filters
+                </Button>
+              ) : (
+                <Button onClick={handleNewCase} className="gap-2">
+                  <Plus className="w-4 h-4" />
+                  New Process
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-[var(--bz-surface)] border-b border-[var(--bz-border)]">
+                  <tr>
+                    {(
+                      [
+                        { key: "id", label: "ID", sort: true },
+                        {
+                          key: "practice_type_code",
+                          label: "Process Type",
+                          sort: true,
+                        },
+                        { key: "client_name", label: "Client", sort: true },
+                        {
+                          key: "client_lead",
+                          label: "Assigned To",
+                          sort: true,
+                        },
+                        { key: "status", label: "Status", sort: true },
+                        { key: "priority", label: "Priority", sort: true },
+                        { key: "payment", label: "Payment" },
+                        { key: "price", label: "Price", right: true },
+                        { key: "updated_at", label: "Updated", sort: true },
+                        { key: "actions", label: "Actions" },
+                      ] as {
+                        key: string;
+                        label: string;
+                        sort?: boolean;
+                        right?: boolean;
+                      }[]
+                    ).map((col) =>
+                      col.sort ? (
+                        <th
+                          key={col.key}
+                          onClick={() => toggleSort(col.key as SortField)}
+                          className="px-4 py-3 text-left text-sm font-semibold text-[var(--bz-text-1)] cursor-pointer hover:bg-[var(--bz-base)]/50 transition-colors"
+                        >
+                          <div className="flex items-center gap-2">
+                            {col.label}
+                            {sortField === col.key &&
+                              (sortOrder === "asc" ? (
+                                <ArrowUp className="w-4 h-4" />
+                              ) : (
+                                <ArrowDown className="w-4 h-4" />
+                              ))}
+                            {sortField !== col.key && (
+                              <ArrowUpDown className="w-4 h-4 opacity-30" />
+                            )}
+                          </div>
+                        </th>
+                      ) : (
+                        <th
+                          key={col.key}
+                          className={`px-4 py-3 ${col.right ? "text-right" : "text-left"} text-sm font-semibold text-[var(--bz-text-1)]`}
+                        >
+                          {col.label}
+                        </th>
+                      ),
+                    )}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--bz-border)]">
+                  {paginatedPractices.map((practice) => (
+                    <tr
+                      key={practice.id}
+                      className="hover:bg-[var(--bz-card-hover)] transition-colors cursor-pointer"
+                      onContextMenu={(e) => handleContextMenu(e, practice)}
+                      onClick={() => router.push(`/process/${practice.id}`)}
+                    >
+                      <td className="px-4 py-3 text-sm font-medium text-[var(--bz-text-1)]">
+                        #{practice.id}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-[var(--bz-text-1)]">
+                        {practice.practice_type_code
+                          ?.toUpperCase()
+                          .replace(/_/g, " ") || "-"}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {practice.client_id ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              router.push(`/clients/${practice.client_id}`);
+                            }}
+                            className="text-[var(--bz-text-1)] hover:text-[var(--bz-accent)] transition-colors text-left"
+                          >
+                            {practice.client_name || "Unknown"}
+                          </button>
+                        ) : (
+                          <span className="text-[var(--bz-text-1)]">
+                            {practice.client_name || "Unknown"}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {practice.client_lead ? (
+                          <div className="inline-flex items-center gap-1.5 bg-[var(--bz-accent)]/10 px-2 py-0.5 rounded text-[var(--bz-accent)]">
+                            <User className="w-3 h-3" />
+                            <span className="text-[10px] font-medium">
+                              {teamMemberOptions.find(
+                                (m) => m.value === practice.client_lead,
+                              )?.label || practice.client_lead.split("@")[0]}
+                            </span>
+                          </div>
+                        ) : (
+                          <span
+                            className="text-[var(--bz-text-2)] text-xs italic opacity-60"
+                            title="No team member assigned"
+                            aria-label="No team member assigned"
+                          >
+                            Unassigned
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        <div className="inline-flex items-center gap-1.5">
+                          <span
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={statusDotStyle(
+                              getStatusColumn(practice.status),
+                            )}
+                          />
+                          <span className="text-[var(--bz-text-1)]">
+                            {practice.status
+                              ?.replace(/_/g, " ")
+                              .charAt(0)
+                              .toUpperCase() +
+                              practice.status?.replace(/_/g, " ").slice(1) ||
+                              "-"}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {practice.priority === "urgent" ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-[color-mix(in_srgb,var(--state-danger)_15%,transparent)] text-[var(--state-danger)]">
+                            🔥 urgent
+                          </span>
+                        ) : practice.priority === "high" ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-[color-mix(in_srgb,var(--state-warning)_12%,transparent)] text-[var(--state-warning)]">
+                            ↑ high
+                          </span>
+                        ) : (
+                          <span
+                            className="text-[var(--bz-text-2)] text-xs"
+                            title="Normal priority"
+                            aria-label="Normal priority"
+                          >
+                            —
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {practice.payment_status ? (
+                          <span
+                            className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                              practice.payment_status === "paid"
+                                ? "bg-[color-mix(in_srgb,var(--state-success)_15%,transparent)] text-[var(--state-success)]"
+                                : practice.payment_status === "partial"
+                                  ? "bg-[color-mix(in_srgb,var(--state-warning)_15%,transparent)] text-[var(--state-warning)]"
+                                  : "bg-[color-mix(in_srgb,var(--state-danger)_15%,transparent)] text-[var(--state-danger)]"
+                            }`}
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                            {practice.payment_status}
+                          </span>
+                        ) : (
+                          <span
+                            className="text-[var(--bz-text-2)] text-xs"
+                            title="Payment not set"
+                            aria-label="Payment not set"
+                          >
+                            —
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right">
+                        {practice.actual_price || practice.quoted_price ? (
+                          <Money
+                            compact
+                            value={
+                              practice.actual_price ||
+                              practice.quoted_price ||
+                              0
+                            }
+                            className="font-medium"
+                            style={{ color: "var(--bz-accent)" }}
+                          />
+                        ) : (
+                          <span className="text-[var(--bz-text-2)] text-xs">
+                            —
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {practice.updated_at ? (
+                          (() => {
+                            const ageDays = Math.floor(
+                              (Date.now() -
+                                new Date(practice.updated_at).getTime()) /
+                                86400000,
+                            );
+                            const label =
+                              ageDays === 0
+                                ? "today"
+                                : ageDays >= 30
+                                  ? `${Math.floor(ageDays / 30)}mo`
+                                  : ageDays >= 7
+                                    ? `${Math.floor(ageDays / 7)}w`
+                                    : `${ageDays}d`;
+                            return (
+                              <span
+                                className="text-xs tabular-nums px-1.5 py-0.5 rounded"
+                                style={{
+                                  background:
+                                    ageDays > 14
+                                      ? "color-mix(in srgb, var(--state-danger) 12%, transparent)"
+                                      : ageDays > 7
+                                        ? "color-mix(in srgb, var(--state-warning) 10%, transparent)"
+                                        : "transparent",
+                                  color:
+                                    ageDays > 14
+                                      ? "var(--state-danger)"
+                                      : ageDays > 7
+                                        ? "var(--state-warning)"
+                                        : "var(--bz-text-2)",
+                                }}
+                                title={`Last updated: ${new Date(practice.updated_at).toLocaleDateString("en-US")}`}
+                                aria-label={`Last updated: ${new Date(practice.updated_at).toLocaleDateString("en-US")}`}
+                              >
+                                {label}
+                              </span>
+                            );
+                          })()
+                        ) : (
+                          <span className="text-[var(--bz-text-2)] text-xs">
+                            —
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        <div
+                          className="flex items-center gap-1"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <ContactQuickActions practice={practice} />
+                          <button
+                            className="p-1.5 rounded text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)] hover:bg-[var(--bz-card-hover)] transition-colors"
+                            onClick={(e) => handleMenuClick(e, practice)}
+                            title="More options"
+                            aria-label="More options"
+                          >
+                            <MoreVertical className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Pagination Controls */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between px-4 py-3 border-t border-[var(--bz-border)] bg-[var(--bz-surface)]">
+                  <div className="text-sm text-[var(--bz-text-2)]">
+                    Showing {(listPageNumber - 1) * itemsPerPage + 1} to{" "}
+                    {Math.min(
+                      listPageNumber * itemsPerPage,
+                      filteredPractices.length,
+                    )}{" "}
+                    of {filteredPractices.length} process
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() =>
+                        setListPageNumber((p) => Math.max(1, p - 1))
+                      }
+                      disabled={listPageNumber === 1}
+                      className="px-3 py-1 rounded-lg border border-[var(--bz-border)] bg-[var(--bz-surface)] text-[var(--bz-text-1)] hover:bg-[var(--bz-base)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Previous
+                    </button>
+                    <div className="flex items-center gap-2 px-3 py-1">
+                      {Array.from(
+                        { length: Math.min(5, totalPages) },
+                        (_, i) => {
+                          const pageNum = i + 1;
+                          return (
+                            <button
+                              key={pageNum}
+                              onClick={() => setListPageNumber(pageNum)}
+                              className={`px-2 py-1 rounded-lg transition-colors ${
+                                listPageNumber === pageNum
+                                  ? "bg-[var(--bz-accent)] text-[var(--accent-foreground)]"
+                                  : "bg-[var(--bz-surface)] text-[var(--bz-text-1)] hover:bg-[var(--bz-base)]"
+                              }`}
+                            >
+                              {pageNum}
+                            </button>
+                          );
+                        },
+                      )}
+                      {totalPages > 5 && (
+                        <span className="text-[var(--bz-text-2)]">...</span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() =>
+                        setListPageNumber((p) => Math.min(totalPages, p + 1))
+                      }
+                      disabled={listPageNumber === totalPages}
+                      className="px-3 py-1 rounded-lg border border-[var(--bz-border)] bg-[var(--bz-surface)] text-[var(--bz-text-1)] hover:bg-[var(--bz-base)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Info Footer */}
+      <div className="text-center py-8">
+        <p className="text-xs text-[var(--bz-text-2)]">
+          <span className="sm:hidden">
+            Tap a card to open it. Swipe horizontally to review every stage.
+          </span>
+          <span className="hidden sm:inline">
+            Pro Tip: Right-click or use the menu on cards to quickly change
+            process status.
+          </span>
+        </p>
+      </div>
+
+      {/* Context Menu for Status Change */}
+      {selectedPractice && menuPosition && (
+        <div
+          ref={menuRef}
+          className="fixed z-50 min-w-[200px] rounded-lg border border-[var(--bz-border)] bg-[var(--bz-card)] shadow-[var(--bz-shadow-card)] py-1 animate-in fade-in zoom-in-95 duration-100"
+          style={{
+            // ✅ Smart positioning: adjusts based on viewport boundaries
+            // Menu height ~340px (header 40px + 9 items * 32px + padding)
+            // Menu width: 220px (min-w-[200px] + padding)
+            top:
+              menuPosition.y + 340 > window.innerHeight
+                ? Math.max(10, menuPosition.y - 340) // Open above if not enough space below
+                : menuPosition.y,
+            left:
+              menuPosition.x + 220 > window.innerWidth
+                ? Math.max(10, menuPosition.x - 220) // Open to left if not enough space to right
+                : menuPosition.x,
+            // Ensure menu never goes offscreen
+            maxHeight: "calc(100vh - 20px)",
+            maxWidth: "calc(100vw - 20px)",
+          }}
+        >
+          <div className="px-3 py-2 border-b border-[var(--bz-border)] bg-[var(--bz-surface)] rounded-t-lg">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold text-[var(--bz-text-1)]">
+                  Update Status
+                </p>
+                <p className="text-[10px] text-[var(--bz-text-2)]">
+                  {selectedPractice.practice_type_code
+                    ?.toUpperCase()
+                    .replace(/_/g, " ") || "Process"}{" "}
+                  #{selectedPractice.id}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  router.push(`/process/${selectedPractice.id}`);
+                  setSelectedPractice(null);
+                  setMenuPosition(null);
+                }}
+                className="text-[10px] px-2 py-1 rounded border border-[var(--bz-border)] text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)] hover:border-[var(--bz-accent)]/40 transition-colors"
+              >
+                Open →
+              </button>
+            </div>
+          </div>
+          <div className="max-h-[300px] overflow-y-auto p-1 space-y-0.5">
+            {STATUS_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                onClick={() =>
+                  handleStatusChange(selectedPractice.id, option.value)
+                }
+                disabled={
+                  selectedPractice.status === option.value ||
+                  updatingId !== null
+                }
+                className={`w-full px-3 py-2 text-left text-sm rounded-md transition-colors flex items-center justify-between group ${
+                  selectedPractice.status === option.value
+                    ? "bg-[var(--bz-accent)]/10 text-[var(--bz-accent)] font-medium"
+                    : "text-[var(--bz-text-1)] hover:bg-[var(--bz-accent)]/10 hover:text-[var(--bz-accent)]"
+                } ${updatingId !== null ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className="w-2 h-2 rounded-full"
+                    style={statusDotStyle(option.column)}
+                  />
+                  {option.label}
+                </div>
+                {selectedPractice.status === option.value && (
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                )}
+              </button>
+            ))}
+          </div>
+          {/* Payment Status Section */}
+          <div className="border-t border-[var(--bz-border)] px-3 py-2">
+            <p className="text-[10px] text-[var(--bz-text-2)] mb-1.5 font-medium uppercase tracking-wide">
+              Payment
+            </p>
+            <div className="flex gap-1">
+              {(["unpaid", "partial", "paid"] as const).map((ps) => (
+                <button
+                  key={ps}
+                  onClick={() => handlePaymentChange(selectedPractice.id, ps)}
+                  disabled={
+                    selectedPractice.payment_status === ps ||
+                    updatingId !== null
+                  }
+                  className="flex-1 text-[10px] py-1 rounded font-medium transition-all disabled:opacity-40 disabled:cursor-default capitalize"
+                  style={{
+                    background:
+                      selectedPractice.payment_status === ps
+                        ? ps === "paid"
+                          ? "color-mix(in srgb, var(--state-success) 25%, transparent)"
+                          : ps === "partial"
+                            ? "color-mix(in srgb, var(--state-warning) 25%, transparent)"
+                            : "color-mix(in srgb, var(--state-danger) 25%, transparent)"
+                        : "var(--bz-surface)",
+                    color:
+                      selectedPractice.payment_status === ps
+                        ? ps === "paid"
+                          ? "var(--state-success)"
+                          : ps === "partial"
+                            ? "var(--state-warning)"
+                            : "var(--state-danger)"
+                        : "var(--bz-text-2)",
+                    border:
+                      selectedPractice.payment_status === ps
+                        ? ps === "paid"
+                          ? "1px solid color-mix(in srgb, var(--state-success) 40%, transparent)"
+                          : ps === "partial"
+                            ? "1px solid color-mix(in srgb, var(--state-warning) 40%, transparent)"
+                            : "1px solid color-mix(in srgb, var(--state-danger) 40%, transparent)"
+                        : "1px solid var(--bz-border)",
+                  }}
+                >
+                  {ps}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Priority Section */}
+          <div className="border-t border-[var(--bz-border)] px-3 py-2">
+            <p className="text-[10px] text-[var(--bz-text-2)] mb-1.5 font-medium uppercase tracking-wide">
+              Priority
+            </p>
+            <div className="flex gap-1">
+              {(
+                [
+                  {
+                    value: "normal",
+                    label: "Normal",
+                    color: "var(--bz-text-secondary)",
+                    active:
+                      "color-mix(in srgb, var(--bz-text-secondary) 25%, transparent)",
+                    border:
+                      "color-mix(in srgb, var(--bz-text-secondary) 40%, transparent)",
+                  },
+                  {
+                    value: "high",
+                    label: "High",
+                    color: "var(--state-warning)",
+                    active:
+                      "color-mix(in srgb, var(--state-warning) 25%, transparent)",
+                    border:
+                      "color-mix(in srgb, var(--state-warning) 40%, transparent)",
+                  },
+                  {
+                    value: "urgent",
+                    label: "Urgent",
+                    color: "var(--state-danger)",
+                    active:
+                      "color-mix(in srgb, var(--state-danger) 25%, transparent)",
+                    border:
+                      "color-mix(in srgb, var(--state-danger) 40%, transparent)",
+                  },
+                ] as const
+              ).map((p) => {
+                const isCurrent =
+                  (selectedPractice.priority || "normal") === p.value;
+                return (
+                  <button
+                    key={p.value}
+                    onClick={() =>
+                      handlePriorityChange(selectedPractice.id, p.value)
+                    }
+                    disabled={isCurrent || updatingId !== null}
+                    className="flex-1 text-[10px] py-1 rounded font-medium transition-all disabled:opacity-40 disabled:cursor-default capitalize"
+                    style={{
+                      background: isCurrent ? p.active : "var(--bz-surface)",
+                      color: isCurrent ? p.color : "var(--bz-text-2)",
+                      border: isCurrent
+                        ? `1px solid ${p.border}`
+                        : "1px solid var(--bz-border)",
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

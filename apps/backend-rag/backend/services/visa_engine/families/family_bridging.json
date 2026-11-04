@@ -1,0 +1,67 @@
+{
+  "family": "BRIDGING",
+  "name": "Bridging stay permit",
+  "category": "Special Visa",
+  "permit_class": "BRIDGING",
+  "entry_type": null,
+  "law_dir": "law/BRIDGING",
+  "start_question": "permit_transition",
+  "questions": {
+    "permit_transition": {
+      "text_en": "Which transition between stay permits do you need?",
+      "options": {
+        "evisa_visit_to_itas": "BRIDGING",
+        "nonextendable_itas_to_new_permit": "BRIDGING",
+        "nonextendable_itap_to_new_permit": "BRIDGING"
+      },
+      "labels_en": {
+        "evisa_visit_to_itas": "From a visit stay permit applied for through evisa.imigrasi.go.id to a limited stay permit (ITAS).",
+        "nonextendable_itas_to_new_permit": "From a limited stay permit (ITAS) that can no longer be extended to a new stay permit.",
+        "nonextendable_itap_to_new_permit": "From a permanent stay permit (ITAP) that can no longer be extended to a new stay permit."
+      }
+    },
+    "onshore": {
+      "text_en": "Are you already in Indonesia, and will you remain in Indonesia while using this bridging stay permit?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    },
+    "application_deadline": {
+      "text_en": "Can you apply through evisa.imigrasi.go.id and pay the immigration fee no later than 3 days before your current stay permit expires?",
+      "options": {
+        "yes": true,
+        "no": false
+      }
+    }
+  },
+  "visas": {
+    "BRIDGING": {
+      "sponsor_required": null,
+      "sponsor": null,
+      "entry_type": null,
+      "apply_channel": "ONSHORE",
+      "is_sold": true,
+      "stay_days": 60,
+      "stay_options": [{ "value": 60, "unit": "DAY" }],
+      "extendable": false,
+      "max_total_days": null,
+      "max_total_months": null,
+      "price_keys": [
+        { "category": "single_entry_visas", "item_key": "Bridging Visa" }
+      ],
+      "requires_questions": ["onshore", "application_deadline"]
+    }
+  },
+  "notes": [
+    "The three transition options retain the qualifications in allowed_activities verbatim. The visit permit must have been applied for through evisa; ITAS/ITAP must no longer be extendable. The source says new stay permit for ITAS/ITAP holders, without specifying its class; the following sentence discusses conversion to ITAS. That scope remains TO_VERIFY. No ITAP destination or conversion entitlement is inferred.",
+    "Three questions per path. A no to onshore or the application/payment deadline gives NOT_COVERED. An absent or unlisted transition is asked again; no other permit transition is inferred.",
+    "A matching path gives TO_VERIFY, not OK: the nationwide sponsor Boolean is unstated. The Jakarta Pusat sponsor account and checklist are office-specific, and no sponsor exemption or national sponsor requirement is inferred.",
+    "The published validity is exactly 60 DAY. It is not converted into months or years, and no duration question is invented. Leaving Indonesia ends this permit's validity.",
+    "OWNER RULING 2026-10-19: BRIDGING is not extendable (extendable false). Basis, Permenkumham 11/2024 Pasal 86A ayat (1): 'Izin Tinggal Kunjungan bagi Orang Asing dalam rangka peralihan Izin Tinggal Keimigrasian sebagaimana dimaksud dalam Pasal 80 ayat (3) huruf f dan ayat (4) huruf d diberikan untuk jangka waktu paling lama 60 (enam puluh) hari dan tidak dapat diperpanjang.' The quote is in the card's regulation_verbatim, separate from the page extraction (whose extendable field stays null).",
+    "All nine requirements remain a verbatim checklist, never document-possession questions. Application and payment no later than 3 days before expiry is a legal timing condition, not a request to upload documents.",
+    "The central press URL returned 404; the substantive official Depok republication is the main source. Source-document hashes and the Jakarta Pusat local scope remain in the card.",
+    "Only single_entry_visas / Bridging Visa is an exact commercial key. Its catalog category does not grant single entry: entry_type remains null. Stamp duties are not PNBP or client prices.",
+    "Cumulative maximum, entry entitlement, nationwide sponsor rule, PNBP amount and the checklist's applicability outside Jakarta Pusat remain TO_VERIFY. No ITAP.json was supplied for this non-E family; DB itap stays null."
+  ]
+}

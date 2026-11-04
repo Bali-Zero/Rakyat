@@ -1,0 +1,73 @@
+import type { components } from "./schema";
+
+// Runtime witness of the generated contract, independent of the UI fact mapper.
+// Adding/removing a schema key must update this one exhaustive set.
+const applicantFactPaths = {
+  "commercial.service_fee_budget_idr": true,
+  "commercial.wants_quote": true,
+  "family.marriage_registered": true,
+  "family.relation_to_sponsor": true,
+  "family.sponsor_confirmed": true,
+  "family.sponsor_nationalities": true,
+  "family.sponsor_permit_basis": true,
+  "family.sponsor_status_code": true,
+  "family.stepchild_birth_certificate_confirmed": true,
+  "family.stepchild_marriage_certificate_confirmed": true,
+  "immigration.current_status_code": true,
+  "immigration.current_status_expiry": true,
+  "immigration.currently_in_indonesia": true,
+  "immigration.last_entry_date": true,
+  "immigration.overstay_days": true,
+  "immigration.renewal_paid": true,
+  "immigration.violation_history": true,
+  "intent.desired_entry_date": true,
+  "intent.entry_pattern": true,
+  "intent.purposes": true,
+  "intent.requested_product_code": true,
+  "intent.stay_days": true,
+  "investment.capital_market_only": true,
+  "investment.establishes_indonesian_company": true,
+  "investment.foreign_branch_or_subsidiary": true,
+  "investment.ikn_subsidiary": true,
+  "investment.investment_amount_usd": true,
+  "investment.investment_capital_idr": true,
+  "investment.paid_up_capital_idr": true,
+  "investment.proposed_role": true,
+  "investment.meets_published_threshold": true,
+  "investment.own_shareholding_idr": true,
+  "investment.pt_pma_committed": true,
+  "person.birth_date": true,
+  "person.guardian_consent": true,
+  "person.marital_status": true,
+  "person.nationalities": true,
+  "process.application_channel": true,
+  "process.wants_onshore_conversion": true,
+  "secondhome.bank_deposit_at_state_bank": true,
+  "secondhome.bank_deposit_in_own_name": true,
+  "secondhome.bank_deposit_usd": true,
+  "secondhome.passive_monthly_income_usd": true,
+  "secondhome.qualifying_property_value_usd": true,
+  "sponsor.diplomatic_household": true,
+  "sponsor.government_collaboration": true,
+  "sponsor.government_invitation": true,
+  "sponsor.trade_office": true,
+  "sponsor.type": true,
+  "sponsor.world_figure_invitation": true,
+  "study.admission_confirmed": true,
+  "study.level": true,
+  "study.sponsor_confirmed": true,
+  "work.annual_foreign_income_usd": true,
+  "work.employer_country_code": true,
+  "work.employer_is_indonesian_entity": true,
+  "work.indonesia_source_compensation": true,
+  "work.indonesian_work_sponsor_confirmed": true,
+  "work.serves_indonesian_clients": true,
+} satisfies Record<keyof components["schemas"]["ApplicantFactsData"], true>;
+
+export const APPLICANT_FACT_COUNT = Object.keys(applicantFactPaths).length;
+
+/** Backend fact paths temporarily omitted during an ordered rollout. */
+export const ORDERED_ROLLOUT_OPTIONAL_PATHS: ReadonlySet<string> = new Set();
+
+export const FRONTEND_EMITTED_FACT_COUNT =
+  APPLICANT_FACT_COUNT - ORDERED_ROLLOUT_OPTIONAL_PATHS.size;

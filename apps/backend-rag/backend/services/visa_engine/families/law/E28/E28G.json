@@ -1,0 +1,128 @@
+{
+  "code": "E28G",
+  "official_name_id": "E28G Visa Investor Perwakilan Perusahaan Induk",
+  "source_url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/E28G",
+  "retrieved_at": "2026-10-17T13:27:12Z",
+  "page_sha256": "96768b69307c8632176c74e3c521bf9cea598112fa5ac5ce8ea436cda54a6d33",
+  "definition_verbatim": "Visa investor ini dapat diajukan oleh orang asing dari negara mana pun yang memenuhi syarat untuk berinvestasi di Indonesia.\nVisa ini diperuntukkan bagi orang asing yang akan menjabat sebagai perwakilan perusahaan induk yang ditempatkan di perusahaan cabang di Indonesia, dengan masa tinggal yang dapat mencapai 5 (lima) atau 10 (sepuluh) tahun.",
+  "jenis_visa_verbatim": "Jenis visa : Visa tinggal terbatas bagi orang asing yang akan menjabat sebagai perwakilan perusahaan induk yang ditempatkan di perusahaan cabang di Indonesia.",
+  "stay_days": ["Masa tinggal : 5 tahun dan 10 tahun."],
+  "extendable": ["Ekstensi : Dapat diperpanjang."],
+  "entry": "multiple",
+  "where_to_apply": null,
+  "sponsor_required": {
+    "as_stated_boolean": false,
+    "verbatim": [
+      "Anda tidak membutuhkan penjamin/sponsor untuk mengajukan visa ini"
+    ],
+    "invitation_requirement_see": "requirements_verbatim (Persyaratan Khusus)"
+  },
+  "requirements_verbatim": [
+    {
+      "n": 1,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "Paspor kebangsaan yang sah dan masih berlaku paling singkat 6 bulan sebelum masa berlakunya habis,"
+    },
+    {
+      "n": 2,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "bukti memiliki biaya hidup selama berada di wilayah Indonesia berupa rekening koran 3 bulan terakhir atas nama Orang Asing atau penjamin sebesar minimal US$2.000 atau dalam mata uang lain yang setara jumlahnya,"
+    },
+    {
+      "n": 3,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "pasfoto berwarna terbaru (setahun terakhir). Detail"
+    },
+    {
+      "n": 4,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "daftar riwayat hidup (CV)"
+    },
+    {
+      "n": 5,
+      "section": "Pengajuan visa (berkas elektronik)",
+      "text": "rincian perjalanan (itinerary)"
+    },
+    {
+      "n": 6,
+      "section": "Persyaratan Khusus / Visa 5 tahun",
+      "text": "Pernyataan komitmen bahwa perusahaan asing akan menanamkan investasi paling sedikit US$25.000.000, untuk jangka waktu tinggal sampai dengan 5 tahun yang harus dipenuhi dalam waktu 90 hari terhitung sejak tanggal masuk ke Indonesia."
+    },
+    {
+      "n": 7,
+      "section": "Persyaratan Khusus / Visa 10 tahun",
+      "text": "Pernyataan komitmen bahwa perusahaan asing akan menanamkan investasi paling sedikit US$50.000.000, untuk jangka waktu tinggal sampai dengan 10 tahun yang harus dipenuhi dalam waktu 90 hari terhitung sejak tanggal masuk ke Indonesia."
+    }
+  ],
+  "pengajuan_intro_verbatim": "Anda harus memiliki akun di evisa.imigrasi.go.id sebelum mengajukan visa. Setelah memiliki akun, Anda dapat mengajukan visa setelah login di evisa.imigrasi.go.id dengan menyiapkan berkas elektronik (detail format file) Orang Asing antara lain:",
+  "allowed_activities": "Dengan visa ini, Anda dapat melakukan aktivitas yang berhubungan dengan bisnis, investasi, dan pendirian perusahaan, termasuk melakukan pembahasan, negosiasi, dan/atau menandatangani perjanjian bisnis.\nAnda juga diperkenankan melakukan kegiatan dan pekerjaan sebagai perwakilan perusahaan induk yang ditempatkan di perusahaan cabang. Anda dapat membawa keluarga Anda untuk tinggal di Indonesia. Visa ini juga memungkinkan Anda keluar-masuk Indonesia selama Izin Masuk Kembali masih berlaku. Anda juga diperkenankan melakukan aktivitas wisata, pembelian barang, serta mengunjungi teman atau keluarga.\nAnda juga diperkenankan menerima imbalan atau fasilitas atas investasi yang Anda tanamkan dan/atau jabatan yang Anda pegang.",
+  "prohibited_or_conditions_verbatim": [
+    "Tinggal di wilayah Indonesia melebihi masa berlaku izin tinggal.",
+    "Melakukan pekerjaan yang tidak sesuai dengan jenis izin tinggal.",
+    "Melakukan kegiatan yang tidak sesuai dengan uraian kegiatan dan hak yang diberikan, kecuali telah mengajukan perubahan atau pengajuan rangkap jenis kegiatan."
+  ],
+  "ketentuan_lain_verbatim": [
+    "Orang Asing tanpa kewarganegaraan dan Orang Asing pemegang dokumen perjalanan (bukan paspor kebangsaan) berupa paspor sementara, paspor darurat, titre du voyage, certificate of identity, laissez passer, atau dokumen sejenis lainnya harus melampirkan dokumen Izin Masuk Kembali ke negara tempat Visa Kunjungan diajukan serta tiket kembali/tiket terusan ke negara lain (kecuali bagi awak alat angkut).",
+    "Masa berlaku visa adalah 90 hari sejak diterbitkan. Jika tidak digunakan setelah jangka waktu tersebut, Orang Asing harus mengajukan visa baru untuk dapat masuk ke Indonesia.",
+    "Harap diperhatikan bahwa masa berlaku visa berbeda dengan masa tinggal, silakan periksa visa Anda untuk informasi tentang lama izin tinggal.",
+    "Izin Tinggal Terbatas (ITAS) dan Izin Masuk Kembali akan terbit secara otomatis begitu Anda diizinkan masuk oleh petugas pada Tempat Pemeriksaan Imigrasi."
+  ],
+  "pnbp_verbatim_for_reference_only": [
+    "Masa tinggal hingga 5 tahun: Rp13.000.000",
+    "Komponen biaya",
+    "- Biaya Izin Tinggal: Rp7.000.000",
+    "- Biaya Visa Tinggal : Rp500.000",
+    "- Biaya Verifikasi II: Rp2.000.000",
+    "- Biaya Izin Masuk Kembali: Rp3.500.000",
+    "Masa tinggal hingga 10 tahun : Rp. 19.500.000",
+    "Komponen biaya",
+    "- Biaya Izin Tinggal: Rp12.000.000",
+    "- Biaya Visa Tinggal : Rp500.000",
+    "- Biaya Verifikasi II: Rp2.000.000",
+    "- Biaya Izin Masuk Kembali: Rp5.000.000"
+  ],
+  "notes": [
+    "VERIFIED_FROM_SOURCE means faithful extraction, not resolution of legal inconsistencies. Whitespace and HTML list markers are normalized; source wording, spelling, punctuation and alternatives are retained.",
+    "stay_days retains source year-based sentences; no conversion of years into days. entry=multiple derives only from the explicit entry/exit wording. where_to_apply is null: no explicit offshore/onshore rule is stated.",
+    "Requirements are numbered in source order. Counts include parent bullets and alternative bullets; they are not a count of simultaneously mandatory documents. Scope labels and the full Persyaratan khusus text preserve conditional context. Reference directories are retained separately and excluded from the count.",
+    "itap_verbatim includes generic/other-ITAS conversion wording requested by the brief. It is not a finding of ITAS-to-ITAP eligibility; the visa page does not explicitly name ITAP. Code-specific eligibility is null + TO_VERIFY; see ITAP.json.",
+    "PNBP text is official reference only, never a client price.",
+    "TO_VERIFY: the brief reports E28G as not current, but this exact official URL has a substantive HTTP 200 page. Record the page as retrieved; current legal classification is not independently established by page availability.",
+    "TO_VERIFY: application requires Paspor kebangsaan, while Ketentuan lain includes a stateless/non-national-travel-document clause. Both source statements are retained without deciding document eligibility."
+  ],
+  "status": "VERIFIED_FROM_SOURCE",
+  "itap_verbatim": [
+    {
+      "text": "Alih status : Dapat dialihstatuskan ke izin tinggal terbatas lain.",
+      "url": "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/E28G",
+      "section": "Ringkasan visa"
+    }
+  ],
+  "itap_eligibility_as_stated_boolean": null,
+  "itap_status": "TO_VERIFY",
+  "itap_family_evidence": "ITAP.json",
+  "total_max_stay_verbatim": null,
+  "http_status": 200,
+  "raw_path": "raw/E28G.html",
+  "to_verify": [
+    "itap_eligibility_as_stated_boolean",
+    "where_to_apply",
+    "total_max_stay_verbatim",
+    "current_classification_against_reported_absence",
+    "national_passport_requirement_vs_non_national_document_clause"
+  ],
+  "ringkasan_visa_verbatim": "Jenis visa : Visa tinggal terbatas bagi orang asing yang akan menjabat sebagai perwakilan perusahaan induk yang ditempatkan di perusahaan cabang di Indonesia.\nMasa tinggal : 5 tahun dan 10 tahun.\nEkstensi : Dapat diperpanjang.\nAlih status : Dapat dialihstatuskan ke izin tinggal terbatas lain.",
+  "masa_tinggal_verbatim": null,
+  "persyaratan_khusus_verbatim": "Visa 5 tahun\n- Pernyataan komitmen bahwa perusahaan asing akan menanamkan investasi paling sedikit US$25.000.000, untuk jangka waktu tinggal sampai dengan 5 tahun yang harus dipenuhi dalam waktu 90 hari terhitung sejak tanggal masuk ke Indonesia.\nVisa 10 tahun\n- Pernyataan komitmen bahwa perusahaan asing akan menanamkan investasi paling sedikit US$50.000.000, untuk jangka waktu tinggal sampai dengan 10 tahun yang harus dipenuhi dalam waktu 90 hari terhitung sejak tanggal masuk ke Indonesia.",
+  "persyaratan_khusus_context_verbatim": null,
+  "reference_lists_verbatim": null,
+  "proses_pengajuan_verbatim": "Pengajuan Visa di Direktorat Jenderal Imigrasi:\n- pemeriksaan kelengkapan persyaratan;\n- verifikasi pembayaran biaya imigrasi sesuai dengan ketentuan peraturan perundang-undangan;\n- pembuatan profil dan verifikasi;\n- persetujuan;\n- penerbitan visa.\nWaktu Proses lima hari kerja setelah pembayaran visa diterima.",
+  "dasar_hukum_verbatim": [
+    "Peraturan Pemerintah Nomor 45 tahun 2024 tentang Tarif PNBP di Lingkungan Kementerian Hukum dan HAM RI tentang Tarif PNBP di Lingkungan Kementerian Hukum dan HAM",
+    "Peraturan Menteri Hukum dan HAM RI Nomor 22 Tahun 2023 tentang Visa dan Izin Tinggal",
+    "Peraturan Menteri Hukum dan HAM RI Nomor 11 Tahun 2024 tentang Visa dan Izin Tinggal",
+    "Keputusan Menteri Imigrasi dan Pemasyarakatan RI Nomor M.IP-08.GR.01.01 tahun 2025 tentang Klasifikasi Visa",
+    "Peraturan Menteri Keuangan RI Nomor 9/PMK.02/2022 tentang Jenis dan Tarif PNBP Kebutuhan Mendesak atas Pelayanan Keimigrasian yang berlaku pada Kemenkumham RI",
+    "Peraturan Menteri Keuangan RI Nomor 82 Tahun 2023 tentang Jenis dan Tarif atas Jenis PNBP Kebutuhan Mendesak atas Pelayanan Golden Visa yang berlaku pada Kemenkumham RI"
+  ]
+}

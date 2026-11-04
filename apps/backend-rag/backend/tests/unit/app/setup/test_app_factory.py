@@ -1,0 +1,225 @@
+"""
+Unit tests for app_factory.py.
+
+Tests create_app(), lifespan(), and _safe_stop() with all external
+dependencies mocked.
+"""
+
+import asyncio
+import sys
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import APIRouter
+
+# ── Guard imports so settings validation doesn't fire ──
+_mock_settings = MagicMock()
+_mock_settings.PROJECT_NAME = "Test Nuzantara"
+_mock_settings.API_V1_STR = "/api/v1"
+_mock_settings.log_level = "INFO"
+
+# Pre-seed modules that app_factory imports at module level.
+# Stub routers are REAL empty APIRouters, not MagicMocks: fastapi 0.137+
+# include_router asserts `not router._contains_router(self)`, and a
+# MagicMock answers that with a truthy MagicMock → spurious AssertionError.
+_patches = {
+    "backend.app.setup.logging_config": MagicMock(configure_logging=MagicMock()),
+    "backend.app.setup.middleware_config": MagicMock(),
+    "backend.app.setup.observability": MagicMock(),
+    "backend.app.setup.exception_handlers": MagicMock(),
+    "backend.app.setup.router_registration": MagicMock(),
+    "backend.app.routers.root_endpoints": MagicMock(router=APIRouter()),
+    "backend.app.routers.audio": MagicMock(router=APIRouter()),
+    "backend.app.routers.system_observability": MagicMock(router=APIRouter()),
+    "backend.app.routers.article_composer": MagicMock(limiter=MagicMock()),
+    "slowapi": MagicMock(_rate_limit_exceeded_handler=MagicMock()),
+    "slowapi.errors": MagicMock(RateLimitExceeded=Exception),
+}
+
+
+def _close_created_coro(coro: object) -> MagicMock:
+    close = getattr(coro, "close", None)
+    if callable(close):
+        close()
+    task = MagicMock()
+    task.done.return_value = True
+    return task
+
+
+# ---------------------------------------------------------------------------
+# Tests: _safe_stop
+# ---------------------------------------------------------------------------
+
+
+class TestSafeStop:
+    @pytest.mark.asyncio
+    async def test_successful_stop(self):
+        from backend.app.setup.app_factory import _safe_stop
+
+        coro = AsyncMock()()
+        with patch("backend.app.setup.app_factory.logger") as mock_logger:
+            await _safe_stop("TestService", coro)
+        # Should not raise, and must log the success line (not a timeout/error one).
+        mock_logger.info.assert_called_once_with("✅ %s stopped", "TestService")
+        mock_logger.warning.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_timeout_stop(self):
+        from backend.app.setup.app_factory import _safe_stop
+
+        async def slow_coro():
+            await asyncio.sleep(100)
+
+        # Should not raise even if slow — just log warning
+        with (
+            patch("backend.app.setup.app_factory.SHUTDOWN_TIMEOUT", 0.01),
+            patch("backend.app.setup.app_factory.logger") as mock_logger,
+        ):
+            await _safe_stop("SlowService", slow_coro())
+
+        assert mock_logger.warning.call_count == 1
+        args, _ = mock_logger.warning.call_args
+        assert "timed out" in args[0]
+        assert args[1] == "SlowService"
+
+    @pytest.mark.asyncio
+    async def test_exception_stop(self):
+        from backend.app.setup.app_factory import _safe_stop
+
+        async def failing_coro():
+            raise RuntimeError("boom")
+
+        # Should not propagate — the error is caught and logged instead.
+        with patch("backend.app.setup.app_factory.logger") as mock_logger:
+            await _safe_stop("FailService", failing_coro())
+
+        mock_logger.warning.assert_called_once()
+        args, _ = mock_logger.warning.call_args
+        assert args[1] == "FailService"
+        assert isinstance(args[2], RuntimeError)
+        assert str(args[2]) == "boom"
+
+
+# ---------------------------------------------------------------------------
+# Tests: create_app
+# ---------------------------------------------------------------------------
+
+
+class TestCreateApp:
+    def test_creates_fastapi_instance(self):
+        with (
+            patch.dict(sys.modules, _patches),
+            patch("backend.app.setup.app_factory.settings", _mock_settings),
+            patch("backend.app.setup.app_factory.register_middleware"),
+            patch("backend.app.setup.app_factory.setup_observability"),
+            patch("backend.app.setup.app_factory.http_exception_handler"),
+            patch("backend.app.setup.app_factory.starlette_http_exception_handler"),
+            patch("backend.app.setup.app_factory.general_exception_handler"),
+        ):
+            from backend.app.setup.app_factory import create_app
+
+            app = create_app()
+            assert app.title == "Test Nuzantara"
+
+    def test_app_has_exception_handlers(self):
+        with (
+            patch.dict(sys.modules, _patches),
+            patch("backend.app.setup.app_factory.settings", _mock_settings),
+            patch("backend.app.setup.app_factory.register_middleware"),
+            patch("backend.app.setup.app_factory.setup_observability"),
+            patch("backend.app.setup.app_factory.http_exception_handler"),
+            patch("backend.app.setup.app_factory.starlette_http_exception_handler"),
+            patch("backend.app.setup.app_factory.general_exception_handler"),
+        ):
+            from backend.app.setup.app_factory import create_app
+
+            app = create_app()
+            # FastAPI should have exception handlers registered
+            assert app.exception_handlers is not None
+
+
+# ---------------------------------------------------------------------------
+# Tests: lifespan
+# ---------------------------------------------------------------------------
+
+
+class TestLifespan:
+    @pytest.mark.asyncio
+    async def test_lifespan_yields(self):
+        """Lifespan should yield (startup) then complete (shutdown)."""
+        from types import SimpleNamespace
+
+        from backend.app.setup.app_factory import lifespan
+
+        app_state = SimpleNamespace()
+        mock_app = MagicMock()
+        mock_app.state = app_state
+
+        with patch(
+            "backend.app.setup.app_factory.asyncio.create_task",
+            side_effect=_close_created_coro,
+        ):
+            async with lifespan(mock_app):
+                assert app_state.process_mode == "rag"
+
+    @pytest.mark.asyncio
+    async def test_lifespan_cancels_pending_init_on_shutdown(self):
+        """If init_task is not done, lifespan should cancel it."""
+        from types import SimpleNamespace
+
+        from backend.app.setup.app_factory import lifespan
+
+        app_state = SimpleNamespace()
+        mock_app = MagicMock()
+        mock_app.state = app_state
+
+        # Create a real asyncio Future to act as the init task
+        loop = asyncio.get_event_loop()
+        real_future = loop.create_future()
+
+        def capture_pending_init(coro: object) -> asyncio.Future[object]:
+            close = getattr(coro, "close", None)
+            if callable(close):
+                close()
+            return real_future
+
+        with patch(
+            "backend.app.setup.app_factory.asyncio.create_task",
+            side_effect=capture_pending_init,
+        ):
+            async with lifespan(mock_app):
+                pass
+
+        # The lifespan cancels the init task if not done
+        assert real_future.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_lifespan_closes_kbli_notebook_client(self):
+        """Shutdown should close the KBLI notebook module-level HTTP client."""
+        from types import SimpleNamespace
+
+        from backend.app.setup.app_factory import lifespan
+
+        app_state = SimpleNamespace()
+        mock_app = MagicMock()
+        mock_app.state = app_state
+        close_kbli_http_client = AsyncMock()
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "backend.app.routers.kbli_notebook": MagicMock(
+                        close_kbli_http_client=close_kbli_http_client,
+                    )
+                },
+            ),
+            patch(
+                "backend.app.setup.app_factory.asyncio.create_task",
+                side_effect=_close_created_coro,
+            ),
+        ):
+            async with lifespan(mock_app):
+                pass
+
+        close_kbli_http_client.assert_awaited_once()

@@ -1,0 +1,1101 @@
+"""
+Unit tests for backend/services/integrations/zoho_email_service.py
+Covers: sanitize_filename, ZohoEmailService (list_folders, list_emails, get_email,
+        search_emails, send_email, reply_email, forward_email, mark_read,
+        toggle_flag, move_to_folder, _parse_recipients, _parse_recipients_to_objects,
+        _parse_attachments, _normalize_folder_type, _request, _get_headers,
+        _get_account_id, _log_activity, close)
+"""
+
+import json
+import logging
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
+
+# Patch heavy imports before importing the module
+with (
+    patch("backend.app.core.config.settings", MagicMock(zoho_api_domain="https://mail.zoho.com")),
+    patch("backend.app.metrics.metrics_collector", MagicMock()),
+):
+    from backend.services.integrations.zoho_email_service import (
+        ZohoEmailService,
+        _safe_filename_ext,
+        _safe_filename_len,
+        sanitize_filename,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Fixtures
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def mock_pool() -> MagicMock:
+    """Mock asyncpg pool."""
+    pool = MagicMock()
+    conn = AsyncMock()
+
+    class _Ctx:
+        async def __aenter__(self) -> AsyncMock:
+            return conn
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+    pool.acquire = MagicMock(return_value=_Ctx())
+    pool._conn = conn
+    return pool
+
+
+@pytest.fixture
+def service(mock_pool: MagicMock) -> ZohoEmailService:
+    """Create a ZohoEmailService with mocked deps."""
+    with patch("backend.services.integrations.zoho_email_service.ZohoOAuthService"):
+        svc = ZohoEmailService(db_pool=mock_pool)
+        svc.oauth_service = AsyncMock()
+        svc.oauth_service.get_valid_token = AsyncMock(return_value="test-token")
+        svc.oauth_service.get_account_id = AsyncMock(return_value="acc123")
+        svc.oauth_service.get_connection_status = AsyncMock(
+            return_value={"email": "user@balizero.com"},
+        )
+        svc.oauth_service.close = AsyncMock()
+        svc.api_domain = "https://mail.zoho.com"
+        return svc
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# sanitize_filename
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestSanitizeFilename:
+    def test_basic(self) -> None:
+        assert sanitize_filename("test.pdf") == "test.pdf"
+
+    def test_spaces_replaced(self) -> None:
+        assert sanitize_filename("my file.pdf") == "my_file.pdf"
+
+    def test_special_chars_removed(self) -> None:
+        assert sanitize_filename('file<>:"|.pdf') == "file.pdf"
+
+    def test_comma_removed(self) -> None:
+        result = sanitize_filename("My File, Name (1).pdf")
+        assert "," not in result
+        assert result.endswith(".pdf")
+
+    def test_empty_filename(self) -> None:
+        assert sanitize_filename("") == "unnamed_file"
+
+    def test_very_long_filename(self) -> None:
+        long_name = "a" * 300 + ".txt"
+        result = sanitize_filename(long_name)
+        assert len(result) <= 200
+
+    def test_no_extension(self) -> None:
+        result = sanitize_filename("myfile")
+        assert result == "myfile"
+
+    def test_only_special_chars(self) -> None:
+        result = sanitize_filename('<>:"|?.pdf')
+        assert result.endswith(".pdf")
+        assert "file" in result  # falls back to "file"
+
+    def test_multiple_underscores_collapsed(self) -> None:
+        result = sanitize_filename("a   b   c.pdf")
+        assert "___" not in result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZohoEmailService._normalize_folder_type
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestNormalizeFolderType:
+    def test_inbox(self, service: ZohoEmailService) -> None:
+        assert service._normalize_folder_type("Inbox") == "inbox"
+
+    def test_sent(self, service: ZohoEmailService) -> None:
+        assert service._normalize_folder_type("Sent") == "sent"
+
+    def test_custom(self, service: ZohoEmailService) -> None:
+        assert service._normalize_folder_type("My Folder") == "custom"
+
+    def test_junk(self, service: ZohoEmailService) -> None:
+        assert service._normalize_folder_type("Junk") == "spam"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZohoEmailService._parse_recipients / _parse_recipients_to_objects
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestParseRecipients:
+    def test_empty(self, service: ZohoEmailService) -> None:
+        assert service._parse_recipients("") == []
+        assert service._parse_recipients_to_objects("") == []
+
+    def test_single(self, service: ZohoEmailService) -> None:
+        assert service._parse_recipients("c@b.com") == ["c@b.com"]
+
+    def test_multiple(self, service: ZohoEmailService) -> None:
+        result = service._parse_recipients("c@b.com, l@h.com")
+        assert len(result) == 2
+
+    def test_to_objects_simple(self, service: ZohoEmailService) -> None:
+        result = service._parse_recipients_to_objects("user@example.com")
+        assert result == [{"address": "user@example.com", "name": ""}]
+
+    def test_to_objects_with_name(self, service: ZohoEmailService) -> None:
+        result = service._parse_recipients_to_objects('"John Doe" <john@example.com>')
+        assert len(result) == 1
+        assert result[0]["address"] == "john@example.com"
+        assert result[0]["name"] == "John Doe"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZohoEmailService._parse_attachments
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestParseAttachments:
+    def test_empty(self, service: ZohoEmailService) -> None:
+        assert service._parse_attachments([]) == []
+
+    def test_basic_attachment(self, service: ZohoEmailService) -> None:
+        att = [
+            {
+                "attachmentId": "att1",
+                "attachmentName": "test.pdf",
+                "attachmentSize": 1024,
+                "contentType": "application/pdf",
+            },
+        ]
+        result = service._parse_attachments(att)
+        assert len(result) == 1
+        assert result[0]["attachment_id"] == "att1"
+        assert result[0]["filename"] == "test.pdf"
+        assert result[0]["size"] == 1024
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZohoEmailService._get_client / close
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestGetClientAndClose:
+    def test_creates_client(self, service: ZohoEmailService) -> None:
+        client = service._get_client()
+        assert client is not None
+
+    def test_returns_same_client(self, service: ZohoEmailService) -> None:
+        c1 = service._get_client()
+        c2 = service._get_client()
+        assert c1 is c2
+
+    @pytest.mark.asyncio
+    async def test_close(self, service: ZohoEmailService) -> None:
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        service._client = mock_client
+
+        await service.close()
+        mock_client.aclose.assert_awaited_once()
+        service.oauth_service.close.assert_awaited_once()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZohoEmailService._request
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestRequest:
+    @pytest.mark.asyncio
+    async def test_successful_request(self, service: ZohoEmailService) -> None:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": []}
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=mock_response)
+        service._client = mock_client
+        service._client.is_closed = False
+
+        result = await service._request("user1", "GET", "/messages/view")
+        assert result == {"data": []}
+
+    @pytest.mark.asyncio
+    async def test_error_response(self, service: ZohoEmailService) -> None:
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.content = b'{"data": {"errorCode": "INVALID_TOKEN"}}'
+        mock_response.json.return_value = {"data": {"errorCode": "INVALID_TOKEN"}}
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=mock_response)
+        mock_client.is_closed = False
+        service._client = mock_client
+
+        with pytest.raises(ValueError, match="API error"):
+            await service._request("user1", "GET", "/messages/view")
+
+    @pytest.mark.asyncio
+    async def test_error_response_non_dict_json_body(self, service: ZohoEmailService) -> None:
+        """
+        Regression test (prod 500 on /api/integrations/zoho/folders):
+
+        Zoho (or an intermediary gateway/proxy) can return an error status with
+        a JSON body that is NOT a dict — e.g. a bare list or string. The old
+        code did `error_data.get(...)` unconditionally, which raised
+        AttributeError (not ValueError) and leaked as an unhandled 500 instead
+        of the router's honest `except ValueError -> 400` path.
+        """
+        mock_response = MagicMock()
+        mock_response.status_code = 502
+        mock_response.content = b'["Bad Gateway"]'
+        mock_response.json.return_value = ["Bad Gateway"]
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=mock_response)
+        mock_client.is_closed = False
+        service._client = mock_client
+
+        # Must raise ValueError (caught by the router -> 400), never AttributeError/TypeError.
+        with pytest.raises(ValueError, match="API error"):
+            await service._request("user1", "GET", "/folders")
+
+    @pytest.mark.asyncio
+    async def test_success_response_non_dict_json_body(self, service: ZohoEmailService) -> None:
+        """
+        Same class of bug on the success path: a 200 OK with a non-dict JSON
+        body (e.g. `null` or a bare list) must raise ValueError, not silently
+        return a non-dict that crashes a caller's `.get("data", [])`.
+        """
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = None
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=mock_response)
+        mock_client.is_closed = False
+        service._client = mock_client
+
+        with pytest.raises(ValueError, match="Unexpected response format"):
+            await service._request("user1", "GET", "/folders")
+
+    @pytest.mark.asyncio
+    async def test_error_response_never_logs_provider_body_or_address(
+        self, service: ZohoEmailService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Guilt (R1, PR #7385 round 1): exercises the REAL `_request` — only
+        the transport is mocked, same seam as `test_error_response` above, so
+        this does not hide behind mocking `_request` itself. FAILS on
+        9666233cff, whose `_request` logged the fully decoded error body
+        (address included) in the warning line."""
+        body = {
+            "data": {"errorCode": "INVALID_INPUT"},
+            "moreInfo": "recipient leak.probe@example.com is invalid",
+        }
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.content = json.dumps(body).encode()
+        mock_response.json.return_value = body
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=mock_response)
+        mock_client.is_closed = False
+        service._client = mock_client
+
+        with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
+            with pytest.raises(ValueError, match="API error"):
+                await service._request("user1", "POST", "/messages")
+
+        assert "@" not in caplog.text
+        assert "leak.probe" not in caplog.text
+        assert "400" in caplog.text
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZohoEmailService.list_folders
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestListFolders:
+    @pytest.mark.asyncio
+    async def test_list_folders(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(
+            return_value={
+                "data": [
+                    {
+                        "folderId": "f1",
+                        "folderName": "Inbox",
+                        "folderType": "Inbox",
+                        "unreadCount": 5,
+                        "messageCount": 100,
+                    },
+                    {
+                        "folderId": "f2",
+                        "folderName": "Sent",
+                        "folderType": "Sent",
+                        "unreadCount": 0,
+                        "messageCount": 50,
+                    },
+                ],
+            },
+        )
+
+        result = await service.list_folders("user1")
+        assert len(result) == 2
+        assert result[0]["folder_id"] == "f1"
+        assert result[0]["folder_type"] == "inbox"
+        assert result[1]["folder_type"] == "sent"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZohoEmailService.list_emails
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestListEmails:
+    @pytest.mark.asyncio
+    async def test_list_emails_basic(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(
+            return_value={
+                "data": [
+                    {
+                        "messageId": "m1",
+                        "folderId": "inbox",
+                        "threadId": "t1",
+                        "subject": "Hello",
+                        "fromAddress": "sender@example.com",
+                        "sender": "Sender",
+                        "toAddress": "me@balizero.com",
+                        "ccAddress": "",
+                        "summary": "Preview...",
+                        "hasAttachment": False,
+                        "isRead": False,
+                        "isFlagged": False,
+                        "receivedTime": "2026-01-01T10:00:00Z",
+                    },
+                ],
+                "paging": {"totalCount": 1, "hasMoreData": False},
+            },
+        )
+
+        result = await service.list_emails("user1")
+        assert len(result["emails"]) == 1
+        assert result["emails"][0]["subject"] == "Hello"
+        assert result["total"] == 1
+        assert result["has_more"] is False
+
+    @pytest.mark.asyncio
+    async def test_list_emails_with_filters(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(
+            return_value={"data": [], "paging": {"totalCount": 0, "hasMoreData": False}},
+        )
+
+        result = await service.list_emails(
+            "user1",
+            folder_id="sent",
+            limit=10,
+            start=5,
+            search_key="invoice",
+            is_unread=True,
+        )
+        assert result["emails"] == []
+        # Verify params were passed correctly
+        call_args = service._request.call_args
+        assert call_args[1]["params"]["searchKey"] == "invoice"
+        assert call_args[1]["params"]["status"] == "unread"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZohoEmailService.search_emails
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestSearchEmails:
+    @pytest.mark.asyncio
+    async def test_search(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(
+            return_value={
+                "data": [
+                    {
+                        "messageId": "m1",
+                        "folderId": "inbox",
+                        "subject": "Invoice 2026",
+                        "fromAddress": "billing@example.com",
+                        "sender": "Billing",
+                        "summary": "Your invoice...",
+                        "hasAttachment": True,
+                        "isRead": True,
+                        "receivedTime": "2026-01-01T10:00:00Z",
+                    },
+                ],
+            },
+        )
+
+        result = await service.search_emails("user1", "invoice")
+        assert len(result) == 1
+        assert result[0]["subject"] == "Invoice 2026"
+        assert result[0]["has_attachments"] is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZohoEmailService.send_email
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestSendEmail:
+    @pytest.mark.asyncio
+    async def test_send_basic(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(
+            return_value={"data": {"messageId": "sent1"}},
+        )
+        service._log_activity = AsyncMock()
+
+        with patch("backend.services.integrations.zoho_email_service.metrics_collector"):
+            result = await service.send_email(
+                user_id="user1",
+                to=["recipient@example.com"],
+                subject="Test",
+                content="<p>Hello</p>",
+            )
+
+        assert result["success"] is True
+        assert result["message_id"] == "sent1"
+        service._log_activity.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_send_with_cc_bcc_attachments(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(
+            return_value={"data": {"messageId": "sent2"}},
+        )
+        service._log_activity = AsyncMock()
+
+        with patch("backend.services.integrations.zoho_email_service.metrics_collector"):
+            result = await service.send_email(
+                user_id="user1",
+                to=["c@b.com"],
+                subject="With attachments",
+                content="body",
+                cc=["u3@b.com"],
+                bcc=["ux2@b.com"],
+                attachments=[
+                    {"store_name": "s", "attachment_path": "/p", "attachment_name": "f.pdf"}
+                ],
+                is_html=False,
+            )
+
+        assert result["success"] is True
+        payload = service._request.call_args[1]["json_data"]
+        assert payload["ccAddress"] == "u3@b.com"
+        assert payload["bccAddress"] == "ux2@b.com"
+        assert len(payload["attachments"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_send_error_records_metric(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(side_effect=ValueError("API error"))
+
+        with (
+            patch("backend.services.integrations.zoho_email_service.metrics_collector"),
+            pytest.raises(ValueError),
+        ):
+            await service.send_email(
+                user_id="user1",
+                to=["c@b.com"],
+                subject="Test",
+                content="body",
+            )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZohoEmailService.reply_email
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestReplyEmail:
+    @pytest.mark.asyncio
+    async def test_reply(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(
+            return_value={"data": {"messageId": "reply1"}},
+        )
+        service._log_activity = AsyncMock()
+
+        result = await service.reply_email(
+            user_id="user1",
+            message_id="m1",
+            content="Thanks!",
+            to_address="sender@example.com",
+        )
+        assert result["success"] is True
+        assert result["message_id"] == "reply1"
+
+    @pytest.mark.asyncio
+    async def test_reply_all(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(
+            return_value={"data": {"messageId": "reply2"}},
+        )
+        service._log_activity = AsyncMock()
+
+        result = await service.reply_email(
+            user_id="user1",
+            message_id="m1",
+            content="Reply all",
+            reply_all=True,
+            to_address="sender@example.com",
+            cc_address="other@example.com",
+        )
+        assert result["success"] is True
+        # Should call /messages/m1/replyall
+        call_args = service._request.call_args
+        assert "replyall" in call_args[0][2]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZohoEmailService.forward_email
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestForwardEmail:
+    @pytest.mark.asyncio
+    async def test_forward(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(
+            return_value={"data": {"messageId": "fwd1"}},
+        )
+        service._log_activity = AsyncMock()
+
+        result = await service.forward_email(
+            user_id="user1",
+            message_id="m1",
+            to=["fwd@example.com"],
+            content="<p>FYI</p>",
+        )
+        assert result["success"] is True
+        assert result["message_id"] == "fwd1"
+
+    @pytest.mark.asyncio
+    async def test_forward_no_content(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(
+            return_value={"data": {"messageId": "fwd2"}},
+        )
+        service._log_activity = AsyncMock()
+
+        result = await service.forward_email(
+            user_id="user1",
+            message_id="m1",
+            to=["fwd@example.com"],
+        )
+        assert result["success"] is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# send_email / reply_email / forward_email — recipients never reach the log
+# in cleartext (sender-PII split of PR #7308; the raw `to`/`to_address` here
+# was the same shape as birthday_notifier_service.py's leak).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_LOGGER_NAME = "backend.services.integrations.zoho_email_service"
+_LEAK = "leak.probe@example.com"
+
+
+class TestSendReplyForwardNeverLogRawRecipients:
+    @pytest.mark.asyncio
+    async def test_send_email_logs_redacted_recipients_only(
+        self, service: ZohoEmailService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from backend.security.pii_log_identifier import redact_identifier_for_log
+
+        service._request = AsyncMock(return_value={"data": {"messageId": "sent1"}})
+        service._log_activity = AsyncMock()
+
+        with patch("backend.services.integrations.zoho_email_service.metrics_collector"):
+            with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
+                await service.send_email(
+                    user_id="user1",
+                    to=[_LEAK],
+                    subject="Test",
+                    content="<p>Hello</p>",
+                    cc=["cc.leak@example.com"],
+                    bcc=["bcc.leak@example.com"],
+                )
+
+        # The payload sent to Zoho is untouched — only the log is redacted.
+        payload = service._request.call_args[1]["json_data"]
+        assert payload["toAddress"] == _LEAK
+        assert payload["ccAddress"] == "cc.leak@example.com"
+        assert payload["bccAddress"] == "bcc.leak@example.com"
+
+        assert _LEAK not in caplog.text
+        assert "cc.leak@example.com" not in caplog.text
+        assert "bcc.leak@example.com" not in caplog.text
+        assert redact_identifier_for_log(_LEAK) in caplog.text
+        assert redact_identifier_for_log("cc.leak@example.com") in caplog.text
+        assert redact_identifier_for_log("bcc.leak@example.com") in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_reply_email_logs_redacted_recipient_only(
+        self, service: ZohoEmailService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from backend.security.pii_log_identifier import redact_identifier_for_log
+
+        service._request = AsyncMock(return_value={"data": {"messageId": "reply1"}})
+        service._log_activity = AsyncMock()
+
+        with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
+            await service.reply_email(
+                user_id="user1",
+                message_id="m1",
+                content="Thanks!",
+                to_address=_LEAK,
+            )
+
+        assert _LEAK not in caplog.text
+        assert redact_identifier_for_log(_LEAK) in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_forward_email_logs_redacted_recipients_only(
+        self, service: ZohoEmailService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from backend.security.pii_log_identifier import redact_identifier_for_log
+
+        service._request = AsyncMock(return_value={"data": {"messageId": "fwd1"}})
+        service._log_activity = AsyncMock()
+
+        with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
+            await service.forward_email(
+                user_id="user1",
+                message_id="m1",
+                to=[_LEAK],
+                content="<p>FYI</p>",
+            )
+
+        assert _LEAK not in caplog.text
+        assert redact_identifier_for_log(_LEAK) in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_send_email_subject_with_address_never_in_caplog(
+        self, service: ZohoEmailService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """R1.2 (PR #7385 round 1): the subject itself can carry an address —
+        `subject=%r` used to log up to 50 characters of the raw subject."""
+        service._request = AsyncMock(return_value={"data": {"messageId": "sent1"}})
+        service._log_activity = AsyncMock()
+
+        with patch("backend.services.integrations.zoho_email_service.metrics_collector"):
+            with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
+                await service.send_email(
+                    user_id="user1",
+                    to=["ok@example.com"],
+                    subject=f"Re: invoice for {_LEAK}",
+                    content="<p>Hello</p>",
+                )
+
+        assert "@" not in caplog.text
+        assert "invoice" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_send_email_to_none_fails_at_the_join_not_the_log_line(
+        self, service: ZohoEmailService
+    ) -> None:
+        """R1.2: `to=None` must fail at the SAME site as origin/main
+        (`",".join(to)` inside the payload build) — not earlier, inside the
+        log line's redaction comprehension, which would turn a TypeError
+        with a different message into a different bug report."""
+        service._log_activity = AsyncMock()
+
+        with patch("backend.services.integrations.zoho_email_service.metrics_collector"):
+            with pytest.raises(TypeError, match="can only join an iterable"):
+                await service.send_email(
+                    user_id="user1",
+                    to=None,  # type: ignore[arg-type]
+                    subject="Test",
+                    content="<p>Hi</p>",
+                )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZohoEmailService.mark_read / toggle_flag / move_to_folder
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestStatusOperations:
+    @pytest.mark.asyncio
+    async def test_mark_read(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(return_value={})
+
+        result = await service.mark_read("user1", ["m1", "m2"], is_read=True)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_mark_unread(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(return_value={})
+
+        result = await service.mark_read("user1", ["m1"], is_read=False)
+        assert result is True
+        payload = service._request.call_args[1]["json_data"]
+        assert payload["mode"] == "markAsUnread"
+
+    @pytest.mark.asyncio
+    async def test_toggle_flag(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(return_value={})
+
+        result = await service.toggle_flag("user1", "m1", is_flagged=True)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_move_to_folder(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(return_value={})
+
+        result = await service.move_to_folder("user1", ["m1", "m2"], "trash_id")
+        assert result is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZohoEmailService.get_email
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestGetEmail:
+    @pytest.mark.asyncio
+    async def test_get_email(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(
+            side_effect=[
+                # First call: list emails to find metadata
+                {
+                    "data": [
+                        {
+                            "messageId": "m1",
+                            "folderId": "inbox",
+                            "threadId": "t1",
+                            "subject": "Test Email",
+                            "fromAddress": "sender@example.com",
+                            "sender": "Sender",
+                            "toAddress": "me@balizero.com",
+                            "ccAddress": "",
+                            "bccAddress": "",
+                            "summary": "Preview",
+                            "hasAttachment": False,
+                            "isFlagged": False,
+                            "receivedTime": "2026-01-01T10:00:00Z",
+                            "attachments": [],
+                        },
+                    ],
+                },
+                # Second call: get content
+                {"data": {"content": "<p>Hello World</p>"}},
+            ],
+        )
+        service.mark_read = AsyncMock()
+
+        result = await service.get_email("user1", "m1", folder_id="inbox")
+        assert result["subject"] == "Test Email"
+        assert result["html_content"] == "<p>Hello World</p>"
+        assert result["is_read"] is True
+
+    @pytest.mark.asyncio
+    async def test_get_email_no_folder_id(self, service: ZohoEmailService) -> None:
+        with pytest.raises(ValueError, match="folder_id is required"):
+            await service.get_email("user1", "m1")
+
+    @pytest.mark.asyncio
+    async def test_get_email_not_found(self, service: ZohoEmailService) -> None:
+        service._request = AsyncMock(return_value={"data": []})
+
+        with pytest.raises(ValueError, match="not found"):
+            await service.get_email("user1", "nonexistent", folder_id="inbox")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZohoEmailService._log_activity
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestLogActivity:
+    @pytest.mark.asyncio
+    async def test_log_activity_success(
+        self, service: ZohoEmailService, mock_pool: MagicMock
+    ) -> None:
+        mock_pool._conn.fetchval = AsyncMock(return_value="user@balizero.com")
+        mock_pool._conn.execute = AsyncMock()
+
+        await service._log_activity(
+            user_id="user1",
+            operation="sent",
+            email_subject="Test",
+            recipient_email="c@b.com",
+        )
+        mock_pool._conn.execute.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_log_activity_failure_does_not_raise(
+        self,
+        service: ZohoEmailService,
+        mock_pool: MagicMock,
+    ) -> None:
+        mock_pool._conn.fetchval = AsyncMock(side_effect=Exception("DB error"))
+
+        with patch(
+            "backend.services.integrations.zoho_email_service.logger"
+        ) as mock_logger:
+            await service._log_activity(user_id="user1", operation="sent")
+
+        mock_pool._conn.execute.assert_not_called()
+        mock_logger.warning.assert_called_once()
+        assert (
+            mock_logger.warning.call_args.args[0]
+            == "[Email Activity] Failed to log activity: %s"
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZohoEmailService.upload_attachment — never logs the filename or provider
+# free text at ANY log level (PR #7385 round 1 R1.3, hardened round 2 M3/M6:
+# the round-1 tests only asserted at ERROR, which let the pre-validation and
+# success-path INFO logs keep leaking the raw filename undetected).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _mock_success_client() -> AsyncMock:
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "data": {"attachmentId": "att1", "storeName": "s", "attachmentPath": "p"},
+    }
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.is_closed = False
+    return mock_client
+
+
+class TestUploadAttachmentNeverLogsFilenameOrProviderText:
+    @pytest.mark.asyncio
+    async def test_error_response_logs_no_filename_or_address(
+        self, service: ZohoEmailService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        body = {
+            "data": {
+                "errorCode": "INVALID_INPUT",
+                "message": f"recipient {_LEAK} rejected",
+            },
+        }
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.content = json.dumps(body).encode()
+        mock_response.json.return_value = body
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.is_closed = False
+        service._client = mock_client
+
+        with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
+            with pytest.raises(ValueError, match="Upload failed"):
+                await service.upload_attachment(
+                    user_id="user1",
+                    filename=f"Passport_{_LEAK}.pdf",
+                    content=b"hello",
+                    content_type="application/pdf",
+                )
+
+        assert "@" not in caplog.text
+        assert "leak.probe" not in caplog.text
+        assert "Passport" not in caplog.text
+        # Positive: the safe metadata this log line is FOR is actually there.
+        assert "user=user1" in caplog.text
+        assert "filename_ext=pdf" in caplog.text
+        assert "status=400" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_http_error_logs_no_traceback_filename_or_message(
+        self, service: ZohoEmailService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(
+            side_effect=httpx.ConnectError(f"boom talking to {_LEAK}"),
+        )
+        mock_client.is_closed = False
+        service._client = mock_client
+
+        with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
+            with pytest.raises(ValueError, match="Network error"):
+                await service.upload_attachment(
+                    user_id="user1",
+                    filename="report.pdf",
+                    content=b"hello",
+                    content_type="application/pdf",
+                )
+
+        assert "@" not in caplog.text
+        assert "boom" not in caplog.text
+        assert "user=user1" in caplog.text
+        assert "filename_ext=pdf" in caplog.text
+        assert "ConnectError" in caplog.text
+        for record in caplog.records:
+            assert record.exc_info is None
+
+    @pytest.mark.asyncio
+    async def test_file_too_large_logs_no_filename(
+        self, service: ZohoEmailService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
+            with pytest.raises(ValueError, match="File too large"):
+                await service.upload_attachment(
+                    user_id="user1",
+                    filename=f"Contract_{_LEAK}.pdf",
+                    content=b"x" * (26 * 1024 * 1024),
+                    content_type="application/pdf",
+                )
+
+        assert "@" not in caplog.text
+        assert "leak.probe" not in caplog.text
+        assert "Contract" not in caplog.text
+        assert "filename_ext=pdf" in caplog.text
+        assert "user=user1" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_filename_too_long_logs_no_filename(
+        self, service: ZohoEmailService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        long_name = "a" * 250 + f"_{_LEAK}.pdf"
+        assert len(long_name) > 255
+
+        with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
+            with pytest.raises(ValueError, match="Filename too long"):
+                await service.upload_attachment(
+                    user_id="user1",
+                    filename=long_name,
+                    content=b"hello",
+                    content_type="application/pdf",
+                )
+
+        assert "@" not in caplog.text
+        assert "leak.probe" not in caplog.text
+        assert long_name not in caplog.text
+        assert f"filename_len={len(long_name)}" in caplog.text
+        assert "filename_ext=pdf" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_filename_sanitized_logs_no_filename(
+        self, service: ZohoEmailService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        service._client = _mock_success_client()
+        original = f"My File {_LEAK}.pdf"
+
+        with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
+            await service.upload_attachment(
+                user_id="user1",
+                filename=original,
+                content=b"hello",
+                content_type="application/pdf",
+            )
+
+        assert "@" not in caplog.text
+        assert "leak.probe" not in caplog.text
+        assert original not in caplog.text
+        assert "My_File" not in caplog.text
+        assert "original_ext=pdf" in caplog.text
+        assert "sanitized_ext=pdf" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_upload_request_and_success_info_logs_no_filename(
+        self, service: ZohoEmailService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        service._client = _mock_success_client()
+
+        with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
+            await service.upload_attachment(
+                user_id="user1",
+                filename=f"Passport_{_LEAK}.pdf",
+                content=b"hello",
+                content_type="application/pdf",
+            )
+
+        assert "@" not in caplog.text
+        assert "leak.probe" not in caplog.text
+        assert "Passport" not in caplog.text
+        # The two INFO logs (request-received, success) both carry the safe
+        # metadata this class exists to allow through.
+        assert caplog.text.count("filename_ext=pdf") >= 2
+        assert "attachment_id=att1" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_extension_whitelist_rejects_non_alnum_shapes(
+        self, service: ZohoEmailService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """M3: the whitelisted-extension log must never expose the FULL
+        filename for the shapes the review flagged — `First.Lastname` (a
+        name, not a real extension) and `scan.a@b` (an address-shaped
+        non-extension)."""
+        for filename in ("First.Lastname", "scan.a@b"):
+            caplog.clear()
+            service._client = AsyncMock()
+            service._client.post = AsyncMock(side_effect=httpx.ConnectError("boom"))
+            service._client.is_closed = False
+
+            with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
+                with pytest.raises(ValueError, match="Network error"):
+                    await service.upload_attachment(
+                        user_id="user1",
+                        filename=filename,
+                        content=b"hello",
+                        content_type="application/octet-stream",
+                    )
+            assert filename not in caplog.text
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# _safe_filename_ext / _safe_filename_len — non-str tolerance (C3, PR #7385
+# gate follow-up, NIT). Both used to raise TypeError for anything that
+# isn't a str (`"." in filename` / `len(filename)` on a non-str blow up
+# immediately) — unreachable today (upload_attachment's only production
+# caller passes `file.filename or "unnamed"`), but a helper meant only to
+# feed a log line degrading to its own documented default beats crashing
+# ahead of the size/length validation this method still has to run.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestSafeFilenameHelpersToleranceForNonStr:
+    @pytest.mark.parametrize("filename", [None, 42, b"scan.pdf", ["a.pdf"]])
+    def test_safe_filename_ext_tolerates_non_str(self, filename: Any) -> None:
+        assert _safe_filename_ext(filename) == "other"
+
+    @pytest.mark.parametrize("filename", [None, 42, b"scan.pdf", ["a.pdf"]])
+    def test_safe_filename_len_tolerates_non_str(self, filename: Any) -> None:
+        assert _safe_filename_len(filename) == 0
+
+    def test_safe_filename_ext_and_len_unchanged_for_str(self) -> None:
+        """Non-regression: the str path is untouched by the guard."""
+        assert _safe_filename_ext("scan.pdf") == "pdf"
+        assert _safe_filename_len("scan.pdf") == 8
+        assert _safe_filename_ext("scan.a@b") == "other"
+
+
+class TestUploadAttachmentNonStrFilenameDoesNotCrashBeforeValidation:
+    @pytest.mark.asyncio
+    async def test_none_filename_completes_instead_of_raising_type_error(
+        self, service: ZohoEmailService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Guilt test: fails on b491d10138 with
+        ``TypeError: argument of type 'NoneType' is not iterable`` raised
+        out of the very FIRST log line in upload_attachment (PRE-VALIDATION
+        section) — before file size, filename length or sanitization ever
+        run. `sanitize_filename(None, ...)` already treats a falsy filename
+        as `"unnamed_file"`, so once the diagnostics helpers stop crashing,
+        the whole call completes normally with a safe placeholder name.
+        """
+        service._client = _mock_success_client()
+
+        with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
+            result = await service.upload_attachment(
+                user_id="user1",
+                filename=None,  # type: ignore[arg-type]
+                content=b"hello",
+                content_type="application/pdf",
+            )
+
+        assert result["attachment_id"] == "att1"
+        assert "filename_ext=other" in caplog.text

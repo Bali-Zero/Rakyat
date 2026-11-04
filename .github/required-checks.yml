@@ -1,0 +1,25 @@
+# Required status checks for Rakyat main (P4 spec rev 3, contract item 1). Each name is the `name:` of exactly one
+# job in a `pull_request` workflow (GitHub appends matrix values in parentheses). required_app_id 15368 = GitHub
+# Actions. scripts/ci/test_required_checks_contract.py asserts the contract for every entry; it runs inside the
+# actionlint job, itself one of these checks.
+contexts:
+  - name: "E2E Tests (Playwright)"
+    required_app_id: 15368
+  - name: "Backend Tests (Python)"
+    required_app_id: 15368
+  - name: "Frontend Tests (Next.js) (mouth, true)"
+    required_app_id: 15368
+  - name: "Visa Oracle fullstack smoke"
+    required_app_id: 15368
+  - name: "Repo-wide scanners"
+    required_app_id: 15368
+  - name: "CodeQL Analysis (python)"
+    required_app_id: 15368
+  - name: "CodeQL Analysis (javascript)"
+    required_app_id: 15368
+  - name: "Merah Putih DAY palette holds its contrast law"
+    required_app_id: 15368
+  - name: "actionlint — workflow schema + expression gate"
+    required_app_id: 15368
+  - name: "catE-sovereignty-lint"
+    required_app_id: 15368
