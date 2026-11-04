@@ -26,10 +26,11 @@ Usage (on the Pro, with the drain's environment: same service account, database 
 ``drive-intake-reenqueue-run.sh``, in the repo's root ``scripts`` directory, is the drain wrapper's twin: it
 reads the service account from its 0600 file, moves to apps/backend-rag and passes every argument on.
 
-Input: a TSV whose FIRST column is a Drive file id (``[A-Za-z0-9_-]{10,100}``); blank lines are skipped,
-the other columns are ignored, a repeated id counts once. Any other first column (a header included),
-no id at all or more than 500 of them is bad input: exit 2 before any Drive or database call, and the
-message names a line NUMBER, never what the line says.
+Input: a TSV whose FIRST column is a Drive file id (``[A-Za-z0-9_-]{10,100}``), checked exactly as it is
+written: nothing is trimmed, so an id padded with a space, a tab or any other whitespace is bad input. A
+line of only whitespace is blank and skipped, the other columns are ignored, a repeated id counts once.
+Any other first column (a header included), no id at all or more than 500 of them is bad input: exit 2
+before any Drive or database call, and the message names a line NUMBER, never what the line says.
 
 Output: ONE JSON line of counts on stdout (``apply`` 0/1, ``duplicate_ids``, then the counters of the
 run: ``requested``, ``would_enqueue_new``, ``enqueued_new``, ``already_present``, ``skipped_*``,
@@ -75,7 +76,7 @@ DEFAULT_DSN = "postgresql://nuzantara@127.0.0.1:5432/nuzantara_dev"
 
 
 def read_ids(path: Path) -> tuple[list[str], int, str | None]:
-    """(ids, repeated ids, problem): the first TSV column of every non-blank line.
+    """(ids, repeated ids, problem): the first TSV column of every non-blank line, exactly as written.
 
     ``problem`` is None when the file is usable, else a sentence that names a line number or a
     count and nothing the file says.
@@ -98,7 +99,7 @@ def read_ids(path: Path) -> tuple[list[str], int, str | None]:
         non_blank += 1
         if non_blank > MAX_IDS:
             return [], 0, f"more than {MAX_IDS} ids"
-        first = line.split("\t", 1)[0].strip()
+        first = line.split("\t", 1)[0]  # as written: a padded id is not an id
         if _FILE_ID_RE.fullmatch(first) is None:
             return [], 0, f"line {number} does not start with a Drive file id"
         if first in seen:

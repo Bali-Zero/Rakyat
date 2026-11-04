@@ -233,6 +233,46 @@ def test_a_bad_ids_file_exits_2_before_any_database_or_drive_call(
     assert out == "" and NAME not in err and "passwd" not in err
 
 
+# An id is checked exactly as written. Each text below is one valid id, or good lines around it, made wrong
+# by padding or by a separator that is not a tab: the run must stop at that line, touching nothing.
+PADDED = {
+    "leading-space": (f" {fid(1)}\n", 1),
+    "trailing-space": (f"{fid(1)} \n", 1),
+    "trailing-space-then-a-tab": (f"{fid(1)} \t{NAME}\n", 1),
+    "leading-tab": (f"\t{fid(1)}\n", 1),
+    "both-sides": (f"  {fid(1)}  \n", 1),
+    "no-break-space": (f"{fid(1)}\u00a0\n", 1),
+    "padded-after-good-lines-and-blanks": (f"{fid(1)}\n\n   \n {fid(2)}\n", 4),
+    "padded-last-line-without-a-newline": (f"{fid(1)}\n{fid(2)} ", 2),
+    "space-separated-columns": (f"{fid(1)} {NAME}\n", 1),
+}
+
+
+@pytest.mark.parametrize("kind", list(PADDED))
+def test_a_padded_id_is_bad_input_and_the_message_names_its_line(
+    kind: str,
+    wired: Wired,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    wired.stub_library(monkeypatch)
+    text, line_number = PADDED[kind]
+    code, out, err = run(wired.cli, capsys, "--ids-file", tsv(tmp_path, text), "--apply")
+    assert code == 2 and out == ""
+    assert f"line {line_number} " in err  # "line 1 does not start..." and not "line 10 ..."
+    assert wired.built == {"pool": 0, "service": 0} and wired.calls == []  # no Drive, no database
+    assert NAME not in err and fid(1) not in err and fid(2) not in err  # a number, never the line
+
+
+def test_read_ids_hands_back_the_ids_exactly_as_written(wired: Wired, tmp_path: Path) -> None:
+    path = Path(tsv(tmp_path, f"{fid(1)}\t x \n\n \t\n{fid(2)}\n{fid(1)}\n"))
+    assert wired.cli.read_ids(path) == ([fid(1), fid(2)], 1, None)
+    padded_path = Path(tsv(tmp_path, f"{fid(1)}\n{fid(2)} \n"))
+    ids, repeated, problem = wired.cli.read_ids(padded_path)
+    assert (ids, repeated) == ([], 0) and problem == "line 2 does not start with a Drive file id"
+
+
 def test_the_message_names_the_line_number(wired: Wired, tmp_path: Path, capsys: Any) -> None:
     code, _, err = run(wired.cli, capsys, "--ids-file", tsv(tmp_path, BAD["good-then-a-name"]))
     assert code == 2 and "line 2" in err
@@ -354,9 +394,14 @@ def test_only_the_first_column_is_read_and_blank_lines_crlf_and_a_bom_are_fine(
     wired: Wired, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
 ) -> None:
     wired.stub_library(monkeypatch)
-    text = f"\ufeff{fid(1)}\t{NAME}\tbirthday\r\n\r\n   \r\n{fid(2)} \t{NAME}.pdf\r\n"
+    text = (
+        f"\ufeff{fid(1)}\t{NAME}\tbirthday\r\n"
+        "\r\n   \r\n\t\t\r\n \t \r\n"  # blank, spaces only, tabs only, both: all skipped
+        f"{fid(2)}\t  {NAME}.pdf \t \r\n"  # spaces after the first tab are the other columns' business
+        f"{fid(3)}"  # no tab, no final newline
+    )
     code, out, err = run(wired.cli, capsys, "--ids-file", tsv(tmp_path, text))
-    assert code == 0 and wired.calls[0]["ids"] == [fid(1), fid(2)]
+    assert code == 0 and wired.calls[0]["ids"] == [fid(1), fid(2), fid(3)]
     assert NAME not in out + err
 
 
