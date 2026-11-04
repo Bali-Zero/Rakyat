@@ -80,6 +80,7 @@ import math
 import os
 import re
 import shutil
+import stat
 import time
 import traceback
 from collections.abc import Sequence
@@ -169,20 +170,36 @@ def _write_all(fd: int, data: bytes) -> None:
         view = view[written:]
 
 
+def _mode_of_the_blob(dest: Path, new_file_mode: int) -> int:
+    """The permission bits the blob at ``dest`` ends with: its own when it exists, else a new file's."""
+    try:
+        return stat.S_IMODE(dest.stat().st_mode)
+    except FileNotFoundError:
+        return new_file_mode
+
+
 def _write_atomically(dest: Path, data: bytes) -> None:
     """Put ``data`` at ``dest`` in one step: it is staged beside the destination and renamed onto it.
 
     A write that fails (disk full, an I/O error, an interrupt) leaves no file at ``dest`` and no stage: a
-    blob already there is never truncated and a missing one never shows up half written. The stage lives in
-    the destination's directory (so the rename stays inside one filesystem), carries a name of its own that
-    holds no part of the Drive name, and gets the mode a plain write of the file would have given it.
+    blob already there is never truncated and keeps its mode, and a missing one never shows up half
+    written. The stage lives in the destination's directory (so the rename stays inside one filesystem)
+    and carries a name of its own that holds no part of the Drive name.
+
+    The blob ends with the mode an in-place write would have left it: a blob already at ``dest`` keeps its
+    permission bits, a new one gets what the kernel gives a new file, 0o666 minus the umask, which is read
+    off the stage as it is born (os.umask() is process-global and racy, so it is never called). While the
+    bytes are written the stage is never more permissive than 0o600, whatever its final mode will be.
     Atomic against a failed write, not against a power cut: nothing is fsynced, as before.
     """
     stage = dest.parent / f".stage-{os.urandom(8).hex()}.part"
     fd = os.open(stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
     try:
         try:
+            born_with = stat.S_IMODE(os.fstat(fd).st_mode)
+            os.fchmod(fd, born_with & 0o600)  # narrowed before the first byte
             _write_all(fd, data)
+            os.fchmod(fd, _mode_of_the_blob(dest, born_with))
         finally:
             os.close(fd)
         os.replace(stage, dest)
@@ -196,7 +213,8 @@ async def _download_file(drive_service, file_id: str, dest: Path) -> int:
     """Download Drive file bytes to dest via get_media. Returns byte size.
 
     The file appears at ``dest`` whole or not at all (``_write_atomically``): the drain and the re-enqueue
-    both come through here, and a blob that ``enqueue`` hashes must never be a truncated one.
+    both come through here, and a blob that ``enqueue`` hashes must never be a truncated one. A blob that
+    is downloaded again keeps the permission bits it had, as an in-place write leaves them.
     """
     import asyncio
     import io

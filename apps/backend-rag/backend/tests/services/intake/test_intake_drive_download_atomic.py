@@ -8,11 +8,15 @@ GUILT: a write that fails part way (disk full, I/O error, an interrupt) that lea
 destination or a stage behind; a blob that was already there and is truncated, or changed at all, by a failed
 rewrite; a final rename that fails and leaves a stage; a stage that is not beside the destination or whose name
 holds a part of the Drive name; a file descriptor left open; a direct write of a blob anywhere in the adapter;
-the drain or the re-enqueue not going through the same helper.
-INNOCENCE: a download that works gives the same bytes at the same path, the same returned size and the mode a
-plain write gives (so the drain's live behaviour on success is unchanged), whether the file is empty or a
-megabyte, whether the directory exists yet or not, with a 255-byte name; a write that takes fewer bytes than it
-was given is finished; a reader never sees half a blob while writers replace it.
+the drain or the re-enqueue not going through the same helper; a blob downloaded again that comes out with other
+permission bits than an in-place write leaves it (a 0o600 or 0o640 blob made 0o644), a stage more permissive than
+0o600 while bytes are written, the umask read through os.umask(), a failed write or chmod that changes the bytes or
+the mode of the blob already there.
+INNOCENCE: a download that works gives the same bytes at the same path, the same returned size and the mode an
+in-place write leaves (a blob already there keeps its permission bits, a new one gets 0o666 minus the umask, under
+any umask), so the drain's live behaviour on success is unchanged, whether the file is empty or a megabyte,
+whether the directory exists yet or not, with a 255-byte name; a write that takes fewer bytes than it was given is
+finished; a reader never sees half a blob while writers replace it.
 Synthetic payloads and names only, under tmp_path; the Drive and the queue are fakes.
 """
 
@@ -20,6 +24,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import contextlib
 import errno
 import os
 import re
@@ -185,6 +190,134 @@ async def test_a_destination_with_a_255_byte_name_still_downloads(blobs: Path) -
     )  # the stage must not be named after it: a suffix would pass the limit
     assert await da._download_file(Drive({"f1": b"abc"}), "f1", dest) == 3
     assert dest.read_bytes() == b"abc" and names(blobs) == [dest.name]
+
+
+# --------------------------------------------------------------------------- #
+# A blob downloaded again keeps the permission bits an in-place write leaves it (gate round 2, R2)
+# --------------------------------------------------------------------------- #
+@contextlib.contextmanager
+def _umask(value: int) -> Iterator[None]:
+    old = os.umask(value)
+    try:
+        yield
+    finally:
+        os.umask(old)
+
+
+def _mode(path: Path) -> int:
+    return stat.S_IMODE(path.stat().st_mode)
+
+
+def _blob_at(path: Path, mode: int | None) -> Path:
+    """A blob already on disk with exactly ``mode`` whatever the umask says (None: nothing there yet)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if mode is not None:
+        path.write_bytes(b"older bytes, longer than the new ones are")
+        os.chmod(path, mode)
+    return path
+
+
+EXISTING = [0o600, 0o640, 0o644, 0o664, None]
+EXISTING_IDS = ["existing-0600", "existing-0640", "existing-0644", "existing-0664", "new"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("umask", [0o022, 0o077], ids=["umask-022", "umask-077"])
+@pytest.mark.parametrize("existing", EXISTING, ids=EXISTING_IDS)
+async def test_a_download_leaves_the_mode_an_in_place_write_leaves(
+    existing: int | None, umask: int, blobs: Path
+) -> None:
+    """The base wrote with ``dest.write_bytes``: a blob already there kept its mode, a new one got 0o666 minus the umask."""
+    theirs = _blob_at(blobs / "in-place" / "blob.bin", existing)
+    ours = _blob_at(blobs / "staged" / "blob.bin", existing)
+    with _umask(umask):
+        theirs.write_bytes(b"new bytes")  # the base's routine, on a twin file
+        assert await da._download_file(Drive({"f1": b"new bytes"}), "f1", ours) == 9
+    assert ours.read_bytes() == b"new bytes" and names(ours.parent) == ["blob.bin"]
+    assert _mode(ours) == _mode(theirs) == (0o666 & ~umask if existing is None else existing)
+
+
+@pytest.mark.parametrize(
+    "umask", [0o022, 0o077, 0o002], ids=["umask-022", "umask-077", "umask-002"]
+)
+@pytest.mark.parametrize("existing", EXISTING, ids=EXISTING_IDS)
+def test_the_stage_is_never_more_permissive_than_0600_while_bytes_are_written(
+    existing: int | None, umask: int, blobs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dest = _blob_at(blobs / "blob.bin", existing)
+    seen: list[int] = []
+
+    def watched(fd: int, data: bytes) -> None:
+        for start in range(0, len(data), 3):  # a look at the stage before each chunk
+            seen.append(stat.S_IMODE(os.fstat(fd).st_mode))
+            os.write(fd, data[start : start + 3])
+
+    monkeypatch.setattr(da, "_write_all", watched)
+    with _umask(umask):
+        da._write_atomically(dest, b"0123456789")
+    assert len(seen) == 4
+    assert all(mode & ~0o600 == 0 for mode in seen), [oct(mode) for mode in seen]
+
+
+@pytest.mark.parametrize("existing", [0o600, 0o640, 0o644], ids=["0600", "0640", "0644"])
+def test_a_failed_write_leaves_the_bytes_and_the_mode_of_the_blob_already_there(
+    existing: int, blobs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dest = _blob_at(blobs / "blob.bin", existing)
+    before = (dest.read_bytes(), _mode(dest), dest.stat().st_ino)
+    break_the_write(monkeypatch)
+    with pytest.raises(OSError):
+        da._write_atomically(dest, b"the new bytes")
+    assert (dest.read_bytes(), _mode(dest), dest.stat().st_ino) == before
+    assert names(blobs) == ["blob.bin"]
+
+
+@pytest.mark.parametrize("fails_on", [1, 2], ids=["narrowing", "final-mode"])
+def test_a_chmod_that_fails_leaves_the_blob_untouched_and_no_stage(
+    fails_on: int, blobs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dest = _blob_at(blobs / "blob.bin", 0o640)
+    real, calls = os.fchmod, []
+
+    def flaky(fd: int, mode: int) -> None:
+        calls.append(mode)
+        if len(calls) == fails_on:
+            raise OSError(errno.EPERM, "Operation not permitted")
+        real(fd, mode)
+
+    monkeypatch.setattr(os, "fchmod", flaky)
+    with pytest.raises(OSError) as raised:
+        da._write_atomically(dest, b"the new bytes")
+    assert raised.value.errno == errno.EPERM and len(calls) == fails_on
+    assert dest.read_bytes().startswith(b"older") and _mode(dest) == 0o640
+    assert names(blobs) == ["blob.bin"]
+
+
+def test_a_destination_whose_mode_cannot_be_read_is_an_error_and_not_a_new_blob(
+    blobs: Path,
+) -> None:
+    blobs.mkdir(parents=True)
+    dest = blobs / "loop.bin"
+    dest.symlink_to(dest.name)  # a link to itself: stat() says ELOOP, as the base's open() does
+    with pytest.raises(OSError) as raised:
+        da._write_atomically(dest, b"abc")
+    assert raised.value.errno == errno.ELOOP
+    assert dest.is_symlink() and names(blobs) == ["loop.bin"]
+
+
+def test_the_umask_is_never_read_through_os_umask(
+    blobs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    there = _blob_at(blobs / "there.bin", 0o640)
+
+    def forbidden(mask: int) -> int:
+        raise AssertionError("os.umask is process-global: reading it changes it for every thread")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(os, "umask", forbidden)
+        da._write_atomically(blobs / "new.bin", b"abc")
+        da._write_atomically(there, b"abc")
+    assert _mode(there) == 0o640
 
 
 # --------------------------------------------------------------------------- #
