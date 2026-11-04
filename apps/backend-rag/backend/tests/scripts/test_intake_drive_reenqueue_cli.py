@@ -502,7 +502,11 @@ def test_no_file_or_folder_name_and_no_path_reaches_stdout_stderr_or_a_log(
 # The real entry point, in a real process
 # --------------------------------------------------------------------------- #
 def _spawn(*argv: str, env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-    env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(BACKEND_RAG)}
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONPATH": str(BACKEND_RAG),
+        "PYTHONDONTWRITEBYTECODE": "1",  # a test process leaves no __pycache__ behind it
+    }
     env.update(env_extra or {})
     return subprocess.run(
         [sys.executable, str(SCRIPT), *argv],
