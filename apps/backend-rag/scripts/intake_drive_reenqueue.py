@@ -13,12 +13,17 @@ decides by ``intake_key`` (source, ref, blob hash, pipeline version). The two ag
 row yet. A file that was queued once and has changed in Drive since reads ``already_present`` in a dry run
 and still gets a new row on apply.
 
-Before an apply, read the dry run's JSON line. Go on to ``--apply`` only when ``errors`` and
-``skipped_out_of_scope`` are both 0 and the outcome counts (every count but ``requested`` and ``disk_hold``)
-add up to ``requested``, the number of ids you meant to send; otherwise stop and look. ``already_present``
-is not a reason to stop: an apply adds no second row for a file whose content has not changed
-(``intake_key``). Nor are ``missing``, ``skipped_removed`` and ``skipped_native``, since a file can be
-trashed, converted or deleted between two looks: each one only means one id fewer for ``would_enqueue_new``.
+Before an apply, read the dry run's JSON line. Its keys are of two kinds. The OUTCOME keys say what became
+of each id: ``would_enqueue_new``, ``enqueued_new``, ``already_present``, ``skipped_removed``,
+``skipped_native``, ``skipped_out_of_scope``, ``missing``, ``errors`` and ``not_attempted`` (a dry run fills
+``would_enqueue_new`` and an apply ``enqueued_new``; every id lands in exactly one of the nine). The
+METADATA keys describe the run and are never outcomes: ``apply``, ``duplicate_ids``, ``requested`` and
+``disk_hold``. Go on to ``--apply`` only when ``errors`` and ``skipped_out_of_scope`` are both 0 and the
+OUTCOME keys add up to ``requested``, the number of distinct ids read (a repeated id is counted once, in
+``duplicate_ids``); otherwise stop and look. ``already_present`` is not a reason to stop: an apply adds no
+second row for a file whose content has not changed (``intake_key``). Nor are ``missing``,
+``skipped_removed`` and ``skipped_native``, since a file can be trashed, converted or deleted between two
+looks: each one only means one id fewer for ``would_enqueue_new``.
 
 Usage (on the Pro, with the drain's environment: same service account, database and blob root):
   python scripts/intake_drive_reenqueue.py --ids-file IDS.tsv            # dry run

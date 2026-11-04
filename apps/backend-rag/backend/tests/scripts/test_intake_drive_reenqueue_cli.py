@@ -356,7 +356,8 @@ def test_the_help_says_when_a_dry_run_may_be_followed_by_an_apply(
     assert (
         "Go on to ``--apply`` only when ``errors`` and ``skipped_out_of_scope`` are both 0" in text
     )
-    assert "(every count but ``requested`` and ``disk_hold``) add up to ``requested``" in text
+    assert "the OUTCOME keys add up to ``requested``, the number of distinct ids read" in text
+    assert "(a repeated id is counted once, in ``duplicate_ids``)" in text
     assert "otherwise stop and look" in text
     assert "``already_present`` is not a reason to stop" in text
     assert "Nor are ``missing``, ``skipped_removed`` and ``skipped_native``" in text
@@ -364,16 +365,127 @@ def test_the_help_says_when_a_dry_run_may_be_followed_by_an_apply(
     assert wired.built == {"pool": 0, "service": 0}
 
 
-def test_every_count_the_help_names_in_its_rule_is_a_count_the_library_returns(
+def _help_keys(cli: Any, capsys: Any) -> tuple[set[str], set[str]]:
+    """(the OUTCOME keys, the METADATA keys) as the help names them: the words in double backticks."""
+    with pytest.raises(SystemExit):
+        cli.main(["--help"])
+    text = " ".join(capsys.readouterr().out.split())
+    outcome = text[text.index("The OUTCOME keys") : text.index("The METADATA keys")]
+    metadata = text[text.index("The METADATA keys") : text.index("Go on to")]
+
+    def named(part: str) -> set[str]:
+        return set(re.findall(r"``([a-z_]+)``", part))
+
+    return named(outcome), named(metadata)
+
+
+def test_the_help_splits_every_json_key_into_outcome_or_metadata_and_none_is_left_out(
     wired: Wired, capsys: Any
 ) -> None:
-    with pytest.raises(SystemExit):
-        wired.cli.main(["--help"])
-    text = " ".join(capsys.readouterr().out.split())
-    rule = text[text.index("Before an apply") : text.index("Usage")]
-    named = set(re.findall(r"``([a-z_]+)``", rule)) - {"intake_key"}
-    assert {"errors", "skipped_out_of_scope", "requested"} <= named
-    assert named <= set(da._new_reenqueue_counters(0))
+    outcome, metadata = _help_keys(wired.cli, capsys)
+    counters = set(da._new_reenqueue_counters(0))
+    assert outcome == counters - {"requested", "disk_hold"}  # what became of each id
+    assert metadata == {"apply", "duplicate_ids", "requested", "disk_hold"}
+    assert not outcome & metadata  # no key is both
+    assert outcome | metadata == counters | {"apply", "duplicate_ids"}  # and none is unnamed
+
+
+def _real_run(
+    wired: Wired,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: Any,
+    text: str,
+    *,
+    apply: bool,
+    out_of_scope: bool = False,
+    broken: bool = False,
+) -> tuple[int, dict[str, int]]:
+    """The CLI over the REAL library and a fake Drive: one JSON line of counts, as an operator reads it."""
+
+    async def download(drive_service: Any, file_id: str, dest: Path) -> int:
+        return 7
+
+    async def enqueue(pool: Any, **kwargs: Any) -> EnqueueResult:
+        return EnqueueResult(instance_id=1, queue_id=1, was_new=True)
+
+    async def no_pause(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(da, "_download_file", download)
+    monkeypatch.setattr(da, "enqueue", enqueue)
+    monkeypatch.setattr(da, "_pause", no_pause)
+    monkeypatch.setattr(da, "_free_bytes", lambda: 10**15)
+    monkeypatch.setattr(da, "_BLOB_ROOT", tmp_path / "blobs")
+    drive = wired.drive
+    drive.add("DIR", f"{NAME}-dir", [SCOPE], "application/vnd.google-apps.folder")
+    drive.add("ELSEWHERE", f"{NAME}-else", ["ROOT"], "application/vnd.google-apps.folder")
+    drive.add("ROOT", "root", [], "application/vnd.google-apps.folder")
+    drive.add(fid(1), f"{NAME}-1.pdf", ["DIR"])
+    drive.add(fid(2), f"{NAME}-2.pdf", ["DIR"])
+    drive.add(fid(4), f"{NAME}-4.doc", ["DIR"], "application/vnd.google-apps.document")  # native
+    drive.add(fid(5), f"{NAME}-5.pdf", ["ELSEWHERE" if out_of_scope else "DIR"])
+    if broken:
+        drive.errors[fid(2)] = _drive_error(500, "backendError")
+    argv = ["--ids-file", tsv(tmp_path, text), *(["--apply"] if apply else [])]
+    code, out, _ = run(wired.cli, capsys, *argv)
+    return code, json.loads(out)
+
+
+def _go_on(line: dict[str, int], outcome: set[str]) -> bool:
+    """The rule as the help states it, on the outcome keys only."""
+    return (
+        line["errors"] == 0
+        and line["skipped_out_of_scope"] == 0
+        and sum(line[key] for key in outcome) == line["requested"]
+    )
+
+
+REPEATING = {
+    "a-clean-id-twice": f"{fid(1)}\n{fid(1)}\n",  # the gate's own example: requested=1, duplicate_ids=1
+    "mixed-outcomes-and-a-repeat": f"{fid(1)}\n{fid(2)}\n{fid(1)}\n{fid(3)}\n{fid(4)}\n",
+}
+
+
+@pytest.mark.parametrize("apply", [False, True], ids=["dry-run", "apply"])
+@pytest.mark.parametrize("kind", list(REPEATING))
+def test_the_rule_in_the_help_holds_on_the_json_of_an_input_that_repeats_an_id(
+    kind: str,
+    apply: bool,
+    wired: Wired,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    help_outcome, help_metadata = _help_keys(wired.cli, capsys)
+    code, line = _real_run(wired, monkeypatch, tmp_path, capsys, REPEATING[kind], apply=apply)
+    assert set(line) == help_outcome | help_metadata  # the line has these keys and no others
+    assert line["duplicate_ids"] >= 1  # the input did repeat an id
+    assert sum(line[key] for key in help_outcome) == line["requested"]  # the rule's sum
+    assert sum(line[key] for key in help_outcome | {"duplicate_ids"}) != line["requested"]
+    assert sum(line.values()) != line["requested"]  # summing the whole line, literally, is wrong
+    assert _go_on(line, help_outcome) is True and code == 0
+
+
+@pytest.mark.parametrize("apply", [False, True], ids=["dry-run", "apply"])
+def test_the_rule_in_the_help_says_stop_for_an_error_or_a_file_out_of_scope(
+    apply: bool,
+    wired: Wired,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    help_outcome, _ = _help_keys(wired.cli, capsys)
+    text = f"{fid(1)}\n{fid(2)}\n{fid(1)}\n"
+    code, errors = _real_run(wired, monkeypatch, tmp_path, capsys, text, apply=apply, broken=True)
+    assert (errors["errors"], code) == (1, 3) and not _go_on(errors, help_outcome)
+    text = f"{fid(1)}\n{fid(5)}\n"
+    _, scope = _real_run(wired, monkeypatch, tmp_path, capsys, text, apply=apply, out_of_scope=True)
+    assert scope["skipped_out_of_scope"] == 1 and not _go_on(scope, help_outcome)
+    # the other outcomes are findings to read, not reasons to stop
+    text = f"{fid(1)}\n{fid(3)}\n{fid(4)}\n"
+    _, rest = _real_run(wired, monkeypatch, tmp_path, capsys, text, apply=apply)
+    assert (rest["missing"], rest["skipped_native"]) == (1, 1) and _go_on(rest, help_outcome)
 
 
 # --------------------------------------------------------------------------- #
