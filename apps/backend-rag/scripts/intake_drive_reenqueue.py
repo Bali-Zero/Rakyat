@@ -16,6 +16,8 @@ and still gets a new row on apply.
 Usage (on the Pro, with the drain's environment: same service account, database and blob root):
   python scripts/intake_drive_reenqueue.py --ids-file IDS.tsv            # dry run
   python scripts/intake_drive_reenqueue.py --ids-file IDS.tsv --apply    # download + enqueue
+``drive-intake-reenqueue-run.sh``, in the repo's root ``scripts`` directory, is the drain wrapper's twin: it
+reads the service account from its 0600 file, moves to apps/backend-rag and passes every argument on.
 
 Input: a TSV whose FIRST column is a Drive file id (``[A-Za-z0-9_-]{10,100}``); blank lines are skipped,
 the other columns are ignored, a repeated id counts once. Any other first column (a header included),
