@@ -17,6 +17,7 @@ sentinel.
 from __future__ import annotations
 
 import ast
+import asyncio
 import importlib.util
 import json
 import logging
@@ -24,6 +25,7 @@ import os
 import re
 import subprocess
 import sys
+import textwrap
 import types
 from pathlib import Path
 from typing import Any
@@ -69,6 +71,8 @@ class FakePool:
 
     def __init__(self) -> None:
         self.closed = False
+        self.close_calls = 0
+        self.close_error: Exception | None = None
         self.refs: set[str] = set()
 
     def acquire(self) -> Any:
@@ -88,7 +92,10 @@ class FakePool:
         return _Ctx()
 
     async def close(self) -> None:
+        self.close_calls += 1
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error.with_traceback(None)
 
 
 class FakeDrive:
@@ -591,6 +598,97 @@ def test_the_pool_is_closed_after_a_run(
     assert wired.pool.closed is True
 
 
+def test_a_pool_that_fails_to_close_after_a_clean_run_is_exit_3_with_the_counts_and_no_message(
+    wired: Wired,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    wired.stub_library(monkeypatch)
+    wired.result = counts(would_enqueue_new=1)
+    wired.pool.close_error = RuntimeError(f"cannot close the pool of {NAME}")
+    with caplog.at_level(logging.DEBUG):
+        code, out, err = run(wired.cli, capsys, "--ids-file", tsv(tmp_path, fid(1) + "\n"))
+    assert code == 3 and wired.pool.close_calls == 1
+    assert out.count("\n") == 1 and json.loads(out)["would_enqueue_new"] == 1  # the counts are said
+    assert "RuntimeError" in caplog.text and "closing the intake database failed" in caplog.text
+    assert NAME not in caplog.text + out + err
+    assert all(r.exc_info is None and r.exc_text is None for r in caplog.records)
+
+
+def test_a_pool_that_fails_to_close_after_a_failed_run_is_exit_3_and_both_faults_are_summaries(
+    wired: Wired, tmp_path: Path, capsys: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    wired.service_error = ValueError(f"bad credentials for {NAME}")
+    wired.pool.close_error = RuntimeError(f"cannot close the pool of {NAME}")
+    with caplog.at_level(logging.DEBUG):
+        code, out, err = run(wired.cli, capsys, "--ids-file", tsv(tmp_path, fid(1) + "\n"))
+    assert code == 3 and out == "" and wired.pool.close_calls == 1
+    assert "ValueError" in caplog.text and "RuntimeError" in caplog.text
+    assert NAME not in caplog.text + err
+    assert all(r.exc_info is None and r.exc_text is None for r in caplog.records)
+
+
+def test_a_pool_that_closes_cleanly_changes_nothing_about_the_exit_code(
+    wired: Wired, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    wired.stub_library(monkeypatch)
+    wired.result = counts(would_enqueue_new=1)
+    code, out, _ = run(wired.cli, capsys, "--ids-file", tsv(tmp_path, fid(1) + "\n"))
+    assert code == 0 and wired.pool.close_calls == 1 and json.loads(out)["requested"] == 1
+
+
+def test_the_pool_is_closed_even_when_the_run_is_cancelled(
+    wired: Wired, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def cancelled(*args: Any, **kwargs: Any) -> dict[str, int]:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(wired.cli, "reenqueue_drive_files", cancelled)
+    with pytest.raises(asyncio.CancelledError):
+        wired.cli.main(["--ids-file", tsv(tmp_path, fid(1) + "\n")])
+    assert wired.pool.close_calls == 1  # a fault that is not an Exception still closes the pool
+
+
+# The pool, the Drive service and the library are replaced inside a real process: what the operator would
+# see on a close that raises an exception whose message carries a file name.
+FAKE_WORLD = f"""
+import asyncpg
+class _Pool:
+    async def close(self):
+        raise RuntimeError("cannot close the pool of {NAME}")
+async def _create_pool(**kwargs):
+    return _Pool()
+asyncpg.create_pool = _create_pool
+import backend.services.integrations.service_account_drive_service as svc
+svc.ServiceAccountDriveService = lambda *a, **k: object()
+import backend.services.intake.drive_adapter as da
+async def _reenqueue(pool, service, scope, ids, *, apply):
+    keys = {sorted(KEYS)!r}
+    return {{**dict.fromkeys(keys, 0), "requested": len(ids), "would_enqueue_new": len(ids)}}
+da.reenqueue_drive_files = _reenqueue
+"""
+
+
+def test_a_close_that_raises_ends_the_real_process_with_exit_3_no_traceback_and_no_name(
+    tmp_path: Path,
+) -> None:
+    child = _spawn_driven(
+        tmp_path,
+        FAKE_WORLD,
+        "--ids-file",
+        tsv(tmp_path, fid(1) + "\n"),
+        env_extra={"INTAKE_DRIVE_SCOPE_FOLDER_ID": SCOPE},
+    )
+    assert child.returncode == 3, child.stderr
+    assert "Traceback" not in child.stderr and 'File "' not in child.stderr
+    assert NAME not in child.stdout + child.stderr
+    assert "RuntimeError" in child.stderr  # said by class, with the place it was raised
+    line = json.loads(child.stdout)
+    assert (line["requested"], line["would_enqueue_new"], child.stdout.count("\n")) == (1, 1, 1)
+
+
 # --------------------------------------------------------------------------- #
 # A run that cannot start, or a fault that escapes: exit 3, a summary, never a message
 # --------------------------------------------------------------------------- #
@@ -700,13 +798,42 @@ def test_no_file_or_folder_name_and_no_path_reaches_stdout_stderr_or_a_log(
 # --------------------------------------------------------------------------- #
 # The real entry point, in a real process
 # --------------------------------------------------------------------------- #
-def _spawn(*argv: str, env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _child_env(env_extra: dict[str, str] | None = None) -> dict[str, str]:
     env = {
         "PATH": os.environ.get("PATH", ""),
         "PYTHONPATH": str(BACKEND_RAG),
         "PYTHONDONTWRITEBYTECODE": "1",  # a test process leaves no __pycache__ behind it
     }
     env.update(env_extra or {})
+    return env
+
+
+def _spawn_driven(
+    tmp_path: Path, patches: str, *argv: str, env_extra: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """The real script, run as __main__ in a real process, after `patches` ran in that process."""
+    driver = tmp_path / "driver.py"
+    driver.write_text(
+        "import runpy, sys\n"
+        f"sys.path.insert(0, {str(BACKEND_RAG)!r})\n"
+        + textwrap.dedent(patches)
+        + f"\nsys.argv = [{str(SCRIPT)!r}] + sys.argv[1:]\n"
+        + f"runpy.run_path({str(SCRIPT)!r}, run_name='__main__')\n",
+        encoding="utf-8",
+    )
+    return subprocess.run(
+        [sys.executable, str(driver), *argv],
+        cwd=BACKEND_RAG,
+        env=_child_env(env_extra),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=60,
+    )
+
+
+def _spawn(*argv: str, env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    env = _child_env(env_extra)
     return subprocess.run(
         [sys.executable, str(SCRIPT), *argv],
         cwd=BACKEND_RAG,

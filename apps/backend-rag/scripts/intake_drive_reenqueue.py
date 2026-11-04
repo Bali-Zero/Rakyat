@@ -43,7 +43,7 @@ run: ``requested``, ``would_enqueue_new``, ``enqueued_new``, ``already_present``
 counts only, never a file name or a path (``source_path`` goes to the queue row, as in the drain).
 
 Exit: 0 ok; 2 bad input or configuration (nothing was touched); 3 the run had errors, stopped at the
-disk floor (``disk_hold=1``) or could not start (database or Drive service).
+disk floor (``disk_hold=1``), could not start (database or Drive service) or could not close the database.
 
 Env (as the drain): LOCAL_DATABASE_URL (default postgresql://nuzantara@127.0.0.1:5432/nuzantara_dev),
 INTAKE_DRIVE_SCOPE_FOLDER_ID (REQUIRED), INTAKE_BLOB_ROOT, INTAKE_DRIVE_MIN_FREE_GIB (default 20: an apply
@@ -128,6 +128,41 @@ def _parser() -> argparse.ArgumentParser:
     return ap
 
 
+async def _close(pool: asyncpg.Pool) -> bool:
+    """Close the pool. A close that fails fails the run, said by class and place and never by its message."""
+    try:
+        await pool.close()
+    except Exception as exc:
+        why = _failure_summary(exc)
+        logger.error("closing the intake database failed (%s)", why)
+        return False
+    return True
+
+
+async def _re_enqueue(
+    pool: asyncpg.Pool, ids: list[str], scope_id: str, *, apply: bool
+) -> dict[str, int] | None:
+    """The counters of the run, or None when it could not be done (the reason is logged by class and place)."""
+    try:
+        from backend.services.integrations.service_account_drive_service import (
+            ServiceAccountDriveService,
+        )
+
+        drive_service = ServiceAccountDriveService()
+    except Exception as exc:
+        why = _failure_summary(exc)
+        logger.error("Drive service unavailable (%s)", why)
+        return None
+    try:
+        return await reenqueue_drive_files(pool, drive_service, scope_id, ids, apply=apply)
+    except Exception as exc:
+        # The run logs the faults it handles; one that gets past it would end in the interpreter's
+        # traceback, whose message can hold a file or folder name.
+        why = _failure_summary(exc)
+        logger.error("re-enqueue failed (%s)", why)
+        return None
+
+
 async def _run(ids: list[str], repeated: int, scope_id: str, *, apply: bool) -> int:
     db_url = os.environ.get("LOCAL_DATABASE_URL", DEFAULT_DSN)
     try:
@@ -137,28 +172,13 @@ async def _run(ids: list[str], repeated: int, scope_id: str, *, apply: bool) -> 
         logger.error("cannot open the intake database (%s)", why)
         return EXIT_ERRORS
     try:
-        try:
-            from backend.services.integrations.service_account_drive_service import (
-                ServiceAccountDriveService,
-            )
-
-            drive_service = ServiceAccountDriveService()
-        except Exception as exc:
-            why = _failure_summary(exc)
-            logger.error("Drive service unavailable (%s)", why)
-            return EXIT_ERRORS
-        try:
-            counters = await reenqueue_drive_files(pool, drive_service, scope_id, ids, apply=apply)
-        except Exception as exc:
-            # The run logs the faults it handles; one that gets past it would end in the interpreter's
-            # traceback, whose message can hold a file or folder name.
-            why = _failure_summary(exc)
-            logger.error("re-enqueue failed (%s)", why)
-            return EXIT_ERRORS
+        counters = await _re_enqueue(pool, ids, scope_id, apply=apply)
     finally:
-        await pool.close()
+        closed = await _close(pool)
+    if counters is None:
+        return EXIT_ERRORS
     print(json.dumps({"apply": int(apply), "duplicate_ids": repeated, **counters}, sort_keys=True))
-    return EXIT_ERRORS if counters["errors"] or counters["disk_hold"] else EXIT_OK
+    return EXIT_ERRORS if counters["errors"] or counters["disk_hold"] or not closed else EXIT_OK
 
 
 def main(argv: list[str] | None = None) -> int:
