@@ -12,13 +12,20 @@ is closed on every path.
 PURE unit: the pool and the Drive service are fakes, the library is stubbed where the test is about the CLI
 and real (over a fake Drive) where it is about what leaves the process. Synthetic ids only; every name is a
 sentinel.
+R1, no Drive name reaches any handler, is held where a record is CREATED and never in a handler: the Drive
+client logs ids, counts and class names since #9236, and the tests run its REAL constructor over a fake Drive
+whose every name is the sentinel, with a foreign observer at six places. On a base without #9236 they are RED
+(the client puts folder names and the raw text of a failed check in its start-up lines).
 """
 
 from __future__ import annotations
 
 import ast
 import asyncio
+import contextlib
+import functools
 import importlib.util
+import io
 import json
 import logging
 import os
@@ -27,6 +34,7 @@ import subprocess
 import sys
 import textwrap
 import types
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +81,7 @@ class FakePool:
         self.closed = False
         self.close_calls = 0
         self.close_error: Exception | None = None
+        self.lookup_error: Exception | None = None
         self.refs: set[str] = set()
 
     def acquire(self) -> Any:
@@ -80,6 +89,8 @@ class FakePool:
 
         class _Conn:
             async def fetchval(self, query: str, *args: Any) -> Any:
+                if pool.lookup_error is not None:
+                    raise pool.lookup_error.with_traceback(None)
                 return args[0] in pool.refs
 
         class _Ctx:
@@ -808,6 +819,10 @@ def _child_env(env_extra: dict[str, str] | None = None) -> dict[str, str]:
         "PATH": os.environ.get("PATH", ""),
         "PYTHONPATH": str(BACKEND_RAG),
         "PYTHONDONTWRITEBYTECODE": "1",  # a test process leaves no __pycache__ behind it
+        # Settings() will not load without these two and reads .env from the working directory only: made-up
+        # values (conftest's), so that no child depends on a .env file being there. A checkout has none.
+        "JWT_SECRET_KEY": "test_jwt_secret_key_for_testing_only_min_32_chars_long",
+        "API_KEYS": "test_api_key_1,test_api_key_2",
     }
     env.update(env_extra or {})
     return env
@@ -864,8 +879,9 @@ def test_the_script_runs_as_a_program(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The log route: ONE handler, two speakers. The Drive client this CLI builds names folders in its start-up
-# lines and prints the raw text of a failed check: none of it may reach stdout or stderr.
+# The log route. Two speakers (this CLI and the Drive adapter) log Drive ids, counts and exception class
+# names; one handler keeps every other logger's noise off the terminal. That handler is hygiene: what keeps
+# a name out of a log is that it never enters a record (the R1 section below).
 # --------------------------------------------------------------------------- #
 SAFE_HANDLER = "intake_drive_reenqueue.safe_stderr"
 SAFE_LOGGERS = ("intake_drive_reenqueue", "backend.services.intake.drive_adapter")
@@ -1058,19 +1074,54 @@ def test_an_unexpected_fault_ends_the_real_process_with_exit_3_no_traceback_and_
     assert "unexpected fault" in child.stderr and "RuntimeError" in child.stderr
 
 
-# ---- the REAL service constructor, over a fake Drive API -------------------------------------------------
+# ---- R1: no Drive name reaches any handler ---------------------------------------------------------------
+# Held where a record is CREATED, never in a handler: code anywhere can attach a handler to any logger, so a
+# handler cannot hold it. The Drive client (ServiceAccountDriveService) logs folder ids, counts and exception
+# class names only since #9236, and so do this CLI and the Drive adapter. What follows runs the REAL client
+# constructor over a fake Drive API whose every folder and file name is the sentinel, with every logger at
+# DEBUG, and looks at what a foreign observer is handed at six places.
+ADAPTER_LOGGER, CLI_LOGGER = SAFE_LOGGERS[1], SAFE_LOGGERS[0]
+DELEGATE = (
+    "delegate-6f1c@example.invalid"  # a Workspace address made up for the tests: never logged
+)
+
+
+def _sentinel_http_error(status: int, reason: str, where: str) -> HttpError:
+    """A Drive error whose uri AND body repeat the sentinel: the worst a failed call can hand a log line."""
+    message = f"File not found: {NAME}"
+    body = {
+        "error": {
+            "code": status,
+            "message": message,
+            "errors": [{"domain": "global", "reason": reason, "message": message}],
+        }
+    }
+    uri = f"https://www.googleapis.com/drive/v3/files/{where}?fields=name&q={NAME}"
+    return HttpError(httplib2.Response({"status": status}), json.dumps(body).encode(), uri=uri)
+
+
 class RealCtor:
     """The CLI around the REAL ServiceAccountDriveService constructor, a fake Drive API and a fake pool.
 
     Nothing real can be reached: the settings the constructor reads, its credentials factory and the
-    discovery build are all replaced, and the folders it checks at start-up carry the sentinel in their
-    name or in the text of the exception.
+    discovery build are replaced. Every folder it checks at start-up and every file the run reads carries the
+    sentinel in its name. ``companies`` is what the check of the last folder does: "ok" finds it, "runtime"
+    raises a RuntimeError whose text holds the sentinel, "http" an HttpError whose uri and body hold it.
+    ``delegated`` makes the client impersonate that (made-up) Workspace address.
     """
 
-    def __init__(self, monkeypatch: pytest.MonkeyPatch, cli: Any) -> None:
+    def __init__(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        cli: Any,
+        *,
+        companies: str = "runtime",
+        delegated: str | None = None,
+    ) -> None:
         import backend.services.integrations.service_account_drive_service as svc
 
         self.cli = cli
+        self.svc = svc
         self.pool = FakePool()
         self.drive = FakeDrive()
         self.discovery: list[tuple[str, str]] = []
@@ -1102,61 +1153,409 @@ class RealCtor:
         monkeypatch.setattr(svc, "settings", settings)
         monkeypatch.setattr(svc, "service_account", accounts)
         monkeypatch.setattr(svc, "build", build)
+        if delegated is not None:
+            client = functools.partial(svc.ServiceAccountDriveService, delegated_user=delegated)
+            monkeypatch.setattr(svc, "ServiceAccountDriveService", client)
         self.drive.add(ROOT_ID, f"{NAME}-root-folder", [])
         self.drive.add(INDIVIDUALS_ID, f"{NAME}-individuals", [])
-        self.drive.errors[COMPANIES_ID] = RuntimeError(f"folder {NAME} is unreachable")
+        if companies == "runtime":
+            self.drive.errors[COMPANIES_ID] = RuntimeError(f"folder {NAME} is unreachable")
+        elif companies == "http":
+            self.drive.errors[COMPANIES_ID] = _sentinel_http_error(404, "notFound", COMPANIES_ID)
+        else:
+            self.drive.add(COMPANIES_ID, f"{NAME}-companies", [])
         self.drive.add("DIR", f"{NAME}-dir", [SCOPE], "application/vnd.google-apps.folder")
         self.drive.add(fid(1), f"{NAME}-1.pdf", ["DIR"])
 
+    def ingest_faults(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Seven ids that end in seven different ways, every fault holding the sentinel in its text.
 
-@pytest.fixture
-def real_ctor(cli: Any, monkeypatch: pytest.MonkeyPatch) -> RealCtor:
-    monkeypatch.setenv("INTAKE_DRIVE_SCOPE_FOLDER_ID", SCOPE)
-    monkeypatch.delenv("INTAKE_DRIVE_MIN_FREE_GIB", raising=False)
-    return RealCtor(monkeypatch, cli)
+        1 is fine; 2 fails at files.get; 3 is gone; 4 and 5 fail to download; 6 fails to enqueue; 7 has an
+        ancestor whose lookup fails. A dry run cannot ask the queue.
+        """
+        named = f"cannot read {NAME}"
+        _patch_apply_path(monkeypatch, tmp_path)
+
+        async def download(drive_service: Any, file_id: str, dest: Path) -> int:
+            if file_id == fid(4):
+                raise _drive_error(500, "backendError", message=named)
+            if file_id == fid(5):
+                raise PermissionError(13, "Permission denied", f"/blobs/{NAME}.pdf")
+            return 7
+
+        async def enqueue(pool: Any, **kwargs: Any) -> EnqueueResult:
+            if kwargs["source_ref"] == f"drive:{fid(6)}":
+                raise RuntimeError(named)
+            return EnqueueResult(instance_id=1, queue_id=1, was_new=True)
+
+        monkeypatch.setattr(da, "_download_file", download)
+        monkeypatch.setattr(da, "enqueue", enqueue)
+        for i in range(2, 8):
+            self.drive.add(fid(i), f"{NAME}-{i}.pdf", ["DIR"])
+        self.drive.errors[fid(2)] = _sentinel_http_error(500, "backendError", fid(2))
+        self.drive.errors[fid(3)] = _sentinel_http_error(404, "notFound", fid(3))
+        self.drive.items[fid(7)]["parents"] = ["LOST"]
+        self.drive.errors["LOST"] = RuntimeError(named)
+        self.pool.lookup_error = RuntimeError(named)
 
 
-@pytest.mark.parametrize("apply", [False, True], ids=["dry-run", "apply"])
-def test_the_real_service_constructor_over_a_fake_drive_api_leaks_no_name_to_stdout_or_stderr(
-    apply: bool,
-    real_ctor: RealCtor,
+CASES = {
+    "dry-run": [0],
+    "apply": [0],
+    "folder-errors": [0],
+    "ingest-errors": [3, 3],
+}  # case: exit codes
+PLACES = [
+    "terminal-only",  # the CLI's own handler and nothing else
+    "root-buffer",  # a StreamHandler on the root, into a buffer
+    "root-file",  # a FileHandler on the root
+    "service-stderr",  # a StreamHandler(stderr) on the Drive client's own logger
+    "adapter-handler",  # a handler on the drive adapter's logger
+    "last-resort",  # no handler at all: logging.lastResort, which writes to stderr
+]
+ADAPTER_FAULTS = [
+    "queue lookup failed",
+    "files.get failed",
+    "is gone or unreadable",
+    "ancestor walk failed",
+    "enqueue failed",
+]
+
+
+def _live(place: str, case: str) -> list[str] | None:
+    """What a handler at ``place`` must have been handed in a run of ``case`` (proof that it was
+    listening), or None when that run gives it nothing to hear."""
+    faults = ADAPTER_FAULTS if case == "ingest-errors" else []
+    if place == "last-resort":  # WARNING and above, from every logger
+        return [COMPANIES_ID] if case == "folder-errors" else faults or None
+    if place == "terminal-only":  # the CLI's own lines; the Drive client's, as a constant line
+        return ["reenqueue_drive done", *(["withheld"] if case == "folder-errors" else []), *faults]
+    if place == "adapter-handler":
+        return ["reenqueue_drive done", *faults]
+    service = [COMPANIES_ID] if case == "folder-errors" else [ROOT_ID]
+    return service if place == "service-stderr" else [*service, "reenqueue_drive done", *faults]
+
+
+PAIRS = [(place, case) for place in PLACES for case in CASES if _live(place, case) is not None]
+
+
+class _Tap(logging.Handler):
+    """Keeps, for each record it is handed, every field a formatter, a serializer or a log shipper could print."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.NOTSET)
+        self.fields: list[str] = []
+        self.exc_texts: list[str] = []
+        self.records = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        shown = self.format(record)  # the message and, when the record has one, its traceback
+        self.records += 1
+        self.exc_texts.append(str(record.exc_text))
+        self.fields += [
+            str(record.msg),
+            repr(record.args),
+            record.getMessage(),
+            shown,
+            repr(record.exc_info),
+            str(record.exc_text),
+            str(record.stack_info),
+        ]
+
+    def leaks(self) -> int:
+        return sum(field.count(word) for field in self.fields for word in (NAME, DELEGATE))
+
+
+class _Placed:
+    """One place where a foreign observer of the log sits, and what it writes."""
+
+    def __init__(self, place: str, tmp_path: Path) -> None:
+        self.place = place
+        self.buffer = io.StringIO()
+        self.path = tmp_path / "foreign.log"
+        self.handlers: list[logging.Handler] = []
+        self.taps: list[_Tap] = []
+
+    def watch(self, logger: logging.Logger, handler: logging.Handler) -> None:
+        tap = _Tap()  # at the same place, the field-level view of what the handler is handed
+        logger.addHandler(handler)
+        logger.addHandler(tap)
+        self.handlers.append(handler)
+        self.taps.append(tap)
+
+    def written(self, stderr: str) -> str:
+        """The text the observer wrote: stderr for the terminal, the stderr handler and the last resort."""
+        if self.place == "root-file":
+            return self.path.read_text(encoding="utf-8") if self.path.exists() else ""
+        return (
+            self.buffer.getvalue() if self.place in ("root-buffer", "adapter-handler") else stderr
+        )
+
+
+@contextlib.contextmanager
+def _placed(
+    place: str, cli: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Iterator[_Placed]:
+    """Every logger at DEBUG and a foreign observer at ``place``; the loggers are put back on the way out."""
+    root = logging.getLogger()
+    service, adapter = logging.getLogger(SERVICE_LOGGER), logging.getLogger(ADAPTER_LOGGER)
+    loggers = [root, service, adapter, logging.getLogger(CLI_LOGGER)]
+    saved = [(each, list(each.handlers), each.level) for each in loggers]
+    placed = _Placed(place, tmp_path)
+    try:
+        for each in loggers:
+            each.setLevel(logging.DEBUG)
+        if place == "root-buffer":
+            placed.watch(root, logging.StreamHandler(placed.buffer))
+        elif place == "root-file":
+            placed.watch(root, logging.FileHandler(placed.path, encoding="utf-8"))
+        elif place == "service-stderr":
+            placed.watch(service, logging.StreamHandler(sys.stderr))
+        elif place == "adapter-handler":
+            placed.watch(adapter, logging.StreamHandler(placed.buffer))
+        elif place == "last-resort":
+            root.handlers[
+                :
+            ] = []  # pytest's own included: nobody listens, so the last resort speaks
+            monkeypatch.setattr(cli, "_install_safe_logging", lambda: None)
+        yield placed
+    finally:
+        for each, handlers, level in saved:
+            each.handlers[:] = handlers
+            each.setLevel(level)
+        for handler in placed.handlers:
+            handler.close()
+
+
+def _runs_of(
+    case: str, real: RealCtor, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> list[list[str]]:
+    """The CLI runs of one case, set up on the fakes of ``real``, as argv lists."""
+    one = tmp_path / "one.tsv"
+    one.write_text(fid(1) + "\n", encoding="utf-8")
+    if case == "apply":
+        _patch_apply_path(monkeypatch, tmp_path)
+        return [["--ids-file", str(one), "--apply"]]
+    if case == "ingest-errors":
+        real.ingest_faults(monkeypatch, tmp_path)
+        every = tmp_path / "every.tsv"
+        every.write_text("".join(f"{fid(i)}\n" for i in range(1, 8)), encoding="utf-8")
+        return [["--ids-file", str(one)], ["--ids-file", str(every), "--apply"]]
+    if case == "folder-errors":
+        real.drive.errors[INDIVIDUALS_ID] = RuntimeError(f"folder {NAME} is unreachable")
+    return [["--ids-file", str(one)]]
+
+
+@pytest.mark.parametrize(("place", "case"), PAIRS, ids=[f"{p}-{c}" for p, c in PAIRS])
+def test_no_name_reaches_a_handler_wherever_it_sits_and_whatever_the_run_does(
+    place: str,
+    case: str,
+    cli: Any,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: Any,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    _patch_apply_path(monkeypatch, tmp_path)
-    argv = ["--ids-file", tsv(tmp_path, fid(1) + "\n"), *(["--apply"] if apply else [])]
-    with caplog.at_level(logging.DEBUG):
-        code, out, err = run(real_ctor.cli, capsys, *argv)
-    assert real_ctor.discovery == [("drive", "v3")]  # the real constructor ran and built its client
-    assert (
-        NAME in caplog.text and "unreachable" in caplog.text
-    )  # control: it DID log the name and the raw text
-    assert code == 0 and json.loads(out)["requested"] == 1
-    assert NAME not in out and NAME not in err and "unreachable" not in err
-    assert (
-        "impersonating" not in err and "Loaded Google credentials" not in err
-    )  # INFO lines: dropped
-    assert "withheld" in err and SERVICE_LOGGER in err  # the ERROR line: replaced, not silent
-    assert "reenqueue_drive done" in err  # the adapter's own summary line still speaks
+    monkeypatch.setenv("INTAKE_DRIVE_SCOPE_FOLDER_ID", SCOPE)
+    monkeypatch.delenv("INTAKE_DRIVE_MIN_FREE_GIB", raising=False)
+    companies = "http" if case == "folder-errors" else "ok"
+    real = RealCtor(monkeypatch, cli, companies=companies, delegated=DELEGATE)
+    runs = _runs_of(case, real, monkeypatch, tmp_path)
+    codes: list[int] = []
+    outs: list[str] = []
+    err = ""
+    with _placed(place, cli, monkeypatch, tmp_path) as placed:
+        for argv in runs:
+            code, out, run_err = run(cli, capsys, *argv)
+            codes.append(code)
+            outs.append(out)
+            err += run_err
+        for handler in placed.handlers:
+            handler.flush()
+        heard = placed.written(err)
+    assert codes == CASES[case]  # the run did what the case says it does
+    assert real.discovery == [("drive", "v3")] * len(runs)  # the real constructor ran, once per run
+    assert all(marker in heard for marker in _live(place, case) or []), heard  # it was listening
+    assert all(tap.records > 0 for tap in placed.taps)
+    assert all(out.count("\n") == 1 for out in outs)  # stdout stays one JSON line per run
+    deliveries = sum(text.count(NAME) + text.count(DELEGATE) for text in (*outs, err, heard))
+    assert deliveries + sum(tap.leaks() for tap in placed.taps) == 0
+    assert not any(NAME in text for tap in placed.taps for text in tap.exc_texts)
 
 
-def test_a_stream_handler_left_on_the_root_is_removed_so_it_cannot_print_what_the_safe_one_drops(
-    real_ctor: RealCtor, tmp_path: Path, capsys: Any, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize("place", ["terminal-only", "named-stderr", "root-buffer", "root-file"])
+def test_the_gates_round_2_probe_finds_no_sentinel_at_any_output_handler(
+    place: str, cli: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    foreign = logging.StreamHandler(sys.stderr)  # prints every record it is given, as it is
-    logging.getLogger().addHandler(foreign)
+    """The round-2 gate's own independent test, kept as it was written (its four placements, its
+    capture, its fake): the real constructor over fake Drive metadata, the root and the service at DEBUG."""
+    monkeypatch.setenv("INTAKE_DRIVE_SCOPE_FOLDER_ID", SCOPE)
+    real = RealCtor(monkeypatch, cli, delegated=DELEGATE)
+    ids = tmp_path / "ids.tsv"
+    ids.write_text(fid(1) + "\n", encoding="utf-8")
+    root, service = logging.getLogger(), logging.getLogger(SERVICE_LOGGER)
+    roots, services = list(root.handlers), list(service.handlers)
+    levels = (root.level, service.level)
+    out, err, buffer = io.StringIO(), io.StringIO(), io.StringIO()
+    target = tmp_path / "captured.log"
+    foreign: logging.Handler | None = None
     try:
-        with caplog.at_level(logging.DEBUG):
-            code, out, err = run(real_ctor.cli, capsys, "--ids-file", tsv(tmp_path, fid(1) + "\n"))
-        assert foreign not in logging.getLogger().handlers
+        root.setLevel(logging.DEBUG)
+        service.setLevel(logging.DEBUG)
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            if place == "named-stderr":
+                foreign = logging.StreamHandler(sys.stderr)
+                service.addHandler(foreign)
+            elif place == "root-buffer":
+                foreign = logging.StreamHandler(buffer)
+                root.addHandler(foreign)
+            elif place == "root-file":
+                foreign = logging.FileHandler(target)
+                root.addHandler(foreign)
+            code = cli.main(["--ids-file", str(ids)])
+        if foreign is not None:
+            foreign.flush()
+        captured = out.getvalue() + err.getvalue() + buffer.getvalue()
+        if target.exists():
+            captured += target.read_text(encoding="utf-8")
     finally:
-        logging.getLogger().removeHandler(foreign)
-    assert code == 0 and NAME not in out + err
+        root.handlers[:] = roots
+        service.handlers[:] = services
+        root.setLevel(levels[0])
+        service.setLevel(levels[1])
+        if foreign is not None:
+            foreign.close()
+    assert code == 0 and real.discovery == [("drive", "v3")]
+    assert captured.count(NAME) + captured.count(DELEGATE) == 0
+
+
+@pytest.mark.parametrize("delegated", [DELEGATE, None], ids=["made-up-address", "default-address"])
+@pytest.mark.parametrize("companies", ["ok", "runtime", "http"])
+def test_the_real_client_constructor_creates_no_record_that_holds_a_name_or_an_address(
+    companies: str,
+    delegated: str | None,
+    cli: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The source of R1: no handler is involved, the records are looked at where they are created."""
+    real = RealCtor(monkeypatch, cli, companies=companies, delegated=delegated)
+    tap, service = _Tap(), logging.getLogger(SERVICE_LOGGER)
+    level = service.level
+    service.setLevel(logging.DEBUG)
+    service.addHandler(tap)
+    try:
+        real.svc.ServiceAccountDriveService()
+    finally:
+        service.removeHandler(tap)
+        service.setLevel(level)
+    said = "\n".join(tap.fields)
+    assert tap.records >= 6  # the credentials, the address and the four folders were all said
+    assert ROOT_ID in said and COMPANIES_ID in said  # ids are what it says
+    assert tap.leaks() == 0
+    assert delegated is not None or "@" not in said  # the address it falls back to is no more said
+
+
+def test_a_third_party_warning_reaches_the_terminal_as_a_constant_line_and_a_foreign_root_handler_goes(
+    wired: Wired, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    """Terminal hygiene, proved with a synthetic emitter and not with the Drive client: a record of a
+    logger the CLI does not speak for is printed whole by a handler somebody left on the root, and as one
+    constant line once the CLI has taken that handler off."""
+    noisy, root = logging.getLogger("thirdparty.synthetic"), logging.getLogger()
+    foreign = logging.StreamHandler(sys.stderr)
+    root.addHandler(foreign)
+
+    async def speak(pool: Any, drive_service: Any, scope_id: str, ids: list[str], *, apply: bool):
+        noisy.warning("noise about %s", NAME)
+        return {**counts(), "requested": len(ids)}
+
+    try:
+        noisy.warning("noise about %s", NAME)
+        left_alone = capsys.readouterr().err
+        monkeypatch.setattr(wired.cli, "reenqueue_drive_files", speak)
+        code, out, err = run(wired.cli, capsys, "--ids-file", tsv(tmp_path, fid(1) + "\n"))
+        taken_off = foreign not in root.handlers
+    finally:
+        root.removeHandler(foreign)
+    assert NAME in left_alone  # the emitter is guilty: nobody stopped it
+    assert code == 0 and taken_off
+    assert NAME not in out + err and "withheld" in err and "thirdparty.synthetic" in err
+
+
+def _drive_calls(source: str, functions: set[str] | None) -> list[tuple[str, str, tuple[str, ...]]]:
+    """(function, method, keywords) of every ``<anything>.files().<method>(...)`` call in ``functions``
+    (all functions when None); a call inside a nested function belongs to the outermost one."""
+    found: list[tuple[str, str, tuple[str, ...]]] = []
+
+    def visit(node: ast.AST, outer: str | None) -> None:
+        for child in ast.iter_child_nodes(node):
+            name = outer
+            if name is None and isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                name = child.name
+            if (
+                name is not None
+                and (functions is None or name in functions)
+                and isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and isinstance(child.func.value, ast.Call)
+                and getattr(child.func.value.func, "attr", "") == "files"
+            ):
+                found.append((name, child.func.attr, tuple(k.arg or "**" for k in child.keywords)))
+            visit(child, name)
+
+    visit(ast.parse(source), None)
+    return found
+
+
+def _by_id(calls: list[tuple[str, str, tuple[str, ...]]]) -> bool:
+    """True when every call reads one file named by its id: get or get_media, with fileId and no query."""
+    return bool(calls) and all(
+        method in ("get", "get_media") and "fileId" in keywords and "q" not in keywords
+        for _, method, keywords in calls
+    )
+
+
+def test_every_drive_call_on_the_reenqueue_path_addresses_a_file_by_id() -> None:
+    """The assumption behind the third-party DEBUG lines ("URL being requested" in googleapiclient): a URL
+    that holds an id and no query cannot hold a name."""
+    import googleapiclient.model as model
+
+    adapter = (BACKEND_RAG / "backend/services/intake/drive_adapter.py").read_text(encoding="utf-8")
+    client = BACKEND_RAG / "backend/services/integrations/service_account_drive_service.py"
+    in_adapter = _drive_calls(adapter, None)
+    at_start_up = _drive_calls(client.read_text(encoding="utf-8"), {"_validate_configured_folders"})
+    assert sorted((fn, method) for fn, method, _ in in_adapter) == [
+        ("_download_file", "get_media"),
+        ("_file_meta", "get"),
+        ("_folder_meta", "get"),
+    ]
+    assert [(fn, method) for fn, method, _ in at_start_up] == [
+        ("_validate_configured_folders", "get")
+    ]
+    assert _by_id(in_adapter) and _by_id(at_start_up)
     assert (
-        NAME in caplog.text
-    )  # a handler that writes anywhere else (the harness's capture) is left alone
+        model.dump_request_response is False
+    )  # googleapiclient would log whole requests and responses
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "def f(d):\n    return d.files().list(q=\"name = 'x'\").execute()\n",
+        "def f(d):\n    return d.files().get(fileId=1, q='x').execute()\n",
+        "def f(d):\n    return d.files().get(supportsAllDrives=True).execute()\n",
+        "def f(d):\n    return d.files().update(fileId=1).execute()\n",
+        "def f(d):\n    return 1\n",
+    ],
+)
+def test_the_by_id_checker_refuses_a_query_a_missing_id_and_a_call_that_is_not_a_read(
+    snippet: str,
+) -> None:
+    assert not _by_id(_drive_calls(snippet, None))
+
+
+def test_the_by_id_checker_lets_a_read_by_id_through() -> None:
+    ok = "def f(d):\n    return d.files().get(fileId=1, fields='id').execute()\n"
+    assert _by_id(_drive_calls(ok, None))
 
 
 def _real_ctor_driver(*, apply: bool, verbose_root: bool, control: Path) -> str:
@@ -1194,7 +1593,7 @@ da._free_bytes = lambda: 10**15
         else ""
     )
     return f"""
-import asyncpg, atexit, logging, types
+import asyncpg, atexit, functools, json, logging, types
 
 class _Conn:
     async def fetchval(self, query, *args):
@@ -1248,31 +1647,42 @@ svc.service_account = types.SimpleNamespace(
     )
 )
 svc.build = lambda api, version, credentials=None: _Api()
+svc.ServiceAccountDriveService = functools.partial(
+    svc.ServiceAccountDriveService, delegated_user={DELEGATE!r}
+)
 import backend.services.intake.drive_adapter as da
 {applying}
 class _Tap(logging.Handler):
-    seen = False
+    def __init__(self):
+        super().__init__(logging.NOTSET)
+        self.seen = 0
+        self.leaks = 0
     def emit(self, record):
         try:
-            if {NAME!r} in record.getMessage():
-                _Tap.seen = True
+            fields = [str(record.msg), repr(record.args), record.getMessage(), self.format(record),
+                      repr(record.exc_info), str(record.exc_text)]
+            self.seen += 1
+            self.leaks += sum(f.count(word) for f in fields for word in ({NAME!r}, {DELEGATE!r}))
         except Exception:
-            pass
-# the tap sits on the service's own logger, not on the root: a handler on the root would stop the script's
-# logging.basicConfig from installing its stderr handler and hide, in a version without the cure, the leak
-logging.getLogger("backend.services.integrations.service_account_drive_service").addHandler(_Tap())
+            self.leaks += 1  # a record the tap cannot read is a record it cannot vouch for
+TAPS = {{"service": _Tap(), "adapter": _Tap(), "root": _Tap()}}
+logging.getLogger({SERVICE_LOGGER!r}).addHandler(TAPS["service"])
+logging.getLogger({ADAPTER_LOGGER!r}).addHandler(TAPS["adapter"])
+logging.getLogger().addHandler(TAPS["root"])
 if {verbose_root!r}:
     logging.getLogger().setLevel(logging.DEBUG)
-atexit.register(lambda: open({str(control)!r}, "w").write("1" if _Tap.seen else "0"))
+atexit.register(
+    lambda: open({str(control)!r}, "w").write(json.dumps({{k: [t.seen, t.leaks] for k, t in TAPS.items()}}))
+)
 """
 
 
 @pytest.mark.parametrize("verbose_root", [False, True], ids=["quiet-root", "verbose-root"])
 @pytest.mark.parametrize("apply", [False, True], ids=["dry-run", "apply"])
-def test_the_real_constructor_in_a_real_process_leaks_no_name_whatever_the_root_logger_says(
+def test_the_real_constructor_in_a_real_process_leaks_no_name_to_any_handler_or_the_terminal(
     apply: bool, verbose_root: bool, tmp_path: Path
 ) -> None:
-    control = tmp_path / "control.txt"
+    control = tmp_path / "control.json"
     child = _spawn_driven(
         tmp_path,
         _real_ctor_driver(apply=apply, verbose_root=verbose_root, control=control),
@@ -1282,10 +1692,13 @@ def test_the_real_constructor_in_a_real_process_leaks_no_name_whatever_the_root_
         env_extra={"INTAKE_DRIVE_SCOPE_FOLDER_ID": SCOPE},
     )
     assert child.returncode == 0, child.stderr
+    heard = json.loads(control.read_text())  # [records, deliveries of the sentinel] per observer
     assert (
-        control.read_text() == "1"
-    )  # control: the constructor logged the sentinel, inside that process
-    assert NAME not in child.stdout + child.stderr and "unreachable" not in child.stderr
+        heard["service"][0] >= 1 and heard["adapter"][0] >= 1
+    )  # they were listening, in that process
+    assert [deliveries for _, deliveries in heard.values()] == [0, 0, 0]
+    assert NAME not in child.stdout + child.stderr and DELEGATE not in child.stdout + child.stderr
+    assert "unreachable" not in child.stderr
     assert "withheld" in child.stderr and SERVICE_LOGGER in child.stderr
     assert (
         "reenqueue_drive done" in child.stderr
