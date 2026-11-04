@@ -818,3 +818,29 @@ async def test_against_the_real_queue_an_apply_enqueues_once_and_a_second_apply_
     assert (await go(True)) == expect(requested=1, already_present=1)
     assert len(await real.rows(f"drive:{f}")) == 1  # idempotent through intake_key
     assert (await go(False)) == expect(requested=1, already_present=1)
+
+
+@pytest.mark.asyncio
+async def test_against_the_real_queue_a_changed_file_reads_present_in_a_dry_run_and_new_on_apply(
+    real: Real, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """What the CLI help promises: the dry run asks by source_ref, the apply decides by intake_key."""
+    world = World(monkeypatch, tmp_path, fake_queue=False)
+    f = f"reenq{uuid.uuid4().hex[:12]}"
+    real.refs.append(f"drive:{f}")
+    world.drive.folder("DIR", f"{NAME}-dir", [SCOPE])
+    world.drive.file(f, f"{NAME}.pdf", ["DIR"])
+
+    def go(apply: bool) -> Any:
+        return da.reenqueue_drive_files(real.pool, world.drive, SCOPE, [f], apply=apply)
+
+    world.content = uuid.uuid4().bytes * 8  # the file as it was when it was queued
+    real.hashes.append(hashlib.sha256(world.content).hexdigest())
+    assert (await go(True)) == expect(requested=1, enqueued_new=1)
+    world.content = uuid.uuid4().bytes * 8  # the same Drive id, changed since
+    real.hashes.append(hashlib.sha256(world.content).hexdigest())
+    assert (await go(False)) == expect(requested=1, already_present=1)  # the estimate
+    assert (await go(True)) == expect(requested=1, enqueued_new=1)  # the apply: a new row
+    assert len(await real.rows(f"drive:{f}")) == 2
+    assert (await go(True)) == expect(requested=1, already_present=1)  # and then nothing more
+    assert len(await real.rows(f"drive:{f}")) == 2

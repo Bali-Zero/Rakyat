@@ -294,6 +294,17 @@ def test_an_unknown_flag_or_a_missing_ids_file_argument_exits_2(wired: Wired) ->
     assert wired.built == {"pool": 0, "service": 0}
 
 
+def test_the_help_says_how_a_dry_run_can_differ_from_an_apply(wired: Wired, capsys: Any) -> None:
+    with pytest.raises(SystemExit) as stopped:
+        wired.cli.main(["--help"])
+    assert stopped.value.code == 0
+    text = " ".join(capsys.readouterr().out.split())
+    assert "asks the queue by ``source_ref``" in text
+    assert "decides by ``intake_key``" in text
+    assert "reads ``already_present`` in a dry run and still gets a new row on apply" in text
+    assert wired.built == {"pool": 0, "service": 0}
+
+
 # --------------------------------------------------------------------------- #
 # What the CLI hands to the library
 # --------------------------------------------------------------------------- #

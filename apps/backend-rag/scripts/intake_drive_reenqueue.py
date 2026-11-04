@@ -8,6 +8,11 @@ then either only COUNTS it (dry run, the default: no download, no enqueue) or do
 (``--apply``; ``enqueue`` is idempotent on ``intake_key``, so running it twice adds nothing). It never
 touches the drain's cursor. See ``backend/services/intake/drive_adapter.py::reenqueue_drive_files``.
 
+The dry run is an estimate: it asks the queue by ``source_ref`` (``drive:<file id>``), while the apply
+decides by ``intake_key`` (source, ref, blob hash, pipeline version). The two agree for a file that has no
+row yet. A file that was queued once and has changed in Drive since reads ``already_present`` in a dry run
+and still gets a new row on apply.
+
 Usage (on the Pro, with the drain's environment: same service account, database and blob root):
   python scripts/intake_drive_reenqueue.py --ids-file IDS.tsv            # dry run
   python scripts/intake_drive_reenqueue.py --ids-file IDS.tsv --apply    # download + enqueue
