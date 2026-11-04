@@ -9,6 +9,7 @@ import {
   DynamicJsonLd,
 } from "@/components/seo";
 import { RouteChangeTracker } from "@/components/analytics/RouteChangeTracker";
+import { consentModeScript } from "@/lib/analytics-consent";
 import { analyticsUrlRedactScript } from "@/lib/analytics-url";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import { ErrorBoundary } from "@/components/optimization";
@@ -204,14 +205,11 @@ export default function RootLayout({
             verified 2026-05-21 (subhi-activity-log.md): Next.js App Router IGNORES
             strategy="beforeInteractive" for <Script> rendered as <body> children,
             so we use raw <script> in <head> for guaranteed pre-paint execution.
-            Strategy: analytics_storage=granted by legitimate interest (analytics-
-            only, no PII, no ad cookies), ad_* stay denied for GDPR/UU-PDP. */}
-        <script
-          dangerouslySetInnerHTML={{
-            __html:
-              "window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('consent','default',{'analytics_storage':'denied','ad_storage':'denied','ad_user_data':'denied','ad_personalization':'denied','wait_for_update':500});gtag('consent','update',{'analytics_storage':'granted'});",
-          }}
-        />
+            Strategy: every category defaults to denied. Marketing hosts keep the
+            automatic analytics_storage=granted update; the client portal
+            (my.balizero.com, /portal/*) and any unknown host never get it
+            (COM-253, reverts DAI-104). See src/lib/analytics-consent.ts. */}
+        <script dangerouslySetInnerHTML={{ __html: consentModeScript }} />
 
         {/* Redact credential-bearing query params from page_location BEFORE
             gtag.js loads. Measured 2026-09-11: /portal/register?token=… and
