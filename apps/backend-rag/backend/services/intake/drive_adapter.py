@@ -73,6 +73,7 @@ it the run stops, loudly, ``disk_hold=1``); a file Drive no longer serves is ``m
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
@@ -158,8 +159,45 @@ def _local_blob_path(file_id: str, file_name: str) -> Path:
     return _BLOB_ROOT / file_id[:2] / f"{file_id}__{safe_name}"
 
 
+def _write_all(fd: int, data: bytes) -> None:
+    """os.write until every byte is out: one call may take fewer (the seam the tests break a write at)."""
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        if written <= 0:
+            raise OSError("a write made no progress")
+        view = view[written:]
+
+
+def _write_atomically(dest: Path, data: bytes) -> None:
+    """Put ``data`` at ``dest`` in one step: it is staged beside the destination and renamed onto it.
+
+    A write that fails (disk full, an I/O error, an interrupt) leaves no file at ``dest`` and no stage: a
+    blob already there is never truncated and a missing one never shows up half written. The stage lives in
+    the destination's directory (so the rename stays inside one filesystem), carries a name of its own that
+    holds no part of the Drive name, and gets the mode a plain write of the file would have given it.
+    Atomic against a failed write, not against a power cut: nothing is fsynced, as before.
+    """
+    stage = dest.parent / f".stage-{os.urandom(8).hex()}.part"
+    fd = os.open(stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    try:
+        try:
+            _write_all(fd, data)
+        finally:
+            os.close(fd)
+        os.replace(stage, dest)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(stage)
+        raise
+
+
 async def _download_file(drive_service, file_id: str, dest: Path) -> int:
-    """Download Drive file bytes to dest via get_media. Returns byte size."""
+    """Download Drive file bytes to dest via get_media. Returns byte size.
+
+    The file appears at ``dest`` whole or not at all (``_write_atomically``): the drain and the re-enqueue
+    both come through here, and a blob that ``enqueue`` hashes must never be a truncated one.
+    """
     import asyncio
     import io
 
@@ -176,7 +214,7 @@ async def _download_file(drive_service, file_id: str, dest: Path) -> int:
 
     data = await asyncio.to_thread(_blocking_download)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(data)
+    _write_atomically(dest, data)
     return len(data)
 
 
