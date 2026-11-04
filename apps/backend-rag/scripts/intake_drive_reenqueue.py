@@ -39,11 +39,14 @@ before any Drive or database call, and the message names a line NUMBER, never wh
 
 Output: ONE JSON line of counts on stdout (``apply`` 0/1, ``duplicate_ids``, then the counters of the
 run: ``requested``, ``would_enqueue_new``, ``enqueued_new``, ``already_present``, ``skipped_*``,
-``missing``, ``errors``, ``not_attempted``, ``disk_hold``). Logs go to stderr and carry Drive ids and
-counts only, never a file name or a path (``source_path`` goes to the queue row, as in the drain). They
-leave through ONE handler that lets only this CLI's and the Drive adapter's lines through: the records of
-every other logger, the Drive client's start-up lines that name folders included, are dropped, or at
-WARNING and above replaced by a line that names the logger and the exception class and nothing else.
+``missing``, ``errors``, ``not_attempted``, ``disk_hold``). Logs go to stderr and carry Drive ids,
+counts and exception class names only, never a file name, a path, a Workspace address or the text of an
+exception (``source_path`` goes to the queue row, as in the drain). That holds where each record is
+created: a name never enters a record, so no handler, this one or any that other code attaches anywhere,
+can print one. This CLI and the Drive adapter log that way, and so does the Drive client since #9236. The
+one handler this CLI installs is terminal hygiene only: it prints the lines of this CLI and of the Drive
+adapter and keeps the noise of every other logger off the terminal (below WARNING a record is dropped,
+from WARNING up it becomes a line that names the logger and the exception class).
 
 Exit: 0 ok; 2 bad input or configuration (nothing was touched); 3 the run had errors, stopped at the
 disk floor (``disk_hold=1``), could not start (database or Drive service) or could not close the database.
@@ -84,9 +87,12 @@ MAX_FILE_BYTES = 4 * 1024 * 1024
 EXIT_OK, EXIT_BAD_INPUT, EXIT_ERRORS = 0, 2, 3
 DEFAULT_DSN = "postgresql://nuzantara@127.0.0.1:5432/nuzantara_dev"
 
-# The Drive client this CLI builds logs the NAMES of the folders it checks at start-up, and the raw text of
-# the exception when one check fails. Only the two loggers below write lines that carry Drive ids and counts
-# and nothing else; the one handler below is the only way a log record leaves this process.
+# Names never enter a log record on this path: this CLI and the Drive adapter log Drive ids, counts and
+# exception class names, and the Drive client does the same since #9236 (it used to put the folder names and
+# the raw text of a failed check in its start-up lines). That is the guarantee, held where a record is
+# created: a handler cannot hold it, because any code can attach one anywhere. The handler below is terminal
+# hygiene: it prints the lines of the two loggers named here and keeps every other logger's noise off the
+# terminal.
 _SAFE_LOGGERS = frozenset({"intake_drive_reenqueue", "backend.services.intake.drive_adapter"})
 _HANDLER_NAME = "intake_drive_reenqueue.safe_stderr"
 _PLAIN = re.compile(r"[A-Za-z0-9_.]{1,100}")
@@ -98,12 +104,14 @@ def _plain(word: object) -> str:
 
 
 class _SafeStderr(logging.Handler):
-    """The only route of a log record to stderr in this process.
+    """What this process prints on stderr as a log line: terminal hygiene, not a privacy guarantee.
 
-    The two loggers of _SAFE_LOGGERS are printed as they are, without any traceback. A record of any other
-    logger (the Drive client, Google's libraries, the database driver) is dropped below WARNING, and at
-    WARNING or above is replaced by a constant line that names the logger and, when the record carried one,
-    the exception CLASS: never its message, its text or its traceback.
+    It does not keep names out of the logs (they never enter a record: see the comment above) and it is not
+    the only way a record leaves this process: a handler attached anywhere else is handed every record, as
+    it always was. The two loggers of _SAFE_LOGGERS are printed as they are, without any traceback. A record
+    of any other logger (the Drive client, Google's libraries, the database driver) is dropped below
+    WARNING, and at WARNING or above is replaced by a constant line that names the logger and, when the
+    record carried one, the exception CLASS: never its message, its text or its traceback.
     """
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -129,7 +137,11 @@ class _SafeStderr(logging.Handler):
 
 
 def _install_safe_logging() -> None:
-    """Make _SafeStderr the process's only log route to the terminal."""
+    """Put _SafeStderr on the root and take the other terminal handlers of the root off it.
+
+    Hygiene: a third-party record is then printed once, as a constant line, and not also whole by a handler
+    somebody left on the root. Handlers anywhere else are left alone.
+    """
     root = logging.getLogger()
     for handler in list(root.handlers):
         stream = getattr(handler, "stream", None)
