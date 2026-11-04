@@ -509,6 +509,80 @@ class _Page:
     listed: bool = True
 
 
+async def _ingest_change(
+    pool: asyncpg.Pool,
+    drive_service,
+    scope_id: str,
+    change: dict[str, Any],
+    folder_cache: dict[str, dict[str, Any]],
+    counters: dict[str, int],
+    failures: list[tuple[str, bool]],
+) -> None:
+    """ONE change of the feed: skip it, or scope-check, download and enqueue it.
+
+    The body of the drain loop, moved here unchanged. It counts what it did in ``counters`` and
+    appends a change that failed to ``failures`` as ``(file_id, permanent Drive error of that
+    file?)``: a Drive, disk or DB fault of its own change is recorded there, never raised.
+    """
+    if change.get("removed"):
+        counters["skipped_removed"] += 1
+        return
+    file_meta = change.get("file") or {}
+    file_id = change.get("fileId") or file_meta.get("id")
+    if not file_id or file_meta.get("trashed"):
+        counters["skipped_removed"] += 1
+        return
+    mime_type = file_meta.get("mimeType", "")
+    if mime_type.startswith(_GOOGLE_NATIVE_PREFIX):
+        # Google-native docs have no downloadable binary blob to hash.
+        # (Folders are google-apps.folder → also skipped here.)
+        counters["skipped_native"] += 1
+        return
+
+    # Scope filter (m227): only files whose ancestor chain reaches the
+    # watched root are ingested; the walk yields the relative folder path.
+    try:
+        rel_dir = await _resolve_relative_dir(
+            drive_service, file_meta.get("parents"), scope_id, folder_cache
+        )
+    except Exception as exc:
+        # A lookup that FAILED says nothing about the scope: retry the change (cursor
+        # held, same bookkeeping as a failed download), never count it out of scope.
+        why = _failure_summary(exc)
+        logger.warning("drain_drive: ancestor walk failed for file_id=%s (%s)", file_id, why)
+        counters["errors"] += 1
+        failures.append((file_id, _is_permanent_file_error(exc)))
+        return
+    if rel_dir is None:
+        counters["skipped_out_of_scope"] += 1
+        return
+
+    file_name = file_meta.get("name", file_id)
+    source_path = f"{rel_dir}/{file_name}" if rel_dir else file_name
+    dest = _local_blob_path(file_id, file_name)
+    try:
+        byte_size = await _download_file(drive_service, file_id, dest)
+        res = await enqueue(
+            pool,
+            source=_SOURCE,
+            source_ref=f"drive:{file_id}",
+            blob_path=dest,
+            mime_type=mime_type or None,
+            byte_size=byte_size,
+            source_path=source_path,
+        )
+    except Exception as exc:
+        why = _failure_summary(exc)
+        logger.error("drain_drive enqueue failed for file_id=%s (%s)", file_id, why)
+        counters["errors"] += 1
+        failures.append((file_id, _is_permanent_file_error(exc)))
+        return
+    if res.was_new:
+        counters["enqueued_new"] += 1
+    else:
+        counters["already_present"] += 1
+
+
 async def _drain_page(
     pool: asyncpg.Pool,
     drive_service,
@@ -538,63 +612,9 @@ async def _drain_page(
     failures: list[tuple[str, bool]] = []  # (file_id, permanent Drive error of that file?)
 
     for change in changes:
-        if change.get("removed"):
-            counters["skipped_removed"] += 1
-            continue
-        file_meta = change.get("file") or {}
-        file_id = change.get("fileId") or file_meta.get("id")
-        if not file_id or file_meta.get("trashed"):
-            counters["skipped_removed"] += 1
-            continue
-        mime_type = file_meta.get("mimeType", "")
-        if mime_type.startswith(_GOOGLE_NATIVE_PREFIX):
-            # Google-native docs have no downloadable binary blob to hash.
-            # (Folders are google-apps.folder → also skipped here.)
-            counters["skipped_native"] += 1
-            continue
-
-        # Scope filter (m227): only files whose ancestor chain reaches the
-        # watched root are ingested; the walk yields the relative folder path.
-        try:
-            rel_dir = await _resolve_relative_dir(
-                drive_service, file_meta.get("parents"), scope_id, folder_cache
-            )
-        except Exception as exc:
-            # A lookup that FAILED says nothing about the scope: retry the change (cursor
-            # held, same bookkeeping as a failed download), never count it out of scope.
-            why = _failure_summary(exc)
-            logger.warning("drain_drive: ancestor walk failed for file_id=%s (%s)", file_id, why)
-            counters["errors"] += 1
-            failures.append((file_id, _is_permanent_file_error(exc)))
-            continue
-        if rel_dir is None:
-            counters["skipped_out_of_scope"] += 1
-            continue
-
-        file_name = file_meta.get("name", file_id)
-        source_path = f"{rel_dir}/{file_name}" if rel_dir else file_name
-        dest = _local_blob_path(file_id, file_name)
-        try:
-            byte_size = await _download_file(drive_service, file_id, dest)
-            res = await enqueue(
-                pool,
-                source=_SOURCE,
-                source_ref=f"drive:{file_id}",
-                blob_path=dest,
-                mime_type=mime_type or None,
-                byte_size=byte_size,
-                source_path=source_path,
-            )
-        except Exception as exc:
-            why = _failure_summary(exc)
-            logger.error("drain_drive enqueue failed for file_id=%s (%s)", file_id, why)
-            counters["errors"] += 1
-            failures.append((file_id, _is_permanent_file_error(exc)))
-            continue
-        if res.was_new:
-            counters["enqueued_new"] += 1
-        else:
-            counters["already_present"] += 1
+        await _ingest_change(
+            pool, drive_service, scope_id, change, folder_cache, counters, failures
+        )
 
     # Move our cursor to the feed's continuation, unless a change of this page failed: then
     # HOLD it (the page is re-listed next tick; enqueue is idempotent). The hold has no tick
