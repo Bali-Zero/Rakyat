@@ -15,13 +15,15 @@ sentinel.
 R1, no Drive name reaches any handler, is held where a record is CREATED and never in a handler: the Drive
 client logs ids, counts and class names since #9236, and the tests run its REAL constructor over a fake Drive
 whose every name is the sentinel, with a foreign observer at six places. On a base without #9236 they are RED
-(the client puts folder names and the raw text of a failed check in its start-up lines).
+(the client puts folder names and the raw text of a failed check in its start-up lines, and the raw text
+of a failed decode of its credentials in its debug lines).
 """
 
 from __future__ import annotations
 
 import ast
 import asyncio
+import base64
 import contextlib
 import functools
 import importlib.util
@@ -1084,6 +1086,15 @@ ADAPTER_LOGGER, CLI_LOGGER = SAFE_LOGGERS[1], SAFE_LOGGERS[0]
 DELEGATE = (
     "delegate-6f1c@example.invalid"  # a Workspace address made up for the tests: never logged
 )
+KEY = "ZQX-key-6f1c"  # stands for the private key of the service account: never logged
+FORBIDDEN = (NAME, DELEGATE, KEY)  # what no record of a run may hold, whatever the run does
+
+
+def _account() -> str:
+    """The service account the fake settings hold: its key is a canary."""
+    return json.dumps(
+        {"type": "service_account", "client_email": "synthetic@example.invalid", "private_key": KEY}
+    )
 
 
 def _sentinel_http_error(status: int, reason: str, where: str) -> HttpError:
@@ -1100,14 +1111,52 @@ def _sentinel_http_error(status: int, reason: str, where: str) -> HttpError:
     return HttpError(httplib2.Response({"status": status}), json.dumps(body).encode(), uri=uri)
 
 
+def _undecodable() -> str:
+    """Base64 whose bytes are not UTF-8: the error of decoding them holds them, sentinel included, in .object."""
+    return base64.b64encode(b"\xff\xfe" + NAME.encode()).decode()
+
+
+def _not_json() -> str:
+    """Base64 of a text that is not JSON: the error of parsing it holds the text, sentinel included, in .doc."""
+    return base64.b64encode(f"not json {NAME}".encode()).decode()
+
+
+SHAPES = {  # the credentials the client is given, by shape
+    "creds-base64": base64.b64encode(_account().encode()).decode(),  # parses at the second try
+    "creds-undecodable": _undecodable(),
+    "creds-not-json": _not_json(),
+}
+# the client refuses its credentials: no API client is built and the run has no counts to print
+REFUSED = {"creds-undecodable", "creds-not-json"}
+
+
+def _decode_errors(payload: str) -> list[str]:
+    """The text of the error that each of the client's two parses of ``payload`` raises (raw JSON, then
+    base64): what its log lines must never say. The stdlib's errors do not carry the payload in their text,
+    so the sentinel in the payload is for the routes that do: repr, exc_info and the payload itself."""
+    texts = []
+    for parse in (
+        lambda: json.loads(payload),
+        lambda: json.loads(base64.b64decode(payload).decode("utf-8")),
+    ):
+        try:
+            parse()
+        except Exception as exc:
+            texts.append(str(exc))
+    return texts
+
+
 class RealCtor:
     """The CLI around the REAL ServiceAccountDriveService constructor, a fake Drive API and a fake pool.
 
     Nothing real can be reached: the settings the constructor reads, its credentials factory and the
     discovery build are replaced. Every folder it checks at start-up and every file the run reads carries the
     sentinel in its name. ``companies`` is what the check of the last folder does: "ok" finds it, "runtime"
-    raises a RuntimeError whose text holds the sentinel, "http" an HttpError whose uri and body hold it.
-    ``delegated`` makes the client impersonate that (made-up) Workspace address.
+    raises a RuntimeError whose text holds the sentinel, "http" an HttpError whose uri and body hold it,
+    "trashed" finds it in the bin. ``delegated`` makes the client impersonate that (made-up) Workspace
+    address. ``credentials`` replaces the service account it reads by one of SHAPES. ``forbidden`` is every
+    string that no record of a run may hold: the sentinel, the address, the key, and for ``credentials``
+    the payload and the text of each error that parsing it raises.
     """
 
     def __init__(
@@ -1117,6 +1166,7 @@ class RealCtor:
         *,
         companies: str = "runtime",
         delegated: str | None = None,
+        credentials: str | None = None,
     ) -> None:
         import backend.services.integrations.service_account_drive_service as svc
 
@@ -1134,9 +1184,13 @@ class RealCtor:
             real.discovery.append((api, version))
             return real.drive.service
 
-        account = json.dumps(
-            {"type": "service_account", "client_email": "synthetic@example.invalid"}
-        )
+        account = _account()
+        self.forbidden: tuple[str, ...] = FORBIDDEN
+        if credentials is not None:
+            errors = _decode_errors(credentials)
+            assert all(errors)  # an error without a text would be found in every record
+            account = credentials
+            self.forbidden += (credentials, *errors)
         settings = types.SimpleNamespace(
             google_credentials_json=account,
             google_drive_root_folder_id=ROOT_ID,
@@ -1164,14 +1218,15 @@ class RealCtor:
             self.drive.errors[COMPANIES_ID] = _sentinel_http_error(404, "notFound", COMPANIES_ID)
         else:
             self.drive.add(COMPANIES_ID, f"{NAME}-companies", [])
+            self.drive.items[COMPANIES_ID]["trashed"] = companies == "trashed"
         self.drive.add("DIR", f"{NAME}-dir", [SCOPE], "application/vnd.google-apps.folder")
         self.drive.add(fid(1), f"{NAME}-1.pdf", ["DIR"])
 
     def ingest_faults(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """Seven ids that end in seven different ways, every fault holding the sentinel in its text.
+        """Eight ids that end in eight different ways, every fault holding the sentinel in its text.
 
         1 is fine; 2 fails at files.get; 3 is gone; 4 and 5 fail to download; 6 fails to enqueue; 7 has an
-        ancestor whose lookup fails. A dry run cannot ask the queue.
+        ancestor whose lookup fails; 8 has an ancestor that is gone. A dry run cannot ask the queue.
         """
         named = f"cannot read {NAME}"
         _patch_apply_path(monkeypatch, tmp_path)
@@ -1190,12 +1245,14 @@ class RealCtor:
 
         monkeypatch.setattr(da, "_download_file", download)
         monkeypatch.setattr(da, "enqueue", enqueue)
-        for i in range(2, 8):
+        for i in range(2, 9):
             self.drive.add(fid(i), f"{NAME}-{i}.pdf", ["DIR"])
         self.drive.errors[fid(2)] = _sentinel_http_error(500, "backendError", fid(2))
         self.drive.errors[fid(3)] = _sentinel_http_error(404, "notFound", fid(3))
         self.drive.items[fid(7)]["parents"] = ["LOST"]
         self.drive.errors["LOST"] = RuntimeError(named)
+        self.drive.items[fid(8)]["parents"] = ["GONE"]
+        self.drive.errors["GONE"] = _sentinel_http_error(404, "notFound", "GONE")
         self.pool.lookup_error = RuntimeError(named)
 
 
@@ -1204,6 +1261,8 @@ CASES = {
     "apply": [0],
     "folder-errors": [0],
     "ingest-errors": [3, 3],
+    "creds-undecodable": [3],
+    "creds-not-json": [3],
 }  # case: exit codes
 PLACES = [
     "terminal-only",  # the CLI's own handler and nothing else
@@ -1218,6 +1277,7 @@ ADAPTER_FAULTS = [
     "files.get failed",
     "is gone or unreadable",
     "ancestor walk failed",
+    "no longer exists",
     "enqueue failed",
 ]
 
@@ -1226,13 +1286,23 @@ def _live(place: str, case: str) -> list[str] | None:
     """What a handler at ``place`` must have been handed in a run of ``case`` (proof that it was
     listening), or None when that run gives it nothing to hear."""
     faults = ADAPTER_FAULTS if case == "ingest-errors" else []
+    if case in REFUSED:  # both parses fail, the client is refused and the CLI says so
+        parsed = ["SA creds not raw JSON", "SA creds base64 decode failed"]
+        refused = ["Drive service"]
+        return {
+            "terminal-only": refused,  # the CLI's own line: the client's debug lines are not printed
+            "last-resort": refused,
+            "service-stderr": parsed,
+            "root-buffer": [*parsed, *refused],
+            "root-file": [*parsed, *refused],
+        }.get(place)
     if place == "last-resort":  # WARNING and above, from every logger
-        return [COMPANIES_ID] if case == "folder-errors" else faults or None
+        return [ROOT_ID, COMPANIES_ID] if case == "folder-errors" else faults or None
     if place == "terminal-only":  # the CLI's own lines; the Drive client's, as a constant line
         return ["reenqueue_drive done", *(["withheld"] if case == "folder-errors" else []), *faults]
     if place == "adapter-handler":
         return ["reenqueue_drive done", *faults]
-    service = [COMPANIES_ID] if case == "folder-errors" else [ROOT_ID]
+    service = [ROOT_ID, COMPANIES_ID] if case == "folder-errors" else [ROOT_ID]
     return service if place == "service-stderr" else [*service, "reenqueue_drive done", *faults]
 
 
@@ -1242,8 +1312,9 @@ PAIRS = [(place, case) for place in PLACES for case in CASES if _live(place, cas
 class _Tap(logging.Handler):
     """Keeps, for each record it is handed, every field a formatter, a serializer or a log shipper could print."""
 
-    def __init__(self) -> None:
+    def __init__(self, words: tuple[str, ...] = FORBIDDEN) -> None:
         super().__init__(logging.NOTSET)
+        self.words = words
         self.fields: list[str] = []
         self.exc_texts: list[str] = []
         self.records = 0
@@ -1263,21 +1334,23 @@ class _Tap(logging.Handler):
         ]
 
     def leaks(self) -> int:
-        return sum(field.count(word) for field in self.fields for word in (NAME, DELEGATE))
+        return sum(field.count(word) for field in self.fields for word in self.words)
 
 
 class _Placed:
     """One place where a foreign observer of the log sits, and what it writes."""
 
-    def __init__(self, place: str, tmp_path: Path) -> None:
+    def __init__(self, place: str, tmp_path: Path, words: tuple[str, ...]) -> None:
         self.place = place
+        self.words = words
         self.buffer = io.StringIO()
         self.path = tmp_path / "foreign.log"
         self.handlers: list[logging.Handler] = []
         self.taps: list[_Tap] = []
 
     def watch(self, logger: logging.Logger, handler: logging.Handler) -> None:
-        tap = _Tap()  # at the same place, the field-level view of what the handler is handed
+        # at the same place, the field-level view of what the handler is handed
+        tap = _Tap(self.words)
         logger.addHandler(handler)
         logger.addHandler(tap)
         self.handlers.append(handler)
@@ -1294,14 +1367,18 @@ class _Placed:
 
 @contextlib.contextmanager
 def _placed(
-    place: str, cli: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    place: str,
+    cli: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    words: tuple[str, ...] = FORBIDDEN,
 ) -> Iterator[_Placed]:
     """Every logger at DEBUG and a foreign observer at ``place``; the loggers are put back on the way out."""
     root = logging.getLogger()
     service, adapter = logging.getLogger(SERVICE_LOGGER), logging.getLogger(ADAPTER_LOGGER)
     loggers = [root, service, adapter, logging.getLogger(CLI_LOGGER)]
     saved = [(each, list(each.handlers), each.level) for each in loggers]
-    placed = _Placed(place, tmp_path)
+    placed = _Placed(place, tmp_path, words)
     try:
         for each in loggers:
             each.setLevel(logging.DEBUG)
@@ -1339,9 +1416,10 @@ def _runs_of(
     if case == "ingest-errors":
         real.ingest_faults(monkeypatch, tmp_path)
         every = tmp_path / "every.tsv"
-        every.write_text("".join(f"{fid(i)}\n" for i in range(1, 8)), encoding="utf-8")
+        every.write_text("".join(f"{fid(i)}\n" for i in range(1, 9)), encoding="utf-8")
         return [["--ids-file", str(one)], ["--ids-file", str(every), "--apply"]]
     if case == "folder-errors":
+        real.drive.items[ROOT_ID]["trashed"] = True
         real.drive.errors[INDIVIDUALS_ID] = RuntimeError(f"folder {NAME} is unreachable")
     return [["--ids-file", str(one)]]
 
@@ -1358,12 +1436,14 @@ def test_no_name_reaches_a_handler_wherever_it_sits_and_whatever_the_run_does(
     monkeypatch.setenv("INTAKE_DRIVE_SCOPE_FOLDER_ID", SCOPE)
     monkeypatch.delenv("INTAKE_DRIVE_MIN_FREE_GIB", raising=False)
     companies = "http" if case == "folder-errors" else "ok"
-    real = RealCtor(monkeypatch, cli, companies=companies, delegated=DELEGATE)
+    real = RealCtor(
+        monkeypatch, cli, companies=companies, delegated=DELEGATE, credentials=SHAPES.get(case)
+    )
     runs = _runs_of(case, real, monkeypatch, tmp_path)
     codes: list[int] = []
     outs: list[str] = []
     err = ""
-    with _placed(place, cli, monkeypatch, tmp_path) as placed:
+    with _placed(place, cli, monkeypatch, tmp_path, real.forbidden) as placed:
         for argv in runs:
             code, out, run_err = run(cli, capsys, *argv)
             codes.append(code)
@@ -1372,14 +1452,19 @@ def test_no_name_reaches_a_handler_wherever_it_sits_and_whatever_the_run_does(
         for handler in placed.handlers:
             handler.flush()
         heard = placed.written(err)
+    refused = case in REFUSED
     assert codes == CASES[case]  # the run did what the case says it does
-    assert real.discovery == [("drive", "v3")] * len(runs)  # the real constructor ran, once per run
+    # the real constructor ran once per run, and built its API client unless it refused the credentials
+    assert real.discovery == ([] if refused else [("drive", "v3")] * len(runs))
     assert all(marker in heard for marker in _live(place, case) or []), heard  # it was listening
     assert all(tap.records > 0 for tap in placed.taps)
-    assert all(out.count("\n") == 1 for out in outs)  # stdout stays one JSON line per run
-    deliveries = sum(text.count(NAME) + text.count(DELEGATE) for text in (*outs, err, heard))
+    # stdout is one JSON line per run, and none for a run that stopped before it had counts
+    assert all(out.count("\n") == (0 if refused else 1) for out in outs)
+    deliveries = sum(text.count(word) for text in (*outs, err, heard) for word in real.forbidden)
     assert deliveries + sum(tap.leaks() for tap in placed.taps) == 0
-    assert not any(NAME in text for tap in placed.taps for text in tap.exc_texts)
+    assert not any(
+        word in text for tap in placed.taps for text in tap.exc_texts for word in real.forbidden
+    )
 
 
 @pytest.mark.parametrize("place", ["terminal-only", "named-stderr", "root-buffer", "root-file"])
@@ -1429,7 +1514,7 @@ def test_the_gates_round_2_probe_finds_no_sentinel_at_any_output_handler(
 
 
 @pytest.mark.parametrize("delegated", [DELEGATE, None], ids=["made-up-address", "default-address"])
-@pytest.mark.parametrize("companies", ["ok", "runtime", "http"])
+@pytest.mark.parametrize("companies", ["ok", "runtime", "http", "trashed"])
 def test_the_real_client_constructor_creates_no_record_that_holds_a_name_or_an_address(
     companies: str,
     delegated: str | None,
@@ -1452,6 +1537,37 @@ def test_the_real_client_constructor_creates_no_record_that_holds_a_name_or_an_a
     assert ROOT_ID in said and COMPANIES_ID in said  # ids are what it says
     assert tap.leaks() == 0
     assert delegated is not None or "@" not in said  # the address it falls back to is no more said
+
+
+@pytest.mark.parametrize("shape", list(SHAPES))
+def test_the_credentials_parser_says_a_class_name_and_never_the_text_of_its_errors(
+    shape: str, cli: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R1 at the credentials, where the records are created: a payload the raw parse cannot read is tried as
+    base64; what is said of each failure is neither the failure's text, nor the payload, nor anything the
+    error holds. Two payloads fail both parses and the client refuses to start; one is readable."""
+    real = RealCtor(monkeypatch, cli, credentials=SHAPES[shape])
+    refused = shape in REFUSED
+    assert len(_decode_errors(SHAPES[shape])) == (2 if refused else 1)  # the shape is what it says
+    tap, service = _Tap(real.forbidden), logging.getLogger(SERVICE_LOGGER)
+    level = service.level
+    service.setLevel(logging.DEBUG)
+    service.addHandler(tap)
+    try:
+        if refused:
+            with pytest.raises(ValueError, match="Invalid Service Account credentials"):
+                real.svc.ServiceAccountDriveService()
+        else:
+            real.svc.ServiceAccountDriveService()
+    finally:
+        service.removeHandler(tap)
+        service.setLevel(level)
+    said = "\n".join(tap.fields)
+    assert "SA creds not raw JSON" in said  # the raw parse failed in all three
+    assert ("SA creds base64 decode failed" in said) is refused
+    assert ("Loaded Google credentials from base64-encoded JSON" in said) is not refused
+    assert tap.leaks() == 0
+    assert real.discovery == ([] if refused else [("drive", "v3")])
 
 
 def test_a_third_party_warning_reaches_the_terminal_as_a_constant_line_and_a_foreign_root_handler_goes(
