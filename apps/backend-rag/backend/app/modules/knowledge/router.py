@@ -72,7 +72,12 @@ async def semantic_search(query: SearchQuery, request: Request) -> SearchRespons
         )
 
         logger.info(
-            f"Received query: '{query.query}', collection={query.collection}, level={query.level}, limit={query.limit}",
+            # Never the query text: it can carry client PII. Length + filters only.
+            "Received query: query_len=%d, collection=%s, level=%s, limit=%s",
+            len(query.query),
+            query.collection,
+            query.level,
+            query.limit,
         )
 
         # Validate level
@@ -139,8 +144,14 @@ async def semantic_search(query: SearchQuery, request: Request) -> SearchRespons
         execution_time = (time.time() - start_time) * 1000
 
         logger.info(
-            f"Search completed: '{query.query}' (level {query.level}) -> "
-            f"{len(search_results)} results in {execution_time:.2f}ms",
+            "Search completed: query_len=%d, collection=%s (level %s, limit %s) -> "
+            "%d results in %.2fms",
+            len(query.query),
+            query.collection,
+            query.level,
+            query.limit,
+            len(search_results),
+            execution_time,
         )
 
         return SearchResponse(
