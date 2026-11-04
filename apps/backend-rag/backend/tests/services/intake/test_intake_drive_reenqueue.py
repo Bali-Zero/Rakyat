@@ -458,6 +458,12 @@ async def test_every_requested_id_lands_in_exactly_one_counter(world: World, app
     assert sum(counters[key] for key in BUCKETS) == counters["requested"]
 
 
+def test_the_outcome_counts_are_every_count_but_requested_and_disk_hold() -> None:
+    """The CLI help tells the operator the outcome counts add up to ``requested``: those are all but two."""
+    assert set(BUCKETS) == set(da._new_reenqueue_counters(0)) - {"requested", "disk_hold"}
+    assert set(ZERO) == set(da._new_reenqueue_counters(0))
+
+
 @pytest.mark.asyncio
 async def test_no_ids_means_no_drive_call(world: World) -> None:
     assert await world.run([], apply=True) == expect()

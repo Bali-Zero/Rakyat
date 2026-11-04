@@ -21,6 +21,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import types
@@ -303,6 +304,36 @@ def test_the_help_says_how_a_dry_run_can_differ_from_an_apply(wired: Wired, caps
     assert "decides by ``intake_key``" in text
     assert "reads ``already_present`` in a dry run and still gets a new row on apply" in text
     assert wired.built == {"pool": 0, "service": 0}
+
+
+def test_the_help_says_when_a_dry_run_may_be_followed_by_an_apply(
+    wired: Wired, capsys: Any
+) -> None:
+    with pytest.raises(SystemExit) as stopped:
+        wired.cli.main(["--help"])
+    assert stopped.value.code == 0
+    text = " ".join(capsys.readouterr().out.split())
+    assert (
+        "Go on to ``--apply`` only when ``errors`` and ``skipped_out_of_scope`` are both 0" in text
+    )
+    assert "(every count but ``requested`` and ``disk_hold``) add up to ``requested``" in text
+    assert "otherwise stop and look" in text
+    assert "``already_present`` is not a reason to stop" in text
+    assert "Nor are ``missing``, ``skipped_removed`` and ``skipped_native``" in text
+    assert "each one only means one id fewer for ``would_enqueue_new``" in text
+    assert wired.built == {"pool": 0, "service": 0}
+
+
+def test_every_count_the_help_names_in_its_rule_is_a_count_the_library_returns(
+    wired: Wired, capsys: Any
+) -> None:
+    with pytest.raises(SystemExit):
+        wired.cli.main(["--help"])
+    text = " ".join(capsys.readouterr().out.split())
+    rule = text[text.index("Before an apply") : text.index("Usage")]
+    named = set(re.findall(r"``([a-z_]+)``", rule)) - {"intake_key"}
+    assert {"errors", "skipped_out_of_scope", "requested"} <= named
+    assert named <= set(da._new_reenqueue_counters(0))
 
 
 # --------------------------------------------------------------------------- #

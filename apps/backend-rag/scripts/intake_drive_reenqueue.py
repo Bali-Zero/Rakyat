@@ -13,6 +13,13 @@ decides by ``intake_key`` (source, ref, blob hash, pipeline version). The two ag
 row yet. A file that was queued once and has changed in Drive since reads ``already_present`` in a dry run
 and still gets a new row on apply.
 
+Before an apply, read the dry run's JSON line. Go on to ``--apply`` only when ``errors`` and
+``skipped_out_of_scope`` are both 0 and the outcome counts (every count but ``requested`` and ``disk_hold``)
+add up to ``requested``, the number of ids you meant to send; otherwise stop and look. ``already_present``
+is not a reason to stop: an apply adds no second row for a file whose content has not changed
+(``intake_key``). Nor are ``missing``, ``skipped_removed`` and ``skipped_native``, since a file can be
+trashed, converted or deleted between two looks: each one only means one id fewer for ``would_enqueue_new``.
+
 Usage (on the Pro, with the drain's environment: same service account, database and blob root):
   python scripts/intake_drive_reenqueue.py --ids-file IDS.tsv            # dry run
   python scripts/intake_drive_reenqueue.py --ids-file IDS.tsv --apply    # download + enqueue
