@@ -250,14 +250,14 @@ describe("OverviewTab — open processes", () => {
           practice({
             id: 2,
             practice_type_name: "Annual SPT",
-            assigned_to: "angel@balizero.com",
+            assigned_to: "colleague@example.test",
           }),
         ]}
         needsViewerAction={false}
       />,
     );
     expect(within(processesSection()).getByText("You")).toBeTruthy();
-    expect(within(processesSection()).getByText("angel")).toBeTruthy();
+    expect(within(processesSection()).getByText("colleague")).toBeTruthy();
   });
 
   it("INNOCENCE: an unknown viewer never claims You", () => {
