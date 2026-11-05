@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 import backend.services.federation_alerts.actions.codex_image_gen as _codex_image_gen_mod
+import backend.services.federation_alerts.actions.codex_visual_dispatch as _codex_visual_dispatch_mod
 import backend.services.federation_alerts.actions.codex_xhigh_fix as _codex_xhigh_fix_mod
 from backend.services.federation_alerts.actions.codex_image_gen import (
     codex_image_gen_action,
@@ -258,8 +259,16 @@ async def test_image_gen_safe_name_strips_special_chars() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def _orchestrator_stand_in(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The orchestrator script is a backstage tool; dry-run only needs a path that exists.
+    script = tmp_path / "codex_visual_orchestrator.py"
+    script.write_text("")
+    monkeypatch.setattr(_codex_visual_dispatch_mod, "ORCHESTRATOR_SCRIPT", script)
+
+
 @pytest.mark.asyncio
-async def test_visual_dispatch_dry_run_returns_command() -> None:
+async def test_visual_dispatch_dry_run_returns_command(_orchestrator_stand_in: None) -> None:
     p = _Proposal(action_payload={"topic": "KEP-71/PJ/2026 SPT extension"})
     result = await codex_visual_dispatch_action(p, dry_run=True)
     assert result.success is True
@@ -286,7 +295,7 @@ async def test_visual_dispatch_rejects_oversize_topic() -> None:
 
 
 @pytest.mark.asyncio
-async def test_visual_dispatch_clamps_timeout() -> None:
+async def test_visual_dispatch_clamps_timeout(_orchestrator_stand_in: None) -> None:
     p = _Proposal(action_payload={"topic": "test", "timeout_sec": 99999})
     result = await codex_visual_dispatch_action(p, dry_run=True)
     assert result.metadata["timeout_sec"] == 7200
