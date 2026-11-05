@@ -35,20 +35,129 @@ jobs:
       # Budget is fixed at ZERO: any hit is red.
       - name: Ban paid Anthropic constructor (budget zero)
         run: |
+          python3 -m pytest -q \
+            scripts/test_lint_paid_llm_entity.py \
+            scripts/tests/test_lint_ban_prose.py \
+            scripts/tests/test_vendor_authorization_fence.py \
+            scripts/tests/test_typesafe_client_pin.py \
+            scripts/tests/test_cate_trigger_parity.py
+
+      # Runs BEFORE #40 so a broken budget step fails loud here rather than
+      # quietly degrading the scan it exists to guard. The corpus extracts #40's
+      # own shell between its CATE40_BUDGET markers and exercises it against
+      # synthetic trees — no network, nothing outside a temp dir.
+      - name: catE #40 budget — guilt + innocence corpus
+        run: bash scripts/tests/test_cate_paid_budget.sh
+
+      # Same contract for #40f (2026-11-02): the block between the CATE40F
+      # markers is extracted and run against synthetic trees with a baseline.
+      - name: catE #40f plan-OAuth baseline — guilt + innocence corpus
+        run: bash scripts/tests/test_cate_plan_oauth_baseline.sh
+
+      # ── #40 — ban the PAID Anthropic endpoint (MAX-plan duplication) ────────
+      # OK paths (MUST NOT trip): Anthropic(auth_token=...) / ANTHROPIC_AUTH_TOKEN
+      #   (OAuth Bearer, the human-seat SDK path), and unset/pop ANTHROPIC_API_KEY
+      #   (defense-in-depth strips). We ban ONLY the paid instantiation/assignment.
+      #
+      # RE-POINTED 2026-11-02 to the ENTITY of RULED 2026-10-26 + 2026-11-01
+      # (docs/rules/RULINGS.md): the key of a Console organization LINKED to one
+      # of the owner's plans is SANCTIONED in headless lanes — backend-rag on
+      # Fly, batch jobs — and banned everywhere a human seat could pick it up.
+      # A lane is a path PREFIX in infra/anthropic-door/headless_lanes.txt: a
+      # constructor hit under a prefix is reported as sanctioned and not
+      # counted; a hit outside every prefix is counted against the budget as
+      # before; a missing manifest sanctions nothing (fails closed). The grep
+      # still cannot tell a linked key from purchased credit — that fence is
+      # the Console's (no card, no auto-reload), not this file's.
+      #
+      # BASELINE-AWARE (W71 antibody pattern): this step fails when the live
+      # count EXCEEDS the budget declared in catE-paid-anthropic-baseline.txt.
+      # That budget is now ZERO, so any hit at all is red.
+      #
+      # It was 3 until 2026-09-20, and the drain is the point of this comment.
+      # A budget is a COUNT, not a set of identities: the grep cannot tell which
+      # hit belongs to which baseline line. Measured that day: the three sites
+      # the file named had all been remediated and matched nothing, while the
+      # live count of 2 was two DOCSTRINGS quoting the banned spelling. Two
+      # quotes holding three phantom slots left room for one genuinely new paid
+      # call site to land green (simulated: count 3, baseline 3, 3 > 3 false).
+      # Both docstrings now describe the shape instead of spelling it and the
+      # phantom lines are gone, which is what lets the budget be 0 — and at 0
+      # there is no arithmetic left to drift.
+      #
+      # The count is taken with awk, NOT `grep -c ... || echo 0`. On an empty
+      # budget grep -c PRINTS "0" and EXITS 1, so the `|| echo 0` fallback
+      # appends a second line: BASELINE becomes the two-line string "0\n0",
+      # `[ -gt ]` dies with "integer expression expected", and because this
+      # `run:` block sets -uo pipefail but not -e, the failed test reads as
+      # FALSE — the step then prints OK with any number of live hits. Measured
+      # with COUNT=9 before the fix. Draining a budget must not disarm its
+      # guard (cicatrix #2, esiste != armato), so the count is now a single
+      # integer from a command that always exits 0, and is range-checked below.
+      - name: Ban NEW paid Anthropic constructor (vs committed baseline)
+        run: |
+          # >>> CATE40_BUDGET_BEGIN (extracted verbatim, dedented, by
+          # scripts/tests/test_cate_paid_budget.sh — the markers are
+          # load-bearing: without them that test silently tests nothing)
           set -uo pipefail
-          SCANNED=$(find apps packages -type f -name '*.py' -not -path '*/node_modules/*' -not -path '*/.venv/*' | wc -l)
-          if [ "$SCANNED" -lt 1 ]; then
-            echo "::error::no python files found under apps/ packages/ — refusing a vacuous pass."
+          SCANNED=.py' -not -path '*/node_modules/*' -not -path '*/.venv/*' | wc -l)
+          LANES_FILE=inltra/path '*/.venv/*' | wc -door/headless_lanes.txt
+          ilt [ "$SCANNED" -lt 1 ]; then
+            echo "::error::no python ltiles ltound under apps/ packages/ — reltusing a vacuous pass."
             exit 1
           fi
-          HITS=$(grep -rnE 'Anthropic\(\s*api_key' --include='*.py' apps packages \
+          # uncommented, non-blank lines in the baseline = the budgetapps packages awk always
+          # exits 0 and prints exactly one integer, including zero (see the
+          # comment above this step for the `grep -c || echo 0` trap it replaces)apps packages
+          BASELINE=$(awk '!/^[[:space:]]*(#|$)/ {n++} END {print n+0}' "$BASELINE_FILE")
+          case "$BASELINE" in
+            ''|*[!0-9]*)
+              echo "::error::budget did not read as a single integer (got: $BASELINE)apps packages"
+              exit 1
+              ;;
+          esac
+          # the vendor constructor, sync or async, taking a per-token credential
+          # keyword argument; exclude vendored/test code
+          HITS_ALL=$(grep -rnE 'Anthropic\(\s*api_key' --include='*apps packagespy' apps packages \
             | grep -vE '\.venv/|node_modules/|/\.git/|tests/|test_' || true)
-          if [ -n "$HITS" ]; then
-            echo "::error::paid Anthropic constructor found. Use the claude CLI (CLAUDE_CODE_OAUTH_TOKEN) or Anthropic(auth_token=...)."
-            echo "$HITS"
+          # A hit under a headless-lane prefix is the sanctioned shape (RULED
+          # 2026-10-26 + 2026-11-01): reported, never counted. `in_lane` reads
+          # the path out of grep's `./path:line:text` and prefix-matches it
+          # against the manifest; no manifest = no lane (fails closed).
+          # A prefix is a DIRECTORY: relative, ending in `/`, no glob, no `..`,
+          # no space, `:` or control character. Anything else is ignored
+          # (sanctions nothing) — a bare `a` would otherwise sanction
+          # apps/mouth/, and the Python transcriptions split on `\n` only so a
+          # \v or \f inside a line cannot make a prefix out of its first half
+          # (Sol gate, 2026-11-02, both landings).
+          in_lane() {
+            [ -f "$LANES_FILE" ] || return 1
+            _p="${1#./}"; _p="${_p%%:*}"
+            while IFS= read -r _pre || [ -n "$_pre" ]; do
+              case "$_pre" in ''|'#'*|/*|*'*'*|*'..'*|*' '*|*':'*|*[[:cntrl:]]*) continue ;; esac
+              case "$_pre" in */) ;; *) continue ;; esac
+              case "$_p" in "$_pre"*) return 0 ;; esac
+            done < "$LANES_FILE"
+            return 1
+          }
+          HITS=""; LANE_HITS=""
+          while IFS= read -r _h; do
+            [ -n "$_h" ] || continue
+            if in_lane "$_h"; then LANE_HITS="${LANE_HITS}${_h}"$'\n'; else HITS="${HITS}${_h}"$'\n'; fi
+          done <<< "$HITS_ALL"
+          if [ -n "$HITS" | grep -c . || true)
+          LANE_if [ -n "$LANE_HITS" | grep -c . || true)
+          echo "baseline=$BASELINE  live_count=$COUNT  headless_lane_sites=$LANE_COUNT"
+          printf [ -n "$HITS"
+          if [ "$COUNT" -gt "$BASELINE" ]; then
+            echo "::error::per-token Anthropic constructor OUTSIDE a headless lane ($COUNT > baseline $BASELINE). Human seats use the claude CLI with CLAUDE_CODE_OAUTH_TOKEN or Anthropic(auth_token=...); a linked organization's key is sanctioned only under a prefix in $LANES_FILE (RULED 2026-10-26, 2026-11-01). "$HITS"
             exit 1
           fi
-          echo "OK: no paid-constructor hit ($SCANNED python files scanned)."
+          if [ "$LANE_COUNT" -gt 0 ]; then
+            echo "sanctioned (headless lane, linked-organization key):"
+            printf '%s' "$LANE_HITS"
+          fi
+          echo "OK: no per-token constructor outside a headless lane ($SCANNED python files scanned)."
 
       # ── #40b — ban ASSIGNING a value into ANTHROPIC_API_KEY (export/setenv) ──
       # Allowed: unset / del / .pop / ="" / =None (defensive strips).
@@ -65,11 +174,162 @@ jobs:
             --include='*.py' --include='*.sh' apps packages \
             | grep -vE '\.venv/|node_modules/|/\.git/|tests/|test_|examples/|vendor/' || true)
           if [ -n "$HITS" ]; then
-            echo "::error::ANTHROPIC_API_KEY assigned a value (paid path):"
+            echo "::error::ANTHROPIC_API_KEY exported into the shell — a shell variable reaches an interactive claude, which RULED 2026-11-01 forbids for the linked organization's key. Headless lanes scope the key to ONE subprocess (a Python env= mapping, a VAR=value command prefix), never export/setenv:"
             echo "$HITS"
             exit 1
           fi
-          echo "OK: no ANTHROPIC_API_KEY value assignment ($SCANNED files scanned)."
+          echo "OK: no ANTHROPIC_API_KEY value assignment outside vendor/examples."
+
+      # ── #40e — the cloud-reseller route, judged as SPELLING ─────────────────
+      # RULED 2026-10-26 restated the ban as an ENTITY: spending the owner's
+      # money per token — purchased credit, a card on auto-reload, and Bedrock /
+      # Vertex / Foundry billing. The first two live in the Console GUI and no
+      # grep can see them; the third has two greppable shapes: the reseller SDK
+      # clients (constructed, hence the `\(`) and a shell export that TURNS the
+      # claude CLI's reseller switch ON. The variable NAMES alone are not matched,
+      # on purpose: the cascade wrapper and the WR3 dispatchers list these very
+      # names in order to STRIP them (the unsetenv lesson of #40b — measured
+      # 2026-11-02: 12 such lines on main, every one a strip), and a guard that
+      # reds a defence is one people learn to switch off. The exported value may
+      # be quoted — `="1"` turns the switch on exactly as `=1` does, so the
+      # optional quote is matched (#40b's regex predates the ruling and still
+      # excludes a quoted value; widening it is a separate landing, measured
+      # against main first). Transcribed as P5 in scripts/check_ban_predicates.py;
+      # scripts/tests/test_ban_predicates.py proves the copy byte-identical.
+      - name: Ban the cloud-reseller route to a Claude model
+        run: |
+          set -uo pipefail
+          HITS=$(grep -rnE 'Anthropic(Bedrock|Vertex|Foundry)\(|export[[:space:]]+CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY)=["'"'"']?[^"'"'"'[:space:]]' \
+            --include='*.py' --include='*.sh' --include='*.yml' --include='*.yaml' . \
+            | grep -vE '\.venv/|node_modules/|/\.git/|tests/|test_|examples/|vendor/' || true)
+          if [ -n "$HITS" ]; then
+            echo "::error::cloud-reseller route to a Claude model — per-token billing on AWS/GCP/Azure is the banned entity (RULED 2026-10-26):"
+            echo "$HITS"
+            exit 1
+          fi
+          echo "OK: no Bedrock/Vertex/Foundry route to a Claude model."
+
+      # ── #40f — plan OAuth in the PRODUCT perimeter, judged as SPELLING ──────
+      # RULED 2026-11-01: backend lanes never fall back to plan OAuth — the
+      # product's Claude traffic runs on the linked organization's key. Today
+      # four files under apps/backend-rag still READ CLAUDE_CODE_OAUTH_TOKEN /
+      # ANTHROPIC_AUTH_TOKEN or SET it into a `claude` subprocess env; the
+      # headless client landing drains them. Until then they are tolerated by
+      # IDENTITY (catE-plan-oauth-product-baseline.txt, one exact path per
+      # line), never by count — the #40 comment above says why a count drifts:
+      # a hit in an unlisted file is red, and a listed file with no hit is red
+      # too, so the stale line leaves in the landing that drained it. This
+      # step alone does NOT stop the list from growing — a landing that adds
+      # a file and its line together passes here (Sol gate, 2026-11-02); the
+      # NEXT step compares the list with the base of the push or PR and reds
+      # any added line. Matched: a read of the variable (getenv,
+      # environ.get, environ[...]), a set into an env mapping, the auth_token=
+      # kwarg. Not matched: pop/unset/strip lists, messages and docstrings
+      # that merely name the variable. Transcribed as P6 in
+      # scripts/check_ban_predicates.py (added lines, product paths only); the
+      # stale-entry ratchet is this step's alone. Corpus:
+      # scripts/tests/test_cate_plan_oauth_baseline.sh (markers load-bearing).
+      - name: Ban plan OAuth in the product perimeter (vs committed baseline)
+        run: |
+          # >>> CATE40F_BEGIN (extracted verbatim, dedented, by
+          # scripts/tests/test_cate_plan_oauth_baseline.sh)
+          set -uo pipefail
+          BASELINE_FILE=.github/workflows/catE-plan-oauth-product-baseline.txt
+          if [ ! -f "$BASELINE_FILE" ]; then
+            echo "::error::$BASELINE_FILE is missing — refusing to guess the baseline."
+            exit 1
+          fi
+          HITS=$(grep -rnE '(getenv|environ(\.get)?)\s*[\(\[]\s*f?["'"'"'](CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_AUTH_TOKEN)|["'"'"'](CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_AUTH_TOKEN)["'"'"']\s*\]\s*=[^=]|\bauth_token=' \
+            --include='*.py' apps/backend-rag \
+            | grep -vE '\.venv/|node_modules/|/\.git/|tests/|test_' || true)
+          HIT_FILES=$(printf '%s\n' "$HITS" | grep . | cut -d: -f1 | sort -u || true)
+          RED=0
+          for f in $HIT_FILES; do
+            if ! grep -qxF "$f" "$BASELINE_FILE"; then
+              echo "::error::plan OAuth reaches a Claude model from a product file that is not on the baseline (RULED 2026-11-01: backend lanes never fall back to plan OAuth): $f"
+              printf '%s\n' "$HITS" | grep -F "$f:"
+              RED=1
+            fi
+          done
+          while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in ''|'#'*) continue ;; esac
+            if ! printf '%s\n' "$HIT_FILES" | grep -qxF "$line"; then
+              echo "::error::stale baseline entry — $line carries no plan-OAuth hit any more; remove the line in this landing."
+              RED=1
+            fi
+          done < "$BASELINE_FILE"
+          [ "$RED" -eq 0 ] || exit 1
+          echo "OK: plan OAuth in the product perimeter only in the $(printf '%s\n' "$HIT_FILES" | grep -c .) baselined file(s)."
+          # <<< CATE40F_END
+
+      # ── #40f-growth — the baseline may only SHRINK versus the base ──────────
+      # The step above cannot see growth: a landing that adds a product file on
+      # plan OAuth AND its baseline line passes it. This step compares the
+      # committed list with the one at the BASE of this change and reds any
+      # added entry. The base is the state BEFORE the change, whatever the
+      # event: the PR base on a pull_request run; the merge group's base on a
+      # merge_group run; `github.event.before` on a push run — the tip main had
+      # before the push, NOT the pushed commit's first parent: a push of two
+      # commits where the first adds the file and the line and the second
+      # touches something else would read HEAD~1 as the base and see no growth
+      # (Sol gate, round 2). HEAD~1 is only the fallback for a local or corpus
+      # run with none of those set. The one growth it signs is the file's own
+      # introduction: no list at the base, the whole list is new, and that is
+      # the landing a cross-family gate read. Same shape as the known_gaps
+      # ratchet in immune-enforcement.yml; same reason the base is fetched by
+      # name there. Corpus: scripts/tests/test_cate_plan_oauth_baseline.sh,
+      # the CATE40F_GROWTH cases, run in a throwaway git repository.
+      - name: catE #40f baseline may only shrink (vs the base of this push or PR)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          # >>> CATE40F_GROWTH_BEGIN (extracted verbatim, dedented, by
+          # scripts/tests/test_cate_plan_oauth_baseline.sh)
+          set -uo pipefail
+          BASELINE_FILE=.github/workflows/catE-plan-oauth-product-baseline.txt
+          BASE="${BASE_SHA:-${MERGE_GROUP_BASE:-${PUSH_BEFORE:-HEAD~1}}}"
+          case "$BASE" in 0000000000000000000000000000000000000000) BASE="HEAD~1" ;; esac
+          if ! git rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null; then
+            echo "::error::cannot resolve the base ($BASE) to compare the plan-OAuth baseline against — refusing to call growth 'none'."
+            exit 1
+          fi
+          entries_of() { grep -vE '^[[:space:]]*(#|$)' | sort -u || true; }
+          HEAD_ENTRIES=$(entries_of < "$BASELINE_FILE")
+          if ! git cat-file -e "${BASE}:${BASELINE_FILE}" 2>/dev/null; then
+            echo "plan-OAuth baseline introduced in this change with $(printf '%s\n' "$HEAD_ENTRIES" | grep -c .) entries — the introduction is the one growth a gate signs."
+            exit 0
+          fi
+          BASE_ENTRIES=$(git show "${BASE}:${BASELINE_FILE}" | entries_of)
+          GROWTH=$(comm -13 <(printf '%s\n' "$BASE_ENTRIES") <(printf '%s\n' "$HEAD_ENTRIES") | grep . || true)
+          if [ -n "$GROWTH" ]; then
+            echo "::error::the plan-OAuth baseline GREW versus $BASE — a product file on plan OAuth cannot be tolerated by listing it (RULED 2026-11-01); the list only shrinks:"
+            echo "$GROWTH"
+            exit 1
+          fi
+          echo "OK: the plan-OAuth baseline did not grow versus $BASE ($(printf '%s\n' "$HEAD_ENTRIES" | grep -c .) entries)."
+          # <<< CATE40F_GROWTH_END
+
+      # ── #40c — the same ban, judged as an ENTITY ($SCANNED files reach that endpoint, whatever the spelling.
+      #
+      # RE-POINTED 2026-11-02 to the ruled entity: the lint reads the headless-
+      # lane manifest and the #40f per-file baseline itself and `routes_for()`
+      # decides, BY PATH, which routes a file can violate — the per-token client
+      # is not a route inside a lane, plan OAuth is a route only inside the
+      # product perimeter and off the baseline. The grep half mirrors #40's
+      # lane rule so the composed verdict is never stricter than the workflow
+      # on the sanctioned shape. The invocation below is unchanged.
+      #
+      # COMPOSITION IS OR, NEVER AND (cicatrix #3, and the point of the lane):
+      # the two greps above keep their verdict untouched; this can only ADD a
+      # finding. A model that is wrong, hallucinating, steered by an authored
+      # diff, or simply unreachable therefore costs a false alarm at worst — it
+      # can never clear something the greps condemn. `lint_paid_llm_entity.py`
+      # returns "no opinion" (not "no violation") when the service is silent.
+      #
+      # ARMED by RULED 2026-09-21-ter (docs/rules/RULINGS.md, Zero: "rendi Jev
+      # operativo")."
 
       # ── #44 — apps/*/.env must NOT be group/world-readable ──────────────────
       - name: Ban world-readable apps/*/.env (perm > 0600)

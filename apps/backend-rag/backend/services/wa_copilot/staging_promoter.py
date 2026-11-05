@@ -57,8 +57,8 @@ SCHEMA_VERSION = "v1.0"
 # the message is classified as 'outbound' (team → client). Otherwise inbound.
 # Resolver downstream (S1.3) refines via phone/LID/email cascade.
 TEAM_NAME_TOKENS: tuple[str, ...] = (
-    "bali zero",  # "Cetedu AG", "Ari Bali Zero", "Antonello ~ Bali Zero", etc.
-    " bz",        # trailing-BZ alias (covers "Cetedu AG", "Hogipu - AG")
+    "bali zero",  # "<first name> AG", "<first name> Bali Zero", "<first name> ~ Bali Zero", etc.
+    " bz",        # trailing-AG alias (covers "<first name> AG", "<first name> - AG")
     "balizero",   # email-style
     "sahira",
     "krisna",

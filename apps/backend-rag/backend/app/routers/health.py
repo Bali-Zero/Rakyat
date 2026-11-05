@@ -444,19 +444,27 @@ async def health_check(request: Request, response: Response) -> HealthResponse:
 @router.get("/detailed")
 async def detailed_health(request: Request) -> dict[str, Any]:
     """
-    Detailed health check showing all service statuses.
+    Detailed health of this process and its locally checked dependencies.
 
     Returns comprehensive information about each service for debugging
     and monitoring purposes. Includes:
     - Individual service status (healthy/degraded/unavailable)
     - Error messages for failed services
     - Database connectivity check
-    - Overall system health assessment
+    - Delegated RAG services whose remote health is not checked here
+    - Overall process health assessment
 
     Returns:
         dict: Detailed health status with per-service breakdown
     """
     services: dict[str, dict[str, Any]] = {}
+    process_mode = getattr(request.app.state, "process_mode", None) or "unknown"
+    is_light = process_mode == "light"
+    rag_delegation = {
+        "status": "delegated",
+        "critical": False,
+        "details": {"target_process": "rag", "health_status": "not_checked"},
+    }
 
     # Check SearchService (Critical)
     try:
@@ -464,16 +472,16 @@ async def detailed_health(request: Request) -> dict[str, Any]:
         if ss:
             services["search"] = {
                 "status": "healthy",
-                "critical": True,
+                "critical": not is_light,
                 "details": {
                     "provider": getattr(ss.embedder, "provider", "unknown"),
                     "model": getattr(ss.embedder, "model", "unknown"),
                 },
             }
         else:
-            services["search"] = {"status": "unavailable", "critical": True}
+            services["search"] = {"status": "unavailable", "critical": not is_light}
     except Exception as e:
-        services["search"] = {"status": "error", "critical": True, "error": str(e)}
+        services["search"] = {"status": "error", "critical": not is_light, "error": str(e)}
 
     # Check AI Client (Critical)
     try:
@@ -481,13 +489,13 @@ async def detailed_health(request: Request) -> dict[str, Any]:
         if ai:
             services["ai"] = {
                 "status": "healthy",
-                "critical": True,
+                "critical": not is_light,
                 "details": {"type": type(ai).__name__},
             }
         else:
-            services["ai"] = {"status": "unavailable", "critical": True}
+            services["ai"] = {"status": "unavailable", "critical": not is_light}
     except Exception as e:
-        services["ai"] = {"status": "error", "critical": True, "error": str(e)}
+        services["ai"] = {"status": "error", "critical": not is_light, "error": str(e)}
 
     # Check Database Pool
     try:
@@ -498,7 +506,7 @@ async def detailed_health(request: Request) -> dict[str, Any]:
                 await conn.execute("SELECT 1")
             services["database"] = {
                 "status": "healthy",
-                "critical": False,
+                "critical": is_light,
                 "details": {
                     "min_size": db_pool.get_min_size(),
                     "max_size": db_pool.get_max_size(),
@@ -506,9 +514,9 @@ async def detailed_health(request: Request) -> dict[str, Any]:
                 },
             }
         else:
-            services["database"] = {"status": "unavailable", "critical": False}
+            services["database"] = {"status": "unavailable", "critical": is_light}
     except Exception as e:
-        services["database"] = {"status": "error", "critical": False, "error": str(e)}
+        services["database"] = {"status": "error", "critical": is_light, "error": str(e)}
 
     # Check Memory Service
     try:
@@ -530,13 +538,13 @@ async def detailed_health(request: Request) -> dict[str, Any]:
         if router_instance:
             services["router"] = {
                 "status": "healthy",
-                "critical": True,
+                "critical": not is_light,
                 "details": {"type": type(router_instance).__name__},
             }
         else:
-            services["router"] = {"status": "unavailable", "critical": True}
+            services["router"] = {"status": "unavailable", "critical": not is_light}
     except Exception as e:
-        services["router"] = {"status": "error", "critical": True, "error": str(e)}
+        services["router"] = {"status": "error", "critical": not is_light, "error": str(e)}
 
     # Check Health Monitor
     try:
@@ -553,6 +561,13 @@ async def detailed_health(request: Request) -> dict[str, Any]:
             services["health_monitor"] = {"status": "unavailable", "critical": False}
     except Exception as e:
         services["health_monitor"] = {"status": "error", "critical": False, "error": str(e)}
+
+    if is_light:
+        # initialize_services_light omits these RAG services. Preserve any
+        # observed local error instead of replacing it with delegation.
+        for name in ("search", "ai", "memory", "router", "health_monitor"):
+            if services[name]["status"] == "unavailable":
+                services[name] = rag_delegation.copy()
 
     # Check generic query cache (backend.core.cache.CacheService — hodudi
     # KG/query-expansion/embedding caching, e.g. kg_cache.py, query_expansion.py,
@@ -715,7 +730,9 @@ async def detailed_health(request: Request) -> dict[str, Any]:
                 }
         else:
             # Orchestrator not yet created (lazy-init on first query)
-            if kg_langgraph_enabled:
+            if is_light:
+                services["kg_langgraph"] = rag_delegation.copy()
+            elif kg_langgraph_enabled:
                 services["kg_langgraph"] = {
                     "status": "pending_first_query",
                     "critical": False,
@@ -737,12 +754,14 @@ async def detailed_health(request: Request) -> dict[str, Any]:
         services["kg_langgraph"] = {"status": "error", "critical": False, "error": str(e)}
 
     # Calculate overall status
-    critical_services = ["search", "ai"]
+    critical_services = ["database"] if is_light else ["search", "ai"]
     critical_healthy = all(
         services.get(s, {}).get("status") == "healthy" for s in critical_services
     )
 
-    any_degraded = any(services.get(s, {}).get("status") != "healthy" for s in services)
+    any_degraded = any(
+        service.get("status") not in {"healthy", "delegated"} for service in services.values()
+    )
 
     if not critical_healthy:
         overall_status = "critical"
@@ -753,6 +772,9 @@ async def detailed_health(request: Request) -> dict[str, Any]:
 
     return {
         "status": overall_status,
+        "scope": "process-local",
+        "process_mode": process_mode,
+        "build_sha": BUILD_SHA,
         "services": services,
         "critical_services": critical_services,
         "registry": service_registry_status,
@@ -837,7 +859,7 @@ async def liveness_check() -> dict[str, Any]:
 @router.get("/metrics/qdrant")
 async def qdrant_metrics() -> dict[str, Any]:
     """
-    Qdrant operation metrics for monitoring performance.
+    Qdrant operation metrics accumulated by this process since startup.
 
     Returns metrics including:
     - Search operation counts and average latency
@@ -852,6 +874,8 @@ async def qdrant_metrics() -> dict[str, Any]:
         metrics = get_qdrant_metrics()
         return {
             "status": "ok",
+            "scope": "process-local",
+            "build_sha": BUILD_SHA,
             "metrics": metrics,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -859,6 +883,8 @@ async def qdrant_metrics() -> dict[str, Any]:
         logger.error("Failed to get Qdrant metrics: %s", e, exc_info=True)
         return {
             "status": "error",
+            "scope": "process-local",
+            "build_sha": BUILD_SHA,
             "error": str(e),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }

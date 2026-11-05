@@ -268,7 +268,7 @@ async def record_email_result(
 # quote — unpaired, or paired but not adjacent to `@` (plain prose like
 # `"call me @home"`) — is ordinary content and whitespace inside it still
 # splits words normally. `_redact_token` peels a matched `"..."` pair that
-# wraps the WHOLE token (`"naneni@example.com"` → `"id:…"`, symmetric,
+# wraps the WHOLE token (`"someone@example.com"` → `"id:…"`, symmetric,
 # nothing left unbalanced); a quote that is not at both edges — the
 # quoted-local case, where the closing `"` sits mid-token right before
 # `@` — is left as content and digested with the rest, deliberately: an
@@ -310,7 +310,7 @@ def _redact_token(token: str) -> str:
     it survives. `@` is never in either strip set, so a token can never be
     peeled down past its own `@` — there is always something left to digest.
 
-    K3: a `"`-wrapped token (`"naneni@example.com"`, both edges) peels the
+    K3: a `"`-wrapped token (`"someone@example.com"`, both edges) peels the
     same way — `"id:…"`, quotes preserved, nothing unbalanced. A quote pair
     that does NOT wrap the whole token — the quoted-local shape,
     `"qzvk wjyg"@x`, whose closing `"` sits mid-token right before `@` — is

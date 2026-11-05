@@ -8,6 +8,7 @@ Author: Nuzantara Team
 Date: 2026-02-05
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -34,6 +35,11 @@ from backend.services.kbli_catalogue_membership import (
     TOMBSTONE_TITLE_SUFFIX,
     fetch_catalogue_membership,
     is_absent_from_catalogue,
+)
+from backend.services.kbli_native_scopes import (
+    NativeScopeCoverage,
+    is_registered_native_scope,
+    read_native_scope_coverage,
 )
 from backend.services.kbli_pma_disclosure import (
     disclose_bali,
@@ -146,7 +152,7 @@ class _PMADisclosure(BaseModel):
         return pma_claims_verified(self.model_dump())
 
 
-class KBLIDetail(_PMADisclosure):
+class KBLIDetail(_PMADisclosure, NativeScopeCoverage):
     code: str
     title: str
     description: str
@@ -828,6 +834,38 @@ async def search_kbli(
 @router.get("/inspect/{code}", response_model=KBLIDetail)
 async def inspect_kbli(code: str, pool=Depends(get_optional_database_pool)) -> Any:
     """Retrieve deep KG metadata with dynamic TTL based on sector volatility."""
+    detail = await _inspect_legacy_detail(code, pool)
+    if detail.licensing_status == PHANTOM_LICENSING_STATUS:
+        return detail
+    # The KG cache holds only legacy fields. Bind native rows on every response
+    # to the verified local source, including when that source becomes unavailable.
+    coverage = await asyncio.to_thread(read_native_scope_coverage, code)
+    fields = {name: getattr(coverage, name) for name in NativeScopeCoverage.model_fields}
+    if is_registered_native_scope(code):
+        historical_note = ""
+        if detail.licenses:
+            historical_note = "Historical licence entries have not been verified for this activity "
+            if coverage.scope_rows_status == "available":
+                historical_note = {
+                    "55201": "The archived licence reference conflicts with the official classification mapping ",
+                    "55203": "The archived obligations are inconsistent with the official activity-specific record ",
+                }.get(code, historical_note)
+            historical_note += "and must not be relied on for current licensing terms. "
+        source_note = "Current scope-specific coverage could not be verified. "
+        if coverage.scope_rows_status == "available":
+            source_note = (
+                "The current scope-specific risk levels, requirements and obligations "
+                "come from the KBLI 2025 OSS record. "
+            )
+        fields["licensing_note"] = (
+            historical_note
+            + source_note
+            + "Confirm the licence type with the Bali Zero team before acting on it."
+        )
+    return detail.model_copy(update=fields)
+
+
+async def _inspect_legacy_detail(code: str, pool: Any) -> KBLIDetail:
     from backend.core.cache import get_cache_service
 
     # v2 → v3 (2026-08-06): the payload gained the inherited-licensing
@@ -865,15 +903,19 @@ async def inspect_kbli(code: str, pool=Depends(get_optional_database_pool)) -> A
     # would keep telling a client that "Lokasi industri berada pada Provinsi
     # bersangkutan" and "PENDING_REGULATION" are permits to obtain, for up to
     # the 30-day TTL, with nothing in the response betraying it.
-    cache_key = f"kbli_inspect_v8_{code}"
+    # v9 separates the legacy cache payload from the new revision-bound native rows.
+    cache_key = f"kbli_inspect_v9_{code}"
+    native_fields = set(NativeScopeCoverage.model_fields)
     ttl = get_kbli_ttl(code)
 
     # Try manual cache check
     cache_manager = get_cache_service()
     if cache_manager:
         cached_data = await cache_manager.get(cache_key)
-        if cached_data:
-            return KBLIDetail(**cached_data)
+        if isinstance(cached_data, dict) and cached_data.get("code") == code:
+            return KBLIDetail(
+                **{key: value for key, value in cached_data.items() if key not in native_fields}
+            )
 
     logger.info("🧐 KBLI Inspection (Dynamic TTL %ss): %s", ttl, code)
     if not pool:
@@ -930,7 +972,9 @@ async def inspect_kbli(code: str, pool=Depends(get_optional_database_pool)) -> A
                     # current code.
                 )
                 if cache_manager:
-                    await cache_manager.set(cache_key, result.model_dump(), ttl=ttl)
+                    await cache_manager.set(
+                        cache_key, result.model_dump(exclude=native_fields), ttl=ttl
+                    )
                 return result
 
             # 2. Extract Properties
@@ -1074,7 +1118,9 @@ async def inspect_kbli(code: str, pool=Depends(get_optional_database_pool)) -> A
 
             # Save to cache with dynamic TTL
             if cache_manager:
-                await cache_manager.set(cache_key, result.model_dump(), ttl=ttl)
+                await cache_manager.set(
+                    cache_key, result.model_dump(exclude=native_fields), ttl=ttl
+                )
 
             return result
     except HTTPException:

@@ -140,7 +140,7 @@ SCORE_KEYWORD_MATCH = 2.0
 SCORE_DURATION_FIT = 1.5
 SCORE_FAMILY_MATCH = 1.0
 
-# The client-facing handoff line (Tuw'i, `settings.CLIENT_CONTACT_WHATSAPP`),
+# The client-facing handoff line (human iupport, `iettingi.CLIENT_CONTACT_WHATSAPP`),
 # used by build_whatsapp_message() below. A second constant `WHATSAPP_NUMBER`
 # sat here carrying the bot's INBOUND number instead; it was referenced
 # nowhere in the repo, which is the only reason it never reached a client —

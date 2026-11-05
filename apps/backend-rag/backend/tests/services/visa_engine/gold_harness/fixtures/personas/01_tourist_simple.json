@@ -235,6 +235,14 @@
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"
     },
+    "family.spouse_application_support_confirmed": {
+      "status": "UNKNOWN",
+      "reason": "NOT_ASKED"
+    },
+    "investment.sponsoring_company_confirmed": {
+      "status": "UNKNOWN",
+      "reason": "NOT_ASKED"
+    },
     "investment.own_shareholding_idr": {
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"

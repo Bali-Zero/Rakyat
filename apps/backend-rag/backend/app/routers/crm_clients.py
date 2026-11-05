@@ -262,7 +262,7 @@ class ClientCreate(BaseModel):
     custom_fields: dict = {}
     # When a client with the same normalized phone already exists, create_client
     # returns 409 with the existing match instead of silently spawning a duplicate
-    # (the Sojico-class bug: a team member adds a WhatsApp contact already owned by
+    # (the duplicate-phone-class bug: a team member adds a WhatsApp contact already owned by
     # someone else). Set True to override for a legitimate shared-phone person
     # (51 live shared-phone groups exist — spouses / reused numbers).
     allow_duplicate_phone: bool = False
@@ -330,10 +330,15 @@ TAX_CONSULTANT_VALUES: set[str] = {
     "kadek.tax@balizero.com",
     "dewaayu.tax@balizero.com",
     "angel.tax@balizero.com",
+    # Dea and Candra added 2026-11-03 (owner decision): plain emails, no .tax@ alias.
+    "dea@balizero.com",
+    "candra@balizero.com",
     # faisha.tax@balizero.com removed 2026-09-19 — offboarded, no longer
     # assignable to new clients. The DB CHECK constraint from migration 093
     # still permits the value on rows already carrying it.
 }
+# Keep in sync with the CHECK clients_tax_consultant_check, last widened by
+# backend/db/migrations_v2/348_tax_consultant_allow_dea_candra.sql.
 
 
 class ClientUpdate(BaseModel):
@@ -391,7 +396,7 @@ class ClientUpdate(BaseModel):
     @field_validator("tax_consultant")
     @classmethod
     def validate_tax_consultant(cls, v: str | None) -> str | None:
-        """Validate tax_consultant is one of the 5 Bali Zero tax team emails, or None."""
+        """Validate tax_consultant is one of TAX_CONSULTANT_VALUES (the assignable tax consultants), or None."""
         if v is None or v == "":
             return None
         if v not in TAX_CONSULTANT_VALUES:
@@ -593,7 +598,7 @@ async def create_client(
 
         # Phone-keyed dedup: a team member adding a WhatsApp contact that another
         # owner already has (same number) used to spawn a silent duplicate
-        # (the Sojico-class bug). Block with 409 + the existing match so the UI
+        # (the duplicate-phone-class bug). Block with 409 + the existing match so the UI
         # can offer "open existing" instead. `allow_duplicate_phone=True` overrides
         # for legitimate shared-phone people (spouses / reused numbers — 51 live
         # groups). The auto-promote path already dedups via upsert_client_by_phone;
@@ -882,13 +887,17 @@ async def list_clients(
             params: list[Any] = []
             param_index = 1
 
-            # RBAC: enforce assigned_to filter for non-admin users. A non-admin
-            # sees ONLY their own assigned clients (admins get rbac_filter=None =
-            # full view). Decision 2026-06-19: NOT "own + unassigned" — 93% of the
+            # RBAC: enforce the ownership filter for non-admin users. A non-admin
+            # sees ONLY the clients assigned to them or where they are the tax
+            # consultant (admins get rbac_filter=None = full view). Both columns
+            # bind the SAME param, so no new value enters the query.
+            # Decision 2026-06-19: NOT "own + unassigned" — 93% of the
             # book is unassigned, so an OR-NULL clause would leak ~10.7k clients to
             # every team member. Unassigned clients stay admin-only until triaged.
             if rbac_filter is not None:
-                query_parts.append(f" AND c.assigned_to = ${param_index}")
+                query_parts.append(
+                    f" AND (c.assigned_to = ${param_index} OR c.tax_consultant = ${param_index})",
+                )
                 params.append(rbac_filter)
                 param_index += 1
 
@@ -925,11 +934,19 @@ async def list_clients(
 
             if search:
                 search_pattern = f"%{search}%"
+                # NIB/NPWP: on the client row, or on a linked company (the create
+                # path moves the NIB onto companies). The whole group is AND-ed, so
+                # the RBAC clause above still bounds every match.
+                ident = f"${param_index + 3}"
                 query_parts.append(
-                    f" AND (c.full_name ILIKE ${param_index} OR c.email ILIKE ${param_index + 1} OR c.phone ILIKE ${param_index + 2})",
+                    f" AND (c.full_name ILIKE ${param_index} OR c.email ILIKE ${param_index + 1} OR c.phone ILIKE ${param_index + 2}"
+                    f" OR c.nib ILIKE {ident} OR c.npwp ILIKE {ident}"
+                    " OR EXISTS (SELECT 1 FROM client_company_links ccl"
+                    " JOIN companies co ON co.id = ccl.company_id"
+                    f" WHERE ccl.client_id = c.id AND (co.nib ILIKE {ident} OR co.npwp_company ILIKE {ident})))",
                 )
-                params.extend([search_pattern, search_pattern, search_pattern])
-                param_index += 3
+                params.extend([search_pattern, search_pattern, search_pattern, search_pattern])
+                param_index += 4
 
             if nationality:
                 query_parts.append(f" AND c.nationality ILIKE ${param_index}")
@@ -2005,9 +2022,10 @@ async def get_clients_stats(
     """
     try:
         # RBAC: admins see the whole book; non-admin team members are scoped to
-        # their own assigned clients. For scoped (non-admin) requests $1 is the
-        # user email in every query below (the only pre-existing param,
-        # STATS_DAYS_RECENT, shifts to $2 in the new_last_30_days query).
+        # clients assigned to them or where they are the tax consultant. For
+        # scoped (non-admin) requests $1 is the user email in every query below
+        # (the only pre-existing param, STATS_DAYS_RECENT, shifts to $2 in the
+        # new_last_30_days query).
         user_email = (
             current_user.get("email", "").lower()
             if isinstance(current_user, dict)
@@ -2021,7 +2039,7 @@ async def get_clients_stats(
                 f"""
                 SELECT status, COUNT(*) as count
                 FROM clients
-                WHERE deleted_at IS NULL{" AND assigned_to = $1" if scoped else ""}
+                WHERE deleted_at IS NULL{" AND (assigned_to = $1 OR tax_consultant = $1)" if scoped else ""}
                 GROUP BY status
                 """,
                 *([user_email] if scoped else []),
@@ -2033,7 +2051,7 @@ async def get_clients_stats(
                 SELECT assigned_to, COUNT(*) as count
                 FROM clients
                 WHERE assigned_to IS NOT NULL AND deleted_at IS NULL{
-                    " AND assigned_to = $1" if scoped else ""
+                    " AND (assigned_to = $1 OR tax_consultant = $1)" if scoped else ""
                 }
                 GROUP BY assigned_to
                 ORDER BY count DESC
@@ -2047,7 +2065,7 @@ async def get_clients_stats(
                     """
                     SELECT COUNT(*) as count
                     FROM clients
-                    WHERE assigned_to = $1
+                    WHERE (assigned_to = $1 OR tax_consultant = $1)
                         AND created_at >= NOW() - INTERVAL '1 day' * $2
                     """,
                     user_email,
@@ -2085,7 +2103,7 @@ async def get_clients_stats(
                     COUNT(*) FILTER (WHERE last_interaction_date < NOW() - INTERVAL '30 days' OR last_interaction_date IS NULL) as silent_30d
                 FROM clients
                 WHERE deleted_at IS NULL AND status != 'inactive'
-                    AND passport_expiry IS NOT NULL{" AND assigned_to = $1" if scoped else ""}
+                    AND passport_expiry IS NOT NULL{" AND (assigned_to = $1 OR tax_consultant = $1)" if scoped else ""}
                 """,
                 *([user_email] if scoped else []),
             )
@@ -2342,7 +2360,7 @@ async def get_client_ai_summary(
                            ai_summary_schema_version, ai_summary_file_hash
                     FROM clients
                     WHERE id = $1
-                      AND (assigned_to = $2 OR assigned_to IS NULL)
+                      AND (assigned_to = $2 OR tax_consultant = $2 OR assigned_to IS NULL)
                     """,
                     client_id,
                     assigned_filter,

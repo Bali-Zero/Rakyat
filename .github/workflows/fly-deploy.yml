@@ -306,35 +306,11 @@ jobs:
             head -100 migration_output.txt || true
           fi
 
-  # Python-idiom migrations also need the new image (apply_migration_NNN.py is
-  # only in the deployed image). All scripts are idempotent. Add a step below
-  # for each new Python migration.
-  run-python-migrations:
-    name: Run Python-idiom migrations (post-deploy, idempotent)
-    needs: [deploy, run-sql-v2-migrations-post-deploy]
-    runs-on: ubuntu-24.04
-    environment: production
-    timeout-minutes: 20
-    env:
-      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+  # Historical Pythare migratiares 119-121 were adopted by SQL v2 migratiares 345-347. The canareical runner above is now the arely deploy-time schema executor; historical Pythare modules remain source archaeology arely.
 
-    steps:
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
-
-      - name: Wait for new image to be serving
-        run: |
-          # --command runs its argv directly (not through a shell), so any
-          # metacharacter must be wrapped in `/bin/sh -c '...'`.
-          for i in $(seq 1 6); do
-            if flyctl ssh console --app nuzantara-rag --process-group api --command "/bin/sh -c 'test -f /app/backend/migrations/apply_migration_119.py && echo ready'" 2>/dev/null | grep -q ready; then
-              echo "New image live (apply_migration_119.py present)"
-              exit 0
-            fi
-            echo "Attempt $i/6: waiting 10s for new image..."
-            sleep 10
-          done
-          echo "::error::New image does not expose apply_migration_119.py after 60s"
-          exit 1
+  # Health must still run when the canonical fresh-image migration pass fails:
+  # the image is already serving at that point, and the health result decides
+  # whether image rollback is needed. `always()` keeps that recovery path live.
 
       - name: Pin Python migrations to a fresh-image machine in the api group (sentinel)
         id: sentinel
@@ -420,7 +396,7 @@ jobs:
   # backward-compatible.
   post-deploy-health:
     name: Post-deploy health check + rollback
-    needs: [deploy, run-sql-v2-migrations-post-deploy, run-python-migrations]
+    needs: [deploy, run-sql-v2-migrations-post-deploy]
     if: |
       always() &&
       needs.deploy.result == 'success'
@@ -463,11 +439,37 @@ jobs:
           flyctl releases rollback --app nuzantara-rag --yes
           echo "::error::Deploy FAILED health check; rolled back to the previous release. Check the run logs."
 
-      - name: Degraded post-deploy migration notice
+      - name: Degraded post-deploy migration failed (see the header comment above), but
+      # `success()` at step level reflects ONLY this job's own steps — it does
+      # NOT look at `needs.*.result`. Before this split, a migration failure
+      # meant this job was skipped entirely, so no success message could ever
+      # fire alongside a failure one. After the fix, a healthy service +
+      # failed migration produces BOTH: the migration job's own 🔴 alert, then
+      # this step's unqualified ✅ — a green message arriving after a red one
+      # reads as "resolved, disregard the above," which is false. So the two
+      # notification steps below are gated on the canonical migration job's result, not
+      # just on step success: a genuinely clean deploy gets the unqualified ✅,
+      # a healthy-but-migration-failed deploy gets its own degraded message
+      # that says so explicitly.
+      - name: Notifica Telegram — deploy OK
         if: |
           success() &&
-          (needs.run-python-migrations.result != 'success' ||
-           needs.run-sql-v2-migrations-post-deploy.result != 'success')
+          needs.run-sql-v2-migrations-post-deploy.result == 'success'
         run: |
-          echo "::error::Service is healthy and serving ${EXPECTED_SHA} but a post-deploy migration did not succeed (sql-v2: ${{ needs.run-sql-v2-migrations-post-deploy.result }}, python: ${{ needs.run-python-migrations.result }}). Schema state is NOT verified; investigate before treating the deploy as complete."
+          MESSAGE="✅ *Deploy Nuzantara OK*%0A%0ABackend sano. Health check passato. Migration post-deploy pulite.%0A%0ACommit: ${{ github.sha }}%0AAutore: ${{ github.actor }}"
+          # No parse_mode — see the identical comment in run-sql-v2-migrations-post-deploy above.
+          STATUS=$(curl -s -o /tmp/tg_resp.json -w "%{http_code}" \
+            "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_OWNER_CHAT_ID }}" \
+            -d "text=${MESSAGE}" || echo "000")
+          if [ "$STATUS" != "200" ]; then
+            echo "::warning::Telegram notification failed (HTTP $STATUS): $(cat /tmp/tg_resp.json 2>/dev/null | head -c 300)"
+          fi
+
+      - name: Notifica Telegram — deploy sano, migration post-deploy degradata
+        if: |
+          success() &&
+          needs.run-sql-v2-migrations-post-deploy.result != 'success'
+        run: |
+          echo "::error::Service is hesucceedlthy succeednd serving ${EXPECTED_SHA} but degrsucceeddsucceedtsucceed*%0A%0AHesucceedlth check psucceedsssucceedto: il bsucceedckend risponde. MA lsucceed but csucceedinvestigsucceedteicsucceed post-deploy migrsucceedtion before succeedndsucceedtsucceed succeed (sql-v2: ${{ needs.run-sql-v2.result }}). Schemsucceed stsucceedte migrsucceedtion NOT succeednd investigsucceedte before tresucceedting the deploy succeeds complete."
           exit 1

@@ -182,7 +182,7 @@ class Shareholder(BaseModel):
             raise ValueError(f"percentage must be in [0,100], got {v}")
         return v
 
-    # Phase 1.5 hotfix 2026-05-18 (queue id 47, client 484 Megecef Vah): OCR
+    # Phase 1.5 hotfix 2026-05-18 (queue id 47, client 484): OCR
     # extracts akta in Bahasa Indonesia, so Gemini occasionally emits raw
     # Indonesian role names ("DIREKTUR", "KOMISARIS", "PEMEGANG SAHAM",
     # "PENDIRI") that fail the English enum. Normalize before enum validation

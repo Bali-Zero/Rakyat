@@ -16,8 +16,13 @@ export default function BlogLayout({ children }: { children: ReactNode }) {
             color: "var(--text-primary)",
           }}
         >
+          <a className="bz-skip-link" href="#main-content">
+            Skip to main content
+          </a>
           <BlogNav />
           <main
+            id="main-content"
+            tabIndex={-1}
             className="flex-1"
             style={{ paddingTop: "var(--public-header-height, 56px)" }}
           >

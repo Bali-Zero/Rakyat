@@ -4,8 +4,41 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { Send, Loader2, Bot } from "lucide-react";
 import dynamic from "next/dynamic";
 import { trackKBLIChatQuestion } from "@/lib/analytics";
+import { isImeComposing } from "@/lib/ime-composing";
 
 const ReactMarkdown = dynamic(() => import("react-markdown"), { ssr: false });
+
+// The chat session id used to live in localStorage forever. It now carries an
+// expiry (24 h); a stale or legacy plain-string entry starts a fresh session.
+export const CHAT_SESSION_KEY = "kbli-chat-session";
+export const CHAT_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+
+export function readStoredSession(now = Date.now()): string | null {
+  try {
+    const raw = localStorage.getItem(CHAT_SESSION_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as { id?: unknown }).id === "string" &&
+      typeof (parsed as { expiresAt?: unknown }).expiresAt === "number" &&
+      (parsed as { expiresAt: number }).expiresAt > now
+    ) {
+      return (parsed as { id: string }).id;
+    }
+  } catch {
+    // legacy plain id or corrupt entry: fall through to a new session
+  }
+  return null;
+}
+
+export function writeStoredSession(id: string, now = Date.now()): void {
+  localStorage.setItem(
+    CHAT_SESSION_KEY,
+    JSON.stringify({ id, expiresAt: now + CHAT_SESSION_TTL_MS }),
+  );
+}
 
 interface ZantaraChatProps {
   codeContext?: {
@@ -32,7 +65,7 @@ export function ZantaraChat({
   const [loading, setLoading] = useState(false);
   const [sessionId] = useState(() =>
     typeof window !== "undefined"
-      ? localStorage.getItem("kbli-chat-session") || crypto.randomUUID()
+      ? readStoredSession() || crypto.randomUUID()
       : "",
   );
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -41,7 +74,7 @@ export function ZantaraChat({
 
   useEffect(() => {
     if (sessionId && typeof window !== "undefined") {
-      localStorage.setItem("kbli-chat-session", sessionId);
+      writeStoredSession(sessionId);
     }
   }, [sessionId]);
 
@@ -256,7 +289,7 @@ export function ZantaraChat({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Enter" && !e.shiftKey && !isImeComposing(e)) {
                 e.preventDefault();
                 sendMessage(input);
               }

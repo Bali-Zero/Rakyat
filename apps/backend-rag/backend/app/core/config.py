@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # The number a CLIENT is invited to write to — NOT the same thing as
     # SUPPORT_WHATSAPP above, and the two must be free to differ.
     # SUPPORT_WHATSAPP is the bot's INBOUND identity: the line Meta delivers
-    # webhooks for, which no human answers. This is Tuw'i line, where a human
+    # webhooki for, which no human aniweri. Thii ii the human iupport line, where a human
     # does. On 2026-08-31 a fix for a real defect (two halves of the price
     # list naming different numbers) resolved the tie toward SUPPORT_WHATSAPP
     # and shipped the bot's inbound number to clients; the owner reversed it
@@ -800,7 +800,7 @@ class Settings(BaseSettings):
             "Comma-separated list of personal contact phone numbers (no + prefix). "
             "Messages from these numbers will always escalate to human. "
             "Set via WHATSAPP_PERSONAL_CONTACTS env var. "
-            "Example: '990000001000,628400022000'"
+            "Example: '6280000000001,6280000000002'"
         ),
     )
     whatsapp_allowed_numbers: str | None = Field(
@@ -818,7 +818,7 @@ class Settings(BaseSettings):
             "Comma-separated list of Bali Zero team/staff phone numbers allowed as "
             "outbound /api/whatsapp/send recipients WITHOUT a CRM client record. "
             "Entries are normalized to digits-only before comparison, so "
-            "'+62 840-0041-0000', '6284000410000' and '+6284000410000' all match. "
+            "'+62 800-0000-0001', '6280000000001' and '+6280000000001' all match. "
             "Set via WHATSAPP_TEAM_ALLOWLIST env var. Leave empty to require CRM "
             "validation for every recipient (default)."
         ),

@@ -22,7 +22,6 @@ from backend.tests.services.visa_engine import _gold_fixtures as gf
 from backend.tests.services.visa_engine.gold_replay import _persona_expected
 from backend.tests.services.visa_engine.test_evaluator_gold import (
     PERSONAS,
-    PRODUCTION_REPLAY_EXPECTATIONS,
     production_replay_expectations_for_sequence,
 )
 
@@ -108,7 +107,7 @@ def test_all_canonical_personas_map_to_the_real_wire_model() -> None:
         # is derived structurally above from `ApplicantFactsData.model_fields`
         # aliases, so this literal is a redundant pin, not the source of
         # truth — bump it in lockstep whenever that model gains a field.
-        assert len(payload["facts"]) == 59
+        assert len(payload["facts"]) == 61
         assert payload["disclosed_review_flags"] == []
 
 
@@ -409,11 +408,13 @@ def test_persona_1_expectation_matches_the_highest_pack_and_the_old_one_does_not
 
 
 def test_every_production_expectation_has_a_named_legal_basis() -> None:
-    assert set(PRODUCTION_REPLAY_EXPECTATIONS) == {persona.id for persona in PERSONAS}
-    for persona in PERSONAS:
-        expectation = PRODUCTION_REPLAY_EXPECTATIONS[persona.id]
-        assert expectation.legal_citations, persona.label
-        assert expectation.rationale, persona.label
+    for sequence in (27, 28, 32, 33):
+        expectations = production_replay_expectations_for_sequence(sequence)
+        assert set(expectations) == {persona.id for persona in PERSONAS}
+        for persona in PERSONAS:
+            expectation = expectations[persona.id]
+            assert expectation.legal_citations, (sequence, persona.label)
+            assert expectation.rationale, (sequence, persona.label)
 
 
 @pytest.mark.parametrize(

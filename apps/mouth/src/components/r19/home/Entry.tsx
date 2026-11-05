@@ -28,6 +28,17 @@ export function SiteHeader() {
     return () => desktop.removeEventListener("change", dismiss);
   }, []);
 
+  // While the mobile menu is open the page behind it is inert, so Tab stays
+  // inside the menu instead of wandering into the content underneath
+  // (web audit panel 2026-11-01, observed on a 390 px viewport).
+  useEffect(() => {
+    const main = document.getElementById("main-content");
+    if (!main) return;
+    if (open) main.setAttribute("inert", "");
+    else main.removeAttribute("inert");
+    return () => main.removeAttribute("inert");
+  }, [open]);
+
   return (
     <header
       className="site-header"
@@ -42,6 +53,9 @@ export function SiteHeader() {
         if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
       }}
     >
+      <a className="skip" href="#main-content">
+        Skip to main content
+      </a>
       <a aria-label="Bali Zero home" className="brand" href="/">
         <img
           alt="Bali Zero"
@@ -85,7 +99,10 @@ export function SiteHeader() {
             <img
               alt=""
               className="brand-logo-3-img"
+              decoding="async"
+              height="120"
               src="/assets/r19/brand-3.webp"
+              width="120"
             />
             <span>ALI</span>
             <span className="brand-zero">
@@ -120,6 +137,10 @@ export function Hero() {
         alt="Sunset illustration of traditional Balinese artisans beside a river, connected by a bridge to a futuristic cultural design atelier"
         fetchPriority="high"
         src="/assets/r19/hero-sunset-future.webp"
+        srcSet="/assets/r19/hero-sunset-future-640w.webp 640w, /assets/r19/hero-sunset-future-1280w.webp 1280w, /assets/r19/hero-sunset-future.webp 1800w"
+        sizes="100vw"
+        width={1800}
+        height={750}
       />
       <div className="hero-copy">
         <span className="eyebrow">Bali · Indonesia</span>

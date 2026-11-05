@@ -138,8 +138,9 @@ class WhatsAppChannelAdapter(BaseChannel):
             }
 
             logger.info(
-                f"📨 WhatsApp message: phone={redact_identifier_for_log(from_phone)}, "
-                f"name={sender_name}, text={text[:50]}...",
+                "📨 WhatsApp message: phone=%s, text_chars=%d",
+                redact_identifier_for_log(from_phone),
+                len(text or ""),
             )
 
             return ChannelMessage(

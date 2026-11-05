@@ -67,7 +67,7 @@ def _push_kwargs(blob: Path, **overrides: object) -> dict:
         "file_name": "passport-scan.pdf",
         "document_type": "passport",
         "blob_path": str(blob),
-        "practice_id": 12,
+        "practice_uuid": "11111111-2222-4333-8444-555555555555",
         "document_category": "immigration",
         "mime_type": "application/pdf",
         "notes": "intake:wa-123",
@@ -140,7 +140,7 @@ async def test_success_parses_doc_id_file_url_and_drive_file_id(mock_client, blo
     assert body["document_category"] == "immigration"
     assert body["mime_type"] == "application/pdf"
     assert body["notes"] == "intake:wa-123"
-    assert body["practice_id"] == 12
+    assert body["practice_id"] == "11111111-2222-4333-8444-555555555555"
     # Fields the endpoint does NOT accept must not be sent.
     assert "extracted_fields" not in body
     # None optionals are dropped, not sent as null.
@@ -498,3 +498,64 @@ async def test_upload_carries_expected_phone_core_ownership_token(mock_client, b
     body = json.loads(requests[1].content)
     # "+62 840-0022-0000" → digits 6284000220000 → core (62 stripped)
     assert body["expected_phone_core"] == "84000220000"
+
+
+async def test_local_numeric_practice_cannot_cross_database_boundary(mock_client, blob):
+    requests = mock_client(_serve_upsert(lambda r: httpx.Response(200, json={})))
+    result = await crm_push.push_committed_document(
+        **_push_kwargs(blob, practice_uuid=None, practice_id=12)
+    )
+    assert result.status == "practice_identity_unresolved"
+    assert requests == []
+
+
+async def test_no_practice_upload_omits_the_practice_key(mock_client, blob):
+    requests = mock_client(
+        _serve_upsert(lambda r: httpx.Response(200, json={"success": True, "document_id": 1}))
+    )
+    result = await crm_push.push_committed_document(**_push_kwargs(blob, practice_uuid=None))
+    assert result.ok is True
+    assert "practice_id" not in json.loads(requests[-1].content)
+
+
+async def test_invalid_practice_uuid_fails_before_network(mock_client, blob):
+    requests = mock_client(_serve_upsert(lambda r: httpx.Response(200, json={})))
+    result = await crm_push.push_committed_document(
+        **_push_kwargs(blob, practice_uuid="invalid-uuid")
+    )
+    assert result.status == "practice_identity_unresolved"
+    assert requests == []
+
+
+async def test_remote_practice_identity_refusal_is_preserved_without_retry(mock_client, blob):
+    requests = mock_client(
+        _serve_upsert(
+            lambda r: httpx.Response(409, json={"detail": "practice_identity_unresolved"})
+        )
+    )
+    result = await crm_push.push_committed_document(**_push_kwargs(blob))
+    assert result.status == "practice_identity_unresolved"
+    assert len(requests) == 2
+
+
+async def test_uuid_upload_fails_closed_on_old_integer_server(mock_client, blob):
+    from pydantic import BaseModel, ValidationError
+
+    class LegacyUpload(BaseModel):
+        practice_id: int | None = None
+
+    uploads = []
+
+    def old_upload(request):
+        try:
+            LegacyUpload.model_validate_json(request.content)
+        except ValidationError:
+            return httpx.Response(422, json={"detail": "invalid practice_id"})
+        uploads.append(request)
+        return httpx.Response(200, json={"success": True, "document_id": 1})
+
+    requests = mock_client(_serve_upsert(old_upload))
+    result = await crm_push.push_committed_document(**_push_kwargs(blob))
+    assert result.status == "rejected"
+    assert len(requests) == 2
+    assert uploads == []

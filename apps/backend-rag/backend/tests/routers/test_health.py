@@ -25,6 +25,134 @@ def client(app: FastAPI) -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
+@pytest.fixture
+def detailed_local_services(app: FastAPI, mock_db_pool, monkeypatch: pytest.MonkeyPatch):
+    pool, conn = mock_db_pool
+    conn.execute = AsyncMock(return_value="SELECT 1")
+    pool.get_min_size = MagicMock(return_value=1)
+    pool.get_max_size = MagicMock(return_value=10)
+    pool.get_size = MagicMock(return_value=2)
+    app.state.db_pool = pool
+    app.state.redis_manager = SimpleNamespace(
+        health_check=AsyncMock(return_value={"connected": True})
+    )
+    monkeypatch.setenv("ENABLE_KG_LANGGRAPH", "false")
+    with (
+        patch(
+            "backend.core.cache.get_cache_service",
+            return_value=SimpleNamespace(get_stats=lambda: {"connected": True}),
+        ),
+        patch("backend.middleware.rate_limiter.get_rate_limit_stats", return_value={}),
+        patch("backend.app.dependencies._agentic_rag_orchestrator", None),
+    ):
+        yield conn
+
+
+class TestDetailedHealthProcessScope:
+    def test_light_process_reports_delegation_and_local_identity(
+        self, app: FastAPI, client: TestClient, detailed_local_services, monkeypatch
+    ) -> None:
+        app.state.process_mode = "light"
+        monkeypatch.setattr(health_module, "BUILD_SHA", "synthetic-build-sha")
+
+        response = client.get("/health/detailed")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "healthy"
+        assert body["scope"] == "process-local"
+        assert body["process_mode"] == "light"
+        assert body["build_sha"] == "synthetic-build-sha"
+        assert body["critical_services"] == ["database"]
+        for name in ("search", "ai", "memory", "router", "health_monitor", "kg_langgraph"):
+            assert body["services"][name] == {
+                "status": "delegated",
+                "critical": False,
+                "details": {"target_process": "rag", "health_status": "not_checked"},
+            }
+        assert body["services"]["database"]["critical"] is True
+        detailed_local_services.execute.assert_awaited_once_with("SELECT 1")
+
+    @pytest.mark.parametrize("process_mode", ["rag", None])
+    @pytest.mark.parametrize("missing_service", ["search_service", "ai_client"])
+    def test_missing_heavy_services_remain_critical(
+        self,
+        app: FastAPI,
+        client: TestClient,
+        detailed_local_services,
+        process_mode,
+        missing_service,
+    ) -> None:
+        if process_mode is not None:
+            app.state.process_mode = process_mode
+        app.state.search_service = SimpleNamespace(embedder=SimpleNamespace())
+        app.state.ai_client = object()
+        setattr(app.state, missing_service, None)
+
+        body = client.get("/health/detailed").json()
+
+        assert body["status"] == "critical"
+        assert body["process_mode"] == (process_mode or "unknown")
+        assert body["critical_services"] == ["search", "ai"]
+        missing_name = "search" if missing_service == "search_service" else "ai"
+        assert body["services"][missing_name]["status"] == "unavailable"
+
+    @pytest.mark.parametrize("missing_pool", [False, True])
+    def test_light_database_failure_is_critical(
+        self, app: FastAPI, client: TestClient, detailed_local_services, missing_pool
+    ) -> None:
+        app.state.process_mode = "light"
+        if missing_pool:
+            app.state.db_pool = None
+        else:
+            detailed_local_services.execute.side_effect = RuntimeError("synthetic DB failure")
+
+        body = client.get("/health/detailed").json()
+
+        assert body["status"] == "critical"
+        assert body["services"]["database"]["critical"] is True
+        assert body["services"]["database"]["status"] == (
+            "unavailable" if missing_pool else "error"
+        )
+
+    def test_light_process_keeps_present_service_error_visible(
+        self, app: FastAPI, client: TestClient, detailed_local_services
+    ) -> None:
+        app.state.process_mode = "light"
+        app.state.search_service = object()  # Malformed local service has no embedder.
+
+        body = client.get("/health/detailed").json()
+
+        assert body["status"] == "degraded"
+        assert body["services"]["search"]["status"] == "error"
+        assert body["services"]["search"]["critical"] is False
+        assert "embedder" in body["services"]["search"]["error"]
+
+    def test_light_process_keeps_local_redis_failure_visible(
+        self, app: FastAPI, client: TestClient, detailed_local_services
+    ) -> None:
+        app.state.process_mode = "light"
+        app.state.redis_manager.health_check.return_value = {"connected": False}
+
+        body = client.get("/health/detailed").json()
+
+        assert body["status"] == "degraded"
+        assert body["services"]["redis"]["status"] == "unavailable"
+
+    def test_qdrant_metrics_expose_their_local_scope(self, client: TestClient, monkeypatch) -> None:
+        monkeypatch.setattr(health_module, "BUILD_SHA", "synthetic-build-sha")
+        metrics = {"search_calls": 0, "errors": 0}
+        with patch("backend.core.qdrant_db.get_qdrant_metrics", return_value=metrics):
+            response = client.get("/health/metrics/qdrant")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "ok"
+        assert body["metrics"] == metrics
+        assert body["scope"] == "process-local"
+        assert body["build_sha"] == "synthetic-build-sha"
+
+
 class TestRouterStructure:
     @pytest.mark.unit
     def test_router_prefix_and_routes(self) -> None:

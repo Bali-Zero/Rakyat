@@ -42,6 +42,7 @@ from backend.services.prime.property_service import (  # noqa: F401
     calculate_investment_score,
     calculate_zone_kbli_fit,
     classify_activity,
+    investment_kbli_summary,
     is_investor_relevant,
 )
 from backend.services.prime.tax_service import (
@@ -776,6 +777,7 @@ class PrimeNexusService:
         price_idr: float | None = None,
         investor_profile: dict[str, Any] | None = None,
         geo_data: dict[str, Any] | None = None,
+        vintage: str | None = None,
     ) -> dict[str, Any]:
         """
         Full investment analysis: resolve zone → KBLIEye → scoring → intel.
@@ -783,7 +785,9 @@ class PrimeNexusService:
         """
         # Check analyze cache
         gh6 = encode_geohash(lat, lng, precision=6)
-        cache_key = f"prime:analyze:{gh6}:{kbli_code or 'none'}:{is_pma}"
+        cache_key = "prime:analyze:v2:" + json.dumps(
+            [gh6, kbli_code, is_pma, vintage], separators=(",", ":")
+        )
         if self._cache:
             try:
                 cached = await self._cache.get(cache_key)
@@ -826,27 +830,32 @@ class PrimeNexusService:
         kbli_state: str | None = None
         kbli_oss_risk: str | None = None
 
-        if kbli_code:
+        if kbli_code is not None:
             try:
                 eye = self._get_kbli_eye()
-                kd = eye.get_decision(code=kbli_code, is_pma=is_pma, location="Bali")
-                audit = kd.get("audit", kd)
-                kbli_state = audit.get("state", kd.get("state", "UNKNOWN"))
-                kbli_oss_risk = audit.get("oss_risk") or None
-                pma_logic = kd.get("pma_logic", {})
-                kbli_result = {
-                    "code": kd.get("kbli_2025", kbli_code),
-                    "title": kd.get("title", ""),
-                    "state": kbli_state,
-                    "reason": audit.get("reason_code", ""),
-                    "oss_risk": audit.get("oss_risk", ""),
-                    "max_foreign_ownership": pma_logic.get("max_foreign_ownership", 0),
-                }
+                kd = eye.get_decision(
+                    code=kbli_code, is_pma=is_pma, location="Bali", vintage=vintage
+                )
+                kbli_result = investment_kbli_summary(kd, kbli_code)
+                kbli_state = kbli_result["state"]
+                kbli_oss_risk = kbli_result["oss_risk"] or None
             except (KeyError, ValueError, TypeError) as e:
-                kbli_result = {"code": kbli_code, "state": "ERROR", "error": str(e)}
+                kbli_state = "ERROR"
+                kbli_result = {
+                    "code": kbli_code,
+                    "state": "ERROR",
+                    "error": str(e),
+                    "max_foreign_ownership": None,
+                }
                 logger.warning("[PrimeNexus] KBLIEye data error: %s", e)
             except Exception as e:
-                kbli_result = {"code": kbli_code, "state": "ERROR", "error": str(e)}
+                kbli_state = "ERROR"
+                kbli_result = {
+                    "code": kbli_code,
+                    "state": "ERROR",
+                    "error": str(e),
+                    "max_foreign_ownership": None,
+                }
                 logger.exception("[PrimeNexus] KBLIEye unexpected error")
 
         # Step 3: ROI calculation (if land/price provided)
@@ -896,7 +905,7 @@ class PrimeNexusService:
         scoring = calculate_investment_score(
             zone_data=zone_data,
             kbli_state=kbli_state,
-            kbli_code=kbli_code,
+            kbli_code=kbli_result["code"] if kbli_result and kbli_state != "ERROR" else None,
             roi_data=roi_data,
             geo_data=geo_data,
             oss_risk=kbli_oss_risk,
@@ -948,7 +957,9 @@ class PrimeNexusService:
                 "breakdown": scoring["breakdown"],
                 "modifiers": scoring["modifiers"],
                 "hard_blocks": scoring["hard_blocks"],
-            },
+            }
+            if kbli_state != "ERROR" or scoring["hard_blocks"]
+            else None,
             "sea_distance_m": sea_dist,
             "property_tax": property_tax,
             "property_eligibility": property_eligibility,
@@ -957,8 +968,8 @@ class PrimeNexusService:
             "cache_hit": False,
         }
 
-        # Cache result
-        if self._cache:
+        # An unavailable resolver source must be retried on the next lookup.
+        if self._cache and kbli_state != "ERROR":
             try:
                 cache_data = {k: v for k, v in result.items() if k != "cache_hit"}
                 await self._cache.set(cache_key, json.dumps(cache_data, default=str), ttl=14400)
@@ -968,9 +979,9 @@ class PrimeNexusService:
                 logger.debug("[PrimeNexus] Analyze cache set failed")
 
         logger.info(
-            "[PrimeNexus] analyze: verdict=%s score=%d zone=%s kbli=%s",
-            verdict_label,
-            scoring["score"],
+            "[PrimeNexus] analyze: verdict=%s score=%s zone=%s kbli=%s",
+            verdict_label if result["verdict"] else None,
+            scoring["score"] if result["verdict"] else None,
             zone_code,
             kbli_code,
         )

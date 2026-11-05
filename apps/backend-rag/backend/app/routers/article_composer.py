@@ -355,7 +355,7 @@ async def compose_article(
     if not oauth_configured():
         error = APIError.create(
             code=ErrorCode.API_KEY_NOT_CONFIGURED,
-            message="Claude OAuth token (CLAUDE_CODE_OAUTH_TOKEN) not configured",
+            message="Claude Console seat (ANTHROPIC_CONSOLE_KEY_<n> + ANTHROPIC_CONSOLE_WORKSPACE_<n>) not configured",
             request_id=request_id,
         )
         article_compose_payloads.labels(status="error", category=payload.category).inc()
@@ -557,11 +557,11 @@ async def compose_status() -> dict[str, Any]:
     return {
         "configured": configured,
         "api_key_set": configured,
-        "provider": "claude_oauth",
+        "provider": "claude_console",
         "gateway": "claude_cli",
         "model": ARTICLE_COMPOSER_MODEL,
         **get_llm_health(),
-        "estimated_cost_per_article": "MAX subscription (no per-call bill)",
+        "estimated_cost_per_article": "metered per token on the seat's Console org",
         "cache_enabled": cache_service.enabled,
         "rate_limit": "10 requests/minute per IP",
     }

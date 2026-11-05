@@ -82,7 +82,7 @@ ATTENDANCE_DATA = [
         date(2026, 3, 16), date(2026, 3, 17),
     ]),
     # Asya: 0 sick, 0 cuti — skip
-    # Pum Zagik: 1 sick (Mar 30), 2 cuti (Mar 16, 17)
+    # one staff member: 1 sick (Mar 30), 2 cuti (Mar 16, 17)
     ("ari.firda@balizero.com", [
         date(2026, 3, 30),
     ], [

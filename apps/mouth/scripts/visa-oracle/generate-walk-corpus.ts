@@ -65,7 +65,7 @@ import {
   type OracleFacts,
 } from "../../src/app/(visa-oracle)/visa-oracle/_lib/tree";
 import {
-  channelConflictsWithOnshoreIntent,
+  conflictingQuestionId,
   computeNextNode,
   type OracleNode,
 } from "../../src/app/(visa-oracle)/visa-oracle/_lib/flow";
@@ -207,26 +207,17 @@ export function answerFor(
   facts: Record<string, string> = {},
 ): string {
   const ordinary = ordinaryAnswerFor(id, overrides);
-  if (
-    id !== "application_channel" ||
-    !channelConflictsWithOnshoreIntent(facts.wants_onshore_conversion, ordinary)
-  ) {
-    return ordinary;
+  if (!conflictingQuestionId(id, ordinary, facts)) return ordinary;
+  // An explicit conflicting override cannot represent a completed interview.
+  if (id === "investment_sponsoring_company_confirmed") {
+    if (overrides[id] !== undefined)
+      throw new Error("Contradictory company sponsor answer in completed walk");
+    return "unconfirmed";
   }
-  const question = QUESTIONS[id];
-  const accepted = question.options.find(
-    (option) =>
-      !channelConflictsWithOnshoreIntent(
-        facts.wants_onshore_conversion,
-        option.key,
-      ),
+  const accepted = QUESTIONS[id].options.find(
+    (option) => !conflictingQuestionId(id, option.key, facts),
   );
-  if (!accepted) {
-    throw new Error(
-      `answerFor: no accepted application_channel option for ` +
-        `wants_onshore_conversion=${facts.wants_onshore_conversion}`,
-    );
-  }
+  if (!accepted) throw new Error(`No consistent answer for ${id}`);
   return accepted.key;
 }
 
@@ -831,6 +822,8 @@ export function enumerateScenarios(): Scenario[] {
     overrides: {
       ...base,
       category: "invest",
+      sponsor_category: "INVESTMENT",
+      investment_sponsoring_company_confirmed: "yes",
       investment_vehicle: "pt_pma",
       wants_onshore_conversion: "no",
       investment_capital_idr: "10000000000",
@@ -850,6 +843,8 @@ export function enumerateScenarios(): Scenario[] {
       overrides: {
         ...base,
         category: "invest",
+        sponsor_category: "INVESTMENT",
+        investment_sponsoring_company_confirmed: "yes",
         investment_vehicle: "pt_pma",
         wants_onshore_conversion: "no",
         investment_capital_idr: "10000000000",

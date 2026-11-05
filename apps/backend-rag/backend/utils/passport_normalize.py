@@ -85,8 +85,8 @@ def title_case_name(name: str | None) -> str | None:
     """Convert MRZ uppercase name to Title Case.
 
     Handles:
-    - ``<<`` separators  (SUVOQUNE<<FAPEJI -> Suvoqune Fapeji)
-    - Apostrophes        (O'ZOHUX -> O'Zohux)
+    - ``<<`` separators  (DOE<<JANE -> Jane Doe)
+    - Apostrophes        (O'EXAMPLE -> O'Example)
     - Hyphens            (JEAN-NUZOHA -> Jean-Nuzoha)
 
     Returns ``None`` for ``None`` or empty input.

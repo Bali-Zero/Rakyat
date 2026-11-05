@@ -38,9 +38,9 @@ def normalize_phone(phone: str | None) -> str | None:
     Delegates to the canonical implementation in validators.py.
 
     Examples:
-        "+62 840 0022 0000" → "+6284000220000"
-        "0840-0022-0000" → "+6284000220000"
-        "840 0022 0000" → "+6284000220000"
+        "+62 800 0000 0001" → "+6280000000001"
+        "0800-0000-0001" → "+6280000000001"
+        "800 0000 0001" → "+6280000000001"
     """
     if not phone:
         return None

@@ -194,6 +194,55 @@ def test_client_update_tax_consultant_invalid():
         ClientUpdate(tax_consultant="uxxx13@dxxx1.com")
 
 
+@pytest.mark.parametrize(
+    "dxxx1",
+    [
+        "dea@balizero.com",
+        "candra@balizero.com",
+        "veronika.tax@balizero.com",
+        "kadek.tax@balizero.com",
+    ],
+)
+def test_client_update_tax_consultant_accepts_assignable(dxxx1):
+    from backend.app.routers.crm_clients import ClientUpdate
+
+    assert ClientUpdate(tax_consultant=dxxx1).tax_consultant == dxxx1
+
+
+@pytest.mark.parametrize(
+    "dxxx1",
+    [
+        "someone@balizero.com",
+        "dea.tax@balizero.com",
+        "candra.tax@balizero.com",
+        "Dea@balizero.com",
+        "faisha.tax@balizero.com",  # offboarded: kept by the DB CHECK, not assignable
+    ],
+)
+def test_client_update_tax_consultant_rejects_unknown_and_near_miss(dxxx1):
+    from backend.app.routers.crm_clients import ClientUpdate
+
+    with pytest.raises(ValueError, match="tax_consultant must be one of"):
+        ClientUpdate(tax_consultant=dxxx1)
+
+
+def test_tax_consultant_validator_and_migration_stay_in_sync():
+    """Every validator value is in the latest CHECK migration (guard against drift)."""
+    import re
+    from pathlib import Path
+
+    from backend.app.routers.crm_clients import TAX_CONSULTANT_VALUES
+
+    sql = (
+        Path(__file__).resolve().parents[3]
+        / "db/migrations_v2/348_tax_consultant_allow_dea_candra.sql"
+    ).read_text()
+    forward = sql.split("-- === ROLLBACK ===")[0]
+    in_check = set(re.findall(r"'([^']+@balizero\.com)'", forward))
+    assert TAX_CONSULTANT_VALUES <= in_check
+    assert {"dea@balizero.com", "candra@balizero.com"} <= in_check
+
+
 def test_client_update_tax_consultant_empty_string_becomes_none():
     from backend.app.routers.crm_clients import ClientUpdate
 

@@ -1,5 +1,5 @@
 """Roster decisions of 2026-10-20: the full practices view has a read-only half
-(Ruslana, Natalie) and a managing member (Veronika, login tax@balizero.com).
+(Ruslana) and a managing member (Veronika, login tax@balizero.com).
 Only the read-only half is refused as a GARUDA actor and as an assignment target."""
 
 from __future__ import annotations
@@ -34,7 +34,8 @@ def test_the_read_only_half_is_inside_the_full_view() -> None:
     assert PRACTICES_READ_ONLY_VIEW_EMAILS < PRACTICES_EXTRA_VIEW_EMAILS
     assert "tax@balizero.com" in PRACTICES_EXTRA_VIEW_EMAILS
     assert "tax@balizero.com" not in PRACTICES_READ_ONLY_VIEW_EMAILS
-    assert "natalie@balizero.com" in PRACTICES_READ_ONLY_VIEW_EMAILS
+    assert "natalie@balizero.com" not in PRACTICES_READ_ONLY_VIEW_EMAILS
+    assert "natalie@balizero.com" not in PRACTICES_EXTRA_VIEW_EMAILS
 
 
 @pytest.mark.parametrize("email", sorted(PRACTICES_EXTRA_VIEW_EMAILS))

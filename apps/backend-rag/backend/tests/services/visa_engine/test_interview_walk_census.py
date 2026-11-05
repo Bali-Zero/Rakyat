@@ -653,6 +653,7 @@ WALK_DEAD_END_ALLOWLIST_BY_SEQUENCE[30] = WALK_DEAD_END_ALLOWLIST_BY_SEQUENCE[29
 WALK_DEAD_END_ALLOWLIST_BY_SEQUENCE[31] = WALK_DEAD_END_ALLOWLIST_BY_SEQUENCE[30]
 # seq-32 moves no dead end: the D12 explorer boundary walks (stay 180 / 181) both end SUPPORTED.
 WALK_DEAD_END_ALLOWLIST_BY_SEQUENCE[32] = WALK_DEAD_END_ALLOWLIST_BY_SEQUENCE[31]
+WALK_DEAD_END_ALLOWLIST_BY_SEQUENCE[33] = dict(WALK_DEAD_END_ALLOWLIST_BY_SEQUENCE[32])
 #: PR-12: the three unsure work walks. Both questions ARE asked in each walk
 #: and the mapper refuses to certify "unsure" (`ANSWER_NEVER_CERTIFIED`), so
 #: the fact stays open; the sponsor-confirmation walk is the same shape as the
@@ -1636,6 +1637,8 @@ def _t06_visit_outcomes(sequence: int) -> dict[str, tuple[str, tuple[str, ...]]]
     return _T06_VISIT_OUTCOMES_SEQ32 if sequence >= 32 else _T06_VISIT_OUTCOMES
 
 
+EXPECTED_OUTCOME_BY_SEQUENCE[33] = dict(EXPECTED_OUTCOME_BY_SEQUENCE[32])
+
 EXPECTED_OUTCOME_BY_SEQUENCE = {
     _seq: {
         **_pins,
@@ -1785,6 +1788,7 @@ EXPECTED_REASONS_BY_SEQUENCE: dict[int, dict[str, ReasonPin]] = {
     30: _EXPECTED_REASONS_ON_SEQ30,
     31: _EXPECTED_REASONS_ON_SEQ31,
     32: _EXPECTED_REASONS_ON_SEQ32,
+    33: dict(_EXPECTED_REASONS_ON_SEQ32),
 }
 EXPECTED_REASONS: dict[str, ReasonPin] = EXPECTED_REASONS_BY_SEQUENCE.get(_SIGNED_SEQUENCE, {})
 
@@ -1921,6 +1925,8 @@ EXPECTED_STATE_CENSUS_BY_SEQUENCE[32] = {
 # table the replay test re-measures; seq-20 differs by the explorer's 181-day walk).
 _T06_STATE_DELTA = Counter(state for state, _candidates in _T06_VISIT_OUTCOMES.values())
 _T06_STATE_DELTA_SEQ20 = Counter(state for state, _c in _T06_VISIT_OUTCOMES_SEQ20.values())
+EXPECTED_STATE_CENSUS_BY_SEQUENCE[33] = dict(EXPECTED_STATE_CENSUS_BY_SEQUENCE[32])
+
 EXPECTED_STATE_CENSUS_BY_SEQUENCE = {
     _seq: {
         _state: _count + (_T06_STATE_DELTA_SEQ20 if _seq == 20 else _T06_STATE_DELTA).get(_state, 0)
@@ -2004,6 +2010,8 @@ EXPECTED_DEAD_END_FACT_CENSUS_BY_SEQUENCE[32] = EXPECTED_DEAD_END_FACT_CENSUS_BY
 # PR-12: the unsure payer / unsure sponsor-confirmation work walks dead-end on the fact
 # their own answered question refuses to certify (seq-20 also holds the old
 # `offshore/other/paid/sponsor_unsure` row on the sponsor fact).
+EXPECTED_DEAD_END_FACT_CENSUS_BY_SEQUENCE[33] = dict(EXPECTED_DEAD_END_FACT_CENSUS_BY_SEQUENCE[32])
+
 EXPECTED_DEAD_END_FACT_CENSUS_BY_SEQUENCE = {
     _seq: {
         **_facts,
@@ -2170,6 +2178,7 @@ STUDIO_HELD_WALKS_BY_SEQUENCE[29] = STUDIO_HELD_WALKS_BY_SEQUENCE[28]
 STUDIO_HELD_WALKS_BY_SEQUENCE[30] = STUDIO_HELD_WALKS_BY_SEQUENCE[29]
 STUDIO_HELD_WALKS_BY_SEQUENCE[31] = STUDIO_HELD_WALKS_BY_SEQUENCE[30]
 STUDIO_HELD_WALKS_BY_SEQUENCE[32] = STUDIO_HELD_WALKS_BY_SEQUENCE[31]
+STUDIO_HELD_WALKS_BY_SEQUENCE[33] = STUDIO_HELD_WALKS_BY_SEQUENCE[32]
 STUDIO_HELD_WALKS: frozenset[str] = STUDIO_HELD_WALKS_BY_SEQUENCE.get(_SIGNED_SEQUENCE, frozenset())
 STUDIO_REVIEW_REASON = "SECOND_HOME_BELOW_THRESHOLD_STUDIO"
 

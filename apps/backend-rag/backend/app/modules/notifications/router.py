@@ -563,7 +563,7 @@ async def send_direct_email(
             tag = "primary" if idx == 0 else f"fallback={name}"
             # C4 (PR #7385 gate follow-up): `request.to`/`request.subject` are
             # caller-supplied PII/free-text (the latter can itself carry an
-            # address, e.g. "Re: naneni@example.com") — never logged raw.
+            # address, e.g. "Re: someone@example.com") — never logged raw.
             # Reuses email_audit's own digest + bounded scrub, not a new regex.
             # C3 (#7438 gate, CodeQL 9217, py/log-injection): main's original
             # line used `{request.subject!r}`, whose repr escapes `\n` — the

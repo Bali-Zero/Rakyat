@@ -75,7 +75,7 @@ import { ProcessTab } from "./components/ProcessTab";
 import { FamilyTab } from "./components/FamilyTab";
 import { ImmigrationTab } from "./components/ImmigrationTab";
 import { CompanyTab } from "./components/CompanyTab";
-import { TaxTab } from "./components/TaxTab";
+import { TaxTab, legacyConsultantLabel } from "./components/TaxTab";
 import { ActivityTab } from "./components/ActivityTab";
 import { PortalAccess } from "./components/PortalAccess";
 import { PortalMessages } from "./components/PortalMessages";
@@ -1200,6 +1200,14 @@ export function ClientDetailClient({
                         }
                       >
                         <option value="">— not assigned —</option>
+                        {taxConsultantValue &&
+                          !taxConsultants.some(
+                            (c) => c.value === taxConsultantValue,
+                          ) && (
+                            <option value={taxConsultantValue}>
+                              {legacyConsultantLabel(taxConsultantValue)}
+                            </option>
+                          )}
                         {taxConsultants.map((c) => (
                           <option key={c.value} value={c.value}>
                             {c.label}

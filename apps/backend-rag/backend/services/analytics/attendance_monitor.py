@@ -114,7 +114,7 @@ TELEGRAM_MAX_MSG_LEN: int = 4000
 # Manager routing: which supervisor to CC on the ultimatum email. The reporting
 # lines are the leave-approval ones (hr_leave_routing.VERONIKA_REPORTS), so a
 # change there is a change here.
-# - tax team (any *.tax@balizero.com), setup team, Natalie -> Veronika
+# - tax team (any *.tax@balizero.com), setup team -> Veronika
 #   (Manager of the tax department and the setup team, Zero 2026-10-20)
 # - rina                                                  -> Ruslana
 # - everyone else                                         -> only zero@ in CC
@@ -135,7 +135,7 @@ def resolve_responsible_manager(email: str) -> str | None:
     no specific supervisor (in which case only ``zero@balizero.com`` is CC'd).
 
     Routing rules (per Zero, 2026-04-07 and 2026-10-20):
-        - *.tax@balizero.com, setup team, natalie@ -> veronika@balizero.com
+        - *.tax@balizero.com, setup team            -> veronika@balizero.com
         - rina@                                    -> ruslana@balizero.com
         - everyone else                            -> None (zero@ only)
     """

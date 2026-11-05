@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { isImeComposing } from "@/lib/ime-composing";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Search,
@@ -319,7 +320,11 @@ export function SearchModal({
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         setSelectedIndex((i) => Math.max(i - 1, 0));
-      } else if (e.key === "Enter" && results[selectedIndex]) {
+      } else if (
+        e.key === "Enter" &&
+        !isImeComposing(e) &&
+        results[selectedIndex]
+      ) {
         e.preventDefault();
         const article = results[selectedIndex];
         window.location.href = `/${article.category}/${article.slug}`;

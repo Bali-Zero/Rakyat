@@ -13,6 +13,7 @@ export async function POST(request: NextRequest) {
       lat,
       lng,
       kbli_code,
+      vintage,
       is_pma,
       land_size_m2,
       price_idr,
@@ -33,7 +34,8 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         lat,
         lng,
-        kbli_code: kbli_code || undefined,
+        kbli_code,
+        vintage,
         is_pma: is_pma ?? true,
         land_size_m2: land_size_m2 || undefined,
         price_idr: price_idr || undefined,

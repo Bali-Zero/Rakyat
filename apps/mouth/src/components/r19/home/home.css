@@ -410,9 +410,6 @@
     gap: 15px;
     font-size: 11px;
   }
-  :where([data-r19-home]) :where(.site-header) nav a:last-child {
-    display: none;
-  }
   :where([data-r19-home]) .account {
     font-size: 10px;
   }
@@ -2439,4 +2436,15 @@
   flex: 0 0 1.25em;
   width: 1.25em;
   text-align: right;
+}
+
+/* Web audit panel 2026-11-01 (Argon / Kimi / Astra). Headings balance their
+   line breaks, prose avoids single-word last lines. Progressive: browsers
+   without text-wrap render exactly as before. content-visibility was tried
+   in #9117 and dropped: full-page captures paint those sections blank. */
+:where([data-r19-home]) :is(h1, h2, h3, h4) {
+  text-wrap: balance;
+}
+:where([data-r19-home]) :is(p, li, blockquote) {
+  text-wrap: pretty;
 }

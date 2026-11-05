@@ -20,6 +20,7 @@ import asyncpg
 import httpx
 
 from backend.app.core.config import settings
+from backend.security.pii_log_identifier import redact_identifier_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,7 @@ class GoogleDriveService:
         Raises:
             ValueError: If token exchange fails
         """
-        logger.info("[BUKILI] Exchanging code for user %s", user_id)
+        logger.info("[BUKILI] Exchanging code for user %s", redact_identifier_for_log(user_id))
 
         client = self._get_client()
         response = await client.post(
@@ -153,7 +154,7 @@ class GoogleDriveService:
 
         if response.status_code != 200:
             error_data = response.json()
-            logger.error("[BUKILI] Token exchange failed: %s", error_data)
+            logger.error("[BUKILI] Token exchange failed: HTTP %s", response.status_code)
             raise ValueError(
                 f"Token exchange failed: {error_data.get('error_description', 'Unknown error')}",
             )
@@ -173,7 +174,9 @@ class GoogleDriveService:
             expires_at=expires_at,
         )
 
-        logger.info("[BUKILI] Successfully connected for user %s", user_id)
+        logger.info(
+            "[BUKILI] Successfully connected for user %s", redact_identifier_for_log(user_id)
+        )
         return token_data
 
     async def _store_tokens(
@@ -256,7 +259,7 @@ class GoogleDriveService:
                 self._oauth_system_disabled_logged = True
             return None
 
-        logger.info("[BUKILI] Refreshing token for user %s", user_id)
+        logger.info("[BUKILI] Refreshing token for user %s", redact_identifier_for_log(user_id))
 
         client = self._get_client()
         response = await client.post(
@@ -270,7 +273,9 @@ class GoogleDriveService:
         )
 
         if response.status_code != 200:
-            logger.error("[BUKILI] Token refresh failed for user %s", user_id)
+            logger.error(
+                "[BUKILI] Token refresh failed for user %s", redact_identifier_for_log(user_id)
+            )
             return None
 
         token_data = response.json()
@@ -324,7 +329,7 @@ class GoogleDriveService:
                 user_id,
             )
 
-        logger.info("[BUKILI] Disconnected for user %s", user_id)
+        logger.info("[BUKILI] Disconnected for user %s", redact_identifier_for_log(user_id))
         return True
 
     # =========================================================================
@@ -376,7 +381,7 @@ class GoogleDriveService:
 
         if response.status_code != 200:
             error = response.json()
-            logger.error("[BUKILI] List files failed: %s", error)
+            logger.error("[BUKILI] List files failed: HTTP %s", response.status_code)
             raise ValueError(
                 f"Failed to list files: {error.get('error', {}).get('message', 'Unknown error')}",
             )
@@ -595,13 +600,13 @@ class GoogleDriveService:
 
         if response.status_code != 200:
             error = response.json()
-            logger.error("[BUKILI] Create folder failed: %s", error)
+            logger.error("[BUKILI] Create folder failed: HTTP %s", response.status_code)
             raise ValueError(
                 f"Failed to create folder: {error.get('error', {}).get('message', 'Unknown error')}",
             )
 
         folder_data = response.json()
-        logger.info(f"[BUKILI] Created folder '{name}' with ID: {folder_data['id']}")
+        logger.info("[BUKILI] Created folder with ID: %s", folder_data["id"])
         return folder_data
 
     async def create_client_folder_async(
@@ -697,12 +702,17 @@ class GoogleDriveService:
                     if len(parts) == 1:
                         folder_id_cache[name] = subfolder["id"]
                 except Exception as e:
-                    logger.error("[BUKILI] Failed to create subfolder %s: %s", subfolder_path, e)
+                    logger.error(
+                        "[BUKILI] Failed to create subfolder under root %s for client %s: %s",
+                        root_folder_id,
+                        client_id,
+                        type(e).__name__,
+                    )
                     continue
 
             logger.info(
-                "[BUKILI] Created client folder structure for %s: %s",
-                client_name,
+                "[BUKILI] Created client folder structure for client %s: %s",
+                client_id,
                 root_folder_id,
             )
 
@@ -714,7 +724,11 @@ class GoogleDriveService:
             }
 
         except Exception as e:
-            logger.error("[BUKILI] Failed to create client folder for %s: %s", client_name, e)
+            logger.error(
+                "[BUKILI] Failed to create client folder for client %s: %s",
+                client_id,
+                type(e).__name__,
+            )
             return {
                 "success": False,
                 "error": str(e),
@@ -791,7 +805,7 @@ class GoogleDriveService:
 
         if response.status_code != 200:
             error = response.json()
-            logger.error("[BUKILI] List folder files failed: %s", error)
+            logger.error("[BUKILI] List folder files failed: HTTP %s", response.status_code)
             raise ValueError(
                 f"Failed to list files: {error.get('error', {}).get('message', 'Unknown error')}",
             )
@@ -883,7 +897,7 @@ class GoogleDriveService:
 
         if response.status_code != 200:
             error = response.json()
-            logger.error("[BUKILI] Get folder structure failed: %s", error)
+            logger.error("[BUKILI] Get folder structure failed: HTTP %s", response.status_code)
             raise ValueError(
                 f"Failed to get folder structure: {error.get('error', {}).get('message', 'Unknown error')}",
             )
@@ -1012,7 +1026,9 @@ class GoogleDriveService:
 
         if metadata_response.status_code != 200:
             error = metadata_response.json()
-            logger.error("[BUKILI] Upload file metadata failed: %s", error)
+            logger.error(
+                "[BUKILI] Upload file metadata failed: HTTP %s", metadata_response.status_code
+            )
             raise ValueError(
                 f"Failed to upload file: {error.get('error', {}).get('message', 'Unknown error')}",
             )
@@ -1037,7 +1053,9 @@ class GoogleDriveService:
                 if upload_response.headers.get("content-type", "").startswith("application/json")
                 else {}
             )
-            logger.error("[BUKILI] Upload file content failed: %s", error)
+            logger.error(
+                "[BUKILI] Upload file content failed: HTTP %s", upload_response.status_code
+            )
             raise ValueError(
                 f"Failed to upload file content: {error.get('error', {}).get('message', 'Unknown error')}",
             )
@@ -1047,8 +1065,8 @@ class GoogleDriveService:
         size_bytes = int(file_info.get("size", 0)) if file_info.get("size") else len(file_content)
 
         logger.info(
-            "[BUKILI] Uploaded file '%s' (%s bytes) to folder %s",
-            file_name,
+            "[BUKILI] Uploaded file %s (%s bytes) to folder %s",
+            file_id,
             size_bytes,
             folder_id,
         )

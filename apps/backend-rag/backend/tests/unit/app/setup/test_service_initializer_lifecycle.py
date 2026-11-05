@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
+from backend.app.core.database import normalize_database_dsn
 from backend.app.setup import service_initializer as initializer
 
 
@@ -165,14 +166,14 @@ async def test_initialize_services_does_not_mark_failed_critical_startup_complet
 
 
 def test_clean_database_dsn_removes_only_sslmode() -> None:
-    dsn, ssl_context = initializer._clean_database_dsn(
+    dsn, ssl_context = normalize_database_dsn(
         "postgresql://user:pass@db.example/test?sslmode=disable&application_name=api"
     )
 
     assert dsn == "postgresql://user:pass@db.example/test?application_name=api"
     assert ssl_context is False
 
-    unchanged_dsn, default_ssl_context = initializer._clean_database_dsn(
+    unchanged_dsn, default_ssl_context = normalize_database_dsn(
         "postgresql://user:pass@db.example/test"
     )
     assert unchanged_dsn == "postgresql://user:pass@db.example/test"
@@ -192,7 +193,7 @@ async def test_initialize_services_light_configures_pool_codecs_and_kill_switch(
     monkeypatch.setattr(
         initializer.settings, "database_url", "postgresql://db/test?sslmode=disable"
     )
-    monkeypatch.setattr(initializer.asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr(initializer, "create_database_pool", create_pool)
     monkeypatch.setattr(initializer, "service_registry", registry)
     monkeypatch.setattr(initializer, "_initialize_redis_manager", MagicMock())
     monkeypatch.setenv("DISABLE_BACKGROUND_WORKERS", "1")
@@ -205,16 +206,15 @@ async def test_initialize_services_light_configures_pool_codecs_and_kill_switch(
     await initializer.initialize_services_light(app)
 
     pool_options = create_pool.await_args.kwargs
-    assert pool_options["dsn"] == "postgresql://db/test"
-    assert pool_options["ssl"] is False
-    assert pool_options["statement_cache_size"] == 0
-    assert pool_options["min_size"] == 2
-    assert pool_options["max_size"] == 10
-
-    connection = SimpleNamespace(execute=AsyncMock(), set_type_codec=AsyncMock())
-    await pool_options["init"](connection)
-    connection.execute.assert_awaited_once_with("SET statement_timeout = '30s'")
-    assert [call.args[0] for call in connection.set_type_codec.await_args_list] == ["jsonb", "json"]
+    assert pool_options["dsn"] == "postgresql://db/test?sslmode=disable"
+    policy = pool_options["policy"]
+    assert policy.min_size == 2
+    assert policy.max_size == 10
+    assert policy.command_timeout == 60
+    assert policy.max_inactive_connection_lifetime == 30.0
+    assert policy.statement_timeout_seconds == 30
+    assert policy.validate_on_connect is False
+    assert policy.validate_after_create is False
 
     assert app.state.db_pool is db_pool
     assert app.state.cache is cache
@@ -234,7 +234,7 @@ async def test_initialize_services_light_cache_failure_is_non_critical(
 ) -> None:
     app = SimpleNamespace(state=SimpleNamespace())
     monkeypatch.setattr(initializer.settings, "database_url", "postgresql://db/test")
-    monkeypatch.setattr(initializer.asyncpg, "create_pool", AsyncMock(return_value=object()))
+    monkeypatch.setattr(initializer, "create_database_pool", AsyncMock(return_value=object()))
     monkeypatch.setattr(initializer, "service_registry", MagicMock())
     monkeypatch.setattr(initializer, "_initialize_redis_manager", MagicMock())
     monkeypatch.setenv("DISABLE_BACKGROUND_WORKERS", "1")
@@ -281,7 +281,7 @@ async def test_initialize_services_light_retries_pool_creation_until_it_succeeds
         sleeps.append(delay)
 
     monkeypatch.setattr(initializer.settings, "database_url", "postgresql://db/test")
-    monkeypatch.setattr(initializer.asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr(initializer, "create_database_pool", create_pool)
     monkeypatch.setattr(initializer.asyncio, "sleep", fake_sleep)
     monkeypatch.setattr(initializer, "service_registry", registry)
     monkeypatch.setattr(initializer, "_initialize_redis_manager", MagicMock())
@@ -333,7 +333,7 @@ async def test_initialize_services_light_never_gives_up_on_pool_creation(
             raise asyncio.CancelledError
 
     monkeypatch.setattr(initializer.settings, "database_url", "postgresql://db/test")
-    monkeypatch.setattr(initializer.asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr(initializer, "create_database_pool", create_pool)
     monkeypatch.setattr(initializer.asyncio, "sleep", fake_sleep)
     monkeypatch.setattr(initializer, "service_registry", registry)
     monkeypatch.setattr(initializer, "_initialize_redis_manager", MagicMock())
@@ -389,7 +389,11 @@ async def test_initialize_services_light_failure_after_the_pool_is_still_fatal(
     app = SimpleNamespace(state=SimpleNamespace())
     registry = MagicMock()
     monkeypatch.setattr(initializer.settings, "database_url", "postgresql://db/test")
-    monkeypatch.setattr(initializer.asyncpg, "create_pool", AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        initializer,
+        "create_database_pool",
+        AsyncMock(return_value=object()),
+    )
     monkeypatch.setattr(
         initializer,
         "initialize_garuda_services",

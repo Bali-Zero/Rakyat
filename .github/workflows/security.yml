@@ -28,6 +28,526 @@ concurrency:
   cancel-in-progress: ${{ (github.ref != 'refs/heads/main') && github.event_name != 'merge_group' }}
 
 jobs:
+  # Path-aware gating (2026-08-20). Before this job existed, all 8 jobs below
+  # ran on EVERY pull_request and EVERY merge_group entry, unconditionally —
+  # measured live over a 70-minute window at 424.7 runner-minutes total,
+  # 364 min/h, ~39.84 min/run, and merge_group alone was 47.5% of all minutes
+  # this workflow burns. A PR touching only a .md file paid the full bill.
+  #
+  # This job does NOT invent a second classifier. It reuses the exact
+  # `scripts/ci/change_map.py` domain model + `scripts/ci/hotzone_changed_files.sh`
+  # enumerator that tests.yml's own `changes` job (promoted to enforcing
+  # 2026-08-14, PR #4181) already runs in production — same root-of-trust
+  # extraction, same corpus self-test, same manual override, same fail-open
+  # polarity on every layer. GitHub Actions `needs.*.outputs` are scoped to a
+  # single workflow file, so a literal second `changes` job is unavoidable —
+  # but the JUDGING LOGIC (change_map.py) is the identical file, not a fork of it.
+  #
+  # What differs from tests.yml's job is only the DERIVED FLAGS: six test
+  # suites there, seven security scanners here, each with its own trigger
+  # rationale (see the per-job `if:` comments below). detect-secrets is
+  # deliberately absent from every flag here — see its own job for why.
+  changes:
+    name: Change map (security)
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      map: ${{ steps.classify.outputs.map }}
+      # Fail-open defaults (superscar #2 "esiste ≠ armato"): any failure of
+      # the override probe, the classifier corpus, the trusted-extraction
+      # step, the enumerator, or this step's own JSON parsing leaves
+      # steps.classify.outputs.* unset, and every `|| 'true'` below then
+      # makes the corresponding scanner run. There is no path from a broken
+      # classifier to a silently-skipped scan.
+      run_all: ${{ steps.classify.outputs.run_all || 'true' }}
+      run_codeql_python: ${{ steps.classify.outputs.run_codeql_python || 'true' }}
+      run_codeql_js: ${{ steps.classify.outputs.run_codeql_js || 'true' }}
+      run_bandit: ${{ steps.classify.outputs.run_bandit || 'true' }}
+      run_snyk_python: ${{ steps.classify.outputs.run_snyk_python || 'true' }}
+      run_safety: ${{ steps.classify.outputs.run_safety || 'true' }}
+      run_snyk_docker: ${{ steps.classify.outputs.run_snyk_docker || 'true' }}
+      run_snyk_node: ${{ steps.classify.outputs.run_snyk_node || 'true' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+
+      # Same discretionary manual lever as tests.yml (Merge-OS round-2 Cure
+      # #1) — ONE operator switch forces the full suite on BOTH workflows
+      # during an incident, rather than two separate variables to remember.
+      # Truth table lives in scripts/ci/ring_gating_override.sh: only the
+      # exact literal "true" activates; every other value (unset, "false",
+      # typo) leaves the classifier deciding, i.e. today's behavior.
+      - name: Manual override — force full suite (Merge-OS round-2 Cure #1)
+        id: override
+        env:
+          MERGEOS_RING_GATING_DISABLED: ${{ vars.MERGEOS_RING_GATING_DISABLED }}
+        run: bash scripts/ci/ring_gating_override.sh >> "$GITHUB_OUTPUT"
+
+      - name: Self-test ring-gating override (guilt + innocence)
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/ci/test_ring_gating_override.py
+
+      # ROOT OF TRUST — identical rationale to tests.yml's own extraction
+      # step: a PR that breaks something CodeQL/Bandit/Snyk would have
+      # caught could, in the same commit, edit change_map.py (or
+      # security_gate_flags.py — see its own module docstring) to
+      # misclassify itself away from the scanner that would have caught it.
+      # Extract all five classifier files from BASE_SHA (main's tip for a
+      # PR, the queue's base for merge_group) and judge with ONLY those
+      # copies — a PR can propose a change to the classifier, but that
+      # change judges every OTHER PR first and only starts judging PRs once
+      # merged. `.github/` and `scripts/ci/` are already PREFIX_RULES
+      # entries mapped to security_sensitive, so a PR editing the classifier
+      # is itself classified run-everything by the OLD copy doing the judging.
+      - name: Extract trusted classifier (base ref)
+        id: extract
+        if: steps.override.outputs.active != 'true'
+        env:
+          BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
+        run: |
+          set -uo pipefail
+          CLASSIFIER_DIR="$RUNNER_TEMP/trusted-classifier"
+          mkdir -p "$CLASSIFIER_DIR"
+          OK=true
+          for f in scripts/ci/change_map.py scripts/ci/test_change_map.py scripts/ci/hotzone_changed_files.sh scripts/ci/security_gate_flags.py scripts/ci/test_security_gate_flags.py; do
+            if ! git show "${BASE_SHA}:${f}" > "$CLASSIFIER_DIR/$(basename "$f")" 2>/dev/null; then
+              echo "::warning::could not extract $f from base ref $BASE_SHA — treating classifier as untrusted for this run"
+              OK=false
+            fi
+          done
+          chmod +x "$CLASSIFIER_DIR/hotzone_changed_files.sh" 2>/dev/null || true
+          echo "dir=$CLASSIFIER_DIR" >> "$GITHUB_OUTPUT"
+          echo "ok=$OK" >> "$GITHUB_OUTPUT"
+
+      - name: Verify change-map guilt and innocence corpus
+        id: classifier-tests
+        if: steps.override.outputs.active != 'true'
+        continue-on-error: true
+        env:
+          CLASSIFIER_DIR: ${{ steps.extract.outputs.dir }}
+          EXTRACT_OK: ${{ steps.extract.outputs.ok }}
+        run: |
+          set -uo pipefail
+          if [ "$EXTRACT_OK" != "true" ]; then
+            echo "::error::base-ref classifier extraction failed — refusing to trust a corpus that didn't run"
+            exit 1
+          fi
+          python3 "$CLASSIFIER_DIR/test_change_map.py"
+          python3 "$CLASSIFIER_DIR/test_security_gate_flags.py"
+
+      # merge_group base/head SHAs — same established pattern as
+      # hot-zone-pr-gate.yml / tests.yml / harness-floor.yml.
+      - name: Enumerate and classify this PR's files
+        id: classify
+        if: steps.override.outputs.active != 'true'
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha || github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+          CLASSIFIER_TEST_OUTCOME: ${{ steps.classifier-tests.outcome }}
+          CLASSIFIER_DIR: ${{ steps.extract.outputs.dir }}
+          EXTRACT_OK: ${{ steps.extract.outputs.ok }}
+        run: |
+          set -uo pipefail
+          CHANGED_FILE="$RUNNER_TEMP/change-map-changed-files.txt"
+
+          if [ "$EXTRACT_OK" != "true" ] || [ "$CLASSIFIER_TEST_OUTCOME" != "success" ]; then
+            echo "::warning::classifier untrusted or corpus failed; recommendation defaults to all scanners"
+            printf '%s\n' '__CHANGE_MAP_ENUMERATION_ERROR__' > "$CHANGED_FILE"
+          elif ! bash "$CLASSIFIER_DIR/hotzone_changed_files.sh" \
+            "$BASE_SHA" "$HEAD_SHA" "$PR_NUMBER" > "$CHANGED_FILE"; then
+            echo "::warning::changed-file enumeration failed; recommendation defaults to all scanners"
+            printf '%s\n' '__CHANGE_MAP_ENUMERATION_ERROR__' > "$CHANGED_FILE"
+          fi
+
+          if ! MAP_JSON="$(python3 "$CLASSIFIER_DIR/change_map.py" < "$CHANGED_FILE")"; then
+            echo "::warning::change_map.py exited non-zero; forcing conservative fallback"
+            MAP_JSON='{"schema_version":1,"mode":"enforcing","reason":"classifier_runtime_failure","changed_file_count":0,"domains":{},"unknown_paths":[],"run_all":true,"suggested_jobs":[],"would_skip":[]}'
+          fi
+          RUN_ALL="$(MAP_JSON="$MAP_JSON" python3 -c 'import json, os; print(str(json.loads(os.environ["MAP_JSON"])["run_all"]).lower())')"
+          echo "map=$MAP_JSON" >> "$GITHUB_OUTPUT"
+          echo "run_all=$RUN_ALL" >> "$GITHUB_OUTPUT"
+
+          # Per-scanner flags, delegated to security_gate_flags.py (the SAME
+          # trusted, BASE_SHA-extracted copy as change_map.py above — root
+          # of trust applies to the flag math too, not just the domain
+          # classification: a PR editing this file's rules directly, leaving
+          # change_map.py untouched, is a distinct bypass this extraction
+          # also closes). See that module for the per-scanner rationale
+          # (docstring + FLAG_DOMAINS table) and
+          # scripts/ci/test_security_gate_flags.py for its guilt/innocence
+          # corpus (run above, alongside test_change_map.py). It also owns
+          # the JS-manifest predicate that closes a verified gap in
+          # change_map.py's own JS-manifest rule (EXACT_RULES matches only
+          # the literal root-level "package.json"/"package-lock.json" —
+          # apps/wa-mirror/package-lock.json, this repo's own nested
+          # lockfile outside the root npm-workspaces tree, falls through to
+          # PREFIX_RULES and is tagged only "wa_mirror", never
+          # "security_sensitive"). Deliberately NOT fixed inside
+          # change_map.py itself: that file is under active review in
+          # another PR the same day (#4441, adding a fleet_ops domain to
+          # unrelated scripts/ subdirectories) — flagged as a worthwhile
+          # upstream follow-up, not fixed here, to avoid two PRs touching
+          # the same CODEOWNERS-tier1 file in parallel.
+          JOB_FLAGS="$(MAP_JSON="$MAP_JSON" python3 "$CLASSIFIER_DIR/security_gate_flags.py" < "$CHANGED_FILE")"
+          echo "$JOB_FLAGS" >> "$GITHUB_OUTPUT"
+          echo "::notice::security change-map: $MAP_JSON"
+          echo "::notice::security gate flags: $JOB_FLAGS"
+
+      - name: Publish change-map decision
+        if: always()
+        env:
+          MAP_JSON: ${{ steps.classify.outputs.map }}
+          CLASSIFIER_TEST_OUTCOME: ${{ steps.classifier-tests.outcome }}
+          CLASSIFY_OUTCOME: ${{ steps.classify.outcome }}
+          OVERRIDE_ACTIVE: ${{ steps.override.outputs.active }}
+          JS_MANIFEST_TOUCHED: ${{ steps.classify.outputs.js_manifest_touched }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+
+          raw = os.environ.get("MAP_JSON", "")
+          if raw:
+              result = json.loads(raw)
+          elif os.environ.get("OVERRIDE_ACTIVE") == "true":
+              result = {"reason": "manual_override_disabled", "run_all": True, "unknown_paths": []}
+          else:
+              result = {"reason": "classifier_runtime_failure", "run_all": True, "unknown_paths": []}
+
+          lines = [
+              "## Security change map",
+              "",
+              f"- Classifier corpus: `{os.environ['CLASSIFIER_TEST_OUTCOME']}`",
+              f"- Classification step: `{os.environ['CLASSIFY_OUTCOME']}`",
+              f"- Conservative fallback (run everything): `{str(result['run_all']).lower()}`",
+              f"- Reason: `{result['reason']}`",
+              f"- JS manifest touched (any path): `{os.environ.get('JS_MANIFEST_TOUCHED', 'unknown')}`",
+          ]
+          if result.get("unknown_paths"):
+              lines.extend(
+                  ["", "Unclassified paths (therefore all scanners run):", ""]
+                  + [f"- `{path}`" for path in result["unknown_paths"]]
+              )
+          lines.append("")
+          lines.append(
+              "detect-secrets ignores this map's domain routing entirely (runs on every "
+              "domain) — it has its own, narrower, event-based exception for merge_group; "
+              "see its own job comment for both."
+          )
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\n".join(lines) + "\n")
+          PY
+
+  snyk-python:
+    name: Snyk Python Security
+    needs: [changes]
+    # Path-aware skip (2026-08-20) — see the `changes` job comment for the
+    # full rationale. `!cancelled()` overrides the inherited skip from
+    # `changes` being pull_request/merge_group-only; the event-name branch
+    # makes this job unconditional on push/schedule/workflow_dispatch;
+    # `needs.changes.result != 'success'` covers a stale published output
+    # surviving a later failure in that job; `!= 'false'` is fail-open on
+    # every other path (unset/malformed output never skips a scan).
+    # Snyk-python scans apps/backend-rag/requirements.txt only — gated on
+    # security_sensitive (which already covers any requirements*.txt /
+    # pyproject.toml / uv.lock change, globally, via change_map.py's
+    # basename rule), not on backend_python: a code-only change cannot
+    # alter the declared dependency set this scanner evaluates.
+    # MERGE-GROUP DEDUP (2026-09-05): Snyk is not a required context (verified
+    # live, `gh api repos/.../branches/main/protection` — 13 required contexts,
+    # this job's name is not among them) and reads only apps/backend-rag's
+    # requirements.txt. NOT claiming that file is byte-identical between a
+    # PR's own head and its later merge_group entry — it isn't provably so (a
+    # merge_group's tree is base tip + any earlier-queued-ahead batchmates +
+    # this PR; base drift or a batchmate touching this same file is a real,
+    # if narrow, possibility). What actually licenses skipping here: this job
+    # is advisory only (not required, never blocks a merge), and IF a
+    # different PR is what changed requirements.txt, THAT PR's own
+    # pull_request-triggered Snyk run already scanned it — the finding still
+    # surfaces, just not doubled up on every subsequent PR's merge_group
+    # entry too. `github.event_name != 'merge_group'` below removes only that
+    # redundant re-scan; pull_request/push/schedule/workflow_dispatch keep
+    # running exactly as before. IF THIS JOB IS EVER MADE REQUIRED for
+    # merge, remove the `github.event_name != 'merge_group'` term above —
+    # the whole argument here depends on advisory-only status.
+    if: >-
+      !cancelled() &&
+      github.event_name != 'merge_group' &&
+      (
+        (github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
+        needs.changes.result != 'success' ||
+        needs.changes.outputs.run_snyk_python != 'false'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Blocking gate — HIGH/CRITICAL CVEs fail the job unless the finding is
+    # listed in .security/exceptions.yaml (see docs/security/CVE_TRIAGE_POLICY.md).
+    # Exceptions are enforced by the "Honour CVE exceptions" step below, which
+    # re-runs Snyk after filtering out accepted CVE ids.
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Validate CVE exceptions file
+        run: |
+          pip install pyyaml -q
+          python scripts/check_cve_exceptions.py
+
+      - name: Run Snyk (Python, JSON for exception filtering)
+        uses: snyk/actions/python@12140f4059e244892ae643824a95459a102120dd # master
+        continue-on-error: true # we make the decision in the next step
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: |
+            --severity-threshold=high
+            --file=apps/backend-rag/requirements.txt
+            --package-manager=pip
+            --project-name=nuzantara-backend
+            --json-file-output=snyk-python.json
+            --sarif-file-output=snyk.sarif
+
+      - name: Honour CVE exceptions (fail on un-accepted CVEs)
+        run: |
+          python scripts/filter_snyk_findings.py snyk-python.json
+        env:
+          CVE_EXCEPTIONS_PATH: .security/exceptions.yaml
+
+      - name: Upload Snyk results
+        uses: github/codeql-action/upload-sarif@v4.38.2
+        if: always() && hashFiles('snyk.sarif') != ''
+        continue-on-error: true
+        with:
+          sarif_file: snyk.sarif
+
+  snyk-node:
+    name: Snyk Node.js Security
+    needs: [changes]
+    # Path-aware skip — see snyk-python's comment for the shared rationale.
+    # Gated on the JS-manifest predicate (any package.json/package-lock.json
+    # anywhere in the tree, not just the root ones change_map.py's
+    # EXACT_RULES literally matches — closes a verified nested-lockfile gap,
+    # e.g. apps/wa-mirror/package-lock.json, its own lockfile outside the
+    # root npm-workspaces tree this job's `npm ci` installs) in addition to
+    # security_sensitive.
+    # MERGE-GROUP DEDUP (2026-09-05) — same rationale as snyk-python's own
+    # comment above (not a required context; a different PR's own change to
+    # package.json/package-lock.json is caught by THAT PR's own
+    # pull_request-triggered scan, not claimed to be provably absent here).
+    if: >-
+      !cancelled() &&
+      github.event_name != 'merge_group' &&
+      (
+        (github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
+        needs.changes.result != 'success' ||
+        needs.changes.outputs.run_snyk_node != 'false'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Blocking gate — see snyk-python. Exceptions honoured via
+    # .security/exceptions.yaml (docs/security/CVE_TRIAGE_POLICY.md).
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Setup Python (for exception filter)
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate CVE exceptions file
+        run: |
+          pip install pyyaml -q
+          python scripts/check_cve_exceptions.py
+
+      - name: Run Snyk (Node.js, JSON for exception filtering)
+        run: |
+          npx --yes snyk@latest test \
+            --severity-threshold=high \
+            --all-projects \
+            --json-file-output=snyk-node.json \
+            --sarif-file-output=snyk.sarif || true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      - name: Honour CVE exceptions (fail on un-accepted CVEs)
+        run: |
+          python scripts/filter_snyk_findings.py snyk-node.json
+        env:
+          CVE_EXCEPTIONS_PATH: .security/exceptions.yaml
+
+      - name: Upload Snyk results
+        uses: github/codeql-action/upload-sarif@v4.38.2
+        if: always() && hashFiles('snyk.sarif') != ''
+        continue-on-error: true
+        with:
+          sarif_file: snyk.sarif
+
+  snyk-docker:
+    name: Snyk Docker Security
+    needs: [changes]
+    # Path-aware skip — see snyk-python's comment for the shared rationale.
+    # backend_python is included here (unlike snyk-python/safety) because
+    # this job also validates that the production Dockerfile still BUILDS
+    # (see the job's own comment below) — application code, not just the
+    # Dockerfile or requirements.lock.txt, can break that build.
+    # NOT MERGE-GROUP DEDUPED (considered and reverted, 2026-09-05): a
+    # merge_group's tree is base-branch tip + any earlier-queued-ahead
+    # batchmates + this PR, which is not provably byte-identical to what
+    # this PR's own `pull_request` run built (that run checks out
+    # `refs/pull/N/merge`, a test-merge against whatever the base was AT
+    # THAT RUN'S trigger time — a moving target, not this PR's diff alone).
+    # This job is the one place in this file where that gap is not
+    # theoretical: run 30302472020 (see the job's own comment below) IS a
+    # merge_group run that caught a broken image build the PR-head run had
+    # not. Deduping this job would silently reintroduce that exact blind
+    # spot. Flagged by an adversarial review seat (codex-gpt-5.6-sol) on an
+    # earlier draft that DID dedup this job; see the PR body/evidence pack.
+    if: >-
+      !cancelled() &&
+      (
+        (github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
+        needs.changes.result != 'success' ||
+        needs.changes.outputs.run_snyk_docker != 'false'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # This job does TWO different things and they deserve different verdicts:
+    # it BUILDS the production image, and then it SCANS the result.
+    #
+    # A vulnerability finding stays advisory — a CVE in the base image should not
+    # block every pull request — and that is handled where it belongs, by the
+    # step-level `continue-on-error` on "Run Snyk (Docker)" below.
+    #
+    # A BUILD failure is not a finding. It means the production image cannot be
+    # produced at all, and `fly deploy` builds this very Dockerfile. So the
+    # job-level `continue-on-error: true` that used to sit here was removed
+    # (2026-07-28): measured, it let the workflow RUN report `success` while
+    # `Build Docker image` had failed — run 30302472020 (a merge_group!) and run
+    # 30301159955 both concluded green with a broken image. The job's own check
+    # went red either way, but nothing that watches "did security.yml pass" could
+    # see it, and this check cannot be made required because it needs SNYK_TOKEN
+    # (a required context that needs a secret is impassable for Dependabot).
+    #
+    # Removing it changes no gating: `Snyk Docker Security` is not a required
+    # context and the run conclusion is not one either. It only stops the run from
+    # claiming success over a broken build.
+    #
+    # The comment previously here said "Advisory-only: see snyk-python job
+    # comment" — a pointer that had outlived its target: snyk-python is now
+    # documented as a BLOCKING gate, so the reference argued the opposite of what
+    # it was cited for. Stating the reason locally instead of pointing elsewhere.
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Build Docker image
+        run: |
+          docker build -t nuzantara-rag:${{ github.sha }} \
+            -f apps/backend-rag/Dockerfile .
+
+      - name: Run Snyk (Docker)
+        uses: snyk/actions/docker@12140f4059e244892ae643824a95459a102120dd # master
+        continue-on-error: true # vulnerability findings stay advisory (see job comment)
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          image: nuzantara-rag:${{ github.sha }}
+          args: --severity-threshold=high
+
+      # A red check on a pull request is seen by its author. A red check on MAIN is
+      # seen by nobody: none of this workflow's eight jobs alarmed, while fly-deploy
+      # and six cron-* workflows all carry `if: failure()` Telegram steps on the same
+      # channel. That asymmetry is why the 2026-07-27 NodeSource 403s — intermittent
+      # failures at 19:57, 19:58, 20:06, 20:20 and 20:24, recovering by 20:42 — broke
+      # the production image build repeatedly without anyone being told.
+      #
+      # Restricted to non-PR triggers on purpose: on a pull request the author
+      # already has the signal, and duplicating it there would only train people
+      # to ignore the channel. That was originally written as `event_name=='push'
+      # && ref=='refs/heads/main'`, which commit 4e2d8367e (#4218, 2026-08-16)
+      # orphaned: narrowing `on.push.branches` from `[main, develop]` to
+      # `[develop]` means GitHub's own branch filter now guarantees
+      # `event_name=='push' ⟹ ref=='refs/heads/develop'` — the old conjunct
+      # against `refs/heads/main` became a standing contradiction, so this step
+      # could never fire on a push, and under `schedule` (the daily backstop
+      # #4218 named as the intended replacement) `event_name` is never `'push'`
+      # either. The alarm was armed and mute. Proven live: the 2026-08-20
+      # unbuildable image (upstream `claude-code@2.1.237` published without its
+      # `linux-x64` tarball) alarmed nobody. The condition below now names
+      # exactly the two triggers this `on:` block can actually deliver a
+      # failure() run through — a push to `develop`, or the daily `schedule`
+      # run (which always executes against the default branch, i.e. main).
+      # `secrets.*` is available on both: `schedule` only ever fires on the
+      # default branch, never a fork PR context, and this repo's other
+      # scheduled workflows (e.g. the former cron-cert-monitor.yml) read
+      # `secrets.TELEGRAM_BOT_TOKEN`/`secrets.TELEGRAM_OWNER_CHAT_ID` live under
+      # `on: schedule:` with no special-casing.
+      # The alert NAMES the ref it fired on rather than asserting one. The step
+      # used to be titled "... on main" and say so in its body — true while the
+      # only trigger was a push to main, and a lie the moment the condition
+      # above gained the `develop` push and the scheduled run. An alert that
+      # inventories mutable state mislead exactly the person reading it at
+      # 07:30 (W114/W106), and it is the same belief that produced the
+      # condition, so the two must not be able to disagree. `github.ref_name`
+      # is `develop` on the push and the default branch on the scheduled run.
+      - name: Telegram alert — production image failed to BUILD
+        if: failure() && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/develop'))
+        env:
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_OWNER_CHAT_ID: ${{ secrets.TELEGRAM_OWNER_CHAT_ID }}
+        run: |
+          # NOT `curl -s ... || true`. This step IS the alarm — the whole reason the job
+          # stopped carrying `continue-on-error` — so it must be able to fail when the
+          # alarm does not arrive. `telegram_notify.sh` judges the API's REPLY: a rotated
+          # token answers HTTP 401 with a well-formed body and leaves curl's exit code at
+          # 0, which is how an alarm goes green while saying nothing (W104).
+          # No --soft here, deliberately: an undeliverable build-break alert must be
+          # visible as a failure, not as a line in a log nobody opens.
+          # The body is assembled with printf rather than written as a literal
+          # multi-line string: inside a `run: |` block a line that starts at
+          # column 0 CLOSES the YAML scalar, and the file stops being valid
+          # YAML — caught by actionlint before this ever ran.
+          TEXT="$(printf '%s\n' \
+            "🐳 <b>nuzantara-rag image failed to BUILD on ${REF}</b>" \
+            "" \
+            "<code>${SHA:0:8}</code>" \
+            "" \
+            "<code>fly deploy</code> builds this same Dockerfile, so a deploy attempted now would fail too. This check is advisory for CVEs, never for a build break." \
+            "" \
+            "${RUN_URL}")"
+          bash scripts/ci/telegram_notify.sh --parse-mode HTML --text "$TEXT"
+
   codeql:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
@@ -60,7 +580,16 @@ jobs:
         uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           category: "/language:${{matrix.language}}"
-          # merge_group: analyse, never upload. The queue's temporary ref is
-          # deleted once the group is rebuilt or merged, and a SARIF upload at
-          # the end of a long analysis then fails with "ref ... not found".
-          upload: ${{ github.event_name == 'merge_group' && 'never' || 'always' }}
+          # Keep analysis independent of Code Scanning availability and of temporary merge-group refs. Preserve a findings below.
+          upload: never
+          upload-database: false
+          output: codeql-results
+
+      - name: Retain CodeQL SARIF
+        if: always() && env.RUN_THIS_LANGUAGE == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: codeql-sarif-${{ matrix.language }}-${{ github.run_attempt }}
+          path: codeql-results/**/*.sarif
+          if-no-files-found: error
+          retention-days: 14

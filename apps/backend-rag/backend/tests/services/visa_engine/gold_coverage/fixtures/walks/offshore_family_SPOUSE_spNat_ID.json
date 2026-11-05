@@ -12,7 +12,7 @@
     "marital_status",
     "family_sponsor_nationalities",
     "family_marriage_registered",
-    "family_sponsor_confirmed",
+    "family_spouse_application_support_confirmed",
     "stay_days",
     "review_gate"
   ],
@@ -81,6 +81,10 @@
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"
     },
+    "investment.sponsoring_company_confirmed": {
+      "status": "UNKNOWN",
+      "reason": "NOT_ASKED"
+    },
     "investment.own_shareholding_idr": {
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"
@@ -109,7 +113,11 @@
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"
     },
-    "family.sponsor_confirmed": { "status": "KNOWN", "value": true },
+    "family.spouse_application_support_confirmed": {
+      "status": "KNOWN",
+      "value": true
+    },
+    "family.sponsor_confirmed": { "status": "UNKNOWN", "reason": "NOT_ASKED" },
     "study.level": { "status": "UNKNOWN", "reason": "NOT_ASKED" },
     "study.admission_confirmed": { "status": "UNKNOWN", "reason": "NOT_ASKED" },
     "study.sponsor_confirmed": { "status": "UNKNOWN", "reason": "NOT_ASKED" },

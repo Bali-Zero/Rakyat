@@ -117,8 +117,8 @@ export const BANK_ROWS: LedgerRow[] = [
   },
   {
     date: "25/07",
-    description: "TRSF MASUK — BPK. XIRILA",
-    amount: "+10.000.013",
+    description: "TRSF MASUK — BPK. CONTOH NASABAH",
+    amount: "+10.013.013",
     balance: "111.710.000",
   },
   {
@@ -210,8 +210,8 @@ export const CASHBOOK_ROWS: LedgerRow[] = [
   },
   {
     date: "25/07",
-    description: "Owner transfer — Bpk. Xirila",
-    amount: "+10.000.013",
+    description: "Owner transfer — Bpk. Contoh Nasabah",
+    amount: "+10.013.013",
     balance: "121.310.000",
   },
   {
@@ -330,7 +330,7 @@ export const EXERCISES: Exercise[] = [
       {
         id: "c_reply",
         label: "Your reply",
-        placeholder: "Dear Mr Pinihoh,",
+        placeholder: "Dear Mr Example,",
       },
     ],
   },

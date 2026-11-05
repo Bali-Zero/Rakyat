@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { logger } from "@/lib/logger";
 import { trackKBLISearch } from "@/lib/analytics";
+import { isImeComposing } from "@/lib/ime-composing";
 
 interface Props {
   navigateOnSubmit?: boolean;
@@ -151,6 +152,7 @@ export function KBLISearch({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (isImeComposing(e)) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setActiveIndex((prev) => Math.min(prev + 1, results.length - 1));
@@ -191,6 +193,9 @@ export function KBLISearch({
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
           onFocus={() => query.length >= 2 && setIsOpen(true)}
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
           placeholder={placeholder}
           aria-label={placeholder || "Search KBLI"}
           role="combobox"

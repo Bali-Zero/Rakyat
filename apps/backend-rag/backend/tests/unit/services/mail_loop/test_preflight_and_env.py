@@ -236,44 +236,92 @@ def _request() -> draft_module.DraftRequest:
     )
 
 
-def test_draft_attempts_the_cli_without_the_token_variable(
+def _console_seat(monkeypatch: pytest.MonkeyPatch, n: int = 1, key: str = "sk-test") -> None:
+    """One Console seat (RULED 2026-11-01): key + the workspace it is pinned to."""
+    monkeypatch.setenv(f"ANTHROPIC_CONSOLE_KEY_{n}", key)
+    monkeypatch.setenv(f"ANTHROPIC_CONSOLE_WORKSPACE_{n}", f"wrkspc_test{n}")
+
+
+@pytest.fixture
+def no_seats(monkeypatch: pytest.MonkeyPatch) -> None:
+    for n in (1, 2, 3):
+        monkeypatch.delenv(f"ANTHROPIC_CONSOLE_KEY_{n}", raising=False)
+        monkeypatch.delenv(f"ANTHROPIC_CONSOLE_WORKSPACE_{n}", raising=False)
+
+
+def test_draft_runs_the_cli_on_the_console_seat(
     monkeypatch: pytest.MonkeyPatch,
+    no_seats: None,
 ) -> None:
-    """INNOCENCE: an unset token must not pre-empt a CLI that can authenticate."""
-    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    """INNOCENCE: with a seat configured the CLI runs — on THAT seat's key and
+    workspace header, with no plan-OAuth material in its environment."""
+    _console_seat(monkeypatch, 1, "sk-seat-one")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "plan-oauth-must-not-reach-the-child")
     monkeypatch.setenv("CLAUDE_CLI_PATH", "/fake/claude")
 
     seen: dict[str, Any] = {}
 
-    def fake_run(argv: list[str], **_kwargs: Any) -> _Completed:
+    def fake_run(argv: list[str], **kwargs: Any) -> _Completed:
         seen["argv"] = argv
+        seen["env"] = kwargs.get("env")
         return _Completed(0, stdout="Dear client, ...")
 
     monkeypatch.setattr(draft_module.subprocess, "run", fake_run)
 
     assert draft_module.generate(_request()) == "Dear client, ..."
     assert seen["argv"][0] == "/fake/claude", "the CLI was never invoked"
+    assert seen["env"]["ANTHROPIC_API_KEY"] == "sk-seat-one"
+    assert seen["env"]["ANTHROPIC_CUSTOM_HEADERS"] == "anthropic-workspace-id: wrkspc_test1"
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in seen["env"]
 
 
-def test_draft_reports_the_clis_real_error_when_it_fails(
+def test_draft_refuses_without_a_console_seat(
     monkeypatch: pytest.MonkeyPatch,
+    no_seats: None,
 ) -> None:
-    """GUILT: a CLI that cannot authenticate still fails — with ITS reason.
-
-    This is what the removed pre-check was really protecting, and the CLI's own
-    message is strictly more informative than a guess about a variable.
-    """
-    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    """GUILT: no seat is no door (RULED 2026-11-01). The CLI's own OAuth
+    session is plan quota — the fallback this used to WARN about and take —
+    so the CLI is not invoked at all, and the verdict names the seat variables.
+    A plan-OAuth token in the environment does not count as a seat."""
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "plan-oauth-is-not-a-seat")
     monkeypatch.setenv("CLAUDE_CLI_PATH", "/fake/claude")
-    monkeypatch.setattr(
-        draft_module.subprocess,
-        "run",
-        lambda *_a, **_k: _Completed(1, stderr="Invalid API key / not logged in"),
-    )
+    invoked = 0
+
+    def fake_run(*_a: Any, **_k: Any) -> _Completed:
+        nonlocal invoked
+        invoked += 1
+        return _Completed(0, stdout="must not be drafted")
+
+    monkeypatch.setattr(draft_module.subprocess, "run", fake_run)
+
+    with pytest.raises(draft_module.DraftUnavailable) as excinfo:
+        draft_module.generate(_request())
+    assert "ANTHROPIC_CONSOLE_KEY_" in str(excinfo.value)
+    assert invoked == 0, "the CLI ran without a sanctioned seat"
+
+
+def test_draft_reports_the_clis_real_error_when_every_seat_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    no_seats: None,
+) -> None:
+    """A CLI that cannot authenticate still fails — with ITS reason, after the
+    seats were tried in order and each named in the attempt."""
+    _console_seat(monkeypatch, 1, "sk-one")
+    _console_seat(monkeypatch, 2, "sk-two")
+    monkeypatch.setenv("CLAUDE_CLI_PATH", "/fake/claude")
+    tried: list[str] = []
+
+    def fake_run(*_a: Any, **kwargs: Any) -> _Completed:
+        tried.append(kwargs["env"]["ANTHROPIC_API_KEY"])
+        return _Completed(1, stderr="Invalid API key / not logged in")
+
+    monkeypatch.setattr(draft_module.subprocess, "run", fake_run)
 
     with pytest.raises(draft_module.DraftUnavailable) as excinfo:
         draft_module.generate(_request())
     assert "not logged in" in str(excinfo.value)
+    assert "console_2" in str(excinfo.value)
+    assert tried == ["sk-one", "sk-two"]
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +434,7 @@ def test_the_prompt_never_reaches_the_command_line(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """GUILT: the client's words must not be visible to `ps`."""
+    _console_seat(monkeypatch)
     monkeypatch.setenv("CLAUDE_CLI_PATH", "/fake/claude")
     seen: dict[str, Any] = {}
 
@@ -407,6 +456,7 @@ def test_the_prompt_arrives_on_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
     Without this, deleting the prompt entirely would pass the test above while
     producing drafts about nothing.
     """
+    _console_seat(monkeypatch)
     monkeypatch.setenv("CLAUDE_CLI_PATH", "/fake/claude")
     seen: dict[str, Any] = {}
 

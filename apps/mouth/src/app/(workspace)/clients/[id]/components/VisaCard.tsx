@@ -1,12 +1,6 @@
 "use client";
 
-import React, {
-  useState,
-  useRef,
-  useCallback,
-  useEffect,
-  useEffectEvent,
-} from "react";
+import React, { useState, useRef, useCallback } from "react";
 import { FileText, Loader2, Upload, Trash2, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -48,7 +42,6 @@ export function VisaCard({
   const [isDeleting, setIsDeleting] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const hasTriggeredVisaOcr = useRef(false);
 
   // Poll OCR status after upload
   // NOTE: cleanupOnUnmount=false reproduces this copy's original gap — it
@@ -62,7 +55,6 @@ export function VisaCard({
 
   // The current visa/KITAS — see pickCurrentVisa.
   const latestVisa = pickCurrentVisa(documents);
-  const latestVisaFileUrl = latestVisa?.google_drive_file_url;
 
   // Find active visa process
   const visaProcess = activePractices.find(
@@ -81,8 +73,10 @@ export function VisaCard({
   const visaStartDate = latestVisa?.issue_date || visaProcess?.start_date;
   const visaExpiryDate = latestVisa?.expiry_date;
 
-  // Auto-extract visa dates via OCR when visa doc exists but no dates
-  const handleExtractVisa = async (isManual = false) => {
+  // Extract visa dates via OCR. Runs only from the explicit Extract button:
+  // opening the card must never send a document to OCR, because the backend
+  // writes the result onto the client's visa fields.
+  const handleExtractVisa = async () => {
     if (!latestVisa?.google_drive_file_url || isExtracting) return;
     const fileId = extractDriveFileId(latestVisa.google_drive_file_url);
     if (!fileId) return;
@@ -118,34 +112,14 @@ export function VisaCard({
         await onRefresh();
       }
     } catch (err) {
-      if (isManual) {
-        toast.error("OCR failed. Please try again.");
-      } else {
-        logger.error("Auto-extract visa OCR failed", {
-          metadata: { error: String(err) },
-        });
-      }
+      toast.error("OCR failed. Please try again.");
+      logger.error("Visa OCR failed", {
+        metadata: { error: String(err) },
+      });
     } finally {
       setIsExtracting(false);
     }
   };
-
-  const triggerAutoExtractVisa = useEffectEvent(() => {
-    void handleExtractVisa();
-  });
-
-  // Auto-trigger visa OCR when visa doc exists but no expiry date
-  useEffect(() => {
-    if (
-      latestVisaFileUrl &&
-      !visaExpiryDate &&
-      !isExtracting &&
-      !hasTriggeredVisaOcr.current
-    ) {
-      hasTriggeredVisaOcr.current = true;
-      triggerAutoExtractVisa();
-    }
-  }, [latestVisaFileUrl, visaExpiryDate, isExtracting]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -440,7 +414,7 @@ export function VisaCard({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => handleExtractVisa(true)}
+                onClick={() => void handleExtractVisa()}
                 disabled={isExtracting}
               >
                 {isExtracting ? (

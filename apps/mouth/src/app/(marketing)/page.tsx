@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import { preload } from "react-dom";
 import { SessionInit } from "@/components/funnel/SessionInit";
 import { R19HomeProvider } from "@/components/r19/R19Presentation";
 import { R19_VARS } from "@/components/r19/presentation";
@@ -16,7 +17,12 @@ import { Footer } from "@/components/r19/home/Footer";
 import { ZantaraFAB } from "../v2/_components/ZantaraFAB";
 import "@/components/r19/home/home.css";
 
-export const dynamic = "force-dynamic";
+// Incremental Static Regeneration, not per-request rendering. The journal
+// data already comes through unstable_cache(revalidate: 60) in
+// lib/blog/articles.ts, so a 60 s page revalidation loses no editorial
+// freshness, while the CDN and the browser back-forward cache can keep the
+// page (web audit panel, 2026-11-01).
+export const revalidate = 60;
 
 export const metadata: Metadata = {
   title: {
@@ -35,7 +41,19 @@ export const metadata: Metadata = {
   },
 };
 
+// The R19 faces are declared in home.css, which the browser only parses after
+// the HTML; without these hints it first downloads the root layout's Inter and
+// Cormorant (unused here) and discovers Manrope/Fraunces late. Entity-checked
+// against home.css by hero-and-fonts.test.ts.
+const R19_HOME_FONTS = [
+  "/fonts/manrope-r19-home.woff2",
+  "/fonts/fraunces-r19-home.woff2",
+];
+
 export default function HomePage() {
+  for (const href of R19_HOME_FONTS) {
+    preload(href, { as: "font", type: "font/woff2", crossOrigin: "anonymous" });
+  }
   return (
     <R19HomeProvider>
       <div

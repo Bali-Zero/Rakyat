@@ -85,6 +85,10 @@
       "status": "KNOWN",
       "value": 9900000026
     },
+    "investment.sponsoring_company_confirmed": {
+      "status": "UNKNOWN",
+      "reason": "NOT_ASKED"
+    },
     "investment.own_shareholding_idr": {
       "status": "KNOWN",
       "value": 9999999999
@@ -125,11 +129,15 @@
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"
     },
+    "family.spouse_application_support_confirmed": {
+      "status": "UNKNOWN",
+      "reason": "NOT_ASKED"
+    },
     "family.sponsor_confirmed": { "status": "KNOWN", "value": true },
     "study.level": { "status": "UNKNOWN", "reason": "NOT_ASKED" },
     "study.admission_confirmed": { "status": "UNKNOWN", "reason": "NOT_ASKED" },
     "study.sponsor_confirmed": { "status": "UNKNOWN", "reason": "NOT_ASKED" },
-    "sponsor.type": { "status": "KNOWN", "value": "NONE" },
+    "sponsor.type": { "status": "KNOWN", "value": "INVESTMENT" },
     "sponsor.government_invitation": {
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"

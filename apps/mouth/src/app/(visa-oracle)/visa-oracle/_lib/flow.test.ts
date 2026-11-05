@@ -213,7 +213,7 @@ const CATEGORY_CASES: ReadonlyArray<{
       ["marital_status", "MARRIED"],
       ["family_sponsor_nationalities", "ID"],
       ["family_marriage_registered", "yes"],
-      ["family_sponsor_confirmed", "yes"],
+      ["family_spouse_application_support_confirmed", "yes"],
       ["stay_days", "365"],
     ],
   },

@@ -252,18 +252,33 @@ async def _call_ollama_json(prompt: str, model: str = OLLAMA_MODEL) -> dict[str,
 
 
 async def _call_claude_json(prompt: str) -> dict[str, Any] | None:
-    """Claude Haiku 4.5 OAuth CLI fallback. Used when Ollama timeouts.
+    """Claude Haiku 4.5 CLI fallback on a Console seat. Used when Ollama timeouts.
 
     Symbiosis Law 2 disclaimer: prompt passes via Anthropic API (cloud).
     Caller MUST apply strip_pii_extra() before invoking this function.
-    OAuth-only (no ANTHROPIC_API_KEY) per global Anthropic ban rule.
+    RULED 2026-11-01: the child runs on a Console seat (key + workspace header
+    from ``backend.llm.claude_oauth_client.build_seat_env``), never on the
+    inherited environment — the plan-OAuth session this used to fall back on
+    while blanking ANTHROPIC_API_KEY. No seat: None, like no binary.
     """
+    from backend.llm.claude_oauth_client import build_seat_env, collect_seats
+
+    seats = collect_seats()
+    if not seats:
+        logger.warning(
+            "Claude CLI fallback skipped: no Console seat configured "
+            "(ANTHROPIC_CONSOLE_KEY_<n> + ANTHROPIC_CONSOLE_WORKSPACE_<n>)"
+        )
+        return None
     cmd = [
         CLAUDE_CLI,
         "--print",
+        "--bare",
+        "--tools", "",
         "--model", CLAUDE_MODEL,
         "--output-format", "json",
         "--no-session-persistence",
+        "--",
         prompt,
     ]
     try:
@@ -271,7 +286,7 @@ async def _call_claude_json(prompt: str) -> dict[str, Any] | None:
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={**__import__("os").environ, "ANTHROPIC_API_KEY": ""},
+            env=build_seat_env(seats[0]),
         )
         try:
             stdout, stderr = await asyncio.wait_for(

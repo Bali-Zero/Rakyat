@@ -704,6 +704,21 @@ async def test_payload_with_or_without_own_shareholding_is_200(
     assert response.status_code == 200, response.text
 
 
+@pytest.mark.parametrize("confirmation", [None, True, False])
+async def test_company_sponsorship_answer_is_backward_compatible(confirmation: bool | None) -> None:
+    payload = _wire_payload(_facts_with_purposes(["INVESTMENT"]))
+    key = "investment.sponsoring_company_confirmed"
+    if confirmation is None:
+        payload["facts"].pop(key, None)
+    else:
+        payload["facts"][key] = {"status": "KNOWN", "value": confirmation}
+
+    async with _client(_build_app(_UntouchedPool())) as client:
+        response = await client.post(_REAL_EVALUATE_URL, json=payload)
+
+    assert response.status_code == 200, response.text
+
+
 @pytest.mark.parametrize("bad_value", [-1, 1.5, "10000000000"])
 async def test_own_shareholding_invalid_value_is_422(bad_value: object) -> None:
     payload = _wire_payload(_facts_with_purposes(["INVESTMENT"]))
@@ -923,6 +938,116 @@ async def test_idempotency_conflict_is_static_409(
         )
     assert response.status_code == 409
     assert response.json() == {"detail": "Idempotency-Key is already bound to a different request"}
+
+
+@pytest.mark.parametrize(
+    ("key", "company_on_old_wire", "old_hash"),
+    [
+        # Frozen before each optional field was added, on the deployed 59- and 60-field contracts.
+        (
+            "investment.sponsoring_company_confirmed",
+            False,
+            "8f01dfdd18d48b6d4d1138483c0c7624b9cb13eeac7f6cb74795e1c2fadfc31b",
+        ),
+        (
+            "family.spouse_application_support_confirmed",
+            False,
+            "8f01dfdd18d48b6d4d1138483c0c7624b9cb13eeac7f6cb74795e1c2fadfc31b",
+        ),
+        (
+            "family.spouse_application_support_confirmed",
+            True,
+            "d145b966df00d7f006500b9653c7542fe64145822b5c6b61dc422fed5d733eac",
+        ),
+    ],
+)
+async def test_legacy_idempotency_binding_survives_company_sponsor_rollout(
+    monkeypatch: pytest.MonkeyPatch,
+    key: str,
+    company_on_old_wire: bool,
+    old_hash: str,
+) -> None:
+    recorded: list[bytes] = []
+
+    async def record_binding(*args: object, **kwargs: Any) -> VisaOracleEvaluateResponse:
+        recorded.append(kwargs["canonical_request"])
+        return VisaOracleEvaluateResponse.model_validate(
+            evaluate_path.build_temp_unavailable_body(
+                now=datetime(2026, 11, 3, tzinfo=timezone.utc),
+                code="EVALUATE_SURFACE_DISABLED",
+            )
+        )
+
+    monkeypatch.setattr(evaluate_path, "run_public_evaluation", record_binding)
+    payload = _wire_payload(_facts_with_purposes(["INVESTMENT"]))
+    payload["collected_at"] = "2026-11-03T00:00:00Z"
+    payload["assessment_id"] = "00000000-0000-4000-8000-000000000001"
+    payload["facts"].pop("family.spouse_application_support_confirmed")
+    payload["facts"].pop("investment.sponsoring_company_confirmed")
+    if company_on_old_wire:
+        payload["facts"]["investment.sponsoring_company_confirmed"] = {
+            "status": "KNOWN",
+            "value": True,
+        }
+    assert len(payload["facts"]) == (60 if company_on_old_wire else 59)
+    async with _client(_build_app(_UntouchedPool())) as client:
+        for value in (
+            None,
+            {"status": "UNKNOWN", "reason": "NOT_ASKED"},
+            {"status": "UNKNOWN", "reason": "UNVERIFIED"},
+            {"status": "UNKNOWN", "reason": "CONFLICTING"},
+            {"status": "KNOWN", "value": False},
+            {"status": "KNOWN", "value": True},
+        ):
+            if value is not None:
+                payload["facts"][key] = value
+            response = await client.post(
+                _REAL_EVALUATE_URL,
+                json=payload,
+                headers={"idempotency-key": "company-confirmation-rollout"},
+            )
+            assert response.status_code == 200, response.text
+
+    assert hashlib.sha256(recorded[0]).hexdigest() == old_hash
+    assert recorded[0] == recorded[1]
+    assert len(set(recorded)) == 5
+
+
+async def test_raw_company_confirmation_and_no_sponsor_remain_conflicting_for_evaluation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company_key = "investment.sponsoring_company_confirmed"
+    observed: list[tuple[dict, bytes]] = []
+
+    async def record(*args: object, **kwargs: Any) -> VisaOracleEvaluateResponse:
+        request = kwargs["request"]
+        facts = request.applicant_facts()
+        observed.append(
+            (facts.facts.model_dump(mode="json", by_alias=True), kwargs["canonical_request"])
+        )
+        # Conversion must never mutate the incoming request used for retries.
+        assert request.facts.investment_sponsoring_company_confirmed.value is True
+        return VisaOracleEvaluateResponse.model_validate(
+            evaluate_path.build_temp_unavailable_body(
+                now=datetime(2026, 11, 3, tzinfo=timezone.utc), code="EVALUATE_SURFACE_DISABLED"
+            )
+        )
+
+    monkeypatch.setattr(evaluate_path, "run_public_evaluation", record)
+    payload = _wire_payload(_facts_with_purposes(["INVESTMENT"]))
+    payload["facts"][company_key] = {"status": "KNOWN", "value": True}
+    async with _client(_build_app(_UntouchedPool())) as client:
+        for category in ("NONE", "INVESTMENT"):
+            payload["facts"]["sponsor.type"] = {"status": "KNOWN", "value": category}
+            response = await client.post(_REAL_EVALUATE_URL, json=payload)
+            assert response.status_code == 200, response.text
+
+    assert observed[0][0][company_key] == {"status": "UNKNOWN", "reason": "CONFLICTING"}
+    assert observed[1][0][company_key] == {"status": "KNOWN", "value": True}
+    assert json.loads(observed[0][1])["body"]["facts"][company_key] == {
+        "status": "KNOWN",
+        "value": True,
+    }
 
 
 async def test_canonical_request_hash_ignores_json_property_order(

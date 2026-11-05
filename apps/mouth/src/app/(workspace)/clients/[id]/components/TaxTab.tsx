@@ -151,6 +151,9 @@ const TaxConsultantSelector = memo(function TaxConsultantSelector({
           className={`min-h-9 w-full max-w-[240px] border border-[var(--line-control)] bg-transparent px-2.5 text-[13px] text-[var(--bz-text-1)] ${FOCUS} disabled:opacity-60`}
         >
           <option value="">— not assigned —</option>
+          {value && !consultants.some((c) => c.value === value) && (
+            <option value={value}>{legacyConsultantLabel(value)}</option>
+          )}
           {consultants.map((c) => (
             <option key={c.value} value={c.value}>
               {c.label}
@@ -756,4 +759,10 @@ export function TaxTab({
           (product-visible removal, disclosed in the PR body). */}
     </div>
   );
+}
+
+/** Label for a stored consultant that is no longer offered: "veronika.tax@x" -> "Veronika". */
+export function legacyConsultantLabel(value: string): string {
+  const local = value.split("@")[0].replace(/\.tax$/, "");
+  return local ? local.charAt(0).toUpperCase() + local.slice(1) : value;
 }

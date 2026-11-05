@@ -33,7 +33,7 @@ describe("gold oracle baseline (QW-2 independent SHADOW-parity oracle)", () => {
       category: "family",
       family_relation: "SPOUSE",
       family_sponsor_nationalities: "ID",
-      family_sponsor_confirmed: "yes",
+      family_spouse_application_support_confirmed: "yes",
       family_marriage_registered: "unsure",
       review_gate: "none",
     });
@@ -81,7 +81,7 @@ describe("gold oracle baseline (QW-2 independent SHADOW-parity oracle)", () => {
     for (const id of [
       "family_relation",
       "family_sponsor_nationalities",
-      "family_sponsor_confirmed",
+      "family_spouse_application_support_confirmed",
       "family_marriage_registered",
     ]) {
       expect(familyIds).toContain(id);

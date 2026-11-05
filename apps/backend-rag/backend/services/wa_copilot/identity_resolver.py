@@ -401,7 +401,7 @@ async def resolve_team_name(
 ) -> ResolveResult | None:
     """Signal #3b: sender_push_name → fuzzy team_members.full_name.
 
-    Catches "Cetedu AG" / "Ari Bali Zero" / "Hogipu - AG" style push names that
+    Catches "<first name> AG" / "<first name> Bali Zero" / "<first name> - AG" style push names that
     don't have team_member_email populated. Strips BZ/Bali Zero markers first
     to maximise trigram alignment with bare team member full_names.
 

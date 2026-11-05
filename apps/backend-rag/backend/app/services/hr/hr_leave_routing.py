@@ -1,6 +1,6 @@
 """HR leave request routing — hard-coded org chart rules.
 
-Tax team (*.tax@), setup team and Natalie → Kagecesa (tax@balizero.com),
+Tax team (*.tax@) and setup team → Kagecesa (tax@balizero.com),
 Manager of both the tax department and the setup team (Zero, 2026-10-20).
 Rina → Ruslana
 Everyone else (including Veronika herself) → Zero
@@ -40,8 +40,8 @@ SETUP_TEAM_EMAILS: frozenset[str] = frozenset(
     }
 )
 
-#: Everyone Veronika manages: tax, setup, and Natalie (finance & client services).
-VERONIKA_REPORTS: frozenset[str] = TAX_TEAM_EMAILS | SETUP_TEAM_EMAILS | {"natalie@balizero.com"}
+#: Everyone Veronika manages: tax and setup.
+VERONIKA_REPORTS: frozenset[str] = TAX_TEAM_EMAILS | SETUP_TEAM_EMAILS
 
 SUPERVISOR_MAP: dict[str, str] = {
     **dict.fromkeys(sorted(VERONIKA_REPORTS), VERONIKA_EMAIL),

@@ -249,7 +249,7 @@ describe("masthead", () => {
   it("appends the company name to the eyebrow only when the field is set", async () => {
     await renderClient(makeProfile({ companyName: "PT Contoh Libic" }));
     expect(
-      screen.getByText("CLIENT · #0412 · PT Contoh Libic"),
+      screen.getByText("CLIENT · #0412 · PT Contoh Libic"), // token-lint-ok: #0412 is a client number, not a colour
     ).toBeInTheDocument();
   });
 

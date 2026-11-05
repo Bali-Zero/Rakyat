@@ -55,6 +55,20 @@ def test_extract_json_returns_none_if_all_candidates_invalid():
     assert parsed is None
 
 
+@pytest.fixture(autouse=True)
+def console_seat(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RULED 2026-11-01: `claude` runs only on a Console seat — every test that
+    reaches a (faked) subprocess needs one; the guilt test below removes it."""
+    monkeypatch.setenv("ANTHROPIC_CONSOLE_KEY_1", "sk-test-seat")
+    monkeypatch.setenv("ANTHROPIC_CONSOLE_WORKSPACE_1", "wrkspc_test1")
+
+
+def _no_seat(monkeypatch: pytest.MonkeyPatch) -> None:
+    for n in (1, 2, 3):
+        monkeypatch.delenv(f"ANTHROPIC_CONSOLE_KEY_{n}", raising=False)
+        monkeypatch.delenv(f"ANTHROPIC_CONSOLE_WORKSPACE_{n}", raising=False)
+
+
 # ── ClaudeCLIRunner config ────────────────────────────────────────────
 
 
@@ -133,3 +147,43 @@ async def test_subprocess_runner_timeout_kills_process(tmp_path):
     result = await runner.run("whatever", timeout=1)
     assert result.ok is False
     assert "timeout" in (result.error or "").lower()
+
+
+# ── ClaudeCLIRunner seats (RULED 2026-11-01) ───────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_claude_runner_refuses_without_a_seat(monkeypatch, tmp_path):
+    """GUILT: no seat is no door — the binary is never launched, so a host with
+    only its interactive OAuth session (the shut fallback) cannot be used."""
+    _no_seat(monkeypatch)
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "plan-oauth-is-not-a-seat")
+    marker = tmp_path / "launched"
+    fake = tmp_path / "claude"
+    fake.write_text(f"#!/bin/sh\ntouch {marker}\necho hi\n")
+    fake.chmod(0o755)
+    runner = ClaudeCLIRunner(binary_path=str(fake))
+    with pytest.raises(CLIRunnerError, match="ANTHROPIC_CONSOLE_KEY_"):
+        await runner.run("hello", timeout=5)
+    assert not marker.exists(), "the CLI ran without a sanctioned seat"
+
+
+@pytest.mark.asyncio
+async def test_claude_runner_child_sees_the_seat_and_nothing_else(monkeypatch, tmp_path):
+    """INNOCENCE: the child gets the seat's key + workspace header and no plan
+    OAuth; the plugin root pin stays."""
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "plan-oauth-must-not-reach-the-child")
+    fake = tmp_path / "claude"
+    fake.write_text(
+        "#!/bin/sh\n"
+        'echo "key=${ANTHROPIC_API_KEY:-unset} hdr=${ANTHROPIC_CUSTOM_HEADERS:-unset} '
+        'oauth=${CLAUDE_CODE_OAUTH_TOKEN:-unset} plugin=${CLAUDE_PLUGIN_ROOT:-unset}"\n'
+    )
+    fake.chmod(0o755)
+    runner = ClaudeCLIRunner(binary_path=str(fake))
+    result = await runner.run("hello", timeout=5)
+    assert result.ok is True
+    assert "key=sk-test-seat" in result.output
+    assert "hdr=anthropic-workspace-id: wrkspc_test1" in result.output
+    assert "oauth=unset" in result.output
+    assert "plugin=/dev/null" in result.output

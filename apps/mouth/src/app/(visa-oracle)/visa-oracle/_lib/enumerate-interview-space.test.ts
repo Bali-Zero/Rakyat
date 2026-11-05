@@ -170,7 +170,7 @@ describe("REPRESENTATIVE_VALUES is complete (GATE-B1-REPORT-6842.md Check 2, MED
     expect(missing).toEqual([]);
   });
 
-  it("typedBranchRelevantQuestionIds finds the four known thresholds (not a stale hardcoded pair)", () => {
+  it("typedBranchRelevantQuestionIds finds the typed branch thresholds (not a stale hardcoded pair)", () => {
     // Slice A7-M (2026-09-22): `birth_date` (kind "date") joins
     // `BRANCH_RELEVANT_FACT_KEYS` — `flow.ts` now branches on it (minor vs
     // adult) — so it joins this typed set too.
@@ -178,6 +178,8 @@ describe("REPRESENTATIVE_VALUES is complete (GATE-B1-REPORT-6842.md Check 2, MED
       [
         "birth_date",
         "family_sponsor_nationalities",
+        "investment_paid_up_capital_idr",
+        "investment_own_shareholding_idr",
         "permit_expiry",
         "stay_days",
       ].sort(),
@@ -293,10 +295,18 @@ describe("buildCoveringSubset — total edge coverage", () => {
     const target = REAL_SUBSET.walks.find((walk) => walk.label === targetLabel);
     expect(target).toBeDefined();
     const withoutIt = REAL_SUBSET.walks.filter(
-      (walk) => walk.label !== targetLabel,
+      (walk) =>
+        !(
+          walk.asked.includes("family_sponsor_nationalities") &&
+          walk.facts.family_sponsor_nationalities === "ID"
+        ),
     );
     const report = edgeCoverageReport(REAL_SPACE.edgesReachable, withoutIt);
-    expect(report.edgesMissing).toEqual(["family_sponsor_nationalities=ID"]);
+    expect(report.edgesMissing).toEqual([
+      "family_sponsor_nationalities=ID",
+      "family_spouse_application_support_confirmed=no",
+      "family_spouse_application_support_confirmed=pending",
+    ]);
   });
 
   it("is not empty (blind-scan floor: zero walks is a defect, not a valid output)", () => {
@@ -465,8 +475,11 @@ describe("Y3b — the derived refusable-question-id set is exactly {application_
     // OBS-A2g-4): a second refusal guard added anywhere in flowReducer must
     // move this literal, by hand, for the test to keep passing — it cannot
     // silently absorb a new guard the way a `.length`-derived bound could.
-    expect(refusable.length).toBe(1);
-    expect(refusable).toEqual(["application_channel"]);
+    expect(refusable.length).toBe(2);
+    expect(refusable).toEqual([
+      "application_channel",
+      "investment_sponsoring_company_confirmed",
+    ]);
   });
 });
 
@@ -778,13 +791,14 @@ describe("renderCoveringWalks — assessment_id is a per-walk deterministic UUID
   // A6-bis (mouth slice, PLAN-ratified, not yet merged) adds two more "Not sure" defaults and may
   // move this pinned literal — do not re-pin speculatively; re-measure and re-pin only when
   // A6-bis lands, by command (MANDATE-vo.md, row 4 "enumeration memo-space").
-  it("cardinality: the covering subset renders exactly 256 walks (pinned literal, re-measured after PR-M's retirement_penjamin_confirmed)", () => {
+  it("cardinality: the covering subset renders 260 walks including company sponsorship", () => {
     // Slice A7-M (2026-09-22): `birth_date` joins `BRANCH_RELEVANT_FACT_KEYS`
     // with two representative values (adult, minor) — 252 → 254.
     // PR-M (2026-09-27): the retirement branch asks the E33F penjamin sibling
     // `retirement_penjamin_confirmed` (yes/no) — its two answers join the
     // covering subset — 254 → 256.
-    expect(RENDERED.length).toBe(256);
+    // E28A adds the sponsoring-company question and two capital/share-value branches.
+    expect(RENDERED.length).toBe(260);
   });
 
   it("guilt+innocence: every rendered walk's assessment_id is a valid v5 UUID", () => {

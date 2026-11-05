@@ -7,7 +7,7 @@
  *
  * NOTE: `antonellosiano@balizero.com` (not `@kuxas.com`) is the correct
  * owner-alias identity — it's the value the backend actually stamps into
- * RBAC checks. `uxxxxxxxxxxxx1@gmail.com` is a *different* identity used
+ * RBAC checks. The owner's personal Gmail account is a *different* identity used
  * only for personal OAuth / Google Drive (30TB quota owner), never for
  * backend admin/owner gating.
  *

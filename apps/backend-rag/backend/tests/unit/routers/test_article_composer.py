@@ -234,7 +234,7 @@ def mock_llm_response():
 # --- COMPOSE ENDPOINT TESTS ---
 
 
-@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch.dict("os.environ", {"ANTHROPIC_CONSOLE_KEY_1": "test-key", "ANTHROPIC_CONSOLE_WORKSPACE_1": "wrkspc_test1"})
 @patch("backend.app.routers.article_composer.call_claude_with_retry")
 def test_compose_article_success(
     mock_call,
@@ -262,7 +262,7 @@ def test_compose_article_success(
     assert mock_call.call_args.kwargs.get("model") == "claude-sonnet-5"
 
 
-@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch.dict("os.environ", {"ANTHROPIC_CONSOLE_KEY_1": "test-key", "ANTHROPIC_CONSOLE_WORKSPACE_1": "wrkspc_test1"})
 @patch("backend.app.routers.article_composer.call_claude_with_retry")
 def test_compose_article_priority_word_count(mock_call, test_client):
     """Test that facts section length varies by priority (high=600, medium=500, low=400 words)."""
@@ -313,7 +313,7 @@ def test_compose_article_priority_word_count(mock_call, test_client):
         assert word_count >= expected_words - 50
 
 
-@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch.dict("os.environ", {"ANTHROPIC_CONSOLE_KEY_1": "test-key", "ANTHROPIC_CONSOLE_WORKSPACE_1": "wrkspc_test1"})
 @patch("backend.app.routers.article_composer.call_claude_with_retry")
 def test_compose_article_json_cleanup(mock_call, test_client, sample_compose_request):
     """Test that markdown JSON blocks are cleaned correctly."""
@@ -371,10 +371,10 @@ def test_compose_article_missing_api_key(test_client, sample_compose_request):
     assert response.status_code == 500
     detail = response.json()["detail"]
     assert detail["code"] == "API_KEY_NOT_CONFIGURED"
-    assert "CLAUDE_CODE_OAUTH_TOKEN" in detail["message"]
+    assert "ANTHROPIC_CONSOLE_KEY_" in detail["message"]
 
 
-@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch.dict("os.environ", {"ANTHROPIC_CONSOLE_KEY_1": "test-key", "ANTHROPIC_CONSOLE_WORKSPACE_1": "wrkspc_test1"})
 @patch("backend.app.routers.article_composer.call_claude_with_retry")
 def test_compose_article_json_parse_error(
     mock_call,
@@ -400,7 +400,7 @@ def test_compose_article_json_parse_error(
     assert data["error"]["code"] in {"INVALID_JSON_RESPONSE", "JSON_PARSE_ERROR"}
 
 
-@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch.dict("os.environ", {"ANTHROPIC_CONSOLE_KEY_1": "test-key", "ANTHROPIC_CONSOLE_WORKSPACE_1": "wrkspc_test1"})
 @patch("backend.app.routers.article_composer.call_claude_with_retry")
 def test_compose_article_api_error(mock_call, test_client, sample_compose_request):
     """Test compose handles Claude OAuth errors."""
@@ -421,7 +421,7 @@ def test_compose_article_api_error(mock_call, test_client, sample_compose_reques
 
 def test_compose_status_configured(test_client):
     """Test compose status endpoint when configured"""
-    with patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"}):
+    with patch.dict("os.environ", {"ANTHROPIC_CONSOLE_KEY_1": "test-key", "ANTHROPIC_CONSOLE_WORKSPACE_1": "wrkspc_test1"}):
         response = test_client.get("/api/articles/compose/status")
 
         assert response.status_code == 200
@@ -429,7 +429,7 @@ def test_compose_status_configured(test_client):
         assert data["configured"] is True
         assert data["api_key_set"] is True
         assert data["model"] == "claude-sonnet-5"
-        assert data["provider"] == "claude_oauth"
+        assert data["provider"] == "claude_console"
         assert {"breaker_state", "last_error", "last_success_at"} <= set(data)
 
 
@@ -1138,7 +1138,7 @@ def test_build_enrichment_prompt_priority_instructions():
 # --- INTEGRATION TEST ---
 
 
-@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch.dict("os.environ", {"ANTHROPIC_CONSOLE_KEY_1": "test-key", "ANTHROPIC_CONSOLE_WORKSPACE_1": "wrkspc_test1"})
 @patch("backend.app.routers.article_composer.call_claude_with_retry")
 @patch("backend.services.integrations.github_publisher.github_publisher")
 def test_full_compose_and_publish_flow(
@@ -1196,7 +1196,7 @@ def test_full_compose_and_publish_flow(
     assert publish_data["commit_sha"] == "abc123"
 
 
-@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch.dict("os.environ", {"ANTHROPIC_CONSOLE_KEY_1": "test-key", "ANTHROPIC_CONSOLE_WORKSPACE_1": "wrkspc_test1"})
 @patch(
     "backend.app.routers.article_composer.call_claude_with_retry",
     new_callable=AsyncMock,

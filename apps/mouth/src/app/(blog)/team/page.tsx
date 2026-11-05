@@ -137,9 +137,6 @@ const ACCOUNTING_TEAM: TeamMember[] = compose([
     roleOverride: "Accountant",
   },
   {
-    slug: "natalie",
-  },
-  {
     slug: "rina",
   },
 ]);

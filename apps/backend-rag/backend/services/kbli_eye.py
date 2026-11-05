@@ -1,12 +1,53 @@
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from backend.services.kbli_pma_disclosure import disclose_pma
 
 logger = logging.getLogger(__name__)
+
+
+# Frozen BPS relation identity from scripts/kbli_filiera/holdout_truth_compile.py.
+# Covers taxonomy only; unrelated edits to licensing or editorial data do not invalidate it.
+BPS_RELATION_DIGEST = (
+    "ca9e7ffcadcaf526e1bd69afecb40f23d31ac20db8ab4aafa21a0271206100b2"  # pragma: allowlist secret
+)
+BPSReverseIndex = dict[str, dict[str, dict[str, int]]]
+DEFAULT_DATASET = "source_documents/KBLI_2025_FINAL_CLEAN.json"
+
+
+def _verified_bps_successors(rows: list[dict]) -> BPSReverseIndex | None:
+    """Rebuild the compiler's content digest before using even a single historical edge."""
+    relation = {}
+    try:
+        for row in rows:
+            code = row["kode_kbli_2025"]
+            ancestry = row["bps_2020_ancestors"]
+            if (
+                not isinstance(code, str)
+                or code in relation
+                or ancestry["parser_run_digest"] != BPS_RELATION_DIGEST
+            ):
+                return None
+            relation[code] = {key: ancestry[key] for key in ("codes", "sebagian", "source_locator")}
+    except (KeyError, TypeError):
+        return None
+
+    # Same serialization as bps_crosswalk_parser._relation_digest. That build-time
+    # script is not shipped in the backend image.
+    encoded = json.dumps(
+        {"relation": relation}, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    if hashlib.sha256(encoded.encode()).hexdigest() != BPS_RELATION_DIGEST:
+        return None
+
+    reverse: BPSReverseIndex = {}
+    for code, ancestry in relation.items():
+        for old, locator in zip(ancestry["codes"], ancestry["source_locator"], strict=True):
+            reverse.setdefault(old, {})[code] = locator
+    return reverse
 
 
 class KBLIEye:
@@ -49,41 +90,39 @@ class KBLIEye:
     # cooperative/UMKM. Token strutturato in maiuscolo, non prosa libera.
     UMKM_ALLOCATION_MARKER: str = "DIALOKASIKAN"
 
-    def __init__(self, db_path: str = "source_documents/KBLI_2025_FINAL_CLEAN.json") -> None:
+    def __init__(self, db_path: str = DEFAULT_DATASET) -> None:
         # Risolviamo il path rispetto alla root del progetto
         self.db_path = Path(db_path)
-        self.data: list = []
+        self.data: list[dict] = []
+        self._bps_successors: BPSReverseIndex | None = None
         self._load_database()
 
-    def _load_database(self) -> Any:
-        if not self.db_path.exists():
-            # Prova path alternativo se eseguito da diverse cartelle
-            alt_path = Path("apps/backend-rag") / self.db_path
-            if alt_path.exists():
-                self.db_path = alt_path
-            else:
-                # Un `return` NUDO qui ha tenuto questo organo morto e MUTO in
-                # produzione: il dataset non entra nell'immagine Docker (il
-                # Dockerfile copia backend/scripts/training-data, mai `data/`),
-                # quindi ogni get_decision() risponde DATABASE_NOT_LOADED e i
-                # due endpoint consumatori degradano il blocco KBLI a
-                # `state: "ERROR"` senza che nulla lo dica. Il rifiuto va
-                # LOGGATO: un fallimento silenzioso non è un fallimento visto.
-                logger.error(
-                    "KBLIEye: dataset non trovato (%s né %s) — get_decision() "
-                    "risponderà DATABASE_NOT_LOADED a ogni codice. cwd=%s",
-                    self.db_path,
-                    alt_path,
-                    Path.cwd(),
-                )
-                return
-
-        with open(self.db_path) as f:
-            content = json.load(f)
-            if isinstance(content, dict) and "data" in content:
-                self.data = content["data"]
-            else:
-                self.data = content  # Backup se fosse già una lista
+    def _load_database(self) -> None:
+        paths = [self.db_path, Path("apps/backend-rag") / self.db_path]
+        # The Dockerfile installs the first path under /app. A clean development
+        # worktree has only the tracked canonical, not the ignored backend copies.
+        backend_root = Path(__file__).resolve().parents[2]
+        if self.db_path == Path(DEFAULT_DATASET) and backend_root.parent.name == "apps":
+            paths.append(backend_root.parent.parent / "data" / self.db_path)
+        path = next((candidate for candidate in paths if candidate.is_file()), None)
+        if path is None:
+            logger.error("KBLIEye: dataset unavailable at %s (cwd=%s)", paths, Path.cwd())
+            return
+        self.db_path = path
+        try:
+            with path.open(encoding="utf-8") as source:
+                content = json.load(source)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            logger.error("KBLIEye: cannot read dataset at %s", path)
+            return
+        rows = content.get("data") if isinstance(content, dict) else content
+        if not isinstance(rows, list):
+            logger.error("KBLIEye: invalid dataset structure at %s", path)
+            return
+        self.data = rows
+        self._bps_successors = _verified_bps_successors(rows)
+        if self._bps_successors is None:
+            logger.warning("KBLIEye: incomplete or unverified BPS crosswalk in %s", path)
 
     @staticmethod
     def _foreign_cap(kbli: dict) -> tuple[int | float | None, str | None, bool]:
@@ -137,7 +176,9 @@ class KBLIEye:
             return False
         return None
 
-    def get_decision(self, code: str, is_pma: bool = True, location: str = "Bali") -> dict:
+    def get_decision(
+        self, code: str, is_pma: bool = True, location: str = "Bali", *, vintage: str | None = None
+    ) -> dict:
         """
         Esegue l'audit deterministico. Restituisce uno STATO, non solo testo.
         """
@@ -145,9 +186,9 @@ class KBLIEye:
             return {"state": "ERROR", "reason_code": "DATABASE_NOT_LOADED"}
 
         # 1. Risoluzione Codice (Mapping forzato al 2025)
-        kbli = self._resolve_kbli(code)
-        if not kbli:
-            return {"state": "ERROR", "reason_code": "CODE_NOT_FOUND"}
+        kbli, resolution = self._resolve_kbli(code, vintage)
+        if kbli is None:
+            return resolution
 
         # 2. Parametri di input per la matrice
         disclosed = disclose_pma(kbli)
@@ -196,10 +237,14 @@ class KBLIEye:
             state = "APPROVED"
             reason = "STANDARD_COMPLIANCE"
 
+        # A scalar taxonomy reference exists only for a single verified BPS ancestor.
+        ancestors = kbli["bps_2020_ancestors"]["codes"] if self._bps_successors is not None else []
+
         # 4. Payload strutturato per Dashboard e WhatsApp
         return {
             "kbli_2025": kbli["kode_kbli_2025"],
-            "kbli_2020_ref": kbli.get("kbli_2020_source"),
+            "kbli_2020_ref": ancestors[0] if len(ancestors) == 1 else None,
+            "resolution": resolution,
             "title": kbli["judul"],
             "audit": {
                 "state": state,  # APPROVED | WARNING | REJECTED
@@ -227,17 +272,52 @@ class KBLIEye:
             "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         }
 
-    def _resolve_kbli(self, code: str) -> dict | None:
-        """Cerca il codice 2025 anche se viene fornito un codice 2020."""
-        # Sanitizzazione input
-        clean_code = str(code).strip()
-        for item in self.data:
-            if (
-                item.get("kode_kbli_2025") == clean_code
-                or item.get("kbli_2020_source") == clean_code
-            ):
-                return item
-        return None
+    def _resolve_kbli(self, code: str, vintage: str | None = None) -> tuple[dict | None, dict]:
+        """Prefer exact current identity; only a verified BPS relation may resolve 2020."""
+        code = str(code).strip()
+        if vintage not in (None, "2020", "2025"):
+            return None, {
+                "state": "ERROR",
+                "reason_code": "UNSUPPORTED_VINTAGE",
+                "input_code": code,
+                "vintage": vintage,
+            }
+        inferred = vintage is None
+        if vintage != "2020":
+            current_rows = (
+                row
+                for row in self.data
+                if isinstance(row, dict) and row.get("kode_kbli_2025") == code
+            )
+            current = next(current_rows, None)
+            if current is not None:
+                context = {"input_code": code, "vintage": "2025", "inferred": inferred}
+                if next(current_rows, None) is not None:
+                    return None, {
+                        "state": "ERROR",
+                        "reason_code": "DUPLICATE_CURRENT_CODE",
+                        **context,
+                    }
+                return current, {**context, "basis": "EXACT_2025"}
+            if vintage == "2025":
+                return None, {"state": "ERROR", "reason_code": "CODE_NOT_FOUND"}
+
+        context = {"input_code": code, "vintage": "2020", "inferred": inferred}
+        if self._bps_successors is None:
+            return None, {"state": "ERROR", "reason_code": "CROSSWALK_UNAVAILABLE", **context}
+        matches = self._bps_successors.get(code, {})
+        if not matches:
+            return None, {"state": "ERROR", "reason_code": "CODE_NOT_FOUND"}
+        if len(matches) > 1:
+            return None, {
+                "state": "ERROR",
+                "reason_code": "AMBIGUOUS_KBLI_TRANSITION",
+                **context,
+                "candidates": sorted(matches),
+            }
+        target, locator = next(iter(matches.items()))
+        row = next(row for row in self.data if row["kode_kbli_2025"] == target)
+        return row, {**context, "basis": "UNIQUE_BPS_2020", "source_locator": dict(locator)}
 
 
 if __name__ == "__main__":

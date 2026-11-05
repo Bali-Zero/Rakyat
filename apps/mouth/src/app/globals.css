@@ -1081,6 +1081,14 @@ html {
   color-scheme: dark;
 }
 
+/* The browser themes the viewport scrollbar and native controls from the ROOT
+   element only. The R19 home and the Rumah Putih article pages paint light
+   paper (#F7F4EE) but used to set color-scheme: light on an inner <div>, so
+   they got dark scrollbars (web audit panel 2026-11-01). */
+html:has([data-r19-home], .rumah-putih) {
+  color-scheme: light;
+}
+
 body {
   background: var(--kbli-bg-base);
   color: var(--kbli-text-primary);

@@ -18,6 +18,7 @@ from backend.app.dependencies import get_current_user
 from backend.app.deps.auth import reject_portal_roles
 from backend.app.deps.crm_access import can_view_all_clients
 from backend.core.cache import invalidate_cache
+from backend.security.pii_log_identifier import redact_identifier_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +223,10 @@ async def update_thread(
         raise HTTPException(status_code=404, detail="Thread not found")
 
     logger.info(
-        f"Thread {thread_id} updated by {user.get('email')}: {body.model_dump(exclude_none=True)}"
+        "Thread %s updated by %s: fields=%s",
+        thread_id,
+        redact_identifier_for_log(user.get("email")),
+        sorted(body.model_dump(exclude_none=True)),
     )
 
     # Emit WebSocket event for real-time updates
@@ -512,11 +516,11 @@ async def _send_via_channel(
 
         adapter = channel_router.adapters.get(channel)
         if not adapter:
-            logger.warning("No adapter registered for channel: %s", channel)
+            logger.warning("No adapter registered for the requested outbound channel")
             return
 
         # Extract channel_id from thread metadata
         # For now, we log a warning — full outbound routing needs channel_id
-        logger.info(f"Outbound reply via {channel}: {content[:50]}...")
+        logger.info("Outbound reply via %s: %d chars", channel, len(content or ""))
     except Exception as e:
         logger.warning("Outbound send failed: %s", e)
