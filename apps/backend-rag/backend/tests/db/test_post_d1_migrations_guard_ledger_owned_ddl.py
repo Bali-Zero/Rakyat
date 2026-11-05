@@ -431,6 +431,11 @@ def test_every_migration_filename_carries_a_number() -> None:
     )
 
 
+# These tables are named only in backstage files not carried to Rakyat,
+# verified against Teman2 960bba05f70a (no naming file exists on Rakyat).
+_NAMED_ONLY_OUTSIDE_RAKYAT: frozenset[str] = frozenset({"team_employees"})
+
+
 def test_every_snapshot_table_is_still_named_somewhere_in_the_repository() -> None:
     """The snapshot can rot in BOTH directions; this catches one of them.
 
@@ -476,7 +481,7 @@ def test_every_snapshot_table_is_still_named_somewhere_in_the_repository() -> No
             f"closed rather than reporting a clean snapshot on a broken instrument."
         )
     seen = {line.strip() for line in proc.stdout.splitlines()}
-    ghosts = [t for t in names if t not in seen]
+    ghosts = [t for t in names if t not in seen and t not in _NAMED_ONLY_OUTSIDE_RAKYAT]
     assert not ghosts, (
         f"tables in the NON_APP_OWNED_TABLES snapshot named nowhere in the tracked "
         f"tree: {ghosts}. Either they were renamed/dropped and the entry is dead, or "

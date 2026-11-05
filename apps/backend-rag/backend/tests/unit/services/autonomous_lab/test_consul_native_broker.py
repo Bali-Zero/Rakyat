@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -169,6 +170,8 @@ def test_reasoning_tokens_remain_native_counters_not_an_added_total() -> None:
 
 
 def test_rpc_usage_projection_survives_native_checkpoint_and_broker_validation() -> None:
+    if not (Path(__file__).resolve().parents[7] / "scripts" / "conductor").is_dir():
+        pytest.skip("scripts/conductor not in Rakyat")
     from scripts.conductor.adapter_contracts import DiscoveryKey
     from scripts.conductor.app_server_rpc import _notification
     from scripts.conductor.codex_shadow import NativeBinding, NativeResult

@@ -755,5 +755,7 @@ def test_topology_ocr_vision_role_matches_invariant():
     """MODEL_TOPOLOGY.json (the runtime source for the ocr_vision role) must
     agree with the S9 invariant -- guards a config-side regression that the
     hardcoded-default test above cannot see."""
+    if not (model_roles._topology_path().exists()):
+        pytest.skip('MODEL_TOPOLOGY.json not in Rakyat')
     topo = json.loads(model_roles._topology_path().read_text())
     assert topo["roles"]["ocr_vision"] == "qwen2.5vl:7b"

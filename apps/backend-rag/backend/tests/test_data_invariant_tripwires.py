@@ -19,6 +19,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from backend.core import embeddings
 from backend.services.lead_capture.source import LeadSource, PublicLeadSource
 
@@ -188,6 +190,8 @@ def test_authoritative_pricing_json_never_reintroduces_retired_contact() -> None
     ``apps/backend-rag/backend/data/PRICING_DEPRECATED_2025.md``) and is
     excluded from every production code path by contract, not by accident.
     """
+    if not ((_repo_root() / "scripts" / "pricelist_2026").is_dir()):
+        pytest.skip('scripts/pricelist_2026 not in Rakyat')
     import sys
 
     repo_root = _repo_root()
@@ -260,6 +264,8 @@ def test_client_contact_whatsapp_matches_the_price_list_generator():
     the bot's inbound identity, a deliberately different number (owner ruling
     2026-09-01). See the comment on CLIENT_CONTACT_WHATSAPP in config.py.
     """
+    if not ((_repo_root() / "scripts" / "pricelist_2026").is_dir()):
+        pytest.skip('scripts/pricelist_2026 not in Rakyat')
     import sys
 
     from backend.app.core.config import settings
@@ -797,6 +803,8 @@ def test_every_repo_side_copy_of_the_client_number_agrees():
     modules at runtime, so they cannot share a constant. What they CAN share is
     a test that fails the moment they disagree.
     """
+    if not ((_repo_root() / "scripts" / "pricelist_2026").is_dir()):
+        pytest.skip('scripts/pricelist_2026 not in Rakyat')
     import re
     import sys
 

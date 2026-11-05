@@ -698,6 +698,11 @@ from backend.scripts import kbli_documents_cure as _cure
 
 def test_repo_layout_resolves_to_the_real_detector():
     """INNOCENCE: where the repo exists, the selector must still find its owner."""
+    if not any(
+        (ancestor / _cure.CONFORMANCE_MARKER).is_file()
+        for ancestor in _Path(_cure.__file__).resolve().parents
+    ):
+        pytest.skip(f"{_cure.CONFORMANCE_MARKER} not in Rakyat")
     found = _cure.find_conformance_script()
     assert found is not None
     assert found.is_file()
