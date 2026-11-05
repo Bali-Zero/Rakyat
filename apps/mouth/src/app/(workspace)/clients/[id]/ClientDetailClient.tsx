@@ -1,6 +1,8 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useCallback, useState, useEffect, useRef } from "react";
+import { scrollActiveTabIntoView } from "./tabBarScroll";
+import dynamic from "next/dynamic";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
@@ -14,15 +16,9 @@ import {
   AlertCircle,
   Bell,
   MessageCircle,
-  Send,
   Loader2,
   AlertTriangle,
-  Activity,
   Mail,
-  PenLine,
-  Phone,
-  Calendar,
-  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AvatarWithFallback } from "@/components/ui/avatar-with-fallback";
@@ -61,6 +57,8 @@ import {
   viewerIsNext,
 } from "../client-row-model";
 import styles from "./client-detail-desk.module.css";
+import { FOCUS } from "@/components/workspace/r19/tokens";
+import { lkpmApi } from "@/lib/api/workspace/lkpm.api";
 
 // Local component imports
 import { isTabType } from "./components/types";
@@ -68,25 +66,118 @@ import type { TabType, ModalType } from "./components/types";
 import type { TaxConsultantOption } from "@/lib/workspace/roster-directory";
 import { useTeamMemberOptions } from "@/hooks/useTeamMembers";
 import { formatCurrency } from "./components/utils";
-import { OverviewTab } from "./components/OverviewTab";
-import { DocumentsTab } from "./components/DocumentsTab";
-import { FilesBrowserPanel } from "./components/FilesBrowserPanel";
-import { ProcessTab } from "./components/ProcessTab";
-import { FamilyTab } from "./components/FamilyTab";
-import { ImmigrationTab } from "./components/ImmigrationTab";
-import { CompanyTab } from "./components/CompanyTab";
-import { TaxTab, legacyConsultantLabel } from "./components/TaxTab";
-import { ActivityTab } from "./components/ActivityTab";
-import { PortalAccess } from "./components/PortalAccess";
-import { PortalMessages } from "./components/PortalMessages";
+import { OverviewTab, overviewLedgerCount } from "./components/OverviewTab";
+import { initials } from "./components/overview-brief";
+import {
+  firstName,
+  legacyConsultantLabel,
+  permitLine,
+  roleLine,
+} from "./components/header-facts";
+import { clearCompanyDetailCache } from "./components/company/companyDetailCache";
 import { BusinessStoryPanel } from "./components/BusinessStoryPanel";
-import { EditClientModal } from "./components/modals/EditClientModal";
-import { AddFamilyMemberModal } from "./components/modals/AddFamilyMemberModal";
-import { EditFamilyMemberModal } from "./components/modals/EditFamilyMemberModal";
-import { AddDocumentModal } from "./components/modals/AddDocumentModal";
-import { EditDocumentModal } from "./components/modals/EditDocumentModal";
 import { viewerCanChangeDocumentVisibility } from "./components/modals/document-visibility";
-import { AddCompanyModal } from "./components/modals/AddCompanyModal";
+import { startEarly, earlyKey } from "./components/early-fetch";
+import { TabSkeleton } from "./components/TabSkeleton";
+
+/*
+ * Only Overview is in this chunk. Every other tab and every modal is its own
+ * chunk, fetched when it is first needed — or a moment before, on hover/focus
+ * of its tab button (`TAB_LOADERS`) — so the first paint no longer waits on
+ * ~250 KB of code the Overview never runs. Each loader is the SAME
+ * `import()` the dynamic component uses, so a preload and the render share one
+ * network request.
+ */
+/** One import() per chunk, shared by a hover preload and the render. */
+const once = <T,>(load: () => Promise<T>) => {
+  let promise: Promise<T> | undefined;
+  return () => (promise ??= load());
+};
+
+const loadDocuments = once(() =>
+  import("./components/DocumentsTab").then((m) => m.DocumentsTab),
+);
+const loadFiles = once(() =>
+  import("./components/FilesBrowserPanel").then((m) => m.FilesBrowserPanel),
+);
+const loadProcess = once(() =>
+  import("./components/ProcessTab").then((m) => m.ProcessTab),
+);
+const loadFamily = once(() =>
+  import("./components/FamilyTab").then((m) => m.FamilyTab),
+);
+const loadImmigration = once(() =>
+  import("./components/ImmigrationTab").then((m) => m.ImmigrationTab),
+);
+const loadCompany = once(() =>
+  import("./components/CompanyTab").then((m) => m.CompanyTab),
+);
+const loadTax = once(() => import("./components/TaxTab").then((m) => m.TaxTab));
+
+/** Per tab key: how to fetch its chunk ahead of the click. Overview is static. */
+export const TAB_LOADERS: Partial<Record<TabType, () => Promise<unknown>>> = {
+  process: loadProcess,
+  visas: loadImmigration,
+  company: loadCompany,
+  tax: loadTax,
+  family: loadFamily,
+  documents: () => Promise.all([loadDocuments(), loadFiles()]),
+};
+
+const DocumentsTab = dynamic(loadDocuments, { loading: () => <TabSkeleton /> });
+const FilesBrowserPanel = dynamic(loadFiles, { loading: () => null });
+const ProcessTab = dynamic(loadProcess, { loading: () => <TabSkeleton /> });
+const FamilyTab = dynamic(loadFamily, { loading: () => <TabSkeleton /> });
+const ImmigrationTab = dynamic(loadImmigration, {
+  loading: () => <TabSkeleton />,
+});
+const CompanyTab = dynamic(loadCompany, { loading: () => <TabSkeleton /> });
+const TaxTab = dynamic(loadTax, { loading: () => <TabSkeleton /> });
+
+// Modals open on a click and draw their own overlay: nothing to show while the
+// chunk loads (it is a few ms on a warm cache), so `loading` is empty.
+const EditClientModal = dynamic(
+  () =>
+    import("./components/modals/EditClientModal").then(
+      (m) => m.EditClientModal,
+    ),
+  { loading: () => null },
+);
+const AddFamilyMemberModal = dynamic(
+  () =>
+    import("./components/modals/AddFamilyMemberModal").then(
+      (m) => m.AddFamilyMemberModal,
+    ),
+  { loading: () => null },
+);
+const EditFamilyMemberModal = dynamic(
+  () =>
+    import("./components/modals/EditFamilyMemberModal").then(
+      (m) => m.EditFamilyMemberModal,
+    ),
+  { loading: () => null },
+);
+const AddDocumentModal = dynamic(
+  () =>
+    import("./components/modals/AddDocumentModal").then(
+      (m) => m.AddDocumentModal,
+    ),
+  { loading: () => null },
+);
+const EditDocumentModal = dynamic(
+  () =>
+    import("./components/modals/EditDocumentModal").then(
+      (m) => m.EditDocumentModal,
+    ),
+  { loading: () => null },
+);
+const AddCompanyModal = dynamic(
+  () =>
+    import("./components/modals/AddCompanyModal").then(
+      (m) => m.AddCompanyModal,
+    ),
+  { loading: () => null },
+);
 
 /**
  * The client-status trigger (below) is a menu TRIGGER, not a report — it
@@ -104,6 +195,10 @@ const STATUS_TRIGGER_BASE =
   "inline-flex h-6 items-center gap-1.5 whitespace-nowrap border px-2.5 " +
   PILL_SQUARE +
   " text-[10px] font-[650] uppercase tracking-[0.12em] bg-transparent cursor-pointer hover:opacity-80 transition-opacity disabled:cursor-wait";
+
+/** Masthead layout for this page: column below xl, row from xl (today's desktop). */
+export const MASTHEAD_STACK =
+  "flex-1 min-w-0 md:flex-col md:items-start md:gap-3 xl:flex-row xl:items-end xl:gap-[18px]";
 
 export interface ClientDetailClientProps {
   /**
@@ -127,6 +222,25 @@ export function ClientDetailClient({
   const clientId = params?.id ? Number(params.id) : 0;
   const { options: teamMemberOptions } = useTeamMemberOptions();
 
+  // The calls that only need the client id start NOW, in parallel with the
+  // profile request, not after it resolves and the Overview mounts. Their
+  // owning components take these promises on first load (early-fetch.ts).
+  useEffect(() => {
+    if (!clientId) return;
+    startEarly(earlyKey("ai-summary", clientId), () =>
+      api.crm.getClientAiSummary(clientId),
+    );
+    startEarly(earlyKey("wa-case-intel", clientId), () =>
+      api.crm.getClientWaCaseIntelligence(clientId),
+    );
+    startEarly(earlyKey("portal-status", clientId), () =>
+      api.crm.getPortalStatus(clientId),
+    );
+    startEarly(earlyKey("portal-messages", clientId), () =>
+      api.crm.getPortalMessages(clientId),
+    );
+  }, [clientId]);
+
   const {
     data: profile,
     isLoading,
@@ -134,7 +248,13 @@ export function ClientDetailClient({
   } = useClientDetail(clientId);
   const { data: timelineData } = useClientTimeline(clientId);
   const { data: docCategoriesData } = useDocumentCategories();
-  const invalidateClient = useInvalidateClient(clientId);
+  const invalidateClientQueries = useInvalidateClient(clientId);
+  // Any change made from this card (a document, a family member, a company
+  // field) also drops the cached company detail the Company tab keeps.
+  const invalidateClient = useCallback(() => {
+    clearCompanyDetailCache();
+    return invalidateClientQueries();
+  }, [invalidateClientQueries]);
   const setClientCache = useSetClientCache(clientId);
   const businessStoryQuery = useClientBusinessStory(
     clientId,
@@ -142,15 +262,10 @@ export function ClientDetailClient({
     profile?.company_links,
   );
 
-  // Local interactions state: seeded from query, extended optimistically on log
-  const [interactions, setInteractions] = useState<Interaction[]>([]);
-
-  // Sync local interactions state when the timeline query data arrives/updates
-  useEffect(() => {
-    if (timelineData) {
-      setInteractions(timelineData);
-    }
-  }, [timelineData]);
+  // The newest logged contact feeds the Client info card. The Activity tab is
+  // gone, so nothing on this page writes interactions any more: it is a plain
+  // read of the timeline query.
+  const interactions: Interaction[] = timelineData ?? [];
 
   const docCategories = docCategoriesData ?? [];
   const error = queryError ? "Failed to load client data" : null;
@@ -209,13 +324,6 @@ export function ClientDetailClient({
   const [isDeletingClient, setIsDeletingClient] = useState(false);
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
-  const [showLogPanel, setShowLogPanel] = useState(false);
-  const [logType, setLogType] = useState<
-    "note" | "call" | "whatsapp" | "email" | "meeting" | "chat"
-  >("note");
-  const [logSummary, setLogSummary] = useState("");
-  const [isLogging, setIsLogging] = useState(false);
-  const [logSaved, setLogSaved] = useState(false);
   // R7a: the two controls the hidden Company/Tax tabs used to own for a
   // company-less client — linking the first company and assigning the tax
   // consultant. Kept on Overview so hiding the tabs orphans no action.
@@ -225,6 +333,30 @@ export function ClientDetailClient({
   useEffect(() => {
     setTaxConsultantValue(profile?.client.tax_consultant ?? "");
   }, [profile?.client.tax_consultant]);
+  // A tax client: a consultant on record, or LKPM history (the only live tax
+  // data — the tax_* tables are empty in prod). Unknown until it answers.
+  const [lkpmReports, setLkpmReports] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    lkpmApi
+      .getClientHistory(clientId)
+      .then((r) => {
+        if (alive) setLkpmReports(r.count);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [clientId]);
+  const isTaxClient = Boolean(taxConsultantValue) || lkpmReports > 0;
+  // The team block names people by FIRST NAME only.
+  const taxConsultantLabel = taxConsultantValue
+    ? firstName(
+        taxConsultants.find((c) => c.value === taxConsultantValue)?.label ??
+          legacyConsultantLabel(taxConsultantValue),
+        taxConsultantValue,
+      )
+    : "";
 
   const saveTaxConsultant = async (newValue: string) => {
     const previous = taxConsultantValue;
@@ -252,43 +384,17 @@ export function ClientDetailClient({
       setIsSavingTaxConsultant(false);
     }
   };
-  const logTextareaRef = useRef<HTMLTextAreaElement>(null);
   const tabsRef = useRef<HTMLElement>(null);
+  // The tab bar scrolls inside itself on narrow screens: keep the active tab in view.
+  useEffect(() => {
+    scrollActiveTabIntoView(tabsRef.current);
+  }, [activeTab, isLoading]);
   const statusMenuRef = useRef<HTMLDivElement>(null);
   useClickOutside(
     statusMenuRef,
     () => setShowStatusMenu(false),
     showStatusMenu,
   );
-
-  const submitLog = async () => {
-    if (!logSummary.trim()) return;
-    setIsLogging(true);
-    try {
-      const user = await api.getProfile();
-      const newInteraction = await api.crm.createInteraction({
-        client_id: clientId,
-        interaction_type: logType,
-        summary: logSummary.trim(),
-        team_member: user.email,
-        direction: "outbound",
-      });
-      setInteractions((prev) => [newInteraction, ...prev]);
-      toast.success("Interaction logged");
-      setLogSaved(true);
-      setTimeout(() => setLogSaved(false), 1500);
-      setLogSummary("");
-      setShowLogPanel(false);
-      // Refresh to update last_interaction_date in header
-      invalidateClient();
-    } catch (err) {
-      toast.error("Failed to log interaction", {
-        description: (err as Error).message,
-      });
-    } finally {
-      setIsLogging(false);
-    }
-  };
 
   const updateStatus = async (newStatus: string) => {
     if (newStatus === profile?.client.status) {
@@ -330,25 +436,16 @@ export function ClientDetailClient({
   }, [searchParams]);
 
   const handleTabChange = (tab: TabType, alreadyActive?: boolean) => {
-    // R8 gate C6: a tab entry whose `activeKeys` already cover `visibleTab`
-    // (only "Activity" today, `activeKeys: ["timeline", "whatsapp"]`) is a
-    // no-op when clicked from either of its own keys — clicking "Activity"
-    // while `?tab=whatsapp` used to force `visibleTab` back to "timeline",
-    // remounting `<ActivityTab key={...}>` and discarding a typed draft, a
-    // pending Undo Slip/timer and an error Notice. An ordinary tab whose own
-    // key is already `visibleTab` was already a harmless no-op before this
-    // guard (same state, same URL); it stays a no-op now, just without the
-    // redundant `router.replace` call.
-    //
-    // R8 gate B1: a click is only a true no-op when `activeTab` and
-    // `visibleTab` AGREE. R7a's render-time fallback (`visibleTab`, below)
-    // can force them apart — a deep link to a hidden Company/Tax tab shows
-    // Overview (`visibleTab`) while `activeTab` and the URL still say
-    // "company". There, clicking the visible (and therefore "active")
-    // Overview button is the one gesture that normalises both; skipping it
-    // would leave the URL lying and `activeTab` stuck, so the next render
-    // that flips `showCompanyTab`/`showTaxTab` true (e.g. Add company) would
-    // jump the panel to Company with no user action.
+    // A click on the tab that is already showing is a true no-op only when
+    // `activeTab` and `visibleTab` AGREE. The render-time fallback
+    // (`visibleTab`, below) can force them apart — a deep link to a hidden
+    // Company/Tax tab shows Overview while `activeTab` and the URL still say
+    // "company". There, clicking the visible Overview button is the one
+    // gesture that normalises both; skipping it would leave the URL lying and
+    // `activeTab` stuck, so the next render that flips `showCompanyTab` /
+    // `showTaxTab` true (e.g. Add company) would jump the panel with no user
+    // action. (A retired `?tab=timeline|whatsapp` is not a TabType: the
+    // reader ignores it and the page stays on Overview.)
     if (alreadyActive && activeTab === visibleTab) return;
     const scrollY = window.scrollY;
     setActiveTab(tab);
@@ -367,16 +464,6 @@ export function ClientDetailClient({
       day: "numeric",
       month: "short",
       year: "numeric",
-    });
-  };
-
-  const formatTime = (dateStr: string) => {
-    if (!dateStr) return "";
-    // Return placeholder during SSR to avoid hydration mismatch
-    if (!isMounted) return "...";
-    return new Date(dateStr).toLocaleTimeString("en-GB", {
-      hour: "2-digit",
-      minute: "2-digit",
     });
   };
 
@@ -404,11 +491,19 @@ export function ClientDetailClient({
     client,
     family_members,
     documents,
-    expiry_alerts,
     practices,
     company_links,
     stats,
+    attention_stats: attentionStats,
   } = profile;
+  const setupOption = client.assigned_to
+    ? teamMemberOptions.find(
+        (m) => m.value === client.assigned_to!.toLowerCase(),
+      )
+    : undefined;
+  const setupName = client.assigned_to
+    ? firstName(setupOption?.label, client.assigned_to)
+    : "";
 
   // General docs only — excludes passports (Overview), immigration (Immigration tab), company docs (Company tab)
   const isPassportDoc = (d: ClientDocument) =>
@@ -438,6 +533,48 @@ export function ClientDetailClient({
     },
     {} as Record<string, ClientDocument[]>,
   );
+
+  // Seam 3 (4-Model Consensus): merge profile.company_documents into TaxTab's documents
+  // so corporate SPTs (spt_company/spt_tahunan_badan/bpe_spt_badan), Coretax credentials,
+  // and corporate EFINs on linked PTs light up TaxTab without duplicating rows in documents.
+  const taxDocuments: ClientDocument[] = [
+    ...documents,
+    ...((profile.company_documents ?? []).map((cd) => {
+      const rawType = (cd.document_type || "").toLowerCase();
+      let mappedType = cd.document_type;
+      if (
+        rawType === "spt_tahunan_badan" ||
+        rawType === "spt_company" ||
+        rawType === "bpe_spt_badan" ||
+        rawType === "spt"
+      ) {
+        mappedType = "spt_company";
+      } else if (
+        rawType === "coretax_credentials" ||
+        rawType === "coretax_access"
+      ) {
+        mappedType = "coretax_access";
+      } else if (rawType === "efin_company" || rawType === "efin") {
+        mappedType = "efin";
+      }
+      return {
+        id: -cd.id,
+        client_id: clientId,
+        document_type: mappedType,
+        document_category: "tax",
+        file_name: cd.file_name || cd.document_title || `${mappedType}.pdf`,
+        file_url: cd.google_drive_file_url,
+        google_drive_file_url: cd.google_drive_file_url,
+        file_id: cd.google_drive_file_id,
+        status: cd.status || "active",
+        expiry_date: cd.expiry_date,
+        created_at: cd.created_at || "",
+        company_id: cd.company_id,
+        is_archived: false,
+        deleted_at: null,
+      } as ClientDocument;
+    })),
+  ];
 
   // Calculate stats
   const activePractices = practices.filter(
@@ -539,11 +676,38 @@ export function ClientDetailClient({
         }`
       : undefined;
 
-  const clientRefEyebrow =
-    `CLIENT · #${String(client.id).padStart(4, "0")}` +
-    (client.company_name ? ` · ${client.company_name}` : "");
+  // Eyebrow = the record reference only; the company moved under the name, as
+  // the client's role in it.
+  const clientRefEyebrow = `CLIENT · #${String(client.id).padStart(4, "0")}`;
+  const headerRole = roleLine(company_links);
+  const headerPermit = permitLine(documents);
+  const headerSub =
+    headerRole || headerPermit || clientMastheadSubtitle ? (
+      <>
+        {headerRole ? (
+          <span className="block" data-testid="header-role">
+            {headerRole}
+          </span>
+        ) : null}
+        {headerPermit ? (
+          <span className="block" data-testid="header-permit">
+            {headerPermit}
+          </span>
+        ) : null}
+        {clientMastheadSubtitle ? (
+          <span className="block">{clientMastheadSubtitle}</span>
+        ) : null}
+      </>
+    ) : undefined;
 
   const clientTone = clientStatusTone(client.status);
+  const overviewLedgerN = overviewLedgerCount(
+    documents,
+    profile.attention,
+    activePractices,
+    profile.attention_error,
+  );
+  const businessStoryShown = (businessStoryQuery.data?.length ?? 0) > 0;
 
   return (
     <div className="space-y-6">
@@ -562,29 +726,42 @@ export function ClientDetailClient({
           avatar has no r19 slot, so it wraps the primitive page-locally
           rather than forking it (per spec §"Hard rules"). */}
       <div className="flex items-start gap-4">
-        <div className="w-16 h-16 shrink-0 rounded-full bg-[var(--bz-card)] flex items-center justify-center overflow-hidden">
-          {client.avatar_url ? (
-            <img
-              src={client.avatar_url}
-              alt={client.full_name}
-              className="w-full h-full object-cover"
-            />
-          ) : countryFlag ? (
-            <div className="w-full h-full rounded-full bg-[var(--bz-base)] flex items-center justify-center text-4xl">
+        <div className="relative w-16 h-16 shrink-0">
+          <div className="w-16 h-16 rounded-full bg-[var(--bz-card)] border border-[var(--bz-border)] flex items-center justify-center overflow-hidden">
+            {client.avatar_url ? (
+              <img
+                src={client.avatar_url}
+                alt={client.full_name}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <span
+                aria-hidden="true"
+                className="text-[24px] font-semibold tracking-[-0.02em] text-[var(--tx-pure)]"
+              >
+                {initials(client.full_name)}
+              </span>
+            )}
+          </div>
+          {countryFlag && (
+            <span
+              className="absolute -bottom-0.5 -right-0.5 flex h-6 w-6 items-center justify-center rounded-full border border-[var(--bz-border)] bg-[var(--bz-base)] text-[14px] leading-none"
+              title={client.nationality}
+              aria-label={client.nationality}
+            >
               {countryFlag}
-            </div>
-          ) : (
-            <div
-              className="w-full h-full rounded-full"
-              style={{ background: "var(--bz-card)" }}
-            />
+            </span>
           )}
         </div>
         <Masthead
-          className="flex-1 min-w-0"
+          // Stacked (actions BELOW the title block) until xl: at 768 with the
+          // sidebar open, title + role + permit and four actions side by
+          // side leave the title one word per line. The shared Masthead is
+          // untouched; its md:flex-row is overridden here via tailwind-merge.
+          className={MASTHEAD_STACK}
           eyebrow={clientRefEyebrow}
           title={client.full_name}
-          subtitle={clientMastheadSubtitle}
+          subtitle={headerSub}
           right={
             <>
               {/* Copper "NEEDS YOU" stamp — derived ownership only, detail-only. */}
@@ -594,7 +771,8 @@ export function ClientDetailClient({
                   <Button
                     variant="outline"
                     size="sm"
-                    className="gap-2 text-[var(--accent-whatsapp)] border-[color-mix(in_srgb,var(--accent-whatsapp)_30%,transparent)] hover:bg-[color-mix(in_srgb,var(--accent-whatsapp)_10%,transparent)]"
+                    className="gap-2 border-[var(--line-control)]"
+                    aria-label="WhatsApp"
                     onClick={() => {
                       const phone = client.phone?.replace(/\D/g, "");
                       if (phone)
@@ -604,24 +782,8 @@ export function ClientDetailClient({
                         );
                     }}
                   >
-                    <MessageCircle className="w-4 h-4" />
-                    WhatsApp
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-2 text-sky-500 border-sky-500/30 hover:bg-sky-500/10"
-                    onClick={() => {
-                      const phone = client.phone?.replace(/\D/g, "");
-                      if (phone)
-                        window.open(
-                          `https://t.me/+${phone.startsWith("0") ? "62" + phone.slice(1) : phone}`,
-                          "_blank",
-                        );
-                    }}
-                  >
-                    <Send className="w-4 h-4" />
-                    Telegram
+                    <MessageCircle className="w-4 h-4 text-[var(--accent-whatsapp)]" />
+                    <span className="hidden sm:inline">WhatsApp</span>
                   </Button>
                 </>
               )}
@@ -629,35 +791,16 @@ export function ClientDetailClient({
                 <Button
                   variant="outline"
                   size="sm"
-                  className="gap-2 text-indigo-400 border-indigo-400/30 hover:bg-indigo-400/10"
+                  className="gap-2 border-[var(--line-control)]"
+                  aria-label="Email"
                   onClick={() =>
                     window.open(`mailto:${client.email}`, "_blank")
                   }
                 >
                   <Mail className="w-4 h-4" />
-                  Email
+                  <span className="hidden sm:inline">Email</span>
                 </Button>
               )}
-              {/* Open/closed toggle, not ownership — ink-selected idiom
-                  (same law as the tab bar's .tabActive, K3b C1/round-3 R1),
-                  never the shadcn default's copper fill. */}
-              <Button
-                variant="outline"
-                size="sm"
-                className={
-                  showLogPanel
-                    ? "gap-2 border-[var(--tx-pure)] text-[var(--tx-pure)]"
-                    : "gap-2"
-                }
-                onClick={() => {
-                  setShowLogPanel((v) => !v);
-                  if (!showLogPanel)
-                    setTimeout(() => logTextareaRef.current?.focus(), 80);
-                }}
-              >
-                <PenLine className="w-4 h-4" />
-                Log
-              </Button>
               {client.google_drive_folder_id && (
                 <Button
                   variant="outline"
@@ -673,7 +816,7 @@ export function ClientDetailClient({
                   aria-label="Open client's Google Drive folder"
                 >
                   <FolderOpen className="w-4 h-4" />
-                  Drive
+                  <span className="hidden sm:inline">Drive</span>
                 </Button>
               )}
             </>
@@ -751,318 +894,136 @@ export function ClientDetailClient({
               })()}
           </p>
 
-          {/* Assignment */}
-          {client.assigned_to && (
+          {/* Team — who holds this client: "Setup" is the owner (assigned_to);
+              "Tax consultant" appears for a tax client (a consultant on record
+              or LKPM history) and stays changeable in place. People are named
+              by first name only. */}
+          {(client.assigned_to || isTaxClient) && (
             <div
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--bz-surface)] border border-[var(--bz-border)]"
-              title={`Assigned to: ${client.assigned_to.split("@")[0]}`}
+              className="overflow-hidden rounded-xl border border-[var(--bz-border)] bg-[var(--bz-card)]"
+              data-testid="client-team"
             >
-              <AvatarWithFallback
-                src={
-                  teamMemberOptions.find((m) => m.value === client.assigned_to)
-                    ?.avatar
-                }
-                alt={client.assigned_to.split("@")[0]}
-                className="w-8 h-8 rounded-full object-cover ring-2 ring-[color-mix(in_srgb,var(--state-success)_30%,transparent)]"
-                fallback={
-                  <div className="w-8 h-8 rounded-full bg-[color-mix(in_srgb,var(--state-success)_20%,transparent)] flex items-center justify-center">
-                    <User className="w-4 h-4 text-[var(--state-success)]" />
+              {client.assigned_to && (
+                <div
+                  className="flex items-center gap-3 px-3 py-2.5"
+                  data-testid="team-setup"
+                >
+                  <AvatarWithFallback
+                    src={setupOption?.avatar}
+                    alt={setupName}
+                    className="h-8 w-8 rounded-full object-cover"
+                    fallback={
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--bz-border)] bg-[var(--bz-base)] text-[11px] font-semibold text-[var(--tx-pure)]">
+                        {initials(setupName)}
+                      </div>
+                    }
+                  />
+                  <div className="flex min-w-0 flex-col">
+                    <span className="text-[11px] text-[var(--tx-secondary)]">
+                      Setup
+                    </span>
+                    <span
+                      className="truncate text-sm font-medium text-[var(--tx-pure)]"
+                      data-testid="team-setup-name"
+                    >
+                      {setupName}
+                    </span>
                   </div>
-                }
-              />
-              <div className="flex flex-col">
-                <span className="text-xs text-[var(--bz-text-2)]">
-                  Assigned to
-                </span>
-                <span className="text-sm font-medium text-[var(--bz-text-1)] capitalize">
-                  {client.assigned_to.split("@")[0]}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Alert badges — urgency (a date), never ownership: warning, never danger */}
-          {(stats.expired_count > 0 ||
-            stats.red_alerts > 0 ||
-            stats.yellow_alerts > 0) && (
-            <div className="flex flex-wrap gap-2">
-              {stats.expired_count > 0 && (
-                <span className="px-2 py-1 text-xs rounded-full bg-[color-mix(in_srgb,var(--state-warning)_30%,transparent)] text-[var(--state-warning)] flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" />
-                  {stats.expired_count} expired
-                </span>
-              )}
-              {stats.red_alerts > 0 && (
-                <span className="px-2 py-1 text-xs rounded-full bg-[color-mix(in_srgb,var(--state-warning)_20%,transparent)] text-[var(--state-warning)] flex items-center gap-1">
-                  <Bell className="w-3 h-3" />
-                  {stats.red_alerts} urgent
-                </span>
-              )}
-              {stats.yellow_alerts > 0 && (
-                <span className="px-2 py-1 text-xs rounded-full bg-[color-mix(in_srgb,var(--state-warning)_20%,transparent)] text-[var(--state-warning)] flex items-center gap-1">
-                  <Bell className="w-3 h-3" />
-                  {stats.yellow_alerts} soon
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* Expiry Alert strip — shown when there are urgent docs. A date
-              is urgency, never ownership, never danger: warning throughout. */}
-          {expiry_alerts.filter(
-            (a) => a.alert_color === "expired" || a.alert_color === "red",
-          ).length > 0 && (
-            <div
-              className="flex items-start gap-3 rounded-xl px-4 py-3 border"
-              style={{
-                background:
-                  "color-mix(in srgb, var(--state-warning) 8%, transparent)",
-                borderColor:
-                  "color-mix(in srgb, var(--state-warning) 30%, transparent)",
-              }}
-            >
-              <AlertTriangle className="w-4 h-4 text-[var(--state-warning)] shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-[var(--state-warning)]">
-                  {expiry_alerts.filter((a) => a.alert_color === "expired")
-                    .length > 0 && (
-                    <span>
-                      {
-                        expiry_alerts.filter((a) => a.alert_color === "expired")
-                          .length
-                      }{" "}
-                      expired
-                      {expiry_alerts.filter((a) => a.alert_color === "red")
-                        .length > 0
-                        ? " · "
-                        : ""}
-                    </span>
-                  )}
-                  {expiry_alerts.filter((a) => a.alert_color === "red").length >
-                    0 && (
-                    <span>
-                      {
-                        expiry_alerts.filter((a) => a.alert_color === "red")
-                          .length
-                      }{" "}
-                      expiring soon
-                    </span>
-                  )}
-                </p>
-                <div className="flex flex-wrap gap-1.5 mt-1">
-                  {expiry_alerts
-                    .filter(
-                      (a) =>
-                        a.alert_color === "expired" || a.alert_color === "red",
-                    )
-                    .slice(0, 4)
-                    .map((alert, i) => (
-                      <span
-                        key={i}
-                        className="text-xs px-2 py-0.5 rounded-full bg-[color-mix(in_srgb,var(--state-warning)_20%,transparent)] text-[var(--state-warning)]"
-                      >
-                        {alert.document_type?.replace(/_/g, " ")}
-                        {alert.entity_type === "family_member"
-                          ? ` (${alert.entity_name})`
-                          : ""}
-                        {alert.alert_color === "expired"
-                          ? " — expired"
-                          : ` — ${alert.days_until_expiry}d`}
-                      </span>
-                    ))}
-                  {expiry_alerts.filter(
-                    (a) =>
-                      a.alert_color === "expired" || a.alert_color === "red",
-                  ).length > 4 && (
-                    <span className="text-xs text-[var(--state-warning)] opacity-70">
-                      +
-                      {expiry_alerts.filter(
-                        (a) =>
-                          a.alert_color === "expired" ||
-                          a.alert_color === "red",
-                      ).length - 4}{" "}
-                      more
-                    </span>
-                  )}
                 </div>
-              </div>
+              )}
+              {isTaxClient && (
+                <div
+                  className={`flex items-center gap-3 px-3 py-2.5 ${client.assigned_to ? "border-t border-[var(--bz-border)]" : ""}`}
+                  data-testid="team-tax-consultant"
+                >
+                  <AvatarWithFallback
+                    src={
+                      teamMemberOptions.find(
+                        (m) => m.value === taxConsultantValue,
+                      )?.avatar
+                    }
+                    alt={taxConsultantLabel || "Tax consultant"}
+                    className="h-8 w-8 rounded-full object-cover"
+                    fallback={
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full border border-dashed border-[var(--line-control)] bg-[var(--bz-base)] text-[11px] font-semibold text-[var(--tx-pure)]">
+                        {taxConsultantLabel
+                          ? initials(taxConsultantLabel)
+                          : "—"}
+                      </div>
+                    }
+                  />
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <label
+                      htmlFor="tax-consultant-team"
+                      className="text-[11px] text-[var(--tx-secondary)]"
+                    >
+                      Tax consultant
+                    </label>
+                    <select
+                      id="tax-consultant-team"
+                      value={taxConsultantValue}
+                      onChange={(e) => void saveTaxConsultant(e.target.value)}
+                      disabled={isSavingTaxConsultant}
+                      className={`-ml-0.5 cursor-pointer appearance-auto truncate rounded bg-transparent text-sm font-medium text-[var(--tx-pure)] ${FOCUS}`}
+                    >
+                      <option value="">Not assigned</option>
+                      {taxConsultantValue &&
+                        !taxConsultants.some(
+                          (c) => c.value === taxConsultantValue,
+                        ) && (
+                          <option value={taxConsultantValue}>
+                            {taxConsultantLabel}
+                          </option>
+                        )}
+                      {taxConsultants.map((c) => (
+                        <option key={c.value} value={c.value}>
+                          {firstName(c.label, c.value)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
             </div>
           )}
+
+          {/* Counters — the backend's own attention_stats, expired and urgent
+              only. Absent stats = no counters (the old view counts were
+              noise). A count is urgency (a date), never ownership: warning,
+              never danger, and always a word next to the number. */}
+          {attentionStats &&
+            (attentionStats.expired > 0 || attentionStats.urgent > 0) && (
+              <div
+                className="flex flex-wrap gap-2"
+                data-testid="attention-counters"
+              >
+                {attentionStats.expired > 0 && (
+                  <span className="flex items-center gap-1 rounded-full border border-[var(--state-warning)] px-2 py-1 text-xs font-bold text-[var(--state-warning)]">
+                    <AlertCircle className="h-3 w-3" aria-hidden="true" />
+                    {attentionStats.expired} expired
+                  </span>
+                )}
+                {attentionStats.urgent > 0 && (
+                  <span className="flex items-center gap-1 rounded-full border border-[var(--line-control)] px-2 py-1 text-xs font-semibold text-[var(--state-warning)]">
+                    <Bell className="h-3 w-3" aria-hidden="true" />
+                    {attentionStats.urgent} urgent
+                  </span>
+                )}
+              </div>
+            )}
         </div>
 
         <div className={styles.mainColumn}>
-          {/* Inline Log Interaction Panel */}
-          {showLogPanel && (
-            <div className="rounded-xl border border-[var(--bz-border)] bg-[var(--bz-surface)] p-4 space-y-3 animate-in slide-in-from-top-2 duration-150">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-[var(--bz-text-1)]">
-                  Log interaction
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowLogPanel(false);
-                    setLogSummary("");
-                  }}
-                  className="p-1 rounded hover:bg-[var(--bz-card)] text-[var(--bz-text-2)]"
-                  aria-label="Close log panel"
-                  title="Close log panel"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              {/* Quick presets — one click to prefill + submit */}
-              <div className="flex flex-wrap gap-1.5">
-                <span className="text-[10px] text-[var(--bz-text-2)] self-center mr-1 uppercase tracking-wide font-medium">
-                  Quick:
-                </span>
-                {[
-                  {
-                    type: "call" as const,
-                    label: "📞 Called",
-                    summary: "Called client",
-                  },
-                  {
-                    type: "call" as const,
-                    label: "📵 No answer",
-                    summary: "Called — no answer",
-                  },
-                  {
-                    type: "whatsapp" as const,
-                    label: "💬 WA sent",
-                    summary: "WhatsApp message sent",
-                  },
-                  {
-                    type: "note" as const,
-                    label: "✅ Updated",
-                    summary: "Process updated",
-                  },
-                ].map(({ type, label, summary }) => (
-                  <button
-                    key={label}
-                    onClick={async () => {
-                      setLogType(type);
-                      setLogSummary(summary);
-                      setIsLogging(true);
-                      try {
-                        const user = await api.getProfile();
-                        const newInteraction = await api.crm.createInteraction({
-                          client_id: clientId,
-                          interaction_type: type,
-                          summary,
-                          team_member: user.email,
-                          direction: "outbound",
-                        });
-                        setInteractions((prev) => [newInteraction, ...prev]);
-                        toast.success("Logged: " + summary);
-                        setLogSaved(true);
-                        setTimeout(() => setLogSaved(false), 1500);
-                        setLogSummary("");
-                        setShowLogPanel(false);
-                        invalidateClient();
-                      } catch (err) {
-                        toast.error("Failed to log", {
-                          description: (err as Error).message,
-                        });
-                      } finally {
-                        setIsLogging(false);
-                      }
-                    }}
-                    disabled={isLogging}
-                    className="text-xs px-2.5 py-1 rounded-full border border-[var(--bz-border)] bg-[var(--bz-base)] text-[var(--bz-text-2)] hover:border-[var(--line-control)] hover:text-[var(--bz-text-1)] transition-colors disabled:opacity-50"
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              {/* Type chips */}
-              <div className="flex flex-wrap gap-2">
-                {(
-                  [
-                    { key: "note", label: "Note", Icon: FileText },
-                    { key: "call", label: "Call", Icon: Phone },
-                    { key: "whatsapp", label: "WhatsApp", Icon: MessageCircle },
-                    { key: "email", label: "Email", Icon: Mail },
-                    { key: "meeting", label: "Meeting", Icon: Calendar },
-                    { key: "chat", label: "Chat", Icon: MessageCircle },
-                  ] as const
-                ).map(({ key, label, Icon }) => (
-                  <button
-                    key={key}
-                    onClick={() => setLogType(key)}
-                    className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border transition-colors ${
-                      logType === key
-                        ? "bg-[var(--bz-sidebar-active-fill)] text-white border-[var(--bz-sidebar-active-fill)]"
-                        : "bg-[var(--bz-base)] text-[var(--bz-text-2)] border-[var(--bz-border)] hover:border-[var(--line-control)]"
-                    }`}
-                  >
-                    <Icon className="w-3 h-3" />
-                    {label}
-                  </button>
-                ))}
-              </div>
-              {/* Summary textarea */}
-              <textarea
-                ref={logTextareaRef}
-                value={logSummary}
-                onChange={(e) => setLogSummary(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey))
-                    submitLog();
-                }}
-                placeholder={`Add a ${logType} note… (⌘↵ to save)`}
-                rows={3}
-                className="w-full rounded-lg bg-[var(--bz-base)] border border-[var(--bz-border)] text-sm text-[var(--bz-text-1)] placeholder:text-[var(--bz-text-2)] px-3 py-2 resize-none focus:outline-none focus:border-[var(--line-control)] transition-colors"
-              />
-              <div className="flex items-center justify-between">
-                <span
-                  className={`text-[10px] tabular-nums transition-colors ${
-                    logSummary.length > 400
-                      ? "text-[var(--state-warning)]"
-                      : logSummary.length > 200
-                        ? "text-[var(--state-warning)]"
-                        : "text-[var(--bz-text-2)]"
-                  }`}
-                >
-                  {logSummary.length > 0 ? `${logSummary.length} chars` : ""}
-                </span>
-                {/* Primary submit of this panel — forest idiom (same law
-                    as PortalAccess's "Invite to portal", round-3 R2). */}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!logSummary.trim() || isLogging}
-                  onClick={submitLog}
-                  className="gap-2 transition-colors border-[var(--state-success)] bg-[var(--state-success)] text-white hover:bg-[var(--state-success)] hover:opacity-90"
-                >
-                  {isLogging ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <PenLine className="w-4 h-4" />
-                  )}
-                  {logSaved ? "Saved!" : "Save"}
-                </Button>
-              </div>
-            </div>
-          )}
-
           {/* Tabs — hairline idiom: 44px row, --line-control underline, an ink
           underline on the active tab. No role="tab"/aria-selected here: K3a
           dropped role="menu" for the same reason (decision D6) — this bar
           does not implement the arrow-key pattern a tab role promises, so it
-          keeps native buttons with the browser's own Tab/Enter/Space. R5
-          (kita client-profile redesign) wraps the row in a `<nav>` with its
-          own accessible name — matching v3 mock's `aria-label="Client
-          sections"` — and gives the active button `aria-current="page"`,
-          same attribute the mock's own `.tab[aria-current="page"]` rule
-          reads; TAB_KEYS itself is untouched, so every existing `?tab=`
-          deep link still opens the same panel. Only the "process" label
-          moves to the mock's "Practices". R8 folds Timeline + WhatsApp into
-          the mock's single "Activity" button: TAB_KEYS keeps both
-          "timeline" and "whatsapp" as valid deep-link keys (`?tab=whatsapp`
-          bookmarks still work), so this one button matches on EITHER key —
-          `activeKeys` below, not a straight `visibleTab === key` — and its
-          onClick always writes the canonical "timeline" key. */}
+          keeps native buttons with the browser's own Tab/Enter/Space. The row
+          is wrapped in a `<nav>` with its own accessible name and the active
+          button carries `aria-current="page"`. Order (owner, 2026-11-03):
+          overview, practices (`process`), immigration (`visas`), company, tax,
+          family, documents. There is no Activity tab: `?tab=timeline` and
+          `?tab=whatsapp` are not TAB_KEYS any more, so they open Overview. */}
           <nav
             ref={tabsRef}
             className={styles.tabBar}
@@ -1072,28 +1033,22 @@ export function ClientDetailClient({
             {[
               { key: "overview", label: "Overview", icon: User },
               {
-                key: "documents",
-                label: `Documents (${generalDocuments.length})`,
-                icon: FileText,
-              },
-              {
                 key: "process",
                 label: `Practices (${activePractices.length + completedPractices.length})`,
                 icon: FolderOpen,
-              },
-              {
-                key: "family",
-                label: `Family (${stats.family_count})`,
-                icon: Users,
               },
               { key: "visas", label: "Immigration", icon: Globe },
               { key: "company", label: "Company", icon: Building2 },
               { key: "tax", label: "Tax", icon: DollarSign },
               {
-                key: "timeline",
-                label: `Activity (${interactions.length})`,
-                icon: Activity,
-                activeKeys: ["timeline", "whatsapp"] as TabType[],
+                key: "family",
+                label: `Family (${stats.family_count})`,
+                icon: Users,
+              },
+              {
+                key: "documents",
+                label: `Documents (${generalDocuments.length})`,
+                icon: FileText,
               },
             ]
               .filter(({ key }) => {
@@ -1101,15 +1056,16 @@ export function ClientDetailClient({
                 if (key === "tax") return showTaxTab;
                 return true;
               })
-              .map(({ key, label, icon: Icon, activeKeys }) => {
-                const isActive = activeKeys
-                  ? activeKeys.includes(visibleTab)
-                  : visibleTab === key;
+              .map(({ key, label, icon: Icon }) => {
+                const isActive = visibleTab === key;
                 return (
                   <button
                     key={key}
                     type="button"
                     onClick={() => handleTabChange(key as TabType, isActive)}
+                    // Fetch the tab's chunk a moment before the click.
+                    onPointerEnter={() => void TAB_LOADERS[key as TabType]?.()}
+                    onFocus={() => void TAB_LOADERS[key as TabType]?.()}
                     aria-current={isActive ? "page" : undefined}
                     className={`${styles.tab} ${isActive ? styles.tabActive : ""}`}
                   >
@@ -1129,7 +1085,8 @@ export function ClientDetailClient({
                 documents={documents}
                 activePractices={activePractices}
                 completedPractices={completedPractices}
-                expiryAlerts={expiry_alerts}
+                attention={profile.attention}
+                attentionError={profile.attention_error}
                 needsViewerAction={needsViewerAction}
                 formatDate={formatDate}
                 formatCurrency={formatCurrency}
@@ -1139,23 +1096,22 @@ export function ClientDetailClient({
                 isDeletingClient={isDeletingClient}
                 onRefresh={invalidateClient}
                 clientId={clientId}
+                familyMembers={family_members}
+                companyLinks={company_links ?? []}
+                interactions={interactions}
+                viewerEmail={currentUserEmail}
+                onOpenTab={(tab) => handleTabChange(tab)}
               />
-              <BusinessStoryPanel
-                clientName={client.full_name}
-                companyNames={businessStoryCompanyNames}
-                maps={businessStoryQuery.data ?? []}
-                isLoading={businessStoryQuery.isLoading}
-                error={businessStoryError}
-              />
-              <PortalAccess
-                clientId={clientId}
-                clientName={client.full_name}
-                clientEmail={client.email}
-              />
-              <PortalMessages
-                clientId={clientId}
-                clientName={client.full_name}
-              />
+              {businessStoryShown && (
+                <BusinessStoryPanel
+                  n={overviewLedgerN + 1}
+                  clientName={client.full_name}
+                  companyNames={businessStoryCompanyNames}
+                  maps={businessStoryQuery.data ?? []}
+                  isLoading={businessStoryQuery.isLoading}
+                  error={businessStoryError}
+                />
+              )}
               {/* R7a: for a client with no company links (and no company name
                   on record) the Company/Tax tabs are hidden — so the actions
                   they carried move here, to the Overview the deep links fall
@@ -1167,7 +1123,7 @@ export function ClientDetailClient({
                   never in a hover-only row action. */}
               {!showCompanyTab && (
                 <LedgerSection
-                  n={2}
+                  n={overviewLedgerN + (businessStoryShown ? 2 : 1)}
                   tone="wait"
                   title="Company & tax"
                   actions={
@@ -1181,7 +1137,7 @@ export function ClientDetailClient({
                   }
                 >
                   <EmptyState>No company linked yet.</EmptyState>
-                  {!showTaxTab && (
+                  {!showTaxTab && !isTaxClient && (
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
                       <label
                         htmlFor="tax-consultant-inline"
@@ -1279,6 +1235,7 @@ export function ClientDetailClient({
                 setActiveModal("edit_document");
               }}
               onRefresh={invalidateClient}
+              onOpenFamilyTab={() => handleTabChange("family")}
             />
           )}
 
@@ -1289,6 +1246,8 @@ export function ClientDetailClient({
               documents={documents}
               formatDate={formatDate}
               onRefresh={invalidateClient}
+              onOpenDocuments={() => handleTabChange("documents")}
+              companyLinks={company_links}
             />
           )}
 
@@ -1300,32 +1259,8 @@ export function ClientDetailClient({
               companyLinks={company_links}
               onRefresh={invalidateClient}
               taxConsultants={taxConsultants}
-            />
-          )}
-
-          {(visibleTab === "timeline" || visibleTab === "whatsapp") && (
-            <ActivityTab
-              // R8 audit item 5: ActivityTab only reads `initialSection` on
-              // mount (no corrective effect) — a `key` forces the remount a
-              // live `?tab=timeline` <-> `?tab=whatsapp` switch needs while
-              // this guard keeps both under the same branch.
-              key={visibleTab === "whatsapp" ? "whatsapp" : "timeline"}
-              clientId={clientId}
-              interactions={interactions}
-              formatDate={formatDate}
-              formatTime={formatTime}
-              clientCreatedAt={client.created_at}
-              clientFirstContact={client.first_contact_date}
-              initialSection={
-                visibleTab === "whatsapp" ? "whatsapp" : "timeline"
-              }
-              onInteractionCreated={(interaction) =>
-                setInteractions((prev) => [interaction, ...prev])
-              }
-              onInteractionRemoved={(id) =>
-                setInteractions((prev) => prev.filter((i) => i.id !== id))
-              }
-              onSaved={invalidateClient}
+              documents={taxDocuments}
+              attention={profile?.attention}
             />
           )}
         </div>
