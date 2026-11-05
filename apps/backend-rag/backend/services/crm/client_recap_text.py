@@ -219,13 +219,16 @@ def _company_clauses(p: Mapping[str, Any]) -> list[str]:
     elif paid:
         clauses.append(f"paid-up capital is {paid}")
     sh, di = p.get("shareholders_count"), p.get("directors_count")
-    bits = []
-    if sh:
-        bits.append(f"{num(sh)} {_plural(sh, 'shareholder')}")
+    linked: list[tuple[int, str]] = []
+    if sh and p.get("shareholders_source") == "profile":
+        clauses.append(f"the company profile lists {num(sh)} {_plural(sh, 'shareholder')}")
+    elif sh:
+        linked.append((sh, f"{num(sh)} {_plural(sh, 'shareholder')}"))
     if di:
-        bits.append(f"{num(di)} {_plural(di, 'director')}")
-    if bits:
-        clauses.append("it has " + " and ".join(bits))
+        linked.append((di, f"{num(di)} {_plural(di, 'director')}"))
+    if linked:
+        verb = "is" if len(linked) == 1 and linked[0][0] == 1 else "are"
+        clauses.append(" and ".join(b for _, b in linked) + f" {verb} linked in the CRM")
     kbli = p.get("kbli") or []
     if kbli:
         total = max(p.get("kbli_count") or 0, len(kbli))

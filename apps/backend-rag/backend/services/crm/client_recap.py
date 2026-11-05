@@ -12,6 +12,27 @@ prompt, and it lets through codes, enums, counts, ISO dates and capital
 amounts. Never names (client, family, shareholders, staff, companies),
 passport/permit/NIB/NPWP/AHU numbers, addresses, emails, phones, sponsors or
 file names. Documents and images are never sent.
+
+Numbers (spec, after gate rounds 2-4 on Rakyat #22): every number the recap states
+is exact for the record its sentence names. Counts are taken over distinct
+identities, never over rows or list positions, and before any list cap. A count
+that cannot be made exact is omitted, never estimated.
+
+- earlier permits: the client's own stay-permit documents, identity (code, expiry
+  date); a re-upload of the current permit is not an earlier one; one earlier
+  document without an expiry date makes the count unknown.
+- family members on file: family member rows; permits ending before the main
+  permit: those rows whose permit expiry is before the main permit's.
+- open immigration practices: open practice rows of an immigration category.
+- shareholders: the company profile's register (custom_fields.shareholders),
+  identity = normalised name, an entry counting when it holds shares or its role
+  says shareholder; any entry without a name, or with neither shares nor role,
+  makes the register count unknown. Without a usable register, the shareholders
+  and directors linked in the CRM (distinct clients), and the sentence says so.
+- KBLI lines: distinct codes (primary + register codes); KBLI 2020: distinct
+  codes classified as absent from the 2025 catalogue, stated only when every code
+  is classified.
+- capital, total shares, LKPM, dates: single recorded values, stated as recorded.
 """
 
 from __future__ import annotations
@@ -207,6 +228,8 @@ def _mapping(v: Any) -> Mapping[str, Any]:
 
 def _kbli_item(v: Any) -> dict[str, Any]:
     v = v if isinstance(v, Mapping) else {}
+    if not _s_kbli(v.get("code")):
+        return {}  # a KBLI line is its code
     in_2025 = v.get("in_2025")
     return _prune(
         {
@@ -263,7 +286,12 @@ def recap_payload(scope: str, facts: Mapping[str, Any]) -> dict[str, Any]:
         )
     if scope == SCOPE_COMPANY:
         lk = _mapping(f.get("lkpm_latest"))
-        kbli = _valid(f.get("kbli"), _kbli_item)
+        kbli: list[dict[str, Any]] = []
+        kbli_seen: set[str] = set()
+        for item in _valid(f.get("kbli"), _kbli_item):
+            if item["code"] not in kbli_seen:
+                kbli_seen.add(item["code"])
+                kbli.append(item)
         kbli_2020 = sum(1 for k in kbli if k.get("in_2025") is False)
         return _prune(
             {
@@ -273,6 +301,9 @@ def recap_payload(scope: str, facts: Mapping[str, Any]) -> dict[str, Any]:
                 "paid_up_capital_idr": _s_int(f.get("paid_up_capital_idr")),
                 "total_shares": _s_int(f.get("total_shares")),
                 "shareholders_count": _s_int(f.get("shareholders_count")),
+                "shareholders_source": f.get("shareholders_source")
+                if f.get("shareholders_source") in ("profile", "crm")
+                else None,
                 "directors_count": _s_int(f.get("directors_count")),
                 "kbli": kbli[:15],
                 "kbli_count": len(kbli) or None,
@@ -365,8 +396,11 @@ def build_immigration_facts(
             if permit_expiry and date.fromisoformat(permit_expiry) < today
             else "valid",
         }
-        facts["previous_permits_count"] = len(stay) - 1
-        facts["previous_permit_codes"] = sorted({s[3] for s in stay[1:]})
+        current_id = (code, top[5]) if top[5] else None
+        earlier = [s for s in stay[1:] if not (s[5] and (s[3], s[5]) == current_id)]
+        if all(s[5] for s in earlier):
+            facts["previous_permits_count"] = len({(s[3], s[5]) for s in earlier})
+        facts["previous_permit_codes"] = sorted({s[3] for s in earlier})
     if stay:
         issue, expiry = stay[0][4], stay[0][5]
         mine = [
@@ -414,6 +448,36 @@ def _cf_value(cf: Mapping[str, Any], key: str) -> Any:
     return v
 
 
+def _distinct_links(links: Any) -> int:
+    """Distinct linked clients; a row without a client id counts on its own."""
+    ids: set[Any] = set()
+    anonymous = 0
+    for link in links:
+        if link.get("client_id") is None:
+            anonymous += 1
+        else:
+            ids.add(link["client_id"])
+    return len(ids) + anonymous
+
+
+def _register_shareholders(entries: Any) -> int | None:
+    """Distinct shareholders in the company profile register, or None when unknown."""
+    if not isinstance(entries, list) or not entries:
+        return None
+    names: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            return None
+        name = " ".join(str(entry.get("name") or "").split()).casefold()
+        role = str(entry.get("role") or "").lower()
+        digits = re.sub(r"\D", "", str(entry.get("shares") or ""))
+        if not name or (not digits and not role):
+            return None
+        if (digits and int(digits) > 0) or "shareholder" in role or "pemegang saham" in role:
+            names.add(name)
+    return len(names) or None
+
+
 def build_company_facts(
     *,
     company: Mapping[str, Any],
@@ -423,25 +487,31 @@ def build_company_facts(
 ) -> dict[str, Any]:
     cf = from_jsonb(company.get("custom_fields")) if company.get("custom_fields") else {}
     cf = cf if isinstance(cf, dict) else {}
-    holders = [
+    register_count = _register_shareholders(_cf_value(cf, "shareholders"))
+    holders = _distinct_links(
         link
         for link in links
         if "shareholder" in str(link.get("role") or "").lower() or link.get("shares_count")
-    ]
-    cf_holders = _cf_value(cf, "shareholders")
-    holders_count = len(holders) or (len(cf_holders) if isinstance(cf_holders, list) else None)
-    directors = [
+    )
+    directors = _distinct_links(
         link for link in links if re.search(r"director|direktur", str(link.get("role") or ""), re.I)
-    ]
+    )
+    if register_count:
+        holders_count, holders_source = register_count, "profile"
+    else:
+        holders_count, holders_source = holders or None, "crm"
     kbli: list[dict[str, Any]] = []
+    seen: set[str] = set()
     primary = _s_kbli(str(company.get("kbli_code") or "").strip())
     if primary:
         kbli.append({"code": primary, "title": company.get("kbli_description")})
+        seen.add(primary)
     extra = _cf_value(cf, "kbli_codes")
     for code in extra if isinstance(extra, list) else []:
         c = _s_kbli(str(code).strip())
-        if c and c != primary:
+        if c and c not in seen:
             kbli.append({"code": c})
+            seen.add(c)
     for item in kbli:
         if kbli_in_2025 and item["code"] in kbli_in_2025:
             item["in_2025"] = kbli_in_2025[item["code"]]
@@ -455,7 +525,8 @@ def build_company_facts(
         "paid_up_capital_idr": _cf_value(cf, "paid_up_capital"),
         "total_shares": _cf_value(cf, "total_shares"),
         "shareholders_count": holders_count,
-        "directors_count": len(directors) or None,
+        "shareholders_source": holders_source if holders_count else None,
+        "directors_count": directors or None,
         "kbli": kbli,
         "lkpm_latest": dict(lkpm_latest) if lkpm_latest else None,
         "last_amendment_date": amendment,
@@ -536,7 +607,8 @@ async def fetch_company_inputs(conn: Any, client_id: int, company_id: int) -> di
         company_id,
     )
     links = await conn.fetch(
-        "SELECT role, shares_count FROM client_company_links WHERE company_id = $1", company_id
+        "SELECT client_id, role, shares_count FROM client_company_links WHERE company_id = $1",
+        company_id,
     )
     lkpm = None
     try:

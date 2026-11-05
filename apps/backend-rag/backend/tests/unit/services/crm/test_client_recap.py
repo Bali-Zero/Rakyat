@@ -204,11 +204,20 @@ def test_allow_list_drops_unknown_keys_and_free_text_values():
             "company_name": "PT Acme Synthetic",
             "nib": "NIB-1",
             "legal_form": "x@y.com",
-            "kbli": [{"code": "Jane Roe", "title": "ok title"}],
+            "kbli": [
+                {"code": "Jane Roe", "title": "ok title"},
+                {"code": "62010", "title": "ok title"},
+            ],
             "shareholders_count": 2,
+            "shareholders_source": "registry",
         },
     )
-    assert payload == {"shareholders_count": 2, "kbli": [{"title": "ok title"}], "kbli_count": 1}
+    # A KBLI line without a valid code is not a line, and an unknown source is dropped.
+    assert payload == {
+        "shareholders_count": 2,
+        "kbli": [{"code": "62010", "title": "ok title"}],
+        "kbli_count": 1,
+    }
     with pytest.raises(ValueError):
         r.recap_payload("bogus", {})
 
@@ -570,6 +579,119 @@ def test_generic_akta_date_is_not_an_amendment():
     amended = dict(base, akta_perubahan_date=date(2025, 6, 1))
     facts = r.build_company_facts(company=amended, links=[], lkpm_latest=None)
     assert r.recap_payload("company", facts)["last_amendment_date"] == "2025-06-01"
+
+
+# ── numbers spec (client_recap module docstring), after gate rounds 2-4 ──────
+
+
+def _stay_doc(expiry, created_year, issue=None):
+    return {
+        "document_type": "visa",
+        "status": "active",
+        "expiry_date": expiry,
+        "created_at": datetime(created_year, 1, 1, tzinfo=timezone.utc),
+        "family_member_id": None,
+        "ocr_extracted_data": {
+            "raw_response": {"visa_type": "E23 Working KITAS", "issue_date": issue}
+        },
+    }
+
+
+def _imm(docs):
+    return r.build_immigration_facts(
+        documents=docs,
+        family_members=[],
+        practices=[],
+        passport_expiry=None,
+        catalogue=CATALOGUE,
+        today=date(2026, 6, 1),
+    )
+
+
+def test_reupload_of_the_current_permit_is_not_an_earlier_permit():
+    facts = _imm([_stay_doc(date(2026, 12, 1), 2025), _stay_doc(date(2026, 12, 1), 2026)])
+    assert facts["previous_permits_count"] == 0
+    assert "earlier" not in rt.template_recap("immigration", r.recap_payload("immigration", facts))
+
+
+def test_two_documents_of_one_earlier_permit_count_once():
+    facts = _imm(
+        [
+            _stay_doc(date(2026, 12, 1), 2025),
+            _stay_doc(date(2025, 12, 1), 2024),
+            _stay_doc(date(2025, 12, 1), 2025),
+        ]
+    )
+    assert facts["previous_permits_count"] == 1
+    clauses = " | ".join(rt._imm_clauses(r.recap_payload("immigration", facts), date(2026, 6, 1)))
+    assert "one earlier permit is on record" in clauses
+
+
+def test_an_earlier_document_without_expiry_makes_the_count_unknown():
+    facts = _imm([_stay_doc(date(2026, 12, 1), 2025), _stay_doc(None, 2024, issue="2024-01-01")])
+    assert "previous_permits_count" not in facts
+
+
+def _company(register, kbli_codes=None):
+    cf = {"shareholders": json.dumps(register)}
+    if kbli_codes is not None:
+        cf["kbli_codes"] = json.dumps(kbli_codes)
+    return {"company_type": "PT PMA", "kbli_code": "62010", "custom_fields": json.dumps(cf)}
+
+
+def test_register_shareholders_win_over_incomplete_crm_links():
+    # Gate r4 2026-11-05: two shareholders on the register, one linked client,
+    # and the recap said "one shareholder".
+    register = [{"name": "Holder A", "shares": "600"}, {"name": "Holder B", "shares": "400"}]
+    links = [{"client_id": 1, "role": "shareholder", "shares_count": 600}]
+    facts = r.build_company_facts(company=_company(register), links=links, lkpm_latest=None)
+    payload = r.recap_payload("company", facts)
+    assert payload["shareholders_count"] == 2 and payload["shareholders_source"] == "profile"
+    assert "the company profile lists two shareholders" in rt._company_clauses(payload)
+
+
+def test_register_counts_distinct_holders_only():
+    register = [
+        {"name": "Holder A", "shares": "600"},
+        {"name": " holder  a ", "shares": "600"},
+        {"name": "Manager C", "role": "Direktur", "shares": "0"},
+        {"name": "Holder D", "role": "Pemegang Saham"},
+    ]
+    facts = r.build_company_facts(company=_company(register), links=[], lkpm_latest=None)
+    assert facts["shareholders_count"] == 2 and facts["shareholders_source"] == "profile"
+
+
+def test_unusable_register_falls_back_to_crm_links_and_says_so():
+    links = [
+        {"client_id": 1, "role": "shareholder", "shares_count": 600},
+        {"client_id": 1, "role": "shareholder", "shares_count": 600},
+        {"client_id": 2, "role": "director", "shares_count": None},
+    ]
+    for register in ([{"name": "Holder A"}], [{"shares": "10"}], []):
+        facts = r.build_company_facts(company=_company(register), links=links, lkpm_latest=None)
+        payload = r.recap_payload("company", facts)
+        assert payload["shareholders_count"] == 1 and payload["shareholders_source"] == "crm"
+        assert payload["directors_count"] == 1
+        clause = "one shareholder and one director are linked in the CRM"
+        assert clause in rt._company_clauses(payload), register
+
+
+@pytest.mark.asyncio
+async def test_duplicate_kbli_codes_count_once():
+    # Gate r4 2026-11-05: a repeated register code inflated both KBLI totals.
+    company = _company([], kbli_codes=["74100", "74100", "62010"])
+    conn = _CatalogueConn(company, absent={"74100"})
+    facts = r.build_company_facts(**await r.fetch_company_inputs(conn, 7, 55))
+    assert [k["code"] for k in facts["kbli"]] == ["62010", "74100"]
+    payload = r.recap_payload("company", facts)
+    assert payload["kbli_count"] == 2 and payload["kbli_2020_count"] == 1
+    duplicated = r.recap_payload(
+        "company",
+        {"kbli": [{"code": "74100", "in_2025": False}, {"code": "74100", "in_2025": False}]},
+    )
+    assert duplicated["kbli_count"] == 1 and duplicated["kbli_2020_count"] == 1
+    clause = next(c for c in rt._company_clauses(payload) if "KBLI" in c)
+    assert "two KBLI lines" in clause and "one code still on KBLI 2020" in clause
 
 
 def test_hash_carries_schema_version_and_statuses():
