@@ -2115,6 +2115,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/analytics/query-insights/latency": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Stage Latency
+     * @description p50/p95 seconds per pipeline stage (search, llm, reasoning, ...).
+     */
+    get: operations["get_stage_latency_api_analytics_query_insights_latency_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/analytics/query-insights/satisfaction": {
     parameters: {
       query?: never;
@@ -32820,6 +32840,37 @@ export interface operations {
           "application/json": {
             [key: string]: unknown;
           };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_stage_latency_api_analytics_query_insights_latency_get: {
+    parameters: {
+      query?: {
+        days?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
         };
       };
       /** @description Validation Error */
