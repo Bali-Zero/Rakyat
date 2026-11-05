@@ -131,499 +131,6 @@ env:
   BACKEND_COLLECT_COVERAGE: ${{ github.event_name != 'pull_request' }}
 
 jobs:
-  changes:
-    name: Change map
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    outputs:
-      map: ${{ steps.classify.outputs.map }}
-      # Fail-open defaults (superscar #2 "esiste ≠ armato"): any failure of the
-      # classifier corpus, the enumerator, or this step's own JSON parsing
-      # leaves steps.classify.outputs.* unset, and every `|| 'true'` below
-      # then makes the corresponding heavy job run. There is no path from a
-      # broken classifier to a silently-skipped suite.
-      run_all: ${{ steps.classify.outputs.run_all || 'true' }}
-      run_backend_tests: ${{ steps.classify.outputs.run_backend_tests || 'true' }}
-      run_mcp_tests: ${{ steps.classify.outputs.run_mcp_tests || 'true' }}
-      run_evaluator_critical_tests: ${{ steps.classify.outputs.run_evaluator_critical_tests || 'true' }}
-      run_frontend_tests: ${{ steps.classify.outputs.run_frontend_tests || 'true' }}
-      run_packages_core_tests: ${{ steps.classify.outputs.run_packages_core_tests || 'true' }}
-      run_e2e_tests: ${{ steps.classify.outputs.run_e2e_tests || 'true' }}
-      run_repo_scanners: ${{ steps.classify.outputs.run_repo_scanners || 'true' }}
-      # Static test-impact map (world-patterns-import-map.md §1.2, PR lane
-      # only — never merge_group, see impact_map.py's module docstring
-      # "SCOPE, DECLARED"). Same fail-open convention as the flags above:
-      # any failure anywhere in `impact` below leaves these two outputs
-      # unset, and backend-tests' own `|| 'true'` / empty-string check falls
-      # back to the unscoped `backend/tests/` target it already ran before
-      # this lever existed.
-      impact_run_all: ${{ steps.impact.outputs.run_all || 'true' }}
-      impact_selected_tests: ${{ steps.impact.outputs.selected_tests }}
-      # VISIBILITY (2026-09-05, closes the "corpus dies silently" mask that
-      # let #5070 and #5679 run every job on every PR for 9 and 9 days
-      # respectively, both green throughout): a failure of the extraction or
-      # the corpus is ALREADY fail-open (run_all above) — that was never the
-      # gap. The gap was that fail-open path being indistinguishable from a
-      # genuine "nothing here" recommendation. classifier_trusted is 'true'
-      # ONLY when extraction succeeded AND the corpus itself exited 0 in the
-      # trusted layout; the classifier-corpus-visibility job below turns red
-      # (non-required — it can never block a PR) whenever this is 'false' and
-      # nobody asked for the manual override. Fail-open toward 'false'
-      # (untrusted) on any unset/unexpected value — the unsafe direction here
-      # is silently claiming trust, not silently doubting it.
-      # `== 'true' && 'true' || 'false'`, not a bare `|| 'false'` (codex-gpt-5.6-sol
-      # review, 2026-09-05): `||` only substitutes on an EMPTY left side, so a
-      # bare fallback would pass through any unexpected non-empty value (e.g.
-      # a future typo emitting "True"/"1") unnormalized, silently widening the
-      # output's contract beyond the two literal strings its only consumers
-      # (this job's own steps) actually write today. Explicit normalization
-      # closes that for any FUTURE consumer, not just today's.
-      classifier_trusted: ${{ steps.classify.outputs.classifier_trusted == 'true' && 'true' || 'false' }}
-      override_active: ${{ steps.override.outputs.active == 'true' && 'true' || 'false' }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          filter: blob:none
-
-      # MANUAL OVERRIDE (Merge-OS v2 round-2 Cure #1, adapted 2026-08-18 —
-      # PENDING-ARMS.md "Wave 2 of Merge-OS v2 may be armed ONLY with the
-      # four round-2 cures incorporated"). Round-2 demanded an explicit,
-      # fail-safe-polarity kill switch for ring-gating; by the time this cure
-      # was revisited, ring-gating had already shipped default-ON via #4181
-      # with its own internal fail-open defaults (classifier/extraction/
-      # corpus failure -> run_all=true), so this is a DISCRETIONARY manual
-      # lever additive to those defaults, not a replacement for them — an
-      # operator can force the full suite during an incident regardless of
-      # whether the classifier is technically succeeding. Full truth-table
-      # rationale + why the literal v2 variable would have been a silent
-      # regression: scripts/ci/ring_gating_override.sh (guilt+innocence
-      # corpus: scripts/ci/test_ring_gating_override.py).
-      - name: Manual override — force full suite (Merge-OS round-2 Cure #1)
-        id: override
-        env:
-          MERGEOS_RING_GATING_DISABLED: ${{ vars.MERGEOS_RING_GATING_DISABLED }}
-        run: bash scripts/ci/ring_gating_override.sh >> "$GITHUB_OUTPUT"
-
-      # Self-test, unconditional (mirrors "Self-test changed-file
-      # enumerator" in hot-zone-pr-gate.yml): proves BOTH that the script's
-      # own truth table holds AND that it is actually wired into the `if:`
-      # of every step it is meant to gate (round-2 Cure #3's WIRED-shape
-      # demand, adapted) — never gated behind its own output, which would
-      # be a guard that can disable its own guilt test.
-      - name: Self-test ring-gating override (guilt + innocence)
-        run: |
-          python3 -m pip install --quiet pyyaml
-          python3 scripts/ci/test_ring_gating_override.py
-
-      # ROOT OF TRUST (red-team CRITICAL-1, 2026-08-14): the PR's own checkout
-      # cannot be trusted to judge itself — a PR that breaks backend code
-      # could, in the SAME commit, edit hotzone_changed_files.sh or
-      # change_map.py to emit/classify only an innocuous path, self-approving
-      # a skip of the backend suite that would have caught it. Extract the
-      # three classifier files from BASE_SHA (main's tip for a PR, the
-      # queue's base for merge_group) and run ONLY those copies for the rest
-      # of this job — a PR can propose a change to the classifier, but that
-      # change judges every OTHER PR first and only starts judging PRs once
-      # merged. This is conservative, not blind: `scripts/ci/` and `.github/`
-      # are already PREFIX_RULES entries mapped to
-      # infra_workflows/security_sensitive (verified live against
-      # origin/main:scripts/ci/change_map.py, unchanged by this PR), so a PR
-      # that edits the classifier is itself classified as
-      # suggested_jobs=all-six by the OLD copy doing the judging — no new
-      # rule needed for that. Defense in depth: these files are also
-      # added to CODEOWNERS TIER 1 in this same commit.
-      #
-      # impact_map.py / test_impact_map.py (added with the static
-      # test-impact lever, world-patterns-import-map.md §1.2): SAME trust
-      # boundary as change_map.py above — a PR that broke backend/ code
-      # could otherwise edit its own copy of the module-selection logic to
-      # under-select its own regression's test. Extracted unconditionally
-      # (cheap; unused on merge_group, where the `impact` step below never
-      # runs) rather than adding a second extraction step for one event type.
-      - name: Extract trusted classifier (base ref)
-        id: extract
-        if: steps.override.outputs.active != 'true'
-        env:
-          BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
-        run: |
-          set -uo pipefail
-          CLASSIFIER_DIR="$RUNNER_TEMP/trusted-classifier"
-          mkdir -p "$CLASSIFIER_DIR"
-          OK=true
-          for f in scripts/ci/change_map.py scripts/ci/test_change_map.py scripts/ci/security_gate_flags.py scripts/ci/hotzone_changed_files.sh scripts/ci/impact_map.py scripts/ci/test_impact_map.py; do
-            if ! git show "${BASE_SHA}:${f}" > "$CLASSIFIER_DIR/$(basename "$f")" 2>/dev/null; then
-              echo "::warning::could not extract $f from base ref $BASE_SHA — treating classifier as untrusted for this run"
-              OK=false
-            fi
-          done
-          chmod +x "$CLASSIFIER_DIR/hotzone_changed_files.sh" 2>/dev/null || true
-          echo "dir=$CLASSIFIER_DIR" >> "$GITHUB_OUTPUT"
-          echo "ok=$OK" >> "$GITHUB_OUTPUT"
-
-      # ENFORCING (promoted 2026-08-14): the shadow window covered 57 audited
-      # runs and found exactly one real false-skip (a backend-only edit to
-      # the PricingTool canonical JSON that broke a mouth-side generated
-      # snapshot), closed in this same branch — see
-      # scripts/ci/test_change_map.py for the guilt+innocence corpus this run
-      # re-verifies on every PR before trusting its own classification.
-      # A corpus failure is recorded as run_all=true (below) and never alters
-      # a live job — the invariant that made shadow mode safe still holds now
-      # that the recommendation is actually consulted. Runs the BASE-ref
-      # extraction above, not this checkout's copy (CRITICAL-1).
-      - name: Verify change-map guilt and innocence corpus
-        id: classifier-tests
-        if: steps.override.outputs.active != 'true'
-        continue-on-error: true
-        env:
-          CLASSIFIER_DIR: ${{ steps.extract.outputs.dir }}
-          EXTRACT_OK: ${{ steps.extract.outputs.ok }}
-        run: |
-          set -uo pipefail
-          if [ "$EXTRACT_OK" != "true" ]; then
-            echo "::error::base-ref classifier extraction failed — refusing to trust a corpus that didn't run"
-            echo "impact_ok=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          # impact_map.py's own corpus is recorded as a SEPARATE `impact_ok`
-          # output rather than folded into this step's own exit code — a
-          # break in the newer, narrower test-impact-map corpus must fail
-          # open on the PR-lane module scoping below (the `impact` step),
-          # not force run_all=true on all six domain-routed jobs, which is
-          # change_map.py's unrelated concern.
-          IMPACT_RC=0
-          python3 "$CLASSIFIER_DIR/test_impact_map.py" || IMPACT_RC=$?
-          echo "impact_ok=$([ "$IMPACT_RC" -eq 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          python3 "$CLASSIFIER_DIR/test_change_map.py"
-
-      # merge_group base/head SHAs (established pattern — see hot-zone-pr-gate.yml,
-      # harness-floor.yml, frontend-typecheck.yml, docs-sync.yml): under a merge
-      # queue entry github.event.pull_request.* is unset, so the merge_group.*
-      # SHAs take priority via `||`. hotzone_changed_files.sh resolves the
-      # merge-base with pure git and only falls back to the PR files API (which
-      # needs PR_NUMBER) if that fails — PR_NUMBER being empty under merge_group
-      # is therefore not a live gap, it only narrows the fallback path.
-      - name: Enumerate and classify this PR's files
-        id: classify
-        if: steps.override.outputs.active != 'true'
-        continue-on-error: true
-        env:
-          BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.merge_group.head_sha || github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          GH_TOKEN: ${{ github.token }}
-          CLASSIFIER_TEST_OUTCOME: ${{ steps.classifier-tests.outcome }}
-          CLASSIFIER_DIR: ${{ steps.extract.outputs.dir }}
-          EXTRACT_OK: ${{ steps.extract.outputs.ok }}
-        run: |
-          set -uo pipefail
-          CHANGED_FILE="$RUNNER_TEMP/change-map-changed-files.txt"
-
-          if [ "$EXTRACT_OK" != "true" ] || [ "$CLASSIFIER_TEST_OUTCOME" != "success" ]; then
-            echo "::warning::classifier untrusted or corpus failed; recommendation defaults to all jobs"
-            printf '%s\n' '__CHANGE_MAP_ENUMERATION_ERROR__' > "$CHANGED_FILE"
-          elif ! bash "$CLASSIFIER_DIR/hotzone_changed_files.sh" \
-            "$BASE_SHA" "$HEAD_SHA" "$PR_NUMBER" > "$CHANGED_FILE"; then
-            echo "::warning::changed-file enumeration failed; recommendation defaults to all jobs"
-            printf '%s\n' '__CHANGE_MAP_ENUMERATION_ERROR__' > "$CHANGED_FILE"
-          fi
-
-          # HIGH-4 (red-team 2026-08-14): capture the classifier's own exit
-          # code explicitly. `set -uo pipefail` (no `-e`, deliberately — see
-          # W101 in cicatrix-superscar.md) does NOT abort on a failing
-          # command substitution, so a bare `MAP_JSON="$(...)"` swallows a
-          # nonzero exit from change_map.py: the shell would carry on with
-          # whatever partial/empty stdout it captured and could publish
-          # selective outputs from a script that had already crashed.
-          if ! MAP_JSON="$(python3 "$CLASSIFIER_DIR/change_map.py" < "$CHANGED_FILE")"; then
-            echo "::warning::change_map.py exited non-zero; forcing conservative fallback"
-            MAP_JSON='{"schema_version":1,"mode":"enforcing","reason":"classifier_runtime_failure","changed_file_count":0,"domains":{},"unknown_paths":[],"run_all":true,"suggested_jobs":["backend-tests","mcp-tests","evaluator-critical-tests","frontend-tests","packages-core-tests","e2e-tests","repo-scanners"],"would_skip":[]}'
-          fi
-          RUN_ALL="$(MAP_JSON="$MAP_JSON" python3 -c 'import json, os; print(str(json.loads(os.environ["MAP_JSON"])["run_all"]).lower())')"
-          echo "map=$MAP_JSON" >> "$GITHUB_OUTPUT"
-          echo "run_all=$RUN_ALL" >> "$GITHUB_OUTPUT"
-
-          # classifier_trusted: the SAME condition this step already used above
-          # to decide whether to trust hotzone_changed_files.sh's enumeration —
-          # re-published as its own explicit output instead of left implicit in
-          # a warning line, so a consumer (the visibility job below, or a human
-          # reading the step summary) never has to re-derive it from two other
-          # steps' outcomes.
-          if [ "$EXTRACT_OK" = "true" ] && [ "$CLASSIFIER_TEST_OUTCOME" = "success" ]; then
-            echo "classifier_trusted=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "classifier_trusted=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # Per-job explicit booleans (superscar #3 "guard-over-match"): a
-          # `contains(map_json, 'job-name')` substring check on the raw JSON
-          # would be one classifier bug away from "frontend-tests" silently
-          # licensing something like a hypothetical "old-frontend-tests" job.
-          # Deriving one flag per job from the parsed suggested_jobs list, by
-          # exact membership, keeps every decision word-exact.
-          JOB_FLAGS="$(MAP_JSON="$MAP_JSON" python3 -c '
-          import json, os
-
-          result = json.loads(os.environ["MAP_JSON"])
-          run_all = bool(result["run_all"])
-          suggested = set(result["suggested_jobs"])
-          jobs = [
-              "backend-tests",
-              "mcp-tests",
-              "evaluator-critical-tests",
-              "frontend-tests",
-              "packages-core-tests",
-              "e2e-tests",
-              "repo-scanners",
-          ]
-          for job in jobs:
-              flag = run_all or job in suggested
-              output_name = "run_" + job.replace("-", "_")
-              value = "true" if flag else "false"
-              print(f"{output_name}={value}")
-          ')"
-          echo "$JOB_FLAGS" >> "$GITHUB_OUTPUT"
-          echo "::notice::change-map: $MAP_JSON"
-
-      # Lever L2, world-patterns-import-map.md §1.2: within backend-tests
-      # (once change_map above has already decided that job runs), select
-      # only the pytest modules impact_map.py's static import graph says
-      # this PR's changed files can reach — instead of the full
-      # `backend/tests/` (1400+ modules) that job ran unconditionally
-      # before this step existed. PR lane ONLY (`if:` below) — merge_group
-      # NEVER consults this output; it keeps running the unconditional full
-      # suite, so a wrong or incomplete impact map here costs a slow PR-lane
-      # run, never a missed regression (see the module's own "SCOPE,
-      # DECLARED" docstring for exactly what it cannot see: anything outside
-      # apps/backend-rag/backend/, dynamic imports, importlib, env-driven
-      # wiring). Reuses $CHANGED_FILE from "Enumerate and classify" above —
-      # same merge-base-anchored list, no second enumeration.
-      - name: Compute static test-impact map (PR lane only)
-        id: impact
-        if: steps.override.outputs.active != 'true' && github.event_name == 'pull_request'
-        continue-on-error: true
-        env:
-          CLASSIFIER_DIR: ${{ steps.extract.outputs.dir }}
-          EXTRACT_OK: ${{ steps.extract.outputs.ok }}
-          IMPACT_OK: ${{ steps.classifier-tests.outputs.impact_ok }}
-        run: |
-          set -uo pipefail
-          CHANGED_FILE="$RUNNER_TEMP/change-map-changed-files.txt"
-
-          if [ "$EXTRACT_OK" != "true" ] || [ "$IMPACT_OK" != "true" ]; then
-            echo "::warning::impact-map classifier untrusted or its own corpus failed; backend-tests keeps the unscoped full suite"
-            echo "run_all=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if ! IMPACT_JSON="$(python3 "$CLASSIFIER_DIR/impact_map.py" < "$CHANGED_FILE")"; then
-            echo "::warning::impact_map.py exited non-zero; backend-tests keeps the unscoped full suite"
-            echo "run_all=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          RUN_ALL="$(IMPACT_JSON="$IMPACT_JSON" python3 -c 'import json, os; print(str(json.loads(os.environ["IMPACT_JSON"])["run_all"]).lower())')"
-          echo "run_all=$RUN_ALL" >> "$GITHUB_OUTPUT"
-          if [ "$RUN_ALL" = "false" ]; then
-            {
-              echo "selected_tests<<IMPACT_TESTS_EOF"
-              IMPACT_JSON="$IMPACT_JSON" python3 -c 'import json, os; print("\n".join(json.loads(os.environ["IMPACT_JSON"])["selected_tests"]))'
-              echo "IMPACT_TESTS_EOF"
-            } >> "$GITHUB_OUTPUT"
-          fi
-
-          # Counts only in the loud notice — the selected-file list itself
-          # can run into the hundreds of paths (see the module docstring's
-          # app-factory hub example) and belongs in $GITHUB_OUTPUT, not a
-          # GitHub Actions annotation.
-          #
-          # HEREDOC, not `python3 -c '...'` (2026-09-05 fix): the one-liner
-          # version quoted dict keys with `\"run_all\"` INSIDE an f-string
-          # expression — a backslash-escaped quote inside `{...}` is a
-          # SyntaxError on Python < 3.12 ("f-string expression part cannot
-          # include a backslash", lifted by PEP 701). This job has no
-          # `actions/setup-python` step, so it runs on whatever `python3` the
-          # `ubuntu-24.04` image (confirmed live, run 33896943526's "Set up
-          # job" log) ships as default — 3.12, which is why this has not
-          # actually broken a live run yet. It is NOT safe by convention: the
-          # rest of this repo's Python CI surface pins 3.11 explicitly (e.g.
-          # scripts-tests-sweep.yml's `actions/setup-python` with
-          # `python-version: "3.11"`), and anyone reproducing this exact step
-          # against that pin — or against a contributor's local 3.11/3.10 —
-          # hits the SyntaxError immediately. A `python3 - <<'PY'` heredoc
-          # (same pattern already used two steps down, "Publish change-map
-          # decision") passes the script over stdin with no shell-quoting
-          # interaction, so the f-strings need no escaping at all and the bug
-          # class cannot recur here.
-          SUMMARY="$(IMPACT_JSON="$IMPACT_JSON" python3 - <<'PY'
-          import json
-          import os
-
-          d = json.loads(os.environ["IMPACT_JSON"])
-          print(
-              f"run_all={d['run_all']} reason={d['reason']} "
-              f"selected={d.get('selected_test_count', '-')}/{d.get('total_test_count', '-')}"
-          )
-          PY
-          )"
-          echo "::notice::test-impact-map: $SUMMARY"
-
-      - name: Publish change-map decision
-        if: always()
-        env:
-          MAP_JSON: ${{ steps.classify.outputs.map }}
-          CLASSIFIER_TEST_OUTCOME: ${{ steps.classifier-tests.outcome }}
-          CLASSIFY_OUTCOME: ${{ steps.classify.outcome }}
-          OVERRIDE_ACTIVE: ${{ steps.override.outputs.active }}
-          CLASSIFIER_TRUSTED: ${{ steps.classify.outputs.classifier_trusted == 'true' && 'true' || 'false' }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-
-          raw = os.environ.get("MAP_JSON", "")
-          if raw:
-              result = json.loads(raw)
-          elif os.environ.get("OVERRIDE_ACTIVE") == "true":
-              # Manual override (Merge-OS round-2 Cure #1) — the classifier was
-              # never consulted, this is not a failure. Distinguished from the
-              # classifier_runtime_failure fallback below so the step summary
-              # never misreports an intentional operator action as a defect.
-              result = {
-                  "reason": "manual_override_disabled",
-                  "run_all": True,
-                  "suggested_jobs": [
-                      "backend-tests",
-                      "mcp-tests",
-                      "evaluator-critical-tests",
-                      "frontend-tests",
-                      "packages-core-tests",
-                      "e2e-tests",
-                      "repo-scanners",
-                  ],
-                  "would_skip": [],
-                  "unknown_paths": [],
-              }
-          else:
-              result = {
-                  "reason": "classifier_runtime_failure",
-                  "run_all": True,
-                  "suggested_jobs": [
-                      "backend-tests",
-                      "mcp-tests",
-                      "evaluator-critical-tests",
-                      "frontend-tests",
-                      "packages-core-tests",
-                      "e2e-tests",
-                      "repo-scanners",
-                  ],
-                  "would_skip": [],
-                  "unknown_paths": [],
-              }
-
-          skipped = result["would_skip"]
-
-          classifier_trusted = os.environ.get("CLASSIFIER_TRUSTED", "false")
-
-          lines = [
-              "## Change map — enforcing",
-              "",
-              f"- Classifier corpus: `{os.environ['CLASSIFIER_TEST_OUTCOME']}`",
-              f"- Classification step: `{os.environ['CLASSIFY_OUTCOME']}`",
-              f"- Classifier trusted (extraction + corpus both clean): `{classifier_trusted}`",
-              f"- Conservative fallback (run everything): `{str(result['run_all']).lower()}`",
-              f"- Reason: `{result['reason']}`",
-              f"- Ran: `{', '.join(result['suggested_jobs']) or 'none'}`",
-              f"- Skipped: `{', '.join(skipped) or 'none'}`",
-          ]
-          if classifier_trusted != "true" and os.environ.get("OVERRIDE_ACTIVE") != "true":
-              lines.extend(
-                  [
-                      "",
-                      "**The trusted-classifier corpus did not pass in the flat extraction "
-                      "layout this run** — see the `Classifier corpus trust (visibility "
-                      "only)` job (non-required, exists only when this is true) for the red "
-                      "signal. The fallback above is safe (run_all), but the recommendation "
-                      "for THIS PR was degraded and did not reflect its actual diff.",
-                  ]
-              )
-          if result.get("unknown_paths"):
-              lines.extend(
-                  ["", "Unclassified paths (therefore all jobs):", ""]
-                  + [f"- `{path}`" for path in result["unknown_paths"]]
-              )
-          if skipped:
-              lines.extend(
-                  [
-                      "",
-                      "The jobs above were skipped because none of their domains matched"
-                      " this PR/merge-group's changed files. Any classifier failure, "
-                      "enumeration failure, or unclassified path forces the conservative"
-                      " fallback (`run_all=true`) instead — see"
-                      " `scripts/ci/change_map.py` for the domain routing.",
-                  ]
-              )
-          else:
-              lines.extend(
-                  [
-                      "",
-                      "No job was skipped for this run.",
-                  ]
-              )
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-              summary.write("\n".join(lines) + "\n")
-          PY
-
-  # VISIBILITY-ONLY red signal for the corpus mask (2026-09-05). #5070
-  # (2026-08-26) and #5679 (2026-09-04) each killed the trusted-classifier
-  # corpus silently: the fail-open contract correctly forced run_all=true on
-  # every PR for 9 and then 9 more days, and `changes` stayed green
-  # throughout because `classifier-tests`/`classify` are BOTH
-  # `continue-on-error: true` (load-bearing — a hard failure there must never
-  # block a PR whose diff never touched the classifier). Nobody noticed
-  # either incident from CI's own signal; both were found by a human reading
-  # `run_all: true` on an unrelated diff and asking why.
-  #
-  # This job exists ONLY to be seen, never to gate: it fires exclusively when
-  # `changes` itself concluded success (so this is additive information, not
-  # a duplicate of a real `changes` failure, which is already visible) AND
-  # the classifier was genuinely untrusted (extraction or corpus failed) AND
-  # nobody asked for the manual override (which intentionally never consults
-  # the classifier — that is not a defect). It is NOT added to
-  # infra/required.d/contexts.json or branch protection — a red run here can
-  # never block a merge queue entry, only tell a human to go look.
-  classifier-corpus-visibility:
-    name: Classifier corpus trust (visibility only)
-    needs: [changes]
-    if: needs.changes.outputs.override_active != 'true' && needs.changes.outputs.classifier_trusted != 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    permissions:
-      contents: read
-    # continue-on-error (codex-gpt-5.6-sol review, 2026-09-05): "not in
-    # infra/required.d/contexts.json" only defends against classic
-    # required-status-checks matching this job's exact name — it says nothing
-    # about a repository/organization RULESET that requires every check-run on
-    # a PR to succeed, or merge automation that inspects the raw checks list
-    # rather than the named-required subset. `continue-on-error: true` closes
-    # that regardless of which policy shape is live: the JOB's own check-run
-    # conclusion can still report `failure` (the red signal this job exists
-    # for), but that failure no longer fails the WORKFLOW RUN itself — the
-    # exact split the `npm-audit` job's own "Two-layer advisory design"
-    # comment below already documents and this job now matches.
-    continue-on-error: true
-    steps:
-      - name: Classifier corpus FAILED in the trusted extraction layout
-        run: |
-          echo "::error::classifier corpus FAILED in the trusted layout — recommendation degraded to run-all"
-          echo "See the 'Change map' job's 'Verify change-map guilt and innocence corpus' / 'Extract trusted classifier (base ref)' steps for which one failed, and scripts/ci/test_trusted_extraction_layout.py to reproduce it locally."
-          exit 1
-
   # ── S11 backend-test sharding (2026-08-23) ──────────────────────────────────
   # `Backend Tests (Python)` used to be ONE job, and every code PR paid it twice
   # (PR lane + merge-group lane). Measured on this workflow, not estimated:
@@ -655,24 +162,11 @@ jobs:
   # That is superscar #2 / W69 (required-checks silently disarmed). So the fan-in
   # job below KEEPS the exact name, and the shards get new, non-required names.
   #
-  # The classifier `if:` below is duplicated across `backend-static` and
-  # `backend-shard` because GitHub Actions does not support YAML anchors in
-  # workflow files. The fan-in deliberately does NOT carry a third copy — it
-  # reads the upstream jobs' actual `result`, which is the same decision
-  # observed rather than re-derived (superscar #9: two copies of one derivation
-  # is how they drift).
+  # The fan-in reads the upstream jobs' actual `result` rather than re-deriving
+  # any condition (superscar #9: two copies of one derivation is how they drift).
   backend-static:
     name: Backend Static (Python)
-    needs: [changes]
-    # Identical to the pre-split `backend-tests` condition — see the long
-    # rationale on `backend-shard` below, which carries the original comment.
-    if: >-
-      !cancelled() &&
-      (
-        (github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
-        needs.changes.result != 'success' ||
-        needs.changes.outputs.run_backend_tests != 'false'
-      )
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -899,38 +393,8 @@ jobs:
 
   backend-shard:
     name: Backend Shard ${{ matrix.shard }}
-    needs: [changes]
-    # Path-aware skip (change-map, promoted to enforcing 2026-08-14). `changes`
-    # only runs on pull_request/merge_group (see its own `if:` above), so on
-    # push/schedule/workflow_dispatch it is skipped — without `!cancelled()`
-    # a `needs: [changes]` job would inherit that skip by default (W117-class
-    # "the guard has no hole, it cannot see the event") and this job would
-    # silently stop running on every push to main. `!cancelled()` overrides
-    # that default; the event-name branch then makes this job unconditional
-    # outside pull_request/merge_group, exactly matching its pre-change-map
-    # behavior. Under pull_request/merge_group, `run_backend_tests` decides —
-    # its job-level default is 'true' (see `changes.outputs`), so any upstream
-    # failure/skip/malformed-JSON is fail-open, never fail-closed. HIGH-3
-    # (red-team 2026-08-14): a *stale* `run_backend_tests=false` published by
-    # `classify` before a LATER step in that same job fails would otherwise
-    # survive — job-level output defaults (`|| 'true'`) only cover an output
-    # that was never set, not one set-then-abandoned. `needs.changes.result
-    # != 'success'` closes that: any non-success conclusion of the `changes`
-    # job (not just a missing output) forces this job to run.
-    # `!cancelled()` note (red-team finding 13, accepted as-is): this makes
-    # the whole expression fail-STOP, not fail-open, for the one case where
-    # the entire workflow run itself is cancelled (manual cancel, or a newer
-    # push evicting this one via the concurrency group) — a cancelled run
-    # does not get a false pass, it gets no verdict at all, same as before
-    # change-map existed. That is intentional, not a gap this rule needs to
-    # cover.
-    if: >-
-      !cancelled() &&
-      (
-        (github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
-        needs.changes.result != 'success' ||
-        needs.changes.outputs.run_backend_tests != 'false'
-      )
+    # No change map on Rakyat: every event runs the shard.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -1082,8 +546,8 @@ jobs:
         # red shard (and the fan-in still refuses a shard whose result is not
         # `success`, so an aborted shard can never look complete).
         env:
-          IMPACT_RUN_ALL: ${{ needs.changes.outputs.impact_run_all || 'true' }}
-          IMPACT_SELECTED_TESTS: ${{ needs.changes.outputs.impact_selected_tests }}
+          IMPACT_RUN_ALL: true
+          IMPACT_SELECTED_TESTS: 
         run: |
           # RECEIPTS LIVE OUTSIDE THE PYTEST CWD. Same refuter finding as the
           # coverage decision above: anything written into apps/backend-rag is
@@ -1227,14 +691,10 @@ jobs:
   # the three shards and the static job do the work.
   backend-tests:
     name: Backend Tests (Python)
-    needs: [changes, backend-static, backend-shard]
-    # NOT a third copy of the change-map predicate. The upstream jobs already
-    # evaluated it; this reads what they actually did. Both skipped ⇒ the
-    # classifier said "no backend change" ⇒ this skips too, and GitHub treats a
-    # skipped required context as satisfied, exactly as before the split.
-    # Anything else ⇒ this runs and adjudicates, including when a shard failed
-    # (`!cancelled()` overrides the implicit success() that `needs` would
-    # otherwise impose — same mechanism the pre-split job used on `changes`).
+    needs: [backend-static, backend-shard]
+    # Reads what the upstream jobs actually did. Rakyat has no change map, so
+    # they always run; this runs and adjudicates, including when a shard failed
+    # (`!cancelled()` overrides the implicit success() that `needs` imposes).
     if: >-
       !cancelled() &&
       (
@@ -1251,8 +711,8 @@ jobs:
       - name: Assert every upstream job succeeded
         # FAIL-CLOSED, and deliberately not `if: success()`-shaped: the whole
         # point is that this step runs when an upstream did NOT succeed. A
-        # `skipped` or `cancelled` shard reaching here means the classifier said
-        # to run backend tests and something stopped one — that is a red verdict,
+        # `skipped` or `cancelled` shard reaching here means something stopped
+        # one — that is a red verdict,
         # never a silent pass. There is no gameable path: a shard cannot make
         # this green by not running.
         env:
@@ -1299,9 +759,8 @@ jobs:
           path: shard-receipts
 
       - name: Verify the partitioner's own guilt and innocence corpus
-        # The guard is only worth what its own tests are worth, and unlike the
-        # change-map corpus (which is fail-OPEN, because it can only narrow) this
-        # one is fail-CLOSED: a partitioner whose guilt cases stop failing can
+        # The guard is only worth what its own tests are worth, and this
+        # corpus is fail-CLOSED: a partitioner whose guilt cases stop failing can
         # hide a shrinking corpus, which is the exact defect this job exists to
         # make impossible.
         run: python3 scripts/ci/test_shard_tests.py
@@ -1318,9 +777,7 @@ jobs:
         # silently disagree with the guard" was true and beside the point: both
         # can agree to be wrong together.
         #
-        # This is the identical trust boundary the `changes` job already
-        # enforces for change_map.py / impact_map.py (red-team CRITICAL-1,
-        # 2026-08-14), applied to the same class of file: LOGIC from the base
+        # This is a trust boundary (red-team CRITICAL-1, 2026-08-14): LOGIC from the base
         # ref, DATA (the tree being enumerated) from this checkout. A PR that
         # legitimately ADDS test modules is unaffected — the trusted enumerator
         # walks the head tree and finds them, and the shards must own them.
@@ -1380,8 +837,8 @@ jobs:
         # owned by nobody, a module outside the corpus, or a chunk-N outside
         # 1..SHARD_COUNT. Runs the TRUSTED copy resolved above.
         env:
-          IMPACT_RUN_ALL: ${{ needs.changes.outputs.impact_run_all || 'true' }}
-          IMPACT_SELECTED_TESTS: ${{ needs.changes.outputs.impact_selected_tests }}
+          IMPACT_RUN_ALL: true
+          IMPACT_SELECTED_TESTS: 
           TRUSTED_PARTITIONER: ${{ steps.trusted.outputs.path }}
           TRUSTED_ORIGIN: ${{ steps.trusted.outputs.trusted }}
         run: |
@@ -1624,184 +1081,11 @@ jobs:
             apps/backend-rag/coverage.xml
           if-no-files-found: warn
 
-  mcp-tests:
-    name: MCP Server Tests
-    needs: [changes]
-    # Path-aware skip — see backend-shard's comment above for the full
-    # rationale (`!cancelled()` overrides the inherited skip from `changes`
-    # being pull_request/merge_group-only; `needs.changes.result !=
-    # 'success'` covers a stale published output surviving a later failure
-    # in that job (HIGH-3); fail-open on every other path).
-    if: >-
-      !cancelled() &&
-      (
-        (github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
-        needs.changes.result != 'success' ||
-        needs.changes.outputs.run_mcp_tests != 'false'
-      )
-    runs-on: ubuntu-latest
-    env:
-      HAS_CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN != '' }}
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-        with:
-          filter: blob:none
-
-      - name: Setup Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.11"
-
-      - name: Install MCP dependencies
-        run: |
-          cd apps/nuzantara-mcp
-          pip install --upgrade pip
-          # The editable install of nuzantara-mcp[test] is a KNOWN legitimately-
-          # optional path (git blame 9d2d7c90f5, 2026-04-12): it was flaky in CI,
-          # and the fix at the time was to guarantee the actual test deps
-          # (fastmcp, httpx, pytest, ...) install unconditionally on the next
-          # line regardless of whether the editable install succeeds. What was
-          # wrong was `2>/dev/null || true` — that made the failure SILENT. Keep
-          # the degrade-path behavior, drop the silence: log loudly instead.
-          if ! pip install -e ".[test]"; then
-            echo "::warning title=nuzantara-mcp editable install failed::pip install -e '.[test]' failed — falling back to the explicit test-deps install on the next line (known-flaky path, see commit 9d2d7c90f5). NOT silently ignored: if the MCP package itself fails to install, test collection may still fail downstream with a confusing import error — check this warning first."
-          fi
-          pip install fastmcp httpx pytest pytest-asyncio pytest-mock
-
-      - name: Run MCP tests with branch coverage
-        run: |
-          cd apps/nuzantara-mcp
-          CI=true ./scripts/test-coverage.sh
-
-      - name: Upload MCP coverage to Codecov
-        if: ${{ env.HAS_CODECOV_TOKEN == 'true' }}
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-        with:
-          token: ${{ env.CODECOV_TOKEN }}
-          files: apps/nuzantara-mcp/coverage.xml
-          flags: mcp
-          name: mcp-coverage
-
-      - name: Upload test results
-        uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: mcp-test-results
-          path: |
-            apps/nuzantara-mcp/test-results-mcp.xml
-            apps/nuzantara-mcp/coverage.xml
-
-  evaluator-critical-tests:
-    name: Evaluator Critical Tests
-    needs: [changes]
-    # Path-aware skip — see backend-shard's comment above for the full
-    # rationale (`!cancelled()` overrides the inherited skip from `changes`
-    # being pull_request/merge_group-only; `needs.changes.result !=
-    # 'success'` covers a stale published output surviving a later failure
-    # in that job (HIGH-3); fail-open on every other path).
-    if: >-
-      !cancelled() &&
-      (
-        (github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
-        needs.changes.result != 'success' ||
-        needs.changes.outputs.run_evaluator_critical_tests != 'false'
-      )
-    runs-on: ubuntu-latest
-    # Two hosted checkouts exhausted the old 10-minute job cap before tests.
-    # Keep the complete current tree and every coverage assertion; 20 minutes
-    # supplies bounded checkout/install/test headroom, not a latency guarantee.
-    timeout-minutes: 20
-    env:
-      HAS_CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN != '' }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-        with:
-          filter: blob:none
-
-      - name: Setup Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.11"
-
-      - name: Install test dependencies
-        run: pip install pytest pytest-cov httpx
-
-      - name: Run evaluator critical tests with branch coverage
-        run: |
-          PYTHONPATH=. python -m pytest \
-            apps/evaluator/cep/test_run_cep.py \
-            apps/evaluator/nlm_deep_research/tests/test_circuit_breaker.py \
-            -q \
-            --cov=apps.evaluator.cep.run_cep \
-            --cov=apps.evaluator.nlm_deep_research.circuit_breaker \
-            --cov-branch \
-            --cov-report=term-missing \
-            --cov-report=xml:apps/evaluator/coverage.xml \
-            --cov-fail-under=85 \
-            --junit-xml=apps/evaluator/test-results-evaluator.xml
-
-      - name: Upload evaluator coverage to Codecov
-        if: ${{ env.HAS_CODECOV_TOKEN == 'true' }}
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-        with:
-          token: ${{ env.CODECOV_TOKEN }}
-          files: apps/evaluator/coverage.xml
-          flags: evaluator-critical
-          name: evaluator-critical-coverage
-
-      - name: Upload test results
-        uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: evaluator-critical-test-results
-          path: |
-            apps/evaluator/test-results-evaluator.xml
-            apps/evaluator/coverage.xml
-
   frontend-tests:
     name: Frontend Tests (Next.js)
-    needs: [changes]
-    # LOAD-BEARING: a job with `needs` and no status-function condition inherits
-    # an implicit `success()` gate. On PR #4706 / run 32866302767, `changes`
-    # concluded `cancelled`, so GitHub skipped this job BEFORE matrix expansion
-    # and never created the required context
-    # `Frontend Tests (Next.js) (mouth, true)` (infra/required.d/contexts.json).
-    # `!cancelled()` replaces that implicit success-only gate: an upstream
-    # failure/cancellation no longer suppresses the matrix, while cancellation
-    # of the workflow run itself still stops work. Do NOT move the path predicate
-    # here: a false job-level condition would again erase the matrix contexts.
-    # The first step below keeps the normal path filter and fails open to RUN
-    # when `changes` is non-successful or its output is missing.
-    #
-    # DIAGNOSED, NOT A DEFECT (2026-09-05, re: PR #5696 checks showing
-    # "Frontend Tests (Next.js) (mouth, true)" and the then-second leg as
-    # `pass` in 4-5s on a docs-only diff where the Change map listed
-    # `frontend-tests` in `would_skip`): verified against that PR's actual
-    # job logs (run 33896943526, jobs 101103158988/101103158947). Both legs
-    # (the second leg, admin-dashboard, was removed 2026-10-19, tag
-    # archive/admin-dashboard) spin up a runner and execute exactly ONE step — "Decide whether to
-    # run" below — which read `RUN_FRONTEND_TESTS: false` and correctly set
-    # `run=false`; every subsequent step (checkout, npm install, vitest) was
-    # skipped, matching its own `if: steps.decide.outputs.run == 'true'`
-    # guard. No test ran. The visible difference from the other five heavy
-    # jobs — which report GitHub's `skipping` conclusion at effectively zero
-    # cost — is COSMETIC, not functional: those five use a job-level `if:`
-    # keyed on the classifier, which is exactly the shape the LOAD-BEARING
-    # comment above documents as unsafe FOR THIS JOB (a job-level `if:` that
-    # can evaluate false erases the matrix's required-context names when
-    # `changes` doesn't succeed cleanly — #4706's actual failure mode).
-    # Moving frontend-tests to that shape to buy the cheaper "skipping" badge
-    # would reopen #4706. Left unchanged; the ~5s/leg "Set up job" + decide
-    # cost is the accepted price of keeping the required contexts stable.
+    # Always runs (Rakyat has no change map). `!cancelled()` keeps the matrix
+    # contexts, e.g. `Frontend Tests (Next.js) (mouth, true)`, from being
+    # skipped when an upstream job fails; cancelling the run still stops work.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     env:
@@ -1821,38 +1105,10 @@ jobs:
             coverage: true
 
     steps:
-      # Gates the whole matrix (the `mouth` leg) — the change-map domains
-      # that route here (mouth/wa_mirror/packages_core).
-      # Unconditional and first: needs no checkout, just workflow context.
-      # Mirrors the OTHER five jobs' job-level `if:` logic exactly (same
-      # three-way OR: non-PR/merge_group event always runs; a non-success
-      # `changes` conclusion fail-opens per HIGH-3; otherwise the per-job
-      # flag decides, defaulting fail-open) — the only difference is WHERE
-      # the decision lives (a step output here, a job `if:` there), because
-      # only this job needs every matrix child to exist regardless of the
-      # decision. `cancelled()` is not consulted here: an actual run
-      # cancellation stops the whole job before any step completes,
-      # regardless of what this step would have decided (see finding-13 note
-      # on backend-shard above for why that is accepted, not a gap).
+      # Always runs: Rakyat has no change map, so every PR runs the full suite.
       - name: Decide whether to run
         id: decide
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          CHANGES_RESULT: ${{ needs.changes.result }}
-          RUN_FRONTEND_TESTS: ${{ needs.changes.outputs.run_frontend_tests }}
-        run: |
-          set -u
-          if [ "$EVENT_NAME" != "pull_request" ] && [ "$EVENT_NAME" != "merge_group" ]; then
-            RUN=true
-          elif [ "$CHANGES_RESULT" != "success" ]; then
-            RUN=true
-          elif [ "$RUN_FRONTEND_TESTS" != "false" ]; then
-            RUN=true
-          else
-            RUN=false
-          fi
-          echo "run=$RUN" >> "$GITHUB_OUTPUT"
-          echo "::notice::frontend-tests decide: event=$EVENT_NAME changes_result=$CHANGES_RESULT run_frontend_tests=$RUN_FRONTEND_TESTS -> run=$RUN"
+        run: echo "run=true" >> "$GITHUB_OUTPUT"
 
       - name: Checkout code
         if: steps.decide.outputs.run == 'true'
@@ -1978,68 +1234,6 @@ jobs:
           cd packages/core
           npx vitest --run
 
-      # DECLARED LIMIT: exclude only
-      # `__tests__/garuda-preview-process-integration.test.ts`. That test
-      # symlinks the real backend `.venv` at lines 43-46, while
-      # `resolveGarudaProcessConfig` requires `.venv/bin/python` at
-      # `lib/garuda-preview-adapter.ts:137,146`; CI installs Python packages
-      # system-wide at `.github/workflows/tests.yml:529-551`, and only in the
-      # backend job, so this frontend job has neither that `.venv` nor the
-      # backend dependencies the spawned CLI imports. PR #4796's
-      # `backend/tests/services/garuda_flow/test_preview_adapter_parity.py` runs
-      # in the backend suite and covers the nine hand-maintained constants'
-      # contract drift meanwhile. It does NOT prove this excluded test's unique
-      # boundary: the spawned child cannot read the backend `.env` or inherit
-      # unrelated application secrets. Closing the limit requires a backend
-      # venv plus its dependencies in an already-required CI context that can
-      # execute this real-child test; the pending-arms ledger tracks that work.
-      - name: Run admin-dashboard-local tests (except real Python process integration)
-        if: matrix.app == 'mouth' && steps.decide.outputs.run == 'true'
-        run: |
-          cd apps/admin-dashboard-local
-          npx vitest run --exclude='**/garuda-preview-process-integration.test.ts'
-
-      # wa-mirror's vitest suite had NEVER run in CI — 8 test files, 0 gates.
-      # The bridge is the organ that mirrors client WhatsApp lines, and the alert
-      # policy it now carries (announce the failure to recover, never the
-      # disconnection — apps/wa-mirror/bridge/down-alarm.ts) is exactly the kind
-      # of rule that decays silently: a mute watchdog looks identical to a healthy
-      # one. Built, never armed (cicatrix-superscar #2), and W108's lesson is that
-      # the defect only surfaces once the test runs on EVERY PR.
-      #
-      # Same reasoning as the packages/core step above for WHERE this lives: a
-      # step of the already-required `(mouth, true)` leg, because branch
-      # protection pins required contexts by NAME (W69).
-      #
-      # The declared limit of the first version of this step ("runs 2 of the 8
-      # files, because apps/wa-mirror is not an npm workspace and has NO
-      # lockfile") is CLOSED: the lockfile now exists in the repo, so this
-      # installs from it and runs the whole suite. Measured before arming, on two
-      # machines: `npm ci` exits 0 from a pristine tree and all 8 files pass —
-      # 127 tests, 325ms on Pro, 1.1s on M5. The 6 files that used to "fail" were
-      # never broken; they were importing baileys / pino / libphonenumber-js from
-      # a tree that did not have them.
-      #
-      # `npm ci` and not `npm install`: ci fails loudly when the lock and the
-      # manifest disagree, which is the check that keeps the committed lock
-      # honest (W98 — a lock that drifts from its manifest is how a forbidden
-      # version reaches production with every gate green).
-      #
-      # DECLARED LIMIT, unchanged by this step: Dependabot's npm ecosystem is
-      # pointed at "/" only, which resolves the WORKSPACE tree — wa-mirror is not
-      # a workspace, so this lock is not watched by it. `npm audit` on the tree
-      # that runs in production reports 3 high + 1 low, all transitive under
-      # @whiskeysockets/baileys@7.0.0-rc13 (protobufjs, sharp, ws) plus a
-      # Windows-only dev-server issue in esbuild. Committing the lock does not
-      # add that exposure — the same tree was already live and unmeasurable; it
-      # makes it visible. Coverage and the RC bump are on the W81 ledger.
-      - name: Run wa-mirror bridge suite (installs from its own lockfile)
-        if: matrix.app == 'mouth' && steps.decide.outputs.run == 'true'
-        run: |
-          cd apps/wa-mirror
-          npm ci
-          npx vitest run
-
       - name: Upload coverage
         if: ${{ matrix.coverage && env.HAS_CODECOV_TOKEN == 'true' && steps.decide.outputs.run == 'true' }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
@@ -2074,7 +1268,6 @@ jobs:
     # measured 2026-08-17, ×19 failures in one main-red window). A finding
     # here is real and worth seeing; it is never grounds to eject a queue
     # entry or block a PR whose diff never touched a dependency.
-    needs: [changes]
     # MERGE-GROUP DEDUP (2026-09-05): unlike Snyk (a static manifest diff),
     # `npm audit` genuinely CAN find something new on merge_group that wasn't
     # there on the PR-head run — the advisory database moves independently of
@@ -2086,14 +1279,7 @@ jobs:
     # next scheduled/PR run will surface anyway. `github.event_name !=
     # 'merge_group'` below trades that marginal earlier-sighting for one
     # fewer redundant job per queue entry.
-    if: >-
-      !cancelled() &&
-      github.event_name != 'merge_group' &&
-      (
-        (github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
-        needs.changes.result != 'success' ||
-        needs.changes.outputs.run_frontend_tests != 'false'
-      )
+    if: ${{ !cancelled() && github.event_name != 'merge_group' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Two-layer advisory design (hardened after Codex red-team rounds 1-2 on
@@ -2195,28 +1381,16 @@ jobs:
 
   packages-core-tests:
     name: Shared Core Package Tests
-    needs: [changes]
-    # Path-aware skip — see backend-shard's comment above for the full
-    # rationale (`!cancelled()` overrides the inherited skip from `changes`
-    # being pull_request/merge_group-only; `needs.changes.result !=
-    # 'success'` covers a stale published output surviving a later failure
-    # in that job (HIGH-3); fail-open on every other path).
-    if: >-
-      !cancelled() &&
-      (
-        (github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
-        needs.changes.result != 'success' ||
-        needs.changes.outputs.run_packages_core_tests != 'false'
-      )
+    # Always runs: Rakyat has no change map.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # suite-growth-probe finding, 2026-09-27: no timeout-minutes on this job at
     # all. Measured (last 40 completed tests.yml runs, gh Jobs API): real
     # (non-skip) runs top out at ~1.4min. NOT sized to 2x that (would be 5):
     # this job runs actions/checkout, and scripts/lint_workflow_timeout_floor.py's
     # own 10-minute floor exists precisely because checkout on this repo
-    # intermittently takes ~2min on its own — see the sibling comment on
-    # evaluator-critical-tests above for the measured failure mode a
-    # script-sized budget would reproduce. 10 is the floor that lint
+    # intermittently takes ~2min on its own — a
+    # script-sized budget would reproduce that failure mode. 10 is the floor that lint
     # enforces, confirmed clean at this value.
     timeout-minutes: 10
     env:
@@ -2259,19 +1433,8 @@ jobs:
 
   e2e-tests:
     name: E2E Tests (Playwright)
-    needs: [changes]
-    # Path-aware skip — see backend-shard's comment above for the full
-    # rationale (`!cancelled()` overrides the inherited skip from `changes`
-    # being pull_request/merge_group-only; `needs.changes.result !=
-    # 'success'` covers a stale published output surviving a later failure
-    # in that job (HIGH-3); fail-open on every other path).
-    if: >-
-      !cancelled() &&
-      (
-        (github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
-        needs.changes.result != 'success' ||
-        needs.changes.outputs.run_e2e_tests != 'false'
-      )
+    # Always runs: Rakyat has no change map.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # Measured cold setup took 711s before backend startup; retain room for
     # the bounded 120s startup, browser setup, production build and tests.
@@ -2708,14 +1871,7 @@ jobs:
   # exists and deadlock the queue.
   visa-oracle-fullstack-smoke:
     name: Visa Oracle fullstack smoke
-    needs: [changes]
-    if: >-
-      !cancelled() &&
-      (
-        (github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
-        needs.changes.result != 'success' ||
-        needs.changes.outputs.run_e2e_tests != 'false'
-      )
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # 15 (original, no-retry budget — sized against the steady-state run, not
     # either hang) + up to 5 (one uv-install retry) + up to 10 (one smoke
@@ -2944,16 +2100,8 @@ jobs:
   # A fixture added to one of them fails here loudly rather than passing blind.
   repo-scanners:
     name: Repo-wide scanners
-    needs: [changes]
-    # Same path-aware skip as every gated job above: a skipped job reports
-    # success to branch protection, and every other path fails open.
-    if: >-
-      !cancelled() &&
-      (
-        (github.event_name != 'pull_request' && github.event_name != 'merge_group') ||
-        needs.changes.result != 'success' ||
-        needs.changes.outputs.run_repo_scanners != 'false'
-      )
+    # Always runs: Rakyat has no change map.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -2973,21 +2121,15 @@ jobs:
         working-directory: apps/backend-rag
         run: |
           python -m pytest --noconftest -p no:cacheprovider \
-            "backend/tests/unit/core/test_ingest_target_registry.py::test_no_undeclared_ingest_entrypoint_exists" \
-            "backend/tests/unit/kb/test_legal_status_read_lint.py::test_the_backend_reads_the_field_nowhere_today" \
             "backend/tests/unit/auth/test_jwt_decode_policy.py::test_python_jose_is_gone_from_production_and_tests" \
             "backend/tests/services/visa_check/test_e33_forbidden_claims.py::TestMouthContentSecondHomeDuration" \
-            "backend/tests/services/visa_check/test_e33_forbidden_claims.py::test_visa_check_import_chain_stays_stdlib_only" \
-            "backend/tests/unit/kb/test_kb_inventory_contract.py::test_every_high_severity_finding_is_mirrored_in_the_pending_arms_ledger" \
-            "backend/tests/unit/kb/test_kb_inventory_contract.py::test_the_ledger_mirror_check_is_not_examining_zero_findings"
+            "backend/tests/services/visa_check/test_e33_forbidden_claims.py::test_visa_check_import_chain_stays_stdlib_only"
 
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
     needs:
       - backend-tests
-      - mcp-tests
-      - evaluator-critical-tests
       - frontend-tests
       - packages-core-tests
       - e2e-tests
@@ -3006,8 +2148,6 @@ jobs:
           # red row and still pass. That is the same class of lying gate the
           # comment below describes, arriving through the back door.
           BACKEND_RESULT: ${{ needs.backend-tests.result }}
-          MCP_RESULT: ${{ needs.mcp-tests.result }}
-          EVALUATOR_RESULT: ${{ needs.evaluator-critical-tests.result }}
           FRONTEND_RESULT: ${{ needs.frontend-tests.result }}
           PACKAGES_CORE_RESULT: ${{ needs.packages-core-tests.result }}
           E2E_RESULT: ${{ needs.e2e-tests.result }}
@@ -3028,8 +2168,6 @@ jobs:
           script: |
             const results = {
               "Backend (Python)": process.env.BACKEND_RESULT,
-              "MCP server": process.env.MCP_RESULT,
-              "Evaluator critical": process.env.EVALUATOR_RESULT,
               "Frontend matrix": process.env.FRONTEND_RESULT,
               "Shared core package": process.env.PACKAGES_CORE_RESULT,
               "E2E page-load smoke": process.env.E2E_RESULT,

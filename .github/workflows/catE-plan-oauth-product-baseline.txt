@@ -1,0 +1,12 @@
+# catE #40f — plan OAuth in the PRODUCT perimeter (apps/backend-rag): the
+# per-FILE identity set tolerated until the headless client landing drains it.
+# RULED 2026-11-01: backend lanes never fall back to plan OAuth; RULED
+# 2026-11-02 consequence (c). One exact repo-relative path per line.
+# A hit in a file NOT listed here is red (step 40f). A listed file with NO hit
+# is red too (step 40f: the stale line leaves in the landing that drained it).
+# An ADDED line is red against the base of the push or PR (step 40f-growth).
+# So this list only shrinks; its introduction is the one growth a gate signed.
+# Measured 2026-11-02 at origin/main 29316e5f: 4 files, 10 lines.
+# Drained 2026-11-03 by the headless client landing (Console seats,
+# backend.llm.claude_oauth_client): 0 files. The list stays empty from here —
+# any hit in apps/backend-rag is red on its own, with nothing to baseline.

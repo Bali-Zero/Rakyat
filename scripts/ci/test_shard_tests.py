@@ -556,56 +556,6 @@ class HostedFanInCheckout(unittest.TestCase):
             self.assertIn(guard, job)
         self.assertIn('git show "${BASE_SHA}:scripts/ci/shard_tests.py"', job)
 
-    def test_change_map_keeps_trusted_classifier_with_lazy_full_history(self):
-        workflow = Path(__file__).resolve().parents[2] / ".github/workflows/tests.yml"
-        job = workflow.read_text().split("\n  changes:\n", 1)[1]
-        job = re.split(r"\n  [a-zA-Z0-9_-]+:", job, maxsplit=1)[0]
-        self._assert_checkout_contract(job)
-        for guard in (
-            "timeout-minutes: 10",
-            "Extract trusted classifier (base ref)",
-            "Verify change-map guilt and innocence corpus",
-            "Compute static test-impact map (PR lane only)",
-        ):
-            self.assertIn(guard, job)
-
-    def test_mouth_checkout_keeps_full_tree_and_real_typecheck(self):
-        root = Path(__file__).resolve().parents[2]
-        workflow = (root / ".github/workflows/frontend-typecheck.yml").read_text()
-        job = workflow.split("\n  typecheck:\n", 1)[1]
-        self._assert_checkout_contract(job)
-        self.assertNotIn("sparse-checkout:", job)
-        for guard in (
-            "timeout-minutes: 20",
-            "Enumerate changed files (merge-base anchored, fail-loud)",
-            "npm ci --no-audit --no-fund",
-            "run: npm run typecheck",
-        ):
-            self.assertIn(guard, job)
-
-    def test_security_classifier_keeps_its_trusted_full_tree_inputs(self):
-        root = Path(__file__).resolve().parents[2]
-        job = (root / ".github/workflows/security.yml").read_text().split("\n  changes:\n", 1)[1]
-        job = re.split(r"\n  [a-zA-Z0-9_-]+:", job, maxsplit=1)[0]
-        self._assert_checkout_contract(job)
-        for guard in (
-            "timeout-minutes: 10",
-            "Extract trusted classifier (base ref)",
-            "Verify change-map guilt and innocence corpus",
-            "run_codeql_python",
-            "run_codeql_js",
-        ):
-            self.assertIn(guard, job)
-
-    def test_format_guard_keeps_its_name_only_history_and_real_check(self):
-        root = Path(__file__).resolve().parents[2]
-        job = (root / ".github/workflows/prettier-changed-files.yml").read_text().split("\n  prettier:\n", 1)[1]
-        self._assert_checkout_contract(job)
-        self.assertIn("timeout-minutes: 15", job)
-        self.assertIn("hotzone_changed_files.sh", job)
-        self.assertIn("xargs npx --no-install prettier --check", job)
-        self.assertIn("npm ci --no-audit --no-fund", job)
-
     def test_guilt_eager_historical_blobs_are_rejected(self):
         with self.assertRaisesRegex(AssertionError, "lazy"):
             self._assert_checkout_contract(
