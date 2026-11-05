@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime, timedelta
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
@@ -340,7 +340,9 @@ def _payload_facts(payload: Mapping[str, Any]) -> tuple[set[date], set[str], set
 def _text_dates(text: str) -> tuple[list[date | tuple[int, int] | None], str]:
     found: list[date | tuple[int, int] | None] = []
 
-    def take(rx: re.Pattern[str], build) -> None:
+    def take(
+        rx: re.Pattern[str], build: Callable[[re.Match[str]], date | tuple[int, int] | None]
+    ) -> None:
         nonlocal text
         for m in list(rx.finditer(text)):
             found.append(build(m))
@@ -388,7 +390,7 @@ _PERMIT_NOUN_RE = re.compile(r"\b(kitas|kitap|e-?visa|visa|permit|itk|itas|itap)
 def _tokenise_dates(text: str) -> tuple[str, dict[str, date | None]]:
     marks: dict[str, date | None] = {}
 
-    def sub(rx: re.Pattern[str], build) -> None:
+    def sub(rx: re.Pattern[str], build: Callable[[re.Match[str]], date | None]) -> None:
         nonlocal text
 
         def rep(m: re.Match[str]) -> str:

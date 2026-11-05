@@ -64,7 +64,7 @@ def test_seam1_normalize_drive_file_preserves_regular_folder_and_file():
 def test_seam3_corporate_spt_satisfies_client_attention_spt_rule():
     client = {
         "id": 5228,
-        "full_name": "Matteo Maimone",
+        "full_name": "Budi Contoh Sintetis",
         "tax_consultant": "tax@balizero.com",
         "passport_expiry": "2030-01-01",
     }
