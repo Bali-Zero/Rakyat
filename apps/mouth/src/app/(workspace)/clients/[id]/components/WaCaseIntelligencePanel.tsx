@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Sparkles,
 } from "lucide-react";
+import { earlyKey, takeEarly } from "./early-fetch";
 import { api } from "@/lib/api";
 import { logger } from "@/lib/logger";
 import type {
@@ -156,7 +157,10 @@ export function WaCaseIntelligencePanel({
 
   const fetchCases = useCallback(async () => {
     try {
-      const data = await api.crm.getClientWaCaseIntelligence(clientId);
+      const data = await (takeEarly<
+        Awaited<ReturnType<typeof api.crm.getClientWaCaseIntelligence>>
+      >(earlyKey("wa-case-intel", clientId)) ??
+        api.crm.getClientWaCaseIntelligence(clientId));
       setResponse(data);
       setExpandedId(data.cases[0]?.id ?? null);
       setError(null);

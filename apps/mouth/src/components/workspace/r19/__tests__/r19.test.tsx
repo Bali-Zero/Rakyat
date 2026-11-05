@@ -231,7 +231,7 @@ describe("DeskStrip", () => {
     expect(screen.getByText("right")).toBeTruthy();
   });
 
-  it("the count is the 22px Fraunces count token", () => {
+  it("the count is the 22px Plex count token", () => {
     render(<DeskStrip count={7} />);
     expect(screen.getByText("7").className).toContain("text-[22px]");
   });

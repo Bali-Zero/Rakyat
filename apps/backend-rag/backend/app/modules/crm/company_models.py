@@ -7,7 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import JSON, Column, Date, Numeric, Text
+from sqlalchemy import JSON, Column, Date, Numeric, SmallInteger, Text
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -157,6 +157,9 @@ class CompanyDocument(SQLModel, table=True):
     # Dates
     issue_date: date | None = None
     expiry_date: date | None = None
+    # Present in production (smallint, nullable); declared here so a database
+    # bootstrapped from the models has the column the client profile selects.
+    fiscal_year: int | None = Field(default=None, sa_column=Column(SmallInteger))
     reminder_date: date | None = None
 
     # File Storage

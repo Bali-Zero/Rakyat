@@ -1,9 +1,23 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientDocument } from "@/lib/api/crm/crm.types";
 import { ImmigrationTab, isVisaFamilyDocument } from "./ImmigrationTab";
+import { pickCurrentVisa } from "./pickCurrentVisa";
 
 vi.mock("./AiSummaryCard", () => ({ AiSummaryCard: () => null }));
+
+const { getClientRecap } = vi.hoisted(() => ({
+  getClientRecap: vi.fn(),
+}));
+vi.mock("@/lib/api", () => ({
+  api: { crm: { deleteDocument: vi.fn(), getClientRecap } },
+}));
 
 // Hoisted so the SAME `push` spy backs every `useRouter()` call across the
 // file — a fresh `vi.fn()` per call (the round-2 shape) can never observe an
@@ -17,6 +31,9 @@ vi.mock("next/navigation", () => ({
 
 beforeEach(() => {
   push.mockClear();
+  // The AI summary slot stays empty unless a test gives it text.
+  getClientRecap.mockReset();
+  getClientRecap.mockRejectedValue(new Error("no recap"));
 });
 
 // A few cases below freeze the clock (vi.setSystemTime) to pin exact-day
@@ -83,7 +100,7 @@ describe("ImmigrationTab — current permit panel vs visa history (R6 restyle)",
     expect(screen.queryByText("Visa history")).not.toBeInTheDocument();
   });
 
-  it("shows an expired VOA only in the Visa history grid, not the permit panel (INNOCENCE)", () => {
+  it("a lone expired VOA is still the current permit (the latest one), with no history (one rule shared with Overview)", () => {
     const pastDate = new Date(Date.now() - 60 * 86400000)
       .toISOString()
       .slice(0, 10);
@@ -96,8 +113,8 @@ describe("ImmigrationTab — current permit panel vs visa history (R6 restyle)",
       },
     ]);
 
-    expect(screen.queryByText("Current permit")).not.toBeInTheDocument();
-    expect(screen.getByText("Visa history")).toBeInTheDocument();
+    expect(screen.getByText("Current permit")).toBeInTheDocument();
+    expect(screen.queryByText("Visa history")).not.toBeInTheDocument();
   });
 
   it("keeps an unexpired kitas as the current permit when a VOA is also present (existing precedence unchanged)", () => {
@@ -124,7 +141,8 @@ describe("ImmigrationTab — current permit panel vs visa history (R6 restyle)",
 
     // Current permit picks the document with the furthest-out expiry first
     // (existing sort order: descending expiry) — unchanged by this fix.
-    expect(screen.getAllByText("kitas")).toHaveLength(1);
+    // Panel + the current permit's own first row of the history.
+    expect(screen.getAllByText("kitas")).toHaveLength(2);
     expect(screen.getByText("Visa history")).toBeInTheDocument();
     expect(screen.getAllByText("voa")).toHaveLength(1);
   });
@@ -213,8 +231,9 @@ describe("ImmigrationTab — current permit panel vs visa history (R6 restyle)",
     // R6c: the phone step (below 640px) relocates the same status node onto
     // the row's first cell too, so "verified" now renders twice — desktop
     // Status cell + phone block, jsdom evaluates no media queries.
-    expect(screen.getAllByText("verified")).toHaveLength(2);
-    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    // A previous permit reads "Completed" (never the raw status word).
+    expect(screen.getAllByText("Completed").length).toBeGreaterThan(0);
+    expect(screen.queryByText("verified")).not.toBeInTheDocument();
   });
 });
 
@@ -344,7 +363,7 @@ describe("ImmigrationTab — 30-day grace boundary (R6 repair P1-6)", () => {
     expect(screen.queryByText("Visa history")).not.toBeInTheDocument();
   });
 
-  it("BOUNDARY: a visa expired 31 days ago falls out of the panel and into Visa history", () => {
+  it("a visa expired 31 days ago is still the current permit while it is the only one (no 30-day grace any more)", () => {
     const outsideGrace = new Date(Date.now() - 31 * 86400000)
       .toISOString()
       .slice(0, 10);
@@ -357,8 +376,8 @@ describe("ImmigrationTab — 30-day grace boundary (R6 repair P1-6)", () => {
       },
     ]);
 
-    expect(screen.queryByText("Current permit")).not.toBeInTheDocument();
-    expect(screen.getByText("Visa history")).toBeInTheDocument();
+    expect(screen.getByText("Current permit")).toBeInTheDocument();
+    expect(screen.queryByText("Visa history")).not.toBeInTheDocument();
   });
 });
 
@@ -419,10 +438,10 @@ describe("ImmigrationTab — Visa-history row controls are reachable on touch (R
       { ...baseDoc, id: 73, document_type: "kitas", expiry_date: historyDate },
     ]);
 
-    assertReachableOnTouch(screen.getByRole("button", { name: /edit kitas/i }));
-    assertReachableOnTouch(
-      screen.getByRole("button", { name: /remove kitas/i }),
-    );
+    for (const b of screen.getAllByRole("button", { name: /edit kitas/i }))
+      assertReachableOnTouch(b);
+    for (const b of screen.getAllByRole("button", { name: /remove kitas/i }))
+      assertReachableOnTouch(b);
   });
 
   it("PIN (B1 — the defect that would have caught the missing column in round 1): every Visa-history row renders the same number of grid children as the head", () => {
@@ -442,7 +461,6 @@ describe("ImmigrationTab — Visa-history row controls are reachable on touch (R
         id: 75,
         document_type: "kitap",
         expiry_date: withMember,
-        family_member_name: "Synthetic Dependent",
       },
       { ...baseDoc, id: 76, document_type: "visa", expiry_date: withoutMember },
     ]);
@@ -456,7 +474,7 @@ describe("ImmigrationTab — Visa-history row controls are reachable on touch (R
     const body = head!.nextElementSibling;
     expect(body).not.toBeNull();
     const rows = Array.from(body!.children);
-    expect(rows.length).toBe(2); // withMember + withoutMember
+    expect(rows.length).toBe(3); // current + withMember + withoutMember
     for (const row of rows) {
       expect(row.children.length).toBe(head!.children.length);
     }
@@ -471,7 +489,13 @@ describe("ImmigrationTab — Visa-history row controls are reachable on touch (R
       .slice(0, 10);
     renderTab([
       { ...baseDoc, id: 80, document_type: "kitas", expiry_date: currentDate },
-      { ...baseDoc, id: 81, document_type: "kitap", expiry_date: historyDate },
+      {
+        ...baseDoc,
+        id: 81,
+        document_type: "kitap",
+        issue_date: "2020-01-01",
+        expiry_date: historyDate,
+      },
     ]);
 
     const grid = document.querySelector(
@@ -576,9 +600,16 @@ describe("ImmigrationTab — visa-history grid gets a phone step below 640px (R6
         ...baseDoc,
         id: 103,
         document_type: "kitap",
+        issue_date: "2020-01-01",
         expiry_date: historyDate1,
       },
-      { ...baseDoc, id: 104, document_type: "visa", expiry_date: historyDate2 },
+      {
+        ...baseDoc,
+        id: 104,
+        document_type: "visa",
+        issue_date: "2020-01-01",
+        expiry_date: historyDate2,
+      },
     ]);
 
     const grid = document.querySelector(
@@ -587,7 +618,7 @@ describe("ImmigrationTab — visa-history grid gets a phone step below 640px (R6
     const head = grid!.querySelector('[role="row"]');
     const body = head!.nextElementSibling;
     const rows = Array.from(body!.children) as HTMLElement[];
-    expect(rows.length).toBe(2);
+    expect(rows.length).toBe(3); // the current permit leads the history
 
     for (const row of rows) {
       expect(row.children.length).toBe(head!.children.length);
@@ -599,22 +630,25 @@ describe("ImmigrationTab — visa-history grid gets a phone step below 640px (R6
     }
   });
 
-  it("PIN C: the phone block in the row's first cell carries the same status label (or —) and the exact Expires string, honouring the urgent class", () => {
+  it("PIN C: the phone block in the row's first cell repeats the status cell and the exact validity string (older rows carry no deadline)", () => {
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    const currentDate = "2027-05-16"; // +500d, becomes the current permit
-    const notUrgentDate = "2026-07-19"; // +200d, future but not the actualVisa
-    const expiredDate = "2025-12-22"; // -10d
 
     renderTab([
-      { ...baseDoc, id: 110, document_type: "kitas", expiry_date: currentDate },
+      {
+        ...baseDoc,
+        id: 110,
+        document_type: "kitas",
+        expiry_date: "2027-05-16", // the latest, so the current permit
+      },
       {
         ...baseDoc,
         id: 111,
         document_type: "kitap",
-        expiry_date: notUrgentDate,
+        expiry_date: "2026-07-19",
+        issue_date: "2025-07-19",
         status: "pending",
       },
-      { ...baseDoc, id: 112, document_type: "voa", expiry_date: expiredDate },
+      { ...baseDoc, id: 112, document_type: "voa", expiry_date: "2025-12-22" },
     ]);
 
     const grid = document.querySelector(
@@ -623,49 +657,35 @@ describe("ImmigrationTab — visa-history grid gets a phone step below 640px (R6
     const head = grid!.querySelector('[role="row"]');
     const body = head!.nextElementSibling;
     const rows = Array.from(body!.children) as HTMLElement[];
-    expect(rows.length).toBe(2);
+    expect(rows.length).toBe(3); // the current permit leads the history
 
     for (const row of rows) {
       const wrapper = row.children[0] as HTMLElement;
       const phoneBlock = wrapper.querySelector(".sm\\:hidden") as HTMLElement;
       expect(phoneBlock).not.toBeNull();
-      const desktopExpires = row.children[3] as HTMLElement;
-      expect(phoneBlock.textContent).toContain(desktopExpires.textContent);
+      const desktopValidity = row.children[3] as HTMLElement;
+      expect(phoneBlock.textContent).toContain(desktopValidity.textContent);
+      expect(phoneBlock.textContent).toMatch(/Completed|Verified|Current/);
+      expect(phoneBlock.textContent).not.toMatch(/ago|left/);
+      expect(desktopValidity.className).not.toContain("state-warning");
     }
 
-    // The expired, status-less row (voa, id 112): dash where there is no
-    // status, and the urgent warning class on the phone Expires line.
-    const noStatusRow = rows.find((r) =>
-      r.children[3].textContent?.includes("Expired 10d ago"),
+    const periodRow = rows.find((r) =>
+      r.children[3].textContent?.includes("2025-07-19 → 2026-07-19"),
     )!;
-    const noStatusWrapper = noStatusRow.children[0] as HTMLElement;
-    const noStatusPhoneBlock = noStatusWrapper.querySelector(
-      ".sm\\:hidden",
-    ) as HTMLElement;
-    expect(noStatusPhoneBlock.textContent).toContain("—");
-    const urgentLine = Array.from(
-      noStatusPhoneBlock.querySelectorAll("span"),
-    ).find((s) => s.textContent?.includes("Expired 10d ago"))!;
-    expect(urgentLine.className).toContain("text-[var(--state-warning)]");
-
-    // The kitap row (id 111) carries a real status: the phone block shows
-    // the same tone/label, not a dash.
-    const statusRow = rows.find(
-      (r) => r.children[1].textContent === "pending",
+    expect(periodRow.children[1].textContent).toContain("Completed");
+    const endedRow = rows.find((r) =>
+      r.children[3].textContent?.includes("Ended 2025-12-22"),
     )!;
-    const statusWrapper = statusRow.children[0] as HTMLElement;
-    const statusPhoneBlock = statusWrapper.querySelector(
-      ".sm\\:hidden",
-    ) as HTMLElement;
-    expect(statusPhoneBlock.textContent).toContain("pending");
+    expect(endedRow).toBeDefined();
   });
 });
 
 describe("ImmigrationTab — the six unpinned repairs from R6-reaudit.md §3 (M6-M11)", () => {
-  it("GUILT: alert_color 'yellow' warns a history row's date cell even 300 days out (M6)", () => {
+  it("GUILT (inverted): an older row's date is never warned, even with alert_color 'yellow' (only the current permit has a deadline)", () => {
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
     const currentDate = "2027-05-16"; // +500d, becomes the current permit
-    const yellowDate = "2026-10-28"; // +300d — date math alone would not warn
+    const yellowDate = "2026-10-28"; // +300d, an older permit
     renderTab([
       { ...baseDoc, id: 50, document_type: "kitas", expiry_date: currentDate },
       {
@@ -677,13 +697,11 @@ describe("ImmigrationTab — the six unpinned repairs from R6-reaudit.md §3 (M6
       },
     ]);
 
-    // R6c: the phone step duplicates the same Expires string onto the row's
-    // first cell — scope with getAllByText + an explicit length rather than
-    // weakening the assertion.
     const expiryCells = screen.getAllByText(new RegExp(yellowDate));
     expect(expiryCells).toHaveLength(2);
     for (const cell of expiryCells) {
-      expect(cell.className).toContain("text-[var(--state-warning)]");
+      expect(cell.className).not.toContain("text-[var(--state-warning)]");
+      expect(cell.textContent).not.toMatch(/left|ago/);
     }
   });
 
@@ -732,27 +750,37 @@ describe("ImmigrationTab — the six unpinned repairs from R6-reaudit.md §3 (M6
       },
     ]);
 
-    expect(screen.getByText("kitas c317")).toBeInTheDocument();
+    expect(screen.getAllByText("kitas c317").length).toBeGreaterThan(0);
     expect(screen.getByText("kitap dependent")).toBeInTheDocument();
   });
 
-  it("PIN: an expired history row's date carries the expiry word, not just the date (M8)", () => {
-    const currentDate = new Date(Date.now() + 500 * 86400000)
-      .toISOString()
-      .slice(0, 10);
-    const expiredDate = new Date(Date.now() - 10 * 86400000)
-      .toISOString()
-      .slice(0, 10);
+  it("PIN: an older permit shows its validity period and no countdown, while the current permit does (GUILT + INNOCENCE)", () => {
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
     renderTab([
-      { ...baseDoc, id: 56, document_type: "kitas", expiry_date: currentDate },
-      { ...baseDoc, id: 57, document_type: "kitap", expiry_date: expiredDate },
+      {
+        ...baseDoc,
+        id: 56,
+        document_type: "kitas",
+        expiry_date: "2027-05-16",
+      },
+      {
+        ...baseDoc,
+        id: 57,
+        document_type: "kitap",
+        issue_date: "2024-12-22",
+        expiry_date: "2025-12-22",
+      },
     ]);
 
-    // R6c: same duplication — desktop Expires cell + phone block line.
-    expect(screen.getAllByText(/Expired 10d ago/)).toHaveLength(2);
+    // History row: period + tag, no "ago"/"left" for it (desktop cell + phone line).
+    expect(screen.getAllByText(/2024-12-22 → 2025-12-22/)).toHaveLength(2);
+    expect(screen.getAllByText("Completed").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Expired 10d ago/)).not.toBeInTheDocument();
+    // The current permit keeps its countdown.
+    expect(screen.getByText(/2027-05-16 · .*left/)).toBeInTheDocument();
   });
 
-  it("PIN: the current-permit panel shows the document's file_name (M9)", () => {
+  it("PIN: the current-permit panel does not print the file name; it is the download button's title and aria-label (M9, inverted)", () => {
     const currentDate = new Date(Date.now() + 60 * 86400000)
       .toISOString()
       .slice(0, 10);
@@ -763,10 +791,17 @@ describe("ImmigrationTab — the six unpinned repairs from R6-reaudit.md §3 (M6
         document_type: "kitas",
         expiry_date: currentDate,
         file_name: "synthetic-permit-scan.pdf",
+        google_drive_file_url: "https://drive.google.com/file/d/abc123/view",
       },
     ]);
 
-    expect(screen.getByText("synthetic-permit-scan.pdf")).toBeInTheDocument();
+    expect(
+      screen.queryByText("synthetic-permit-scan.pdf"),
+    ).not.toBeInTheDocument();
+    const dl = screen.getByRole("button", {
+      name: "Download current permit",
+    });
+    expect(dl).toHaveAttribute("title", "synthetic-permit-scan.pdf");
   });
 
   it("PIN: the Visa history heading shows the real row count (M10)", () => {
@@ -785,7 +820,7 @@ describe("ImmigrationTab — the six unpinned repairs from R6-reaudit.md §3 (M6
     expect(screen.getByText("(2)")).toBeInTheDocument();
   });
 
-  it("PIN: family_member_name appears on a history row (M11)", () => {
+  it("PIN (inverted): a family member's permit is not a history row; one quiet line points to the Family tab (M11)", () => {
     const currentDate = new Date(Date.now() + 500 * 86400000)
       .toISOString()
       .slice(0, 10);
@@ -803,7 +838,10 @@ describe("ImmigrationTab — the six unpinned repairs from R6-reaudit.md §3 (M6
       },
     ]);
 
-    expect(screen.getByText(/Synthetic Dependent/)).toBeInTheDocument();
+    expect(screen.queryByText(/Synthetic Dependent/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Family permits are in the Family tab (1)"),
+    ).toBeInTheDocument();
   });
 });
 
@@ -983,12 +1021,12 @@ describe("ImmigrationTab — MERP rides with the current permit, not 'Other' (ow
         document_type: "MERP",
         document_category: "immigration",
         permit_family: "merp",
-        permit_label: "MERP — Multiple Exit Re-entry Permit",
+        permit_label: "MERP · Multiple Exit Re-entry Permit",
       },
     ]);
 
     expect(
-      screen.getByText("MERP — Multiple Exit Re-entry Permit"),
+      screen.getByText("MERP · Multiple Exit Re-entry Permit"),
     ).toBeInTheDocument();
   });
 
@@ -1009,7 +1047,7 @@ describe("ImmigrationTab — MERP rides with the current permit, not 'Other' (ow
 });
 
 describe("ImmigrationTab — permit_family_label secondary line (owner correction: index leads, family is secondary)", () => {
-  it("GUILT: shows the family label as a secondary line under the current-permit badge when it differs from the primary label", () => {
+  it("GUILT (inverted): the family label is no longer a second line under the current-permit badge; the badge reads code · name", () => {
     const futureDate = new Date(Date.now() + 60 * 86400000)
       .toISOString()
       .slice(0, 10);
@@ -1025,10 +1063,10 @@ describe("ImmigrationTab — permit_family_label secondary line (owner correctio
       },
     ]);
 
-    expect(screen.getByText("E23 — Working KITAS")).toBeInTheDocument();
+    expect(screen.getByText("E23 · Working KITAS")).toBeInTheDocument();
     expect(
-      screen.getByText("KITAS / ITAS — Limited Stay Permit"),
-    ).toBeInTheDocument();
+      screen.queryByText("KITAS / ITAS — Limited Stay Permit"),
+    ).not.toBeInTheDocument();
   });
 
   it("INNOCENCE: does not repeat the label when permit_family_label equals permit_label (no index was found)", () => {
@@ -1052,7 +1090,7 @@ describe("ImmigrationTab — permit_family_label secondary line (owner correctio
     ).toHaveLength(1);
   });
 
-  it("shows the family label in the visa-history row's secondary line when it differs from the primary label", () => {
+  it("a history row shows only its label, never the family label line", () => {
     const futureDate = new Date(Date.now() + 400 * 86400000)
       .toISOString()
       .slice(0, 10);
@@ -1082,7 +1120,9 @@ describe("ImmigrationTab — permit_family_label secondary line (owner correctio
 
     expect(screen.getByText("Visa history")).toBeInTheDocument();
     expect(screen.getByText("C31")).toBeInTheDocument();
-    expect(screen.getByText("ITK — Visit Stay Permit")).toBeInTheDocument();
+    expect(
+      screen.queryByText("ITK — Visit Stay Permit"),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -1102,13 +1142,13 @@ describe("ImmigrationTab — REWORK (independent gate, 2026-09-21)", () => {
       },
     ]);
 
-    expect(
-      screen.getByText("D12 — Pre-Investment (Multiple Entry)"),
-    ).toBeInTheDocument();
+    // Cleaned: index · name, without the taxonomy qualifier.
+    expect(screen.getByText("D12 · Pre-Investment")).toBeInTheDocument();
+    expect(screen.queryByText(/Multiple Entry/)).not.toBeInTheDocument();
     expect(screen.queryByText("itk")).not.toBeInTheDocument();
   });
 
-  it("(a) shows the family secondary line in the 'Other' card grid when it differs from the primary label", () => {
+  it("(a) the 'Other' list shows no family secondary line", () => {
     renderTab([
       {
         ...baseDoc,
@@ -1121,10 +1161,10 @@ describe("ImmigrationTab — REWORK (independent gate, 2026-09-21)", () => {
       },
     ]);
 
+    expect(screen.getByText("D12 · Pre-Investment")).toBeInTheDocument();
     expect(
-      screen.getByText("D12 — Pre-Investment (Multiple Entry)"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("ITK — Visit Stay Permit")).toBeInTheDocument();
+      screen.queryByText("ITK — Visit Stay Permit"),
+    ).not.toBeInTheDocument();
   });
 
   it("(a) GUILT falls back to the raw document_type in the 'Other' grid when unresolved (never invents a label)", () => {
@@ -1156,7 +1196,7 @@ describe("ImmigrationTab — REWORK (independent gate, 2026-09-21)", () => {
     ]);
 
     const badge = screen.getByText(
-      "E28D — Investor Visa Pendirian Cabang atau Anak Perusahaan Golden Visa",
+      "E28D · Investor Visa Pendirian Cabang atau Anak Perusahaan Golden Visa",
     );
     expect(badge.className).not.toMatch(/\bcapitalize\b/);
   });
@@ -1193,7 +1233,7 @@ describe("ImmigrationTab — REWORK (independent gate, 2026-09-21)", () => {
     ]);
 
     const label = screen.getByText(
-      "E28D — Investor Visa Pendirian Cabang atau Anak Perusahaan Golden Visa",
+      "E28D · Investor Visa Pendirian Cabang atau Anak Perusahaan Golden Visa",
     );
     expect(label.className).not.toMatch(/\bcapitalize\b/);
   });
@@ -1218,12 +1258,616 @@ describe("ImmigrationTab — REWORK (independent gate, 2026-09-21)", () => {
         // text node no longer an EXACT match for the bare label and hide
         // a real double-render behind a text-matcher false negative.
         permit_family: "merp",
-        permit_label: "MERP — Multiple Exit Re-entry Permit",
+        permit_label: "MERP · Multiple Exit Re-entry Permit",
       },
     ]);
 
     expect(
-      screen.getAllByText("MERP — Multiple Exit Re-entry Permit"),
+      screen.getAllByText("MERP · Multiple Exit Re-entry Permit"),
     ).toHaveLength(1);
+  });
+});
+
+describe("ImmigrationTab — one current permit, shared with the Overview", () => {
+  const mk = (
+    over: Partial<ClientDocument> & { id: number },
+  ): ClientDocument => ({
+    client_id: 1,
+    document_type: "kitas",
+    document_category: "immigration",
+    ...over,
+  });
+
+  it("the Overview picker and the Immigration tab choose the same current permit", () => {
+    const docs = [
+      mk({ id: 1, issue_date: "2023-01-01", expiry_date: "2024-01-01" }),
+      mk({ id: 2, issue_date: "2025-01-01", expiry_date: "2036-01-01" }),
+      mk({ id: 3, document_type: "voa", expiry_date: "2025-06-01" }),
+    ];
+    expect(pickCurrentVisa(docs)?.id).toBe(2);
+    renderTab(docs);
+    expect(screen.getByText("Current permit")).toBeInTheDocument();
+    // The panel shows permit 2's expiry; permit 1's is in history.
+    expect(screen.getAllByText(/2036-01-01/).length).toBeGreaterThan(0);
+    expect(screen.getByText("Visa history")).toBeInTheDocument();
+  });
+
+  it("GUILT: an older expired visa in history shows no countdown (no 'ago' / 'left'); INNOCENCE: the current permit does", () => {
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    renderTab([
+      mk({ id: 1, issue_date: "2022-01-01", expiry_date: "2023-01-01" }),
+      mk({ id: 2, issue_date: "2025-06-01", expiry_date: "2027-06-01" }),
+    ]);
+    const grid = document.querySelector(
+      '[data-hgrid="immigration-visa-history"]',
+    )!;
+    expect(grid.textContent).toContain("2022-01-01 → 2023-01-01");
+    expect(grid.textContent).toContain("Completed");
+    expect(grid.textContent).not.toMatch(/ago|left|Expires/);
+    expect(document.body.textContent).toMatch(/2027-06-01 · .*left/);
+  });
+
+  it("a removed or archived newer permit does not displace the current one", () => {
+    const docs = [
+      mk({ id: 1, expiry_date: "2027-01-01" }),
+      mk({
+        id: 2,
+        expiry_date: "2031-01-01",
+        deleted_at: "2026-01-01T00:00:00Z",
+      }),
+      mk({ id: 3, expiry_date: "2032-01-01", is_archived: true }),
+    ];
+    expect(pickCurrentVisa(docs)?.id).toBe(1);
+  });
+
+  it("GUILT: a spouse's permit is not in the client's history and carries no countdown; the Family line switches tab; no family docs -> no line", () => {
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    const onOpen = vi.fn();
+    render(
+      <ImmigrationTab
+        clientId={1}
+        documents={[
+          mk({ id: 1, expiry_date: "2028-01-01" }),
+          mk({
+            id: 2,
+            family_member_id: 9,
+            family_member_name: "Member A",
+            permit_code: "E31A",
+            permit_label: "E31A — Spouse KITAS",
+            expiry_date: "2026-01-21",
+          }),
+        ]}
+        formatDate={(d) => d}
+        onAddClick={vi.fn()}
+        onEditClick={vi.fn()}
+        onRefresh={vi.fn()}
+        onOpenFamilyTab={onOpen}
+      />,
+    );
+    expect(document.body.textContent).not.toContain("Spouse KITAS");
+    expect(document.body.textContent).not.toMatch(/⏰|20d left/);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Family permits are in the Family tab (1)",
+      }),
+    );
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    cleanup();
+    renderTab([mk({ id: 1, expiry_date: "2028-01-01" })]);
+    expect(screen.queryByText(/Family permits are in/)).not.toBeInTheDocument();
+  });
+});
+
+describe("ImmigrationTab — clean labels, no photos, same-permit copies (owner feedback 2026-11-03)", () => {
+  const mk = (
+    over: Partial<ClientDocument> & { id: number },
+  ): ClientDocument => ({
+    client_id: 1,
+    document_type: "kitas",
+    document_category: "immigration",
+    ...over,
+  });
+  const FILE = "2025-06-25__ITAS-E28A__synthetic.pdf";
+
+  it("GUILT: '(Standard)' is never rendered; the badge reads '<code> · <name>' and no family subline appears", () => {
+    renderTab([
+      mk({
+        id: 1,
+        expiry_date: "2036-01-01",
+        permit_code: "E28A",
+        permit_label: "E28A — Investor KITAS (Standard)",
+        permit_family_label: "KITAS / ITAS — Limited Stay Permit",
+      }),
+    ]);
+    expect(screen.getByText("E28A · Investor KITAS")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("(Standard)");
+    expect(document.body.textContent).not.toContain("Limited Stay Permit");
+  });
+
+  it("GUILT: no raw file name is visible in the panel or any row; it stays on the download button", () => {
+    renderTab([
+      mk({
+        id: 1,
+        expiry_date: "2036-01-01",
+        file_name: FILE,
+        google_drive_file_url: "https://drive.google.com/file/d/a1/view",
+      }),
+      mk({
+        id: 2,
+        expiry_date: "2026-01-01",
+        file_name: FILE,
+        google_drive_file_url: "https://drive.google.com/file/d/a2/view",
+      }),
+      mk({
+        id: 3,
+        document_type: "imta",
+        expiry_date: "2030-01-01",
+        file_name: FILE,
+        google_drive_file_url: "https://drive.google.com/file/d/a3/view",
+      }),
+    ]);
+    expect(document.body.textContent).not.toContain(FILE);
+    expect(
+      screen.getAllByRole("button", { name: `Download ${FILE}` }).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("GUILT: a second file of the SAME permit (same code + expiry) is not history; it is listed under 'Other files of this permit' with its actions", () => {
+    renderTab([
+      mk({ id: 1, expiry_date: "2036-06-25", permit_code: "E28A" }),
+      mk({ id: 2, expiry_date: "2036-06-25", permit_code: "E28A" }),
+      mk({ id: 3, expiry_date: "2024-06-25", permit_code: "E28A" }),
+    ]);
+    expect(screen.getByText("Other files of this permit")).toBeInTheDocument();
+    const same = document.querySelector(
+      '[data-hgrid="immigration-same-permit"]',
+    )!;
+    expect(same.querySelectorAll('button[aria-label^="Edit"]')).toHaveLength(1);
+    expect(same.querySelectorAll('button[aria-label^="Remove"]')).toHaveLength(
+      1,
+    );
+    const history = document.querySelector(
+      '[data-hgrid="immigration-visa-history"]',
+    )!;
+    // Only the really older permit is history (after the current permit's own row).
+    expect(history.textContent).toContain("Ended 2024-06-25");
+    expect(
+      history.querySelector('[role="row"]')!.nextElementSibling!.children,
+    ).toHaveLength(2); // current + the older permit
+    expect(screen.getByText("(1)")).toBeInTheDocument();
+  });
+
+  it("INNOCENCE: same code but a different expiry is history, not a copy; same permit number groups regardless of expiry", () => {
+    renderTab([
+      mk({ id: 1, expiry_date: "2036-06-25", permit_code: "E28A" }),
+      mk({ id: 2, expiry_date: "2030-06-25", permit_code: "E28A" }),
+    ]);
+    expect(
+      screen.queryByText("Other files of this permit"),
+    ).not.toBeInTheDocument();
+    cleanup();
+    renderTab([
+      mk({ id: 1, expiry_date: "2036-06-25", permit_number: "TEST-1" }),
+      mk({ id: 2, expiry_date: "2030-06-25", permit_number: "TEST-1" }),
+    ]);
+    expect(screen.getByText("Other files of this permit")).toBeInTheDocument();
+  });
+
+  it("GUILT: 'Ended' is never written for a date in the future ('Valid until'); a past date still reads 'Ended'", () => {
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    renderTab([
+      mk({ id: 1, document_type: "kitap", expiry_date: "2040-01-01" }),
+      mk({ id: 2, document_type: "visa", expiry_date: "2027-06-25" }),
+      mk({ id: 3, document_type: "voa", expiry_date: "2025-06-25" }),
+    ]);
+    const history = document.querySelector(
+      '[data-hgrid="immigration-visa-history"]',
+    )!.textContent!;
+    expect(history).toContain("Valid until 2027-06-25");
+    expect(history).toContain("Ended 2025-06-25");
+    expect(history).not.toContain("Ended 2027-06-25");
+  });
+
+  it("the Issued column is hidden when no history row has an issue_date, shown when one does", () => {
+    const docs = [
+      mk({ id: 1, expiry_date: "2036-01-01" }),
+      mk({ id: 2, document_type: "kitap", expiry_date: "2025-01-01" }),
+    ];
+    renderTab(docs);
+    let head = document.querySelector(
+      '[data-hgrid="immigration-visa-history"] [role="row"]',
+    )!;
+    expect(head.textContent).not.toContain("Issued");
+    expect(head.children.length).toBe(4);
+    cleanup();
+    renderTab([docs[0], { ...docs[1], issue_date: "2024-01-01" }]);
+    head = document.querySelector(
+      '[data-hgrid="immigration-visa-history"] [role="row"]',
+    )!;
+    expect(head.textContent).toContain("Issued");
+    expect(head.children.length).toBe(5);
+  });
+
+  it("no <img> anywhere in the tab: Other and Working permit are compact rows, not image cards", () => {
+    renderTab([
+      mk({ id: 1, expiry_date: "2036-01-01" }),
+      mk({
+        id: 2,
+        document_type: "imta",
+        expiry_date: "2030-01-01",
+        google_drive_file_url: "https://drive.google.com/file/d/a3/view",
+      }),
+      mk({
+        id: 3,
+        document_type: "sponsor_letter",
+        google_drive_file_url: "https://drive.google.com/file/d/a4/view",
+      }),
+    ]);
+    expect(document.querySelectorAll("img")).toHaveLength(0);
+    expect(
+      document.querySelector('[data-section="immigration-working"]'),
+    ).not.toBeNull();
+    expect(
+      document.querySelector('[data-section="immigration-other"]'),
+    ).not.toBeNull();
+  });
+
+  it("an EPO document is a history row ('EPO · Exit permit') with its date, not an 'Other' or 'Working Permit' card", () => {
+    renderTab([
+      mk({ id: 1, expiry_date: "2036-01-01" }),
+      mk({
+        id: 2,
+        document_type: "epo",
+        permit_code: "EPO",
+        permit_label: "EPO — Exit permit (Exit Permit Only)",
+        expiry_date: "2025-03-04",
+      }),
+    ]);
+    const history = document.querySelector(
+      '[data-hgrid="immigration-visa-history"]',
+    )!;
+    expect(history.textContent).toContain("EPO · Exit permit");
+    expect(history.textContent).toContain("2025-03-04");
+    expect(history.textContent).not.toMatch(/ago|left/);
+    expect(screen.queryByText("Other")).not.toBeInTheDocument();
+    expect(screen.queryByText("Working Permit")).not.toBeInTheDocument();
+  });
+});
+
+describe("ImmigrationTab — visual review round (kinds, EPO, ITK, neutral history)", () => {
+  const mk = (
+    over: Partial<ClientDocument> & { id: number },
+  ): ClientDocument => ({
+    client_id: 1,
+    document_type: "kitas",
+    document_category: "immigration",
+    ...over,
+  });
+  const historyText = () =>
+    document.querySelector('[data-hgrid="immigration-visa-history"]')!
+      .textContent!;
+
+  it("the KITAS (not the e-Visa) is the current permit and the copy list is labelled by document kind, with actions", () => {
+    for (const order of [0, 1]) {
+      const kitas = mk({
+        id: 1,
+        permit_code: "E28A",
+        permit_label: "E28A — Investor KITAS (Standard)",
+        expiry_date: "2036-06-25",
+      });
+      const evisa = mk({
+        id: 2,
+        document_type: "evisa",
+        permit_code: "E28A",
+        permit_label: "E28A — Investor KITAS (Standard)",
+        expiry_date: "2036-06-25",
+      });
+      renderTab(order ? [evisa, kitas] : [kitas, evisa]);
+      const same = document.querySelector(
+        '[data-hgrid="immigration-same-permit"]',
+      )!;
+      expect(same.textContent).toContain("e-Visa");
+      expect(same.textContent).not.toContain("KITAS card");
+      expect(same.querySelectorAll('button[aria-label^="Edit"]')).toHaveLength(
+        1,
+      );
+      expect(same.textContent).toContain("2036-06-25");
+      cleanup();
+    }
+  });
+
+  it("GUILT: a spouse's permit never shows a countdown in the client's history; INNOCENCE: the client's own older permit stays", () => {
+    renderTab([
+      mk({ id: 1, expiry_date: "2036-01-01" }),
+      mk({ id: 2, document_type: "kitap", expiry_date: "2024-01-01" }),
+      mk({
+        id: 3,
+        family_member_id: 9,
+        expiry_date: new Date(Date.now() + 20 * 86400000)
+          .toISOString()
+          .slice(0, 10),
+      }),
+    ]);
+    expect(historyText()).toContain("Ended 2024-01-01");
+    expect(historyText()).not.toMatch(/left|ago|⏰/);
+    expect(screen.getByText("(1)")).toBeInTheDocument();
+  });
+
+  it("EPO in any case, with no expiry, reads 'EPO · Exit permit' dated by issue_date, else by the upload date; never two dashes", () => {
+    renderTab([
+      mk({ id: 1, expiry_date: "2036-01-01" }),
+      mk({ id: 2, document_type: "EPO", issue_date: "2025-03-04" }),
+      mk({
+        id: 3,
+        document_type: "Exit_Permit",
+        created_at: "2025-02-01T10:00:00Z",
+      }),
+    ]);
+    const text = historyText();
+    expect(text).toContain("EPO · Exit permit");
+    expect(text).toContain("Issued 2025-03-04");
+    expect(text).toContain("Issued 2025-02-01");
+    expect(screen.queryByText("epo")).not.toBeInTheDocument();
+  });
+
+  it("GUILT: an expired ITK is a history row, neutral ('Ended <date>'), never 'Expired Nd ago' nor a warning tone, and not in Other", () => {
+    vi.setSystemTime(new Date("2026-11-03T00:00:00.000Z"));
+    renderTab([
+      mk({ id: 1, expiry_date: "2036-01-01" }),
+      mk({
+        id: 2,
+        document_type: "itk",
+        permit_code: "C1",
+        permit_label: "ITK — Visit stay permit",
+        expiry_date: "2026-10-14",
+      }),
+    ]);
+    const text = historyText();
+    expect(text).toContain("C1 · ITK — Visit stay permit");
+    expect(text).toContain("Ended 2026-10-14");
+    expect(document.body.textContent).not.toMatch(/Expired \d+d ago/);
+    expect(
+      document.querySelector('[data-section="immigration-other"]'),
+    ).toBeNull();
+    expect(
+      document.querySelector(
+        '[data-hgrid="immigration-visa-history"] [class*="state-warning"]',
+      ),
+    ).toBeNull();
+  });
+
+  it("INNOCENCE: a Working permit row is neutral too (no countdown text)", () => {
+    renderTab([
+      mk({ id: 1, expiry_date: "2036-01-01" }),
+      mk({ id: 2, document_type: "imta", expiry_date: "2030-01-01" }),
+    ]);
+    const row = document.querySelector('[data-section="immigration-working"]')!;
+    expect(row.textContent).toContain("2030-01-01");
+    expect(row.textContent).not.toMatch(/left|ago/);
+  });
+});
+
+describe("ImmigrationTab — owner round 2026-11-03 (current row first, pills, cards)", () => {
+  const mk = (
+    over: Partial<ClientDocument> & { id: number },
+  ): ClientDocument => ({
+    client_id: 1,
+    document_type: "kitas",
+    document_category: "immigration",
+    ...over,
+  });
+  const rowsOf = () => {
+    const grid = document.querySelector(
+      '[data-hgrid="immigration-visa-history"]',
+    )!;
+    return Array.from(
+      grid.querySelector('[role="row"]')!.nextElementSibling!.children,
+    ) as HTMLElement[];
+  };
+
+  it("the current permit is the FIRST history row, marked, larger, with a Verified pill; previous rows are smaller, muted and read Completed", () => {
+    renderTab([
+      mk({ id: 1, expiry_date: "2036-01-01", status: "verified" }),
+      mk({
+        id: 2,
+        document_type: "kitap",
+        expiry_date: "2024-01-01",
+        status: "verified",
+      }),
+    ]);
+    const rows = rowsOf();
+    expect(rows).toHaveLength(2);
+    expect(rows[0].getAttribute("data-current")).toBe("true");
+    expect(rows[1].getAttribute("data-current")).toBeNull();
+    expect(rows[0].textContent).toContain("Verified");
+    expect(rows[0].innerHTML).toContain("text-[17px]");
+    expect(rows[0].innerHTML).toContain("state-success");
+    expect(rows[1].textContent).toContain("Completed");
+    expect(rows[1].textContent).not.toContain("Verified");
+    expect(rows[1].innerHTML).toContain("text-[13px]");
+    expect(rows[1].innerHTML).toContain("state-danger");
+    expect(rows[1].innerHTML).not.toContain("text-[17px]");
+  });
+
+  it("INNOCENCE: the retired status word appears nowhere; an unverified current permit reads Current, not Verified", () => {
+    renderTab([
+      mk({ id: 1, expiry_date: "2036-01-01" }),
+      mk({ id: 2, document_type: "kitap", expiry_date: "2024-01-01" }),
+    ]);
+    expect(document.body.textContent).not.toContain("Super" + "seded");
+    expect(rowsOf()[0].textContent).toContain("Current");
+    expect(rowsOf()[0].textContent).not.toContain("Verified");
+  });
+
+  it("Issued shows the issue_date only where the payload has it; no upload-date guess; column hidden when no row has one", () => {
+    renderTab([
+      mk({
+        id: 1,
+        expiry_date: "2036-01-01",
+        issue_date: "2025-01-01",
+        created_at: "2025-02-02T00:00:00Z",
+      }),
+      mk({
+        id: 2,
+        document_type: "kitap",
+        expiry_date: "2024-01-01",
+        created_at: "2023-03-03T00:00:00Z",
+      }),
+    ]);
+    const rows = rowsOf();
+    expect(rows[0].textContent).toContain("2025-01-01");
+    expect(rows[0].textContent).not.toContain("2025-02-02");
+    expect(rows[1].textContent).not.toContain("2023-03-03");
+    cleanup();
+    renderTab([
+      mk({
+        id: 1,
+        expiry_date: "2036-01-01",
+        created_at: "2025-02-02T00:00:00Z",
+      }),
+      mk({ id: 2, document_type: "kitap", expiry_date: "2024-01-01" }),
+    ]);
+    expect(
+      document.querySelector(
+        '[data-hgrid="immigration-visa-history"] [role="row"]',
+      )!.textContent,
+    ).not.toContain("Issued");
+  });
+
+  it("Other and Working permit are small cards (no image) with Download and Upload at the bottom-left; Upload opens the add flow, edit and remove stay", () => {
+    const onAdd = vi.fn();
+    render(
+      <ImmigrationTab
+        clientId={1}
+        documents={[
+          mk({ id: 1, expiry_date: "2036-01-01" }),
+          mk({
+            id: 2,
+            document_type: "sponsor_letter",
+            google_drive_file_url: "https://drive.google.com/file/d/a4/view",
+            file_name: "synthetic-letter.pdf",
+          }),
+        ]}
+        formatDate={(d) => d}
+        onAddClick={onAdd}
+        onEditClick={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    );
+    const other = document.querySelector('[data-section="immigration-other"]')!;
+    expect(other.querySelectorAll("img")).toHaveLength(0);
+    expect(other.textContent).toContain("sponsor letter");
+    expect(other.textContent).not.toContain("synthetic-letter.pdf");
+    expect(
+      screen.getByRole("button", { name: "Download synthetic-letter.pdf" }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: /upload a file for sponsor_letter/i }),
+    );
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByRole("button", { name: /edit sponsor_letter/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /remove sponsor_letter/i }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("ImmigrationTab — AI summary slot beside the current permit", () => {
+  it("asks for the immigration scope and shows the text inside the current-permit panel; hidden when the backend has none", async () => {
+    getClientRecap.mockResolvedValueOnce({
+      scope: "immigration",
+      text: "Synthetic permit summary.",
+      generated_at: "2026-11-03T09:00:00Z",
+      model: null,
+      stale: false,
+    });
+    renderTab([
+      {
+        ...baseDoc,
+        id: 1,
+        document_type: "kitas",
+        expiry_date: "2036-01-01",
+      },
+    ]);
+    const text = await screen.findByText("Synthetic permit summary.");
+    expect(getClientRecap).toHaveBeenCalledWith(1, "immigration", undefined);
+    expect(
+      screen.getByText("Current permit").closest("div.rounded-lg"),
+    ).toContainElement(text);
+  });
+
+  it("INNOCENCE: no summary element when the endpoint fails", async () => {
+    renderTab([
+      { ...baseDoc, id: 1, document_type: "kitas", expiry_date: "2036-01-01" },
+    ]);
+    await screen.findByText("Current permit");
+    await waitFor(() =>
+      expect(screen.queryByTestId("ai-recap-skeleton")).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByLabelText("AI summary")).not.toBeInTheDocument();
+  });
+});
+
+describe("ImmigrationTab — polish (v8): one-line validity, Download on copies", () => {
+  const mk = (
+    over: Partial<ClientDocument> & { id: number },
+  ): ClientDocument => ({
+    client_id: 1,
+    document_type: "kitas",
+    document_category: "immigration",
+    ...over,
+  });
+
+  it("the Validity cell of a history row never wraps at desktop (nowrap), on every row", () => {
+    renderTab([
+      mk({ id: 1, issue_date: "2025-01-04", expiry_date: "2036-01-04" }),
+      mk({
+        id: 2,
+        document_type: "kitap",
+        issue_date: "2024-01-04",
+        expiry_date: "2025-01-04",
+      }),
+    ]);
+    const body = document.querySelector(
+      '[data-hgrid="immigration-visa-history"] [role="row"]',
+    )!.nextElementSibling!;
+    for (const row of Array.from(body.children)) {
+      const validity = row.children[3] as HTMLElement;
+      expect(validity.className).toContain("whitespace-nowrap");
+    }
+  });
+
+  it("GUILT: a copy of the current permit that has a file (Drive id or file URL, not only a Drive URL) offers Download; INNOCENCE: one with no file does not", () => {
+    renderTab([
+      mk({ id: 1, permit_code: "E28A", expiry_date: "2036-06-25" }),
+      mk({
+        id: 2,
+        document_type: "evisa",
+        permit_code: "E28A",
+        expiry_date: "2036-06-25",
+        file_id: "driveId123",
+        file_name: "synthetic-evisa.pdf",
+      }),
+      mk({
+        id: 3,
+        document_type: "kitas",
+        permit_code: "E28A",
+        expiry_date: "2036-06-25",
+      }),
+    ]);
+    const same = document.querySelector(
+      '[data-hgrid="immigration-same-permit"]',
+    )!;
+    expect(
+      same.querySelectorAll(
+        'button[aria-label="Download synthetic-evisa.pdf"]',
+      ),
+    ).toHaveLength(1);
+    expect(
+      same.querySelectorAll('button[aria-label^="Download"]'),
+    ).toHaveLength(1);
+    expect(same.querySelectorAll('button[aria-label^="Edit"]')).toHaveLength(2);
   });
 });

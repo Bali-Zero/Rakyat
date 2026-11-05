@@ -20,7 +20,7 @@ export function Eyebrow({
 }
 
 /**
- * The 96×4 copper rule, the copper eyebrow, the 40/42 Fraunces headline, the
+ * The 96×4 copper rule, the copper eyebrow, the 40/42 Plex headline, the
  * sentence, and the `actions` the page supplies. This is where the copper
  * rule lives on every kita page, which is why the masthead is never removed.
  *
