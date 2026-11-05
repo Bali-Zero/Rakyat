@@ -197,7 +197,23 @@ describe("55106 native scope presentation", () => {
 });
 
 describe("verified priority code scope coverage", () => {
-  const codes = ["55201", "55203", "56101", "56303", "55209", "56102"] as const;
+  const codes = [
+    "55201",
+    "55203",
+    "56101",
+    "56303",
+    "55209",
+    "56102",
+    "68111",
+    "68210",
+    "68292",
+    "70201",
+    "70209",
+    "85510",
+    "93116",
+    "96220",
+    "96230",
+  ] as const;
   const canonical = JSON.parse(
     readFileSync(
       resolve(

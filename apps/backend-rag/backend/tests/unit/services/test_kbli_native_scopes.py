@@ -18,6 +18,15 @@ ATTESTED_COUNTS = {
     "56303": 4,
     "55209": 3,
     "56102": 6,
+    "68111": 4,
+    "68210": 8,
+    "68292": 4,
+    "70201": 3,
+    "70209": 8,
+    "85510": 8,
+    "93116": 3,
+    "96220": 3,
+    "96230": 4,
 }
 
 
@@ -109,6 +118,11 @@ def test_same_tier_scopes_stay_separate_and_caller_cannot_mutate_cache(tmp_path,
     ]
 
 
+def test_residential_rental_gap_is_not_an_empty_attestation():
+    assert not scopes.is_registered_native_scope("68112")
+    assert scopes.read_native_scope_coverage("68112") == scopes.NativeScopeCoverage()
+
+
 @pytest.mark.parametrize(
     "reason",
     [
@@ -198,7 +212,7 @@ def test_other_codes_have_no_attestation(tmp_path, monkeypatch):
     assert scopes.read_native_scope_coverage("56304", path) == scopes.NativeScopeCoverage()
 
 
-def test_seven_codes_share_one_dataset_read_without_cache_thrashing(tmp_path, monkeypatch):
+def test_registered_codes_share_one_dataset_read_without_cache_thrashing(tmp_path, monkeypatch):
     path = tmp_path / "canonical.json"
     path.write_bytes(CANONICAL.read_bytes())
     opens = []

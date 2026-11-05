@@ -26,6 +26,15 @@ ATTESTED_COUNTS = {
     "56303": 4,
     "55209": 3,
     "56102": 6,
+    "68111": 4,
+    "68210": 8,
+    "68292": 4,
+    "70201": 3,
+    "70209": 8,
+    "85510": 8,
+    "93116": 3,
+    "96220": 3,
+    "96230": 4,
 }
 LEGACY_SOURCES = {
     "55201": ["80100"],
@@ -34,12 +43,23 @@ LEGACY_SOURCES = {
     "56303": ["56303"],
     "55209": ["55199"],
     "56102": ["56102"],
+    "68111": ["68111"],
+    "68210": ["68200"],
+    "68292": ["68200"],
+    "70201": ["70201", "70204"],
+    "70209": ["70209"],
+    "85510": [],
+    "93116": ["93116"],
+    "96220": [],
+    "96230": [],
 }
 
 
 @pytest.fixture
 def make_endpoint(monkeypatch):
-    def make(*, present=True, node_exists=True, licenses_present=True):
+    def make(
+        *, present=True, node_exists=True, licenses_present=True, licensing_status="REGULATED"
+    ):
         store = {}
         conn = MagicMock()
 
@@ -50,7 +70,10 @@ def make_endpoint(monkeypatch):
             return {
                 "name": f"KG {code}",
                 "description": "",
-                "properties": {"pp28_sources": LEGACY_SOURCES.get(code, ["55199"])},
+                "properties": {
+                    "pp28_sources": LEGACY_SOURCES.get(code, ["55199"]),
+                    "licensing_status": licensing_status,
+                },
             }
 
         async def rows_query(query, *args):
@@ -206,6 +229,28 @@ def test_unattested_code_never_acquires_scopes_from_qdrant_or_graph(make_endpoin
     assert "KBLI 2020 code 55199" in body["licensing_note"]
 
 
+def test_current_native_rows_override_cached_pending_until_source_is_lost(
+    make_endpoint, monkeypatch
+):
+    client, cache, _ = make_endpoint(licenses_present=False, licensing_status="PENDING_REGULATION")
+    path = INSPECT + "85510"
+    verified = client.get(path).json()
+    assert verified["scope_rows_status"] == "available"
+    assert verified["licensing_status"] == "REGULATED"
+    assert verified["licenses"] == [] and len(verified["scope_rows"]) == 8
+    assert cache["kbli_inspect_v9_85510"]["licensing_status"] == "PENDING_REGULATION"
+    with monkeypatch.context() as gap:
+        gap.setattr(
+            kbli_notebook,
+            "read_native_scope_coverage",
+            lambda code: kbli_notebook.NativeScopeCoverage(),
+        )
+        unavailable = client.get(path).json()
+        assert unavailable["licensing_status"] == "PENDING_REGULATION"
+        assert unavailable["scope_rows_status"] == "unavailable"
+    assert client.get(path).json() == verified
+
+
 @pytest.mark.parametrize("code", ATTESTED_COUNTS)
 @pytest.mark.parametrize("licenses_present", [True, False])
 def test_warm_cache_tracks_source_loss_and_recovery(
@@ -268,6 +313,15 @@ def test_attested_codes_bind_every_native_field_on_cold_and_warm_get(make_endpoi
         "56101": None,
         "56303": None,
         "56102": None,
+        "68111": None,
+        "68210": ["68200"],
+        "68292": ["68200"],
+        "70201": None,
+        "70209": None,
+        "85510": None,
+        "93116": None,
+        "96220": None,
+        "96230": None,
     }[code]
     assert body["licensing_content_inherited_from"] == inherited
     note = body["licensing_note"]
@@ -281,6 +335,8 @@ def test_attested_codes_bind_every_native_field_on_cold_and_warm_get(make_endpoi
             "archived obligations are inconsistent with the official activity-specific record"
             in note
         )
+    elif code == "70201":
+        assert "archive combines tourism and industrial consultancy terms" in note
     else:
         assert "Historical licence entries have not been verified for this activity" in note
     assert "must not be relied on for current licensing terms" in note
@@ -296,7 +352,12 @@ def test_attested_codes_bind_every_native_field_on_cold_and_warm_get(make_endpoi
             "scope_index": raw["scope_index"],
             "scope_uraian": raw["scope_uraian"],
             "scale": raw["skala_usaha"],
-            "type": "NIB dan Sertifikat Standar",
+            "type": {
+                "Rendah": "NIB",
+                "Menengah Rendah": "NIB dan Sertifikat Standar",
+                "Menengah Tinggi": "NIB dan Sertifikat Standar",
+                "Tinggi": "NIB dan Izin",
+            }[raw["kategori_risiko"]],
             "risk_level": raw["kategori_risiko"],
             "requirements": raw["persyaratan"],
             "obligations": raw["kewajiban"],
