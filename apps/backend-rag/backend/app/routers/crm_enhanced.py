@@ -1368,6 +1368,40 @@ async def get_client_profile(
         }
 
 
+@router.get("/clients/{client_id}/recap")
+async def get_client_recap(
+    client_id: int,
+    scope: str = Query(..., pattern="^(immigration|company)$"),
+    company_id: int | None = Query(None),
+    pool: Any = Depends(get_database_pool),
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Short AI recap for the kita client card; a model failure yields text=null, never a 5xx."""
+    from backend.services.crm import client_recap as recap
+
+    async with pool.acquire() as conn:
+        await verify_client_access(client_id, current_user, conn, allow_assigned=True)
+        subject_key = ""
+        try:
+            if scope == recap.SCOPE_IMMIGRATION:
+                inputs = await recap.fetch_immigration_inputs(conn, client_id)
+                facts = recap.build_immigration_facts(**inputs)
+            else:
+                resolved = await recap.resolve_company_id(conn, client_id, company_id)
+                if resolved is None:
+                    return recap.empty_recap(scope)
+                subject_key = str(resolved)
+                facts = recap.build_company_facts(
+                    **await recap.fetch_company_inputs(conn, client_id, resolved)
+                )
+        except Exception as exc:
+            logger.warning(
+                "client recap facts failed for client %s: %s", client_id, type(exc).__name__
+            )
+            return recap.empty_recap(scope)
+    return await recap.get_recap(pool, client_id, scope, subject_key, facts)
+
+
 @router.patch("/clients/{client_id}/profile")
 async def update_client_profile(
     client_id: int,

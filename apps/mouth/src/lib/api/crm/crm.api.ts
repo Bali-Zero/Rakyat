@@ -28,6 +28,7 @@ import type {
   TaxCompanyPilotKey,
   TaxCompanyPilotMap,
   AiSummaryResponse,
+  ClientRecap,
   WaCaseIntelligenceResponse,
   WorkspaceAiAutoApproveResult,
   WorkspaceAiSnapshotReviewItem,
@@ -63,6 +64,24 @@ interface RevenueGrowthResponse {
     outstanding_revenue: number;
     practice_count: number;
   }>;
+}
+
+/** Team route shape (backend PortalMixin.get_messages): `from_team` + `is_read`;
+ * the older `direction` + `read_at` shape is still accepted. */
+type RawPortalMessage = Partial<PortalMessageThread> & {
+  from_team?: boolean;
+};
+
+export function normalizePortalMessage(
+  raw: RawPortalMessage,
+): PortalMessageThread {
+  const { from_team, ...rest } = raw;
+  return {
+    ...rest,
+    direction:
+      raw.direction ?? (from_team ? "team_to_client" : "client_to_team"),
+    is_read: raw.is_read ?? Boolean(raw.read_at),
+  } as PortalMessageThread;
 }
 
 export class CrmApi {
@@ -471,6 +490,20 @@ export class CrmApi {
     );
   }
 
+  async getClientRecap(
+    clientId: number,
+    scope: "immigration" | "company",
+    companyId?: number,
+  ): Promise<ClientRecap> {
+    const q = new URLSearchParams({ scope });
+    if (companyId != null) q.set("company_id", String(companyId));
+    return this.client.request<ClientRecap>(
+      `/api/crm/clients/${clientId}/recap?${q.toString()}`,
+      undefined,
+      15000,
+    );
+  }
+
   /**
    * Get AI-generated L1 cross-folder summary for a client.
    *
@@ -854,13 +887,15 @@ export class CrmApi {
     team_member: string;
     direction?: "inbound" | "outbound";
     practice_id?: number;
+    /** Backend allows web_chat, gmail, whatsapp, phone, in_person; omitted keeps in_person. */
+    channel?: "web_chat" | "gmail" | "whatsapp" | "phone" | "in_person" | null;
   }): Promise<Interaction> {
     return this.client.request<Interaction>("/api/crm/interactions/", {
       method: "POST",
       body: JSON.stringify({
         ...data,
         direction: data.direction || "outbound",
-        channel: "in_person",
+        channel: data.channel === undefined ? "in_person" : data.channel,
       }),
     });
   }
@@ -1224,11 +1259,14 @@ export class CrmApi {
   ): Promise<{ messages: PortalMessageThread[]; total: number }> {
     const resp = await this.client.request<{
       success: boolean;
-      data: { messages: PortalMessageThread[]; total: number };
+      data: { messages: RawPortalMessage[]; total: number };
     }>(
       `/api/crm/portal/clients/${clientId}/messages?limit=${limit}&offset=${offset}`,
     );
-    return resp.data;
+    return {
+      ...resp.data,
+      messages: (resp.data.messages ?? []).map(normalizePortalMessage),
+    };
   }
 
   async sendPortalMessage(

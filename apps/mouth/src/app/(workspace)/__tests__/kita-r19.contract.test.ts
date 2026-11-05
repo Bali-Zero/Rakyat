@@ -8,8 +8,9 @@ import { describe, expect, it } from "vitest";
  * kita-theme.contract.test.ts pins the --bz-kita-* INDIRECTION (the six alias
  * declarations). This file pins the VALUES behind it: the R19 alphabet —
  * paper, ink, copper, forest, slate, muted — in both themes, and the rules
- * the concept calls laws: no red anywhere on kita, Fraunces as the serif
- * face, nothing a consumer paints with erased to `transparent`, and on-accent
+ * the concept calls laws: no red anywhere on kita, IBM Plex Sans as the heading
+ * face (Fraunces stays on my/portal), nothing a consumer paints with erased
+ * to `transparent`, and on-accent
  * ink that clears SC 1.4.3.
  *
  * Guilt and innocence (cicatrix-superscar #3): every detector below is a pure
@@ -66,7 +67,11 @@ const PLANTED_REDS = {
  * alongside the four above, allowed here rather than duplicated with its
  * own detector so `findBannedReds` stays the single "is this a red" answer.
  */
-const RAIL_RULE = "#ce8571"; // token-lint-ok: the expected value this contract pins, not a style
+/** The rail is the green of --state-success, the navy surface two steps above ink. */
+const RAIL_GREEN = "#253e33"; // token-lint-ok: the expected value this contract pins, not a style
+const SURFACE_NAVY = "#314b64"; // token-lint-ok: the expected value this contract pins, not a style
+const PANEL_COPPER = "#f2c2b1"; // token-lint-ok: the expected value this contract pins, not a style
+const RAIL_RULE = "#e09a84"; // token-lint-ok: the expected value this contract pins, not a style
 
 const globalsCss = readFileSync(
   join(__dirname, "..", "..", "globals.css"),
@@ -96,6 +101,7 @@ export function findBannedReds(block: string): string[] {
     R19.copperHover,
     R19.copperHoverDark,
     RAIL_RULE,
+    PANEL_COPPER,
   ]);
   const found: string[] = [];
   for (const hex of block.match(/#[0-9a-fA-F]{6}\b/g) ?? []) {
@@ -185,9 +191,9 @@ describe("kita R19 seam — light", () => {
     expect(block).toContain(`--line-control: ${R19.lineControl};`);
   });
 
-  it("selects Fraunces and Manrope", () => {
+  it("selects IBM Plex Sans and Manrope", () => {
     expect(block).toContain(
-      '--font-serif: "Fraunces", ui-serif, Georgia, serif;',
+      '--font-serif: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;',
     );
     expect(block).toContain(
       '--font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;',
@@ -253,6 +259,7 @@ describe("the no-red detector is awake (guilt)", () => {
       R19.forest,
       R19.slate,
       RAIL_RULE,
+      PANEL_COPPER,
     ];
     expect(findBannedReds(innocent.join(" "))).toEqual([]);
   });
@@ -434,14 +441,14 @@ describe("kita R19 seam — what the block refuses to redeclare", () => {
  * background, outside this window's perimeter, and this is the guard a
  * later window should trip if it ever folds it into the rail tokens.
  */
-const RAIL_PAPER_ON_INK_COMPOSITE = "#c7c8c7"; // token-lint-ok: fusion/MEASURE.md's composite of paper-78% over the rail ink, not a style
+const RAIL_PAPER_ON_INK_COMPOSITE = "#c9ccc5"; // token-lint-ok: paper-78% composited over the green rail (measured 2026-11-04), not a style
 
 describe("kita R19 rail (K1c-bis) — the seven rail declarations", () => {
   for (const theme of ["operative-light", "operative-dark"]) {
     const block = themeBlock(theme);
 
     it(`${theme}: pins --bz-kita-rail and --nav-rail-bg`, () => {
-      expect(block).toContain(`--bz-kita-rail: ${R19.ink};`);
+      expect(block).toContain(`--bz-kita-rail: ${RAIL_GREEN};`);
       expect(block).toContain("--nav-rail-bg: var(--bz-kita-rail);");
     });
 
@@ -465,10 +472,10 @@ describe("kita R19 rail (K1c-bis) — the seven rail declarations", () => {
 
   it("the rail background is the same ink in both themes (the invariant rail)", () => {
     expect(themeBlock("operative-light")).toContain(
-      `--bz-kita-rail: ${R19.ink};`,
+      `--bz-kita-rail: ${RAIL_GREEN};`,
     );
     expect(themeBlock("operative-dark")).toContain(
-      `--bz-kita-rail: ${R19.ink};`,
+      `--bz-kita-rail: ${RAIL_GREEN};`,
     );
   });
 
@@ -487,17 +494,20 @@ describe("kita R19 rail (K1c-bis) — the seven rail declarations", () => {
   });
 
   it("paper-78% composited over the rail ink clears 4.5:1, at the measured composite", () => {
-    // fusion/MEASURE.md measured this composite at 8.48:1.
-    expect(contrast(RAIL_PAPER_ON_INK_COMPOSITE, R19.ink)).toBeCloseTo(8.48, 1);
+    // Measured 2026-11-04 on the green rail: 7.11:1.
+    expect(contrast(RAIL_PAPER_ON_INK_COMPOSITE, RAIL_GREEN)).toBeCloseTo(
+      7.11,
+      1,
+    );
     expect(
-      contrast(RAIL_PAPER_ON_INK_COMPOSITE, R19.ink),
+      contrast(RAIL_PAPER_ON_INK_COMPOSITE, RAIL_GREEN),
     ).toBeGreaterThanOrEqual(4.5);
   });
 
   it("the copper rule on the rail ink clears 4.5:1", () => {
-    // fusion/MEASURE.md measured this pair at 4.89:1.
-    expect(contrast(RAIL_RULE, R19.ink)).toBeCloseTo(4.89, 1);
-    expect(contrast(RAIL_RULE, R19.ink)).toBeGreaterThanOrEqual(4.5);
+    // Measured 2026-11-04 on the green rail: 5.03:1.
+    expect(contrast(RAIL_RULE, RAIL_GREEN)).toBeCloseTo(5.03, 1);
+    expect(contrast(RAIL_RULE, RAIL_GREEN)).toBeGreaterThanOrEqual(4.5);
   });
 });
 
@@ -520,15 +530,15 @@ export function composite(fg: string, alpha: number, ground: string): string {
  * sits on when nothing is happening cannot see either of them.
  */
 describe("kita R19 rail (K1c-bis) — hover and focus states", () => {
-  const ACTIVE_WASH = composite(R19.canvas, 0.06, R19.ink);
+  const ACTIVE_WASH = composite(R19.canvas, 0.06, RAIL_GREEN);
 
   it("the composite helper is awake (guilt and innocence)", () => {
     // Fully opaque returns the paint; fully transparent returns the ground.
-    expect(composite(R19.canvas, 1, R19.ink)).toBe(R19.canvas);
-    expect(composite(R19.canvas, 0, R19.ink)).toBe(R19.ink);
+    expect(composite(R19.canvas, 1, RAIL_GREEN)).toBe(R19.canvas);
+    expect(composite(R19.canvas, 0, RAIL_GREEN)).toBe(RAIL_GREEN);
     // And a 6% paper wash moves the ink measurably without becoming paper.
-    expect(ACTIVE_WASH).not.toBe(R19.ink);
-    expect(contrast(ACTIVE_WASH, R19.ink)).toBeLessThan(1.2);
+    expect(ACTIVE_WASH).not.toBe(RAIL_GREEN);
+    expect(contrast(ACTIVE_WASH, RAIL_GREEN)).toBeLessThan(1.2);
   });
 
   it("the focus ring reads --nav-rule, because --border-focus fails on the rail", () => {
@@ -536,9 +546,9 @@ describe("kita R19 rail (K1c-bis) — hover and focus states", () => {
     // focus indicator, and on the ink rail this one does not clear it — that
     // failure is the whole reason AppSidebar's workspace branch overrides the
     // ring colour rather than only its offset.
-    expect(contrast(R19.copper, R19.ink)).toBeLessThan(3);
+    expect(contrast(R19.copper, RAIL_GREEN)).toBeLessThan(3);
     // The cure, measured: the rail's own copper.
-    expect(contrast(RAIL_RULE, R19.ink)).toBeGreaterThanOrEqual(3);
+    expect(contrast(RAIL_RULE, RAIL_GREEN)).toBeGreaterThanOrEqual(3);
   });
 
   it("the rail copper does NOT clear 4.5:1 once the hover wash is under it", () => {
@@ -552,5 +562,64 @@ describe("kita R19 rail (K1c-bis) — hover and focus states", () => {
     expect(
       contrast(RAIL_PAPER_ON_INK_COMPOSITE, ACTIVE_WASH),
     ).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+describe("kita visual refresh 2026-11-04 — green rail, navy surface", () => {
+  const light = themeBlock("operative-light");
+  const dark = themeBlock("operative-dark");
+  const tokenValue = (block: string, name: string) =>
+    block.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1].trim();
+
+  it("the rail is the value of --state-success, in both themes", () => {
+    expect(tokenValue(light, "--state-success")).toBe(RAIL_GREEN);
+    expect(tokenValue(light, "--bz-kita-rail")).toBe(RAIL_GREEN);
+    expect(tokenValue(dark, "--bz-kita-rail")).toBe(RAIL_GREEN);
+  });
+
+  it("the rail does not reference a state token (alias the value, not the name)", () => {
+    expect(tokenValue(light, "--bz-kita-rail")).not.toContain("var(");
+  });
+
+  it("the vault surface token is navy two steps above ink and is not the rail", () => {
+    expect(tokenValue(light, "--bz-kita-surface-navy")).toBe(SURFACE_NAVY);
+    expect(tokenValue(dark, "--bz-kita-surface-navy")).toBe(SURFACE_NAVY);
+    expect(SURFACE_NAVY).not.toBe(RAIL_GREEN);
+    expect(SURFACE_NAVY).not.toBe(R19.ink);
+    expect(contrast(R19.canvas, SURFACE_NAVY)).toBeGreaterThanOrEqual(7);
+  });
+
+  it("the navy is lighter than ink (guilt: the old ink fails the 'lighter' claim)", () => {
+    const lum = (h: string) => contrast(h, "#000000");
+    expect(lum(SURFACE_NAVY)).toBeGreaterThan(lum(R19.ink));
+    expect(lum(R19.ink)).not.toBeGreaterThan(lum(R19.ink));
+  });
+
+  it("in-page ink panels follow the navy in light and stay the paper band in dark", () => {
+    expect(tokenValue(light, "--bz-kita-ink-fill")).toBe(
+      "var(--bz-kita-surface-navy)",
+    );
+    expect(tokenValue(dark, "--bz-kita-ink-fill")).toBe("var(--bz-text-1)");
+  });
+
+  it("panel copper and paper text clear AA on the navy", () => {
+    expect(contrast(PANEL_COPPER, SURFACE_NAVY)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast("#fffcf7", SURFACE_NAVY)).toBeGreaterThanOrEqual(4.5);
+    // Guilt: the old on-dark copper step does not on the lighter navy.
+    expect(contrast("#d98a70", SURFACE_NAVY)).toBeLessThan(4.5);
+  });
+
+  it("the portal (my) blocks never mention the rail, the navy or the ink fill", () => {
+    for (const theme of ["operative-light", "operative-dark"]) {
+      const m = globalsCss.match(
+        new RegExp(
+          `\\[data-theme="${theme}"\\]\\[data-product="my"\\]\\s*\\{([\\s\\S]*?)\\n\\}`,
+        ),
+      );
+      expect(m).not.toBeNull();
+      expect(m![1]).not.toContain("--bz-kita-rail");
+      expect(m![1]).not.toContain("--bz-kita-surface-navy");
+      expect(m![1]).not.toContain("--bz-kita-ink-fill");
+    }
   });
 });

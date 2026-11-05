@@ -160,10 +160,10 @@ describe("probe positive controls", () => {
     expect(hoverBg, "hover tint class not found").not.toBeNull();
   });
 
-  it("the band behind the trigger is --bz-text-1", () => {
+  it("the band behind the trigger is --bz-kita-ink-fill", () => {
     // The ground is asserted, not assumed: if the band moves, this fails
     // before any ratio below can pass against the wrong colour.
-    expect(widgetSrc).toContain("bg-[var(--bz-text-1)]");
+    expect(widgetSrc).toContain("bg-[var(--bz-kita-ink-fill)]");
   });
 });
 
@@ -173,7 +173,7 @@ for (const [name, selector] of [
 ] as const) {
   describe(`kita ${name} — Aturan trigger`, () => {
     const block = parseTokens(extractBlock(globalsCss, selector));
-    const ground = hexToRgb(resolve(block, "--bz-text-1"));
+    const ground = hexToRgb(resolve(block, "--bz-kita-ink-fill"));
 
     it("rest-state border clears 3:1 over the band", () => {
       const fg = hexToRgb(resolve(block, border![1]));
