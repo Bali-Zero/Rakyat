@@ -154,7 +154,7 @@ class WhatsAppService:
             WhatsApp API response
 
         Note:
-            Phone format: "6284000220000" (no + prefix)
+            Phone format: "6281234567890" (no + prefix)
             WhatsApp has 4096 char limit per message
         """
         if not self.token:

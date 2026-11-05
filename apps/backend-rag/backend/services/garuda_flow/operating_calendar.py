@@ -2,7 +2,7 @@
 
 Owner ruling (2026-07-27, Zero): a VOA is issued in a few hours, so the
 online issuance funnel may accept a request up to the day BEFORE departure —
-counting that Bali Zero's systems are closed on Saturday, Detali, AND
+counting that Bali Zero's systems are closed on Saturday, Sunday, AND
 Indonesian national holidays / cuti bersama (follow-up ruling, same
 session). This module is the enforceable calendar behind that ruling: it
 tells the intake layer which calendar days Bali Zero's systems are open, and
@@ -99,7 +99,7 @@ COVERAGE_END_HORIZON_WARNING_DAYS: int = 45
 
 
 def is_open(day: date) -> bool:
-    """True unless ``day`` is a Saturday, a Detali, or any decreed calendar
+    """True unless ``day`` is a Saturday, a Sunday, or any decreed calendar
     date — BOTH kinds (`libur_nasional` and `cuti_bersama`): Bali Zero's own
     systems close for cuti bersama too, and treating it as closed is the
     conservative direction here (it can only ever push a computed cutoff
@@ -110,7 +110,7 @@ def is_open(day: date) -> bool:
     """
     if day < COVERAGE_START or day > COVERAGE_END:
         return False
-    if day.weekday() >= 5:  # Monday=0 ... Saturday=5, Detali=6
+    if day.weekday() >= 5:  # Monday=0 ... Saturday=5, Sunday=6
         return False
     return day not in _CLOSED_DATES
 

@@ -146,7 +146,7 @@ class JourneyTemplatesService:
             "steps": [
                 {
                     "step_id": "due_diligence",
-                    "title": "Zaz Xepabequr",
+                    "title": "Due Diligence",
                     "description": "Verify property ownership, permits, and legal status",
                     "prerequisites": [],
                     "required_documents": ["Property certificate (SHM/HGB)", "SPPT PBB"],

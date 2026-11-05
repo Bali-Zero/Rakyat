@@ -22,8 +22,8 @@ async def run():
                 "pb_umku": [
                     "Sertifikat Hak Guna Bangunan (HGB) - per entità legali",
                     "Hak Pakai - per stranieri (diritto d'uso/possesso)",
-                    "Persetujuan Bangunan Gedung (JEL) - ex IMB",
-                    "Sertifikat Laik Fungsi (GEQ)",
+                    "Persetujuan Bangunan Gedung (PBG) - ex IMB",
+                    "Sertifikat Laik Fungsi (SLF)",
                 ],
                 "obligations": [
                     "Laporan LKPM (Laporan Kegiatan Penanaman Modal) trimestrale",

@@ -531,7 +531,7 @@ rilascio del Paspor Dinas, comunicare che:
 Per comunicare con il cliente in modo chiaro e professionale, usare
 le seguenti terminologie:
 
-  VANELARA               | INDONESIANO / INGLESE
+  ITALIANO               | INDONESIANO / INGLESE
   ───────────────────────────────────────────────────────────────────
   Passaporto di servizio | Paspor Dinas / Service Passport
   Ordine di missione     | Surat Tugas / Mission Order

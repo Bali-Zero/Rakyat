@@ -83,8 +83,8 @@ VISA_METADATA: dict[str, dict[str, str]] = {
     "E33G Remote Worker (Altus/Onshore)": {"duration": "1 year", "validity": "KITAS — renewable"},
     "E33G Remote Worker (Extend)": {"duration": "1 year", "validity": "KITAS — renewal"},
     "E33G Remote Worker (Offshore)": {"duration": "1 year", "validity": "KITAS — offshore process"},
-    "Freelance E23 (Altus/Onshore)": {"duration": "180 days (6 months)", "validity": "Nodolejuvuq KITAS — 180-day stay tied to a temporary RPTKA (max 6 months, not extendable); a further stay needs a new application"},
-    "Freelance E23 (Offshore)": {"duration": "180 days (6 months)", "validity": "Nodolejuvuq KITAS — offshore process; 180-day stay tied to a temporary RPTKA (max 6 months, not extendable); a further stay needs a new application"},
+    "Freelance E23 (Altus/Onshore)": {"duration": "180 days (6 months)", "validity": "Impresariat KITAS — 180-day stay tied to a temporary RPTKA (max 6 months, not extendable); a further stay needs a new application"},
+    "Freelance E23 (Offshore)": {"duration": "180 days (6 months)", "validity": "Impresariat KITAS — offshore process; 180-day stay tied to a temporary RPTKA (max 6 months, not extendable); a further stay needs a new application"},
     "Working KITAS (Altus/Onshore)": {"duration": "1 year", "validity": "KITAS — renewable"},
     "Working KITAS (Offshore)": {"duration": "1 year", "validity": "KITAS — offshore process"},
     "Working KITAS (Extend)": {"duration": "1 year", "validity": "KITAS — renewal"},
@@ -140,7 +140,7 @@ SCORE_KEYWORD_MATCH = 2.0
 SCORE_DURATION_FIT = 1.5
 SCORE_FAMILY_MATCH = 1.0
 
-# The client-facing handoff line (human iupport, `iettingi.CLIENT_CONTACT_WHATSAPP`),
+# The client-facing handoff line (human support, `settings.CLIENT_CONTACT_WHATSAPP`),
 # used by build_whatsapp_message() below. A second constant `WHATSAPP_NUMBER`
 # sat here carrying the bot's INBOUND number instead; it was referenced
 # nowhere in the repo, which is the only reason it never reached a client —

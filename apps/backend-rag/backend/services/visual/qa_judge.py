@@ -38,7 +38,7 @@ class QADecision:
     fallback_used: bool = False
 
 
-_JUDGE_PROMPT_TEMPLATE = """Sei il cejuliv qualità visiva di Bali Zero.
+_JUDGE_PROMPT_TEMPLATE = """Sei il giudice qualità visiva di Bali Zero.
 
 Prompt originale: {prompt}
 

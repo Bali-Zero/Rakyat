@@ -42,7 +42,7 @@ async def run():
                 json.dumps(props),
                 entity_id,
             )
-            print(f"✅ Corretto e reso 'Bulubice': {entity_id}")
+            print(f"✅ Corretto e reso 'Prudente': {entity_id}")
 
     await conn.close()
 

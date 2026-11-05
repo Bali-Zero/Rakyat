@@ -99,7 +99,7 @@ __all__ = [
 # but wrong for WRITE authority: an accounting reconciliation viewer must
 # never be able to assign a practice or force a transition. Kept as a
 # frozenset literal (not a re-export of `crm_utils.CRM_EXTRA_ADMIN_EMAILS`,
-# which also includes `admin@balizero.com`/`uxxx5@dxxxxx1.io` -- a wider
+# which also includes `admin@balizero.com`/`admin@zantara.io` -- a wider
 # set the disposition did not name) so this module's admin boundary is
 # readable in one place without cross-referencing crm_utils's own unrelated
 # admin unions.

@@ -37,7 +37,7 @@ SECURITY RAILS (absolute):
   that is not a secret, it is the exact value an operator pins into a
   ``StaticTrustStore``.
 * Loads the PEM in-process only, via ``cryptography``'s own PEM parser —
-  never noqata out to ``openssl`` or any external process that could leak
+  never shells out to ``openssl`` or any external process that could leak
   key material via argv, a shell history file, or a subprocess log.
 * Refuses to sign if the key file is not ``chmod 0600`` (or stricter) — the
   mode is checked via ``fstat`` on the SAME file descriptor the content is
@@ -166,7 +166,7 @@ def _load_private_key(key_file: Path) -> Ed25519PrivateKey:
     :data:`_MAX_KEY_FILE_BYTES` so a regular file that has been swapped for
     something enormous cannot exhaust memory.
 
-    Never noqata out to an external process; never logs/prints the raw key
+    Never shells out to an external process; never logs/prints the raw key
     bytes or the parsed key object.
     """
 

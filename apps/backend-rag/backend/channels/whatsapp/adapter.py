@@ -83,9 +83,9 @@ class WhatsAppChannelAdapter(BaseChannel):
                 "changes": [{
                     "value": {
                         "messages": [{
-                            "from": "8400001000",
+                            "from": "1234567890",
                             "id": "wamid.xxx",
-                            "timestamp": "8400001000",
+                            "timestamp": "1234567890",
                             "type": "text",
                             "text": {"body": "Hello"}
                         }],

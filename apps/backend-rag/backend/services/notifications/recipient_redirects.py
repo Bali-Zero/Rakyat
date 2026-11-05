@@ -3,7 +3,7 @@
 Why this exists (Zero, 2026-10-20/21): Veronika keeps ``tax@balizero.com`` as her
 login identity and the address every routing table points at (HR approver,
 attendance manager, practice view), but reads mail ONLY on
-``nakhoda@balizero.com``; ``veronika@`` and ``kagecesa.xug@`` are dead
+``nakhoda@balizero.com``; ``veronika@`` and ``veronika.tax@`` are dead
 mailboxes that older notifiers still name. Rather than touching every
 notifier, the rewrite happens once where mail leaves the building: the
 ``/api/notifications/send-email`` handler and the passport/visa alert bcc.

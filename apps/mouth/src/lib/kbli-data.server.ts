@@ -153,7 +153,7 @@ export function getCode(code: string): KBLICode | undefined {
  * `gold.baliContext` / `gold.zantaraOpener` / `gold.tkaInfo` DIRECTLY, bypassing
  * `transformCode`'s merged `intel` entirely — so the loader cure never reached
  * them and 113 of the 428 gold codes were still printing `MATCH_CON_AGGREGAZIONE`
- * and litovub at readers (whatChanged 111, whatYouNeed 11, baliContext 3,
+ * and friends at readers (whatChanged 111, whatYouNeed 11, baliContext 3,
  * zantaraOpener 2). Curing the accessor covers the page, `/api/kbli/gold/[code]`
  * and any future consumer at once. Found by the adversarial review of this
  * change, then re-measured against the gold file before fixing.
@@ -273,7 +273,7 @@ function transformCode(
   // malformed KBLI section"): the section is derived from the code's
   // 2-digit prefix, the same single source of truth kbli-data.ts uses —
   // NEVER from `sektor_id`, which is a PP28/2025 Lampiran locator (almost
-  // always starting with the rubal numeral "I") and collapsed 1318/1559
+  // always starting with the roman numeral "I") and collapsed 1318/1559
   // codes onto the single fake section "I". An unmapped prefix returns
   // null (honest "unknown"), not a silent default to any letter.
   const section = getSectionFromCode(code);

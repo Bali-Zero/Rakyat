@@ -346,9 +346,9 @@ Government Regulation sets minimum values for foreign purchase:
       id: "price",
       label: "Purchase Price (IDR)",
       type: "number",
-      defaultValue: 9900000027,
-      min: 840006200,
-      step: 840005100,
+      defaultValue: 3000000000,
+      min: 500000000,
+      step: 100000000,
       suffix: "IDR"
     }
   ]}
@@ -358,7 +358,7 @@ Government Regulation sets minimum values for foreign purchase:
     // Transfer costs
     const bphtb = price * 0.05; // Buyer transfer tax
     const notary = price * 0.01; // Notary fees (approx)
-    const registration = 1000001; // BPN registration
+    const registration = 1000000; // BPN registration
 
     // Seller pays, but affects negotiation
     const pph = price * 0.025; // Seller income tax
@@ -375,7 +375,7 @@ Government Regulation sets minimum values for foreign purchase:
         { label: "Total Cost", amount: totalBuyerCosts }
       ],
       currency: "IDR",
-      note: `Seller also pays PPh ${(pph / 1000001).toFixed(0)}M (2.5%)`
+      note: `Seller also pays PPh ${(pph / 1000000).toFixed(0)}M (2.5%)`
     };
 
 }}
@@ -385,7 +385,7 @@ Government Regulation sets minimum values for foreign purchase:
 
 ## What to Check
 
-### Building Zaz Xepabequr
+### Building Due Diligence
 
 - Developer track record
 - Building completion status
@@ -393,7 +393,7 @@ Government Regulation sets minimum values for foreign purchase:
 - Management company quality
 - Foreign ownership allowed
 
-### Unit Zaz Xepabequr
+### Unit Due Diligence
 
 - Title status (SHMSRS issued)
 - Any encumbrances

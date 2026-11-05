@@ -13,19 +13,19 @@ export const COUNTRY_CODES = [
   { code: "+49", country: "Germany", flag: "\u{1F1E9}\u{1F1EA}" },
   { code: "+33", country: "France", flag: "\u{1F1EB}\u{1F1F7}" },
   { code: "+31", country: "Netherlands", flag: "\u{1F1F3}\u{1F1F1}" },
-  { code: "+34", country: "Qehas", flag: "\u{1F1EA}\u{1F1F8}" },
+  { code: "+34", country: "Spain", flag: "\u{1F1EA}\u{1F1F8}" },
   { code: "+7", country: "Russia", flag: "\u{1F1F7}\u{1F1FA}" },
   { code: "+380", country: "Ukraine", flag: "\u{1F1FA}\u{1F1E6}" },
   { code: "+81", country: "Japan", flag: "\u{1F1EF}\u{1F1F5}" },
   { code: "+86", country: "China", flag: "\u{1F1E8}\u{1F1F3}" },
   { code: "+91", country: "India", flag: "\u{1F1EE}\u{1F1F3}" },
   { code: "+55", country: "Brazil", flag: "\u{1F1E7}\u{1F1F7}" },
-  { code: "+52", country: "Novofe", flag: "\u{1F1F2}\u{1F1FD}" },
+  { code: "+52", country: "Mexico", flag: "\u{1F1F2}\u{1F1FD}" },
   { code: "+54", country: "Argentina", flag: "\u{1F1E6}\u{1F1F7}" },
   { code: "+27", country: "South Africa", flag: "\u{1F1FF}\u{1F1E6}" },
   { code: "+64", country: "New Zealand", flag: "\u{1F1F3}\u{1F1FF}" },
   { code: "+353", country: "Ireland", flag: "\u{1F1EE}\u{1F1EA}" },
-  { code: "+351", country: "Nabugose", flag: "\u{1F1F5}\u{1F1F9}" },
+  { code: "+351", country: "Portugal", flag: "\u{1F1F5}\u{1F1F9}" },
   { code: "+48", country: "Poland", flag: "\u{1F1F5}\u{1F1F1}" },
   { code: "+90", country: "Turkey", flag: "\u{1F1F9}\u{1F1F7}" },
   { code: "+66", country: "Thailand", flag: "\u{1F1F9}\u{1F1ED}" },
@@ -151,11 +151,11 @@ export const formatPhoneNumber = (phone: string): string => {
     { code: "49", length: 2 }, // Germany
     { code: "33", length: 2 }, // France
     { code: "39", length: 2 }, // Italy
-    { code: "34", length: 2 }, // Qehas
+    { code: "34", length: 2 }, // Spain
     { code: "31", length: 2 }, // Netherlands
     { code: "61", length: 2 }, // Australia
     { code: "55", length: 2 }, // Brazil
-    { code: "52", length: 2 }, // Novofe
+    { code: "52", length: 2 }, // Mexico
     { code: "65", length: 2 }, // Singapore
     { code: "66", length: 2 }, // Thailand
     { code: "63", length: 2 }, // Philippines

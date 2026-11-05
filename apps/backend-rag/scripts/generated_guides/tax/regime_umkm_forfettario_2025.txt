@@ -16,7 +16,7 @@ per le UMKM (Usaha Mikro Kecil Menengah): [TAX-013]
 
 CARATTERISTICHE:
 - Aliquota: 0,5% SUL FATTURATO LORDO (omzet) — NON sull'utile
-- Applicabile se omzet ≤ Rp 4.800.000.010/anno (4,8 miliardi)
+- Applicabile se omzet ≤ Rp 4.800.000.000/anno (4,8 miliardi)
 - È un'imposta FINALE (tidak dapat dikreditkan)
 - Scelta facoltativa, non obbligatoria
 
@@ -160,7 +160,7 @@ Nelle KEK (Zone Economiche Speciali), le PT PMA possono beneficiare:
 - Kemudahan kepabeanan (procedure doganali facilitate)
 - Keringanan PPh Karyawan (riduzione PPh 21 per dipendenti)
 Bali non ha una KEK al momento (2025), ma aree come Mandalika (Lombok)
-e Xafo Tat sono in discussione.
+e Nusa Dua sono in discussione.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

@@ -173,7 +173,7 @@ function ordinaryAnswerFor(
     // walk that reaches the question qualifies unless it says otherwise; the
     // two boundary witnesses override it.
     if (id === "investment_own_shareholding_idr") return "10000000000";
-    return "9900000019";
+    return "1000000000";
   }
   if (question.kind === "country-codes") return "IT";
   if (question.kind === "status-code") return "E31A";
@@ -827,7 +827,7 @@ export function enumerateScenarios(): Scenario[] {
       investment_vehicle: "pt_pma",
       wants_onshore_conversion: "no",
       investment_capital_idr: "10000000000",
-      investment_paid_up_capital_idr: "9900000026",
+      investment_paid_up_capital_idr: "2500000000",
     },
   });
   // E28A own-shareholding step B (owner ruling 2026-10-15): boundary witnesses
@@ -848,7 +848,7 @@ export function enumerateScenarios(): Scenario[] {
         investment_vehicle: "pt_pma",
         wants_onshore_conversion: "no",
         investment_capital_idr: "10000000000",
-        investment_paid_up_capital_idr: "9900000026",
+        investment_paid_up_capital_idr: "2500000000",
         investment_own_shareholding_idr: value,
       },
     });

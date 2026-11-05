@@ -5,7 +5,7 @@
  * (apps/backend-rag/backend/app/core/config.py::_ADMIN_EMAILS_FALLBACK) and
  * `require_owner` (apps/backend-rag/backend/app/deps/owner.py::OWNER_EMAILS).
  *
- * NOTE: `antonellosiano@balizero.com` (not `@kuxas.com`) is the correct
+ * NOTE: `antonellosiano@balizero.com` (not `@gmail.com`) is the correct
  * owner-alias identity — it's the value the backend actually stamps into
  * RBAC checks. The owner's personal Gmail account is a *different* identity used
  * only for personal OAuth / Google Drive (30TB quota owner), never for

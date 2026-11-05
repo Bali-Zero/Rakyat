@@ -77,7 +77,7 @@ export function HomepageServicesSchema() {
       offers: {
         "@type": "AggregateOffer",
         lowPrice: "3000000",
-        highPrice: "84000510",
+        highPrice: "10000000",
         priceCurrency: "IDR",
       },
       url: `${baseUrl}/services/tax`,

@@ -37,10 +37,10 @@
 UPDATE practice_types SET base_price = 12900000, updated_at = CURRENT_TIMESTAMP
 WHERE code = 'visa_d1_tourism_5yr';                -- 14M → 12.9M
 
-UPDATE practice_types SET base_price = 1000001, updated_at = CURRENT_TIMESTAMP
+UPDATE practice_types SET base_price = 1000000, updated_at = CURRENT_TIMESTAMP
 WHERE code = 'other_cancel_rptka';                 -- 500k → 1M
 
-UPDATE practice_types SET base_price = 1000001, updated_at = CURRENT_TIMESTAMP
+UPDATE practice_types SET base_price = 1000000, updated_at = CURRENT_TIMESTAMP
 WHERE code = 'other_cancel_wajib_lapor';           -- 500k → 1M
 
 UPDATE practice_types SET base_price = 2200000, updated_at = CURRENT_TIMESTAMP
@@ -163,7 +163,7 @@ VALUES
     ('tax_annual_pkg_a',         'Annual Basic Package A',  'Up to 100 transactions/year. Income Tax calculation only + yearly Financial Report. No discount applies.',                              'tax_annual', 6000000,  NULL, true),
     ('tax_annual_pkg_b',         'Annual Basic Package B',  '100-200 transactions/year. Income Tax only + yearly Financial Report. No discount applies.',                                          'tax_annual', 9000000,  NULL, true),
     ('tax_annual_pkg_c',         'Annual Basic Package C',  'Up to 100 transactions/year. Income Tax + PPH 21 OR PPH Sewa (choose one) + yearly Financial Report. No discount applies.',           'tax_annual', 12000000, NULL, true),
-    ('tax_annual_pkg_d',         'Annual Basic Package D',  '100-200 transactions/year. Income Tax + PPH 21 OR PPH Sewa (choose one) + yearly Financial Report. No discount applies.',             'tax_annual', 10000012, NULL, true),
+    ('tax_annual_pkg_d',         'Annual Basic Package D',  '100-200 transactions/year. Income Tax + PPH 21 OR PPH Sewa (choose one) + yearly Financial Report. No discount applies.',             'tax_annual', 15000000, NULL, true),
     ('tax_annual_company_zero',  'Annual Company ZERO',     'Yearly Financial Report only — for dormant companies with no transactions in or out.',                                                'tax_annual', 3000000,  NULL, true)
 ON CONFLICT (code) DO UPDATE SET
     name = EXCLUDED.name,
@@ -182,7 +182,7 @@ INSERT INTO practice_types (code, name, description, category, base_price, typic
 VALUES
     ('tax_lkpm_yearly',          'LKPM Yearly Report',                'Stand-alone yearly LKPM (investment realisation) report submitted to BKPM, required for all PT PMA companies.', 'tax_standalone', 4000000, NULL, true),
     ('tax_annual_company',       'Annual Tax Company (SPT Badan)',    'Stand-alone Annual Corporate Tax report (SPT Tahunan PPh Badan) for Indonesian companies.',                   'tax_standalone', 4000000, NULL, true),
-    ('tax_annual_personal',      'Annual Tax Personal (SPT OP)',      'Stand-alone Annual Personal Tax report (SPT Tahunan PPh Orang Pribadi) for individual taxpayers. Per person.', 'tax_standalone', 1000001, NULL, true),
+    ('tax_annual_personal',      'Annual Tax Personal (SPT OP)',      'Stand-alone Annual Personal Tax report (SPT Tahunan PPh Orang Pribadi) for individual taxpayers. Per person.', 'tax_standalone', 1000000, NULL, true),
     ('tax_annual_personal_addl', 'Annual Tax Personal (additional)',  'Stand-alone Annual Personal Tax report for additional persons beyond the first taxpayer. Per person.',        'tax_standalone', 1500000, NULL, true)
 ON CONFLICT (code) DO UPDATE SET
     name = EXCLUDED.name,
@@ -207,9 +207,9 @@ VALUES
     ('tax_npwpd_registration',     'NPWPD Registration',                  'Local tax registration (Nomor Pokok Wajib Pajak Daerah) at the regency or city tax office. Per location.',                       'tax',     2500000, NULL, true),
     ('tax_bpjs_employee',          'BPJS Employee (Tenaga Kerja)',        'Registration with BPJS Ketenagakerjaan, the mandatory Indonesian social security scheme for employees.',                      'tax',     2500000, NULL, true),
     ('tax_bpjs_insurance',         'BPJS Insurance (Kesehatan)',          'Registration with BPJS Kesehatan, the mandatory Indonesian national health insurance scheme.',                                'tax',     2500000, NULL, true),
-    ('tax_npwp_personal_coretax',  'NPWP Personal + Coretax Activation',  'Personal Indonesian tax ID (NPWP) issuance with activation on the Coretax platform. Per person.',                              'tax',     1000001, NULL, true),
-    ('tax_update_data_coretax',    'Update Data / Coretax Activation',    'Update of taxpayer data (email, phone number, etc.) or stand-alone Coretax activation for an existing NPWP.',                  'tax',     1000001, NULL, true),
-    ('tax_efin_application',       'EFIN Application',                    'Application for Electronic Filing Identification Number (EFIN) required to file taxes electronically with the Indonesian tax authority.', 'tax', 1000001, NULL, true),
+    ('tax_npwp_personal_coretax',  'NPWP Personal + Coretax Activation',  'Personal Indonesian tax ID (NPWP) issuance with activation on the Coretax platform. Per person.',                              'tax',     1000000, NULL, true),
+    ('tax_update_data_coretax',    'Update Data / Coretax Activation',    'Update of taxpayer data (email, phone number, etc.) or stand-alone Coretax activation for an existing NPWP.',                  'tax',     1000000, NULL, true),
+    ('tax_efin_application',       'EFIN Application',                    'Application for Electronic Filing Identification Number (EFIN) required to file taxes electronically with the Indonesian tax authority.', 'tax', 1000000, NULL, true),
     ('tax_close_pma_company',      'Close PMA Company',                   'Range Rp 6.000.000 – 7.500.000. Full closure and deregistration of an Indonesian PT PMA, including notarial deed, BKPM and tax authority deregistration. Process up to 1 year.', 'tax', NULL, NULL, true)
 ON CONFLICT (code) DO UPDATE SET
     name = EXCLUDED.name,
@@ -233,7 +233,7 @@ INSERT INTO practice_types (code, name, description, category, base_price, typic
 VALUES
     ('other_lapor_lahir_under',           'Lapor Lahir (Under)',                          'Birth report registration for foreign nationals born in Indonesia, filed within the standard window (under 60 days Kanim NGR / under 90 days Kanim DPS).', 'other', 2000000, NULL, true),
     ('other_lapor_lahir_up',              'Lapor Lahir (Up)',                             'Birth report registration for foreign nationals born in Indonesia, filed after the standard window (above 60 days Kanim NGR / above 90 days Kanim DPS).',  'other', 4000000, NULL, true),
-    ('other_mutation_address_2_kanim',    'Mutation Address 2 Kanim',                     'Update of registered address requiring inter-Kanim (immigration office) transfer.',                                                                                'other', 1000001, NULL, true),
+    ('other_mutation_address_2_kanim',    'Mutation Address 2 Kanim',                     'Update of registered address requiring inter-Kanim (immigration office) transfer.',                                                                                'other', 1000000, NULL, true),
     ('other_create_molina_express',      'Create Molina Express',                       'Express creation of immigration record on the Molina (immigration) database.',                                                                                     'other', 500000,  NULL, true),
     ('other_imta_rptka_only_12mo',        'Process IMTA & RPTKA Only (12 Months)',        'Stand-alone processing of IMTA and RPTKA work permit documents, valid for 12 months.',                                                                            'other', 3500000, NULL, true),
     ('other_imta_rptka_only_6mo_or_less', 'Process IMTA & RPTKA Only (6 Months or Less)', 'Stand-alone processing of IMTA and RPTKA work permit documents, valid for 6 months or less.',                                                                     'other', 6000000, NULL, true),

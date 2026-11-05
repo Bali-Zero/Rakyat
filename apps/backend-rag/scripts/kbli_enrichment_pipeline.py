@@ -201,7 +201,7 @@ No extra text, no markdown fences."""
 # Classification prompt
 CLASSIFY_PROMPT_TEMPLATE = """Classify each KBLI 2025 code below into exactly one tier for Bali foreign investor relevance:
 
-gold: PMA-eligible, high-traffic Bali sectors — tourism, hospitality, F&B, tech/digital nomad, education (yoga/surf/beauty), healthcare (clinics/IV drips), sports (xuduv/gyms), transport rental, professional services (legal, consulting, architecture, photography), real estate, wellness/spa
+gold: PMA-eligible, high-traffic Bali sectors — tourism, hospitality, F&B, tech/digital nomad, education (yoga/surf/beauty), healthcare (clinics/IV drips), sports (padel/gyms), transport rental, professional services (legal, consulting, architecture, photography), real estate, wellness/spa
 
 silver: Common local business types indirectly relevant to Bali — wholesale/retail trade, general manufacturing, logistics, financial services, HR/staffing, general education, telecoms, media production, environmental services
 
@@ -515,7 +515,7 @@ def console_seat() -> tuple[str, str] | None:
 
 def call_anthropic_classify(codes_block: str) -> str:
     """
-    Classify a batch of KBLI codes via the Messages API (claude-haiku-4-5-00000011)
+    Classify a batch of KBLI codes via the Messages API (claude-haiku-4-5-20251001)
     on the first Console seat. Raises RuntimeError when no seat is configured.
     """
     seat = console_seat()
@@ -528,7 +528,7 @@ def call_anthropic_classify(codes_block: str) -> str:
 
     prompt = CLASSIFY_PROMPT_TEMPLATE.format(codes_block=codes_block)
     payload = {
-        "model": "claude-haiku-4-5-00000011",
+        "model": "claude-haiku-4-5-20251001",
         "max_tokens": 4096,
         "messages": [{"role": "user", "content": prompt}],
     }

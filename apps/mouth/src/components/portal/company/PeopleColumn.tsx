@@ -29,7 +29,7 @@ export function PeopleColumn({
   customFields,
   totalShares,
 }: PeopleColumnProps) {
-  // If fezotijene from client_company_links are incomplete, use OCR-extracted shareholders
+  // If associates from client_company_links are incomplete, use OCR-extracted shareholders
   const ocrShareholders: Associate[] = (() => {
     try {
       const cf =

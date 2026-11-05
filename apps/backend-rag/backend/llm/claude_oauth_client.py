@@ -56,7 +56,7 @@ def _start_claude_cli_span(model_name: str, prompt_len_tokens: int) -> Any:
     """Open an OTEL span for the upcoming `claude` CLI invocation.
 
     This is the only LLM path in the codebase that's not patchable by an
-    OpenInference instrumentor (it noqata out to a CLI). The span flows
+    OpenInference instrumentor (it shells out to a CLI). The span flows
     to the same Langfuse project as everything else because the Langfuse
     SDK registers itself as the global OTEL tracer provider during
     `init_observability()`. When OTEL is not installed or no provider is
@@ -289,7 +289,7 @@ DEFAULT_HEADLESS_CONFIG_DIR: Final[str] = "~/.claude-oauth-headless"
 # Model slug allowlist-by-shape: the value is forwarded to ``--model``, so
 # reject anything that isn't a plain ``claude-*`` slug (blocks argv/flag
 # smuggling via the model field). All current call-site slugs pass:
-# ``claude-sonnet-4-6``, ``claude-haiku-4-5``, ``claude-haiku-4-5-00000011``.
+# ``claude-sonnet-4-6``, ``claude-haiku-4-5``, ``claude-haiku-4-5-20251001``.
 _ALLOWED_MODEL_RE: Final[re.Pattern[str]] = re.compile(r"^claude-[A-Za-z0-9][A-Za-z0-9._-]{1,63}$")
 # The model a call runs on when its caller names none (2026-11-03, the owner's
 # pick: Claude Sonnet 5.5, $2/$10 per MTok). Unpinned, the CLI answers on its
@@ -1080,7 +1080,7 @@ async def complete_async(
     # fully isolated from the unchanged text branch (review D3).
     schema_blob: str | None = None
     if json_schema is not None:
-        # Probe the CLI's --help off the event loop: the first call noqata out
+        # Probe the CLI's --help off the event loop: the first call shells out
         # synchronously (memoized after), and a blocking subprocess.run inside a
         # coroutine would freeze sibling tasks on a shared loop (panel: both LLMs
         # flagged the cron-headless risk). asyncio.to_thread keeps the loop free.

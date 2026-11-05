@@ -83,7 +83,7 @@ def migration_dsn_is_dedicated(database_url: str | None = None) -> bool:
     explicit LEGACY override therefore stays legacy even while
     `MIGRATION_DATABASE_URL` is set. Before this, a globally configured
     migrator DSN imposed dedicated-role checks on a connection that was never
-    the migrator and could not satisfy them (Tomen, 2026-09-11).
+    the migrator and could not satisfy them (Astra, 2026-09-11).
 
     An ALTERNATE dedicated URL -- a second migrator DSN that is not the
     configured one -- is not distinguishable from a legacy one by inspecting

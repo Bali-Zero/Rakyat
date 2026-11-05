@@ -1002,7 +1002,7 @@ def _change_belongs_to_meta_inbox(change: WhatsAppChange) -> bool:
 
 
 # 2026-08-26 same-WABA finding (Zero, via WhatsApp Manager, relayed by the
-# I DUE BOT team lead): the team-bot number +62 840-0042-00000 lives on the
+# I DUE BOT team lead): the team-bot number +62 881-0383-18896 lives on the
 # SAME WABA and the SAME Meta app as the public client number above. One app
 # means one webhook, two numbers — so this router's single endpoint receives
 # BOTH numbers' deliveries and must tell them apart itself; Meta gives no

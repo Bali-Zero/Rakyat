@@ -62,7 +62,7 @@ except ImportError:
 
 # We no longer use ``langchain_anthropic``. Claude reasoning now goes
 # through ``backend.llm.claude_oauth_langchain.build_claude_oauth_chat_model``,
-# which noqata out to ``claude -p`` with Max OAuth tokens. Imported lazily
+# which shells out to ``claude -p`` with Max OAuth tokens. Imported lazily
 # inside :func:`get_llm_for_reasoning` so LangChain Core is only loaded
 # when needed.
 

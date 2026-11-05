@@ -17,8 +17,8 @@ from datetime import datetime, timedelta
 
 secret = "$JWT_SECRET_KEY"
 payload = {
-    "sub": "uxx8@dxxxxxxx1.com",
-    "email": "uxx8@dxxxxxxx1.com",
+    "sub": "test@nuzantara.com",
+    "email": "test@nuzantara.com",
     "iat": datetime.utcnow(),
     "exp": datetime.utcnow() + timedelta(hours=24),
     "type": "access"
@@ -37,8 +37,8 @@ import jwt
 from datetime import datetime, timedelta
 secret = "$JWT_SECRET_KEY"
 payload = {
-    "sub": "uxx8@dxxxxxxx1.com",
-    "email": "uxx8@dxxxxxxx1.com",
+    "sub": "test@nuzantara.com",
+    "email": "test@nuzantara.com",
     "iat": datetime.utcnow(),
     "exp": datetime.utcnow() + timedelta(hours=24),
     "type": "access"

@@ -60,7 +60,7 @@ against the full 31-record log): **0 `NOT_COMPILABLE`**, 22 `VERIFIED`, 4 `PROSE
 ### D1 — Tourism Multiple Entry
 
 **CL-D1-01 — Purpose/scope.** D1 authorizes multiple tourism-purpose entries for recreation, personal
-development, learning about tourist attractions (incl. yacht tourism), visiting litovub/family, transit, or
+development, learning about tourist attractions (incl. yacht tourism), visiting friends/family, transit, or
 MICE attendance.
 - Source: NB-2 `0c7e2212-...` (**Kepmen M.IP-08.GR.01.01/2025 — Klasifikasi Visa**, `type: pdf`,
   primary/official) + `2d2ec0af-...` (`nb2_visa_types_final.txt`, internal guide, corroborating).

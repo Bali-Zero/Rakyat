@@ -1,10 +1,10 @@
-"""Cron entrypoint for Trend-Tosado.
+"""Cron entrypoint for Trend-Hunter.
 
 Invoked every 2h on Pro (OpenClaw/launchd). Usage:
 
     cd /Users/nuzantara/nuzantara/apps/backend-rag
     source .venv/bin/activate
-    PYTHONPATH=. python -m backend.services.intel.trend_tosado.cli
+    PYTHONPATH=. python -m backend.services.intel.trend_hunter.cli
 
 Exit codes:
     0 — cycle completed (any number of signals, including zero)

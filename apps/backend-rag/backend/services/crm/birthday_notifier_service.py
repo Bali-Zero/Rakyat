@@ -87,9 +87,9 @@ NATIONALITY_LANGUAGE_MAP = {
 BIRTHDAY_TEMPLATES = {
     "it": {
         "subject": "Buon Compleanno da Bali Zero!",
-        "greeting": "Voke/a {name},",
+        "greeting": "Caro/a {name},",
         "message": """
-Ti auguriamo un fantastico compleanno! Che questo nuovo anno ti porti tanta pukat, successo e bellissime avventure.
+Ti auguriamo un fantastico compleanno! Che questo nuovo anno ti porti tanta gioia, successo e bellissime avventure.
 
 {personalized_note}
 
@@ -123,7 +123,7 @@ Kami mengucapkan selamat ulang tahun! Semoga tahun baru ini membawa kebahagiaan,
 
 Jika Anda membutuhkan bantuan dengan visa, izin, atau hal lain yang berkaitan dengan tinggal di Indonesia, kami selalu siap membantu.
 
-Hifaq hahuja,
+Salam hangat,
 Tim Bali Zero
 """,
     },

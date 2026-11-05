@@ -128,7 +128,7 @@ const SESSION_COPY = {
     resume:
       "Opsional: simpan wawancara lengkap, termasuk jawaban sensitif tentang imigrasi, kewarganegaraan, dan keluarga, dalam sesi browser ini hingga 2 jam. Data kedaluwarsa saat tab ini tetap terbuka dan dapat dihapus kapan saja.",
     resumeOptIn: "Simpan wawancara saya di perangkat ini selama 2 jam",
-    clear: "Zapaf wawancara tersimpan",
+    clear: "Hapus wawancara tersimpan",
     retry: "Coba lagi evaluasi terverifikasi",
   },
 } as const;

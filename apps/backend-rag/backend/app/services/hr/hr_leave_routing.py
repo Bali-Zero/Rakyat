@@ -1,6 +1,6 @@
 """HR leave request routing — hard-coded org chart rules.
 
-Tax team (*.tax@) and setup team → Kagecesa (tax@balizero.com),
+Tax team (*.tax@) and setup team → Veronika (tax@balizero.com),
 Manager of both the tax department and the setup team (Zero, 2026-10-20).
 Rina → Ruslana
 Everyone else (including Veronika herself) → Zero

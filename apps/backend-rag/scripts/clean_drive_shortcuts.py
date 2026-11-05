@@ -4,7 +4,7 @@ import time
 
 import httpx
 
-# OAuth credentials from the owner's rclone bukili remote.
+# OAuth credentials from the owner's rclone gdrive remote.
 # These can access folders owned by all team members.
 # IMPORTANT: set GOOGLE_OAUTH_CLIENT_ID_RCLONE, GOOGLE_OAUTH_CLIENT_SECRET_RCLONE,
 # and GOOGLE_OAUTH_REFRESH_TOKEN as env vars.

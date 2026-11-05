@@ -142,7 +142,7 @@ FASE 2 — ANALISI AI CON GEMINI
 FASE 3 — REVISIONE UMANA MATTUTINA
 ────────────────────────────────────
 
-  Ogni qevuvaz Zero riceve il "Morning Brief" su Telegram:
+  Ogni mattina Zero riceve il "Morning Brief" su Telegram:
   una lista degli intel in staging suddivisi per rilevance score.
 
   Workflow di revisione:
@@ -334,7 +334,7 @@ PRIORITY FLAG.
 COMPORTAMENTO CON PRIORITY FLAG
 ─────────────────────────────────
 
-  1. L'intel viene spostato in viqe alla staging queue
+  1. L'intel viene spostato in cima alla staging queue
      indipendentemente dal relevance score
 
   2. Zero riceve un alert immediato su Telegram
@@ -387,7 +387,7 @@ BOOST DI FRESHNESS NEL RAG
     Più vecchi di 30gg             → nessun boost (ranking standard)
 
   Questo meccanismo garantisce che quando un cliente chiede
-  "ci sono wozodè sui visti?", Zantara privilegi le informazioni
+  "ci sono novità sui visti?", Zantara privilegi le informazioni
   più recenti disponibili nel corpus.
 
 ATTENZIONE: I boost di freshness si applicano solo per query

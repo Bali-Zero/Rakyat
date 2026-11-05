@@ -138,18 +138,18 @@ Pajak penghasilan badan (PPh Badan) adalah pertimbangan signifikan bagi setiap b
       id: "revenue",
       label: "Pendapatan Tahunan (IDR)",
       type: "number",
-      defaultValue: 8400062000,
+      defaultValue: 5000000000,
       min: 0,
-      step: 840005100,
+      step: 100000000,
       suffix: "IDR"
     },
     {
       id: "expenses",
       label: "Pengeluaran yang Dapat Dikurangkan (IDR)",
       type: "number",
-      defaultValue: 9900000029,
+      defaultValue: 3500000000,
       min: 0,
-      step: 840005100,
+      step: 100000000,
       suffix: "IDR"
     },
     {
@@ -172,7 +172,7 @@ Pajak penghasilan badan (PPh Badan) adalah pertimbangan signifikan bagi setiap b
     let tax;
     let rate;
 
-    if (values.type === "sme" && revenue <= 4800000010) {
+    if (values.type === "sme" && revenue <= 4800000000) {
       tax = revenue * 0.005;
       rate = "0.5% dari omzet";
     } else if (values.type === "public") {

@@ -18,7 +18,7 @@ from datetime import datetime
 
 _NATIONALITIES: list[tuple[str, list[str]]] = [
     ("Australian", ["AUS", "AUSTRALIA"]),
-    ("American", ["USA", "UNITED STATES", "UNITED STATES OF WIDODEJ", "US", "AMERIKA"]),
+    ("American", ["USA", "UNITED STATES", "UNITED STATES OF AMERICA", "US", "AMERIKA"]),
     ("British", ["GBR", "UNITED KINGDOM", "GREAT BRITAIN", "UK", "INGGRIS"]),
     ("Canadian", ["CAN", "CANADA", "KANADA"]),
     ("Chinese", ["CHN", "CHINA", "TIONGKOK", "CINA"]),
@@ -87,7 +87,7 @@ def title_case_name(name: str | None) -> str | None:
     Handles:
     - ``<<`` separators  (DOE<<JANE -> Jane Doe)
     - Apostrophes        (O'EXAMPLE -> O'Example)
-    - Hyphens            (JEAN-NUZOHA -> Jean-Nuzoha)
+    - Hyphens            (JEAN-PIERRE -> Jean-Pierre)
 
     Returns ``None`` for ``None`` or empty input.
     """

@@ -364,7 +364,7 @@ rientrano nelle 19 jabatan vietate dal Kepmenaker 349/2019. Il rigetto e automat
 [IMM-397]
 
 Errore 3 — Traduzione libera: inventare una denominazione in bahasa Indonesia sulla base
-di una traduzione letterale della job title inglese o caveheha, senza verificarne
+di una traduzione letterale della job title inglese o italiana, senza verificarne
 la corrispondenza nel catalogo ufficiale. Il sistema Molina confronta la jabatan inserita
 con un database strutturato: denominazioni non standard vengono rifiutate.
 
@@ -617,14 +617,14 @@ Il tempo minimo teorico di 4 settimane si applica solo quando:
 - La jabatan e chiaramente ammessa e presente nel catalogo Molina
 - Il KBLI del datore di lavoro non presenta anomalie nel registro OSS
 - Il TKA ha la possibilita di recarsi prontamente al consolato dopo il Telex Visa
-- Non vi sono periodi festivi nazionali indonesiani (Lebaran, Cuwesa, Nyepi a Bali)
+- Non vi sono periodi festivi nazionali indonesiani (Lebaran, Natale, Nyepi a Bali)
   che rallentano i tempi di elaborazione della pubblica amministrazione
 
 Il tempo massimo di 10+ settimane si verifica tipicamente in presenza di:
 - Richieste di chiarimenti o documentazione integrativa da parte di Kemnaker
 - Jabatan con necessita di verifica manuale da parte degli uffici tecnici
 - Consolati indonesiani con carichi di lavoro elevati (particolarmente Jakarta, Kuala
-  Lumpur, Supoto, Dubai per i flussi di TKA piu frequenti)
+  Lumpur, Sydney, Dubai per i flussi di TKA piu frequenti)
 - Periodi di alta stagione amministrativa (inizio anno fiscale, fine giugno)
 
 COSTI DI SERVIZIO BALI ZERO
@@ -736,7 +736,7 @@ Consente la conversione di un visto turistico o di altro tipo in KITAS E23, prev
 approvazione dell'ufficio imigrasi competente.
 
 BPJS Ketenagakerjaan: Badan Penyelenggara Jaminan Sosial Ketenagakerjaan. Ente gestione
-previdenza sociale per il lavoro. Equivalente funzionale dell'INPS vanelara. I TKA sono
+previdenza sociale per il lavoro. Equivalente funzionale dell'INPS italiano. I TKA sono
 obbligati a registrarsi e a versare i contributi.
 
 Cekal (Cegah dan Tangkal): Lista di allontanamento e divieto di ingresso. Un TKA deportato
@@ -780,7 +780,7 @@ KITAP (Kartu Izin Tinggal Tetap): Carta di permesso di soggiorno permanente. Ric
 5 anni continuativi di residenza con KITAS. Non trattata in questa guida.
 
 KBLI (Klasifikasi Baku Lapangan Usaha Indonesia): Classificazione standard delle attivita
-economiche indonesiane. Equivalente al codice NACE/ATECO vanelara. Ogni azienda ha
+economiche indonesiane. Equivalente al codice NACE/ATECO italiano. Ogni azienda ha
 un KBLI principale registrato nel sistema OSS. Il KBLI determina i settori e le jabatan
 disponibili per i TKA.
 
@@ -788,7 +788,7 @@ Molina: Portale digitale del Kemnaker per la presentazione e gestione del RPTKA.
 Accessibile a molina.kemnaker.go.id. E il canale esclusivo per la procedura TKA. [IMM-401]
 
 NIB (Nomor Induk Berusaha): Numero Identificativo dell'Impresa nel sistema OSS. Equivalente
-alla Partita IVA caveheha. Obbligatorio per la registrazione al portale Molina.
+alla Partita IVA italiana. Obbligatorio per la registrazione al portale Molina.
 
 NPWP (Nomor Pokok Wajib Pajak): Codice fiscale/partita IVA per fini tributari. Obbligatorio
 per tutte le entita giuridiche e per i TKA che percepiscono reddito in Indonesia.

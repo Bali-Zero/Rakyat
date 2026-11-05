@@ -184,7 +184,7 @@ async def get_drive_access_token(conn: asyncpg.Connection) -> str:
 
 SA_PATH = os.path.expanduser("~/Desktop/nuzantara-9ae2756d7fcc.json")
 
-# OAuth credentials from rclone bukili remote (the owner's personal Gmail account)
+# OAuth credentials from rclone gdrive remote (the owner's personal Gmail account)
 # These can access folders owned by all team members.
 # IMPORTANT: set GOOGLE_OAUTH_CLIENT_ID_RCLONE, GOOGLE_OAUTH_CLIENT_SECRET_RCLONE,
 # and GOOGLE_OAUTH_REFRESH_TOKEN as env vars.
@@ -709,7 +709,7 @@ async def process_company(
                 pt_name = f["name"].strip()
                 break
 
-    # 3. Try file names (e.g. AKTA PT Wamo.pdf)
+    # 3. Try file names (e.g. AKTA PT Nils.pdf)
     if not pt_name:
         for f in company_files:
             name_up = f["name"].upper()

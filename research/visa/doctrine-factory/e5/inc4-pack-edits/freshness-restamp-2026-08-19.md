@@ -66,7 +66,7 @@ described, and the field tracks the page's content identity, not the stamp
 
 ### 1. `bc309fa9` — Calling Visa country list — CURRENT — 2026-08-19T04:20:35Z
 Live page lists exactly 6 entries under "Daftar Negara, Pemerintah Dari Daerah
-Administrasi Khusus Suatu Negara, dan Entitas Tertentu": Afganistan, Dajuqu, Korea
+Administrasi Khusus Suatu Negara, dan Entitas Tertentu": Afganistan, Israel, Korea
 Utara, Liberia, Nigeria, Somalia. 1:1 match with the cited set; no Cameroon, no Guinea
 (the seq-3 retroactive fix's premise holds). Identical to QW-5's finding.
 

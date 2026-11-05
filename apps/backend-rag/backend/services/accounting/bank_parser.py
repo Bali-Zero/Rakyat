@@ -7,11 +7,11 @@ stays local — this runs on the box, never sends rows to a cloud LLM.
 
 Indonesian gotchas handled:
   - dd/mm/yyyy (and dd/mm with no year) dates
-  - decimal-comma / thousands-dot amounts ("9.900.001,89") OR plain ("9900001")
+  - decimal-comma / thousands-dot amounts ("1.234.567,89") OR plain ("1234567")
   - separate Debit/Credit columns OR one signed amount OR amount + DB/CR flag
   - leading-apostrophe text guards ("'04/09)
 
-CIMB Niaga is the company's bank (PT JUXO BALI JOF, acct 840006400000). The
+CIMB Niaga is the company's bank (PT BAYU BALI NOL, acct 800198149700). The
 exact column names get finalized once Asya sends a real OCTO export; until then
 CIMB_NIAGA below is a best-effort default and `auto` sniffs the header.
 """
@@ -52,7 +52,7 @@ class BankConfig:
     flag_col: str | None = None       # amount + DB/CR flag mode
     credit_flag_values: tuple[str, ...] = ("CR", "C", "K", "KREDIT", "CREDIT")
     balance_col: str | None = None
-    decimal_comma: bool = False       # True => "9.900.001,89"; False => "1,234,567.89"/plain
+    decimal_comma: bool = False       # True => "1.234.567,89"; False => "1,234,567.89"/plain
     delimiter: str = ","              # decimal-comma exports must use ';' (else comma collides)
 
 
@@ -102,7 +102,7 @@ def _parse_amount(raw: str, decimal_comma: bool) -> int:
     neg = s.startswith("-") or (s.startswith("(") and s.endswith(")"))
     s = s.strip("-()").replace(" ", "")
     if decimal_comma:
-        # "9.900.001,89" -> dots are thousands, comma is decimal
+        # "1.234.567,89" -> dots are thousands, comma is decimal
         s = s.replace(".", "").replace(",", ".")
     else:
         # "1,234,567.89" -> commas are thousands

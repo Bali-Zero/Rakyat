@@ -3,7 +3,7 @@
 Reference: docs/war-room-2.0-design.md §11, §14.
 
 Modules:
-- failover_detector: decides when Air should take over Trend-Tosado
+- failover_detector: decides when Air should take over Trend-Hunter
 - missed_runs_alerter: Telegram notifications for war_room_missed_runs
 - token_watchdog: alerts 7gg before IG/LinkedIn long-lived token expiry
 - quota_monitor: watches war_room_costs for soft-cap breach + daily spike

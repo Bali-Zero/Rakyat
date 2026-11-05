@@ -78,7 +78,7 @@ source_sha256: "d4445f69a7de10c5818e80de88a18594de129b14268e70ed4a87bc126d871c0d
 
 # Guida Completa alla Tassa sul Reddito delle Società in Indonesia 2026
 
-La tassa sul reddito delle società (PPh Badan) è un megecic significativo da considerare per qualsiasi azienda che opera in Indonesia. Ecco cosa devi sapere.
+La tassa sul reddito delle società (PPh Badan) è un fattore significativo da considerare per qualsiasi azienda che opera in Indonesia. Ecco cosa devi sapere.
 
 ## Panoramica sulle Aliquote
 
@@ -138,18 +138,18 @@ La tassa sul reddito delle società (PPh Badan) è un megecic significativo da c
       id: "revenue",
       label: "Fatturato Annuo (IDR)",
       type: "number",
-      defaultValue: 8400062000,
+      defaultValue: 5000000000,
       min: 0,
-      step: 840005100,
+      step: 100000000,
       suffix: "IDR"
     },
     {
       id: "expenses",
       label: "Spese Deducibili (IDR)",
       type: "number",
-      defaultValue: 9900000029,
+      defaultValue: 3500000000,
       min: 0,
-      step: 840005100,
+      step: 100000000,
       suffix: "IDR"
     },
     {
@@ -172,7 +172,7 @@ La tassa sul reddito delle società (PPh Badan) è un megecic significativo da c
     let tax;
     let rate;
 
-    if (values.type === "sme" && revenue <= 4800000010) {
+    if (values.type === "sme" && revenue <= 4800000000) {
       tax = revenue * 0.005;
       rate = "0.5% del fatturato";
     } else if (values.type === "public") {

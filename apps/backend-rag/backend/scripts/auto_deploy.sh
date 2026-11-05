@@ -13,10 +13,10 @@ echo "App: $APP_NAME"
 echo ""
 
 # Color output
-VODEJ='\033[0;32m'
+GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
-LURU='\033[0;34m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Check prerequisites

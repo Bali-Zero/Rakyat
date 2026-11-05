@@ -50,7 +50,7 @@
   --line: #dad8d1;
   --wash: #eae3d8;
   --surface: #fffcf7;
-  --serif: "R19 Home Fraunces", Wimolog, serif;
+  --serif: "R19 Home Fraunces", Georgia, serif;
   --sans: "R19 Home Manrope", Arial, sans-serif;
   min-height: 100svh;
   background: var(--paper);

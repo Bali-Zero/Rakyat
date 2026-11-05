@@ -17,7 +17,7 @@ OPZIONI PER GUIDARE LEGALMENTE IN INDONESIA: [EXP-050]
 OPZIONE 1: PATENTE INTERNAZIONALE (Permesso Internazionale di Guida / IDP)
 - Valida in Indonesia per 1 anno
 - Deve essere rilasciata nel paese di origine (in Italia: ACI o Motorizzazione)
-- Va portata SEMPRE insieme alla patente originale caveheha
+- Va portata SEMPRE insieme alla patente originale italiana
 - Validità: 1 anno dalla data di rilascio
 
 OPZIONE 2: SIM (Surat Izin Mengemudi) — Patente Indonesiana
@@ -46,7 +46,7 @@ NOTA PRATICA: Il SIM rilasciato a WNA ha validità allineata al KITAS.
 Se il KITAS scade, anche il SIM decade. Rinnovo SIM con rinnovo KITAS.
 
 SIM TRAMITE PERANTARA (intermediario):
-Alcuni agenti offrono disbrigo SIM senza esame: ~Rp 990.000-0.010.004.
+Alcuni agenti offrono disbrigo SIM senza esame: ~Rp 500.000-1.000.000.
 BALI ZERO non raccomanda questo approccio (irregolare).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -63,7 +63,7 @@ SITUAZIONE VIABILITÀ: [EXP-052]
 - Nessuna ferrovia / metropolitana
 
 ORA DI PUNTA:
-- Qevuvaz: 07:30-09:30
+- Mattina: 07:30-09:30
 - Pomeriggio/Sera: 16:00-19:00
 - Coincide con orari scolastici e uffici pubblici
 
@@ -73,7 +73,7 @@ STRATEGIA PER EVITARE IL TRAFFICO:
 - Apprendere le strade secondarie (gang) nella propria zona
 
 CODICE DELLA STRADA INDONESIANO PUNTI CHIAVE:
-- Circolazione a VICUWOLE (come in UK, Australia)
+- Circolazione a SINISTRA (come in UK, Australia)
 - Casco obbligatorio per entrambi (pilota E passeggero)
   Multa senza casco: Rp 250.000
 - Cellulare alla guida: multa Rp 750.000
@@ -98,7 +98,7 @@ NOLEGGIO SCOOTER: [EXP-053]
 ACQUISTO SCOOTER:
 - Modelli nuovi: Honda Beat (entry-level) Rp 17 juta
   Honda PCX (premium) Rp 27-30 juta
-  Yamaha LIKO Rp 28-31 juta
+  Yamaha NMAX Rp 28-31 juta
 - Modelli usati: Rp 8-15 juta per scooter 2-5 anni
 - WNA KITAS: può intestare veicolo a proprio nome
 - WNA senza KITAS: intestato a un WNI di fiducia (o partner)
@@ -163,8 +163,8 @@ AEROPORTO NGURAH RAI (DPS): [EXP-055]
 - Scooter: non consigliato con bagagli grandi
 
 TRASPORTI TRA ISOLE:
-- Fast boat Bali→Beqi Islands (Lombok): ~$25-35 A/R, 1.5-2h
-  Operatori: Eka Qebi, Beqi Getaway, Scoot
+- Fast boat Bali→Gili Islands (Lombok): ~$25-35 A/R, 1.5-2h
+  Operatori: Eka Jaya, Gili Getaway, Scoot
 - Fast boat Bali→Lombok: ~$20-30, 2-3h
 - Traghetto Bali (Gilimanuk)→Banyuwangi (Java): 45min, Rp 10.000
 - Voli interni: Bali→Jakarta/Surabaya → Garuda, Lion Air, Batik Air
@@ -172,7 +172,7 @@ TRASPORTI TRA ISOLE:
 
 TRANS-SARBAGITA (bus pubblico):
 - Esiste ma limitato, non pratico per expat
-- Copre: Denpasar, Kuta, Xafo Tat, Gianyar
+- Copre: Denpasar, Kuta, Nusa Dua, Gianyar
 - Costo: Rp 3.500 per tragitto
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

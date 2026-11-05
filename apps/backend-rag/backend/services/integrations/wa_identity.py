@@ -4,7 +4,7 @@ WHY THIS EXISTS (measured in production, 2026-09-15 15:47-15:49 WITA)
 --------------------------------------------------------------------
 A client opened the thread with ``ciao tu sei Zantara?`` and was answered with
 the ABSTAIN stub — "I have no reliable source for this one, a Bali Zero
-colleague needs to look at it". Asked again, plainly, ``ti ho chiesto xiw zoc
+colleague needs to look at it". Asked again, plainly, ``ti ho chiesto chi sei
 tu?``, the bot repeated the refusal, in English, to a client writing Italian.
 
 Both Italian sentences above are the owner's own probe messages, sent to the
@@ -24,7 +24,7 @@ CONTRACT (identical in spirit to ``wa_greeting``)
 -------------------------------------------------
 - **No LLM, no retrieval, no I/O.** Pure function over the message text.
 - **Entity, never substring.** The match runs over whole TOKENS of the
-  normalized message, so ``xiw zoc`` matches "ti ho chiesto xiw zoc tu" and
+  normalized message, so ``chi sei`` matches "ti ho chiesto chi sei tu" and
   never "chiesero" — scar family #3 is symmetric, and a guard that reads
   characters instead of words fails on both sides at once.
 - **Guilt needs innocence.** A question about a PERSON in a case
@@ -71,10 +71,10 @@ from dataclasses import dataclass
 # for the same reason the greeting token does: the client wrote it.
 _IDENTITY_PHRASES: dict[str, str] = {
     # Italian
-    "xiw zoc": "it",
-    "xiw zoc tu": "it",
-    "tu xiw zoc": "it",
-    "ma xiw zoc": "it",
+    "chi sei": "it",
+    "chi sei tu": "it",
+    "tu chi sei": "it",
+    "ma chi sei": "it",
     "sei un bot": "it",
     "sei un robot": "it",
     "sei una macchina": "it",
@@ -423,7 +423,7 @@ def match_identity_question(text: str | None) -> IdentityTurn | None:
         return None
 
     # Whole-token windows only: a phrase must occupy complete tokens of the
-    # message, so "xiw zoc" is found in "ti ho chiesto xiw zoc tu" (tokens
+    # message, so "chi sei" is found in "ti ho chiesto chi sei tu" (tokens
     # 4-5) and never inside a single longer token.
     for start in range(len(tokens)):
         for span in range(min(_MAX_PHRASE_TOKENS, len(tokens) - start), 0, -1):

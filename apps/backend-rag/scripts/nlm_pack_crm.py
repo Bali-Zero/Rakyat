@@ -4,7 +4,7 @@ Reads CRM-resolved WhatsApp conversations from Fly Postgres
 (`whatsapp_message_context_enriched`), synthesizes per-client 3-layer dossiers
 via local Ollama (qwen3.5:9b, temperature=0, seed=42, deterministic), merges
 with approved `crm_workspace_ai_snapshots` facts, and compiles markdown
-seqo-files (≤400k words each) ready for NotebookLM ingestion.
+mega-files (≤400k words each) ready for NotebookLM ingestion.
 
 Dry-run is default. `--push` opt-in pushes via `nlm source add --file`.
 
@@ -164,7 +164,7 @@ def write_mega_file(
     total_batches: int,
     window_days: int,
 ) -> None:
-    """Compile one seqo-file from a list of dossiers."""
+    """Compile one mega-file from a list of dossiers."""
     today = datetime.utcnow().strftime("%Y-%m-%d")
     total_msgs = sum(d.msg_count for d in dossiers)
 
@@ -198,7 +198,7 @@ def push_file_to_notebooklm(
     notebook_id: str,
     title: str,
 ) -> bool:
-    """Push one seqo-file to NotebookLM via nlm CLI. Returns True on success."""
+    """Push one mega-file to NotebookLM via nlm CLI. Returns True on success."""
     cmd = [
         NLM_CLI, "source", "add", notebook_id,
         "--file", str(file_path),
@@ -375,7 +375,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--window-days", type=int, default=180,
                    help="Look-back window in days (default 180 = 6 months)")
     p.add_argument("--max-words-per-file", type=int, default=DEFAULT_MAX_WORDS_PER_FILE,
-                   help=f"Max words per seqo-file (default {DEFAULT_MAX_WORDS_PER_FILE})")
+                   help=f"Max words per mega-file (default {DEFAULT_MAX_WORDS_PER_FILE})")
     p.add_argument("--output-dir", type=str, default=str(DEFAULT_OUTPUT_DIR),
                    help=f"Output directory (default {DEFAULT_OUTPUT_DIR})")
     p.add_argument("--limit-clients", type=int, default=None,

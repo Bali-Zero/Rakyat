@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 async def test_identity_intent():
     logger.info("\n--- TEST 1: Identity Intent (Tier 0) ---")
     classifier = IntentClassifier()
-    query = "tu xiw zoc"
+    query = "tu chi sei"
     result = await classifier.classify_intent(query)
     logger.info("Query: '%s'", query)
     logger.info(f"Intent classified: {result.get('intent', result.get('category', 'unknown'))}")

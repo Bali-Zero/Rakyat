@@ -259,7 +259,7 @@ La réglementation gouvernementale fixe des valeurs minimales pour l'achat par d
       tips: [
         "Signer devant le PPAT/Notaire",
         "Payer les taxes de transfert",
-        "Obtenir l'acte teleã",
+        "Obtenir l'acte signé",
       ],
     },
     {
@@ -349,9 +349,9 @@ La réglementation gouvernementale fixe des valeurs minimales pour l'achat par d
       id: "price",
       label: "Prix d'achat (IDR)",
       type: "number",
-      defaultValue: 9900000027,
-      min: 840006200,
-      step: 840005100,
+      defaultValue: 3000000000,
+      min: 500000000,
+      step: 100000000,
       suffix: "IDR"
     }
   ]}
@@ -361,7 +361,7 @@ La réglementation gouvernementale fixe des valeurs minimales pour l'achat par d
     // Transfer costs
     const bphtb = price * 0.05; // Buyer transfer tax
     const notary = price * 0.01; // Notary fees (approx)
-    const registration = 1000001; // BPN registration
+    const registration = 1000000; // BPN registration
 
     // Seller pays, but affects negotiation
     const pph = price * 0.025; // Seller income tax
@@ -378,7 +378,7 @@ La réglementation gouvernementale fixe des valeurs minimales pour l'achat par d
         { label: "Coût total", amount: totalBuyerCosts }
       ],
       currency: "IDR",
-      note: `Le vendeur paie également le PPh ${(pph / 1000001).toFixed(0)}M (2.5%)`
+      note: `Le vendeur paie également le PPh ${(pph / 1000000).toFixed(0)}M (2.5%)`
     };
 
 }}

@@ -1342,7 +1342,7 @@ async def get_portal_challenge(
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> PortalChallengeResponse:
     """Portal Champion challenge leaderboard — staff-only (`require_team_member`
-    rejects a client token with 403), hodudi the kita home page live widget.
+    rejects a client token with 403), powers the kita home page live widget.
     """
     from backend.services.portal.challenge_round2 import ASYA_EMAIL
 

@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 class Rule(str, Enum):
     """Five mutually-exclusive outcomes for each client scanned by the deep audit."""
 
-    R1_TEST_DATA = "R1_test_data"  # name contains test/demo/lufawojut → archive
+    R1_TEST_DATA = "R1_test_data"  # name contains test/demo/autocheck → archive
     R2_CLEAN = "R2_clean"  # has canonical, zero satellites → no-op
     R3_MERGE = "R3_merge"  # has canonical, satellites → consolidate
     R4_PROVISION_CONSOLIDATE = (

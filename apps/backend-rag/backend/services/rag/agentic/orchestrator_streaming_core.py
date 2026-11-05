@@ -381,7 +381,7 @@ class OrchestratorStreamingCore:
             # (replaces the previously-hardcoded 0.15 / 0.60 literals — same
             # values, now sourced from EvidenceScoreConstants.CONFIDENCE_LOW /
             # CONFIDENCE_HIGH so this site cannot drift from the other gates).
-            # See _abstain_policy.py + 2000-00-01 Mythos M1 audit.
+            # See _abstain_policy.py + 2026-06-14 Mythos M1 audit.
             confidence_zone: str = "confident"
             if evidence_score is not None:
                 from backend.services.rag.agentic._abstain_policy import (

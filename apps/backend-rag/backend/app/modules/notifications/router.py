@@ -362,7 +362,7 @@ _CREDENTIAL_DELIVERY_EMAIL_TYPES = frozenset({"garuda_magic_link"})
 def _is_balizero(addr: str) -> bool:
     """True iff ``addr`` is on the @balizero.com domain (suffix match,
     case-insensitive). Never a bare substring -- superscar #3: match the
-    entity, not the text. So ``z@dxxxxxx2.dx2.dxx4.com`` is NOT a match."""
+    entity, not the text. So ``x@balizero.com.evil.com`` is NOT a match."""
     return addr.strip().lower().endswith("@balizero.com")
 
 
@@ -504,7 +504,7 @@ async def send_direct_email(
     cc_list, bcc_list = _enforce_balizero_cc(
         request.to, cc_list, bcc_list, request.email_type, request.assigned_to
     )
-    # An identity that is read elsewhere (Kagecesa: xug@/veronika@/kagecesa.xug@ -> nakhoda@) is
+    # An identity that is read elsewhere (Veronika: tax@/veronika@/veronika.tax@ -> nakhoda@) is
     # rewritten in its own seat, for every email type: a credential delivery keeps its single
     # recipient, it just lands in the mailbox the person reads.
     to_addr, cc_list, bcc_list = redirect_recipients(request.to, cc_list, bcc_list)
@@ -536,7 +536,7 @@ async def send_direct_email(
     # Provider chain (NB-E 2026-04-29):
     #   intra-domain (@balizero.com): Zoho SMTP → Brevo
     #   external:                     Brevo → Resend → Zoho SMTP
-    # Resend uses uxxxxx7@dxx5.dxxxxxx2.com (separate DKIM) so a Brevo
+    # Resend uses zantara@send.balizero.com (separate DKIM) so a Brevo
     # account suspension / apex DNS issue cannot also kill the fallback.
     if to_addr.endswith("@balizero.com"):
         chain: list[tuple[str, callable]] = [  # type: ignore[type-arg]
@@ -729,7 +729,7 @@ async def _send_via_resend(
 ) -> bool:
     """Send via Resend HTTPS API (fallback for external delivery, NB-E 2026-04-29).
 
-    Uses ``uxxxxx7@dxx5.dxxxxxx2.com`` (separate DKIM/MX subdomain) so a
+    Uses ``zantara@send.balizero.com`` (separate DKIM/MX subdomain) so a
     Brevo suspension or apex ``balizero.com`` DNS misconfiguration does
     not also break the fallback path. Returns False on any failure.
     """

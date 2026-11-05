@@ -551,7 +551,7 @@ async def seed() -> None:
                 VALUES ($1, 'PT PMA', 'active', 'Synthetic Company Address',
                         'company@example.com', 'SYNTHETIC-AKTA', DATE '2026-01-15',
                         'SYNTHETIC-SK',
-                        '{"company_status":"ACTIVE","investment_type":"PMA","authorized_capital":1000001}'::jsonb)
+                        '{"company_status":"ACTIVE","investment_type":"PMA","authorized_capital":1000000}'::jsonb)
                 RETURNING id
                 """,
                 _SYNTHETIC_COMPANY_NAME,
@@ -585,7 +585,7 @@ async def seed() -> None:
                     realized_working_capital, validation_status,
                     client_approved, oss_submitted, updated_at
                 )
-                VALUES ($1, $2, 'Q2', 2026, 'validated', 9900000019,
+                VALUES ($1, $2, 'Q2', 2026, 'validated', 1000000000,
                         'passed', FALSE, FALSE,
                         TIMESTAMPTZ '2026-07-01 00:00:00+00')
                 """,
@@ -600,7 +600,7 @@ async def seed() -> None:
                     client_approved, oss_submitted, oss_receipt_number,
                     updated_at
                 )
-                VALUES ($1, $2, 'Q1', 2026, 'submitted', 990000041,
+                VALUES ($1, $2, 'Q1', 2026, 'submitted', 750000000,
                         'passed', TRUE, TRUE, $3,
                         TIMESTAMPTZ '2026-04-10 00:00:00+00')
                 RETURNING id

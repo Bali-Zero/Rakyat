@@ -73,7 +73,7 @@ _GMAPS_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 async def _resolve_desa_code_from_latlng(lat: float, lng: float, gmaps_api_key: str) -> str | None:
     """
     Deterministic step 1: call Google Maps Geocoding to get the BPS desa code
-    from coordinates.  Returns a 10-digit BPS code like '9900000011' or None.
+    from coordinates.  Returns a 10-digit BPS code like '5103030005' or None.
     """
     params = {
         "latlng": f"{lat},{lng}",

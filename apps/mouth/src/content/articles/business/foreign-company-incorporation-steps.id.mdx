@@ -352,7 +352,7 @@ Peraturan baru yang berlaku pada tahun 2025 membawa beberapa penyederhanaan:
     let total = 0;
     const breakdown = [];
 
-    const serviceCosts = { diy: 10000012, basic: 35000000, full: 55000000 };
+    const serviceCosts = { diy: 15000000, basic: 35000000, full: 55000000 };
     const service = serviceCosts[values.service];
     total += service;
     breakdown.push({ label: "Biaya layanan", amount: service });
@@ -362,7 +362,7 @@ Peraturan baru yang berlaku pada tahun 2025 membawa beberapa penyederhanaan:
     breakdown.push({ label: "Biaya pemerintah", amount: govFees });
 
     if (values.vo) {
-      const voCost = values.location === 'jakarta' ? 10000012 : 12000000;
+      const voCost = values.location === 'jakarta' ? 15000000 : 12000000;
       total += voCost;
       breakdown.push({ label: "Kantor virtual (1 tahun)", amount: voCost });
     }
@@ -379,7 +379,7 @@ Peraturan baru yang berlaku pada tahun 2025 membawa beberapa penyederhanaan:
 
 ---
 
-## Tips untuk Bebera
+## Tips untuk Sukses
 
 <InfoCard variant="tip" title="Tips Pendaftaran">
   1. **KBLI dulu**: Pilih kode dengan hati-hati sebelum memulai 2. **Rencanakan

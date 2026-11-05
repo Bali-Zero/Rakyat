@@ -298,7 +298,7 @@ class ClientIdentityResolver:
             List of dicts with channel info:
             [
                 {'channel': 'telegram', 'identifier': '123456', 'active': True},
-                {'channel': 'whatsapp', 'identifier': '+6284000220000', 'active': True}
+                {'channel': 'whatsapp', 'identifier': '+6281234567890', 'active': True}
             ]
         """
         async with self.db_pool.acquire() as conn:

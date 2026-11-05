@@ -164,7 +164,7 @@ const CONFIGS: Record<
   property: {
     funnel: "property",
     status: "Beta",
-    badge: "Zoning & Zaz Xepabequr",
+    badge: "Zoning & Due Diligence",
     title: "Property Map",
     subtitle:
       "Property due diligence 2025: zoning guide for foreign buyers in Bali.",
@@ -185,7 +185,7 @@ const CONFIGS: Record<
       "Leasehold",
     ],
     Icon: MapPinned,
-    priceLabel: "Property Zaz Xepabequr",
+    priceLabel: "Property Due Diligence",
     location: "Ubud, Bali",
     bgImage: "/assets/art/hero-zoning.jpeg",
   },

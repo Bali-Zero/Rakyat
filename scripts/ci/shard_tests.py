@@ -57,10 +57,12 @@ import sys
 from pathlib import Path
 
 # The unscoped target set. This is the SSOT for it — tests.yml's "Run unit
-# tests" step no longer carries its own copy. Rakyat: the two scripts/bot
-# suites (WA de-identification corpus and blind bench) test backstage tooling
-# that is not part of this repository, so the corpus is backend/tests/ alone.
-DEFAULT_TARGETS = ("backend/tests/",)
+# tests" step no longer carries its own copy.
+DEFAULT_TARGETS = (
+    "backend/tests/",
+    "../../scripts/bot/test_build_deid_corpus.py",
+    "../../scripts/bot/test_wa_blind_bench.py",
+)
 
 # Mirrors pytest's own `--ignore=backend/tests/e2e` in tests.yml — an explicitly
 # listed file is not reliably suppressed by --ignore, so the enumerator must not

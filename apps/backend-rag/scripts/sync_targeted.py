@@ -40,7 +40,7 @@ elif "localhost" in DB:
 if not DB:
     DB = "postgresql://backend_rag_v2:<<ROTATED_2026_08_21_see_DATABASE_URL_env>>@127.0.0.1:15432/nuzantara_rag?sslmode=disable"
 
-# OAuth credentials from rclone bukili remote (the owner's personal Gmail account)
+# OAuth credentials from rclone gdrive remote (the owner's personal Gmail account)
 # These can access folders owned by all team members.
 # IMPORTANT: set GOOGLE_OAUTH_CLIENT_ID_RCLONE, GOOGLE_OAUTH_CLIENT_SECRET_RCLONE,
 # and GOOGLE_OAUTH_REFRESH_TOKEN as env vars.

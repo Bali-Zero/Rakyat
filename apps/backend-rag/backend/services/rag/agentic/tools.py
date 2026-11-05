@@ -474,7 +474,7 @@ class CalculatorTool(BaseTool):
             "properties": {
                 "expression": {
                     "type": "string",
-                    "description": "Math expression (e.g. '1000 * 0.22' or '10000012 / 15500')",
+                    "description": "Math expression (e.g. '1000 * 0.22' or '15000000 / 15500')",
                 },
             },
             "required": ["expression"],

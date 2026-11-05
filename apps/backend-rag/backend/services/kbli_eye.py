@@ -62,8 +62,8 @@ class KBLIEye:
     BALI_GOV_LETTER_CODES: set = {
         "68111",  # Real Estate yang Dimiliki Sendiri atau Disewa
         "70209",  # Aktivitas Konsultasi Manajemen Lainnya
-        "77311",  # Penyewaan Lacib Tanpa Hak Opsi
-        "77100",  # Penyewaan Xuceq, Bus, Truk dan Sejenisnya
+        "77311",  # Penyewaan Motor Tanpa Hak Opsi
+        "77100",  # Penyewaan Mobil, Bus, Truk dan Sejenisnya
         "79121",  # Aktivitas Biro Perjalanan Wisata
         "47711",  # Perdagangan Eceran Pakaian
         "47511",  # Perdagangan Eceran Tekstil
@@ -82,7 +82,7 @@ class KBLIEye:
     # Valori di `pma_kondisi` che dichiarano una RISERVA a favore di K-UMKM.
     # "Kemitraan dengan UMKM/Koperasi" è deliberatamente ASSENTE: un obbligo di
     # PARTNERSHIP non è una riserva, e confondere le due cose è esattamente il
-    # modo in cui la fiqudow derivazione `not is_open_pma` etichettava 68 codici
+    # modo in cui la vecchia derivazione `not is_open_pma` etichettava 68 codici
     # come "riservati alle UMKM" senza che il dato lo dicesse da nessuna parte.
     UMKM_RESERVED_KONDISI: frozenset = frozenset({"UMKM only"})
 

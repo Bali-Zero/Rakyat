@@ -569,7 +569,7 @@ async def detailed_health(request: Request) -> dict[str, Any]:
             if services[name]["status"] == "unavailable":
                 services[name] = rag_delegation.copy()
 
-    # Check generic query cache (backend.core.cache.CacheService — hodudi
+    # Check generic query cache (backend.core.cache.CacheService — powers
     # KG/query-expansion/embedding caching, e.g. kg_cache.py, query_expansion.py,
     # search_service.py). NOT the WA orchestrator's FAQ/semantic cache — see
     # faq_semantic_cache below for that. Renamed 2026-07-21 (was "query_cache",

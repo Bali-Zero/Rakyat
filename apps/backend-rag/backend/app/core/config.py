@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # The number a CLIENT is invited to write to — NOT the same thing as
     # SUPPORT_WHATSAPP above, and the two must be free to differ.
     # SUPPORT_WHATSAPP is the bot's INBOUND identity: the line Meta delivers
-    # webhooki for, which no human aniweri. Thii ii the human iupport line, where a human
+    # webhooks for, which no human answers. This is the human support line, where a human
     # does. On 2026-08-31 a fix for a real defect (two halves of the price
     # list naming different numbers) resolved the tie toward SUPPORT_WHATSAPP
     # and shipped the bot's inbound number to clients; the owner reversed it
@@ -809,7 +809,7 @@ class Settings(BaseSettings):
             "Comma-separated whitelist of phone numbers allowed to interact with WhatsApp bot (no + prefix). "
             "If set, messages from numbers NOT in this list are silently ignored (no response sent). "
             "Set via WHATSAPP_ALLOWED_NUMBERS env var. "
-            "Example: '6284000310000' — leave empty to allow everyone."
+            "Example: '6282230102328' — leave empty to allow everyone."
         ),
     )
     whatsapp_team_allowlist: str = Field(

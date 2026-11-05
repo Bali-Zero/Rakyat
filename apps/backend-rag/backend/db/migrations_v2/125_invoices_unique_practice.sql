@@ -8,7 +8,7 @@
 -- (format INV-YYYYMM-<practice_id>). Running invoice regeneration in a new
 -- month produced a NEW invoice row with a NEW number for the same
 -- practice_id, bypassing the conflict target. Practice 204 ended up with
--- two invoices (INV-200000-01000 and INV-200000-01001).
+-- two invoices (INV-202603-00204 and INV-202604-00204).
 --
 -- Fix: add UNIQUE (practice_id) so only one invoice per practice can exist.
 -- Any regeneration updates-in-place.

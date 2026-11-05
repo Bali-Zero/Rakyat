@@ -4,7 +4,7 @@ Design §11.1 + §11.2.
 
 Pro publishes a heartbeat every N minutes via the Olympus heartbeat service
 (``apps/backend-rag/backend/services/olympus/heartbeat.py``). When Air's
-cron wakes up, it asks this detector: should I run the Trend-Tosado in
+cron wakes up, it asks this detector: should I run the Trend-Hunter in
 degraded mode?
 
 Inputs come from a ``heartbeat_lookup_fn`` we inject so the detector is

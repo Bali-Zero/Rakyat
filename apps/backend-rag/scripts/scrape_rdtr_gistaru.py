@@ -38,7 +38,7 @@ LAYERS = {
         {
             "service": "_RDTR__51A2_KAWASAN_PERKOTAAN_SINGARAJA_2023",
             "district": "Buleleng",
-            "subdistrict": "Jutidadig",
+            "subdistrict": "Singaraja",
             "perda": "2023",
         },
         {
@@ -154,7 +154,7 @@ LAYERS = {
         {
             "service": "_RDTR_51B7_KECAMATAN_SUKAWATI",
             "district": "Gianyar",
-            "subdistrict": "Kupohobe",
+            "subdistrict": "Sukawati",
             "perda": "2023",
         },
         {

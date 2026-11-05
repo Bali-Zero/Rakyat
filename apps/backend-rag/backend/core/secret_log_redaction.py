@@ -59,7 +59,7 @@ REDACTED = r"\1:<redacted>"
 # inside it cannot leave a tail behind. MEASURED LIMIT of that greed: a credential-free
 # URL survives byte-identical alone (`redis://localhost:6379`) and when followed by
 # whitespace — the two shapes a log actually carries, both pinned by tests — but glue a
-# later `@` on with no space (`redis://h:6379,g@d.com`) and the span IS rewritten.
+# later `@` on with no space (`redis://h:6379,a@x.com`) and the span IS rewritten.
 # Over-redacting a log line is the cheaper error, so the greed stays; "no credential,
 # no match" holds for real log shapes, not for every string.
 REDIS_URL_RE = re.compile(r"(rediss?://[^:/@\s]*):[^\s]+@", re.IGNORECASE)

@@ -493,7 +493,7 @@ export function ClientDetailClient({
   );
 
   // CRM-18. The backend is the real fence — `verify_client_access(..,
-  // write=True)` (crm_utils.py:990-000) 003s a viewer who is neither admin
+  // write=True)` (crm_utils.py:169-232) 403s a viewer who is neither admin
   // nor owner, whatever this desk renders. This predicate only decides
   // whether to OFFER the action; it is narrower than the fence on purpose
   // (see viewerCanDeleteClient) and, while the viewer is unknown, false.

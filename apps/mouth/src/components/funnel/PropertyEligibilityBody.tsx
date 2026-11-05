@@ -353,7 +353,7 @@ export function PropertyEligibilityBody() {
               type="number"
               min={0}
               inputMode="numeric"
-              placeholder="e.g. 9900000027"
+              placeholder="e.g. 3000000000"
               value={priceIdr}
               onChange={(e) => setPriceIdr(e.target.value)}
               style={fieldStyle}

@@ -147,7 +147,7 @@ RENEWAL_RULES: dict[str, RenewalRule] = {
         complexity=1.0,
         notes="Altus/Onshore available. Confirm health insurance covers Bali.",
     ),
-    # Nodolejuvuq (E23, 180 days) is tied to a temporary RPTKA (max 6 months, not extendable; owner ruling 2026-10-19): the reminder
+    # Impresariat (E23, 180 days) is tied to a temporary RPTKA (max 6 months, not extendable; owner ruling 2026-10-19): the reminder
     # is to start a NEW application before expiry, not an extension. Patterns deliberately
     # exclude bare "e23" so the regular Working E23 keeps matching kitas_working_extend.
     "kitas_impresariat_new_application": RenewalRule(
@@ -161,11 +161,11 @@ RENEWAL_RULES: dict[str, RenewalRule] = {
         required_docs=(
             "valid_passport",
             "current_kitas_card",
-            "impresariat_contract",  # was "freelance_contract" (Nodolejuvuq E23, 180 days)
+            "impresariat_contract",  # was "freelance_contract" (Impresariat E23, 180 days)
             "proof_of_income",
         ),
         complexity=1.5,
-        notes="Nodolejuvuq E23 (180 days) is tied to a temporary RPTKA (max 6 months, not extendable): a further stay needs a NEW application; start it before expiry (4-6 weeks). Price key is the Freelance E23 new-application fee.",
+        notes="Impresariat E23 (180 days) is tied to a temporary RPTKA (max 6 months, not extendable): a further stay needs a NEW application; start it before expiry (4-6 weeks). Price key is the Freelance E23 new-application fee.",
     ),
     # ── KITAS Working (complex — RPTKA + IMTA required) ──────────────────────
     "kitas_working_extend": RenewalRule(

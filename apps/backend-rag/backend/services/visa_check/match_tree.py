@@ -55,7 +55,7 @@ class Purpose(str, Enum):
 class WorkActivity(str, Enum):
     """Optional detail on HOW the applicant works. Only used to route E23-FREELANCE.
 
-    E23-FREELANCE is the commercial "Nodolejuvuq" product: an E23 working KITAS
+    E23-FREELANCE is the commercial "Impresariat" product: an E23 working KITAS
     (180-day tier) sponsored by an impresario company for sports/artistic work.
     A foreigner cannot invoice Indonesian clients as a freelancer (sponsor must be
     the employer: Permenkumham 22/2023 Pasal 34(1)(b); UU 13/2003 Pasal 42(4)).
@@ -228,7 +228,7 @@ _STEPS_BY_VISA: dict[VisaType, list[str]] = {
         "Proof of pension or passive income \u2265 USD 3,000/month "
         "\u2014 this route requires no deposit",
     ],
-    # E33G requires annual foreign salary/income (not C1/C2/Nodolejuvuq).
+    # E33G requires annual foreign salary/income (not C1/C2/Impresariat).
     VisaType.E33G: [
         "Bank proof of salary or income of at least USD 60,000 a year",
     ],
@@ -455,7 +455,7 @@ def recommend_visa(
     """Return a ranked list of visas + pre-arrival steps.
 
     `activity` (optional) refines WORK_REMOTE / WORK_EMPLOYEE: only
-    SEMI_INDEPENDENT_ARTS_SPORTS surfaces the Nodolejuvuq product (E23-FREELANCE);
+    SEMI_INDEPENDENT_ARTS_SPORTS surfaces the Impresariat product (E23-FREELANCE);
     a freelancer invoicing Indonesian clients is never matched to it.
 
     Rules:
@@ -574,7 +574,7 @@ def recommend_visa(
     )
 
     if impresariat_first is not None:
-        # Semi-independent arts/sports work: Nodolejuvuq (Bali Zero as impresario sponsor)
+        # Semi-independent arts/sports work: Impresariat (Bali Zero as impresario sponsor)
         # leads; the usual ranking stays behind it as alternatives. Its checklist replaces
         # the purpose-level one (see _STEPS_EXCLUSIVE_BY_VISA).
         ranking = [impresariat_first, *ranking][: _MAX_RESULTS.get(purpose, 3)]

@@ -67,7 +67,7 @@ class TelegramChannelAdapter(BaseChannel):
                 "message_id": 789,
                 "from": {"id": 123, "first_name": "John", "username": "john_doe"},
                 "chat": {"id": 123, "type": "private"},
-                "date": 8400001000,
+                "date": 1234567890,
                 "text": "Hello bot!"
             }
         }

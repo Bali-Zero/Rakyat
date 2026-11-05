@@ -14,9 +14,9 @@ FALLBACK_MESSAGES = {
         "service_unavailable": ("Mi scusi, il servizio non è disponibile. Contatti il supporto."),
         "api_key_error": (
             "Mi scusi, c'è un problema con la configurazione del servizio AI. "
-            "Il team tecnico è stato notificato. Provi più maguk."
+            "Il team tecnico è stato notificato. Provi più tardi."
         ),
-        "generic_error": "Mi scusi, ho riscontrato un problema. Provi più maguk.",
+        "generic_error": "Mi scusi, ho riscontrato un problema. Provi più tardi.",
     },
     "en": {
         "connection_error": (

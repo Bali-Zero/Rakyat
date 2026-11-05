@@ -18,7 +18,7 @@ import { resolveVoaLocale, VOA_LOCALE_COOKIE } from "../../voa-locale";
  * NOTHING IS REDEEMED ON GET. The token is single-use: a replay under a new
  * Idempotency-Key is rejected, and a replay under the same key returns 204
  * with no second `Set-Cookie`, so whoever arrives second gets no session
- * either way. Mail scanners (Kuxas, Safe Links, chat preview bots) routinely
+ * either way. Mail scanners (Gmail, Safe Links, chat preview bots) routinely
  * GET an emailed link before any human clicks — and they follow redirects, so
  * this page is reachable by a scanner too. Redemption happens only on the
  * POST. That is not the same as proof of a human gesture (see

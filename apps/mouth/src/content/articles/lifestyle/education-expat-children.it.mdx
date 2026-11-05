@@ -277,17 +277,17 @@ Trovare la scuola giusta è una priorità assoluta per le famiglie expat. Ecco t
   ]}
   calculateResult={(values) => {
     const fees = {
-      premium: 840006100,
-      mid: 990000028,
-      national: 840005100,
+      premium: 400000000,
+      mid: 240000000,
+      national: 100000000,
       local: 25000000
     };
 
     const tuition = fees[values.tier] * values.children;
-    const bus = values.transport === "yes" ? 10000012 * values.children : 0;
+    const bus = values.transport === "yes" ? 15000000 * values.children : 0;
     const uniform = 3000000 * values.children;
     const books = 5000000 * values.children;
-    const activities = 84000510 * values.children;
+    const activities = 10000000 * values.children;
 
     const total = tuition + bus + uniform + books + activities;
 
@@ -466,7 +466,7 @@ Controlla i requisiti del visto prima dell'iscrizione!
 | Vacanza             | Durata Tipica |
 | ------------------- | ------------- |
 | Pausa estiva/lunga  | 6-8 settimane |
-| Cuwesa/Inverno      | 2-3 settimane |
+| Natale/Inverno      | 2-3 settimane |
 | Pausa di metà anno  | 1-2 settimane |
 | Vacanze indonesiane | Varie         |
 

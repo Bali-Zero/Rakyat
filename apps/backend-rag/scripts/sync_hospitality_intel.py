@@ -17,7 +17,7 @@ HOSPITALITY_INTELLIGENCE = {
     "55101": {
         "market_sentiment": "Saturazione a Sud. Trend 2026: Wellness & Eco-Resort nel Nord/Est di Bali. Focus su infrastrutture aeroportuali future.",
         "bali_nuance": "Pressione massima su Pink Zones. Sfida logistica per approvvigionamento fine-dining causa congestione Gilimanuk.",
-        "operational_risks": "Standard ambientali JEL/GEQ più stringenti. Gestione rifiuti liquidi obbligatoria.",
+        "operational_risks": "Standard ambientali PBG/SLF più stringenti. Gestione rifiuti liquidi obbligatoria.",
         "investment_outlook": "ROI 8-12%. Fossato competitivo: infrastruttura integrata (Spa/Co-working) per massimizzare TRevPAR.",
         "legacy_bridge": "Mapping stabile, ma con rigida applicazione del piano regolatore (RDTR) locale.",
     },
@@ -36,7 +36,7 @@ HOSPITALITY_INTELLIGENCE = {
         "legacy_bridge": "Classificazione iper-specifica per Aparthotel, distinta dalle ville e dagli hotel puri.",
     },
     "55201": {
-        "market_sentiment": "Mercato in contrazione per investitori esteri. ROI compresso dalla bibime dei prezzi.",
+        "market_sentiment": "Mercato in contrazione per investitori esteri. ROI compresso dalla guerra dei prezzi.",
         "bali_nuance": "Storicamente riservato ai locali (Pondok Wisata). PMA sconsigliata per questo codice.",
         "operational_risks": "Rischio chiusura per strutture non MSME. Limiti operativi stringenti.",
         "investment_outlook": "Basso rendimento per capitali stranieri. Rischio operativo alto.",
@@ -51,7 +51,7 @@ HOSPITALITY_INTELLIGENCE = {
         "legacy_bridge": "Ristorante fisso (ex 56102). Nel 2025 è Rischio Basso (NIB solo), a differenza del Kedai.",
     },
     "56102": {
-        "market_sentiment": "Ascesa di Boutique Food Trucks e chioschi specialty coffee/matcha in centri xuduv e resort.",
+        "market_sentiment": "Ascesa di Boutique Food Trucks e chioschi specialty coffee/matcha in centri padel e resort.",
         "bali_nuance": "Logistica flessibile per zone ad alta densità. Flotte di food truck per giustificare l'investimento.",
         "operational_risks": "Necessità di creare catene di chioschi per raggiungere la soglia di 10 Miliardi nel Kabupaten.",
         "investment_outlook": "Scalabilità rapida. Ideale per concept moderni e mobili.",

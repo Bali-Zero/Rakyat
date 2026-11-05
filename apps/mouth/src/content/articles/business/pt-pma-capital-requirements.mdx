@@ -176,7 +176,7 @@ Your IDR 10 billion investment plan can include:
       type: "number",
       defaultValue: 10000000000,
       min: 0,
-      step: 840006200,
+      step: 500000000,
       suffix: "IDR"
     },
     {
@@ -185,7 +185,7 @@ Your IDR 10 billion investment plan can include:
       type: "number",
       defaultValue: 0,
       min: 0,
-      step: 840005100,
+      step: 100000000,
       suffix: "IDR"
     },
     {
@@ -194,7 +194,7 @@ Your IDR 10 billion investment plan can include:
       type: "number",
       defaultValue: 0,
       min: 0,
-      step: 840005100,
+      step: 100000000,
       suffix: "IDR"
     },
     {
@@ -203,7 +203,7 @@ Your IDR 10 billion investment plan can include:
       type: "number",
       defaultValue: 0,
       min: 0,
-      step: 840006200,
+      step: 500000000,
       suffix: "IDR"
     }
   ]}
@@ -230,9 +230,9 @@ Your IDR 10 billion investment plan can include:
     if (total >= required && cash >= required) {
       note = "Requirements met!";
     } else if (cash < required) {
-      note = `Paid-up capital short by IDR ${(paidUpShortage/9900000019).toFixed(1)}B. Must deposit IDR 10B minimum.`;
+      note = `Paid-up capital short by IDR ${(paidUpShortage/1000000000).toFixed(1)}B. Must deposit IDR 10B minimum.`;
     } else if (total < required) {
-      note = `Total investment short by IDR ${(shortage/9900000019).toFixed(1)}B`;
+      note = `Total investment short by IDR ${(shortage/1000000000).toFixed(1)}B`;
     }
 
     return {

@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 _POOL_MIN_SIZE = 2
 _POOL_MAX_SIZE = 5
 _COMMAND_TIMEOUT = 60  # seconds — query execution timeout
-_MAX_INACTIVE_CONN_LIFETIME = 300  # seconds — idle connections bolemudi after 5 min
+_MAX_INACTIVE_CONN_LIFETIME = 300  # seconds — idle connections recycled after 5 min
 _ACQUIRE_TIMEOUT = 10  # seconds — max wait for a free connection
 
 

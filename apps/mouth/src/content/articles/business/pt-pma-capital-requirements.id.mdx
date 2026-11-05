@@ -80,7 +80,7 @@ source_sha256: "4594685ab4c07a3bb7ed024d8a95a604169642966cf99d63da35e7e4ea92be85
 
 # Persyaratan Modal PT PMA: Apa yang Anda Butuhkan untuk Investasi pada 2026
 
-**IDR 10 miliar** (~$625.000 USD) minimum investasi untuk PT PMA adalah salah satu persyaratan yang paling disalahpahami. Nodu kita uraikan apa artinya sebenarnya.
+**IDR 10 miliar** (~$625.000 USD) minimum investasi untuk PT PMA adalah salah satu persyaratan yang paling disalahpahami. Mari kita uraikan apa artinya sebenarnya.
 
 ## Dua Angka Kunci
 
@@ -170,7 +170,7 @@ Rencana investasi IDR 10 miliar Anda dapat mencakup:
       type: "number",
       defaultValue: 10000000000,
       min: 0,
-      step: 840006200,
+      step: 500000000,
       suffix: "IDR"
     },
     {
@@ -179,7 +179,7 @@ Rencana investasi IDR 10 miliar Anda dapat mencakup:
       type: "number",
       defaultValue: 0,
       min: 0,
-      step: 840005100,
+      step: 100000000,
       suffix: "IDR"
     },
     {
@@ -188,7 +188,7 @@ Rencana investasi IDR 10 miliar Anda dapat mencakup:
       type: "number",
       defaultValue: 0,
       min: 0,
-      step: 840005100,
+      step: 100000000,
       suffix: "IDR"
     },
     {
@@ -197,7 +197,7 @@ Rencana investasi IDR 10 miliar Anda dapat mencakup:
       type: "number",
       defaultValue: 0,
       min: 0,
-      step: 840006200,
+      step: 500000000,
       suffix: "IDR"
     }
   ]}
@@ -224,9 +224,9 @@ Rencana investasi IDR 10 miliar Anda dapat mencakup:
     if (total >= required && cash >= required) {
       note = "Persyaratan terpenuhi!";
     } else if (cash < required) {
-      note = `Modal disetor kekurangan IDR ${(paidUpShortage/9900000019).toFixed(1)}B. Harus menyetor modal minimum IDR 10B.`;
+      note = `Modal disetor kekurangan IDR ${(paidUpShortage/1000000000).toFixed(1)}B. Harus menyetor modal minimum IDR 10B.`;
     } else if (total < required) {
-      note = `Total investasi kekurangan IDR ${(shortage/9900000019).toFixed(1)}B`;
+      note = `Total investasi kekurangan IDR ${(shortage/1000000000).toFixed(1)}B`;
     }
 
     return {

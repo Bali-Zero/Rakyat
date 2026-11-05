@@ -133,7 +133,7 @@ _EFIN_PATTERN = re.compile(r"\bEFIN[\s:]*\d{10}\b", re.IGNORECASE)
 
 # Claude OAuth CLI fallback for Ollama timeouts. Triggers extra-strip per Law 2.
 CLAUDE_CLI = "/Users/nuzantara/.local/bin/claude"
-CLAUDE_MODEL = "claude-haiku-4-5-00000011"
+CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 CLAUDE_TIMEOUT = 120.0
 
 

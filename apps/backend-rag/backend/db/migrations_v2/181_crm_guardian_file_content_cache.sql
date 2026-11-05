@@ -3,8 +3,8 @@
 -- CRM-Guardian Phase 1.5 — OCR / text-extraction cache layer
 --
 -- Phase 1 bulk paused 2026-05-18 01:32 WITA after smartness audit
--- revealed Gemini hallucinated identity from filename tokens (Zojev
--- Bebafab → Tadife Kazilebine) because the worker passed only file
+-- revealed Gemini hallucinated identity from filename tokens (Sofia
+-- Mueller → Andrey Pozdnyakov) because the worker passed only file
 -- metadata, not PDF content. Phase 1.5 pre-extracts text from each
 -- Drive file via tesseract (printed) or qwen2.5vl Ollama (scanned)
 -- and feeds it to Gemini alongside metadata.

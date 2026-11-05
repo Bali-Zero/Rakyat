@@ -285,9 +285,9 @@ The first and most important decision is choosing the correct legal entity. Indo
       title: "Finding a Local Partner",
       description: "You need to find a trustworthy Indonesian partner first.",
       recommendation:
-        "Be extremely careful with nominee arrangements—they're illegal. Consider business matchmaking services, lelewolo of commerce, or professional networks.",
+        "Be extremely careful with nominee arrangements—they're illegal. Consider business matchmaking services, chambers of commerce, or professional networks.",
       nextSteps: [
-        "Network through lelewolo of commerce",
+        "Network through chambers of commerce",
         "Professional matchmaking services",
         "Legal due diligence",
       ],
@@ -754,7 +754,7 @@ Here's the complete journey from decision to operation:
       type: "number",
       defaultValue: 10000000000,
       min: 10000000000,
-      step: 9900000019,
+      step: 1000000000,
       suffix: "IDR"
     },
     {
@@ -795,7 +795,7 @@ Here's the complete journey from decision to operation:
     const breakdown = [];
 
     // Notary fees
-    const notaryFee = 10000012;
+    const notaryFee = 15000000;
     total += notaryFee;
     breakdown.push({ label: "Notary & Legal Fees", amount: notaryFee });
 
@@ -818,7 +818,7 @@ Here's the complete journey from decision to operation:
 
     // Virtual office
     if (values['virtual-office']) {
-      const voFee = values.location === 'jakarta' ? 10000012 : 12000000;
+      const voFee = values.location === 'jakarta' ? 15000000 : 12000000;
       total += voFee;
       breakdown.push({ label: "Virtual Office (1 year)", amount: voFee });
     }

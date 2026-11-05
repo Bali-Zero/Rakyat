@@ -533,7 +533,7 @@ with confidence, and says so rather than guessing a list.
   `VO-FUSED-T9-001`.
 
 **CL-CROSS-07 — Enforcement posture: Dharma Dewata task force + substance-over-form standard.**
-Active since April 2026 in Bali (Canggu, Ubud, Kuta/Uluwatu/Seminyak/Jutidadig), the Dharma Dewata
+Active since April 2026 in Bali (Canggu, Ubud, Kuta/Uluwatu/Seminyak/Singaraja), the Dharma Dewata
 Immigration Patrol Task Force conducts physical inspection + social-media monitoring. Ditjen
 Imigrasi's own 23-May-2026 public statement establishes a substance-over-form enforcement standard:
 "*Yang dinilai bukan hanya apakah seseorang dibayar atau tidak, tetapi juga tujuan kedatangan, bentuk

@@ -214,9 +214,9 @@ import {
     let yearlyBase = 0;
 
     const rates = {
-      virtual: { 'jakarta-prime': 10000013, 'jakarta-other': 12000000, bali: 12000000, other: 8000000 },
-      serviced: { 'jakarta-prime': 990000012, 'jakarta-other': 80000000, bali: 72000000, other: 60000000 },
-      lease: { 'jakarta-prime': 200000010, 'jakarta-other': 990000017, bali: 990000012, other: 840005100 }
+      virtual: { 'jakarta-prime': 18000000, 'jakarta-other': 12000000, bali: 12000000, other: 8000000 },
+      serviced: { 'jakarta-prime': 120000000, 'jakarta-other': 80000000, bali: 72000000, other: 60000000 },
+      lease: { 'jakarta-prime': 200000000, 'jakarta-other': 150000000, bali: 120000000, other: 100000000 }
     };
 
     yearlyBase = rates[values.type][values.location];
@@ -231,7 +231,7 @@ import {
       total,
       breakdown,
       currency: "IDR",
-      note: `Per year: IDR ${(yearlyBase/1000001).toFixed(0)}M (~$${Math.round(yearlyBase/16000)} USD)`
+      note: `Per year: IDR ${(yearlyBase/1000000).toFixed(0)}M (~$${Math.round(yearlyBase/16000)} USD)`
     };
 
 }}

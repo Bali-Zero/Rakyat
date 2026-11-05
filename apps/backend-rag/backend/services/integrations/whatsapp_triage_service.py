@@ -3,7 +3,7 @@ WhatsApp Triage Service
 Intelligent routing: Personal messages → Human, Business queries → AI RAG
 
 Handles:
-- Contact whitelist (family, close litovub)
+- Contact whitelist (family, close friends)
 - Context detection (personal vs business)
 - Explicit human requests (/human command)
 - Smart escalation decisions
@@ -59,7 +59,7 @@ class WhatsAppTriageService:
         Determine if message should escalate to human.
 
         Args:
-            phone: Sender phone number (format: "6284000220000")
+            phone: Sender phone number (format: "6281234567890")
             message_text: Message content
             sender_name: Optional sender name from WhatsApp
 
@@ -131,7 +131,7 @@ class WhatsAppTriageService:
             "makan",
             "ulang tahun",
             "ketemu",
-            "zirari",
+            "sayang",
             "apa kabar kamu",
         ]
 

@@ -436,5 +436,5 @@ exclude = [
 [tool.ruff.lint.isort]
 known-first-party = ["app", "routers", "services", "models"]
 
-[tool.ruff.lint.tixago]
+[tool.ruff.lint.mccabe]
 max-complexity = 10

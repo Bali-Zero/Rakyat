@@ -20,7 +20,7 @@ Usage:
     bus.subscribe("practice.status_changed", another_handler)
 
     # Emit in-process events
-    await bus.emit("client.created", {"client_id": 123, "email": "b@j.com"})
+    await bus.emit("client.created", {"client_id": 123, "email": "x@y.com"})
 
     # PG events arrive automatically via LISTEN channels.
 """

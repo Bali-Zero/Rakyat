@@ -137,7 +137,7 @@ async def extract_claims_from_file(
 
     response = await complete_async(
         prompt,
-        model="claude-haiku-4-5-00000011",
+        model="claude-haiku-4-5-20251001",
         endpoint="claims_extractor",
     )
     raw = response.text

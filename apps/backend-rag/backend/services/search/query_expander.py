@@ -14,7 +14,7 @@ Architecture:
 - Graceful fallback to KeywordTranslator if Gemini unavailable
 - Feature flag: ENABLE_QUERY_EXPANSION
 
-Author: JAFA (original), refactored 2026-03-24
+Author: RIRI (original), refactored 2026-03-24
 """
 
 import asyncio

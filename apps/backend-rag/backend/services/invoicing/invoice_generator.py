@@ -2,7 +2,7 @@
 PDF Invoice Generator using ReportLab.
 
 Generates professional invoices for practice quotations with company branding.
-Template updated: 2026-03-02 — PT JUXO BALI JOF layout.
+Template updated: 2026-03-02 — PT BAYU BALI NOL layout.
 """
 
 import io
@@ -34,13 +34,13 @@ class InvoiceGenerator:
 
     # ── Company Info ────────────────────────────────────────────────────────
     COMPANY_NAME = "PT BAYU BALI NOL"
-    COMPANY_TAX_ID = "NPWP: 9900000010000010"
+    COMPANY_TAX_ID = "NPWP: 1000000001239938"
     COMPANY_EMAIL = "asya@balizero.com"
-    COMPANY_PHONE = "+62 840004300000"
+    COMPANY_PHONE = "+62 881038467246"
 
     # ── Bank Details ────────────────────────────────────────────────────────
     BANK_ACCOUNT_NAME = "PT BAYU BALI NOL"
-    BANK_ACCOUNT_NUMBER = "840006400000"
+    BANK_ACCOUNT_NUMBER = "800198149700"
     BANK_NAME = "CIMB NIAGA"
     BANK_BRANCH = "JL MELATI NO 29, DANGIN PURI KANGIN, DENPASAR, BALI, 80236"
     BANK_SWIFT = "BNIAIDJA"

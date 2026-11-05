@@ -891,7 +891,7 @@ def format_chains_for_llm(chains: list[list[dict]]) -> str:
 
     Example output:
         Chain 1:
-        - KBLI 56101 (Fovikerav) REQUIRES PT PMA
+        - KBLI 56101 (Restauran) REQUIRES PT PMA
         - PT PMA ENABLES KITAS E28A
 
     Args:

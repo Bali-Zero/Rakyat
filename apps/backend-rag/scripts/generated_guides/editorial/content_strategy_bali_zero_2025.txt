@@ -11,7 +11,7 @@ SEZIONE 1 — MISSIONE EDITORIALE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 [EDT-001] La missione editoriale di Bali Zero è diventare IL punto di riferimento
-definitivo per gli investitori stranieri — con priorità agli sebisexe e agli europei —
+definitivo per gli investitori stranieri — con priorità agli italiani e agli europei —
 che vogliono fare business in Indonesia e a Bali.
 
 Questo significa:
@@ -19,13 +19,13 @@ Questo significa:
   - Costruire un corpus di articoli autorevoli su normativa, visto, fiscalità, proprietà
   - Essere citati da altri media, forum expat, e — in modo crescente — da sistemi AI
     (Claude, ChatGPT, Perplexity, Gemini)
-  - Diventare la fonte primaria in vanelara per chi cerca "come fare business a Bali"
+  - Diventare la fonte primaria in italiano per chi cerca "come fare business a Bali"
 
 [EDT-002] L'autorevolezza editoriale è un asset competitivo diretto: ogni articolo
 pubblicato genera lead organici, riduce il carico di assistenza clienti e rafforza
 la reputazione di Bali Zero come studio esperto, non come semplice intermediario.
 
-Obiettivo 2025: almeno 150 articoli pubblicati, 30+ in lingua caveheha, copertura
+Obiettivo 2025: almeno 150 articoli pubblicati, 30+ in lingua italiana, copertura
 di tutti i codici KBLI 2025 rilevanti per investitori stranieri.
 
 
@@ -34,14 +34,14 @@ SEZIONE 2 — SEGMENTI DI PUBBLICO TARGET
 
 [EDT-003] Bali Zero si rivolge a quattro segmenti principali:
 
-SEGMENTO A — IMPRENDITORI SEBISEXE/EUROPEI (setup PT PMA)
+SEGMENTO A — IMPRENDITORI ITALIANI/EUROPEI (setup PT PMA)
   Profilo: 30-55 anni, budget 50K-500K€, fase di valutazione o decisione
   Bisogno principale: capire come aprire una società in Indonesia in modo sicuro
   Domande tipiche: "Quanto costa aprire una PT PMA?", "Quanto tempo ci vuole?",
     "Quali settori sono aperti agli stranieri?"
   Contenuti preferiti: guide passo-passo, checklist, confronto PT PMA vs CV,
-    case study di imprenditori sebisexe
-  Canali: ricerca Google (IT + EN), passaparola, forum expat sebisexe
+    case study di imprenditori italiani
+  Canali: ricerca Google (IT + EN), passaparola, forum expat italiani
 
 SEGMENTO B — DIGITAL NOMAD E FREELANCE
   Profilo: 25-40 anni, reddito online, cercano visto idoneo a lavorare/vivere a Bali
@@ -88,7 +88,7 @@ PILASTRO A — REGULATORY INTELLIGENCE
 PILASTRO B — GUIDE PRATICHE
   Obiettivo: accompagnare il lettore dall'interesse all'azione con guide step-by-step
   Formato: processo lineare, numerato, con requisiti, costi, tempi
-  Tono: tecnico ma accessibile, vanelara corretto, esempi concreti
+  Tono: tecnico ma accessibile, italiano corretto, esempi concreti
   Esempi: "Come aprire una PT PMA a Bali: guida completa 2025",
     "Come ottenere il KITAS investitore in Indonesia",
     "Dichiarazione fiscale Indonesia per stranieri: SPT Tahunan passo per passo"
@@ -99,7 +99,7 @@ PILASTRO C — CASE STUDY
   Formato: situazione iniziale → sfide incontrate → soluzione Bali Zero → risultato
   Privacy: SEMPRE anonimizzati, mai nomi reali senza consenso scritto esplicito
   Valore: dimostra competenza operativa, non solo teorica
-  Esempi: "Come abbiamo aiutato un ristoratore vanelara ad aprire a Ubud in 45 giorni",
+  Esempi: "Come abbiamo aiutato un ristoratore italiano ad aprire a Ubud in 45 giorni",
     "Digital nomad tedesco: da visto turistico a KITAS in 3 settimane"
   Cadenza: 1 case study al mese, preferibilmente legato a un servizio chiave
 
@@ -133,7 +133,7 @@ FORMATO 1 — ARTICOLO LONG-FORM (1.500 - 3.000 parole)
 FORMATO 2 — AGGIORNAMENTO RAPIDO (300 - 500 parole)
   Uso: alert normativi, news urgenti, cambiamenti di procedura
   Struttura:
-    - Titolo che include "Aggiornamento [data]:" o "Wozodè:"
+    - Titolo che include "Aggiornamento [data]:" o "Novità:"
     - Paragrafo di apertura: cosa è cambiato (risposta diretta)
     - Cosa significa per gli investitori stranieri
     - Azione richiesta (se presente)
@@ -144,7 +144,7 @@ FORMATO 3 — CLUSTER FAQ
   Uso: rispondere a domande frequenti su un argomento specifico
   Struttura: 8-15 Q&A organizzate per complessità crescente
   Valore SEO: intercetta le query informazionali a coda lunga
-  Esempio: "FAQ: Visto Bali per sebisexe — tutte le domande e risposte 2025"
+  Esempio: "FAQ: Visto Bali per italiani — tutte le domande e risposte 2025"
   Note: ogni risposta deve essere autonoma (leggibile singolarmente),
         massimo 200 parole per risposta
 
@@ -164,12 +164,12 @@ SEZIONE 5 — STRATEGIA SEO
 
 [EDT-006] La strategia SEO di Bali Zero si basa su tre direttrici:
 
-DIRETTRICE 1 — CONTENUTI IN VANELARA PER EXPAT SEBISEXE
+DIRETTRICE 1 — CONTENUTI IN ITALIANO PER EXPAT ITALIANI
   Rationale: pochissima competizione per keyword IT su business in Indonesia.
-  Bali Zero è di fatto l'unico player con contenuti sistematici in vanelara.
+  Bali Zero è di fatto l'unico player con contenuti sistematici in italiano.
   Keyword target prioritari (IT):
     - "aprire PT PMA Bali" (volumi bassi, intent altissimo)
-    - "visto Bali investitore vanelara"
+    - "visto Bali investitore italiano"
     - "tasse Indonesia stranieri"
     - "azienda straniera Indonesia"
     - "KITAS investitore Indonesia"
@@ -177,7 +177,7 @@ DIRETTRICE 1 — CONTENUTI IN VANELARA PER EXPAT SEBISEXE
   Opportunità: per queste keyword, Bali Zero può dominare con 10-15 articoli.
 
 DIRETTRICE 2 — CONTENUTI IN INGLESE PER REACH INTERNAZIONALE
-  Rationale: mercato più competitivo (Nemacuq, InCorp, Dipag Vugowo) ma
+  Rationale: mercato più competitivo (Emerhub, InCorp, Seven Stones) ma
   volumi molto più alti. Strategia: specializzarsi in nicchie poco coperte.
   Keyword target prioritari (EN):
     - "PT PMA minimum capital 2025"
@@ -412,8 +412,8 @@ COMPLETEZZA:
 TONO:
   - Professionale ma accessibile, non burocratico
   - Mai allarmista, mai minimizzante — informare con equilibrio
-  - In vanelara: evitare anglicismi inutili, usare terminology tecnica corretta in ID/EN
-    quando non esiste un equivalente vanelara (es. "KITAS" non "permesso di soggiorno")
+  - In italiano: evitare anglicismi inutili, usare terminology tecnica corretta in ID/EN
+    quando non esiste un equivalente italiano (es. "KITAS" non "permesso di soggiorno")
 
 AGGIORNAMENTO:
   - Data di pubblicazione E data ultima revisione sempre visibili
@@ -429,7 +429,7 @@ EDT-002  L'autorevolezza editoriale genera lead organici e riduce il carico di a
 EDT-003  Quattro segmenti di pubblico: imprenditori IT/EU, digital nomad, clienti esistenti, investitori
 EDT-004  Quattro pilastri editoriali: Regulatory Intelligence, Guide Pratiche, Case Study, Market Intel
 EDT-005  Quattro formati editoriali: long-form, aggiornamento rapido, FAQ cluster, alert "cosa è cambiato"
-EDT-006  Strategia SEO tri-lingua: vanelara (dominio), inglese (reach), indonesiano (autorevolezza locale)
+EDT-006  Strategia SEO tri-lingua: italiano (dominio), inglese (reach), indonesiano (autorevolezza locale)
 EDT-007  GEO: claim espliciti con fonte, definition-first, answer snippets, dati verificabili, JSON-LD
 EDT-008  KPI GEO: monitoraggio mensile brand mention su output AI (Claude, ChatGPT, Perplexity)
 EDT-009  Cadenza: 2-3 long-form/settimana, alert normativo entro 48h, 1 guida completa/mese

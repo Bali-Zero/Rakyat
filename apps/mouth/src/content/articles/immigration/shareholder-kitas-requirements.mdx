@@ -167,9 +167,9 @@ Foreign shareholders in Indonesian companies have several KITAS options dependin
       id: "totalCapital",
       label: "Company Paid-Up Capital",
       type: "number",
-      defaultValue: 8400062000,
+      defaultValue: 5000000000,
       min: 0,
-      step: 840006200,
+      step: 500000000,
       suffix: "IDR"
     },
     {
@@ -186,7 +186,7 @@ Foreign shareholders in Indonesian companies have several KITAS options dependin
     const capital = Number(values.totalCapital);
     const percent = Number(values.sharePercent) / 100;
     const yourShare = capital * percent;
-    const minInvestor = 9900000019;
+    const minInvestor = 1000000000;
     const eligible = yourShare >= minInvestor;
 
     return {

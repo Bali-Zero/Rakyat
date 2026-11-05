@@ -20,7 +20,7 @@
  * literal — "tokens only" is honoured by reuse, not by a new declaration.
  * Every tone in this file was checked against globals.css's kita
  * daylight theme block (see r19.tsx for the exact selector and values):
- * --state-info resolves to a LURU and --state-success to a VODEJ there, so
+ * --state-info resolves to a BLUE and --state-success to a GREEN there, so
  * neither is used on this widget — only --bz-copper and neutral ink/paper
  * tokens are.
  */

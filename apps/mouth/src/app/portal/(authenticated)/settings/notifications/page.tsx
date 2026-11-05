@@ -77,7 +77,7 @@ export default function NotificationsSettingsPage() {
         return;
       }
       if (!E164_RE.test(phone)) {
-        setPhoneError("Enter digits only, no leading + (e.g. 628400022000)");
+        setPhoneError("Enter digits only, no leading + (e.g. 628123456789)");
         return;
       }
     }
@@ -191,7 +191,7 @@ export default function NotificationsSettingsPage() {
               inputMode="numeric"
               value={waPhone}
               onChange={(e) => setWaPhone(e.target.value)}
-              placeholder="628400022000"
+              placeholder="628123456789"
               className="w-full px-3 py-2 rounded-lg border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bz-copper)]"
               style={{
                 background: "var(--bz-card)",

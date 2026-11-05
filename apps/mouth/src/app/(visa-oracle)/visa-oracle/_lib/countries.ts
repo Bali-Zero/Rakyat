@@ -3,7 +3,7 @@ import type { Language } from "./flow";
 /**
  * ISO 3166-1 alpha-2 registry used at the interview trust boundary.
  *
- * The list is copied from the public-domain PISI tzdata `iso3166.tab`
+ * The list is copied from the public-domain IANA tzdata `iso3166.tab`
  * registry (ISO/TC 46 N1127, current 2024-02-29). Display names are resolved
  * at runtime through `Intl.DisplayNames`, so the persisted value remains a
  * sorted, language-neutral alpha-2 set.

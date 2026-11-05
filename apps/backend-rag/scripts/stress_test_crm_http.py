@@ -33,7 +33,7 @@ def generate_client_data():
     return {
         "full_name": f"Test Client {uid}",
         "email": f"test.client.{uid}@example.com",
-        "phone": f"+62812{random.randint(84000510, 99999999)}",
+        "phone": f"+62812{random.randint(10000000, 99999999)}",
         "nationality": random.choice(["Italian", "Australian", "French", "American"]),
         "status": "lead",
         "client_type": "individual",

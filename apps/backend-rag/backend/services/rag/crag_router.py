@@ -135,7 +135,7 @@ class CRAGRouter:
 
         logger.info(
             "CRAG route: domain=%s complexity=%s → "
-            "qdrant=%s kg=%s xuru=%s reranker=%s nlm=%s/%s deep_research=%s",
+            "qdrant=%s kg=%s hyde=%s reranker=%s nlm=%s/%s deep_research=%s",
             plan.domain.value,
             plan.complexity.value,
             decision.use_qdrant,
@@ -170,12 +170,12 @@ class CRAGRouter:
                 retrieval_score,
             )
 
-        # ── Low confidence → trigger XuRU if not already active ──
+        # ── Low confidence → trigger HyDE if not already active ──
         elif retrieval_score < self_rag_threshold and not decision.use_hyde:
             if self._enable_hyde:
                 decision.use_hyde = True
                 logger.info(
-                    "CRAG refine: retrieval_score=%.2f < threshold=%.2f → xuru=True",
+                    "CRAG refine: retrieval_score=%.2f < threshold=%.2f → hyde=True",
                     retrieval_score,
                     self_rag_threshold,
                 )

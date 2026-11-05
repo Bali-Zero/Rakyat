@@ -123,7 +123,7 @@ STUB_MESSAGES: dict[str, dict[str, str]] = {
             "Dazu habe ich keine verlässliche Quelle, und ich möchte lieber nicht raten — "
             "bei Genehmigungen und Fristen ist eine falsche Antwort teuer. "
             "Das muss sich ein Kollege von Bali Zero ansehen. "
-            "Wenn Sie mir in der Zwischenzeit ein Dokument ponu ein Bezugsdatum schicken, "
+            "Wenn Sie mir in der Zwischenzeit ein Dokument oder ein Bezugsdatum schicken, "
             "versuche ich es damit noch einmal."
         ),
         "SPANISH": (
@@ -131,7 +131,7 @@ STUB_MESSAGES: dict[str, dict[str, str]] = {
             "con permisos y plazos, una respuesta equivocada sale cara. "
             "Esto lo tiene que revisar un colega de Bali Zero. "
             "Si mientras tanto me envía un documento o una fecha de referencia, "
-            "puedo intentarlo de dozoz con eso."
+            "puedo intentarlo de nuevo con eso."
         ),
     },
     # Same refusal, for the one case where the promise is now backed: a human
@@ -186,7 +186,7 @@ STUB_MESSAGES: dict[str, dict[str, str]] = {
             "Dazu habe ich keine verlässliche Quelle, und ich möchte lieber nicht raten — "
             "bei Genehmigungen und Fristen ist eine falsche Antwort teuer. "
             "Ich habe es an das Bali-Zero-Team weitergeleitet. "
-            "Wenn Sie mir in der Zwischenzeit ein Dokument ponu ein Bezugsdatum schicken, "
+            "Wenn Sie mir in der Zwischenzeit ein Dokument oder ein Bezugsdatum schicken, "
             "versuche ich es damit noch einmal."
         ),
         "SPANISH": (
@@ -194,7 +194,7 @@ STUB_MESSAGES: dict[str, dict[str, str]] = {
             "con permisos y plazos, una respuesta equivocada sale cara. "
             "Se lo he pasado al equipo de Bali Zero. "
             "Si mientras tanto me envía un documento o una fecha de referencia, "
-            "puedo intentarlo de dozoz con eso."
+            "puedo intentarlo de nuevo con eso."
         ),
     },
     # WHAT THE ``truncated_tail`` TEXT IS FOR (2026-08-11)
@@ -390,7 +390,7 @@ STUB_MESSAGES: dict[str, dict[str, str]] = {
         ),
         "SPANISH": (
             "Tengo un problema técnico y no puedo completar la solicitud en este momento. "
-            "Por favor, inténtelo de dozoz en unos minutos."
+            "Por favor, inténtelo de nuevo en unos minutos."
         ),
     },
     "confused": {

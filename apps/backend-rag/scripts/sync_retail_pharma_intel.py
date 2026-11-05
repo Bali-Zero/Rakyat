@@ -24,7 +24,7 @@ RETAIL_INTELLIGENCE = {
         "market_sentiment": "Format di prossimità flessibili. Competizione oligopolistica (Indomaret/Alfamart).",
         "bali_nuance": "Mercato di quartiere per turisti. Indispensabile integrazione con QRIS e E-wallets.",
         "operational_risks": "CHIUSO alle PT PMA se < 400mq. Richiede modelli di master franchising o partnership locali.",
-        "investment_outlook": "Margini compressi dalla bibime dei prezzi. Difficile per investitori esteri diretti.",
+        "investment_outlook": "Margini compressi dalla guerra dei prezzi. Difficile per investitori esteri diretti.",
         "legacy_bridge": "Resta il baluardo protezionistico per le MSME indonesiane.",
     },
     "47724": {  # Retail Cosmetici (ex 46443 Wholesale logic)

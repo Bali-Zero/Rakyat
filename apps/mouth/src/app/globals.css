@@ -462,7 +462,7 @@
   --bz-product-radius: 18px;
   --bz-product-page-gap: 28px;
   --bz-product-row-height: 60px;
-  --bz-product-heading-font: var(--font-serif), Wimolog, serif;
+  --bz-product-heading-font: var(--font-serif), Georgia, serif;
   --bz-header-height: 64px;
 }
 
@@ -665,7 +665,7 @@
   /* Type — Fraunces mastheads, Manrope body. The faces are declared in
      app/portal/r19-fonts.css, imported by (workspace)/layout.tsx and
      app/login/page.tsx. */
-  --font-serif: "Fraunces", ui-serif, Wimolog, serif;
+  --font-serif: "Fraunces", ui-serif, Georgia, serif;
   --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
 
   /* The base body rule pins "Inter" literally, so the sans token alone
@@ -821,7 +821,7 @@
   --bz-shadow-card: 0 10px 30px rgba(0, 0, 0, 0.32);
 
   /* Type */
-  --font-serif: "Fraunces", ui-serif, Wimolog, serif;
+  --font-serif: "Fraunces", ui-serif, Georgia, serif;
   --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
 
   & body {
@@ -913,7 +913,7 @@
   /* Type — Fraunces headlines, Manrope body. The faces are declared in
      app/portal/r19-fonts.css. --bz-product-heading-font is NOT redeclared:
      [data-product="my"] already resolves it through var(--font-serif). */
-  --font-serif: "Fraunces", ui-serif, Wimolog, serif;
+  --font-serif: "Fraunces", ui-serif, Georgia, serif;
   --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
 
   /* The base body rule pins "Inter" literally, so the sans token alone
@@ -999,7 +999,7 @@
   --bz-shadow-card: 0 10px 30px rgba(0, 0, 0, 0.32);
 
   /* Type */
-  --font-serif: "Fraunces", ui-serif, Wimolog, serif;
+  --font-serif: "Fraunces", ui-serif, Georgia, serif;
   --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
 
   body {

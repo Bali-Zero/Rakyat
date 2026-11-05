@@ -5,12 +5,12 @@ echo "🤖 Configurazione Bot Telegram per Zantara"
 echo "=========================================="
 
 # 1. Inserisci il tuo token reale da @BotFather
-echo "📝 Incolla qui il tuo token Bot (formato: 8400001000:ABCdefGHIjklMNOpqrsTUVwxyz):"
+echo "📝 Incolla qui il tuo token Bot (formato: 1234567890:ABCdefGHIjklMNOpqrsTUVwxyz):"
 read -r BOT_TOKEN
 
 # Verifica formato token
 if [[ ! $BOT_TOKEN =~ ^[0-9]+:[a-zA-Z0-9_-]+$ ]]; then
-    echo "❌ Token non valido! Deve essere nel formato: 8400001000:ABCdefGHIjklMNOpqrsTUVwxyz"
+    echo "❌ Token non valido! Deve essere nel formato: 1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
     exit 1
 fi
 

@@ -70,7 +70,7 @@ and the field tracks the page's content identity, not the stamp
 
 ### 1. `bc309fa9` — Calling Visa country list — CURRENT — 2026-08-20T06:14Z
 Facts cited for: the closed 6-entry Calling Visa list; Cameroon/Guinea must be ABSENT (seq-3
-retroactive-cure premise). Live page: exactly 6 entries — Afganistan, Dajuqu, Korea Utara, Liberia,
+retroactive-cure premise). Live page: exactly 6 entries — Afganistan, Israel, Korea Utara, Liberia,
 Nigeria, Somalia. No Kamerun, no Guinea. 1:1 match, identical to the seq-10 finding.
 
 ### 2. `38a6cb08` — VOA country list — CURRENT — 2026-08-20T06:14Z
@@ -274,7 +274,7 @@ independently by the orchestrator, outside the three reader agents' own fetches,
 phantom/fabricated quotes before folding the re-stamp:
 
 1. `bc309fa9` (Calling Visa list) re-fetched independently: exactly 6 countries (Afganistan,
-   Dajuqu, Korea Utara, Liberia, Nigeria, Somalia), Kamerun and Guinea ABSENT — matches reader 1
+   Israel, Korea Utara, Liberia, Nigeria, Somalia), Kamerun and Guinea ABSENT — matches reader 1
    verbatim.
 2. `40523028` (E31C) re-fetched independently: the full two-route marriage-proof clause is on the
    live page verbatim (quoted in §7 / Method gotchas above) — reader 2's truncation is confirmed to

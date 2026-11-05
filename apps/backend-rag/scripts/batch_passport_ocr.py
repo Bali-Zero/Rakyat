@@ -32,7 +32,7 @@ DB = (
     or "postgresql://backend_rag_v2:<<ROTATED_2026_05_22_see_DATABASE_URL_env>>@localhost:15432/nuzantara_rag?sslmode=disable"
 )
 
-# OAuth credentials from rclone bukili remote (the owner's personal Gmail account)
+# OAuth credentials from rclone gdrive remote (the owner's personal Gmail account)
 # These can access folders owned by all team members.
 # IMPORTANT: set GOOGLE_OAUTH_CLIENT_ID_RCLONE, GOOGLE_OAUTH_CLIENT_SECRET_RCLONE,
 # and GOOGLE_OAUTH_REFRESH_TOKEN as env vars.

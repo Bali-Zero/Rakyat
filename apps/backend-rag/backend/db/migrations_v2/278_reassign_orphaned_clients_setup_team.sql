@@ -165,7 +165,7 @@ SET statement_timeout = '60s';
 -- migration depends on ("client 11500 does not read as an orphan"). That
 -- broke three legitimate states: a split-deploy reassignment of 11500 to a
 -- DIFFERENT active operator after 277 ran (explicitly supported by this
--- file's own header), 11500 being merged/deleted, or pum.zagik@'s roster
+-- file's own header), 11500 being merged/deleted, or ari.firda@'s roster
 -- email changing -- all three leave the true invariant intact but would
 -- have raised this exception permanently, fixable only by hand-editing a
 -- shipped migration file. The check below now asserts the invariant itself:
@@ -195,7 +195,7 @@ BEGIN
 END $$;
 
 -- Kimi K3 refuter finding (2026-08-21, round 3, finding 3.2, CONFIRMED): the six
--- water-filling recipients below (damar/surya/vino/adit/pum.zagik/krisna) are
+-- water-filling recipients below (damar/surya/vino/adit/ari.firda/krisna) are
 -- literals baked into the `team` CTE further down, never checked against
 -- team_members. A stale or misspelled recipient email would silently receive
 -- zero clients while the level computation still counts them as an active

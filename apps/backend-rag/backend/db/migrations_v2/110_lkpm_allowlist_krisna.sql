@@ -4,8 +4,8 @@
 -- Date: 2026-04-16
 --
 -- The PDF "Client LKPM Report Q1 2026.pdf" lists Krisna as the handler
--- for 4 PTs (Bali Accommodation Management, Jebote Muvih Ruzon,
--- Bali Nea Karma, Urban Jebote Bali, Qiwit Entertainment Found).
+-- for 4 PTs (Bali Accommodation Management, Jungle Dream House,
+-- Bali Nea Karma, Urban Jungle Bali, Karta Entertainment Found).
 -- He doesn't have a .tax@ sub-alias so we whitelist krisna@balizero.com.
 --
 -- Must be kept in sync with:

@@ -5,7 +5,9 @@
   "type": "module",
   "workspaces": [
     "apps/mouth",
-    "packages/core"
+    "apps/admin-dashboard-local",
+    "packages/core",
+    "packages/ts-schemas"
   ],
   "scripts": {
     "prepare": "husky",

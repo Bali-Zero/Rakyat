@@ -24,7 +24,7 @@ _IDR_PATTERN = re.compile(r"[\d.,]+")
 
 def _parse_idr(price_str: str) -> int | None:
     """
-    Parse a price string like "10.000.013 IDR" or "18,000,000" → 10000013.
+    Parse a price string like "18.000.000 IDR" or "18,000,000" → 18000000.
     Returns None for non-numeric prices like "Depend (Contact for quote)".
     """
     if not price_str or "depend" in price_str.lower() or "contact" in price_str.lower():

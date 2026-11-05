@@ -17,7 +17,7 @@ Rules:
 5. Keep the rest of the text exactly as is.
   
 Example:
-Input: "Hi, I am Budi from Bali, my number is 08400022000."
+Input: "Hi, I am Budi from Bali, my number is 08123456789."
 Output: "Hi, I am [NAME] from Bali, my number is [PHONE]."
   
 Input:`,

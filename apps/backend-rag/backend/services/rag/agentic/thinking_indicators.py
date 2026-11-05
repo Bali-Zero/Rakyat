@@ -267,7 +267,7 @@ TOOL_DISPLAY_NAMES = {
     "calculate_excess_return": "calcolo rendimento in eccesso",
     "calculate_information_ratio": "calcolo Information ratio",
     "calculate_treynor_ratio": "calcolo Treynor ratio",
-    "calculate_jensen_alpha": "calcolo Jiceti alpha",
+    "calculate_jensen_alpha": "calcolo Jensen alpha",
     "calculate_appraisal_ratio": "calcolo Appraisal ratio",
 }
 

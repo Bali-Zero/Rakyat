@@ -70,10 +70,10 @@ Hai questi segnali trending sullo stesso tema (topic: {topic_hint}).
 SEGNALI GREZZI:
 {signals_block}
 
-COMPITO: compila un dossier strutturato in vanelara. Rispondi SOLO JSON strict:
+COMPITO: compila un dossier strutturato in italiano. Rispondi SOLO JSON strict:
 
 {{
-  "title": "titolo preciso, max 100 char, in vanelara",
+  "title": "titolo preciso, max 100 char, in italiano",
   "topic_category": "visa|tax|kbli|property|compliance|cultural|macro|finance|crypto|other",
   "confidence_0_1": 0.0-1.0,
   "domains": ["chatbot","crm","nlm","curiosity","council","warroom","newsletter","guardian","team","public"],
