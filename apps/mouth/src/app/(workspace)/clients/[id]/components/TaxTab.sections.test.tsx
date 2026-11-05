@@ -299,7 +299,7 @@ describe("Personal tax / Company tax sections", () => {
     ).not.toHaveAttribute("data-state", "done");
   });
 
-  it("two companies: one Company tax block each, unattributed docs go to the primary", async () => {
+  it("GUILT: two companies, one client-level SPT: neither company shows it as filed", async () => {
     await mount({
       client: { tax_consultant: "dea.tax@example.test" },
       companyLinks: [LINK(1, "Alpha PT", true), LINK(2, "Beta PT")],
@@ -308,9 +308,26 @@ describe("Personal tax / Company tax sections", () => {
     const blocks = await screen.findAllByTestId("spt-block-spt_company");
     expect(blocks).toHaveLength(2);
     expect(blocks[0]).toHaveTextContent("Alpha PT");
-    expect(blocks[0]).toHaveAttribute("data-state", "done");
+    expect(blocks[0]).not.toHaveAttribute("data-state", "done");
     expect(blocks[1]).toHaveTextContent("Beta PT");
     expect(blocks[1]).not.toHaveAttribute("data-state", "done");
+  });
+
+  it("INNOCENCE: two companies, an SPT carrying company_id closes only that company", async () => {
+    await mount({
+      client: { tax_consultant: "dea.tax@example.test" },
+      companyLinks: [LINK(1, "Alpha PT", true), LINK(2, "Beta PT")],
+      documents: [
+        doc({
+          document_type: "spt",
+          fiscal_year: 2025,
+          company_id: 2,
+        } as never),
+      ],
+    });
+    const blocks = await screen.findAllByTestId("spt-block-spt_company");
+    expect(blocks[0]).not.toHaveAttribute("data-state", "done");
+    expect(blocks[1]).toHaveAttribute("data-state", "done");
   });
 
   it("one company: a single block with no company heading", async () => {

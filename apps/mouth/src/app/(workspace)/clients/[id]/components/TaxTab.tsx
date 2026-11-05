@@ -888,7 +888,8 @@ export function TaxTab({
     companyLinks?.find((l) => l.is_primary) ?? companyLinks?.[0];
   // Company SPT blocks: one per company when there is more than one. A
   // document carrying a company_id belongs to that company; one without
-  // belongs to the primary company.
+  // closes none when several companies are linked (the backend counts a
+  // client-level SPT only for a client with exactly one linked company).
   const companyBlocks: {
     key: string;
     heading?: string;
@@ -902,9 +903,7 @@ export function TaxTab({
           companyId: l.company_id,
           docs: docs.filter((d) => {
             const cid = (d as SptDocumentLike).company_id;
-            return cid != null
-              ? cid === l.company_id
-              : l.company_id === primaryLink?.company_id;
+            return cid != null && cid === l.company_id;
           }),
         }))
       : [

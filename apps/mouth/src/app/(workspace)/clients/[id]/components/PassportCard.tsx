@@ -18,6 +18,7 @@ import {
   getDriveProxyUrl,
   getPassportValidityColor,
   pickCurrentPassport,
+  downloadHrefFor,
 } from "./utils";
 import { daysUntil } from "./overview-brief";
 import { CardFrame, ExpiryText, Fact, Facts, NOT_RECORDED } from "./cardKit";
@@ -63,18 +64,13 @@ export function PassportCard({
   const expiryDays = daysUntil(client.passport_expiry, Date.now());
 
   // Convert Drive view URL to direct download URL
-  const getDownloadUrl = (url: string) => {
-    const fileId = extractDriveFileId(url);
-    if (fileId) {
-      return `/api/documents/proxy/${fileId}`;
-    }
-    return url;
-  };
+  const getDownloadUrl = downloadHrefFor;
 
   const handleDownload = (e: React.MouseEvent) => {
     e.preventDefault();
     if (passportImageUrl) {
       const downloadUrl = getDownloadUrl(passportImageUrl);
+      if (!downloadUrl) return;
       const link = document.createElement("a");
       link.href = downloadUrl;
       link.download = `passport_${client.full_name?.replace(/\s+/g, "_") || "document"}.pdf`;
