@@ -80,9 +80,11 @@ DEFAULT_TARGETS = (
 EXCLUDED_DIRS = (
     "backend/tests/e2e",
     # Single files (matched by exact path): they read files that are not
-    # production and so not on Rakyat (infra/eventbus runner, a .claude ledger).
+    # production and so not on Rakyat (infra/eventbus runner, a .claude ledger,
+    # the kb/ tree).
     "backend/tests/unit/core/test_ingest_target_registry.py",
     "backend/tests/unit/kb/test_kb_inventory_contract.py",
+    "backend/tests/unit/kb/test_legal_status_read_lint.py",
 )
 
 # IMPACT_SELECTED_TESTS is published repo-root-relative; the shards run from
