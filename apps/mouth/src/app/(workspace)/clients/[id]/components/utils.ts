@@ -91,6 +91,20 @@ export const extractDriveFileId = (url: string): string | null => {
   return null;
 };
 
+// Only an https URL may be navigated from an API-supplied string; javascript:,
+// data: and the rest reach the DOM sink otherwise.
+export const safeExternalUrl = (
+  url: string | null | undefined,
+): string | null => {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url.trim());
+    return parsed.protocol === "https:" ? parsed.href : null;
+  } catch {
+    return null;
+  }
+};
+
 // Get proxy thumbnail URL for displaying document without Google branding
 export const getDriveProxyUrl = (
   url: string,

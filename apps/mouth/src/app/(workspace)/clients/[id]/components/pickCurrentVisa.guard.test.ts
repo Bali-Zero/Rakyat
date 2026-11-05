@@ -180,3 +180,25 @@ describe("pickCurrentVisa — a stay permit beats its own e-Visa copy", () => {
     ).toBe(5);
   });
 });
+
+describe("pickCurrentVisa — rejected documents are not permits", () => {
+  it("GUILT: a rejected KITAS with a future expiry is not picked", () => {
+    const docs = [
+      doc({ id: 1, status: "rejected", expiry_date: "2030-01-01" }),
+    ];
+    expect(pickCurrentVisa(docs)).toBeUndefined();
+    expect(
+      pickCurrentVisa([
+        doc({ id: 1, status: "Rejected" as never, expiry_date: "2030-01-01" }),
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("INNOCENCE: a verified permit beside a rejected later one still wins", () => {
+    const docs = [
+      doc({ id: 1, status: "verified", expiry_date: "2027-01-01" }),
+      doc({ id: 2, status: "rejected", expiry_date: "2030-01-01" }),
+    ];
+    expect(pickCurrentVisa(docs)?.id).toBe(1);
+  });
+});

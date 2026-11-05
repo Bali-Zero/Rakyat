@@ -117,3 +117,36 @@ describe("PassportCard", () => {
     });
   });
 });
+
+describe("PassportCard download navigates only safe URLs", () => {
+  const renderWith = (url: string) =>
+    render(
+      <PassportCard
+        client={client as any}
+        documents={[{ ...documents[0], google_drive_file_url: url }] as any}
+        formatDate={(value) => value}
+        onRefresh={vi.fn()}
+        clientId={42}
+      />,
+    );
+
+  it("GUILT: a javascript: file URL is never clicked", () => {
+    const spy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => {});
+    renderWith("javascript:alert(1)");
+    fireEvent.click(screen.getByRole("button", { name: /download/i }));
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("INNOCENCE: an https URL still downloads", () => {
+    const spy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => {});
+    renderWith("https://files.example.test/passport.pdf");
+    fireEvent.click(screen.getByRole("button", { name: /download/i }));
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+});

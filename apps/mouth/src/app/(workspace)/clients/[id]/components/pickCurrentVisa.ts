@@ -85,7 +85,8 @@ export const pickCurrentPermitFor = (
       isVisaDocument(doc) &&
       (doc.family_member_id ?? null) === familyMemberId &&
       !doc.deleted_at &&
-      !doc.is_archived,
+      !doc.is_archived &&
+      doc.status?.toLowerCase() !== "rejected",
   );
 
   let dated: ClientDocument | undefined;

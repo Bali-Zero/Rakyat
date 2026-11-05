@@ -18,6 +18,7 @@ import {
   getDriveProxyUrl,
   getPassportValidityColor,
   pickCurrentPassport,
+  safeExternalUrl,
 } from "./utils";
 import { daysUntil } from "./overview-brief";
 import { CardFrame, ExpiryText, Fact, Facts, NOT_RECORDED } from "./cardKit";
@@ -68,13 +69,14 @@ export function PassportCard({
     if (fileId) {
       return `/api/documents/proxy/${fileId}`;
     }
-    return url;
+    return safeExternalUrl(url);
   };
 
   const handleDownload = (e: React.MouseEvent) => {
     e.preventDefault();
     if (passportImageUrl) {
       const downloadUrl = getDownloadUrl(passportImageUrl);
+      if (!downloadUrl) return;
       const link = document.createElement("a");
       link.href = downloadUrl;
       link.download = `passport_${client.full_name?.replace(/\s+/g, "_") || "document"}.pdf`;
