@@ -54,15 +54,15 @@
     "workspace:reset": "npm run workspace:clean && npm install"
   },
   "devDependencies": {
-    "@types/node": "^26.5.1",
+    "@types/node": "^26.6.6",
     "esbuild": "^0.28.2",
     "husky": "^9.1.7",
-    "prettier": "^3.9.8",
+    "prettier": "^3.9.10",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "axios": "^1.20.0"
+    "axios": "^1.21.0"
   },
   "description": "**Production-ready AI platform powered by ZANTARA - Bali Zero's intelligent business assistant**",
   "main": "index.js",
