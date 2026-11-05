@@ -183,11 +183,12 @@ async def test_endpoint_cache_failure_returns_no_text_and_logs_type_only(caplog)
     assert _leaks(caplog) == []
 
 
-def test_no_cloud_provider_for_the_recap(monkeypatch):
-    # The recap facts are client data and a cloud SDK logs its own exception
-    # text; "gemini" must not select any provider (gate 2026-11-05).
-    monkeypatch.setenv("RECAP_REWRITE_PROVIDER", "gemini")
+@pytest.mark.parametrize("choice", ["gemini", "ollama", "OLLAMA", ""])
+def test_no_rewrite_provider_is_configured_for_the_recap(monkeypatch, choice):
+    # The recap facts are client data. A cloud SDK and the local Ollama client
+    # both log their own exception text, so no env value selects a provider
+    # (gate rounds 1 and 2, 2026-11-05).
+    monkeypatch.setenv("RECAP_REWRITE_PROVIDER", choice)
     assert rt.configured_provider() is None
     assert not hasattr(rt, "GeminiProvider")
-    monkeypatch.setenv("RECAP_REWRITE_PROVIDER", "")
-    assert rt.configured_provider() is None
+    assert not hasattr(rt, "OllamaProvider")

@@ -3,9 +3,9 @@
 Pipeline per request: build facts from rows kita already holds -> reduce them
 through ONE allow-list (``recap_payload``) -> sha256 of the canonical JSON ->
 return the cached row when the hash is unchanged, otherwise render the
-deterministic template (optionally rewritten by a LOCAL model when
-RECAP_REWRITE_PROVIDER=ollama), upsert, return. A changed fact set therefore refreshes the recap by
-itself; an unchanged one never costs a model call.
+deterministic template, upsert, return. No rewrite provider is configured: the
+template is the recap, and a caller may still inject a provider. A changed fact
+set therefore refreshes the recap by itself.
 
 PII boundary (hard rule): only what ``recap_payload`` lets through reaches the
 prompt, and it lets through codes, enums, counts, ISO dates and capital
@@ -172,11 +172,15 @@ def _prune(d: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in d.items() if v not in (None, [], {})}
 
 
-def _list(v: Any, fn, limit: int) -> list[Any]:
+def _valid(v: Any, fn) -> list[Any]:
     if not isinstance(v, Sequence) or isinstance(v, (str, bytes)):
         return []
     out = [fn(x) for x in v]
-    return [x for x in out if x not in (None, {}, [])][:limit]
+    return [x for x in out if x not in (None, {}, [])]
+
+
+def _list(v: Any, fn, limit: int) -> list[Any]:
+    return _valid(v, fn)[:limit]
 
 
 def _person_permit(v: Any) -> dict[str, Any]:
@@ -223,6 +227,16 @@ def recap_payload(scope: str, facts: Mapping[str, Any]) -> dict[str, Any]:
     f = facts if isinstance(facts, Mapping) else {}
     if scope == SCOPE_IMMIGRATION:
         cp = _mapping(f.get("current_permit"))
+        cp_expiry = _s_date(cp.get("expiry_date"))
+        practices = _valid(f.get("open_practices"), _practice)
+        family = _valid(f.get("family_permits"), _person_permit)
+        # The lists below are capped; the counts are taken before the cap so the
+        # recap never reports the cap as the total.
+        family_early = sum(
+            1
+            for x in family
+            if cp_expiry and x.get("permit_expiry_date") and x["permit_expiry_date"] < cp_expiry
+        )
         return _prune(
             {
                 "current_permit": _prune(
@@ -231,7 +245,7 @@ def recap_payload(scope: str, facts: Mapping[str, Any]) -> dict[str, Any]:
                         "official_name": _s_slot(clean_permit_name(cp.get("official_name")), 80),
                         "status": _s_status(cp.get("status")),
                         "issue_date": _s_date(cp.get("issue_date")),
-                        "expiry_date": _s_date(cp.get("expiry_date")),
+                        "expiry_date": cp_expiry,
                     }
                 ),
                 "itk_expiry_date": _s_date(f.get("itk_expiry_date")),
@@ -241,12 +255,16 @@ def recap_payload(scope: str, facts: Mapping[str, Any]) -> dict[str, Any]:
                 "passport_expiry_date": _s_date(f.get("passport_expiry_date")),
                 "passport_status": _s_status(f.get("passport_status")),
                 "family_members_count": _s_int(f.get("family_members_count")),
-                "family_permits": _list(f.get("family_permits"), _person_permit, 10),
-                "open_practices": _list(f.get("open_practices"), _practice, 10),
+                "family_permits": family[:10],
+                "family_permits_end_early_count": family_early or None,
+                "open_practices": practices[:10],
+                "open_practices_count": len(practices) or None,
             }
         )
     if scope == SCOPE_COMPANY:
         lk = _mapping(f.get("lkpm_latest"))
+        kbli = _valid(f.get("kbli"), _kbli_item)
+        kbli_2020 = sum(1 for k in kbli if k.get("in_2025") is False)
         return _prune(
             {
                 "legal_form": _s_slot(f.get("legal_form")),
@@ -256,7 +274,9 @@ def recap_payload(scope: str, facts: Mapping[str, Any]) -> dict[str, Any]:
                 "total_shares": _s_int(f.get("total_shares")),
                 "shareholders_count": _s_int(f.get("shareholders_count")),
                 "directors_count": _s_int(f.get("directors_count")),
-                "kbli": _list(f.get("kbli"), _kbli_item, 15),
+                "kbli": kbli[:15],
+                "kbli_count": len(kbli) or None,
+                "kbli_2020_count": kbli_2020 or None,
                 "lkpm_latest": _prune(
                     {
                         "year": _s_int(lk.get("year")),
@@ -519,9 +539,11 @@ async def fetch_company_inputs(conn: Any, client_id: int, company_id: int) -> di
     lkpm = None
     try:
         row = await conn.fetchrow(
-            "SELECT year, quarter, status FROM lkpm_reports WHERE client_id = $1 "
-            "AND (company_id = $2 OR (company_id IS NULL AND "
-            "(SELECT count(*) FROM client_company_links WHERE client_id = $1) = 1)) "
+            # The company's own reports whoever filed them; an unattributed report
+            # counts only for a client with exactly one company.
+            "SELECT year, quarter, status FROM lkpm_reports WHERE company_id = $2 "
+            "OR (client_id = $1 AND company_id IS NULL AND "
+            "(SELECT count(*) FROM client_company_links WHERE client_id = $1) = 1) "
             "ORDER BY year DESC, quarter DESC LIMIT 1",
             client_id,
             company_id,

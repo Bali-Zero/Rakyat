@@ -208,7 +208,7 @@ def test_allow_list_drops_unknown_keys_and_free_text_values():
             "shareholders_count": 2,
         },
     )
-    assert payload == {"shareholders_count": 2, "kbli": [{"title": "ok title"}]}
+    assert payload == {"shareholders_count": 2, "kbli": [{"title": "ok title"}], "kbli_count": 1}
     with pytest.raises(ValueError):
         r.recap_payload("bogus", {})
 
@@ -403,6 +403,93 @@ async def test_lkpm_query_is_scoped_to_the_company():
     sql, *args = conn.fetchrow.await_args_list[1].args
     assert "company_id" in sql and 55 in args and 7 in args
     assert out["lkpm_latest"]["quarter"] == "Q1"
+
+
+def test_capped_immigration_lists_keep_their_true_counts():
+    # Gate r2 2026-11-05: the payload caps practices and family permits at 10;
+    # the recap must state the real totals, not the cap.
+    facts = {
+        "current_permit": {"code": "E23", "status": "active", "expiry_date": "2026-12-01"},
+        "family_members_count": 12,
+        "family_permits": [
+            {"relationship": "child", "permit_code": "E31", "permit_expiry_date": "2026-06-01"}
+        ]
+        * 12,
+        "open_practices": [{"type": "KITAS Extension"}] * 11,
+    }
+    payload = r.recap_payload("immigration", facts)
+    assert len(payload["open_practices"]) == 10 and payload["open_practices_count"] == 11
+    assert len(payload["family_permits"]) == 10
+    assert payload["family_permits_end_early_count"] == 12
+    clauses = " | ".join(rt._imm_clauses(payload, date(2026, 1, 10)))
+    assert "11 immigration practices are open" in clauses
+    assert "12 of them with permits that end before the main permit" in clauses
+
+
+def test_capped_kbli_list_keeps_its_true_counts():
+    kbli = [{"code": f"{47100 + i}", "in_2025": i < 14} for i in range(16)]
+    payload = r.recap_payload("company", {"kbli": kbli})
+    assert len(payload["kbli"]) == 15
+    assert payload["kbli_count"] == 16 and payload["kbli_2020_count"] == 2
+    clause = next(c for c in rt._company_clauses(payload) if "KBLI" in c)
+    assert "16 KBLI lines" in clause and "two codes still on KBLI 2020" in clause
+
+
+def test_short_lists_count_as_listed_and_empty_lists_add_no_count():
+    payload = r.recap_payload(
+        "immigration",
+        {"current_permit": {"code": "E23"}, "open_practices": [{"type": "KITAS Extension"}]},
+    )
+    assert payload["open_practices_count"] == 1
+    assert "family_permits_end_early_count" not in payload
+    company = r.recap_payload("company", {"kbli": [{"code": "62010", "in_2025": True}]})
+    assert company["kbli_count"] == 1 and "kbli_2020_count" not in company
+
+
+@pytest.mark.asyncio
+async def test_lkpm_latest_is_the_company_s_latest_whoever_filed_it():
+    # Gate r2 2026-11-05: a later report of the same company filed under a
+    # co-owner client is the company's latest; an unattributed report counts
+    # only for a client with exactly one company. Run the real SQL on SQLite.
+    import re
+    import sqlite3
+
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(side_effect=[{"company_type": "PT"}, None])
+    conn.fetch = AsyncMock(return_value=[])
+    conn.fetchval = AsyncMock(return_value=None)
+    await r.fetch_company_inputs(conn, 7, 55)
+    sql = re.sub(r"\$(\d)", r"?\1", conn.fetchrow.await_args_list[1].args[0])
+
+    db = sqlite3.connect(":memory:")
+    db.execute(
+        "CREATE TABLE lkpm_reports "
+        "(client_id INT, company_id INT, year INT, quarter TEXT, status TEXT)"
+    )
+    db.execute("CREATE TABLE client_company_links (client_id INT, company_id INT)")
+    db.executemany(
+        "INSERT INTO client_company_links VALUES (?, ?)", [(7, 55), (7, 66), (8, 55), (9, 77)]
+    )
+    db.executemany(
+        "INSERT INTO lkpm_reports VALUES (?, ?, ?, ?, 'approved')",
+        [
+            (7, 55, 2026, "Q1"),
+            (8, 55, 2026, "Q3"),
+            (7, 66, 2026, "Q4"),
+            (7, None, 2027, "Q1"),
+            (8, None, 2028, "Q1"),
+            (9, None, 2025, "Q2"),
+        ],
+    )
+
+    def latest(client_id, company_id):
+        row = db.execute(sql, (client_id, company_id)).fetchone()
+        return (row[0], row[1]) if row else None
+
+    assert latest(7, 55) == (2026, "Q3")
+    assert latest(7, 66) == (2026, "Q4")
+    assert latest(9, 77) == (2025, "Q2")
+    assert latest(7, 99) is None
 
 
 def test_hash_carries_schema_version_and_statuses():

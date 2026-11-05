@@ -118,23 +118,6 @@ def test_validator_accepts_good_variants():
     )[0]
 
 
-@pytest.mark.asyncio
-async def test_providers_clean_output_and_never_raise(monkeypatch):
-    from unittest.mock import AsyncMock, patch
-
-    with patch(
-        "backend.llm.ollama_client.ollama_generate",
-        AsyncMock(return_value="<think>x</think> **Hi**  there."),
-    ):
-        assert await t.OllamaProvider("m").generate("p") == "Hi there."
-    with patch("backend.llm.ollama_client.ollama_generate", AsyncMock(return_value=None)):
-        assert await t.OllamaProvider("m").generate("p") is None
-    monkeypatch.setenv("RECAP_REWRITE_PROVIDER", "")
-    assert t.configured_provider() is None
-    monkeypatch.setenv("RECAP_REWRITE_PROVIDER", "ollama")
-    assert isinstance(t.configured_provider(), t.OllamaProvider)
-
-
 def test_permit_name_and_family_code_cleaning():
     from backend.services.crm import client_recap as r
 

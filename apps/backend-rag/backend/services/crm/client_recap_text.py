@@ -7,7 +7,6 @@ Everything here reads ONLY the allow-listed payload produced by
 from __future__ import annotations
 
 import logging
-import os
 import re
 from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime, timedelta
@@ -158,7 +157,7 @@ def _imm_clauses(p: Mapping[str, Any], today: date) -> list[str]:
 
     practices = p.get("open_practices") or []
     if practices:
-        n = len(practices)
+        n = max(p.get("open_practices_count") or 0, len(practices))
         types = list(dict.fromkeys(x["type"] for x in practices if x.get("type")))[:4]
         s = (
             "an immigration practice is open"
@@ -182,13 +181,14 @@ def _imm_clauses(p: Mapping[str, Any], today: date) -> list[str]:
     fam_n = p.get("family_members_count") or 0
     if fam_n:
         s = f"{num(fam_n)} family {_plural(fam_n, 'member is', 'members are')} on file"
-        k = len(
+        listed = len(
             [
                 f
                 for f in p.get("family_permits") or []
                 if expiry and (fe := _d(f.get("permit_expiry_date"))) and fe < expiry
             ]
         )
+        k = max(p.get("family_permits_end_early_count") or 0, listed)
         if k:
             s += (
                 ", one of them with a permit that ends before the main permit"
@@ -228,11 +228,12 @@ def _company_clauses(p: Mapping[str, Any]) -> list[str]:
         clauses.append("it has " + " and ".join(bits))
     kbli = p.get("kbli") or []
     if kbli:
-        s = f"it is registered under {num(len(kbli))} KBLI {_plural(len(kbli), 'line')}"
+        total = max(p.get("kbli_count") or 0, len(kbli))
+        s = f"it is registered under {num(total)} KBLI {_plural(total, 'line')}"
         titles = [k["title"] for k in kbli if k.get("title")][:2]
         if titles:
             s += " (" + ", ".join(titles) + ")"
-        old = sum(1 for k in kbli if k.get("in_2025") is False)
+        old = max(p.get("kbli_2020_count") or 0, sum(1 for k in kbli if k.get("in_2025") is False))
         if old:
             s += f", and {num(old)} {_plural(old, 'code')} still on KBLI 2020"
         clauses.append(s)
@@ -648,35 +649,8 @@ async def rewrite_with_retry(
     return (text2 if ok2 else text), ok2, False, (reasons if ok2 else reasons2)
 
 
-def _clean(raw: str | None) -> str | None:
-    if not raw:
-        return None
-    text = re.sub(r"<think>.*?</think>", " ", raw, flags=re.DOTALL)
-    text = re.sub(r"[*_#`>]+", "", text)
-    text = re.sub(r"\s+", " ", text).strip().strip('"')
-    return text or None
-
-
-class OllamaProvider:
-    name = "ollama"
-
-    def __init__(self, model: str | None = None, timeout: float = 90.0) -> None:
-        self.model = model or os.getenv("RECAP_OLLAMA_MODEL", "qwen3.5:9b")
-        self.timeout = timeout
-
-    async def generate(self, prompt: str) -> str | None:
-        from backend.llm.ollama_client import ollama_generate
-
-        raw = await ollama_generate(
-            prompt, model=self.model, temperature=0.2, max_tokens=300, timeout=self.timeout
-        )
-        return _clean(raw)
-
-
 def configured_provider() -> RecapProvider | None:
-    choice = os.getenv("RECAP_REWRITE_PROVIDER", "").strip().lower()
-    if choice == "ollama":
-        return OllamaProvider()
-    # No cloud provider: the recap facts are client data, and a cloud SDK logs
-    # its own exception text. "gemini" (or any other value) means no rewrite.
+    # No rewrite provider is configured: the template is the recap. A cloud SDK
+    # and the local Ollama client both log their own exception text, which can
+    # echo the prompt built from client facts. A caller may still inject one.
     return None
