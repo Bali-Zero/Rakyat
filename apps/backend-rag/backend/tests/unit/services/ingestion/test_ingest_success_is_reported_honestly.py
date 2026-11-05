@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 
-def _find_runner() -> Path:
+def _find_runner() -> Path | None:
     """Walk up to the repository that CONTAINS this test, never a fixed depth.
 
     A hardcoded `parents[N]` breaks the moment the tree is re-nested, and an
@@ -41,13 +41,22 @@ def _find_runner() -> Path:
         candidate = parent / relative
         if candidate.exists():
             return candidate
-    raise AssertionError(f"{relative} not found above {__file__}")
+    return None
 
 
 RUNNER_PATH = _find_runner()
 
 
+def _require_runner() -> Path:
+    """Lazy: the runner is not carried everywhere (Rakyat has no infra/eventbus),
+    so only the tests that load it skip; the CLI tests still run."""
+    if RUNNER_PATH is None:
+        pytest.skip("infra/eventbus/regulatory_ingest_runner.py is absent in this checkout")
+    return RUNNER_PATH
+
+
 def _load_runner():
+    _require_runner()
     spec = importlib.util.spec_from_file_location("regulatory_ingest_runner_undertest", RUNNER_PATH)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -93,7 +102,7 @@ def test_the_subprocess_no_longer_hardcodes_its_own_verdict():
     are ordinary in-process returns after work that either succeeded or raised,
     and they are not this bug.
     """
-    source = RUNNER_PATH.read_text()
+    source = _require_runner().read_text()
     assert '{{"ok": True' not in source, "the subprocess is claiming success again"
     assert '"success": result.get("success")' in source, "it must report the ingest's own verdict"
 

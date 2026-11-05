@@ -96,7 +96,15 @@ def _subscribed_event_types() -> set[str]:
     return found
 
 
-BRIDGE_CHANNELS = _bridge_channels()
+@pytest.fixture(scope="module")
+def bridge_channels() -> set[str]:
+    """Lazy: the bridge script is not carried everywhere (Rakyat has no
+    scripts/pg-to-organism-bridge.py), so only the bridge tests skip."""
+    if not BRIDGE_PATH.is_file():
+        pytest.skip(f"{BRIDGE_PATH.relative_to(REPO_ROOT)} is absent in this checkout")
+    return _bridge_channels()
+
+
 SUBSCRIBED_EVENT_TYPES = _subscribed_event_types()
 
 
@@ -119,27 +127,27 @@ class TestDeclarationCoverage:
 
 
 class TestBridgeClaims:
-    def test_bridge_claims_match_bridge_channels(self) -> None:
+    def test_bridge_claims_match_bridge_channels(self, bridge_channels: set[str]) -> None:
         claimed = {ch for ch, kinds in CHANNEL_CONSUMERS.items() if "bridge" in kinds}
-        not_in_bridge = claimed - BRIDGE_CHANNELS
+        not_in_bridge = claimed - bridge_channels
         assert not not_in_bridge, (
             f"channel(s) declare 'bridge' but pg-to-organism-bridge.py does "
             f"NOT LISTEN them: {sorted(not_in_bridge)}"
         )
 
-    def test_bridge_channels_are_known(self) -> None:
-        unknown = BRIDGE_CHANNELS - set(PG_CHANNEL_MAP) - BRIDGE_ONLY_CHANNELS
+    def test_bridge_channels_are_known(self, bridge_channels: set[str]) -> None:
+        unknown = bridge_channels - set(PG_CHANNEL_MAP) - BRIDGE_ONLY_CHANNELS
         assert not unknown, (
             f"bridge LISTENs channel(s) unknown to PG_CHANNEL_MAP and not in "
             f"the bridge-only allowlist (dead or renamed?): {sorted(unknown)}"
         )
 
-    def test_bridge_covered_channels_declare_it(self) -> None:
+    def test_bridge_covered_channels_declare_it(self, bridge_channels: set[str]) -> None:
         """If the bridge LISTENs an EventBus channel, the declaration must say
         so — otherwise CHANNEL_CONSUMERS under-reports reality."""
         undeclared = {
             ch
-            for ch in BRIDGE_CHANNELS & set(PG_CHANNEL_MAP)
+            for ch in bridge_channels & set(PG_CHANNEL_MAP)
             if "bridge" not in CHANNEL_CONSUMERS.get(ch, frozenset())
         }
         assert not undeclared, (

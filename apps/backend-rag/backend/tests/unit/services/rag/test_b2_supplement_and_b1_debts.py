@@ -41,22 +41,31 @@ _SUPPLEMENT_PATH = _BENCH_DIR / "manifest_supplement_b2.json"
 _QUERY_VECTORS_PATH = _BENCH_DIR / "query_vectors_b1_5.json"
 
 
-def _find_repo_root(start: Path) -> Path:
+def _find_repo_root(start: Path) -> Path | None:
     """Walk up from `start` to the checkout root (the dir carrying both
     `.git` and `evidence/`) — robust to this test file's exact nesting depth,
     unlike a hardcoded `parents[N]`."""
     for candidate in (start, *start.parents):
         if (candidate / ".git").exists() and (candidate / "evidence").is_dir():
             return candidate
-    raise RuntimeError(f"repo root not found walking up from {start}")
+    return None
 
 
 _REPO_ROOT = _find_repo_root(Path(__file__).resolve())
-_B15_PRECALL_PATH = (
-    _REPO_ROOT
-    / "evidence/2026-09/agent-nuzantara-backend-rag-b1-5-query-vectors-7057dd74"
-    / "b1-5-precall.json"
+_B15_PRECALL_REL = (
+    "evidence/2026-09/agent-nuzantara-backend-rag-b1-5-query-vectors-7057dd74"
+    "/b1-5-precall.json"
 )
+_B15_PRECALL_PATH = _REPO_ROOT / _B15_PRECALL_REL if _REPO_ROOT is not None else None
+
+
+def _require_precall() -> Path:
+    """Lazy: the B1.5 precall receipt lives in an evidence directory that is not
+    carried everywhere (Rakyat has no evidence/), so only the two tests that
+    read it skip; the supplement and D-C4 checks still run."""
+    if _B15_PRECALL_PATH is None or not _B15_PRECALL_PATH.exists():
+        pytest.skip(f"{_B15_PRECALL_REL} is absent in this checkout")
+    return _B15_PRECALL_PATH
 
 _EXPECTED_ARTIFACT_SHA256 = (
     "0021c3275b7bd9f812f0ce52fc06da1330e89a9d1c40a4c105ca932720083012"
@@ -271,10 +280,10 @@ def test_d_b15_query_vectors_artifact_sha256_matches_the_precall_receipt() -> No
     import hashlib
 
     assert _QUERY_VECTORS_PATH.exists(), f"artifact file missing: {_QUERY_VECTORS_PATH}"
-    assert _B15_PRECALL_PATH.exists(), f"precall receipt missing: {_B15_PRECALL_PATH}"
+    precall_path = _require_precall()
 
     actual_sha256 = hashlib.sha256(_QUERY_VECTORS_PATH.read_bytes()).hexdigest()
-    precall = json.loads(_B15_PRECALL_PATH.read_text(encoding="utf-8"))
+    precall = json.loads(precall_path.read_text(encoding="utf-8"))
     recorded_sha256 = precall["completion"]["artifact_sha256"]
 
     assert actual_sha256 == _EXPECTED_ARTIFACT_SHA256, (
@@ -292,7 +301,7 @@ def test_d_b15_list_sha256_is_a_different_field_and_is_not_the_file_hash() -> No
     is not tempted to bind to it instead of `completion.artifact_sha256`."""
     import hashlib
 
-    precall = json.loads(_B15_PRECALL_PATH.read_text(encoding="utf-8"))
+    precall = json.loads(_require_precall().read_text(encoding="utf-8"))
     artifact = json.loads(_QUERY_VECTORS_PATH.read_text(encoding="utf-8"))
 
     list_sha256_recorded = precall["list_sha256"]
