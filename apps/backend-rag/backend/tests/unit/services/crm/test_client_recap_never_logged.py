@@ -150,6 +150,7 @@ async def test_endpoint_facts_failure_logs_type_only(caplog):
     user = {"id": "u", "role": "admin", "email": "a@example.com"}
     with (
         patch.object(ce, "verify_client_access", AsyncMock()),
+        patch.object(r, "RECAP_ENABLED", True),
         patch.object(r, "fetch_immigration_inputs", AsyncMock(side_effect=_failure())),
         caplog.at_level(logging.DEBUG),
     ):

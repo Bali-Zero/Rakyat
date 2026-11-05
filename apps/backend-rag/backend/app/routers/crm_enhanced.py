@@ -1381,6 +1381,8 @@ async def get_client_recap(
 
     async with pool.acquire() as conn:
         await verify_client_access(client_id, current_user, conn, allow_assigned=True)
+        if not recap.RECAP_ENABLED:
+            return recap.empty_recap(scope)
         subject_key = ""
         try:
             if scope == recap.SCOPE_IMMIGRATION:
