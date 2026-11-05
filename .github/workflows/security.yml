@@ -535,7 +535,7 @@ jobs:
             -f apps/backend-rag/Dockerfile .
 
       - name: Run Snyk (Docker)
-        uses: snyk/actions/docker@12140f4059e244892ae643824a95459a102120dd # master
+        uses: snyk/actions/docker@11b673cfb4b0dc0d860a1323caa199d54950dcce # master
         continue-on-error: true # vulnerability findings stay advisory (see job comment)
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
