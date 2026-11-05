@@ -13,7 +13,7 @@ import {
 } from "@/lib/upload/base64UploadLimit";
 import { useOcrPolling } from "@/hooks/useOcrPolling";
 import type { ClientProfile, ClientDocument } from "@/lib/api/crm/crm.types";
-import { extractDriveFileId } from "./utils";
+import { downloadHrefFor, extractDriveFileId } from "./utils";
 import { pickCurrentVisa } from "./pickCurrentVisa";
 import { daysUntil, elapsedShare, humanize } from "./overview-brief";
 import { permitLine } from "./header-facts";
@@ -88,9 +88,10 @@ export function VisaCard({
   const handleDownload = (e: React.MouseEvent) => {
     e.preventDefault();
     if (!latestVisaFileUrl) return;
-    const fileId = extractDriveFileId(latestVisaFileUrl);
+    const href = downloadHrefFor(latestVisaFileUrl);
+    if (!href) return;
     const link = document.createElement("a");
-    link.href = fileId ? `/api/documents/proxy/${fileId}` : latestVisaFileUrl;
+    link.href = href;
     link.download = `visa_${client.full_name?.replace(/\s+/g, "_") || "document"}.pdf`;
     document.body.appendChild(link);
     link.click();

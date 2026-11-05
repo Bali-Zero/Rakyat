@@ -71,3 +71,28 @@ describe("VisaCard OCR runs only on an explicit click", () => {
     ]);
   });
 });
+
+describe("VisaCard download navigates only safe URLs", () => {
+  const clickSpy = () =>
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+  it("GUILT: a javascript: file URL is never clicked", () => {
+    const spy = clickSpy();
+    renderCard(visaDoc({ google_drive_file_url: "javascript:alert(1)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Download visa" }));
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("INNOCENCE: an https non-Drive-ID URL still downloads", () => {
+    const spy = clickSpy();
+    renderCard(
+      visaDoc({
+        google_drive_file_url: "https://files.example.test/kitas.pdf",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Download visa" }));
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+});
