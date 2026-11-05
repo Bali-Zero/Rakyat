@@ -823,8 +823,8 @@ def _child_env(env_extra: dict[str, str] | None = None) -> dict[str, str]:
         "PYTHONDONTWRITEBYTECODE": "1",  # a test process leaves no __pycache__ behind it
         # Settings() will not load without these two and reads .env from the working directory only: made-up
         # values (conftest's), so that no child depends on a .env file being there. A checkout has none.
-        "JWT_SECRET_KEY": "test_jwt_secret_key_for_testing_only_min_32_chars_long",
-        "API_KEYS": "test_api_key_1,test_api_key_2",
+        "JWT_SECRET_KEY": "test_jwt_secret_key_for_testing_only_min_32_chars_long",  # pragma: allowlist secret
+        "API_KEYS": "test_api_key_1,test_api_key_2",  # pragma: allowlist secret
     }
     env.update(env_extra or {})
     return env
