@@ -445,7 +445,9 @@ def build_company_facts(
     for item in kbli:
         if kbli_in_2025 and item["code"] in kbli_in_2025:
             item["in_2025"] = kbli_in_2025[item["code"]]
-    amendment = company.get("akta_perubahan_date") or _cf_value(cf, "akta_date")
+    # Only an explicit amendment deed is an amendment: the generic custom_fields
+    # "akta_date" can be the deed of establishment.
+    amendment = company.get("akta_perubahan_date")
     return {
         "legal_form": company.get("company_type"),
         "established_date": company.get("akta_pendirian_date"),
@@ -560,9 +562,16 @@ async def fetch_company_inputs(conn: Any, client_id: int, company_id: int) -> di
     }
 
 
+_KBLI_CLASSIFY_MAX = 50
+
+
 async def _kbli_in_2025(conn: Any, company: Mapping[str, Any]) -> dict[str, bool]:
     """Code -> in the KBLI 2025 catalogue, from ``kbli_documents`` (the service the
-    kbli tools already use). UNKNOWN verdicts are omitted: absence of evidence says nothing."""
+    kbli tools already use), for EVERY code of the company or for none.
+
+    The recap states how many codes are still on KBLI 2020, so a partial classification
+    would understate it: past the ceiling, or on any UNKNOWN verdict, nothing is returned
+    and the recap says nothing about KBLI 2020."""
     from backend.services.kbli_catalogue_membership import (
         ABSENT,
         CANONICAL,
@@ -573,15 +582,16 @@ async def _kbli_in_2025(conn: Any, company: Mapping[str, Any]) -> dict[str, bool
     cf = from_jsonb(company.get("custom_fields")) if company.get("custom_fields") else {}
     cf = cf if isinstance(cf, dict) else {}
     extra = _cf_value(cf, "kbli_codes")
-    codes = [company.get("kbli_code")] + (extra if isinstance(extra, list) else [])
+    raw_codes = [company.get("kbli_code")] + (extra if isinstance(extra, list) else [])
+    codes = list(dict.fromkeys(c for c in (_s_kbli(str(r or "").strip()) for r in raw_codes) if c))
+    if len(codes) > _KBLI_CLASSIFY_MAX:
+        return {}
     out: dict[str, bool] = {}
-    for raw in codes[:15]:
-        code = _s_kbli(str(raw or "").strip())
-        if not code or code in out:
-            continue
+    for code in codes:
         verdict = catalogue_verdict(await fetch_catalogue_membership(conn, code))
-        if verdict in (CANONICAL, ABSENT):
-            out[code] = verdict == CANONICAL
+        if verdict not in (CANONICAL, ABSENT):
+            return {}
+        out[code] = verdict == CANONICAL
     return out
 
 

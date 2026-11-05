@@ -122,12 +122,13 @@ async def fetch_catalogue_membership(conn: Any, code: str) -> Sequence[Any] | No
     try:
         return await conn.fetch(CATALOGUE_MEMBERSHIP_QUERY, code, PHANTOM_LICENSING_STATUS)
     except asyncpg.PostgresError as e:
+        # Type name only: the server's message can echo a bound value, and the recap
+        # reaches this path with a client company's codes.
         logger.warning(
-            "⚠️ KBLI catalogue membership unreadable for %s (%s: %s) — verdict UNKNOWN, "
+            "⚠️ KBLI catalogue membership unreadable for %s (%s) — verdict UNKNOWN, "
             "serving the pre-tombstone answer",
             code,
             type(e).__name__,
-            e,
         )
         return None
 

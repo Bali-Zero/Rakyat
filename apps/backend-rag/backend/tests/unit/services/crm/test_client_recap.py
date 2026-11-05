@@ -492,6 +492,86 @@ async def test_lkpm_latest_is_the_company_s_latest_whoever_filed_it():
     assert latest(7, 99) is None
 
 
+def _kbli_company(n_codes):
+    extra = [str(47100 + i) for i in range(n_codes - 1)]
+    return {
+        "company_type": "PT PMA",
+        "kbli_code": "62010",
+        "custom_fields": json.dumps({"kbli_codes": json.dumps(extra)}),
+    }
+
+
+class _CatalogueConn:
+    """Answers the company row and the KBLI catalogue membership query, per code."""
+
+    def __init__(self, company, absent=(), raise_for=()):
+        self.company, self.absent, self.raise_for = company, set(absent), set(raise_for)
+        self.codes = []
+
+    async def fetchrow(self, sql, *args):
+        return self.company if "FROM companies" in sql else None
+
+    async def fetchval(self, sql, *args):
+        return None
+
+    async def fetch(self, sql, *args):
+        if "kbli_documents" not in sql:
+            return []
+        code = args[0]
+        self.codes.append(code)
+        if code in self.raise_for:
+            import asyncpg
+
+            raise asyncpg.UndefinedTableError("relation does not exist")
+        return [{"catalogue_size": 5000, "canonical_rows": 0 if code in self.absent else 1}]
+
+
+@pytest.mark.asyncio
+async def test_kbli_2020_count_classifies_every_code_on_the_real_path():
+    # Gate r3 2026-11-05: the catalogue was asked about the first 15 codes only,
+    # so a 2020 code past the cap was never counted.
+    conn = _CatalogueConn(_kbli_company(16), absent={"47113", "47114"})
+    facts = r.build_company_facts(**await r.fetch_company_inputs(conn, 7, 55))
+    payload = r.recap_payload("company", facts)
+    assert len(conn.codes) == 16
+    assert payload["kbli_count"] == 16 and payload["kbli_2020_count"] == 2
+    clause = next(c for c in rt._company_clauses(payload) if "KBLI" in c)
+    assert "16 KBLI lines" in clause and "two codes still on KBLI 2020" in clause
+
+
+@pytest.mark.asyncio
+async def test_one_unreadable_kbli_verdict_means_no_kbli_2020_count():
+    conn = _CatalogueConn(_kbli_company(3), absent={"47100"}, raise_for={"47101"})
+    facts = r.build_company_facts(**await r.fetch_company_inputs(conn, 7, 55))
+    payload = r.recap_payload("company", facts)
+    assert payload["kbli_count"] == 3 and "kbli_2020_count" not in payload
+    assert "KBLI 2020" not in " ".join(rt._company_clauses(payload))
+
+
+@pytest.mark.asyncio
+async def test_kbli_past_the_ceiling_is_not_classified():
+    conn = _CatalogueConn(_kbli_company(r._KBLI_CLASSIFY_MAX + 1))
+    assert await r._kbli_in_2025(conn, conn.company) == {}
+    assert conn.codes == []
+
+
+def test_generic_akta_date_is_not_an_amendment():
+    # Gate r3 2026-11-05: custom_fields "akta_date" can be the deed of
+    # establishment; only akta_perubahan_date is an amendment.
+    base = {
+        "company_type": "PT PMA",
+        "akta_pendirian_date": date(2024, 2, 1),
+        "custom_fields": json.dumps({"akta_date": "2024-02-01"}),
+    }
+    facts = r.build_company_facts(company=base, links=[], lkpm_latest=None)
+    payload = r.recap_payload("company", facts)
+    assert "last_amendment_date" not in payload
+    assert "amendment" not in " ".join(rt._company_clauses(payload))
+    amended = dict(base, akta_perubahan_date=date(2025, 6, 1))
+    facts = r.build_company_facts(company=amended, links=[], lkpm_latest=None)
+    assert r.recap_payload("company", facts)["last_amendment_date"] == "2025-06-01"
+
+
 def test_hash_carries_schema_version_and_statuses():
     payload = r.recap_payload("immigration", FACTS)
     h1 = r.facts_hash(payload)

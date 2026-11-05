@@ -192,3 +192,18 @@ def test_no_rewrite_provider_is_configured_for_the_recap(monkeypatch, choice):
     assert rt.configured_provider() is None
     assert not hasattr(rt, "GeminiProvider")
     assert not hasattr(rt, "OllamaProvider")
+
+
+@pytest.mark.asyncio
+async def test_kbli_catalogue_error_on_the_recap_path_logs_the_type_only(caplog):
+    # Gate r3 2026-11-05: the catalogue helper logged the PostgresError itself,
+    # whose message can echo a bound value.
+    import asyncpg
+
+    conn = MagicMock()
+    conn.fetch = AsyncMock(side_effect=asyncpg.UndefinedTableError(f"relation {SENTINEL}"))
+    with caplog.at_level(logging.WARNING):
+        out = await r._kbli_in_2025(conn, {"kbli_code": "62010"})
+    assert out == {}
+    assert _logged_from(caplog, "backend.services.kbli_catalogue_membership") == 1
+    assert _leaks(caplog) == []
