@@ -284,6 +284,205 @@ const NATIVE_SCOPE_ATTESTATIONS: Record<
       ],
     ],
   },
+  "68111": {
+    rowsSha256:
+      "b36066661a2e8d80461d5bcfddb24ceac76321a1c7f198d02240b25457a78693", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Pengembangan Hunian dan/atau hunian campuran: Kelompok ini mencakup usaha pembelian, penjualan, persewaan dan pengoperasian perumahan baik yang dimiliki sendiri maupun disewa",
+        "Mikro",
+        "Menengah Rendah",
+      ],
+      [
+        0,
+        "Pengembangan Hunian dan/atau hunian campuran: Kelompok ini mencakup usaha pembelian, penjualan, persewaan dan pengoperasian perumahan baik yang dimiliki sendiri maupun disewa",
+        "Kecil",
+        "Menengah Rendah",
+      ],
+      [
+        0,
+        "Pengembangan Hunian dan/atau hunian campuran: Kelompok ini mencakup usaha pembelian, penjualan, persewaan dan pengoperasian perumahan baik yang dimiliki sendiri maupun disewa",
+        "Menengah",
+        "Menengah Rendah",
+      ],
+      [
+        0,
+        "Pengembangan Hunian dan/atau hunian campuran: Kelompok ini mencakup usaha pembelian, penjualan, persewaan dan pengoperasian perumahan baik yang dimiliki sendiri maupun disewa",
+        "Besar",
+        "Menengah Rendah",
+      ],
+    ],
+  },
+  "68210": {
+    rowsSha256:
+      "7ffa1cd686f35510e7f8a4b7b26a26561b9a5fb511157704eccdbfcc7057371d", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "1. Penyelenggara Perdagangan Melalui Sistem Elektronik (PPMSE) dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan dalam wilayah hukum Negara Kesatuan Republik Indonesia 2. PPMSE dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan di luar wilayah hukum Negara Kesatuan Republik Indonesia yang melakukan kegiatan usaha di bidang PMSE di wilayah hukum Negara Kesatuan Republik Indonesia",
+        "Mikro",
+        "Rendah",
+      ],
+      [
+        0,
+        "1. Penyelenggara Perdagangan Melalui Sistem Elektronik (PPMSE) dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan dalam wilayah hukum Negara Kesatuan Republik Indonesia 2. PPMSE dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan di luar wilayah hukum Negara Kesatuan Republik Indonesia yang melakukan kegiatan usaha di bidang PMSE di wilayah hukum Negara Kesatuan Republik Indonesia",
+        "Kecil",
+        "Tinggi",
+      ],
+      [
+        0,
+        "1. Penyelenggara Perdagangan Melalui Sistem Elektronik (PPMSE) dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan dalam wilayah hukum Negara Kesatuan Republik Indonesia 2. PPMSE dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan di luar wilayah hukum Negara Kesatuan Republik Indonesia yang melakukan kegiatan usaha di bidang PMSE di wilayah hukum Negara Kesatuan Republik Indonesia",
+        "Menengah",
+        "Tinggi",
+      ],
+      [
+        0,
+        "1. Penyelenggara Perdagangan Melalui Sistem Elektronik (PPMSE) dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan dalam wilayah hukum Negara Kesatuan Republik Indonesia 2. PPMSE dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan di luar wilayah hukum Negara Kesatuan Republik Indonesia yang melakukan kegiatan usaha di bidang PMSE di wilayah hukum Negara Kesatuan Republik Indonesia",
+        "Besar",
+        "Tinggi",
+      ],
+      [
+        1,
+        "Seluruh, kecuali 1. Penyelenggara Perdagangan Melalui Sistem Elektronik (PPMSE) dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan dalam wilayah hukum Negara Kesatuan Republik Indonesia 2. PPMSE dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan di luar wilayah hukum Negara Kesatuan Republik Indonesia yang melakukan kegiatan usaha di bidang PMSE di wilayah hukum Negara Kesatuan Republik Indonesia",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Seluruh, kecuali 1. Penyelenggara Perdagangan Melalui Sistem Elektronik (PPMSE) dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan dalam wilayah hukum Negara Kesatuan Republik Indonesia 2. PPMSE dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan di luar wilayah hukum Negara Kesatuan Republik Indonesia yang melakukan kegiatan usaha di bidang PMSE di wilayah hukum Negara Kesatuan Republik Indonesia",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Seluruh, kecuali 1. Penyelenggara Perdagangan Melalui Sistem Elektronik (PPMSE) dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan dalam wilayah hukum Negara Kesatuan Republik Indonesia 2. PPMSE dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan di luar wilayah hukum Negara Kesatuan Republik Indonesia yang melakukan kegiatan usaha di bidang PMSE di wilayah hukum Negara Kesatuan Republik Indonesia",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Seluruh, kecuali 1. Penyelenggara Perdagangan Melalui Sistem Elektronik (PPMSE) dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan dalam wilayah hukum Negara Kesatuan Republik Indonesia 2. PPMSE dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan di luar wilayah hukum Negara Kesatuan Republik Indonesia yang melakukan kegiatan usaha di bidang PMSE di wilayah hukum Negara Kesatuan Republik Indonesia",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+    ],
+  },
+  "68292": {
+    rowsSha256:
+      "53639d0c1682c532f7b13e7c695f43002c70578958a354993872f726ce97d245", // pragma: allowlist secret
+    rows: [
+      [0, "Seluruh", "Mikro", "Menengah Tinggi"],
+      [0, "Seluruh", "Kecil", "Menengah Tinggi"],
+      [0, "Seluruh", "Menengah", "Menengah Tinggi"],
+      [0, "Seluruh", "Besar", "Menengah Tinggi"],
+    ],
+  },
+  "70201": {
+    rowsSha256:
+      "507b5dc00264666d86654b6e6b3c2ab200ac3a847af54b9b08c510a6e867aa63", // pragma: allowlist secret
+    rows: [
+      [0, "Seluruh", "Mikro", "Rendah"],
+      [0, "Seluruh", "Kecil", "Rendah"],
+      [0, "Seluruh", "Menengah", "Rendah"],
+    ],
+  },
+  "70209": {
+    rowsSha256:
+      "362a654520f5d1ba1227b11cfb65a9be6fa8e906a6ae5ee5a8cdaa6247578a86", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Jasa Konsultansi Manajemen Keamanan Pelabuhan",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Jasa Konsultansi Manajemen Keamanan Pelabuhan",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Jasa Konsultansi Manajemen Keamanan Pelabuhan",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Jasa Konsultansi Manajemen Keamanan Pelabuhan",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+      [1, "Jasa Konsultasi Manajemen dan Bisnis", "Mikro", "Rendah"],
+      [1, "Jasa Konsultasi Manajemen dan Bisnis", "Kecil", "Rendah"],
+      [1, "Jasa Konsultasi Manajemen dan Bisnis", "Menengah", "Rendah"],
+      [1, "Jasa Konsultasi Manajemen dan Bisnis", "Besar", "Rendah"],
+    ],
+  },
+  "85510": {
+    rowsSha256:
+      "01648a96cb258d4bdd6fec341150cbdcbed2023105a46f0aa2c389c42866356b", // pragma: allowlist secret
+    rows: [
+      [0, "Seluruh", "Mikro", "Tinggi"],
+      [0, "Seluruh", "Kecil", "Tinggi"],
+      [0, "Seluruh", "Menengah", "Tinggi"],
+      [0, "Seluruh", "Besar", "Tinggi"],
+      [1, "Seluruh", "Mikro", "Tinggi"],
+      [1, "Seluruh", "Kecil", "Tinggi"],
+      [1, "Seluruh", "Menengah", "Tinggi"],
+      [1, "Seluruh", "Besar", "Tinggi"],
+    ],
+  },
+  "93116": {
+    rowsSha256:
+      "0aeac2b40fbf72a0608f23e5d0f4391e18ce21962c7cbd26b572ec99fd05ca98", // pragma: allowlist secret
+    rows: [
+      [0, "Seluruh", "Kecil", "Menengah Rendah"],
+      [0, "Seluruh", "Menengah", "Menengah Rendah"],
+      [0, "Seluruh", "Besar", "Menengah Rendah"],
+    ],
+  },
+  "96220": {
+    rowsSha256:
+      "c27bafdccbc570e9686ed51995f981e2fb98ea84e4e7e87e4876d646870f7483", // pragma: allowlist secret
+    rows: [
+      [0, "Seluruh", "Mikro", "Rendah"],
+      [0, "Seluruh", "Kecil", "Rendah"],
+      [0, "Seluruh", "Menengah", "Rendah"],
+    ],
+  },
+  "96230": {
+    rowsSha256:
+      "c7c173cca755cf95ce07a0bffffd95f76e3127e76bf4a9b026ddde658c0a1348", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Usaha Spa yang sudah mengarah kepada Medical Spa",
+        "Besar",
+        "Tinggi",
+      ],
+      [
+        1,
+        "Seluruh, kecuali usaha SPA yang mengarah kepada Medical SPA",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Seluruh, kecuali usaha SPA yang mengarah kepada Medical SPA",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Seluruh, kecuali usaha SPA yang mengarah kepada Medical SPA",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+    ],
+  },
 };
 
 function isCompleteNativeCoverage(
