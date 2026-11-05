@@ -170,6 +170,11 @@ class TestSupplementIsWellFormedAndNeverPooledWithMandatory:
         assert decided_ids.isdisjoint(supplement_ids)
 
 
+_PINNED_SET_NAMES = sorted(
+    name for name, entry in harness.load(_SUPPLEMENT_PATH)["sets"].items() if "source" in entry
+)
+
+
 def _repo_root() -> Path:
     p = Path(__file__).resolve()
     while p != p.parent:
@@ -216,14 +221,20 @@ class TestSupplementSourceShaPinsVerifyAgainstFileBytes:
                 # name the set whose pin covers it, rather than simply lack one.
                 assert entry.get("derived_from") in supplement["sets"], entry
                 continue
-            source_path = repo_root / entry["source"]
-            if not source_path.is_file():
-                pytest.skip(f"set {set_name}: {entry['source']} not in Rakyat")
-            actual = harness.source_sha256(source_path)
-            assert actual == entry["source_sha256"], (
-                f"set {set_name}: recorded source_sha256 {entry['source_sha256']!r} "
-                f"does not match {source_path}'s real file-bytes hash {actual!r}"
-            )
+            # Every pinned set is byte-verified by the per-set test below.
+            assert set_name in _PINNED_SET_NAMES, set_name
+
+    @pytest.mark.parametrize("set_name", _PINNED_SET_NAMES)
+    def test_source_pin_verifies_against_file_bytes(self, supplement: dict, set_name: str) -> None:
+        entry = supplement["sets"][set_name]
+        source_path = _repo_root() / entry["source"]
+        if not source_path.is_file():
+            pytest.skip(f"set {set_name}: {entry['source']} not in Rakyat")
+        actual = harness.source_sha256(source_path)
+        assert actual == entry["source_sha256"], (
+            f"set {set_name}: recorded source_sha256 {entry['source_sha256']!r} "
+            f"does not match {source_path}'s real file-bytes hash {actual!r}"
+        )
 
 
 class TestBalancePerCell:

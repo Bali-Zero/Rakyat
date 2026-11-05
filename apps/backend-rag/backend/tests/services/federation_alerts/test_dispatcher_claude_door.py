@@ -9,6 +9,7 @@ refusal (guilt) and keep the non-Claude commands working (innocence).
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -52,9 +53,8 @@ def test_a_claude_command_is_refused_before_any_subprocess(
 
 def test_a_non_claude_command_runs_without_any_anthropic_or_claude_variable(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    if not ((dispatcher.PROJECT_ROOT / "README.md").exists()):
-        pytest.skip('README.md (used as the stand-in dispatch script) not in Rakyat')
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "synthetic-plan")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-key")
     monkeypatch.setenv("ANTHROPIC_CONSOLE_KEY_1", "synthetic-seat")
@@ -68,7 +68,9 @@ def test_a_non_claude_command_runs_without_any_anthropic_or_claude_variable(
         return _Proc()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    monkeypatch.setattr(dispatcher, "AI_DISPATCH_SCRIPT", dispatcher.PROJECT_ROOT / "README.md")
+    stand_in = tmp_path / "ai-dispatch-stand-in.sh"  # exists; execution is mocked
+    stand_in.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(dispatcher, "AI_DISPATCH_SCRIPT", stand_in)
     result = asyncio.run(dispatcher.dispatch_via_ai_dispatch("gemini-scan", "x"))
 
     assert result.success is True
