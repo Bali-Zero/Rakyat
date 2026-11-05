@@ -337,7 +337,10 @@ async def test_endpoint_company_without_link_returns_null_and_failure_never_rais
     pool = MagicMock()
     pool.acquire = lambda: _Ctx()
     user = {"id": "u", "role": "admin", "email": "a@example.com"}
-    with patch.object(ce, "verify_client_access", AsyncMock()):
+    with (
+        patch.object(ce, "verify_client_access", AsyncMock()),
+        patch.object(r, "RECAP_ENABLED", True),
+    ):
         out = await ce.get_client_recap(
             1, scope="company", company_id=None, pool=pool, current_user=user
         )
@@ -347,6 +350,40 @@ async def test_endpoint_company_without_link_returns_null_and_failure_never_rais
                 1, scope="immigration", company_id=None, pool=pool, current_user=user
             )
         assert out["text"] is None and out["scope"] == "immigration"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["immigration", "company"])
+async def test_recap_is_off_and_the_endpoint_answers_null_after_auth(scope):
+    # Owner, 2026-11-05: the recap stays off until a strict-parsing spec passes.
+    from backend.app.routers import crm_enhanced as ce
+
+    assert r.RECAP_ENABLED is False
+    conn = MagicMock()
+    conn.fetchval, conn.fetch, conn.fetchrow = AsyncMock(), AsyncMock(), AsyncMock()
+
+    class _Ctx:
+        async def __aenter__(self):
+            return conn
+
+        async def __aexit__(self, *a):
+            return False
+
+    pool = MagicMock()
+    pool.acquire = lambda: _Ctx()
+    user = {"id": "u", "role": "admin", "email": "a@example.com"}
+    access = AsyncMock()
+    with (
+        patch.object(ce, "verify_client_access", access),
+        patch.object(r, "get_recap", AsyncMock(side_effect=AssertionError("no generation"))),
+    ):
+        out = await ce.get_client_recap(1, scope=scope, company_id=7, pool=pool, current_user=user)
+    access.assert_awaited_once()
+    assert out == r.empty_recap(scope) and out["text"] is None
+    # The route's own except would turn a query error into the same null answer,
+    # so "off" is proven by no query being attempted at all.
+    for query in (conn.fetchval, conn.fetch, conn.fetchrow):
+        query.assert_not_awaited()
 
 
 def test_none_shaped_facts_are_handled():

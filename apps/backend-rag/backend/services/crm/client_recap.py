@@ -46,6 +46,11 @@ logger = logging.getLogger(__name__)
 
 SCOPE_IMMIGRATION = "immigration"
 SCOPE_COMPANY = "company"
+# Off by the owner on 2026-11-05: gate round 7 on Rakyat #22 found recap counts
+# that are still not exact, and this live version predates that lane's fixes.
+# The endpoint answers text=null (the card hides it) until a strict-parsing
+# spec passes its gate and a fresh lane turns this back on.
+RECAP_ENABLED = False
 SCOPES = (SCOPE_IMMIGRATION, SCOPE_COMPANY)
 
 TEMPLATE_MODEL = "template"
