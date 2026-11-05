@@ -268,8 +268,12 @@ def _person_permit_items(
     for itk in (i for i in immigration if i.bucket == ITK):
         if live.issue is not None and itk.issue is not None:
             ok = itk.issue >= live.issue
+        elif live.uploaded != float("-inf"):
+            ok = itk.uploaded > live.uploaded
         else:
-            ok = live.uploaded != float("-inf") and itk.uploaded > live.uploaded
+            # A permit read from the family member's own fields has no issue or
+            # upload time: an ITK extends it when it runs at least to its end.
+            ok = itk.expiry >= live.expiry
         if ok:
             candidates.append(itk)
     if candidates:

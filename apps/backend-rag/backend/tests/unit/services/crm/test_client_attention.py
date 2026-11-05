@@ -235,6 +235,27 @@ def test_family_member_documents_do_not_leak_to_client() -> None:
     assert [(i["subject"], i["subject_id"]) for i in result["attention"]] == [("family_member", 5)]
 
 
+def test_family_visit_permit_from_fields_takes_its_itk() -> None:
+    # Gate #24 round 1: the permit read from the member's fields had no issue
+    # or upload time, so no ITK could ever extend it.
+    fam = [{"id": 5, "full_name": "Member B", "current_visa_type": "VOA", "visa_expiry": d(-3)}]
+    itk = doc(9, "itk", d(27), family_member_id=5)
+    item = run([itk], family=fam)["attention"][0]
+    assert (item["state"], item["date"], item["note"], item["document_id"]) == (
+        "upcoming",
+        d(27).isoformat(),
+        None,
+        9,
+    )
+
+
+def test_family_visit_permit_ignores_an_itk_that_ends_before_it() -> None:
+    fam = [{"id": 5, "full_name": "Member B", "current_visa_type": "VOA", "visa_expiry": d(-3)}]
+    old_itk = doc(9, "itk", d(-40), family_member_id=5)
+    item = run([old_itk], family=fam)["attention"][0]
+    assert (item["state"], item["note"]) == ("expired", "itk_missing")
+
+
 def test_unclassifiable_family_visa_gives_no_item() -> None:
     fam = [{"id": 5, "full_name": "Member B", "current_visa_type": "???", "visa_expiry": d(-3)}]
     assert run(family=fam)["attention"] == []
