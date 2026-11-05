@@ -14,6 +14,8 @@ Covers:
 import asyncio
 import base64
 import json
+import re
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -775,8 +777,28 @@ class TestMergeLabelDeadline:
         assert GitHubPublisher.MERGE_LABEL_CALL_TIMEOUT_S <= 5.0
 
 
-# Rakyat: `TestMergerParity` moved to the backstage — it reads scripts/localci/merger.py, the LocalCI merger, which is backstage.
-# Original at 677e29bb3511:apps/backend-rag/backend/tests/services/integrations/test_github_publisher.py; listed in PERIMETER.txt.
+class TestMergerParity:
+    def test_timestamp_and_login_shapes_equal_merger_source(self):
+        from backend.services.integrations import github_publisher as gp
+
+        root = next(
+            (
+                q
+                for q in Path(__file__).resolve().parents
+                if (q / "scripts/localci/merger.py").is_file()
+            ),
+            None,
+        )
+        assert gp._TS_RE.pattern == r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"
+        assert gp._LOGIN_RE.pattern == "[A-Za-z0-9][A-Za-z0-9-]{0,38}"
+        if root is None:
+            pytest.skip("scripts/localci/merger.py not in this checkout")
+        text = (root / "scripts/localci/merger.py").read_text()
+        ts = re.search(r'^_TS_RE = re\.compile\(r"(.*?)"\)', text, re.M)
+        login = re.search(r'^_LOGIN_RE = re\.compile\(r"(.*?)"\)', text, re.M)
+        assert ts and login
+        assert ts.group(1) == gp._TS_RE.pattern
+        assert login.group(1) == gp._LOGIN_RE.pattern
 
 
 class TestPublishPathsApplyTheLabel:

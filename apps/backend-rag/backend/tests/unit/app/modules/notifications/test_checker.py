@@ -356,7 +356,7 @@ class TestExpiryCheckerEdgeCases:
         client = ClientInfo(
             id=1,
             email="test@example.com",
-            full_name="Datid Hosoh",
+            full_name="Marco Rossi",
             preferred_language="it",
             passport_expiry=datetime.now(tz=timezone.utc) + timedelta(days=365),
         )

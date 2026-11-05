@@ -316,11 +316,11 @@ describe("hard exclusion #4 — Thailand's wrong tax-rate figure", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Exclusion #5 — Nabugose D7's income floor is a formula, never a frozen
+// Exclusion #5 — Portugal D7's income floor is a formula, never a frozen
 // number, and the RMMG value is a separately dated field.
 // ---------------------------------------------------------------------------
 
-describe("hard exclusion #5 — Nabugose D7 income floor is a formula, not a frozen number", () => {
+describe("hard exclusion #5 — Portugal D7 income floor is a formula, not a frozen number", () => {
   it("the formula export carries percentages, a legal basis, and a SEPARATELY DATED RMMG value", () => {
     expect(PORTUGAL_D7_INCOME_FORMULA.principalPercentOfRmmg.value).toBe(100);
     expect(PORTUGAL_D7_INCOME_FORMULA.additionalAdultPercentOfRmmg.value).toBe(
@@ -345,7 +345,7 @@ describe("hard exclusion #5 — Nabugose D7 income floor is a formula, not a fro
   });
 
   it("no programme row hardcodes the D7 income floor as a bare number without the word 'formula' or a percentage nearby", () => {
-    const d7 = COUNTRY_PROGRAMMES.find((p) => p.id === "nabugose_d7");
+    const d7 = COUNTRY_PROGRAMMES.find((p) => p.id === "portugal_d7");
     const income = d7?.incomeRequirement?.value ?? "";
     expect(income.toLowerCase()).toContain("formula");
     expect(income).toMatch(/100%/);

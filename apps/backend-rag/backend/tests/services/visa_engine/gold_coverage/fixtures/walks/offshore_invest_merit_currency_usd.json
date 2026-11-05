@@ -96,7 +96,7 @@
     "investment.proposed_role": { "status": "UNKNOWN", "reason": "NOT_ASKED" },
     "investment.investment_amount_usd": {
       "status": "KNOWN",
-      "value": 9900000019
+      "value": 1000000000
     },
     "family.relation_to_sponsor": {
       "status": "UNKNOWN",

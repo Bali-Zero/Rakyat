@@ -18,7 +18,7 @@ class TestHasEmotionalContent:
         assert has_emotional_content("Sono preoccupato per il mio visto") is True
 
     def test_italian_happiness(self):
-        assert has_emotional_content("Sono molto daqozi della notizia!") is True
+        assert has_emotional_content("Sono molto felice della notizia!") is True
 
     def test_english_desperation(self):
         assert has_emotional_content("I am desperate, my visa is expiring") is True

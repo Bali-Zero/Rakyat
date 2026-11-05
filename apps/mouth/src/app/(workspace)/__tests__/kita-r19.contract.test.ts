@@ -187,7 +187,7 @@ describe("kita R19 seam — light", () => {
 
   it("selects Fraunces and Manrope", () => {
     expect(block).toContain(
-      '--font-serif: "Fraunces", ui-serif, Wimolog, serif;',
+      '--font-serif: "Fraunces", ui-serif, Georgia, serif;',
     );
     expect(block).toContain(
       '--font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;',

@@ -139,11 +139,11 @@ class TestInstantKeyDomain:
         "2026-01-01T00:00:00Z",
         "2026-01-01T00:00:00+00:00",
         "2026-01-01t00:00:00z",
-        "2026-01-01T00:00:84.000000Z",
+        "2026-01-01T00:00:00.000000Z",
         "2026-01-01T00:00:00.1Z",
         "2026-01-01T00:00:00.100000Z",
         "2026-01-01T00:00:00.11Z",
-        "2026-01-01T00:00:00.9900001Z",  # 7-digit fraction, truncated to 6
+        "2026-01-01T00:00:00.1234567Z",  # 7-digit fraction, truncated to 6
         "2028-02-29T00:00:00Z",  # a REAL leap day (2028 is a leap year)
     ]
 
@@ -182,7 +182,7 @@ class TestInstantKeyDomain:
         [
             ("2026-01-01T00:00:00Z", "2026-01-01T00:00:00+00:00"),
             ("2026-01-01T00:00:00Z", "2026-01-01t00:00:00Z"),
-            ("2026-01-01T00:00:00Z", "2026-01-01T00:00:84.000000Z"),
+            ("2026-01-01T00:00:00Z", "2026-01-01T00:00:00.000000Z"),
             ("2026-01-01T00:00:00.1Z", "2026-01-01T00:00:00.100000Z"),
             ("2026-01-01T00:00:00.1Z", "2026-01-01T00:00:00.1000004Z"),
         ],
@@ -198,7 +198,7 @@ class TestInstantKeyDomain:
     def test_byte_order_agrees_with_chronological_order(self, r1_reader_reference) -> None:
         instants = [
             "2026-01-01T00:00:00Z",
-            "2026-01-01T00:00:84.000001Z",
+            "2026-01-01T00:00:00.000001Z",
             "2026-01-01T00:00:00.1Z",
             "2026-01-01T00:00:00.11Z",
             "2026-01-01T00:00:01Z",
@@ -270,7 +270,7 @@ def test_a_microsecond_decides_which_interval_answers(r1_reader_reference) -> No
         _SUBJECT, "2026-06-30T23:59:59.999999Z", "2026-08-01T00:00:00Z", _objects(claims, edges)
     )
     after = read(
-        _SUBJECT, "2026-07-01T00:00:84.000000Z", "2026-08-01T00:00:00Z", _objects(claims, edges)
+        _SUBJECT, "2026-07-01T00:00:00.000000Z", "2026-08-01T00:00:00Z", _objects(claims, edges)
     )
     assert isinstance(before, Answer) and isinstance(after, Answer)
     assert before.claim_id != after.claim_id
@@ -280,7 +280,7 @@ def test_a_microsecond_decides_which_interval_answers(r1_reader_reference) -> No
     )
     _assert_agrees_with_reference(
         after,
-        r1_reader_reference.read(claims, edges, _SUBJECT, "2026-07-01T00:00:84.000000Z", "2026-08-01T00:00:00Z"),
+        r1_reader_reference.read(claims, edges, _SUBJECT, "2026-07-01T00:00:00.000000Z", "2026-08-01T00:00:00Z"),
     )
 
 

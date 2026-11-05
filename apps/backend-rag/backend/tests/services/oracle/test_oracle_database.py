@@ -41,8 +41,19 @@ def test_get_db_manager_uses_lazy_singleton_with_placeholder(
     assert first._engine is None
 
 
-# Rakyat: `test_get_user_profile_prefers_static_team_members` moved to the backstage — it reads the staff roster team_members.json, kept out of Rakyat (PII).
-# Original at a0f6cca8b44d:apps/backend-rag/backend/tests/services/oracle/test_oracle_database.py; listed in PERIMETER.txt.
+@pytest.mark.asyncio
+async def test_get_user_profile_prefers_static_team_members(monkeypatch) -> None:
+    # The real roster is off-repo: serve a synthetic member through the shim the service imports at call time.
+    member = {"id": "member-01", "email": "member-01@example.test", "name": "Member 01", "role": "admin", "preferred_language": "id"}
+    monkeypatch.setattr("backend.data.team_members.TEAM_MEMBERS", [member])
+    manager = DatabaseManager("postgresql://user:pass@localhost/db")
+
+    profile = await manager.get_user_profile(member["email"])
+
+    assert profile is not None
+    assert profile["email"] == member["email"]
+    assert profile["name"] == member.get("name", "Team Member")
+    assert profile["language_preference"] == member.get("preferred_language", "en")
 
 
 @pytest.mark.asyncio

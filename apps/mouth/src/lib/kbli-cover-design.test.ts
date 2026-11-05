@@ -26,7 +26,7 @@ describe("SECTION_VISUALS", () => {
     const validMotifs = new Set([
       "organic",
       "grid",
-      "zunoh",
+      "waves",
       "circuit",
       "arc",
       "strata",

@@ -1227,7 +1227,7 @@ describe("investment.investment_amount_usd — PR-D4c-2, currency-bound amount o
       category: "invest",
       investment_vehicle: "family",
       investment_currency: "idr",
-      investment_capital_idr: "8400062000",
+      investment_capital_idr: "5000000000",
     }).facts;
     expect(wire["investment.investment_capital_idr"]).toEqual({
       status: "KNOWN",
@@ -2195,7 +2195,7 @@ describe("annual foreign income fact", () => {
 
   it("maps a number above the safe maximum to UNKNOWN NOT_PROVIDED", () => {
     expect(
-      mapFacts({ remote_annual_income_usd: "9900000010000013" }).facts[
+      mapFacts({ remote_annual_income_usd: "9007199254740993" }).facts[
         "work.annual_foreign_income_usd"
       ],
     ).toEqual({ status: "UNKNOWN", reason: "NOT_PROVIDED" });

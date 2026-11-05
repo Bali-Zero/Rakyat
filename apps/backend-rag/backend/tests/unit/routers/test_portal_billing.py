@@ -1,0 +1,737 @@
+"""Tests for portal billing via PortalService."""
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from backend.app.routers import portal_billing
+from backend.services.portal.portal_service import PortalService
+
+
+def _make_invoice_service(row: dict[str, object] | None) -> tuple[PortalService, AsyncMock]:
+    mock_conn = AsyncMock()
+    mock_conn.fetchrow.return_value = row
+
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    return PortalService(mock_pool), mock_conn
+
+
+def test_get_portal_service_returns_portal_service() -> None:
+    """_get_portal_service wires the request pool into PortalService."""
+    mock_pool = MagicMock()
+
+    service = portal_billing._get_portal_service(mock_pool)
+
+    assert isinstance(service, PortalService)
+    assert service.pool is mock_pool
+
+
+@pytest.mark.asyncio
+async def test_get_billing_returns_invoices():
+    """get_billing returns invoices with summary."""
+    mock_conn = AsyncMock()
+    mock_conn.fetch.return_value = [
+        {
+            "id": 1,
+            "invoice_number": "INV-202602-00010",
+            "amount_idr": 20000000.0,
+            "invoice_source": "local_pdf",
+            "drive_file_id": "abc",
+            "drive_web_link": "https://drive.google.com/abc",
+            "email_sent_to_client": True,
+            "generated_at": None,
+            "created_at": None,
+            "practice_id": 10,
+            "practice_name": "KITAS B211A",
+            "practice_category": "visa",
+            "payment_status": "unpaid",
+            "paid_amount_idr": None,
+            "paid_amount": 0,
+            "quoted_price": 20000000.0,
+        },
+        {
+            "id": 2,
+            "invoice_number": "INV-202603-00015",
+            "amount_idr": 35000000.0,
+            "invoice_source": "local_pdf",
+            "drive_file_id": "def",
+            "drive_web_link": "https://drive.google.com/def",
+            "email_sent_to_client": True,
+            "generated_at": None,
+            "created_at": None,
+            "practice_id": 15,
+            "practice_name": "PT PMA Setup",
+            "practice_category": "company",
+            "payment_status": "paid",
+            "paid_amount_idr": 35000000,
+            "paid_amount": 35000000,
+            "quoted_price": 35000000.0,
+        },
+    ]
+
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    service = PortalService(mock_pool)
+    result = await service.get_billing(
+        client_id=1,
+        current_user={"client_id": 1, "email": "c1@example.com"},
+    )
+
+    assert len(result["invoices"]) == 2
+    assert result["summary"]["total_invoiced"] == 55000000.0
+    assert result["summary"]["total_paid"] == 35000000.0
+    assert result["summary"]["total_pending"] == 20000000.0
+    assert result["summary"]["count"] == 2
+    assert all(invoice["drive_web_link"] is None for invoice in result["invoices"])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Partial payments (2026-08-20)
+#
+# The operator's lifecycle is unpaid -> partial -> paid and the money lands in
+# `practices.paid_amount` (and `invoices.paid_amount_idr`) in the same
+# transaction that moves the status. The summary used to credit `amount_idr`
+# only when the status read exactly "paid", so a client who had paid part of a
+# bill was shown Paid = 0 and the FULL amount Outstanding, in warning colour.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _billing_row(**overrides: object) -> dict[str, object]:
+    """One row shaped exactly like the get_billing SELECT."""
+    row: dict[str, object] = {
+        "id": 1,
+        "invoice_number": "INV-202608-00001",
+        "amount_idr": 10000000.0,
+        "invoice_source": "local_pdf",
+        "drive_file_id": None,
+        "drive_web_link": None,
+        "email_sent_to_client": False,
+        "generated_at": None,
+        "created_at": None,
+        "practice_id": 10,
+        "practice_name": "KITAS B211A",
+        "practice_category": "visa",
+        "paid_amount_idr": None,
+        "payment_status": "unpaid",
+        "paid_amount": 0,
+        "quoted_price": 10000000.0,
+    }
+    row.update(overrides)
+    return row
+
+
+async def _billing_for(rows: list[dict[str, object]]) -> dict[str, object]:
+    mock_conn = AsyncMock()
+    mock_conn.fetch.return_value = rows
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    return await PortalService(mock_pool).get_billing(
+        client_id=1,
+        current_user={"client_id": 1, "email": "c1@example.com"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_partial_payment_is_credited_not_reported_as_fully_outstanding() -> None:
+    """GUILT: the regression this fix exists for. Half paid must read half paid."""
+    result = await _billing_for(
+        [_billing_row(payment_status="partial", paid_amount=4000000, paid_amount_idr=4000000)]
+    )
+
+    assert result["summary"]["total_invoiced"] == 10000000.0
+    assert result["summary"]["total_paid"] == 4000000.0
+    assert result["summary"]["total_pending"] == 6000000.0
+
+
+@pytest.mark.asyncio
+async def test_a_practice_with_two_invoices_is_credited_once() -> None:
+    """GUILT: paid_amount is per PRACTICE, the list is per INVOICE. Summing it
+    per row would double-count a practice that carries two invoices."""
+    result = await _billing_for(
+        [
+            _billing_row(id=1, amount_idr=6000000.0, practice_id=10, paid_amount=5000000),
+            _billing_row(id=2, amount_idr=4000000.0, practice_id=10, paid_amount=5000000),
+        ]
+    )
+
+    assert result["summary"]["total_invoiced"] == 10000000.0
+    assert result["summary"]["total_paid"] == 5000000.0
+    assert result["summary"]["total_pending"] == 5000000.0
+
+
+@pytest.mark.asyncio
+async def test_payment_ahead_of_invoicing_never_makes_outstanding_negative() -> None:
+    """A practice can be paid beyond what has been invoiced so far. Outstanding
+    is 'of what we billed you, what is left' — it must not go negative."""
+    result = await _billing_for(
+        [_billing_row(amount_idr=3000000.0, paid_amount=10000000, payment_status="paid")]
+    )
+
+    assert result["summary"]["total_paid"] == 3000000.0
+    assert result["summary"]["total_pending"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_fully_paid_still_reads_fully_paid() -> None:
+    """INNOCENCE: the case that already worked must keep working."""
+    result = await _billing_for(
+        [_billing_row(paid_amount=10000000, payment_status="paid", paid_amount_idr=10000000)]
+    )
+
+    assert result["summary"]["total_paid"] == 10000000.0
+    assert result["summary"]["total_pending"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_unpaid_reads_nothing_paid() -> None:
+    """INNOCENCE: an untouched invoice must not be credited by the new path."""
+    result = await _billing_for([_billing_row()])
+
+    assert result["summary"]["total_paid"] == 0.0
+    assert result["summary"]["total_pending"] == 10000000.0
+
+
+@pytest.mark.asyncio
+async def test_null_payment_status_reads_unpaid_not_pending() -> None:
+    """'pending' is not a state this system emits — invoice_service.py says so
+    verbatim, and the client's StatusBadge has no entry for it either."""
+    result = await _billing_for([_billing_row(payment_status=None)])
+
+    assert result["invoices"][0]["payment_status"] == "unpaid"
+
+
+@pytest.mark.asyncio
+async def test_per_invoice_paid_amount_is_exposed_including_when_unrecorded() -> None:
+    """The per-invoice figure is passed through raw (None when a payment was
+    reconciled against the practice without naming an invoice), so the capped
+    summary hides nothing."""
+    result = await _billing_for(
+        [
+            _billing_row(id=1, practice_id=10, paid_amount_idr=4000000),
+            _billing_row(id=2, practice_id=11, paid_amount_idr=None),
+        ]
+    )
+
+    assert result["invoices"][0]["paid_amount_idr"] == 4000000.0
+    assert result["invoices"][1]["paid_amount_idr"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_billing_empty():
+    """get_billing returns empty list when no invoices."""
+    mock_conn = AsyncMock()
+    mock_conn.fetch.return_value = []
+
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    service = PortalService(mock_pool)
+    result = await service.get_billing(
+        client_id=999,
+        current_user={"client_id": 999, "email": "c999@example.com"},
+    )
+
+    assert len(result["invoices"]) == 0
+    assert result["summary"]["total_invoiced"] == 0
+    assert result["summary"]["total_pending"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_billing_fails_closed_on_database_error():
+    """get_billing must not present a database failure as an empty account."""
+    mock_conn = AsyncMock()
+    mock_conn.fetch.side_effect = RuntimeError("database unavailable")
+
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    service = PortalService(mock_pool)
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await service.get_billing(
+            client_id=1,
+            current_user={"client_id": 1, "email": "c1@example.com"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_billing_route_wraps_service_result() -> None:
+    """Billing route returns the service payload behind the success envelope."""
+    client = {"client_id": 7, "email": "c7@example.com"}
+    expected = {"invoices": [], "summary": {"count": 0}}
+    service = AsyncMock()
+    service.get_billing.return_value = expected
+
+    result = await portal_billing.get_billing(client=client, portal_service=service)
+
+    assert result == {"success": True, "data": expected}
+    service.get_billing.assert_awaited_once_with(7, current_user=client)
+
+
+@pytest.mark.asyncio
+async def test_get_billing_route_hides_service_errors() -> None:
+    """Billing route logs backend errors without leaking details to clients."""
+    service = AsyncMock()
+    service.get_billing.side_effect = RuntimeError("database unavailable")
+
+    with pytest.raises(portal_billing.HTTPException) as exc:
+        await portal_billing.get_billing(
+            client={"client_id": 7, "email": "c7@example.com"},
+            portal_service=service,
+        )
+
+    assert exc.value.status_code == 500
+    assert exc.value.detail == "Failed to load billing data"
+
+
+@pytest.mark.asyncio
+async def test_get_invoice_pdf_url():
+    """get_invoice_pdf_url returns a portal proxy URL, not Drive details."""
+    mock_conn = AsyncMock()
+    mock_conn.fetchrow.return_value = {
+        "drive_web_link": "https://drive.google.com/abc",
+        "drive_file_id": "abc123",
+    }
+
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    service = PortalService(mock_pool)
+    result = await service.get_invoice_pdf_url(
+        client_id=1,
+        invoice_id=1,
+        current_user={"client_id": 1, "email": "c1@example.com"},
+    )
+
+    assert result is not None
+    assert result == {"download_url": "/api/portal/billing/1/pdf"}
+
+
+class _DriveHttpError(Exception):
+    """The shape of googleapiclient.errors.HttpError that matters here."""
+
+    def __init__(self, status: int) -> None:
+        super().__init__(f"drive returned {status}")
+        self.resp = MagicMock(status=status)
+
+
+def _sa_drive_mock(*, metadata: object, content: object = b"PDF_INVOICE") -> MagicMock:
+    """Mock the Service Account Drive client.
+
+    The download proxies used to ask GoogleDriveService for the SYSTEM OAuth
+    token; `_refresh_token` returns None for SYSTEM BY DESIGN since
+    2026-05-10, so those calls could only ever 500 in production. The tests
+    that guarded them mocked the token to a value production cannot obtain
+    (superscar #2, esiste≠armato — inside the suite). Audit finding F-01.
+    """
+
+    def _mock(value: object) -> AsyncMock:
+        if isinstance(value, Exception):
+            return AsyncMock(side_effect=value)
+        return AsyncMock(return_value=value)
+
+    sa = MagicMock()
+    sa.get_file_metadata = _mock(metadata)
+    sa.download_file_content = _mock(content)
+    return sa
+
+
+@pytest.mark.asyncio
+async def test_download_invoice_pdf_streams_owned_invoice_drive_file():
+    """download_invoice_pdf streams an invoice PDF through the portal proxy."""
+    mock_conn = AsyncMock()
+    mock_conn.fetchrow.return_value = {
+        "invoice_number": "INV-202602-00010",
+        "drive_web_link": "https://drive.google.com/file/d/invoice_drive_123/view",
+        "drive_file_id": "invoice_drive_123",
+    }
+
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    sa = _sa_drive_mock(
+        metadata={"name": "invoice.pdf", "mimeType": "application/pdf"},
+        content=b"PDF_INVOICE",
+    )
+
+    service = PortalService(mock_pool)
+    with patch(
+        "backend.services.integrations.service_account_drive_service.ServiceAccountDriveService",
+        return_value=sa,
+    ):
+        result = await service.download_invoice_pdf(
+            client_id=1,
+            invoice_id=1,
+            current_user={"client_id": 1, "email": "c1@example.com"},
+        )
+
+    assert result == {
+        "content": b"PDF_INVOICE",
+        "file_name": "invoice.pdf",
+        "mime_type": "application/pdf",
+    }
+
+
+def test_download_invoice_pdf_route_streams_proxy_response():
+    """Billing PDF route returns file bytes without exposing Drive details."""
+    app = FastAPI()
+    app.include_router(portal_billing.router)
+
+    service = AsyncMock()
+    service.download_invoice_pdf.return_value = {
+        "content": b"PDF_INVOICE",
+        "file_name": "invoice.pdf",
+        "mime_type": "application/pdf",
+    }
+
+    app.dependency_overrides[portal_billing.get_current_client] = lambda: {
+        "client_id": 1,
+        "email": "c1@example.com",
+    }
+    app.dependency_overrides[portal_billing._get_portal_service] = lambda: service
+
+    response = TestClient(app).get("/api/portal/billing/1/pdf")
+
+    assert response.status_code == 200
+    assert response.content == b"PDF_INVOICE"
+    assert response.headers["content-type"] == "application/pdf"
+    assert "invoice.pdf" in response.headers["content-disposition"]
+
+
+@pytest.mark.asyncio
+async def test_get_invoice_pdf_url_not_found():
+    """get_invoice_pdf_url returns None for non-existent invoice."""
+    mock_conn = AsyncMock()
+    mock_conn.fetchrow.return_value = None
+
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    service = PortalService(mock_pool)
+    result = await service.get_invoice_pdf_url(
+        client_id=1,
+        invoice_id=999,
+        current_user={"client_id": 1, "email": "c1@example.com"},
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_invoice_pdf_url_propagates_db_error() -> None:
+    """get_invoice_pdf_url must not disguise a database failure as a missing PDF."""
+    service, mock_conn = _make_invoice_service(row=None)
+    mock_conn.fetchrow.side_effect = ConnectionError("database unavailable")
+
+    with pytest.raises(ConnectionError, match="database unavailable"):
+        await service.get_invoice_pdf_url(
+            client_id=1,
+            invoice_id=999,
+            current_user={"client_id": 1, "email": "c1@example.com"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_download_invoice_pdf_uses_fail_closed_gate_upload() -> None:
+    """QA runtime streams its reserved fixture without importing or calling Drive."""
+    service, _mock_conn = _make_invoice_service(
+        {
+            "invoice_number": "QA-INV-2026-0001",
+            "drive_web_link": None,
+            "drive_file_id": "synthetic_invoice_pdf_fixture_00000001",
+        }
+    )
+    sink = MagicMock()
+    sink.download = AsyncMock(return_value=b"%PDF-synthetic-invoice")
+
+    with patch(
+        "backend.services.portal._mixins.billing.GateUploadClient.from_environment",
+        return_value=sink,
+    ):
+        result = await service.download_invoice_pdf(
+            client_id=1,
+            invoice_id=1,
+            current_user={"client_id": 1, "email": "c1@example.com"},
+        )
+
+    assert result == {
+        "content": b"%PDF-synthetic-invoice",
+        "file_name": "QA-INV-2026-0001.pdf",
+        "mime_type": "application/pdf",
+    }
+    sink.download.assert_awaited_once_with("synthetic_invoice_pdf_fixture_00000001")
+
+
+@pytest.mark.asyncio
+async def test_download_invoice_pdf_returns_none_for_missing_invoice() -> None:
+    """download_invoice_pdf returns None when the invoice is absent."""
+    service, _mock_conn = _make_invoice_service(row=None)
+
+    result = await service.download_invoice_pdf(
+        client_id=1,
+        invoice_id=999,
+        current_user={"client_id": 1, "email": "c1@example.com"},
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_download_invoice_pdf_returns_none_for_unextractable_drive_link() -> None:
+    """download_invoice_pdf refuses invoice rows without a usable Drive file id."""
+    service, _mock_conn = _make_invoice_service(
+        {
+            "invoice_number": "INV-202602-00010",
+            "drive_web_link": "https://example.com/not-google-drive",
+            "drive_file_id": None,
+        }
+    )
+
+    result = await service.download_invoice_pdf(
+        client_id=1,
+        invoice_id=1,
+        current_user={"client_id": 1, "email": "c1@example.com"},
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_download_invoice_pdf_raises_when_drive_not_connected() -> None:
+    """download_invoice_pdf reports missing Google Drive token as a backend failure."""
+    service, _mock_conn = _make_invoice_service(
+        {
+            "invoice_number": "INV-202602-00010",
+            "drive_web_link": None,
+            "drive_file_id": "invoice_drive_123",
+        }
+    )
+
+    sa = _sa_drive_mock(metadata={"name": "invoice.pdf", "mimeType": "application/pdf"})
+
+    with (
+        patch(
+            "backend.services.integrations.service_account_drive_service.ServiceAccountDriveService",
+            return_value=sa,
+        ),
+        patch("backend.services.integrations.google_drive_service.GoogleDriveService") as oauth_cls,
+    ):
+        oauth_cls.SYSTEM_USER_ID = "SYSTEM"
+        oauth_cls.return_value.get_valid_token = AsyncMock(return_value=None)
+
+        result = await service.download_invoice_pdf(
+            client_id=1,
+            invoice_id=1,
+            current_user={"client_id": 1, "email": "c1@example.com"},
+        )
+
+    # Guilt-proof: put `get_valid_token(SYSTEM)` back in the credential path
+    # and this fails — that token is always None, which was the 500.
+    assert result is not None
+    oauth_cls.return_value.get_valid_token.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_download_invoice_pdf_returns_none_when_metadata_is_404() -> None:
+    """download_invoice_pdf returns None when Drive metadata lookup is 404."""
+    service, _mock_conn = _make_invoice_service(
+        {
+            "invoice_number": "INV-202602-00010",
+            "drive_web_link": None,
+            "drive_file_id": "invoice_drive_123",
+        }
+    )
+    sa = _sa_drive_mock(metadata=_DriveHttpError(404))
+
+    with patch(
+        "backend.services.integrations.service_account_drive_service.ServiceAccountDriveService",
+        return_value=sa,
+    ):
+
+        result = await service.download_invoice_pdf(
+            client_id=1,
+            invoice_id=1,
+            current_user={"client_id": 1, "email": "c1@example.com"},
+        )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_download_invoice_pdf_raises_when_metadata_fetch_fails() -> None:
+    """download_invoice_pdf raises on non-200 Drive metadata errors."""
+    service, _mock_conn = _make_invoice_service(
+        {
+            "invoice_number": "INV-202602-00010",
+            "drive_web_link": None,
+            "drive_file_id": "invoice_drive_123",
+        }
+    )
+    sa = _sa_drive_mock(metadata=_DriveHttpError(503))
+
+    with patch(
+        "backend.services.integrations.service_account_drive_service.ServiceAccountDriveService",
+        return_value=sa,
+    ):
+
+        with pytest.raises(RuntimeError, match="Failed to fetch invoice metadata"):
+            await service.download_invoice_pdf(
+                client_id=1,
+                invoice_id=1,
+                current_user={"client_id": 1, "email": "c1@example.com"},
+            )
+
+
+@pytest.mark.asyncio
+async def test_download_invoice_pdf_returns_none_when_download_is_404() -> None:
+    """download_invoice_pdf returns None when Drive media download is 404."""
+    service, _mock_conn = _make_invoice_service(
+        {
+            "invoice_number": "INV-202602-00010",
+            "drive_web_link": None,
+            "drive_file_id": "invoice_drive_123",
+        }
+    )
+    sa = _sa_drive_mock(
+        metadata={"name": "invoice.pdf", "mimeType": "application/pdf"},
+        content=_DriveHttpError(404),
+    )
+
+    with patch(
+        "backend.services.integrations.service_account_drive_service.ServiceAccountDriveService",
+        return_value=sa,
+    ):
+
+        result = await service.download_invoice_pdf(
+            client_id=1,
+            invoice_id=1,
+            current_user={"client_id": 1, "email": "c1@example.com"},
+        )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_download_invoice_pdf_raises_when_download_fails() -> None:
+    """download_invoice_pdf raises on non-200 Drive download errors."""
+    service, _mock_conn = _make_invoice_service(
+        {
+            "invoice_number": "INV-202602-00010",
+            "drive_web_link": None,
+            "drive_file_id": "invoice_drive_123",
+        }
+    )
+    sa = _sa_drive_mock(
+        metadata={"name": "invoice.pdf", "mimeType": "application/pdf"},
+        content=_DriveHttpError(500),
+    )
+
+    with patch(
+        "backend.services.integrations.service_account_drive_service.ServiceAccountDriveService",
+        return_value=sa,
+    ):
+
+        with pytest.raises(RuntimeError, match="Failed to download invoice"):
+            await service.download_invoice_pdf(
+                client_id=1,
+                invoice_id=1,
+                current_user={"client_id": 1, "email": "c1@example.com"},
+            )
+
+
+@pytest.mark.asyncio
+async def test_get_invoice_pdf_url_route_returns_proxy_url() -> None:
+    """PDF URL route returns the portal proxy URL from the service."""
+    client = {"client_id": 7, "email": "c7@example.com"}
+    expected = {"download_url": "/api/portal/billing/13/pdf"}
+    service = AsyncMock()
+    service.get_invoice_pdf_url.return_value = expected
+
+    result = await portal_billing.get_invoice_pdf_url(
+        invoice_id=13,
+        client=client,
+        portal_service=service,
+    )
+
+    assert result == {"success": True, "data": expected}
+    service.get_invoice_pdf_url.assert_awaited_once_with(7, 13, current_user=client)
+
+
+@pytest.mark.asyncio
+async def test_get_invoice_pdf_url_route_returns_404_when_missing() -> None:
+    """PDF URL route returns 404 when the invoice has no downloadable PDF."""
+    service = AsyncMock()
+    service.get_invoice_pdf_url.return_value = None
+
+    with pytest.raises(portal_billing.HTTPException) as exc:
+        await portal_billing.get_invoice_pdf_url(
+            invoice_id=13,
+            client={"client_id": 7, "email": "c7@example.com"},
+            portal_service=service,
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "Invoice not found or PDF not available"
+
+
+@pytest.mark.asyncio
+async def test_get_invoice_pdf_url_route_hides_service_errors() -> None:
+    """PDF lookup returns a generic 500 instead of a false 404 or backend detail."""
+    service = AsyncMock()
+    service.get_invoice_pdf_url.side_effect = ConnectionError("database unavailable")
+
+    with pytest.raises(portal_billing.HTTPException) as exc:
+        await portal_billing.get_invoice_pdf_url(
+            invoice_id=13,
+            client={"client_id": 7, "email": "c7@example.com"},
+            portal_service=service,
+        )
+
+    assert exc.value.status_code == 500
+    assert exc.value.detail == "Failed to load invoice PDF"
+
+
+@pytest.mark.asyncio
+async def test_download_invoice_pdf_route_returns_404_when_missing() -> None:
+    """Billing PDF route returns 404 when the service cannot stream a PDF."""
+    service = AsyncMock()
+    service.download_invoice_pdf.return_value = None
+
+    with pytest.raises(portal_billing.HTTPException) as exc:
+        await portal_billing.download_invoice_pdf(
+            invoice_id=13,
+            client={"client_id": 7, "email": "c7@example.com"},
+            portal_service=service,
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "Invoice not found or PDF not available"
+
+
+@pytest.mark.asyncio
+async def test_download_invoice_pdf_route_hides_service_errors() -> None:
+    """Billing PDF route converts unexpected service failures to a 500."""
+    service = AsyncMock()
+    service.download_invoice_pdf.side_effect = RuntimeError("drive unavailable")
+
+    with pytest.raises(portal_billing.HTTPException) as exc:
+        await portal_billing.download_invoice_pdf(
+            invoice_id=13,
+            client={"client_id": 7, "email": "c7@example.com"},
+            portal_service=service,
+        )
+
+    assert exc.value.status_code == 500
+    assert exc.value.detail == "Failed to download invoice PDF"

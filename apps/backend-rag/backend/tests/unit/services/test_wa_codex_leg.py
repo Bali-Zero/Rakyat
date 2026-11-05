@@ -404,7 +404,7 @@ async def test_an_identity_question_is_served_from_the_script_before_any_io(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Measured on real delivery, 2026-09-15 15:47-15:49 WITA: "ciao tu sei
-    Zantara?" and "ti ho chiesto xiw zoc tu?" both reached the package build,
+    Zantara?" and "ti ho chiesto chi sei tu?" both reached the package build,
     found no chunk that says who Zantara is, and terminalized as the ABSTAIN
     stub — the second reply in English, to a client writing Italian.
 
@@ -427,14 +427,14 @@ async def test_the_second_real_production_message_also_short_circuits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The exact second message of the same production thread, "ti ho
-    chiesto xiw zoc tu?" — it must resolve to the SAME Italian presentation,
+    chiesto chi sei tu?" — it must resolve to the SAME Italian presentation,
     not the English fallback the production incident actually sent."""
-    stubs = _wire_stubs(monkeypatch, query="ti ho chiesto xiw zoc tu?")
+    stubs = _wire_stubs(monkeypatch, query="ti ho chiesto chi sei tu?")
     result = await _run()
 
     assert result.text is not None
     assert result.text == wa_codex_leg.match_identity_question(
-        "ti ho chiesto xiw zoc tu?"
+        "ti ho chiesto chi sei tu?"
     ).text
     stubs.rag_client.post.assert_not_awaited()
 
@@ -464,7 +464,7 @@ async def test_a_human_handoff_request_is_served_from_the_script_before_any_io(
     tests above: the assertions that matter are the NEGATIVE ones — no
     build request, no broker offer — plus the POSITIVE one that a human was
     actually notified, not just told a client-facing lie."""
-    stubs = _wire_stubs(monkeypatch, query="goqame parlare con una persona")
+    stubs = _wire_stubs(monkeypatch, query="voglio parlare con una persona")
     notify = AsyncMock(return_value=True)
     monkeypatch.setattr(wa_codex_leg, "notify_human_handoff", notify)
 
@@ -473,7 +473,7 @@ async def test_a_human_handoff_request_is_served_from_the_script_before_any_io(
     assert result.text is not None
     # notified=True -> today's copy: the turn actually promises a colleague.
     assert result.text == wa_codex_leg.match_human_request(
-        "goqame parlare con una persona"
+        "voglio parlare con una persona"
     ).text
     assert result.reason == "" and not result.stand_down and not result.fail
     stubs.rag_client.post.assert_not_awaited()
@@ -1868,7 +1868,7 @@ async def test_leg_restores_placeholders_before_the_customer_sees_them(
     AFTER `finalize_wa_answer` returns would leave this kwarg holding the
     raw `[PII-PHONE-1]` placeholder and this assertion goes red, even
     though the old `result.text`-only assertions below would still pass."""
-    build = {**_GOOD_BUILD, "reversal_map": {"[PII-PHONE-1]": "+628400017000"}}
+    build = {**_GOOD_BUILD, "reversal_map": {"[PII-PHONE-1]": "+628111234567"}}
     stubs = _wire_stubs(
         monkeypatch,
         build=build,
@@ -1881,12 +1881,12 @@ async def test_leg_restores_placeholders_before_the_customer_sees_them(
     )
     result = await _run(conn=conn)
     assert result.text is not None
-    assert "+628400017000" in result.text
+    assert "+628111234567" in result.text
     assert "[PII-" not in result.text
     stubs.rag_client.post.assert_awaited_once()  # sanity: build actually ran
 
     received_answer = echo_finalize.await_args.kwargs["data"]["answer"]
-    assert "+628400017000" in received_answer
+    assert "+628111234567" in received_answer
     assert "[PII-" not in received_answer
 
 

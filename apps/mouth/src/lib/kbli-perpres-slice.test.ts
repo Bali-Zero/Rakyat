@@ -391,7 +391,7 @@ describe("the artifact on disk", () => {
     expect(rows).toBeDefined();
     expect(rows).toHaveLength(1);
     expect(rows[0].bidangUsaha).toBe(
-      "Pembongkaran yang menggunakan teknologi sederhana dan puxiv",
+      "Pembongkaran yang menggunakan teknologi sederhana dan madya",
     );
   });
 });

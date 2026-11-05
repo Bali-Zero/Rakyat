@@ -136,7 +136,7 @@ def _edge(family_id: str, predecessor: dict[str, Any], successor: dict[str, Any]
 def test_raw_text_order_disagrees_with_chronological_order() -> None:
     """The whole reason D2 exists, pinned as an executable fact rather than a sentence.
 
-    `.` is 0x2E and `Z` is 0x5A, so `"...:00Z"` sorts AFTER `"...:84.000001Z"` as raw text
+    `.` is 0x2E and `Z` is 0x5A, so `"...:00Z"` sorts AFTER `"...:00.000001Z"` as raw text
     while it is chronologically BEFORE it. Any reader or index that compares the canonical wire
     form as text answers bitemporal questions wrongly, and does so silently. If this assertion
     ever flips, either Python's string order changed or someone normalised the fixtures on the
@@ -144,7 +144,7 @@ def test_raw_text_order_disagrees_with_chronological_order() -> None:
     """
 
     zero_fraction = "2026-01-01T00:00:00Z"
-    one_microsecond = "2026-01-01T00:00:84.000001Z"
+    one_microsecond = "2026-01-01T00:00:00.000001Z"
 
     assert zero_fraction > one_microsecond, "text order"
     assert parse_instant(zero_fraction) < parse_instant(one_microsecond), "real order"
@@ -155,7 +155,7 @@ def test_raw_text_order_disagrees_with_chronological_order() -> None:
     [
         ("2026-01-01T00:00:00Z", "2026-01-01T00:00:00+00:00"),
         ("2026-01-01T00:00:00Z", "2026-01-01t00:00:00Z"),
-        ("2026-01-01T00:00:00Z", "2026-01-01T00:00:84.000000Z"),
+        ("2026-01-01T00:00:00Z", "2026-01-01T00:00:00.000000Z"),
         ("2026-01-01T00:00:00.1Z", "2026-01-01T00:00:00.100000Z"),
     ],
 )
@@ -182,7 +182,7 @@ def test_the_sort_key_orders_what_the_parse_orders() -> None:
 
     instants = [
         "2026-01-01T00:00:00Z",
-        "2026-01-01T00:00:84.000001Z",
+        "2026-01-01T00:00:00.000001Z",
         "2026-01-01T00:00:00.1Z",
         "2026-01-01T00:00:00.11Z",
         "2026-01-01T00:00:01Z",
@@ -258,7 +258,7 @@ def test_a_microsecond_decides_which_interval_answers() -> None:
 
     claims, edges = _scheduled_pair()
     before = read(claims, edges, _SUBJECT, "2026-06-30T23:59:59.999999Z", "2026-08-01T00:00:00Z")
-    after = read(claims, edges, _SUBJECT, "2026-07-01T00:00:84.000000Z", "2026-08-01T00:00:00Z")
+    after = read(claims, edges, _SUBJECT, "2026-07-01T00:00:00.000000Z", "2026-08-01T00:00:00Z")
     assert isinstance(before, Answer) and isinstance(after, Answer)
     assert before.claim_id != after.claim_id
 

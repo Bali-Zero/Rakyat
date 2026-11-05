@@ -267,14 +267,14 @@ describe("PortalChallengeWidget", () => {
         team_total_activations: 0,
         entries: [
           entry({
-            member: "j@d.com",
+            member: "b@x.com",
             display_name: "Budi",
             rank: 1,
             activations: 0,
             award_tier: null,
           }),
           entry({
-            member: "g@d.com",
+            member: "a@x.com",
             display_name: "Ari",
             rank: 2,
             activations: 0,
@@ -386,7 +386,7 @@ describe("PortalChallengeWidget", () => {
     render(<PortalChallengeWidget identity="ari@balizero.com" />);
     const strip = within(screen.getByTestId("tax-strip"));
     expect(strip.getByText(/memimpin/)).toBeInTheDocument();
-    expect(strip.getByText("Rp 1.000.001")).toBeInTheDocument();
+    expect(strip.getByText("Rp 1.000.000")).toBeInTheDocument();
   });
 
   it("tax strip: shows the not-yet-eligible branch under the fallback threshold", () => {
@@ -791,8 +791,8 @@ describe("Round 2 «Lascia o raddoppia»", () => {
         team_total_activations: 160,
         entries: [
           {
-            member: "pum.zagik",
-            display_name: "Pum Zagik",
+            member: "ari.firda",
+            display_name: "Ari Firda",
             avatar_url: null,
             is_tax: false,
             rank: 1,
@@ -885,7 +885,7 @@ describe("Round 2 «Lascia o raddoppia»", () => {
     expect(norm(rows[0].textContent)).toContain("Rp 6.000.000");
     expect(norm(rows[1].textContent)).toContain("Rp 3.500.000");
     expect(norm(rows[2].textContent)).toContain("Rp 2.000.000");
-    expect(norm(rows[3].textContent)).toContain("Rp 1.000.001");
+    expect(norm(rows[3].textContent)).toContain("Rp 1.000.000");
     expect(norm(rows[4].textContent)).toContain("Rp 700.000");
 
     expect(within(rows[0]).getByText("Adit")).toBeInTheDocument();
@@ -1368,8 +1368,8 @@ describe("Round 2 «Lascia o raddoppia»", () => {
           team_total_activations: 160,
           entries: [
             {
-              member: "pum.zagik",
-              display_name: "Pum Zagik",
+              member: "ari.firda",
+              display_name: "Ari Firda",
               avatar_url: null,
               is_tax: false,
               rank: 1,
@@ -1425,18 +1425,18 @@ describe("Round 2 «Lascia o raddoppia»", () => {
     const region = screen.getByTestId("september-results");
     const section = within(region);
 
-    // Frozen order — pum.zagik, surya, krisna (rank order, unchanged by R2).
+    // Frozen order — ari.firda, surya, krisna (rank order, unchanged by R2).
     const names = section
-      .getAllByText(/^#\d+ (Pum Zagik|Surya|Krisna)$/)
+      .getAllByText(/^#\d+ (Ari Firda|Surya|Krisna)$/)
       .map((el) => el.textContent);
-    expect(names).toEqual(["#1 Pum Zagik", "#2 Surya", "#3 Krisna"]);
+    expect(names).toEqual(["#1 Ari Firda", "#2 Surya", "#3 Krisna"]);
 
     const rows = region.querySelectorAll("li");
     expect(norm(rows[0]!.textContent)).toContain("Rp 3.000.000");
     expect(norm(rows[1]!.textContent)).toContain("Rp 1.500.000");
     expect(norm(rows[2]!.textContent)).toContain("Rp 700.000");
 
-    // Both choice labels appear (Pum Zagik + Surya "prize", Krisna "carry").
+    // Both choice labels appear (Ari Firda + Surya "prize", Krisna "carry").
     expect(section.getAllByText("Ambil hadiah")).toHaveLength(2);
     expect(section.getByText("Bawa poin ke Oktober")).toBeInTheDocument();
   });
