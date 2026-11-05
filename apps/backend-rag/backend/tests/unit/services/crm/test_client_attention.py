@@ -48,6 +48,7 @@ def run(
     family: list[dict[str, Any]] | None = None,
     companies: list[dict[str, Any]] | None = None,
     lkpm: list[dict[str, Any]] | None = None,
+    company_docs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return build_client_attention(
         client=client or {"id": 1, "full_name": "Client A"},
@@ -55,6 +56,7 @@ def run(
         documents=documents or [],
         company_links=companies or [],
         lkpm_reports=lkpm or [],
+        company_documents=company_docs or [],
         today=today,
     )
 
@@ -185,6 +187,36 @@ def test_itk_without_issue_dates_uses_upload_order() -> None:
     assert item["document_id"] == 2 and item["note"] is None
 
 
+def test_a_later_itk_that_ends_before_the_visa_decides_the_stay() -> None:
+    # INTENDED (gate #24 round 2 read it as a defect): the authorized stay of a
+    # visit visa ends with its ITK, not with the e-Visa's validity (Permenkumham
+    # 29/2021 art. 2). An ITK issued after the visa that ends before the visa
+    # document sets the date; once it has passed, the stay is expired.
+    v = visit(expiry=d(25), issue_date=d(-30))
+    itk = doc(2, "itk", d(-4), issue_date=d(-20))
+    item = run([v, itk])["attention"][0]
+    assert (item["state"], item["date"], item["note"], item["document_id"]) == (
+        "expired",
+        d(-4).isoformat(),
+        None,
+        2,
+    )
+    # The same when only the upload order relates them.
+    v2 = visit(expiry=d(25), created_at=datetime(2026, 5, 1, tzinfo=timezone.utc))
+    itk2 = doc(3, "itk", d(-4), created_at=datetime(2026, 6, 1, tzinfo=timezone.utc))
+    item2 = run([v2, itk2])["attention"][0]
+    assert (item2["state"], item2["document_id"]) == ("expired", 3)
+
+
+def test_company_document_model_declares_fiscal_year() -> None:
+    # Gate #24 round 2: the profile selects cd.fiscal_year (smallint in prod);
+    # a database bootstrapped from the models must have it too.
+    from backend.app.modules.crm.company_models import CompanyDocument
+
+    col = CompanyDocument.__table__.columns["fiscal_year"]
+    assert col.nullable and col.type.python_type is int
+
+
 # ── passport ────────────────────────────────────────────────────────────────
 
 
@@ -231,6 +263,27 @@ def test_family_member_documents_do_not_leak_to_client() -> None:
     fam = [{"id": 5, "full_name": "Member B", "current_visa_type": None, "visa_expiry": None}]
     result = run([doc(1, "kitas", d(-3), family_member_id=5)], family=fam)
     assert [(i["subject"], i["subject_id"]) for i in result["attention"]] == [("family_member", 5)]
+
+
+def test_family_visit_permit_from_fields_takes_its_itk() -> None:
+    # Gate #24 round 1: the permit read from the member's fields had no issue
+    # or upload time, so no ITK could ever extend it.
+    fam = [{"id": 5, "full_name": "Member B", "current_visa_type": "VOA", "visa_expiry": d(-3)}]
+    itk = doc(9, "itk", d(27), family_member_id=5)
+    item = run([itk], family=fam)["attention"][0]
+    assert (item["state"], item["date"], item["note"], item["document_id"]) == (
+        "upcoming",
+        d(27).isoformat(),
+        None,
+        9,
+    )
+
+
+def test_family_visit_permit_ignores_an_itk_that_ends_before_it() -> None:
+    fam = [{"id": 5, "full_name": "Member B", "current_visa_type": "VOA", "visa_expiry": d(-3)}]
+    old_itk = doc(9, "itk", d(-40), family_member_id=5)
+    item = run([old_itk], family=fam)["attention"][0]
+    assert (item["state"], item["note"]) == ("expired", "itk_missing")
 
 
 def test_unclassifiable_family_visa_gives_no_item() -> None:
@@ -447,3 +500,95 @@ def test_lkpm_tracking_expires_after_twelve_months() -> None:
     recent = [rep("Q4", 2025, status="approved"), rep("Q3", 2026)]
     got = of_kind(run(today=date(2026, 10, 20), companies=CO, lkpm=recent), "lkpm")
     assert got[0]["state"] == "overdue"
+
+
+def test_lkpm_tax_client_company_without_reports_gets_countdown_and_open() -> None:
+    # GUILT (gate 2026-11-05 r6): a linked company of a tax client that has no
+    # LKPM report on kita used to get no item at all, even in an open window.
+    up = of_kind(run(today=date(2026, 9, 25), client=TAX, companies=CO), "lkpm")
+    assert [(i["subject_id"], i["label"], i["state"]) for i in up] == [
+        (9, "LKPM Q3 2026", "upcoming")
+    ]
+    opened = of_kind(run(today=date(2026, 10, 5), client=TAX, companies=CO), "lkpm")
+    assert [(i["subject_name"], i["state"]) for i in opened] == [("PT Synthetic", "open")]
+    # It does not track LKPM here, so it is never overdue.
+    assert of_kind(run(today=date(2026, 10, 20), client=TAX, companies=CO), "lkpm") == []
+
+
+def test_lkpm_every_linked_company_of_a_tax_client_gets_its_window() -> None:
+    two = [
+        {"company_id": 10, "company_name": "PT Alpha Synthetic"},
+        {"company_id": 20, "company_name": "PT Beta Synthetic"},
+    ]
+    filed = [rep("Q3", 2026, company_id=10, status="submitted")]
+    got = of_kind(run(today=date(2026, 10, 5), client=TAX, companies=two, lkpm=filed), "lkpm")
+    assert sorted((i["subject_id"], i["state"]) for i in got) == [(10, "done"), (20, "open")]
+
+
+def test_lkpm_client_level_report_belongs_to_the_only_company() -> None:
+    # INNOCENCE: a client-level report (company_id NULL) of a single-company
+    # client stays ONE item for that company, never a second anonymous one.
+    client_level = [rep("Q3", 2026, company_id=None, status="approved")]
+    got = of_kind(run(today=date(2026, 10, 5), client=TAX, companies=CO, lkpm=client_level), "lkpm")
+    assert [(i["subject_id"], i["state"]) for i in got] == [(9, "done")]
+
+
+def test_lkpm_non_tax_client_without_reports_gets_nothing() -> None:
+    # INNOCENCE: no tax consultant and no report -> not a tax client, no LKPM.
+    assert of_kind(run(today=date(2026, 10, 5), companies=CO), "lkpm") == []
+
+
+# ── SPT company: evidence must belong to THAT company (gate 2026-11-05) ─────
+
+TWO_CO = [
+    {"company_id": 10, "company_name": "PT Alpha Synthetic"},
+    {"company_id": 20, "company_name": "PT Beta Synthetic"},
+]
+
+
+def company_spt_states(
+    today: date,
+    *,
+    docs: list[dict[str, Any]] | None = None,
+    company_docs: list[dict[str, Any]] | None = None,
+    companies: list[dict[str, Any]] | None = None,
+) -> dict[Any, str]:
+    r = run(docs, today=today, client=TAX, companies=companies or TWO_CO, company_docs=company_docs)
+    return {i["subject_id"]: i["state"] for i in of_kind(r, "spt_company")}
+
+
+def cdoc(company_id: int, doc_type: str, fiscal_year: int | None) -> dict[str, Any]:
+    return {"company_id": company_id, "document_type": doc_type, "fiscal_year": fiscal_year}
+
+
+def test_one_company_spt_does_not_close_the_other_company() -> None:
+    states = company_spt_states(
+        date(2026, 5, 1), company_docs=[cdoc(10, "spt_tahunan_badan", 2025)]
+    )
+    assert states == {10: "done", 20: "overdue"}
+
+
+def test_bpe_receipt_counts_as_filed_for_its_company() -> None:
+    states = company_spt_states(date(2026, 5, 1), company_docs=[cdoc(20, "bpe_spt_badan", 2025)])
+    assert states == {10: "overdue", 20: "done"}
+
+
+def test_company_spt_of_another_fiscal_year_is_not_done() -> None:
+    states = company_spt_states(
+        date(2026, 5, 1), company_docs=[cdoc(10, "spt_tahunan_badan", 2024)]
+    )
+    assert states == {10: "overdue", 20: "overdue"}
+
+
+def test_client_level_spt_never_closes_two_companies() -> None:
+    states = company_spt_states(date(2026, 5, 1), docs=[doc(1, "spt", None, fiscal_year=2025)])
+    assert states == {10: "overdue", 20: "overdue"}
+
+
+def test_client_level_spt_still_closes_a_single_company() -> None:
+    states = company_spt_states(
+        date(2026, 5, 1),
+        docs=[doc(1, "spt", None, fiscal_year=2025)],
+        companies=[TWO_CO[0]],
+    )
+    assert states == {10: "done"}

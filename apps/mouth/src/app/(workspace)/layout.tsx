@@ -25,8 +25,9 @@ import { removeDashboardQueries } from "@/hooks/useDashboardData";
  * app/portal/r19-fonts.css (self-hosted variable TTFs under public/fonts/);
  * importing the file does not select them — the
  * [data-theme][data-product="kita"] blocks in globals.css point --font-serif
- * and --font-sans at those families, which is what puts Fraunces on the
- * mastheads and Manrope on the body. Same import as
+ * and --font-sans at those families, which is what puts IBM Plex Sans (500)
+ * on the headings and numerals and Manrope on the body (Fraunces stays on
+ * the my/portal blocks). Same import as
  * (workspace)/garuda-voa/layout.tsx, which already did this page-locally.
  */
 import "../portal/r19-fonts.css";

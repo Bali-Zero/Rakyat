@@ -18,7 +18,7 @@ interface Props {
 
 /**
  * A hairline KPI band: one row of cells divided by 1px rules, each cell a
- * small uppercase label above a large tabular Fraunces numeral. No card
+ * small uppercase label above a large tabular Plex numeral. No card
  * chrome, no rounded corners, no drop shadow — the unit is the cell, not a
  * box around it. Two columns below `md`, five across on a desk.
  *
