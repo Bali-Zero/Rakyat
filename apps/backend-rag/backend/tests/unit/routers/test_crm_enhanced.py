@@ -98,6 +98,127 @@ class TestGetClientProfile:
         assert result["stats"]["family_count"] == 0
 
     @pytest.mark.asyncio
+    async def test_profile_carries_attention_next_to_legacy_alerts(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        """`attention`/`attention_stats` are ADDITIVE: `expiry_alerts`/`stats` stay."""
+        from datetime import date, timedelta
+
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        soon = date.today() + timedelta(days=30)
+        doc_row = {
+            "id": 11,
+            "document_type": "kitas",
+            "document_category": "immigration",
+            "status": "active",
+            "expiry_date": soon,
+            "issue_date": None,
+            "fiscal_year": 2025,
+            "fiscal_period": None,
+            "family_member_id": None,
+            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "deleted_at": None,
+            "ocr_extracted_data": None,
+        }
+
+        async def fetch(sql: str, *_args: Any) -> list[dict[str, Any]]:
+            if "FROM documents d" in sql:
+                assert "d.issue_date" in sql and "d.fiscal_year" in sql
+                assert "d.fiscal_period" in sql
+                return [doc_row]
+            return []
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            mock_db_conn.fetchrow = AsyncMock(return_value=client_row)
+            mock_db_conn.fetch = AsyncMock(side_effect=fetch)
+            result = await get_client_profile(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+
+        assert result["expiry_alerts"] == []
+        assert result["stats"]["documents_count"] == 1
+        # The Tax tab lists SPT history per fiscal year from this payload.
+        assert result["documents"][0]["fiscal_year"] == 2025
+        assert "fiscal_period" in result["documents"][0] and "issue_date" in result["documents"][0]
+        assert [(i["kind"], i["label"], i["state"]) for i in result["attention"]] == [
+            ("permit", "KITAS", "urgent")
+        ]
+        assert result["attention_stats"] == {"expired": 0, "urgent": 1, "upcoming": 0, "done": 0}
+
+    @pytest.mark.asyncio
+    async def test_profile_survives_attention_failure(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        with (
+            patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()),
+            patch(
+                "backend.app.routers.crm_enhanced.build_client_attention",
+                side_effect=RuntimeError("boom"),
+            ),
+        ):
+            mock_db_conn.fetchrow = AsyncMock(return_value=client_row)
+            mock_db_conn.fetch = AsyncMock(return_value=[])
+            result = await get_client_profile(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+
+        assert result["attention"] == []
+        assert result["attention_error"] == "attention_build_failed"
+        assert "boom" not in str(result["attention_error"])
+        assert "stats" in result and "expiry_alerts" in result
+
+    @pytest.mark.asyncio
+    async def test_profile_attention_error_is_null_on_success(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            mock_db_conn.fetchrow = AsyncMock(return_value=client_row)
+            mock_db_conn.fetch = AsyncMock(return_value=[])
+            result = await get_client_profile(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+
+        assert "attention_error" in result and result["attention_error"] is None
+
+    @pytest.mark.asyncio
+    async def test_profile_selects_practice_payment_and_client_identity_fields(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        """Pins the SELECT column lists the kita overview reads (all verified in prod)."""
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        seen: dict[str, str] = {}
+
+        async def fetch(sql: str, *_args: Any) -> list[dict[str, Any]]:
+            if "FROM practices p" in sql:
+                seen["practices"] = sql
+            return []
+
+        async def fetchrow(sql: str, *_args: Any) -> dict[str, Any]:
+            if "FROM clients" in sql and "uuid" in sql:
+                seen["client"] = sql
+            return client_row
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            mock_db_conn.fetchrow = AsyncMock(side_effect=fetchrow)
+            mock_db_conn.fetch = AsyncMock(side_effect=fetch)
+            await get_client_profile(client_id=42, pool=mock_db_pool, current_user=admin_user)
+
+        for col in (
+            "p.paid_amount",
+            "p.updated_at",
+            "p.expected_completion_date AS estimated_completion",
+        ):
+            assert col in seen["practices"], col
+        for col in ("birthplace", "npwp", "nib", "lead_source"):
+            assert col in seen["client"], col
+
+    @pytest.mark.asyncio
     async def test_profile_client_carries_saved_tax_consultant(
         self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
     ) -> None:
