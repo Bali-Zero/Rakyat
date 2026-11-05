@@ -30,6 +30,15 @@ _NATIVE_ROWS_SHA256 = {
     "56101": "fe7c191cbb2393ba38e8a4d5f7ca613ab45cae81f6e3fadc5e1b0999f2150449",  # pragma: allowlist secret
     "56102": "a1e3eee1d40a6a769cc9f8e9ad668e8f4b1ecbb85c34df58a92993d3828c5e94",  # pragma: allowlist secret
     "56303": "a8d9ed6b61d000e481e0ae56f6cc5fc34f3359f788291d338ebfde9bf01fa967",  # pragma: allowlist secret
+    "68111": "b36066661a2e8d80461d5bcfddb24ceac76321a1c7f198d02240b25457a78693",  # pragma: allowlist secret
+    "68210": "7ffa1cd686f35510e7f8a4b7b26a26561b9a5fb511157704eccdbfcc7057371d",  # pragma: allowlist secret
+    "68292": "53639d0c1682c532f7b13e7c695f43002c70578958a354993872f726ce97d245",  # pragma: allowlist secret
+    "70201": "507b5dc00264666d86654b6e6b3c2ab200ac3a847af54b9b08c510a6e867aa63",  # pragma: allowlist secret
+    "70209": "362a654520f5d1ba1227b11cfb65a9be6fa8e906a6ae5ee5a8cdaa6247578a86",  # pragma: allowlist secret
+    "85510": "01648a96cb258d4bdd6fec341150cbdcbed2023105a46f0aa2c389c42866356b",  # pragma: allowlist secret
+    "93116": "0aeac2b40fbf72a0608f23e5d0f4391e18ce21962c7cbd26b572ec99fd05ca98",  # pragma: allowlist secret
+    "96220": "c27bafdccbc570e9686ed51995f981e2fb98ea84e4e7e87e4876d646870f7483",  # pragma: allowlist secret
+    "96230": "c7c173cca755cf95ce07a0bffffd95f76e3127e76bf4a9b026ddde658c0a1348",  # pragma: allowlist secret
 }
 _DATASET_VERSION = "v11.0-L2-oss-risk-20260911"
 _DATASET_SIZE = 38_651_062
