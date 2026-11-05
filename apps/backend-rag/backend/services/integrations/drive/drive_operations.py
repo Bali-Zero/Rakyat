@@ -11,13 +11,30 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 _FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
+_SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
+
+_DRIVE_LIST_FIELDS = (
+    "nextPageToken, files(id, name, mimeType, size, modifiedTime, "
+    "webViewLink, thumbnailLink, shortcutDetails(targetId, targetMimeType))"
+)
 
 
 def _normalize_drive_file(f: dict[str, Any]) -> dict[str, Any]:
     """Drive API v3 returns no `type` field and `size` as a string (absent for
     folders and Google-native docs); the team_drive router contract requires
-    `type` ('file'|'folder') and an int `size` on every item."""
-    f["type"] = "folder" if f.get("mimeType") == _FOLDER_MIME_TYPE else "file"
+    `type` ('file'|'folder') and an int `size` on every item.
+    Resolves Drive Shortcuts (application/vnd.google-apps.shortcut) to their target."""
+    mime = f.get("mimeType")
+    details = f.pop("shortcutDetails", None) or {}
+    if mime == _SHORTCUT_MIME_TYPE and details.get("targetId"):
+        f["shortcut_id"] = f.get("id")
+        f["is_shortcut"] = True
+        f["id"] = details["targetId"]
+        mime = details.get("targetMimeType") or mime
+        f["mimeType"] = mime
+    else:
+        f["is_shortcut"] = False
+    f["type"] = "folder" if mime == _FOLDER_MIME_TYPE else "file"
     f["size"] = int(f.get("size") or 0)
     return f
 
@@ -66,7 +83,7 @@ class DriveOperationsManager:
         params = {
             "q": " and ".join(query_parts),
             "pageSize": page_size,
-            "fields": "nextPageToken, files(id, name, mimeType, size, modifiedTime, webViewLink, thumbnailLink)",
+            "fields": _DRIVE_LIST_FIELDS,
         }
         if page_token:
             params["pageToken"] = page_token

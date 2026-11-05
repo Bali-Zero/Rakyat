@@ -29,6 +29,7 @@ from backend.app.utils.crm_utils import (
 from backend.app.utils.json_utils import from_jsonb, to_jsonb
 from backend.core.cache import invalidate_cache
 from backend.services.crm.admin_document_visibility import admin_document_not_team_deleted_clause
+from backend.services.crm.client_attention import build_client_attention
 from backend.services.crm.permit_label import resolve_permit_label
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 
@@ -1104,6 +1105,7 @@ async def get_client_profile(
                 google_drive_folder_id, status, client_type,
                 assigned_to, tax_consultant, address, notes, tags, custom_fields,
                 first_contact_date, last_interaction_date,
+                birthplace, npwp, nib, lead_source,
                 created_at, updated_at
             FROM clients
             WHERE id = $1 AND deleted_at IS NULL
@@ -1141,7 +1143,8 @@ async def get_client_profile(
             SELECT
                 d.id, d.document_type, d.document_category,
                 d.file_name, d.file_id, d.file_url, d.google_drive_file_url,
-                d.status, d.expiry_date, d.notes, d.family_member_id,
+                d.status, d.expiry_date, d.issue_date, d.fiscal_year, d.fiscal_period, d.notes,
+                d.family_member_id,
                 d.practice_id, d.created_at, d.updated_at,
                 d.deleted_at, d.uploaded_source, d.ocr_extracted_data, d.client_visible,
                 fm.full_name as family_member_name,
@@ -1184,9 +1187,12 @@ async def get_client_profile(
         # NOT forwarded to the client — only the resolved, display-ready
         # fields are.
         documents_out: list[dict[str, Any]] = []
+        attention_docs: list[dict[str, Any]] = []
         for d in documents:
             doc = dict(d)
             ocr_data = from_jsonb(doc.pop("ocr_extracted_data", None))
+            # Raw OCR stays server-side: only the attention classifier reads it.
+            attention_docs.append({**doc, "ocr_extracted_data": ocr_data})
             permit = resolve_permit_label(
                 doc.get("document_type"), ocr_data, catalogue=visa_catalogue
             )
@@ -1228,7 +1234,9 @@ async def get_client_profile(
             SELECT
                 p.id, p.status, p.priority, p.expiry_date, p.start_date,
                 p.completion_date, p.title,
-                p.quoted_price, p.actual_price, p.payment_status,
+                p.quoted_price, p.actual_price, p.paid_amount, p.payment_status,
+                p.expected_completion_date AS estimated_completion,
+                p.updated_at,
                 p.assigned_to,
                 p.family_member_id,
                 fm.full_name as family_member_name,
@@ -1302,11 +1310,47 @@ async def get_client_profile(
             client_id,
         )
 
+        # "Needs attention" (owner rules 2026-11-03) — additive next to the
+        # legacy view-based `expiry_alerts` / `stats`. A failure here must
+        # never break the profile.
+        try:
+            lkpm_rows = await conn.fetch(
+                """
+                SELECT r.company_id, r.quarter, r.year, r.status, r.oss_submitted,
+                       EXISTS (SELECT 1 FROM lkpm_receipts rc
+                               WHERE rc.lkpm_report_id = r.id) AS has_receipts
+                FROM lkpm_reports r
+                WHERE r.company_id IN (
+                        SELECT company_id FROM client_company_links WHERE client_id = $1
+                      )
+                   OR (r.client_id = $1 AND r.company_id IS NULL)
+                """,
+                client_id,
+            )
+            attention_payload = build_client_attention(
+                client=dict(client),
+                family_members=[dict(fm) for fm in family_members],
+                documents=attention_docs,
+                company_links=[dict(cl) for cl in company_links],
+                lkpm_reports=[dict(r) for r in lkpm_rows],
+                catalogue=visa_catalogue,
+            )
+            attention_payload["attention_error"] = None
+        except Exception as exc:
+            # The exception text can echo a client field value; log the type only.
+            logger.warning("client attention build failed: %s", type(exc).__name__)
+            attention_payload = {
+                "attention": [],
+                "attention_stats": {"expired": 0, "urgent": 0, "upcoming": 0, "done": 0},
+                "attention_error": "attention_build_failed",
+            }
+
         return {
             "client": dict(client),
             "family_members": [dict(fm) for fm in family_members],
             "documents": documents_out,
             "expiry_alerts": [dict(a) for a in expiry_alerts],
+            **attention_payload,
             "practices": [dict(p) for p in practices],
             "company_links": [dict(cl) for cl in company_links],
             "company_documents": [dict(cd) for cd in company_documents],
@@ -1321,6 +1365,40 @@ async def get_client_profile(
                 "yellow_alerts": sum(1 for a in expiry_alerts if a["alert_color"] == "yellow"),
             },
         }
+
+
+@router.get("/clients/{client_id}/recap")
+async def get_client_recap(
+    client_id: int,
+    scope: str = Query(..., pattern="^(immigration|company)$"),
+    company_id: int | None = Query(None),
+    pool: Any = Depends(get_database_pool),
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Short AI recap for the kita client card; a model failure yields text=null, never a 5xx."""
+    from backend.services.crm import client_recap as recap
+
+    async with pool.acquire() as conn:
+        await verify_client_access(client_id, current_user, conn, allow_assigned=True)
+        subject_key = ""
+        try:
+            if scope == recap.SCOPE_IMMIGRATION:
+                inputs = await recap.fetch_immigration_inputs(conn, client_id)
+                facts = recap.build_immigration_facts(**inputs)
+            else:
+                resolved = await recap.resolve_company_id(conn, client_id, company_id)
+                if resolved is None:
+                    return recap.empty_recap(scope)
+                subject_key = str(resolved)
+                facts = recap.build_company_facts(
+                    **await recap.fetch_company_inputs(conn, client_id, resolved)
+                )
+        except Exception as exc:
+            logger.warning(
+                "client recap facts failed for client %s: %s", client_id, type(exc).__name__
+            )
+            return recap.empty_recap(scope)
+    return await recap.get_recap(pool, client_id, scope, subject_key, facts)
 
 
 @router.patch("/clients/{client_id}/profile")

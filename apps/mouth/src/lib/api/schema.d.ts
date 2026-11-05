@@ -5218,6 +5218,26 @@ export interface paths {
     patch: operations["update_client_profile_api_crm_clients__client_id__profile_patch"];
     trace?: never;
   };
+  "/api/crm/clients/{client_id}/recap": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Client Recap
+     * @description Short AI recap for the kita client card; a model failure yields text=null, never a 5xx.
+     */
+    get: operations["get_client_recap_api_crm_clients__client_id__recap_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/crm/clients/{client_id}/summary": {
     parameters: {
       query?: never;
@@ -37191,6 +37211,42 @@ export interface operations {
         "application/json": components["schemas"]["ClientProfileUpdate"];
       };
     };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_client_recap_api_crm_clients__client_id__recap_get: {
+    parameters: {
+      query: {
+        scope: string;
+        company_id?: number | null;
+      };
+      header?: never;
+      path: {
+        client_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
     responses: {
       /** @description Successful Response */
       200: {
