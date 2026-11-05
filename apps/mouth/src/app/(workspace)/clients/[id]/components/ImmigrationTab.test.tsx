@@ -1914,3 +1914,89 @@ describe("ImmigrationTab history — rejected label", () => {
     expect(screen.queryByText("Rejected")).not.toBeInTheDocument();
   });
 });
+
+describe("ImmigrationTab — a rejected file of the current permit", () => {
+  const rejectedSibling = {
+    ...baseDoc,
+    id: 402,
+    document_type: "evisa",
+    permit_number: "SYN-001",
+    expiry_date: "2031-01-01",
+    status: "rejected" as const,
+  };
+  const current = {
+    ...baseDoc,
+    id: 401,
+    document_type: "kitas",
+    permit_number: "SYN-001",
+    expiry_date: "2031-01-01",
+    status: "verified" as const,
+  };
+
+  it("GUILT: a rejected e-Visa sharing the permit number is not under 'Other files of this permit' and reads Rejected", () => {
+    renderTab([current, rejectedSibling]);
+    expect(screen.queryByText("Other files of this permit")).toBeNull();
+    expect(document.querySelector("#immigration-same-permit")).toBeNull();
+    expect(screen.getAllByText("Rejected").length).toBeGreaterThan(0);
+    // Only the current permit's own row (phone + desktop cell) says "Valid until".
+    expect(screen.getAllByText(/Valid until 2031/)).toHaveLength(2);
+  });
+
+  it("INNOCENCE: the same sibling, verified, stays under 'Other files of this permit'", () => {
+    renderTab([current, { ...rejectedSibling, status: "verified" as const }]);
+    expect(screen.getByText("Other files of this permit")).toBeTruthy();
+  });
+
+  it("GUILT: a rejected older permit's validity cell reads Rejected, no date range", () => {
+    renderTab([
+      current,
+      {
+        ...baseDoc,
+        id: 403,
+        document_type: "kitas",
+        permit_number: "SYN-002",
+        issue_date: "2020-01-01",
+        expiry_date: "2024-01-01",
+        status: "rejected" as const,
+      },
+    ]);
+    expect(screen.queryByText(/→/)).toBeNull();
+    expect(screen.queryByText(/Ended/)).toBeNull();
+  });
+
+  it("INNOCENCE: a non-rejected older permit keeps its date range", () => {
+    renderTab([
+      current,
+      {
+        ...baseDoc,
+        id: 404,
+        document_type: "kitas",
+        permit_number: "SYN-002",
+        issue_date: "2020-01-01",
+        expiry_date: "2024-01-01",
+        status: "verified" as const,
+      },
+    ]);
+    expect(screen.getAllByText(/→/).length).toBeGreaterThan(0);
+  });
+
+  const merp = (status: "rejected" | "verified") => ({
+    ...baseDoc,
+    id: 405,
+    document_type: "merp",
+    document_category: "immigration" as const,
+    expiry_date: "2031-02-02",
+    status,
+  });
+
+  it("GUILT: a rejected MERP chip shows Rejected, not an expiry date", () => {
+    renderTab([current, merp("rejected")]);
+    expect(screen.getByText(/· Rejected/)).toBeTruthy();
+    expect(screen.queryByText(/Exp 2031-02-02/)).toBeNull();
+  });
+
+  it("INNOCENCE: a verified MERP chip keeps its expiry date", () => {
+    renderTab([current, merp("verified")]);
+    expect(screen.getByText(/Exp 2031-02-02/)).toBeTruthy();
+  });
+});

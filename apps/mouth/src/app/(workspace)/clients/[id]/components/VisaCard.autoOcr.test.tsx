@@ -110,3 +110,19 @@ describe("VisaCard empty state with only a rejected permit", () => {
     expect(screen.queryByText(/rejected permit/)).toBeNull();
   });
 });
+
+describe("VisaCard empty state: 'on file' excludes removed and archived", () => {
+  it("INNOCENCE: a rejected permit that is also deleted does not trigger the rejected wording", () => {
+    renderCard(
+      visaDoc({ status: "rejected", deleted_at: "2026-10-02T00:00:00Z" }),
+    );
+    expect(screen.getByText(/No visa or KITAS on file/)).toBeTruthy();
+    expect(screen.queryByText(/Only a rejected permit/)).toBeNull();
+  });
+
+  it("INNOCENCE: a rejected permit that is also archived does not trigger the rejected wording", () => {
+    renderCard(visaDoc({ status: "rejected", is_archived: true }));
+    expect(screen.getByText(/No visa or KITAS on file/)).toBeTruthy();
+    expect(screen.queryByText(/Only a rejected permit/)).toBeNull();
+  });
+});

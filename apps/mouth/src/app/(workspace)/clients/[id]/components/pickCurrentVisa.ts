@@ -73,7 +73,9 @@ export const pickCurrentVisa = (
 ): ClientDocument | undefined => pickCurrentPermitFor(documents, null);
 
 // True when the client has no current permit but does hold a rejected one, so
-// the card says so instead of claiming nothing is on file.
+// the card says so instead of claiming nothing is on file. "On file" excludes
+// removed (deleted_at) and archived documents: a rejected permit that is also
+// removed or archived does not count, and the card says nothing is on file.
 export const hasOnlyRejectedPermit = (documents: ClientDocument[]): boolean =>
   !pickCurrentVisa(documents) &&
   documents.some(

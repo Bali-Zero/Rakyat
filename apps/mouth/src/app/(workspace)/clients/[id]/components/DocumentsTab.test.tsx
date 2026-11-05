@@ -584,3 +584,35 @@ describe("DocumentsTab — archive a document (CRM-17)", () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("DocumentsTab — a rejected document is never due", () => {
+  it("GUILT: a rejected legacy itk expiring tomorrow has no countdown and is not counted", () => {
+    renderTab([
+      doc({
+        id: 71,
+        document_type: "itk",
+        document_category: undefined,
+        status: "rejected",
+        file_name: "rejected-itk.pdf",
+        expiry_date: daysFromNow(1),
+      }),
+    ]);
+    expect(screen.queryByText(/left/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/expiring soon/)).not.toBeInTheDocument();
+  });
+
+  it("INNOCENCE: the same document, verified, shows the countdown and is counted", () => {
+    renderTab([
+      doc({
+        id: 72,
+        document_type: "itk",
+        document_category: undefined,
+        status: "verified",
+        file_name: "valid-itk.pdf",
+        expiry_date: daysFromNow(1),
+      }),
+    ]);
+    expect(screen.getAllByText(/left/).length).toBeGreaterThan(0);
+    expect(screen.getByText("1 expiring soon")).toBeInTheDocument();
+  });
+});

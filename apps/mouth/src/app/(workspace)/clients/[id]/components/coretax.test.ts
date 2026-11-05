@@ -46,3 +46,16 @@ describe("coretaxStatus", () => {
     expect(s.efin.onFile).toBe(false);
   });
 });
+
+describe("coretaxStatus — a rejected document is not on file", () => {
+  it("GUILT: a rejected EFIN is not on file; INNOCENCE: a verified one is", () => {
+    expect(
+      coretaxStatus([{ document_type: "efin", status: "rejected" }]).efin
+        .onFile,
+    ).toBe(false);
+    expect(
+      coretaxStatus([{ document_type: "efin", status: "verified" }]).efin
+        .onFile,
+    ).toBe(true);
+  });
+});

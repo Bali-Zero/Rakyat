@@ -192,3 +192,17 @@ describe("after the window: the line points at the next filing", () => {
     expect(s.label).toBe("Next filing opens 1 Mar 2026");
   });
 });
+
+describe("sptFilings — a rejected filing is not a filing", () => {
+  it("GUILT: a rejected SPT is not counted; INNOCENCE: a verified one is", () => {
+    const base = { document_type: "spt_personal", fiscal_year: 2025 };
+    expect(
+      sptFilings([{ ...base, status: "rejected" }], "spt_personal"),
+    ).toEqual([]);
+    expect(
+      sptFilings([{ ...base, status: "verified" }], "spt_personal").map(
+        (f) => f.fiscalYear,
+      ),
+    ).toEqual([2025]);
+  });
+});
