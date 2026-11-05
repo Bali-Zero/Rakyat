@@ -861,7 +861,10 @@ async def sync_company_drive_folder(
                 kwargs["pageToken"] = page_token
             resp = service.files().list(**kwargs).execute()
             for item in resp.get("files", []):
-                if item.get("mimeType") == "application/vnd.google-apps.folder":
+                mime = item.get("mimeType")
+                if mime == "application/vnd.google-apps.shortcut":
+                    continue
+                if mime == "application/vnd.google-apps.folder":
                     all_files.extend(_list_files_recursive(item["id"], depth + 1))
                 else:
                     all_files.append(item)
