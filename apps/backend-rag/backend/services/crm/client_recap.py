@@ -23,16 +23,20 @@ that cannot be made exact is omitted, never estimated.
   document without an expiry date makes the count unknown.
 - family members on file: family member rows; permits ending before the main
   permit: those rows whose permit expiry is before the main permit's.
-- open immigration practices: open practice rows of an immigration category.
+- open immigration practices: open practice rows of an immigration category,
+  counted before any name filter; a legacy row resolves its type by code; one
+  open row of unknown category makes the count unknown.
 - shareholders: the company profile's register (custom_fields.shareholders),
   identity = normalised name, an entry counting when it holds shares or its role
   says shareholder; any entry without a name, or with neither shares nor role,
-  makes the register count unknown. Without a usable register, the shareholders
+  makes the register count unknown; shares are read as a signed number. Without a
+  usable register, the shareholders
   and directors linked in the CRM (distinct clients), and the sentence says so.
-- KBLI lines: distinct codes (primary + register codes); KBLI 2020: distinct
-  codes classified as absent from the 2025 catalogue, stated only when every code
-  is classified.
-- capital, total shares, LKPM, dates: single recorded values, stated as recorded.
+- KBLI lines: distinct codes (primary + register codes). Codes not in the KBLI
+  2025 catalogue: distinct codes the catalogue we hold answers ABSENT for, stated
+  as exactly that (never as "KBLI 2020"), and only when every code is classified.
+- capital: the recorded amount, in words only when the short form is exact,
+  otherwise in full digits. Total shares, LKPM, dates: as recorded.
 """
 
 from __future__ import annotations
@@ -251,7 +255,13 @@ def recap_payload(scope: str, facts: Mapping[str, Any]) -> dict[str, Any]:
     if scope == SCOPE_IMMIGRATION:
         cp = _mapping(f.get("current_permit"))
         cp_expiry = _s_date(cp.get("expiry_date"))
-        practices = _valid(f.get("open_practices"), _practice)
+        raw_practices = f.get("open_practices")
+        practice_rows = (
+            [x for x in raw_practices if isinstance(x, Mapping)]
+            if isinstance(raw_practices, list)
+            else []
+        )
+        practices = _valid(practice_rows, _practice)
         family = _valid(f.get("family_permits"), _person_permit)
         # The lists below are capped; the counts are taken before the cap so the
         # recap never reports the cap as the total.
@@ -281,7 +291,7 @@ def recap_payload(scope: str, facts: Mapping[str, Any]) -> dict[str, Any]:
                 "family_permits": family[:10],
                 "family_permits_end_early_count": family_early or None,
                 "open_practices": practices[:10],
-                "open_practices_count": len(practices) or None,
+                "open_practices_count": len(practice_rows) or None,
             }
         )
     if scope == SCOPE_COMPANY:
@@ -292,7 +302,7 @@ def recap_payload(scope: str, facts: Mapping[str, Any]) -> dict[str, Any]:
             if item["code"] not in kbli_seen:
                 kbli_seen.add(item["code"])
                 kbli.append(item)
-        kbli_2020 = sum(1 for k in kbli if k.get("in_2025") is False)
+        kbli_absent = sum(1 for k in kbli if k.get("in_2025") is False)
         return _prune(
             {
                 "legal_form": _s_slot(f.get("legal_form")),
@@ -307,7 +317,7 @@ def recap_payload(scope: str, facts: Mapping[str, Any]) -> dict[str, Any]:
                 "directors_count": _s_int(f.get("directors_count")),
                 "kbli": kbli[:15],
                 "kbli_count": len(kbli) or None,
-                "kbli_2020_count": kbli_2020 or None,
+                "kbli_absent_2025_count": kbli_absent or None,
                 "lkpm_latest": _prune(
                     {
                         "year": _s_int(lk.get("year")),
@@ -428,13 +438,17 @@ def build_immigration_facts(
             }
         )
     facts["family_permits"] = fam
-    facts["open_practices"] = [
-        {"type": p.get("practice_type_name"), "status": p.get("status")}
-        for p in practices
-        if str(p.get("status") or "").lower() not in _CLOSED_PRACTICE_STATUSES
-        and p.get("practice_type_name")
-        and str(p.get("practice_category") or "").lower() in IMMIGRATION_PRACTICE_CATEGORIES
+    open_rows = [
+        p for p in practices if str(p.get("status") or "").lower() not in _CLOSED_PRACTICE_STATUSES
     ]
+    if any(not p.get("practice_category") for p in open_rows):
+        facts["open_practices"] = None  # one open row of unknown category: count unknown
+    else:
+        facts["open_practices"] = [
+            {"type": p.get("practice_type_name"), "status": p.get("status")}
+            for p in open_rows
+            if str(p.get("practice_category") or "").lower() in IMMIGRATION_PRACTICE_CATEGORIES
+        ]
     return facts
 
 
@@ -460,6 +474,19 @@ def _distinct_links(links: Any) -> int:
     return len(ids) + anonymous
 
 
+def _signed_shares(v: Any) -> int | None:
+    """A share count read as a signed number ("1.000" and "1,000" are one thousand)."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return int(v)
+    text = str(v or "").strip()
+    digits = re.sub(r"\D", "", text)
+    if not digits:
+        return None
+    return -int(digits) if text.startswith("-") or text.startswith("(") else int(digits)
+
+
 def _register_shareholders(entries: Any) -> int | None:
     """Distinct shareholders in the company profile register, or None when unknown."""
     if not isinstance(entries, list) or not entries:
@@ -470,10 +497,10 @@ def _register_shareholders(entries: Any) -> int | None:
             return None
         name = " ".join(str(entry.get("name") or "").split()).casefold()
         role = str(entry.get("role") or "").lower()
-        digits = re.sub(r"\D", "", str(entry.get("shares") or ""))
-        if not name or (not digits and not role):
+        shares = _signed_shares(entry.get("shares"))
+        if not name or (shares is None and not role):
             return None
-        if (digits and int(digits) > 0) or "shareholder" in role or "pemegang saham" in role:
+        if (shares is not None and shares > 0) or "shareholder" in role or "pemegang saham" in role:
             names.add(name)
     return len(names) or None
 
@@ -562,11 +589,15 @@ async def fetch_immigration_inputs(conn: Any, client_id: int) -> dict[str, Any]:
         """
         SELECT p.status, pt.name AS practice_type_name, pt.category AS practice_category
           FROM practices p
-          JOIN practice_types pt ON p.practice_type_id = pt.id
+          LEFT JOIN practice_types pt
+            ON pt.id = p.practice_type_id
+            OR (p.practice_type_id IS NULL AND pt.code = p.practice_type_code)
          WHERE p.client_id = $1
-           AND pt.category = ANY($2::text[])
+           AND lower(coalesce(p.status, '')) <> ALL($2::text[])
+           AND (pt.category IS NULL OR pt.category = ANY($3::text[]))
         """,
         client_id,
+        sorted(_CLOSED_PRACTICE_STATUSES),
         sorted(IMMIGRATION_PRACTICE_CATEGORIES),
     )
     try:

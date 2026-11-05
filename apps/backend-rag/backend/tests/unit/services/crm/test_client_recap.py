@@ -103,7 +103,6 @@ def _immigration_facts():
                 "practice_type_name": "Monthly Tax Reporting",
                 "practice_category": "tax_monthly",
             },
-            {"status": "on_process", "practice_type_name": "Uncategorised Work"},
         ],
         passport_expiry=date(2029, 5, 5),
         catalogue=CATALOGUE,
@@ -439,9 +438,9 @@ def test_capped_kbli_list_keeps_its_true_counts():
     kbli = [{"code": f"{47100 + i}", "in_2025": i < 14} for i in range(16)]
     payload = r.recap_payload("company", {"kbli": kbli})
     assert len(payload["kbli"]) == 15
-    assert payload["kbli_count"] == 16 and payload["kbli_2020_count"] == 2
+    assert payload["kbli_count"] == 16 and payload["kbli_absent_2025_count"] == 2
     clause = next(c for c in rt._company_clauses(payload) if "KBLI" in c)
-    assert "16 KBLI lines" in clause and "two codes still on KBLI 2020" in clause
+    assert "16 KBLI lines" in clause and "two codes are not in the KBLI 2025 catalogue" in clause
 
 
 def test_short_lists_count_as_listed_and_empty_lists_add_no_count():
@@ -452,7 +451,7 @@ def test_short_lists_count_as_listed_and_empty_lists_add_no_count():
     assert payload["open_practices_count"] == 1
     assert "family_permits_end_early_count" not in payload
     company = r.recap_payload("company", {"kbli": [{"code": "62010", "in_2025": True}]})
-    assert company["kbli_count"] == 1 and "kbli_2020_count" not in company
+    assert company["kbli_count"] == 1 and "kbli_absent_2025_count" not in company
 
 
 @pytest.mark.asyncio
@@ -536,25 +535,25 @@ class _CatalogueConn:
 
 
 @pytest.mark.asyncio
-async def test_kbli_2020_count_classifies_every_code_on_the_real_path():
+async def test_kbli_absent_count_classifies_every_code_on_the_real_path():
     # Gate r3 2026-11-05: the catalogue was asked about the first 15 codes only,
     # so a 2020 code past the cap was never counted.
     conn = _CatalogueConn(_kbli_company(16), absent={"47113", "47114"})
     facts = r.build_company_facts(**await r.fetch_company_inputs(conn, 7, 55))
     payload = r.recap_payload("company", facts)
     assert len(conn.codes) == 16
-    assert payload["kbli_count"] == 16 and payload["kbli_2020_count"] == 2
+    assert payload["kbli_count"] == 16 and payload["kbli_absent_2025_count"] == 2
     clause = next(c for c in rt._company_clauses(payload) if "KBLI" in c)
-    assert "16 KBLI lines" in clause and "two codes still on KBLI 2020" in clause
+    assert "16 KBLI lines" in clause and "two codes are not in the KBLI 2025 catalogue" in clause
 
 
 @pytest.mark.asyncio
-async def test_one_unreadable_kbli_verdict_means_no_kbli_2020_count():
+async def test_one_unreadable_kbli_verdict_means_no_absent_count():
     conn = _CatalogueConn(_kbli_company(3), absent={"47100"}, raise_for={"47101"})
     facts = r.build_company_facts(**await r.fetch_company_inputs(conn, 7, 55))
     payload = r.recap_payload("company", facts)
-    assert payload["kbli_count"] == 3 and "kbli_2020_count" not in payload
-    assert "KBLI 2020" not in " ".join(rt._company_clauses(payload))
+    assert payload["kbli_count"] == 3 and "kbli_absent_2025_count" not in payload
+    assert "KBLI 2025 catalogue" not in " ".join(rt._company_clauses(payload))
 
 
 @pytest.mark.asyncio
@@ -684,14 +683,128 @@ async def test_duplicate_kbli_codes_count_once():
     facts = r.build_company_facts(**await r.fetch_company_inputs(conn, 7, 55))
     assert [k["code"] for k in facts["kbli"]] == ["62010", "74100"]
     payload = r.recap_payload("company", facts)
-    assert payload["kbli_count"] == 2 and payload["kbli_2020_count"] == 1
+    assert payload["kbli_count"] == 2 and payload["kbli_absent_2025_count"] == 1
     duplicated = r.recap_payload(
         "company",
         {"kbli": [{"code": "74100", "in_2025": False}, {"code": "74100", "in_2025": False}]},
     )
-    assert duplicated["kbli_count"] == 1 and duplicated["kbli_2020_count"] == 1
+    assert duplicated["kbli_count"] == 1 and duplicated["kbli_absent_2025_count"] == 1
     clause = next(c for c in rt._company_clauses(payload) if "KBLI" in c)
-    assert "two KBLI lines" in clause and "one code still on KBLI 2020" in clause
+    assert "two KBLI lines" in clause and "one code is not in the KBLI 2025 catalogue" in clause
+
+
+# ── spec amendments after gate round 5 ──────────────────────────────────────
+
+
+def _practice_facts(practices):
+    return r.build_immigration_facts(
+        documents=[], family_members=[], practices=practices, passport_expiry=None, catalogue=None
+    )
+
+
+def test_open_practice_count_does_not_depend_on_the_display_name():
+    # Gate r5: a name the slot sanitiser rejects dropped the row from the count.
+    facts = _practice_facts(
+        [
+            {
+                "status": "on_process",
+                "practice_type_name": "KITAS Extension",
+                "practice_category": "visa",
+            },
+            {
+                "status": "on_process",
+                "practice_type_name": None,
+                "practice_category": "visa_extension",
+            },
+        ]
+    )
+    payload = r.recap_payload("immigration", facts)
+    assert payload["open_practices_count"] == 2
+    assert payload["open_practices"] == [{"type": "KITAS Extension"}]
+    clauses = " | ".join(rt._imm_clauses(payload, date(2026, 6, 1)))
+    assert "two immigration practices are open" in clauses
+
+
+def test_an_open_practice_of_unknown_category_makes_the_count_unknown():
+    facts = _practice_facts(
+        [
+            {
+                "status": "on_process",
+                "practice_type_name": "KITAS Extension",
+                "practice_category": "visa",
+            },
+            {"status": "on_process", "practice_type_name": None, "practice_category": None},
+            {"status": "completed", "practice_type_name": None, "practice_category": None},
+        ]
+    )
+    assert facts["open_practices"] is None
+    payload = r.recap_payload("immigration", facts)
+    assert "open_practices_count" not in payload and "open_practices" not in payload
+    closed_only = _practice_facts(
+        [
+            {
+                "status": "on_process",
+                "practice_type_name": "KITAS Extension",
+                "practice_category": "visa",
+            },
+            {"status": "completed", "practice_type_name": None, "practice_category": None},
+        ]
+    )
+    assert r.recap_payload("immigration", closed_only)["open_practices_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_practice_query_keeps_legacy_rows_and_open_ones_only():
+    # Gate r5: the inner join on practice_type_id dropped legacy rows that the
+    # profile shows through their practice_type_code.
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(return_value=None)
+    conn.fetchval = AsyncMock(return_value=None)
+    conn.fetch = AsyncMock(return_value=[])
+    await r.fetch_immigration_inputs(conn, 7)
+    calls = [c.args for c in conn.fetch.await_args_list if "FROM practices" in c.args[0]]
+    assert len(calls) == 1
+    sql, *args = calls[0]
+    flat = " ".join(sql.split())
+    assert "LEFT JOIN practice_types pt" in flat
+    assert "p.practice_type_id IS NULL AND pt.code = p.practice_type_code" in flat
+    assert "pt.category IS NULL OR pt.category = ANY($3::text[])" in flat
+    assert args == [
+        7,
+        sorted(r._CLOSED_PRACTICE_STATUSES),
+        sorted(r.IMMIGRATION_PRACTICE_CATEGORIES),
+    ]
+
+
+def test_capital_is_stated_exactly():
+    # Gate r5: 1,049,000,000 was stated as "IDR 1.0 billion".
+    assert rt.fmt_idr(1_049_000_000) == "IDR 1,049,000,000"
+    assert rt.fmt_idr(2_500_000_000) == "IDR 2.5 billion"
+    assert rt.fmt_idr(10_000_000_000) == "IDR 10.0 billion"
+    assert rt.fmt_idr(1_250_000) == "IDR 1,250,000"
+    assert rt.fmt_idr(900_000) == "IDR 900,000"
+    clauses = rt._company_clauses({"authorized_capital_idr": 1_049_000_000})
+    assert clauses == ["authorized capital is IDR 1,049,000,000"]
+
+
+def test_kbli_absence_is_stated_as_what_was_checked():
+    # Gate r5: absence from the 2025 catalogue does not prove KBLI 2020.
+    payload = r.recap_payload("company", {"kbli": [{"code": "00000", "in_2025": False}]})
+    clause = next(c for c in rt._company_clauses(payload) if "KBLI" in c)
+    assert "one code is not in the KBLI 2025 catalogue" in clause and "2020" not in clause
+
+
+def test_register_shares_are_read_signed():
+    # Gate r5: "-10" lost its sign and counted as a holding.
+    register = [
+        {"name": "Holder A", "shares": "10"},
+        {"name": "Manager C", "shares": "-10", "role": "director"},
+        {"name": "Manager D", "shares": "(5)", "role": "komisaris"},
+        {"name": "Holder E", "shares": "1.000"},
+    ]
+    facts = r.build_company_facts(company=_company(register), links=[], lkpm_latest=None)
+    assert facts["shareholders_count"] == 2 and facts["shareholders_source"] == "profile"
+    assert r._signed_shares(True) is None and r._signed_shares(12) == 12
 
 
 def test_hash_carries_schema_version_and_statuses():

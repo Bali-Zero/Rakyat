@@ -53,7 +53,7 @@ def test_company_template_content_and_shape():
     assert "PT PMA" in out and "1 February 2024" in out
     assert "IDR 10.0 billion" in out and "IDR 2.5 billion" in out
     assert "two shareholders and one director" in out
-    assert "two KBLI lines" in out and "one code still on KBLI 2020" in out
+    assert "two KBLI lines" in out and "one code is not in the KBLI 2025 catalogue" in out
     assert "Q2 2026" in out and "1 June 2025" in out
     assert t.validate_recap(out, CO)[0], t.validate_recap(out, CO)
 

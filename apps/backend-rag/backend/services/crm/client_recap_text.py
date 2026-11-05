@@ -47,7 +47,8 @@ def fmt_idr(n: int | None) -> str | None:
         return None
     for unit, size in (("trillion", 10**12), ("billion", 10**9), ("million", 10**6)):
         if n >= size:
-            return f"IDR {n / size:.1f} {unit}"
+            # Words only when the short form is the recorded amount exactly.
+            return f"IDR {n / size:.1f} {unit}" if n % (size // 10) == 0 else f"IDR {n:,}"
     return f"IDR {n:,}"
 
 
@@ -236,9 +237,14 @@ def _company_clauses(p: Mapping[str, Any]) -> list[str]:
         titles = [k["title"] for k in kbli if k.get("title")][:2]
         if titles:
             s += " (" + ", ".join(titles) + ")"
-        old = max(p.get("kbli_2020_count") or 0, sum(1 for k in kbli if k.get("in_2025") is False))
-        if old:
-            s += f", and {num(old)} {_plural(old, 'code')} still on KBLI 2020"
+        absent = max(
+            p.get("kbli_absent_2025_count") or 0, sum(1 for k in kbli if k.get("in_2025") is False)
+        )
+        if absent:
+            s += (
+                f", and {num(absent)} {_plural(absent, 'code is', 'codes are')} not in the"
+                " KBLI 2025 catalogue"
+            )
         clauses.append(s)
     lk = p.get("lkpm_latest") or {}
     if lk.get("year") and lk.get("quarter"):
