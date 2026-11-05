@@ -29,7 +29,7 @@ google-auth-httplib2>=0.4.1
 boto3>=1.43.71
 
 # AI/ML - UPGRADED FOR HTTPX 0.28+ COMPATIBILITY
-openai>=2.53.0  # Upgraded for httpx 0.28+ (proxies parameter removed)
+openai>=3.42.1  # Upgraded for httpx 0.28+ (proxies parameter removed)
 anthropic>=1.2.0  # Upgraded for httpx 0.28+ compatibility
 # PyTorch - Explicitly specify compatible version to avoid RuntimeError with sentence-transformers
 # PyTorch 2.2.0+ required for transformers compatibility (register_pytree_node)
