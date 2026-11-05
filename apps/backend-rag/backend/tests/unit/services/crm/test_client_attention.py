@@ -472,6 +472,42 @@ def test_lkpm_tracking_expires_after_twelve_months() -> None:
     assert got[0]["state"] == "overdue"
 
 
+def test_lkpm_tax_client_company_without_reports_gets_countdown_and_open() -> None:
+    # GUILT (gate 2026-11-05 r6): a linked company of a tax client that has no
+    # LKPM report on kita used to get no item at all, even in an open window.
+    up = of_kind(run(today=date(2026, 9, 25), client=TAX, companies=CO), "lkpm")
+    assert [(i["subject_id"], i["label"], i["state"]) for i in up] == [
+        (9, "LKPM Q3 2026", "upcoming")
+    ]
+    opened = of_kind(run(today=date(2026, 10, 5), client=TAX, companies=CO), "lkpm")
+    assert [(i["subject_name"], i["state"]) for i in opened] == [("PT Synthetic", "open")]
+    # It does not track LKPM here, so it is never overdue.
+    assert of_kind(run(today=date(2026, 10, 20), client=TAX, companies=CO), "lkpm") == []
+
+
+def test_lkpm_every_linked_company_of_a_tax_client_gets_its_window() -> None:
+    two = [
+        {"company_id": 10, "company_name": "PT Alpha Synthetic"},
+        {"company_id": 20, "company_name": "PT Beta Synthetic"},
+    ]
+    filed = [rep("Q3", 2026, company_id=10, status="submitted")]
+    got = of_kind(run(today=date(2026, 10, 5), client=TAX, companies=two, lkpm=filed), "lkpm")
+    assert sorted((i["subject_id"], i["state"]) for i in got) == [(10, "done"), (20, "open")]
+
+
+def test_lkpm_client_level_report_belongs_to_the_only_company() -> None:
+    # INNOCENCE: a client-level report (company_id NULL) of a single-company
+    # client stays ONE item for that company, never a second anonymous one.
+    client_level = [rep("Q3", 2026, company_id=None, status="approved")]
+    got = of_kind(run(today=date(2026, 10, 5), client=TAX, companies=CO, lkpm=client_level), "lkpm")
+    assert [(i["subject_id"], i["state"]) for i in got] == [(9, "done")]
+
+
+def test_lkpm_non_tax_client_without_reports_gets_nothing() -> None:
+    # INNOCENCE: no tax consultant and no report -> not a tax client, no LKPM.
+    assert of_kind(run(today=date(2026, 10, 5), companies=CO), "lkpm") == []
+
+
 # ── SPT company: evidence must belong to THAT company (gate 2026-11-05) ─────
 
 TWO_CO = [

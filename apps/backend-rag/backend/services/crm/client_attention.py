@@ -24,6 +24,8 @@ member):
   ``overdue`` also needs the company to TRACK LKPM on kita: a filed report
   (submitted/approved, oss_submitted or a receipt) whose window closed within
   the last 12 months; untracked companies get countdown/open/done only.
+  Every linked company of a tax client owes its window, with or without a
+  report on kita; a client-level report counts for the only linked company.
 
 The permit taxonomy is NOT redefined here: ``permit_label.resolve_permit_label``
 supplies the family / index, this module only maps that onto the owner's five
@@ -366,10 +368,18 @@ def _lkpm_items(
     company_names: Mapping[int | None, str | None],
     reports: Sequence[Mapping[str, Any]],
     today: date,
+    owing: Sequence[int],
 ) -> list[dict[str, Any]]:
-    by_company: dict[int | None, list[Mapping[str, Any]]] = {}
+    # Every company in ``owing`` gets its window even with no report on kita;
+    # a client-level report (company_id NULL) belongs to the only linked
+    # company when there is exactly one, else it keeps its own group.
+    by_company: dict[int | None, list[Mapping[str, Any]]] = {cid: [] for cid in owing}
+    sole = next(iter(company_names)) if len(company_names) == 1 else None
     for r in reports:
-        by_company.setdefault(r.get("company_id"), []).append(r)
+        cid = r.get("company_id")
+        if cid is None and sole is not None:
+            cid = sole
+        by_company.setdefault(cid, []).append(r)
 
     items: list[dict[str, Any]] = []
     for company_id, rows in by_company.items():
@@ -537,11 +547,17 @@ def build_client_attention(
         if p:
             items.append(p)
 
-    company_names = {cl.get("company_id"): cl.get("company_name") for cl in company_links}
+    company_names = {
+        cl.get("company_id"): cl.get("company_name")
+        for cl in company_links
+        if cl.get("company_id") is not None
+    }
     lkpm_rows = list(lkpm_reports)
-    items += _lkpm_items(company_names, lkpm_rows, today)
-
     is_tax_client = bool(str(client.get("tax_consultant") or "").strip()) or bool(lkpm_rows)
+    # A tax client's linked companies all owe LKPM, reported on kita or not.
+    owing = list(company_names) if is_tax_client else []
+    items += _lkpm_items(company_names, lkpm_rows, today, owing)
+
     if is_tax_client:
         fiscal_year = today.year - 1
         client_docs = [d for d in docs if not d.get("family_member_id")]
