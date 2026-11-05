@@ -265,7 +265,10 @@ def _person_permit_items(
             )
         ]
 
-    # VISIT: the ITK stamp that extends it decides the date.
+    # VISIT: the ITK decides the date. The authorized stay of a visit visa ends
+    # with its ITK, not with the e-Visa's validity (Permenkumham 29/2021 art. 2),
+    # so an ITK issued (or, without issue dates, uploaded) after the permit sets
+    # the date even when it ends earlier: that stay is over.
     candidates = []
     for itk in (i for i in immigration if i.bucket == ITK):
         if live.issue is not None and itk.issue is not None:
@@ -274,7 +277,8 @@ def _person_permit_items(
             ok = itk.uploaded > live.uploaded
         else:
             # A permit read from the family member's own fields has no issue or
-            # upload time: an ITK extends it when it runs at least to its end.
+            # upload time, so nothing orders the two: an ITK is taken as its
+            # extension only when it runs at least to the permit's end.
             ok = itk.expiry >= live.expiry
         if ok:
             candidates.append(itk)

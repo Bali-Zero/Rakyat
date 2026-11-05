@@ -187,6 +187,36 @@ def test_itk_without_issue_dates_uses_upload_order() -> None:
     assert item["document_id"] == 2 and item["note"] is None
 
 
+def test_a_later_itk_that_ends_before_the_visa_decides_the_stay() -> None:
+    # INTENDED (gate #24 round 2 read it as a defect): the authorized stay of a
+    # visit visa ends with its ITK, not with the e-Visa's validity (Permenkumham
+    # 29/2021 art. 2). An ITK issued after the visa that ends before the visa
+    # document sets the date; once it has passed, the stay is expired.
+    v = visit(expiry=d(25), issue_date=d(-30))
+    itk = doc(2, "itk", d(-4), issue_date=d(-20))
+    item = run([v, itk])["attention"][0]
+    assert (item["state"], item["date"], item["note"], item["document_id"]) == (
+        "expired",
+        d(-4).isoformat(),
+        None,
+        2,
+    )
+    # The same when only the upload order relates them.
+    v2 = visit(expiry=d(25), created_at=datetime(2026, 5, 1, tzinfo=timezone.utc))
+    itk2 = doc(3, "itk", d(-4), created_at=datetime(2026, 6, 1, tzinfo=timezone.utc))
+    item2 = run([v2, itk2])["attention"][0]
+    assert (item2["state"], item2["document_id"]) == ("expired", 3)
+
+
+def test_company_document_model_declares_fiscal_year() -> None:
+    # Gate #24 round 2: the profile selects cd.fiscal_year (smallint in prod);
+    # a database bootstrapped from the models must have it too.
+    from backend.app.modules.crm.company_models import CompanyDocument
+
+    col = CompanyDocument.__table__.columns["fiscal_year"]
+    assert col.nullable and col.type.python_type is int
+
+
 # ── passport ────────────────────────────────────────────────────────────────
 
 
