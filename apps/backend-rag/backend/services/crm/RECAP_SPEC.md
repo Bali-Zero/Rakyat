@@ -1,4 +1,4 @@
-# Client recap: numbers spec v3.1 (strict parsing)
+# Client recap: numbers spec v3.2 (strict parsing)
 
 Status: **proposed, gated before code**. Owner decision 2026-11-05: the recap stays
 off (`client_recap.RECAP_ENABLED = False`, PR #31) until this spec passes its gate and a
@@ -22,6 +22,12 @@ Lineage:
   - naive datetimes;
   - list containers;
   - free-text labels.
+- v3.2 closes the four v3.1 spec-gate findings:
+  - Rule L is now the backend predicate character for character: no trimming;
+  - the permit code grammar sees every code-shaped token, compound ones included, so an
+    alternative can no longer hide;
+  - the absence statement I0 is dropped;
+  - C7 weighs the unattributed LKPM rows of every client linked to the company.
 
 ## Rule 0: the class rule
 
@@ -42,11 +48,8 @@ Five rules apply to every input and every statement.
      set contains **any** member that is unparseable, unknown, or would need a judgement
      the grammar does not make is omitted as a whole. It is never stated as a lower,
      partial or "best guess" value.
-3. **Absence is a statement too.**
-   - "No X is recorded" is stated only when the source set is **empty**: no live record of
-     that kind exists at all.
-   - When records exist but cannot be classified or ordered, the clause is omitted. It is
-     never replaced by an absence claim.
+3. **No absence claims.** The recap never says that something is not recorded. A clause
+   with no source, or whose records cannot be classified or ordered, is omitted.
 4. **Classify before filtering.** A query never drops a row whose classification decides
    whether a statement can be made.
 5. **No identity from free text or OCR.** Names and document numbers never decide that two
@@ -54,13 +57,19 @@ Five rules apply to every input and every statement.
    (company or client) reaches the text or a prompt. Labels come only from closed sets or
    database catalogues (`visa_types.name`, `practice_types.name`).
 
-**Liveness (Rule L, the backend attention predicate,
-`client_attention.py:216-218`).** A document is live when all three hold:
-- `deleted_at` is NULL;
-- `is_archived` is not true;
-- `status`, trimmed and lower-cased, is neither `rejected` nor `deleted`.
+**Liveness (Rule L).** This is the backend attention predicate `_usable`, character for
+character (`client_attention.py:214-219`):
 
-Only live documents of the client itself (`family_member_id` NULL) feed I0–I3.
+```py
+doc.get("deleted_at") is None and not doc.get("is_archived")
+and str(doc.get("status") or "").lower() not in {"rejected", "deleted"}
+```
+
+- There is no trimming: `" rejected "` is live.
+- No other status voids a document.
+- The implementation calls `_usable` itself; it does not copy it.
+
+Only live documents of the client itself (`family_member_id` NULL) feed I1–I3.
 
 ## Grammars
 
@@ -71,8 +80,60 @@ Only live documents of the client itself (`family_member_id` NULL) feed I0–I3.
 | KBLI code | A `str` of exactly five ASCII digits, with no whitespace. |
 | code list | The value at `custom_fields.<key>`. **Empty:** missing, `None` or `[]` means no codes. **Accepted:** a `list` whose every element is a `str`, or a `str` that decodes once as JSON to such a list. **Malformed:** anything else (dict, number, nested list, non-string element, undecodable string). |
 | LKPM period | **year:** an `int`, not a `bool`, in 2000–2100. **quarter:** a `str` exactly `Q1`, `Q2`, `Q3` or `Q4` (production stores text), or an `int`, not a `bool`, in 1–4. It is always stated as `Q<n> <year>`. |
-| permit code of a document | **String signals only:** `document_type` and the OCR `visa_type`, each used only if it is a `str`. A non-string OCR value counts as absent. **Index code:** a token equal to a `visa_types.code`. **Classifiable:** every index code found across the document's string signals is the same single code, and the permit resolver's family for the document is unambiguous. The document's code is then that index code, or, when no index code is found, the family's generic code (`KITAS`, `KITAP`, `EVISA`). **Unclassifiable:** two distinct index codes, two families, or an index code whose family differs from the resolved family. |
+| permit family and code of a document | See "Permit documents" below. |
 | category / role / status / legal form | An exact match after trimming whitespace and lower-casing, against the closed sets below. Never a substring match. |
+
+## Permit documents
+
+The recap does not take a family or code from `resolve_permit_label`. That resolver keeps
+the first family keyword and the first parsable token, so it can hide an alternative. The
+recap reads the same inputs under these rules instead.
+
+**Signals.** A document has two signals:
+
+| Signal | Read as |
+|---|---|
+| `document_type` | A `str`, or absent when NULL. |
+| OCR `visa_type` | The path is `ocr_extracted_data` → `raw_response` → `visa_type`. **Absent** when any step is NULL or missing. **Malformed** when `ocr_extracted_data` or `raw_response` is present but not a `dict`, or `visa_type` is present but not a `str`. |
+
+Before matching, each string signal has every `_` replaced by a space.
+
+**Family keywords.** Families come from the keyword tests of `permit_label._classify`.
+Each family's test is evaluated on its own; the first match does **not** win. The
+families are KITAP, MERP, KITAS, ITK and EVISA. A document's **family set** is every family
+whose test matches either signal.
+
+**Code-shaped tokens.** These are the alphanumeric tokens of either signal, upper-cased,
+that have at least one full-length parse under the resolver's index grammar
+(`_parse_index_token`: `CODE = [A-E]\d{1,2}[A-Z]?`, optionally fused with
+`STAY = 2[A-Z]\d{0,2}`).
+- A token **reads as a code** when exactly one of its parses has a CODE in
+  `visa_types.code`.
+- A token with no such parse, or with two or more, is **unresolved**.
+
+A document is a **permit document** when:
+- it is the client's own and live;
+- and at least one of these holds:
+  - its family set is non-empty;
+  - it has a code-shaped token;
+  - a signal is malformed;
+  - its trimmed, lower-cased `document_type` is `visa` or `immigration_document`.
+
+A permit document is **classifiable** when all of these hold:
+- no signal is malformed;
+- no code-shaped token is unresolved;
+- all code-reading tokens read as the same single code;
+- its family set has exactly one family.
+
+Otherwise it is **unclassifiable**. That covers two families, two codes, a code outside
+the catalogue, an ambiguous compound token, a code with no family keyword, and a generic
+type with no keyword.
+
+A classifiable document's **code** is the single index code. When it has none, the code
+is its family's generic code: `KITAS`, `KITAP` or `EVISA`.
+
+**Stay-permit families** are KITAS, KITAP and EVISA. ITK is a visit stay permit; it feeds
+I3 only. MERP feeds nothing.
 
 ## Closed sets
 
@@ -115,10 +176,10 @@ Each row is one statement the deterministic template can make. Nothing else is s
 
 | # | Statement | Rule |
 |---|---|---|
-| I0 | "No current stay permit is recorded" | Stated only when the client has **no** live document that the permit resolver places in a stay-permit family (KITAS, KITAP, e-Visa), whatever its expiry or code. |
-| I1 | Current permit code and official name | **Candidates:** the client's live documents in a stay-permit family. **Omitted (with I2, I3, I6) when:** any candidate is unclassifiable or lacks a strict expiry, because "latest" cannot be decided. **Pick:** the latest expiry. **Tie rule:** tied documents must share one family. Within it, a precise index code beats the same family's generic code. Two different precise codes, or two families, on the latest date omit the clause. **Name:** the official name comes from `visa_types` by the picked code. |
+| I0 | "No current stay permit is recorded" | **Not stated** (Rule 0.3). An ITK, an unclassifiable document or an undated permit would each make it false. |
+| I1 | Current permit code and official name | **Candidates:** the client's classifiable permit documents (see Permit documents) whose family is a stay-permit family. **Omitted (with I2, I3 and I6) when:** there is no candidate; any permit document of the client is unclassifiable; or any candidate lacks a strict expiry. In those cases "latest" cannot be decided. **Pick:** the latest expiry. **Tie rule:** tied documents must share one family. Within it, a precise index code beats the same family's generic code. Two different precise codes, or two families, on the latest date omit the clause. **Name:** the official name comes from `visa_types` by the picked code. |
 | I2 | Permit issue date, expiry date, "valid" / "expired" | **Expiry:** the I1 date. **Issue date:** the strict OCR issue date of the picked document. When several documents tie with the picked code, it is stated only if all of them carry the same strict issue date. Otherwise the issue date is omitted. **Validity:** "expired" means expiry < today (WITA); otherwise the permit is "valid". |
-| I3 | ITK expiry and its status | **Candidates:** the client's live documents in the ITK family. **Omitted when:** any candidate lacks a strict expiry, or I1 is omitted. **Eligible:** with an I2 issue date, the ITKs whose expiry is on or after it. Without one, the ITKs whose expiry is from today up to the I1 expiry. **Statement:** the latest eligible expiry; its status uses the I2 rule. |
+| I3 | ITK expiry and its status | **Candidates:** the client's classifiable permit documents whose family is ITK. **Omitted when:** any candidate lacks a strict expiry, or I1 is omitted. **Eligible:** with an I2 issue date, the ITKs whose expiry is on or after it. Without one, the ITKs whose expiry is from today up to the I1 expiry. **Statement:** the latest eligible expiry; its status uses the I2 rule. |
 | I4 | Passport expiry and its status | `clients.passport_expiry`, a strict date; status by the I2 rule. |
 | I5 | Family members on file | The number of `client_family_members` rows of the client. |
 | I6 | Family permits that end before the main permit | **Who has a permit:** a row whose trimmed `current_visa_type` is non-empty, or whose `visa_expiry` is not NULL. **Count:** those rows whose strict `visa_expiry` is earlier than the I1 expiry. **Omitted when:** I1 is omitted, or any row with a permit lacks a strict `visa_expiry`. |
@@ -135,7 +196,7 @@ Each row is one statement the deterministic template can make. Nothing else is s
 | C4 | Shareholders and directors "linked in the CRM" | **Source:** only `client_company_links` of the company, counted as distinct `client_id`. `shares_count` is an integer column. **Shareholder:** a link with a shareholder role, or with `shares_count > 0`. **Not a shareholder:** a link with a director or other-known role and `shares_count` NULL or 0. **Shareholder count omitted when:** any link has an unknown role and `shares_count` NULL or 0. **Director:** a link with a director role. **Director count omitted when:** any link has an unknown role. **Not counted:** the company profile register (`custom_fields.shareholders`), whose identities are free-text names (Rule 0.5). The sentence always says "linked in the CRM". |
 | C5 | KBLI lines (count only) | **Codes:** the distinct codes among `companies.kbli_code` (empty when NULL or `""`) and the `custom_fields.kbli_codes` code list. **Omitted when:** the list is malformed, or any present code is not a strict KBLI code. **No titles are stated:** `kbli_description` is company free text (Rule 0.5). |
 | C6 | Codes not in the KBLI 2025 catalogue | The distinct C5 codes for which the catalogue answers ABSENT. **Stated only when:** C5 is stated, every code is classified (no UNKNOWN verdict), and there are at most 50 codes. **Wording:** exactly "not in the KBLI 2025 catalogue". |
-| C7 | Latest LKPM period (and its status label) | **Candidates:** `lkpm_reports` rows with `company_id` equal to this company. **Omitted when:** the client has any client-level row (`company_id` NULL), since that row cannot be attributed to a company and could be this company's latest; or any candidate's period is unparseable. **Statement:** the latest candidate period, as `Q<n> <year>`, with its status label when the status is in the LKPM status set. |
+| C7 | Latest LKPM period (and its status label) | **Candidates:** `lkpm_reports` rows with `company_id` equal to this company. **The company's clients:** every `client_id` in `client_company_links` with this `company_id`. The current client is one of them, by `resolve_company_id`. **Omitted when:** any of the company's clients has a client-level row (`company_id` NULL), because such a row cannot be attributed and could be this company's latest. Whichever linked client opens the recap, the answer is the same. Also omitted when any candidate's period is unparseable. **Statement:** the latest candidate period, as `Q<n> <year>`, with its status label when the status is in the LKPM status set. |
 
 **Never stated:** total shares, KBLI titles, any name (client, family, shareholder,
 staff, company), permit, passport, NIB, NPWP or AHU numbers, addresses, contacts,
@@ -172,24 +233,45 @@ sponsors and file names.
    - naive and aware datetimes across the WITA midnight;
    - impossible dates;
    - `Q5`, `q1` and `"Q1 "`.
-2. **Counterexamples from the v3 spec gate**, each a guilt test with its expected
-   omission:
-   - an undated KITAS beside a passport (I0 must not fire);
-   - `"E23 or E28A"` and a dict `visa_type` (unclassifiable);
-   - a generic KITAP tied with a precise E23;
-   - two E23 with the same expiry and different issue dates (issue date omitted);
-   - a rejected ITK later than the live one (ignored);
-   - the role `not a shareholder` (unknown, so the count is omitted);
-   - a `kitas` practice with an empty or misspelled status;
-   - a client-level LKPM row (C7 omitted);
-   - a `2027/"q4 "` row beside `2026/Q2` (C7 omitted);
-   - a dict, JSON-string or nested `kbli_codes`;
-   - a free-text `company_type` (C1 omitted).
+2. **Counterexamples from the v3 and v3.1 spec gates.** Each one is a guilt test, written
+   with synthetic codes, and each states its expected outcome.
+   - An undated KITAS beside a passport: I1 is omitted, and no absence sentence exists.
+   - A single live ITK and no stay permit: I1 and I3 are omitted, and no absence sentence
+     exists.
+   - Rule L on `" rejected "`: the document is live, exactly as `_usable` says.
+   - `"E23 or E28A"`: two codes, so unclassifiable.
+   - A compound token (CODE fused with STAY) followed by `"or <code>"`: two codes, so
+     unclassifiable.
+   - A code-shaped token outside the catalogue beside a catalogue code: unresolved, so
+     unclassifiable.
+   - A `visa_type` that is a `dict`, a list or a number: malformed, so unclassifiable,
+     even with `document_type` `kitas`.
+   - A `raw_response` that is not a `dict`: malformed.
+   - An `ocr_extracted_data` of NULL with `document_type` `kitas`: classifiable as
+     `KITAS`.
+   - `document_type` `visa` with no OCR: unclassifiable (no family).
+   - A `document_type` matching two family keywords: unclassifiable.
+   - A generic KITAP tied with a precise E23: two families on the latest date, so I1 is
+     omitted.
+   - Two E23 with the same expiry and different issue dates: the issue date is omitted.
+   - A rejected ITK later than the live one: ignored.
+   - The role `not a shareholder`: unknown, so the count is omitted.
+   - A `kitas` practice with an empty or misspelled status: I7 is omitted.
+   - A client-level LKPM row of the current client: C7 is omitted.
+   - A client-level LKPM row of ANOTHER client linked to the same company: C7 is omitted
+     whichever linked client opens the recap.
+   - A `2027/"q4 "` row beside `2026/Q2`: C7 is omitted.
+   - `kbli_codes` cases:
+     - a valid list: accepted;
+     - a JSON string that decodes once to a valid list: accepted;
+     - a dict, a nested list, a list with a non-string element, or an undecodable string:
+       malformed, so C5 is omitted.
+   - A free-text `company_type`: C1 is omitted.
 3. **One omission test per rule.** For every "omitted when" rule, a test where exactly one
    member triggers it, with the clause absent from the rendered text, and its innocent
    twin present.
 4. **Query shape.** A test shows the practice query keeps every status and every category,
-   and the LKPM query keeps client-level rows visible to the builder.
+   and the LKPM query returns the client-level rows of every client linked to the company to the builder.
 5. **End to end.** A test runs every statement from DB-shaped rows through the builder,
    the payload and the template.
 6. **PII.** A test pushes sentinels through every input and asserts them absent from the
