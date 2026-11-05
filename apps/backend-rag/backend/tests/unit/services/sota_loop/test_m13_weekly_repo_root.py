@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+
+import pytest
 from unittest.mock import MagicMock
 
 from backend.services.sota_loop.m13_weekly import _repo_root
@@ -43,6 +45,8 @@ def test_show_toplevel_derivation_finds_the_real_repo_root(monkeypatch) -> None:
     worktree, verified live: `--git-common-dir` in this very worktree
     resolves to the outer main checkout's .git, `--show-toplevel` resolves
     to this worktree's own root)."""
+    if not ((_THIS_REPO_ROOT / "scripts" / "agent_start.py").exists()):
+        pytest.skip('scripts/agent_start.py not in Rakyat')
     monkeypatch.delenv("NUZANTARA_REPO_ROOT", raising=False)
     root = _repo_root()
     assert root == _THIS_REPO_ROOT

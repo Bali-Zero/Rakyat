@@ -53,6 +53,8 @@ def test_a_claude_command_is_refused_before_any_subprocess(
 def test_a_non_claude_command_runs_without_any_anthropic_or_claude_variable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    if not ((dispatcher.PROJECT_ROOT / "README.md").exists()):
+        pytest.skip('README.md (used as the stand-in dispatch script) not in Rakyat')
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "synthetic-plan")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-key")
     monkeypatch.setenv("ANTHROPIC_CONSOLE_KEY_1", "synthetic-seat")
