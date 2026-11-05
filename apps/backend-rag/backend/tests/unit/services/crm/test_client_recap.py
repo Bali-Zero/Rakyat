@@ -20,6 +20,7 @@ PII = [
     "PT Acme Synthetic",
     "X9900001",
     "KITAS-998877",
+    "KITAS-112233",
     "NIB-1234567890123",
     "01.234.567.8-901.000",
     "AHU-0001234",
@@ -32,10 +33,10 @@ PII = [
 
 
 def _docs():
-    ocr = lambda issue: {  # noqa: E731
+    ocr = lambda issue, number="KITAS-998877": {  # noqa: E731
         "raw_response": {
             "visa_type": "E23 Working KITAS",
-            "visa_number": "KITAS-998877",
+            "visa_number": number,
             "sponsor": "Sponsor Corp",
             "full_name": "Jane Roe",
             "issue_date": issue,
@@ -57,7 +58,7 @@ def _docs():
             "expiry_date": date(2025, 12, 1),
             "created_at": datetime(2024, 1, 1, tzinfo=timezone.utc),
             "family_member_id": None,
-            "ocr_extracted_data": ocr("2024-12-02"),
+            "ocr_extracted_data": ocr("2024-12-02", "KITAS-112233"),
         },
         {
             "document_type": "itk",
@@ -583,16 +584,17 @@ def test_generic_akta_date_is_not_an_amendment():
 # ── numbers spec (client_recap module docstring), after gate rounds 2-4 ──────
 
 
-def _stay_doc(expiry, created_year, issue=None):
+def _stay_doc(expiry, created_year, issue=None, number=None, visa_type="E23 Working KITAS"):
+    raw = {"visa_type": visa_type, "issue_date": issue}
+    if number is not None:
+        raw["visa_number"] = number
     return {
         "document_type": "visa",
         "status": "active",
         "expiry_date": expiry,
         "created_at": datetime(created_year, 1, 1, tzinfo=timezone.utc),
         "family_member_id": None,
-        "ocr_extracted_data": {
-            "raw_response": {"visa_type": "E23 Working KITAS", "issue_date": issue}
-        },
+        "ocr_extracted_data": {"raw_response": raw},
     }
 
 
@@ -608,7 +610,12 @@ def _imm(docs):
 
 
 def test_reupload_of_the_current_permit_is_not_an_earlier_permit():
-    facts = _imm([_stay_doc(date(2026, 12, 1), 2025), _stay_doc(date(2026, 12, 1), 2026)])
+    facts = _imm(
+        [
+            _stay_doc(date(2026, 12, 1), 2025, number="TST-0001"),
+            _stay_doc(date(2026, 12, 1), 2026, number="tst 0001"),
+        ]
+    )
     assert facts["previous_permits_count"] == 0
     assert "earlier" not in rt.template_recap("immigration", r.recap_payload("immigration", facts))
 
@@ -616,9 +623,9 @@ def test_reupload_of_the_current_permit_is_not_an_earlier_permit():
 def test_two_documents_of_one_earlier_permit_count_once():
     facts = _imm(
         [
-            _stay_doc(date(2026, 12, 1), 2025),
-            _stay_doc(date(2025, 12, 1), 2024),
-            _stay_doc(date(2025, 12, 1), 2025),
+            _stay_doc(date(2026, 12, 1), 2025, number="TST0002"),
+            _stay_doc(date(2025, 12, 1), 2024, number="TST0001"),
+            _stay_doc(date(2025, 12, 1), 2025, number="TST0001"),
         ]
     )
     assert facts["previous_permits_count"] == 1
@@ -626,9 +633,55 @@ def test_two_documents_of_one_earlier_permit_count_once():
     assert "one earlier permit is on record" in clauses
 
 
-def test_an_earlier_document_without_expiry_makes_the_count_unknown():
-    facts = _imm([_stay_doc(date(2026, 12, 1), 2025), _stay_doc(None, 2024, issue="2024-01-01")])
+def test_an_earlier_document_without_a_number_makes_the_count_unknown():
+    # Spec amendment 2: identity is the permit number, so a document without one
+    # cannot be told apart and the count is omitted.
+    facts = _imm(
+        [
+            _stay_doc(date(2026, 12, 1), 2025, number="TST0002"),
+            _stay_doc(date(2025, 12, 1), 2024, number="TST0001"),
+            _stay_doc(date(2024, 12, 1), 2023),
+        ]
+    )
     assert "previous_permits_count" not in facts
+    assert facts["previous_permit_codes"] == ["E23"]
+
+
+def test_a_current_permit_without_a_number_makes_the_count_unknown():
+    # Nothing then tells a re-upload of the current permit from an earlier one.
+    facts = _imm(
+        [_stay_doc(date(2026, 12, 1), 2025), _stay_doc(date(2025, 12, 1), 2024, number="TST0001")]
+    )
+    assert "previous_permits_count" not in facts
+
+
+def test_an_earlier_document_without_expiry_still_counts_by_number():
+    facts = _imm(
+        [
+            _stay_doc(date(2026, 12, 1), 2025, number="TST0002"),
+            _stay_doc(None, 2024, issue="2024-01-01", number="TST0001"),
+        ]
+    )
+    assert facts["previous_permits_count"] == 1
+
+
+def test_one_permit_resolved_at_two_precisions_is_not_an_earlier_permit():
+    # Round 6: the same permit read as "E23" on one copy and generic "KITAS" on
+    # another (with another expiry read) was counted as an earlier permit.
+    facts = _imm(
+        [
+            _stay_doc(date(2026, 12, 1), 2025, number="TST0003"),
+            _stay_doc(date(2026, 11, 30), 2025, number="TST0003", visa_type="KITAS"),
+        ]
+    )
+    assert facts["previous_permits_count"] == 0
+    assert "earlier" not in rt.template_recap("immigration", r.recap_payload("immigration", facts))
+
+
+def test_the_earlier_permit_code_list_lends_no_count_to_a_rewrite():
+    payload = r.recap_payload("immigration", {"previous_permit_codes": ["E23", "E31"]})
+    assert payload["previous_permit_codes"] == ["E23", "E31"]
+    assert 2 not in rt._payload_facts(payload)[2]
 
 
 def _company(register, kbli_codes=None):
@@ -673,6 +726,25 @@ def test_unusable_register_falls_back_to_crm_links_and_says_so():
         assert payload["directors_count"] == 1
         clause = "one shareholder and one director are linked in the CRM"
         assert clause in rt._company_clauses(payload), register
+
+
+def test_crm_fallback_counts_only_positive_holdings():
+    # Spec amendment 2: a zero, negative or unreadable shares_count is no holding.
+    links = [
+        {"client_id": 1, "role": "director", "shares_count": 0},
+        {"client_id": 2, "role": None, "shares_count": "-5"},
+        {"client_id": 3, "role": "", "shares_count": "0"},
+        {"client_id": 4, "role": "Pemegang Saham", "shares_count": None},
+        {"client_id": 5, "role": None, "shares_count": "1.000"},
+    ]
+    facts = r.build_company_facts(company=_company([]), links=links, lkpm_latest=None)
+    assert facts["shareholders_count"] == 2 and facts["shareholders_source"] == "crm"
+    assert facts["directors_count"] == 1
+
+
+def test_schema_version_retires_the_live_template_cache():
+    # Cached recaps written under production's template must be regenerated.
+    assert rt.RECAP_SCHEMA_VERSION != "2026-11-04.v4"
 
 
 @pytest.mark.asyncio

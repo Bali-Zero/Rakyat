@@ -18,9 +18,13 @@ is exact for the record its sentence names. Counts are taken over distinct
 identities, never over rows or list positions, and before any list cap. A count
 that cannot be made exact is omitted, never estimated.
 
-- earlier permits: the client's own stay-permit documents, identity (code, expiry
-  date); a re-upload of the current permit is not an earlier one; one earlier
-  document without an expiry date makes the count unknown.
+- earlier permits (amendment 2): the client's own stay-permit documents other
+  than the current one; identity is the permit number (OCR ``visa_number``,
+  compared on its letters and digits), never the resolved code or the expiry
+  date, since two copies of one permit can resolve at different precision
+  (KITAS vs E23). The count is the distinct numbers among them minus the current
+  permit's number; it is omitted when the current permit or any earlier document
+  has no number. The list of earlier permit codes carries no count.
 - family members on file: family member rows; permits ending before the main
   permit: those rows whose permit expiry is before the main permit's.
 - open immigration practices: open practice rows of an immigration category,
@@ -30,8 +34,10 @@ that cannot be made exact is omitted, never estimated.
   identity = normalised name, an entry counting when it holds shares or its role
   says shareholder; any entry without a name, or with neither shares nor role,
   makes the register count unknown; shares are read as a signed number. Without a
-  usable register, the shareholders
-  and directors linked in the CRM (distinct clients), and the sentence says so.
+  usable register, the shareholders and directors linked in the CRM (distinct
+  clients), and the sentence says so; a linked client is a shareholder only when
+  its role is a shareholder role or its ``shares_count``, read as a signed
+  number, is greater than 0 (amendment 2).
 - KBLI lines: distinct codes (primary + register codes). Codes not in the KBLI
   2025 catalogue: distinct codes the catalogue we hold answers ABSENT for, stated
   as exactly that (never as "KBLI 2020"), and only when every code is classified.
@@ -346,6 +352,11 @@ def facts_hash(payload: Mapping[str, Any]) -> str:
 # ── fact builders (pure) ────────────────────────────────────────────────────
 
 
+def _permit_number(v: Any) -> str:
+    """The permit number as identity: letters and digits only, upper case; "" if none."""
+    return re.sub(r"[^0-9A-Za-z]", "", str(v or "")).upper()
+
+
 def _issue_date(ocr: Any) -> str | None:
     raw = _mapping(ocr).get("raw_response")
     if not isinstance(raw, dict):
@@ -388,7 +399,10 @@ def build_immigration_facts(
         elif permit["permit_family"] in _STAY_RACE_FAMILIES:
             issue = _issue_date(ocr)
             created = _s_date(d.get("created_at")) or ""
-            stay.append((expiry or "", issue or "", created, permit["permit_code"], issue, expiry))
+            number = _permit_number(permit.get("permit_number"))
+            stay.append(
+                (expiry or "", issue or "", created, permit["permit_code"], issue, expiry, number)
+            )
     stay.sort(reverse=True)
     today = today or datetime.now(ZoneInfo("Asia/Makassar")).date()
     facts: dict[str, Any] = {}
@@ -408,8 +422,8 @@ def build_immigration_facts(
         }
         current_id = (code, top[5]) if top[5] else None
         earlier = [s for s in stay[1:] if not (s[5] and (s[3], s[5]) == current_id)]
-        if all(s[5] for s in earlier):
-            facts["previous_permits_count"] = len({(s[3], s[5]) for s in earlier})
+        if top[6] and all(s[6] for s in stay[1:]):
+            facts["previous_permits_count"] = len({s[6] for s in stay[1:]} - {top[6]})
         facts["previous_permit_codes"] = sorted({s[3] for s in earlier})
     if stay:
         issue, expiry = stay[0][4], stay[0][5]
@@ -487,6 +501,16 @@ def _signed_shares(v: Any) -> int | None:
     return -int(digits) if text.startswith("-") or text.startswith("(") else int(digits)
 
 
+def _is_shareholder_role(role: Any) -> bool:
+    text = str(role or "").lower()
+    return "shareholder" in text or "pemegang saham" in text
+
+
+def _holds_shares(v: Any) -> bool:
+    shares = _signed_shares(v)
+    return shares is not None and shares > 0
+
+
 def _register_shareholders(entries: Any) -> int | None:
     """Distinct shareholders in the company profile register, or None when unknown."""
     if not isinstance(entries, list) or not entries:
@@ -500,7 +524,7 @@ def _register_shareholders(entries: Any) -> int | None:
         shares = _signed_shares(entry.get("shares"))
         if not name or (shares is None and not role):
             return None
-        if (shares is not None and shares > 0) or "shareholder" in role or "pemegang saham" in role:
+        if (shares is not None and shares > 0) or _is_shareholder_role(role):
             names.add(name)
     return len(names) or None
 
@@ -518,7 +542,7 @@ def build_company_facts(
     holders = _distinct_links(
         link
         for link in links
-        if "shareholder" in str(link.get("role") or "").lower() or link.get("shares_count")
+        if _is_shareholder_role(link.get("role")) or _holds_shares(link.get("shares_count"))
     )
     directors = _distinct_links(
         link for link in links if re.search(r"director|direktur", str(link.get("role") or ""), re.I)

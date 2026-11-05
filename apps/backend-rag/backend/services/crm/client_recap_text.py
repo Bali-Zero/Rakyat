@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 MAX_CHARS = 450
 # Bump whenever the template wording, the validator or the allow-list changes: it is hashed
 # with the facts, so cached texts written by older logic are regenerated.
-RECAP_SCHEMA_VERSION = "2026-11-04.v4"
+RECAP_SCHEMA_VERSION = "2026-11-05.v5"
 _MONTHS = [
     "January", "February", "March", "April", "May", "June", "July",
     "August", "September", "October", "November", "December",
@@ -329,12 +329,12 @@ def _payload_facts(payload: Mapping[str, Any]) -> tuple[set[date], set[str], set
                 dates.add(d)
                 ints.add(d.year)
             codes.update(_CODE_RE.findall(leaf.upper() if len(leaf) <= 16 else leaf))
-    for v in payload.values():
-        if isinstance(v, (list, tuple)):
+    for key, v in payload.items():
+        # The earlier-permit code list carries no count (spec amendment 2).
+        if isinstance(v, (list, tuple)) and key != "previous_permit_codes":
             ints.add(len(v))
     kbli = payload.get("kbli") or []
     ints.add(sum(1 for k in kbli if k.get("in_2025") is False))
-    ints.add(len(payload.get("previous_permit_codes") or []))
     permit_end = _d((payload.get("current_permit") or {}).get("expiry_date"))
     if permit_end:
         ints.add(
