@@ -1,4 +1,5 @@
 import type { ClientDocument } from "@/lib/api/crm/crm.types";
+import { isRejectedDocument } from "./utils";
 
 // The ONE rule for "which document is a person's current permit". The
 // Overview card (`pickCurrentVisa`) and the Immigration tab (which badges the
@@ -59,7 +60,7 @@ const toTime = (value?: string | null): number =>
 //
 // Candidates: the client's own immigration visa/KITAS/KITAP documents (no
 // family member), not removed by the client in the portal (deleted_at) and
-// not archived by the team.
+// not archived by the team, and not rejected.
 //
 // Among dated documents the farthest expiry wins, as before. A document with
 // no expiry_date yet wins only when it was uploaded AFTER that one: a new
@@ -70,6 +71,21 @@ const toTime = (value?: string | null): number =>
 export const pickCurrentVisa = (
   documents: ClientDocument[],
 ): ClientDocument | undefined => pickCurrentPermitFor(documents, null);
+
+// True when the client has no current permit but does hold a rejected one, so
+// the card says so instead of claiming nothing is on file. "On file" excludes
+// removed (deleted_at) and archived documents: a rejected permit that is also
+// removed or archived does not count, and the card says nothing is on file.
+export const hasOnlyRejectedPermit = (documents: ClientDocument[]): boolean =>
+  !pickCurrentVisa(documents) &&
+  documents.some(
+    (doc) =>
+      isVisaDocument(doc) &&
+      !doc.family_member_id &&
+      !doc.deleted_at &&
+      !doc.is_archived &&
+      isRejectedDocument(doc),
+  );
 
 /**
  * The current permit of ONE holder: the client themselves (`null`) or a
@@ -85,7 +101,8 @@ export const pickCurrentPermitFor = (
       isVisaDocument(doc) &&
       (doc.family_member_id ?? null) === familyMemberId &&
       !doc.deleted_at &&
-      !doc.is_archived,
+      !doc.is_archived &&
+      !isRejectedDocument(doc),
   );
 
   let dated: ClientDocument | undefined;

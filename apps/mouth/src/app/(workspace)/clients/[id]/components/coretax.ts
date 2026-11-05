@@ -5,10 +5,13 @@
 // client's documents — a `coretax_access` document means access is on file, an
 // `efin` document means the EFIN is.
 
+import { isRejectedDocument } from "./utils";
+
 export interface CoretaxDocumentLike {
   document_type: string;
   issue_date?: string;
   created_at?: string;
+  status?: string | null;
   is_archived?: boolean;
   deleted_at?: string | null;
 }
@@ -34,7 +37,7 @@ export interface CoretaxStatus {
 }
 
 function live(d: CoretaxDocumentLike): boolean {
-  return !d.is_archived && !d.deleted_at;
+  return !d.is_archived && !d.deleted_at && !isRejectedDocument(d);
 }
 
 function newest(docs: CoretaxDocumentLike[]): string | null {

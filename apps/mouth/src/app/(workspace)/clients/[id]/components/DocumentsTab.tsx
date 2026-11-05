@@ -20,7 +20,7 @@ import {
   TABULAR,
   type PillTone,
 } from "@/components/workspace/r19";
-import { getDocumentOpenUrl } from "./utils";
+import { getDocumentOpenUrl, isRejectedDocument } from "./utils";
 
 const CATEGORY_ORDER = [
   "immigration",
@@ -99,6 +99,13 @@ function expiryCountdown(expiryDate?: string): {
   if (daysLeft === 0) return { label: "Expires today", urgent: true };
   if (daysLeft <= 90) return { label: `⏰ ${daysLeft}d left`, urgent: true };
   return { urgent: false };
+}
+
+/** A rejected document is never due: no countdown, no urgency. */
+function countdownOf(d: ClientDocument): { label?: string; urgent: boolean } {
+  return isRejectedDocument(d)
+    ? { urgent: false }
+    : expiryCountdown(d.expiry_date);
 }
 
 /** Nearest expiry first; documents without one sort last. */
@@ -207,7 +214,7 @@ export function DocumentsTab({
   // Aggregate across ALL documents regardless of the active filter — same
   // scope the old `totalUrgent` used (origin/main before this restyle).
   const totalExpiringSoon = useMemo(
-    () => documents.filter((d) => expiryCountdown(d.expiry_date).urgent).length,
+    () => documents.filter((d) => countdownOf(d).urgent).length,
     [documents],
   );
 
@@ -218,8 +225,7 @@ export function DocumentsTab({
     for (const [cat, docs] of Object.entries(documentsByCategory)) {
       stats.set(cat, {
         total: docs.length,
-        expiringSoon: docs.filter((d) => expiryCountdown(d.expiry_date).urgent)
-          .length,
+        expiringSoon: docs.filter((d) => countdownOf(d).urgent).length,
       });
     }
     return stats;
@@ -330,7 +336,7 @@ export function DocumentsTab({
             const typeLabel = formatDocumentType(d.document_type);
             const openUrl = getDocumentOpenUrl(d);
             const pillState = documentStatusPill(d);
-            const countdown = expiryCountdown(d.expiry_date);
+            const countdown = countdownOf(d);
             const expiresLabel = d.expiry_date
               ? formatDate(d.expiry_date)
               : "—";

@@ -91,6 +91,48 @@ export const extractDriveFileId = (url: string): string | null => {
   return null;
 };
 
+// Only an https URL may be navigated from an API-supplied string; javascript:,
+// data: and the rest reach the DOM sink otherwise.
+export const safeExternalUrl = (
+  url: string | null | undefined,
+): string | null => {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url.trim());
+    return parsed.protocol === "https:" ? parsed.href : null;
+  } catch {
+    return null;
+  }
+};
+
+export const isRejectedDocument = (doc: { status?: string | null }): boolean =>
+  doc.status?.trim().toLowerCase() === "rejected";
+
+const DRIVE_HOSTS = new Set(["drive.google.com", "docs.google.com"]);
+
+// The Drive file id of a URL, only when the host is exactly a Google Drive
+// one. A foreign host with a `?id=` must not be rewritten to the proxy.
+export const driveProxyFileId = (
+  url: string | null | undefined,
+): string | null => {
+  if (!url) return null;
+  try {
+    if (!DRIVE_HOSTS.has(new URL(url.trim()).hostname)) return null;
+  } catch {
+    return null;
+  }
+  return extractDriveFileId(url);
+};
+
+// Where a card's Download goes: the proxy for a Drive file, an https URL as
+// itself, nothing otherwise.
+export const downloadHrefFor = (
+  url: string | null | undefined,
+): string | null => {
+  const fileId = driveProxyFileId(url);
+  return fileId ? `/api/documents/proxy/${fileId}` : safeExternalUrl(url);
+};
+
 // Get proxy thumbnail URL for displaying document without Google branding
 export const getDriveProxyUrl = (
   url: string,
@@ -260,6 +302,7 @@ export const pickCurrentPassport = (
       !doc.family_member_id &&
       !doc.deleted_at &&
       !doc.is_archived &&
+      !isRejectedDocument(doc) &&
       doc.document_type?.toLowerCase().includes("passport"),
   );
   const uploadedAt = (doc: ClientDocument) =>

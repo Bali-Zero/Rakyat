@@ -71,3 +71,58 @@ describe("VisaCard OCR runs only on an explicit click", () => {
     ]);
   });
 });
+
+describe("VisaCard download navigates only safe URLs", () => {
+  const clickSpy = () =>
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+  it("GUILT: a javascript: file URL is never clicked", () => {
+    const spy = clickSpy();
+    renderCard(visaDoc({ google_drive_file_url: "javascript:alert(1)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Download visa" }));
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("INNOCENCE: an https non-Drive-ID URL still downloads", () => {
+    const spy = clickSpy();
+    renderCard(
+      visaDoc({
+        google_drive_file_url: "https://files.example.test/kitas.pdf",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Download visa" }));
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+});
+
+describe("VisaCard empty state with only a rejected permit", () => {
+  it("GUILT: a lone rejected permit reads 'Only a rejected permit on file'", () => {
+    renderCard(visaDoc({ status: "rejected", expiry_date: "2030-01-01" }));
+    expect(screen.getByText(/Only a rejected permit on file/)).toBeTruthy();
+    expect(screen.queryByText(/No visa or KITAS on file/)).toBeNull();
+  });
+
+  it("INNOCENCE: no documents at all keeps 'No visa or KITAS on file'", () => {
+    renderCard([]);
+    expect(screen.getByText(/No visa or KITAS on file/)).toBeTruthy();
+    expect(screen.queryByText(/rejected permit/)).toBeNull();
+  });
+});
+
+describe("VisaCard empty state: 'on file' excludes removed and archived", () => {
+  it("INNOCENCE: a rejected permit that is also deleted does not trigger the rejected wording", () => {
+    renderCard(
+      visaDoc({ status: "rejected", deleted_at: "2026-10-02T00:00:00Z" }),
+    );
+    expect(screen.getByText(/No visa or KITAS on file/)).toBeTruthy();
+    expect(screen.queryByText(/Only a rejected permit/)).toBeNull();
+  });
+
+  it("INNOCENCE: a rejected permit that is also archived does not trigger the rejected wording", () => {
+    renderCard(visaDoc({ status: "rejected", is_archived: true }));
+    expect(screen.getByText(/No visa or KITAS on file/)).toBeTruthy();
+    expect(screen.queryByText(/Only a rejected permit/)).toBeNull();
+  });
+});

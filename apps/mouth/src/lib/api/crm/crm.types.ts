@@ -969,6 +969,7 @@ export interface CompanyDocument {
   google_drive_file_url?: string;
   file_name?: string;
   is_verified: boolean;
+  fiscal_year?: number | null;
   created_at: string;
 }
 

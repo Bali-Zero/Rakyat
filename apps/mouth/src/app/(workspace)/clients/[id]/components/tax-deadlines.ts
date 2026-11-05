@@ -7,6 +7,8 @@
 // done); the state names below are the same on purpose so the two can be
 // reconciled. Calendar days are WITA (UTC+8) days, and `now` is injectable.
 
+import { isRejectedDocument } from "./utils";
+
 export type SptKind = "spt_personal" | "spt_company";
 
 /**
@@ -184,6 +186,7 @@ export interface SptDocumentLike {
   file_url?: string;
   google_drive_file_url?: string;
   company_id?: number | null;
+  status?: string | null;
   is_archived?: boolean;
   deleted_at?: string | null;
 }
@@ -214,7 +217,12 @@ export function sptFilings(
   const types = SPT_DOCUMENT_TYPES[kind];
   const byYear = new Map<number, SptFiling>();
   for (const d of docs) {
-    if (!types.includes(d.document_type) || d.is_archived || d.deleted_at)
+    if (
+      !types.includes(d.document_type) ||
+      d.is_archived ||
+      d.deleted_at ||
+      isRejectedDocument(d)
+    )
       continue;
     const fiscalYear = documentFiscalYear(d);
     if (fiscalYear == null) continue;

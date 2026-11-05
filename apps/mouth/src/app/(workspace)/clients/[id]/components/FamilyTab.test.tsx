@@ -416,3 +416,59 @@ describe("FamilyTab — r19 family ledger", () => {
     expect(screen.queryByText(/formatted:undefined/)).not.toBeInTheDocument();
   });
 });
+
+describe("FamilyTab — rejected documents never supply a date", () => {
+  const memberDoc = (over: Partial<ClientDocument>): ClientDocument =>
+    ({
+      id: 1,
+      client_id: 412,
+      family_member_id: 1,
+      document_type: "kitas",
+      document_category: "immigration",
+      ...over,
+    }) as ClientDocument;
+  const bare = {
+    ...MEMBER,
+    visa_expiry: undefined,
+    passport_expiry: undefined,
+  };
+
+  it("GUILT: a rejected KITAS expiry is not shown for the member", () => {
+    renderTab(
+      [bare as FamilyMember],
+      [memberDoc({ status: "rejected", expiry_date: "2031-05-05" })],
+    );
+    expect(screen.queryByText(/2031-05-05/)).not.toBeInTheDocument();
+  });
+
+  it("INNOCENCE: a verified KITAS expiry is shown", () => {
+    renderTab(
+      [bare as FamilyMember],
+      [memberDoc({ status: "verified", expiry_date: "2031-05-05" })],
+    );
+    expect(screen.getAllByText(/2031-05-05/).length).toBeGreaterThan(0);
+  });
+
+  const passportDoc = (status: string): ClientDocument =>
+    memberDoc({
+      id: 2,
+      document_type: "passport",
+      document_category: "personal",
+      status: status as never,
+      google_drive_file_url: "https://drive.google.com/file/d/f1/view",
+    });
+
+  it("GUILT: a rejected passport offers no View/Download for the member", () => {
+    renderTab([bare as FamilyMember], [passportDoc("rejected")]);
+    expect(
+      screen.queryByRole("button", { name: /View passport for/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("INNOCENCE: a verified passport offers View for the member", () => {
+    renderTab([bare as FamilyMember], [passportDoc("verified")]);
+    expect(
+      screen.getByRole("button", { name: /View passport for/ }),
+    ).toBeInTheDocument();
+  });
+});

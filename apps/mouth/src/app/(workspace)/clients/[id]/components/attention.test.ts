@@ -348,3 +348,45 @@ describe("buildLedger — area labels and severity over area", () => {
     expect(ledger.more).toHaveLength(0);
   });
 });
+
+describe("buildLedger — rejected documents never become a Valid visa row", () => {
+  it("GUILT: only a rejected KITAS with a future expiry yields no Visa row", () => {
+    const ledger = buildLedger(
+      [],
+      [
+        {
+          id: 1,
+          client_id: 7,
+          document_type: "kitas",
+          document_category: "immigration",
+          status: "rejected",
+          expiry_date: "2030-01-01",
+        },
+      ],
+      NOW,
+    );
+    expect([...ledger.rows, ...ledger.more].map((r) => r.area)).not.toContain(
+      "Visa",
+    );
+  });
+
+  it("INNOCENCE: the same document, verified, yields a Visa row", () => {
+    const ledger = buildLedger(
+      [],
+      [
+        {
+          id: 1,
+          client_id: 7,
+          document_type: "kitas",
+          document_category: "immigration",
+          status: "verified",
+          expiry_date: "2030-01-01",
+        },
+      ],
+      NOW,
+    );
+    expect([...ledger.rows, ...ledger.more].map((r) => r.area)).toContain(
+      "Visa",
+    );
+  });
+});

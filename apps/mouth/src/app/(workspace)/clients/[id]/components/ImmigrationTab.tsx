@@ -16,7 +16,7 @@ import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { ClientDocument } from "@/lib/api/crm/crm.types";
-import { extractDriveFileId } from "./utils";
+import { extractDriveFileId, isRejectedDocument } from "./utils";
 import { permitDisplay } from "./permit-label";
 import { COMPLETED_PILL, CURRENT_PILL } from "./permit-status-pills";
 import { AiRecap } from "./AiRecap";
@@ -294,6 +294,7 @@ export function ImmigrationTab({
         (d) =>
           (isVisaFamilyDocument(d) || isItkDocument(d)) &&
           !isMerpDocument(d) &&
+          !isRejectedDocument(d) &&
           isSamePermit(d, actualVisa),
       )
     : [];
@@ -344,6 +345,7 @@ export function ImmigrationTab({
   // alone, "Issued" for an issue date or (last resort) the upload date, so a
   // row never reads as two dashes while the record carries any date.
   const historyDateText = (doc: ClientDocument): string => {
+    if (isRejectedDocument(doc)) return "Rejected";
     if (doc.issue_date && doc.expiry_date)
       return `${formatDate(doc.issue_date)} → ${formatDate(doc.expiry_date)}`;
     if (doc.expiry_date)
@@ -721,7 +723,10 @@ export function ImmigrationTab({
                 >
                   <RefreshCw className="w-3 h-3" />
                   {permitDisplayLabel(doc)}
-                  {doc.expiry_date && ` · Exp ${formatDate(doc.expiry_date)}`}
+                  {isRejectedDocument(doc)
+                    ? " · Rejected"
+                    : doc.expiry_date &&
+                      ` · Exp ${formatDate(doc.expiry_date)}`}
                 </span>
               ))}
             </div>
@@ -806,7 +811,9 @@ export function ImmigrationTab({
                       ? doc.status === "verified"
                         ? "Verified"
                         : "Current"
-                      : "Completed"}
+                      : isRejectedDocument(doc)
+                        ? "Rejected"
+                        : "Completed"}
                   </span>
                 );
                 const expiresText = historyDateText(doc);
