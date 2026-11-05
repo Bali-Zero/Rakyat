@@ -2,8 +2,9 @@
 
 Pipeline per request: build facts from rows kita already holds -> reduce them
 through ONE allow-list (``recap_payload``) -> sha256 of the canonical JSON ->
-return the cached row when the hash is unchanged, otherwise generate with
-Gemini, upsert, return. A changed fact set therefore refreshes the recap by
+return the cached row when the hash is unchanged, otherwise render the
+deterministic template (optionally rewritten by a LOCAL model when
+RECAP_REWRITE_PROVIDER=ollama), upsert, return. A changed fact set therefore refreshes the recap by
 itself; an unchanged one never costs a model call.
 
 PII boundary (hard rule): only what ``recap_payload`` lets through reaches the
@@ -55,6 +56,10 @@ REWRITE_RETRY_AFTER_S = 600
 # and MERP re-entry permits are not part of it.
 _STAY_RACE_FAMILIES = {FAMILY_KITAS, FAMILY_KITAP, FAMILY_EVISA}
 _CLOSED_PRACTICE_STATUSES = {"completed", "cancelled", "canceled", "closed", "done", "rejected"}
+# practice_types.category values that are immigration work. The Immigration
+# recap calls what it lists "immigration practices", so a tax, corporate or
+# property practice must never be counted there.
+IMMIGRATION_PRACTICE_CATEGORIES = frozenset({"visa", "visa_extension", "kitap"})
 _RELATIONSHIPS = {"spouse", "child", "parent", "sibling", "other"}
 
 _CODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 /_-]{0,15}$")
@@ -374,6 +379,7 @@ def build_immigration_facts(
         for p in practices
         if str(p.get("status") or "").lower() not in _CLOSED_PRACTICE_STATUSES
         and p.get("practice_type_name")
+        and str(p.get("practice_category") or "").lower() in IMMIGRATION_PRACTICE_CATEGORIES
     ]
     return facts
 
@@ -461,12 +467,14 @@ async def fetch_immigration_inputs(conn: Any, client_id: int) -> dict[str, Any]:
     )
     practices = await conn.fetch(
         """
-        SELECT p.status, pt.name AS practice_type_name
+        SELECT p.status, pt.name AS practice_type_name, pt.category AS practice_category
           FROM practices p
           JOIN practice_types pt ON p.practice_type_id = pt.id
          WHERE p.client_id = $1
+           AND pt.category = ANY($2::text[])
         """,
         client_id,
+        sorted(IMMIGRATION_PRACTICE_CATEGORIES),
     )
     try:
         rows = await conn.fetch("SELECT upper(code) AS code, name FROM visa_types")

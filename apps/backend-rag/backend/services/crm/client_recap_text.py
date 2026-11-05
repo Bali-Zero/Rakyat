@@ -671,44 +671,10 @@ class OllamaProvider:
         return _clean(raw)
 
 
-class GeminiProvider:
-    name = "gemini"
-
-    def __init__(self, model: str = "gemini-2.5-flash", timeout: float = 20.0) -> None:
-        self.model = model
-        self.timeout = timeout
-
-    async def generate(self, prompt: str) -> str | None:
-        import asyncio
-
-        try:
-            from backend.llm.genai_client import GENAI_AVAILABLE, get_genai_client
-
-            if not GENAI_AVAILABLE:
-                return None
-            client = get_genai_client()
-            if not client.is_available:
-                return None
-            result = await asyncio.wait_for(
-                client.generate_content(
-                    contents=prompt,
-                    model=self.model,
-                    max_output_tokens=1024,
-                    temperature=0.2,
-                    endpoint="crm_client_recap",
-                ),
-                timeout=self.timeout,
-            )
-            return _clean(result.get("text"))
-        except Exception as exc:
-            logger.warning("recap gemini rewrite failed: %s", type(exc).__name__)
-            return None
-
-
 def configured_provider() -> RecapProvider | None:
     choice = os.getenv("RECAP_REWRITE_PROVIDER", "").strip().lower()
     if choice == "ollama":
         return OllamaProvider()
-    if choice == "gemini":
-        return GeminiProvider()
+    # No cloud provider: the recap facts are client data, and a cloud SDK logs
+    # its own exception text. "gemini" (or any other value) means no rewrite.
     return None

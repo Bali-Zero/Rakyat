@@ -162,16 +162,32 @@ async def test_endpoint_facts_failure_logs_type_only(caplog):
 
 
 @pytest.mark.asyncio
-async def test_gemini_provider_failure_logs_type_only(caplog):
-    client = MagicMock()
-    client.is_available = True
-    client.generate_content = AsyncMock(side_effect=_failure())
+async def test_endpoint_cache_failure_returns_no_text_and_logs_type_only(caplog):
+    # Gate 2026-11-05 P3: a cache SELECT/UPSERT error must not become a 5xx.
+    from backend.app.routers import crm_enhanced as ce
+
+    pool = _Pool()
+    user = {"id": "u", "role": "admin", "email": "a@example.com"}
     with (
-        patch("backend.llm.genai_client.GENAI_AVAILABLE", True),
-        patch("backend.llm.genai_client.get_genai_client", return_value=client),
+        patch.object(ce, "verify_client_access", AsyncMock()),
+        patch.object(r, "fetch_immigration_inputs", AsyncMock(return_value={})),
+        patch.object(r, "build_immigration_facts", MagicMock(return_value=FACTS)),
+        patch.object(r, "get_recap", AsyncMock(side_effect=_failure())),
         caplog.at_level(logging.DEBUG),
     ):
-        text = await rt.GeminiProvider().generate("prompt")
-    assert text is None
-    assert _logged_from(caplog, rt.__name__) == 1
+        out = await ce.get_client_recap(
+            9105, scope="immigration", company_id=None, pool=pool, current_user=user
+        )
+    assert out["text"] is None
+    assert _logged_from(caplog, ROUTER) == 1
     assert _leaks(caplog) == []
+
+
+def test_no_cloud_provider_for_the_recap(monkeypatch):
+    # The recap facts are client data and a cloud SDK logs its own exception
+    # text; "gemini" must not select any provider (gate 2026-11-05).
+    monkeypatch.setenv("RECAP_REWRITE_PROVIDER", "gemini")
+    assert rt.configured_provider() is None
+    assert not hasattr(rt, "GeminiProvider")
+    monkeypatch.setenv("RECAP_REWRITE_PROVIDER", "")
+    assert rt.configured_provider() is None

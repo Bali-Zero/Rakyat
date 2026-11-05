@@ -463,6 +463,11 @@ def _spt_item(
     )
 
 
+# company_documents.document_type values that prove a company's annual SPT:
+# the return itself, or its electronic receipt (BPE).
+COMPANY_SPT_DOCUMENT_TYPES = frozenset({"spt", "spt_badan", "spt_tahunan_badan", "bpe_spt_badan"})
+
+
 def build_client_attention(
     *,
     client: Mapping[str, Any],
@@ -470,6 +475,7 @@ def build_client_attention(
     documents: Sequence[Mapping[str, Any]],
     company_links: Sequence[Mapping[str, Any]],
     lkpm_reports: Sequence[Mapping[str, Any]],
+    company_documents: Sequence[Mapping[str, Any]] = (),
     catalogue: Mapping[str, str] | None = None,
     today: date | None = None,
 ) -> dict[str, Any]:
@@ -555,8 +561,20 @@ def build_client_attention(
         )
         if spt_p:
             items.append(spt_p)
-        company_done = has_spt("spt")
+        # A company's SPT is done only on evidence for THAT company: an SPT row in
+        # company_documents for the fiscal year. A client-level "spt" document
+        # names no company, so it can stand for one only when the client has
+        # exactly one linked company; with two or more it would close the alarm
+        # of a company that never filed.
+        filed_companies = {
+            cd.get("company_id")
+            for cd in company_documents
+            if str(cd.get("document_type") or "").lower() in COMPANY_SPT_DOCUMENT_TYPES
+            and cd.get("fiscal_year") == fiscal_year
+        }
+        client_level_spt = has_spt("spt") and len(company_links) == 1
         for cl in company_links:
+            company_done = client_level_spt or cl.get("company_id") in filed_companies
             spt_c = _spt_item(
                 "spt_company",
                 "company",

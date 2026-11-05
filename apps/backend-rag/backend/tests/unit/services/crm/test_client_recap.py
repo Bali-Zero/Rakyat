@@ -94,9 +94,16 @@ def _immigration_facts():
             {
                 "status": "on_process",
                 "practice_type_name": "KITAS Extension",
+                "practice_category": "visa_extension",
                 "title": "Jane Roe renewal",
             },
-            {"status": "completed", "practice_type_name": "Old Visa"},
+            {"status": "completed", "practice_type_name": "Old Visa", "practice_category": "visa"},
+            {
+                "status": "on_process",
+                "practice_type_name": "Monthly Tax Reporting",
+                "practice_category": "tax_monthly",
+            },
+            {"status": "on_process", "practice_type_name": "Uncategorised Work"},
         ],
         passport_expiry=date(2029, 5, 5),
         catalogue=CATALOGUE,
@@ -113,6 +120,14 @@ def test_immigration_facts_pick_latest_permit_and_itk():
     assert payload["passport_expiry_date"] == "2029-05-05"
     assert payload["family_members_count"] == 1
     assert payload["open_practices"] == [{"type": "KITAS Extension"}]
+
+
+def test_immigration_recap_lists_only_immigration_practices():
+    # Gate 2026-11-05: the template calls these "immigration practices", so an
+    # open tax practice (or one with no category) must not be counted.
+    facts = _immigration_facts()
+    assert [p["type"] for p in facts["open_practices"]] == ["KITAS Extension"]
+    assert r.IMMIGRATION_PRACTICE_CATEGORIES == frozenset({"visa", "visa_extension", "kitap"})
 
 
 def test_immigration_prompt_has_no_pii():

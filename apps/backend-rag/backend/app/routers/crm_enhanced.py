@@ -1294,7 +1294,7 @@ async def get_client_profile(
             SELECT
                 cd.id, cd.uuid, cd.company_id, cd.document_type, cd.document_subtype,
                 cd.document_number, cd.document_title, cd.description,
-                cd.issue_date, cd.expiry_date, cd.status,
+                cd.issue_date, cd.expiry_date, cd.fiscal_year, cd.status,
                 cd.google_drive_file_id, cd.google_drive_file_url,
                 cd.file_name, cd.file_size_kb, cd.mime_type,
                 cd.is_verified, cd.created_at, cd.updated_at,
@@ -1332,6 +1332,7 @@ async def get_client_profile(
                 family_members=[dict(fm) for fm in family_members],
                 documents=attention_docs,
                 company_links=[dict(cl) for cl in company_links],
+                company_documents=[dict(cd) for cd in company_documents],
                 lkpm_reports=[dict(r) for r in lkpm_rows],
                 catalogue=visa_catalogue,
             )
@@ -1398,7 +1399,12 @@ async def get_client_recap(
                 "client recap facts failed for client %s: %s", client_id, type(exc).__name__
             )
             return recap.empty_recap(scope)
-    return await recap.get_recap(pool, client_id, scope, subject_key, facts)
+    try:
+        return await recap.get_recap(pool, client_id, scope, subject_key, facts)
+    except Exception as exc:
+        # The cache read/upsert failing must not turn the card's recap into a 5xx.
+        logger.warning("client recap cache failed for client %s: %s", client_id, type(exc).__name__)
+        return recap.empty_recap(scope)
 
 
 @router.patch("/clients/{client_id}/profile")

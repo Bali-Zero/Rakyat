@@ -48,6 +48,7 @@ def run(
     family: list[dict[str, Any]] | None = None,
     companies: list[dict[str, Any]] | None = None,
     lkpm: list[dict[str, Any]] | None = None,
+    company_docs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return build_client_attention(
         client=client or {"id": 1, "full_name": "Client A"},
@@ -55,6 +56,7 @@ def run(
         documents=documents or [],
         company_links=companies or [],
         lkpm_reports=lkpm or [],
+        company_documents=company_docs or [],
         today=today,
     )
 
@@ -447,3 +449,59 @@ def test_lkpm_tracking_expires_after_twelve_months() -> None:
     recent = [rep("Q4", 2025, status="approved"), rep("Q3", 2026)]
     got = of_kind(run(today=date(2026, 10, 20), companies=CO, lkpm=recent), "lkpm")
     assert got[0]["state"] == "overdue"
+
+
+# ── SPT company: evidence must belong to THAT company (gate 2026-11-05) ─────
+
+TWO_CO = [
+    {"company_id": 10, "company_name": "PT Alpha Synthetic"},
+    {"company_id": 20, "company_name": "PT Beta Synthetic"},
+]
+
+
+def company_spt_states(
+    today: date,
+    *,
+    docs: list[dict[str, Any]] | None = None,
+    company_docs: list[dict[str, Any]] | None = None,
+    companies: list[dict[str, Any]] | None = None,
+) -> dict[Any, str]:
+    r = run(docs, today=today, client=TAX, companies=companies or TWO_CO, company_docs=company_docs)
+    return {i["subject_id"]: i["state"] for i in of_kind(r, "spt_company")}
+
+
+def cdoc(company_id: int, doc_type: str, fiscal_year: int | None) -> dict[str, Any]:
+    return {"company_id": company_id, "document_type": doc_type, "fiscal_year": fiscal_year}
+
+
+def test_one_company_spt_does_not_close_the_other_company() -> None:
+    states = company_spt_states(
+        date(2026, 5, 1), company_docs=[cdoc(10, "spt_tahunan_badan", 2025)]
+    )
+    assert states == {10: "done", 20: "overdue"}
+
+
+def test_bpe_receipt_counts_as_filed_for_its_company() -> None:
+    states = company_spt_states(date(2026, 5, 1), company_docs=[cdoc(20, "bpe_spt_badan", 2025)])
+    assert states == {10: "overdue", 20: "done"}
+
+
+def test_company_spt_of_another_fiscal_year_is_not_done() -> None:
+    states = company_spt_states(
+        date(2026, 5, 1), company_docs=[cdoc(10, "spt_tahunan_badan", 2024)]
+    )
+    assert states == {10: "overdue", 20: "overdue"}
+
+
+def test_client_level_spt_never_closes_two_companies() -> None:
+    states = company_spt_states(date(2026, 5, 1), docs=[doc(1, "spt", None, fiscal_year=2025)])
+    assert states == {10: "overdue", 20: "overdue"}
+
+
+def test_client_level_spt_still_closes_a_single_company() -> None:
+    states = company_spt_states(
+        date(2026, 5, 1),
+        docs=[doc(1, "spt", None, fiscal_year=2025)],
+        companies=[TWO_CO[0]],
+    )
+    assert states == {10: "done"}
