@@ -244,8 +244,7 @@ class OutsideRootdirNodeidsAreUnique(unittest.TestCase):
             for t in st.DEFAULT_TARGETS
             if t.startswith("../../")
         ]
-        # Rakyat's DEFAULT_TARGETS has no outside-rootdir entry today, so the
-        # list may be empty; the check stays to catch the first one added.
+        self.assertTrue(outside)
         self.assertEqual(_name_collisions(outside), [])
 
     def _collide(self, a_src, b_src):

@@ -1,0 +1,871 @@
+import React from "react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  Client,
+  ClientCompanyLink,
+  ClientProfile,
+} from "@/lib/api/crm/crm.types";
+
+const {
+  mockUpdateClient,
+  mockSetClientCache,
+  mockInvalidateClient,
+  mockUseClientDetail,
+  stableTimeline,
+  stableSearchParams,
+  mockUseSearchParams,
+  mockRouterPush,
+  mockRouterReplace,
+  taxTabProps,
+  activityTabMounts,
+} = vi.hoisted(() => {
+  const stableSearchParams = {
+    get: vi.fn((_key: string): string | null => null),
+  };
+  return {
+    taxTabProps: [] as Record<string, unknown>[],
+    // R8 gate C3: one entry per REAL ActivityTab mount (see the stub below)
+    // — the only way to tell "the `key=` forced a remount" from "the
+    // `initialSection` prop just changed on the same instance".
+    activityTabMounts: [] as string[],
+    mockUpdateClient: vi.fn(),
+    mockSetClientCache: vi.fn(),
+    mockInvalidateClient: vi.fn(),
+    mockUseClientDetail: vi.fn(),
+    stableTimeline: [],
+    stableSearchParams,
+    // Indirection so ONE test (R8 gate C3) can simulate an in-place URL
+    // change (a new `searchParams` reference, as real Next.js gives on
+    // navigation) without touching the reference-stable default every
+    // other test in this file relies on. Return type widened to a plain
+    // `get` function (not `stableSearchParams`'s literal `Mock` type) so
+    // that one test can swap in a plain closure.
+    mockUseSearchParams: vi.fn(
+      (): { get: (key: string) => string | null } => stableSearchParams,
+    ),
+    // R8 gate C6: stable across renders (unlike an inline `vi.fn()` in the
+    // mock factory below, which would be a fresh instance every render) so
+    // a test can assert "no navigation happened" after a click.
+    mockRouterPush: vi.fn(),
+    mockRouterReplace: vi.fn(),
+  };
+});
+
+vi.mock("next/navigation", () => ({
+  useParams: () => ({ id: "7" }),
+  useRouter: () => ({
+    back: vi.fn(),
+    push: mockRouterPush,
+    replace: mockRouterReplace,
+  }),
+  useSearchParams: () => mockUseSearchParams(),
+}));
+
+vi.mock("@/lib/api", () => ({
+  api: {
+    getProfile: vi.fn().mockResolvedValue({
+      email: "synthetic.team@example.test",
+    }),
+    // K3b added a synchronous read for the ownership predicate (copper
+    // stamp, masthead subtitle) — same shape as `getUserProfile` everywhere
+    // else in kita. This mock did not carry it before; a component that now
+    // calls it would throw "api.getUserProfile is not a function" on every
+    // test in this file, which is why it is added here rather than guarded
+    // with optional chaining in the component itself.
+    getUserProfile: vi.fn(() => ({ email: "synthetic.team@example.test" })),
+    crm: {
+      updateClient: mockUpdateClient,
+      createInteraction: vi.fn(),
+      deleteClient: vi.fn(),
+    },
+  },
+}));
+
+vi.mock("@/hooks/useClientDetail", () => ({
+  useClientDetail: mockUseClientDetail,
+  useClientTimeline: () => ({ data: stableTimeline }),
+  useDocumentCategories: () => ({ data: [] }),
+  useClientBusinessStory: () => ({
+    data: [],
+    error: null,
+    isLoading: false,
+  }),
+  useInvalidateClient: () => mockInvalidateClient,
+  useSetClientCache: () => mockSetClientCache,
+}));
+
+vi.mock("@/hooks/useTeamMembers", () => ({
+  useTeamMemberOptions: () => ({ options: [] }),
+}));
+
+vi.mock("@/lib/logger", () => ({
+  logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+}));
+
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
+vi.mock("./components/OverviewTab", () => ({
+  OverviewTab: () => <div data-testid="OverviewTab" />,
+}));
+vi.mock("./components/DocumentsTab", () => ({
+  DocumentsTab: () => <div data-testid="DocumentsTab" />,
+}));
+vi.mock("./components/ProcessTab", () => ({
+  ProcessTab: () => <div data-testid="ProcessTab" />,
+}));
+vi.mock("./components/FamilyTab", () => ({
+  FamilyTab: () => <div data-testid="FamilyTab" />,
+}));
+vi.mock("./components/ImmigrationTab", () => ({
+  ImmigrationTab: () => <div data-testid="ImmigrationTab" />,
+}));
+vi.mock("./components/CompanyTab", () => ({
+  CompanyTab: () => <div data-testid="CompanyTab" />,
+}));
+// Records its props instead of discarding them. A stub that renders and forgets
+// cannot tell "the right list was forwarded" from "some same-shaped list was".
+vi.mock("./components/TaxTab", () => ({
+  TaxTab: (props: Record<string, unknown>) => {
+    taxTabProps.push(props);
+    return <div data-testid="TaxTab" />;
+  },
+}));
+vi.mock("./components/ActivityTab", () => ({
+  ActivityTab: (props: Record<string, unknown>) => {
+    // Empty deps: fires once per REAL mount, never on a same-instance
+    // prop update — the mount-vs-rerender distinction R8 gate C3 needs.
+    React.useEffect(() => {
+      activityTabMounts.push(props.initialSection as string);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    return (
+      <div
+        data-testid="ActivityTab"
+        data-section={props.initialSection as string}
+      />
+    );
+  },
+}));
+vi.mock("./components/PortalMessages", () => ({
+  PortalMessages: () => <div data-testid="PortalMessages" />,
+}));
+vi.mock("./components/BusinessStoryPanel", () => ({
+  BusinessStoryPanel: () => <div data-testid="BusinessStoryPanel" />,
+}));
+vi.mock("./components/modals/EditClientModal", () => ({
+  EditClientModal: () => null,
+}));
+vi.mock("./components/modals/AddFamilyMemberModal", () => ({
+  AddFamilyMemberModal: () => null,
+}));
+vi.mock("./components/modals/EditFamilyMemberModal", () => ({
+  EditFamilyMemberModal: () => null,
+}));
+vi.mock("./components/modals/AddDocumentModal", () => ({
+  AddDocumentModal: () => null,
+}));
+vi.mock("./components/modals/EditDocumentModal", () => ({
+  EditDocumentModal: () => null,
+}));
+// Stubbed (not the real modal) so the Add-company click test can assert on a
+// marker this module actually renders; the real modal's own suite covers it.
+vi.mock("./components/modals/AddCompanyModal", () => ({
+  AddCompanyModal: () => <div data-testid="AddCompanyModal" />,
+}));
+
+const makeCompanyLink = (): ClientCompanyLink => ({
+  link_id: 701,
+  company_id: 7001,
+  company_name: "Synthetic PT Sejahtera",
+  company_type: "PT PMA",
+  role: "shareholder",
+  is_primary: true,
+  status: "active",
+});
+
+const makeProfile = (
+  practiceStatus?: string,
+  practicesCount = practiceStatus ? 1 : 0,
+  companyLinks: ClientCompanyLink[] = [makeCompanyLink()],
+): ClientProfile => ({
+  client: {
+    id: 7,
+    uuid: "synthetic-client-7",
+    full_name: "Synthetic Status Client",
+    email: "synthetic.status@example.test",
+    status: "active",
+    client_type: "individual",
+    created_at: "2026-07-27T00:00:00Z",
+    updated_at: "2026-07-27T00:00:00Z",
+  },
+  family_members: [],
+  documents: [],
+  expiry_alerts: [],
+  practices: practiceStatus
+    ? [
+        {
+          id: 71,
+          status: practiceStatus,
+          practice_type_code: "SYNTHETIC",
+          practice_type_name: "Synthetic Process",
+        },
+      ]
+    : [],
+  company_links: companyLinks,
+  stats: {
+    family_count: 0,
+    documents_count: 0,
+    practices_count: practicesCount,
+    expired_count: 0,
+    red_alerts: 0,
+    yellow_alerts: 0,
+  },
+});
+
+// R7a rework: zero company links, no company name, plus optional client-field
+// overrides (a personal tax id is the finding-1 case).
+const companyLessProfile = (overrides: Partial<Client> = {}): ClientProfile => {
+  const profile = makeProfile(undefined, 0, []);
+  return { ...profile, client: { ...profile.client, ...overrides } };
+};
+
+/**
+ * Synthetic, and deliberately not the real table.
+ *
+ * The component takes the tax team as a prop precisely so the values are not
+ * baked into the client bundle; a fixture that copied the production addresses
+ * back into a "use client" test would not fail anything, but it would reintroduce
+ * the habit this change exists to break.
+ */
+const CONSULTANTS = [
+  { value: "consultant.one@example.test", label: "Consultant One" },
+  { value: "consultant.two@example.test", label: "Consultant Two" },
+];
+
+describe("ClientDetailClient", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // clearAllMocks keeps implementations: without this a deep-link test would
+    // leak its ?tab= into every test that runs after it.
+    stableSearchParams.get.mockImplementation(() => null);
+    mockUseSearchParams.mockImplementation(() => stableSearchParams);
+    taxTabProps.length = 0;
+    activityTabMounts.length = 0;
+    mockUseClientDetail.mockReturnValue({
+      data: makeProfile(),
+      isLoading: false,
+      error: null,
+    });
+    mockInvalidateClient.mockResolvedValue(undefined);
+    mockUpdateClient.mockResolvedValue({
+      ...makeProfile().client,
+      status: "inactive",
+    });
+  });
+
+  it("selects a status with the mouse and patches the authoritative client", async () => {
+    const user = userEvent.setup();
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Change client status" }),
+    );
+    await user.click(screen.getByRole("button", { name: "inactive" }));
+
+    await waitFor(() => {
+      expect(mockUpdateClient).toHaveBeenCalledWith(
+        7,
+        { status: "inactive" },
+        "synthetic.team@example.test",
+      );
+    });
+    expect(mockSetClientCache).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 7, status: "inactive" }),
+    );
+  });
+
+  it("counts only processes visible in the active and completed lists", async () => {
+    mockUseClientDetail.mockReturnValue({
+      data: makeProfile("cancelled", 1),
+      isLoading: false,
+      error: null,
+    });
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    expect(
+      screen.getByRole("button", { name: "Practices (0)" }),
+    ).toBeInTheDocument();
+  });
+
+  // R5 (kita client-profile redesign): the tab bar becomes a `<nav>` with its
+  // own accessible name, matching v3 mock's `aria-label="Client sections"`.
+  // GUILT: before R5 this was a bare `<div>` with no navigation landmark at
+  // all, so this query found nothing.
+  it("wraps the tab bar in a nav landmark named 'Client sections' (R5)", async () => {
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    expect(
+      screen.getByRole("navigation", { name: "Client sections" }),
+    ).toBeInTheDocument();
+  });
+
+  // R5: aria-current="page" tracks whichever tab is active and only that
+  // one — mirrors the mock's `.tab[aria-current="page"]` rule. GUILT: before
+  // R5 no tab button carried aria-current at all. INNOCENCE: clicking a
+  // different tab moves the attribute rather than leaving it on both.
+  it("moves aria-current to the tab the viewer picks, and only that one (R5)", async () => {
+    const user = userEvent.setup();
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    const overviewTab = screen.getByRole("button", { name: "Overview" });
+    const documentsTab = screen.getByRole("button", { name: /^Documents/ });
+    expect(overviewTab).toHaveAttribute("aria-current", "page");
+    expect(documentsTab).not.toHaveAttribute("aria-current");
+
+    await user.click(documentsTab);
+
+    expect(documentsTab).toHaveAttribute("aria-current", "page");
+    expect(overviewTab).not.toHaveAttribute("aria-current");
+  });
+
+  // R8: one "Activity" button folds the old separate Timeline/WhatsApp
+  // buttons. GUILT: before R8 the deep link table had two buttons named
+  // "Timeline (…)" and "WhatsApp"; a straight `visibleTab === key` compare
+  // on a single merged button would only light up for "timeline" and leave
+  // a `?tab=whatsapp` visitor looking at a tab bar with nothing current.
+  it.each(["timeline", "whatsapp"])(
+    "gives the single Activity button aria-current=page for ?tab=%s",
+    async (tab) => {
+      stableSearchParams.get.mockImplementation((key: string) =>
+        key === "tab" ? tab : null,
+      );
+      const { ClientDetailClient } = await import("./ClientDetailClient");
+      render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+      const activityButton = await screen.findByRole("button", {
+        name: /^Activity/,
+      });
+      expect(activityButton).toHaveAttribute("aria-current", "page");
+      expect(
+        screen.getByRole("button", { name: "Overview" }),
+      ).not.toHaveAttribute("aria-current");
+    },
+  );
+
+  /**
+   * Both refuter seats reached this independently, and they were right.
+   *
+   * Deleting `taxConsultants={taxConsultants}` at the TaxTab call site is caught
+   * by the type checker, because the prop is required. SUBSTITUTING it is not:
+   * this component already calls `useTeamMemberOptions()`, which yields the same
+   * `{value, label}` shape, so `taxConsultants={teamMemberOptions}` would
+   * typecheck, pass every other test, and pass the chunk guard — while feeding
+   * the dropdown a client-fetched roster that disagrees with the values backend
+   * migration 093 accepts. Identity of the forwarded array is the assertion.
+   */
+  it("forwards the server-supplied consultants to TaxTab, not some other same-shaped list", async () => {
+    const user = userEvent.setup();
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    await user.click(screen.getByRole("button", { name: "Tax" }));
+
+    await waitFor(() => expect(taxTabProps.length).toBeGreaterThan(0));
+    expect(taxTabProps[taxTabProps.length - 1].taxConsultants).toEqual(
+      CONSULTANTS,
+    );
+  });
+
+  // handleTabChange writes `?tab=<key>` for EVERY tab, so every key the page
+  // can write must be a key the page can read back — a reload or a shared link
+  // otherwise lands on Overview. The table is the whole TabType union.
+  it.each([
+    ["overview", "OverviewTab"],
+    ["documents", "DocumentsTab"],
+    ["process", "ProcessTab"],
+    ["family", "FamilyTab"],
+    ["visas", "ImmigrationTab"],
+    ["company", "CompanyTab"],
+    ["tax", "TaxTab"],
+    ["timeline", "ActivityTab"],
+    ["whatsapp", "ActivityTab"],
+  ])("opens the %s tab from the ?tab= deep link", async (tab, testId) => {
+    stableSearchParams.get.mockImplementation((key: string) =>
+      key === "tab" ? tab : null,
+    );
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    expect(await screen.findByTestId(testId)).toBeInTheDocument();
+  });
+
+  // R8: both legacy deep-link keys fold into the same ActivityTab mount,
+  // seeded with the section that matches the key that opened it — a
+  // bookmark to `?tab=whatsapp` must not land on the Timeline section.
+  it.each([
+    ["timeline", "timeline"],
+    ["whatsapp", "whatsapp"],
+  ])(
+    "?tab=%s seeds ActivityTab's initialSection with %s",
+    async (tab, section) => {
+      stableSearchParams.get.mockImplementation((key: string) =>
+        key === "tab" ? tab : null,
+      );
+      const { ClientDetailClient } = await import("./ClientDetailClient");
+      render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+      expect(await screen.findByTestId("ActivityTab")).toHaveAttribute(
+        "data-section",
+        section,
+      );
+    },
+  );
+
+  // R8 gate C3: an in-place URL change (browser back/forward, or any
+  // navigation that keeps ClientDetailClient mounted) must force a fresh
+  // ActivityTab instance, not just flip its `initialSection` prop on the
+  // SAME instance — the real component only reads `initialSection` on
+  // mount, so a same-instance prop flip would silently restore "back to
+  // ?tab=whatsapp lands on Timeline". `data-section` alone cannot prove
+  // this (a re-rendered stub reflects the new prop either way); the
+  // `activityTabMounts` mount-effect array is the only observable that
+  // tells "remounted" from "re-rendered".
+  it("re-navigating ?tab=whatsapp -> ?tab=timeline in place remounts ActivityTab, not just its section prop", async () => {
+    let tab = "whatsapp";
+    mockUseSearchParams.mockImplementation(() => ({
+      get: (key: string) => (key === "tab" ? tab : null),
+    }));
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    const { rerender } = render(
+      <ClientDetailClient taxConsultants={CONSULTANTS} />,
+    );
+
+    expect(await screen.findByTestId("ActivityTab")).toHaveAttribute(
+      "data-section",
+      "whatsapp",
+    );
+    expect(activityTabMounts).toEqual(["whatsapp"]);
+
+    tab = "timeline";
+    rerender(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("ActivityTab")).toHaveAttribute(
+        "data-section",
+        "timeline",
+      ),
+    );
+    // GUILT: remove the `key=` on <ActivityTab> (R5b) or freeze it to a
+    // constant (R5c) and this stays `["whatsapp"]` — the prop above still
+    // flips correctly, but no second mount ever fires.
+    expect(activityTabMounts).toEqual(["whatsapp", "timeline"]);
+  });
+
+  // R8 gate C6: the merged "Activity" tab button carries
+  // `activeKeys: ["timeline", "whatsapp"]`, but its own `key` is hardcoded
+  // "timeline" — so clicking it while already on `?tab=whatsapp` used to
+  // call `handleTabChange("timeline")` unconditionally: a real navigation
+  // that snapped `visibleTab` back to "timeline", remounted `<ActivityTab>`
+  // (see the C3 test above for why that matters) and discarded a typed
+  // draft, a pending Undo Slip/timer and an error Notice. An ordinary tab
+  // whose own key already equals `visibleTab` was already a harmless
+  // no-op before this guard (same state, same URL, just a redundant
+  // `router.replace` call) — it stays a no-op now, just without that
+  // redundant call either.
+  it("clicking the Activity tab while already on ?tab=whatsapp is a no-op (R8 gate C6)", async () => {
+    const user = userEvent.setup();
+    stableSearchParams.get.mockImplementation((key: string) =>
+      key === "tab" ? "whatsapp" : null,
+    );
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    expect(await screen.findByTestId("ActivityTab")).toHaveAttribute(
+      "data-section",
+      "whatsapp",
+    );
+    expect(activityTabMounts).toEqual(["whatsapp"]);
+
+    const activityButton = screen.getByRole("button", { name: /Activity/ });
+    expect(activityButton).toHaveAttribute("aria-current", "page");
+    await user.click(activityButton);
+
+    expect(mockRouterReplace).not.toHaveBeenCalled();
+    expect(mockRouterPush).not.toHaveBeenCalled();
+    // Still the SAME mount, still on the WhatsApp section — not bounced
+    // back to Timeline.
+    expect(activityTabMounts).toEqual(["whatsapp"]);
+    expect(screen.getByTestId("ActivityTab")).toHaveAttribute(
+      "data-section",
+      "whatsapp",
+    );
+  });
+
+  // R8 gate B1: R7a's render-time fallback (`visibleTab`) can force
+  // `activeTab` and `visibleTab` apart — a deep link to a hidden Company
+  // tab renders Overview while `activeTab` and the URL still say
+  // "company". The bare `if (alreadyActive) return;` (R8 gate C6) treated
+  // that click as a no-op too, because `isActive` is computed against
+  // `visibleTab` (agrees with the visible Overview button) — so the URL
+  // kept lying and `activeTab` stayed stuck on "company", ready to jump
+  // the panel back to Company the instant `showCompanyTab` turned true
+  // (e.g. after "Add company" + `invalidateClient`). Clicking Overview is
+  // the one reachable gesture that must still normalise both.
+  it("R7a fallback: clicking Overview while ?tab=company still normalises the URL (R8 gate B1)", async () => {
+    const user = userEvent.setup();
+    mockUseClientDetail.mockReturnValue({
+      data: companyLessProfile(),
+      isLoading: false,
+      error: null,
+    });
+    stableSearchParams.get.mockImplementation((key: string) =>
+      key === "tab" ? "company" : null,
+    );
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    expect(await screen.findByTestId("OverviewTab")).toBeInTheDocument();
+    const overview = screen.getByRole("button", { name: "Overview" });
+    expect(overview).toHaveAttribute("aria-current", "page");
+
+    await user.click(overview);
+
+    // GUILT: with the bare `if (alreadyActive) return;` this is 0 calls —
+    // the click that should normalise `activeTab`/the URL is swallowed.
+    expect(mockRouterReplace).toHaveBeenCalledWith("/clients/7?tab=overview", {
+      scroll: false,
+    });
+  });
+
+  it("ignores a ?tab= value that is not a tab and stays on Overview", async () => {
+    stableSearchParams.get.mockImplementation((key: string) =>
+      key === "tab" ? "constructor" : null,
+    );
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    expect(await screen.findByTestId("OverviewTab")).toBeInTheDocument();
+    expect(screen.queryByTestId("ActivityTab")).not.toBeInTheDocument();
+  });
+
+  // R7a (kita client-profile redesign): a client with ZERO company links
+  // loses the Company and Tax tab buttons, and a deep link to either falls
+  // back to Overview with the active state agreeing. GUILT: before R7a both
+  // buttons rendered and ?tab=company opened CompanyTab. The "no button"
+  // assertion dies without the tab-bar filter; the fallback +
+  // aria-current-on-Overview assertions die without the render-time
+  // visibleTab guard.
+  it.each([
+    ["company", "Company"],
+    ["tax", "Tax"],
+  ])(
+    "hides the %s tab and falls back to Overview when the client has no company links (R7a)",
+    async (tab, name) => {
+      mockUseClientDetail.mockReturnValue({
+        data: companyLessProfile(),
+        isLoading: false,
+        error: null,
+      });
+      stableSearchParams.get.mockImplementation((key: string) =>
+        key === "tab" ? tab : null,
+      );
+      const { ClientDetailClient } = await import("./ClientDetailClient");
+      render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+      expect(await screen.findByTestId("OverviewTab")).toBeInTheDocument();
+      expect(screen.queryByTestId(`${name}Tab`)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Overview" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      // The actions the hidden tabs carried must survive on Overview: the
+      // section renders with Add company and the tax-consultant select (the
+      // client has no personal tax id, so the Tax tab is hidden too and the
+      // select is not duplicated anywhere). Dies without the LedgerSection
+      // block or its unconditional `!showTaxTab` guard.
+      expect(
+        screen.getByRole("heading", { name: "Company & tax" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Add company" }),
+      ).toBeInTheDocument();
+      expect(screen.getByLabelText("Tax consultant")).toBeInTheDocument();
+    },
+  );
+
+  // Finding 1 (R7a rework): a client with a personal tax identifier but no
+  // company keeps the Tax tab — TaxTab renders `client.npwp ?? client.tax_id`
+  // and `client.nib`, and no other surface does, so hiding the tab would make
+  // a stored fact invisible. GUILT: without the `showTaxTab` flag the Tax
+  // button never renders here; the `?tab=tax` deep link falls back to
+  // Overview; and the Overview section renders a second tax-consultant select
+  // beside the one in TaxTab. All values synthetic.
+  it.each([
+    ["npwp", "00.000.000.0-000.000"],
+    ["tax_id", "SYNTHETIC-TAX-0001"],
+    ["nib", "0011223344556"],
+  ] as const)(
+    "keeps the Tax tab for a company-less client with a personal %s (R7a rework)",
+    async (field, value) => {
+      mockUseClientDetail.mockReturnValue({
+        data: companyLessProfile({ [field]: value }),
+        isLoading: false,
+        error: null,
+      });
+      const { ClientDetailClient } = await import("./ClientDetailClient");
+      const first = render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+      // Tax visible, Company still hidden.
+      expect(screen.getByRole("button", { name: "Tax" })).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Company" }),
+      ).not.toBeInTheDocument();
+
+      // Overview block: Add company yes, tax-consultant select NO — the
+      // selector already lives in the now-visible Tax tab.
+      expect(
+        screen.getByRole("heading", { name: "Company & tax" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Add company" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByLabelText("Tax consultant")).not.toBeInTheDocument();
+      first.unmount();
+
+      // ?tab=tax opens Tax.
+      stableSearchParams.get.mockImplementation((key: string) =>
+        key === "tab" ? "tax" : null,
+      );
+      const second = render(
+        <ClientDetailClient taxConsultants={CONSULTANTS} />,
+      );
+      expect(await screen.findByTestId("TaxTab")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Tax" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      second.unmount();
+
+      // ?tab=company still falls back to Overview.
+      stableSearchParams.get.mockImplementation((key: string) =>
+        key === "tab" ? "company" : null,
+      );
+      render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+      expect(await screen.findByTestId("OverviewTab")).toBeInTheDocument();
+      expect(screen.queryByTestId("CompanyTab")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Overview" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+    },
+  );
+
+  // INNOCENCE: a client WITH a company link is unchanged — both buttons
+  // render and both deep links open their tab, and the company-less
+  // "Company & tax" section is NOT on Overview. Dies only if the tab filter
+  // starts dropping buttons for linked clients too, or if the section stops
+  // respecting `showCompanyTab`.
+  it("keeps Company and Tax tabs and both deep links for a client with a company link (R7a)", async () => {
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    const first = render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+    expect(screen.getByRole("button", { name: "Company" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tax" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Company & tax" }),
+    ).not.toBeInTheDocument();
+    first.unmount();
+
+    stableSearchParams.get.mockImplementation((key: string) =>
+      key === "tab" ? "company" : null,
+    );
+    const second = render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+    expect(await screen.findByTestId("CompanyTab")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Company" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    second.unmount();
+
+    stableSearchParams.get.mockImplementation((key: string) =>
+      key === "tab" ? "tax" : null,
+    );
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+    expect(await screen.findByTestId("TaxTab")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tax" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  // LOADING: while the profile query is unresolved the page is the spinner
+  // (no tab bar exists to flicker, nothing carries aria-current), and a
+  // ?tab=company deep link set during that phase must NOT have been bounced
+  // to Overview — once the data lands WITH links, the deep link wins.
+  // Dies without the render-time guard if the fallback lives in the URL
+  // effect instead: the effect runs while `profile` is still undefined and
+  // would reset activeTab to overview before the data arrives.
+  it("does not bounce ?tab=company while the profile is still loading (R7a)", async () => {
+    mockUseClientDetail.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      error: null,
+    });
+    stableSearchParams.get.mockImplementation((key: string) =>
+      key === "tab" ? "company" : null,
+    );
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    const { rerender, container } = render(
+      <ClientDetailClient taxConsultants={CONSULTANTS} />,
+    );
+
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+    expect(container.querySelector('[aria-current="page"]')).toBeNull();
+
+    // The profile arrives — WITH a company link. The deep link set during
+    // the loading phase must now resolve to the Company tab.
+    mockUseClientDetail.mockReturnValue({
+      data: makeProfile(),
+      isLoading: false,
+      error: null,
+    });
+    rerender(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    expect(await screen.findByTestId("CompanyTab")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Company" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  // Parity: hiding the tabs must not orphan the two ACTIONS they carried
+  // for a company-less client — linking the first company (AddCompanyModal)
+  // and assigning the tax consultant (the control TaxTab renders). The modal
+  // module is stubbed above, so the assertion is on a marker the stub really
+  // renders; without the button the click query dies first.
+  it("keeps add-company and tax-consultant reachable when the tabs are hidden (R7a)", async () => {
+    mockUseClientDetail.mockReturnValue({
+      data: companyLessProfile(),
+      isLoading: false,
+      error: null,
+    });
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    expect(
+      screen.getByRole("button", { name: "Add company" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Tax consultant")).toBeInTheDocument();
+  });
+
+  // The Overview select is a COPY of TaxTab's selector logic (TaxTab is owned
+  // by another slice), so its behaviour is pinned here as the original's is in
+  // TaxTab.consultants.test.tsx. Dies without the `updateClient` call, the
+  // success toast, or the cache invalidation in `saveTaxConsultant`.
+  it("Overview tax-consultant select saves through updateClient, confirms with the consultant's label and refreshes (R7a)", async () => {
+    mockUpdateClient.mockClear();
+    mockInvalidateClient.mockClear();
+    mockUpdateClient.mockResolvedValueOnce({});
+    mockUseClientDetail.mockReturnValue({
+      data: companyLessProfile(),
+      isLoading: false,
+      error: null,
+    });
+    const { toast } = await import("sonner");
+    vi.mocked(toast.success).mockClear();
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    const select = screen.getByLabelText("Tax consultant") as HTMLSelectElement;
+    expect(select.value).toBe("");
+    await userEvent.selectOptions(select, "consultant.one@example.test");
+
+    await waitFor(() =>
+      expect(mockUpdateClient).toHaveBeenCalledWith(
+        7,
+        { tax_consultant: "consultant.one@example.test" },
+        "synthetic.team@example.test",
+      ),
+    );
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "Tax consultant: Consultant One",
+      ),
+    );
+    expect(mockInvalidateClient).toHaveBeenCalled();
+    expect(select.value).toBe("consultant.one@example.test");
+  });
+
+  // GUILT: a failed save must not leave the select showing a consultant the
+  // server never stored. Dies without the `setTaxConsultantValue(previous)`
+  // revert in the catch branch.
+  it("Overview tax-consultant select reverts and reports when the save fails (R7a)", async () => {
+    mockUpdateClient.mockClear();
+    mockUpdateClient.mockRejectedValueOnce(new Error("synthetic failure"));
+    mockUseClientDetail.mockReturnValue({
+      data: companyLessProfile(),
+      isLoading: false,
+      error: null,
+    });
+    const { toast } = await import("sonner");
+    vi.mocked(toast.error).mockClear();
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    const select = screen.getByLabelText("Tax consultant") as HTMLSelectElement;
+    await userEvent.selectOptions(select, "consultant.two@example.test");
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "Failed to update tax consultant",
+        { description: "synthetic failure" },
+      ),
+    );
+    await waitFor(() => expect(select.value).toBe(""));
+  });
+
+  // INNOCENCE (round-1 judgement call, pinned): `company_name` set with zero
+  // links keeps BOTH tabs — CompanyTab's name-search fallback surfaces real
+  // data that hiding would orphan. Dies if `showCompanyTab` stops reading
+  // `client.company_name`.
+  it("keeps Company and Tax tabs when only company_name is set with zero links (R7a rework)", async () => {
+    mockUseClientDetail.mockReturnValue({
+      data: companyLessProfile({ company_name: "Synthetic PT Sejahtera" }),
+      isLoading: false,
+      error: null,
+    });
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    expect(screen.getByRole("button", { name: "Company" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tax" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Company & tax" }),
+    ).not.toBeInTheDocument();
+  });
+
+  // GUILT: the Add company control must actually open AddCompanyModal —
+  // asserted on the stub's own test id, not an id nobody sets.
+  it("opens AddCompanyModal when Add company is clicked (R7a rework)", async () => {
+    const user = userEvent.setup();
+    mockUseClientDetail.mockReturnValue({
+      data: companyLessProfile(),
+      isLoading: false,
+      error: null,
+    });
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    await user.click(screen.getByRole("button", { name: "Add company" }));
+
+    expect(await screen.findByTestId("AddCompanyModal")).toBeInTheDocument();
+  });
+});

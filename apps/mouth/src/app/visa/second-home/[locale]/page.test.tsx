@@ -74,7 +74,7 @@ describe("second-home/[locale] — component (spec §2, §7)", () => {
     render(jsx);
 
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      /Ximi in Indonesia fino a 5 anni/,
+      /Vivi in Indonesia fino a 5 anni/,
     );
   });
 
@@ -94,7 +94,7 @@ describe("second-home/[locale] — component (spec §2, §7)", () => {
       params: Promise.resolve({ locale: "it" }),
     });
     const html = renderToString(itJsx);
-    expect(html).toContain("Ximi in Indonesia fino a 5 anni");
+    expect(html).toContain("Vivi in Indonesia fino a 5 anni");
 
     const idJsx = await SecondHomeLocalizedPage({
       params: Promise.resolve({ locale: "id" }),
@@ -155,7 +155,7 @@ describe("second-home/[locale] — metadata (spec §4)", () => {
     });
     expect(metadata.title).toMatch(/Visto Second Home/);
     expect(String(metadata.description)).toContain("USD 130.000");
-    expect(String(metadata.description)).toContain("USD 1.000.001");
+    expect(String(metadata.description)).toContain("USD 1.000.000");
   });
 });
 

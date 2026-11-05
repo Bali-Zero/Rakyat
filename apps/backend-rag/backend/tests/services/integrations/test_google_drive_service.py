@@ -43,7 +43,7 @@ class TestSanitizeDriveQueryString:
         assert GoogleDriveService._sanitize_drive_query_string("hello world") == "hello world"
 
     def test_single_quote_escaped(self):
-        result = GoogleDriveService._sanitize_drive_query_string("J'Axene")
+        result = GoogleDriveService._sanitize_drive_query_string("O'Brien")
         assert result == "O\\'Brien"
 
     def test_backslash_escaped(self):

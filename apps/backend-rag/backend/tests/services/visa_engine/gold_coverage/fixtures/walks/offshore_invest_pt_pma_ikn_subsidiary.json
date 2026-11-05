@@ -79,11 +79,11 @@
     "investment.pt_pma_committed": { "status": "KNOWN", "value": true },
     "investment.investment_capital_idr": {
       "status": "KNOWN",
-      "value": 9900000019
+      "value": 1000000000
     },
     "investment.paid_up_capital_idr": {
       "status": "KNOWN",
-      "value": 9900000019
+      "value": 1000000000
     },
     "investment.sponsoring_company_confirmed": {
       "status": "UNKNOWN",

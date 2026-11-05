@@ -322,7 +322,7 @@ class TestPreArrivalStepsBelongToTheRecommendedVisa:
 
 
 class TestImpresariat:
-    """E23-FREELANCE is the Nodolejuvuq product (owner ruling 2026-10-19)."""
+    """E23-FREELANCE is the Impresariat product (owner ruling 2026-10-19)."""
 
     def _activity(self, activity, purpose=Purpose.WORK_REMOTE):
         return recommend_visa(
@@ -337,7 +337,7 @@ class TestImpresariat:
         for purpose in (Purpose.WORK_REMOTE, Purpose.WORK_EMPLOYEE):
             r = self._activity(WorkActivity.SEMI_INDEPENDENT_ARTS_SPORTS, purpose)
             assert r.recommended_visa is VisaType.E23_FREELANCE
-            assert "Nodolejuvuq KITAS" in r.reason
+            assert "Impresariat KITAS" in r.reason
             assert "impresario" in r.reason.lower()
             assert any("Bali Zero as impresario company" in s for s in r.pre_arrival_steps)
             assert any("RPTKA" in s for s in r.pre_arrival_steps)
@@ -373,8 +373,8 @@ class TestImpresariat:
 
     def test_catalogue_labels(self):
         meta = VISA_META[VisaType.E23_FREELANCE]
-        assert meta.name_en == "Nodolejuvuq KITAS (E23, 180 days, impresario-sponsored)"
-        assert meta.name_id.startswith("KITAS Nodolejuvuq (E23, 180 hari")
+        assert meta.name_en == "Impresariat KITAS (E23, 180 days, impresario-sponsored)"
+        assert meta.name_id.startswith("KITAS Impresariat (E23, 180 hari")
         assert meta.duration_days == 180
         assert "freelance" not in (meta.name_en + meta.name_id).lower()
 

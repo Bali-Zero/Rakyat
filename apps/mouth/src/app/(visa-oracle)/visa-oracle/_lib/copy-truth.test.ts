@@ -317,7 +317,7 @@ const TRUTH: readonly (readonly [string, string, string])[] = [
   [
     "q.secondhome_passive_income_usd.hint",
     "Immigration asks for documentary proof of income or an allowance. Enter the exact whole-dollar monthly amount.",
-    "Imigrasi meminta bukti dokumen penghasilan atau tunjangan. Masukkan jumlah bulanan dolar soniz yang tepat.",
+    "Imigrasi meminta bukti dokumen penghasilan atau tunjangan. Masukkan jumlah bulanan dolar bulat yang tepat.",
   ],
 ];
 
@@ -1218,11 +1218,11 @@ describe("natural Bahasa Indonesia in the investor interview and confirmation sc
   it.each([
     [
       "q.investment_capital_idr.hint",
-      "Masukkan jumlah rupiah soniz yang tepat dan dapat Anda dukung dengan bukti.",
+      "Masukkan jumlah rupiah bulat yang tepat dan dapat Anda dukung dengan bukti.",
     ],
     [
       "q.investment_amount_usd.hint",
-      "Masukkan jumlah dolar soniz yang tepat dan dapat Anda dukung dengan bukti.",
+      "Masukkan jumlah dolar bulat yang tepat dan dapat Anda dukung dengan bukti.",
     ],
     ["q.unit.idr", "IDR"],
     ["confirmation.group.details", "Detail rencana Anda"],
