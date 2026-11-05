@@ -439,6 +439,11 @@ export interface ClientDocument {
   permit_stay_index?: string;
   permit_number?: string;
   permit_sponsor?: string;
+  /**
+   * Fiscal year of a tax filing (`spt`, `spt_personal`). Optional: the Tax tab
+   * falls back to a year written in `file_name` when the API omits it.
+   */
+  fiscal_year?: number | null;
 }
 
 export interface DocumentCreate {
@@ -500,6 +505,38 @@ export interface ExpiryAlertsSummary {
 // CLIENT PROFILE (Enhanced)
 // ============================================
 
+/**
+ * One thing that needs the team's eyes on a client profile, computed by the
+ * backend (permits, passports, LKPM windows, SPT filings) so the page does not
+ * re-derive deadlines from raw dates.
+ */
+export interface AttentionItem {
+  kind: "permit" | "passport" | "lkpm" | "spt_personal" | "spt_company";
+  subject: "client" | "family_member" | "company";
+  subject_id: number | null;
+  subject_name: string | null;
+  /** Human label, e.g. "KITAS", "LKPM Q4 2026", "SPT personal 2025". */
+  label: string;
+  code: string | null;
+  state: "expired" | "overdue" | "urgent" | "open" | "upcoming" | "done";
+  /** The deadline, or the day the window closes. */
+  date: string | null;
+  /** When a not-yet-open window opens. */
+  opens_on: string | null;
+  /** Days to `date` (negative once past); to `opens_on` for an upcoming window. */
+  days: number | null;
+  /** "itk_missing" when a visit visa has no onward ITK on file. */
+  note: "itk_missing" | null;
+  document_id: number | null;
+}
+
+export interface AttentionStats {
+  expired: number;
+  urgent: number;
+  upcoming: number;
+  done: number;
+}
+
 export interface ClientProfile {
   client: Client;
   family_members: FamilyMember[];
@@ -528,6 +565,16 @@ export interface ClientProfile {
     family_member_relationship?: string;
   }>;
   company_links?: ClientCompanyLink[];
+  company_documents?: CompanyDocument[];
+  /** Absent on a backend that does not send it yet: the page then shows no
+   *  counters and only the Visa row built from the current permit document
+   *  (there is no `expiry_alerts` fallback). When the backend fails to build the
+   *  list it returns `[]` with zeroed stats and `attention_error` set. */
+  attention?: AttentionItem[];
+  attention_stats?: AttentionStats;
+  /** `"attention_build_failed"` when the backend could not compute `attention`,
+   *  `null` on success; absent on an older backend. */
+  attention_error?: string | null;
   stats: {
     family_count: number;
     documents_count: number;
@@ -873,6 +920,8 @@ export interface ClientCompanyLink {
   brand_name?: string;
   role: string;
   client_name?: string;
+  /** Set on a company's associates (the person's client card); absent on a client's own links. */
+  client_id?: number;
   is_primary: boolean;
   ownership_percentage?: number;
   shares_count?: number;
@@ -899,12 +948,15 @@ export interface ClientCompanyLink {
   company_email?: string;
   company_status?: string;
   setup_progress?: number;
+  google_drive_folder_id?: string | null;
+  tax_dept_folder_id?: string | null;
   custom_fields?: Record<string, unknown>;
 }
 
 export interface CompanyDocument {
   id: number;
   uuid: string;
+  company_id?: number;
   document_type: string;
   document_subtype?: string;
   document_number?: string;
@@ -1072,6 +1124,8 @@ export interface PortalMessageThread {
   direction: "client_to_team" | "team_to_client";
   sent_by?: string;
   read_at?: string;
+  /** Normalised from the backend's `is_read` (or a legacy `read_at`). */
+  is_read?: boolean;
   created_at: string;
   practice_id?: number;
 }
@@ -1271,4 +1325,13 @@ export interface AiProfile {
     | "mixed"
     | "unknown";
   rationale?: string | null;
+}
+
+/** GET /api/crm/clients/{id}/recap — a few plain-language lines for a tab. `text` null = nothing to show. */
+export interface ClientRecap {
+  scope: string;
+  text: string | null;
+  generated_at: string | null;
+  model: string | null;
+  stale: boolean;
 }

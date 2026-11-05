@@ -3,7 +3,8 @@
 import { useId, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { motion, useReducedMotion } from "framer-motion";
-import { ArrowUpRight, ChevronDown, Crown, Crosshair } from "lucide-react";
+import { ArrowUpRight, Award, ChevronDown, Crown, Crosshair, Sparkles } from "lucide-react";
+import { formatIDR } from "@balizero/core/utils";
 import { ChampionPortrait } from "@/components/workspace/ChampionPortrait";
 import type {
   PortalChallengeEntry,
@@ -97,11 +98,29 @@ export function ChampionArena({
   const isZeroState = round2
     ? (data.team_total_points ?? 0) === 0
     : data.team_total_activations === 0;
+  const isClosed = data.status === "closed";
+
+  // Compute Round 2 + Asya Mission bonuses for closed victory view
+  // (Rule: September prize-takers only win a Round 2 bonus if their October
+  // rank is at least equal to their September rank — Krishna improved #3 -> #2,
+  // while Surya (#2 -> #5) and Ari (#1 -> #6) get Rp 0).
+  const r2BonusTotal = entries.reduce(
+    (acc, e) => acc + (e.total_prize_idr ?? 0),
+    0,
+  );
+  const asyaBonusTotal =
+    data.asya_mission?.reached ? (data.asya_mission.prize_idr ?? 0) : 0;
+  const grandTotalBonusIdr = r2BonusTotal + asyaBonusTotal;
+  const sprintPassedCount = entries.filter((e) => e.sprint_reached).length;
+  const contenderR2Bonus = contender?.total_prize_idr ?? 0;
+  const contenderMissedSepRank =
+    contender?.september_rank != null &&
+    contender.rank > contender.september_rank;
 
   return (
     <div
       data-testid="champion-arena"
-      className="relative overflow-hidden rounded-2xl bg-[var(--bz-text-1)] p-4 text-[var(--bz-surface)] sm:p-6"
+      className="relative overflow-hidden rounded-2xl bg-[var(--bz-kita-ink-fill)] p-4 text-[var(--bz-surface)] sm:p-6"
     >
       <div
         aria-hidden="true"
@@ -109,11 +128,19 @@ export function ChampionArena({
       />
       <div className="relative flex flex-wrap items-start justify-between gap-x-8 gap-y-5">
         <div className="min-w-0">
-          <div
-            aria-hidden="true"
-            className="mb-3 h-[3px] w-14 rounded-sm bg-[var(--bz-copper)]"
-          />
-          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--bz-kita-ink-panel-copper)]">
+          <div className="mb-3 flex items-center gap-2.5">
+            <div
+              aria-hidden="true"
+              className="h-[3px] w-14 rounded-sm bg-[var(--bz-copper)]"
+            />
+            {isClosed && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-[color-mix(in_srgb,var(--bz-copper)_22%,transparent)] px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--bz-kita-ink-panel-copper)]">
+                <Sparkles size={11} aria-hidden="true" />
+                Hasil Akhir Resmi · Kemenangan Tim
+              </span>
+            )}
+          </div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--bz-kita-ink-panel-copper)]">
             {round2
               ? `${data.campaign ?? "Lascia o raddoppia"} · ${formatWindowRange(data.window_start, data.window_end)} · WITA`
               : data.status === "closed"
@@ -130,11 +157,35 @@ export function ChampionArena({
           </h2>
           <p className="mt-1.5 text-base opacity-80 sm:text-lg" style={SERIF}>
             {data.status === "closed"
-              ? "Setiap poin berarti."
+              ? "Setiap poin berarti — seluruh tim menuntaskan misi dengan gemilang."
               : "Satu poin. Semua bisa berubah."}
           </p>
         </div>
-        <div className="flex flex-wrap items-end gap-x-8 gap-y-4">
+        <div className="flex flex-wrap items-end gap-x-7 gap-y-4">
+          {isClosed && grandTotalBonusIdr > 0 && (
+            <div
+              data-testid="champion-grand-bonus"
+              className={cn(
+                "flex flex-col rounded-xl border border-[var(--bz-kita-ink-panel-copper)] bg-[color-mix(in_srgb,var(--bz-copper)_16%,transparent)] px-4 py-2.5",
+              )}
+            >
+              <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--bz-kita-ink-panel-copper)]">
+                Total Bonus Tim Tercapai
+              </span>
+              <span
+                className="mt-0.5 font-black tabular-nums leading-none text-[clamp(24px,2.8vw,34px)] text-[var(--bz-surface)]"
+                style={SERIF}
+              >
+                {formatIDR(grandTotalBonusIdr)}
+              </span>
+              <span className="mt-1 text-[11px] opacity-75">
+                Podium &amp; Slot 1–4 {formatIDR(r2BonusTotal)}
+                {asyaBonusTotal > 0
+                  ? ` · Misi Asya ${formatIDR(asyaBonusTotal)}`
+                  : ""}
+              </span>
+            </div>
+          )}
           <div
             data-testid="champion-team-total"
             className="flex items-end gap-2.5"
@@ -149,7 +200,9 @@ export function ChampionArena({
             </span>
             <span className="max-w-[11rem] pb-0.5 text-[12px] leading-snug opacity-70">
               {round2
-                ? "poin tim"
+                ? isClosed && sprintPassedCount > 0
+                  ? `poin tim · ${sprintPassedCount}/${entries.length} lolos Sprint`
+                  : "poin tim"
                 : isZeroState
                   ? "Belum ada klien aktivasi — jadilah yang pertama!"
                   : "klien aktivasi dari seluruh tim"}
@@ -164,71 +217,95 @@ export function ChampionArena({
             "relative mt-6 grid gap-4",
             leaders.length > 0 &&
               contender &&
-              "lg:grid-cols-[minmax(0,1fr)_minmax(17rem,20rem)] lg:items-end",
+              "lg:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)] lg:items-end",
           )}
         >
           {leaders.length > 0 && (
             <div className="grid grid-cols-3 items-end gap-2 sm:gap-4">
-              {leaders.map((entry, index) => (
-                <motion.button
-                  key={entry.member}
-                  layout={!reduceMotion}
-                  type="button"
-                  onClick={() => setSelected(entry.member)}
-                  aria-pressed={contender?.member === entry.member}
-                  aria-label={`Lihat peluang ${entry.display_name}`}
-                  className={cn(
-                    FOCUS,
-                    "group relative flex min-w-0 flex-col items-center rounded-xl border px-1.5 pb-3 pt-3 text-center transition-colors sm:px-4 sm:pb-4",
-                    index === 0
-                      ? "order-2 border-[var(--bz-kita-ink-panel-copper)] bg-[color-mix(in_srgb,var(--bz-copper)_14%,transparent)]"
-                      : HAIRLINE_ON_INK,
-                    index === 1 && "order-1",
-                    index === 2 && "order-3",
-                    contender?.member === entry.member &&
-                      "ring-2 ring-[var(--bz-kita-ink-panel-copper)] ring-offset-2 ring-offset-[var(--bz-text-1)]",
-                  )}
-                >
-                  {index === 0 && (
-                    <Crown
-                      size={22}
-                      className="mb-1.5 text-[var(--bz-kita-ink-panel-copper)]"
-                      aria-hidden="true"
-                    />
-                  )}
-                  <ChampionPortrait
-                    face
-                    name={entry.display_name}
-                    src={entry.avatar_url}
-                    sizes="(max-width: 640px) 240px, 360px"
+              {leaders.map((entry, index) => {
+                const entryR2Bonus = entry.total_prize_idr ?? 0;
+                const improvedFromSep =
+                  entry.september_rank != null &&
+                  entry.rank <= entry.september_rank;
+                return (
+                  <motion.button
+                    key={entry.member}
+                    layout={!reduceMotion}
+                    type="button"
+                    onClick={() => setSelected(entry.member)}
+                    aria-pressed={contender?.member === entry.member}
+                    aria-label={`Lihat peluang ${entry.display_name}`}
                     className={cn(
-                      "mb-2.5 aspect-square w-full border-2 border-[var(--bz-kita-ink-panel-copper)]",
+                      FOCUS,
+                      "group relative flex min-w-0 flex-col items-center rounded-xl border px-1.5 pb-3 pt-3 text-center transition-colors sm:px-4 sm:pb-4",
                       index === 0
-                        ? "max-w-24 sm:max-w-36"
-                        : "max-w-20 sm:max-w-28",
+                        ? "order-2 border-[var(--bz-kita-ink-panel-copper)] bg-[color-mix(in_srgb,var(--bz-copper)_14%,transparent)]"
+                        : HAIRLINE_ON_INK,
+                      index === 1 && "order-1",
+                      index === 2 && "order-3",
+                      contender?.member === entry.member &&
+                        "ring-2 ring-[var(--bz-kita-ink-panel-copper)] ring-offset-2 ring-offset-[var(--bz-kita-ink-fill)]",
                     )}
-                  />
-                  <span className="text-[10px] font-bold uppercase tracking-widest opacity-70">
-                    #{entry.rank}
-                    {entry.is_me ? " · Kamu" : ""}
-                  </span>
-                  <span className="mt-0.5 line-clamp-2 max-w-full break-words text-xs font-bold leading-tight sm:text-lg">
-                    {entry.display_name}
-                  </span>
-                  <motion.span
-                    key={scoreOf(entry, round2)}
-                    initial={reduceMotion ? false : { opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="mt-1.5 text-3xl font-black tabular-nums leading-none sm:text-5xl"
-                    style={SERIF}
                   >
-                    {scoreOf(entry, round2)}
-                  </motion.span>
-                  <span className="mt-1 text-[10px] uppercase tracking-[0.2em] opacity-60">
-                    poin
-                  </span>
-                </motion.button>
-              ))}
+                    {index === 0 && (
+                      <Crown
+                        size={22}
+                        className="mb-1.5 text-[var(--bz-kita-ink-panel-copper)]"
+                        aria-hidden="true"
+                      />
+                    )}
+                    <ChampionPortrait
+                      face
+                      name={entry.display_name}
+                      src={entry.avatar_url}
+                      sizes="(max-width: 640px) 240px, 360px"
+                      className={cn(
+                        "mb-2.5 aspect-square w-full border-2 border-[var(--bz-kita-ink-panel-copper)]",
+                        index === 0
+                          ? "max-w-24 sm:max-w-36"
+                          : "max-w-20 sm:max-w-28",
+                      )}
+                    />
+                    <span className="text-[11px] font-bold uppercase tracking-widest text-[var(--bz-kita-ink-panel-copper)]">
+                      {isClosed ? `Juara ${entry.rank} · #${entry.rank}` : `#${entry.rank}`}
+                      {entry.is_me ? " · Kamu" : ""}
+                    </span>
+                    <span className="mt-0.5 line-clamp-2 max-w-full break-words text-xs font-bold leading-tight sm:text-lg">
+                      {entry.display_name}
+                    </span>
+                    <motion.span
+                      key={scoreOf(entry, round2)}
+                      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="mt-1.5 text-3xl font-black tabular-nums leading-none sm:text-5xl"
+                      style={SERIF}
+                    >
+                      {scoreOf(entry, round2)}
+                    </motion.span>
+                    <span className="mt-1 text-[11px] uppercase tracking-[0.2em] opacity-60">
+                      poin
+                    </span>
+                    {isClosed && entryR2Bonus > 0 && (
+                      <div className="mt-2.5 flex w-full flex-col items-center rounded-lg border border-[var(--bz-kita-ink-panel-copper)] bg-[color-mix(in_srgb,var(--bz-copper)_20%,transparent)] px-2 py-1.5">
+                        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--bz-kita-ink-panel-copper)]">
+                          Bonus Diraih
+                        </span>
+                        <span
+                          className="mt-0.5 text-xs font-black tabular-nums text-[var(--bz-surface)] sm:text-base"
+                          style={SERIF}
+                        >
+                          {formatIDR(entryR2Bonus)}
+                        </span>
+                        {improvedFromSep && (
+                          <span className="text-[11px] tabular-nums opacity-80">
+                            Naik #{entry.september_rank} Sep → #{entry.rank} Okt
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </motion.button>
+                );
+              })}
             </div>
           )}
           {contender && (
@@ -249,10 +326,14 @@ export function ChampionArena({
                     className="size-12 border border-[var(--bz-kita-ink-panel-copper)]"
                   />
                   <div className="min-w-0">
-                    <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--bz-kita-ink-panel-copper)]">
-                      <Crosshair size={13} aria-hidden="true" />
+                    <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--bz-kita-ink-panel-copper)]">
+                      {data.status === "closed" ? (
+                        <Award size={13} aria-hidden="true" />
+                      ) : (
+                        <Crosshair size={13} aria-hidden="true" />
+                      )}
                       {data.status === "closed"
-                        ? "Hasil akhir"
+                        ? "Sertifikat Kemenangan"
                         : "Target berikutnya"}
                     </p>
                     <p className="mt-0.5 truncate text-base font-bold">
@@ -277,6 +358,39 @@ export function ChampionArena({
                         ? "Di puncak. Pertahankan posisimu!"
                         : "Jadilah pencetak poin pertama."}
                 </p>
+                {isClosed && (
+                  <div className="mt-3 rounded-lg border border-[var(--bz-kita-ink-panel-copper)] bg-[color-mix(in_srgb,var(--bz-copper)_14%,transparent)] p-3">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--bz-kita-ink-panel-copper)]">
+                        Bonus Oktober
+                      </span>
+                      <span
+                        className="text-lg font-black tabular-nums text-[var(--bz-surface)]"
+                        style={SERIF}
+                      >
+                        {formatIDR(contenderR2Bonus)}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] opacity-80">
+                      {contenderMissedSepRank ? (
+                        <span>
+                          Tidak ada bonus (#{contender.september_rank} Sep → #
+                          {contender.rank} Okt)
+                        </span>
+                      ) : (
+                        <span>
+                          Slot #{contender.prize_slot ?? contender.rank}
+                        </span>
+                      )}
+                      {contender.sprint_points != null && (
+                        <span>
+                          Sprint: {contender.sprint_points}/20{" "}
+                          {contender.sprint_reached ? "✓ Lolos" : ""}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
               {data.status === "live" && (
                 <Link
@@ -293,7 +407,7 @@ export function ChampionArena({
               <div className={cn("mt-4 border-t pt-4", HAIRLINE_ON_INK)}>
                 <label
                   htmlFor={pickerId}
-                  className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-70"
+                  className="text-[11px] font-bold uppercase tracking-[0.2em] opacity-70"
                 >
                   Lihat peluang peserta lain
                 </label>
@@ -304,7 +418,7 @@ export function ChampionArena({
                     onChange={(event) => setSelected(event.target.value)}
                     className={cn(
                       FOCUS,
-                      "w-full appearance-none truncate rounded-lg border bg-[var(--bz-text-1)] py-2.5 pl-3 pr-9 text-sm text-[var(--bz-surface)]",
+                      "w-full appearance-none truncate rounded-lg border bg-[var(--bz-kita-ink-fill)] py-2.5 pl-3 pr-9 text-sm text-[var(--bz-surface)]",
                       "border-[color-mix(in_srgb,var(--bz-surface)_25%,transparent)]",
                     )}
                   >

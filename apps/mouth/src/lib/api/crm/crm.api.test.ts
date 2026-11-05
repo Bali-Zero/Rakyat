@@ -1151,4 +1151,95 @@ describe("CrmApi", () => {
       });
     });
   });
+
+  describe("getPortalMessages — backend team-route shape (from_team / is_read)", () => {
+    const backendBody = {
+      success: true,
+      data: {
+        total: 3,
+        unread_count: 1,
+        messages: [
+          {
+            id: 1,
+            content: "From the client, unread",
+            from_team: false,
+            is_read: false,
+            sent_by: "Client A",
+            created_at: "2026-11-01T00:00:00+00:00",
+          },
+          {
+            id: 2,
+            content: "From the client, read",
+            from_team: false,
+            is_read: true,
+            sent_by: "Client A",
+            created_at: "2026-11-01T01:00:00+00:00",
+          },
+          {
+            id: 3,
+            content: "From the team",
+            from_team: true,
+            is_read: false,
+            sent_by: "Team A",
+            created_at: "2026-11-01T02:00:00+00:00",
+          },
+        ],
+      },
+    };
+
+    it("GUILT: maps from_team to direction and keeps is_read, so client messages sit on the client side and unread ones are countable", async () => {
+      mockClient.request.mockResolvedValue(backendBody);
+      const { messages } = await crmApi.getPortalMessages(7);
+      expect(messages.map((m) => m.direction)).toEqual([
+        "client_to_team",
+        "client_to_team",
+        "team_to_client",
+      ]);
+      expect(messages.map((m) => m.is_read)).toEqual([false, true, false]);
+      const unreadFromClient = messages.filter(
+        (m) => m.direction === "client_to_team" && !m.is_read,
+      );
+      expect(unreadFromClient.map((m) => m.id)).toEqual([1]);
+    });
+
+    it("INNOCENCE: the legacy direction/read_at shape is still read as it was", async () => {
+      mockClient.request.mockResolvedValue({
+        success: true,
+        data: {
+          total: 1,
+          messages: [
+            {
+              id: 9,
+              content: "x",
+              direction: "team_to_client",
+              read_at: "2026-11-01T00:00:00Z",
+              created_at: "2026-11-01T00:00:00Z",
+            },
+          ],
+        },
+      });
+      const { messages } = await crmApi.getPortalMessages(7);
+      expect(messages[0].direction).toBe("team_to_client");
+      expect(messages[0].is_read).toBe(true);
+    });
+  });
+
+  describe("createInteraction channel", () => {
+    const base = {
+      client_id: 1,
+      interaction_type: "call" as const,
+      summary: "Call",
+      team_member: "staff@example.test",
+    };
+    it("keeps in_person when no channel is given, sends the one given, and sends null for a note", async () => {
+      mockClient.request.mockResolvedValue({});
+      await crmApi.createInteraction(base);
+      await crmApi.createInteraction({ ...base, channel: "phone" });
+      await crmApi.createInteraction({ ...base, channel: null });
+      const sent = mockClient.request.mock.calls.map(
+        (c) => JSON.parse(c[1].body).channel,
+      );
+      expect(sent).toEqual(["in_person", "phone", null]);
+    });
+  });
 });
