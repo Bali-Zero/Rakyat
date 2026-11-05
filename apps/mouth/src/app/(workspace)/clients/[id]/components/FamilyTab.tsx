@@ -31,7 +31,7 @@ import {
   BASE64_UPLOAD_MAX_BYTES,
   BASE64_UPLOAD_MAX_LABEL,
 } from "@/lib/upload/base64UploadLimit";
-import { extractDriveFileId } from "./utils";
+import { extractDriveFileId, isRejectedDocument } from "./utils";
 import { formatLongSpan } from "@/lib/utils/format-date";
 
 type DocumentKind = "passport" | "visa";
@@ -467,10 +467,13 @@ export function FamilyTab({
               const memberDocuments = documents.filter(
                 (document) => document.family_member_id === member.id,
               );
-              const passportDocument = memberDocuments.find((document) =>
-                document.document_type?.toLowerCase().includes("passport"),
+              const passportDocument = memberDocuments.find(
+                (document) =>
+                  !isRejectedDocument(document) &&
+                  document.document_type?.toLowerCase().includes("passport"),
               );
               const visaDocument = memberDocuments.find((document) => {
+                if (isRejectedDocument(document)) return false;
                 const type = document.document_type?.toLowerCase();
                 return type?.includes("kitas") || type?.includes("visa");
               });

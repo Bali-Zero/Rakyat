@@ -13,8 +13,8 @@ import {
 } from "@/lib/upload/base64UploadLimit";
 import { useOcrPolling } from "@/hooks/useOcrPolling";
 import type { ClientProfile, ClientDocument } from "@/lib/api/crm/crm.types";
-import { extractDriveFileId, safeExternalUrl } from "./utils";
-import { pickCurrentVisa } from "./pickCurrentVisa";
+import { downloadHrefFor, extractDriveFileId } from "./utils";
+import { hasOnlyRejectedPermit, pickCurrentVisa } from "./pickCurrentVisa";
 import { daysUntil, elapsedShare, humanize } from "./overview-brief";
 import { permitLine } from "./header-facts";
 import {
@@ -88,10 +88,7 @@ export function VisaCard({
   const handleDownload = (e: React.MouseEvent) => {
     e.preventDefault();
     if (!latestVisaFileUrl) return;
-    const fileId = extractDriveFileId(latestVisaFileUrl);
-    const href = fileId
-      ? `/api/documents/proxy/${fileId}`
-      : safeExternalUrl(latestVisaFileUrl);
+    const href = downloadHrefFor(latestVisaFileUrl);
     if (!href) return;
     const link = document.createElement("a");
     link.href = href;
@@ -386,8 +383,11 @@ export function VisaCard({
         </Facts>
       ) : (
         <p className="text-[13px] leading-[1.5] text-[var(--tx-secondary)]">
-          No visa or KITAS on file. Upload the permit (JPG, PNG or PDF, up to{" "}
-          {BASE64_UPLOAD_MAX_LABEL}) and its dates are read from it.
+          {hasOnlyRejectedPermit(documents)
+            ? "Only a rejected permit on file."
+            : "No visa or KITAS on file."}{" "}
+          Upload the permit (JPG, PNG or PDF, up to {BASE64_UPLOAD_MAX_LABEL})
+          and its dates are read from it.
         </p>
       )}
       <div

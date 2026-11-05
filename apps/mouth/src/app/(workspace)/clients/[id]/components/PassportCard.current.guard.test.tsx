@@ -120,3 +120,30 @@ describe("PassportCard uses the current passport", () => {
     expect(screen.queryByText(/old\.pdf/)).toBeNull();
   });
 });
+
+describe("pickCurrentPassport — rejected passports are never current", () => {
+  it("GUILT: a newer rejected passport does not supply the current one", () => {
+    const good = doc({
+      id: 1,
+      status: "verified",
+      created_at: "2025-01-01T00:00:00Z",
+    });
+    const rejected = doc({
+      id: 2,
+      status: " Rejected " as never,
+      created_at: "2026-01-01T00:00:00Z",
+    });
+    expect(pickCurrentPassport([good, rejected])?.id).toBe(1);
+    expect(pickCurrentPassport([rejected])).toBeUndefined();
+  });
+
+  it("INNOCENCE: a non-rejected newer passport still wins", () => {
+    const old = doc({ id: 1, created_at: "2025-01-01T00:00:00Z" });
+    const newer = doc({
+      id: 2,
+      status: "verified",
+      created_at: "2026-01-01T00:00:00Z",
+    });
+    expect(pickCurrentPassport([old, newer])?.id).toBe(2);
+  });
+});

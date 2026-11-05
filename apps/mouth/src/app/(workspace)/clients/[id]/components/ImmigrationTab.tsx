@@ -16,7 +16,7 @@ import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { ClientDocument } from "@/lib/api/crm/crm.types";
-import { extractDriveFileId } from "./utils";
+import { extractDriveFileId, isRejectedDocument } from "./utils";
 import { permitDisplay } from "./permit-label";
 import { COMPLETED_PILL, CURRENT_PILL } from "./permit-status-pills";
 import { AiRecap } from "./AiRecap";
@@ -806,7 +806,9 @@ export function ImmigrationTab({
                       ? doc.status === "verified"
                         ? "Verified"
                         : "Current"
-                      : "Completed"}
+                      : isRejectedDocument(doc)
+                        ? "Rejected"
+                        : "Completed"}
                   </span>
                 );
                 const expiresText = historyDateText(doc);

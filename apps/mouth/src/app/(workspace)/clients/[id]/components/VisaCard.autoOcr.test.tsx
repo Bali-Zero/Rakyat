@@ -96,3 +96,17 @@ describe("VisaCard download navigates only safe URLs", () => {
     spy.mockRestore();
   });
 });
+
+describe("VisaCard empty state with only a rejected permit", () => {
+  it("GUILT: a lone rejected permit reads 'Only a rejected permit on file'", () => {
+    renderCard(visaDoc({ status: "rejected", expiry_date: "2030-01-01" }));
+    expect(screen.getByText(/Only a rejected permit on file/)).toBeTruthy();
+    expect(screen.queryByText(/No visa or KITAS on file/)).toBeNull();
+  });
+
+  it("INNOCENCE: no documents at all keeps 'No visa or KITAS on file'", () => {
+    renderCard([]);
+    expect(screen.getByText(/No visa or KITAS on file/)).toBeTruthy();
+    expect(screen.queryByText(/rejected permit/)).toBeNull();
+  });
+});

@@ -1871,3 +1871,46 @@ describe("ImmigrationTab — polish (v8): one-line validity, Download on copies"
     expect(same.querySelectorAll('button[aria-label^="Edit"]')).toHaveLength(2);
   });
 });
+
+describe("ImmigrationTab history — rejected label", () => {
+  it("GUILT: a rejected permit in the history reads Rejected, not Completed", () => {
+    renderTab([
+      {
+        ...baseDoc,
+        id: 301,
+        document_type: "kitas",
+        expiry_date: "2031-01-01",
+        status: "verified",
+      },
+      {
+        ...baseDoc,
+        id: 302,
+        document_type: "kitas",
+        expiry_date: "2029-01-01",
+        status: "rejected",
+      },
+    ]);
+    expect(screen.getAllByText("Rejected").length).toBeGreaterThan(0);
+  });
+
+  it("INNOCENCE: a non-rejected older permit still reads Completed, and no Rejected", () => {
+    renderTab([
+      {
+        ...baseDoc,
+        id: 303,
+        document_type: "kitas",
+        expiry_date: "2031-01-01",
+        status: "verified",
+      },
+      {
+        ...baseDoc,
+        id: 304,
+        document_type: "kitas",
+        expiry_date: "2029-01-01",
+        status: "pending",
+      },
+    ]);
+    expect(screen.getAllByText("Completed").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Rejected")).not.toBeInTheDocument();
+  });
+});
