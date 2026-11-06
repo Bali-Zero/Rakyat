@@ -8,6 +8,7 @@ Usage:
     PYTHONPATH=. python scripts/backfill_leave_2026.py [--dry-run]
 """
 
+import os
 import asyncio
 import sys
 from datetime import date
@@ -96,7 +97,7 @@ LEAVE_TYPE_SICK = 2
 # Zero's team_member ID — used as reviewed_by for backfilled approvals
 REVIEWER_ID = "7dfe56b2-ff63-4d40-b78b-90c018127a02"
 
-DB_URL = "postgresql://backend_rag_v2:<<ROTATED_2026_05_22_see_DATABASE_URL_env>>@localhost:15432/nuzantara_rag"
+DB_URL = os.environ["DATABASE_URL"]
 
 
 async def get_employee_id(conn: asyncpg.Connection, email: str) -> int | None:

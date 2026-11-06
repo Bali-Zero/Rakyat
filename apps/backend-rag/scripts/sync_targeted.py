@@ -38,7 +38,7 @@ elif "localhost" in DB:
     DB = DB.replace("localhost", "127.0.0.1")
 
 if not DB:
-    DB = "postgresql://backend_rag_v2:<<ROTATED_2026_08_21_see_DATABASE_URL_env>>@127.0.0.1:15432/nuzantara_rag?sslmode=disable"
+    DB = os.environ["DATABASE_URL"]
 
 # OAuth credentials from rclone gdrive remote (the owner's personal Gmail account)
 # These can access folders owned by all team members.
