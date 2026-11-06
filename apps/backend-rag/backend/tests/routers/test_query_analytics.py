@@ -17,6 +17,9 @@ def repo() -> MagicMock:
     fake.get_dashboard_summary = AsyncMock(return_value={"summary": True})
     fake.get_failed_queries = AsyncMock(return_value=[{"query": "missing"}])
     fake.record_feedback = AsyncMock(return_value=True)
+    fake.get_stage_latency = AsyncMock(
+        return_value=[{"stage": "llm", "samples": 3, "p50_s": 20.0, "p95_s": 29.0}]
+    )
     return fake
 
 
@@ -53,6 +56,19 @@ class TestAnalyticsEndpoints:
         response = client.get("/api/analytics/query-insights/failed?limit=5&days=7")
         assert response.status_code == 200
         assert response.json()[0]["query"] == "missing"
+
+    @pytest.mark.integration
+    def test_latency_returns_stage_percentiles(self, client: TestClient, repo: MagicMock) -> None:
+        response = client.get("/api/analytics/query-insights/latency?days=30")
+        assert response.status_code == 200
+        assert response.json() == [{"stage": "llm", "samples": 3, "p50_s": 20.0, "p95_s": 29.0}]
+        repo.get_stage_latency.assert_awaited_once_with(days=30)
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("days", [0, 91])
+    def test_latency_rejects_a_window_out_of_bounds(self, client: TestClient, days: int) -> None:
+        response = client.get(f"/api/analytics/query-insights/latency?days={days}")
+        assert response.status_code == 422
 
     @pytest.mark.integration
     def test_feedback_rejects_invalid_value(self, client: TestClient) -> None:

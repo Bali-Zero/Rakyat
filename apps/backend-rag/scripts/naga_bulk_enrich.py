@@ -213,7 +213,7 @@ QUERY_CORPUS: dict[str, list[str]] = {
 
 _http: httpx.AsyncClient | None = None
 BACKEND_URL = os.getenv("BACKEND_URL", "https://nuzantara-rag.fly.dev")
-BACKEND_API_KEY = os.getenv("SCRAPER_API_KEY", "internal-scraper-key")
+BACKEND_API_KEY = os.getenv("SCRAPER_API_KEY", "")
 GEMINI_MODEL = os.getenv("NAGA_GEMINI_MODEL", "gemini-3.1-pro-preview")
 
 
@@ -364,9 +364,8 @@ async def recall_similar(**kwargs: Any) -> dict:
 async def get_db_pool() -> asyncpg.Pool | None:
     db_url = os.getenv("DATABASE_URL", "")
     if not db_url:
-        # Try local tunnel default
-        db_url = "postgresql://backend_rag_v2:<<ROTATED_2026_05_22_see_DATABASE_URL_env>>@localhost:15432/nuzantara_rag"
-        logger.info("DATABASE_URL not set, trying tunnel default: localhost:15432")
+        logger.error("DATABASE_URL not set; export it before running this script")
+        return None
 
     try:
         pool = await asyncpg.create_pool(

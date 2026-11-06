@@ -1,3 +1,4 @@
+import os
 import asyncio
 import json
 
@@ -6,7 +7,7 @@ import asyncpg
 
 async def run():
     conn = await asyncpg.connect(
-        "postgresql://nuzantara:nuzantara_local_2024@localhost:5432/nuzantara"
+        os.environ["DATABASE_URL"]
     )
 
     expert_data = [

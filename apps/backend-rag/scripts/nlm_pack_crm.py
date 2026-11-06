@@ -231,7 +231,7 @@ def _resolve_database_url() -> str:
     if not url:
         logger.error(
             "DATABASE_URL not set. Export it before running, e.g.:\n"
-            "  export DATABASE_URL=postgres://USER:PASS@localhost:15432/nuzantara_rag?sslmode=disable"
+            "  export DATABASE_URL=postgres://USER@localhost:15432/nuzantara_rag?sslmode=disable"
         )
         sys.exit(2)
     return url

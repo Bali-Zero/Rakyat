@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 DB = (
     os.getenv("DATABASE_URL", "").replace("postgres://", "postgresql://")
-    or "postgresql://backend_rag_v2:<<ROTATED_2026_05_22_see_DATABASE_URL_env>>@localhost:15432/nuzantara_rag?sslmode=disable"
+    or os.environ["DATABASE_URL"]
 )
 
 # OAuth credentials from rclone gdrive remote (the owner's personal Gmail account)

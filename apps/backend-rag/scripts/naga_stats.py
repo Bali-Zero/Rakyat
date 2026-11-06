@@ -20,10 +20,7 @@ from datetime import datetime, timezone
 
 import asyncpg
 
-DB_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://backend_rag_v2:<<ROTATED_2026_05_22_see_DATABASE_URL_env>>@localhost:15432/nuzantara_rag",
-)
+DB_URL = os.environ["DATABASE_URL"]
 
 
 async def fetch_stats(conn: asyncpg.Connection) -> dict:

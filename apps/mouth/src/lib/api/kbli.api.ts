@@ -191,6 +191,250 @@ const NATIVE_SCOPE_ATTESTATIONS: Record<
   string,
   { rowsSha256: string; rows: NativeScopeIdentity[] }
 > = {
+  "42914": {
+    rowsSha256:
+      "97179155fd3ee19b1080c438326ad4773c041fb7c26a752d5815b2e403c7693b", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Kode Subklasifikasi Konstruksi Intake, Control Gate, Penstock dan Outflow Pembangkit Listrik Tenaga Air : KK003",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Kode Subklasifikasi Konstruksi Intake, Control Gate, Penstock dan Outflow Pembangkit Listrik Tenaga Air : KK003",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Kode Subklasifikasi Konstruksi Intake, Control Gate, Penstock dan Outflow Pembangkit Listrik Tenaga Air : KK003",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Kode Subklasifikasi Konstruksi Intake, Control Gate, Penstock dan Outflow Pembangkit Listrik Tenaga Air : KK003",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Reservoir Pembangkit Listrik Tenaga Air: KK002",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Reservoir Pembangkit Listrik Tenaga Air: KK002",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Reservoir Pembangkit Listrik Tenaga Air: KK002",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Reservoir Pembangkit Listrik Tenaga Air: KK002",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+    ],
+  },
+  "42915": {
+    rowsSha256:
+      "cddde20f934ff9d0410823a7b7dcf5436164b8f222e89c61eb5ea7ab76ba26e5", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Kode Subklasifikasi Pekerjaan Konstruksi Pelindung Pantai : KK004",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Kode Subklasifikasi Pekerjaan Konstruksi Pelindung Pantai : KK004",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Kode Subklasifikasi Pekerjaan Konstruksi Pelindung Pantai : KK004",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Kode Subklasifikasi Pekerjaan Konstruksi Pelindung Pantai : KK004",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+    ],
+  },
+  "42991": {
+    rowsSha256:
+      "e9bb0257f86dade3a409c786579f412dc50b62a75e730137afef8cd8128e3947", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Minyak dan Gas Bumi : ST006",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Minyak dan Gas Bumi : BS013",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Minyak dan Gas Bumi : BS013",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Minyak dan Gas Bumi : BS013",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Minyak dan Gas Bumi : BS013",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+    ],
+  },
+  "42994": {
+    rowsSha256:
+      "94c97afea50969c2f0bc35a5b9d8d0deae6d40b9ecef04d96f533a5aac0e7566", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Olahraga : ST009",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Olahraga : BS016",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Olahraga : BS016",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Olahraga : BS016",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Olahraga : BS016",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+    ],
+  },
+  "42995": {
+    rowsSha256:
+      "5904b16886e74fd9bb766f4f43d8275aaf296e716ab783b2fbed2189d495c35e", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Pengolahan Produk Kimia, Petrokimia, Farmasi, dan Industri Lainnya : ST010",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Pengolahan Produk Kimia, Petrokimia, Farmasi, dan Industri Lainnya : BS018",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Pengolahan Produk Kimia, Petrokimia, Farmasi, dan Industri Lainnya : BS018",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Pengolahan Produk Kimia, Petrokimia, Farmasi, dan Industri Lainnya : BS018",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Pengolahan Produk Kimia, Petrokimia, Farmasi, dan Industri Lainnya : BS018",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+    ],
+  },
+  "42998": {
+    rowsSha256:
+      "431683ea886f31f6e02708b0b4402fd6bc19378c55237aee710678b11eddce99", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Operasi Reaktor Daya Mikro D ≤ 30 MWt (D ≤10 MWe)",
+        "Besar",
+        "Tinggi",
+      ],
+      [
+        1,
+        "Operasi Reaktor Daya Kecil 30 MWt < D ≤ 1000 MWt (10 MWe < D ≤ 300 MWe)",
+        "Besar",
+        "Tinggi",
+      ],
+      [
+        2,
+        "Operasi Reaktor Daya Besar D > 1000 MWt (D > 300 MWe)",
+        "Besar",
+        "Tinggi",
+      ],
+      [3, "Konstruksi Reaktor Non Daya Kecil D ≤ 30 MWt", "Besar", "Tinggi"],
+      [4, "Konstruksi Reaktor Non Daya Besar D > 30 MWt", "Besar", "Tinggi"],
+      [
+        5,
+        "Konstruksi Reaktor Daya Mikro D ≤ 30 MWt (D ≤ 10 MWe)",
+        "Besar",
+        "Tinggi",
+      ],
+      [
+        6,
+        "Konstruksi Reaktor Daya Kecil 30 MWt < D ≤ 1000 MWt (10 MWe < D ≤ 300 MWe)",
+        "Besar",
+        "Tinggi",
+      ],
+      [
+        7,
+        "Konstruksi Reaktor Daya Besar D > 1000 MWt (D > 300 MWe)",
+        "Besar",
+        "Tinggi",
+      ],
+      [
+        8,
+        "Dekomisioning Reaktor Daya Besar D > 1000 MWt (D > 300 MWe)",
+        "Besar",
+        "Tinggi",
+      ],
+      [9, "Operasi Reaktor Non Daya Kecil D ≤ 30 MWt", "Besar", "Tinggi"],
+      [10, "Operasi Reaktor Non Daya Besar D > 30 MWt", "Besar", "Tinggi"],
+    ],
+  },
   "55106": {
     rowsSha256:
       "eda9f92d5f0fc28aa612f29a9e51967dcf1b08e6104ba99c65297591ba3fc14c", // pragma: allowlist secret

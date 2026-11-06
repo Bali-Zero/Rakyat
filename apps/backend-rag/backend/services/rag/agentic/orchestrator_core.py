@@ -2112,6 +2112,7 @@ class OrchestratorCore:
                 cost_usd=token_usage.cost_usd,
                 error_message=error_message,
                 response_text=response_text,
+                stage_timings=timings,
             )
             if query_id is None:
                 logger.warning("Query analytics returned no receipt (non-critical)")
