@@ -9,7 +9,7 @@
  * API contract are byte-for-byte the behaviour that was here before.
  *
  * The table stays a table: staff scan five columns and the semantics are worth
- * keeping. What changes is the dressing — copper rule + Fraunces masthead,
+ * keeping. What changes is the dressing — copper rule + Plex masthead,
  * eyebrow column heads, hairlines instead of a filled card, copper numerals,
  * and the seven states as OUTLINED pills in the four R19 meanings. No filled
  * state row, and no red: see r19.tsx.

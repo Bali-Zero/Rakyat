@@ -204,7 +204,7 @@ export function ProcessTab({
                 onClick={() => setSortBy(s)}
                 className={`text-xs px-2 py-1 rounded transition-colors ${
                   sortBy === s
-                    ? "bg-[var(--tx-pure)] text-[var(--bz-base)]"
+                    ? "bg-[var(--bz-kita-ink-fill)] text-[var(--bz-base)]"
                     : "text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]"
                 }`}
               >

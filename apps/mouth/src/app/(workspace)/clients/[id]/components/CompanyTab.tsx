@@ -1,13 +1,17 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Copy, Edit2, Loader2, Plus, RefreshCw } from "lucide-react";
+import Image from "next/image";
+import Link from "next/link";
+import { ArrowUpRight, Edit2, Loader2, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { logger } from "@/lib/logger";
+import type { KbliResolution } from "@/lib/kbli-resolve";
 import type {
+  ClientCompanyLink,
   ClientProfile,
   ClientDocument,
   CompanyDocument,
@@ -23,6 +27,7 @@ import {
   HairlineRow,
   LedgerSection,
   Numeral,
+  SERIF_SECTION,
   StatePill,
   TABULAR,
   type PillTone,
@@ -41,18 +46,29 @@ import {
 import { CompanyDocUpload } from "./company/CompanyDocUpload";
 import { EditCompanyModal } from "./company/EditCompanyModal";
 import { AddCompanyModal } from "./modals/AddCompanyModal";
+import { CompanyIdentity } from "./company/CompanyIdentity";
+import {
+  clearCompanyDetailCache,
+  fetchCompanyDetail,
+} from "./company/companyDetailCache";
+import { AiRecap } from "./AiRecap";
+import { LegalTimeline, type LegalMilestone } from "./company/LegalTimeline";
+import {
+  groupAssociates,
+  personClientId,
+  type Associate,
+} from "./company/associates";
 
-/** 7 common KBLI codes' English titles — real static reference data, kept
- * verbatim from the old `KBLIEditorial.tsx`, not a per-record fabrication. */
-const KBLI_ENGLISH: Record<string, string> = {
-  "68110": "Real Estate Activities — Own or Leased",
-  "70209": "Other Management Consulting Activities",
-  "56101": "Restaurant",
-  "47111": "Retail Trade in Mini Markets",
-  "46100": "Wholesale Trade on a Fee or Contract Basis",
-  "62011": "Computer Programming Activities",
-  "73100": "Advertising",
-};
+/** The person's name is the primary text of its row: kita heading face
+ * (SERIF_SECTION), 15px, 16px from sm up, weight 600 — a weight the kita
+ * heading face actually ships, so the browser never synthesizes it. */
+const PERSON_NAME =
+  "min-w-0 truncate text-[15px] leading-tight sm:text-[16px] underline-offset-4 group-hover/person:underline";
+const PERSON_NAME_STYLE = { ...SERIF_SECTION, fontWeight: 600 };
+
+/** Below sm a shareholder row stacks: the meta cells read "Role x", "Shares n", "Ownership p%". */
+const META_LABEL =
+  "max-sm:text-[12px] max-sm:before:text-[var(--tx-secondary)]";
 
 const DOC_VAULT_SLOTS = [
   { docType: "akta_pendirian", label: "Akta Pendirian", hint: "PDF/JPG" },
@@ -153,25 +169,6 @@ function KvItem({
   );
 }
 
-function CopyButton({ value, field }: { value: string; field: string }) {
-  return (
-    <button
-      type="button"
-      aria-label={`Copy ${field}`}
-      onClick={() => {
-        void navigator.clipboard.writeText(value);
-        toast.success("Copied");
-      }}
-      className={cn(
-        "inline-flex h-6 w-6 items-center justify-center text-[var(--tx-secondary)] hover:text-[var(--tx-pure)]",
-        FOCUS,
-      )}
-    >
-      <Copy className="h-3 w-3" aria-hidden="true" />
-    </button>
-  );
-}
-
 const KV_GRID =
   "grid grid-cols-1 gap-x-8 gap-y-5 py-5 sm:grid-cols-2 lg:grid-cols-3";
 
@@ -184,12 +181,19 @@ export function CompanyTab({
   documents,
   formatDate,
   onRefresh,
+  onOpenDocuments,
+  companyLinks,
 }: {
   clientId: number;
   client: ClientProfile["client"];
   documents: ClientDocument[];
   formatDate: (d: string) => string;
   onRefresh: () => Promise<void>;
+  /** Switches the client card to its Documents tab. */
+  onOpenDocuments?: () => void;
+  /** The client's links from the profile already on screen: the identity
+   * renders from them with no request of its own. */
+  companyLinks?: ClientCompanyLink[];
 }) {
   const pmaDocs = documents.filter((d) => d.document_category === "pma");
 
@@ -218,14 +222,7 @@ export function CompanyTab({
     custom_fields?: Record<string, unknown>;
   } | null>(null);
 
-  const [associates, setAssociates] = useState<
-    Array<{
-      client_name?: string;
-      role: string;
-      ownership_percentage?: number;
-      shares_count?: number;
-    }>
-  >([]);
+  const [associates, setAssociates] = useState<Associate[]>([]);
 
   // Links beyond the one shown above. A client can hold several active PT
   // links; listing them keeps a second PT from being silently hidden.
@@ -239,6 +236,53 @@ export function CompanyTab({
   const [isAddingCompany, setIsAddingCompany] = useState(false);
   const [isSyncingDrive, setIsSyncingDrive] = useState(false);
   const [reloadTrigger, setReloadTrigger] = useState(0);
+  // Every mutation made from this tab (edit, Sync Drive, Add company, a vault
+  // upload) goes through here: the cached detail is dropped first, so the
+  // next open of the tab never shows a stale copy of the staff's own change.
+  const reload = () => {
+    clearCompanyDetailCache();
+    setReloadTrigger((t) => t + 1);
+  };
+  // The navigator is the source of truth for KBLI titles: the server resolves
+  // each stored code against the same dataset /kbli/[code] is built from.
+  // `null` until it answers, so no row links to a page that may not exist.
+  const [kbliResolved, setKbliResolved] = useState<Record<
+    string,
+    KbliResolution
+  > | null>(null);
+  const [legacyEnglish, setLegacyEnglish] = useState<Record<string, string>>(
+    {},
+  );
+  const kbliCodeList = companyData?.kbli_code;
+  useEffect(() => {
+    if (!kbliCodeList) return;
+    let cancelled = false;
+    const codes = kbliCodeList
+      .split(",")
+      .map((c) => c.trim())
+      .filter(Boolean);
+    void fetch(`/api/kbli/resolve?codes=${encodeURIComponent(codes.join(","))}`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(res.status)))
+      .then(async (body: { resolutions: Record<string, KbliResolution> }) => {
+        const stale = codes.filter((c) => !body.resolutions[c]?.inNavigator);
+        if (stale.length > 0) {
+          const legacy = await import("@/lib/kbli-legacy-english");
+          const next: Record<string, string> = {};
+          for (const c of stale) {
+            const t = legacy.LEGACY_ENGLISH_TITLES[c];
+            if (t) next[c] = t;
+          }
+          if (!cancelled) setLegacyEnglish(next);
+        }
+        if (!cancelled) setKbliResolved(body.resolutions);
+      })
+      .catch(() => {
+        // Titles stay as recorded, unlinked.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [kbliCodeList]);
 
   useEffect(() => {
     let cancelled = false;
@@ -246,7 +290,12 @@ export function CompanyTab({
     async function loadCompanyData() {
       try {
         // Step 1: Try linked companies
-        const linked = await api.crm.getClientCompanies(clientId);
+        // The profile already carries the links: no round trip for them on the
+        // first load (a reload after an edit asks the server again).
+        const linked =
+          reloadTrigger === 0 && companyLinks?.length
+            ? companyLinks
+            : await api.crm.getClientCompanies(clientId);
         // The flagged primary link wins; the first row is only the fallback
         // when no link carries is_primary (the old linked[0] behaviour).
         const primary = linked.find((l) => l.is_primary) ?? linked[0];
@@ -289,54 +338,11 @@ export function CompanyTab({
           });
 
           if (co.company_id) {
-            api.crm
-              .getCompany(co.company_id)
+            fetchCompanyDetail(co.company_id, reloadTrigger > 0)
               .then((full) => {
                 if (cancelled) return;
                 if (full.associates?.length) {
-                  const grouped = new Map<
-                    string,
-                    {
-                      client_name?: string;
-                      roles: string[];
-                      ownership_percentage?: number;
-                      shares_count?: number;
-                    }
-                  >();
-                  for (const a of full.associates) {
-                    const key = a.client_name || "unknown";
-                    if (!grouped.has(key)) {
-                      grouped.set(key, {
-                        client_name: a.client_name,
-                        roles: [],
-                        ownership_percentage: a.ownership_percentage,
-                        shares_count: a.shares_count,
-                      });
-                    }
-                    const entry = grouped.get(key)!;
-                    if (a.role && !entry.roles.includes(a.role))
-                      entry.roles.push(a.role);
-                    if (
-                      a.shares_count &&
-                      (!entry.shares_count ||
-                        a.shares_count > entry.shares_count)
-                    )
-                      entry.shares_count = a.shares_count;
-                    if (
-                      a.ownership_percentage &&
-                      (!entry.ownership_percentage ||
-                        a.ownership_percentage > entry.ownership_percentage)
-                    )
-                      entry.ownership_percentage = a.ownership_percentage;
-                  }
-                  const groupedAssociates = Array.from(grouped.values()).map(
-                    (g) => ({
-                      client_name: g.client_name,
-                      role: g.roles.join(" / "),
-                      ownership_percentage: g.ownership_percentage,
-                      shares_count: g.shares_count,
-                    }),
-                  );
+                  const groupedAssociates = groupAssociates(full.associates);
                   setAssociates(groupedAssociates);
                   const totalShares = groupedAssociates.reduce(
                     (sum, a) => sum + (a.shares_count || 0),
@@ -413,48 +419,7 @@ export function CompanyTab({
               custom_fields: found.custom_fields,
             });
             if (found.associates?.length) {
-              const grouped2 = new Map<
-                string,
-                {
-                  client_name?: string;
-                  roles: string[];
-                  ownership_percentage?: number;
-                  shares_count?: number;
-                }
-              >();
-              for (const a of found.associates) {
-                const key = a.client_name || "unknown";
-                if (!grouped2.has(key)) {
-                  grouped2.set(key, {
-                    client_name: a.client_name,
-                    roles: [],
-                    ownership_percentage: a.ownership_percentage,
-                    shares_count: a.shares_count,
-                  });
-                }
-                const entry = grouped2.get(key)!;
-                if (a.role && !entry.roles.includes(a.role))
-                  entry.roles.push(a.role);
-                if (
-                  a.shares_count &&
-                  (!entry.shares_count || a.shares_count > entry.shares_count)
-                )
-                  entry.shares_count = a.shares_count;
-                if (
-                  a.ownership_percentage &&
-                  (!entry.ownership_percentage ||
-                    a.ownership_percentage > entry.ownership_percentage)
-                )
-                  entry.ownership_percentage = a.ownership_percentage;
-              }
-              const groupedAssociates2 = Array.from(grouped2.values()).map(
-                (g) => ({
-                  client_name: g.client_name,
-                  role: g.roles.join(" / "),
-                  ownership_percentage: g.ownership_percentage,
-                  shares_count: g.shares_count,
-                }),
-              );
+              const groupedAssociates2 = groupAssociates(found.associates);
               setAssociates(groupedAssociates2);
               const totalShares2 = groupedAssociates2.reduce(
                 (sum, a) => sum + (a.shares_count || 0),
@@ -494,6 +459,9 @@ export function CompanyTab({
     return () => {
       cancelled = true;
     };
+    // companyLinks is read once per load on purpose (a new array identity on
+    // every parent render must not refetch).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId, client.company_name, client.full_name, reloadTrigger]);
 
   // ── LOADING ────────────────────────────────────────────────────────────
@@ -534,7 +502,7 @@ export function CompanyTab({
             onClose={() => setIsAddingCompany(false)}
             onSuccess={() => {
               setIsAddingCompany(false);
-              setReloadTrigger((t) => t + 1);
+              reload();
               void onRefresh();
             }}
           />
@@ -579,12 +547,14 @@ export function CompanyTab({
   const people =
     ocrShareholders.length > associates.length
       ? ocrShareholders.map((s) => ({
+          client_id: undefined as number | undefined,
           name: s.name,
           role: s.role,
           shares: s.shares,
           pct: s.pct,
         }))
       : associates.map((a) => ({
+          client_id: a.client_id,
           name: a.client_name,
           role: a.role,
           shares: a.shares_count,
@@ -628,7 +598,7 @@ export function CompanyTab({
     effectivePendirianNo || co?.akta_perubahan_no || co?.sk_menhumkam_no;
 
   const hasCapitalFacts =
-    capitalFull || co?.shares_count || foundingDate || co?.akta_perubahan_no;
+    capitalFull || co?.shares_count || co?.akta_perubahan_no;
 
   const kbliCodes = co?.kbli_code
     ? co.kbli_code.split(",").map((c) => c.trim())
@@ -637,21 +607,14 @@ export function CompanyTab({
     .split(";")
     .map((d) => d.trim());
 
-  // Legal timeline entries — same push order as the old component (amendment,
-  // NIB/OSS, incorporation), never re-sorted by date.
-  const legalEntries: Array<{
-    key: string;
-    kind: string;
-    title: string;
-    body: string;
-    refText?: string;
-    date?: string;
-  }> = [];
+  // Legal timeline milestones. The timeline orders them by date (newest
+  // first, undated ones after); this list only says what exists.
+  const legalEntries: LegalMilestone[] = [];
   if (co?.akta_perubahan_no && co?.akta_perubahan_date) {
     legalEntries.push({
       key: "amendment",
-      kind: "Akta Perubahan · Corporate Amendment",
-      title: `Revision #${co.akta_perubahan_no}`,
+      kind: "Amendment deed",
+      title: `Akta Perubahan · Revision #${co.akta_perubahan_no}`,
       body: `Amendment filed with Kemenkumham.${capital ? ` Authorized capital updated to ${capital}.` : ""}`,
       refText: `Akta Perubahan #${co.akta_perubahan_no}`,
       date: co.akta_perubahan_date,
@@ -660,25 +623,44 @@ export function CompanyTab({
   if (co?.nib) {
     legalEntries.push({
       key: "nib",
-      kind: "Regulatory · OSS Compliance",
+      kind: "NIB",
       title: "NIB Issued & OSS Platform Verified",
-      body: `Registered on the Online Single Submission (OSS) platform.${co.npwp_company ? ` NPWP ${co.npwp_company} completed.` : ""}`,
-      refText: `NIB ${co.nib}${co.npwp_company ? ` · NPWP ${co.npwp_company}` : ""}`,
+      body: "Registered on the Online Single Submission (OSS) platform.",
+      refText: `NIB ${co.nib}`,
+    });
+  }
+  if (co?.npwp_company) {
+    legalEntries.push({
+      key: "npwp",
+      kind: "NPWP",
+      title: "Company tax number registered",
+      body: "Tax identification number on record.",
+      refText: `NPWP ${co.npwp_company}`,
     });
   }
   if (effectivePendirianNo && effectivePendirianDate) {
     legalEntries.push({
       key: "incorporation",
-      kind: "Incorporation · Company Formation",
+      kind: "Deed of establishment",
       title: `${companyName} Established`,
-      body: `Incorporated as a Perseroan Terbatas${isPMA ? " under the PMA regime (foreign direct investment)" : ""}.${co?.sk_menhumkam_no ? " Approved by the Ministry of Law and Human Rights." : ""}`,
-      refText: co?.sk_menhumkam_no,
+      body: `Incorporated as a Perseroan Terbatas${isPMA ? " under the PMA regime (foreign direct investment)" : ""}.`,
+      refText: `Akta Pendirian #${effectivePendirianNo}`,
       date: effectivePendirianDate,
     });
+    if (co?.sk_menhumkam_no) {
+      legalEntries.push({
+        key: "sk",
+        kind: "SK Menkumham",
+        title: "Approved by the Ministry of Law and Human Rights",
+        body: "Ministerial decree approving the deed of establishment.",
+        refText: co.sk_menhumkam_no,
+        date: co.sk_menhumkam_date,
+      });
+    }
   } else if (co?.sk_menhumkam_no && co?.sk_menhumkam_date) {
     legalEntries.push({
       key: "incorporation-sk",
-      kind: "Incorporation · Company Formation",
+      kind: "SK Menkumham",
       title: `${companyName} Established`,
       body: "Incorporated and approved by Kemenkumham.",
       refText: co.sk_menhumkam_no,
@@ -721,7 +703,7 @@ export function CompanyTab({
             },
           );
           if (res.added > 0) {
-            setReloadTrigger((t) => t + 1);
+            reload();
             void onRefresh();
           }
         } catch (err) {
@@ -755,11 +737,25 @@ export function CompanyTab({
     </Button>
   );
 
+  // Section numbers follow what is actually rendered, so a hidden section
+  // never leaves a gap (01, 03, 04...).
+  const shownSections = [
+    true,
+    hasCapitalFacts,
+    shareholderCount > 0,
+    kbliCodes.length > 0,
+    hasLegalData,
+    Boolean(co?.company_id),
+  ];
+  const sectionN = (index: number) =>
+    shownSections.slice(0, index + 1).filter(Boolean).length;
+
   // ── RENDER ─────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col gap-8">
       <LedgerSection
-        n={1}
+        n={sectionN(0)}
+        wrapActions
         tone={co ? "done" : "wait"}
         title="Company identity"
         actions={
@@ -770,49 +766,39 @@ export function CompanyTab({
           </>
         }
       >
-        <div className={KV_GRID}>
-          <KvItem label="Legal name" value={companyName} />
-          <KvItem
-            label="Company type"
-            value={companyTypeLabel}
-            sub={companyTypeSubtitle}
-          />
-          <KvItem
-            label="NIB"
-            value={co?.nib || "—"}
-            sub={
-              co?.nib
-                ? "Nomor Induk Berusaha · OSS registered"
-                : "Nomor Induk Berusaha"
-            }
-            action={co?.nib ? <CopyButton value={co.nib} field="NIB" /> : null}
-          />
-          <KvItem
-            label="NPWP"
-            value={co?.npwp_company || "—"}
-            sub="Tax Identification Number"
-            action={
-              co?.npwp_company ? (
-                <CopyButton value={co.npwp_company} field="NPWP" />
-              ) : null
-            }
-          />
-          <KvItem
-            label="KBLI"
-            value={kbliCodes[0] || "—"}
-            sub={kbliDescriptions[0] || undefined}
-          />
-          <KvItem
-            label="Registered address"
-            value={streetAddress || cityProvince || "—"}
-            sub={streetAddress && cityProvince ? cityProvince : undefined}
-          />
-        </div>
-        {co ? (
-          <div className="pb-4">
-            <StatePill {...companyStatusPill(co.company_status || "active")} />
-          </div>
-        ) : null}
+        <CompanyIdentity
+          name={companyName}
+          typeLabel={companyTypeLabel}
+          typeGloss={companyTypeSubtitle}
+          status={
+            co ? companyStatusPill(co.company_status || "active") : undefined
+          }
+          foundingLines={[
+            // The AHU decree number(s); a record holding two (deed, then the
+            // latest amendment) separates them with " / ".
+            ...(co?.sk_menhumkam_no || "")
+              .split("/")
+              .map((n) => n.trim())
+              .filter(Boolean),
+            ...(age ? [`${age.label} old`] : []),
+          ]}
+          nib={co?.nib}
+          npwp={co?.npwp_company}
+          capital={capitalFull}
+          foundingDate={foundingDate ? formatDate(foundingDate) : undefined}
+          address={streetAddress}
+          cityProvince={cityProvince}
+          documentCount={allDocs.length}
+          aside={
+            <AiRecap
+              clientId={clientId}
+              scope="company"
+              companyId={co?.company_id}
+              className="w-full sm:w-auto sm:min-w-[240px] sm:max-w-[52ch] sm:flex-1"
+            />
+          }
+          onOpenDocuments={onOpenDocuments}
+        />
         {otherLinks.length > 0 ? (
           <div className="pb-4">
             <p className="text-[11px] font-[650] uppercase tracking-[0.14em] text-[var(--tx-secondary)]">
@@ -836,7 +822,7 @@ export function CompanyTab({
       </LedgerSection>
 
       {hasCapitalFacts && (
-        <LedgerSection n={2} title="Capital & shares">
+        <LedgerSection n={sectionN(1)} title="Capital & shares">
           <div className={KV_GRID}>
             {capitalFull && (
               <KvItem
@@ -860,15 +846,6 @@ export function CompanyTab({
                 }
               />
             ) : null}
-            {foundingDate ? (
-              <KvItem
-                label="Incorporation date"
-                value={formatDate(foundingDate)}
-                sub={[co?.sk_menhumkam_no, age ? `${age.label} old` : undefined]
-                  .filter(Boolean)
-                  .join(" · ")}
-              />
-            ) : null}
             {co?.akta_perubahan_no ? (
               <KvItem
                 label="Last amendment"
@@ -886,7 +863,7 @@ export function CompanyTab({
 
       {shareholderCount > 0 && (
         <LedgerSection
-          n={3}
+          n={sectionN(2)}
           title={
             <span className="flex items-baseline gap-2">
               Shareholders &amp; officers{" "}
@@ -895,7 +872,7 @@ export function CompanyTab({
           }
         >
           <HairlineGrid cols="minmax(12rem,1.8fr) minmax(8rem,1fr) minmax(6rem,0.7fr) minmax(6rem,0.7fr)">
-            <HairlineHead>
+            <HairlineHead className="max-sm:hidden">
               <span>Person</span>
               <span>Role</span>
               <span>Shares</span>
@@ -903,33 +880,93 @@ export function CompanyTab({
             </HairlineHead>
             <HairlineBody>
               {people.map((person, i) => {
-                const name = person.name || client.full_name || "?";
+                const name =
+                  (person.name || client.full_name || "?").trim() || "?";
+                const cardId = personClientId(person, associates, clientId);
                 return (
-                  <HairlineRow key={`${name}-${i}`}>
-                    <div className="min-w-0 px-2.5">
+                  <HairlineRow
+                    key={`${name}-${i}`}
+                    className="max-sm:grid-cols-3 max-sm:gap-y-1 max-sm:py-2.5"
+                  >
+                    <div className="min-w-0 px-2.5 max-sm:col-span-3">
                       <CellStack
                         primary={
-                          <span className="flex min-w-0 items-center gap-3">
-                            <span
-                              aria-hidden="true"
-                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-[var(--bz-card)] text-xs text-[var(--tx-pure)]"
+                          cardId ? (
+                            <Link
+                              href={`/clients/${cardId}`}
+                              className={cn(
+                                "group/person flex min-w-0 items-center gap-3 rounded-[6px] text-[var(--tx-pure)]",
+                                FOCUS,
+                              )}
                             >
-                              {getInitials(name)}
+                              <span
+                                aria-hidden="true"
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] border border-[var(--bz-border)] bg-[var(--bz-card)] text-xs text-[var(--tx-pure)] group-hover/person:border-[var(--tx-pure)]"
+                              >
+                                {getInitials(name)}
+                              </span>
+                              <span
+                                data-testid="person-name"
+                                className={PERSON_NAME}
+                                style={PERSON_NAME_STYLE}
+                              >
+                                {name}
+                              </span>
+                              <ArrowUpRight
+                                className="h-3.5 w-3.5 shrink-0 text-[var(--tx-secondary)] group-hover/person:text-[var(--tx-pure)]"
+                                aria-hidden="true"
+                              />
+                            </Link>
+                          ) : (
+                            <span className="flex min-w-0 items-center gap-3">
+                              <span
+                                aria-hidden="true"
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-[var(--bz-card)] text-xs text-[var(--tx-pure)]"
+                              >
+                                {getInitials(name)}
+                              </span>
+                              <span
+                                data-testid="person-name"
+                                className={PERSON_NAME}
+                                style={PERSON_NAME_STYLE}
+                              >
+                                {name}
+                              </span>
                             </span>
-                            <span className="truncate">{name}</span>
-                          </span>
+                          )
                         }
                       />
                     </div>
-                    <span className="truncate px-2.5 capitalize text-[var(--tx-pure)]">
+                    <span
+                      className={cn(
+                        "truncate px-2.5 capitalize text-[var(--tx-pure)]",
+                        "max-sm:overflow-visible max-sm:whitespace-normal max-sm:break-words",
+                        META_LABEL,
+                        "max-sm:before:content-['Role_']",
+                      )}
+                    >
                       {person.role || "Shareholder"}
                     </span>
-                    <span className="px-2.5" style={TABULAR}>
+                    <span
+                      className={cn(
+                        "px-2.5",
+                        META_LABEL,
+                        "max-sm:before:content-['Shares_']",
+                      )}
+                      style={TABULAR}
+                    >
                       {person.shares != null
                         ? person.shares.toLocaleString()
                         : "—"}
                     </span>
-                    <span className="px-2.5" style={TABULAR}>
+                    <span
+                      className={cn(
+                        "px-2.5",
+                        META_LABEL,
+                        "max-sm:before:content-['Ownership_']",
+                      )}
+                      style={TABULAR}
+                    >
                       {person.pct != null ? `${person.pct}%` : "—"}
                     </span>
                   </HairlineRow>
@@ -941,9 +978,32 @@ export function CompanyTab({
       )}
 
       {kbliCodes.length > 0 && (
-        <LedgerSection n={4} title="Business activities">
+        <LedgerSection
+          n={sectionN(3)}
+          title={
+            <span className="flex items-center gap-2.5">
+              Business activities
+              <a
+                href="/kbli"
+                target="_blank"
+                rel="noopener"
+                title="KBLI Navigator"
+                className={cn("inline-flex rounded-full", FOCUS)}
+              >
+                <Image
+                  src="/images/kita/kbli-navigator-badge.webp"
+                  alt="KBLI Navigator"
+                  width={30}
+                  height={30}
+                  unoptimized
+                  className="h-[30px] w-[30px] rounded-full"
+                />
+              </a>
+            </span>
+          }
+        >
           <HairlineGrid cols="96px minmax(0,1fr) 110px">
-            <HairlineHead>
+            <HairlineHead className="max-sm:grid-cols-[72px_minmax(0,1fr)] max-sm:[&>span:nth-child(3)]:hidden">
               <span>Code</span>
               <span>Activity</span>
               <span>Tag</span>
@@ -951,19 +1011,78 @@ export function CompanyTab({
             <HairlineBody>
               {kbliCodes.map((code, i) => {
                 const desc = kbliDescriptions[i] || kbliDescriptions[0] || "";
-                const english = KBLI_ENGLISH[code];
+                const res = kbliResolved?.[code];
+                const inNavigator = res?.inNavigator === true;
+                const stale = res !== undefined && !inNavigator;
+                const english = inNavigator
+                  ? res.title
+                  : stale
+                    ? legacyEnglish[code]
+                    : undefined;
+                const successors = res?.successors ?? [];
                 return (
-                  <HairlineRow key={code}>
+                  <HairlineRow
+                    key={code}
+                    className="max-sm:grid-cols-[72px_minmax(0,1fr)] max-sm:py-2"
+                  >
                     <span className="px-2.5 font-semibold" style={TABULAR}>
-                      {code}
+                      {inNavigator ? (
+                        <a
+                          href={`/kbli/${encodeURIComponent(code)}`}
+                          target="_blank"
+                          rel="noopener"
+                          className={cn(
+                            "inline-flex items-center gap-0.5 underline-offset-4 hover:underline",
+                            FOCUS,
+                          )}
+                        >
+                          {code}
+                          <ArrowUpRight
+                            className="h-3 w-3"
+                            aria-hidden="true"
+                          />
+                          <span className="sr-only"> (opens in a new tab)</span>
+                        </a>
+                      ) : (
+                        code
+                      )}
                     </span>
                     <div className="min-w-0 px-2.5">
                       <CellStack
                         primary={english || desc || `KBLI ${code}`}
                         secondary={english ? desc : undefined}
                       />
+                      {stale && (
+                        <p
+                          data-testid="kbli-2020-flag"
+                          className="mt-0.5 text-[12px] text-[var(--state-warning)]"
+                        >
+                          KBLI 2020 · not yet migrated to KBLI 2025
+                          {successors.length > 0 && (
+                            <span className="block text-[var(--tx-secondary)]">
+                              {successors.map((s) => (
+                                <span key={s.code} className="block">
+                                  → 2025:{" "}
+                                  <a
+                                    href={`/kbli/${s.code}`}
+                                    target="_blank"
+                                    rel="noopener"
+                                    className={cn(
+                                      "underline-offset-4 hover:underline",
+                                      FOCUS,
+                                    )}
+                                  >
+                                    {s.code}
+                                  </a>{" "}
+                                  {s.title}
+                                </span>
+                              ))}
+                            </span>
+                          )}
+                        </p>
+                      )}
                     </div>
-                    <span className="px-2.5">
+                    <span className="px-2.5 max-sm:col-start-2 max-sm:pt-1">
                       <StatePill
                         tone={i === 0 ? "ink" : "wait"}
                         label={i === 0 ? "Primary" : "Secondary"}
@@ -978,45 +1097,14 @@ export function CompanyTab({
       )}
 
       {hasLegalData && (
-        <LedgerSection n={5} title="Legal timeline">
-          <HairlineGrid cols="minmax(10rem,1.2fr) minmax(14rem,2fr) 110px">
-            <HairlineHead>
-              <span>Event</span>
-              <span>Detail</span>
-              <span>Date</span>
-            </HairlineHead>
-            <HairlineBody>
-              {legalEntries.map((entry) => (
-                <HairlineRow key={entry.key}>
-                  <div className="min-w-0 px-2.5">
-                    <CellStack primary={entry.title} secondary={entry.kind} />
-                  </div>
-                  <div className="min-w-0 px-2.5 py-2">
-                    <p className="text-[12px] text-[var(--tx-secondary)]">
-                      {entry.body}
-                    </p>
-                    {entry.refText ? (
-                      <p
-                        className="mt-1 text-[11px] text-[var(--tx-secondary)]"
-                        style={TABULAR}
-                      >
-                        {entry.refText}
-                      </p>
-                    ) : null}
-                  </div>
-                  <span className="px-2.5" style={TABULAR}>
-                    {entry.date ? formatDate(entry.date) : "—"}
-                  </span>
-                </HairlineRow>
-              ))}
-            </HairlineBody>
-          </HairlineGrid>
+        <LedgerSection n={sectionN(4)} title="Legal timeline">
+          <LegalTimeline entries={legalEntries} formatDate={formatDate} />
         </LedgerSection>
       )}
 
       {co?.company_id && (
         <LedgerSection
-          n={6}
+          n={sectionN(5)}
           title={
             <span className="flex items-baseline gap-2">
               Document vault <Numeral n={allDocs.length} size="count" />
@@ -1069,7 +1157,7 @@ export function CompanyTab({
                   hint={item.hint}
                   existingDoc={existing}
                   onUploaded={() => {
-                    setReloadTrigger((t) => t + 1);
+                    reload();
                     void onRefresh();
                   }}
                 />
@@ -1087,7 +1175,7 @@ export function CompanyTab({
           onClose={() => setIsEditingCompany(false)}
           onSave={() => {
             setIsEditingCompany(false);
-            setReloadTrigger((t) => t + 1);
+            reload();
           }}
         />
       )}
@@ -1099,7 +1187,7 @@ export function CompanyTab({
           onClose={() => setIsAddingCompany(false)}
           onSuccess={() => {
             setIsAddingCompany(false);
-            setReloadTrigger((t) => t + 1);
+            reload();
             void onRefresh();
           }}
         />

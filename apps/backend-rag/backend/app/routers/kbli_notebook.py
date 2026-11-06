@@ -849,10 +849,13 @@ async def inspect_kbli(code: str, pool=Depends(get_optional_database_pool)) -> A
                 historical_note = {
                     "55201": "The archived licence reference conflicts with the official classification mapping ",
                     "55203": "The archived obligations are inconsistent with the official activity-specific record ",
+                    "70201": "The archive combines tourism and industrial consultancy terms ",
                 }.get(code, historical_note)
             historical_note += "and must not be relied on for current licensing terms. "
         source_note = "Current scope-specific coverage could not be verified. "
         if coverage.scope_rows_status == "available":
+            # Native rows supersede an archival pending marker without changing the KG cache.
+            fields["licensing_status"] = "REGULATED"
             source_note = (
                 "The current scope-specific risk levels, requirements and obligations "
                 "come from the KBLI 2025 OSS record. "

@@ -144,7 +144,7 @@ describe("lkpmHealth boundaries — N and N+1 must land on different levels", ()
   });
 });
 
-describe("Tax identity — NPWP/NIB provenance", () => {
+describe("Tax identity — NPWP provenance (the NIB lives on the Company tab)", () => {
   it("company fallback shows the value, the words 'via company' and the company name", async () => {
     const { TaxTab } = await import("./TaxTab");
     render(
@@ -158,14 +158,14 @@ describe("Tax identity — NPWP/NIB provenance", () => {
     );
 
     expect(await screen.findByText("11.222.333.4-555.000")).toBeInTheDocument();
-    // Both NPWP and NIB fall back, each with its own "via company · …" line.
-    expect(screen.getAllByText(/via company/).length).toBe(2);
-    expect(screen.getAllByText(/via company · Acme Test PT/).length).toBe(2);
-    // NIB falls back the same way.
-    expect(screen.getByText("9120107642219")).toBeInTheDocument();
+    // Only the NPWP falls back, with its "via company · …" line; the NIB is
+    // no longer part of Tax identity at all.
+    expect(screen.getAllByText(/via company/).length).toBe(1);
+    expect(screen.getByText(/via company · Acme Test PT/)).toBeInTheDocument();
+    expect(screen.queryByText("9120107642219")).not.toBeInTheDocument();
   });
 
-  it("the client's own NPWP and NIB win over the company's", async () => {
+  it("the client's own NPWP wins over the company's, and no NIB is shown", async () => {
     const { TaxTab } = await import("./TaxTab");
     const client = {
       npwp: "99.888.777.6-555.000",
@@ -182,7 +182,7 @@ describe("Tax identity — NPWP/NIB provenance", () => {
     );
 
     expect(await screen.findByText("99.888.777.6-555.000")).toBeInTheDocument();
-    expect(screen.getByText("9120107000111")).toBeInTheDocument();
+    expect(screen.queryByText("9120107000111")).not.toBeInTheDocument();
     // The company's own numbers must not appear — the fallback is suppressed.
     expect(screen.queryByText("11.222.333.4-555.000")).not.toBeInTheDocument();
     expect(screen.queryByText("9120107642219")).not.toBeInTheDocument();
@@ -213,9 +213,7 @@ describe("Tax identity — NPWP/NIB provenance", () => {
     expect(await screen.findByText("88.777.666.5-444.000")).toBeInTheDocument();
     expect(screen.queryByText("11.222.333.4-555.000")).not.toBeInTheDocument();
     expect(screen.queryByText("Not registered")).not.toBeInTheDocument();
-    // The own NIB still wins over the company's.
-    expect(screen.getByText("9120107000111")).toBeInTheDocument();
-    expect(screen.queryByText("9120107642219")).not.toBeInTheDocument();
+    expect(screen.queryByText("9120107000111")).not.toBeInTheDocument();
   });
 
   it("a real npwp wins over tax_id", async () => {
@@ -248,7 +246,7 @@ describe("Tax identity — NPWP/NIB provenance", () => {
       />,
     );
 
-    expect((await screen.findAllByText("Not registered")).length).toBe(2);
+    expect((await screen.findAllByText("Not registered")).length).toBe(1);
   });
 });
 
