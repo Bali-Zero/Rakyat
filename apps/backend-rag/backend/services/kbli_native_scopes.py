@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from backend.services.kbli_licence_derivation import (
     TIER,
@@ -80,6 +80,11 @@ class NativeScopeCoverage(BaseModel):
     scope_rows: list[NativeScopeRow] | None = None
     scope_rows_status: Literal["available", "verified_empty", "unavailable"] = "unavailable"
     scope_rows_source: NativeScopeSource | None = None
+    _canonical_description: str | None = PrivateAttr(default=None)
+
+    @property
+    def canonical_description(self) -> str | None:
+        return self._canonical_description
 
 
 def _dataset_path() -> Path:
@@ -150,7 +155,7 @@ def _code_coverage(code: str, records: list[dict]) -> NativeScopeCoverage:
         projected = [_project_row(code, ordinal, row) for ordinal, row in enumerate(rows)]
     except (KeyError, TypeError, ValueError, Refusal, ShapeDefect):
         return NativeScopeCoverage()
-    return NativeScopeCoverage(
+    coverage = NativeScopeCoverage(
         scope_rows=projected,
         scope_rows_status="available",
         scope_rows_source=NativeScopeSource(
@@ -161,6 +166,12 @@ def _code_coverage(code: str, records: list[dict]) -> NativeScopeCoverage:
             source=_NATIVE_SOURCE,
         ),
     )
+    # 42995's legacy KG text truncates the current OSS exclusion.
+    if code == "42995":
+        description = record.get("uraian")
+        if isinstance(description, str) and description.strip():
+            coverage._canonical_description = description
+    return coverage
 
 
 @lru_cache(maxsize=2)

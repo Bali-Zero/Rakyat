@@ -70,7 +70,12 @@ LEGACY_SOURCES = {
 @pytest.fixture
 def make_endpoint(monkeypatch):
     def make(
-        *, present=True, node_exists=True, licenses_present=True, licensing_status="REGULATED"
+        *,
+        present=True,
+        node_exists=True,
+        licenses_present=True,
+        licensing_status="REGULATED",
+        stored_description="",
     ):
         store = {}
         conn = MagicMock()
@@ -83,6 +88,7 @@ def make_endpoint(monkeypatch):
                 "name": f"KG {code}",
                 "description": "",
                 "properties": {
+                    "uraian": stored_description,
                     "pp28_sources": LEGACY_SOURCES.get(code, ["55199"]),
                     "licensing_status": licensing_status,
                 },
@@ -261,6 +267,36 @@ def test_current_native_rows_override_cached_pending_until_source_is_lost(
         assert unavailable["licensing_status"] == "PENDING_REGULATION"
         assert unavailable["scope_rows_status"] == "unavailable"
     assert client.get(path).json() == verified
+
+
+def test_42995_uses_full_oss_description_without_changing_legacy_cache(make_endpoint, monkeypatch):
+    expected = next(
+        record["uraian"]
+        for record in json.loads(DATASET.read_bytes())["data"]
+        if record["kode_kbli_2025"] == "42995"
+    )
+    truncated = expected[:500]
+    assert len(expected) > len(truncated) and "42997" not in truncated
+    client, cache, conn = make_endpoint(stored_description=truncated)
+    path = INSPECT + "42995"
+    response = client.get(path)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["description"] == expected and body["scope_rows_status"] == "available"
+    assert "_canonical_description" not in body
+    assert cache["kbli_inspect_v9_42995"]["description"] == truncated
+    assert client.get(path).json() == body
+    with monkeypatch.context() as gap:
+        gap.setattr(
+            kbli_notebook,
+            "read_native_scope_coverage",
+            lambda code: kbli_notebook.NativeScopeCoverage(),
+        )
+        unavailable = client.get(path).json()
+        assert unavailable["scope_rows_status"] == "unavailable"
+        assert unavailable["description"] == truncated
+    assert client.get(path).json() == body
+    conn.fetchrow.assert_awaited_once()
 
 
 @pytest.mark.parametrize("code", ATTESTED_COUNTS)
