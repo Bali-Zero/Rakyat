@@ -213,7 +213,7 @@ QUERY_CORPUS: dict[str, list[str]] = {
 
 _http: httpx.AsyncClient | None = None
 BACKEND_URL = os.getenv("BACKEND_URL", "https://nuzantara-rag.fly.dev")
-BACKEND_API_KEY = os.getenv("SCRAPER_API_KEY", "internal-scraper-key")
+BACKEND_API_KEY = os.getenv("SCRAPER_API_KEY", "")
 GEMINI_MODEL = os.getenv("NAGA_GEMINI_MODEL", "gemini-3.1-pro-preview")
 
 
