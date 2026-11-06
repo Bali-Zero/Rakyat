@@ -161,7 +161,7 @@ BALI_QUERIES: list[tuple[str, str]] = [
 # ---------------------------------------------------------------------------
 
 BACKEND_URL = os.getenv("BACKEND_URL", "https://nuzantara-rag.fly.dev")
-BACKEND_API_KEY = os.getenv("SCRAPER_API_KEY", "internal-scraper-key")
+BACKEND_API_KEY = os.getenv("SCRAPER_API_KEY", "")
 _http: httpx.AsyncClient | None = None
 
 
