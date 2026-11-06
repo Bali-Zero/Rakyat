@@ -11,6 +11,12 @@ from backend.services import kbli_native_scopes as scopes
 
 CANONICAL = Path(__file__).resolve().parents[6] / "data/source_documents/KBLI_2025_FINAL_CLEAN.json"
 ATTESTED_COUNTS = {
+    "42914": 8,
+    "42915": 4,
+    "42991": 5,
+    "42994": 5,
+    "42995": 5,
+    "42998": 11,
     "55106": 6,
     "55201": 3,
     "55203": 3,

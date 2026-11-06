@@ -23,6 +23,12 @@ _DATASET_SHA256 = (
     "75d5b9f527f3dbb56ebe560725ae260bc2ba5f897090495aec5c4c16c2ca7580"  # pragma: allowlist secret
 )
 _NATIVE_ROWS_SHA256 = {
+    "42914": "97179155fd3ee19b1080c438326ad4773c041fb7c26a752d5815b2e403c7693b",  # pragma: allowlist secret
+    "42915": "cddde20f934ff9d0410823a7b7dcf5436164b8f222e89c61eb5ea7ab76ba26e5",  # pragma: allowlist secret
+    "42991": "e9bb0257f86dade3a409c786579f412dc50b62a75e730137afef8cd8128e3947",  # pragma: allowlist secret
+    "42994": "94c97afea50969c2f0bc35a5b9d8d0deae6d40b9ecef04d96f533a5aac0e7566",  # pragma: allowlist secret
+    "42995": "5904b16886e74fd9bb766f4f43d8275aaf296e716ab783b2fbed2189d495c35e",  # pragma: allowlist secret
+    "42998": "431683ea886f31f6e02708b0b4402fd6bc19378c55237aee710678b11eddce99",  # pragma: allowlist secret
     "55106": "eda9f92d5f0fc28aa612f29a9e51967dcf1b08e6104ba99c65297591ba3fc14c",  # pragma: allowlist secret
     "55201": "f91730f158d9349962c9bb5be1654b55365cd0e04cdf9d7381a995ebdccc484c",  # pragma: allowlist secret
     "55203": "26d0209c36cd531dad9e58a65564956429e6cdd56e3a970a55aea9b05f45601c",  # pragma: allowlist secret

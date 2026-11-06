@@ -19,6 +19,12 @@ DATASET_SHA = "75d5b9f527f3dbb56ebe560725ae260bc2ba5f897090495aec5c4c16c2ca7580"
 ROWS_SHA = "eda9f92d5f0fc28aa612f29a9e51967dcf1b08e6104ba99c65297591ba3fc14c"
 INSPECT = "/api/v1/kbli-notebook/inspect/"
 ATTESTED_COUNTS = {
+    "42914": 8,
+    "42915": 4,
+    "42991": 5,
+    "42994": 5,
+    "42995": 5,
+    "42998": 11,
     "55106": 6,
     "55201": 3,
     "55203": 3,
@@ -37,6 +43,12 @@ ATTESTED_COUNTS = {
     "96230": 4,
 }
 LEGACY_SOURCES = {
+    "42914": ["42914"],
+    "42915": ["42915", "42918", "42917", "42916"],
+    "42991": ["42917"],
+    "42994": ["42924"],
+    "42995": ["42918"],
+    "42998": ["42917"],
     "55201": ["80100"],
     "55203": ["55193"],
     "56101": ["56101", "56102", "56109"],
@@ -306,6 +318,12 @@ def test_attested_codes_bind_every_native_field_on_cold_and_warm_get(make_endpoi
     assert body["scope_rows_source"]["dataset_sha256"] == DATASET_SHA
     assert body["scope_rows_source"]["kbli_vintage"] == "2025"
     inherited = {
+        "42914": None,
+        "42915": None,
+        "42991": ["42917"],
+        "42994": ["42924"],
+        "42995": ["42918"],
+        "42998": ["42917"],
         "55106": ["55199"],
         "55201": ["80100"],
         "55203": ["55193"],
