@@ -42,7 +42,7 @@ _db_env = os.getenv("DATABASE_URL", "")
 DB = (
     _db_env.replace("postgres://", "postgresql://")
     if _db_env
-    else "postgresql://backend_rag_v2:<<ROTATED_2026_05_22_see_DATABASE_URL_env>>@localhost:15432/nuzantara_rag?sslmode=disable"
+    else os.environ["DATABASE_URL"]
 )
 
 # Category map for document names → DB category

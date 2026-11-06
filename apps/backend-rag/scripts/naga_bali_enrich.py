@@ -290,8 +290,7 @@ async def run(limit: int | None, dry_run: bool, delay: float) -> None:
             print(f"  [{i:3d}/{total}] [{cat}] {q}")
         return
 
-    db_url = os.getenv("DATABASE_URL",
-        "postgresql://backend_rag_v2:<<ROTATED_2026_05_22_see_DATABASE_URL_env>>@localhost:15432/nuzantara_rag")
+    db_url = os.environ["DATABASE_URL"]
     try:
         pool = await asyncpg.create_pool(db_url, min_size=1, max_size=3)
         async with pool.acquire() as conn:

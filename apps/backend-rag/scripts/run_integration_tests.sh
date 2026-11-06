@@ -17,7 +17,7 @@ echo -e "${YELLOW}Verifica variabili d'ambiente...${NC}"
 
 if [ -z "$DATABASE_URL" ]; then
     echo -e "${YELLOW}⚠️  DATABASE_URL non impostata, uso default${NC}"
-    export DATABASE_URL="postgresql://test:test@localhost:5432/test"
+    export DATABASE_URL="postgresql://test@localhost:5432/test"
 fi
 
 if [ -z "$QDRANT_URL" ]; then
