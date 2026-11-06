@@ -396,7 +396,10 @@ jobs:
     # No change map on Rakyat: every event runs the shard.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Coverage runs (see BACKEND_COLLECT_COVERAGE) are slower: on 2026-11-06 Shard 1
+    # was at 64% when the old 30-minute cap cancelled it, on two runs in a row, so
+    # main had no test verdict. A PR run of the same shard took 21 minutes.
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 30 || 60 }}
 
     strategy:
       # fail-fast: false ON PURPOSE. With the default (true), the first shard to
