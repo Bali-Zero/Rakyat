@@ -75,83 +75,80 @@ ogImage: "/static/insights/business/pt-pma-capital-requirements.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "it"
-source_sha256: "4594685ab4c07a3bb7ed024d8a95a604169642966cf99d63da35e7e4ea92be85"
+source_sha256: "e6010e09de6373b5491a13b22ec5329a5ed7db8acf658a59ca50a69ed33e9fcc"
 ---
 
-# Requisiti di Capitale per PT PMA: Cosa Devi Investire nel 2026
+# Requisiti di Capitale per PT PMA: Ciò che Devi Investire nel 2026
 
-L’**investimento minimo di 10 miliardi di IDR** (~625.000 USD) per PT PMA è uno dei requisiti più fraintesi. Analizziamo cosa significa realmente.
+Il minimo di investimento di **IDR 10 miliardi** (~$625.000 USD) per la PT PMA è uno dei requisiti più fraintesi. Analizziamo cosa significa realmente.
 
 ## I Due Numeri Chiave
 
-| Requisito               | Importo                | Cosa Significa                                                |
-| ----------------------- | ---------------------- | ------------------------------------------------------------- |
-| **Investimento Totale** | 10 miliardi di IDR min | Investimento pianificato totale durante la vita della società |
-| **Capitale Versato**    | 10 miliardi di IDR min | Denaro depositato sul conto bancario della società            |
+| Requisito          | Importo             | Significato                                 |
+| -------------------- | ------------------ | ------------------------------------------ |
+| **Investimento Totale** | IDR 10 miliardi min | Investimento totale pianificato durante la vita della società |
+| **Capitale Versato**  | IDR 10 miliardi min | Contanti depositati sul conto bancario della società     |
 
 <InfoCard variant="important" title="Entrambi Devono Essere Rispettati">
 
-Secondo le normative attuali, **sia** il piano di investimento totale che il
-capitale versato devono essere di almeno 10 miliardi di IDR. Questo è cambiato
-rispetto alle regole precedenti in cui il capitale versato poteva essere
-inferiore.
+Secondo le attuali normative, sia il piano di investimento totale che il capitale versato devono essere almeno di IDR 10 miliardi. Questo è cambiato rispetto alle regole precedenti in cui il capitale versato poteva essere inferiore.
 
 </InfoCard>
 
 ---
 
-## Cosa Conta Come Investimento?
+## Cosa Conta come Investimento?
 
-Il tuo piano di investimento di 10 miliardi di IDR può includere:
+Il tuo piano di investimento di IDR 10 miliardi può includere:
 
 <ComparisonTable
-  title="Cosa Conta Verso l'Investimento"
-  description="Categorie che contribuiscono ai tuoi 10 miliardi di IDR"
+  title="Cosa Conta verso l'Investimento"
+  description="Categorie che contano verso i tuoi IDR 10B"
   items={[
     {
       name: "Capitale Azionario",
-      subtitle: "Denaro depositato",
+      subtitle: "Contanti depositati",
       values: {
-        Type: "Denaro",
+        Type: "Contanti",
         "Conta?": "Sì - Primario",
-        Documentation: "Conferma del deposito bancario",
+        Documentazione: "Conferma deposito bancario",
       },
       highlight: true,
     },
     {
       name: "Attrezzature e Beni",
-      subtitle: "Attività fisiche",
+      subtitle: "Beni fisici",
       values: {
-        Type: "Attività",
+        Type: "Beni",
         "Conta?": "Sì",
-        Documentation: "Documenti di importazione, ricevute d'acquisto",
+        Documentazione: "Documenti di importazione, ricevute d'acquisto",
       },
     },
     {
       name: "Capitale Circolante",
       subtitle: "Fondi operativi",
       values: {
-        Type: "Denaro",
+        Type: "Contanti",
         "Conta?": "Sì",
-        Documentation: "Proiezioni finanziarie",
+        Documentazione: "Proiezioni finanziarie",
       },
     },
     {
-      name: "Prestiti da Azionisti",
+      name: "Prestiti degli Azionisti",
       subtitle: "Prestiti dai proprietari",
       values: {
         Type: "Debito",
         "Conta?": "Sì",
-        Documentation: "Contratti di prestito",
+        Documentazione: "Contratti di prestito",
       },
     },
     {
       name: "Terreni e Edifici",
       subtitle: "Se di proprietà della società",
       values: {
-        Type: "Attività",
+        Type: "Beni",
         "Conta?": "Sì",
-        Documentation: "Contratti di acquisto, valutazioni",
+        Documentazione: "Contratti d'acquisto, valutazioni",
       },
     },
   ]}
@@ -159,15 +156,15 @@ Il tuo piano di investimento di 10 miliardi di IDR può includere:
 
 ---
 
-## Calcolatore di Investimento
+## Calcolatore dell'Investimento
 
 <Calculator
-  title="Pianificatore della Struttura dell'Investimento"
-  description="Pianifica come raggiungere un investimento di 10 miliardi di IDR"
+  title="Pianificatore della Struttura di Investimento"
+  description="Pianifica come raggiungere l'investimento di IDR 10B"
   fields={[
     {
       id: "cash",
-      label: "Denaro da Depositare (Capitale Azionario)",
+      label: "Contanti da Depositare (Capitale Azionario)",
       type: "number",
       defaultValue: 10000000000,
       min: 0,
@@ -194,7 +191,7 @@ Il tuo piano di investimento di 10 miliardi di IDR può includere:
     },
     {
       id: "property",
-      label: "Proprietà/Terreno",
+      label: "Immobili/Terreni",
       type: "number",
       defaultValue: 0,
       min: 0,
@@ -214,10 +211,10 @@ Il tuo piano di investimento di 10 miliardi di IDR può includere:
     const paidUpShortage = Math.max(0, required - cash);
 
     const breakdown = [
-      { label: "Capitale Azionario (Denaro)", amount: cash },
+      { label: "Capitale Azionario (Contanti)", amount: cash },
       { label: "Attrezzature e Macchinari", amount: equipment },
       { label: "Capitale Circolante", amount: working },
-      { label: "Proprietà/Terreno", amount: property },
+      { label: "Immobili/Terreni", amount: property },
       { label: "Piano di Investimento Totale", amount: total }
     ];
 
@@ -225,9 +222,9 @@ Il tuo piano di investimento di 10 miliardi di IDR può includere:
     if (total >= required && cash >= required) {
       note = "Requisiti soddisfatti!";
     } else if (cash < required) {
-      note = `Capitale versato inferiore di IDR ${(paidUpShortage/1000000000).toFixed(1)}B. È necessario depositare un minimo di 10 miliardi di IDR.`;
+      note = `Capitale versato in carenza di IDR ${(paidUpShortage/1000000000).toFixed(1)}B. È necessario depositare almeno IDR 10B.`;
     } else if (total < required) {
-      note = `Investimento totale inferiore di IDR ${(shortage/1000000000).toFixed(1)}B`;
+      note = `Investimento totale in carenza di IDR ${(shortage/1000000000).toFixed(1)}B`;
     }
 
     return {
@@ -242,24 +239,24 @@ Il tuo piano di investimento di 10 miliardi di IDR può includere:
 
 ---
 
-## Domande Frequenti sui Capitali
+## Domande Frequenti sul Capitale
 
 <InfoCard variant="note" title="FAQ">
-**D: Ho bisogno di 10 miliardi di IDR sul mio conto bancario il primo giorno?**
-R: Sì, il capitale versato di 10 miliardi di IDR deve essere depositato per aprire il conto bancario della società e completare la registrazione.
+**Q: Devo avere IDR 10B sul mio conto bancario al giorno 1?**
+A: Sì, il capitale versato di IDR 10B deve essere depositato per aprire il conto bancario della società e completare la registrazione.
 
-**D: Posso usarlo dopo averlo depositato?**
-R: Sì, una volta depositato come capitale azionario, puoi utilizzare questi fondi per le operazioni aziendali.
+**Q: Posso usarlo dopo il deposito?**
+A: Sì, una volta depositato come capitale azionario, utilizzi questi fondi per le operazioni aziendali.
 
-**D: Cosa succede se non posso raggiungere i 10 miliardi di IDR?**
-R: Le opzioni includono:
+**Q: Cosa succede se non riesco a soddisfare i requisiti di IDR 10B?**
+A: Le opzioni includono:
 
 - Joint venture con un partner locale
-- Struttura aziendale diversa (ufficio di rappresentanza, ecc.)
-- Aspettare di avere capitale sufficiente
+- Struttura aziendale diversa (ufficio rappresentanza, ecc.)
+- Attendere di avere capitale sufficiente
 
-**D: C'è un modo per aggirare il minimo?**
-R: Non esiste un modo legittimo. Le normative sono chiare sul minimo di 10 miliardi di IDR per PT PMA.
+**Q: Esiste qualche modo per aggirare il minimo?**
+A: No, non esiste un metodo legittimo. Le normative sono chiare sul minimo di IDR 10B per la PT PMA.
 
 </InfoCard>
 
@@ -268,50 +265,50 @@ R: Non esiste un modo legittimo. Le normative sono chiare sul minimo di 10 milia
 ## Strutturare il Tuo Investimento
 
 <Checklist
-  title="Checklist della Pianificazione dell'Investimento"
-  description="Passaggi per strutturare l'investimento del tuo PT PMA"
+  title="Elenco di Controllo per la Pianificazione dell'Investimento"
+  description="Passaggi per strutturare il tuo investimento PT PMA"
   persistKey="pma-capital-checklist"
   items={[
     {
       id: "plan",
-      label: "Crea un piano di investimento triennale",
-      description: "Dettaglio di come verranno utilizzati i capitali",
+      label: "Creare un piano di investimento triennale",
+      description: "Scomposizione di come verranno utilizzati i capitali",
       required: true,
-      category: "pianificazione",
+      category: "planning",
     },
     {
       id: "source",
-      label: "Documenta la fonte dei fondi",
-      description: "Estratti conto bancari, registri di investimento",
+      label: "Documentare la fonte dei fondi",
+      description: "Enunciazioni bancarie, registri di investimento",
       required: true,
-      category: "documentazione",
+      category: "documentation",
     },
     {
       id: "timeline",
-      label: "Pianifica la tempistica dell'iniezione di capitale",
-      description: "Quando i fondi saranno trasferiti",
+      label: "Pianificare la tempistica dell'iniezione di capitale",
+      description: "Quando i fondi verranno trasferiti",
       required: true,
-      category: "pianificazione",
+      category: "planning",
     },
     {
       id: "currency",
-      label: "Pianifica lo scambio di valuta",
-      description: "Strategia di conversione da USD a IDR",
+      label: "Pianificare il cambio valute",
+      description: "Strategia di conversione USD a IDR",
       required: false,
-      category: "pratica",
+      category: "practical",
     },
     {
       id: "bank",
       label: "Ricerca i requisiti bancari",
-      description: "Le diverse banche hanno processi diversi",
+      description: "Diverse banche hanno processi diversi",
       required: true,
-      category: "pratica",
+      category: "practical",
     },
   ]}
   categories={[
     { id: "planning", label: "Pianificazione", color: "blue" },
     { id: "documentation", label: "Documentazione", color: "green" },
-    { id: "practical", label: "Pratica", color: "amber" },
+    { id: "practical", label: "Pratico", color: "amber" },
   ]}
   showProgress={true}
 />
@@ -320,6 +317,6 @@ R: Non esiste un modo legittimo. Le normative sono chiare sul minimo di 10 milia
 
 ## Articoli Correlati
 
-- [Come Registrare PT PMA](/insights/business/foreign-company-incorporation-steps)
+- [Come Registrare una PT PMA](/insights/business/foreign-company-incorporation-steps)
 - [Avviare un'attività in Indonesia](/insights/business/starting-a-business-in-indonesia-complete-guide)
 - [NIB Spiegato](/insights/business/nib-explained)
