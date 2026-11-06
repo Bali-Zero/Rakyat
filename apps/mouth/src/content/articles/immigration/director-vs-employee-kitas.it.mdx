@@ -77,12 +77,12 @@ canonicalUrl: "https://balizero.com/immigration/director-vs-employee-kitas"
 ogImage: "/static/insights/immigration/director-employee.jpg"
 twitterCard: "summary_large_image"
 locale: "it"
-source_sha256: "e127acfce54d1b9055dfe84553c58da3fdc5e1f7e4ab11c52c8f1fec84e9605a"
+source_sha256: "12e8d08ef74226174b904709ba4f8f879a8d8b6657d5905dbce640462b179774"
 ---
 
-# Director vs Employee KITAS: Le Principali Differenze in Indonesia 2026
+# Director vs Employee KITAS: Le Differenze Chiave in Indonesia 2026
 
-Se lavori in Indonesia, il tipo di KITAS e i requisiti dipendono dal fatto che tu sia un amministratore delegato (Director) di una società o un dipendente. Ecco le differenze principali.
+Se lavori in Indonesia, il tipo di KITAS e i requisiti dipendono dal fatto che tu sia un amministratore di una società o un dipendente. Ecco le differenze principali.
 
 ## Confronto Rapido
 
@@ -94,11 +94,11 @@ Se lavori in Indonesia, il tipo di KITAS e i requisiti dipendono dal fatto che t
       name: "Director KITAS",
       subtitle: "Gestire una PT PMA",
       values: {
-        Sponsor: "Propria società",
-        RPTKA: "Richiesto",
-        "DKP-TKA": "Richiesto",
+        Sponsor: "Propria azienda",
+        RPTKA: "Obbligatorio",
+        "DKP-TKA": "Obbligatorio",
         "Position Flexibility": "Maggiore libertà",
-        Liability: "Responsabilità societaria",
+        Liability: "Responsabilità aziendale",
         Qualification: "Flessibile",
       },
       highlight: true,
@@ -108,8 +108,8 @@ Se lavori in Indonesia, il tipo di KITAS e i requisiti dipendono dal fatto che t
       subtitle: "Lavorare per una società",
       values: {
         Sponsor: "Datore di lavoro",
-        RPTKA: "Richiesto",
-        "DKP-TKA": "Richiesto",
+        RPTKA: "Obbligatorio",
+        "DKP-TKA": "Obbligatorio",
         "Position Flexibility": "Ruolo fisso",
         Liability: "Solo personale",
         Qualification: "5+ anni di esperienza",
@@ -123,39 +123,39 @@ Se lavori in Indonesia, il tipo di KITAS e i requisiti dipendono dal fatto che t
 ## Quale Sei Tu?
 
 <DecisionTree
-  title="Director o Dipendente?"
+  title="Amministratore o Dipendente?"
   description="Determina il tipo corretto di KITAS"
   nodes={[
     {
       id: "start",
-      question: "Possiedi quote nella società indonesiana?",
+      question: "Possiedi azioni nella società indonesiana?",
       options: [
         { label: "Sì, sono un azionista", next: "shareholder" },
-        { label: "No, non possiedo quote", next: "no-shares" },
+        { label: "No, non possiedo azioni", next: "no-shares" },
       ],
     },
     {
       id: "shareholder",
-      question: "Sei elencato come Director nell'atto societario?",
+      question: "Sei elencato come Amministratore nell'atto di costituzione?",
       options: [
-        { label: "Sì, sono un Director", next: "director" },
-        { label: "No, solo azionista", next: "investor" },
+        { label: "Sì, sono un Amministratore", next: "director" },
+        { label: "No, solo un azionista", next: "investor" },
       ],
     },
     {
       id: "no-shares",
       question: "Qual è il tuo ruolo nella società?",
       options: [
-        { label: "Nomina come Director", next: "non-shareholder-director" },
+        { label: "Nomina come Amministratore", next: "non-shareholder-director" },
         { label: "Dipendente/Gestore/Consulente", next: "employee" },
       ],
     },
     {
       id: "director",
       result: {
-        title: "Director KITAS (Azionista-Director)",
+        title: "Director KITAS (Azionista-Amministratore)",
         description:
-          "Hai bisogno del Director KITAS con RPTKA. Sei sia proprietario che lavoratore. La tua società sponsorizza il tuo permesso.",
+          "Hai bisogno di Director KITAS con RPTKA. Sei sia proprietario che lavoratore. La tua società sponsorizza il tuo permesso.",
       },
     },
     {
@@ -163,7 +163,7 @@ Se lavori in Indonesia, il tipo di KITAS e i requisiti dipendono dal fatto che t
       result: {
         title: "Investor KITAS (C313)",
         description:
-          "Se sei solo un investitore e non lavori, puoi ottenere l'Investor KITAS senza RPTKA. Se desideri lavorare attivamente, avrai bisogno del RPTKA.",
+          "Se sei solo un investitore e non lavori, puoi ottenere Investor KITAS senza RPTKA. Se vuoi lavorare attivamente, avrai bisogno di RPTKA.",
       },
     },
     {
@@ -171,7 +171,7 @@ Se lavori in Indonesia, il tipo di KITAS e i requisiti dipendono dal fatto che t
       result: {
         title: "Director KITAS (Non proprietario)",
         description:
-          "Sei un director professionista. Necessario il processo completo di RPTKA + KITAS. La società che dirigi è il tuo sponsor.",
+          "Sei un amministratore professionista. Serve il processo completo RPTKA + KITAS. La società che dirigi è il tuo sponsor.",
       },
     },
     {
@@ -179,7 +179,7 @@ Se lavori in Indonesia, il tipo di KITAS e i requisiti dipendono dal fatto che t
       result: {
         title: "Employee KITAS",
         description:
-          "Permesso di lavoro standard come dipendente. Il tuo datore di lavoro gestisce il RPTKA e sponsorizza il tuo KITAS. Devi possedere qualifiche pertinenti.",
+          "Permesso di lavoro standard come dipendente. Il tuo datore di lavoro gestisce RPTKA e sponsorizza il tuo KITAS. Hai bisogno delle qualifiche pertinenti.",
       },
     },
   ]}
@@ -189,55 +189,55 @@ Se lavori in Indonesia, il tipo di KITAS e i requisiti dipendono dal fatto che t
 
 ## Specifiche del Director KITAS
 
-### Chi è un Director?
+### Chi è un Amministratore?
 
 Nelle società indonesiane:
 
 - **Direktur Utama** (Presidente)
-- **Direktur** (Amministratore delegato)
+- **Direktur** (Amministratore)
 
-Elencati nell'atto societario (Akta), nominati dagli azionisti.
+Elencati nell'atto di costituzione (Akta), nominati dagli azionisti.
 
-### Requisiti per il Director
+### Requisiti per Amministratori
 
-| Requisito             | Director                                               |
-| --------------------- | ------------------------------------------------------ |
-| Formazione            | Flessibile (la laurea aiuta ma non è sempre richiesta) |
-| Esperienza            | Meno rigorosa (la regola dei 5 anni spesso derogata)   |
-| Restrizioni di ruolo  | I director sono esenti da molte restrizioni            |
-| Giustificazione RPTKA | Più facile (gestire la propria società)                |
+| Requisito          | Amministratore                                        |
+| -------------------- | ----------------------------------------------- |
+| Istruzione            | Flessibile (la laurea aiuta ma non è sempre obbligatoria) |
+| Esperienza           | Meno rigorosa (la regola dei 5 anni viene spesso derogata)          |
+| Restrizioni di ruolo | Gli amministratori sono esenti da molte restrizioni         |
+| Giustificazione RPTKA | Più facile (gestire la propria azienda)                    |
 
-<InfoCard variant="tip" title="Vantaggio Director">
+<InfoCard variant="tip" title="Vantaggio Amministratore">
 
-Come Director della tua PT PMA, hai maggiore flessibilità: - Il ruolo è intrinsecamente giustificabile - I requisiti di esperienza sono meno rigorosi - Controlli lo sponsor (la tua società) - Puoi definire il tuo ambito lavorativo
+Come amministratore della tua PT PMA, hai maggiore flessibilità: - Il ruolo è intrinsecamente giustificabile - I requisiti di esperienza sono meno rigorosi - Controlli lo sponsor (la tua società) - Puoi definire il proprio ambito lavorativo
 
 </InfoCard>
 
-### Responsabilità del Director
+### Responsabilità degli Amministratori
 
-Oltre al KITAS, i director hanno obblighi legali:
+Oltre al KITAS, gli amministratori hanno obblighi legali:
 
-- Responsabilità legale della società
-- Compliance fiscale (società e personale)
+- Responsabilità legale aziendale
+- Conformità fiscale (aziendale e personale)
 - Conformità alle leggi sul lavoro
 - Reporting societario
 
 ---
 
-## Specifiche dell'Employee KITAS
+## Specifiche del Employee KITAS
 
-### Requisiti per il Dipendente
+### Requisiti per Dipendenti
 
 <ComparisonTable
-  title="Requisiti di Qualifica per i Dipendenti"
+  title="Requisiti di Qualificazione per i Dipendenti"
   description="Cosa ti serve per qualificarti"
   items={[
     {
-      name: "Formazione",
+      name: "Istruzione",
       values: {
         Requirement: "Laurea triennale o superiore",
         Field: "Pertinente al ruolo",
-        Verification: "Potrebbe essere richiesta legalizzazione",
+        Verification: "Potrebbe essere necessaria la legalizzazione",
       },
     },
     {
@@ -252,8 +252,8 @@ Oltre al KITAS, i director hanno obblighi legali:
     {
       name: "Ruolo",
       values: {
-        Requirement: "Non nella lista delle posizioni vietate",
-        Field: "Manageriale/specialistico",
+        Requirement: "Non nella lista delle restrizioni",
+        Field: "Dirigente/specialista",
         Verification: "Approvazione RPTKA",
       },
     },
@@ -262,75 +262,75 @@ Oltre al KITAS, i director hanno obblighi legali:
 
 ### Restrizioni di Ruolo per i Dipendenti
 
-I dipendenti affrontano controlli più severi sui ruoli:
+I dipendenti affrontano controlli più rigorosi sui ruoli:
 
-- Non possono essere in Risorse Umane/Personale
-- Non possono essere in Controllo Qualità (QC)
+- Non possono essere in HR/Personale
+- Non possono essere in QC (controllo qualità)
 - Ruoli amministrativi limitati
-- Devono essere a livello manageriale/specialistico
+- Devono essere livello dirigenziale/specialista
 
-<InfoCard variant="warning" title="Il Ruolo Deve Coincidere">
+<InfoCard variant="warning" title="Il Ruolo Deve Corrispondere">
 
-Come dipendente, il tuo lavoro effettivo deve corrispondere esattamente alla posizione approvata nel RPTKA. I director hanno maggiore flessibilità nella definizione del proprio ruolo.
+Come dipendente, il tuo lavoro effettivo deve corrispondere esattamente al ruolo approvato nel RPTKA. Gli amministratori hanno maggiore flessibilità nella definizione del proprio ruolo.
 
 </InfoCard>
 
 ---
 
-## Differenze di Procedura
+## Differenze di Processo
 
-### Procedura Director KITAS
+### Processo Director KITAS
 
-1. Costituirti o unirti come PT PMA in qualità di Director
+1. Istituire/entrare in PT PMA come Amministratore
 2. L'atto societario mostra la tua nomina
-3. La società richiede il RPTKA (per te)
-4. Proseguire con la normale procedura KITAS
-5. Tu controlli i tempi (sei il capo)
+3. La società fa domanda per RPTKA (per te)
+4. Continuare con il normale processo KITAS
+5. Tu controlli i tempi (sei tu il capo)
 
-### Procedura Employee KITAS
+### Processo Employee KITAS
 
-1. Ricevere un'offerta di lavoro da una società indonesiana
-2. Il datore di lavoro richiede il RPTKA
+1. Ottenere un'offerta di lavoro da una società indonesiana
+2. Il datore di lavoro fa domanda per RPTKA
 3. Fornisci i documenti al datore di lavoro
-4. Il datore di lavoro gestisce la procedura
+4. Il datore di lavoro gestisce il processo
 5. Dipendi dai tempi del datore di lavoro
 
 ---
 
 ## Confronto dei Costi
 
-| Voce di costo         | Director                                        | Employee                             |
-| --------------------- | ----------------------------------------------- | ------------------------------------ |
-| DKP-TKA               | Sì (la società paga)                            | Sì (solitamente la società paga)     |
-| Fee KITAS             | Sì                                              | Sì                                   |
-| Fee Agenzia           | Spesso incluse nella costituzione della società | Il datore di lavoro solitamente paga |
-| Chi sostiene il costo | La tua società                                  | Datore di lavoro                     |
+| Voce di costo      | Director                         | Employee                   |
+| -------------- | -------------------------------- | -------------------------- |
+| DKP-TKA        | Sì (l'azienda paga)               | Sì (solitamente l'azienda paga) |
+| Fee KITAS     | Sì                              | Sì                        |
+| Fee Agenzia     | Spesso inclusa nell'avvio azienda | Il datore di lavoro solitamente paga    |
+| Chi sostiene il costo | La tua azienda                     | Datore di lavoro                   |
 
-**Effetto netto**: Costi totali simili, ma i director pagano essenzialmente dalla propria società, mentre i dipendenti hanno i costi coperti dal datore di lavoro.
+**Effetto netto**: Costi totali simili, ma gli amministratori pagano essenzialmente dalla propria azienda, mentre i dipendenti hanno i costi coperti dal datore di lavoro.
 
 ---
 
-## Cambiamento tra Tipologie
+## Cambio tra Tipologie
 
-### Dipendente a Director
+### Da Dipendente ad Amministratore
 
-Se diventi un Director:
+Se diventi un Amministratore:
 
-- Potrebbe essere necessario un nuovo RPTKA (posizione diversa)
+- Potrebbe essere necessario un nuovo RPTKA (ruolo diverso)
 - L'atto societario deve essere aggiornato
-- La transizione può essere fatta durante il rinnovo
+- La transizione può essere fatta all'estensione
 
-### Director a Dipendente
+### Da Amministratore a Dipendente
 
-Se lasci la tua società per lavorare come dipendente:
+Se lasci la tua azienda per lavorare come dipendente:
 
-- Il vecchio KITAS diventa invalido
-- Il nuovo datore di lavoro deve richiedere un nuovo RPTKA
+- Il vecchio KITAS è invalido
+- Il nuovo datore di lavoro deve fare domanda per un nuovo RPTKA
 - Riavvio del processo completo
 
-<InfoCard variant="note" title="Il KITAS è Specifico della Posizione">
+<InfoCard variant="note" title="Il KITAS è Specifico per il Ruolo">
 
-Ogni cambiamento significativo di ruolo richiede un nuovo RPTKA. Non si può semplicemente "convertire" il Director KITAS in Employee o viceversa.
+Ogni cambiamento significativo di ruolo richiede un nuovo RPTKA. Non puoi semplicemente "convertire" il director KITAS in employee o viceversa.
 
 </InfoCard>
 
@@ -338,45 +338,45 @@ Ogni cambiamento significativo di ruolo richiede un nuovo RPTKA. Non si può sem
 
 ## Pro e Contro
 
-### Vantaggi del Director
+### Pro del Director
 
 - Maggiore controllo sul permesso
 - Definizione flessibile del ruolo
-- Requisiti di qualifica più facili
-- Possibilità di sponsorizzare la famiglia direttamente
+- Requisiti di qualificazione più facili
+- Possibilità di sponsorizzare direttamente la famiglia
 
-### Svantaggi del Director
+### Contro del Director
 
 - Responsabilità aziendali
 - Responsabilità legale
-- Necessità di mantenere la società
-- Più costoso (costi della società)
+- Bisogna mantenere l'azienda
+- Più costoso (costi aziendali)
 
-### Vantaggi del Dipendente
+### Pro del Dipendente
 
 - Nessuna responsabilità aziendale
 - Il datore di lavoro gestisce i costi
 - Il datore di lavoro gestisce la burocrazia
 - Arrangiamento più semplice
 
-### Svantaggi del Dipendente
+### Contro del Dipendente
 
 - Dipendenza dal datore di lavoro
-- Requisiti di qualifica più severi
+- Qualifiche più rigorose
 - Meno controllo sui tempi
-- Legato a una posizione specifica
+- Vincolato a un ruolo specifico
 
 ---
 
-## Domande Frequenti
+## Domande Comuni
 
 <AskZantara
   context="Director KITAS, employee KITAS, PT PMA director, work permit comparison Indonesia"
-  placeholder="Chiedi su Director vs Employee KITAS..."
+  placeholder="Chiedi su director vs employee KITAS..."
   suggestedQuestions={[
-    "Posso essere Director senza possedere quote?",
-    "Cosa succede se sono sia Director che Dipendente contemporaneamente?",
-    "Il mio coniuge può lavorare con un visto dipendente?",
+    "Posso essere amministratore senza possedere azioni?",
+    "Cosa succede se sono amministratore e dipendente contemporaneamente?",
+    "Il mio coniuge può lavorare con il visto di dipendenza?",
     "Quale è più veloce da ottenere?",
   ]}
 />
@@ -385,7 +385,7 @@ Ogni cambiamento significativo di ruolo richiede un nuovo RPTKA. Non si può sem
 
 ## Articoli Correlati
 
-- [Guida al Permesso di Lavoro KITAS](/visas/working-kitas-e23-indonesias-revised-legal-framework-explained)
+- [Guida al KITAS Work Permit](/visas/working-kitas-e23-indonesias-revised-legal-framework-explained)
 - [Guida Investor KITAS](/insights/immigration/investor-kitas-guide)
-- [Guida alla Registrazione PT PMA](/insights/business/foreign-company-incorporation-steps)
-- [Requisiti per il Shareholder KITAS](/insights/immigration/shareholder-kitas-requirements)
+- [Guida Registrazione PT PMA](/insights/business/foreign-company-incorporation-steps)
+- [Requisiti Shareholder KITAS](/insights/immigration/shareholder-kitas-requirements)
