@@ -856,6 +856,8 @@ async def inspect_kbli(code: str, pool=Depends(get_optional_database_pool)) -> A
         if coverage.scope_rows_status == "available":
             # Native rows supersede an archival pending marker without changing the KG cache.
             fields["licensing_status"] = "REGULATED"
+            if coverage.canonical_description is not None:
+                fields["description"] = coverage.canonical_description
             source_note = (
                 "The current scope-specific risk levels, requirements and obligations "
                 "come from the KBLI 2025 OSS record. "

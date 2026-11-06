@@ -198,6 +198,12 @@ describe("55106 native scope presentation", () => {
 
 describe("verified priority code scope coverage", () => {
   const codes = [
+    "42914",
+    "42915",
+    "42991",
+    "42994",
+    "42995",
+    "42998",
     "55201",
     "55203",
     "56101",

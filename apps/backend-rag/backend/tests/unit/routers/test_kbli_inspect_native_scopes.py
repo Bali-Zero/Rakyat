@@ -19,6 +19,12 @@ DATASET_SHA = "75d5b9f527f3dbb56ebe560725ae260bc2ba5f897090495aec5c4c16c2ca7580"
 ROWS_SHA = "eda9f92d5f0fc28aa612f29a9e51967dcf1b08e6104ba99c65297591ba3fc14c"
 INSPECT = "/api/v1/kbli-notebook/inspect/"
 ATTESTED_COUNTS = {
+    "42914": 8,
+    "42915": 4,
+    "42991": 5,
+    "42994": 5,
+    "42995": 5,
+    "42998": 11,
     "55106": 6,
     "55201": 3,
     "55203": 3,
@@ -37,6 +43,12 @@ ATTESTED_COUNTS = {
     "96230": 4,
 }
 LEGACY_SOURCES = {
+    "42914": ["42914"],
+    "42915": ["42915", "42918", "42917", "42916"],
+    "42991": ["42917"],
+    "42994": ["42924"],
+    "42995": ["42918"],
+    "42998": ["42917"],
     "55201": ["80100"],
     "55203": ["55193"],
     "56101": ["56101", "56102", "56109"],
@@ -58,7 +70,12 @@ LEGACY_SOURCES = {
 @pytest.fixture
 def make_endpoint(monkeypatch):
     def make(
-        *, present=True, node_exists=True, licenses_present=True, licensing_status="REGULATED"
+        *,
+        present=True,
+        node_exists=True,
+        licenses_present=True,
+        licensing_status="REGULATED",
+        stored_description="",
     ):
         store = {}
         conn = MagicMock()
@@ -71,6 +88,7 @@ def make_endpoint(monkeypatch):
                 "name": f"KG {code}",
                 "description": "",
                 "properties": {
+                    "uraian": stored_description,
                     "pp28_sources": LEGACY_SOURCES.get(code, ["55199"]),
                     "licensing_status": licensing_status,
                 },
@@ -251,6 +269,36 @@ def test_current_native_rows_override_cached_pending_until_source_is_lost(
     assert client.get(path).json() == verified
 
 
+def test_42995_uses_full_oss_description_without_changing_legacy_cache(make_endpoint, monkeypatch):
+    expected = next(
+        record["uraian"]
+        for record in json.loads(DATASET.read_bytes())["data"]
+        if record["kode_kbli_2025"] == "42995"
+    )
+    truncated = expected[:500]
+    assert len(expected) > len(truncated) and "42997" not in truncated
+    client, cache, conn = make_endpoint(stored_description=truncated)
+    path = INSPECT + "42995"
+    response = client.get(path)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["description"] == expected and body["scope_rows_status"] == "available"
+    assert "_canonical_description" not in body
+    assert cache["kbli_inspect_v9_42995"]["description"] == truncated
+    assert client.get(path).json() == body
+    with monkeypatch.context() as gap:
+        gap.setattr(
+            kbli_notebook,
+            "read_native_scope_coverage",
+            lambda code: kbli_notebook.NativeScopeCoverage(),
+        )
+        unavailable = client.get(path).json()
+        assert unavailable["scope_rows_status"] == "unavailable"
+        assert unavailable["description"] == truncated
+    assert client.get(path).json() == body
+    conn.fetchrow.assert_awaited_once()
+
+
 @pytest.mark.parametrize("code", ATTESTED_COUNTS)
 @pytest.mark.parametrize("licenses_present", [True, False])
 def test_warm_cache_tracks_source_loss_and_recovery(
@@ -306,6 +354,12 @@ def test_attested_codes_bind_every_native_field_on_cold_and_warm_get(make_endpoi
     assert body["scope_rows_source"]["dataset_sha256"] == DATASET_SHA
     assert body["scope_rows_source"]["kbli_vintage"] == "2025"
     inherited = {
+        "42914": None,
+        "42915": None,
+        "42991": ["42917"],
+        "42994": ["42924"],
+        "42995": ["42918"],
+        "42998": ["42917"],
         "55106": ["55199"],
         "55201": ["80100"],
         "55203": ["55193"],
