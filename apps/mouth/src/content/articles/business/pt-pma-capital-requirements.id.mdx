@@ -75,45 +75,43 @@ ogImage: "/static/insights/business/pt-pma-capital-requirements.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "id"
-source_sha256: "4594685ab4c07a3bb7ed024d8a95a604169642966cf99d63da35e7e4ea92be85"
+source_sha256: "e6010e09de6373b5491a13b22ec5329a5ed7db8acf658a59ca50a69ed33e9fcc"
 ---
 
-# Persyaratan Modal PT PMA: Apa yang Anda Butuhkan untuk Investasi pada 2026
+# Kebutuhan Modal PT PMA: Apa yang Anda Butuhkan untuk Berinvestasi 2026
 
-**IDR 10 miliar** (~$625.000 USD) minimum investasi untuk PT PMA adalah salah satu persyaratan yang paling disalahpahami. Mari kita uraikan apa artinya sebenarnya.
+Kebutuhan investasi minimum **IDR 10 miliar** (~$625.000 USD) untuk PT PMA adalah salah satu persyaratan yang paling sering disalahartikan. Mari kita bedah apa artinya sebenarnya.
 
 ## Dua Angka Kunci
 
-| Persyaratan         | Jumlah            | Apa Artinya                                              |
-| ------------------- | ----------------- | -------------------------------------------------------- |
-| **Total Investasi** | IDR 10 miliar min | Total investasi yang direncanakan selama umur perusahaan |
-| **Modal Disetor**   | IDR 10 miliar min | Uang tunai yang disetorkan ke rekening bank perusahaan   |
+| Kebutuhan          | Jumlah             | Artinya                                     |
+| ------------------ | ------------------ | ------------------------------------------ |
+| **Total Investasi** | IDR 10 miliar min  | Total investasi direncanakan selama masa hidup perusahaan |
+| **Modal Disetor**   | IDR 10 miliar min  | Uang tunai yang disetor ke rekening bank perusahaan     |
 
-<InfoCard variant="important" title="Kedua Harus Dipenuhi">
+<InfoCard variant="important" title="Keduanya Harus Dipenuhi">
 
-Menurut peraturan saat ini, **baik** rencana investasi total MAUPUN modal
-disetor harus setidaknya IDR 10 miliar. Ini berubah dari aturan sebelumnya di
-mana modal disetor bisa lebih rendah.
+Sesuai regulasi saat ini, **keduanya** rencana total investasi DAN modal disetor harus minimal IDR 10 miliar. Ini berbeda dari aturan sebelumnya di mana modal disetor bisa lebih rendah.
 
 </InfoCard>
 
 ---
 
-## Apa yang Termasuk dalam Investasi?
+## Apa yang Dihitung sebagai Investasi?
 
-Rencana investasi IDR 10 miliar Anda dapat mencakup:
+Rencana investasi Anda sebesar IDR 10 miliar dapat mencakup:
 
 <ComparisonTable
-  title="Apa yang Diperhitungkan dalam Investasi"
-  description="Kategori yang diperhitungkan dalam IDR 10B Anda"
+  title="Apa yang Dihitung Menuju Investasi"
+  description="Kategori yang dihitung menuju investasi IDR 10B Anda"
   items={[
     {
-      name: "Modal Saham",
-      subtitle: "Uang tunai yang disetorkan",
+      name: "Modal Sah",
+      subtitle: "Uang tunai disetor",
       values: {
         Type: "Tunai",
-        "Diperhitungkan?": "Ya - Utama",
-        Documentation: "Bukti setoran bank",
+        "Dihitung?": "Ya - Utama",
+        Dokumentasi: "Konfirmasi setoran bank",
       },
       highlight: true,
     },
@@ -122,8 +120,8 @@ Rencana investasi IDR 10 miliar Anda dapat mencakup:
       subtitle: "Aset fisik",
       values: {
         Type: "Aset",
-        "Diperhitungkan?": "Ya",
-        Documentation: "Dokumen impor, kuitansi pembelian",
+        "Dihitung?": "Ya",
+        Dokumentasi: "Dokumen impor, bukti pembelian",
       },
     },
     {
@@ -131,17 +129,17 @@ Rencana investasi IDR 10 miliar Anda dapat mencakup:
       subtitle: "Dana operasional",
       values: {
         Type: "Tunai",
-        "Diperhitungkan?": "Ya",
-        Documentation: "Proyeksi keuangan",
+        "Dihitung?": "Ya",
+        Dokumentasi: "Proyeksi keuangan",
       },
     },
     {
       name: "Pinjaman Pemegang Saham",
       subtitle: "Pinjaman dari pemilik",
       values: {
-        Type: "Hutang",
-        "Diperhitungkan?": "Ya",
-        Documentation: "Perjanjian pinjaman",
+        Type: "Utang",
+        "Dihitung?": "Ya",
+        Dokumentasi: "Perjanjian pinjaman",
       },
     },
     {
@@ -149,8 +147,8 @@ Rencana investasi IDR 10 miliar Anda dapat mencakup:
       subtitle: "Jika dimiliki perusahaan",
       values: {
         Type: "Aset",
-        "Diperhitungkan?": "Ya",
-        Documentation: "Perjanjian pembelian, penilaian",
+        "Dihitung?": "Ya",
+        Dokumentasi: "Perjanjian pembelian, penilaian",
       },
     },
   ]}
@@ -166,7 +164,7 @@ Rencana investasi IDR 10 miliar Anda dapat mencakup:
   fields={[
     {
       id: "cash",
-      label: "Tunai untuk Disetor (Modal Saham)",
+      label: "Tunai untuk Disetor (Modal Sah)",
       type: "number",
       defaultValue: 10000000000,
       min: 0,
@@ -193,7 +191,7 @@ Rencana investasi IDR 10 miliar Anda dapat mencakup:
     },
     {
       id: "property",
-      label: "Properti/Tanah",
+      label: "Tanah & Bangunan",
       type: "number",
       defaultValue: 0,
       min: 0,
@@ -213,10 +211,10 @@ Rencana investasi IDR 10 miliar Anda dapat mencakup:
     const paidUpShortage = Math.max(0, required - cash);
 
     const breakdown = [
-      { label: "Modal Saham (Tunai)", amount: cash },
+      { label: "Modal Sah (Tunai)", amount: cash },
       { label: "Peralatan & Mesin", amount: equipment },
       { label: "Modal Kerja", amount: working },
-      { label: "Properti/Tanah", amount: property },
+      { label: "Tanah & Bangunan", amount: property },
       { label: "Total Rencana Investasi", amount: total }
     ];
 
@@ -224,9 +222,9 @@ Rencana investasi IDR 10 miliar Anda dapat mencakup:
     if (total >= required && cash >= required) {
       note = "Persyaratan terpenuhi!";
     } else if (cash < required) {
-      note = `Modal disetor kekurangan IDR ${(paidUpShortage/1000000000).toFixed(1)}B. Harus menyetor modal minimum IDR 10B.`;
+      note = `Modal disetor kurang sebesar IDR ${(paidUpShortage/1000000000).toFixed(1)}B. Harus menyetor minimal IDR 10B.`;
     } else if (total < required) {
-      note = `Total investasi kekurangan IDR ${(shortage/1000000000).toFixed(1)}B`;
+      note = `Total investasi kurang sebesar IDR ${(shortage/1000000000).toFixed(1)}B`;
     }
 
     return {
@@ -244,31 +242,31 @@ Rencana investasi IDR 10 miliar Anda dapat mencakup:
 ## Pertanyaan Umum Tentang Modal
 
 <InfoCard variant="note" title="FAQ">
-**T: Apakah saya membutuhkan IDR 10B di rekening bank saya pada hari pertama?**
-A: Ya, modal disetor IDR 10B harus disetorkan ke rekening bank perusahaan dan menyelesaikan pendaftaran.
+**Q: Apakah saya perlu memiliki IDR 10B di rekening bank pada hari pertama?**
+A: Ya, modal disetor sebesar IDR 10B harus disetor untuk membuka rekening bank perusahaan dan menyelesaikan pendaftaran.
 
-**T: Bisakah saya menggunakannya setelah disetor?**
-A: Ya, setelah disetor sebagai modal, Anda dapat menggunakan dana ini untuk operasi bisnis.
+**Q: Bisakah saya menggunakannya setelah disetor?**
+A: Ya, sekali disetor sebagai modal saham, dana ini digunakan untuk operasional bisnis.
 
-**T: Bagaimana jika saya tidak dapat memenuhi IDR 10B?**
-A: Opsi termasuk:
+**Q: Bagaimana jika saya tidak bisa memenuhi IDR 10B?**
+A: Pilihan meliputi:
 
-- Perusahaan patungan dengan mitra lokal
+- Kemitraan dengan mitra lokal
 - Struktur bisnis yang berbeda (kantor perwakilan, dll.)
-- Menunggu sampai Anda memiliki modal yang cukup
+- Menunggu hingga memiliki modal yang cukup
 
-**T: Apakah ada cara untuk menghindari minimum?**
-A: Tidak ada cara yang sah. Peraturan jelas tentang minimum IDR 10B untuk PT PMA.
+**Q: Apakah ada cara untuk menghindari minimum ini?**
+A: Tidak ada cara yang sah. Regulasi jelas mengenai minimal IDR 10B untuk PT PMA.
 
 </InfoCard>
 
 ---
 
-## Menyusun Investasi Anda
+## Merancang Investasi Anda
 
 <Checklist
   title="Daftar Periksa Perencanaan Investasi"
-  description="Langkah-langkah untuk menyusun investasi PT PMA Anda"
+  description="Langkah-langkah untuk merancang investasi PT PMA Anda"
   persistKey="pma-capital-checklist"
   items={[
     {
@@ -281,28 +279,28 @@ A: Tidak ada cara yang sah. Peraturan jelas tentang minimum IDR 10B untuk PT PMA
     {
       id: "source",
       label: "Dokumentasikan sumber dana",
-      description: "Rekening bank, catatan investasi",
+      description: "Laporan rekening bank, catatan investasi",
       required: true,
       category: "documentation",
     },
     {
       id: "timeline",
-      label: "Rencanakan jadwal penyuntikan modal",
+      label: "Rencanakan jadwal suntikan modal",
       description: "Kapan dana akan ditransfer",
       required: true,
       category: "planning",
     },
     {
       id: "currency",
-      label: "Rencanakan pertukaran mata uang",
+      label: "Rencanakan konversi mata uang",
       description: "Strategi konversi USD ke IDR",
       required: false,
       category: "practical",
     },
     {
       id: "bank",
-      label: "Teliti persyaratan bank",
-      description: "Bank yang berbeda memiliki proses yang berbeda",
+      label: "Telusuri persyaratan bank",
+      description: "Bank berbeda memiliki proses berbeda",
       required: true,
       category: "practical",
     },
@@ -319,6 +317,6 @@ A: Tidak ada cara yang sah. Peraturan jelas tentang minimum IDR 10B untuk PT PMA
 
 ## Artikel Terkait
 
-- [Cara Mendaftarkan PT PMA](/insights/business/foreign-company-incorporation-steps)
+- [Cara Mendaftar PT PMA](/insights/business/foreign-company-incorporation-steps)
 - [Memulai Bisnis di Indonesia](/insights/business/starting-a-business-in-indonesia-complete-guide)
 - [NIB Dijelaskan](/insights/business/nib-explained)

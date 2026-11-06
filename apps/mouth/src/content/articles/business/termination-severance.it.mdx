@@ -74,26 +74,26 @@ ogImage: "/static/insights/business/termination-severance.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "it"
-source_sha256: "ecf7cbc87e522d72cbbd8d34f3fcda8244bc532e0761601a5217bbed376554ee"
+source_sha256: "fa0890a15f926e13a3add197db9222732fbf11be38af170368edba3e87427a28"
 ---
 
-# Dismissal & Indennità di Licenziamento in Indonesia 2026
+# Licenziamento e Indennizzi in Indonesia 2026
 
-La cessazione del rapporto con i dipendenti in Indonesia (PHK - Pemutusan Hubungan Kerja) richiede il rispetto di specifiche procedure legali e il pagamento delle dovute indennità.
+Licenziare dipendenti in Indonesia (PHK - *Pemutusan Hubungan Kerja*) richiede il rispetto di specifiche procedure legali e il pagamento delle dovute indennità.
 
-## Tipi di Cessazione
+## Tipi di Licenziamento
 
 <ComparisonTable
-  title="Categorie di Cessazione"
-  description="Diversi tipi di cessazione del rapporto di lavoro"
+  title="Categorie di Licenziamento"
+  description="Diversi tipi di risoluzione del rapporto di lavoro"
   items={[
     {
       name: "Iniziativa del Datore di Lavoro",
       subtitle: "Decisione aziendale",
       values: {
-        Examples: "Ridondanza, scarsa performance",
-        Severance: "Integra o parziale",
-        Notice: "Richiesto",
+        Examples: "Riduzione del personale, scarsa performance",
+        Severance: "Integra piena o parziale",
+        Notice: "Obbligatoria",
         Process: "Procedura formale",
       },
     },
@@ -108,22 +108,22 @@ La cessazione del rapporto con i dipendenti in Indonesia (PHK - Pemutusan Hubung
       },
     },
     {
-      name: "Fine Contratto",
+      name: "Scadenza Contrattuale",
       subtitle: "Scadenza PKWT",
       values: {
-        Examples: "Termine del contratto scaduto",
+        Examples: "Termine contrattuale scaduto",
         Severance: "Pagamento indennità",
-        Notice: "Secondo il contratto",
-        Process: "Automatico a meno di rinnovo",
+        Notice: "Secondo contratto",
+        Process: "Automatico se non rinnovato",
       },
     },
     {
-      name: "Ingiustizia Grave",
+      name: "Ingiustizie Gravi",
       subtitle: "Licenziamento immediato",
       values: {
         Examples: "Furto, violenza, frode",
         Severance: "Nessuna (solitamente)",
-        Notice: "Non richiesto",
+        Notice: "Non richiesta",
         Process: "Indagine richiesta",
       },
       highlight: true,
@@ -140,15 +140,15 @@ L'indennità in Indonesia ha tipicamente **tre componenti**:
 
 1. **Uang Pesangon (UP)** - Indennità base di licenziamento
 2. **Uang Penghargaan Masa Kerja (UPMK)** - Indennità per anzianità
-3. **Uang Penggantian Hak (UPH)** - Indennizzo per benefici non utilizzati
+3. **Uang Penggantian Hak (UPH)** - Indennizzo per benefici non goduti
 
-L'importo dipende dal motivo della cessazione e dall'anzianità di servizio.
+L'importo dipende dalla causa del licenziamento e dall'anzianità di servizio.
 
 </InfoCard>
 
 ---
 
-## Calcolatore dell'Indennità
+## Calcolatore Indennizzi
 
 <Calculator
   title="Stima Indennità"
@@ -174,21 +174,21 @@ L'importo dipende dal motivo della cessazione e dall'anzianità di servizio.
     },
     {
       id: "reason",
-      label: "Motivo Cessazione",
+      label: "Motivo del Licenziamento",
       type: "select",
       options: [
-        { value: "redundancy", label: "Ridondanza/Efficienza" },
-        { value: "closure", label: "Chiusura Azienda" },
+        { value: "redundancy", label: "Riduzione del personale/Efficienza" },
+        { value: "closure", label: "Chiusura Aziendale" },
         { value: "performance", label: "Scarsa Performance" },
-        { value: "misconduct", label: "Ingiustizia Grave" },
+        { value: "misconduct", label: "Ingiustizie Gravi" },
         { value: "resignation", label: "Dimissioni" },
-        { value: "retirement", label: "Pensionamento" }
+        { value: "retirement", label: "Pensione" }
       ],
       defaultValue: "redundancy"
     },
     {
       id: "leave",
-      label: "Ferie Annuale Non Utilizzate (giorni)",
+      label: "Ferie Annuale Non Godute (giorni)",
       type: "number",
       defaultValue: 5,
       min: 0,
@@ -264,7 +264,7 @@ L'importo dipende dal motivo della cessazione e dall'anzianità di servizio.
         { label: "Pesangon (UP)", amount: Math.round(up) },
         { label: "Anzianità (UPMK)", amount: Math.round(upmk) },
         { label: "Indennizzo Ferie", amount: Math.round(leaveCompensation) },
-        { label: "Abitazione/Medicina (15%)", amount: Math.round(housingMedical) },
+        { label: "Abitazione/Medica (15%)", amount: Math.round(housingMedical) },
         { label: "Totale Indennità", amount: Math.round(total) }
       ],
       currency: "IDR",
@@ -276,7 +276,7 @@ L'importo dipende dal motivo della cessazione e dall'anzianità di servizio.
 
 ---
 
-## Tabelle Indennità
+## Tabelle Indennizzi
 
 ### Uang Pesangon (UP) - Indennità Base
 
@@ -294,38 +294,38 @@ L'importo dipende dal motivo della cessazione e dall'anzianità di servizio.
 
 ### UPMK - Anzianità
 
-| Periodo di Servizio | Mesi    |
-| ------------------- | ------- |
-| 3 a < 6 anni        | 2 mesi  |
-| 6 a < 9 anni        | 3 mesi  |
-| 9 a < 12 anni       | 4 mesi  |
-| 12 a < 15 anni      | 5 mesi  |
-| 15 a < 18 anni      | 6 mesi  |
-| 18 a < 21 anni      | 7 mesi  |
-| 21 a < 24 anni      | 8 mesi  |
-| 24+ anni            | 10 mesi |
+| Periodo di Servizio   | Mesi    |
+| --------------------- | ------- |
+| 3 a < 6 anni          | 2 mesi  |
+| 6 a < 9 anni          | 3 mesi  |
+| 9 a < 12 anni         | 4 mesi  |
+| 12 a < 15 anni        | 5 mesi  |
+| 15 a < 18 anni        | 6 mesi  |
+| 18 a < 21 anni        | 7 mesi  |
+| 21 a < 24 anni        | 8 mesi  |
+| 24+ anni              | 10 mesi |
 
 ---
 
-## Indennità per Motivo
+## Indennizzi per Motivo
 
 <ComparisonTable
   title="Diritti all'Indennità"
-  description="In base al motivo di cessazione"
+  description="In base al motivo del licenziamento"
   items={[
     {
-      name: "Chiusura Azienda",
+      name: "Chiusura Aziendale",
       values: {
-        UP: "1× completo",
-        UPMK: "1× completo",
+        UP: "1× piena",
+        UPMK: "1× piena",
         UPH: "Sì",
       },
     },
     {
-      name: "Ridondanza",
+      name: "Riduzione del Personale",
       values: {
-        UP: "1× completo",
-        UPMK: "1× completo",
+        UP: "1× piena",
+        UPMK: "1× piena",
         UPH: "Sì",
       },
     },
@@ -333,7 +333,7 @@ L'importo dipende dal motivo della cessazione e dall'anzianità di servizio.
       name: "Perdita Aziendale (2 anni)",
       values: {
         UP: "0.5×",
-        UPMK: "1× completo",
+        UPMK: "1× piena",
         UPH: "Sì",
       },
     },
@@ -341,24 +341,24 @@ L'importo dipende dal motivo della cessazione e dall'anzianità di servizio.
       name: "Forza Maggiore",
       values: {
         UP: "0.5×",
-        UPMK: "1× completo",
+        UPMK: "1× piena",
         UPH: "Sì",
       },
     },
     {
-      name: "Pensionamento",
+      name: "Pensione",
       values: {
         UP: "1.75×",
-        UPMK: "1× completo",
+        UPMK: "1× piena",
         UPH: "Sì",
       },
     },
     {
-      name: "Ingiustizia Grave",
+      name: "Ingiustizie Gravi",
       values: {
         UP: "Nessuna",
         UPMK: "Nessuna",
-        UPH: "Solo ferie non usate",
+        UPH: "Solo ferie non godute",
       },
     },
     {
@@ -366,7 +366,7 @@ L'importo dipende dal motivo della cessazione e dall'anzianità di servizio.
       values: {
         UP: "Nessuna",
         UPMK: "Solo indennità",
-        UPH: "Ferie non usate",
+        UPH: "Ferie non godute",
       },
     },
   ]}
@@ -374,21 +374,21 @@ L'importo dipende dal motivo della cessazione e dall'anzianità di servizio.
 
 ---
 
-## Procedura di Cessazione
+## Procedura di Licenziamento
 
 <JourneyMap
-  title="Procedura di Cessazione"
-  description="Passaggi per il licenziamento legale"
+  title="Procedura di Licenziamento"
+  description="Passaggi per un licenziamento legale"
   estimatedTotal="2-8 settimane"
   steps={[
     {
       id: "grounds",
-      title: "Stabilire le Motivi",
+      title: "Stabilire le Causa",
       description: "Documentare il motivo",
       duration: "In corso",
       status: "richiesto",
       tips: [
-        "Documentazione della performance",
+        "Documentazione sulla performance",
         "Lettere di richiamo (se applicabile)",
         "Giustificazione aziendale",
         "Revisione legale",
@@ -410,14 +410,14 @@ L'importo dipende dal motivo della cessazione e dall'anzianità di servizio.
     {
       id: "tripartite",
       title: "Tripartita (se necessario)",
-      description: "Mediazione ufficio Manpower",
+      description: "Mediazione ufficio risorse umane",
       duration: "30 giorni",
       status: "richiesto",
       tips: [
         "Se la bipartita fallisce",
         "Richiedere a Disnaker",
-        "Mediazione/Conciliazione",
-        "Cercare raccomandazione",
+        "Mediazione/armonizzazione",
+        "Ottenere raccomandazione",
       ],
     },
     {
@@ -429,15 +429,15 @@ L'importo dipende dal motivo della cessazione e dall'anzianità di servizio.
       tips: [
         "Se non raggiunto accordo",
         "Presentare a tribunale PHI",
-        "Esporre il caso",
+        "Esposizione causa",
         "Aspettare decisione",
       ],
     },
     {
       id: "payment",
       title: "Pagamento Indennità",
-      description: "Pagare i diritti",
-      duration: "Al momento della cessazione",
+      description: "Paga i diritti",
+      duration: "Al momento del licenziamento",
       status: "finale",
       tips: [
         "Calcolare tutte le componenti",
@@ -460,21 +460,21 @@ Per problemi di performance/comportamento, utilizzare la disciplina progressiva:
 2. **Secondo Richiamo (SP2)** - Scritto, valido 6 mesi
 3. **Terzo Richiamo (SP3)** - Ultimo richiamo
 
-Dopo lo SP3, è possibile procedere al licenziamento con indennità ridotte.
+Dopo lo SP3, il licenziamento è possibile con indennità ridotta.
 
-**Nota:** Per ingiustizie gravi, è possibile il licenziamento immediato senza richiami.
+**Nota:** Per ingiustizie gravi, possibile licenziamento immediato senza richiami.
 
 </InfoCard>
 
 ---
 
-## Ingiustizia Grave
+## Ingiustizie Gravi
 
 ### Cosa Qualifica?
 
 <Checklist
-  title="Esempi di Ingiustizia Grave"
-  description="Motivi per licenziamento immediato"
+  title="Esempi di Ingiustizie Gravi"
+  description="Causa per licenziamento immediato"
   persistKey="misconduct-checklist"
   items={[
     {
@@ -487,13 +487,13 @@ Dopo lo SP3, è possibile procedere al licenziamento con indennità ridotte.
     {
       id: "violence",
       label: "Violenza o minacce",
-      description: "Assalto fisico, minacce",
+      description: "Aggressione fisica, minacce",
       required: false,
       category: "criminal",
     },
     {
       id: "drugs",
-      label: "Uso di droghe in ufficio",
+      label: "Uso di droghe sul posto di lavoro",
       description: "Possesso o uso",
       required: false,
       category: "criminal",
@@ -507,8 +507,8 @@ Dopo lo SP3, è possibile procedere al licenziamento con indennità ridotte.
     },
     {
       id: "gambling",
-      label: "Scommesse in ufficio",
-      description: "Durante l'orario di lavoro",
+      label: "Scommesse sul posto di lavoro",
+      description: "Durante orario di lavoro",
       required: false,
       category: "policy",
     },
@@ -521,14 +521,14 @@ Dopo lo SP3, è possibile procedere al licenziamento con indennità ridotte.
     },
     {
       id: "immoral",
-      label: "Atti immorali in ufficio",
+      label: "Atti immorali sul posto di lavoro",
       description: "Molestie sessuali, ecc.",
       required: false,
       category: "policy",
     },
   ]}
   categories={[
-    { id: "criminal", label: "Criminale", color: "red" },
+    { id: "criminal", label: "Penale", color: "red" },
     { id: "breach", label: "Violazione Contratto", color: "amber" },
     { id: "policy", label: "Violazione Politica", color: "purple" },
     { id: "attendance", label: "Presenza", color: "blue" },
@@ -538,22 +538,22 @@ Dopo lo SP3, è possibile procedere al licenziamento con indennità ridotte.
 
 ---
 
-## Indennità PKWT
+## Indennizzi PKWT
 
 Per contratti a termine (PKWT), alla scadenza:
 
 ### Formula di Indennizzo
 
-| Durata Contratto      | Indennizzo           |
-| --------------------- | -------------------- |
-| Ogni mese di servizio | 1 giorno di salario  |
-| Esempio: 12 mesi      | 12 giorni di salario |
-| Esempio: 24 mesi      | 24 giorni di salario |
+| Durata Contratto       | Indennizzo   |
+| ---------------------- | ------------ |
+| Ogni mese di servizio  | 1 giorno retribuzione |
+| Esempio: 12 mesi       | 12 giorni retribuzione |
+| Esempio: 24 mesi       | 24 giorni retribuzione |
 
-<InfoCard variant="note" title="Terminazione Anticipata PKWT">
+<InfoCard variant="note" title="Licenziamento Anticipato PKWT">
 
-Se il PKWT è terminato anticipatamente dal datore di lavoro: - Deve pagare il valore residuo del contratto -
-Più indennizzo per l'anzianità di servizio - A meno che non sia per ingiustizia grave
+Se il PKWT è licenziato anticipatamente dal datore di lavoro: - Deve pagare il valore residuo del contratto -
+Più indennizzo per periodo di servizio - A meno che non sia per ingiustizie gravi
 
 </InfoCard>
 
@@ -563,38 +563,38 @@ Più indennizzo per l'anzianità di servizio - A meno che non sia per ingiustizi
 
 ### Documenti Richiesti
 
-| Documento              | Scopo                      |
-| ---------------------- | -------------------------- |
-| Lettera di cessazione  | Avviso ufficiale           |
-| Calcolo indennità      | Dettaglio dettagliato      |
-| Verbale bipartita      | Registri incontro          |
-| Accordo                | Consenso reciproco         |
-| Ricevuta               | Prova pagamento            |
-| Lettera di riferimento | Per dipendente (opzionale) |
+| Documento              | Scopo                 |
+| ---------------------- | --------------------- |
+| Lettera di licenziamento | Avviso ufficiale       |
+| Calcolo indennità       | Dettaglio dettagliato  |
+| Verbale bipartita       | Resoconto incontro     |
+| Accordo                 | Consenso reciproco     |
+| Ricevuta                | Prova pagamento        |
+| Lettera di riferimento  | Per dipendente (opzionale) |
 
 ---
 
 ## Errori Comuni
 
-| Errore                               | Impatto                          |
-| ------------------------------------ | -------------------------------- |
-| Nessun richiamo scritto              | Non si può provare la causa      |
-| Saltare la bipartita                 | Procedura non valida             |
-| Sottopagamento indennità             | Richieste legali                 |
-| Licenziamento immediato senza motivi | Deve reintegrare o pagare intero |
-| Non documentare                      | Posizione legale debole          |
+| Errore                               | Impatto                     |
+| ------------------------------------ | --------------------------- |
+| Nessun richiamo scritto              | Impossibile provare la causa |
+| Saltare la fase bipartita            | Procedura nulla             |
+| Sottopagamento indennità             | Ricorsi legali              |
+| Licenziamento immediato senza cause  | Deve reintegrare o pagare intero |
+| Mancanza di documentazione           | Posizione legale debole     |
 
 ---
 
-## Domande Comuni
+## Domande Frequenti
 
 <AskZantara
-  context="Cessazione dipendenti Indonesia, indennità di licenziamento, PHK, diritto del lavoro cessazione"
-  placeholder="Chiedi su cessazione e indennità..."
+  context="Licenziamento dipendenti Indonesia, indennità, PHK, licenziamento diritto lavoro"
+  placeholder="Chiedi su licenziamento e indennità..."
   suggestedQuestions={[
     "Quanto è l'indennità per 5 anni di servizio?",
     "Posso licenziare senza indennità?",
-    "Qual è la procedura di cessazione?",
+    "Qual è la procedura di licenziamento?",
     "I dipendenti PKWT ricevono indennità?",
   ]}
 />
@@ -603,6 +603,6 @@ Più indennizzo per l'anzianità di servizio - A meno che non sia per ingiustizi
 
 ## Articoli Correlati
 
-- [Guida Diritto del Lavoro](/insights/business/labor-law-guide)
+- [Guida Diritto Lavoro](/insights/business/labor-law-guide)
 - [Assunzione Dipendenti Indonesiani](/insights/business/hiring-indonesian-employees)
 - [Guida Setup PT PMA](/business/foreign-company-incorporation-steps)
