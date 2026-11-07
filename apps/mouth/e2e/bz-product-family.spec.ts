@@ -263,7 +263,7 @@ test.describe("Bali Zero product-family noqata page Page", () => {
     await page.goto(`${MY_ORIGIN}/portal/messages`, {
       waitUntil: "domcontentloaded",
     });
-    const messages = page.getByRole("link", { name: "Messages" });
+    const messages = page.getByRole("link", { name: /Messages/i });
 
     await expect(messages).toBeVisible({ timeout: 30000 });
     await expect(messages).toHaveAttribute("href", "/portal/messages");

@@ -140,6 +140,7 @@ describe("PortalBottomNav", () => {
     await waitFor(() => {
       const badge = screen.getByText("5");
       expect(badge).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /5 messages/i })).toBeVisible();
     });
   });
 
