@@ -1,4 +1,4 @@
-# Client recap: numbers spec v3.2 (strict parsing)
+# Client recap: numbers spec v3.3 (strict parsing)
 
 Status: **proposed, gated before code**. Owner decision 2026-11-05: the recap stays
 off (`client_recap.RECAP_ENABLED = False`, PR #31) until this spec passes its gate and a
@@ -35,7 +35,10 @@ The recap states only two kinds of value.
 
 - **(a) A recorded value**, read from a typed field and shown as recorded: a date, an
   amount, a code, a period, or a label from a closed set or a database catalogue.
-- **(b) A count over identities the database defines**: row primary keys or client ids.
+- **(b) A count over identities the database defines**: row primary keys, client ids, or
+  catalogue identities. A catalogue identity is a KBLI code that resolves to a row of the
+  KBLI 2025 catalogue (verdict CANONICAL). A code that does not resolve is not an
+  identity and is never counted.
 
 Five rules apply to every input and every statement.
 
@@ -153,6 +156,13 @@ All sets are measured on production on 2026-11-05.
 - **Closed:** `completed`, `cancelled`, `canceled`, `closed`, `done`, `rejected`.
 - **Unknown:** anything else, including NULL and the empty string.
 
+**What the pre-v3 code does (main, `client_recap.py`):** its practice query joins
+`practice_types` and has no category filter. It counts every row whose status is not in
+the closed set and whose type has a name, so an unknown or NULL status counts as open and
+a row without a practice type is dropped by the join. The production counts of rows by
+category were not verified by the spec gate. I7 replaces this with the category and
+status classification above.
+
 **CRM link roles** (`client_company_links.role`):
 - **Shareholder:** `shareholder`, `pemegang saham`.
 - **Director:** `director`, `direktur`, `direktur utama`, `director_utama`,
@@ -177,9 +187,9 @@ Each row is one statement the deterministic template can make. Nothing else is s
 | # | Statement | Rule |
 |---|---|---|
 | I0 | "No current stay permit is recorded" | **Not stated** (Rule 0.3). An ITK, an unclassifiable document or an undated permit would each make it false. |
-| I1 | Current permit code and official name | **Candidates:** the client's classifiable permit documents (see Permit documents) whose family is a stay-permit family. **Omitted (with I2, I3 and I6) when:** there is no candidate; any permit document of the client is unclassifiable; or any candidate lacks a strict expiry. In those cases "latest" cannot be decided. **Pick:** the latest expiry. **Tie rule:** tied documents must share one family. Within it, a precise index code beats the same family's generic code. Two different precise codes, or two families, on the latest date omit the clause. **Name:** the official name comes from `visa_types` by the picked code. |
-| I2 | Permit issue date, expiry date, "valid" / "expired" | **Expiry:** the I1 date. **Issue date:** the strict OCR issue date of the picked document. When several documents tie with the picked code, it is stated only if all of them carry the same strict issue date. Otherwise the issue date is omitted. **Validity:** "expired" means expiry < today (WITA); otherwise the permit is "valid". |
-| I3 | ITK expiry and its status | **Candidates:** the client's classifiable permit documents whose family is ITK. **Omitted when:** any candidate lacks a strict expiry, or I1 is omitted. **Eligible:** with an I2 issue date, the ITKs whose expiry is on or after it. Without one, the ITKs whose expiry is from today up to the I1 expiry. **Statement:** the latest eligible expiry; its status uses the I2 rule. |
+| I1 | Current permit code and official name | **Candidates:** the client's classifiable permit documents (see Permit documents) whose family is a stay-permit family. **Omitted (with I2, I3 and I6) when:** there is no candidate; any permit document of the client is unclassifiable; or any candidate lacks a strict expiry. In those cases "latest" cannot be decided. **Expiry source:** `documents.expiry_date` of each candidate, a strict date. **Pick:** the latest expiry. **Tie rule:** tied documents must share one family. Within it, a precise index code beats the same family's generic code. Two different precise codes, or two families, on the latest date omit the clause. **Name:** the official name comes from `visa_types` by the picked code. |
+| I2 | Permit issue date, expiry date, "valid" / "expired" | **Expiry:** the I1 date. **Issue date:** read from `ocr_extracted_data` → `raw_response`, under these four keys only: `issue_date`, `date_of_issue`, `issued_date`, `tanggal_terbit`. No key present: there is no issue date. One or more present: every present key must hold a strict date and all the strict dates must be equal, and then that date is the issue date. If a present key is unparseable, or two present keys hold different strict dates, the issue date is **conflicting**: I2 states no issue date and I3 is omitted. No key is ever preferred over another. When several documents tie with the picked code, it is stated only if all of them carry the same strict issue date. Otherwise the issue date is omitted. **Validity:** "expired" means expiry < today (WITA); otherwise the permit is "valid". |
+| I3 | ITK expiry and its status | **Candidates:** the client's classifiable permit documents whose family is ITK. **Expiry source:** `documents.expiry_date`. **Omitted when:** any candidate lacks a strict expiry, I1 is omitted, or the I2 issue date is conflicting. **Eligible:** with an I2 issue date, the ITKs whose expiry is on or after it. Without one, the ITKs whose expiry is from today up to the I1 expiry. **Statement:** the latest eligible expiry; its status uses the I2 rule. |
 | I4 | Passport expiry and its status | `clients.passport_expiry`, a strict date; status by the I2 rule. |
 | I5 | Family members on file | The number of `client_family_members` rows of the client. |
 | I6 | Family permits that end before the main permit | **Who has a permit:** a row whose trimmed `current_visa_type` is non-empty, or whose `visa_expiry` is not NULL. **Count:** those rows whose strict `visa_expiry` is earlier than the I1 expiry. **Omitted when:** I1 is omitted, or any row with a permit lacks a strict `visa_expiry`. |
@@ -194,9 +204,9 @@ Each row is one statement the deterministic template can make. Nothing else is s
 | C2 | Establishment date; last amendment date | `akta_pendirian_date` and `akta_perubahan_date` respectively, each a strict date. The generic `custom_fields.akta_date` is never an amendment. |
 | C3 | Authorised and paid-up capital | `custom_fields.authorized_capital` and `paid_up_capital`. Each is a strict non-negative integer (IDR), else omitted. It is written in words only when the one-decimal short form equals the amount exactly; otherwise in full digits (`IDR 1,049,000,000`). |
 | C4 | Shareholders and directors "linked in the CRM" | **Source:** only `client_company_links` of the company, counted as distinct `client_id`. `shares_count` is an integer column. **Shareholder:** a link with a shareholder role, or with `shares_count > 0`. **Not a shareholder:** a link with a director or other-known role and `shares_count` NULL or 0. **Shareholder count omitted when:** any link has an unknown role and `shares_count` NULL or 0. **Director:** a link with a director role. **Director count omitted when:** any link has an unknown role. **Not counted:** the company profile register (`custom_fields.shareholders`), whose identities are free-text names (Rule 0.5). The sentence always says "linked in the CRM". |
-| C5 | KBLI lines (count only) | **Codes:** the distinct codes among `companies.kbli_code` (empty when NULL or `""`) and the `custom_fields.kbli_codes` code list. **Omitted when:** the list is malformed, or any present code is not a strict KBLI code. **No titles are stated:** `kbli_description` is company free text (Rule 0.5). |
-| C6 | Codes not in the KBLI 2025 catalogue | The distinct C5 codes for which the catalogue answers ABSENT. **Stated only when:** C5 is stated, every code is classified (no UNKNOWN verdict), and there are at most 50 codes. **Wording:** exactly "not in the KBLI 2025 catalogue". |
-| C7 | Latest LKPM period (and its status label) | **Candidates:** `lkpm_reports` rows with `company_id` equal to this company. **The company's clients:** every `client_id` in `client_company_links` with this `company_id`. The current client is one of them, by `resolve_company_id`. **Omitted when:** any of the company's clients has a client-level row (`company_id` NULL), because such a row cannot be attributed and could be this company's latest. Whichever linked client opens the recap, the answer is the same. Also omitted when any candidate's period is unparseable. **Statement:** the latest candidate period, as `Q<n> <year>`, with its status label when the status is in the LKPM status set. |
+| C5 | KBLI lines (count only) | **Codes:** the distinct codes among `companies.kbli_code` (empty when NULL or `""`) and the `custom_fields.kbli_codes` code list. **Count:** the number of distinct codes, each of which resolves to a row of the KBLI 2025 catalogue (Rule 0.b). **Omitted when:** the list is malformed; any present code is not a strict KBLI code; any code has an ABSENT or UNKNOWN catalogue verdict; or there are more than 50 codes. A single unresolved code omits the whole count. **No titles are stated:** `kbli_description` is company free text (Rule 0.5). |
+| C6 | Catalogue verdict on the recorded codes | A verdict over the set, not a count of identities: an absent code is not an identity. **Stated only when:** the codes are well formed (as in C5), at most 50, every code has a verdict (none UNKNOWN), and at least one is ABSENT. **Wording:** exactly "at least one KBLI code on file is not in the KBLI 2025 catalogue". It carries no code and no number. C5 and C6 are never both stated. |
+| C7 | Latest LKPM period (and its status label) | **Candidates:** `lkpm_reports` rows with `company_id` equal to this company. **The company's clients:** every `client_id` in `client_company_links` with this `company_id`. The current client is one of them, by `resolve_company_id`. **Omitted when:** any of the company's clients has a client-level row (`company_id` NULL), because such a row cannot be attributed and could be this company's latest. Whichever linked client opens the recap, the answer is the same. Also omitted when any candidate's period is unparseable. **Statement:** the latest candidate period, as `Q<n> <year>`, with its status label when every candidate that carries the latest period has the same status and that status is in the LKPM status set. When two candidates carry the latest period with different statuses (two linked clients may each hold a row for the same company, quarter and year), the label is omitted and the period is still stated. |
 
 **Never stated:** total shares, KBLI titles, any name (client, family, shareholder,
 staff, company), permit, passport, NIB, NPWP or AHU numbers, addresses, contacts,
@@ -261,6 +271,15 @@ sponsors and file names.
    - A client-level LKPM row of ANOTHER client linked to the same company: C7 is omitted
      whichever linked client opens the recap.
    - A `2027/"q4 "` row beside `2026/Q2`: C7 is omitted.
+   - Two clients linked to the company, each with a row for the same latest period and
+     different known statuses (allowed by `uq_lkpm_report`, `migration_100a_lkpm_company_id.py`):
+     the period is stated and the status label is omitted. With equal statuses the label is
+     stated.
+   - Issue-date keys: two keys with equal strict dates give that date; two keys with
+     different strict dates, or one key unparseable beside a valid one, give a conflicting
+     issue date, so I2 states none and I3 is omitted.
+   - KBLI: one ABSENT code among valid ones omits C5 and states C6; all CANONICAL states
+     C5 and omits C6; one UNKNOWN code omits both.
    - `kbli_codes` cases:
      - a valid list: accepted;
      - a JSON string that decodes once to a valid list: accepted;
