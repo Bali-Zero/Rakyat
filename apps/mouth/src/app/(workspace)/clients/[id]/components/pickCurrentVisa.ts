@@ -1,4 +1,5 @@
 import type { ClientDocument } from "@/lib/api/crm/crm.types";
+import { isLive } from "./documentValidity";
 
 // The ONE rule for "which document is a person's current permit". The
 // Overview card (`pickCurrentVisa`) and the Immigration tab (which badges the
@@ -58,8 +59,7 @@ const toTime = (value?: string | null): number =>
 // The client's current visa/KITAS for the Overview card.
 //
 // Candidates: the client's own immigration visa/KITAS/KITAP documents (no
-// family member), not removed by the client in the portal (deleted_at) and
-// not archived by the team.
+// family member) that are live (Rule L: not removed, archived or rejected).
 //
 // Among dated documents the farthest expiry wins, as before. A document with
 // no expiry_date yet wins only when it was uploaded AFTER that one: a new
@@ -84,8 +84,7 @@ export const pickCurrentPermitFor = (
     (doc) =>
       isVisaDocument(doc) &&
       (doc.family_member_id ?? null) === familyMemberId &&
-      !doc.deleted_at &&
-      !doc.is_archived,
+      isLive(doc),
   );
 
   let dated: ClientDocument | undefined;
@@ -124,3 +123,19 @@ export const pickCurrentPermitFor = (
     );
   return stay[0] ?? winner;
 };
+
+/**
+ * How many permit documents of ONE holder the pick drops because they are
+ * void (removed, archived or rejected): the number the "removed or rejected
+ * files are in Documents" signpost states.
+ */
+export const countVoidPermitsFor = (
+  documents: ClientDocument[],
+  familyMemberId: number | null,
+): number =>
+  documents.filter(
+    (doc) =>
+      isVisaDocument(doc) &&
+      (doc.family_member_id ?? null) === familyMemberId &&
+      !isLive(doc),
+  ).length;

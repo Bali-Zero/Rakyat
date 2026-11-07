@@ -47,6 +47,7 @@ vi.mock("@/hooks/useClientDetail", () => ({
   useDocumentCategories: () => ({ data: [] }),
   useClientBusinessStory: () => ({ data: [], error: null, isLoading: false }),
   useInvalidateClient: () => vi.fn(),
+  useInvalidateClientProfile: () => vi.fn(),
   useSetClientCache: () => vi.fn(),
 }));
 vi.mock("@/hooks/useTeamMembers", () => ({

@@ -36,34 +36,33 @@ import {
   isStayPermitDocument,
   pickCurrentVisa,
 } from "./pickCurrentVisa";
-import { formatLongSpan } from "@/lib/utils/format-date";
+import {
+  URGENT_WINDOW_DAYS,
+  dayNumber,
+  documentValidity,
+  expiryWording,
+  isLive,
+  isUrgent as isUrgentValidity,
+  parseCalendarDate,
+} from "./documentValidity";
+import { RemovedSignpost } from "./RemovedSignpost";
+import { resolveCardDay } from "./witaClock";
 
 /**
- * "Expired Xd ago" / "Expires today" / "⏰ Xd left" / "Xy Xmo left" — the
- * wording the old per-card expiry chip used, extracted so the permit panel
- * and the legacy doc cards (Working Permit / Other, untouched by this PR)
- * share one label instead of drifting apart.
+ * Start Renewal: a renewable type, a LIVE document, a date, and 90 days or
+ * fewer left (already expired included). A void document is never renewable.
  */
-function daysUntil(dateStr: string): number {
-  return Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86400000);
-}
-
-function expiryLabel(daysLeft: number): string {
-  if (daysLeft < 0) return `Expired ${Math.abs(daysLeft)}d ago`;
-  if (daysLeft === 0) return "Expires today";
-  if (daysLeft <= 365) return `⏰ ${daysLeft}d left`;
-  return `${formatLongSpan(daysLeft)} left`;
-}
-
-/** Same eligibility check the old renewal button used — unchanged threshold. */
-function isRenewable(doc: ClientDocument): boolean {
-  if (!doc.expiry_date) return false;
-  const daysLeft = daysUntil(doc.expiry_date);
+export function isRenewable(doc: ClientDocument, day: string): boolean {
+  if (!isLive(doc)) return false;
+  const { daysLeft } = documentValidity(doc, day);
   return (
-    (daysLeft < 0 || daysLeft <= 90) &&
-    (doc.document_type?.toLowerCase().includes("kitas") ||
+    daysLeft !== null &&
+    daysLeft <= URGENT_WINDOW_DAYS &&
+    Boolean(
+      doc.document_type?.toLowerCase().includes("kitas") ||
       doc.document_type?.toLowerCase().includes("kitap") ||
-      doc.document_type?.toLowerCase().includes("visa"))
+      doc.document_type?.toLowerCase().includes("visa"),
+    )
   );
 }
 
@@ -78,15 +77,12 @@ function isRenewable(doc: ClientDocument): boolean {
  * existed). All three still route to the ONE `--state-warning` tone, never
  * the old per-bucket yellow/red hues (there is no fifth hue in this module).
  */
-function isUrgent(doc: ClientDocument): boolean {
-  if (
-    doc.alert_color === "red" ||
-    doc.alert_color === "expired" ||
-    doc.alert_color === "yellow"
-  )
-    return true;
-  if (!doc.expiry_date) return false;
-  return daysUntil(doc.expiry_date) <= 90;
+function isUrgent(doc: ClientDocument, day: string): boolean {
+  return isUrgentValidity(
+    documentValidity(doc, day),
+    URGENT_WINDOW_DAYS,
+    doc.alert_color,
+  );
 }
 
 /** `.replace(/_/g, " ")` — the OLD card's normalisation, reused so the
@@ -214,6 +210,8 @@ export function ImmigrationTab({
   onEditClick,
   onRefresh,
   onOpenFamilyTab,
+  onOpenRemoved,
+  day: dayProp,
 }: {
   clientId: number;
   documents: ClientDocument[];
@@ -223,8 +221,13 @@ export function ImmigrationTab({
   onRefresh: () => void;
   /** Switches the client card to its Family tab. */
   onOpenFamilyTab?: () => void;
+  /** Opens the Documents "Removed or rejected" group. */
+  onOpenRemoved?: () => void;
+  /** The card's day (`YYYY-MM-DD`, the payload's `as_of`). */
+  day?: string;
 }) {
   const router = useRouter();
+  const day = resolveCardDay(dayProp);
 
   const handleDelete = (docId: number, fileName: string) => {
     toast(`Archive document "${fileName || "Document"}"?`, {
@@ -247,21 +250,30 @@ export function ImmigrationTab({
   // Immigration docs: visas, permits, work authorizations — NO passports (shown in Overview)
   const isPassport = (d: ClientDocument) =>
     d.document_type?.toLowerCase().includes("passport");
+  const isImmigrationDocument = (d: ClientDocument) =>
+    !isPassport(d) &&
+    (d.document_category === "immigration" ||
+      d.document_type?.toLowerCase().includes("kitas") ||
+      d.document_type?.toLowerCase().includes("kitap") ||
+      d.document_type?.toLowerCase().includes("visa") ||
+      d.document_type?.toLowerCase().includes("permit") ||
+      d.document_type?.toLowerCase().includes("imta") ||
+      d.document_type?.toLowerCase().includes("rptka") ||
+      d.document_type?.toLowerCase().includes("evisa") ||
+      d.document_type?.toLowerCase().includes("voa") ||
+      isItkDocument(d) ||
+      isEpoDocument(d));
+  // Live only: a removed, archived or rejected document is neither current,
+  // nor history, nor counted here. It is listed once, in Documents.
   const immigrationDocs = documents.filter(
-    (d) =>
-      !isPassport(d) &&
-      (d.document_category === "immigration" ||
-        d.document_type?.toLowerCase().includes("kitas") ||
-        d.document_type?.toLowerCase().includes("kitap") ||
-        d.document_type?.toLowerCase().includes("visa") ||
-        d.document_type?.toLowerCase().includes("permit") ||
-        d.document_type?.toLowerCase().includes("imta") ||
-        d.document_type?.toLowerCase().includes("rptka") ||
-        d.document_type?.toLowerCase().includes("evisa") ||
-        d.document_type?.toLowerCase().includes("voa") ||
-        isItkDocument(d) ||
-        isEpoDocument(d)),
+    (d) => isImmigrationDocument(d) && isLive(d),
   );
+  const voidOwnImmigration = documents.filter(
+    (d) =>
+      isImmigrationDocument(d) &&
+      !isLive(d) &&
+      !(d.family_member_id || d.family_member_name),
+  ).length;
 
   // Sort: most recent expiry first, then by type
   const sortedAll = [...immigrationDocs].sort((a, b) => {
@@ -344,11 +356,12 @@ export function ImmigrationTab({
   // alone, "Issued" for an issue date or (last resort) the upload date, so a
   // row never reads as two dashes while the record carries any date.
   const historyDateText = (doc: ClientDocument): string => {
-    if (doc.issue_date && doc.expiry_date)
-      return `${formatDate(doc.issue_date)} → ${formatDate(doc.expiry_date)}`;
-    if (doc.expiry_date)
-      return `${daysUntil(doc.expiry_date) >= 0 ? "Valid until " : "Ended "}${formatDate(doc.expiry_date)}`;
-    if (doc.issue_date) return `Issued ${formatDate(doc.issue_date)}`;
+    const { expiry, state } = documentValidity(doc, day);
+    const issue = parseCalendarDate(doc.issue_date);
+    if (issue && expiry) return `${formatDate(issue)} → ${formatDate(expiry)}`;
+    if (expiry)
+      return `${state === "expired" ? "Ended " : "Valid until "}${formatDate(expiry)}`;
+    if (issue) return `Issued ${formatDate(issue)}`;
     if (doc.created_at)
       return `Issued ${formatDate(doc.created_at.slice(0, 10))}`;
     return "—";
@@ -358,7 +371,7 @@ export function ImmigrationTab({
   // file name is only ever the download button's title/aria-label.
   const rowActions = (doc: ClientDocument, withRenew = true) => (
     <div className="flex items-center justify-end gap-0.5 px-2.5">
-      {withRenew && isRenewable(doc) && (
+      {withRenew && isRenewable(doc, day) && (
         <Button
           variant="ghost"
           size="icon"
@@ -531,8 +544,9 @@ export function ImmigrationTab({
   // The history shows the current permit first, marked and larger.
   const historyRows = [...(actualVisa ? [actualVisa] : []), ...previousVisas];
 
+  const currentValidity = actualVisa ? documentValidity(actualVisa, day) : null;
   const expiryTone = actualVisa
-    ? isUrgent(actualVisa)
+    ? isUrgent(actualVisa, day)
       ? "text-[var(--state-warning)]"
       : "text-[var(--tx-pure)]"
     : "text-[var(--tx-secondary)]";
@@ -619,10 +633,14 @@ export function ImmigrationTab({
           </div>
 
           <div className="mt-4 flex flex-wrap items-end gap-7">
-            {actualVisa.issue_date && (
+            {parseCalendarDate(actualVisa.issue_date) && (
               <div>
                 <Numeral
-                  n={Math.max(0, -daysUntil(actualVisa.issue_date))}
+                  n={Math.max(
+                    0,
+                    dayNumber(day) -
+                      dayNumber(parseCalendarDate(actualVisa.issue_date)!),
+                  )}
                   size="kpi"
                   tone="wait"
                   className="text-[var(--tx-pure)]"
@@ -632,48 +650,48 @@ export function ImmigrationTab({
                 </p>
               </div>
             )}
-            {actualVisa.expiry_date &&
-              (() => {
-                const daysLeft = daysUntil(actualVisa.expiry_date);
-                const pastExpiry = daysLeft < 0;
-                return (
-                  <div>
-                    <Numeral
-                      n={Math.abs(daysLeft)}
-                      size="kpi"
-                      tone="wait"
-                      className={expiryTone}
-                    />
-                    <p className="mt-1.5 text-[11px] font-[650] uppercase tracking-[0.06em] text-[var(--tx-secondary)]">
-                      {pastExpiry ? "Days past expiry" : "Days to expiry"}
-                    </p>
-                  </div>
-                );
-              })()}
+            {currentValidity && currentValidity.daysLeft !== null && (
+              <div>
+                <Numeral
+                  n={
+                    currentValidity.state === "expired"
+                      ? -currentValidity.daysLeft
+                      : currentValidity.daysLeft
+                  }
+                  size="kpi"
+                  tone="wait"
+                  className={expiryTone}
+                />
+                <p className="mt-1.5 text-[11px] font-[650] uppercase tracking-[0.06em] text-[var(--tx-secondary)]">
+                  {currentValidity.state === "expired"
+                    ? "Days past expiry"
+                    : "Days to expiry"}
+                </p>
+              </div>
+            )}
           </div>
 
-          {actualVisa.issue_date && actualVisa.expiry_date && (
-            <ValidityTrack
-              issueDate={actualVisa.issue_date}
-              expiryDate={actualVisa.expiry_date}
-            />
-          )}
+          <ValidityTrack
+            issueDate={actualVisa.issue_date}
+            expiryDate={actualVisa.expiry_date}
+            day={day}
+          />
 
           <div className="mt-1 flex flex-wrap gap-5 text-[12.5px] text-[var(--tx-secondary)]">
-            {actualVisa.issue_date && (
+            {parseCalendarDate(actualVisa.issue_date) && (
               <span>
                 Issued{" "}
                 <b className="font-semibold text-[var(--tx-pure)]">
-                  {formatDate(actualVisa.issue_date)}
+                  {formatDate(parseCalendarDate(actualVisa.issue_date)!)}
                 </b>
               </span>
             )}
-            {actualVisa.expiry_date && (
+            {currentValidity?.expiry && currentValidity.daysLeft !== null && (
               <span>
                 Expires{" "}
                 <b className={cn("font-semibold", expiryTone)}>
-                  {formatDate(actualVisa.expiry_date)} ·{" "}
-                  {expiryLabel(daysUntil(actualVisa.expiry_date))}
+                  {formatDate(currentValidity.expiry)} ·{" "}
+                  {expiryWording(currentValidity.daysLeft)}
                 </b>
               </span>
             )}
@@ -721,13 +739,14 @@ export function ImmigrationTab({
                 >
                   <RefreshCw className="w-3 h-3" />
                   {permitDisplayLabel(doc)}
-                  {doc.expiry_date && ` · Exp ${formatDate(doc.expiry_date)}`}
+                  {documentValidity(doc, day).expiry &&
+                    ` · Exp ${formatDate(documentValidity(doc, day).expiry!)}`}
                 </span>
               ))}
             </div>
           )}
 
-          {isRenewable(actualVisa) && (
+          {isRenewable(actualVisa, day) && (
             <Button
               variant="outline"
               size="sm"
@@ -883,6 +902,8 @@ export function ImmigrationTab({
             Family permits are in the Family tab ({familyPermitCount})
           </p>
         ))}
+
+      <RemovedSignpost count={voidOwnImmigration} onOpen={onOpenRemoved} />
 
       {immigrationDocs.length === 0 ? (
         <div className="rounded-xl border border-dashed border-[var(--bz-border)] bg-[var(--bz-card)] p-12 text-center shadow-[var(--bz-shadow-card)]">

@@ -266,21 +266,27 @@ describe("calendar days in WITA", () => {
     expect(witaDateKey(WITA_LATE)).toBe("2026-11-02");
   });
   it("GUILT: just after WITA midnight an expiry of today is 0, yesterday is -1", () => {
-    expect(daysUntil("2026-11-03", WITA_MORNING)).toBe(0);
-    expect(daysUntil("2026-11-02", WITA_MORNING)).toBe(-1);
-    expect(daysUntil("2026-11-04", WITA_MORNING)).toBe(1);
+    expect(daysUntil("2026-11-03", witaDateKey(WITA_MORNING))).toBe(0);
+    expect(daysUntil("2026-11-02", witaDateKey(WITA_MORNING))).toBe(-1);
+    expect(daysUntil("2026-11-04", witaDateKey(WITA_MORNING))).toBe(1);
   });
   it("GUILT: just before WITA midnight an expiry of today is still 0", () => {
-    expect(daysUntil("2026-11-02", WITA_LATE)).toBe(0);
-    expect(daysUntil("2026-11-03", WITA_LATE)).toBe(1);
+    expect(daysUntil("2026-11-02", witaDateKey(WITA_LATE))).toBe(0);
+    expect(daysUntil("2026-11-03", witaDateKey(WITA_LATE))).toBe(1);
   });
-  it("a full instant is converted to its WITA calendar date", () => {
-    // 2026-11-02T17:00Z is 2026-11-03 01:00 in Bali.
-    expect(daysUntil("2026-11-02T17:00:00Z", WITA_MORNING)).toBe(0);
+  it("a full instant is read as written, with no timezone conversion (the backend's value[:10])", () => {
+    // 2026-11-02T17:00Z is 2026-11-03 01:00 in Bali, but the backend reads
+    // the first ten characters: the 2nd.
+    expect(daysUntil("2026-11-02T17:00:00Z", witaDateKey(WITA_MORNING))).toBe(
+      -1,
+    );
+    expect(
+      daysUntil("2026-11-03T23:59:00-11:00", witaDateKey(WITA_MORNING)),
+    ).toBe(0);
   });
   it("INNOCENCE: missing or unparsable dates are null", () => {
-    expect(daysUntil(undefined, NOW)).toBeNull();
-    expect(daysUntil("nope", NOW)).toBeNull();
+    expect(daysUntil(undefined, witaDateKey(NOW))).toBeNull();
+    expect(daysUntil("nope", witaDateKey(NOW))).toBeNull();
   });
   it("GUILT: contact days count WITA calendar dates, not 24h blocks", () => {
     // 23:59 WITA on the 2nd vs 00:30 WITA on the 3rd: one calendar day apart.
@@ -355,14 +361,14 @@ describe("pipelineAmount", () => {
 
 describe("impossible calendar dates (gate round 2)", () => {
   it("GUILT: a month 13 or a 30 February is refused, never rolled over", () => {
-    expect(daysUntil("2026-13-01", NOW)).toBeNull();
-    expect(daysUntil("2026-02-30", NOW)).toBeNull();
+    expect(daysUntil("2026-13-01", witaDateKey(NOW))).toBeNull();
+    expect(daysUntil("2026-02-30", witaDateKey(NOW))).toBeNull();
     expect(ageYears("1990-13-01", NOW)).toBeNull();
   });
 
   it("INNOCENCE: a real leap day and an ordinary date still count", () => {
-    expect(daysUntil("2028-02-29", NOW)).not.toBeNull();
-    expect(daysUntil("2026-11-10", NOW)).toBe(7);
+    expect(daysUntil("2028-02-29", witaDateKey(NOW))).not.toBeNull();
+    expect(daysUntil("2026-11-10", witaDateKey(NOW))).toBe(7);
     expect(ageYears("1990-01-01", NOW)).toBe(36);
   });
 });

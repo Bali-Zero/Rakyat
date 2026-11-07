@@ -386,7 +386,14 @@ export interface ClientDocument {
   file_id?: string;
   file_url?: string;
   google_drive_file_url?: string;
-  status?: "pending" | "received" | "verified" | "rejected" | "expired";
+  status?:
+    | "pending"
+    | "received"
+    | "verified"
+    | "rejected"
+    | "expired"
+    | "active"
+    | "google_drive";
   issue_date?: string;
   expiry_date?: string;
   notes?: string;
@@ -575,6 +582,10 @@ export interface ClientProfile {
   /** `"attention_build_failed"` when the backend could not compute `attention`,
    *  `null` on success; absent on an older backend. */
   attention_error?: string | null;
+  /** The WITA day (`YYYY-MM-DD`) the server computed `attention` for. The card
+   *  derives every document date from this one value; absent on an older
+   *  backend. */
+  as_of?: string;
   stats: {
     family_count: number;
     documents_count: number;

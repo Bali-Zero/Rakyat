@@ -37,6 +37,7 @@ import {
   useClientTimeline,
   useDocumentCategories,
   useInvalidateClient,
+  useInvalidateClientProfile,
   useSetClientCache,
 } from "@/hooks/useClientDetail";
 import { useClickOutside } from "@/hooks/useClickOutside";
@@ -57,6 +58,8 @@ import {
   viewerIsNext,
 } from "../client-row-model";
 import styles from "./client-detail-desk.module.css";
+import { formatCardDate, isLive } from "./components/documentValidity";
+import { useProfileDay, useWitaClock } from "./components/witaClock";
 import { FOCUS } from "@/components/workspace/r19/tokens";
 import { lkpmApi } from "@/lib/api/workspace/lkpm.api";
 
@@ -247,6 +250,11 @@ export function ClientDetailClient({
     isLoading,
     error: queryError,
   } = useClientDetail(clientId);
+  // The card's day is the payload's `as_of`; the browser clock only asks for
+  // a fresh payload once its WITA day has moved past it (WitaClock).
+  const profileDay = useProfileDay(profile);
+  const invalidateProfile = useInvalidateClientProfile(clientId);
+  useWitaClock(profileDay, () => void invalidateProfile());
   const { data: timelineData } = useClientTimeline(clientId);
   const { data: docCategoriesData } = useDocumentCategories();
   const invalidateClientQueries = useInvalidateClient(clientId);
@@ -287,6 +295,9 @@ export function ClientDetailClient({
   const [editingFamilyMember, setEditingFamilyMember] =
     useState<FamilyMember | null>(null);
   const [isMounted, setIsMounted] = useState(false);
+  // Which Documents group opens first: "removed" when a signpost on another
+  // tab sent the reader there.
+  const [documentsGroup, setDocumentsGroup] = useState<string>("all");
   // The signed-in viewer, for the ownership predicate only (copper stamp,
   // masthead subtitle) — read once, same as `api.getUserProfile()` in K3a's
   // /clients desk. `null`/no-email means "viewer unknown": no copper, no
@@ -436,6 +447,11 @@ export function ClientDetailClient({
     }
   }, [searchParams]);
 
+  const openRemovedDocuments = () => {
+    setDocumentsGroup("removed");
+    handleTabChange("documents");
+  };
+
   const handleTabChange = (tab: TabType, alreadyActive?: boolean) => {
     // A click on the tab that is already showing is a true no-op only when
     // `activeTab` and `visibleTab` AGREE. The render-time fallback
@@ -457,16 +473,7 @@ export function ClientDetailClient({
     });
   };
 
-  const formatDate = (dateStr: string) => {
-    if (!dateStr) return "";
-    // Return placeholder during SSR to avoid hydration mismatch
-    if (!isMounted) return "...";
-    return new Date(dateStr).toLocaleDateString("en-GB", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    });
-  };
+  const formatDate = (dateStr: string) => formatCardDate(dateStr, isMounted);
 
   if (isLoading) {
     return (
@@ -520,9 +527,19 @@ export function ClientDetailClient({
     d.document_type?.toLowerCase().includes("evisa") ||
     d.document_type?.toLowerCase().includes("voa");
   const isCompanyDoc = (d: ClientDocument) => d.document_category === "pma";
+  // The row-23 guard: only LIVE general documents are grouped by category.
   const generalDocuments = documents.filter(
-    (d) => !isPassportDoc(d) && !isImmigrationDoc(d) && !isCompanyDoc(d),
+    (d) =>
+      !isPassportDoc(d) &&
+      !isImmigrationDoc(d) &&
+      !isCompanyDoc(d) &&
+      isLive(d),
   );
+  // Every void document of the profile (removed, archived or rejected), of
+  // whatever kind, is listed exactly once, in the Documents tab's "Removed or
+  // rejected" group; the domain tabs list live documents only.
+  const voidDocuments = documents.filter((d) => !isLive(d));
+  const documentRows = [...generalDocuments, ...voidDocuments];
 
   // Group documents by category
   const documentsByCategory = generalDocuments.reduce(
@@ -675,6 +692,7 @@ export function ClientDetailClient({
     profile.attention,
     activePractices,
     profile.attention_error,
+    profileDay!,
   );
   const businessStoryShown = (businessStoryQuery.data?.length ?? 0) > 0;
 
@@ -1016,7 +1034,7 @@ export function ClientDetailClient({
               },
               {
                 key: "documents",
-                label: `Documents (${generalDocuments.length})`,
+                label: `Documents (${documentRows.length})`,
                 icon: FileText,
               },
             ]
@@ -1031,7 +1049,10 @@ export function ClientDetailClient({
                   <button
                     key={key}
                     type="button"
-                    onClick={() => handleTabChange(key as TabType, isActive)}
+                    onClick={() => {
+                      if (key === "documents") setDocumentsGroup("all");
+                      handleTabChange(key as TabType, isActive);
+                    }}
                     // Fetch the tab's chunk a moment before the click.
                     onPointerEnter={() => void TAB_LOADERS[key as TabType]?.()}
                     onFocus={() => void TAB_LOADERS[key as TabType]?.()}
@@ -1070,6 +1091,8 @@ export function ClientDetailClient({
                 interactions={interactions}
                 viewerEmail={currentUserEmail}
                 onOpenTab={(tab) => handleTabChange(tab)}
+                onOpenRemoved={openRemovedDocuments}
+                day={profileDay!}
               />
               {businessStoryShown && (
                 <BusinessStoryPanel
@@ -1154,7 +1177,10 @@ export function ClientDetailClient({
           {activeTab === "documents" && (
             <DocumentsTab
               clientId={clientId}
-              documents={generalDocuments}
+              key={documentsGroup}
+              initialGroup={documentsGroup}
+              day={profileDay!}
+              documents={documentRows}
               documentsByCategory={documentsByCategory}
               formatDate={formatDate}
               onAddClick={() => setActiveModal("add_document")}
@@ -1171,6 +1197,7 @@ export function ClientDetailClient({
 
           {activeTab === "process" && (
             <ProcessTab
+              day={profileDay!}
               clientId={clientId}
               practices={[...activePractices, ...completedPractices]}
               formatDate={formatDate}
@@ -1190,6 +1217,8 @@ export function ClientDetailClient({
                 setActiveModal("edit_family");
               }}
               onRefresh={invalidateClient}
+              onOpenRemoved={openRemovedDocuments}
+              day={profileDay!}
             />
           )}
 
@@ -1205,6 +1234,8 @@ export function ClientDetailClient({
               }}
               onRefresh={invalidateClient}
               onOpenFamilyTab={() => handleTabChange("family")}
+              onOpenRemoved={openRemovedDocuments}
+              day={profileDay!}
             />
           )}
 
@@ -1216,6 +1247,7 @@ export function ClientDetailClient({
               formatDate={formatDate}
               onRefresh={invalidateClient}
               onOpenDocuments={() => handleTabChange("documents")}
+              onOpenRemoved={openRemovedDocuments}
               companyLinks={company_links}
             />
           )}
@@ -1230,6 +1262,7 @@ export function ClientDetailClient({
               taxConsultants={taxConsultants}
               documents={taxDocuments}
               attention={profile?.attention}
+              day={profileDay!}
             />
           )}
         </div>

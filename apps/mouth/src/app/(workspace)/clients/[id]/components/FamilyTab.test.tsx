@@ -96,18 +96,32 @@ describe("FamilyTab — r19 family ledger", () => {
     );
   });
 
-  it("INNOCENCE: a green visa shows the same wording with NO warning weight — the enum, not the day count, drives it", () => {
+  it("INNOCENCE: a green visa 100 days out shows the wording with NO warning weight — only the enum or the 60-day model adds weight", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-19T12:00:00Z"));
 
-    // 10 days left would have been urgent under the old <= 90 client-side
-    // threshold; the server says green, so the weight must stay quiet.
+    // 100 days left is past both the model's 60-day window and any old
+    // <= 90 threshold: the enum says green, so the weight stays quiet.
+    renderTab([{ ...MEMBER, visa_alert: "green", visa_expiry: "2026-12-28" }]);
+
+    expect(screen.getByText("⏰ 100d left")).toHaveAttribute(
+      "style",
+      "color: var(--tx-secondary);",
+    );
+  });
+
+  it("GUILT: a green visa that expires in 10 days is urgent anyway — an enum never turns the model's answer better", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-19T12:00:00Z"));
+
     renderTab([{ ...MEMBER, visa_alert: "green", visa_expiry: "2026-09-29" }]);
 
     expect(screen.getByText("⏰ 10d left")).toHaveAttribute(
       "style",
-      "color: var(--tx-secondary);",
+      "color: var(--state-warning);",
     );
+    expect(screen.getByText("Expiring soon")).toBeInTheDocument();
+    expect(screen.queryByText("Valid")).not.toBeInTheDocument();
   });
 
   it("INNOCENCE: a member with no visa_expiry shows the em-dash, no stray wording line", () => {
@@ -133,7 +147,7 @@ describe("FamilyTab — r19 family ledger", () => {
     expect(screen.getByText("Expiring soon")).toBeInTheDocument();
   });
 
-  it("GUILT: a yellow passport_alert and a red passport_alert render different words on the date cell when no expiry is known", () => {
+  it("INNOCENCE: a passport enum with no date under it is not read — no invented wording line (the enum source rule)", () => {
     renderTab([
       {
         ...MEMBER,
@@ -151,8 +165,8 @@ describe("FamilyTab — r19 family ledger", () => {
       },
     ]);
 
-    expect(screen.getByText(/Renewal recommended/)).toBeInTheDocument();
-    expect(screen.getByText(/Expiring soon/)).toBeInTheDocument();
+    expect(screen.queryByText(/Passport:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Renewal recommended/)).not.toBeInTheDocument();
   });
 
   it("GUILT: passport_alert urgency shows the countdown wording on the date cell", () => {
@@ -315,7 +329,7 @@ describe("FamilyTab — r19 family ledger", () => {
     expect(screen.queryByText(/Passport: 15mo left/)).not.toBeInTheDocument();
   });
 
-  it("GUILT: a passport expiring on the current instant renders 'Expires today'", () => {
+  it("GUILT: a passport expiring on the card's day reads 'Expired today' — day 0 is expired", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-19T12:00:00Z"));
 
@@ -329,7 +343,7 @@ describe("FamilyTab — r19 family ledger", () => {
       },
     ]);
 
-    expect(screen.getByText(/Passport: Expires today/)).toBeInTheDocument();
+    expect(screen.getByText(/Passport: Expired today/)).toBeInTheDocument();
   });
 
   it("GUILT: an already-expired passport renders 'Expired Nd ago'", () => {
