@@ -1390,7 +1390,7 @@ html[data-oracle-theme-bootstrap="dark"]
   --oracle-accent-gold: #9d4e38;
   --atlas-copper: #9d4e38;
   --atlas-rule: #b8b2a5;
-  --atlas-serif: Baskerville, "Iowan Old Style", Wimolog, serif;
+  --atlas-serif: Baskerville, "Iowan Old Style", Georgia, serif;
   --atlas-art-filter: none;
 }
 
@@ -1408,7 +1408,7 @@ html[data-oracle-theme-bootstrap="dark"]
   --oracle-accent-gold: #e3a482;
   --atlas-copper: #e3a482;
   --atlas-rule: rgba(239, 232, 218, 0.28);
-  --atlas-serif: Baskerville, "Iowan Old Style", Wimolog, serif;
+  --atlas-serif: Baskerville, "Iowan Old Style", Georgia, serif;
   /* Dims every scenery photo/illustration for the night palette — never the
      interactive UI, which stays at full contrast through the tokens above. */
   --atlas-art-filter: brightness(0.45) saturate(0.85);
@@ -1635,7 +1635,7 @@ html[data-oracle-theme-bootstrap="dark"]
   opacity: 0;
 }
 .oracle-root.oracle-atlas .oracle-atlas-labels--world span {
-  font-family: Wimolog, serif;
+  font-family: Georgia, serif;
   font-size: 0.84cqw;
   letter-spacing: 0.19em;
   color: var(--oracle-ink-muted);

@@ -126,7 +126,7 @@ INTEREST_KEYWORDS = {
 # Simple language detection patterns
 LANGUAGE_PATTERNS = {
     "it": [
-        r"\b(ciao|buongiorno|buonasera|grazie|dujoc|quanto|costa|vorrei|posso|sono|come|perch[eé]|anche|molto|questo|quello|goqame|bisogno|serve|aiuto|informazioni)\b",
+        r"\b(ciao|buongiorno|buonasera|grazie|prego|quanto|costa|vorrei|posso|sono|come|perch[eé]|anche|molto|questo|quello|voglio|bisogno|serve|aiuto|informazioni)\b",
     ],
     "en": [
         r"\b(hello|hi|thanks|please|how much|i want|i need|can i|what is|help|information|looking for|interested)\b",

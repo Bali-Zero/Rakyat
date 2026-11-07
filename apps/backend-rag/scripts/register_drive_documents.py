@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Nuzantara BUkili Document Registerer
+Nuzantara GDrive Document Registerer
 -----------------------------------
 Parses the de-duplicated scan report and inserts the missing documents into
 the PostgreSQL `documents` table, marking their ocr_status as 'pending'.

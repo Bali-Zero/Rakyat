@@ -1,0 +1,23 @@
+# headless_lanes.txt — WHERE the key of a Console organization LINKED to one of
+# the owner's plans is sanctioned (RULED 2026-10-26 and 2026-11-01,
+# docs/rules/RULINGS.md; Builder Contract §3 in every door).
+#
+# One repo-relative DIRECTORY prefix per line, ending in `/` — no leading `/`,
+# no glob, no `..`, no space or `:`; a line that breaks the shape is ignored
+# and sanctions nothing. Blank lines and `#` lines are ignored.
+# "Headless" means no interactive `claude` session can inherit the credential
+# from the process that holds it — a batch script that asks its operator a
+# yes/no is still headless; a seat launcher, a hook or a shell profile is not.
+# Read by catE-sovereignty-lint #40 and by scripts/check_ban_predicates.py (P1):
+# a per-token-shaped Anthropic client constructed under one of these prefixes
+# is the sanctioned headless shape and is reported, not refused; the same line
+# anywhere else is refused. A missing or empty file sanctions NOTHING — the
+# guards fail closed.
+#
+# A prefix says WHERE, never WHICH credential: the credential is still the
+# linked organization's key (a Fly secret, Pro's secret store), never purchased
+# credit, never a card on auto-reload, and never exported into a shell (#40b) —
+# that is the fence the ruling keeps, and no line here can widen it. Adding a
+# prefix is a deliberate act: a dated line in RULINGS.md, in the same landing.
+apps/backend-rag/backend/
+apps/backend-rag/scripts/

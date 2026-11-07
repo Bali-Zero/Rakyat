@@ -275,14 +275,14 @@ Untuk kepatuhan penuh, pertimbangkan Visa Digital Nomad E33G (Remote Worker Visa
       // Tarif progresif
       if (taxable <= 60000000) {
         tax = taxable * 0.05;
-      } else if (taxable <= 990000029) {
+      } else if (taxable <= 250000000) {
         tax = 3000000 + (taxable - 60000000) * 0.15;
-      } else if (taxable <= 840006200) {
-        tax = 3000000 + 28500000 + (taxable - 990000029) * 0.25;
-      } else if (taxable <= 8400062000) {
-        tax = 3000000 + 28500000 + 62500000 + (taxable - 840006200) * 0.30;
+      } else if (taxable <= 500000000) {
+        tax = 3000000 + 28500000 + (taxable - 250000000) * 0.25;
+      } else if (taxable <= 5000000000) {
+        tax = 3000000 + 28500000 + 62500000 + (taxable - 500000000) * 0.30;
       } else {
-        tax = 3000000 + 28500000 + 62500000 + 1350000000 + (taxable - 8400062000) * 0.35;
+        tax = 3000000 + 28500000 + 62500000 + 1350000000 + (taxable - 5000000000) * 0.35;
       }
     } else {
       // Tarif tetap untuk non-penduduk
@@ -321,7 +321,7 @@ Untuk kepatuhan penuh, pertimbangkan Visa Digital Nomad E33G (Remote Worker Visa
 
 **Periksa dengan negara asal Anda!**
 
-- Aturan penduduk pajak di bebu
+- Aturan penduduk pajak di sana
 - Pelaporan penghasilan asing
 - Manfaat perjanjian pajak
 - Kredit pajak asing

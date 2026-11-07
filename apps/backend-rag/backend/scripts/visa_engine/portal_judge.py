@@ -12,8 +12,11 @@ a reply that is not exactly one JSON object is ``unsure`` / ``invalid_json`` (a 
 ``text_sha256``); the text is resolved by ``ledger_paths`` (never outside ``<ledger>/text``). Exit 1 when any record is
 ``unsure`` or has no successful receipt: the organ halts for a human.
 
-The judge reaches Claude only through ``claude-cascade.sh`` (OAuth seats, ``--claude-only``);
-no HTTP API, no API key. ``--judge fake`` is a deterministic stub for rehearsal.
+The judge reaches Claude only through the ``claude`` CLI on a Console seat
+(``backend.llm.claude_oauth_client``: ``collect_seats`` + ``build_seat_env``, RULED
+2026-11-01 — never the ``claude-cascade.sh`` plan-OAuth cascade it used until 2026-11-03);
+no HTTP API. The prompt travels on stdin, never on argv. ``--judge fake`` is a
+deterministic stub for rehearsal.
 
 Usage::
 
@@ -38,12 +41,6 @@ from backend.scripts.visa_engine.portal_read_receipt import fingerprint, portal_
 
 JUDGE_TIMEOUT_SECONDS = 120
 VERDICTS = frozenset({"none", "changed", "unsure"})
-_REPO_ROOT = Path(__file__).resolve().parents[5]
-# The repo copy is the SSOT (a HOME copy can fork from it); ~/scripts is the fallback.
-CASCADE_CANDIDATES = (
-    _REPO_ROOT / "infra" / "launchagents" / "wrappers" / "claude-cascade.sh",
-    Path.home() / "scripts" / "claude-cascade.sh",
-)
 
 JudgeFn = Callable[[str], str]
 
@@ -52,29 +49,48 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def cascade_argv(model: str) -> list[str]:
-    """argv of the shared wrapper; the prompt travels on stdin, never on argv."""
-    for candidate in CASCADE_CANDIDATES:
-        if candidate.is_file():
-            return [str(candidate), "--stdin", "--claude-only", "--model", model]
-    raise FileNotFoundError(
-        "claude-cascade.sh not found in infra/launchagents/wrappers or ~/scripts"
-    )
+def judge_argv(model: str) -> list[str]:
+    """argv of the judge: the CLI in print mode on the pinned model; the prompt
+    travels on stdin, never on argv (a process's command line is world-readable).
+    Lean: --bare (no hooks, no CLAUDE.md discovery) and --tools "" (a judge reads
+    its prompt and answers; it never needs a tool)."""
+    from backend.llm.claude_oauth_client import resolve_claude_cli
+
+    return [resolve_claude_cli(), "-p", "--bare", "--tools", "", "--model", model]
 
 
 def claude_judge(model: str) -> JudgeFn:
+    """A judge on the Console seats: tries them in order, one call each; the
+    first non-empty exit-0 answer wins. No seat is no door (RULED 2026-11-01):
+    an empty answer, which the caller records as ``unsure`` and halts on, never
+    the host's own plan-OAuth session."""
+    from backend.llm.claude_oauth_client import build_seat_env, collect_seats
+
     def judge(prompt: str) -> str:
-        try:
-            done = subprocess.run(
-                cascade_argv(model),
-                input=prompt,
-                capture_output=True,
-                text=True,
-                timeout=JUDGE_TIMEOUT_SECONDS,
+        seats = collect_seats()
+        if not seats:
+            print(
+                "portal_judge: no Console seat configured (ANTHROPIC_CONSOLE_KEY_<n> + "
+                "ANTHROPIC_CONSOLE_WORKSPACE_<n>) — no plan-OAuth fallback",
+                file=sys.stderr,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError):
             return ""
-        return done.stdout if done.returncode == 0 else ""
+        for seat in seats:
+            try:
+                done = subprocess.run(
+                    judge_argv(model),
+                    input=prompt,
+                    capture_output=True,
+                    text=True,
+                    timeout=JUDGE_TIMEOUT_SECONDS,
+                    env=build_seat_env(seat),
+                )
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                return ""
+            if done.returncode == 0 and done.stdout.strip():
+                return done.stdout
+            print(f"portal_judge: {seat.label} exited {done.returncode} — next seat", file=sys.stderr)
+        return ""
 
     return judge
 

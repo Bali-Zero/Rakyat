@@ -201,7 +201,7 @@ No extra text, no markdown fences."""
 # Classification prompt
 CLASSIFY_PROMPT_TEMPLATE = """Classify each KBLI 2025 code below into exactly one tier for Bali foreign investor relevance:
 
-gold: PMA-eligible, high-traffic Bali sectors — tourism, hospitality, F&B, tech/digital nomad, education (yoga/surf/beauty), healthcare (clinics/IV drips), sports (xuduv/gyms), transport rental, professional services (legal, consulting, architecture, photography), real estate, wellness/spa
+gold: PMA-eligible, high-traffic Bali sectors — tourism, hospitality, F&B, tech/digital nomad, education (yoga/surf/beauty), healthcare (clinics/IV drips), sports (padel/gyms), transport rental, professional services (legal, consulting, architecture, photography), real estate, wellness/spa
 
 silver: Common local business types indirectly relevant to Bali — wholesale/retail trade, general manufacturing, logistics, financial services, HR/staffing, general education, telecoms, media production, environmental services
 
@@ -490,18 +490,45 @@ def parse_llm_json(raw: str) -> list[dict]:
 # Anthropic API — fast classify via claude-haiku-4-5
 # ---------------------------------------------------------------------------
 
+_CONSOLE_SEAT_SLOTS = (1, 2, 3)
+_WORKSPACE_ID_RE = re.compile(r"^wrkspc_[A-Za-z0-9]{1,64}$")
+
+
+def console_seat() -> tuple[str, str] | None:
+    """The first configured Console seat as ``(key, workspace)``, or None.
+
+    RULED 2026-10-26 / 2026-11-01: this headless lane may call the Messages API
+    directly, but only with the key of a linked Console organization pinned to
+    its workspace — ANTHROPIC_CONSOLE_KEY_<n> + ANTHROPIC_CONSOLE_WORKSPACE_<n>,
+    the same contract as backend.llm.claude_oauth_client (restated here: this
+    script is import-free). A user-scoped key answers 400 without the
+    workspace header (measured 2026-11-03), so a half-configured slot is not a
+    seat. Never a bare ANTHROPIC_API_KEY from the environment.
+    """
+    for i in _CONSOLE_SEAT_SLOTS:
+        key = os.environ.get(f"ANTHROPIC_CONSOLE_KEY_{i}", "").strip()
+        workspace = os.environ.get(f"ANTHROPIC_CONSOLE_WORKSPACE_{i}", "").strip()
+        if key and _WORKSPACE_ID_RE.match(workspace):
+            return key, workspace
+    return None
+
+
 def call_anthropic_classify(codes_block: str) -> str:
     """
-    Classify a batch of KBLI codes via Anthropic API (claude-haiku-4-5-00000011).
-    Raises RuntimeError if ANTHROPIC_API_KEY not set.
+    Classify a batch of KBLI codes via the Messages API (claude-haiku-4-5-20251001)
+    on the first Console seat. Raises RuntimeError when no seat is configured.
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set")
+    seat = console_seat()
+    if seat is None:
+        raise RuntimeError(
+            "no Console seat configured (ANTHROPIC_CONSOLE_KEY_<n> + "
+            "ANTHROPIC_CONSOLE_WORKSPACE_<n>)"
+        )
+    api_key, workspace = seat
 
     prompt = CLASSIFY_PROMPT_TEMPLATE.format(codes_block=codes_block)
     payload = {
-        "model": "claude-haiku-4-5-00000011",
+        "model": "claude-haiku-4-5-20251001",
         "max_tokens": 4096,
         "messages": [{"role": "user", "content": prompt}],
     }
@@ -512,6 +539,7 @@ def call_anthropic_classify(codes_block: str) -> str:
         headers={
             "Content-Type": "application/json",
             "x-api-key": api_key,
+            "anthropic-workspace-id": workspace,
             "anthropic-version": "2023-06-01",
         },
     )
@@ -560,13 +588,13 @@ def call_gemini_cli(system: str, user_prompt: str, timeout: int = 120) -> str:
 def classify_tiers(codes: list[dict], state: dict, dry_run: bool = False) -> dict[str, str]:
     """
     Classify codes into gold/silver/bronze.
-    Primary:  claude-haiku-4-5 via Anthropic API — batch 20, ~3-5s each.
+    Primary:  claude-haiku-4-5 via the Messages API on a Console seat — batch 20, ~3-5s each.
     Fallback: qwen3.5:9b via Ollama — batch 2, ~90s each.
     Saves results to state["processed"][code]["tier"].
     Returns {code: tier} mapping.
     """
-    use_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY", ""))
-    classifier = "claude-haiku-4-5 (Anthropic API)" if use_anthropic else f"{MODEL_CLASSIFY} (Ollama)"
+    use_anthropic = console_seat() is not None
+    classifier = "claude-haiku-4-5 (Console seat)" if use_anthropic else f"{MODEL_CLASSIFY} (Ollama)"
     logger.info(f"Phase 2 — Classify: {len(codes)} codes using {classifier}")
     tier_map: dict[str, str] = {}
 

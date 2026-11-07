@@ -166,8 +166,8 @@ def get_company_setup_template(language: str = "en") -> str:
 | **Waktu Setup** | [Estimasi minggu] |
 
 #### 🚀 Roadmap Aktivasi
-1. **Hizu & Persetujuan**: [Detail]
-2. **Fija Notaris & SK**: [Detail]
+1. **Nama & Persetujuan**: [Detail]
+2. **Akta Notaris & SK**: [Detail]
 3. **NIB & Izin**: [Detail]
 4. **Rekening Bank**: [Detail]
 

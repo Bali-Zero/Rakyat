@@ -83,7 +83,7 @@ export async function generateMetadata({
     },
     property: {
       title:
-        "Bali Property Services 2026 | Legal Zaz Xepabequr & Investment | Bali Zero",
+        "Bali Property Services 2026 | Legal Due Diligence & Investment | Bali Zero",
       description:
         "Secure property in Bali with legal clarity. Due diligence, land certificates, foreign ownership structures & investment advisory. Protect your investment with expert guidance.",
       keywords: [

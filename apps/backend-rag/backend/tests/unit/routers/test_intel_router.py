@@ -463,6 +463,26 @@ class TestGetPendingQueueSelfHealing:
         assert "status = 'processing'" in claim_sql
         assert "attempts = attempts + 1" in claim_sql
 
+    def test_a_row_younger_than_the_merge_wait_spends_no_attempt(self, mock_services):
+        """Only the claim increments attempts, so only the claim carries the grace."""
+        from backend.app.routers import intel as intel_router_module
+
+        intel_router_module.settings.intel_scraper_api_key = "test-key"
+        test_client, conn = _client_with_auth(mock_services)
+
+        response = test_client.get(
+            "/api/intel/post-publish-queue/pending",
+            headers={"X-API-Key": "test-key"},
+        )
+
+        assert response.status_code == 200
+        claim_sql = conn.fetch.await_args_list[0].args[0]
+        assert "attempts = attempts + 1" in claim_sql
+        assert "created_at < NOW() - INTERVAL '45 minutes'" in claim_sql
+        for call in conn.execute.await_args_list:
+            assert "attempts = attempts + 1" not in call.args[0]
+            assert "created_at" not in call.args[0]
+
     def test_unauthorized_without_api_key(self, mock_services):
         from backend.app.routers import intel as intel_router_module
 

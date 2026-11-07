@@ -94,8 +94,8 @@ disclosure gate.  Direct Fly execution therefore keeps working without a
 ``PYTHONPATH`` override, while every writer uses the exact same PMA/Bali
 allowlist and boolean validation.
 
-AFTER APPLYING, EVICT THE CACHE: `inspect_kbli` caches its assembled payload
-under `kbli_inspect_v8_<code>` for up to 30 days, so a cured Qdrant payload is
+AFTER APPLYING, EVICT THE CACHE: `inspect_kbli` caches its legacy KG/Qdrant payload
+under `kbli_inspect_v9_<code>` for up to 30 days, so a cured Qdrant payload is
 invisible on the channel until `kbli_inspect_cache_bust.py --only <codes>
 --apply` has run.
 """

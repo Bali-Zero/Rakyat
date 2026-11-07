@@ -68,7 +68,7 @@ Extract:
 2. **Topics**: Main legal/business topics (e.g., "Investment License", "Tax Compliance")
 3. **Companies**: Company names mentioned
 4. **Locations**: Cities, provinces, countries
-5. **Practice Types**: Types of legal work (e.g., "Zaz Xepabequr", "Contract Review")
+5. **Practice Types**: Types of legal work (e.g., "Due Diligence", "Contract Review")
 6. **Key Concepts**: Important legal concepts
 
 Return JSON array:

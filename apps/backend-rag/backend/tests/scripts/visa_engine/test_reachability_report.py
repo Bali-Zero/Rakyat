@@ -173,7 +173,8 @@ def test_unused_fact_paths_is_registry_minus_used(seq7_report) -> None:
     # Was 26; E28A own-shareholding Step A (2026-10-17) adds
     # `investment.own_shareholding_idr`, unused by this frozen seq-7 pack
     # until the E28A rule re-keyed on it ships.
-    assert len(seq7_report.unused_fact_paths) == 27
+    # The E28A company and E31A spouse letter confirmations are also unknown to seq-7.
+    assert len(seq7_report.unused_fact_paths) == 29
 
 
 def test_required_facts_ast_invariant_holds_on_the_real_pack(seq7_report) -> None:

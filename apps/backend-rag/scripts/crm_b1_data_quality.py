@@ -24,10 +24,7 @@ from pathlib import Path
 
 import asyncpg
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql://backend_rag_v2:<<ROTATED_2026_05_22_see_DATABASE_URL_env>>@localhost:15432/nuzantara_rag",
-)
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
@@ -54,12 +51,12 @@ NULLIF_FIELDS = ["phone", "whatsapp", "address", "nationality", "passport_number
 
 # Known duplicates: (id_to_delete, id_to_keep, reason, merge_practices)
 DEDUP_LIST = [
-    (11397, 11394, "Lohazekuk Huvicul Jekag Fif — inactive dup", False),
-    (11393, 11396, "Futaxeh Xinuve Dewiqihupu �� inactive dup", False),
-    (1824, 11390, "Huqituzap Hake — old inactive, new has 3 prax", False),
-    (7441, 10550, "Kelo Qawidibavu/Jagacofox — typo dup", False),
-    (11386, 10825, "Wige Wininah — merge practices to active", True),
-    (10573, 9507, "Marine Zafefewid — merge practices to active", True),
+    (11397, 11394, "inactive dup", False),
+    (11393, 11396, "inactive dup", False),
+    (1824, 11390, "old inactive, new has 3 prax", False),
+    (7441, 10550, "typo dup", False),
+    (11386, 10825, "merge practices to active", True),
+    (10573, 9507, "merge practices to active", True),
 ]
 
 

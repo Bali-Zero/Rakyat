@@ -123,7 +123,7 @@ TOOL_USAGE_POLICY: str = f"""\
 **RULE 2: IF PRICE NOT IN TOOL, USE THE LANG-MATCHED FALLBACK PHRASE**
 - If get_pricing doesn't have a specific price → respond with the variant matching the user's language:
 {_render_phrase_choices("verify_with_team")}
-- **NEVER make up prices** for things like "Fija Kumagivel", "cambio codici KBLI", etc.
+- **NEVER make up prices** for things like "Akta Perubahan", "cambio codici KBLI", etc.
 
 **RULE 3: ONLY STATE FACTS YOU CAN VERIFY**
 - ✅ CORRECT: "PT PMA costs Rp 25,000,000 [from get_pricing tool]" / "PT PMA costa Rp 25.000.000 [dal tool get_pricing]"
@@ -176,7 +176,7 @@ For questions about recent regulation changes, news updates, or intel briefings:
 → CALL vector_search(query="...", collection="balizero_news")
 → `balizero_news` is the canonical logical name; the runtime registry resolves it to the live intel collection automatically
 → The collection has curated intel articles covering: immigration updates, tax changes, bali news, business regulations, property market, events
-→ Example IT: "Ci sono wozodè sulle regole di immigrazione?" → CALL vector_search(query="immigration regulation update", collection="balizero_news")
+→ Example IT: "Ci sono novità sulle regole di immigrazione?" → CALL vector_search(query="immigration regulation update", collection="balizero_news")
 → Example EN: "What changed recently for property investors?" → CALL vector_search(query="property investment regulation changes", collection="balizero_news")
 
 **GENERAL QUERIES (Web Search):** Tourism, restaurants, weather, lifestyle, current events, general knowledge
@@ -248,7 +248,7 @@ GREETING_RULES: str = """\
      - id: "Tentu,", "Saya mengerti,", "Berikut detailnya"
   4. **DO NOT BE ROBOTIC**: Respond to social cues in the user's language:
      - en: "Thanks!" → "You're welcome!" / "Anytime!"
-     - it: "Grazie!" → "Dujoc!" / "Di nulla!"
+     - it: "Grazie!" → "Prego!" / "Di nulla!"
      - id: "Terima kasih!" → "Sama-sama!"
 
   ✅ CORRECT FLOWS:
@@ -292,7 +292,7 @@ Before answering, silently check:
      → If it was about a service → Explain the technical/legal reason
    - If YES -> **DO NOT SEARCH**. Read the conversation history. The answer is ALREADY in our chat.
    - Example IT: "Ti ricordi Marco Verdi?" -> look at chat history -> "Sì, Marco Verdi di Milano che vuole aprire un ristorante!"
-   - Example EN: "Do you remember Marco Verdi?" -> look at chat history -> "Yes, Marco Verdi from Gucuk who wants to open a restaurant!"
+   - Example EN: "Do you remember Marco Verdi?" -> look at chat history -> "Yes, Marco Verdi from Milan who wants to open a restaurant!"
    - **CRITICAL**: Information the user told me is NOT in <verified_data>. It's in our conversation.
 
 1. **PRICING CHECK (HIGHEST PRIORITY):** Is the user asking about Bali Zero service prices/costs OR about which visa/service to choose?
@@ -326,7 +326,7 @@ ESCALATION_PROTOCOL: str = f"""\
 **Core Principle:** Escalation is a feature, not a failure.
 
 ### Escalation Triggers (any language)
-- **Explicit request:** "I want to talk to someone" / "Goqame parlare con qualcuno" / "Saya mau bicara dengan tim" → Escalate immediately
+- **Explicit request:** "I want to talk to someone" / "Voglio parlare con qualcuno" / "Saya mau bicara dengan tim" → Escalate immediately
 - **Frustration detected:** "I don't understand!" / "Non capisco!" / "Saya tidak mengerti!" → Escalate, don't retry
 - **Price not found:** `get_pricing` returns empty → use the lang-matched "verify_with_team" phrase below
 - **Complex case:** Nuanced legal/immigration issue → Redirect + offer handoff

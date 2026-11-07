@@ -5,7 +5,7 @@
  * (`Bali-Zero-Round2-Assessment-Booklet-EN.pdf`). The figures below were
  * machine-verified before that print: bank closing 133.750.000, cash-book
  * closing 116.385.000, difference 17.365.000, reconciled exactly by the four
- * planted items (MDR 850.000 · cut-off 27.000.001 · double payment 8.750.000 ·
+ * planted items (MDR 850.000 · cut-off 27.000.000 · double payment 8.750.000 ·
  * bank charge 35.000). Do not "tidy" a number here without re-running that
  * arithmetic — a test whose numbers do not add up punishes the candidate who
  * is good enough to notice.
@@ -52,7 +52,7 @@ export const BANK_ROWS: LedgerRow[] = [
   {
     date: "03/07",
     description: "TRSF E-BANKING CR — AGODA PAYOUT JULI",
-    amount: "+30.000.001",
+    amount: "+38.400.000",
     balance: "134.900.000",
   },
   {
@@ -70,7 +70,7 @@ export const BANK_ROWS: LedgerRow[] = [
   {
     date: "08/07",
     description: "TRSF MASUK — PT SANDALWOOD",
-    amount: "+10.000.012",
+    amount: "+15.000.000",
     balance: "79.760.000",
   },
   {
@@ -82,7 +82,7 @@ export const BANK_ROWS: LedgerRow[] = [
   {
     date: "12/07",
     description: "SETTLEMENT EDC BCA — PERIODE 01-11/07",
-    amount: "+41.000.001",
+    amount: "+41.650.000",
     balance: "110.160.000",
   },
   {
@@ -100,13 +100,13 @@ export const BANK_ROWS: LedgerRow[] = [
   {
     date: "18/07",
     description: "TRSF E-BANKING CR — AIRBNB PAYOUT",
-    amount: "+22.100.001",
+    amount: "+22.150.000",
     balance: "114.810.000",
   },
   {
     date: "20/07",
     description: "TRSF KELUAR — SEWA KANTOR JULI",
-    amount: "−10.000.012",
+    amount: "−15.000.000",
     balance: "99.810.000",
   },
   {
@@ -117,8 +117,8 @@ export const BANK_ROWS: LedgerRow[] = [
   },
   {
     date: "25/07",
-    description: "TRSF MASUK — BPK. XIRILA",
-    amount: "+10.000.013",
+    description: "TRSF MASUK — BPK. CONTOH NASABAH",
+    amount: "+18.000.000",
     balance: "111.710.000",
   },
   {
@@ -130,7 +130,7 @@ export const BANK_ROWS: LedgerRow[] = [
   {
     date: "31/07",
     description: "TRSF MASUK — K. LINDQVIST",
-    amount: "+27.000.001",
+    amount: "+27.000.000",
     balance: "133.785.000",
   },
   {
@@ -151,7 +151,7 @@ export const CASHBOOK_ROWS: LedgerRow[] = [
   {
     date: "03/07",
     description: "Agoda payout July",
-    amount: "+30.000.001",
+    amount: "+38.400.000",
     balance: "134.900.000",
   },
   {
@@ -169,7 +169,7 @@ export const CASHBOOK_ROWS: LedgerRow[] = [
   {
     date: "08/07",
     description: "Management fee — PT Sandalwood",
-    amount: "+10.000.012",
+    amount: "+15.000.000",
     balance: "79.760.000",
   },
   {
@@ -181,7 +181,7 @@ export const CASHBOOK_ROWS: LedgerRow[] = [
   {
     date: "12/07",
     description: "Card sales settlement (EDC)",
-    amount: "+40.000.001",
+    amount: "+42.500.000",
     balance: "111.010.000",
   },
   {
@@ -193,13 +193,13 @@ export const CASHBOOK_ROWS: LedgerRow[] = [
   {
     date: "18/07",
     description: "Airbnb payout",
-    amount: "+22.100.001",
+    amount: "+22.150.000",
     balance: "124.410.000",
   },
   {
     date: "20/07",
     description: "Office rent — July",
-    amount: "−10.000.012",
+    amount: "−15.000.000",
     balance: "109.410.000",
   },
   {
@@ -210,8 +210,8 @@ export const CASHBOOK_ROWS: LedgerRow[] = [
   },
   {
     date: "25/07",
-    description: "Owner transfer — Bpk. Xirila",
-    amount: "+10.000.013",
+    description: "Owner transfer — Bpk. Contoh Nasabah",
+    amount: "+18.000.000",
     balance: "121.310.000",
   },
   {
@@ -330,7 +330,7 @@ export const EXERCISES: Exercise[] = [
       {
         id: "c_reply",
         label: "Your reply",
-        placeholder: "Dear Mr Pinihoh,",
+        placeholder: "Dear Mr Example,",
       },
     ],
   },

@@ -126,7 +126,7 @@
       "monFriHours": "9:00 - 17:00",
       "saturday": "Sabato",
       "saturdayHours": "10:00 - 14:00",
-      "detali": "Domenica",
+      "sunday": "Domenica",
       "sundayClosed": "Chiuso",
       "timezone": "Fuso orario: WITA (Ora di Bali, UTC+8)"
     },
@@ -293,7 +293,7 @@
         "network_error": "Connessione persa. Verifica la rete e riprova.",
         "email_not_found": "Email non trovata.",
         "server_error": "Errore del server. Riprova tra qualche minuto.",
-        "maintenance": "Manutenzione in corso. Torna più maguk."
+        "maintenance": "Manutenzione in corso. Torna più tardi."
       }
     },
     "forgot_password": {
@@ -320,7 +320,7 @@
   "secondHome": {
     "hero": {
       "eyebrow": "E33 — Visto Second Home",
-      "title": "Ximi in Indonesia fino a 5 anni — con i tuoi fondi",
+      "title": "Vivi in Indonesia fino a 5 anni — con i tuoi fondi",
       "subtitle": "Il visto Second Home è un permesso di soggiorno a lungo termine per richiedenti con solide disponibilità economiche. Nessuno sponsor, nessun datore di lavoro — la base è il tuo impegno finanziario. Si parte da un fit memo gratuito.",
       "stat1v": "5 anni",
       "stat1l": "Primo rilascio, rinnovabile",
@@ -340,8 +340,8 @@
       },
       "b": {
         "title": "Percorso B — Proprietà",
-        "amount": "USD 1.000.001",
-        "body": "Un'unità completata in un rumah susun o appartamento del valore di almeno USD 1.000.001.",
+        "amount": "USD 1.000.000",
+        "body": "Un'unità completata in un rumah susun o appartamento del valore di almeno USD 1.000.000.",
         "note": "Solo strata-title completata — acquisti off-plan e leasehold non sono validi."
       }
     },
@@ -402,7 +402,7 @@
       "q1": "Cos'è il visto Second Home E33 per l'Indonesia?",
       "a1": "Il visto Second Home E33 è un permesso di soggiorno a lungo termine per richiedenti con solide disponibilità economiche. Il primo rilascio dura fino a 5 anni ed è rinnovabile, con un limite cumulativo di 10 anni. È un puro permesso di soggiorno e non autorizza il lavoro in Indonesia.",
       "q2": "Come ci si qualifica per il visto Second Home?",
-      "a2": "Due percorsi: un deposito di USD 130.000 intestato a te presso una banca statale indonesiana (BUMN), oppure un'unità completata in un rumah susun o appartamento del valore di USD 1.000.001. Off-plan e leasehold non sono validi.",
+      "a2": "Due percorsi: un deposito di USD 130.000 intestato a te presso una banca statale indonesiana (BUMN), oppure un'unità completata in un rumah susun o appartamento del valore di USD 1.000.000. Off-plan e leasehold non sono validi.",
       "q3": "Posso lavorare in Indonesia con il visto Second Home?",
       "a3": "No. L'E33 è solo un permesso di soggiorno — non autorizza il lavoro. Il lavoro retribuito in Indonesia richiede un permesso di lavoro/KITAS separato.",
       "q4": "Esiste un'opzione senior per il visto Second Home?",

@@ -56,7 +56,12 @@ export {
 } from "./Checklist";
 
 // Info Card - Highlighted information boxes
-export { InfoCard, type InfoCardProps } from "./InfoCard";
+export {
+  InfoCard,
+  type InfoCardItem,
+  type InfoCardLabelledItem,
+  type InfoCardProps,
+} from "./InfoCard";
 
 // Glossary Term - Linked glossary terms
 export { GlossaryTerm, type GlossaryTermProps } from "./GlossaryTerm";

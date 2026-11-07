@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import nextConfig from "../../../../next.config";
+import nextConfig, { PUBLIC_CSP_REPORT_ONLY } from "../../../../next.config";
 
 describe("production content security policy", () => {
-  it("keeps the shared security headers global without a global CSP", async () => {
+  it("keeps the shared security headers global without a global enforcing CSP", async () => {
     expect(nextConfig.headers).toBeDefined();
 
     const rules = await nextConfig.headers!();
@@ -19,8 +19,11 @@ describe("production content security policy", () => {
       key: "Strict-Transport-Security",
       value: "max-age=63072000; includeSubDomains; preload",
     });
+    // No ENFORCING policy on the catch-all: a global one would block the
+    // dependencies of independent surfaces such as Prime. The report-only
+    // policy (2026-11-01) blocks nothing and only inventories violations.
     expect(enforcingHeader).toBeUndefined();
-    expect(reportOnlyHeader).toBeUndefined();
+    expect(reportOnlyHeader?.value).toBe(PUBLIC_CSP_REPORT_ONLY);
   });
 
   it("enforces a client-safe CSP on every portal route", async () => {

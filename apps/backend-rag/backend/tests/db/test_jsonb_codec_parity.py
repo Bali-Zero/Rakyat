@@ -17,16 +17,17 @@ directory).
 
 The cure widens the codec's encoder to `JSONB_ENCODER =
 functools.partial(json.dumps, default=str)` — a strict superset of every
-caller's own `default=str` serializer — and makes it the ONE object every
-pool (`database.py`, both `service_initializer.py` paths, and the
-`prod_shaped_pool` test fixture) imports and passes to
-`asyncpg.create_pool(init=...)`. This file has three parts:
+caller's own `default=str` serializer. `database.py` owns the shared
+`create_database_pool` factory, both `service_initializer.py` paths call that
+factory, and the factory passes the one canonical initializer to
+`asyncpg.create_pool(init=...)`. The `prod_shaped_pool` fixture imports the
+same initializer directly. This file has three parts:
 
-STRUCTURAL (no database, always runs): the encoder object is the right
-shape, the identity is shared (not four independent copies that can drift
-again the way the pre-2026-08-27 codecs did), and a static AST scan proves no
-`set_type_codec` call anywhere in the three canonical files still names a
-bare `json.dumps` encoder.
+STRUCTURAL (no database, always runs): the encoder object is the right shape,
+the shared factory identity and call path are pinned, both full/light policies
+execute the real canonical codec hook, and a static AST scan proves no
+`set_type_codec` call anywhere in the canonical files still names a bare
+`json.dumps` encoder.
 
 LIVE (in practice ALWAYS runs -- see below): a real round-trip through
 `create_prod_shaped_pool` proving (a) a native Python container round-trips
@@ -104,6 +105,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import asyncpg
 import pytest
@@ -141,12 +143,10 @@ _CANONICAL_CODEC_FILES = (
     BACKEND_ROOT / "scripts" / "kg_staging_promotion.py",
 )
 
-# The production wrappers that must ACTUALLY CALL the canonical hook. Importing
-# the symbol is not using it: `test_service_initializer_imports_the_canonical_
-# initializer_by_identity` below compares module attributes, and that comparison
-# stays true even if every call were deleted. Same refuter, same round.
-_MUST_CALL_INITIALIZER = (
-    BACKEND_ROOT / "app" / "setup" / "service_initializer.py",
+# Direct users of the codec initializer. The application initializer now calls
+# the shared pool factory instead of duplicating this hook in both process paths.
+_DIRECT_INITIALIZER_CALLERS = (
+    BACKEND_ROOT / "app" / "core" / "database.py",
     BACKEND_ROOT / "scripts" / "kg_staging_promotion.py",
     BACKEND_ROOT / "tests" / "fixtures" / "prod_shaped_pool.py",
 )
@@ -194,19 +194,81 @@ def test_prod_shaped_pool_imports_the_canonical_initializer_by_identity() -> Non
     production the way the pre-2026-08-29 duplicate did; importing the name
     makes drift structurally impossible without editing this import."""
     assert (
-        prod_shaped_pool_module.init_asyncpg_connection
-        is database_module.init_asyncpg_connection
+        prod_shaped_pool_module.init_asyncpg_connection is database_module.init_asyncpg_connection
     )
 
 
-def test_service_initializer_imports_the_canonical_initializer_by_identity() -> None:
-    """Both `service_initializer.py` pool paths call
-    `init_asyncpg_connection(conn)` (imported at module level from
-    `backend.app.core.database`), never their own `set_type_codec`."""
-    assert (
-        service_initializer_module.init_asyncpg_connection
-        is database_module.init_asyncpg_connection
+def test_service_initializer_imports_the_canonical_pool_contract_by_identity() -> None:
+    """Both application roles use the shared factory and policy types."""
+    assert service_initializer_module.create_database_pool is database_module.create_database_pool
+    assert service_initializer_module.DatabasePoolPolicy is database_module.DatabasePoolPolicy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("role", "validate_on_connect", "validate_after_create"),
+    (("full", True, True), ("light", False, False)),
+)
+async def test_shared_pool_factory_registers_canonical_codecs_for_both_roles(
+    role: str,
+    validate_on_connect: bool,
+    validate_after_create: bool,
+) -> None:
+    """Exercise the real factory hook; do not replace the codec with a mock."""
+    connection = MagicMock()
+    connection.set_type_codec = AsyncMock()
+    connection.execute = AsyncMock()
+    connection.fetchval = AsyncMock(return_value=1)
+    acquire = MagicMock()
+    acquire.__aenter__ = AsyncMock(return_value=connection)
+    acquire.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock()
+    pool.acquire.return_value = acquire
+    policy = database_module.DatabasePoolPolicy(
+        min_size=2,
+        max_size=10,
+        command_timeout=30 if role == "full" else 60,
+        max_inactive_connection_lifetime=30.0,
+        statement_timeout_seconds=30,
+        validate_on_connect=validate_on_connect,
+        validate_after_create=validate_after_create,
     )
+
+    with patch.object(
+        database_module.asyncpg,
+        "create_pool",
+        new=AsyncMock(return_value=pool),
+    ) as create_pool:
+        result = await database_module.create_database_pool(
+            dsn="postgresql://db/app",
+            policy=policy,
+        )
+        await create_pool.await_args.kwargs["init"](connection)
+
+    assert result is pool
+    assert connection.set_type_codec.await_args_list == [
+        call(
+            "jsonb",
+            encoder=pg_json_codec.JSONB_ENCODER,
+            decoder=json.loads,
+            schema="pg_catalog",
+        ),
+        call(
+            "json",
+            encoder=pg_json_codec.JSONB_ENCODER,
+            decoder=json.loads,
+            schema="pg_catalog",
+        ),
+    ]
+    expected_executes = [call("SET statement_timeout = '30s'")]
+    if role == "full":
+        expected_executes.append(call("SELECT 1"))
+        connection.fetchval.assert_awaited_once_with("SELECT 1")
+        pool.acquire.assert_called_once_with()
+    else:
+        connection.fetchval.assert_not_awaited()
+        pool.acquire.assert_not_called()
+    assert connection.execute.await_args_list == expected_executes
 
 
 def _encoder_kwarg_is_canonical(node: ast.expr) -> bool:
@@ -298,34 +360,35 @@ def test_scanner_actually_detects_a_bare_encoder(tmp_path: Path) -> None:
     assert _set_type_codec_violations(innocent) == []
 
 
-def _awaits_canonical_initializer(path: Path) -> bool:
-    """True if `path` contains at least one `await init_asyncpg_connection(...)`
-    call. AST-based, so a mention inside a docstring or a comment does not
-    count -- only a real call node does."""
+def _named_call_count(path: Path, name: str) -> int:
+    """Count actual calls to a named function, excluding text and imports."""
     tree = ast.parse(path.read_text(), filename=str(path))
+    count = 0
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
-        if name == "init_asyncpg_connection":
-            return True
-    return False
+        called_name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+        count += called_name == name
+    return count
 
 
-def test_production_pool_wrappers_actually_call_the_initializer() -> None:
-    """The identity tests above prove the SYMBOL is shared. They do NOT prove
-    it is USED: delete the `await init_asyncpg_connection(conn)` lines from
-    `service_initializer.py` and both identity tests still pass, because a
-    module attribute is still a module attribute. That gap was found by a
-    blind cross-family refuter (Codex GPT-5.6 sol) on 2026-08-30 and is what
-    this test closes -- an import is not a call."""
-    missing = [str(p) for p in _MUST_CALL_INITIALIZER if not _awaits_canonical_initializer(p)]
+def test_pool_wrappers_reach_the_canonical_codec_path() -> None:
+    """Pin the current graph: application roles share the factory; direct
+    wrappers call the codec hook. Importing a symbol alone is insufficient."""
+    missing = [
+        str(path)
+        for path in _DIRECT_INITIALIZER_CALLERS
+        if _named_call_count(path, "init_asyncpg_connection") == 0
+    ]
     assert not missing, (
-        "these files import or are expected to use the canonical initializer but "
-        f"contain no call to it: {missing}. An import is not a call -- if the pool "
-        "no longer routes through init_asyncpg_connection, test/production codec "
-        "parity is broken even though every identity assertion still passes."
+        "these direct wrappers contain no call to init_asyncpg_connection: "
+        f"{missing}. An import is not a call."
+    )
+    initializer_path = BACKEND_ROOT / "app" / "setup" / "service_initializer.py"
+    assert _named_call_count(initializer_path, "create_database_pool") == 2, (
+        "full and light application startup must each call the shared pool factory; "
+        "they must not duplicate codec bodies or bypass the factory"
     )
 
 
@@ -437,6 +500,7 @@ async def test_pre_serialized_string_still_becomes_jsonb_string_scalar() -> None
             await conn.execute(f"DROP TABLE IF EXISTS {table}")
         await pool.close()
 
+
 # --------------------------------------------------------------------------
 # REAL CALL-SITE PROOF -- the four production writers, the four real tables.
 # See the module docstring's "REAL-CALL-SITE PROOF" paragraph for why this
@@ -533,8 +597,7 @@ async def test_journal_append_event_writes_a_real_jsonb_object_on_garuda_order_j
             # path extraction is the pair that defeats every false-green it could name,
             # and these tests asserted only the first.
             probe = await conn.fetchval(
-                "SELECT detail ->> 'probe' FROM garuda_order_journal "
-                "WHERE event_id = $1",
+                "SELECT detail ->> 'probe' FROM garuda_order_journal WHERE event_id = $1",
                 event_id,
             )
             assert probe == "jsonb_codec_parity", (
@@ -626,9 +689,7 @@ async def test_journal_enqueue_outbox_writes_a_real_jsonb_object_on_garuda_order
                     "round-trip; on a jsonb string scalar this accessor returns None"
                 )
             finally:
-                await conn.execute(
-                    "DELETE FROM garuda_order_outbox WHERE order_id = $1", order_id
-                )
+                await conn.execute("DELETE FROM garuda_order_outbox WHERE order_id = $1", order_id)
                 await conn.execute("DELETE FROM garuda_orders WHERE order_id = $1", order_id)
                 # garuda_order_journal row: append-only, left in place (see
                 # the test above).

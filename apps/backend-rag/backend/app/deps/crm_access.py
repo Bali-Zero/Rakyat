@@ -81,7 +81,7 @@ def get_crm_user_filter(
     Usage in routers:
         assigned_filter = Depends(get_crm_user_filter)
         # assigned_filter is None → show all
-        # assigned_filter is "ux14@dxxx1.com" → WHERE assigned_to = $N
+        # assigned_filter is "user@email.com" → WHERE assigned_to = $N
     """
     # RBAC: admins see the whole book (None = no filter). Non-admins are scoped to
     # their own assigned clients. NB: this is gated on is_crm_admin, NOT on

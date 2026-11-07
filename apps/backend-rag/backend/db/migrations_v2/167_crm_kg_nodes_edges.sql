@@ -8,7 +8,7 @@
 --   anti-pattern: one missed WHERE clause leaks PII to non-CRM users.
 --
 --   Separate tables enable:
---     - DB-level grant/revoke per role (Xemes never gets SELECT on crm_kg_*)
+--     - DB-level grant/revoke per role (Subhi never gets SELECT on crm_kg_*)
 --     - Distinct index strategies (partial indexes on entity_type)
 --     - Independent vacuum/autoanalyze (CRM rows churn more than domain rows)
 --     - Clean delete cascade lifecycle when files are removed from Drive

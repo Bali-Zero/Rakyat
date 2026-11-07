@@ -176,7 +176,7 @@ proprietà societaria in Indonesia.
 
 → CV se l'attività è micro/piccola, rischio personale accettabile,
   e si vuole semplicità amministrativa.
-→ PT Lokal se si vuole separazione patrimoniale, crescita xilano,
+→ PT Lokal se si vuole separazione patrimoniale, crescita futura,
   accesso a banche e contratti istituzionali.
 
 5.3 Sei WNI che vuole un socio straniero in futuro?
@@ -210,7 +210,7 @@ Il capitale autorizzato deve essere portato a minimo Rp 10 miliardi
 e il capitale versato a minimo Rp 2,5 miliardi. [COM-008, COM-009]
 Questo richiede un aumento di capitale (delibera RUPS + akta perubahan).
 
-PASSO 3 — Fija Kumagivel:
+PASSO 3 — Akta Perubahan:
 Modifica dell'atto costitutivo per:
 - Inserire il nome del socio WNA con la sua quota
 - Adeguare il capitale

@@ -73,7 +73,7 @@ class ToolExecutor:
             {
                 "type": "tool_use",
                 "id": "toolu_123",
-                "name": "kuxas_send",
+                "name": "gmail_send",
                 "input": {"to": "client@example.com", "subject": "Hello", "body": "..."}
             }
         ]

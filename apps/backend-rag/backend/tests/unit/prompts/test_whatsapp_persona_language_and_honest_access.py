@@ -140,7 +140,7 @@ class TestTheModelMaySayItCannotSee:
             "en": "situation is fine, handled or up to date unless the verified",
             "it": "a posto, sistemata o in regola se non lo dicono i dati",
             "id": "sudah aman, sudah beres, atau sudah lengkap kecuali data",
-            "de": "in Ordnung, erledigt ponu aktuell, wenn die geprüften Daten",
+            "de": "in Ordnung, erledigt oder aktuell, wenn die geprüften Daten",
         }
         assert bans[lang] in prompt
 

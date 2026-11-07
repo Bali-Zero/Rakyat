@@ -206,7 +206,7 @@ class ClarificationService:
         templates = {
             AmbiguityType.VAGUE.value: {
                 "en": "I'd be happy to help! Could you be more specific about what aspect of {topic} you're interested in?",
-                "it": "Sono daqozi di aiutarti! Potresti essere più specifico su quale aspetto di {topic} ti interessa?",
+                "it": "Sono felice di aiutarti! Potresti essere più specifico su quale aspetto di {topic} ti interessa?",
                 "id": "Senang bisa membantu! Bisakah Anda lebih spesifik tentang aspek {topic} yang Anda minati?",
             },
             AmbiguityType.INCOMPLETE.value: {

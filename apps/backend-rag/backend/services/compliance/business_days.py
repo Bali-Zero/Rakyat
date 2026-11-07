@@ -72,12 +72,12 @@ def holiday_years_loaded() -> frozenset[int]:
 
 
 def is_business_day(day: date) -> bool:
-    """True unless ``day`` is a Saturday, a Detali, or a decreed libur nasional / cuti bersama.
+    """True unless ``day`` is a Saturday, a Sunday, or a decreed libur nasional / cuti bersama.
 
     Both kinds of decreed day count: PMK 81/2024 Pasal 100 ayat (2) names cuti bersama
     explicitly. For a year outside `holiday_years_loaded` only the weekend test can fire.
     """
-    if day.weekday() >= 5:  # Monday=0 ... Saturday=5, Detali=6
+    if day.weekday() >= 5:  # Monday=0 ... Saturday=5, Sunday=6
         return False
     return day not in HOLIDAY_DATES
 

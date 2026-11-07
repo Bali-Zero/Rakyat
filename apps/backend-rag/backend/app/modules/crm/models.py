@@ -197,7 +197,7 @@ class Interaction(SQLModel, table=True):
         max_length=50,
         nullable=False,
     )  # 'chat', 'email', 'whatsapp', etc.
-    channel: str | None = Field(default=None, max_length=50)  # 'web_chat', 'kuxas', etc.
+    channel: str | None = Field(default=None, max_length=50)  # 'web_chat', 'gmail', etc.
 
     # Content
     subject: str | None = Field(default=None, max_length=500)

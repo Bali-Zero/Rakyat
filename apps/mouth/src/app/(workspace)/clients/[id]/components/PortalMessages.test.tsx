@@ -90,6 +90,7 @@ const makeMessage = (id: number): PortalMessageThread => ({
   direction: "team_to_client",
   sent_by: "agent@balizero.com",
   read_at: "2026-08-14T02:00:00Z",
+  is_read: true,
   created_at: "2026-08-14T01:00:00Z",
 });
 
@@ -466,5 +467,18 @@ describe("PortalMessages single send", () => {
       CLIENT_ID,
       "Second reply",
     );
+  });
+});
+
+describe("PortalMessages empty state helper text", () => {
+  it("uses the secondary text token, not opacity, so contrast does not drop", async () => {
+    vi.mocked(api.crm.getPortalMessages).mockResolvedValue({
+      messages: [],
+      total: 0,
+    });
+    render(<PortalMessages clientId={CLIENT_ID} clientName={CLIENT_NAME} />);
+    const helper = await screen.findByText(/Send a message visible on/);
+    expect(helper.className).toContain("text-[var(--bz-text-2)]");
+    expect(helper.className).not.toContain("opacity-60");
   });
 });

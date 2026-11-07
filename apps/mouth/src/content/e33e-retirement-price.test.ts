@@ -86,7 +86,7 @@ describe("E33E retirement price (owner ruling 2026-10-12)", () => {
     expect(idrAmounts("| 5-Year Visa | IDR 18,000,000 |")).toEqual([
       18_000_000,
     ]);
-    expect(idrAmounts("| 5 ans | 10 000 013 IDR |")).toEqual([18_000_000]);
+    expect(idrAmounts("| 5 ans | 18 000 000 IDR |")).toEqual([18_000_000]);
     expect(idrAmounts('"Bali Zero Price": "IDR 18M (5 years)",')).toEqual([
       18_000_000,
     ]);

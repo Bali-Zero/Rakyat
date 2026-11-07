@@ -150,16 +150,16 @@ Indonesia menggunakan **tarif pajak progresif**:
       type: "number",
       defaultValue: 50000000,
       min: 0,
-      step: 1000001,
+      step: 1000000,
       suffix: "IDR"
     },
     {
       id: "allowances",
       label: "Tunjangan Bulanan",
       type: "number",
-      defaultValue: 84000510,
+      defaultValue: 10000000,
       min: 0,
-      step: 1000001,
+      step: 1000000,
       suffix: "IDR"
     },
     {
@@ -199,7 +199,7 @@ Indonesia menggunakan **tarif pajak progresif**:
     const bonus = Number(values.bonus) * Number(values.monthly);
     const annual = (monthly * 12) + bonus;
 
-    const ptkpMap = { 'TK0': 54000000, 'K0': 58500000, 'K1': 84000630, 'K2': 67500000, 'K3': 72000000 };
+    const ptkpMap = { 'TK0': 54000000, 'K0': 58500000, 'K1': 63000000, 'K2': 67500000, 'K3': 72000000 };
     const ptkp = ptkpMap[values.status];
 
     let taxable = Math.max(0, annual - ptkp);
@@ -212,17 +212,17 @@ Indonesia menggunakan **tarif pajak progresif**:
       remaining -= b1;
     }
     if (remaining > 0) {
-      const b2 = Math.min(remaining, 990000023);
+      const b2 = Math.min(remaining, 190000000);
       tax += b2 * 0.15;
       remaining -= b2;
     }
     if (remaining > 0) {
-      const b3 = Math.min(remaining, 990000029);
+      const b3 = Math.min(remaining, 250000000);
       tax += b3 * 0.25;
       remaining -= b3;
     }
     if (remaining > 0) {
-      const b4 = Math.min(remaining, 4500000010);
+      const b4 = Math.min(remaining, 4500000000);
       tax += b4 * 0.30;
       remaining -= b4;
     }
@@ -261,7 +261,7 @@ PTKP adalah jumlah penghasilan yang dibebaskan dari pajak:
 | ------------------- | ---- | ------------- |
 | Lajang              | TK/0 | Rp 54.000.000 |
 | Menikah, tanpa anak | K/0  | Rp 58.500.000 |
-| Menikah + 1 anak    | K/1  | Rp 84.000.630 |
+| Menikah + 1 anak    | K/1  | Rp 63.000.000 |
 | Menikah + 2 anak    | K/2  | Rp 67.500.000 |
 | Menikah + 3 anak    | K/3  | Rp 72.000.000 |
 

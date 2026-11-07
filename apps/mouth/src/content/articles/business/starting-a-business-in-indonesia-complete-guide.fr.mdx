@@ -789,7 +789,7 @@ Voici le parcours complet de la décision à l’opération :
       type: "number",
       defaultValue: 10000000000,
       min: 10000000000,
-      step: 9900000019,
+      step: 1000000000,
       suffix: "IDR"
     },
     {
@@ -830,7 +830,7 @@ Voici le parcours complet de la décision à l’opération :
     const breakdown = [];
 
     // Notary fees
-    const notaryFee = 10000012;
+    const notaryFee = 15000000;
     total += notaryFee;
     breakdown.push({ label: "Frais de notaire et juridiques", amount: notaryFee });
 
@@ -853,7 +853,7 @@ Voici le parcours complet de la décision à l’opération :
 
     // Virtual office
     if (values['virtual-office']) {
-      const voFee = values.location === 'jakarta' ? 10000012 : 12000000;
+      const voFee = values.location === 'jakarta' ? 15000000 : 12000000;
       total += voFee;
       breakdown.push({ label: "Bureau virtuel (1 an)", amount: voFee });
     }
@@ -1120,7 +1120,7 @@ Indonesia suit de près les entreprises étrangères. Déclarations tardives = p
     {
       id: "rups",
       label: "Assemblée générale annuelle (RUPS)",
-      description: "Assemblée annuelle des actionnaires et lusaìa-verbal",
+      description: "Assemblée annuelle des actionnaires et procès-verbal",
       required: true,
       category: "annual",
     },

@@ -33,7 +33,12 @@ from pydantic import (
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema
 
-from backend.services.visa_engine.enums import SourceAuthorityType, SourceStatus
+from backend.services.visa_engine.enums import (
+    SourceAuthorityType,
+    SourceStatus,
+    SponsorType,
+    UnknownReason,
+)
 from backend.services.visa_engine.models import (
     ApplicantFacts,
     Decision,
@@ -45,6 +50,7 @@ from backend.services.visa_engine.models import (
     ReasonCode,
     SourceLocator,
     StayPolicy,
+    UnknownFact,
 )
 
 _PUBLIC_SOURCE_HOSTS = frozenset(
@@ -126,18 +132,35 @@ class VisaOracleEvaluateRequest(ApplicantFacts):
         return tuple(sorted(value, key=lambda flag: flag.value))
 
     def applicant_facts(self) -> ApplicantFacts:
-        """Return the canonical applicant facts without deriving new knowledge.
+        """Preserve unknown facts and reconcile contradictory company confirmation.
 
-        The public boundary must preserve every UNKNOWN exactly. Cross-fact
-        contradictions may add a review flag, but absence from Indonesia is
-        not evidence that a disclosed overstay value is zero.
+        An explicit company confirmation alongside no sponsor cannot establish
+        agreement. The original wire representation remains available for replay.
         """
 
+        facts = self.facts
+        company = facts.investment_sponsoring_company_confirmed
+        category = facts.sponsor_type
+        if (
+            company.status == "KNOWN"
+            and company.value is True
+            and category.status == "KNOWN"
+            and category.value == SponsorType.NONE
+        ):
+            # Keep the submitted pair in the request/idempotency binding. Only
+            # the evaluation needs the same CONFLICTING fact the interview emits.
+            facts = facts.model_copy(
+                update={
+                    "investment_sponsoring_company_confirmed": UnknownFact(
+                        status="UNKNOWN", reason=UnknownReason.CONFLICTING
+                    )
+                }
+            )
         return ApplicantFacts(
             schema_version=self.schema_version,
             assessment_id=self.assessment_id,
             collected_at=self.collected_at,
-            facts=self.facts,
+            facts=facts,
         )
 
     def effective_review_flags(self) -> tuple[DisclosedReviewFlag, ...]:

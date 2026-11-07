@@ -24,7 +24,7 @@ class TestIdrParser:
         assert _idr_string_to_int("5.800.000 IDR") == 5_800_000
 
     def test_parses_with_spaces(self):
-        assert _idr_string_to_int("  84.000.510 IDR  ") == 10_000_000
+        assert _idr_string_to_int("  10.000.000 IDR  ") == 10_000_000
 
     def test_rejects_non_idr(self):
         assert _idr_string_to_int("$100") is None

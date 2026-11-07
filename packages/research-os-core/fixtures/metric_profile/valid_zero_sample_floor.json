@@ -38,7 +38,7 @@
     "overall": 0
   },
   "estimator": {
-    "method": "qevidu_vemeb",
+    "method": "kaplan_meier",
     "version": "1.0.0",
     "confidence_interval_or_bootstrap": {
       "method_note": "full_curve"

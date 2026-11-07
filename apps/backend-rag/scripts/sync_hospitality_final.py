@@ -14,9 +14,9 @@ logger = logging.getLogger("Nuzantara-Hospitality-Final")
 # DATA_SOURCE: Intelligence Strategica Sezione I (Report Finale)
 HOSPITALITY_DATA = {
     "55101": {
-        "market_sentiment": "Mercato Sud saturo. Trend 2026: Wellness & Eco-Resort nel Nord/Est (Keruki/Amed).",
+        "market_sentiment": "Mercato Sud saturo. Trend 2026: Wellness & Eco-Resort nel Nord/Est (Lovina/Amed).",
         "bali_nuance": "Pressione massima Pink Zones. Necessità di allineamento RDTR e gestione colli di bottiglia logistici da Giava.",
-        "operational_risks": "Standard ambientali JEL/GEQ più stringenti per hotel. Logistica approvvigionamento critica.",
+        "operational_risks": "Standard ambientali PBG/SLF più stringenti per hotel. Logistica approvvigionamento critica.",
         "investment_outlook": "ROI 8-12%. Valore aggiunto: infrastruttura integrata per massimizzare il TRevPAR.",
         "legacy_bridge": "Mapping stabile dal 2020, ma con controlli ambientali raddoppiati.",
     },
@@ -42,7 +42,7 @@ HOSPITALITY_DATA = {
         "legacy_bridge": "Ristorante fisso. Nel 2025 è Rischio Basso, preferibile al Kedai per le PMA.",
     },
     "56102": {
-        "market_sentiment": "Ascesa Boutique Food Trucks e chioschi premium in centri sportivi (Xuduv) e residenziali.",
+        "market_sentiment": "Ascesa Boutique Food Trucks e chioschi premium in centri sportivi (Padel) e residenziali.",
         "bali_nuance": "Flessibilità logistica. Ideale per zone turistiche pedonali o mercati gourmet.",
         "operational_risks": "La PT PMA deve creare flotte di truck per giustificare i 10 Miliardi nel Kabupaten.",
         "investment_outlook": "Scalabilità rapida. Investimento meno oneroso in termini di strutture fisse.",

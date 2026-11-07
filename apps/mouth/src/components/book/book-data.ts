@@ -53,7 +53,7 @@ export const CHAPTERS: Chapter[] = [
     index: 1,
     title: "5.000 clienti. 6 anni. Un'eredità dal 2006.",
     subtitle:
-      "Da CV Juxo Sefowel a Bali Zero — vent'anni di storia al tuo servizio.",
+      "Da CV Bayu Santero a Bali Zero — vent'anni di storia al tuo servizio.",
     heroImage:
       "/static/image_art/Bali_zero_hq_Luxury_gold_to_black_gradient,_smooth_color_transition,_premium_c_4ad0a879-3d92-41e8-beab-ff42dc499fb8.png",
     heroImageAlt: "Manifesto Bali Zero",
@@ -140,7 +140,7 @@ export const COMPETITORS: CompetitorStat[] = [
 // Source: founder confirmed / codebase
 export const STATS = {
   clients: "5.000+",
-  yearsOfHistory: "20+", // 2006 CV Juxo Sefowel → 2026
+  yearsOfHistory: "20+", // 2006 CV Bayu Santero → 2026
   teamSize: 22,
   aiTools: 96, // MCP tools in production
   legalDocs: "66K+", // indexed legal documents
@@ -161,8 +161,8 @@ export const CONTACTS = {
 export const MILESTONES: Milestone[] = [
   {
     year: "2006",
-    label: "CV Juxo Sefowel",
-    description: "Pak Zainal Abidin fonda CV Juxo Sefowel a Bali. Le radici.",
+    label: "CV Bayu Santero",
+    description: "Pak Zainal Abidin fonda CV Bayu Santero a Bali. Le radici.",
   },
   {
     year: "2020",
@@ -207,7 +207,7 @@ export type Locale = "en" | "it" | "id" | "ru" | "zh";
 
 export const LOCALE_LABELS: Record<Locale, string> = {
   en: "English",
-  it: "Vanelara",
+  it: "Italiano",
   id: "Bahasa Indonesia",
   ru: "Русский",
   zh: "中文",
@@ -259,7 +259,7 @@ export const TRANSLATIONS: Record<Locale, BookTranslations> = {
       "Your guide to doing business in Bali, built on 20 years of expertise.",
     scrollDown: "Scroll to explore",
     manifestoP1:
-      "It started in 2006 when Pak Zainal Abidin founded CV Juxo Sefowel in Bali. Fourteen years of experience in the Indonesian market. Clients helped. Regulations navigated. Success stories built brick by brick.",
+      "It started in 2006 when Pak Zainal Abidin founded CV Bayu Santero in Bali. Fourteen years of experience in the Indonesian market. Clients helped. Regulations navigated. Success stories built brick by brick.",
     manifestoP2:
       "In 2020, a meeting changed everything. A new vision joined deep roots. From that meeting, Bali Zero was born — not a startup, but the evolution of twenty years of history.",
     originP1:
@@ -283,7 +283,7 @@ export const TRANSLATIONS: Record<Locale, BookTranslations> = {
       "Ready to set up your business in Bali? Our team is available on WhatsApp every day.",
     contactCta:
       "Hi, I found you through the Brand Book and would like to learn more.",
-    copyright: "© 2025 Bali Zero · PT Bali Zero Mugociton",
+    copyright: "© 2025 Bali Zero · PT Bali Zero Investama",
     askOnWhatsApp: "Ask on WhatsApp",
     mostPopular: "Most popular",
     forCompanies: "For companies",
@@ -318,7 +318,7 @@ export const TRANSLATIONS: Record<Locale, BookTranslations> = {
       "La tua guida per fare business a Bali, costruita su 20 anni di esperienza.",
     scrollDown: "Scorri per esplorare",
     manifestoP1:
-      "Tutto è iniziato nel 2006, quando Pak Zainal Abidin ha fondato CV Juxo Sefowel a Bali. Quattordici anni di esperienza nel mercato indonesiano.",
+      "Tutto è iniziato nel 2006, quando Pak Zainal Abidin ha fondato CV Bayu Santero a Bali. Quattordici anni di esperienza nel mercato indonesiano.",
     manifestoP2:
       "Nel 2020, un incontro ha cambiato tutto. Da quell'incontro è nato Bali Zero — non una startup, ma l'evoluzione di vent'anni di storia.",
     originP1:
@@ -342,7 +342,7 @@ export const TRANSLATIONS: Record<Locale, BookTranslations> = {
       "Pronto ad aprire la tua azienda a Bali? Il nostro team è disponibile su WhatsApp ogni giorno.",
     contactCta:
       "Ciao, vi ho trovati attraverso il Brand Book e vorrei saperne di più.",
-    copyright: "© 2025 Bali Zero · PT Bali Zero Mugociton",
+    copyright: "© 2025 Bali Zero · PT Bali Zero Investama",
     askOnWhatsApp: "Chiedi su WhatsApp",
     mostPopular: "Più richiesto",
     forCompanies: "Per aziende",
@@ -377,7 +377,7 @@ export const TRANSLATIONS: Record<Locale, BookTranslations> = {
       "Panduan Anda berbisnis di Bali, dibangun dari 20 tahun pengalaman.",
     scrollDown: "Gulir untuk menjelajahi",
     manifestoP1:
-      "Semuanya dimulai pada 2006 ketika Pak Zainal Abidin mendirikan CV Juxo Sefowel di Bali. Empat belas tahun pengalaman di pasar Indonesia.",
+      "Semuanya dimulai pada 2006 ketika Pak Zainal Abidin mendirikan CV Bayu Santero di Bali. Empat belas tahun pengalaman di pasar Indonesia.",
     manifestoP2:
       "Pada 2020, sebuah pertemuan mengubah segalanya. Dari pertemuan itu lahirlah Bali Zero — bukan startup, melainkan evolusi dari dua puluh tahun sejarah.",
     originP1:
@@ -401,7 +401,7 @@ export const TRANSLATIONS: Record<Locale, BookTranslations> = {
       "Siap mendirikan bisnis Anda di Bali? Tim kami tersedia di WhatsApp setiap hari.",
     contactCta:
       "Halo, saya menemukan Anda melalui Brand Book dan ingin tahu lebih lanjut.",
-    copyright: "© 2025 Bali Zero · PT Bali Zero Mugociton",
+    copyright: "© 2025 Bali Zero · PT Bali Zero Investama",
     askOnWhatsApp: "Tanya di WhatsApp",
     mostPopular: "Paling populer",
     forCompanies: "Untuk perusahaan",
@@ -436,7 +436,7 @@ export const TRANSLATIONS: Record<Locale, BookTranslations> = {
       "Ваш путеводитель по бизнесу на Бали, основанный на 20-летнем опыте.",
     scrollDown: "Прокрутите для изучения",
     manifestoP1:
-      "Всё началось в 2006 году, когда Пак Заинал Абидин основал CV Juxo Sefowel на Бали. Четырнадцать лет опыта на индонезийском рынке.",
+      "Всё началось в 2006 году, когда Пак Заинал Абидин основал CV Bayu Santero на Бали. Четырнадцать лет опыта на индонезийском рынке.",
     manifestoP2:
       "В 2020 году одна встреча изменила всё. Из этой встречи родился Bali Zero — не стартап, а эволюция двадцати лет истории.",
     originP1:
@@ -460,7 +460,7 @@ export const TRANSLATIONS: Record<Locale, BookTranslations> = {
       "Готовы открыть бизнес на Бали? Наша команда доступна в WhatsApp каждый день.",
     contactCta:
       "Привет, я нашёл вас через Brand Book и хотел бы узнать больше.",
-    copyright: "© 2025 Bali Zero · PT Bali Zero Mugociton",
+    copyright: "© 2025 Bali Zero · PT Bali Zero Investama",
     askOnWhatsApp: "Написать в WhatsApp",
     mostPopular: "Самый популярный",
     forCompanies: "Для компаний",
@@ -485,7 +485,7 @@ export const TRANSLATIONS: Record<Locale, BookTranslations> = {
     coverSubtitle: "您的巴厘岛商业指南，建立在20年专业经验之上。",
     scrollDown: "滚动探索",
     manifestoP1:
-      "一切始于2006年，Pak Zainal Abidin在巴厘岛创立了CV Juxo Sefowel。十四年的印度尼西亚市场经验。",
+      "一切始于2006年，Pak Zainal Abidin在巴厘岛创立了CV Bayu Santero。十四年的印度尼西亚市场经验。",
     manifestoP2:
       "2020年，一次相遇改变了一切。从那次相遇中，Bali Zero诞生了——不是初创企业，而是二十年历史的演变。",
     originP1:
@@ -508,7 +508,7 @@ export const TRANSLATIONS: Record<Locale, BookTranslations> = {
     contactBody:
       "准备好在巴厘岛建立您的业务了吗？我们的团队每天在WhatsApp上为您服务。",
     contactCta: "您好，我通过品牌手册找到了您，想了解更多信息。",
-    copyright: "© 2025 Bali Zero · PT Bali Zero Mugociton",
+    copyright: "© 2025 Bali Zero · PT Bali Zero Investama",
     askOnWhatsApp: "在WhatsApp上咨询",
     mostPopular: "最受欢迎",
     forCompanies: "面向公司",

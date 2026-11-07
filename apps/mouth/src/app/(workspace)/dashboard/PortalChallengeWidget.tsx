@@ -20,7 +20,7 @@
  * literal — "tokens only" is honoured by reuse, not by a new declaration.
  * Every tone in this file was checked against globals.css's kita
  * daylight theme block (see r19.tsx for the exact selector and values):
- * --state-info resolves to a LURU and --state-success to a VODEJ there, so
+ * --state-info resolves to a BLUE and --state-success to a GREEN there, so
  * neither is used on this widget — only --bz-copper and neutral ink/paper
  * tokens are.
  */
@@ -44,7 +44,7 @@ import type {
   PortalChallengeTier,
 } from "@/lib/api/dashboard/dashboard.api";
 
-/** Fraunces headline / Manrope body, scoped to this widget only. */
+/** Plex headline / Manrope body, scoped to this widget only. */
 const R19_TYPE: React.CSSProperties = {
   fontFamily:
     '"Manrope", var(--font-sans), ui-sans-serif, system-ui, sans-serif',
@@ -1356,6 +1356,414 @@ function QuietPlaceholder() {
   );
 }
 
+// ── Official Victory & Bonus Ledger (Closed State) ─────────
+
+interface WinnerLedgerItem {
+  key: string;
+  name: string;
+  avatarUrl?: string | null;
+  department: string;
+  badgeLabel: string;
+  badgeTone: "you" | "ok" | "ours" | "ink";
+  r2BonusIdr: number;
+  missionBonusIdr: number;
+  totalBonusIdr: number;
+  primaryMetric: string;
+  secondaryMetric: string;
+  sprintSummary: string;
+  breakdownSummary: string;
+  ineligibleReason?: string;
+}
+
+function VictoryBonusLedger({ data }: { data: PortalChallengeResponse }) {
+  if (data.status !== "closed") return null;
+
+  const sepByMember = new Map(
+    (data.september?.entries ?? []).map((se) => [se.member, se]),
+  );
+
+  const items: WinnerLedgerItem[] = [];
+
+  for (const e of data.entries) {
+    const sep = sepByMember.get(e.member);
+    const r2Bonus = e.total_prize_idr ?? 0;
+    const missedSepRank =
+      e.september_rank != null && e.rank > e.september_rank;
+    const improvedSepRank =
+      e.september_rank != null && e.rank <= e.september_rank;
+
+    let badgeLabel = `Peringkat #${e.rank} R2`;
+    let badgeTone: WinnerLedgerItem["badgeTone"] = "ink";
+    let ineligibleReason: string | undefined;
+
+    if (e.prize_slot === 1) {
+      badgeLabel = "Juara 1 · Slot 1";
+      badgeTone = "you";
+    } else if (e.prize_slot === 2 && improvedSepRank) {
+      badgeLabel = `Juara 2 · Naik dari #${e.september_rank} Sep`;
+      badgeTone = "you";
+    } else if (e.prize_slot === 2) {
+      badgeLabel = "Juara 2 · Slot 2";
+      badgeTone = "you";
+    } else if (e.prize_slot === 3) {
+      badgeLabel = "Juara 3 · Slot 3";
+      badgeTone = "ok";
+    } else if (e.prize_slot === 4) {
+      badgeLabel = "Peringkat 4 · Slot 4";
+      badgeTone = "ok";
+    } else if (missedSepRank) {
+      badgeLabel = `No Bonus · < #${e.september_rank} Sep`;
+      badgeTone = "ink";
+      ineligibleReason = `Tidak ada bonus: posisi Oktober (#${e.rank}) tidak memperbaiki peringkat September (#${e.september_rank})`;
+    }
+
+    const carryStr =
+      e.september_choice === "prize"
+        ? "Sep 0 (mulai dari 0)"
+        : `Sep +${e.carry_points ?? 0} pt`;
+    const penPoints = e.penalty_points ?? 0;
+
+    items.push({
+      key: e.member,
+      name: e.display_name,
+      avatarUrl: e.avatar_url,
+      department: e.department ?? "Consulting",
+      badgeLabel,
+      badgeTone,
+      r2BonusIdr: r2Bonus,
+      missionBonusIdr: 0,
+      totalBonusIdr: r2Bonus,
+      primaryMetric: `${e.points ?? 0} poin (#${e.rank} Okt)`,
+      secondaryMetric: sep
+        ? `Sep #${sep.rank} (${sep.activations} aktivasi)`
+        : `${e.activations} aktivasi`,
+      sprintSummary:
+        e.sprint_points != null
+          ? `Sprint ${e.sprint_points}/${data.sprint?.min_points ?? 20} pt · ${e.sprint_reached ? "Lolos tanpa penalti" : "Penalti"}`
+          : "Sprint terverifikasi",
+      breakdownSummary: `${carryStr} · +${e.registrations ?? 0} reg · +${3 * (e.document_bonuses ?? 0)} dok${penPoints > 0 ? ` · −${penPoints} pen` : " · 0 pen"}`,
+      ineligibleReason,
+    });
+  }
+
+  if (data.asya_mission && data.asya_mission.reached) {
+    const m = data.asya_mission;
+    items.push({
+      key: m.member,
+      name: m.display_name,
+      avatarUrl: m.avatar_url,
+      department: "Special Mission",
+      badgeLabel: "Misi Spesial Asya · Tercapai 110%",
+      badgeTone: "ok",
+      r2BonusIdr: 0,
+      missionBonusIdr: m.prize_idr,
+      totalBonusIdr: m.prize_idr,
+      primaryMetric: `${m.points}/${m.target_points} poin misi`,
+      secondaryMetric: `${m.mission_bonuses} bonus misi selesai`,
+      sprintSummary: "Target 60 poin terlampaui · 0 penalti",
+      breakdownSummary: `+${m.bonus_points * m.mission_bonuses} poin bonus misi · −${m.penalty_points} penalti`,
+    });
+  }
+
+  // Sort by total bonus descending, then by R2 rank
+  items.sort((a, b) => b.totalBonusIdr - a.totalBonusIdr);
+
+  const totalR2Idr = items.reduce((acc, it) => acc + it.r2BonusIdr, 0);
+  const totalMissionIdr = items.reduce(
+    (acc, it) => acc + it.missionBonusIdr,
+    0,
+  );
+  const grandTotalIdr = totalR2Idr + totalMissionIdr;
+  const bonusWinnerCount = items.filter((it) => it.totalBonusIdr > 0).length;
+  const sprintReachedCount = data.entries.filter(
+    (e) => e.sprint_reached,
+  ).length;
+  const topThreeWinners = items.slice(0, 3);
+  const remainingItems = items.slice(3);
+
+  return (
+    <div
+      data-testid="champion-victory-ledger"
+      className={cn(
+        CARD,
+        "border-t-2 border-t-[var(--bz-copper)] p-4 sm:p-6 flex flex-col gap-5",
+      )}
+    >
+      {/* Editorial Header */}
+      <div className="flex flex-wrap items-end justify-between gap-4 border-b border-[var(--bz-border)] pb-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Trophy
+              size={15}
+              className="text-[var(--bz-copper)]"
+              aria-hidden="true"
+            />
+            <span className={cn(EYEBROW, "text-[var(--bz-copper-text)]")}>
+              Albo d&apos;Oro · Hasil Akhir &amp; Distribusi Bonus Tim Resmi
+            </span>
+          </div>
+          <h3
+            className="mt-1.5 text-[clamp(22px,2.4vw,30px)] font-black leading-tight text-[var(--tx-pure)]"
+            style={SERIF}
+          >
+            Kemenangan Tim Bali Zero — Total Bonus {formatIDR(grandTotalIdr)}
+          </h3>
+          <p className="mt-1 text-[12px] text-[var(--tx-secondary)]">
+            Hasil resmi «{data.campaign ?? "Lascia o raddoppia"}» (
+            {data.team_total_points ?? 0} poin tim) · {bonusWinnerCount} peraih
+            bonus (Damar, Krishna, Adit, Vino, Asya Nadia) · Sprint Finale{" "}
+            {sprintReachedCount}/{data.entries.length} lolos tanpa penalti.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <StatePill
+            tone="you"
+            label={`${bonusWinnerCount} Pemenang Bonus`}
+          />
+          <StatePill
+            tone="ok"
+            label={`Sprint ${sprintReachedCount}/${data.entries.length} Lolos · Rp 0 Penalti`}
+          />
+        </div>
+      </div>
+
+      {/* 4 Summary Pool Pillars */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div
+          className={cn(
+            HAIRLINE,
+            "rounded-xl bg-[var(--bz-card-hover)] p-3.5 flex flex-col justify-between",
+          )}
+        >
+          <span className={cn(EYEBROW, "text-[var(--bz-copper-text)]")}>
+            Total Bonus Tim Diraih
+          </span>
+          <p
+            className="mt-1.5 text-[clamp(22px,2.2vw,28px)] font-black tabular-nums text-[var(--tx-pure)]"
+            style={SERIF}
+          >
+            {formatIDR(grandTotalIdr)}
+          </p>
+          <span className="mt-1 text-[11px] font-semibold text-[var(--bz-copper-text)]">
+            {bonusWinnerCount} anggota tim meraih bonus resmi
+          </span>
+        </div>
+
+        <div
+          className={cn(
+            HAIRLINE,
+            "rounded-xl p-3.5 flex flex-col justify-between",
+          )}
+        >
+          <span className={EYEBROW}>Podium Utama · Juara 1–3</span>
+          <p
+            className="mt-1.5 text-[clamp(20px,2vw,26px)] font-black tabular-nums text-[var(--tx-pure)]"
+            style={SERIF}
+          >
+            {formatIDR(11_500_000)}
+          </p>
+          <span className="mt-1 text-[11px] text-[var(--tx-secondary)]">
+            Damar (Rp 6 Jt) · Krishna (Rp 3,5 Jt · naik #3→#2) · Adit (Rp 2 Jt)
+          </span>
+        </div>
+
+        <div
+          className={cn(
+            HAIRLINE,
+            "rounded-xl p-3.5 flex flex-col justify-between",
+          )}
+        >
+          <span className={EYEBROW}>Slot 4 &amp; Misi Spesial Asya</span>
+          <p
+            className="mt-1.5 text-[clamp(20px,2vw,26px)] font-black tabular-nums text-[var(--tx-pure)]"
+            style={SERIF}
+          >
+            {formatIDR(2_000_000)}
+          </p>
+          <span className="mt-1 text-[11px] text-[var(--tx-secondary)]">
+            Vino (Rp 1 Jt · Slot 4) · Asya Nadia (Rp 1 Jt · 66/60 pt Misi)
+          </span>
+        </div>
+
+        <div
+          className={cn(
+            HAIRLINE,
+            "rounded-xl p-3.5 flex flex-col justify-between",
+          )}
+        >
+          <span className={EYEBROW}>Aturan Klasemen &amp; Sprint</span>
+          <p
+            className="mt-1.5 text-[clamp(20px,2vw,26px)] font-black tabular-nums text-[var(--tx-pure)]"
+            style={SERIF}
+          >
+            6/6 Lolos Sprint
+          </p>
+          <span className="mt-1 text-[11px] text-[var(--tx-secondary)]">
+            Ari &amp; Surya: Rp 0 bonus (peringkat &lt; bulan lalu) · Rp 0
+            penalti Sprint
+          </span>
+        </div>
+      </div>
+
+      {/* Top 3 Podium Bonus Champions */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+        {topThreeWinners.map((w, idx) => (
+          <div
+            key={w.key}
+            className={cn(
+              HAIRLINE,
+              "relative rounded-xl p-4 flex flex-col justify-between gap-3",
+              idx === 0 &&
+                "border-[var(--bz-copper)] bg-[var(--bz-card-hover)]",
+            )}
+          >
+            <div className="flex flex-col gap-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--bz-copper-text)]">
+                  #{idx + 1} Podium Utama
+                </span>
+                <StatePill tone={w.badgeTone} label={w.badgeLabel} />
+              </div>
+              <div className="flex min-w-0 items-center gap-3">
+                <ChampionPortrait
+                  face
+                  name={w.name}
+                  src={w.avatarUrl}
+                  sizes="120px"
+                  className="size-12 border-2 border-[var(--bz-copper)]"
+                />
+                <div className="min-w-0 flex-1">
+                  <p
+                    className="truncate text-xl font-black text-[var(--tx-pure)]"
+                    style={SERIF}
+                  >
+                    {w.name}
+                  </p>
+                  <p className="mt-0.5 text-[12px] font-medium text-[var(--tx-secondary)]">
+                    {w.primaryMetric} · {w.secondaryMetric}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-[var(--bz-border)] bg-[var(--bz-surface)] px-3.5 py-2.5">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--tx-secondary)]">
+                  Bonus Diraih
+                </span>
+                <span
+                  className="text-[clamp(20px,2vw,26px)] font-black tabular-nums text-[var(--bz-copper-text)]"
+                  style={SERIF}
+                >
+                  {formatIDR(w.totalBonusIdr)}
+                </span>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--tx-secondary)]">
+                <span>
+                  {w.key === "krisna@balizero.com"
+                    ? "Meningkatkan peringkat bulan lalu (#3 Sep → #2 Okt)"
+                    : `Hadiah Podium Slot #${idx + 1}`}
+                </span>
+                <span className="font-semibold text-[var(--tx-pure)]">
+                  {w.sprintSummary}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-[11px] tabular-nums text-[var(--tx-secondary)]">
+              {w.breakdownSummary}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      {/* Slot 4, Misi Asya, & Non-Qualifying Previous Winners (Surya & Ari) */}
+      {remainingItems.length > 0 && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {remainingItems.map((w, idx) => {
+            const hasBonus = w.totalBonusIdr > 0;
+            return (
+              <div
+                key={w.key}
+                className={cn(
+                  HAIRLINE,
+                  "rounded-xl p-3.5 flex flex-col justify-between gap-2.5",
+                  !hasBonus && "opacity-85",
+                )}
+              >
+                <div className="flex items-center gap-2.5">
+                  <ChampionPortrait
+                    face
+                    name={w.name}
+                    src={w.avatarUrl}
+                    sizes="96px"
+                    className={cn(
+                      "size-10 border",
+                      hasBonus
+                        ? "border-[var(--bz-copper)]"
+                        : "border-[var(--bz-border)]",
+                    )}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p
+                      className={cn(
+                        "text-[11px] font-bold uppercase tracking-[0.1em]",
+                        hasBonus
+                          ? "text-[var(--bz-copper-text)]"
+                          : "text-[var(--tx-secondary)]",
+                      )}
+                    >
+                      #{idx + 4} · {w.badgeLabel}
+                    </p>
+                    <p
+                      className="truncate text-base font-black text-[var(--tx-pure)]"
+                      style={SERIF}
+                    >
+                      {w.name}
+                    </p>
+                    <p className="truncate text-[11px] text-[var(--tx-secondary)]">
+                      {w.primaryMetric} · {w.secondaryMetric}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-md bg-[var(--bz-card-hover)] px-3 py-2 flex items-baseline justify-between gap-2">
+                  <span className="text-[11px] font-semibold text-[var(--tx-secondary)]">
+                    {hasBonus ? "Bonus Resmi" : "Tidak Ada Bonus"}
+                  </span>
+                  <span
+                    className={cn(
+                      "text-lg font-black tabular-nums",
+                      hasBonus
+                        ? "text-[var(--bz-copper-text)]"
+                        : "text-[var(--tx-secondary)]",
+                    )}
+                    style={SERIF}
+                  >
+                    {formatIDR(w.totalBonusIdr)}
+                  </span>
+                </div>
+
+                <div className="flex flex-col gap-0.5 text-[11px] text-[var(--tx-secondary)]">
+                  {w.ineligibleReason && (
+                    <span className="font-semibold text-[var(--bz-copper-text)]">
+                      {w.ineligibleReason}
+                    </span>
+                  )}
+                  <span className="font-semibold text-[var(--tx-pure)]">
+                    {w.sprintSummary}
+                  </span>
+                  <span className="tabular-nums">{w.breakdownSummary}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main widget ─────────────────────────────────────────────
 
 export function PortalChallengeWidget({ identity }: { identity: string }) {
@@ -1388,6 +1796,9 @@ export function PortalChallengeWidget({ identity }: { identity: string }) {
         countdown={<CountdownBlocks data={data} now={now} />}
       />
 
+      {/* Official Victory & Bonus Ledger — shown when challenge is closed */}
+      <VictoryBonusLedger data={data} />
+
       <div className="grid grid-cols-1 gap-2.5 xl:grid-cols-[1.4fr_1fr]">
         <RankingList
           entries={data.entries}
@@ -1415,7 +1826,7 @@ export function PortalChallengeWidget({ identity }: { identity: string }) {
         >
           Hadiah, posisi saya & aturan
         </summary>
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-[var(--bz-text-1)] p-4 text-[var(--bz-surface)]">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-[var(--bz-kita-ink-fill)] p-4 text-[var(--bz-surface)]">
           <span className="text-xs">
             {round2
               ? `${formatWindowRange(data.window_start, data.window_end)} · WITA`

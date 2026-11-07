@@ -1,0 +1,1349 @@
+export interface StatusTransition {
+  status: string;
+  at: string; // ISO timestamp
+}
+
+export interface Practice {
+  id: number;
+  uuid?: string;
+  client_id: number;
+  client_name?: string;
+  client_email?: string;
+  client_phone?: string;
+  client_lead?: string; // Lead team member assigned to client
+  practice_type_id: number;
+  practice_type_name?: string;
+  practice_type_code?: string;
+  status: string;
+  priority: string;
+  quoted_price?: number;
+  actual_price?: number;
+  paid_amount?: number;
+  payment_status: string;
+  assigned_to?: string | null;
+  start_date?: string | null;
+  completion_date?: string | null;
+  expiry_date?: string | null;
+  notes?: string | null;
+  created_at: string;
+  updated_at?: string;
+  status_transitions?: StatusTransition[];
+  family_member_id?: number;
+  family_member_name?: string;
+  family_member_relationship?: string;
+}
+
+export type TaxCompanyPilotKey = "ocean" | "bimala";
+export type TaxCompanyPilotConfidence =
+  "confirmed" | "high" | "medium" | "low" | "unconfirmed";
+
+export interface TaxCompanyPilotEntity {
+  name: string;
+  aliases: string[];
+}
+
+export interface TaxCompanyPilotTaxMember {
+  name: string;
+  workspace_branch: string;
+  source_folder_url: string;
+}
+
+export interface TaxCompanyPilotPerson {
+  name: string;
+  folder_url?: string | null;
+  evidence: string[];
+  role?: string | null;
+  role_confidence: TaxCompanyPilotConfidence;
+  relationship_confidence: TaxCompanyPilotConfidence;
+}
+
+export interface TaxCompanyPilotDocument {
+  name: string;
+  group: "company" | "tax" | "lkpm" | "finance" | "person" | "coretax";
+  evidence_url?: string | null;
+  sensitivity: "internal" | "company" | "person" | "financial" | "credential";
+  confidence: TaxCompanyPilotConfidence;
+}
+
+export interface TaxCompanyPilotGap {
+  code: string;
+  label: string;
+  severity: "high" | "medium" | "low";
+}
+
+export interface TaxCompanyPilotDuplicateCandidate {
+  label: string;
+  urls: string[];
+  confidence: TaxCompanyPilotConfidence;
+}
+
+export interface TaxCompanyPilotEvidenceLink {
+  label: string;
+  url: string;
+  kind: "folder" | "file" | "spreadsheet" | "document";
+}
+
+export interface TaxCompanyPilotStoryEvidence {
+  label: string;
+  detail: string;
+  source_label: string;
+  source_url?: string | null;
+  source_kind: "folder" | "file" | "spreadsheet" | "document";
+  audience: "team";
+  confidence: TaxCompanyPilotConfidence;
+}
+
+export interface TaxCompanyPilotPersonDossier {
+  person_name: string;
+  company_name: string;
+  headline: string;
+  tax_owner: string;
+  drive_folder_url?: string | null;
+  document_groups: string[];
+  risk_flags: string[];
+  next_action: string;
+  relationship_confidence: TaxCompanyPilotConfidence;
+}
+
+export interface TaxCompanyPilotNextAction {
+  owner: "crm" | "tax" | "setup";
+  label: string;
+  reason: string;
+  severity: "high" | "medium" | "low";
+}
+
+export interface TaxCompanyPilotReadiness {
+  status: "ready" | "needs_review" | "blocked";
+  score: number;
+  label: string;
+  reasons: string[];
+}
+
+export interface TaxCompanyPilotWorkspaceAiFact {
+  category: "identity" | "person" | "compliance" | "gap" | "next_action";
+  label: string;
+  detail: string;
+  source_file_ids: string[];
+  confidence: TaxCompanyPilotConfidence;
+}
+
+export interface TaxCompanyPilotWorkspaceAiSnapshot {
+  provider: "notebooklm" | "gemini" | "manual";
+  notebook_id?: string | null;
+  note_id?: string | null;
+  source_file_ids: string[];
+  facts: TaxCompanyPilotWorkspaceAiFact[];
+  approved_by?: string | null;
+  approved_at?: string | null;
+  created_at?: string | null;
+}
+
+export type WorkspaceAiSnapshotReviewStatus = "draft" | "approved" | "rejected";
+
+export interface WorkspaceAiSnapshotReviewItem {
+  id: string;
+  company_id?: number | null;
+  client_id?: number | null;
+  company_name: string;
+  provider: "notebooklm" | "gemini" | "manual";
+  notebook_id?: string | null;
+  note_id?: string | null;
+  source_file_ids: string[];
+  facts: TaxCompanyPilotWorkspaceAiFact[];
+  status: WorkspaceAiSnapshotReviewStatus;
+  created_by?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  created_at: string;
+}
+
+export interface WorkspaceAiAutoApproveDecision {
+  snapshot_id: string;
+  company_id?: number | null;
+  company_name: string;
+  policy_version: string;
+  eligible: boolean;
+  approved: boolean;
+  reason: string;
+  blocked_reasons: string[];
+  fact_count: number;
+}
+
+export interface WorkspaceAiAutoApproveResult {
+  policy_version: string;
+  dry_run: boolean;
+  evaluated: number;
+  eligible_count: number;
+  blocked_count: number;
+  approved_count: number;
+  decisions: WorkspaceAiAutoApproveDecision[];
+}
+
+export interface TaxCompanyPilotEvidenceStory {
+  person_name: string;
+  company_name: string;
+  tax_owner: string;
+  recap: string;
+  relationship_path: string[];
+  evidence_items: TaxCompanyPilotStoryEvidence[];
+  next_action: string;
+  portal_rule: string;
+  team_rule: string;
+  confidence: TaxCompanyPilotConfidence;
+}
+
+export interface TaxCompanyPilotMap {
+  key: string;
+  primary_entry: "person";
+  workspace_mode: "team_read_only";
+  company: TaxCompanyPilotEntity;
+  tax_member: TaxCompanyPilotTaxMember;
+  drive_folders: Record<string, string>;
+  persons: TaxCompanyPilotPerson[];
+  documents: TaxCompanyPilotDocument[];
+  person_dossiers: TaxCompanyPilotPersonDossier[];
+  evidence_stories?: TaxCompanyPilotEvidenceStory[];
+  next_best_actions: TaxCompanyPilotNextAction[];
+  readiness?: TaxCompanyPilotReadiness | null;
+  business_story: string[];
+  duplicate_candidates: TaxCompanyPilotDuplicateCandidate[];
+  gaps: TaxCompanyPilotGap[];
+  evidence_links: TaxCompanyPilotEvidenceLink[];
+  ai_recap: string[];
+  workspace_ai?: TaxCompanyPilotWorkspaceAiSnapshot | null;
+  read_only: boolean;
+  confidence: TaxCompanyPilotConfidence;
+}
+
+import type { JsonObject } from "../../types/common";
+
+export interface Interaction {
+  id: number;
+  client_id?: number;
+  client_name?: string;
+  practice_id?: number;
+  conversation_id?: number;
+  interaction_type: "chat" | "email" | "whatsapp" | "call" | "meeting" | "note";
+  channel?: string;
+  subject?: string;
+  summary?: string;
+  full_content?: string;
+  sentiment?: string;
+  team_member: string;
+  direction: "inbound" | "outbound";
+  interaction_date: string;
+  created_at: string;
+  read_receipt?: boolean; // [NEW] Real read receipt status
+  read_at?: string; // [NEW] When interaction was marked as read
+  read_by?: string; // [NEW] Who marked it as read
+  extracted_entities?: JsonObject; // [NEW] AI extracted entities
+}
+
+export interface WhatsAppEnrichmentFact {
+  id: number;
+  fact_type: string;
+  route: string;
+  fact_value: JsonObject;
+  fact_confidence: number;
+  link_strength: number;
+  apply_score: number;
+  status: string;
+  created_at?: string | null;
+}
+
+export interface WhatsAppEnrichmentResponse {
+  client_id: number;
+  total: number;
+  by_fact_type: Record<string, number>;
+  by_route: Record<string, number>;
+  latest_created_at?: string | null;
+  facts: WhatsAppEnrichmentFact[];
+}
+
+export interface PracticeStats {
+  total_practices: number;
+  active_practices: number;
+  by_status: Record<string, number>;
+  by_type: Array<{ code: string; name: string; count: number }>;
+  revenue: {
+    total_revenue: number;
+    paid_revenue: number;
+    outstanding_revenue: number;
+  };
+}
+
+export interface InteractionStats {
+  total_interactions: number;
+  last_7_days: number;
+  by_type: Record<string, number>;
+  by_sentiment: Record<string, number>;
+  by_team_member: Array<{ team_member: string; count: number }>;
+}
+
+export interface DashboardStats {
+  practices: PracticeStats;
+  interactions: InteractionStats;
+}
+
+export interface Client {
+  id: number;
+  uuid: string;
+  full_name: string;
+  email?: string;
+  phone?: string;
+  whatsapp?: string;
+  nationality?: string;
+  passport_number?: string;
+  passport_expiry?: string;
+  date_of_birth?: string;
+  gender?: "M" | "F";
+  birthplace?: string;
+  address?: string;
+  notes?: string;
+  google_drive_folder_id?: string;
+  status: "lead" | "active" | "completed" | "lost" | "inactive";
+  client_type: "individual" | "company";
+  assigned_to?: string;
+  tax_consultant?: string | null;
+  avatar_url?: string;
+  /** True when the client has an avatar the list omitted for size;
+   *  fetch the image from GET /api/crm/clients/{id}/avatar. */
+  has_avatar?: boolean;
+  company_name?: string;
+  first_contact_date?: string;
+  last_interaction_date?: string;
+  last_sentiment?: string;
+  last_interaction_summary?: string;
+  ai_summary_status?: "available" | "not_generated" | "pending";
+  ai_summary_generated_at?: string | null;
+  ai_profile_tier?: "VIP" | "standard" | "archive" | "unknown" | string | null;
+  ai_profile_archetype?: string | null;
+  ai_red_flags_count?: number;
+  ai_extraction_confidence?: number | null;
+  tags?: string[];
+  lead_source?: string;
+  service_interest?: string | string[];
+  active_practices?: number;
+  tax_id?: string;
+  npwp?: string;
+  nib?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// ============================================
+// FAMILY MEMBERS
+// ============================================
+
+export interface FamilyMember {
+  id: number;
+  client_id: number;
+  full_name: string;
+  relationship:
+    "spouse" | "child" | "parent" | "sibling" | "dependent" | "other";
+  date_of_birth?: string;
+  nationality?: string;
+  passport_number?: string;
+  passport_expiry?: string;
+  current_visa_type?: string;
+  visa_expiry?: string;
+  email?: string;
+  phone?: string;
+  notes?: string;
+  passport_alert?: "green" | "yellow" | "red" | "expired";
+  visa_alert?: "green" | "yellow" | "red" | "expired";
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface FamilyMemberCreate {
+  full_name: string;
+  relationship: string;
+  date_of_birth?: string;
+  nationality?: string;
+  passport_number?: string;
+  passport_expiry?: string;
+  current_visa_type?: string;
+  visa_expiry?: string;
+  email?: string;
+  phone?: string;
+  notes?: string;
+}
+
+// ============================================
+// DOCUMENTS
+// ============================================
+
+export type DocumentCategoryType =
+  "immigration" | "pma" | "tax" | "personal" | "other";
+
+export interface ClientDocument {
+  id: number;
+  client_id: number;
+  document_type: string;
+  document_category?: DocumentCategoryType;
+  file_name?: string;
+  file_id?: string;
+  file_url?: string;
+  google_drive_file_url?: string;
+  status?:
+    | "pending"
+    | "received"
+    | "verified"
+    | "rejected"
+    | "expired"
+    | "active"
+    | "google_drive";
+  issue_date?: string;
+  expiry_date?: string;
+  notes?: string;
+  is_archived?: boolean;
+  family_member_id?: number;
+  family_member_name?: string;
+  practice_id?: number;
+  alert_color?: "green" | "yellow" | "red" | "expired";
+  created_at?: string;
+  updated_at?: string;
+  /**
+   * Set when the CLIENT removed the document from their portal vault
+   * (soft delete, restorable by them for 30 days; the file stays in Drive).
+   *
+   * Distinct from `is_archived`, which is the team-side archive and is
+   * already excluded from this list server-side. Until 2026-09-11 this field
+   * was not returned at all, so a removed document appeared in the team's
+   * list with `status: "received"` and `alert_color: "green"` — identical to
+   * a live one, with no field distinguishing them (portal audit F-02).
+   */
+  deleted_at?: string | null;
+  /**
+   * Whether the client sees this document in the portal. Only `true` is
+   * visible (portal predicate `client_visible = true`); absent = the backend
+   * did not return the field. Flipped via PATCH by admin / Team Leader /
+   * Tax Lead / Supervisor only (PR 7989).
+   */
+  client_visible?: boolean | null;
+  /** 'client' for a portal upload, 'team' for a CRM one. */
+  uploaded_source?: "client" | "team" | string;
+  /**
+   * Derived at read time from `document_type` + whatever OCR already
+   * extracted (`ocr_extracted_data->raw_response`) — see
+   * `backend/services/crm/permit_label.py::resolve_permit_label`. Absent
+   * when there is no evidence for a precise family; the UI falls back to
+   * `document_type` verbatim in that case (never invent a label).
+   */
+  permit_family?: "kitap" | "kitas" | "itk" | "merp" | "evisa" | string;
+  permit_code?: string;
+  permit_label?: string;
+  /**
+   * The family label (e.g. "KITAS / ITAS — Limited Stay Permit") — always
+   * present when a family is known, even when `permit_label` itself leads
+   * with a precise visa index. Secondary line only: show it in the UI when
+   * it differs from `permit_label`, never when they're the same string.
+   */
+  permit_family_label?: string;
+  /** The `2B14`-style stay-permit sub-index, when the OCR text fused one
+   * onto the visa index (e.g. "E33G2C12"). Display-only, safe to ignore. */
+  permit_stay_index?: string;
+  permit_number?: string;
+  permit_sponsor?: string;
+  /**
+   * Fiscal year of a tax filing (`spt`, `spt_personal`). Optional: the Tax tab
+   * falls back to a year written in `file_name` when the API omits it.
+   */
+  fiscal_year?: number | null;
+}
+
+export interface DocumentCreate {
+  document_type: string;
+  document_category?: DocumentCategoryType;
+  file_name?: string;
+  file_id?: string;
+  file_url?: string;
+  google_drive_file_url?: string;
+  expiry_date?: string;
+  notes?: string;
+  family_member_id?: number;
+  practice_id?: number;
+}
+
+export interface DocumentCategory {
+  code: string;
+  name: string;
+  category_group: "immigration" | "pma" | "tax" | "personal" | "other";
+  description?: string;
+  has_expiry: boolean;
+}
+
+// ============================================
+// EXPIRY ALERTS
+// ============================================
+
+export interface ExpiryAlert {
+  entity_type: "client" | "family_member" | "document";
+  entity_id: number;
+  entity_name: string;
+  client_id: number;
+  client_name: string;
+  document_type: string;
+  expiry_date: string;
+  days_until_expiry: number;
+  alert_color: "green" | "yellow" | "red" | "expired";
+  assigned_to?: string;
+}
+
+export interface ExpiryAlertsSummary {
+  counts: {
+    expired: number;
+    red: number;
+    yellow: number;
+    green: number;
+  };
+  urgent_alerts: Array<{
+    client_name: string;
+    entity_name: string;
+    document_type: string;
+    expiry_date: string;
+    days_until_expiry: number;
+    alert_color: string;
+  }>;
+}
+
+// ============================================
+// CLIENT PROFILE (Enhanced)
+// ============================================
+
+/**
+ * One thing that needs the team's eyes on a client profile, computed by the
+ * backend (permits, passports, LKPM windows, SPT filings) so the page does not
+ * re-derive deadlines from raw dates.
+ */
+export interface AttentionItem {
+  kind: "permit" | "passport" | "lkpm" | "spt_personal" | "spt_company";
+  subject: "client" | "family_member" | "company";
+  subject_id: number | null;
+  subject_name: string | null;
+  /** Human label, e.g. "KITAS", "LKPM Q4 2026", "SPT personal 2025". */
+  label: string;
+  code: string | null;
+  state: "expired" | "overdue" | "urgent" | "open" | "upcoming" | "done";
+  /** The deadline, or the day the window closes. */
+  date: string | null;
+  /** When a not-yet-open window opens. */
+  opens_on: string | null;
+  /** Days to `date` (negative once past); to `opens_on` for an upcoming window. */
+  days: number | null;
+  /** "itk_missing" when a visit visa has no onward ITK on file. */
+  note: "itk_missing" | null;
+  document_id: number | null;
+}
+
+export interface AttentionStats {
+  expired: number;
+  urgent: number;
+  upcoming: number;
+  done: number;
+}
+
+export interface ClientProfile {
+  client: Client;
+  family_members: FamilyMember[];
+  documents: ClientDocument[];
+  expiry_alerts: ExpiryAlert[];
+  practices: Array<{
+    id: number;
+    status: string;
+    priority?: string;
+    expiry_date?: string;
+    start_date?: string;
+    completion_date?: string;
+    estimated_completion?: string;
+    title?: string;
+    practice_type_code: string;
+    practice_type_name: string;
+    alert_color?: string;
+    quoted_price?: number;
+    actual_price?: number;
+    paid_amount?: number;
+    payment_status?: string;
+    assigned_to?: string;
+    updated_at?: string;
+    family_member_id?: number;
+    family_member_name?: string;
+    family_member_relationship?: string;
+  }>;
+  company_links?: ClientCompanyLink[];
+  company_documents?: CompanyDocument[];
+  /** Absent on a backend that does not send it yet: the page then shows no
+   *  counters and only the Visa row built from the current permit document
+   *  (there is no `expiry_alerts` fallback). When the backend fails to build the
+   *  list it returns `[]` with zeroed stats and `attention_error` set. */
+  attention?: AttentionItem[];
+  attention_stats?: AttentionStats;
+  /** `"attention_build_failed"` when the backend could not compute `attention`,
+   *  `null` on success; absent on an older backend. */
+  attention_error?: string | null;
+  /** The WITA day (`YYYY-MM-DD`) the server computed `attention` for. The card
+   *  derives every document date from this one value; absent on an older
+   *  backend. */
+  as_of?: string;
+  stats: {
+    family_count: number;
+    documents_count: number;
+    practices_count: number;
+    company_count?: number;
+    /** Active documents of every company linked to the client (any link). */
+    company_documents_count?: number;
+    expired_count: number;
+    red_alerts: number;
+    yellow_alerts: number;
+  };
+}
+
+export interface ClientSummary {
+  client: Client;
+  practices: {
+    total: number;
+    active: number;
+    completed: number;
+    items: Practice[];
+  };
+  interactions: {
+    total: number;
+    recent: Interaction[];
+  };
+  revenue: {
+    total: number;
+    paid: number;
+    outstanding: number;
+  };
+  renewals: RenewalAlert[];
+}
+
+export interface CreateClientParams {
+  full_name: string;
+  email?: string;
+  phone?: string;
+  whatsapp?: string;
+  company_name?: string;
+  nationality?: string;
+  passport_number?: string;
+  passport_expiry?: string;
+  date_of_birth?: string;
+  gender?: "M" | "F";
+  birthplace?: string;
+  notes?: string;
+  status?: "lead" | "active" | "completed" | "lost" | "inactive";
+  client_type?: "individual" | "company";
+  assigned_to?: string;
+  tags?: string[];
+  address?: string;
+  lead_source?:
+    "website" | "whatsapp" | "referral" | "social_media" | "walk_in" | "other";
+  service_interest?: string[]; // e.g., ['kitas', 'pt_pma', 'tax']
+  avatar_url?: string;
+}
+
+/** Result from passport OCR preview endpoint */
+export interface PassportOcrResult {
+  success: boolean;
+  confidence: number;
+  full_name: string | null;
+  surname: string | null;
+  given_names: string | null;
+  nationality: string | null;
+  date_of_birth: string | null;
+  gender: "M" | "F" | null;
+  passport_number: string | null;
+  passport_expiry: string | null;
+  issuing_country: string | null;
+  birthplace: string | null;
+  name_match?: boolean | null;
+  warnings: string[];
+  message: string | null;
+}
+
+// Common nationalities for dropdown
+export const COMMON_NATIONALITIES = [
+  "Afghan",
+  "Albanian",
+  "Algerian",
+  "American",
+  "Andorran",
+  "Angolan",
+  "Antiguan",
+  "Argentine",
+  "Armenian",
+  "Australian",
+  "Austrian",
+  "Azerbaijani",
+  "Bahamian",
+  "Bahraini",
+  "Bangladeshi",
+  "Barbadian",
+  "Belarusian",
+  "Belgian",
+  "Belizean",
+  "Beninese",
+  "Bhutanese",
+  "Bolivian",
+  "Bosnian",
+  "Botswanan",
+  "Brazilian",
+  "British",
+  "Bruneian",
+  "Bulgarian",
+  "Burkinabe",
+  "Burmese",
+  "Burundian",
+  "Cambodian",
+  "Cameroonian",
+  "Canadian",
+  "Cape Verdean",
+  "Central African",
+  "Chadian",
+  "Chilean",
+  "Chinese",
+  "Colombian",
+  "Comorian",
+  "Congolese",
+  "Costa Rican",
+  "Croatian",
+  "Cuban",
+  "Cypriot",
+  "Czech",
+  "Danish",
+  "Djiboutian",
+  "Dominican",
+  "Dutch",
+  "East Timorese",
+  "Ecuadorian",
+  "Egyptian",
+  "Emirati",
+  "Equatorial Guinean",
+  "Eritrean",
+  "Estonian",
+  "Eswatini",
+  "Ethiopian",
+  "Fijian",
+  "Filipino",
+  "Finnish",
+  "French",
+  "Gabonese",
+  "Gambian",
+  "Georgian",
+  "German",
+  "Ghanaian",
+  "Greek",
+  "Grenadian",
+  "Guatemalan",
+  "Guinean",
+  "Guyanese",
+  "Haitian",
+  "Honduran",
+  "Hungarian",
+  "Icelandic",
+  "Indian",
+  "Indonesian",
+  "Iranian",
+  "Iraqi",
+  "Irish",
+  "Israeli",
+  "Italian",
+  "Ivorian",
+  "Jamaican",
+  "Japanese",
+  "Jordanian",
+  "Kazakh",
+  "Kenyan",
+  "Kiribati",
+  "Korean",
+  "Kosovar",
+  "Kuwaiti",
+  "Kyrgyz",
+  "Laotian",
+  "Latvian",
+  "Lebanese",
+  "Liberian",
+  "Libyan",
+  "Liechtenstein",
+  "Lithuanian",
+  "Luxembourgish",
+  "Malagasy",
+  "Malawian",
+  "Malaysian",
+  "Maldivian",
+  "Malian",
+  "Maltese",
+  "Marshallese",
+  "Mauritanian",
+  "Mauritian",
+  "Mexican",
+  "Micronesian",
+  "Moldovan",
+  "Monegasque",
+  "Mongolian",
+  "Montenegrin",
+  "Moroccan",
+  "Mozambican",
+  "Namibian",
+  "Nauruan",
+  "Nepalese",
+  "New Zealander",
+  "Nicaraguan",
+  "Nigerian",
+  "Nigerien",
+  "North Korean",
+  "North Macedonian",
+  "Norwegian",
+  "Omani",
+  "Pakistani",
+  "Palauan",
+  "Palestinian",
+  "Panamanian",
+  "Papua New Guinean",
+  "Paraguayan",
+  "Peruvian",
+  "Polish",
+  "Portuguese",
+  "Qatari",
+  "Romanian",
+  "Russian",
+  "Rwandan",
+  "Saint Lucian",
+  "Salvadoran",
+  "Samoan",
+  "Saudi",
+  "Senegalese",
+  "Serbian",
+  "Seychellois",
+  "Sierra Leonean",
+  "Singaporean",
+  "Slovak",
+  "Slovenian",
+  "Solomon Islander",
+  "Somali",
+  "South African",
+  "South Korean",
+  "South Sudanese",
+  "Spanish",
+  "Sri Lankan",
+  "Sudanese",
+  "Surinamese",
+  "Swedish",
+  "Swiss",
+  "Syrian",
+  "Taiwanese",
+  "Tajik",
+  "Tanzanian",
+  "Thai",
+  "Togolese",
+  "Tongan",
+  "Trinidadian",
+  "Tunisian",
+  "Turkish",
+  "Turkmen",
+  "Tuvaluan",
+  "Ugandan",
+  "Ukrainian",
+  "Uruguayan",
+  "Uzbek",
+  "Vanuatuan",
+  "Venezuelan",
+  "Vietnamese",
+  "Yemeni",
+  "Zambian",
+  "Zimbabwean",
+] as const;
+
+// Client statuses
+export const CLIENT_STATUSES = [
+  { value: "lead", label: "Lead", color: "blue" },
+  { value: "active", label: "Active", color: "green" },
+  { value: "completed", label: "Completed", color: "purple" },
+  { value: "lost", label: "Lost", color: "red" },
+  { value: "inactive", label: "Inactive", color: "gray" },
+] as const;
+
+// Lead sources
+export const LEAD_SOURCES = [
+  { value: "website", label: "Website" },
+  { value: "whatsapp", label: "WhatsApp" },
+  { value: "referral", label: "Referral" },
+  { value: "social_media", label: "Social Media" },
+  { value: "walk_in", label: "Walk-in" },
+  { value: "other", label: "Other" },
+] as const;
+
+// Service interests
+export const SERVICE_INTERESTS = [
+  { value: "kitas_work", label: "KITAS Work Permit" },
+  { value: "kitas_investor", label: "KITAS Investor" },
+  { value: "kitas_spouse", label: "KITAS Spouse" },
+  { value: "kitap", label: "KITAP Permanent" },
+  { value: "pt_pma", label: "PT PMA Setup" },
+  { value: "tax_consulting", label: "Tax Consulting" },
+  { value: "visa_extension", label: "Visa Extension" },
+  { value: "retirement_visa", label: "Retirement Visa" },
+  { value: "second_home", label: "Second Home Visa" },
+  { value: "other", label: "Other" },
+] as const;
+
+// ============================================
+// COMPANIES (Company-Centric CRM)
+// ============================================
+
+export interface Company {
+  id: number;
+  uuid: string;
+  company_name: string;
+  company_type: "PT PMA" | "PT Perorangan" | "CV" | "Other";
+  brand_name?: string;
+  kbli_code?: string;
+  kbli_description?: string;
+  nib?: string;
+  npwp_company?: string;
+  akta_pendirian_no?: string;
+  akta_pendirian_date?: string;
+  akta_perubahan_no?: string;
+  akta_perubahan_date?: string;
+  sk_menhumkam_no?: string;
+  sk_menhumkam_date?: string;
+  registered_address?: string;
+  office_address?: string;
+  city?: string;
+  province?: string;
+  postal_code?: string;
+  company_phone?: string;
+  company_email?: string;
+  status: "active" | "dormant" | "dissolved" | "in_setup";
+  setup_progress: number;
+  google_drive_folder_id?: string;
+  custom_fields?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClientCompanyLink {
+  link_id: number;
+  company_id: number;
+  company_name: string;
+  company_type: string;
+  brand_name?: string;
+  role: string;
+  client_name?: string;
+  /** Set on a company's associates (the person's client card); absent on a client's own links. */
+  client_id?: number;
+  is_primary: boolean;
+  ownership_percentage?: number;
+  shares_count?: number;
+  share_nominal_value?: number;
+  start_date?: string;
+  status: string;
+  notes?: string;
+  // Company details
+  kbli_code?: string;
+  kbli_description?: string;
+  nib?: string;
+  npwp_company?: string;
+  akta_pendirian_no?: string;
+  akta_pendirian_date?: string;
+  akta_perubahan_no?: string;
+  akta_perubahan_date?: string;
+  sk_menhumkam_no?: string;
+  sk_menhumkam_date?: string;
+  registered_address?: string;
+  office_address?: string;
+  city?: string;
+  province?: string;
+  company_phone?: string;
+  company_email?: string;
+  company_status?: string;
+  setup_progress?: number;
+  google_drive_folder_id?: string | null;
+  tax_dept_folder_id?: string | null;
+  custom_fields?: Record<string, unknown>;
+}
+
+export interface CompanyDocument {
+  id: number;
+  uuid: string;
+  company_id?: number;
+  document_type: string;
+  document_subtype?: string;
+  document_number?: string;
+  document_title?: string;
+  description?: string;
+  issue_date?: string;
+  expiry_date?: string;
+  status: "active" | "expired" | "archived" | "pending";
+  google_drive_file_id?: string;
+  google_drive_file_url?: string;
+  file_name?: string;
+  is_verified: boolean;
+  fiscal_year?: number | null;
+  created_at: string;
+}
+
+export interface TaxRecord {
+  id: number;
+  uuid: string;
+  entity_type: "client" | "company";
+  entity_id: number;
+  npwp?: string;
+  npwp_status?: string;
+  tax_center?: string;
+  is_pph21_registered: boolean;
+  is_pph23_registered: boolean;
+  is_pph25_registered: boolean;
+  is_ppn_registered: boolean;
+  is_pph29_registered: boolean;
+  tax_year?: number;
+  reporting_period?: string;
+  next_filing_date?: string;
+  compliance_status: "compliant" | "overdue" | "warning" | "exempt";
+}
+
+export interface TaxDocument {
+  id: number;
+  uuid: string;
+  document_type: string;
+  tax_type?: string;
+  tax_year?: number;
+  tax_period?: string;
+  document_number?: string;
+  filing_date?: string;
+  reported_amount?: number;
+  paid_amount?: number;
+  status: "filed" | "paid" | "corrected" | "amended";
+  google_drive_file_id?: string;
+  file_name?: string;
+}
+
+// Company document types
+export const COMPANY_DOCUMENT_TYPES = [
+  { value: "akta_pendirian", label: "Akta Pendirian" },
+  { value: "akta_perubahan", label: "Akta Perubahan" },
+  { value: "sk_menhumkam", label: "SK Kemenkumham" },
+  { value: "nib", label: "NIB (Business ID)" },
+  { value: "npwp", label: "NPWP Company" },
+  { value: "skt", label: "SKT (Tax Registration)" },
+  { value: "sppkp", label: "SPPKP" },
+  { value: "tdp", label: "TDP" },
+  { value: "domicile_letter", label: "Domicile Letter" },
+  { value: "decrees", label: "Decrees" },
+  { value: "licenses", label: "Licenses" },
+  { value: "contracts", label: "Contracts" },
+  { value: "others", label: "Others" },
+] as const;
+
+// Company roles
+export const COMPANY_ROLES = [
+  { value: "Director", label: "Director" },
+  { value: "Commissioner", label: "Commissioner" },
+  { value: "Shareholder", label: "Shareholder" },
+  { value: "Employee", label: "Employee" },
+  { value: "Agent", label: "Agent" },
+  { value: "Beneficial_Owner", label: "Beneficial Owner" },
+  { value: "Authorized_Signatory", label: "Authorized Signatory" },
+] as const;
+
+// Tax document types
+export const TAX_DOCUMENT_TYPES = [
+  { value: "SPT", label: "SPT (Tax Return)" },
+  { value: "Bukti_Potong", label: "Bukti Potong" },
+  { value: "SSP", label: "SSP (Payment Slip)" },
+  { value: "Faktur_Pajak", label: "Faktur Pajak (Tax Invoice)" },
+  { value: "SKT", label: "SKT" },
+  { value: "SPPKP", label: "SPPKP" },
+  { value: "Tax_Certificate", label: "Tax Certificate" },
+  { value: "Others", label: "Others" },
+] as const;
+
+export interface RenewalAlert {
+  id: number;
+  practice_id: number;
+  client_id: number;
+  alert_type: string;
+  description: string;
+  target_date: string;
+  alert_date: string;
+  status: string;
+}
+
+export interface CreatePracticeParams {
+  client_id: number; // Required by backend
+  practice_type_code?: string; // Omit to open an inquiry without a service
+  status?: string; // inquiry, quotation_sent, in_progress, completed, etc.
+  priority?: string; // normal, high, urgent
+  notes?: string; // Maps from frontend "title"
+  internal_notes?: string;
+  quoted_price?: number;
+  // Discount (added 2026-05-06): fixed-IDR adjustment subtracted from
+  // quoted_price for invoice purposes. Backend validates non-negative
+  // and discount_amount <= quoted_price; reason is free-text optional.
+  discount_amount?: number;
+  discount_reason?: string;
+  assigned_to?: string; // team member email
+  start_date?: string;
+  family_member_id?: number; // Optional: tag practice for a specific dependent (spouse/child)
+}
+
+// ============================================
+// SEARCH
+// ============================================
+
+export interface SearchResult {
+  id: number;
+  type: "client" | "practice" | "document";
+  title: string;
+  subtitle?: string;
+  status?: string;
+  url: string;
+  metadata?: Record<string, any>;
+}
+
+export interface SearchFilters {
+  status?: string[];
+  client_type?: string[];
+  assigned_to?: string[];
+  nationality?: string[];
+  date_from?: string;
+  date_to?: string;
+}
+
+// Portal Messages (team ↔ client bridge)
+/**
+ * Whether a client can reach my.balizero.com yet, and if not, whether an
+ * invitation is already in flight. Returned by
+ * GET /api/crm/portal/clients/{id}/status.
+ * Backend: apps/backend-rag/backend/app/routers/team_invites_messaging.py
+ * (PortalStatusResponse). The three states are mutually exclusive:
+ * portal access granted, invite pending, or neither.
+ */
+export interface PortalAccessStatus {
+  has_portal_access: boolean;
+  portal_user_id: number | null;
+  portal_email: string | null;
+  last_login: string | null;
+  pending_invite: boolean;
+  invite_expires_at: string | null;
+}
+
+export interface PortalMessageThread {
+  id: number;
+  subject?: string;
+  content: string;
+  direction: "client_to_team" | "team_to_client";
+  sent_by?: string;
+  read_at?: string;
+  /** Normalised from the backend's `is_read` (or a legacy `read_at`). */
+  is_read?: boolean;
+  created_at: string;
+  practice_id?: number;
+}
+
+// AI Summary (CRM-Guardian Phase 1 cross-folder L1)
+// Returned by GET /api/crm/clients/{id}/ai-summary.
+// Backend: apps/backend-rag/backend/app/routers/crm_clients.py
+// Schema:  apps/backend-rag/backend/services/crm_guardian/schemas.py (L1ClientSummary v2.0)
+export interface AiSummaryResponse {
+  client_id: number;
+  summary: L1ClientSummary | null;
+  generated_at: string | null;
+  schema_version: string | null;
+  fingerprint: string | null;
+  status: "available" | "not_generated" | "pending";
+}
+
+export interface WaCaseIntelligenceFlag {
+  id?: string;
+  label: string;
+}
+
+export interface WaCaseIntelligenceCard {
+  id: number;
+  conversation_key: string;
+  member_phone?: string | null;
+  counterpart_key?: string | null;
+  display_name?: string | null;
+  chat_kind: "direct" | "group" | "unknown" | string;
+  case_status: "open" | "waiting" | "blocked" | "done" | "archived" | string;
+  case_type?: string | null;
+  source_model: string;
+  reasoning_effort?: string | null;
+  analysis_hash: string;
+  analysis_id?: string | null;
+  message_count: number;
+  unread_count: number;
+  last_message_at?: string | null;
+  priority_score: number;
+  flags: WaCaseIntelligenceFlag[];
+  recap?: string | null;
+  next_action?: string | null;
+  ideal_reply?: string | null;
+  evidence?: string | null;
+  crm_packet?: string | null;
+  raw_sections: Record<string, unknown>;
+  analysis_output_path?: string | null;
+  generated_at?: string | null;
+  imported_at: string;
+  updated_at: string;
+}
+
+export interface WaCaseIntelligenceResponse {
+  client_id: number;
+  status: "available" | "not_generated";
+  case_count: number;
+  cases: WaCaseIntelligenceCard[];
+}
+
+export interface L1ClientSummary {
+  schema_version: string;
+  prompt_version?: string;
+  client_id: number;
+  generated_at?: string;
+  source_folder_id?: string;
+  source_file_count?: number;
+  source_file_fingerprint?: string;
+  identity?: AiIdentity;
+  visa?: AiVisaStatus;
+  company?: AiCompany;
+  shareholders?: AiShareholder[];
+  properties?: AiPropertyAsset[];
+  documents?: AiDocumentRef[];
+  timeline?: AiTimelineEvent[];
+  compliance?: AiCompliance;
+  profile?: AiProfile;
+  narrative_en?: string | null;
+  extraction_confidence?: number | null;
+  extraction_notes?: string[];
+}
+
+export interface AiIdentity {
+  full_name?: string | null;
+  date_of_birth?: string | null;
+  birthplace?: string | null;
+  nationality?: string | null;
+  passport_number?: string | null;
+  passport_expires_at?: string | null;
+  npwp_personal?: string | null;
+}
+
+export interface AiVisaStatus {
+  visa_type?: string | null;
+  stay_permit_number?: string | null;
+  issued_at?: string | null;
+  valid_until?: string | null;
+  sponsor_company?: string | null;
+  multiple_entry?: boolean | null;
+}
+
+export interface AiCompany {
+  legal_name?: string | null;
+  legal_form?: string | null;
+  nib?: string | null;
+  npwp_corporate?: string | null;
+  akta_number?: string | null;
+  akta_date?: string | null;
+  sk_kemenkumham?: string | null;
+  kbli_codes?: string[];
+  kbli_primary?: string | null;
+  paid_up_capital_idr?: number | null;
+  authorized_capital_idr?: number | null;
+  registered_address?: string | null;
+  tax_records?: AiTaxRecord[];
+  lkpm_history?: AiLkpmRecord[];
+  source_company_folders?: string[];
+}
+
+export interface AiTaxRecord {
+  period: string;
+  spt_type?: string | null;
+  filed_at?: string | null;
+  amount_idr?: number | null;
+  status: string;
+  source_file_id?: string | null;
+  notes?: string | null;
+}
+
+export interface AiLkpmRecord {
+  period: string;
+  reported_at?: string | null;
+  realization_idr?: number | null;
+  employment_count?: number | null;
+  status: string;
+  source_file_id?: string | null;
+  notes?: string | null;
+}
+
+export interface AiShareholder {
+  name: string;
+  percentage?: number | null;
+  role?: string | null;
+  nationality?: string | null;
+}
+
+export interface AiPropertyAsset {
+  label?: string | null;
+  address?: string | null;
+  tenure?: string | null;
+  pbg_status?: string | null;
+  lease_expires_at?: string | null;
+}
+
+export interface AiDocumentRef {
+  file_id: string;
+  file_name: string;
+  doc_type: string;
+  issued_at?: string | null;
+  expires_at?: string | null;
+  subject_entity?: string | null;
+  key_fields?: Record<string, string>;
+}
+
+export interface AiTimelineEvent {
+  event_date: string | null;
+  event_type: string;
+  description: string;
+  source_file_id?: string | null;
+}
+
+export interface AiCompliance {
+  lkpm_last_reported?: string | null;
+  lkpm_next_due?: string | null;
+  spt_tahunan_last?: string | null;
+  bpjs_enrolled?: boolean | null;
+  passport_days_until_expiry?: number | null;
+  visa_days_until_expiry?: number | null;
+  red_flags?: string[];
+}
+
+export interface AiProfile {
+  archetype:
+    | "individual_expat"
+    | "individual_investor"
+    | "pt_pma_owner"
+    | "family_member"
+    | "property_holder"
+    | "business_only"
+    | "other";
+  tier: "VIP" | "standard" | "archive" | "unknown";
+  primary_service:
+    | "visa_immigration"
+    | "company_setup"
+    | "tax"
+    | "property"
+    | "hr_payroll"
+    | "mixed"
+    | "unknown";
+  rationale?: string | null;
+}
+
+/** GET /api/crm/clients/{id}/recap — a few plain-language lines for a tab. `text` null = nothing to show. */
+export interface ClientRecap {
+  scope: string;
+  text: string | null;
+  generated_at: string | null;
+  model: string | null;
+  stale: boolean;
+}

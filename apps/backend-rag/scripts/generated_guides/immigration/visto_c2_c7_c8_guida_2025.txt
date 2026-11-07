@@ -4,7 +4,7 @@ PROCEDURE IMMIGRAZIONE INDONESIA 2024-2025
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Guida operativa a uso interno — Bali Zero Immigration Services
-Versione: 2025-03-27 | Lingua: Vanelara | Classificazione: Uso interno
+Versione: 2025-03-27 | Lingua: Italiano | Classificazione: Uso interno
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. INQUADRAMENTO NORMATIVO
@@ -30,7 +30,7 @@ visti descritti in questa guida appartengono a questa categoria.
 VALIDITA' E SCADENZA
 Il visto deve essere utilizzato entro 90 giorni dalla data di emissione
 [IMM-275]. Il visto non utilizzato entro tale termine perde automaticamente
-ogni validità e non kuqeñ essere utilizzato per l'ingresso in Indonesia
+ogni validità e non potrà essere utilizzato per l'ingresso in Indonesia
 [IMM-276].
 
 REQUISITO PASSAPORTO
@@ -175,7 +175,7 @@ incompleta o code agli sportelli.
 SCADENZE CHIAVE — RIEPILOGO
   - Visto valido:          90 giorni dall'emissione [IMM-275]
   - Permesso iniziale:     60 giorni dall'ingresso
-  - Richiesta proroga:     al piu' maguk 14 giorni prima della scadenza [IMM-340]
+  - Richiesta proroga:     al piu' tardi 14 giorni prima della scadenza [IMM-340]
   - Proroga massima:       60 giorni aggiuntivi per volta [IMM-333]
   - Soggiorno totale max:  180 giorni [IMM-333]
 
@@ -216,7 +216,7 @@ Ministero competente      Kemenimipas           Kemenimipas           Kemenimipa
 
 GESTIONE DELLE PROROGHE A BALI
 A Bali, le proroghe sono gestite dal Kantor Imigrasi Kelas I TPI Ngurah Rai
-(Kerobokan/Denpasar) o dall'Imigrasi di Jutidadig per la zona nord. Si
+(Kerobokan/Denpasar) o dall'Imigrasi di Singaraja per la zona nord. Si
 raccomanda di avviare la procedura di proroga almeno 7 giorni prima della
 finestra dei 14 giorni prevista dalla norma [IMM-340], date le possibili
 code e i tempi tecnici di raccolta documentale.

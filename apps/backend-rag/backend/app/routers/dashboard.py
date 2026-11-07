@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from backend.app.dependencies import get_current_user
 from backend.app.deps.crm_access import get_crm_user_filter
 from backend.services.kbli_eye import KBLIEye
+from backend.services.prime.property_service import investment_kbli_summary
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ def _get_kbli_eye() -> KBLIEye:
 
 class ValidatePropertyRequest(BaseModel):
     kbli_code: str
+    vintage: str | None = None
     is_pma: bool = True
     location: str = "Bali"
     skala: str | None = None
@@ -62,6 +64,7 @@ class AnalyzeInvestmentRequest(BaseModel):
     lat: float
     lon: float
     kbli_code: str | None = None
+    vintage: str | None = None
     is_pma: bool = True
     land_size_m2: float | None = None
     price_idr: float | None = None
@@ -762,6 +765,7 @@ async def validate_property(req: ValidatePropertyRequest) -> dict[str, Any]:
         code=req.kbli_code,
         is_pma=req.is_pma,
         location=req.location,
+        vintage=req.vintage,
     )
     state = result.get("audit", {}).get("state", result.get("state", "UNKNOWN"))
     logger.info(
@@ -1120,34 +1124,27 @@ async def analyze_investment(req: AnalyzeInvestmentRequest) -> dict[str, Any]:
     # ── B) KBLIEye → Compliance PMA ───────────────────────────────────
     kbli_state: str | None = None
     kbli_oss_risk: str | None = None
-    if req.kbli_code:
+    if req.kbli_code is not None:
         try:
             eye = _get_kbli_eye()
             kd = eye.get_decision(
                 code=req.kbli_code,
                 is_pma=req.is_pma,
                 location="Bali",
+                vintage=req.vintage,
             )
-            audit = kd.get("audit", kd)
-            kbli_state = audit.get("state", kd.get("state", "UNKNOWN"))
-            kbli_oss_risk = audit.get("oss_risk") or None
-            pma_logic = kd.get("pma_logic", {})
-
-            result["kbli"] = {
-                "code": kd.get("kbli_2025", req.kbli_code),
-                "title": kd.get("title", ""),
-                "state": kbli_state,
-                "reason": audit.get("reason_code", ""),
-                "oss_risk": audit.get("oss_risk", ""),
-                "max_foreign_ownership": pma_logic.get("max_foreign_ownership", 0),
-            }
+            result["kbli"] = investment_kbli_summary(kd, req.kbli_code)
+            kbli_state = result["kbli"]["state"]
+            kbli_oss_risk = result["kbli"]["oss_risk"] or None
             logger.info(
                 "Investment analysis: KBLI %s → %s",
                 req.kbli_code,
                 kbli_state,
             )
         except Exception as e:
+            kbli_state = "ERROR"
             result["kbli"] = {
+                "max_foreign_ownership": None,
                 "code": req.kbli_code,
                 "state": "ERROR",
                 "error": str(e),
@@ -1185,11 +1182,14 @@ async def analyze_investment(req: AnalyzeInvestmentRequest) -> dict[str, Any]:
     scoring = calculate_investment_score(
         zone_data=zone_data if zone_data else None,
         kbli_state=kbli_state,
-        kbli_code=req.kbli_code,
+        kbli_code=result["kbli"]["code"] if result["kbli"] and kbli_state != "ERROR" else None,
         roi_data=result.get("roi"),
         geo_data=req.geo_data,
         oss_risk=kbli_oss_risk,
     )
+
+    if kbli_state == "ERROR" and not scoring["hard_blocks"]:
+        return result  # Preserve the flat KBLI error; a verdict requires a resolved activity.
 
     verdict_label = scoring["verdict"]
     can_invest = scoring["can_invest"]

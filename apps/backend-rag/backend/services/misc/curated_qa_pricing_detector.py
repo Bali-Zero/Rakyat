@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 
 # Currency-marker + digit adjacency: "Rp 5.000.000", "USD 130,000", "$50",
-# "€ 200", "IDR10000012". Requires a digit immediately (optionally after
+# "€ 200", "IDR15000000". Requires a digit immediately (optionally after
 # whitespace/punctuation) after the currency token — a bare "USD" or "Rp"
 # mention with no number attached is not itself a price figure.
 _CURRENCY_WITH_DIGIT_RE = re.compile(

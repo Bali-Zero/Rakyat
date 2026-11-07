@@ -134,8 +134,14 @@ def _garuda_environment_options() -> list[str]:
     return list(options)
 
 
-# Rakyat: `test_garuda_arm_workflow_and_migrations_files_exist` moved to the backstage — it reads .github/workflows/garuda-arm.yml, which is not a Rakyat workflow.
-# Original at 677e29bb3511:apps/backend-rag/backend/tests/app/setup/test_garuda_environment_matches_schema.py; listed in PERIMETER.txt.
+def test_garuda_arm_workflow_and_migrations_files_exist():
+    """Guard the guard: if either input path silently disappears, every
+    other assertion below would vacuously pass on nothing (W84)."""
+    if not (GARUDA_ARM_WORKFLOW.exists()):
+        pytest.skip('.github/workflows/garuda-arm.yml not in Rakyat')
+    assert GARUDA_ARM_WORKFLOW.is_file(), f"missing: {GARUDA_ARM_WORKFLOW}"
+    assert MIGRATIONS_DIR.is_dir(), f"missing: {MIGRATIONS_DIR}"
+    assert list(MIGRATIONS_DIR.glob("*.sql")), f"no .sql files under {MIGRATIONS_DIR}"
 
 
 def test_environment_check_clauses_are_internally_consistent():
@@ -154,9 +160,37 @@ def test_environment_check_clauses_are_internally_consistent():
     )
 
 
-# Rakyat: `test_garuda_environment_workflow_options_are_schema_legal` moved to the backstage — it reads .github/workflows/garuda-arm.yml, which is not a Rakyat workflow.
-# Original at 677e29bb3511:apps/backend-rag/backend/tests/app/setup/test_garuda_environment_matches_schema.py; listed in PERIMETER.txt.
+def test_garuda_environment_workflow_options_are_schema_legal():
+    """The actual regression: every option the workflow lets an operator
+    pick for `garuda_environment` must be a value the database's own
+    `environment` CHECK constraints accept. This is what would have failed
+    on the merged `SANDBOX`/`PRODUCTION` options (SANDBOX is schema-illegal)."""
+    if not (GARUDA_ARM_WORKFLOW.exists()):
+        pytest.skip('.github/workflows/garuda-arm.yml not in Rakyat')
+    options = _garuda_environment_options()
+    allowed = _environment_check_intersection()
+    illegal = set(options) - allowed
+    assert not illegal, (
+        f"garuda-arm.yml's garuda_environment options include values the "
+        f"database's `environment` CHECK constraints reject: {sorted(illegal)}. "
+        f"Schema-legal values (intersection across all CHECK clauses found): "
+        f"{sorted(allowed)}. Arming with an illegal value violates the CHECK "
+        f"constraint on the first write while /health stays green "
+        f"(cicatrix-superscar.md family #2)."
+    )
 
 
-# Rakyat: `test_garuda_environment_default_is_schema_legal` moved to the backstage — it reads .github/workflows/garuda-arm.yml, which is not a Rakyat workflow.
-# Original at 677e29bb3511:apps/backend-rag/backend/tests/app/setup/test_garuda_environment_matches_schema.py; listed in PERIMETER.txt.
+def test_garuda_environment_default_is_schema_legal():
+    """The DEFAULT is the most dangerous slot — it is what an operator gets
+    by just accepting the form, so it must never be the illegal one."""
+    if not (GARUDA_ARM_WORKFLOW.exists()):
+        pytest.skip('.github/workflows/garuda-arm.yml not in Rakyat')
+    workflow = yaml.safe_load(GARUDA_ARM_WORKFLOW.read_text(encoding="utf-8"))
+    default = _workflow_dispatch_inputs(workflow)["garuda_environment"]["default"]
+    allowed = _environment_check_intersection()
+    assert default in allowed, (
+        f"garuda_environment default={default!r} is not in the schema-legal "
+        f"set {sorted(allowed)} — the default is the value an operator gets "
+        f"by accepting the workflow_dispatch form as-is, so it must never be "
+        f"the illegal one."
+    )

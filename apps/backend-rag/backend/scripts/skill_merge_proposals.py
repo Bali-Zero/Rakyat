@@ -66,7 +66,7 @@ def cosine_distance(v1: list[float], v2: list[float]) -> float:
     if n1 <= 0.0 or n2 <= 0.0:
         return math.inf
     cos_sim = dot / (math.sqrt(n1) * math.sqrt(n2))
-    # Clamp because float round-off occasionally yields 1.0000011
+    # Clamp because float round-off occasionally yields 1.0000001
     cos_sim = max(-1.0, min(1.0, cos_sim))
     return 1.0 - cos_sim
 

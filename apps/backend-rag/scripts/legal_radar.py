@@ -4,7 +4,7 @@
 Dispatches to Gemini Search via ai-dispatch.sh per domain and
 sends a Telegram summary to Zero for review.
 
-Called by OpenClaw cron: Detali 08:00 WITA
+Called by OpenClaw cron: Sunday 08:00 WITA
 """
 from __future__ import annotations
 

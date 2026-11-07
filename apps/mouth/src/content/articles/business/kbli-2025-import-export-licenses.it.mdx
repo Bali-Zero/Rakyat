@@ -131,10 +131,10 @@ L\'Indonesia ha due licenze di importo principali e **non sono intercambiabili**
 | **26xxx-28xxx** | Produzione Elettronica e Macchinari              | API-P        | Componenti elettronici, parti industriali                                       | Certificazione SNI, approvazione tipo Postel per telecomunicazioni                      |
 | **29xxx-30xxx** | Produzione Automobilistica                       | API-P        | Parti auto, componenti veicoli                                                  | SNI, requisiti TKDN (contenuto domestico)                                               |
 | **46111-46199** | Commercio All\'ingrosso Prodotti Agricoli        | API-U        | Prodotti agricoli importati, cereali, semi                                      | Autorizzazione quarantena, permesso di importo dal Ministero dell\'Agricoltura          |
-| **46000-00010** | Commercio All\'ingrosso Tessile e Abbigliamento  | API-U        | Capi finiti, tessuti                                                            | Allocazione quota Permendag                                                             |
-| **46000-00011** | Commercio All\'ingrosso Elettronica              | API-U        | Elettronica di consumo, attrezzature IT                                         | Certificazione SNI + SDPPI (Postel) richiesta                                           |
+| **46410-46499** | Commercio All\'ingrosso Tessile e Abbigliamento  | API-U        | Capi finiti, tessuti                                                            | Allocazione quota Permendag                                                             |
+| **46510-46599** | Commercio All\'ingrosso Elettronica              | API-U        | Elettronica di consumo, attrezzature IT                                         | Certificazione SNI + SDPPI (Postel) richiesta                                           |
 | **46900**       | Commercio All\'ingrosso Beni Non Specializzati   | API-U        | Merci generali miste                                                            | Controlli Lartas caso per caso                                                          |
-| **47000-00010** | Vendita al Dettaglio in Supermercati/Ipermercati | API-U        | Beni di consumo importati                                                       | BPOM per alimenti/farmaci, SNI per elettronica                                          |
+| **47111-47199** | Vendita al Dettaglio in Supermercati/Ipermercati | API-U        | Beni di consumo importati                                                       | BPOM per alimenti/farmaci, SNI per elettronica                                          |
 | **47911**       | Vendita al Dettaglio E-commerce                  | API-U        | Prodotti importati diretti                                                      | Come per il retail + licenza e-commerce OSS                                             |
 
 ## API-U vs. API-P: Le Differenze Critiche
@@ -181,7 +181,7 @@ L\'Indonesia offre **agevolazioni fiscali** e **super detrazioni** per le attivi
 **Settori ammissibili alle agevolazioni fiscali (PP 55/2019):**
 
 - Manifatturiero (10xxx-33xxx) con impegno di esportazione minimo del 30%
-- Infrastrutture economiche (guxuseb, telecomunicazioni)
+- Infrastrutture economiche (energia, telecomunicazioni)
 - Industrie ad alta tecnologia (elettronica, farmaceutica)
 
 **Super detrazione fiscale (PMK 128/2019):**
@@ -209,7 +209,7 @@ L\'Indonesia offre **agevolazioni fiscali** e **super detrazioni** per le attivi
 
 - 10xxx-11xxx (Manifattura alimentare/bevande)
 - 46311-46339 (All\'ingrosso alimentare/bevande)
-- 47000-00010 (Supermercato/retail con alimenti)
+- 47111-47199 (Supermercato/retail con alimenti)
 - 47911 (E-commerce che vende alimenti)
 
 **Tempistiche di elaborazione:** 3-6 mesi per la registrazione BPOM (richiesti test prodotto).
@@ -224,8 +224,8 @@ L\'Indonesia offre **agevolazioni fiscali** e **super detrazioni** per le attivi
 **KBLI colpiti:**
 
 - 26xxx (Manifattura elettronica)
-- 46000-00011 (All\'ingrosso elettronica)
-- 47000-00011 (Retail elettronica)
+- 46510-46599 (All\'ingrosso elettronica)
+- 47410-47499 (Retail elettronica)
 
 **Tempistiche di elaborazione:** 1-3 mesi per SNI, 2-4 mesi per Postel.
 
@@ -241,8 +241,8 @@ L\'Indonesia offre **agevolazioni fiscali** e **super detrazioni** per le attivi
 **KBLI colpiti:**
 
 - 13xxx-14xxx (Manifattura tessile/abbigliamento)
-- 46000-00010 (All\'ingrosso tessile)
-- 47000-00012 (Retail tessile)
+- 46410-46499 (All\'ingrosso tessile)
+- 47510-47599 (Retail tessile)
 
 **Tempistiche di elaborazione:** Le domande di quota si aprono annualmente (solitamente Q4 per l\'anno successivo).
 
@@ -452,7 +452,7 @@ Assumendo che il vostro PT PMA sia già registrato con i codici KBLI corretti:
 
 **Scenario:** Una startup importa il suo primo container. Cerca di sdoganare alla Dogana senza un broker registrato.
 
-**Problema:** L\'Indonesia richiede PPJK (Pengusaha Pengurusan Jasa Kepabeanan) — broker doganale autorizzato — per gli importi commerciali. Lo sdoganamento fai-da-te è consentito solo per piccoli importi (<USD 1.500).
+**Problema:** L\'Indonesia richiede PPJK (Pengusaha Pengurusan Jasa Kepabeanan) — broker doganale autorizzato — per gli importi commerciali. Lo sdoganamento fai-da-te è consentito solo per piccoli importi (&lt;USD 1.500).
 
 **Sanzione:** Spedizione trattenuta in porto. Spese di stoccaggio giornaliere (IDR 500k-2 juta/giorno) si accumulano.
 
@@ -464,7 +464,7 @@ KBLI 2025 ha aggiunto codici manifatturieri granulari, specialmente in:
 
 - **Lavorazione alimentare** (10xxx): 47 nuovi codici (es. carne vegetale, bevande funzionali)
 - **Elettronica** (26xxx): 22 nuovi codici (es. dispositivi IoT, fabbricazione droni)
-- **Attrezzature guxuseb rinnovabile** (27xxx): 15 nuovi codici (es. componenti pannelli solari, caricabatterie EV)
+- **Attrezzature energia rinnovabile** (27xxx): 15 nuovi codici (es. componenti pannelli solari, caricabatterie EV)
 
 **Impatto:** Maggiori classificazioni API-P specifiche. Ora potete importare materie prime abbinate precisamente alla vostra produzione, riducendo il rischio di audit doganale.
 
@@ -528,7 +528,7 @@ L\'Indonesia utilizza i codici HS (Sistema Armonizzato) per i dazi doganali, ma 
 
 - OSS RBA 2.1 NON include ancora tutti i codici KBLI 2025
 - Le licenze API utilizzano ancora il quadro KBLI 2020
-- Sono richieste domande jobegeh di permesso Lartas
+- Sono richieste domande manuali di permesso Lartas
 
 **Aggiornamento atteso (metà 2026):**
 

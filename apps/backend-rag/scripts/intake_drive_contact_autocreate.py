@@ -126,7 +126,7 @@ def _sql_field_proj(key_expr: str) -> str:
     null, missing key — is NULL. The previous oracle
     ``COALESCE(fl->k->>'value', fl->>k)`` SERIALIZED a value-less object to
     text, and the digit-stripping npwp validator can mint a "valid" SID out
-    of ``{"confidence": 0.990000001000005}`` (→ 0123456789012345); a
+    of ``{"confidence": 0.123456789012345}`` (→ 0123456789012345); a
     malformed name object likewise became a literal-JSON client name.
     Malformed shapes must never reach a validator: they fail closed here, in
     ONE projection shared by the census, the perimeter re-derive and both

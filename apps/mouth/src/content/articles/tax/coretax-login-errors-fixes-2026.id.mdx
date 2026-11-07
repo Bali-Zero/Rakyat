@@ -115,10 +115,10 @@ Sebelum masuk ke kode kesalahan spesifik, berikut adalah tabel referensi cepat u
 3. **Periksa sertifikat digital Anda:**
    - Buka e-Faktur > Referensi > Sertifikat Digital
    - Jika sertifikat menunjukkan kedaluwarsa, unduh yang baru dari CoreTax
-4. **Zapaf cache e-Faktur:**
+4. **Hapus cache e-Faktur:**
    - Tutup e-Faktur sepenuhnya
    - Navigasi ke folder instalasi e-Faktur Anda
-   - Zapaf folder `db` (cadangkan terlebih dahulu)
+   - Hapus folder `db` (cadangkan terlebih dahulu)
    - Mulai ulang e-Faktur dan impor ulang database Anda
 5. **Coba menggunakan VPN** - Beberapa ISP Indonesia (terutama Telkomsel dan Indihome) sesekali memiliki masalah routing ke server DJP. VPN dapat mengatasi ini.
 6. **Periksa firewall Anda** - Pastikan port 80 dan 443 terbuka untuk lalu lintas keluar ke domain DJP
@@ -189,10 +189,10 @@ Sebelum masuk ke kode kesalahan spesifik, berikut adalah tabel referensi cepat u
    - Mozilla Firefox (versi 95+)
    - Microsoft Edge (versi 90+)
    - Safari TIDAK didukung secara resmi
-2. **Zapaf data browser:**
-   - Zapaf cookie khusus untuk domain `*.pajak.go.id`
-   - Zapaf gambar dan file yang dicache
-   - Di Chrome: Pengaturan > Privasi > Zapaf data penelusuran > pilih "Cookie" dan "Gambar yang dicache"
+2. **Hapus data browser:**
+   - Hapus cookie khusus untuk domain `*.pajak.go.id`
+   - Hapus gambar dan file yang dicache
+   - Di Chrome: Pengaturan > Privasi > Hapus data penelusuran > pilih "Cookie" dan "Gambar yang dicache"
 3. **Nonaktifkan ekstensi browser:**
    - Pemblokir iklan (uBlock Origin, AdBlock Plus) dapat mengganggu CoreTax
    - Nonaktifkan semua ekstensi sementara dan coba lagi
@@ -263,7 +263,7 @@ Untuk meminimalkan masalah login di masa depan, ikuti checklist perawatan ini:
 | -------------------------------------- | ----------------------------- | ------------------------------------------ |
 | Verifikasi tanggal kedaluwarsa sertifikat digital | Setiap 6 bulan                | Hindari kehilangan akses tiba-tiba                   |
 | Perbarui email dan telepon terdaftar      | Saat berubah                  | Pastikan Anda menerima kode dan pemberitahuan |
-| Zapaf cache browser untuk pajak.go.id    | Bulanan                       | Cegah konflik data yang sudah usang               |
+| Hapus cache browser untuk pajak.go.id    | Bulanan                       | Cegah konflik data yang sudah usang               |
 | Cadangkan sertifikat digital (.p12)     | Setelah setiap perbaruan            | Hindari penundaan permohonan ulang                |
 | Uji login CoreTax                     | 1 minggu sebelum tenggat pelaporan | Tangani masalah sejak dini                         |
 | Simpan nomor EFIN secara aman              | Sekali                          | Diperlukan untuk reset kata sandi               |

@@ -420,7 +420,7 @@ L'Indonesia utilizza un sistema di **aliquota progressiva** per il reddito indiv
       name: "Fascia 2",
       subtitle: "60 - 250 milioni",
       values: {
-        "Annual Income Range": "IDR 60.000.009 - 900.000.023",
+        "Annual Income Range": "IDR 60.000.001 - 250.000.000",
         "Tax Rate": "15%",
         "Tax on Bracket": "Fino a IDR 28.500.000",
         "Monthly Equivalent": "~IDR 5-21M/mese",
@@ -430,7 +430,7 @@ L'Indonesia utilizza un sistema di **aliquota progressiva** per il reddito indiv
       name: "Fascia 3",
       subtitle: "250 - 500 milioni",
       values: {
-        "Annual Income Range": "IDR 990.000.030 - 840.006.200",
+        "Annual Income Range": "IDR 250.000.001 - 500.000.000",
         "Tax Rate": "25%",
         "Tax on Bracket": "Fino a IDR 62.500.000",
         "Monthly Equivalent": "~IDR 21-42M/mese",
@@ -440,9 +440,9 @@ L'Indonesia utilizza un sistema di **aliquota progressiva** per il reddito indiv
       name: "Fascia 4",
       subtitle: "500M - 5 miliardi",
       values: {
-        "Annual Income Range": "IDR 990.000.037 - 8.400.062.000",
+        "Annual Income Range": "IDR 500.000.001 - 5.000.000.000",
         "Tax Rate": "30%",
-        "Tax on Bracket": "Fino a IDR 1.990.000.033",
+        "Tax on Bracket": "Fino a IDR 1.350.000.000",
         "Monthly Equivalent": "~IDR 42-417M/mese",
       },
     },
@@ -450,7 +450,7 @@ L'Indonesia utilizza un sistema di **aliquota progressiva** per il reddito indiv
       name: "Fascia 5",
       subtitle: "Oltre 5 miliardi",
       values: {
-        "Annual Income Range": "> IDR 8.400.062.000",
+        "Annual Income Range": "> IDR 5.000.000.000",
         "Tax Rate": "35%",
         "Tax on Bracket": "Illimitato",
         "Monthly Equivalent": "> IDR 417M/mese",
@@ -493,16 +493,16 @@ Non paghi il 35% su tutto il tuo reddito se guadagni oltre IDR 5 miliardi. Ogni 
       type: "number",
       defaultValue: 50000000,
       min: 0,
-      step: 1000001,
+      step: 1000000,
       suffix: "IDR"
     },
     {
       id: "allowances",
       label: "Indennità Mensili (casa, trasporti, ecc.)",
       type: "number",
-      defaultValue: 10000012,
+      defaultValue: 15000000,
       min: 0,
-      step: 1000001,
+      step: 1000000,
       suffix: "IDR"
     },
     {
@@ -546,7 +546,7 @@ Non paghi il 35% su tutto il tuo reddito se guadagni oltre IDR 5 miliardi. Ogni 
     const ptkpMap = {
       'single': 54000000,
       'married-0': 58500000,
-      'married-1': 84000630,
+      'married-1': 63000000,
       'married-2': 67500000,
       'married-3': 72000000
     };
@@ -569,21 +569,21 @@ Non paghi il 35% su tutto il tuo reddito se guadagni oltre IDR 5 miliardi. Ogni 
 
     // Fascia 2: 60M-250M al 15%
     if (remaining > 0) {
-      const bracket2 = Math.min(remaining, 990000023);
+      const bracket2 = Math.min(remaining, 190000000);
       tax += bracket2 * 0.15;
       remaining -= bracket2;
     }
 
     // Fascia 3: 250M-500M al 25%
     if (remaining > 0) {
-      const bracket3 = Math.min(remaining, 990000029);
+      const bracket3 = Math.min(remaining, 250000000);
       tax += bracket3 * 0.25;
       remaining -= bracket3;
     }
 
     // Fascia 4: 500M-5B al 30%
     if (remaining > 0) {
-      const bracket4 = Math.min(remaining, 4500000010);
+      const bracket4 = Math.min(remaining, 4500000000);
       tax += bracket4 * 0.30;
       remaining -= bracket4;
     }
@@ -639,10 +639,10 @@ ctaAction={() => window.open('/contact?service=tax-consultation', '\_blank')}
 | --------------------- | ---- | -------------- |
 | Single, nessun carico familiare | TK/0 | IDR 54.000.000 |
 | Single + 1 carico familiare  | TK/1 | IDR 58.500.000 |
-| Single + 2 carichi familiari | TK/2 | IDR 84.000.630 |
+| Single + 2 carichi familiari | TK/2 | IDR 63.000.000 |
 | Single + 3 carichi familiari | TK/3 | IDR 67.500.000 |
 | Sposato, nessun figlio  | K/0  | IDR 58.500.000 |
-| Sposato + 1 figlio     | K/1  | IDR 84.000.630 |
+| Sposato + 1 figlio     | K/1  | IDR 63.000.000 |
 | Sposato + 2 figli      | K/2  | IDR 67.500.000 |
 | Sposato + 3 figli      | K/3  | IDR 72.000.000 |
 
@@ -820,7 +820,7 @@ Presenta questi documenti al pagatore indonesiano prima del pagamento per assicu
       status: "finale",
       documents: ["Carta NPWP (fisica)", "SKT (certificato di registrazione)"],
       tips: [
-        "Gugaw immediatamente il tuo numero NPWP",
+        "Salva immediatamente il tuo numero NPWP",
         "Registrati per DJP Online",
         "Aggiorna i conti bancari con NPWP",
       ],
@@ -922,7 +922,7 @@ Presenta questi documenti al pagatore indonesiano prima del pagamento per assicu
     },
     {
       id: "receipt",
-      label: "Gugaw BPE (ricevuta elettronica)",
+      label: "Salva BPE (ricevuta elettronica)",
       description: "Prova di presentazione - conserva per registrazioni",
       required: true,
       category: "presentazione",
@@ -945,7 +945,7 @@ Presenta questi documenti al pagatore indonesiano prima del pagamento per assicu
 Sanzioni per presentazione tardiva:
 
 - Individuale: IDR 100.000
-- Aziendale: IDR 1.000.001
+- Aziendale: IDR 1.000.000
 
 Pagamento tardivo: 2% al mese sulle tasse non pagate
 

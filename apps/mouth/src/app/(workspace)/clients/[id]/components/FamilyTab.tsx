@@ -32,7 +32,10 @@ import {
   BASE64_UPLOAD_MAX_LABEL,
 } from "@/lib/upload/base64UploadLimit";
 import { extractDriveFileId } from "./utils";
-import { formatLongSpan } from "@/lib/utils/format-date";
+import { expiryWording, isLive } from "./documentValidity";
+import { familyPassport, familyPermit, levelPill } from "./familyValidity";
+import { resolveCardDay } from "./witaClock";
+import { RemovedSignpost } from "./RemovedSignpost";
 
 type DocumentKind = "passport" | "visa";
 
@@ -173,91 +176,26 @@ function ageAtPresent(dateOfBirth: string) {
   );
 }
 
-/** The old file's exact word for each alert level (FamilyTab.tsx@HEAD~2
- * lines 411-415 passport / 565-569 visa, identical wording both fields) —
- * every enum value the old file distinguished stays distinguishable. */
-function alertWord(alert: "yellow" | "red" | "expired") {
-  if (alert === "expired") return "Expired";
-  if (alert === "red") return "Expiring soon";
-  return "Renewal recommended";
-}
-
 /**
- * The visa pill is sourced from the server-computed `visa_alert` enum, not
- * from a client-side day-count — the enum already decides expiring-vs-valid
- * (r19 law #1: copper is never derived from a raw status string, and where
- * ownership is not derivable the tone is `wait`; there is no ownership
- * signal on a family member, so this never returns `you`).
+ * The visa pill when no date can be read (no field, no live dated document):
+ * the member either has a permit type recorded or has none. The enum is not
+ * read here — a family enum is read only with a date under it.
  */
-function visaPill(alert: FamilyMember["visa_alert"], hasType: boolean) {
-  if (alert === "green") return { tone: "ok" as const, label: "Valid" };
-  if (alert === "yellow" || alert === "red" || alert === "expired")
-    return { tone: "wait" as const, label: alertWord(alert) };
+function undatedVisaPill(hasType: boolean) {
   return {
     tone: "wait" as const,
     label: hasType ? "Visa on file" : "No visa",
   };
 }
 
-/**
- * Shared relative-date wording ladder (OLD:365-370 passport / 520-527 visa,
- * identical wording both fields): `Expired Nd ago` / `Expires today` /
- * `⏰ Nd left` (<= 365) / `Ny Nmo left` (> 365). Pure date math, no threshold —
- * whether that wording is URGENT is a decision each caller makes on its own
- * (passport falls back to a day-count, visa never does — see `visaUrgency`).
- */
-function relativeDateLabel(expiry: string): string {
-  const daysLeft = Math.ceil(
-    (new Date(expiry).getTime() - Date.now()) / 86400000,
-  );
-  if (daysLeft < 0) return `Expired ${Math.abs(daysLeft)}d ago`;
-  if (daysLeft === 0) return "Expires today";
-  if (daysLeft <= 365) return `⏰ ${daysLeft}d left`;
-  return `${formatLongSpan(daysLeft)} left`;
-}
-
-/**
- * Passport has no pill in this grid, so its urgency lives on the date cell
- * itself (word + weight, never a copper tone) — same mechanism as
- * `ObligationsTable`'s `isDueSoon`. When the expiry date is known the
- * countdown wording can only come from the date (the enum still gates
- * whether it is urgent); when it is not known — mirroring the old file's
- * own fallback — the enum's own word carries the state instead.
- */
-function passportUrgency(
-  expiry: string | undefined,
-  alert: FamilyMember["passport_alert"],
-  hasData: boolean,
-) {
-  if (expiry) {
-    const daysLeft = Math.ceil(
-      (new Date(expiry).getTime() - Date.now()) / 86400000,
-    );
-    const urgent = alert ? alert !== "green" : daysLeft <= 180;
-    return { label: relativeDateLabel(expiry), urgent };
-  }
-  if (hasData && alert && alert !== "green") {
-    return { label: alertWord(alert), urgent: true };
-  }
-  return undefined;
-}
-
-/**
- * Visa keeps the same relative wording on its date cell (restored — see the
- * R4 audit §3.1 gate correction), but its urgency weight comes ONLY from the
- * server-computed `visa_alert` enum — never from a client-side day count.
- * The old `<= 90` colour switch stays deleted, on the task's own explicit
- * instruction; wording is not a threshold, weight is, and only the weight
- * was ordered gone.
- */
-function visaUrgency(
-  expiry: string | undefined,
-  alert: FamilyMember["visa_alert"],
-) {
-  if (!expiry) return undefined;
+/** A date cell's second line: the shared wording ladder, urgent or quiet. */
+function expiryLine(
+  result: ReturnType<typeof familyPermit>,
+): { label: string; urgent: boolean } | undefined {
+  if (!result.validity || result.validity.daysLeft === null) return undefined;
   return {
-    label: relativeDateLabel(expiry),
-    urgent: Boolean(alert) && alert !== "green",
+    label: expiryWording(result.validity.daysLeft),
+    urgent: result.urgent,
   };
 }
 
@@ -392,6 +330,8 @@ export function FamilyTab({
   onAddClick,
   onEditClick,
   onRefresh,
+  onOpenRemoved,
+  day: dayProp,
 }: {
   clientId: number;
   familyMembers: FamilyMember[];
@@ -400,7 +340,17 @@ export function FamilyTab({
   onAddClick: () => void;
   onEditClick: (member: FamilyMember) => void;
   onRefresh: () => Promise<void> | void;
+  /** Opens the Documents "Removed or rejected" group. */
+  onOpenRemoved?: () => void;
+  /** The card's day (`YYYY-MM-DD`, the payload's `as_of`). */
+  day?: string;
 }) {
+  const day = resolveCardDay(dayProp);
+  // Void documents of family members are not shown on the members: one line
+  // points at the Documents group that lists them.
+  const voidFamilyDocuments = documents.filter(
+    (d) => Boolean(d.family_member_id || d.family_member_name) && !isLive(d),
+  ).length;
   const handleDelete = (id: number, name: string) => {
     toast(`Remove ${name} from family members?`, {
       action: {
@@ -465,7 +415,8 @@ export function FamilyTab({
           <HairlineBody>
             {familyMembers.map((member) => {
               const memberDocuments = documents.filter(
-                (document) => document.family_member_id === member.id,
+                (document) =>
+                  document.family_member_id === member.id && isLive(document),
               );
               const passportDocument = memberDocuments.find((document) =>
                 document.document_type?.toLowerCase().includes("passport"),
@@ -474,24 +425,17 @@ export function FamilyTab({
                 const type = document.document_type?.toLowerCase();
                 return type?.includes("kitas") || type?.includes("visa");
               });
-              const visaExpiry =
-                member.visa_expiry ?? visaDocument?.expiry_date;
-              const passportExpiry =
-                member.passport_expiry ?? passportDocument?.expiry_date;
+              const permit = familyPermit(member, documents, day);
+              const passport = familyPassport(member, documents, day);
               // No `?? visaDocument?.document_type` fallback: a document on
               // file with nothing extracted yet is not a visa TYPE, it is
               // OCR pending — see the note rendered below.
               const visaType = member.current_visa_type;
-              const pill = visaPill(member.visa_alert, Boolean(visaType));
-              const visaUrgencyInfo = visaUrgency(
-                visaExpiry,
-                member.visa_alert,
-              );
-              const passportUrgencyInfo = passportUrgency(
-                passportExpiry,
-                member.passport_alert,
-                Boolean(member.passport_number || passportDocument),
-              );
+              const pill = permit.level
+                ? levelPill(permit.level)
+                : undatedVisaPill(Boolean(visaType));
+              const visaUrgencyInfo = expiryLine(permit);
+              const passportUrgencyInfo = expiryLine(passport);
               const personalDetails = [
                 member.date_of_birth
                   ? `Born ${formatDate(member.date_of_birth)} · ${ageAtPresent(member.date_of_birth)}y`
@@ -550,7 +494,11 @@ export function FamilyTab({
                     ) : null}
                   </div>
                   <div className="space-y-1 px-2.5 py-3 text-[13px] text-[var(--tx-pure)]">
-                    {visaExpiry ? <p>{formatDate(visaExpiry)}</p> : <p>—</p>}
+                    {permit.expiry ? (
+                      <p>{formatDate(permit.expiry)}</p>
+                    ) : (
+                      <p>—</p>
+                    )}
                     {visaUrgencyInfo ? (
                       <p
                         className="text-xs"
@@ -596,6 +544,11 @@ export function FamilyTab({
           </HairlineBody>
         </HairlineGrid>
       )}
+      <RemovedSignpost
+        count={voidFamilyDocuments}
+        onOpen={onOpenRemoved}
+        className="pt-3"
+      />
     </LedgerSection>
   );
 }

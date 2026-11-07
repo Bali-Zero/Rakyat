@@ -1,4 +1,4 @@
-"""Trend-Tosado — Intel sensory layer for War Room 2.0.
+"""Trend-Hunter — Intel sensory layer for War Room 2.0.
 
 Cron cadence: 2h on Pro (fallback Air degraded mode). Sources:
 - xAI Grok search (OSINT, Pro-only, Law 2)

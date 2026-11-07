@@ -845,7 +845,7 @@ function ClientsListContent() {
         </p>
       )}
 
-      {/* KPI band — desk counts, 22px Fraunces (not the 44px dashboard numeral) */}
+      {/* KPI band — desk counts, 22px Plex (not the 44px dashboard numeral) */}
       <section aria-label="Client metrics" className={styles.kpiBand}>
         {kpis.map((kpi) => (
           <div key={kpi.key}>

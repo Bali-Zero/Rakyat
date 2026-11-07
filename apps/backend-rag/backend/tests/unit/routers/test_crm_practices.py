@@ -2654,6 +2654,8 @@ class TestUploadClientDocument:
                     "phone": None,
                     "phone_normalized": None,
                 },
+                {"id": 7},  # Practice belongs to this client before Drive upload.
+                {"id": 7},  # Same practice at the locked check before INSERT.
             ]
         )
         mock_db_conn.fetchval = AsyncMock(side_effect=[None, 501])
@@ -2686,6 +2688,10 @@ class TestUploadClientDocument:
             )
 
         assert result["document_id"] == 501
+        precheck, recheck = mock_db_conn.fetchrow.await_args_list[-2:]
+        assert precheck.args[1:] == recheck.args[1:] == (7, 42)
+        assert "client_id = $2" in precheck.args[0]
+        assert "FOR SHARE" in recheck.args[0]
         insert = next(
             c for c in mock_db_conn.fetchval.await_args_list if "INSERT INTO documents" in c.args[0]
         )

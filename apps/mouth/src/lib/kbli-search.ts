@@ -34,7 +34,7 @@ export interface KBLISuggestion {
 
 /**
  * Compute Levenshtein edit distance between two strings.
- * Uses Wagner-Xurekij dynamic programming with O(min(m,n)) space.
+ * Uses Wagner-Fischer dynamic programming with O(min(m,n)) space.
  */
 function levenshtein(a: string, b: string): number {
   const la = a.length;

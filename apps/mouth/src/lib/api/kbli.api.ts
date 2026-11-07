@@ -114,7 +114,33 @@ export function apiPmaStatusLabel(record: KBLIPmaDisclosure): string {
   return apiPmaPresentation(record).statusLabel;
 }
 
+export interface KBLINativeScopeRow {
+  row_ordinal: number;
+  scope_index: number;
+  scope_uraian: string;
+  scale: string[];
+  type: string;
+  risk_level: string;
+  requirements: string[];
+  obligations: string[];
+  authorities: string[];
+}
+
+interface KBLINativeScopeSource {
+  dataset_sha256: string;
+  rows_sha256: string;
+  dataset_version: string;
+  kbli_vintage: "2025";
+  source: string;
+}
+
+export interface KBLINativeScopeView {
+  status: "available" | "verified_empty" | "unavailable";
+  rows: KBLINativeScopeRow[];
+}
+
 export interface KBLIDetail extends KBLIPmaDisclosure {
+  licensing_note?: string | null;
   code: string;
   title: string;
   description: string;
@@ -122,6 +148,9 @@ export interface KBLIDetail extends KBLIPmaDisclosure {
   sector: string;
   risk_profile: string;
   licenses: KBLILicense[];
+  scope_rows?: KBLINativeScopeRow[] | null;
+  scope_rows_status?: KBLINativeScopeView["status"];
+  scope_rows_source?: KBLINativeScopeSource | null;
   related_requirements: KBLIRelatedRequirements;
   related_codes: string[];
   intel?: {
@@ -132,6 +161,617 @@ export interface KBLIDetail extends KBLIPmaDisclosure {
     zantaraOpener: string;
     youllAlsoNeed?: string;
   };
+}
+
+function isDisplayableScopeRow(
+  row: KBLINativeScopeRow,
+  ordinal: number,
+): boolean {
+  return Boolean(
+    row &&
+    row.row_ordinal === ordinal &&
+    Number.isInteger(row.scope_index) &&
+    row.scope_index >= 0 &&
+    [row.scope_uraian, row.type, row.risk_level].every(
+      (text) => typeof text === "string" && text.trim(),
+    ) &&
+    [row.scale, row.requirements, row.obligations, row.authorities].every(
+      (items) =>
+        Array.isArray(items) &&
+        items.every((text) => typeof text === "string" && text.trim()),
+    ) &&
+    row.scale.length > 0,
+  );
+}
+
+// Source-pinned row identities for the explicitly verified codes. Each tuple
+// binds scope, scale and risk; counts and risk tiers may vary within a scope.
+type NativeScopeIdentity = [number, string, string, string];
+const NATIVE_SCOPE_ATTESTATIONS: Record<
+  string,
+  { rowsSha256: string; rows: NativeScopeIdentity[] }
+> = {
+  "42914": {
+    rowsSha256:
+      "97179155fd3ee19b1080c438326ad4773c041fb7c26a752d5815b2e403c7693b", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Kode Subklasifikasi Konstruksi Intake, Control Gate, Penstock dan Outflow Pembangkit Listrik Tenaga Air : KK003",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Kode Subklasifikasi Konstruksi Intake, Control Gate, Penstock dan Outflow Pembangkit Listrik Tenaga Air : KK003",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Kode Subklasifikasi Konstruksi Intake, Control Gate, Penstock dan Outflow Pembangkit Listrik Tenaga Air : KK003",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Kode Subklasifikasi Konstruksi Intake, Control Gate, Penstock dan Outflow Pembangkit Listrik Tenaga Air : KK003",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Reservoir Pembangkit Listrik Tenaga Air: KK002",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Reservoir Pembangkit Listrik Tenaga Air: KK002",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Reservoir Pembangkit Listrik Tenaga Air: KK002",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Reservoir Pembangkit Listrik Tenaga Air: KK002",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+    ],
+  },
+  "42915": {
+    rowsSha256:
+      "cddde20f934ff9d0410823a7b7dcf5436164b8f222e89c61eb5ea7ab76ba26e5", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Kode Subklasifikasi Pekerjaan Konstruksi Pelindung Pantai : KK004",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Kode Subklasifikasi Pekerjaan Konstruksi Pelindung Pantai : KK004",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Kode Subklasifikasi Pekerjaan Konstruksi Pelindung Pantai : KK004",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Kode Subklasifikasi Pekerjaan Konstruksi Pelindung Pantai : KK004",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+    ],
+  },
+  "42991": {
+    rowsSha256:
+      "e9bb0257f86dade3a409c786579f412dc50b62a75e730137afef8cd8128e3947", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Minyak dan Gas Bumi : ST006",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Minyak dan Gas Bumi : BS013",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Minyak dan Gas Bumi : BS013",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Minyak dan Gas Bumi : BS013",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Minyak dan Gas Bumi : BS013",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+    ],
+  },
+  "42994": {
+    rowsSha256:
+      "94c97afea50969c2f0bc35a5b9d8d0deae6d40b9ecef04d96f533a5aac0e7566", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Olahraga : ST009",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Olahraga : BS016",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Olahraga : BS016",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Olahraga : BS016",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Olahraga : BS016",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+    ],
+  },
+  "42995": {
+    rowsSha256:
+      "5904b16886e74fd9bb766f4f43d8275aaf296e716ab783b2fbed2189d495c35e", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Pengolahan Produk Kimia, Petrokimia, Farmasi, dan Industri Lainnya : ST010",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Pengolahan Produk Kimia, Petrokimia, Farmasi, dan Industri Lainnya : BS018",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Pengolahan Produk Kimia, Petrokimia, Farmasi, dan Industri Lainnya : BS018",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Pengolahan Produk Kimia, Petrokimia, Farmasi, dan Industri Lainnya : BS018",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Kode Subklasifikasi Konstruksi Bangunan Sipil Fasilitas Pengolahan Produk Kimia, Petrokimia, Farmasi, dan Industri Lainnya : BS018",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+    ],
+  },
+  "42998": {
+    rowsSha256:
+      "431683ea886f31f6e02708b0b4402fd6bc19378c55237aee710678b11eddce99", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Operasi Reaktor Daya Mikro D ≤ 30 MWt (D ≤10 MWe)",
+        "Besar",
+        "Tinggi",
+      ],
+      [
+        1,
+        "Operasi Reaktor Daya Kecil 30 MWt < D ≤ 1000 MWt (10 MWe < D ≤ 300 MWe)",
+        "Besar",
+        "Tinggi",
+      ],
+      [
+        2,
+        "Operasi Reaktor Daya Besar D > 1000 MWt (D > 300 MWe)",
+        "Besar",
+        "Tinggi",
+      ],
+      [3, "Konstruksi Reaktor Non Daya Kecil D ≤ 30 MWt", "Besar", "Tinggi"],
+      [4, "Konstruksi Reaktor Non Daya Besar D > 30 MWt", "Besar", "Tinggi"],
+      [
+        5,
+        "Konstruksi Reaktor Daya Mikro D ≤ 30 MWt (D ≤ 10 MWe)",
+        "Besar",
+        "Tinggi",
+      ],
+      [
+        6,
+        "Konstruksi Reaktor Daya Kecil 30 MWt < D ≤ 1000 MWt (10 MWe < D ≤ 300 MWe)",
+        "Besar",
+        "Tinggi",
+      ],
+      [
+        7,
+        "Konstruksi Reaktor Daya Besar D > 1000 MWt (D > 300 MWe)",
+        "Besar",
+        "Tinggi",
+      ],
+      [
+        8,
+        "Dekomisioning Reaktor Daya Besar D > 1000 MWt (D > 300 MWe)",
+        "Besar",
+        "Tinggi",
+      ],
+      [9, "Operasi Reaktor Non Daya Kecil D ≤ 30 MWt", "Besar", "Tinggi"],
+      [10, "Operasi Reaktor Non Daya Besar D > 30 MWt", "Besar", "Tinggi"],
+    ],
+  },
+  "55106": {
+    rowsSha256:
+      "eda9f92d5f0fc28aa612f29a9e51967dcf1b08e6104ba99c65297591ba3fc14c", // pragma: allowlist secret
+    rows: [
+      [0, "Dengan Luas bangunan > 6.000 M²", "Kecil", "Menengah Tinggi"],
+      [0, "Dengan Luas bangunan > 6.000 M²", "Menengah", "Menengah Tinggi"],
+      [0, "Dengan Luas bangunan > 6.000 M²", "Besar", "Menengah Tinggi"],
+      [1, "Dengan luas bangunan ≤ 6.000 M²", "Kecil", "Menengah Rendah"],
+      [1, "Dengan luas bangunan ≤ 6.000 M²", "Menengah", "Menengah Rendah"],
+      [1, "Dengan luas bangunan ≤ 6.000 M²", "Besar", "Menengah Rendah"],
+    ],
+  },
+  "55201": {
+    rowsSha256:
+      "f91730f158d9349962c9bb5be1654b55365cd0e04cdf9d7381a995ebdccc484c", // pragma: allowlist secret
+    rows: [
+      [0, "Seluruh", "Mikro", "Menengah Rendah"],
+      [0, "Seluruh", "Kecil", "Menengah Rendah"],
+      [0, "Seluruh", "Menengah", "Menengah Rendah"],
+    ],
+  },
+  "55203": {
+    rowsSha256:
+      "26d0209c36cd531dad9e58a65564956429e6cdd56e3a970a55aea9b05f45601c", // pragma: allowlist secret
+    rows: [
+      [0, "Seluruh", "Mikro", "Menengah Rendah"],
+      [0, "Seluruh", "Kecil", "Menengah Rendah"],
+      [0, "Seluruh", "Menengah", "Menengah Rendah"],
+    ],
+  },
+  "56101": {
+    rowsSha256:
+      "fe7c191cbb2393ba38e8a4d5f7ca613ab45cae81f6e3fadc5e1b0999f2150449", // pragma: allowlist secret
+    rows: [
+      [0, "Restoran", "Mikro", "Menengah Rendah"],
+      [0, "Restoran", "Kecil", "Menengah Tinggi"],
+      [0, "Restoran", "Menengah", "Menengah Tinggi"],
+      [0, "Restoran", "Besar", "Menengah Tinggi"],
+      [1, "Rumah / Warung Makan", "Mikro", "Menengah Rendah"],
+      [1, "Rumah / Warung Makan", "Kecil", "Menengah Rendah"],
+    ],
+  },
+  "56303": {
+    rowsSha256:
+      "a8d9ed6b61d000e481e0ae56f6cc5fc34f3359f788291d338ebfde9bf01fa967", // pragma: allowlist secret
+    rows: [
+      [0, "Seluruh", "Mikro", "Menengah Rendah"],
+      [0, "Seluruh", "Kecil", "Menengah Rendah"],
+      [0, "Seluruh", "Menengah", "Menengah Rendah"],
+      [0, "Seluruh", "Besar", "Menengah Rendah"],
+    ],
+  },
+  "55209": {
+    rowsSha256:
+      "7e7304ecbe0531f9a3522494475c5818a0f82d15954f8e8371a50f150ed32909", // pragma: allowlist secret
+    rows: [
+      [0, "Seluruh", "Mikro", "Menengah Rendah"],
+      [0, "Seluruh", "Kecil", "Menengah Rendah"],
+      [0, "Seluruh", "Menengah", "Menengah Rendah"],
+    ],
+  },
+  "56102": {
+    rowsSha256:
+      "a1e3eee1d40a6a769cc9f8e9ad668e8f4b1ecbb85c34df58a92993d3828c5e94", // pragma: allowlist secret
+    rows: [
+      [0, "Kedai Makan", "Mikro", "Menengah Rendah"],
+      [0, "Kedai Makan", "Kecil", "Menengah Rendah"],
+      [
+        1,
+        "Penyediaan Makanan Keliling / Tempat Tidak Tetap",
+        "Mikro",
+        "Menengah Rendah",
+      ],
+      [
+        1,
+        "Penyediaan Makanan Keliling / Tempat Tidak Tetap",
+        "Kecil",
+        "Menengah Rendah",
+      ],
+      [
+        2,
+        "Restoran dan Penyediaan Makanan Keliling Lainnya",
+        "Mikro",
+        "Menengah Rendah",
+      ],
+      [
+        2,
+        "Restoran dan Penyediaan Makanan Keliling Lainnya",
+        "Kecil",
+        "Menengah Rendah",
+      ],
+    ],
+  },
+  "68111": {
+    rowsSha256:
+      "b36066661a2e8d80461d5bcfddb24ceac76321a1c7f198d02240b25457a78693", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Pengembangan Hunian dan/atau hunian campuran: Kelompok ini mencakup usaha pembelian, penjualan, persewaan dan pengoperasian perumahan baik yang dimiliki sendiri maupun disewa",
+        "Mikro",
+        "Menengah Rendah",
+      ],
+      [
+        0,
+        "Pengembangan Hunian dan/atau hunian campuran: Kelompok ini mencakup usaha pembelian, penjualan, persewaan dan pengoperasian perumahan baik yang dimiliki sendiri maupun disewa",
+        "Kecil",
+        "Menengah Rendah",
+      ],
+      [
+        0,
+        "Pengembangan Hunian dan/atau hunian campuran: Kelompok ini mencakup usaha pembelian, penjualan, persewaan dan pengoperasian perumahan baik yang dimiliki sendiri maupun disewa",
+        "Menengah",
+        "Menengah Rendah",
+      ],
+      [
+        0,
+        "Pengembangan Hunian dan/atau hunian campuran: Kelompok ini mencakup usaha pembelian, penjualan, persewaan dan pengoperasian perumahan baik yang dimiliki sendiri maupun disewa",
+        "Besar",
+        "Menengah Rendah",
+      ],
+    ],
+  },
+  "68210": {
+    rowsSha256:
+      "7ffa1cd686f35510e7f8a4b7b26a26561b9a5fb511157704eccdbfcc7057371d", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "1. Penyelenggara Perdagangan Melalui Sistem Elektronik (PPMSE) dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan dalam wilayah hukum Negara Kesatuan Republik Indonesia 2. PPMSE dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan di luar wilayah hukum Negara Kesatuan Republik Indonesia yang melakukan kegiatan usaha di bidang PMSE di wilayah hukum Negara Kesatuan Republik Indonesia",
+        "Mikro",
+        "Rendah",
+      ],
+      [
+        0,
+        "1. Penyelenggara Perdagangan Melalui Sistem Elektronik (PPMSE) dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan dalam wilayah hukum Negara Kesatuan Republik Indonesia 2. PPMSE dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan di luar wilayah hukum Negara Kesatuan Republik Indonesia yang melakukan kegiatan usaha di bidang PMSE di wilayah hukum Negara Kesatuan Republik Indonesia",
+        "Kecil",
+        "Tinggi",
+      ],
+      [
+        0,
+        "1. Penyelenggara Perdagangan Melalui Sistem Elektronik (PPMSE) dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan dalam wilayah hukum Negara Kesatuan Republik Indonesia 2. PPMSE dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan di luar wilayah hukum Negara Kesatuan Republik Indonesia yang melakukan kegiatan usaha di bidang PMSE di wilayah hukum Negara Kesatuan Republik Indonesia",
+        "Menengah",
+        "Tinggi",
+      ],
+      [
+        0,
+        "1. Penyelenggara Perdagangan Melalui Sistem Elektronik (PPMSE) dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan dalam wilayah hukum Negara Kesatuan Republik Indonesia 2. PPMSE dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan di luar wilayah hukum Negara Kesatuan Republik Indonesia yang melakukan kegiatan usaha di bidang PMSE di wilayah hukum Negara Kesatuan Republik Indonesia",
+        "Besar",
+        "Tinggi",
+      ],
+      [
+        1,
+        "Seluruh, kecuali 1. Penyelenggara Perdagangan Melalui Sistem Elektronik (PPMSE) dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan dalam wilayah hukum Negara Kesatuan Republik Indonesia 2. PPMSE dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan di luar wilayah hukum Negara Kesatuan Republik Indonesia yang melakukan kegiatan usaha di bidang PMSE di wilayah hukum Negara Kesatuan Republik Indonesia",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Seluruh, kecuali 1. Penyelenggara Perdagangan Melalui Sistem Elektronik (PPMSE) dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan dalam wilayah hukum Negara Kesatuan Republik Indonesia 2. PPMSE dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan di luar wilayah hukum Negara Kesatuan Republik Indonesia yang melakukan kegiatan usaha di bidang PMSE di wilayah hukum Negara Kesatuan Republik Indonesia",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Seluruh, kecuali 1. Penyelenggara Perdagangan Melalui Sistem Elektronik (PPMSE) dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan dalam wilayah hukum Negara Kesatuan Republik Indonesia 2. PPMSE dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan di luar wilayah hukum Negara Kesatuan Republik Indonesia yang melakukan kegiatan usaha di bidang PMSE di wilayah hukum Negara Kesatuan Republik Indonesia",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Seluruh, kecuali 1. Penyelenggara Perdagangan Melalui Sistem Elektronik (PPMSE) dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan dalam wilayah hukum Negara Kesatuan Republik Indonesia 2. PPMSE dan Penyelenggara Sarana Perantara (PSP) yang tidak dikecualikan yang berkedudukan di luar wilayah hukum Negara Kesatuan Republik Indonesia yang melakukan kegiatan usaha di bidang PMSE di wilayah hukum Negara Kesatuan Republik Indonesia",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+    ],
+  },
+  "68292": {
+    rowsSha256:
+      "53639d0c1682c532f7b13e7c695f43002c70578958a354993872f726ce97d245", // pragma: allowlist secret
+    rows: [
+      [0, "Seluruh", "Mikro", "Menengah Tinggi"],
+      [0, "Seluruh", "Kecil", "Menengah Tinggi"],
+      [0, "Seluruh", "Menengah", "Menengah Tinggi"],
+      [0, "Seluruh", "Besar", "Menengah Tinggi"],
+    ],
+  },
+  "70201": {
+    rowsSha256:
+      "507b5dc00264666d86654b6e6b3c2ab200ac3a847af54b9b08c510a6e867aa63", // pragma: allowlist secret
+    rows: [
+      [0, "Seluruh", "Mikro", "Rendah"],
+      [0, "Seluruh", "Kecil", "Rendah"],
+      [0, "Seluruh", "Menengah", "Rendah"],
+    ],
+  },
+  "70209": {
+    rowsSha256:
+      "362a654520f5d1ba1227b11cfb65a9be6fa8e906a6ae5ee5a8cdaa6247578a86", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Jasa Konsultansi Manajemen Keamanan Pelabuhan",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Jasa Konsultansi Manajemen Keamanan Pelabuhan",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Jasa Konsultansi Manajemen Keamanan Pelabuhan",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+      [
+        0,
+        "Jasa Konsultansi Manajemen Keamanan Pelabuhan",
+        "Besar",
+        "Menengah Tinggi",
+      ],
+      [1, "Jasa Konsultasi Manajemen dan Bisnis", "Mikro", "Rendah"],
+      [1, "Jasa Konsultasi Manajemen dan Bisnis", "Kecil", "Rendah"],
+      [1, "Jasa Konsultasi Manajemen dan Bisnis", "Menengah", "Rendah"],
+      [1, "Jasa Konsultasi Manajemen dan Bisnis", "Besar", "Rendah"],
+    ],
+  },
+  "85510": {
+    rowsSha256:
+      "01648a96cb258d4bdd6fec341150cbdcbed2023105a46f0aa2c389c42866356b", // pragma: allowlist secret
+    rows: [
+      [0, "Seluruh", "Mikro", "Tinggi"],
+      [0, "Seluruh", "Kecil", "Tinggi"],
+      [0, "Seluruh", "Menengah", "Tinggi"],
+      [0, "Seluruh", "Besar", "Tinggi"],
+      [1, "Seluruh", "Mikro", "Tinggi"],
+      [1, "Seluruh", "Kecil", "Tinggi"],
+      [1, "Seluruh", "Menengah", "Tinggi"],
+      [1, "Seluruh", "Besar", "Tinggi"],
+    ],
+  },
+  "93116": {
+    rowsSha256:
+      "0aeac2b40fbf72a0608f23e5d0f4391e18ce21962c7cbd26b572ec99fd05ca98", // pragma: allowlist secret
+    rows: [
+      [0, "Seluruh", "Kecil", "Menengah Rendah"],
+      [0, "Seluruh", "Menengah", "Menengah Rendah"],
+      [0, "Seluruh", "Besar", "Menengah Rendah"],
+    ],
+  },
+  "96220": {
+    rowsSha256:
+      "c27bafdccbc570e9686ed51995f981e2fb98ea84e4e7e87e4876d646870f7483", // pragma: allowlist secret
+    rows: [
+      [0, "Seluruh", "Mikro", "Rendah"],
+      [0, "Seluruh", "Kecil", "Rendah"],
+      [0, "Seluruh", "Menengah", "Rendah"],
+    ],
+  },
+  "96230": {
+    rowsSha256:
+      "c7c173cca755cf95ce07a0bffffd95f76e3127e76bf4a9b026ddde658c0a1348", // pragma: allowlist secret
+    rows: [
+      [
+        0,
+        "Usaha Spa yang sudah mengarah kepada Medical Spa",
+        "Besar",
+        "Tinggi",
+      ],
+      [
+        1,
+        "Seluruh, kecuali usaha SPA yang mengarah kepada Medical SPA",
+        "Mikro",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Seluruh, kecuali usaha SPA yang mengarah kepada Medical SPA",
+        "Kecil",
+        "Menengah Tinggi",
+      ],
+      [
+        1,
+        "Seluruh, kecuali usaha SPA yang mengarah kepada Medical SPA",
+        "Menengah",
+        "Menengah Tinggi",
+      ],
+    ],
+  },
+};
+
+function isCompleteNativeCoverage(
+  rows: KBLINativeScopeRow[],
+  expectedRows: NativeScopeIdentity[],
+): boolean {
+  return (
+    rows.length === expectedRows.length &&
+    rows.every(
+      (row, ordinal) =>
+        isDisplayableScopeRow(row, ordinal) &&
+        row.scale.length === 1 &&
+        JSON.stringify([
+          row.scope_index,
+          row.scope_uraian,
+          row.scale[0],
+          row.risk_level,
+        ]) === JSON.stringify(expectedRows[ordinal]),
+    )
+  );
+}
+
+export function getNativeScopeView(
+  data: KBLIDetail,
+): KBLINativeScopeView | null {
+  const attestation = NATIVE_SCOPE_ATTESTATIONS[data.code];
+  if (!attestation) return null;
+  const source = data.scope_rows_source;
+  const rows = data.scope_rows;
+  if (
+    source?.kbli_vintage === "2025" &&
+    source.source === "OSS_RBA_resiko_2025" &&
+    typeof source.dataset_version === "string" &&
+    source.dataset_version.trim() &&
+    /^[a-f0-9]{64}$/.test(source.dataset_sha256) &&
+    source.rows_sha256 === attestation.rowsSha256 &&
+    Array.isArray(rows)
+  ) {
+    if (
+      data.scope_rows_status === "available" &&
+      isCompleteNativeCoverage(rows, attestation.rows)
+    )
+      return { status: "available", rows };
+  }
+  return { status: "unavailable", rows: [] };
 }
 
 export interface KBLISearchResult extends KBLIPmaDisclosure {

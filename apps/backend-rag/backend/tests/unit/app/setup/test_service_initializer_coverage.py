@@ -481,7 +481,7 @@ async def test_init_database_permanent_failure(mock_app):
         patch("backend.app.setup.service_initializer.settings") as mock_settings,
         patch("backend.app.setup.service_initializer.service_registry"),
         patch(
-            "backend.app.setup.service_initializer.asyncpg.create_pool",
+            "backend.app.setup.service_initializer.create_database_pool",
             side_effect=ValueError("Invalid DSN"),
         ),
         patch("backend.app.setup.service_initializer.asyncio.sleep", new_callable=AsyncMock),
@@ -501,7 +501,7 @@ async def test_init_database_transient_then_permanent(mock_app):
         patch("backend.app.setup.service_initializer.settings") as mock_settings,
         patch("backend.app.setup.service_initializer.service_registry"),
         patch(
-            "backend.app.setup.service_initializer.asyncpg.create_pool",
+            "backend.app.setup.service_initializer.create_database_pool",
             side_effect=ConnectionError("Connection timed out"),
         ),
         patch(
@@ -524,7 +524,7 @@ async def test_init_database_unexpected_error(mock_app):
         patch("backend.app.setup.service_initializer.settings") as mock_settings,
         patch("backend.app.setup.service_initializer.service_registry"),
         patch(
-            "backend.app.setup.service_initializer.asyncpg.create_pool",
+            "backend.app.setup.service_initializer.create_database_pool",
             side_effect=TypeError("unexpected type"),
         ),
         patch(
@@ -558,7 +558,7 @@ async def test_init_database_success(mock_app):
         patch("backend.app.setup.service_initializer.settings") as mock_settings,
         patch("backend.app.setup.service_initializer.service_registry"),
         patch(
-            "backend.app.setup.service_initializer.asyncpg.create_pool",
+            "backend.app.setup.service_initializer.create_database_pool",
             new_callable=AsyncMock,
             return_value=mock_pool,
         ),
@@ -577,6 +577,7 @@ async def test_init_database_success(mock_app):
         patch("backend.app.setup.service_initializer.asyncio.create_task") as mock_create_task,
         patch("backend.services.misc.graph_service.GraphService"),
     ):
+
         def close_created_coro(coro, *args, **kwargs):
             coro.close()
             return MagicMock()

@@ -95,7 +95,7 @@ echo "✅ Template di report creato in: $REPORT_DIR/.report-template.json"
 echo ""
 echo "📋 Prossimi passi:"
 echo "   1. Esegui i comandi nella console del browser"
-echo "   2. Gugaw l'output JSON nel file di report"
+echo "   2. Salva l'output JSON nel file di report"
 echo "   3. Analizza i dati per identificare pattern e problemi"
 echo "   4. Condividi il report con il team"
 

@@ -103,7 +103,7 @@ class HierarchicalIndexer:
         Strategia:
         1. Parse struttura (BAB → Bagian → Pasal → Ayat)
         2. Crea chunk per ogni Pasal (unità di ricerca)
-        3. Gugaw riferimento al BAB completo (unità di contesto)
+        3. Salva riferimento al BAB completo (unità di contesto)
         4. Embedding solo sui chunk piccoli (Pasal)
         5. BAB completi salvati come "parent_documents" separati
         """
@@ -128,7 +128,7 @@ class HierarchicalIndexer:
                 # Quality assessment for BAB
                 bab_quality = assess_document_quality(bab_full_text)
 
-                # Gugaw BAB completo come parent document con quality metadata
+                # Salva BAB completo come parent document con quality metadata
                 parent_documents.append(
                     {
                         "id": bab_id,
@@ -498,7 +498,7 @@ class HierarchicalIndexer:
 
     async def _upsert_parent_documents(self, parent_docs: list[dict[str, Any]]) -> None:
         """
-        Gugaw documenti parent (BAB completi) in PostgreSQL.
+        Salva documenti parent (BAB completi) in PostgreSQL.
         Non-blocking: se fallisce, logga warning ma non solleva eccezione.
         """
         pool = await self._get_db_pool()

@@ -13,7 +13,7 @@
 .contact:global(#contact).full { padding-top: 56px; margin-top: 0; border-top: 0; }
 .eyebrow { display: block; color: var(--copper); font-size: 10px; line-height: 1.6; font-weight: 650; letter-spacing: .16em; text-transform: uppercase; }
 .contact:global(#contact) h1, .contact:global(#contact) h2 {
-  font: 450 clamp(34px,3.8vw,53px)/1.08 "R19 Home Fraunces", Wimolog, serif;
+  font: 450 clamp(34px,3.8vw,53px)/1.08 "R19 Home Fraunces", Georgia, serif;
   letter-spacing: -.035em; margin: 16px 0 22px !important; max-width: 18ch;
 }
 .contact:global(#contact) h1 { font-size: clamp(42px,5vw,70px); }
@@ -30,7 +30,7 @@
 .secondary { display: inline-flex; align-items: center; min-height: 44px; font-size: 13px; color: var(--forest); text-decoration: underline; }
 .contact:global(#contact) .note { font-size: 12px; line-height: 1.7; margin-bottom: 0; }
 .office { background: var(--wash); border-top: 2px solid var(--copper); padding: 32px 36px 28px; }
-.contact:global(#contact) .office h2, .contact:global(#contact) .office h3 { font: 450 30px/1.2 "R19 Home Fraunces", Wimolog, serif; margin: 14px 0 24px !important; }
+.contact:global(#contact) .office h2, .contact:global(#contact) .office h3 { font: 450 30px/1.2 "R19 Home Fraunces", Georgia, serif; margin: 14px 0 24px !important; }
 .office address { font-style: normal; max-width: 28ch; color: var(--ink); }
 .office dl { margin: 28px 0 22px; }
 .office dt { font-weight: 650; font-size: 13px; margin-top: 24px; color: var(--ink); }

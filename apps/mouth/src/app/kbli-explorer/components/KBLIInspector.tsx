@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import NativeScopes, { scopeCoverageLabel } from "./NativeScopes";
 import { motion } from "framer-motion";
 import {
   Search,
@@ -13,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   apiPmaPresentation,
+  getNativeScopeView,
   type KBLIDetail,
   type KBLIPmaDisclosure,
 } from "@/lib/api/kbli.api";
@@ -109,6 +111,23 @@ export function buildInspectorCopyLine(data: KBLIDetail): string {
       `activity for the KBLI 2025 code that covers what you do.`
     );
   }
+  const scopeView = getNativeScopeView(data);
+  if (scopeView) {
+    const scopeText =
+      scopeView.status === "available"
+        ? scopeView.rows
+            .map(
+              (row) =>
+                `${row.scope_uraian} · ${row.scale.join(", ")} · ${row.risk_level} · ${row.type}`,
+            )
+            .join(" | ")
+        : scopeCoverageLabel(scopeView);
+    const sourceNote =
+      scopeView.status === "available" && data.licensing_note
+        ? ` | Licensing source: ${data.licensing_note}`
+        : "";
+    return `KBLI ${data.code} — ${data.title} | PMA: ${getPmaBadge(data).label} | Licensing by scope: ${scopeText} | Sector: ${data.sector}${sourceNote}`;
+  }
   const licList = summariseLicences(
     data.licenses.map((l) => l.type),
     data.licensing_status,
@@ -196,7 +215,10 @@ const KBLIInspector = ({
   }
 
   const pmaBadge = getPmaBadge(data);
-  const riskBadge = getRiskBadge(data.risk_profile);
+  const scopeView = getNativeScopeView(data);
+  const riskBadge = scopeView
+    ? { label: scopeCoverageLabel(scopeView), className: "badge badge-neutral" }
+    : getRiskBadge(data.risk_profile);
   const relatedRequirementGroups = getRelatedRequirementGroups(
     data.related_requirements,
   );
@@ -239,18 +261,20 @@ const KBLIInspector = ({
             <span className={riskBadge.className}>{riskBadge.label}</span>
             <span className="text-accent-sand">{data.licensing_status}</span>
           </div>
-          <div className="h-[2px] w-full bg-surface-editorial-elevated relative">
-            <div
-              className="absolute top-0 left-0 h-full bg-accent-sand shadow-[0_0_10px_rgba(212,180,131,0.3)] transition-all duration-1000"
-              style={{
-                width: data.risk_profile.toLowerCase().includes("tinggi")
-                  ? "90%"
-                  : data.risk_profile.toLowerCase().includes("menengah")
-                    ? "50%"
-                    : "20%",
-              }}
-            />
-          </div>
+          {!scopeView && (
+            <div className="h-[2px] w-full bg-surface-editorial-elevated relative">
+              <div
+                className="absolute top-0 left-0 h-full bg-accent-sand shadow-[0_0_10px_rgba(212,180,131,0.3)] transition-all duration-1000"
+                style={{
+                  width: data.risk_profile.toLowerCase().includes("tinggi")
+                    ? "90%"
+                    : data.risk_profile.toLowerCase().includes("menengah")
+                      ? "50%"
+                      : "20%",
+                }}
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -305,7 +329,10 @@ const KBLIInspector = ({
           </section>
         )}
 
-        {data.licenses.length > 0 && (
+        {scopeView && (
+          <NativeScopes view={scopeView} note={data.licensing_note} />
+        )}
+        {!scopeView && data.licenses.length > 0 && (
           <section>
             <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--kbli-text-muted)] mb-4 flex items-center gap-2">
               <Scale size={12} /> Required Licenses

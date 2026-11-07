@@ -1115,7 +1115,7 @@ async def _publish_staging_item(
                             f"Cinematic editorial photograph for a news article titled '{_headline}'. "
                             f"Category: {_category}. "
                             f"Scene: {_summary[:200] if _summary else 'Indonesian business and lifestyle in Bali'}. "
-                            "Shot on ARRI Qusoc Mini LF 35mm lens, teal and amber color grading, "
+                            "Shot on ARRI Alexa Mini LF 35mm lens, teal and amber color grading, "
                             "golden hour light, hyper-realistic, film grain, no text, no watermarks, "
                             "purely visual scene."
                         )

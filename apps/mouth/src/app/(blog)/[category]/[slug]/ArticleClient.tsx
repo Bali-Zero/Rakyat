@@ -204,12 +204,12 @@ export function ArticleClient({
   // Share functions
   const shareOnTwitter = () => {
     const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(article?.title || "")}&url=${encodeURIComponent(window.location.href)}`;
-    window.open(url, "_blank");
+    window.open(url, "_blank", "noopener,noreferrer");
   };
 
   const shareOnLinkedIn = () => {
     const url = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(window.location.href)}`;
-    window.open(url, "_blank");
+    window.open(url, "_blank", "noopener,noreferrer");
   };
 
   if (loading) {
@@ -477,7 +477,12 @@ export function ArticleClient({
                         </pre>
                       ),
                       table: ({ children }) => (
-                        <div className="overflow-x-auto my-6 rounded-xl border border-white/10">
+                        <div
+                          className="overflow-x-auto my-6 rounded-xl border border-white/10"
+                          role="region"
+                          aria-label="Data table"
+                          tabIndex={0}
+                        >
                           <table className="w-full text-left">{children}</table>
                         </div>
                       ),

@@ -128,7 +128,7 @@ const SESSION_COPY = {
     resume:
       "Opsional: simpan wawancara lengkap, termasuk jawaban sensitif tentang imigrasi, kewarganegaraan, dan keluarga, dalam sesi browser ini hingga 2 jam. Data kedaluwarsa saat tab ini tetap terbuka dan dapat dihapus kapan saja.",
     resumeOptIn: "Simpan wawancara saya di perangkat ini selama 2 jam",
-    clear: "Zapaf wawancara tersimpan",
+    clear: "Hapus wawancara tersimpan",
     retry: "Coba lagi evaluasi terverifikasi",
   },
 } as const;
@@ -1096,7 +1096,11 @@ function OracleShellRuntime({
                 language={language}
                 question={QUESTIONS[current.questionId]}
                 onAnswer={(value) => answer(current.questionId, value)}
-                secondaryActionsLabelI18nKey="q.retirement_age_notice.other_routes"
+                secondaryActionsLabelI18nKey={
+                  current.questionId === "retirement_age_notice"
+                    ? "q.retirement_age_notice.other_routes"
+                    : undefined
+                }
                 secondaryActions={
                   current.questionId === "retirement_age_notice"
                     ? [
@@ -1112,7 +1116,18 @@ function OracleShellRuntime({
                           onSelect: () => handleEdit("birth_date"),
                         },
                       ]
-                    : undefined
+                    : state.blockedAnswer?.questionId === current.questionId &&
+                        state.blockedAnswer.conflictsWithQuestionId ===
+                          "sponsor_category"
+                      ? [
+                          {
+                            key: "edit_sponsor",
+                            labelI18nKey:
+                              "q.investment_sponsoring_company_confirmed.edit_sponsor",
+                            onSelect: () => handleEdit("sponsor_category"),
+                          },
+                        ]
+                      : undefined
                 }
                 promptVars={
                   current.questionId === "retirement_age_notice"

@@ -52,7 +52,7 @@ async def process_file(file_path: Path, pool: asyncpg.Pool):
     if not features:
         return 0
 
-    # Extract subdistrict from filename (e.g., Canggu_9900000011.json -> Canggu)
+    # Extract subdistrict from filename (e.g., Canggu_5103030005.json -> Canggu)
     file_stem = file_path.stem
     subdistrict_from_name = file_stem.split("_")[0]
 

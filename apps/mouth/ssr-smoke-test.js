@@ -11,10 +11,10 @@ test("SSR Smoke Test: Googlebot Verification", async ({ request }) => {
 
   // 2. Critical SEO Check: Price in Raw HTML
   // If this fails, the page is Client-Side Rendered (Bad for SEO)
-  if (!html.includes("10.000.012")) {
+  if (!html.includes("15.000.000")) {
     throw new Error("FATAL: Price not found in raw HTML. SSR is broken.");
   }
-  // ✅ Price (10.000.012) found in server response.
+  // ✅ Price (15.000.000) found in server response.
 
   // 3. Critical SEO Check: JSON-LD Schema
   // Verify Script tag format

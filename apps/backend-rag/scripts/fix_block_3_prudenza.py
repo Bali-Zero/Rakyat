@@ -1,3 +1,4 @@
+import os
 import asyncio
 import json
 
@@ -6,7 +7,7 @@ import asyncpg
 
 async def run():
     conn = await asyncpg.connect(
-        "postgresql://nuzantara:nuzantara_local_2024@localhost:5432/nuzantara"
+        os.environ["DATABASE_URL"]
     )
 
     corrections = [
@@ -42,7 +43,7 @@ async def run():
                 json.dumps(props),
                 entity_id,
             )
-            print(f"✅ Corretto e reso 'Bulubice': {entity_id}")
+            print(f"✅ Corretto e reso 'Prudente': {entity_id}")
 
     await conn.close()
 

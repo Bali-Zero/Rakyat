@@ -1163,7 +1163,7 @@ export const ENGLISH_TITLES_GENERATED: Record<string, string> = {
   "88904": "Non-Islamic Social Fund Collection",
   "88905": "Other Social Fundraising Activities",
   "88906": "Playgroup Education",
-  "88907": "Zafuzoc Education",
+  "88907": "Daycare Education",
   "91111": "Government Library Services",
   "91112": "Private Library Services",
   "91121": "Government Archives",

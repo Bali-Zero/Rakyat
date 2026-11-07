@@ -110,7 +110,7 @@ import {
   type OracleFacts,
 } from "../../src/app/(visa-oracle)/visa-oracle/_lib/tree";
 import {
-  channelConflictsWithOnshoreIntent,
+  conflictingQuestionId,
   computeNextNode,
   type OracleNode,
 } from "../../src/app/(visa-oracle)/visa-oracle/_lib/flow";
@@ -158,6 +158,8 @@ export const REPRESENTATIVE_VALUES: Readonly<
 > = {
   // Gates `birth_date` — `flow.ts` asks guardian consent below 18.
   birth_date: ["1990-01-01", "2015-01-01"],
+  investment_paid_up_capital_idr: ["2500000000", "2499999999"],
+  investment_own_shareholding_idr: ["10000000000", "9999999999"],
   // Gates `renewal_paid` — `flow.ts`'s `shouldAskRenewalPaid`:
   // `daysRemaining(permit_expiry, today) < 0` (past) vs `>= 0` (current/future).
   // An unparseable/empty value folds into the SAME "unknown" branch as the
@@ -233,6 +235,7 @@ export const BRANCH_RELEVANT_FACT_KEYS: readonly string[] = [
   "category",
   "family_relation",
   "family_sponsor_nationalities",
+  "guardian_consent",
   "holds_stay_permit",
   "in_indonesia",
   "investment_capital_market_only",
@@ -241,6 +244,8 @@ export const BRANCH_RELEVANT_FACT_KEYS: readonly string[] = [
   "investment_foreign_branch",
   "investment_ikn_subsidiary",
   "investment_pt_pma",
+  "investment_paid_up_capital_idr",
+  "investment_own_shareholding_idr",
   "investment_vehicle",
   "other_paid_activity",
   "permit_expiry",
@@ -294,16 +299,9 @@ export function answersFor(questionId: string, facts: OracleFacts): string[] {
   }
   if (question.notSure && !values.includes("unsure"))
     values = [...values, "unsure"];
-  if (questionId === "application_channel") {
-    values = values.filter(
-      (value) =>
-        !channelConflictsWithOnshoreIntent(
-          facts.wants_onshore_conversion,
-          value,
-        ),
-    );
-  }
-  return values;
+  return values.filter(
+    (value) => !conflictingQuestionId(questionId, value, facts),
+  );
 }
 
 export interface WalkSpaceCount {

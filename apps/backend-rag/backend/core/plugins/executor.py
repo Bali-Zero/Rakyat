@@ -85,7 +85,7 @@ class PluginExecutor:
     Example:
         executor = PluginExecutor()
         result = await executor.execute(
-            "kuxas.send",
+            "gmail.send",
             {"to": "user@example.com", "subject": "Test"},
             user_id="user123"
         )

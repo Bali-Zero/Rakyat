@@ -129,7 +129,7 @@ def test_failed_condition_wins_over_later_answers(activity: str, gate: str) -> N
 
 
 def test_second_home_has_alternative_commitments_without_sponsor() -> None:
-    for option in ("own_name_state_bank_130000", "apartment_1000001"):
+    for option in ("own_name_state_bank_130000", "apartment_1000000"):
         assert (
             resolve(
                 "E33",

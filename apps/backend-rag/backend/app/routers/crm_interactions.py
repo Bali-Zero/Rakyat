@@ -44,7 +44,7 @@ class InteractionCreate(BaseModel):
     practice_id: int | None = None
     conversation_id: int | None = None
     interaction_type: str  # 'chat', 'email', 'whatsapp', 'call', 'meeting', 'note'
-    channel: str | None = None  # 'web_chat', 'kuxas', 'whatsapp', 'phone', 'in_person'
+    channel: str | None = None  # 'web_chat', 'gmail', 'whatsapp', 'phone', 'in_person'
     subject: str | None = None
     summary: str | None = None  # AI-generated or manual
     full_content: str | None = None
@@ -146,7 +146,7 @@ async def create_interaction(
 
     **Channels:**
     - web_chat: ZANTARA chat widget
-    - kuxas: Kuxas integration
+    - gmail: Gmail integration
     - whatsapp: WhatsApp Business
     - phone: Phone call
     - in_person: Face-to-face meeting
@@ -734,7 +734,7 @@ async def create_interaction_from_conversation(
         raise handle_database_error(e)
 
 
-# NOTE: Kuxas sync endpoint removed - will be replaced by MCP integration
+# NOTE: Gmail sync endpoint removed - will be replaced by MCP integration
 
 
 @router.delete("/{interaction_id}")

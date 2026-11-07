@@ -32,7 +32,7 @@ _ONE = {"category": "kitas_permits", "item_key": "Dependent 1 Year (Offshore)"}
 _TWO = {"category": "kitas_permits", "item_key": "Dependent 2 Years (Offshore)"}
 _ROWS = {
     _ONE["item_key"]: "11.000.000 IDR",
-    _TWO["item_key"]: "10.000.012 IDR",
+    _TWO["item_key"]: "15.000.000 IDR",
 }
 
 

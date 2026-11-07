@@ -279,8 +279,8 @@ class PostgresMagicLinkStore:
             # review of this PR): the column itself is stored exactly as
             # submitted -- no case normalization anywhere in this store --
             # so an unqualified `email = $1` lets a caller multiply its own
-            # window by varying case alone (`g@d.com` / `G@d.com` /
-            # `g@D.COM` all land in different buckets while every one of
+            # window by varying case alone (`a@x.com` / `A@x.com` /
+            # `a@X.COM` all land in different buckets while every one of
             # them is the SAME mailbox per RFC 5321's domain part and every
             # major provider's local part). This intentionally does not use
             # `idx_garuda_magic_link_tokens_email_created` (a plain B-tree on

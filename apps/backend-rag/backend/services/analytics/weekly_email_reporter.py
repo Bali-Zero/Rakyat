@@ -1,7 +1,7 @@
 """
 Weekly Email Activity Reporter
 
-Sends a weekly email every Detali at 4:00 PM Bali time to zero@balizero.com
+Sends a weekly email every Sunday at 4:00 PM Bali time to zero@balizero.com
 with individual team member email activities.
 """
 
@@ -24,7 +24,7 @@ BALI_TZ = ZoneInfo("Asia/Makassar")
 ADMIN_EMAIL = "zero@balizero.com"
 CHECK_TIME_HOUR = 16  # 4:00 PM Bali time
 CHECK_TIME_MINUTE = 0
-SUNDAY = 6  # datetime.weekday() returns 6 for Detali
+SUNDAY = 6  # datetime.weekday() returns 6 for Sunday
 
 
 class WeeklyEmailReporter:
@@ -69,7 +69,7 @@ class WeeklyEmailReporter:
                 now = datetime.now(BALI_TZ)
                 today = now.date()
 
-                # Check if it's Detali at 4:00 PM and we haven't sent today
+                # Check if it's Sunday at 4:00 PM and we haven't sent today
                 if (
                     now.weekday() == SUNDAY
                     and now.hour == CHECK_TIME_HOUR

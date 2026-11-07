@@ -58,9 +58,15 @@ PKG="@anthropic-ai/claude-code"
 # ── THE PIN ─────────────────────────────────────────────────────────────────
 # Single source of truth for all three call sites. Bump DELIBERATELY, in a PR,
 # after verifying the install flow in a real build. Never set to "latest".
-# 2.1.236 (2026-08-18T18:45Z) is the last verified-good release; 2.1.237 is the
-# one that shipped without a linux-x64 build.
-PINNED_VERSION="${CLAUDE_CODE_PIN:-2.1.236}"
+# 2.1.317 (bumped 2026-11-03): linux-x64, linux-x64-musl and darwin-arm64 all
+# published; this script ran for real in a linux/amd64 container (installed the
+# linux-x64 platform package, `claude --version` 2.1.317, --bare/--tools present).
+# The headless client's lean argv ran on a Console seat in a linux/arm64 container
+# and on macOS (Pro): 2.1.236 spent ~5 s of its own around a ~1.1 s API call,
+# 2.1.317 ~0.6-1.8 s; 2.1.236 also predates Claude Sonnet 5.5 and mis-estimates
+# its price. History: 2.1.236 (2026-08-18) was the pin after 2.1.237 shipped
+# without a linux-x64 build.
+PINNED_VERSION="${CLAUDE_CODE_PIN:-2.1.317}"
 
 # ── Which platform build does THIS machine need? ────────────────────────────
 # Derived from the interpreter that will run the CLI, never hardcoded: this same

@@ -8,7 +8,7 @@
 -- apps/mouth/src/data/team-roster.ts (single source of truth).
 --
 -- Idempotent, single column, specific emails only. Email targets verified live 2026-06-15
--- (prefix drift: ari->pum.zagik, kagecesa->xug, angel->angel.tax, dewaayu->dewaayu.tax,
+-- (prefix drift: ari->ari.firda, veronika->tax, angel->angel.tax, dewaayu->dewaayu.tax,
 -- faisha->faysha.tax). Apply on the Pro like 212-228:
 --   psql postgresql://nuzantara@127.0.0.1:5432/nuzantara_dev -f .../229_team_avatars_align_roster.sql
 -- === FORWARD ===

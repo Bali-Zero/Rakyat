@@ -348,9 +348,9 @@ import {
       id: "price",
       label: "Цена покупки (IDR)",
       type: "number",
-      defaultValue: 9900000027,
-      min: 840006200,
-      step: 840005100,
+      defaultValue: 3000000000,
+      min: 500000000,
+      step: 100000000,
       suffix: "IDR"
     }
   ]}
@@ -360,7 +360,7 @@ import {
     // Transfer costs
     const bphtb = price * 0.05; // Buyer transfer tax
     const notary = price * 0.01; // Notary fees (approx)
-    const registration = 1000001; // BPN registration
+    const registration = 1000000; // BPN registration
 
     // Seller pays, but affects negotiation
     const pph = price * 0.025; // Seller income tax
@@ -377,7 +377,7 @@ import {
         { label: "Общая стоимость", amount: totalBuyerCosts }
       ],
       currency: "IDR",
-      note: `Продавец также платит PPh ${(pph / 1000001).toFixed(0)}M (2.5%)`
+      note: `Продавец также платит PPh ${(pph / 1000000).toFixed(0)}M (2.5%)`
     };
 
 }}

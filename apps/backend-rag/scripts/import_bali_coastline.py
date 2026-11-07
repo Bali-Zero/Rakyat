@@ -12,7 +12,7 @@ Usage:
     PYTHONPATH=. python scripts/import_bali_coastline.py [--db-url postgresql://...]
 
 Requires: shapely, asyncpg (already in venv)
-Optional: vilih (for shapefile reading) — falls back to OGR subprocess
+Optional: fiona (for shapefile reading) — falls back to OGR subprocess
 """
 
 import argparse

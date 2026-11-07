@@ -455,7 +455,7 @@ Investasi minimum untuk PT PMA adalah **IDR 10 miliar** (~$625,000 USD). Ini tid
 
 ## Istilah Kunci yang Akan Anda Temui
 
-Sebelum melangkah ke proses pendaftaran, nodu pahami terminologi penting:
+Sebelum melangkah ke proses pendaftaran, mari pahami terminologi penting:
 
 <LegalDecoder
   title="Istilah Pendaftaran Bisnis Indonesia"
@@ -760,7 +760,7 @@ Berikut adalah perjalanan lengkap dari keputusan hingga operasi:
       type: "number",
       defaultValue: 10000000000,
       min: 10000000000,
-      step: 9900000019,
+      step: 1000000000,
       suffix: "IDR"
     },
     {
@@ -801,7 +801,7 @@ Berikut adalah perjalanan lengkap dari keputusan hingga operasi:
     const breakdown = [];
 
     // Biaya notaris
-    const notaryFee = 10000012;
+    const notaryFee = 15000000;
     total += notaryFee;
     breakdown.push({ label: "Biaya Notaris & Hukum", amount: notaryFee });
 
@@ -824,7 +824,7 @@ Berikut adalah perjalanan lengkap dari keputusan hingga operasi:
 
     // Kantor virtual
     if (values['virtual-office']) {
-      const voFee = values.location === 'jakarta' ? 10000012 : 12000000;
+      const voFee = values.location === 'jakarta' ? 15000000 : 12000000;
       total += voFee;
       breakdown.push({ label: "Kantor Virtual (1 tahun)", amount: voFee });
     }

@@ -1421,7 +1421,12 @@ async def get_pending_queue(
             WHERE status = 'failed' AND attempts < 5
             """,
         )
-        # Mark as processing and return (max 5 attempts, then dead-letter)
+        # Mark as processing and return (max 5 attempts, then dead-letter). A row is
+        # enqueued when its PR opens, and the translate step needs the MDX on main:
+        # claiming before pro.rakyat_editorial_merger merges burns the attempts, and
+        # a 300 s poller spends all five in 25 min, as long as Rakyat #45's checks
+        # plus one merger tick. The grace leaves that wait outside the attempts; a
+        # re-queue of an existing row keeps its old created_at and is not delayed.
         await conn.execute(
             """
             UPDATE post_publish_queue
@@ -1434,6 +1439,7 @@ async def get_pending_queue(
             UPDATE post_publish_queue
             SET status = 'processing', started_at = NOW(), attempts = attempts + 1
             WHERE status = 'pending' AND attempts < 5
+              AND created_at < NOW() - INTERVAL '45 minutes'
             RETURNING slug, title, category, source, article_id, created_at,
                       completed_steps, attempts
             """,

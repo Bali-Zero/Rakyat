@@ -13,7 +13,6 @@ from backend.tests.services.crm.partners.conftest import (  # noqa: F401
     _DEFAULT_DB_URL,
     _SCHEMA_SQL,
     _SHIELDED,
-    _TEARDOWN_SQL,
     _IntWithId,
     _shield,
     _UUIDWithId,

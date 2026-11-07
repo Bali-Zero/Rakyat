@@ -6,7 +6,7 @@ import { HeroCTA } from "./HeroCTA";
  * HeroBlueprint — Essay-Opener hero.
  *
  * Concept: the team photographed in a Balinese temple courtyard clad in
- * Necugus marble — two institutional traditions in quiet dialogue.
+ * Carrara marble — two institutional traditions in quiet dialogue.
  * Copy follows the X_BRAND_VOICE.md "bar conversation" register:
  * grounded, sharp, warm-blooded. No "AI-powered", no "premium boutique",
  * no "structured". One concrete observation, one honest commitment,
@@ -30,7 +30,7 @@ export function HeroBlueprint({
       <div className="relative w-full hero-aspect">
         <Image
           src="/assets/art/hero-team.jpeg"
-          alt="The Bali Zero team mid-conversation in a Balinese bale pavilion — seven members on white Necugus marble benches, stone guardian statue and canang offerings beside them"
+          alt="The Bali Zero team mid-conversation in a Balinese bale pavilion — seven members on white Carrara marble benches, stone guardian statue and canang offerings beside them"
           fill
           priority
           fetchPriority="high"

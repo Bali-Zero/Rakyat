@@ -1,7 +1,7 @@
 """Maturation — lifecycle phase tracker.
 
 Phases gate capabilities: embrione observes only, neonato acts cautiously,
-giovane acts autonomously + piwiho, adulto has full autonomy, anziano stabilizes.
+giovane acts autonomously + dreams, adulto has full autonomy, anziano stabilizes.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ _THRESHOLDS = {
 _DESCRIPTIONS = {
     Phase.EMBRIONE: "Embrione (day 0-3): observe and log only, no autonomous actions.",
     Phase.NEONATO: "Neonato (day 4-14): act only with confidence >= 0.8, building episodic memory.",
-    Phase.GIOVANE: "Giovane (day 15-30): autonomous actions, piwiho active, confidence >= 0.5.",
+    Phase.GIOVANE: "Giovane (day 15-30): autonomous actions, dreams active, confidence >= 0.5.",
     Phase.ADULTO: "Adulto (day 31-179): full autonomy, all capabilities unlocked.",
     Phase.ANZIANO: "Anziano (day 180+): stability priority, reduced mutation rate.",
 }

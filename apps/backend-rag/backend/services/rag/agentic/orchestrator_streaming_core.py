@@ -31,6 +31,62 @@ logger.setLevel(logging.INFO)
 # raw tokens leave the process before confidence and analytics are available.
 REACT_STREAM_FINALIZATION_COMPLETE = False
 
+# The clock the per-stage analytics read (stage-timing spec W8). Monotonic, and
+# a different function from the ``time.time()`` reads the stream already had.
+_ANALYTICS_CLOCK = time.perf_counter
+
+
+def _analytics_clock() -> float | None:
+    """A clock read that feeds analytics only: a failure costs the reading,
+    never the user's stream (gate 9198 r1 injected OSError into a bare read
+    placed outside the analytics ``try`` and the stream ended in an error)."""
+    try:
+        return _ANALYTICS_CLOCK()
+    except Exception:
+        return None
+
+
+def _paused_plus(paused: float | None, before: float | None, after: float | None) -> float | None:
+    """Running sum of the time the generator spent suspended at a ``yield`` inside the
+    ReAct loop (measurement spec M2/M3, brief 85bec76a): ``before`` is read AFTER the
+    yield operand is evaluated and bound to a local, ``after`` right after it resumes.
+    Total: any missing reading or failed arithmetic makes the sum None, and None stays
+    None. No log, no access to the exception (E2-a)."""
+    try:
+        if paused is None or before is None or after is None:
+            return None
+        return paused + (after - before)
+    except Exception:
+        return None
+
+
+def _stage_timings_or_none(
+    owner: Any,
+    state: Any,
+    reasoning_start: float | None,
+    reasoning_end: float | None,
+    start_time: float,
+    reasoning_paused: float | None,
+) -> dict[str, float] | None:
+    """Stage timings for the analytics row, or None. Total: never raises an
+    Exception (differential spec S2/S7, brief 85bec76a). ``owner`` is the streaming
+    core; its ``core.metrics_manager`` is read HERE, inside the guard, never as a
+    call argument. A missing clock reading, including a missing pause reading, writes
+    the row WITHOUT timings (W8, M3). ``reasoning_duration`` is the loop's PRODUCING time:
+    end - start minus the time suspended at the loop's yields (M1)."""
+    try:
+        if reasoning_start is None or reasoning_end is None or reasoning_paused is None:
+            return None
+        return owner.core.metrics_manager.extract_timings_from_state(
+            state=state,
+            reasoning_duration=reasoning_end - reasoning_start - reasoning_paused,
+            start_time=start_time,
+        )
+    except Exception:
+        # E2-a: the fallback and nothing else. No log call, no access to the exception:
+        # the row without ``metadata.timings`` is the signal.
+        return None
+
 
 class OrchestratorStreamingCore:
     """
@@ -319,6 +375,8 @@ class OrchestratorStreamingCore:
         # R5 Phase 6: NLM Speculative Fire removed
 
         try:
+            reasoning_paused = 0.0
+            reasoning_start = _analytics_clock()
             # Stream ReAct loop events
             async for raw_event in self.core.reasoning_engine.execute_react_loop_stream(
                 state=state,
@@ -339,9 +397,16 @@ class OrchestratorStreamingCore:
                 # Check if this is a tool call event
                 if raw_event and raw_event.get("type") == "tool_call":
                     tool_name = raw_event.get("data", {}).get("tool_name", "unknown tool")
-                    yield thinking_service.create_thinking_event(
+                    # M2 (operand rule): bind the yield operand FIRST, so building it is
+                    # producer time; the pause read sits between it and the yield.
+                    pending_event = thinking_service.create_thinking_event(
                         ThinkingPhase.TOOL_CALLING,
                         tool_name=tool_name,
+                    )
+                    pause_from = _analytics_clock()
+                    yield pending_event
+                    reasoning_paused = _paused_plus(
+                        reasoning_paused, pause_from, _analytics_clock()
                     )
 
                 # Process and validate events
@@ -350,7 +415,13 @@ class OrchestratorStreamingCore:
                     correlation_id=correlation_id,
                     user_id=user_id,
                 ):
+                    pause_from = _analytics_clock()
                     yield event
+                    reasoning_paused = _paused_plus(
+                        reasoning_paused, pause_from, _analytics_clock()
+                    )
+
+            reasoning_end = _analytics_clock()
 
             # Clear thinking state when done
             yield thinking_service.create_done_event()
@@ -381,7 +452,7 @@ class OrchestratorStreamingCore:
             # (replaces the previously-hardcoded 0.15 / 0.60 literals — same
             # values, now sourced from EvidenceScoreConstants.CONFIDENCE_LOW /
             # CONFIDENCE_HIGH so this site cannot drift from the other gates).
-            # See _abstain_policy.py + 2000-00-01 Mythos M1 audit.
+            # See _abstain_policy.py + 2026-06-14 Mythos M1 audit.
             confidence_zone: str = "confident"
             if evidence_score is not None:
                 from backend.services.rag.agentic._abstain_policy import (
@@ -429,6 +500,14 @@ class OrchestratorStreamingCore:
                         model_used=model_tier,
                         execution_time_ms=int(execution_time * 1000),
                         response_text=getattr(state, "final_answer", None),
+                        stage_timings=_stage_timings_or_none(
+                            self,
+                            state,
+                            reasoning_start,
+                            reasoning_end,
+                            start_time,
+                            reasoning_paused,
+                        ),
                     )
             except Exception as analytics_err:
                 logger.warning(

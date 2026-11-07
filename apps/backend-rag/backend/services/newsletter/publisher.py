@@ -246,7 +246,7 @@ class NewsletterPublisher:
 
     def render_daily_html(self, content: DailyDigestContent) -> str:
         """Render the NEWSLETTER_DAILY template. All CSS is inline (no
-        <style> block — Kuxas strips it, per the email-template surface
+        <style> block — Gmail strips it, per the email-template surface
         spec)."""
         template = Template(NEWSLETTER_DAILY_HTML)
         items_html = "".join(self._build_daily_item_html(item) for item in content.items)

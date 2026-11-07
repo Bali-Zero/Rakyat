@@ -72,6 +72,7 @@ class BusinessAnalyzeRequest(BaseModel):
     lat: float = Field(..., ge=-90, le=90)
     lng: float = Field(..., ge=-180, le=180)
     kbli_code: str | None = None
+    vintage: str | None = None
     is_pma: bool = True
     land_size_m2: float | None = None
     price_idr: float | None = None
@@ -141,6 +142,7 @@ async def analyze_investment(req: BusinessAnalyzeRequest, request: Request) -> d
         lat=req.lat,
         lng=req.lng,
         kbli_code=req.kbli_code,
+        vintage=req.vintage,
         is_pma=req.is_pma,
         land_size_m2=req.land_size_m2,
         price_idr=req.price_idr,

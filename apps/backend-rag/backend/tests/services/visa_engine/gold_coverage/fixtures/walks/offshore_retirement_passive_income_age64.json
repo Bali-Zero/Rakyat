@@ -78,6 +78,10 @@
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"
     },
+    "investment.sponsoring_company_confirmed": {
+      "status": "UNKNOWN",
+      "reason": "NOT_ASKED"
+    },
     "investment.own_shareholding_idr": {
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"
@@ -112,6 +116,10 @@
       "reason": "NOT_ASKED"
     },
     "family.sponsor_permit_basis": {
+      "status": "UNKNOWN",
+      "reason": "NOT_ASKED"
+    },
+    "family.spouse_application_support_confirmed": {
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"
     },
@@ -169,7 +177,7 @@
     },
     "secondhome.passive_monthly_income_usd": {
       "status": "KNOWN",
-      "value": 9900000019
+      "value": 1000000000
     },
     "process.application_channel": {
       "status": "UNKNOWN",

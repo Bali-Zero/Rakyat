@@ -1,0 +1,2214 @@
+name: Tests & Coverage
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  merge_group:
+  workflow_dispatch:
+  # Task #37 (2026-07-26). STRUCTURAL claim, not a snapshot of one night:
+  # `cancel-in-progress: false` (below) protects a run that has already
+  # STARTED — a run still QUEUED for a runner slot is superseded
+  # unconditionally by the next push to the same concurrency group,
+  # regardless of that setting. Under any sufficiently busy stretch, main
+  # can go a long stretch with no completed test verdict even though every
+  # push technically "ran" a workflow. (One specific night's measurement —
+  # 28/38 recent attempts cancelled, main's last verdict over an hour
+  # stale — motivated building this, but that number is a snapshot of one
+  # convoy, not the justification; it had already resolved by the time
+  # this shipped. Do not re-derive urgency from it later. A cure pinned to
+  # tonight's world is tomorrow's bug.)
+  #
+  # This scheduled run is independent proof-of-health, decoupled from push
+  # cadence — it runs the exact same job graph as a push/PR run (no
+  # duplicated logic to drift), against whatever is on main when it fires,
+  # and it gets its own concurrency group below so it never queues behind
+  # — or evicts — a push-triggered run.
+  #
+  # Cadence: every 2h, not hourly. A full run of this job graph measured
+  # ~43 minutes wall-clock on a loaded night — hourly would be a ~72% duty
+  # cycle on the runners this workflow already competes for, and slots are
+  # the binding constraint main's own velocity runs into (task #37's own
+  # finding). Task #41's separate verdict-liveness check (see
+  # main-push-failure-watch.yml) is the FAST heartbeat now — it's a cheap
+  # API-only poll every 15 min, no runner-heavy job — so this run's job
+  # is no longer to detect an outage quickly, only to periodically produce
+  # a real full-suite verdict against main's current head (catching
+  # interaction bugs invisible to per-PR testing) at a sustainable cost.
+  # :17 offset dodges the top-of-hour stampede (same convention as
+  # docs-inventory-refresh-liveness.yml).
+  schedule:
+    - cron: "17 */2 * * *"
+
+# Merge-train spec §10.2 (2026-06-12): cancel-in-progress must NOT apply to
+# main — back-to-back merges were cancelling the in-flight main run, so
+# commits landed on main UNTESTED and a future auto-revert guardian could
+# not attribute a green→red window to a single commit. PR refs keep
+# cancelling (newest push wins).
+#
+# CORRECTED 2026-08-27 (PENDING-ARMS row opened 2026-08-23 by an
+# adversarial refuter on #4647, closed by this change): this paragraph
+# used to end "every main push now runs to completion" — describing a
+# `push:` trigger that has not existed on this workflow since #4210
+# (2026-08-15, Merge-OS v3 step 2). The property the paragraph is actually
+# about — main never landing on an untested commit — is held today by
+# `merge_group` (pre-merge, required) and the `schedule` run below
+# (post-merge proof-of-health against main's current head), not by a push
+# run. `github.ref != 'refs/heads/main'` below still does real work for a
+# manual `workflow_dispatch` fired against main: that event CAN land on
+# `refs/heads/main` even though `push` cannot, and it should get the same
+# "let an in-flight main run finish" treatment the old push case did.
+#
+# Task #37 addendum: a schedule-triggered run must NOT share a group with a
+# run landing directly on `refs/heads/main` outside the queue (see the
+# CORRECTED note above: today that means a `workflow_dispatch` fired
+# against main; a `push` cannot). `github.ref` is `refs/heads/main` for
+# BOTH that case and a schedule run (schedule always fires against the
+# default branch) — grouping on `github.ref` alone would put the scheduled
+# run back in direct contention with such runs for the same runner slot,
+# reproducing the exact starvation this run exists to work around.
+# Scheduled runs get a dedicated, ref-independent group instead.
+#
+# cancel-in-progress is the OPPOSITE value for the scheduled group,
+# deliberately: `false` is what protects a run landing directly on
+# `refs/heads/main` (a started verdict should always get to report, and
+# cancelling it on the next such trigger is what silently starved main in
+# the first place). `true` is
+# correct for the scheduled group for the mirror-image reason — if a new
+# scheduled run starts while the previous is still going (job overrunning
+# the 2h cadence under load), the older run is testing a `main` that no
+# longer exists, so the freshest run should win, not the oldest. Same
+# flag, opposite correct value, because the underlying question differs:
+# "protect a verdict in flight" vs "don't waste a slot re-testing a stale
+# head". Do not "fix" this to match main's `false` — that was tried
+# nowhere, noted here only because the asymmetry looks like a bug at a
+# glance.
+#
+# merge_group readiness (2026-07-27): under merge_group, github.ref resolves
+# to the queue's own temporary ref (refs/heads/gh-readonly-queue/...), which
+# is != 'refs/heads/main' — so the expression above would evaluate to `true`
+# for a queue entry, cancelling an in-flight required-check run every time a
+# newer commit joined the queue (the exact starvation this block exists to
+# prevent for main, just relocated to the queue). This is a composed fix, not
+# the mechanical `cancel-in-progress: ${{ github.event_name != 'merge_group' }}`
+# used on the other 13 required-context workflows: that blanket replacement
+# would have discarded the schedule-vs-push asymmetry documented above. AND-ing
+# `github.event_name != 'merge_group'` onto the existing expression preserves
+# every other branch (a direct run against main stays false, PR refs and
+# schedule keep cancelling) and forces false only for the new merge_group case.
+concurrency:
+  # Per-PR/per-ref for every author. A shared per-workflow group keyed on
+  # github.actor was removed 2026-09-02: GitHub keeps only ONE pending run per
+  # group, so a 3rd near-simultaneous arrival was cancelled BEFORE any job
+  # started — no check-run object is created, so a required context sits at
+  # "Expected — waiting for status" with nothing red to see. Concurrency is now
+  # bounded only by the account-level ceiling, which QUEUES past it rather than
+  # dropping: lateness is visible, an absent check-run is not.
+  group: tests-${{ github.event_name == 'schedule' && 'schedule-main' || github.ref }}
+  cancel-in-progress: ${{ (github.event_name == 'schedule' || github.ref != 'refs/heads/main') && github.event_name != 'merge_group' }}
+  # CHECKED, NOT CHANGED (2026-09-05 audit): for a `pull_request` event,
+  # `github.ref` is `refs/pull/<n>/merge` — never `refs/heads/main` — so the
+  # expression above is already `true` for every PR push (a newer push
+  # supersedes an in-flight run of the same PR). `cancel-in-progress` is only
+  # ever `false` for the two cases the long comment block above this key
+  # explains it must be: a `merge_group` entry and a direct run against
+  # `refs/heads/main`. No PR-triggered idempotent run in this workflow lacks
+  # cancellation.
+
+# S11: the coverage-collection decision lives HERE, once, and nowhere else.
+# It used to be a per-shard step that wrote its answer to a file the fan-in read
+# back. A refuter (Codex GPT-5.6) pointed out the hole: that file is written in
+# the same working directory pytest then runs PR code in, so a `pytest_sessionfinish`
+# in the diff could rewrite every shard's receipt to `false` and the fan-in would
+# skip the coverage combine and the --fail-under gate entirely. A workflow-level
+# `env:` is not writable by anything the job runs, and it is still ONE definition
+# read by both the shards and the fan-in — which was the whole reason the receipt
+# existed (superscar #9: two copies of one derivation is how they drift).
+# Coverage is collected on merge_group / schedule / workflow_dispatch, never on
+# pull_request: it adds wall-clock to every PR for a signal that only needs to be
+# current at the point a commit actually lands
+# (research/operations/2026-08-21-token-ceremony-ci-system-audit.md).
+env:
+  BACKEND_COLLECT_COVERAGE: ${{ github.event_name != 'pull_request' }}
+
+jobs:
+  # ── S11 backend-test sharding (2026-08-23) ──────────────────────────────────
+  # `Backend Tests (Python)` used to be ONE job, and every code PR paid it twice
+  # (PR lane + merge-group lane). Measured on this workflow, not estimated:
+  #   merge_group run 32626973483 — job 1068s, of which "Run unit tests" 797s (74.6%)
+  #   schedule    run 32624568684 — job  975s, of which "Run unit tests" 726s (74.5%)
+  # Intra-job parallelism was already saturated (`-n auto --dist loadfile` on a
+  # 2-core runner, re-added 2026-08-21 with per-worker DB isolation), so the only
+  # remaining lever is CROSS-JOB sharding: 3 × 2 cores instead of 1 × 2.
+  #
+  # WHY THE JOB IS SPLIT IN THREE PIECES AND NOT JUST MATRIXED
+  # A naive `strategy.matrix` over the whole job would duplicate 269s of non-test
+  # work onto every shard's critical path (mypy 90s + pip-audit 37s + install/
+  # migrations/gates 142s), landing at 269 + 797/3 ≈ 535s — worse than the ≤8min
+  # target once the fan-in is added. The two steps that need NEITHER Postgres nor
+  # the test corpus (pip-audit, mypy — plus the two ~1s import/cost gates that
+  # travel with them) move to `backend-static`, which runs CONCURRENTLY with the
+  # shards and is ~205s, i.e. never the critical path. Projected shard wall-clock
+  # ≈ 388s, fan-in ≈ 75s. The PROOF is a measurement on this PR's own transit,
+  # recorded in the PR body — not this comment.
+  #
+  # WHY THE THIRD JOB EXISTS AT ALL (do not "simplify" it away)
+  # `Backend Tests (Python)` is a REQUIRED context in classic branch protection
+  # (27 contexts verified 2026-08-23; cut to 9 then reinstated to 11 by Zero's
+  # 2026-08-27 ruling — this context stayed required throughout, see
+  # docs/runbooks/merge-queue-discipline.md "Required vs advisory checks —
+  # reinstatement rule"). A matrix renames its check runs to
+  # "... (1)", "... (2)" — the bare required context would then never report
+  # again, every queue entry would wait out `checkResponseTimeout` and fail.
+  # That is superscar #2 / W69 (required-checks silently disarmed). So the fan-in
+  # job below KEEPS the exact name, and the shards get new, non-required names.
+  #
+  # The fan-in reads the upstream jobs' actual `result` rather than re-deriving
+  # any condition (superscar #9: two copies of one derivation is how they drift).
+  backend-static:
+    name: Backend Static (Python)
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Cache dependencies (uv)
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('apps/backend-rag/requirements.lock.txt') }}
+
+      - name: Install dependencies (uv, lock-pinned)
+        run: |
+          cd apps/backend-rag
+          pip install --upgrade pip uv
+          # requirements.lock.txt is version-pinned (==) via uv pip compile.
+          # --require-hashes dropped: incompatible with editable cell-core install
+          # AND with un-pinned transitive deps (e.g. cuda-toolkit) that uv resolves
+          # at install time. uv remains 10-100× faster than pip even without hashes.
+          # See docs/uv-migration.md.
+          uv pip install --system -r requirements.lock.txt
+          # Editable cell-core workspace dep (out-of-tree)
+          uv pip install --system -e ../../packages/cell-core
+          # uv cache pruning (2026-09-10): the saved uv cache buys nothing
+          # here. Measured on Backend Shard 1: merge_group run 34382424536
+          # spent 49s restoring the cache + 14s installing, vs the schedule
+          # run 34354276221's 39s cold install with NO cache at all — only
+          # packages/cell-core is source-built (<1s); everything else is a
+          # registry wheel that downloads faster than it restores. uv's
+          # documented CI pattern: prune after install so only source-built
+          # wheels get saved, not ~3 GB of registry wheels.
+          uv cache prune --ci || echo "::warning::uv cache prune --ci failed; the unpruned cache is kept, install already succeeded"
+
+      - name: pip-audit
+        run: |
+          cd apps/backend-rag
+          # Ad-hoc CI tool installs are version-pinned in requirements-ci-tools.txt
+          # (Day-1 CI honesty pass, 2026-07-20) — an unpinned `pip install pip-audit`
+          # silently drifts to whatever build happens to be "latest" the day CI
+          # runs, which can turn a green PR red (or a red PR green) with no
+          # corresponding code change.
+          pip install -r requirements-ci-tools.txt
+          # BUG FIXED (2026-07-20): this step used to audit requirements.txt, which
+          # pip-audit RE-RESOLVES against live PyPI at audit time — that can
+          # silently pick different transitive versions than what
+          # `uv pip install --system -r requirements.lock.txt` actually installed
+          # earlier in this same job. requirements.lock.txt (uv pip compile
+          # --generate-hashes) IS the real install manifest, so audit THAT
+          # instead, with --require-hashes: every entry must be pinned to an
+          # exact version AND carry a matching hash, exactly as installed — and
+          # (per pip-audit's own hash-pinned semantics) no re-resolution happens.
+          # cell-core (-e ../../packages/cell-core) is a first-party workspace
+          # package with no PyPI metadata and no hash (it's editable) — stripped
+          # before handing the file to pip-audit, same rationale as before.
+          # Ignored vulnerabilities documented in apps/backend-rag/.pip-audit-ignore.md
+          # with rationale for each. Review that file before adding new entries.
+          # NO --require-hashes (corrected premise, 2026-07-21): uv deliberately
+          # leaves torch's nvidia/cuda transitive subtree UNPINNED in the lock
+          # (resolved at install time — see the install step's comment), so in
+          # hash mode pip fails the closure on cuda-toolkit/cuda-bindings/… no
+          # matter what we pin ad-hoc. Version pins (==) still prevent the
+          # re-resolution drift this step was designed to kill: pip installs
+          # exactly the locked versions, and the unpinned cuda family resolves
+          # the same way the install step just resolved it.
+          # TWO locks are audited with ONE ignore list (the IGNORES array below), so the
+          # audits cannot drift. requirements.lock.txt is what CI installs;
+          # requirements-prod.lock.txt is what the Fly image installs (Dockerfile) — it
+          # was unaudited until 2026-10-01, when pyjwt 2.13.0 stayed vulnerable in prod
+          # after the CI lock was bumped (#7708, #7709). Both carry the same cell-core
+          # `-e` line and per-package hash lines, so the same normalisation applies.
+          # Hash-mode auto-activation (found 2026-07-21): the lock's per-package
+          # --hash lines make pip enable hash mode ALL BY THEMSELVES (any hash ⇒
+          # hashes required for everything), so dropping --require-hashes was not
+          # enough — the unpinned cuda subtree still failed the closure. Strip
+          # the hash continuation lines and their trailing backslashes so the
+          # audit runs in plain ==-pinned mode.
+          IGNORES=(
+            --ignore-vuln GHSA-69w3-r845-3855
+            --ignore-vuln PYSEC-2025-217
+            --ignore-vuln CVE-2025-62800
+            --ignore-vuln CVE-2025-62801
+            --ignore-vuln GHSA-rcfx-77hg-w2wv
+            --ignore-vuln CVE-2025-69196
+            --ignore-vuln CVE-2025-64340
+            --ignore-vuln CVE-2026-27124
+            --ignore-vuln CVE-2026-28684
+            --ignore-vuln CVE-2026-40217
+            --ignore-vuln CVE-2026-41488
+            --ignore-vuln PYSEC-2025-217
+            --ignore-vuln GHSA-8jfx-5878-hv4v
+            --ignore-vuln CVE-2025-3000
+            --ignore-vuln CVE-2026-4372
+            --ignore-vuln PYSEC-2026-2290
+          )
+          # The `if` suspends `bash -e` only for that pipeline, so the second lock is
+          # still audited when the first fails; any failure turns the step red via RC.
+          RC=0
+          for lock in requirements.lock.txt requirements-prod.lock.txt; do
+            echo "::group::pip-audit $lock"
+            if grep -v '^-e \.\./\.\./packages/cell-core' "$lock" > /tmp/requirements-audit-raw.txt \
+              && sed -e '/^[[:space:]]*--hash=sha256:/d' -e 's/[[:space:]]\\$//' /tmp/requirements-audit-raw.txt > /tmp/requirements-audit.txt \
+              && pip-audit --strict --requirement /tmp/requirements-audit.txt "${IGNORES[@]}"; then
+              echo "pip-audit $lock: clean"
+            else
+              echo "::error::pip-audit failed on $lock"
+              RC=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$RC"
+
+      - name: Mypy type check (core + models)
+        run: |
+          cd apps/backend-rag
+          pip install -r requirements-ci-tools.txt
+          # Strict only on the allowlist in pyproject.toml → [[tool.mypy.overrides]].
+          # Everything else is silenced by the backend.* opt-out. See FOLLOWUPS.md
+          # (section "Mypy strict-module expansion") for the modules pending cleanup.
+          PYTHONPATH=.:../crm-cell python -m mypy backend/core backend/app/models \
+            --config-file pyproject.toml
+
+      - name: Import chain gate
+        run: |
+          cd apps/backend-rag
+          PYTHONPATH=.:../crm-cell python -c "from backend.app.dependencies import get_current_user; print('✅ Import chain OK')"
+
+      - name: Check LLM cost tracking coverage
+        run: python scripts/check_llm_cost_tracking.py
+
+      - name: Run core tests (fast gate — always run)
+        # MOVED here from `backend-shard` on 2026-08-23 (follow-up to #4647),
+        # and deliberately placed LAST in this job — see the ORDERING note below.
+        # The step is written once, but inside the shard job that line ran once
+        # PER MATRIX LEG: measured 7s / 8s / 8s on merge_group run 32632670541,
+        # i.e. ~16s of duplicated runner time and — because the critical path is
+        # the SLOWEST shard and every leg paid it — ~8s ON THE CRITICAL PATH.
+        # That mattered: the same run missed the <=8 min target by 12-40s, so
+        # these 8s were 20-65% of the miss. Here it runs ONCE, on a job measured
+        # at 203s against the slowest shard's 381s, so it costs zero critical
+        # path. Precisely: the GATE runs once. The module itself still executes
+        # twice per full run (this gate, plus the shard that owns it in the
+        # corpus) — down from four, not to one. NOT gated to `matrix.shard == 1` instead: that saving would be
+        # probabilistic, since shard 1 may itself be the slowest leg.
+        #
+        # THE GUILT CHAIN SURVIVES THE MOVE, and that is the load-bearing part.
+        # This job is NOT a required context — only the `Backend Tests (Python)`
+        # fan-in is — but the fan-in's `Assert every upstream job succeeded`
+        # step reads `needs.backend-static.result` in the SAME loop as
+        # `needs.backend-shard.result` and exits non-zero on either, so a red
+        # core test here still reddens the required context. The shard side of
+        # that loop was proven live on dispatch run 32634126661 (one red leg of
+        # three -> fan-in red at exactly this step); the static side is the same
+        # loop, same fail-closed exit.
+        #
+        # ORDERING — LAST, NOT FIRST, and this was a refuter finding (Codex
+        # gpt-5.6-sol, round 1). The first draft put this step before
+        # pip-audit. Because a failing step skips the rest of the job, a
+        # broken core test would then have MASKED four independent gates
+        # (pip-audit, mypy, the import-chain gate, LLM cost coverage) that
+        # used to report regardless — backend-static was independent of the
+        # shards before this move. Last costs nothing: placing it first would
+        # not surface a core failure any sooner at the FAN-IN, because the
+        # fan-in waits on all three shards (~350s) either way.
+        #
+        # THE FAIL-FAST PROPERTY IS TRADED AWAY, DECLARED NOT HIDDEN. Inside
+        # backend-shard this gate turned a core regression red in ~10s (each
+        # leg exited at ~8s via -x). Here the required context still waits for
+        # the shards, so a core regression now goes red in ~350s. That is a
+        # real loss on the RED path, accepted for an ~8s gain on the GREEN
+        # path, which is every run. The alternative the refuter named — a
+        # separate `backend-core` job wired into the fan-in's needs — would
+        # restore fail-fast, but it adds a fifth concurrent job to the runner
+        # slot pressure tests.yml already calls the binding constraint, so it
+        # is not taken here.
+        #
+        # No DATABASE_URL / REDIS_URL: this job has no `services:`, and the
+        # module does not need them. MEASURED, not assumed — its 24 tests pass
+        # with both variables unset AND with them pointed at closed ports
+        # (127.0.0.1:59999 / :59998). The old values were inherited from the
+        # pre-split combined job, where those services happened to exist.
+        # pytest / pytest-asyncio / pytest-cov come from requirements.lock.txt
+        # (verified present); this module needs no pytest-mock, fakeredis or
+        # xdist, and the single conftest on its collection path imports only
+        # stdlib, pydantic and pytest.
+        run: |
+          mkdir -p "$RUNNER_TEMP/static-receipts"
+          cd apps/backend-rag
+          PYTHONPATH=.:../crm-cell pytest backend/tests/services/rag/test_confidence.py \
+            -ra --no-header --tb=short --durations=10 -x \
+            "--junit-xml=$RUNNER_TEMP/static-receipts/test-results-core.xml"
+
+      - name: Upload core-gate test results
+        # DIAGNOSTIC ONLY — and `continue-on-error: true` is what MAKES that true.
+        # A refuter (Codex gpt-5.6-sol, round 1) caught the first draft claiming
+        # "nothing gates on this file" while the upload step itself could fail the
+        # job: a transient artifact-service error would conclude backend-static
+        # `failure`, and the fan-in's assert reads `needs.backend-static.result`,
+        # so the required context would go red with every real gate green.
+        # `if-no-files-found: warn` only covers a MISSING file; it does not make
+        # the upload itself best-effort.
+        #
+        # NOT parity with the pre-move state, stated plainly because the first
+        # draft overclaimed it: the core junit used to ride into the
+        # `backend-test-results` artifact via the fan-in's
+        # `shard-receipts/test-results-*.xml` glob. It now lands in a DIFFERENT
+        # artifact under a DIFFERENT filename, so anything outside this repo that
+        # downloaded `backend-test-results` looking for `test-results-core-*.xml`
+        # will find nothing. No in-repo consumer exists (grepped); external ones
+        # are not observable from a diff.
+        uses: actions/upload-artifact@v7
+        if: always()
+        continue-on-error: true
+        with:
+          name: backend-core-gate-results
+          path: ${{ runner.temp }}/static-receipts/test-results-core.xml
+          if-no-files-found: warn
+
+  backend-shard:
+    name: Backend Shard ${{ matrix.shard }}
+    # No change map on Rakyat: every event runs the shard.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    # Coverage runs (see BACKEND_COLLECT_COVERAGE) are slower: on 2026-11-06 Shard 1
+    # was at 64% when the old 30-minute cap cancelled it, on two runs in a row, so
+    # main had no test verdict. A PR run of the same shard took 21 minutes.
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 30 || 60 }}
+
+    strategy:
+      # fail-fast: false ON PURPOSE. With the default (true), the first shard to
+      # go red cancels its siblings, their results become `cancelled`, and the
+      # fan-in below turns red for a reason ("a shard did not succeed") that
+      # hides the reason anyone actually needs ("which tests failed, on which
+      # shards"). Since the fan-in refuses anything that is not `success`, there
+      # is no fail-open risk in letting the other two finish and report.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+
+    env:
+      # Must match the length of `matrix.shard` above. It cannot be derived from
+      # it (a matrix literal is not expression-evaluable), so the fan-in's
+      # partition guard fails loudly on any disagreement: a `chunk-N.txt` outside
+      # 1..SHARD_COUNT, or a missing one inside it, is a hard error there.
+      SHARD_COUNT: "3"
+      SHARD_INDEX: ${{ matrix.shard }}
+
+    services:
+      postgres:
+        image: ghcr.io/bali-zero/ci-mirror/postgres:15
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: nuzantara_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: ghcr.io/bali-zero/ci-mirror/redis:7
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Runner probe (temporary, day-0)
+        run: |
+          echo "shard=$SHARD_INDEX/$SHARD_COUNT arch=$(uname -m) nproc=$(nproc)"
+          grep -m1 'model name' /proc/cpuinfo || true
+          echo "image=$ImageOS/$ImageVersion"
+          free -h | head -2; df -h / | tail -1
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Cache dependencies (uv)
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('apps/backend-rag/requirements.lock.txt') }}
+
+      - name: Install dependencies (uv, lock-pinned)
+        run: |
+          cd apps/backend-rag
+          pip install --upgrade pip uv
+          # See backend-static's copy of this step for the --require-hashes /
+          # editable-cell-core rationale; kept byte-identical on purpose so the
+          # two jobs install the same closure.
+          uv pip install --system -r requirements.lock.txt
+          uv pip install --system -e ../../packages/cell-core
+          # pytest-xdist re-added 2026-08-21 (world-practice import map §1.3,
+          # research/operations/2026-08-21-world-patterns-import-map.md): the
+          # 2026-08-21 attempt (#4477) had to drop `-n auto --dist loadfile`
+          # because every worker shared the ONE Postgres service DB — see the
+          # "Run unit tests" step below for the fix (per-xdist-worker database,
+          # backend/tests/conftest.py::pytest_configure) and
+          # backend/tests/db/test_xdist_worker_isolation.py for the guilt+
+          # innocence proof. Declared here AND in requirements-test.txt
+          # (scripts/tests/test_test_deps_declared.py's guilt check pins the
+          # two together, same rule fakeredis already follows).
+          uv pip install --system pytest pytest-cov pytest-asyncio pytest-mock fakeredis pytest-xdist
+          # uv cache pruning (2026-09-10): see backend-static's copy of
+          # this step for the measured 49s-restore-vs-39s-cold-install
+          # rationale — the saved uv cache buys nothing here either, same
+          # install closure, only packages/cell-core is source-built.
+          uv cache prune --ci || echo "::warning::uv cache prune --ci failed; the unpruned cache is kept, install already succeeded"
+
+      - name: Bootstrap SQLModel tables
+        # Router-level integration tests assume the full schema (e.g.
+        # test_compliance_lkpm_readypack.py inserts into `clients`), but the
+        # `clients` table has no migration file — it comes from SQLModel
+        # classes in backend/app/modules/crm/models.py that are only ever
+        # materialised via `SQLModel.metadata.create_all()`. Prod was
+        # bootstrapped by hand long ago; CI needs this explicit step.
+        # scripts/ci_bootstrap_schema.py imports the 6 table modules and
+        # runs create_all against the service-container Postgres.
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/nuzantara_test
+          JWT_SECRET_KEY: test_jwt_secret_key_for_testing_only_min_32_chars_long
+          API_KEYS: test_api_key_1,test_api_key_2
+        run: |
+          cd apps/backend-rag
+          PYTHONPATH=.:../crm-cell python scripts/ci_bootstrap_schema.py
+
+      - name: Apply database migrations
+        # After SQLModel tables exist, apply the Alembic-style migration files
+        # that alter or augment them (indexes, triggers, new columns on the
+        # tables we just created). Migration 114 (cognitive_layer) references
+        # `clients`, which is why bootstrap must run first.
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/nuzantara_test
+          JWT_SECRET_KEY: test_jwt_secret_key_for_testing_only_min_32_chars_long
+          API_KEYS: test_api_key_1,test_api_key_2
+        run: |
+          cd apps/backend-rag
+          PYTHONPATH=.:../crm-cell timeout 120 python -m backend.db.migrate apply-all
+
+      - name: Run backend stability gate
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/nuzantara_test
+          TEST_DATABASE_URL: postgresql://test:test@localhost:5432/nuzantara_test
+          INTAKE_TEST_DSN: postgresql://test:test@localhost:5432/nuzantara_test
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET_KEY: test_jwt_secret_key_for_testing_only_min_32_chars_long
+          API_KEYS: test_api_key_1,test_api_key_2
+        run: |
+          cd apps/backend-rag
+          PYTHONPATH=.:../crm-cell python scripts/backend_stability_gate.py
+
+      - name: Compute this shard's chunk
+        # scripts/ci/shard_tests.py is the SSOT for both "what is the corpus"
+        # and "who owns each file" — the fan-in's partition guard calls the same
+        # module, so a shard cannot silently disagree with the guard about what
+        # the full set was. Written BEFORE pytest runs so the receipt survives a
+        # red shard (and the fan-in still refuses a shard whose result is not
+        # `success`, so an aborted shard can never look complete).
+        env:
+          IMPACT_RUN_ALL: true
+          IMPACT_SELECTED_TESTS: 
+        run: |
+          # RECEIPTS LIVE OUTSIDE THE PYTEST CWD. Same refuter finding as the
+          # coverage decision above: anything written into apps/backend-rag is
+          # inside the directory pytest then executes PR code in, so a conftest
+          # could rewrite this shard's chunk list to match a shrunken corpus
+          # after the fact. $RUNNER_TEMP is not somewhere test code has any
+          # reason to be. This narrows the surface; it does not seal it (PR code
+          # running in the job can write anywhere), which is precisely why the
+          # adjudicating LOGIC comes from the base ref rather than from here.
+          mkdir -p "$RUNNER_TEMP/shard-receipts"
+          cd apps/backend-rag
+          python3 ../../scripts/ci/shard_tests.py chunk \
+            --shards "$SHARD_COUNT" --shard "$SHARD_INDEX" \
+            > "$RUNNER_TEMP/shard-receipts/chunk-${SHARD_INDEX}.txt"
+          CHUNK_N=$(grep -c . "$RUNNER_TEMP/shard-receipts/chunk-${SHARD_INDEX}.txt" || true)
+          TOTAL_N=$(python3 ../../scripts/ci/shard_tests.py enumerate | grep -c . || true)
+          echo "shard ${SHARD_INDEX}/${SHARD_COUNT} owns ${CHUNK_N} of ${TOTAL_N} test modules"
+          {
+            echo "## Backend Shard ${SHARD_INDEX}/${SHARD_COUNT}"
+            echo ""
+            echo "Owns **${CHUNK_N}** of ${TOTAL_N} test modules (round-robin over the canonical path order — scripts/ci/shard_tests.py)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run unit tests (sharded)
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/nuzantara_test
+          # Several integration tests read TEST_DATABASE_URL with a `nuzantara`
+          # local-dev fallback; in CI they should hit the same Postgres
+          # service container the rest of the suite uses.
+          TEST_DATABASE_URL: postgresql://test:test@localhost:5432/nuzantara_test
+          # Intake router/writer integration tests intentionally use a dedicated
+          # opt-in DSN. Point it at the same disposable CI database instead of
+          # their local-dev fallback (`nuzantara_dev`), which skipped 50 tests.
+          INTAKE_TEST_DSN: postgresql://test:test@localhost:5432/nuzantara_test
+          REDIS_URL: redis://localhost:6379
+          COLLECT_COVERAGE: ${{ env.BACKEND_COLLECT_COVERAGE }}
+        run: |
+          cd apps/backend-rag
+          set -o pipefail
+          # xdist (2026-08-21, kept): under `-n auto --dist loadfile` every
+          # worker used to share the ONE test Postgres (DATABASE_URL above), so
+          # a counting test in one file observed a sibling worker's parallel
+          # writes — backend/tests/routers/test_intake_review.py::
+          # test_approve_live_claim_owned_by_other_rejected_without_write read
+          # (4, 1) where serial reads (2, 0). The fix is per-xdist-worker
+          # Postgres isolation: backend/tests/conftest.py's `pytest_configure`
+          # clones a throwaway `nuzantara_test_gw{N}` database for every worker
+          # before collection imports any test module. Guilt + innocence in
+          # backend/tests/db/test_xdist_worker_isolation.py. `--dist loadfile`
+          # keeps a whole file on one worker, never splitting it.
+          #
+          # S11 note: sharding is a partition over FILES and xdist's loadfile
+          # distribution is also per-file, so the two compose without touching
+          # the isolation contract — a shard is just a smaller file list.
+          COV_ARGS=()
+          if [ "$COLLECT_COVERAGE" = "true" ]; then
+            # No report here: the data file is the deliverable, and the fan-in
+            # combines the three shards before any threshold is applied. The
+            # filename deliberately has NO leading dot — upload-artifact skips
+            # hidden files unless include-hidden-files is set, which would make
+            # a shard's coverage silently vanish and the combined total silently
+            # under-report (superscar #2: the failure would look like a pass).
+            COV_ARGS=(--cov=backend --cov-branch --cov-report=)
+            export COVERAGE_FILE="$RUNNER_TEMP/shard-receipts/coverage-data-shard${SHARD_INDEX}"
+            # Record the version that is about to WRITE the data. coverage's
+            # on-disk data file carries a schema version, so the fan-in has to
+            # read it back with the same one — and it must learn that from what
+            # actually ran here, never re-derive it (a refuter pointed out that
+            # grepping requirements.lock.txt guesses at a closure this job
+            # installs in two steps, the second of them unpinned).
+            python -c 'import coverage; print(coverage.__version__)' \
+              > "$RUNNER_TEMP/shard-receipts/coverage-version-${SHARD_INDEX}.txt"
+          fi
+
+          # An empty chunk is legitimate: on the scoped PR lane the impact map
+          # can select fewer modules than there are shards. Running pytest with
+          # NO file arguments would collect the entire rootdir instead — the
+          # exact opposite of what an empty chunk means — so guard it.
+          # `while read` and not `mapfile`: same result, no dependency on a
+          # bash>=4 builtin, and it matches the idiom the pre-split step already
+          # used to read $IMPACT_SELECTED_TESTS.
+          CHUNK=()
+          while IFS= read -r test_module; do
+            [ -n "$test_module" ] && CHUNK+=("$test_module")
+          done < "$RUNNER_TEMP/shard-receipts/chunk-${SHARD_INDEX}.txt"
+          if [ "${#CHUNK[@]}" -eq 0 ]; then
+            echo "shard ${SHARD_INDEX} owns no test modules — nothing to run"
+            exit 0
+          fi
+
+          PYTHONPATH=.:../crm-cell pytest \
+            "${CHUNK[@]}" \
+            -n auto --dist loadfile \
+            -ra --no-header --durations=50 \
+            --ignore=backend/tests/e2e \
+            "${COV_ARGS[@]}" \
+            "--junit-xml=$RUNNER_TEMP/shard-receipts/test-results-unit-${SHARD_INDEX}.xml" \
+            --tb=short -x 2>&1 | tee pytest-output.log || PYTEST_RC=$?
+          # errexit-immune capture (house W101 antidote): `run:` steps execute
+          # under `bash -e`. A bare `PYTEST_RC=$?` on the line right after a
+          # failing pipe is dead code — errexit aborts the script ON that
+          # failing pipeline before the next line ever runs, so the RC capture,
+          # the summary tail, and the final `exit` would all be skipped on
+          # exactly the red runs where the durations are wanted most.
+          # `|| PYTEST_RC=$?` keeps errexit from tripping on the pipeline
+          # itself; `set -o pipefail` (kept, above) still makes tee's own rc=0
+          # not mask a red suite.
+          PYTEST_RC=${PYTEST_RC:-0}
+          {
+            echo "### Shard ${SHARD_INDEX} — slowest test durations (top 50)"
+            echo '```'
+            awk '/slowest [0-9]+ durations|slowest durations/,0' pytest-output.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$PYTEST_RC"
+
+      - name: Upload shard receipts
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: backend-shard-${{ matrix.shard }}
+          # chunk-N.txt is what the fan-in's partition guard adjudicates; it is
+          # written before pytest, so it is present even on a red shard.
+          # if-no-files-found: error — a shard that uploads nothing at all would
+          # otherwise reach the guard as a missing chunk list with no clue why.
+          # NOTE (refuter, Codex): `error` fires only when NO listed path matches
+          # anything, not per-path, so it is not a per-file presence check. The
+          # per-file checks that matter are in the fan-in, which refuses on a
+          # missing chunk list, a missing coverage receipt, or a missing junit.
+          path: ${{ runner.temp }}/shard-receipts/
+          if-no-files-found: error
+
+  # ── THE REQUIRED CONTEXT ─────────────────────────────────────────────────────
+  # This job's `name:` is load-bearing infrastructure, not a label. "Backend
+  # Tests (Python)" is one of the required status contexts in classic branch
+  # protection on `main` (11 as of Zero's 2026-08-27 ruling, down from 27 —
+  # docs/runbooks/merge-queue-discipline.md "Required vs advisory checks —
+  # reinstatement rule"). Rename it, matrix it, or delete it and every merge
+  # queue entry from that moment on waits out `checkResponseTimeout` (5400s) and
+  # fails with nothing red to fix — superscar #2 / W69. It reports the verdict;
+  # the three shards and the static job do the work.
+  backend-tests:
+    name: Backend Tests (Python)
+    needs: [backend-static, backend-shard]
+    # Reads what the upstream jobs actually did. Rakyat has no change map, so
+    # they always run; this runs and adjudicates, including when a shard failed
+    # (`!cancelled()` overrides the implicit success() that `needs` imposes).
+    if: >-
+      !cancelled() &&
+      (
+        needs.backend-shard.result != 'skipped' ||
+        needs.backend-static.result != 'skipped'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HAS_CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN != '' }}
+      SHARD_COUNT: "3"
+
+    steps:
+      - name: Assert every upstream job succeeded
+        # FAIL-CLOSED, and deliberately not `if: success()`-shaped: the whole
+        # point is that this step runs when an upstream did NOT succeed. A
+        # `skipped` or `cancelled` shard reaching here means something stopped
+        # one — that is a red verdict,
+        # never a silent pass. There is no gameable path: a shard cannot make
+        # this green by not running.
+        env:
+          STATIC_RESULT: ${{ needs.backend-static.result }}
+          SHARD_RESULT: ${{ needs.backend-shard.result }}
+        run: |
+          set -u
+          FAILED=0
+          for pair in "backend-static:$STATIC_RESULT" "backend-shard:$SHARD_RESULT"; do
+            job="${pair%%:*}"
+            result="${pair#*:}"
+            if [ "$result" != "success" ]; then
+              echo "::error::$job concluded '$result' — the backend suite did not fully run"
+              FAILED=1
+            else
+              echo "$job: success"
+            fi
+          done
+          # backend-shard is a matrix job: `needs.<job>.result` is the AGGREGATE
+          # of its legs, so one red or cancelled shard out of three is enough to
+          # make this non-success. Verified semantics, not assumed — the
+          # partition guard below independently proves all three legs published
+          # a chunk list, so a leg that vanished entirely is caught twice.
+          exit "$FAILED"
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # Keep complete commit history for trusted base extraction, while
+          # fetching historical file contents only when a guard needs them.
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Download shard receipts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: backend-shard-*
+          merge-multiple: true
+          path: shard-receipts
+
+      - name: Verify the partitioner's own guilt and innocence corpus
+        # The guard is only worth what its own tests are worth, and this
+        # corpus is fail-CLOSED: a partitioner whose guilt cases stop failing can
+        # hide a shrinking corpus, which is the exact defect this job exists to
+        # make impossible.
+        run: python3 scripts/ci/test_shard_tests.py
+
+      - name: Extract trusted partitioner (base ref)
+        # CRITICAL, found by an adversarial refuter on this PR (cross-family,
+        # Kimi K3) and NOT by the author: without this the guard is defeatable
+        # in one line. The shards and the fan-in both run the PR's OWN copy of
+        # shard_tests.py, so a PR that appended one entry to EXCLUDED_DIRS (or
+        # narrowed _is_test_file) would make the shards and the guard agree
+        # PERFECTLY on a shrunken corpus — chunks tile it exactly, guard green,
+        # `Backend Tests (Python)` green, and the test that catches the PR's own
+        # regression never ran. The docstring's claim that "a shard cannot
+        # silently disagree with the guard" was true and beside the point: both
+        # can agree to be wrong together.
+        #
+        # This is a trust boundary (red-team CRITICAL-1, 2026-08-14): LOGIC from the base
+        # ref, DATA (the tree being enumerated) from this checkout. A PR that
+        # legitimately ADDS test modules is unaffected — the trusted enumerator
+        # walks the head tree and finds them, and the shards must own them.
+        #
+        # ABSENT IS NOT THE SAME AS FAILED, and conflating them was this step's
+        # own first bug (found by a refuter, Codex GPT-5.6): the first cut fell
+        # back to the head copy on ANY `git show` failure, so an unfetched base
+        # SHA, a shallow clone, or a transient git error silently downgraded a
+        # security gate to "trust the diff". The three states are now
+        # distinguished explicitly, and only ONE of them — the file genuinely not
+        # existing at a base commit we CAN read — is allowed to degrade.
+        id: trusted
+        env:
+          BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
+        run: |
+          set -uo pipefail
+          TRUSTED_DIR="$RUNNER_TEMP/trusted-partitioner"
+          mkdir -p "$TRUSTED_DIR"
+          if [ -z "${BASE_SHA:-}" ]; then
+            # schedule / workflow_dispatch: there is no PR to distrust, the
+            # checkout IS the trusted ref.
+            echo "no base ref for this event — the checkout is the trusted copy"
+            echo "path=scripts/ci/shard_tests.py" >> "$GITHUB_OUTPUT"
+            echo "trusted=self" >> "$GITHUB_OUTPUT"
+          elif ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            # We were handed a base SHA and cannot read it. We therefore cannot
+            # tell "the file is new" from "the history is missing" — and one of
+            # those two answers would hand adjudication to the diff itself.
+            # Refuse instead of guessing.
+            echo "::error::base commit $BASE_SHA is not readable in this checkout — cannot establish a trusted partitioner, and will not fall back to the diff's own copy"
+            exit 1
+          elif git cat-file -e "${BASE_SHA}:scripts/ci/shard_tests.py" 2>/dev/null; then
+            # It exists at base, so extraction MUST succeed. A failure here is an
+            # infrastructure fault, never a licence to use the head copy.
+            if ! git show "${BASE_SHA}:scripts/ci/shard_tests.py" > "$TRUSTED_DIR/shard_tests.py"; then
+              echo "::error::scripts/ci/shard_tests.py exists at $BASE_SHA but could not be extracted"
+              exit 1
+            fi
+            echo "adjudicating with the base ref's partitioner ($BASE_SHA)"
+            echo "path=$TRUSTED_DIR/shard_tests.py" >> "$GITHUB_OUTPUT"
+            echo "trusted=base" >> "$GITHUB_OUTPUT"
+          else
+            # The one legitimate degradation: a readable base commit that genuinely
+            # has no such file — i.e. the PR that INTRODUCES it. Declared loudly
+            # rather than silently downgraded; the file is CODEOWNERS-protected, so
+            # every LATER edit always has a base copy to be judged against.
+            echo "::warning::scripts/ci/shard_tests.py does not exist at $BASE_SHA — this PR introduces it; adjudicating with the head copy"
+            echo "path=scripts/ci/shard_tests.py" >> "$GITHUB_OUTPUT"
+            echo "trusted=introduced" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Partition guard — the shards tiled the corpus exactly
+        # Re-derives the full corpus and adjudicates it against the chunk lists
+        # the shards ACTUALLY consumed (downloaded artifacts, not a
+        # recomputation of itself — a guard that only checks its own arithmetic
+        # is a tautology). Refuses on: a missing shard, an overlap, a module
+        # owned by nobody, a module outside the corpus, or a chunk-N outside
+        # 1..SHARD_COUNT. Runs the TRUSTED copy resolved above.
+        env:
+          IMPACT_RUN_ALL: true
+          IMPACT_SELECTED_TESTS: 
+          TRUSTED_PARTITIONER: ${{ steps.trusted.outputs.path }}
+          TRUSTED_ORIGIN: ${{ steps.trusted.outputs.trusted }}
+        run: |
+          set -euo pipefail
+          cd apps/backend-rag
+          case "$TRUSTED_PARTITIONER" in
+            /*) PARTITIONER="$TRUSTED_PARTITIONER" ;;
+            *)  PARTITIONER="$GITHUB_WORKSPACE/$TRUSTED_PARTITIONER" ;;
+          esac
+
+          # TWO PASSES, asking two different questions. Collapsing them into one
+          # was the author's first attempt at the refuter's finding and it was
+          # wrong in a way worth recording: adjudicating per-shard OWNERSHIP with
+          # the base ref's copy would make any future PR that legitimately
+          # changes the assignment algorithm — the duration-aware v2 splitter
+          # this design explicitly anticipates — permanently unmergeable. A guard
+          # that blocks its own successor is a bug, not rigor.
+          #
+          # SECURITY pass. Say precisely what it is, because an imprecise
+          # version of this sentence was itself a refuter finding: it is the BASE
+          # ref's LOGIC applied to the HEAD tree — NOT "the base ref's corpus".
+          # It cannot see a test file the diff DELETED (no design that runs tests
+          # from the working tree can), and it is not trying to: what it
+          # establishes is that the enumeration rule deciding what runs did not
+          # come from the diff. Question asked: under the base ref's rules, did
+          # every module this tree contains run somewhere, exactly once?
+          # Deliberately silent
+          # about who owns what and about modules the base ref never heard of —
+          # running MORE than the trusted corpus is never a defect, running LESS
+          # always is. This is the pass a malicious diff has to get past, and it
+          # cannot, because the logic did not come from the diff.
+          echo "== security pass: $PARTITIONER (origin: $TRUSTED_ORIGIN) =="
+          python3 "$PARTITIONER" verify --union \
+            --shards "$SHARD_COUNT" \
+            --chunk-dir "$GITHUB_WORKSPACE/shard-receipts"
+
+          # DRIFT pass (head logic): did each shard consume EXACTLY the files
+          # this checkout's partitioner says it owns? Catches the shards and the
+          # guard falling out of step within the PR's own scheme.
+          echo "== drift pass: head copy =="
+          python3 ../../scripts/ci/shard_tests.py verify \
+            --shards "$SHARD_COUNT" \
+            --chunk-dir "$GITHUB_WORKSPACE/shard-receipts"
+
+      - name: Prove each shard reported executed tests
+        # NAMED FOR WHAT IT PROVES, after a refuter (Codex GPT-5.6) correctly
+        # objected that the previous name — "Prove each shard actually executed
+        # its chunk" — claimed a per-module guarantee this step does not deliver.
+        # It reads the shard's junit and refuses three states: no report at all,
+        # zero collected tests, and (added on that finding) a report whose tests
+        # are ALL skipped, which is what a conftest that blanket-skips looks like
+        # from here — pytest exits 0, `tests` is non-zero, and without this the
+        # required context would go green over a suite that ran nothing.
+        # What it does NOT prove, stated plainly so the next reader does not
+        # over-trust it: that every module in the chunk contributed a test. A
+        # module legitimately containing only fixtures contributes none, so a
+        # per-module assertion would false-red. The per-module guarantee lives in
+        # the partition guard above (the plan) plus the shard's own exit code.
+        # Empty chunks (scoped PR lane, selection smaller than the shard count)
+        # are legitimately exempt — and only those.
+        run: |
+          python3 - <<'PY'
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          receipts = Path(os.environ["GITHUB_WORKSPACE"]) / "shard-receipts"
+          shards = int(os.environ["SHARD_COUNT"])
+          problems = []
+          for shard in range(1, shards + 1):
+              chunk = receipts / f"chunk-{shard}.txt"
+              owned = [ln for ln in chunk.read_text().splitlines() if ln.strip()]
+              junit = receipts / f"test-results-unit-{shard}.xml"
+              if not owned:
+                  print(f"shard {shard}: owns no modules (scoped selection) — exempt")
+                  continue
+              if not junit.exists():
+                  problems.append(
+                      f"shard {shard} owned {len(owned)} modules but published no "
+                      f"unit-test report ({junit.name})"
+                  )
+                  continue
+              root = ET.parse(junit).getroot()
+              suites = [root] if root.tag == "testsuite" else list(root)
+              total = sum(int(s.get("tests", 0)) for s in suites)
+              errors = sum(int(s.get("errors", 0)) for s in suites)
+              skipped = sum(int(s.get("skipped", 0)) for s in suites)
+              executed = total - skipped
+              if total == 0:
+                  problems.append(
+                      f"shard {shard} owned {len(owned)} modules and collected 0 tests"
+                  )
+              elif executed == 0:
+                  problems.append(
+                      f"shard {shard} owned {len(owned)} modules and collected {total} "
+                      f"tests, but ALL {skipped} were skipped — nothing actually ran"
+                  )
+              if errors:
+                  problems.append(f"shard {shard} reported {errors} collection error(s)")
+              print(
+                  f"shard {shard}: {len(owned)} modules -> {total} collected, "
+                  f"{executed} executed, {skipped} skipped, {errors} errors"
+              )
+          if problems:
+              for p in problems:
+                  print(f"::error::{p}")
+              sys.exit(1)
+          PY
+
+      - name: Combine shard coverage and enforce the threshold
+        # Coverage is collected only on merge_group/push/schedule/dispatch (see
+        # "Decide coverage-collection scope" in the shard job). The decision is
+        # read back from what the shards WROTE, never re-derived here from
+        # github.event_name — one derivation, one place (superscar #9).
+        #
+        # Fail-closed both ways: the shards must agree with each other, and if
+        # they said `true` then every non-empty shard must have produced a data
+        # file. A missing one would silently lower the combined total and the
+        # --fail-under gate would then be measuring a suite that never ran.
+        run: |
+          set -euo pipefail
+          RECEIPTS="$GITHUB_WORKSPACE/shard-receipts"
+          if [ "$BACKEND_COLLECT_COVERAGE" != "true" ]; then
+            echo "coverage not collected on this lane (pull_request) — threshold not applicable"
+            exit 0
+          fi
+          cd apps/backend-rag
+          MISSING=0
+          RAN_ANY=0
+          for shard in $(seq 1 "$SHARD_COUNT"); do
+            if [ ! -s "$RECEIPTS/chunk-${shard}.txt" ]; then continue; fi
+            RAN_ANY=1
+            if [ ! -f "$RECEIPTS/coverage-data-shard${shard}" ]; then
+              echo "::error::shard ${shard} ran tests but produced no coverage data"
+              MISSING=1
+            fi
+            if [ ! -s "$RECEIPTS/coverage-version-${shard}.txt" ]; then
+              echo "::error::shard ${shard} published no coverage-version receipt"
+              MISSING=1
+            fi
+          done
+          [ "$MISSING" -eq 0 ] || exit 1
+          if [ "$RAN_ANY" -eq 0 ]; then
+            # Every shard owned an empty chunk: nothing ran, so there is nothing
+            # to combine. Loud, not silent — on a coverage-collecting lane this
+            # means the corpus itself came back empty, which is a defect, and the
+            # partition guard above already refused it.
+            echo "::error::coverage was requested but no shard owned any test module"
+            exit 1
+          fi
+          # Install EXACTLY the coverage the shards wrote the data with. Its
+          # on-disk data file carries a schema version, so a drifting reader
+          # here fails to combine. This is read back from the shards' own
+          # receipts, not re-derived: an earlier cut grepped `^coverage==` out
+          # of requirements.lock.txt, and a refuter correctly pointed out that
+          # this GUESSES — the shards install the lock closure and then a
+          # second, unpinned `pytest pytest-cov ...` line on top of it, so the
+          # lock is a claim about the environment rather than an observation of
+          # it. Ask the thing that ran.
+          COV_VERSIONS=$(cat "$RECEIPTS"/coverage-version-*.txt | sort -u)
+          COV_VERSION_COUNT=$(printf '%s\n' "$COV_VERSIONS" | grep -c . || true)
+          if [ "$COV_VERSION_COUNT" -ne 1 ]; then
+            echo "::error::shards wrote coverage data with $COV_VERSION_COUNT different versions ($COV_VERSIONS) — refusing to combine across schema versions"
+            exit 1
+          fi
+          echo "installing coverage==$COV_VERSIONS (the version the shards wrote with)"
+          pip install "coverage==$COV_VERSIONS"
+          cp "$RECEIPTS"/coverage-data-shard* .
+          python -m coverage combine coverage-data-shard*
+          python -m coverage xml -o coverage.xml
+          PYTHONPATH=.:../crm-cell python -m coverage report --fail-under=55
+
+      - name: Upload coverage to Codecov
+        # NOTE (verified 2026-08-23): this repository has no CODECOV_TOKEN
+        # secret, so HAS_CODECOV_TOKEN is 'false' and this step has been
+        # skipping on every run (measured 0s) since before the split. It is
+        # carried over unchanged rather than deleted — arming Codecov is a
+        # separate decision from sharding the suite, and silently dropping the
+        # step would hide that the upload is not happening.
+        if: ${{ env.HAS_CODECOV_TOKEN == 'true' }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          token: ${{ env.CODECOV_TOKEN }}
+          files: apps/backend-rag/coverage.xml
+          flags: backend
+          name: backend-coverage
+
+      - name: Report shard balance
+        # The evidence for whether a duration-aware splitter (pytest-split) is
+        # worth adding next. Round-robin over path order balances FILE COUNT
+        # exactly; it says nothing about time. If max/min wall-clock across the
+        # shards exceeds ~2x on real runs, that is the trigger — measured here
+        # rather than guessed, from junit's own `time` attribute.
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          receipts = Path(os.environ["GITHUB_WORKSPACE"]) / "shard-receipts"
+          rows, times = [], []
+          for shard in range(1, int(os.environ["SHARD_COUNT"]) + 1):
+              junit = receipts / f"test-results-unit-{shard}.xml"
+              chunk = receipts / f"chunk-{shard}.txt"
+              modules = len([ln for ln in chunk.read_text().splitlines() if ln.strip()]) if chunk.exists() else 0
+              if not junit.exists():
+                  rows.append((shard, modules, 0, 0.0))
+                  continue
+              root = ET.parse(junit).getroot()
+              suites = [root] if root.tag == "testsuite" else list(root)
+              rows.append((
+                  shard,
+                  modules,
+                  sum(int(s.get("tests", 0)) for s in suites),
+                  sum(float(s.get("time", 0.0)) for s in suites),
+              ))
+              times.append(sum(float(s.get("time", 0.0)) for s in suites))
+
+          lines = ["## Backend shard balance", "", "| shard | modules | tests | pytest wall |", "|---|---|---|---|"]
+          lines += [f"| {s} | {m} | {t} | {w:.0f}s |" for s, m, t, w in rows]
+          if times and min(times) > 0:
+              ratio = max(times) / min(times)
+              lines += ["", f"slowest/fastest = **{ratio:.2f}x** (a duration-aware splitter is worth adding above ~2x)"]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: backend-test-results
+          path: |
+            shard-receipts/test-results-*.xml
+            apps/backend-rag/coverage.xml
+          if-no-files-found: warn
+
+  frontend-tests:
+    name: Frontend Tests (Next.js)
+    # Always runs (Rakyat has no change map). `!cancelled()` keeps the matrix
+    # contexts, e.g. `Frontend Tests (Next.js) (mouth, true)`, from being
+    # skipped when an upstream job fails; cancelling the run still stops work.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    env:
+      HAS_CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN != '' }}
+    # Keep a bounded budget for installation, complete coverage and result
+    # publication on slower hosted runners.
+    timeout-minutes: 25
+
+    strategy:
+      matrix:
+        # `mouth` runs with a coverage gate (test:coverage:check). The former
+        # `admin-dashboard` leg (no coverage gate) was removed 2026-10-19 with
+        # the app itself (tag archive/admin-dashboard). `web` is intentionally
+        # NOT in the matrix.
+        include:
+          - app: mouth
+            coverage: true
+
+    steps:
+      # Always runs: Rakyat has no change map, so every PR runs the full suite.
+      - name: Decide whether to run
+        id: decide
+        run: echo "run=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout code
+        if: steps.decide.outputs.run == 'true'
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        if: steps.decide.outputs.run == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # Cache hygiene (2026-09-10): one shared key across this matrix's legs
+      # AND the npm-audit job below — all three used to cache the SAME
+      # **/node_modules + ~/.npm content under three different keys
+      # (node-mouth, node-admin-dashboard [leg since removed], node-npm-audit, ~0.7 GB each), so
+      # a single ref paid to store the identical bytes three times. Measured
+      # 2026-09-09 17:45Z (`gh api .../actions/cache/usage`): 10.86 GB used
+      # against the 10 GB repo cap, GitHub's LRU eviction running
+      # continuously. restore-only + main-only save: a `gh-readonly-queue/*`
+      # or `refs/pull/N/merge` ref save can only ever be restored by a
+      # re-run of that SAME ref (GitHub docs, "Caching dependencies" —
+      # "Workflow runs can restore caches created in either the current
+      # branch or the default branch"; a PR-ref cache "can only be restored
+      # by re-runs of the pull request") — 159 PR runs + 78 queue batches/24h
+      # were paying to store copies nothing but themselves could ever read,
+      # evicting main's live copy in the process. main is now the sole
+      # writer; every other ref restores main's copy read-only.
+      - name: Cache dependencies
+        id: node-cache
+        if: steps.decide.outputs.run == 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            **/node_modules
+            ~/.npm
+          key: ${{ runner.os }}-node-workspace-${{ hashFiles('package-lock.json') }}
+
+      - name: Install dependencies
+        if: steps.decide.outputs.run == 'true'
+        run: npm install --no-fund
+
+      - name: Save node cache (main only)
+        if: >-
+          steps.decide.outputs.run == 'true' &&
+          github.ref == 'refs/heads/main' &&
+          steps.node-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            **/node_modules
+            ~/.npm
+          key: ${{ runner.os }}-node-workspace-${{ hashFiles('package-lock.json') }}
+
+      # `npm audit` used to live here — moved to the standalone `npm-audit`
+      # job below (2026-08-21, token-ceremony CI-critical-path audit). It
+      # queries the LIVE npm advisory database, which moves on its own
+      # schedule independent of this repo's tree (cicatrix-superscar.md
+      # family #9, W118: an advisory publish 87s before an otherwise-healthy
+      # merge turned a REQUIRED context red with zero lines of ours changed —
+      # measured 2026-08-17, ×19 in one main-red window). It was also
+      # redundant here: this job's `if:` only depends on
+      # `steps.decide.outputs.run`, never on `matrix.app`, so it ran the
+      # identical repo-root audit TWICE per PR (once per matrix leg) for no
+      # extra coverage. Advisory-only now (continue-on-error, non-required)
+      # so external advisory churn can never eject this required job from
+      # the merge queue for a reason that isn't a code change here.
+      # The staff UI consumes this product contract directly. Run its existing
+      # generator's freshness check in the required mouth leg, including when
+      # only the product contract changes (explicit backend + mouth coupling).
+      - name: Check GARUDA generated contract
+        if: matrix.app == 'mouth' && steps.decide.outputs.run == 'true'
+        run: |
+          ./node_modules/.bin/openapi-typescript products/garuda-voa/contracts/openapi.yaml \
+            --output apps/mouth/src/lib/api/garuda-voa.generated.d.ts --check
+
+      - name: Typecheck mouth contract consumers
+        id: mouth-typecheck
+        if: matrix.app == 'mouth' && steps.decide.outputs.run == 'true'
+        working-directory: apps/mouth
+        run: ../../node_modules/.bin/tsc --noEmit
+
+      - name: Run tests (with coverage)
+        if: matrix.coverage && steps.decide.outputs.run == 'true'
+        run: |
+          cd apps/${{ matrix.app }}
+          npx vitest --run --coverage
+
+      - name: Run tests (no coverage gate)
+        if: ${{ !matrix.coverage && steps.decide.outputs.run == 'true' }}
+        run: |
+          cd apps/${{ matrix.app }}
+          npx vitest --run
+
+      - name: Check coverage threshold
+        if: matrix.coverage && steps.decide.outputs.run == 'true'
+        run: |
+          cd apps/${{ matrix.app }}
+          npm run test:coverage:check
+
+      # WS4 governance: `packages/core` is the shared design-system (tokens,
+      # ThemeProvider, SystemPulse, ComplianceRadar, FactBadge, …) that every
+      # workspace/portal page renders through. It shipped 33 test files / 123
+      # tests that NO workflow ever executed: apps/mouth's vitest config scopes
+      # `include` to `src/**`, and packages/core/vitest.config.ts had no caller.
+      # Built, never armed (cicatrix-superscar #2) — a green CI was asserting
+      # nothing about the components WS2/WS3 landed.
+      #
+      # Deliberately a STEP of the already-required `Frontend Tests (Next.js)
+      # (mouth, true)` leg, NOT a new job or matrix entry: branch protection
+      # pins required contexts by NAME, so a new name would be born unrequired
+      # and would need a settings change nobody would make (W69 — required
+      # checks disarmed). Attaching here means it gates from the merge onward.
+      #
+      # `cd packages/core` resolves vitest/jsdom/@vitejs/plugin-react upward
+      # from the ROOT node_modules (verified: nothing is nested under
+      # apps/mouth, and packages/core/node_modules holds no packages), so the
+      # existing root `npm install` above is all the setup it needs. No
+      # coverage gate: packages/core has no established coverage target yet —
+      # same posture the removed admin-dashboard leg had.
+      - name: Run packages/core tests (shared design-system suite)
+        if: matrix.app == 'mouth' && steps.decide.outputs.run == 'true'
+        run: |
+          cd packages/core
+          npx vitest --run
+
+      - name: Upload coverage
+        if: ${{ matrix.coverage && env.HAS_CODECOV_TOKEN == 'true' && steps.decide.outputs.run == 'true' }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          token: ${{ env.CODECOV_TOKEN }}
+          files: apps/${{ matrix.app }}/coverage/lcov.info
+          flags: ${{ matrix.app }}
+          name: ${{ matrix.app }}-coverage
+
+      - name: Upload frontend coverage artifact
+        if: ${{ always() && matrix.coverage && steps.decide.outputs.run == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-${{ matrix.app }}-coverage
+          path: apps/${{ matrix.app }}/coverage/
+
+  npm-audit:
+    name: npm audit (advisory)
+    # Split out of `frontend-tests` 2026-08-21 (token-ceremony CI-critical-
+    # path audit, research/operations/2026-08-21-token-ceremony-ci-system-
+    # audit.md) — this job is deliberately NOT in
+    # infra/required.d/contexts.json / branch protection's required list
+    # (verified via `gh api repos/.../branches/main/protection/
+    # required_status_checks` before and after this change — the contexts
+    # set is byte-identical). `npm audit` reads the LIVE npm advisory
+    # database, a resource that moves on its own schedule independent of
+    # this repo's tree (cicatrix-superscar.md family #9, W118: an advisory
+    # published 87 seconds before an otherwise-healthy merge queue entry
+    # turned a REQUIRED context red with zero lines of this repo changed —
+    # measured 2026-08-17, ×19 failures in one main-red window). A finding
+    # here is real and worth seeing; it is never grounds to eject a queue
+    # entry or block a PR whose diff never touched a dependency.
+    # MERGE-GROUP DEDUP (2026-09-05): unlike Snyk (a static manifest diff),
+    # `npm audit` genuinely CAN find something new on merge_group that wasn't
+    # there on the PR-head run — the advisory database moves independently of
+    # this repo's tree (see the W118 story above). But that extra visibility
+    # is not worth a second full `npm install` + advisory query per queue
+    # entry: this job's own two-layer design (below) already guarantees a
+    # finding NEVER blocks anything, on either event — so the only thing a
+    # merge_group run could add is an earlier sighting of an advisory the
+    # next scheduled/PR run will surface anyway. `github.event_name !=
+    # 'merge_group'` below trades that marginal earlier-sighting for one
+    # fewer redundant job per queue entry.
+    if: ${{ !cancelled() && github.event_name != 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Two-layer advisory design (hardened after Codex red-team rounds 1-2 on
+    # this PR): (1) the audit step below NEVER exits non-zero on an advisory
+    # finding (gate exit 1) — it warns, writes a job summary, and exits 0 —
+    # so this job's check-run conclusion stays green even if the context is
+    # ever added to required checks by mistake (job-level continue-on-error
+    # alone does NOT guarantee that: it keeps the workflow green while the
+    # check run can still conclude failure). (2) MACHINERY failures still go
+    # red: the gate's own test suite, and a gate exit 2 (CANNOT VERIFY —
+    # unreadable/malformed audit report = no verdict was produced); continue-
+    # on-error keeps the workflow run green while the job shows red for a
+    # human.
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          filter: blob:none
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # Cache hygiene (2026-09-10): shares the SAME key as the Frontend
+      # Tests matrix's node cache above — see that step's comment for the
+      # measured three-copies-of-one-cache rationale and the main-only-save
+      # rationale (PR-ref / gh-readonly-queue/* saves are unrestorable dead
+      # weight that evicts main's live copy).
+      - name: Cache dependencies
+        id: node-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            **/node_modules
+            ~/.npm
+          key: ${{ runner.os }}-node-workspace-${{ hashFiles('package-lock.json') }}
+
+      - name: Install dependencies
+        run: npm install --no-fund
+
+      - name: Save node cache (main only)
+        if: >-
+          github.ref == 'refs/heads/main' &&
+          steps.node-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            **/node_modules
+            ~/.npm
+          key: ${{ runner.os }}-node-workspace-${{ hashFiles('package-lock.json') }}
+
+      - name: npm audit
+        # The gate itself lives in scripts/ci/npm_audit_gate.py so it can carry
+        # a guilt+innocence corpus instead of being a guard nobody can execute
+        # (same shape as scripts/ci/hotzone_changed_files.sh, W102). The waiver
+        # set — and, for each entry, WHY it is unreachable — is documented at
+        # the top of that file. Waivers are scoped to a dependency PATH, so the
+        # same advisory arriving on a path we never vetted still fails.
+        #
+        # --omit=dev: audit only what we ship to production, not the test
+        # toolchain. Dev-only advisories (vitest / @vitest/coverage-v8 "UI
+        # server arbitrary file read", vite, esbuild) are exploitable only when
+        # running `vitest --ui` locally, never in CI or prod; without --omit=dev
+        # they failed the gate on EVERY PR repo-wide. Production-dependency
+        # threshold stays at high.
+        run: |
+          set -euo pipefail
+          # The gate's own test suite fails this job RED (our machinery,
+          # actionable, fail-loud) — everything below it never does.
+          python3 scripts/ci/test_npm_audit_gate.py
+          npm audit --audit-level=high --omit=dev --json > "$RUNNER_TEMP/audit.json" || true
+          set +e
+          python3 scripts/ci/npm_audit_gate.py "$RUNNER_TEMP/audit.json"
+          GATE_RC=$?
+          set -e
+          # Three-way, keyed on the gate's own exit-code contract
+          # (scripts/ci/npm_audit_gate.py): 1 = advisory finding (external
+          # data, never blocks); 2 = CANNOT VERIFY — unreadable/malformed
+          # report, i.e. the audit itself failed and there is NO verdict.
+          # Codex red-team round 2: mapping every nonzero code to green
+          # would let a broken audit report clean — the blind-gate disease
+          # this job's split was written to kill.
+          if [ "${GATE_RC}" -eq 1 ]; then
+            echo "::warning::npm audit advisory (non-blocking, L13) — see the job summary"
+            {
+              echo "### npm audit — advisory finding (non-blocking)"
+              echo ""
+              echo "Advisory-only since 2026-08-21 (token-ceremony audit, lever L13):"
+              echo "the finding is real and worth triaging, but it is never grounds to"
+              echo "eject a queue entry or block a PR whose diff never touched a dependency."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          elif [ "${GATE_RC}" -ne 0 ]; then
+            echo "::error::npm audit gate could not produce a verdict (exit ${GATE_RC}) — machinery/infrastructure failure, not an advisory"
+            exit "${GATE_RC}"
+          fi
+
+  packages-core-tests:
+    name: Shared Core Package Tests
+    # Always runs: Rakyat has no change map.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    # suite-growth-probe finding, 2026-09-27: no timeout-minutes on this job at
+    # all. Measured (last 40 completed tests.yml runs, gh Jobs API): real
+    # (non-skip) runs top out at ~1.4min. NOT sized to 2x that (would be 5):
+    # this job runs actions/checkout, and scripts/lint_workflow_timeout_floor.py's
+    # own 10-minute floor exists precisely because checkout on this repo
+    # intermittently takes ~2min on its own — a
+    # script-sized budget would reproduce that failure mode. 10 is the floor that lint
+    # enforces, confirmed clean at this value.
+    timeout-minutes: 10
+    env:
+      HAS_CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN != '' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install lock-pinned workspace dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run shared core coverage gate
+        run: npm run test:coverage -w packages/core
+
+      - name: Upload shared core coverage to Codecov
+        if: ${{ env.HAS_CODECOV_TOKEN == 'true' }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          token: ${{ env.CODECOV_TOKEN }}
+          files: packages/core/coverage/lcov.info
+          flags: packages-core
+          name: packages-core-coverage
+
+      - name: Upload shared core coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: packages-core-coverage
+          path: packages/core/coverage/
+
+  e2e-tests:
+    name: E2E Tests (Playwright)
+    # Always runs: Rakyat has no change map.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    # Measured cold setup took 711s before backend startup; retain room for
+    # the bounded 120s startup, browser setup, production build and tests.
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: ghcr.io/bali-zero/ci-mirror/postgres:15
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: nuzantara_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: ghcr.io/bali-zero/ci-mirror/redis:7
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      # PR9166 exhausted the hosted runner disk before browser installation.
+      # This job needs Node, Python, Docker and Chromium; Android/.NET are unused.
+      # Remove only preinstalled SDKs on disposable GitHub-hosted runners.
+      - name: Recover hosted runner disk for E2E
+        if: runner.environment == 'github-hosted'
+        run: |
+          df -h "$GITHUB_WORKSPACE"
+          sudo rm -rf -- /usr/local/lib/android /usr/share/dotnet
+          df -h "$GITHUB_WORKSPACE"
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          filter: blob:none
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies (uv, lock-pinned)
+        run: |
+          cd apps/backend-rag
+          pip install --upgrade pip uv
+          uv pip install --system -r requirements.lock.txt
+          # Editable cell-core workspace dep
+          uv pip install --system -e ../../packages/cell-core
+
+      - name: Start backend (FastAPI on :8000)
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/nuzantara_test
+          REDIS_URL: redis://localhost:6379/0
+          QDRANT_URL: ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # ANTHROPIC_API_KEY intentionally NOT set — project policy forbids
+          # pay-as-you-go API keys (Max plan OAuth only, see
+          # memory/feedback_claude_oauth_only.md). Backend Claude paths use
+          # backend.llm.claude_oauth_client (subprocess → `claude -p`).
+          # CI currently has no OAuth token injected; any test that would
+          # hit a real Claude endpoint must mock it.
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          # Backend Settings requires JWT_SECRET_KEY at import (pydantic). It was
+          # missing here for a long time: the uvicorn process died instantly and
+          # the old fail-open wait loop masked it — E2E "passed" against a dead
+          # backend on main (proven 2026-07-21: 30/30 waits + 41 passed). The
+          # fail-loud health gate below exposed the corpse; this is the cure.
+          JWT_SECRET_KEY: test_jwt_secret_key_for_testing_only_min_32_chars_long
+          # Next required-var in the Settings chain (same class as JWT_SECRET_KEY
+          # above, found 2026-07-21 after the JWT fix): API_KEYS, same test values
+          # the other backend jobs in this file already use.
+          API_KEYS: test_api_key_1,test_api_key_2
+          LANGCHAIN_TRACING_V2: "false"
+          ENVIRONMENT: test
+        run: |
+          cd apps/backend-rag
+          PYTHONPATH=. uvicorn backend.app.main:app \
+            --host 0.0.0.0 --port 8000 \
+            --log-level warning &
+          backend_pid=$!
+          # The cold hosted startup exceeded 60s while still importing normally.
+          # Bound every probe and stop immediately if our own backend process exits.
+          backend_deadline=$((SECONDS + 120))
+          backend_ready=false
+          while (( SECONDS < backend_deadline )); do
+            if ! kill -0 "$backend_pid" 2>/dev/null; then
+              echo "Backend exited before becoming healthy"
+              exit 1
+            fi
+            remaining=$((backend_deadline - SECONDS))
+            if (( remaining <= 0 )); then break; fi
+            probe_timeout=$((remaining < 2 ? remaining : 2))
+            if curl -sf --connect-timeout 2 --max-time "$probe_timeout" http://localhost:8000/health; then
+              if ! kill -0 "$backend_pid" 2>/dev/null; then
+                echo "Backend exited during its health probe"
+                exit 1
+              fi
+              backend_ready=true
+              echo "Backend ready"
+              break
+            fi
+            remaining=$((backend_deadline - SECONDS))
+            if (( remaining > 0 )); then
+              echo "Waiting for backend... (${remaining}s remaining)"
+              sleep "$((remaining < 2 ? remaining : 2))"
+            fi
+          done
+          if [ "$backend_ready" != "true" ]; then
+            echo "Backend did not become healthy within 120s"
+            exit 1
+          fi
+
+      - name: Install Node dependencies
+        run: npm install --no-fund
+        env:
+          npm_config_fetch_retry_mintimeout: 20000
+          npm_config_fetch_retries: 3
+
+      - name: Cache Next.js build cache (mouth)
+        # Measured 2026-09-09 on run 34350109029 job 102461489711: the "Run E2E
+        # tests" step below took 244s total, of which the 58 Playwright tests
+        # THEMSELVES sum to 69s — the rest is playwright.config.ts's webServer
+        # (`npm run build && npm run start`), a cold `next build` with no prior
+        # cache. Next.js docs recommend caching `.next/cache` in CI for exactly
+        # this reason: it persists the webpack/SWC build cache across runs even
+        # though `.next/cache` itself is excluded from the `.next` output the
+        # app serves. The key is keyed on the lockfile plus a hash of every
+        # source file `next build` actually compiles from (excluding
+        # node_modules/.next), so a restore-keys fallback (lockfile-only, or
+        # OS-only) still lands on a cache with STALE content — but that is
+        # safe, never wrong: Next.js's own build cache is content-addressed
+        # internally and invalidates whatever it can't reuse, so a stale hit
+        # only costs a partial rebuild, it never serves a stale build cache. A
+        # restore-keys hit is still a warm webpack/turbopack cache, not a cold
+        # one.
+        #
+        # Glob includes css/json (2026-09-09, cross-family review by
+        # codex-gpt-5.6-sol and kimi-code/k3): Tailwind globals and
+        # tsconfig.json affect compiled output but weren't in the original
+        # hash, so a CSS/config-only change hit the SAME key (immutable —
+        # actions/cache skips the post-job save on an exact hit), silently
+        # dropping the refreshed cache until an already-hashed file changed.
+        # Non-blocking on correctness (webpack's own content-hash
+        # invalidation still recompiles the changed module either way) —
+        # this closes the cache-effectiveness gap both reviewers named.
+        #
+        # One pattern per extension, no braces (2026-09-09, correction):
+        # hashFiles runs on @actions/glob, whose documented pattern syntax is
+        # only `*`, `?`, `[...]`, `**` — brace expansion `{js,jsx,...}` is NOT
+        # supported (actions/toolkit packages/glob/README.md, "Glob
+        # behavior"). The brace form matched nothing, so hashFiles returned
+        # '' and the key silently collapsed to the lockfile hash alone — an
+        # exact immutable hit after the first seed, never re-saved on any
+        # source change.
+        uses: actions/cache/restore@v6
+        id: next-cache
+        with:
+          path: apps/mouth/.next/cache
+          key: ${{ runner.os }}-nextjs-mouth-${{ hashFiles('package-lock.json') }}-${{ hashFiles('apps/mouth/**/*.js', 'apps/mouth/**/*.jsx', 'apps/mouth/**/*.ts', 'apps/mouth/**/*.tsx', 'apps/mouth/**/*.mjs', 'apps/mouth/**/*.cjs', 'apps/mouth/**/*.css', 'apps/mouth/**/*.json', '!apps/mouth/node_modules/**', '!apps/mouth/.next/**') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-mouth-${{ hashFiles('package-lock.json') }}-
+            ${{ runner.os }}-nextjs-mouth-
+
+      - name: E2E specs must collect with no credentials present
+        # Playwright IMPORTS every spec file to build its test list — including the
+        # ones the --grep below excludes from running. Until 2026-07-27 seven specs
+        # read the E2E credential at module scope (`const CONFIG = { email:
+        # e2eEmail() }`), so collection threw wherever the secrets are absent, and
+        # the whole job died with "0 tests in 0 files". Absent is not hypothetical:
+        # GitHub withholds repository secrets from Dependabot, so this required
+        # check was permanently unpassable for every dependency update — which is
+        # exactly how a poisoned pin reaches prod behind green checks (W98).
+        # The credentials are emptied ON PURPOSE even when they exist: a guard that
+        # only runs where the thing it guards against cannot happen is decorative.
+        env:
+          E2E_TEST_EMAIL: ""
+          E2E_TEST_PIN: ""
+        run: |
+          cd apps/mouth
+          # Errexit-immune capture (W101): a bare assignment aborts before the check.
+          out=$(npx playwright test --config=playwright.config.ts --list 2>&1) || {
+            echo "❌ E2E collection failed with the credentials absent."
+            echo "   A spec is reading E2E_TEST_EMAIL/PIN at module scope; make it lazy"
+            echo "   (a getter, or move the read inside the test) — see e2e/support/credentials.ts."
+            echo "$out"
+            exit 1
+          }
+          echo "$out" | tail -1
+          # Non-vacuity: "collected nothing" and "collected everything cleanly" both exit 0.
+          echo "$out" | grep -qE "Total: [1-9][0-9]* tests" || {
+            echo "❌ collection reported no tests — a green here would be vacuous"
+            echo "$out" | tail -20
+            exit 1
+          }
+
+      - name: Cache Playwright browser binaries
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright browsers
+        run: |
+          # BOUNDED because `--with-deps` shells out to `apt-get` INSIDE
+          # playwright's own process: this step carries exactly the risk cured
+          # for our explicit apt call sites in scripts/ci/apt_install.sh, in a
+          # place that helper cannot reach.
+          #
+          # Deliberately ALWAYS runs, cache hit or miss (2026-08-21,
+          # token-ceremony CI-critical-path audit) — do not gate this on
+          # `steps.playwright-cache.outputs.cache-hit`. `actions/cache` only
+          # persists the ~/.cache/ms-playwright DIRECTORY; GitHub-hosted
+          # runners are a fresh VM per job, so the apt-installed OS shared
+          # libraries `--with-deps` provides are NEVER preserved by that
+          # cache, cache hit or not. Skipping this step on a warm cache would
+          # restore the browser binaries but silently drop the OS deps they
+          # need to actually launch — the exact "assumed a warm cache implies
+          # a warm machine" class of bug this repo's cicatrix ledger already
+          # has several entries for. `playwright install` is itself
+          # idempotent against an already-populated cache dir (it hashes and
+          # skips any browser binary already present), so the cache still
+          # does its job — cutting the download, not the apt step — without
+          # this step needing a conditional at all.
+          #
+          # Measured over 13 consecutive runs of this workflow (2026-08-18):
+          # eleven finish in 24-32s, one took 8m01s and still succeeded, and one
+          # was 17m33s deep with nothing to show when the job's 20-minute budget
+          # killed it. GitHub reports a budget kill as `cancelled`, NOT
+          # `failure` — and a cancelled REQUIRED context ejects the merge-queue
+          # entry with no failing check anywhere to point at, which is how the
+          # repo sat unmergeable for eleven hours (W118, cicatrix family #2).
+          #
+          # 600s is chosen against the MEASURED distribution, not a round
+          # number: comfortably above the worst observed SUCCESS (8m01s) so a
+          # slow-but-working mirror still passes, and half the job budget so the
+          # remaining 10 minutes still cover build + serve + the tests
+          # themselves. The other half of that arithmetic is the lesson: a bound
+          # sized without leaving room for the rest of the job does not avoid
+          # exhausting the budget, it guarantees it.
+          #
+          # No retry, deliberately. A retry is the remedy that LOOKS right when
+          # the symptom is "slow", and three of them inside one budget is how
+          # the first attempt at the apt cure failed. Failing once, loudly, at a
+          # named step beats being cancelled silently.
+          timeout 600 npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        env:
+          CI: "true"
+          # The production build exceeded the default ~2 GiB V8 heap in CI.
+          NODE_OPTIONS: "--max-old-space-size=4096"
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_PUBLIC_WS_URL: ws://localhost:8000/ws
+          NUZANTARA_API_URL: http://localhost:8000
+          E2E_TEST_EMAIL: ${{ secrets.E2E_TEST_EMAIL }}
+          E2E_TEST_PIN: ${{ secrets.E2E_TEST_PIN }}
+        run: |
+          cd apps/mouth
+          # smoke/smoke.spec.ts hardcodes kita.balizero.com/fly.dev (production smoke),
+          # so --grep keeps its tests out of this run. "Excluded" means excluded from
+          # RUNNING, never from being IMPORTED — Playwright loads every spec to build
+          # the list. That distinction is why the step above exists: a file --grep
+          # skips can still fail the job at module scope.
+          # zantara/ and mission_simulation use process.env.PLAYWRIGHT_BASE_URL so
+          # they pick up localhost:3000 correctly.
+          # Run deterministic page-load smoke tests plus the explicitly mocked
+          # @offline journeys. Live chat/websocket tests still require Qdrant
+          # and an LLM backend, so they remain outside this PR gate.
+          npx playwright test \
+            --config=playwright.config.ts \
+            --project=chromium \
+            --ignore-snapshots \
+            --reporter=list \
+            --grep "page Page|@offline"
+
+      # Cache hygiene (2026-09-10): restore-only + main-only save, same
+      # rationale as the node caches above — a PR-ref or gh-readonly-queue/*
+      # save can only ever be restored by a re-run of that SAME ref (GitHub
+      # docs, "Caching dependencies"), so it is dead weight that evicts
+      # main's live copy instead of ever paying off. `!cancelled()` (not
+      # `always()`): a failed-but-COMPLETED E2E run on main still produced a
+      # real, seedable build cache; a cancelled run's .next/cache is
+      # mid-write and not worth saving.
+      - name: Save Next.js build cache (mouth, main only)
+        if: >-
+          !cancelled() &&
+          github.ref == 'refs/heads/main' &&
+          steps.next-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: apps/mouth/.next/cache
+          key: ${{ steps.next-cache.outputs.cache-primary-key }}
+
+      - name: Check Playwright report
+        id: playwright-report
+        if: always()
+        run: |
+          if [ -d apps/mouth/playwright-report ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v7
+        if: always() && steps.playwright-report.outputs.exists == 'true'
+        with:
+          name: playwright-report
+          path: apps/mouth/playwright-report/
+
+  # `continue-on-error: true` was REMOVED here on 2026-08-29 — still non-required, still
+  # not in any `needs:` chain. The only thing that changes is this job's own check-run
+  # conclusion and, downstream of it, this WORKFLOW RUN's conclusion. If a future reader
+  # finds this job red, read ITS OWN check-run, not the run's overall conclusion — they
+  # can diverge (see the two consumers below).
+  #
+  # This job drives the ONLY test that exercises the real browser -> Next -> FastAPI ->
+  # signed TEST RulePack -> Postgres chain (e2e-tests above never reaches it: every
+  # visa-oracle spec it runs intercepts and mocks `/api/visa-oracle/evaluate`). It is
+  # opt-in (`VISA_ORACLE_FULLSTACK=1`) and owns its own disposable database via
+  # `backend/scripts/visa_engine/fullstack_smoke.py` — a separate job so it never
+  # touches the e2e-tests job's shared Postgres/Redis services or its `--grep "page
+  # Page|@offline"` filter.
+  #
+  # WHAT REMOVING `continue-on-error: true` DID NOT CHANGE: it never made this job's own
+  # check-run report success on failure — measured 2026-08-24 on its first real run (job
+  # 97222544510, PR #4709): the step failed and the check-run's `conclusion` on the
+  # commit was `failure`, same as any other red job, `gh pr checks` included. What
+  # `continue-on-error` bought before removal was that the overall WORKFLOW RUN
+  # conclusion was not dragged down by this job, and that any job which `needs:` this
+  # one still proceeded. Zero jobs in this workflow declare it in `needs:` — `needs:`
+  # can only reference a job in the same workflow file, so this is the only place such a
+  # reference could exist — and no other workflow names it by string. But a run
+  # conclusion is itself an input, and two consumers read it:
+  #
+  #   * `main-red-breaker.yml` intersects the SET OF FAILING JOB NAMES across
+  #     consecutive runs (`run0 & run1`). Because this change also renames the job, a
+  #     failure immediately before and one immediately after the rename do not intersect
+  #     — a genuinely repeated failure spanning this commit is reported one cycle late.
+  #     One-time cost of the rename: the consumer binds the name at runtime, not in
+  #     source, so no string search inside this repo finds it.
+  #   * `test-summary` needs six jobs and NOT this one, so it can still print "✅ Test
+  #     Results" inside a workflow whose conclusion is now red. That contradiction
+  #     pre-dates this change; the flip makes it louder rather than creating it. Left
+  #     alone deliberately — widening `test-summary`'s `needs:` is a different concern
+  #     with its own blast radius.
+  #
+  # It still does NOT block a merge. `main`'s branch protection `required_status_checks`
+  # lists 11 contexts (checked live 2026-08-29 via `gh api
+  # repos/.../branches/main/protection`); this job's name, old or new, is not among
+  # them, and the tracked snapshot `infra/required.d/contexts.json` (regenerated
+  # 2026-08-27) agrees. That list is a repository setting read independent of which
+  # commit is on main, so checking it pre-merge gives the same answer it will
+  # post-merge, unless someone edits the setting (which this PR does not) — but note
+  # what this does NOT establish: the old suffixed name was equally absent from that
+  # list before this PR, so absence proves the rename didn't change a merge gate, not
+  # that the flip was validated against one.
+  #
+  # The governing mechanism is CLASSIC branch protection, not a repository ruleset.
+  # Checked the wider surface too: the repo's only two active rulesets (`Copilot review
+  # for default branch`, `merge-queue-main`) were each read via `gh api
+  # .../rulesets/<id>` — neither declares a `required_status_checks` rule, so the merge
+  # queue draws its required-check list from the same classic-protection contexts above,
+  # not a separate one. A full paginated sweep of all 125 branches' `protected` flag
+  # (GitHub sets this true for classic-protection OR ruleset coverage) found only `main`
+  # protected, and both rulesets' `ref_name` conditions match only `main` anyway.
+  # DECLARED LIMIT: this did not call `branches/<name>/protection` on each of the other
+  # 124 branches individually — it relied on the aggregate `protected` flag as a proxy,
+  # not a direct per-branch read. Promoting this job to required is an operator/Zero
+  # action and is deliberately NOT taken here.
+  #
+  # LICENSING CENSUS (2026-08-29T15:37:50Z; reproducible via `gh api
+  # repos/Bali-Zero/Teman2/actions/workflows/233826362/runs` + per-run `.../jobs`,
+  # matched on job-name substring "fullstack smoke"): over the last 150 `tests.yml`
+  # runs, window 2026-08-29T07:17:24Z -> 2026-08-29T15:35:55Z (~8h18m), the job was
+  # PRESENT in all 150 (none skipped-and-uncounted). Of those: 131 success, 16
+  # cancelled, 2 still in progress at query time, and EXACTLY ONE failure — run
+  # 33254169200 / job 99104993853, 2026-08-29T13:06:21Z
+  # (https://github.com/Bali-Zero/Teman2/actions/runs/33254169200/job/99104993853). That
+  # failure was NOT the fullstack chain breaking: the failing step was "Install
+  # Playwright browsers" (an infra dependency-install step), and "Run the disposable-DB
+  # fullstack smoke" — the step this job exists for — was SKIPPED, never executed. Its
+  # own step reporting `success` on the other 131 runs is evidence THAT step executed
+  # and exited zero — not, by itself, proof of a non-empty, non-trivial Playwright test
+  # selection (a test count pulled from the uploaded Playwright report artifact would be
+  # that proof; it was not pulled here). A second, independent census over 150 runs in a
+  # slightly different window (2026-08-29T07:09:02Z -> 2026-08-29T15:18:23Z: 134
+  # success, 15 cancelled, 1 failure) found the SAME single failure, same run and job id
+  # — corroborating, not duplicating, this one. This ~8-hour window does NOT reach the
+  # ~30-hour red episode from 2026-08-24/25 (two PENDING-ARMS rows record that episode)
+  # and is not claimed to.
+  #
+  # So the flip is licensed by "present and correctly-reporting in 150/150 recent runs,
+  # one infra-flake failure out of 150" — not by a clean record. A ~1-in-150 rate on
+  # this job's setup steps means a future infra flake here now reddens this workflow's
+  # run conclusion and feeds `main-red-breaker`'s cross-run intersection: private
+  # flakiness converted into a fleet-wide red signal, with no compensating retry on that
+  # specific step. Considered and NOT added here: `main-red-breaker`'s own
+  # two-consecutive-run intersection already absorbs a single-run flake without falsely
+  # reporting a "repeated failure" (see above); adding a retry to the failing step is a
+  # CI-behavior change, out of scope for this comment-only PR — and the SIBLING
+  # `e2e-tests` job's identical "Install Playwright browsers" step, earlier in this same
+  # file, carries its own dated, measured rationale for deliberately NOT retrying it
+  # ("No retry, deliberately"). Any future retry proposal for this job has to reconcile
+  # with that one, not duplicate it blind.
+  #
+  # NAME NOTE: the job's `name:` lost its "(advisory)" suffix in the same change. The
+  # string a future branch-protection promotion must use is therefore `Visa Oracle
+  # fullstack smoke` — adding the old suffixed name would add a context that no longer
+  # exists and deadlock the queue.
+  visa-oracle-fullstack-smoke:
+    name: Visa Oracle fullstack smoke
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    # 15 (original, no-retry budget — sized against the steady-state run, not
+    # either hang) + up to 5 (one uv-install retry) + up to 10 (one smoke
+    # retry) = 30. Both retries are scoped to a NAMED hang signature only
+    # (see the two guard steps below, and the uv-install step's own comment
+    # on why detection uses the POSIX `timeout` exit code rather than
+    # GitHub Actions' step outcome) — a real dependency conflict or a real
+    # Playwright assertion failure never retries, so the common-case wall
+    # time is unchanged and this ceiling only matters on the rare hang path.
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: ghcr.io/bali-zero/ci-mirror/postgres:15
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      # Keyed on the real lock file this repo uses for this install
+      # (`requirements.lock.txt`) — there is no `uv.lock` anywhere in this
+      # repo (checked: `find . -iname uv.lock` is empty), so a key on that
+      # filename would never hit.
+      - name: Cache uv package cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('apps/backend-rag/requirements.lock.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      # continue-on-error is required so the job reaches the retry/guard
+      # steps below at all. It is NOT how the timeout is detected: a GitHub
+      # Actions step-level `timeout-minutes` firing sets `outcome: failure`
+      # here, the SAME value a real `uv`/`pip` resolution error produces —
+      # confirmed independently by two adversarial review seats
+      # (codex-gpt-5.6-sol citing actions/runner's StepsRunner.cs task-result
+      # path; tp1-qwen3.8-max citing the same SIGINT/SIGKILL-then-Failed
+      # behaviour), after this PR's first draft wrongly assumed a timeout
+      # would report `cancelled` (that value is reserved for job/workflow-
+      # level cancellation, e.g. a `concurrency` group's cancel-in-progress —
+      # never a step's own timeout). So detection here uses the POSIX
+      # `timeout` utility's own well-documented exit code 124 instead,
+      # captured explicitly — a signal under this step's own control, not
+      # dependent on GitHub Actions runner internals. `set +e` overrides the
+      # `-e` GitHub Actions' default bash invocation already applies, so the
+      # nonzero exit from a real failure doesn't abort the script before the
+      # classification below runs.
+      - name: Install backend dependencies (uv, lock-pinned)
+        id: uv_install
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          cd apps/backend-rag
+          set +e
+          timeout --kill-after=10 240 bash -c '
+            set -e
+            pip install --upgrade pip uv
+            uv pip install --system -r requirements.lock.txt
+            uv pip install --system -e ../../packages/cell-core
+            # uv cache pruning (2026-09-10): same rationale as the two
+            # backend-rag jobs above — measured 49s restore + 14s install vs
+            # 39s cold install with no cache, only cell-core is source-built.
+            uv cache prune --ci || echo "::warning::uv cache prune --ci failed; the unpruned cache is kept, install already succeeded"
+          '
+          rc=$?
+          if [ "$rc" -eq 124 ]; then
+            echo "timed_out=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "timed_out=false" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$rc"
+
+      - name: Retry uv install once (timeout only, never a real resolution failure)
+        id: uv_install_retry
+        if: steps.uv_install.outputs.timed_out == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          cd apps/backend-rag
+          timeout --kill-after=10 240 bash -c '
+            set -e
+            pip install --upgrade pip uv
+            uv pip install --system -r requirements.lock.txt
+            uv pip install --system -e ../../packages/cell-core
+            # uv cache pruning (2026-09-10): same rationale as the
+            # first install attempt above in this same job.
+            uv cache prune --ci || echo "::warning::uv cache prune --ci failed; the unpruned cache is kept, install already succeeded"
+          '
+
+      - name: Guard — fail the job if uv install (or its one timeout-only retry) did not succeed
+        if: >-
+          steps.uv_install.outcome != 'success' &&
+          steps.uv_install_retry.outcome != 'success'
+        run: |
+          echo "::error::uv install did not succeed (outcome=${{ steps.uv_install.outcome }}, timed_out=${{ steps.uv_install.outputs.timed_out }}, retry=${{ steps.uv_install_retry.outcome }})."
+          exit 1
+
+      - name: Install postgresql-client (bounded, fail-closed — scripts/ci/apt_install.sh)
+        run: bash scripts/ci/apt_install.sh psql postgresql-client
+
+      - name: Install Node dependencies
+        run: npm install --no-fund
+        env:
+          npm_config_fetch_retry_mintimeout: 20000
+          npm_config_fetch_retries: 3
+
+      - name: Cache Playwright browser binaries
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright browsers
+        # Always runs, cache hit or miss — see e2e-tests' own step above for
+        # why (`--with-deps` installs OS shared libs the browser needs, which
+        # actions/cache never persists on a fresh runner VM).
+        run: timeout 600 npx playwright install --with-deps chromium
+
+      # 9 = 3 (backend/frontend readiness — fullstack_smoke.py's own internal
+      # _wait_for_http() caps these at 60s/180s, well inside 3min) + 6 (the
+      # smoke itself). The script has no separable GH-Actions-step phase for
+      # "readiness" vs "smoke" — both run inside the same `python -m`
+      # invocation — so this is ONE combined step-level budget, not two; see
+      # the PR body for that judgment call. Hang classification (is_hang)
+      # never trusts GitHub Actions' own step outcome for the reason
+      # documented on the uv-install step above (a step timeout reports
+      # `failure`, indistinguishable there from a real error) — it uses the
+      # POSIX `timeout` utility's exit code 124 for the outer-budget case,
+      # OR the exact string fullstack_smoke.py's internal TimeoutError
+      # raises ("did not become ready") for the inner-readiness-timeout
+      # case, `tee`'d to a log file so it can be grepped after the process
+      # exits. A real Playwright assertion failure produces neither signal,
+      # so it is never classified as a hang and never retried.
+      - name: Run the disposable-DB fullstack smoke
+        id: smoke
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          VISA_ORACLE_FULLSTACK: "1"
+          VISA_ORACLE_SMOKE_ADMIN_DSN: postgresql://test:test@127.0.0.1:5432/postgres
+          PYTHONDONTWRITEBYTECODE: "1"
+          # Importing backend.app.core constructs Settings() at module scope
+          # (backend/app/core/config.py), which requires these two even for a
+          # test-only smoke that never serves real auth. Same throwaway,
+          # non-secret values used by every other job in this workflow that
+          # imports the backend package (see e.g. the "Run backend stability
+          # gate" step above) — not a new convention.
+          JWT_SECRET_KEY: test_jwt_secret_key_for_testing_only_min_32_chars_long
+          API_KEYS: test_api_key_1,test_api_key_2
+        run: |
+          cd apps/backend-rag
+          set +e
+          timeout --kill-after=10 540 python -u -m backend.scripts.visa_engine.fullstack_smoke 2>&1 | tee "$RUNNER_TEMP/visa-oracle-smoke.log"
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -eq 124 ]; then
+            echo "is_hang=true" >> "$GITHUB_OUTPUT"
+          elif grep -q "did not become ready" "$RUNNER_TEMP/visa-oracle-smoke.log"; then
+            echo "is_hang=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_hang=false" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$rc"
+
+      - name: Retry the fullstack smoke once (known hang signature only, never a real assertion failure)
+        id: smoke_retry
+        if: steps.smoke.outputs.is_hang == 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          VISA_ORACLE_FULLSTACK: "1"
+          VISA_ORACLE_SMOKE_ADMIN_DSN: postgresql://test:test@127.0.0.1:5432/postgres
+          PYTHONDONTWRITEBYTECODE: "1"
+          JWT_SECRET_KEY: test_jwt_secret_key_for_testing_only_min_32_chars_long
+          API_KEYS: test_api_key_1,test_api_key_2
+        run: |
+          cd apps/backend-rag
+          timeout --kill-after=10 540 python -u -m backend.scripts.visa_engine.fullstack_smoke
+
+      - name: Guard — fail the job if the smoke (or its one hang-only retry) did not succeed
+        if: >-
+          steps.smoke.outcome != 'success' &&
+          steps.smoke_retry.outcome != 'success'
+        run: |
+          echo "::error::Visa Oracle fullstack smoke did not succeed (outcome=${{ steps.smoke.outcome }}, hang=${{ steps.smoke.outputs.is_hang }}, retry=${{ steps.smoke_retry.outcome }})."
+          exit 1
+
+  # The repo-wide scanners: backend tests that open files by walking the
+  # WHOLE repository (`rglob("*.py")` / apps+scripts+kb roots), so no path rule
+  # can name their inputs and change_map cannot route their readers into
+  # backend-tests (owner ruling 2026-10-18, option B: not every .py buys the
+  # whole backend suite). change_map's `repo_scanners` domain is selected by ANY
+  # changed path with a `.py` basename or a `*.py` directory segment. They stay
+  # in backend-tests too — this job is a second, light reader, not a move.
+  # Four more single-file readers run here so their inputs need not buy the
+  # backend suite: the Second-Home duration scan over apps/mouth/src/content
+  # (an article .mdx) and the PENDING-ARMS ledger mirror pair. Both are stdlib
+  # + PyYAML; the e33 import-chain test turns red if visa_check grows a heavy import.
+  # --noconftest: these tests use no conftest fixture, and the backend conftest
+  # imports the whole application stack this job deliberately does not install.
+  # A fixture added to one of them fails here loudly rather than passing blind.
+  repo-scanners:
+    name: Repo-wide scanners
+    # Always runs: Rakyat has no change map.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install the packages the scanner tests import
+        run: python -m pip install --quiet --disable-pip-version-check pytest==9.0.3 PyJWT==2.15.1 PyYAML==6.0.3
+
+      - name: Run the repo-wide scanner tests
+        working-directory: apps/backend-rag
+        run: |
+          python -m pytest --noconftest -p no:cacheprovider \
+            "backend/tests/unit/auth/test_jwt_decode_policy.py::test_python_jose_is_gone_from_production_and_tests" \
+            "backend/tests/services/visa_check/test_e33_forbidden_claims.py::TestMouthContentSecondHomeDuration" \
+            "backend/tests/services/visa_check/test_e33_forbidden_claims.py::test_visa_check_import_chain_stays_stdlib_only"
+
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs:
+      - backend-tests
+      - frontend-tests
+      - packages-core-tests
+      - e2e-tests
+      - repo-scanners
+    if: always()
+    timeout-minutes: 10
+
+    steps:
+      - name: Create test summary
+        uses: actions/github-script@v9
+        env:
+          # One entry per job in `needs:` — the two lists are load-bearing
+          # together. A job present in `needs:` but absent here reaches the
+          # script as `undefined`: it renders ❌ while `anyFailed` (which tests
+          # for "failure"/"cancelled") ignores it, so the summary would show a
+          # red row and still pass. That is the same class of lying gate the
+          # comment below describes, arriving through the back door.
+          BACKEND_RESULT: ${{ needs.backend-tests.result }}
+          FRONTEND_RESULT: ${{ needs.frontend-tests.result }}
+          PACKAGES_CORE_RESULT: ${{ needs.packages-core-tests.result }}
+          E2E_RESULT: ${{ needs.e2e-tests.result }}
+          REPO_SCANNERS_RESULT: ${{ needs.repo-scanners.result }}
+        with:
+          # FAIL-OPEN FIXED (Day-1 CI honesty, 2026-07-20): this job used to
+          # print a static "Passed" summary WITHOUT ever reading needs.*.result
+          # — it said "✅ Passed" even when every upstream job had failed. It
+          # also claimed an "80%" coverage target when the enforced gate
+          # (the backend-tests fan-in's "Combine shard coverage and enforce
+          # the threshold" step) is 55%. Not a
+          # required branch-protection context (verified via
+          # `gh api repos/.../branches/main/protection/required_status_checks`,
+          # 2026-07-20 — absent from the contexts list), so this failure was
+          # purely cosmetic/misleading, never blocking — but misleading is
+          # still a bug. Now: read the real results, state the real gate, and
+          # fail loudly (core.setFailed) if anything needed did not succeed.
+          script: |
+            const results = {
+              "Backend (Python)": process.env.BACKEND_RESULT,
+              "Frontend matrix": process.env.FRONTEND_RESULT,
+              "Shared core package": process.env.PACKAGES_CORE_RESULT,
+              "E2E page-load smoke": process.env.E2E_RESULT,
+              "Repo-wide scanners": process.env.REPO_SCANNERS_RESULT,
+            };
+
+            const icon = (r) => {
+              if (r === "success") return "✅";
+              if (r === "skipped") return "⏭️";
+              if (r === "cancelled") return "⚠️";
+              return "❌";
+            };
+
+            const lines = Object.entries(results)
+              .map(([name, r]) => `- ${icon(r)} ${name}: ${r}`)
+              .join("\n");
+
+            const anyFailed = Object.values(results).some(
+              (r) => r === "failure" || r === "cancelled"
+            );
+
+            const summary = `
+            ## ${anyFailed ? "❌" : "✅"} Test Results
+
+            ${lines}
+
+            ### Coverage
+            - **Enforced gate**: 55% (\`coverage report --fail-under=55\`, backend-tests fan-in job, over the combined shard data)
+            - Check Codecov for the full report and trend.
+
+            ### Next Steps
+            1. Review failing tests (if any)
+            2. Improve coverage if below the 55% gate
+            3. Check Codecov dashboard for trends
+            `;
+
+            core.summary.addRaw(summary).write();
+
+            if (anyFailed) {
+              core.setFailed(`One or more required jobs did not succeed: ${JSON.stringify(results)}`);
+            }

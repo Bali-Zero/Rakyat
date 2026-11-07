@@ -178,7 +178,7 @@ export function Terminal() {
         [data-zantara-terminal] .terminal-md {
           font-family:
             "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular,
-            Menlo, Fobozu, Consolas, monospace;
+            Menlo, Monaco, Consolas, monospace;
         }
       `}</style>
     </div>

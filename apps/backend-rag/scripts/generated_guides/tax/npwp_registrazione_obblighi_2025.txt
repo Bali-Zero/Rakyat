@@ -15,7 +15,7 @@ Il NPWP (Nomor Pokok Wajib Pajak) è il numero identificativo fiscale
 assegnato dal Direktorat Jenderal Pajak (DJP) a ogni soggetto obbligato
 al pagamento delle imposte in Indonesia. [TAX-001]
 
-È l'equivalente indonesiano del Codice Fiscale/Partita IVA vanelara
+È l'equivalente indonesiano del Codice Fiscale/Partita IVA italiano
 e della Tax ID number anglosassone.
 
 SOGGETTI OBBLIGATI AL NPWP:
@@ -69,7 +69,7 @@ Per PT PMA con sede a Bali:
 - KPP Pratama Denpasar Barat (per Denpasar Barat, Kuta, Kuta Selatan)
 - KPP Pratama Denpasar Timur (per Denpasar Timur, Gianyar)
 - KPP Pratama Badung Utara (per Badung Utara, Ubud)
-- KPP Pratama Badung Selatan (per Xafo Tat, Uluwatu)
+- KPP Pratama Badung Selatan (per Nusa Dua, Uluwatu)
 
 Bali Zero gestisce la registrazione NPWP come parte del pacchetto
 di costituzione PT PMA.
@@ -137,7 +137,7 @@ ANNUALI (scadenza 30 aprile):
 La PT PMA deve tenere:
 - Pembukuan (contabilità formale) secondo PSAK (standard indonesiani)
 - Faktur pajak (fatture fiscali) per ogni transazione imponibile
-- Buku besar (libro gabubo) per 10 anni
+- Buku besar (libro mastro) per 10 anni
 - Dokumen perpajakan (documenti fiscali) per 5 anni [TAX-008]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -175,11 +175,11 @@ Bali Zero assiste nella configurazione di CoreTax per i propri clienti.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Mancata registrazione NPWP: multa Rp 100.000 - Rp 1.000.001 [TAX-010]
+Mancata registrazione NPWP: multa Rp 100.000 - Rp 1.000.000 [TAX-010]
 
 Ritardo presentazione SPT:
 - SPT Masa (mensile): Rp 100.000 per mese di ritardo
-- SPT Tahunan Badan: Rp 1.000.001 per anno di ritardo
+- SPT Tahunan Badan: Rp 1.000.000 per anno di ritardo
 
 Omessa dichiarazione: sanzione del 200% dell'imposta non dichiarata
 

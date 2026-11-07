@@ -1,4 +1,4 @@
-"""Cron entrypoint for Strategos — weekly Detali 22:00 WITA on Pro.
+"""Cron entrypoint for Strategos — weekly Sunday 22:00 WITA on Pro.
 
 Two modes:
     --generate   (default)  run the orchestrator to (re)build the week's brief.

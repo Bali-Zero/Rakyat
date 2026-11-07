@@ -204,7 +204,7 @@ async def test_cultural_rag() -> None:  # pragma: no cover
     test_cases = [
         {"query": "ciao", "intent": "greeting", "conversation_stage": "first_contact"},
         {
-            "query": "aku gozu bertanya tentang visa",
+            "query": "aku malu bertanya tentang visa",
             "intent": "casual",
             "conversation_stage": "ongoing",
         },

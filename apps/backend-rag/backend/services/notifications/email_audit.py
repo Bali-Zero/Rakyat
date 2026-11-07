@@ -255,7 +255,7 @@ async def record_email_result(
 #
 # K3 (PR #7417 gate follow-up, folded into the #7385 C4 PR): `'`/`` ` ``
 # are valid RFC 5322 `atext` (same class as `_`/`*` above) and were wrongly
-# excluded as hard boundaries — `qzvkwy'b@j.com` used to split into two
+# excluded as hard boundaries — `qzvkwy'x@y.com` used to split into two
 # "words" at the apostrophe, so the fragment before it (`qzvkwy`) had no
 # `@` of its own and survived unredacted. They are content now, consumed
 # into the digest like any other local-part character. `"` stays out of
@@ -268,7 +268,7 @@ async def record_email_result(
 # quote — unpaired, or paired but not adjacent to `@` (plain prose like
 # `"call me @home"`) — is ordinary content and whitespace inside it still
 # splits words normally. `_redact_token` peels a matched `"..."` pair that
-# wraps the WHOLE token (`"naneni@example.com"` → `"id:…"`, symmetric,
+# wraps the WHOLE token (`"someone@example.com"` → `"id:…"`, symmetric,
 # nothing left unbalanced); a quote that is not at both edges — the
 # quoted-local case, where the closing `"` sits mid-token right before
 # `@` — is left as content and digested with the rest, deliberately: an
@@ -304,13 +304,13 @@ def _redact_token(token: str) -> str:
     sentence punctuation (`.,;:!?`) are peeled off and reattached to the
     output verbatim — they belong to the surrounding text, not the
     address (e.g. `(a@b).` keeps its parenthesis and period). Anything
-    INSIDE the token (e.g. `first_last@x`'s `_`, or `j'axene@x`'s `'`) is
+    INSIDE the token (e.g. `first_last@x`'s `_`, or `o'brien@x`'s `'`) is
     part of the address as far as this function is concerned and is
     consumed into the digest like any other character, so no fragment of
     it survives. `@` is never in either strip set, so a token can never be
     peeled down past its own `@` — there is always something left to digest.
 
-    K3: a `"`-wrapped token (`"naneni@example.com"`, both edges) peels the
+    K3: a `"`-wrapped token (`"someone@example.com"`, both edges) peels the
     same way — `"id:…"`, quotes preserved, nothing unbalanced. A quote pair
     that does NOT wrap the whole token — the quoted-local shape,
     `"qzvk wjyg"@x`, whose closing `"` sits mid-token right before `@` — is

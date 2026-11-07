@@ -402,9 +402,7 @@ PRODUCTION_REPLAY_EXPECTATIONS: dict[int, ProductionReplayExpectation] = {
         # the unanswered consent first, exactly as it does for persona 6.
         state=DecisionState.NEEDS_INPUT,
         missing=("person.guardian_consent",),
-        legal_citations=(
-            "Kepmen M.IP-08.GR.01.01/2025 - family visa classifications",
-        ),
+        legal_citations=("Kepmen M.IP-08.GR.01.01/2025 - family visa classifications",),
         rationale="A minor without a confirmed guardian gets no public recommendation; guardian consent is asked first.",
     ),
     6: ProductionReplayExpectation(
@@ -416,9 +414,7 @@ PRODUCTION_REPLAY_EXPECTATIONS: dict[int, ProductionReplayExpectation] = {
         # NEEDS_INPUT naming the fact, not an unconditional hold.
         state=DecisionState.NEEDS_INPUT,
         missing=("person.guardian_consent",),
-        legal_citations=(
-            "Kepmen M.IP-08.GR.01.01/2025 - family visa classifications",
-        ),
+        legal_citations=("Kepmen M.IP-08.GR.01.01/2025 - family visa classifications",),
         rationale=(
             "The family route is plausible; the public boundary now asks for "
             "guardian consent instead of holding every minor outright."
@@ -445,25 +441,19 @@ PRODUCTION_REPLAY_EXPECTATIONS: dict[int, ProductionReplayExpectation] = {
     9: ProductionReplayExpectation(
         state=DecisionState.NO_SUPPORTED_PATH,
         no_path_codes=("DIRECT_ONSHORE_CONVERSION_UNSUPPORTED",),
-        legal_citations=(
-            "Permenkumham 22/2023 jo. Permenkumham 11/2024 - alih status",
-        ),
+        legal_citations=("Permenkumham 22/2023 jo. Permenkumham 11/2024 - alih status",),
         rationale="The described direct C1-to-E28A onshore conversion is not a supported route.",
     ),
     10: ProductionReplayExpectation(
         state=DecisionState.HUMAN_REVIEW_REQUIRED,
         review_codes=("STATUS_BRIDGING_REVIEW",),
-        legal_citations=(
-            "Permenkumham 22/2023 jo. Permenkumham 11/2024 - ITK peralihan",
-        ),
+        legal_citations=("Permenkumham 22/2023 jo. Permenkumham 11/2024 - ITK peralihan",),
         rationale="The same investor facts through status bridging require an adviser review.",
     ),
     11: ProductionReplayExpectation(
         state=DecisionState.SUPPORTED_CANDIDATES,
         candidates=("E33G",),
-        legal_citations=(
-            "Permenkumham 22/2023 jo. Permenkumham 11/2024 Pasal 33(2)(j)",
-        ),
+        legal_citations=("Permenkumham 22/2023 jo. Permenkumham 11/2024 Pasal 33(2)(j)",),
         rationale="Remote work with a foreign employer and no Indonesian clients or pay supports E33G.",
     ),
     12: ProductionReplayExpectation(
@@ -472,25 +462,19 @@ PRODUCTION_REPLAY_EXPECTATIONS: dict[int, ProductionReplayExpectation] = {
         # this persona's human-review hold with the named dead end `hf.e33g.local-market`.
         state=DecisionState.NO_SUPPORTED_PATH,
         no_path_codes=("E33G_LOCAL_MARKET_NOT_ALLOWED",),
-        legal_citations=(
-            "Permenkumham 22/2023 jo. Permenkumham 11/2024 Pasal 33(2)(j)",
-        ),
+        legal_citations=("Permenkumham 22/2023 jo. Permenkumham 11/2024 Pasal 33(2)(j)",),
         rationale="Serving Indonesian clients crosses the clean E33G activity boundary.",
     ),
     13: ProductionReplayExpectation(
         state=DecisionState.NEEDS_INPUT,
         missing=("work.serves_indonesian_clients",),
-        legal_citations=(
-            "Permenkumham 22/2023 jo. Permenkumham 11/2024 Pasal 33(2)(j)",
-        ),
+        legal_citations=("Permenkumham 22/2023 jo. Permenkumham 11/2024 Pasal 33(2)(j)",),
         rationale="Local-client activity is a necessary E33G boundary fact and is unprovided.",
     ),
     14: ProductionReplayExpectation(
         state=DecisionState.SUPPORTED_CANDIDATES,
         candidates=("E33G",),
-        legal_citations=(
-            "Permenkumham 22/2023 jo. Permenkumham 11/2024 Pasal 33(2)(j)",
-        ),
+        legal_citations=("Permenkumham 22/2023 jo. Permenkumham 11/2024 Pasal 33(2)(j)",),
         rationale="E33G covers the declared remote-work and tourism purposes together.",
     ),
     15: ProductionReplayExpectation(
@@ -542,9 +526,7 @@ PRODUCTION_REPLAY_EXPECTATIONS: dict[int, ProductionReplayExpectation] = {
         # facts are asked for, overstay first.
         state=DecisionState.NEEDS_INPUT,
         missing=("immigration.overstay_days",),
-        legal_citations=(
-            "Permenkumham 22/2023 jo. Permenkumham 11/2024 - ITK peralihan",
-        ),
+        legal_citations=("Permenkumham 22/2023 jo. Permenkumham 11/2024 - ITK peralihan",),
         rationale="Unknown source status and overstay cannot rule out a prohibited bridging origin; they are asked for.",
     ),
 }
@@ -590,11 +572,36 @@ SEQ32_PRODUCTION_REPLAY_EXPECTATIONS: dict[int, ProductionReplayExpectation] = {
 }
 
 
+# Seq33 preserves all legacy inputs. Generic family agreement cannot certify
+# the new spouse-letter fact. An explicit conversion request cannot be met by
+# a visitor entry product: unknown sponsor facts must be clarified instead.
+SEQ33_PRODUCTION_REPLAY_EXPECTATIONS = {
+    **SEQ32_PRODUCTION_REPLAY_EXPECTATIONS,
+    7: replace(
+        SEQ32_PRODUCTION_REPLAY_EXPECTATIONS[7],
+        candidates=("C1",),
+        rationale="The legacy general family confirmation does not establish the Indonesian spouse's visa request letter for E31A. The complete short family visit still supports C1.",
+    ),
+    9: ProductionReplayExpectation(
+        state=DecisionState.NEEDS_INPUT,
+        missing=("sponsor.type",),
+        legal_citations=(
+            "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/E28A",
+            "https://www.imigrasi.go.id/wna/daftar-visa-indonesia/E33C",
+            "https://www.imigrasi.go.id/wna/izin-tinggal-keimigrasian/izin-tinggal-kunjungan-menjadi-izin-tinggal-terbatas",
+        ),
+        rationale="The declared zero paid-up capital rules out E28A under its existing financial filter. C2/D12 entry visas do not complete this expressly requested in-country conversion. Clarify sponsor.type for potentially eligible special-investment routes before deciding the remaining alternatives. C1 alone is not a general conversion prohibition. application_channel is the expressly selected workflow; the historical wants_onshore_conversion default is not treated as an instruction to substitute entry visas.",
+    ),
+}
+
+
 def production_replay_expectations_for_sequence(
     sequence: int,
 ) -> dict[int, ProductionReplayExpectation]:
     """The legal expectation table belonging to the pack being replayed."""
 
+    if sequence >= 33:
+        return SEQ33_PRODUCTION_REPLAY_EXPECTATIONS
     if sequence >= 32:
         return SEQ32_PRODUCTION_REPLAY_EXPECTATIONS
     return (
@@ -605,12 +612,14 @@ def production_replay_expectations_for_sequence(
 assert set(PRODUCTION_REPLAY_EXPECTATIONS) == set(range(1, 21))
 assert set(SEQ28_PRODUCTION_REPLAY_EXPECTATIONS) == set(range(1, 21))
 assert set(SEQ32_PRODUCTION_REPLAY_EXPECTATIONS) == set(range(1, 21))
+assert set(SEQ33_PRODUCTION_REPLAY_EXPECTATIONS) == set(range(1, 21))
 assert all(
     expectation.legal_citations and expectation.rationale
     for table in (
         PRODUCTION_REPLAY_EXPECTATIONS,
         SEQ28_PRODUCTION_REPLAY_EXPECTATIONS,
         SEQ32_PRODUCTION_REPLAY_EXPECTATIONS,
+        SEQ33_PRODUCTION_REPLAY_EXPECTATIONS,
     )
     for expectation in table.values()
 ), "every production replay expectation needs a named legal citation and rationale"
@@ -814,9 +823,7 @@ def test_persona_20_asymmetric_influence_matrix(compiled_gold_pack) -> None:
         )
 
     both_unknown = _decide(base_overrides)
-    status_only = _decide(
-        {**base_overrides, "immigration.current_status_code": gf.known("C1")}
-    )
+    status_only = _decide({**base_overrides, "immigration.current_status_code": gf.known("C1")})
     overstay_only = _decide({**base_overrides, "immigration.overstay_days": gf.known(0)})
     both_known = _decide(
         {

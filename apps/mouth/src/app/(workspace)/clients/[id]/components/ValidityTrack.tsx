@@ -1,5 +1,6 @@
 import React from "react";
 import { cn } from "@/lib/utils";
+import { dayNumber, parseCalendarDate } from "./documentValidity";
 
 /**
  * A validity bar for a document's issue→expiry window: a hairline track with
@@ -8,31 +9,35 @@ import { cn } from "@/lib/utils";
  * to the `Stamp` primitive only; a raw `--bz-copper` tick here would not be
  * on it, see the R3c guard in `__tests__/client-detail-desk.test.tsx`).
  *
- * Pure day-math on the two REAL dates the caller already resolved from its
- * data — this component never formats a date, only measures one, so it
- * carries no SSR-hydration risk from `new Date()` text output (see
- * IMPLEMENTER-RULES.md "no `new Date()` FORMATTING inside components").
+ * Pure calendar-day math on the two dates and the card's day: no clock, no
+ * `Date`. daysRemaining is the days left clamped to the window; the fill is
+ * the elapsed share. Nothing renders unless both dates are dates and the
+ * window is positive.
  */
 export function ValidityTrack({
   issueDate,
   expiryDate,
+  day,
   className,
 }: {
-  /** ISO date string — the document's real issue date. */
-  issueDate: string;
-  /** ISO date string — the document's real expiry date. */
-  expiryDate: string;
+  /** The document's real issue date. */
+  issueDate: string | null | undefined;
+  /** The document's real expiry date. */
+  expiryDate: string | null | undefined;
+  /** The card's day (`YYYY-MM-DD`). */
+  day: string;
   className?: string;
 }) {
-  const issued = new Date(issueDate).getTime();
-  const expires = new Date(expiryDate).getTime();
-  const now = Date.now();
-  const total = expires - issued;
-  const elapsedMs = Math.min(Math.max(now - issued, 0), Math.max(total, 0));
-  const pct = total > 0 ? (elapsedMs / total) * 100 : 0;
-  const daysTotal = Math.max(0, Math.round(total / 86400000));
-  const daysElapsed = Math.max(0, Math.round(elapsedMs / 86400000));
-  const daysRemaining = Math.max(0, daysTotal - daysElapsed);
+  const issue = parseCalendarDate(issueDate);
+  const expiry = parseCalendarDate(expiryDate);
+  const today = parseCalendarDate(day);
+  if (!issue || !expiry || !today) return null;
+  const daysTotal = dayNumber(expiry) - dayNumber(issue);
+  if (daysTotal <= 0) return null;
+  const daysLeft = dayNumber(expiry) - dayNumber(today);
+  const daysRemaining = Math.min(Math.max(daysLeft, 0), daysTotal);
+  const daysElapsed = daysTotal - daysRemaining;
+  const pct = (daysElapsed / daysTotal) * 100;
 
   return (
     <div
@@ -44,7 +49,7 @@ export function ValidityTrack({
       )}
     >
       <i
-        className="absolute inset-y-0 left-0 block rounded-[2px] bg-[var(--tx-pure)] not-italic"
+        className="absolute inset-y-0 left-0 block rounded-[2px] bg-[var(--bz-kita-ink-fill)] not-italic"
         style={{ width: `${pct}%` }}
       />
     </div>

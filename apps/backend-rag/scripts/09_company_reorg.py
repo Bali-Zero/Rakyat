@@ -37,7 +37,7 @@ STATE_DIR = "/tmp/drive_reorg"
 STATE_FILE = os.path.join(STATE_DIR, "reorg_state.json")
 
 # OAuth credentials (same as bulk_populate)
-# OAuth credentials from rclone bukili remote (uxxxxxxxxxxxx1@gmail.com)
+# OAuth credentials from rclone gdrive remote (the owner's personal Gmail account)
 # These can access folders owned by all team members.
 # IMPORTANT: set GOOGLE_OAUTH_CLIENT_ID_RCLONE, GOOGLE_OAUTH_CLIENT_SECRET_RCLONE,
 # and GOOGLE_OAUTH_REFRESH_TOKEN as env vars.
