@@ -534,8 +534,7 @@ def _resp(status: int = 200, payload: dict | None = None, text: str = "") -> Mag
 class _RecordingGitHub:
     """Answers every call a publish makes, including the retired label ones, and records them."""
 
-    def __init__(self, graphql_status: int = 200) -> None:
-        self.graphql_status = graphql_status
+    def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
         self.is_closed = False
 
@@ -559,10 +558,6 @@ class _RecordingGitHub:
             return _resp(201, {"sha": "c" * 40})
         if "/issues/" in url and url.endswith("/labels"):
             return _resp(200, {})
-        if url.endswith("/graphql"):
-            if self.graphql_status != 200:
-                return _resp(self.graphql_status, text="denied")
-            return _resp(200, {"data": {"repository": {"pullRequest": None}}})
         raise AssertionError(f"unexpected POST {url}")
 
     def urls(self, method: str) -> list[str]:
@@ -636,20 +631,27 @@ class TestPublishingAppliesNoMergeLabel:
         assert "merge_label_applied" not in result
 
     @pytest.mark.asyncio
-    async def test_auto_merge_is_still_requested_and_still_reported(self):
+    async def test_publishing_never_requests_github_auto_merge(self):
+        """Rakyat main has no required check: auto-merge landed #45 before its checks finished."""
         fake = _RecordingGitHub()
-        result = await _publish(_publisher_on(fake))
+        pub = _publisher_on(fake)
+        result = await _publish(pub)
 
-        assert fake.urls("POST").count(f"{GitHubPublisher.BASE_URL}/graphql") == 1
-        assert result["auto_merge_enabled"] is True
-
-    @pytest.mark.asyncio
-    async def test_a_refused_auto_merge_does_not_fail_the_publication(self):
-        fake = _RecordingGitHub(graphql_status=403)
-        result = await _publish(_publisher_on(fake))
-
+        assert not [u for u in fake.urls("POST") if u.endswith("/graphql")]
         assert result["success"] is True
         assert result["auto_merge_enabled"] is False
+        assert "Auto-merge" not in pub._create_pull_request.await_args.kwargs["body"]
+
+    @pytest.mark.asyncio
+    async def test_resuming_a_publication_never_requests_github_auto_merge(self):
+        fake = _RecordingGitHub()
+        pub = _publisher_on(fake)
+        result = await _resume(pub)
+
+        assert not [u for u in fake.urls("POST") if u.endswith("/graphql")]
+        assert result is not None
+        assert result["auto_merge_enabled"] is False
+        assert "Auto-merge" not in pub._create_pull_request.await_args.kwargs["body"]
 
     @pytest.mark.asyncio
     async def test_a_failed_pull_request_is_still_raised(self):
