@@ -7,14 +7,20 @@ import type {
 import { formatLongSpan } from "@/lib/utils/format-date";
 import { pickCurrentVisa } from "./pickCurrentVisa";
 import { pickCurrentPassport } from "./utils";
+import {
+  EXPIRY_WARNING_DAYS,
+  dayNumber,
+  parseCalendarDate,
+  type ValidityState,
+} from "./documentValidity";
+
+export { EXPIRY_WARNING_DAYS };
 
 /**
  * Pure derivations behind the Overview "brief" — every value comes from a
  * field the profile already carries; when the field is absent the fact says
  * so in words instead of guessing.
  */
-
-const DAY_MS = 86_400_000;
 
 type Practice = ClientProfile["practices"][number];
 
@@ -32,42 +38,26 @@ export function witaDateKey(ms: number): string {
   return WITA_FORMAT.format(ms);
 }
 
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}/;
-
-/** Calendar date of a stored date: date-only as written, an instant in WITA. */
+/**
+ * Calendar date of a stored date under the backend grammar (`_as_date`): the
+ * first 10 characters as written, no timezone conversion. Null for anything
+ * that is not a real `YYYY-MM-DD`.
+ */
 function calendarKey(dateStr: string): string | null {
-  const head = dateStr.slice(0, 10);
-  if (!DATE_ONLY.test(dateStr)) {
-    const t = Date.parse(dateStr);
-    return Number.isNaN(t) ? null : witaDateKey(t);
-  }
-  if (dateStr.length === 10) return isRealDate(head) ? head : null;
-  const t = Date.parse(dateStr);
-  return Number.isNaN(t) ? null : witaDateKey(t);
+  return parseCalendarDate(dateStr);
 }
 
-/** "2026-13-01" or "2026-02-30" would silently roll over in Date.UTC — refuse them. */
-function isRealDate(key: string): boolean {
-  const [y, m, d] = key.split("-").map(Number);
-  const t = new Date(Date.UTC(y, m - 1, d));
-  return (
-    t.getUTCFullYear() === y &&
-    t.getUTCMonth() === m - 1 &&
-    t.getUTCDate() === d
-  );
-}
+const keyToDayNumber = dayNumber;
 
-function keyToDayNumber(key: string): number {
-  const [y, m, d] = key.split("-").map(Number);
-  return Date.UTC(y, m - 1, d) / DAY_MS;
-}
-
-/** Whole calendar days from today (WITA) to the date; negative once past. */
-export function daysUntil(dateStr: string | undefined | null, now: number) {
-  if (!dateStr) return null;
-  const key = calendarKey(dateStr);
-  if (!key) return null;
-  return keyToDayNumber(key) - keyToDayNumber(witaDateKey(now));
+/**
+ * Whole calendar days from the card's day (`YYYY-MM-DD`) to the date;
+ * negative once past, null when either is not a date.
+ */
+export function daysUntil(dateStr: string | undefined | null, day: string) {
+  const key = calendarKey(dateStr ?? "");
+  const today = calendarKey(day);
+  if (!key || !today) return null;
+  return keyToDayNumber(key) - keyToDayNumber(today);
 }
 
 /** "kitas_card" -> "Kitas card" — formatting only, never invents a value. */
@@ -78,16 +68,16 @@ export function humanize(code: string | undefined | null): string {
 }
 
 /** Value + unit for a span of days: "138" "days", "3y 10mo" "", "Expired" "". */
-export function spanValue(days: number): { value: string; unit: string } {
-  if (days < 0) return { value: "Expired", unit: "" };
+export function spanValue(
+  days: number,
+  state?: ValidityState,
+): { value: string; unit: string } {
+  if (days < 0 || state === "expired") return { value: "Expired", unit: "" };
   if (days === 0) return { value: "Today", unit: "" };
   if (days === 1) return { value: "1", unit: "day" };
   if (days <= 365) return { value: String(days), unit: "days" };
   return { value: formatLongSpan(days), unit: "" };
 }
-
-/** Same threshold the visa card uses for its red state: two months. */
-export const EXPIRY_WARNING_DAYS = 60;
 
 const VISA_PRACTICE =
   /kitas|kitap|itas|itap|visa|stay permit|e33|c31|c312|c313|c314|e28|e31/i;
@@ -114,7 +104,7 @@ export interface PermitFact {
 export function elapsedShare(
   issued: string | null | undefined,
   expiry: string | null | undefined,
-  now: number,
+  day: string,
 ): number | null {
   if (!issued || !expiry) return null;
   const i = calendarKey(issued);
@@ -122,7 +112,9 @@ export function elapsedShare(
   if (!i || !e) return null;
   const total = keyToDayNumber(e) - keyToDayNumber(i);
   if (total <= 0) return null;
-  const used = keyToDayNumber(witaDateKey(now)) - keyToDayNumber(i);
+  const today = calendarKey(day);
+  if (!today) return null;
+  const used = keyToDayNumber(today) - keyToDayNumber(i);
   return Math.min(Math.max(used / total, 0), 1);
 }
 
@@ -163,7 +155,7 @@ export function permitFact(
       openVisaPractice,
     };
   const label = doc.permit_label || humanize(doc.document_type);
-  const days = daysUntil(doc.expiry_date, now);
+  const days = daysUntil(doc.expiry_date, witaDateKey(now));
   if (days === null)
     return {
       kind: "undated",
@@ -200,7 +192,7 @@ export function passportFact(
     client.passport_expiry ||
     pickCurrentPassport(documents)?.expiry_date ||
     null;
-  const days = daysUntil(expiry, now);
+  const days = daysUntil(expiry, witaDateKey(now));
   const endsBeforePermit =
     days !== null &&
     permit.days !== null &&

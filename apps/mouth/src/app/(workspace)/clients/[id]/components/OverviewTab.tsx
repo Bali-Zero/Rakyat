@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { ArrowUpRight, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type {
@@ -20,7 +20,6 @@ import { WaCaseIntelligencePanel } from "./WaCaseIntelligencePanel";
 import { buildLedger, type AttentionTone, type LedgerRow } from "./attention";
 import {
   contactFact,
-  daysUntil,
   humanize,
   isBalanceUnknown,
   outstandingAmount,
@@ -28,6 +27,8 @@ import {
   PRACTICE_STAGES,
   stageIndex,
 } from "./overview-brief";
+import { familyPassport, familyPermit } from "./familyValidity";
+import { dayToInstant, resolveCardDay } from "./witaClock";
 import type { TabType } from "./types";
 import {
   EmptyState,
@@ -36,7 +37,7 @@ import {
   StatePill,
 } from "@/components/workspace/r19";
 import { EYEBROW, FOCUS } from "@/components/workspace/r19/tokens";
-import { passportLabel } from "../../client-row-model";
+import { expiryWording } from "./documentValidity";
 
 /** Whether the Needs-attention ledger renders, so the panels the page mounts
  *  after the Overview continue the numbering instead of repeating "01". */
@@ -44,15 +45,14 @@ export function overviewLedgerCount(
   documents: ClientDocument[],
   attention: AttentionItem[] | undefined,
   activePractices: ClientProfile["practices"],
-  attentionError?: string | null,
+  attentionError: string | null | undefined,
+  day: string,
 ): number {
-  const ledger = buildLedger(attention, documents, Date.now());
+  const ledger = buildLedger(attention, documents, dayToInstant(day));
   const shown = ledger.rows.length + ledger.more.length > 0 || !!attentionError;
   // + the always-rendered Family & companies section.
   return (shown ? 1 : 0) + (activePractices.length > 0 ? 1 : 0) + 1;
 }
-
-const CLOCK_TICK_MS = 60_000;
 
 /**
  * Where a practice stands on the real lifecycle: one segment per stage, done
@@ -166,6 +166,8 @@ export function OverviewTab({
   interactions = [],
   viewerEmail = null,
   onOpenTab = () => {},
+  onOpenRemoved,
+  day: dayProp,
 }: {
   client: ClientProfile["client"];
   stats: ClientProfile["stats"];
@@ -200,12 +202,15 @@ export function OverviewTab({
   /** Viewer email; null while unknown, so no practice row claims "You". */
   viewerEmail?: string | null;
   onOpenTab?: (tab: TabType) => void;
+  /** Opens the Documents "Removed or rejected" group. */
+  onOpenRemoved?: () => void;
+  /** The card's day (`YYYY-MM-DD`, the payload's `as_of`). */
+  day?: string;
 }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), CLOCK_TICK_MS);
-    return () => clearInterval(id);
-  }, []);
+  // The card's day (the payload's `as_of`) is the only day: the instant below
+  // is its 00:00 WITA, so every derivation agrees with the server's ledger.
+  const day = resolveCardDay(dayProp);
+  const now = dayToInstant(day);
   const ledger = buildLedger(attention, documents, now);
   const attentionTotal = ledger.rows.length + ledger.more.length;
 
@@ -325,6 +330,8 @@ export function OverviewTab({
             formatDate={formatDate}
             onRefresh={onRefresh}
             clientId={clientId}
+            onOpenRemoved={onOpenRemoved}
+            day={day}
           />
         </div>
         <div className="flex [&>*]:w-full">
@@ -336,6 +343,8 @@ export function OverviewTab({
             formatCurrency={formatCurrency}
             onRefresh={onRefresh}
             clientId={clientId}
+            onOpenRemoved={onOpenRemoved}
+            day={day}
           />
         </div>
       </div>
@@ -455,13 +464,11 @@ export function OverviewTab({
         ) : (
           <ul>
             {familyMembers.map((m) => {
-              const visaDays = daysUntil(m.visa_expiry, now);
-              const passportDays = daysUntil(m.passport_expiry, now);
-              const urgent =
-                m.visa_alert === "red" ||
-                m.visa_alert === "expired" ||
-                m.passport_alert === "red" ||
-                m.passport_alert === "expired";
+              const permit = familyPermit(m, documents, day);
+              const passport = familyPassport(m, documents, day);
+              const visaDays = permit.validity?.daysLeft ?? null;
+              const passportDays = passport.validity?.daysLeft ?? null;
+              const urgent = permit.urgent || passport.urgent;
               return (
                 <li key={`fm-${m.id}`}>
                   <button
@@ -489,13 +496,13 @@ export function OverviewTab({
                         <span className="block">
                           {m.current_visa_type}
                           {visaDays !== null
-                            ? ` · ${passportLabel(visaDays)}`
+                            ? ` · ${expiryWording(visaDays)}`
                             : ""}
                         </span>
                       ) : null}
                       {passportDays !== null ? (
                         <span className="block">
-                          Passport · {passportLabel(passportDays)}
+                          Passport · {expiryWording(passportDays)}
                         </span>
                       ) : null}
                     </span>

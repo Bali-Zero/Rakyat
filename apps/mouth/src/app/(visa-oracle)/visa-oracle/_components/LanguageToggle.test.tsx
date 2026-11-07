@@ -14,9 +14,7 @@ describe("LanguageToggle", () => {
     expect(screen.getByText("EN")).toBeInTheDocument();
     expect(screen.getByText("ID")).toBeInTheDocument();
 
-    await user.click(
-      screen.getByRole("button", { name: "Switch to Bahasa Indonesia" }),
-    );
+    await user.click(screen.getByRole("button", { name: /bahasa indonesia/i }));
     expect(document.documentElement.lang).toBe("id");
     expect(onChange).toHaveBeenCalledWith("id");
 

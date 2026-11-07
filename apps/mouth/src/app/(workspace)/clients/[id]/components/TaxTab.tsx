@@ -44,6 +44,8 @@ import {
   type SptState,
   type AttentionState,
 } from "./tax-deadlines";
+import { witaDateKey } from "./overview-brief";
+import { dayToInstant, resolveCardDay } from "./witaClock";
 
 // ============================================
 // TAX CONSULTANT DROPDOWN (Bali Zero tax team)
@@ -74,14 +76,16 @@ type TaxYear = number;
 // ============================================
 interface YearSelectorProps {
   selectedYear: TaxYear;
+  /** The card's year (WITA year of the payload's `as_of`), newest on the list. */
+  currentYear: TaxYear;
   onYearChange: (year: TaxYear) => void;
 }
 
 const YearSelector = memo(function YearSelector({
   selectedYear,
+  currentYear,
   onYearChange,
 }: YearSelectorProps) {
-  const currentYear = new Date().getFullYear();
   const years = Array.from({ length: 5 }, (_, i) => currentYear - i);
 
   return (
@@ -796,6 +800,7 @@ export function TaxTab({
   documents,
   now,
   attention,
+  day: dayProp,
 }: {
   clientId: number;
   formatDate: (d: string) => string;
@@ -812,14 +817,18 @@ export function TaxTab({
   /** The client's documents (already loaded by the parent): Coretax access,
    * EFIN and the SPT filings are read from them — no extra request. */
   documents?: readonly ClientDocument[];
-  /** Injectable clock for the SPT deadlines (tests). */
+  /** Test seam for the SPT deadlines; the card hands in its own day instead. */
   now?: Date;
+  /** The card's day (`YYYY-MM-DD`, the payload's `as_of`). */
+  day?: string;
   /** The profile's attention items; the SPT lines use them when present. */
   attention?: readonly AttentionItem[];
 }) {
-  const [selectedYear, setSelectedYear] = useState<TaxYear>(
-    new Date().getFullYear(),
-  );
+  // One day for the whole tab: the card's day at 00:00 WITA. The year
+  // selector, its default and the SPT status all derive from it.
+  const clock = now ?? new Date(dayToInstant(resolveCardDay(dayProp)));
+  const clockYear = Number(witaDateKey(clock.getTime()).slice(0, 4));
+  const [selectedYear, setSelectedYear] = useState<TaxYear>(clockYear);
   const [lkpmItems, setLkpmItems] = useState<LKPMBatchItem[]>([]);
   const [lkpmLoading, setLkpmLoading] = useState(false);
   const [lkpmReceipts, setLkpmReceipts] = useState<LKPMReceipt[]>([]);
@@ -881,7 +890,6 @@ export function TaxTab({
 
   const docs = documents ?? [];
   const coretax = coretaxStatus(docs);
-  const clock = now ?? new Date();
   // Tax clients: a consultant is assigned or the client has LKPM history.
   const isTaxClient = !!client?.tax_consultant || lkpmItems.length > 0;
   const primaryLink =
@@ -939,6 +947,7 @@ export function TaxTab({
         </div>
         <YearSelector
           selectedYear={selectedYear}
+          currentYear={clockYear}
           onYearChange={setSelectedYear}
         />
       </div>

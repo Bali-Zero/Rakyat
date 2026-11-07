@@ -1018,7 +1018,7 @@ export default function PratichePage() {
                 ? "bg-[color-mix(in_srgb,var(--bz-neon-purple)_20%,transparent)] text-[var(--bz-neon-purple)] border-[color-mix(in_srgb,var(--bz-neon-purple)_40%,transparent)]"
                 : "bg-[var(--surface-raised)] text-[var(--bz-text-2)] border-[var(--bz-border)] hover:border-[color-mix(in_srgb,var(--bz-neon-purple)_30%,transparent)] hover:text-[var(--bz-neon-purple)]",
               title: "Show processes not updated in >14 days",
-              ariaLabel: "Show stale processes (not updated in 14+ days)",
+              ariaLabel: "Stale 14d+, show processes not updated in 14+ days",
               content: <>🕰 Stale 14d+</>,
             },
           ]}
@@ -1140,11 +1140,6 @@ export default function PratichePage() {
                       className="flex w-full items-center justify-between mb-3 rounded-md text-left touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--state-success)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bz-card)]"
                       aria-expanded={!completedCollapsed}
                       aria-controls={`process-column-${statusKey}-content`}
-                      aria-label={
-                        completedCollapsed
-                          ? "Expand completed"
-                          : "Collapse completed"
-                      }
                     >
                       <div className="flex items-center gap-2">
                         <span
@@ -1154,7 +1149,7 @@ export default function PratichePage() {
                           className="font-semibold text-sm uppercase tracking-wider"
                           style={{ color: colors.textColor }}
                         >
-                          {colors.label}
+                          {colors.label}{" "}
                         </h3>
                         <ChevronDown
                           className={`w-3.5 h-3.5 transition-transform ${
@@ -1171,6 +1166,9 @@ export default function PratichePage() {
                         }}
                       >
                         {columnPractices.length}
+                      </span>
+                      <span className="sr-only">
+                        , {completedCollapsed ? "expand" : "collapse"} completed
                       </span>
                     </button>
                   ) : (
@@ -1238,10 +1236,9 @@ export default function PratichePage() {
                           borderColor: colors.tintBorder,
                           color: colors.textColor,
                         }}
-                        aria-label="Expand completed list"
                       >
                         <p className="font-medium">
-                          {columnPractices.length} completed
+                          {columnPractices.length} completed{" "}
                         </p>
                         <p className="opacity-70 mt-1 text-[10px]">
                           Click to expand
@@ -1366,7 +1363,7 @@ export default function PratichePage() {
                                       }}
                                       className="text-left text-[15px] font-bold text-[var(--bz-text-1)] leading-tight tracking-wide uppercase line-clamp-2 hover:text-[var(--bz-accent)] transition-colors pr-6"
                                       title="Open client profile"
-                                      aria-label="Open client profile"
+                                      aria-label={`${practice.client_name || "Unknown Client"}, open client profile`}
                                     >
                                       {practice.client_name || "Unknown Client"}
                                     </button>

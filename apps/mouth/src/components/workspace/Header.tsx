@@ -142,7 +142,7 @@ export function Header({
               new KeyboardEvent("keydown", { key: "k", metaKey: true }),
             )
           }
-          aria-label="Search clients, practices, pages"
+          aria-label="Search clients, practices, pages… ⌘K"
           className="hidden md:flex flex-1 min-w-0 max-w-[420px] mx-2 h-9 items-center gap-2 rounded px-2.5 text-[12px] text-[var(--tx-secondary)] border border-[var(--line-control)] transition-colors hover:bg-[var(--bz-card)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bz-copper)]"
         >
           <Search size={14} className="flex-shrink-0" />

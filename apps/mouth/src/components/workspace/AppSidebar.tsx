@@ -407,7 +407,7 @@ export function AppSidebar({
                   ? "var(--tx-secondary)"
                   : "var(--nav-fg-muted)",
             }}
-            aria-label="Toggle Zantara AI"
+            aria-label="Zantara ⌘J, toggle Zantara AI"
           >
             <BotMessageSquare
               size={15}

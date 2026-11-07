@@ -29,7 +29,7 @@ from backend.app.utils.crm_utils import (
 from backend.app.utils.json_utils import from_jsonb, to_jsonb
 from backend.core.cache import invalidate_cache
 from backend.services.crm.admin_document_visibility import admin_document_not_team_deleted_clause
-from backend.services.crm.client_attention import build_client_attention
+from backend.services.crm.client_attention import build_client_attention, today_wita
 from backend.services.crm.permit_label import resolve_permit_label
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 
@@ -1313,6 +1313,9 @@ async def get_client_profile(
         # "Needs attention" (owner rules 2026-11-03) — additive next to the
         # legacy view-based `expiry_alerts` / `stats`. A failure here must
         # never break the profile.
+        # One WITA day for the whole payload: the attention rows are computed for it and
+        # the card derives every document date from the same value (`as_of`).
+        today = today_wita()
         try:
             lkpm_rows = await conn.fetch(
                 """
@@ -1335,6 +1338,7 @@ async def get_client_profile(
                 company_documents=[dict(cd) for cd in company_documents],
                 lkpm_reports=[dict(r) for r in lkpm_rows],
                 catalogue=visa_catalogue,
+                today=today,
             )
             attention_payload["attention_error"] = None
         except Exception as exc:
@@ -1352,6 +1356,7 @@ async def get_client_profile(
             "documents": documents_out,
             "expiry_alerts": [dict(a) for a in expiry_alerts],
             **attention_payload,
+            "as_of": today.isoformat(),
             "practices": [dict(p) for p in practices],
             "company_links": [dict(cl) for cl in company_links],
             "company_documents": [dict(cd) for cd in company_documents],

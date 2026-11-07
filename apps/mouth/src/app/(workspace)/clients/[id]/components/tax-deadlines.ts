@@ -5,7 +5,10 @@
 // A backend `attention` feed with the same rules is built in parallel (kinds
 // `spt_personal` / `spt_company`, states expired|overdue|urgent|open|upcoming|
 // done); the state names below are the same on purpose so the two can be
-// reconciled. Calendar days are WITA (UTC+8) days, and `now` is injectable.
+// reconciled. Calendar days are WITA (UTC+8) days, and `now` is required: the
+// card hands in its own day (the profile's `as_of`) at 00:00 WITA.
+
+import { isLive, type LivenessFields } from "./documentValidity";
 
 export type SptKind = "spt_personal" | "spt_company";
 
@@ -132,7 +135,7 @@ export function isoDayMs(iso: string): number {
 export function sptStatus(
   kind: SptKind,
   filedFiscalYears: ReadonlySet<number>,
-  now: Date = new Date(),
+  now: Date,
 ): SptStatus {
   const today = witaDay(now);
   const fiscalYear = today.year - 1;
@@ -177,15 +180,13 @@ export function sptStatus(
 // Filed documents
 // ---------------------------------------------------------------------------
 
-export interface SptDocumentLike {
+export interface SptDocumentLike extends LivenessFields {
   document_type: string;
   fiscal_year?: number | null;
   file_name?: string;
   file_url?: string;
   google_drive_file_url?: string;
   company_id?: number | null;
-  is_archived?: boolean;
-  deleted_at?: string | null;
 }
 
 /**
@@ -214,8 +215,7 @@ export function sptFilings(
   const types = SPT_DOCUMENT_TYPES[kind];
   const byYear = new Map<number, SptFiling>();
   for (const d of docs) {
-    if (!types.includes(d.document_type) || d.is_archived || d.deleted_at)
-      continue;
+    if (!types.includes(d.document_type) || !isLive(d)) continue;
     const fiscalYear = documentFiscalYear(d);
     if (fiscalYear == null) continue;
     const url = d.google_drive_file_url || d.file_url || null;

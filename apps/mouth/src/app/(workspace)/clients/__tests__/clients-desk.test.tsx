@@ -650,9 +650,9 @@ describe("/clients ?q= (Cmd+K search clients)", () => {
   it("starts with the search box filled and the list searched", () => {
     mockSearchParams = new URLSearchParams("q=Client 0403");
     renderPage();
-    expect(screen.getByRole("textbox", { name: "Search clients" })).toHaveValue(
-      "Client 0403",
-    );
+    expect(
+      screen.getByRole("textbox", { name: /search clients/i }),
+    ).toHaveValue("Client 0403");
     expect(mockUseCrmClients).toHaveBeenCalledWith(
       expect.objectContaining({ search: "Client 0403" }),
     );

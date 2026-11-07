@@ -416,22 +416,35 @@ describe("OverviewTab — gate round 3", () => {
     expiry_date: "2026-11-03",
   } as any;
 
-  it("GUILT: an open tab crosses WITA midnight — expiring today becomes expired without a remount", () => {
+  it("GUILT: the card keeps the payload's day across browser midnight and changes only when the new day arrives", () => {
     vi.useFakeTimers();
     // 23:59:30 WITA on 3 Nov 2026 == 15:59:30Z
     vi.setSystemTime(new Date("2026-11-03T15:59:30Z"));
-    render(
+    const view = render(
       <OverviewTab
         {...baseProps}
         documents={[kitas]}
         needsViewerAction={false}
+        day="2026-11-03"
       />,
     );
     const card = () => screen.getByTestId("visa-card").textContent;
-    expect(card()).toContain("Expires today");
+    expect(card()).toContain("Expired today");
+    // The browser crosses midnight: the card still shows the payload's day.
     act(() => {
       vi.advanceTimersByTime(61_000);
     });
+    expect(card()).toContain("Expired today");
+    expect(card()).not.toContain("Expired 1 day ago");
+    // The refetched payload lands with the new day: the card changes.
+    view.rerender(
+      <OverviewTab
+        {...baseProps}
+        documents={[kitas]}
+        needsViewerAction={false}
+        day="2026-11-04"
+      />,
+    );
     expect(card()).toContain("Expired 1 day ago");
   });
 
