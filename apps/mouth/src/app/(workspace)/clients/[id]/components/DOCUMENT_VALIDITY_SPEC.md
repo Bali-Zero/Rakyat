@@ -1,4 +1,4 @@
-# documentValidity(doc): one validity model for the kita client card, spec v3
+# documentValidity(doc): one validity model for the kita client card, spec v3.1
 
 Status: **proposed, gated before code** (orchestrator ruling 2026-11-05). The
 implementation lands in the same PR after this spec's gate; the final head gets its own
@@ -29,8 +29,9 @@ v2 kept **two days and two parsers**:
 
 ## Problem (measured on Rakyat main d8ff719b)
 
-The card decides document validity in about 40 places. It uses four clocks, and no
-surface reads `status` when deciding validity.
+The card decides document validity in the 35 rows of the surface table below. It uses
+four calculation families. Exactly one surface reads `status`: `DocumentsTab.tsx:70-73`,
+only to choose the Valid / Rejected pill. No other surface reads it when deciding validity.
 
 - **Pickers.** `pickCurrentPermitFor` (`pickCurrentVisa.ts:83-89`) and
   `pickCurrentPassport` (`utils.ts:294-311`) filter only on `deleted_at` and
@@ -40,7 +41,7 @@ surface reads `status` when deciding validity.
   whatever its date. Beside a "Rejected" pill, the Expires cell still counts down.
 - **Tax.** `sptFilings` (`tax-deadlines.ts:217`) and `coretax.ts:37` count a rejected
   document as filed or on file.
-- **Four clocks:**
+- **Four calculation families:**
   - WITA calendar days (`daysUntil`, `overview-brief.ts:66`);
   - `Math.ceil` against `Date.now()` with a UTC-midnight parse (`ImmigrationTab.tsx:48`,
     `DocumentsTab.tsx:93`, `FamilyTab.tsx:210`, `FamilyTab.tsx:233`, `ProcessTab.tsx:370`);
@@ -342,8 +343,17 @@ precedence.
 - The SQL of `alert_color`, `visa_alert` and `passport_alert`. It is read under the enum
   rule.
 - Practice statuses.
-- The status union: `crm.types.ts:389` gains `active` and `google_drive`. This is a type
-  change only.
+- The status union: `crm.types.ts:389` is today `pending | received | verified | rejected |
+  expired`. It contains neither `active` nor `google_drive`, and both reach the card. The
+  union gains the two. This is a type change only.
+- **Boundary input type (decided).** `ClientDocument` in `crm.types.ts:380-410` types only
+  `deleted_at` as nullable. `is_archived`, `status` and the dates are not. The wire can
+  send `null` for each (Rule L treats null as live). The spec does **not** correct
+  `ClientDocument`. `documentValidity` takes a wider boundary type, `DocumentValidityInput`,
+  in which `deleted_at`, `is_archived`, `status`, `issue_date` and `expiry_date` are each
+  `T | null | undefined` and `status` is `string | null | undefined`. `ClientDocument`
+  is assignable to it. The null and unknown fixtures of obligations 2 and 3 are typed as
+  `DocumentValidityInput`, so no test needs a cast.
 
 ## Test obligations for the implementing lane
 
@@ -367,8 +377,20 @@ precedence.
      the Immigration panel, ValidityTrack, Documents cells and totals, Family rows.
    - When the refetch lands with a new `as_of`, they all change in the same render.
    - The midnight timer and the focus check trigger the invalidation.
-   - A static test finds no `Date.now()` and no `86400000` in this folder outside
-     `WitaClock` and `overview-brief.ts`.
+   - A static test finds no `Date.now()`, no `new Date()` used for day arithmetic and no
+     `86400000` in the **document and practice validity modules**: `DocumentsTab.tsx`,
+     `ImmigrationTab.tsx`, `FamilyTab.tsx` (permit and passport expiry only), `VisaCard.tsx`,
+     `PassportCard.tsx`, `ValidityTrack.tsx`, `OverviewTab.tsx`, `ProcessTab.tsx` (the
+     expiry chip only), `utils.ts`, `attention.ts`, `pickCurrentVisa.ts` and
+     `tax-deadlines.ts`. The only allowed readers of the browser clock are the `WitaClock`
+     module and `overview-brief.ts`.
+   - **Excluded, with the reason, and not widened by this PR:** `AiSummaryCard.tsx`
+     (`:86`, `:101` relative-age labels, `:438` a 7-day horizon, none a document date);
+     `WaCaseIntelligencePanel.tsx:29` (relative age); `early-fetch.ts` and
+     `company/companyDetailCache.ts` (cache TTLs); `FamilyTab.tsx:172` (age from a date of
+     birth); `ProcessTab.tsx:429-430` (days since `updated_at`); `ClientDetailClient.tsx:844-846`
+     (days since last interaction). The static test names these exclusions so a new reader
+     of the clock in a covered module still fails it.
 5. **Formatter:** with `TZ=America/Los_Angeles` and `TZ=Asia/Makassar`, a date-only
    expiry renders the same calendar day in the Documents cell, the history text, the
    Family row and the Process chip.
@@ -397,6 +419,18 @@ precedence.
     - the right signpost shows;
     - the listing counts equal the rows;
     - `FilesBrowserPanel` is untouched.
+
+    **Innocence twin, per surface (rule: every negative assertion above has a live twin).**
+    For each surface below, a live document with the same fields as the void fixture must
+    still count or appear. The existing positive tests are preserved as innocence
+    obligations and must still pass unchanged unless obligation 12 names them:
+
+    | Surface (table row) | Void fixture: asserted | Live twin: asserted | Existing test to preserve |
+    |---|---|---|---|
+    | SPT "Filed" (29) | a rejected SPT does not close the year | a live SPT with the same year and `company_id` shows Filed | `TaxTab.sections.test.tsx` "filed documents flip each section to Filed and list the history" and "INNOCENCE: two companies, an SPT carrying company_id closes only that company" |
+    | Coretax / EFIN on file (30) | a rejected access or EFIN document shows "No ... on file" | a live one shows "... on file" with its date | `coretax.test.ts` "reads each document type independently, newest date wins"; `TaxTab.sections.test.tsx` "access + EFIN documents: both on file, access carries its date" |
+    | Company vault slots (32) | a rejected PMA document leaves the slot empty and shows the signpost | a live document fills its slot | `CompanyTab.test.tsx` "document vault renders its fixed slots when a company is linked" |
+    | Holding counts (22, 33) | a rejected or removed document is not in "N expiring soon" nor in "N documents on file" | the live twin is counted | `DocumentsTab.test.tsx` "1 expiring soon" and "2 expiring soon" cases; `OverviewTab.test.tsx` "5 company documents on file"; `CompanyTab.test.tsx` documents-count case |
 12. Every existing test that pins old behaviour changes in the same PR and is named in the
     PR body.
 13. **Mutation:** one mutant per rule. The PR body reports killed/total and names any
@@ -412,4 +446,10 @@ precedence.
     - the 90-day window;
     - the ValidityTrack clamp;
     - the formatter timezone.
+
+    **Survivor rule.** Beyond the rules above, each row of the surface table has its own
+    mutant: remove that surface's liveness guard. **Any survivor on a rule or on a surface
+    row is a FAIL** of the final gate, not a note in the PR body. There is no
+    equivalent-mutant exception for them. A survivor outside those rows may be named in the
+    PR body with its reason, and the gate judges that reason.
 14. Synthetic fixtures only.
