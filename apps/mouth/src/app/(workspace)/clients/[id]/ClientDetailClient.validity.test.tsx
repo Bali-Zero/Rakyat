@@ -5,7 +5,6 @@
  * The day of the card is the `as_of` of the profile payload on screen. The
  * browser clock only asks for a fresh payload. Synthetic fixtures only.
  */
-import React from "react";
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
