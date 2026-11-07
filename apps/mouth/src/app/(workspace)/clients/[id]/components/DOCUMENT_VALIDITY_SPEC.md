@@ -1,4 +1,4 @@
-# documentValidity(doc): one validity model for the kita client card, spec v3.1
+# documentValidity(doc): one validity model for the kita client card, spec v3.2
 
 Status: **proposed, gated before code** (orchestrator ruling 2026-11-05). The
 implementation lands in the same PR after this spec's gate; the final head gets its own
@@ -94,9 +94,13 @@ OpenAPI schema does not change. `crm.types.ts` gains `as_of?: string`.
   `witaDateKey(Date.now())` at the time the payload was received. Every surface still
   uses that single value.
 - **Memos.** Every memoised derivation that reads a date lists the card's day among its
-  dependencies. No component in this folder calls `Date.now()` or `new Date()` for day
-  arithmetic, or divides by `86400000`. The only exceptions are the `WitaClock` module and
-  `overview-brief.ts`.
+  dependencies.
+- **One clock rule.** The browser-clock ban applies to the validity modules listed in Test
+  obligation 4, and only to them. In those modules `Date.now()`, `new Date()` used for day
+  arithmetic and `86400000` are forbidden. The only readers of the browser clock the
+  validity path may use are the `WitaClock` module and `overview-brief.ts`. Every other
+  read of the clock in this folder is outside this spec and stays as it is. Obligation 4
+  lists those reads with their reason.
 - **Known residue, out of this spec.** The document `alert_color` and the family enums
   are computed in SQL against the database's `CURRENT_DATE`. They are used only under the
   enum rule below, which can add urgency and never removes it. Their day is not the card's
@@ -330,7 +334,7 @@ precedence.
 | 26 | Family void documents | `.find()` may show one | Not shown on members; signpost. |
 | 27 | Overview family rows (`OverviewTab.tsx:455-466`) | Member fields only; enums | The same `familyPermit` / `familyPassport` result as row 25. |
 | 28 | ProcessTab practice chip (`ProcessTab.tsx:370-390`) | ceil; windows `< 0`, `0..14`, `15..30`; `alert_color` beyond; superseded neutral | A practice, not a document: no liveness, no `dateValidity` state. **Only the count changes** to `dayNumber(expiry) − dayNumber(day)` under the date grammar, with the formatter. Windows, `alert_color` fallback, superseded-first precedence and labels are unchanged. A null date shows no chip. |
-| 29 | Tax SPT "Filed" (`sptFilings`) | Excludes archived, removed | Requires `live`. |
+| 29 | Tax SPT "Filed" (`sptFilings`) and the SPT year clock (`TaxTab.tsx:84`, `:821`, `:884` → `:991`, `:1007` → `sptStatus` `:341`) | Excludes archived, removed; the year and clock come from the browser (`new Date()`) | Requires `live`. **Decided:** filed / overdue depends on the current year, so it is a validity decision and uses the card's day like every other validity module. `TaxTab` receives the card's day (`as_of`). The year selector, the initial selected year and the `now` handed to `sptStatus` derive from it: the `now` is a `Date` built from the day at 00:00 WITA. The `new Date()` calls at `:84`, `:821` and `:884` go, and so does the default `now: Date = new Date()` in `tax-deadlines.ts:135`. The `now` prop stays as the test seam. |
 | 30 | Coretax / EFIN on file (`coretax.ts:37`) | Excludes archived, removed | Requires `live`. |
 | 31 | `companyDocumentToClientDocument` | Forces `is_archived: false`, `deleted_at: null` | Maps `status` as received; Rule L reads it. (Today all are `active`.) |
 | 32 | Company vault slots | Drive id present | Filled only by a live document. A void PMA document gets the signpost. |
@@ -377,18 +381,24 @@ precedence.
      the Immigration panel, ValidityTrack, Documents cells and totals, Family rows.
    - When the refetch lands with a new `as_of`, they all change in the same render.
    - The midnight timer and the focus check trigger the invalidation.
+   - The SPT path follows the same rule: with the browser year past the `as_of` year and
+     the refetch not landed, the year selector, the default selected year and the SPT
+     filed / overdue status all use the `as_of` year.
    - A static test finds no `Date.now()`, no `new Date()` used for day arithmetic and no
      `86400000` in the **document and practice validity modules**: `DocumentsTab.tsx`,
      `ImmigrationTab.tsx`, `FamilyTab.tsx` (permit and passport expiry only), `VisaCard.tsx`,
      `PassportCard.tsx`, `ValidityTrack.tsx`, `OverviewTab.tsx`, `ProcessTab.tsx` (the
-     expiry chip only), `utils.ts`, `attention.ts`, `pickCurrentVisa.ts` and
-     `tax-deadlines.ts`. The only allowed readers of the browser clock are the `WitaClock`
+     expiry chip only), `utils.ts` (`getPassportValidityColor` and `getVisaAlertStatus`, the
+     30-day-month alerts; not `isBirthdayToday`), `attention.ts`, `pickCurrentVisa.ts`,
+     `tax-deadlines.ts` and `TaxTab.tsx` (the SPT path: `YearSelector` `:84`, the initial
+     year `:821`, the clock `:884` passed at `:991` and `:1007` to `sptStatus` at `:341`). The only allowed readers of the browser clock are the `WitaClock`
      module and `overview-brief.ts`.
    - **Excluded, with the reason, and not widened by this PR:** `AiSummaryCard.tsx`
      (`:86`, `:101` relative-age labels, `:438` a 7-day horizon, none a document date);
      `WaCaseIntelligencePanel.tsx:29` (relative age); `early-fetch.ts` and
      `company/companyDetailCache.ts` (cache TTLs); `FamilyTab.tsx:172` (age from a date of
-     birth); `ProcessTab.tsx:429-430` (days since `updated_at`); `ClientDetailClient.tsx:844-846`
+     birth); `utils.ts:316` `isBirthdayToday` (a birthday); `modals/EditClientModal.tsx:157-158`
+     (age from a date of birth); `PortalMessages.tsx:129-130` (relative message age); `ProcessTab.tsx:429-430` (days since `updated_at`); `ClientDetailClient.tsx:844-846`
      (days since last interaction). The static test names these exclusions so a new reader
      of the clock in a covered module still fails it.
 5. **Formatter:** with `TZ=America/Los_Angeles` and `TZ=Asia/Makassar`, a date-only
@@ -447,9 +457,22 @@ precedence.
     - the ValidityTrack clamp;
     - the formatter timezone.
 
-    **Survivor rule.** Beyond the rules above, each row of the surface table has its own
-    mutant: remove that surface's liveness guard. **Any survivor on a rule or on a surface
-    row is a FAIL** of the final gate, not a note in the PR body. There is no
-    equivalent-mutant exception for them. A survivor outside those rows may be named in the
-    PR body with its reason, and the gate judges that reason.
+    **The mutant set, executable.** The set is exactly these mutants, one run each:
+    - **Rule mutants:** one per rule listed above (L1, L2, L3, no-trim, day 0, the `as_of`
+      day source, the enum source rule, the positive-label rule, the urgency formula, each
+      picker filter, each holding count, the 90-day window, the ValidityTrack clamp, the
+      formatter timezone).
+    - **Shared-seam mutant:** the `live` field of `documentValidity` (Rule L), mutated once.
+      A survivor is attributed to every surface-table row that consumes the model: rows 3,
+      4, 5, 6, 7, 9, 15, 16, 17, 20, 21, 25, 27 and 31.
+    - **Own-guard mutants:** one per row that has its own liveness guard at its own site,
+      removing that guard: rows 1, 2, 13, 14, 18, 19, 22, 23, 24, 26, 29, 30, 32 and 33.
+    - **Outside the set, by row number:** 8 (server rows rendered as sent), 10 (numerals),
+      11 (ValidityTrack, covered by its clamp rule mutant), 12 (urgency, covered by its rule
+      mutant), 28 (a practice, no liveness, row 28), 34 (out of the promise) and 35
+      (unchanged).
+
+    **Survivor rule.** Any survivor in this set is a FAIL of the final gate, with no
+      equivalent-mutant exception. A mutant outside the set may be named in the PR body with
+      its reason, and the gate judges that reason.
 14. Synthetic fixtures only.
