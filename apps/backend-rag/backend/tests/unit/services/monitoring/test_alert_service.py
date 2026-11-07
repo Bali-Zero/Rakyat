@@ -89,9 +89,9 @@ class TestClose:
 
 
 class TestInit:
-    def test_telegram_enabled(self):
+    def test_telegram_remains_retired_even_when_configured(self):
         svc = _make_service(telegram=True)
-        assert svc.enable_telegram is True
+        assert svc.enable_telegram is False
 
     def test_telegram_disabled(self):
         svc = _make_service(telegram=False)
@@ -159,7 +159,7 @@ class TestSendAlert:
         result = await svc.send_alert("Title", "Msg", AlertLevel.INFO)
         assert result["logging"] is True
 
-    async def test_sends_telegram(self):
+    async def test_configured_telegram_never_sends(self):
         from backend.services.monitoring.alert_service import AlertLevel
 
         svc = _make_service(telegram=True)
@@ -171,12 +171,14 @@ class TestSendAlert:
         svc._client = mock_client
 
         result = await svc.send_alert("Title", "Msg", AlertLevel.ERROR)
-        assert result["telegram"] is True
+        assert result["telegram"] is False
+        assert result["logging"] is True
+        mock_client.post.assert_not_awaited()
 
     async def test_rate_limits_duplicate_alert(self):
         from backend.services.monitoring.alert_service import AlertLevel
 
-        svc = _make_service(telegram=True)
+        svc = _make_service(telegram=True, slack=True)
         mock_client = AsyncMock()
         mock_client.is_closed = False
         mock_resp = MagicMock()
@@ -186,16 +188,16 @@ class TestSendAlert:
 
         # First send succeeds
         result1 = await svc.send_alert("Same Title", "Msg", AlertLevel.ERROR, {"path": "/api/test"})
-        assert result1["telegram"] is True
+        assert result1["slack"] is True
 
         # Second send is rate-limited
         result2 = await svc.send_alert("Same Title", "Msg", AlertLevel.ERROR, {"path": "/api/test"})
-        assert result2["telegram"] is False
+        assert result2["slack"] is False
 
     async def test_global_rate_limit(self):
         from backend.services.monitoring.alert_service import AlertLevel
 
-        svc = _make_service(telegram=True)
+        svc = _make_service(telegram=True, slack=True)
         svc._global_max_per_minute = 2  # Low limit for testing
         mock_client = AsyncMock()
         mock_client.is_closed = False
@@ -209,9 +211,9 @@ class TestSendAlert:
             await svc.send_alert(f"Alert {i}", "Msg", AlertLevel.ERROR, {"path": f"/api/{i}"})
 
         # Third should have been globally rate-limited
-        assert mock_client.post.call_count <= 2
+        assert mock_client.post.call_count == 2
 
-    async def test_telegram_failure_handled(self):
+    async def test_retired_telegram_does_not_attempt_a_broken_transport(self):
         from backend.services.monitoring.alert_service import AlertLevel
 
         svc = _make_service(telegram=True)
@@ -223,6 +225,7 @@ class TestSendAlert:
         result = await svc.send_alert("Title", "Msg", AlertLevel.ERROR)
         assert result["telegram"] is False
         assert result["logging"] is True
+        mock_client.post.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +330,7 @@ class TestSendHourlyDigest:
         # Empty buffer must early-return before ever touching the HTTP client.
         mock_client.post.assert_not_awaited()
 
-    async def test_sends_digest(self):
+    async def test_digest_does_not_send_after_retirement(self):
         svc = _make_service(telegram=True)
         svc._latency_buffer = [
             {
@@ -357,7 +360,7 @@ class TestSendHourlyDigest:
 
         await svc.send_hourly_digest()
         assert len(svc._latency_buffer) == 0  # Cleared
-        mock_client.post.assert_awaited_once()
+        mock_client.post.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -504,7 +507,7 @@ class TestGetAlertService:
 @pytest.mark.asyncio
 class TestEscalatingBackoff:
     @staticmethod
-    def _mock_telegram(svc):
+    def _mock_transport(svc):
         mock_client = AsyncMock()
         mock_client.is_closed = False
         mock_resp = MagicMock()
@@ -514,8 +517,8 @@ class TestEscalatingBackoff:
         return mock_client
 
     async def test_persistent_alert_cooldown_doubles(self, monkeypatch):
-        svc = _make_service(telegram=True)
-        self._mock_telegram(svc)
+        svc = _make_service(telegram=True, slack=True)
+        self._mock_transport(svc)
         clock = {"t": 0.0}
         monkeypatch.setattr(
             "backend.services.monitoring.alert_service.time.monotonic",
@@ -524,28 +527,28 @@ class TestEscalatingBackoff:
         base = svc._alert_cooldown_seconds
 
         clock["t"] = 0.0
-        assert (await svc.send_alert("Stuck", "m", dedup_key="k"))["telegram"] is True
+        assert (await svc.send_alert("Stuck", "m", dedup_key="k"))["slack"] is True
         clock["t"] = base - 1
-        assert (await svc.send_alert("Stuck", "m", dedup_key="k"))["telegram"] is False
+        assert (await svc.send_alert("Stuck", "m", dedup_key="k"))["slack"] is False
         clock["t"] = base
-        assert (await svc.send_alert("Stuck", "m", dedup_key="k"))["telegram"] is True
+        assert (await svc.send_alert("Stuck", "m", dedup_key="k"))["slack"] is True
         clock["t"] = base + 2 * base - 1
-        assert (await svc.send_alert("Stuck", "m", dedup_key="k"))["telegram"] is False
+        assert (await svc.send_alert("Stuck", "m", dedup_key="k"))["slack"] is False
         clock["t"] = base + 2 * base
-        assert (await svc.send_alert("Stuck", "m", dedup_key="k"))["telegram"] is True
+        assert (await svc.send_alert("Stuck", "m", dedup_key="k"))["slack"] is True
 
     async def test_backoff_resets_after_long_silence(self, monkeypatch):
-        svc = _make_service(telegram=True)
-        self._mock_telegram(svc)
+        svc = _make_service(telegram=True, slack=True)
+        self._mock_transport(svc)
         clock = {"t": 0.0}
         monkeypatch.setattr(
             "backend.services.monitoring.alert_service.time.monotonic",
             lambda: clock["t"],
         )
         clock["t"] = 0.0
-        assert (await svc.send_alert("Flap", "m", dedup_key="k"))["telegram"] is True
+        assert (await svc.send_alert("Flap", "m", dedup_key="k"))["slack"] is True
         clock["t"] = svc._alert_backoff_max_seconds * 4
-        assert (await svc.send_alert("Flap", "m", dedup_key="k"))["telegram"] is True
+        assert (await svc.send_alert("Flap", "m", dedup_key="k"))["slack"] is True
 
     async def test_resource_alert_uses_stable_dedup_key(self):
         svc = _make_service(telegram=False)
@@ -554,3 +557,18 @@ class TestEscalatingBackoff:
         await svc.send_resource_alert("pg_dead_tuples", 18000.0, 10000.0, " dead tuples")
         keys = [c.kwargs["dedup_key"] for c in svc.send_alert.call_args_list]
         assert keys == ["resource:pg_dead_tuples", "resource:pg_dead_tuples"]
+
+
+@pytest.mark.asyncio
+async def test_slack_discord_and_logs_survive_retired_configured_telegram():
+    from backend.services.monitoring.alert_service import AlertLevel
+
+    svc = _make_service(telegram=True, slack=True, discord=True)
+    client = AsyncMock()
+    client.is_closed = False
+    client.post.return_value = MagicMock()
+    svc._client = client
+    result = await svc.send_alert("Synthetic", "fixture", AlertLevel.ERROR)
+    assert result == {"telegram": False, "slack": True, "discord": True, "logging": True}
+    assert client.post.await_count == 2
+    assert all("telegram" not in call.args[0] for call in client.post.await_args_list)

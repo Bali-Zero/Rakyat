@@ -1,5 +1,6 @@
 """Telegram notify is best-effort: never raises, swallows network errors."""
 
+import importlib
 from unittest.mock import patch
 
 import pytest
@@ -20,9 +21,7 @@ def test_send_telegram_success(monkeypatch):
 def test_send_telegram_swallows_network_error(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
     monkeypatch.setenv("TELEGRAM_OWNER_CHAT_ID", "990000001")
-    with patch(
-        "urllib.request.urlopen", side_effect=OSError("network down")
-    ) as mock_open:
+    with patch("urllib.request.urlopen", side_effect=OSError("network down")) as mock_open:
         assert send_telegram("hello") is None  # MUST NOT raise
     # Without this the test is vacuous: any future early return — a missing
     # chat id, a feature flag — would make it pass while never reaching the
@@ -51,4 +50,8 @@ def historical_transport_contract_under_mocks(monkeypatch):
 
     Production stays retired; default-off acceptance lives in core retirement tests.
     """
-    monkeypatch.setattr("backend.services.canva_renderer_v2._telegram.telegram_is_retired", lambda: False)
+    monkeypatch.setattr(
+        importlib.import_module("backend.services.canva_renderer_v2._telegram"),
+        "telegram_is_retired",
+        lambda: False,
+    )

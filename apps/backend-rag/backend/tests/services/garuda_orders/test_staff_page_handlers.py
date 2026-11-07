@@ -15,6 +15,7 @@ what a handler reads has something to leak and a test that catches it.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 import re
@@ -1898,8 +1899,12 @@ def test_every_staff_page_survives_markdown_parsing(cls):
 def legacy_mock_transport_contract(monkeypatch):
     """Retained protocol code under test doubles; not the production policy."""
     monkeypatch.setattr(
-        "backend.services.wa_copilot.telegram_notifier.telegram_is_retired", lambda: False
+        importlib.import_module("backend.services.wa_copilot.telegram_notifier"),
+        "telegram_is_retired",
+        lambda: False,
     )
     monkeypatch.setattr(
-        "backend.services.garuda_orders.outbox_consumer.telegram_is_retired", lambda: False
+        importlib.import_module("backend.services.garuda_orders.outbox_consumer"),
+        "telegram_is_retired",
+        lambda: False,
     )

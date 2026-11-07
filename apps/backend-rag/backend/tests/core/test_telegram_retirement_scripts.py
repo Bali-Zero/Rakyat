@@ -29,7 +29,7 @@ def stale_environment(monkeypatch):
         "DATABASE_URL": "postgresql://fixture@127.0.0.1:9/fixture",
         "ENTITY_LINKER_DB_URL": "postgresql://fixture@127.0.0.1:9/fixture",
         "QDRANT_URL": "http://127.0.0.1:9",
-        "QDRANT_API_KEY": "synthetic-key",
+        "QDRANT_API_KEY": "synthetic-key",  # pragma: allowlist secret - synthetic import-only fixture
     }.items():
         monkeypatch.setenv(key, value)
     return monkeypatch

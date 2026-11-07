@@ -1,5 +1,6 @@
 """Tests for Drive Changes Polling Service."""
 
+import importlib
 import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -748,4 +749,5 @@ def historical_transport_contract_under_mocks(monkeypatch):
 
     Production stays retired; default-off acceptance lives in core retirement tests.
     """
-    monkeypatch.setattr("backend.services.crm.drive_poll_service.telegram_is_retired", lambda: False)
+    module = importlib.import_module("backend.services.crm.drive_poll_service")
+    monkeypatch.setattr(module, "telegram_is_retired", lambda: False)

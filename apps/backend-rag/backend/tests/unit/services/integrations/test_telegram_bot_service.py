@@ -1,5 +1,6 @@
 """Tests for backend.services.integrations.telegram_bot_service"""
 
+import importlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -395,4 +396,8 @@ class TestEditMessageText:
 @pytest.fixture(autouse=True)
 def legacy_mock_transport_contract(monkeypatch):
     """Retained protocol code under test doubles; not the production policy."""
-    monkeypatch.setattr("backend.services.integrations.telegram_bot_service.telegram_is_retired", lambda: False)
+    monkeypatch.setattr(
+        importlib.import_module("backend.services.integrations.telegram_bot_service"),
+        "telegram_is_retired",
+        lambda: False,
+    )

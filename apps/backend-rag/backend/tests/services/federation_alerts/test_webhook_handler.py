@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
@@ -342,4 +343,8 @@ def historical_transport_contract_under_mocks(monkeypatch):
 
     Production stays retired; default-off acceptance lives in core retirement tests.
     """
-    monkeypatch.setattr("backend.services.federation_alerts.webhook.telegram_is_retired", lambda: False)
+    monkeypatch.setattr(
+        importlib.import_module("backend.services.federation_alerts.webhook"),
+        "telegram_is_retired",
+        lambda: False,
+    )
