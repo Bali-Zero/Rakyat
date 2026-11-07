@@ -1065,10 +1065,8 @@ async def publish_article_internal(request: PublishRequest) -> PublishResponse:
             else None
         )
 
-        # 3. Commit files to GitHub via pull request + auto-merge.
-        # The target branch (main) is protected (required status checks), so a
-        # direct ref push returns HTTP 422. Publishing via PR lets the commit
-        # land on a temporary branch and auto-merge once CI passes.
+        # 3. Commit files to GitHub via pull request: main takes no direct push, and
+        # pro.rakyat_editorial_merger merges the PR once its required checks pass.
         commit_message = f"feat(article): Add article '{request.article.headline[:50]}...'\n\nCategory: {category_folder}\nPosition: {request.position}\n\n🤖 Published via Article Composer"
 
         result = await github_publisher.create_commit_with_files(
