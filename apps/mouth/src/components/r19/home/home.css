@@ -336,6 +336,43 @@
 :where([data-r19-home]) .archive-pick h3 {
   font-size: 22px;
 }
+:where([data-r19-home]) .journal-insight {
+  margin-top: 48px;
+  padding-top: 18px;
+  border-top: 1px solid var(--ink);
+}
+:where([data-r19-home]) .journal-insight > .eyebrow {
+  display: block;
+  margin-bottom: 4px;
+}
+:where([data-r19-home]) .journal-insight-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+}
+:where([data-r19-home]) .journal-insight h3 {
+  font-size: 22px;
+}
+:where([data-r19-home]) .journal-insight article + article {
+  border-left: 1px solid var(--line);
+  padding-left: 24px;
+}
+@media (max-width: 680px) {
+  :where([data-r19-home]) .journal-insight {
+    margin-top: 36px;
+  }
+  :where([data-r19-home]) .journal-insight-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  :where([data-r19-home]) .journal-insight article + article {
+    border-left: 0;
+    padding-left: 0;
+    margin-top: 20px;
+    padding-top: 6px;
+    border-top: 1px solid var(--line);
+  }
+}
 :where([data-r19-home]) dialog {
   border: 1px solid var(--line);
   background: var(--paper);

@@ -6,12 +6,14 @@ import type { EditorialFeed } from "./journal/types";
 import type { JournalArticle } from "./journal/types";
 export function Journal({
   articles,
+  insights = [],
   indexHref = "/news",
   status = articles.length ? "ready" : "empty",
   fixture = false,
   featuredCount = 2,
 }: {
   articles: readonly JournalArticle[];
+  insights?: readonly JournalArticle[];
   indexHref?: string;
   status?: EditorialFeed["status"];
   fixture?: boolean;
@@ -19,6 +21,7 @@ export function Journal({
 }) {
   const [index, setIndex] = useState(0);
   const visible = status === "ready" ? articles : [];
+  const insightRow = status === "ready" ? insights : [];
   const stories = visible.slice(0, featuredCount);
   const currentIndex = index % Math.max(stories.length, 1);
   const current = stories[currentIndex];
@@ -184,6 +187,24 @@ export function Journal({
             </div>
           ) : null}
         </div>
+        {insightRow.length ? (
+          <section
+            aria-labelledby="journal-insight-title"
+            className="journal-insight"
+          >
+            <span className="eyebrow" id="journal-insight-title">
+              Insight
+            </span>
+            <div className="journal-insight-grid">
+              {insightRow.map((article) => (
+                <article key={article.slug}>
+                  <StoryLink article={{ ...article, image: null }} />
+                  <StoryDate article={article} fixture={fixture} />
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
       </section>
     </div>
   );

@@ -55,3 +55,37 @@ describe("R19 Journal presentation", () => {
     ).toBeNull();
   });
 });
+
+describe("R19 Journal Insight row", () => {
+  const insights: JournalArticle[] = [1, 2, 3].map((i) => ({
+    title: "Insight story " + i,
+    slug: "insight-" + i,
+    category: "Tax & Legal",
+    date: null,
+    image: { src: "/static/news/insight-" + i + ".jpg", alt: "cover " + i },
+    sourceUrl: "/tax-legal/insight-" + i,
+    finalSourceUrl: null,
+    destinationStatus: "available",
+  }));
+  it("renders the pinned insights as text links under one Insight label", () => {
+    render(<Journal articles={articles} insights={insights} />);
+    const row = screen.getByRole("region", { name: "Insight" });
+    for (const i of [1, 2, 3]) {
+      expect(
+        screen.getByRole("link", { name: new RegExp("Insight story " + i) }),
+      ).toBeDefined();
+    }
+    expect(row.querySelectorAll("article")).toHaveLength(3);
+    expect(row.querySelectorAll("img")).toHaveLength(0);
+  });
+  it("renders no Insight row without pinned insights", () => {
+    render(<Journal articles={articles} />);
+    expect(screen.queryByRole("region", { name: "Insight" })).toBeNull();
+  });
+  it("renders no Insight row when the feed is not ready", () => {
+    render(
+      <Journal articles={articles} insights={insights} status="unavailable" />,
+    );
+    expect(screen.queryByRole("region", { name: "Insight" })).toBeNull();
+  });
+});
