@@ -1,6 +1,6 @@
 """Indonesian business days and the decreed holiday table behind them (pure, no I/O).
 
-Calendar facts used below, all 2026: 15 Feb is a Detali; 16 Feb (cuti bersama Imlek) and 17 Feb
+Calendar facts used below, all 2026: 15 Feb is a Sunday; 16 Feb (cuti bersama Imlek) and 17 Feb
 (Imlek) are decreed; 18 Feb is a Wednesday. 20 Mar (cuti bersama Idulfitri) is a Friday, 21-22 Mar
 are Idulfitri AND the weekend, 23-24 Mar are cuti bersama, 25 Mar is a Wednesday — the longest
 closed run in the decree. 17 Aug (Proklamasi Kemerdekaan) is a Monday. 9 Sep is a Wednesday.
@@ -108,7 +108,7 @@ class TestDecree2027:
     def test_named_2027_dates(self) -> None:
         by_date = {h.at: h for h in HOLIDAYS}
         assert by_date[date(2027, 8, 17)].kind is HolidayKind.LIBUR_NASIONAL
-        assert by_date[date(2027, 12, 26)].name == "Muwo Mikraj Nabi Fadedili saw."
+        assert by_date[date(2027, 12, 26)].name == "Isra Mikraj Nabi Muhammad saw."
         assert by_date[date(2027, 12, 24)].kind is HolidayKind.CUTI_BERSAMA
         assert by_date[date(2027, 3, 15)].kind is HolidayKind.CUTI_BERSAMA
 

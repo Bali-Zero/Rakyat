@@ -81,13 +81,13 @@ async def test_it_sends_and_masks_the_phone_but_not_the_body() -> None:
         patch(f"{NOTIFIER}.settings") as settings,
         patch(f"{NOTIFIER}.telegram_bot", telegram),
     ):
-        settings.admin_telegram_chat_id = "8400044000"
+        settings.admin_telegram_chat_id = "8847435604"
         from backend.services.integrations.human_escalation_notifier import (
             notify_human_telegram,
         )
 
         await notify_human_telegram(
-            phone="628400001000",
+            phone="621234567890",
             message_text="I need help with my visa renewal",
             sender_name="Test Sender",
             reason="ai_escalation",
@@ -96,7 +96,7 @@ async def test_it_sends_and_masks_the_phone_but_not_the_body() -> None:
     telegram.send_message.assert_called_once()
     text = telegram.send_message.call_args.kwargs["text"]
     assert "6212***90" in text, "the phone mask changed shape"
-    assert "628400001000" not in text, "the full phone leaked into the notification"
+    assert "621234567890" not in text, "the full phone leaked into the notification"
     assert "I need help with my visa renewal" in text, (
         "the body is NOT masked today — if this ever starts passing for the "
         "opposite reason, the payload narrowed and the callers must be re-read"

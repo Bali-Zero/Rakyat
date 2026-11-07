@@ -8,7 +8,12 @@ Provides:
 - Dashboard aggregation queries (failed queries, collection hit rates, volume, satisfaction)
 """
 
+import contextlib
+import itertools
+import math
 import os
+import re
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -18,6 +23,60 @@ from backend.db.base_repository import BaseRepository
 logger = get_logger(__name__)
 
 _DISABLED_VALUES = {"0", "false", "no", "off"}
+
+# THE NUMERIC DOMAIN of a stage timing, shared by the writer and the consumer.
+# Spec: differential_spec + numeric_domain_spec in this PR's brief (evidence/2026-11/
+# agent-nuzantara-backend-rag-newrag-stage-timings-85bec76a/brief.yml); the
+# W*/S*/C* tags below name its clauses. A stage timing is a number of SECONDS in
+# [0, STAGE_SECONDS_MAX], carried with STAGE_DECIMALS fractional digits. A
+# stage longer than a day is not a measurement. #9191 was suspended after
+# three gate BLOCKs on inputs outside an unstated domain (10**400, 1e400,
+# 1e-400, 131072 nines + .99999): these two constants are the domain, and the
+# only source of its bounds on both sides.
+STAGE_SECONDS_MAX = 86400
+STAGE_DECIMALS = 4
+# The key domain (W2, W10): a stage name is a lowercase ASCII identifier, and the
+# sanitizer reads at most STAGE_ITEMS_MAX items of the mapping, accepted or not
+# (W10, S6). Gate 9198 r2: a key with a NUL or
+# a lone surrogate passed the sanitizer and Postgres jsonb rejected the INSERT,
+# losing the row. With W2 keys and W7 floats the serialised object holds only
+# [a-z0-9_.e+-{}":, ] characters, so it is always a valid jsonb object (W11).
+STAGE_ITEMS_MAX = 32
+_STAGE_KEY = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
+def stage_timings_payload(timings: Mapping[str, Any] | None) -> dict[str, float]:
+    """Per-stage durations, in SECONDS, as they go into ``metadata.timings``.
+
+    Seconds and the key name ``timings`` match what the oracle writer already
+    stores (``oracle/analytics.py``), so one SQL reads both writers. A value or key
+    outside the domain costs its own stage. It never raises on its own operations
+    (exact-type checks, ``float()`` of an exact int guarded for OverflowError, a
+    regex on an exact str); an exception raised by the input mapping's own
+    ``__bool__`` / ``items()`` / iterator propagates and is absorbed by the guard in
+    ``log_query`` (S4), costing the timings key only, never the row.
+    """
+    if not timings:
+        return {}  # W1
+    payload: dict[str, float] = {}
+    for stage, value in itertools.islice(timings.items(), STAGE_ITEMS_MAX):  # W10
+        if type(stage) is not str or _STAGE_KEY.fullmatch(stage) is None:  # W2
+            continue
+        # W3: exact types. A subclass (bool, numpy scalar, a class with its own
+        # __float__) is dropped: gate 9198 r1 showed a float subclass whose
+        # __float__ raised ValueError costing the whole row.
+        if type(value) is not int and type(value) is not float:
+            continue
+        try:
+            seconds = float(value)
+        except OverflowError:  # W4: the only failure left, an int like 10**400
+            continue
+        if not math.isfinite(seconds):  # W5
+            continue
+        if not 0 <= seconds <= STAGE_SECONDS_MAX:  # W6: on the unrounded value
+            continue
+        payload[stage] = round(seconds, STAGE_DECIMALS)  # W7
+    return payload
 
 
 def response_retention_enabled() -> bool:
@@ -50,6 +109,7 @@ class QueryAnalyticsRepository(BaseRepository):
         cost_usd: float = 0.0,
         error_message: str | None = None,
         response_text: str | None = None,
+        stage_timings: Mapping[str, Any] | None = None,
     ) -> str | None:
         """
         Log a RAG query execution to the analytics table.
@@ -71,7 +131,19 @@ class QueryAnalyticsRepository(BaseRepository):
             # double-encodes into a jsonb string scalar instead of an object,
             # which breaks the `metadata ? 'user_email'` operator.
             # Regression fixed 2026-05-14.
-            metadata = {"user_email": user_id} if user_id else {}
+            metadata: dict[str, Any] = {"user_email": user_id} if user_id else {}
+            # Where a query's time goes. Until 2026-11-03 this writer kept only
+            # the total (`execution_time_ms`) and dropped the per-stage dict
+            # its callers had in hand. Measured on prod that day: 52 of 827
+            # rows in 90 days carried a breakdown, all from the oracle writer,
+            # the last on 2026-09-01; on those, p50 llm 38.4 s vs search 4.4 s.
+            # Latency work needs the breakdown on every row this writer adds.
+            try:
+                payload = stage_timings_payload(stage_timings)
+            except Exception:  # S4/E2-a: costs the timings, never the row; nothing else
+                payload = {}
+            if payload:
+                metadata["timings"] = payload
 
             # Keep the answer, not just the assertion that there was one.
             #
@@ -295,6 +367,78 @@ class QueryAnalyticsRepository(BaseRepository):
         except Exception as e:
             log_error(logger, "Failed to get query volume", error=e)
             return []
+
+    async def get_stage_latency(self, days: int = 7) -> list[dict[str, Any]]:
+        """p50/p95 seconds per pipeline stage, from ``metadata.timings``.
+
+        Reads every writer's rows (same key, same unit) under the consumer
+        clauses C1-C8 of the stage-timing domain spec (see ``STAGE_SECONDS_MAX``).
+        The order type guard -> pure range comparison -> round -> float8 is
+        forced with NESTED CASE, never with AND (Postgres does not promise the
+        evaluation order of AND operands). A jsonb number is an
+        arbitrary-precision numeric: 1e400, 1e-400 and 131072 nines + .99999 are
+        all valid jsonb, and each one broke #9191 at a different step (float8
+        overflow, float8 underflow, numeric overflow inside round). Here every
+        one of them only takes part in a numeric comparison, and round/float8
+        see values in [0, STAGE_SECONDS_MAX] only. C8: only stage keys inside the
+        writer's key domain (W2) are counted, so the output is stage names and
+        numbers whichever writer produced the row.
+        """
+        try:
+            cutoff = datetime.now(tz=timezone.utc) - timedelta(days=days)
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        t.key AS stage,
+                        COUNT(*) AS samples,
+                        percentile_cont(0.5) WITHIN GROUP (ORDER BY s.seconds) AS p50_s,
+                        percentile_cont(0.95) WITHIN GROUP (ORDER BY s.seconds) AS p95_s
+                    FROM query_analytics qa
+                    -- C1: jsonb_each only ever sees an object
+                    CROSS JOIN LATERAL jsonb_each(
+                        CASE WHEN jsonb_typeof(qa.metadata->'timings') = 'object'
+                             THEN qa.metadata->'timings' ELSE '{}'::jsonb END
+                    ) AS t(key, value)
+                    CROSS JOIN LATERAL (
+                        SELECT
+                            -- C2: type guard; a jsonb number casts to numeric exactly
+                            CASE WHEN jsonb_typeof(t.value) = 'number' THEN
+                                -- C3: pure numeric comparison, defined for every number
+                                CASE WHEN t.value::numeric BETWEEN 0 AND $2::numeric THEN
+                                    -- C4: round and float8 only inside the domain
+                                    round(t.value::numeric, $3::int)::float8
+                                END
+                            END AS seconds
+                    ) AS s
+                    WHERE qa.created_at >= $1
+                      AND s.seconds IS NOT NULL  -- C5
+                      -- C8: stage keys inside W2 only, explicit lists (no ranges: no locale)
+                      AND t.key ~ '^[abcdefghijklmnopqrstuvwxyz][abcdefghijklmnopqrstuvwxyz0123456789_]{0,63}$'
+                    GROUP BY t.key
+                    ORDER BY t.key
+                    """,
+                    cutoff,
+                    STAGE_SECONDS_MAX,
+                    STAGE_DECIMALS,
+                )
+                return [
+                    {
+                        "stage": r["stage"],
+                        "samples": r["samples"],
+                        "p50_s": round(float(r["p50_s"]), 3),
+                        "p95_s": round(float(r["p95_s"]), 3),
+                    }
+                    for r in rows
+                ]
+
+        except Exception:
+            # E2-b / C7: the fallback first, then ONE constant, argument-free log call
+            # in its own guard. Nothing derived from the exception reaches the log.
+            result: list[dict[str, Any]] = []
+            with contextlib.suppress(Exception):
+                logger.warning("Failed to get stage latency")
+            return result
 
     async def get_satisfaction_score(
         self,

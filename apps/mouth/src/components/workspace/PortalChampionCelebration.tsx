@@ -294,10 +294,10 @@ export function PortalChampionCelebration({ identity }: { identity: string }) {
             exit={reduceMotion ? undefined : { opacity: 0 }}
             className={`fixed inset-0 z-[100] flex items-center justify-center overflow-hidden p-5 text-[var(--bz-surface)] backdrop-blur-md ${
               penalty
-                ? "bg-[color-mix(in_srgb,var(--bz-text-1)_94%,var(--bz-text-3))]"
+                ? "bg-[color-mix(in_srgb,var(--bz-kita-ink-fill)_94%,var(--bz-text-3))]"
                 : bomb
-                  ? "bg-[color-mix(in_srgb,var(--bz-text-1)_82%,var(--bz-red))]"
-                  : "bg-[color-mix(in_srgb,var(--bz-text-1)_88%,transparent)]"
+                  ? "bg-[color-mix(in_srgb,var(--bz-kita-ink-fill)_82%,var(--bz-red))]"
+                  : "bg-[color-mix(in_srgb,var(--bz-kita-ink-fill)_88%,transparent)]"
             }`}
             aria-label={
               penalty ? "Penalti Portal Champion" : "Selebrasi Portal Champion"

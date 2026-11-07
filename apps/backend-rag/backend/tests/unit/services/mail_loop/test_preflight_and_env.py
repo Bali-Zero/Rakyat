@@ -92,7 +92,7 @@ class _FakeService:
             {"folder_id": "F-INBOX", "folder_name": "Inbox"},
             {"folder_id": "F-SENT", "folder_name": "Sent"},
             {"folder_id": "F-VISA", "folder_name": "_Visa"},
-            {"folder_id": "F-VESEX", "folder_name": "_VESEX"},
+            {"folder_id": "F-PTPMA", "folder_name": "_PTPMA"},
             {"folder_id": "F-TAX", "folder_name": "_Tax"},
             {"folder_id": "F-PROPERTY", "folder_name": "_Property"},
             {"folder_id": "F-ADMIN", "folder_name": "_Admin"},

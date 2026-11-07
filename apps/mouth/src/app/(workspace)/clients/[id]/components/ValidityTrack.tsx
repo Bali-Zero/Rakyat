@@ -44,7 +44,7 @@ export function ValidityTrack({
       )}
     >
       <i
-        className="absolute inset-y-0 left-0 block rounded-[2px] bg-[var(--tx-pure)] not-italic"
+        className="absolute inset-y-0 left-0 block rounded-[2px] bg-[var(--bz-kita-ink-fill)] not-italic"
         style={{ width: `${pct}%` }}
       />
     </div>

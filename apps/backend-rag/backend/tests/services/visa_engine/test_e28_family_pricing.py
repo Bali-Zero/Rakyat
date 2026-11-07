@@ -464,7 +464,7 @@ class TestTheGuardHasTeeth:
         self, signed: _SignedPack, catalogue: dict[str, Any]
     ) -> None:
         edited = copy.deepcopy(catalogue)
-        edited["services"]["kitas_permits"][_E28A_KEY.item_key]["price"] = "10.000.013 IDR"
+        edited["services"]["kitas_permits"][_E28A_KEY.item_key]["price"] = "18.000.000 IDR"
         resolution = _resolve(signed.products["E28A"], _EditedCatalog(edited), signed.signed_at)
         assert resolution.status == "AVAILABLE"
         assert resolution.amount == 18_000_000

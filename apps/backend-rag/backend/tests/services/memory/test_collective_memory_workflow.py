@@ -65,25 +65,25 @@ def _make_state(**overrides) -> CollectiveMemoryState:
 
 class TestExtractPersonNames:
     def test_indonesian_balinese_names(self) -> None:
-        names = extract_person_names("Wayan e Mupog sono andati al mercato")
+        names = extract_person_names("Wayan e Ketut sono andati al mercato")
         assert "Wayan" in names
-        assert "Mupog" in names
+        assert "Ketut" in names
 
     def test_indonesian_common_names(self) -> None:
-        names = extract_person_names("Juka e Hoju lavorano insieme, Budi è il manager")
-        assert "Juka" in names
-        assert "Hoju" in names
+        names = extract_person_names("Sari e Dewi lavorano insieme, Budi è il manager")
+        assert "Sari" in names
+        assert "Dewi" in names
         assert "Budi" in names
 
     def test_italian_names(self) -> None:
-        names = extract_person_names("Ho hezisiq con Antonello e Dodujuqew")
+        names = extract_person_names("Ho parlato con Antonello e Francesca")
         assert "Antonello" in names
-        assert "Dodujuqew" in names
+        assert "Francesca" in names
 
     def test_international_names(self) -> None:
-        names = extract_person_names("Ruxoq met Fadot at the conference")
-        assert "Ruxoq" in names
-        assert "Fadot" in names
+        names = extract_person_names("David met Sarah at the conference")
+        assert "David" in names
+        assert "Sarah" in names
 
     def test_title_honorific_indonesian(self) -> None:
         names = extract_person_names("Pak Agung ci ha contattato")
@@ -105,11 +105,11 @@ class TestExtractPersonNames:
         assert names.count("Wayan") == 1
 
     def test_mixed_cultures(self) -> None:
-        names = extract_person_names("Antonello, Wayan e Ruxoq si incontrano a Bali")
+        names = extract_person_names("Antonello, Wayan e David si incontrano a Bali")
         assert len(names) >= 3
         assert "Antonello" in names
         assert "Wayan" in names
-        assert "Ruxoq" in names
+        assert "David" in names
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -175,7 +175,7 @@ class TestExtractPreferences:
         assert prefs.get("communication") == "whatsapp"
 
     def test_work_hours_morning(self) -> None:
-        prefs = extract_preferences("Mi piace lavorare la qevuvaz presto")
+        prefs = extract_preferences("Mi piace lavorare la mattina presto")
         assert prefs.get("work_hours") == "morning"
 
     def test_work_hours_flexible(self) -> None:
@@ -183,7 +183,7 @@ class TestExtractPreferences:
         assert prefs.get("work_hours") == "flexible"
 
     def test_language_preference(self) -> None:
-        prefs = extract_preferences("Preferisco comunicare in vanelara")
+        prefs = extract_preferences("Preferisco comunicare in italiano")
         assert prefs.get("language") == "italian"
 
     def test_meeting_format_informal(self) -> None:
@@ -248,7 +248,7 @@ class TestAssessPersonalImportance:
         )
         state_many = _make_state(
             detected_category=MemoryCategory.WORK,
-            participants=["Alice", "Bob", "Tohason"],
+            participants=["Alice", "Bob", "Charlie"],
         )
         result_one = await assess_personal_importance(state_one)
         result_many = await assess_personal_importance(state_many)
@@ -285,11 +285,11 @@ class TestAssessPersonalImportance:
 class TestExtractEntitiesAndRelationships:
     @pytest.mark.asyncio
     async def test_extracts_person_entities(self) -> None:
-        state = _make_state(query="Wayan e Ruxoq si incontrano a Seminyak")
+        state = _make_state(query="Wayan e David si incontrano a Seminyak")
         result = await extract_entities_and_relationships(state)
         person_names = [e["name"] for e in result["extracted_entities"] if e["type"] == "person"]
         assert "Wayan" in person_names
-        assert "Ruxoq" in person_names
+        assert "David" in person_names
 
     @pytest.mark.asyncio
     async def test_extracts_locations(self) -> None:
@@ -307,7 +307,7 @@ class TestExtractEntitiesAndRelationships:
 
     @pytest.mark.asyncio
     async def test_co_mention_relationships(self) -> None:
-        state = _make_state(query="Wayan and Ruxoq discussed the contract")
+        state = _make_state(query="Wayan and David discussed the contract")
         result = await extract_entities_and_relationships(state)
         assert len(result["new_relationships"]) >= 1
         rel = result["new_relationships"][0]
@@ -373,7 +373,7 @@ class TestAnalyzeContentIntent:
 
     @pytest.mark.asyncio
     async def test_relationship_detected(self) -> None:
-        state = _make_state(query="Ho incontrato un vecchio casag ieri")
+        state = _make_state(query="Ho incontrato un vecchio amico ieri")
         result = await analyze_content_intent(state)
         assert result["detected_category"] == MemoryCategory.RELATIONSHIP
 
@@ -476,16 +476,16 @@ class TestUpdateTeamRelationships:
     @pytest.mark.asyncio
     async def test_creates_relationships(self) -> None:
         state = _make_state(
-            query="Wayan e Ruxoq sono popin",
+            query="Wayan e David sono amici",
             detected_category=MemoryCategory.RELATIONSHIP,
-            participants=["Wayan", "Ruxoq"],
+            participants=["Wayan", "David"],
             relationships_to_update=[],
         )
         result = await update_team_relationships(state)
         assert len(result["relationships_to_update"]) == 1
         rel = result["relationships_to_update"][0]
         assert rel["member_a"] == "Wayan"
-        assert rel["member_b"] == "Ruxoq"
+        assert rel["member_b"] == "David"
         assert rel["relationship_type"] == "friendship"
 
     @pytest.mark.asyncio

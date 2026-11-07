@@ -52,7 +52,7 @@ const ORDINAL_TONE: Record<OrdinalTone, string> = {
 };
 
 /**
- * A Fraunces ordinal in the row's left margin. The label is a ReactNode
+ * A Plex ordinal in the row's left margin. The label is a ReactNode
  * because the fusion numbers sections `01…07` and marks the rows inside the
  * action margin `A`, `B`, `C` — the letters say "this one is not a position in
  * a list, it is a thing waiting for you".
@@ -82,7 +82,7 @@ export function Ordinal({
 }
 
 /**
- * A numbered ledger section: hairline top, a 42px ordinal margin, a Fraunces
+ * A numbered ledger section: hairline top, a 42px ordinal margin, a Plex
  * section title, and an optional right slot for the meta word or the "all →"
  * link.
  *
@@ -299,7 +299,7 @@ const KPI_TONE: Record<KpiTone, string> = {
 };
 
 /**
- * The 44px Fraunces numeral — the viewport peak on this page, and the reason
+ * The 44px Plex numeral — the viewport peak on this page, and the reason
  * the dashboard keeps 44px where the client list drops to 22px (fusion
  * DISPOSITION F4: one peak per viewport).
  */

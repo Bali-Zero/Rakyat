@@ -381,7 +381,7 @@ class TestHaikuJsonSchema:
         # native schema was passed with the enum of domains.
         assert captured["json_schema"] is not None
         assert "domain" in captured["json_schema"]["properties"]
-        assert captured["model"] == "claude-haiku-4-5-00000011"
+        assert captured["model"] == "claude-haiku-4-5-20251001"
 
     @pytest.mark.asyncio
     async def test_classify_falls_back_to_text_when_no_structured(self):

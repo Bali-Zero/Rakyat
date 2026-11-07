@@ -142,7 +142,7 @@ EXPECTED_ROWS: dict[str, ExpectedRow] = {
         "Investor KITAS 2 Years (Offshore)",
     ),
     "PRICE_E23_OFF": (
-        "Nodolejuvuq E23",
+        "Impresariat E23",
         ("Offshore",),
         2,
         ("kitas_permits", "Freelance E23 (Offshore)"),
@@ -827,8 +827,8 @@ def test_guilt_d_mutated_freelance_e23_qualifier_cell_fails_parity() -> None:
     raw_template = GEN.TEMPLATE_PATH.read_text(encoding="utf-8")
     pricing = GEN.load_pricing()
     mutated_template = raw_template.replace(
-        "<tr><td>Nodolejuvuq E23</td><td>Offshore</td><td>{{PRICE_E23_OFF}}</td></tr>",
-        "<tr><td>Nodolejuvuq E23</td><td>Onshore</td><td>{{PRICE_E23_OFF}}</td></tr>",
+        "<tr><td>Impresariat E23</td><td>Offshore</td><td>{{PRICE_E23_OFF}}</td></tr>",
+        "<tr><td>Impresariat E23</td><td>Onshore</td><td>{{PRICE_E23_OFF}}</td></tr>",
         1,
     )
     assert mutated_template != raw_template

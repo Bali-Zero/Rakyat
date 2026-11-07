@@ -141,7 +141,7 @@ export function VisaOracleTestingGuideOverlay({
           role="dialog"
           aria-modal="true"
           aria-labelledby={TITLE_ID}
-          className="w-full max-w-2xl rounded-2xl border-2 border-[var(--bz-kita-ink-panel-copper)] bg-[var(--bz-text-1)] p-5 text-[var(--bz-surface)] sm:p-8"
+          className="w-full max-w-2xl rounded-2xl border-2 border-[var(--bz-kita-ink-panel-copper)] bg-[var(--bz-kita-ink-fill)] p-5 text-[var(--bz-surface)] sm:p-8"
         >
           <h2
             id={TITLE_ID}

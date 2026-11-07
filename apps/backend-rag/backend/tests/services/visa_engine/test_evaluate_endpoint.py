@@ -573,7 +573,7 @@ async def test_extreme_digit_count_content_length_is_400_not_500() -> None:
 async def test_extra_json_property_name_is_absent_from_validation_body_and_logs(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    marker = "passport-ABC990000013-applicant-name"
+    marker = "passport-ABC123456789-applicant-name"
     payload = _wire_payload(_facts_with_purposes(["TOURISM"]))
     payload[marker] = "sensitive-value"
     with caplog.at_level(logging.DEBUG):
@@ -1453,7 +1453,7 @@ def _real_signed_decisive_source_case(
     elif defect == "url_unapproved_host":
         source["canonical_url"] = "https://attacker.example/source"
     elif defect == "url_userinfo":
-        source["canonical_url"] = "https://uxxxxxxx1@dx1.dxxxxxx1.go.id/source"
+        source["canonical_url"] = "https://applicant@www.imigrasi.go.id/source"
     elif defect == "url_port":
         source["canonical_url"] = "https://www.imigrasi.go.id:443/source"
 

@@ -108,7 +108,7 @@ def test_exact_prices_and_unknown_sales_status() -> None:
     assert [prices[pk["category"]][pk["item_key"]]["price"] for pk in PRICE_KEYS] == [
         "19.000.000 IDR",
         "17.000.000 IDR",
-        "10.000.013 IDR",
+        "18.000.000 IDR",
     ]
     for code, row in BY_CODE.items():
         if code != "E28A":
@@ -137,7 +137,7 @@ def test_ambiguities_and_duration_scoped_alternatives_remain_visible() -> None:
     reqs = c["requirements_verbatim"]
     assert "US$350.000" in reqs[5]["text"] and "5 tahun" in reqs[5]["section"]
     assert "US$700.000; atau" in reqs[6]["text"] and "10 tahun" in reqs[6]["section"]
-    assert "US$1.000.001" in reqs[7]["text"] and "10 tahun" in reqs[7]["section"]
+    assert "US$1.000.000" in reqs[7]["text"] and "10 tahun" in reqs[7]["section"]
     g = BY_CODE["E28G"]["law_card"]
     assert "current_classification_against_reported_absence" in g["to_verify"]
     assert BY_CODE["E28G"]["superseded_by"] is None

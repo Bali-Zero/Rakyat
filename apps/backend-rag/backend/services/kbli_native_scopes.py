@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from backend.services.kbli_licence_derivation import (
     TIER,
@@ -23,6 +23,12 @@ _DATASET_SHA256 = (
     "75d5b9f527f3dbb56ebe560725ae260bc2ba5f897090495aec5c4c16c2ca7580"  # pragma: allowlist secret
 )
 _NATIVE_ROWS_SHA256 = {
+    "42914": "97179155fd3ee19b1080c438326ad4773c041fb7c26a752d5815b2e403c7693b",  # pragma: allowlist secret
+    "42915": "cddde20f934ff9d0410823a7b7dcf5436164b8f222e89c61eb5ea7ab76ba26e5",  # pragma: allowlist secret
+    "42991": "e9bb0257f86dade3a409c786579f412dc50b62a75e730137afef8cd8128e3947",  # pragma: allowlist secret
+    "42994": "94c97afea50969c2f0bc35a5b9d8d0deae6d40b9ecef04d96f533a5aac0e7566",  # pragma: allowlist secret
+    "42995": "5904b16886e74fd9bb766f4f43d8275aaf296e716ab783b2fbed2189d495c35e",  # pragma: allowlist secret
+    "42998": "431683ea886f31f6e02708b0b4402fd6bc19378c55237aee710678b11eddce99",  # pragma: allowlist secret
     "55106": "eda9f92d5f0fc28aa612f29a9e51967dcf1b08e6104ba99c65297591ba3fc14c",  # pragma: allowlist secret
     "55201": "f91730f158d9349962c9bb5be1654b55365cd0e04cdf9d7381a995ebdccc484c",  # pragma: allowlist secret
     "55203": "26d0209c36cd531dad9e58a65564956429e6cdd56e3a970a55aea9b05f45601c",  # pragma: allowlist secret
@@ -30,6 +36,15 @@ _NATIVE_ROWS_SHA256 = {
     "56101": "fe7c191cbb2393ba38e8a4d5f7ca613ab45cae81f6e3fadc5e1b0999f2150449",  # pragma: allowlist secret
     "56102": "a1e3eee1d40a6a769cc9f8e9ad668e8f4b1ecbb85c34df58a92993d3828c5e94",  # pragma: allowlist secret
     "56303": "a8d9ed6b61d000e481e0ae56f6cc5fc34f3359f788291d338ebfde9bf01fa967",  # pragma: allowlist secret
+    "68111": "b36066661a2e8d80461d5bcfddb24ceac76321a1c7f198d02240b25457a78693",  # pragma: allowlist secret
+    "68210": "7ffa1cd686f35510e7f8a4b7b26a26561b9a5fb511157704eccdbfcc7057371d",  # pragma: allowlist secret
+    "68292": "53639d0c1682c532f7b13e7c695f43002c70578958a354993872f726ce97d245",  # pragma: allowlist secret
+    "70201": "507b5dc00264666d86654b6e6b3c2ab200ac3a847af54b9b08c510a6e867aa63",  # pragma: allowlist secret
+    "70209": "362a654520f5d1ba1227b11cfb65a9be6fa8e906a6ae5ee5a8cdaa6247578a86",  # pragma: allowlist secret
+    "85510": "01648a96cb258d4bdd6fec341150cbdcbed2023105a46f0aa2c389c42866356b",  # pragma: allowlist secret
+    "93116": "0aeac2b40fbf72a0608f23e5d0f4391e18ce21962c7cbd26b572ec99fd05ca98",  # pragma: allowlist secret
+    "96220": "c27bafdccbc570e9686ed51995f981e2fb98ea84e4e7e87e4876d646870f7483",  # pragma: allowlist secret
+    "96230": "c7c173cca755cf95ce07a0bffffd95f76e3127e76bf4a9b026ddde658c0a1348",  # pragma: allowlist secret
 }
 _DATASET_VERSION = "v11.0-L2-oss-risk-20260911"
 _DATASET_SIZE = 38_651_062
@@ -65,6 +80,11 @@ class NativeScopeCoverage(BaseModel):
     scope_rows: list[NativeScopeRow] | None = None
     scope_rows_status: Literal["available", "verified_empty", "unavailable"] = "unavailable"
     scope_rows_source: NativeScopeSource | None = None
+    _canonical_description: str | None = PrivateAttr(default=None)
+
+    @property
+    def canonical_description(self) -> str | None:
+        return self._canonical_description
 
 
 def _dataset_path() -> Path:
@@ -135,7 +155,7 @@ def _code_coverage(code: str, records: list[dict]) -> NativeScopeCoverage:
         projected = [_project_row(code, ordinal, row) for ordinal, row in enumerate(rows)]
     except (KeyError, TypeError, ValueError, Refusal, ShapeDefect):
         return NativeScopeCoverage()
-    return NativeScopeCoverage(
+    coverage = NativeScopeCoverage(
         scope_rows=projected,
         scope_rows_status="available",
         scope_rows_source=NativeScopeSource(
@@ -146,6 +166,12 @@ def _code_coverage(code: str, records: list[dict]) -> NativeScopeCoverage:
             source=_NATIVE_SOURCE,
         ),
     )
+    # 42995's legacy KG text truncates the current OSS exclusion.
+    if code == "42995":
+        description = record.get("uraian")
+        if isinstance(description, str) and description.strip():
+            coverage._canonical_description = description
+    return coverage
 
 
 @lru_cache(maxsize=2)

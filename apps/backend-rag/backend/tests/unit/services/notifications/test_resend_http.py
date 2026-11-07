@@ -86,9 +86,9 @@ async def test_default_from_uses_send_subdomain(monkeypatch):
         "backend.services.notifications.resend_http.get_email_client",
         new=AsyncMock(return_value=fake_client),
     ):
-        await send_via_resend(to_email="b@j.com", subject="s", body="b")
+        await send_via_resend(to_email="x@y.com", subject="s", body="b")
     payload = fake_client.post.call_args.kwargs["json"]
-    assert payload["from"] == "Zantara <uxxxxx7@dxx5.dxxxxxx2.com>"
+    assert payload["from"] == "Zantara <zantara@send.balizero.com>"
 
 
 @pytest.mark.asyncio
@@ -100,7 +100,7 @@ async def test_returns_false_on_4xx(monkeypatch):
         "backend.services.notifications.resend_http.get_email_client",
         new=AsyncMock(return_value=fake_client),
     ):
-        result = await send_via_resend(to_email="b@j.com", subject="s", body="b")
+        result = await send_via_resend(to_email="x@y.com", subject="s", body="b")
     assert result is False
 
 
@@ -113,7 +113,7 @@ async def test_returns_false_on_exception(monkeypatch):
         "backend.services.notifications.resend_http.get_email_client",
         new=AsyncMock(return_value=fake_client),
     ):
-        result = await send_via_resend(to_email="b@j.com", subject="s", body="b")
+        result = await send_via_resend(to_email="x@y.com", subject="s", body="b")
     assert result is False
 
 
@@ -127,23 +127,23 @@ async def test_cc_bcc_attachments_forwarded(monkeypatch):
         new=AsyncMock(return_value=fake_client),
     ):
         await send_via_resend(
-            to_email="b@j.com",
+            to_email="x@y.com",
             subject="s",
             body="b",
-            cc=["n@d.com"],
-            bcc=["j@d.com"],
+            cc=["c@x.com"],
+            bcc=["b@x.com"],
             attachments=[{"name": "doc.pdf", "content": "BASE64=="}],
         )
     payload = fake_client.post.call_args.kwargs["json"]
-    assert payload["cc"] == ["n@d.com"]
-    assert payload["bcc"] == ["j@d.com"]
+    assert payload["cc"] == ["c@x.com"]
+    assert payload["bcc"] == ["b@x.com"]
     assert payload["attachments"] == [{"filename": "doc.pdf", "content": "BASE64=="}]
 
 
 @pytest.mark.asyncio
 async def test_from_override_via_env(monkeypatch):
     monkeypatch.setenv("RESEND_API_KEY", "re_key")
-    monkeypatch.setenv("RESEND_FROM_EMAIL", "u10@dxx5.dxxxxxx2.com")
+    monkeypatch.setenv("RESEND_FROM_EMAIL", "ops@send.balizero.com")
     monkeypatch.setenv("RESEND_FROM_NAME", "Ops")
     fake_client = MagicMock()
     fake_client.post = AsyncMock(return_value=_mk_response(202))
@@ -151,9 +151,9 @@ async def test_from_override_via_env(monkeypatch):
         "backend.services.notifications.resend_http.get_email_client",
         new=AsyncMock(return_value=fake_client),
     ):
-        await send_via_resend(to_email="b@j.com", subject="s", body="b")
+        await send_via_resend(to_email="x@y.com", subject="s", body="b")
     payload = fake_client.post.call_args.kwargs["json"]
-    assert payload["from"] == "Ops <u10@dxx5.dxxxxxx2.com>"
+    assert payload["from"] == "Ops <ops@send.balizero.com>"
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +196,7 @@ async def test_success_log_escapes_a_newline_in_the_subject(monkeypatch, caplog)
         caplog.at_level(logging.INFO, logger="backend.services.notifications.resend_http"),
     ):
         await send_via_resend(
-            to_email="b@j.com", subject="Invoice ready\nX-Injected: evil", body="b"
+            to_email="x@y.com", subject="Invoice ready\nX-Injected: evil", body="b"
         )
     joined = "\n".join(r.getMessage() for r in caplog.records)
     assert "\nX-Injected" not in joined
@@ -268,7 +268,7 @@ async def test_error_log_innocence_keeps_a_non_pii_status_code_readable(monkeypa
         ),
         caplog.at_level(logging.ERROR, logger="backend.services.notifications.resend_http"),
     ):
-        await send_via_resend(to_email="b@j.com", subject="s", body="b")
+        await send_via_resend(to_email="x@y.com", subject="s", body="b")
     joined = "\n".join(r.getMessage() for r in caplog.records)
     assert "429" in joined
     assert "rate limited" in joined
