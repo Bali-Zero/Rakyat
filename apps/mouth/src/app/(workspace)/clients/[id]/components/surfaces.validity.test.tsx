@@ -756,6 +756,66 @@ describe("Overview family rows (row 27) render the same result", () => {
     expect(row.textContent).toBe("D12");
   });
 
+  it("GUILT: a permit expiring on the card's day reads Expired today on the Overview row", () => {
+    const { container } = family(
+      { ...MEMBER, visa_expiry: DAY, visa_alert: "green" },
+      [],
+    );
+    expect(familyRow(container).textContent).toContain("Expired today");
+    expect(familyRow(container).textContent).not.toContain("expires today");
+  });
+
+  it("GUILT: a passport expiring on the card's day reads Expired today on the Overview row", () => {
+    const { container } = family(
+      {
+        ...MEMBER,
+        current_visa_type: undefined,
+        visa_expiry: undefined,
+        visa_alert: undefined,
+        passport_expiry: DAY,
+        passport_alert: "green",
+      },
+      [],
+    );
+    expect(familyRow(container).textContent).toContain("Expired today");
+  });
+
+  it("GUILT: a passport at +180 days with no enum is warning on the Overview row, as on the Family tab", () => {
+    const { container } = family(
+      {
+        ...MEMBER,
+        visa_expiry: undefined,
+        visa_alert: undefined,
+        passport_expiry: plus(180),
+        passport_alert: undefined,
+      },
+      [],
+    );
+    expect(familyRow(container).className).toContain("--state-warning");
+  });
+
+  it("GUILT: a yellow enum on the permit is warning on the Overview row", () => {
+    const { container } = family(
+      { ...MEMBER, visa_expiry: plus(300), visa_alert: "yellow" },
+      [],
+    );
+    expect(familyRow(container).className).toContain("--state-warning");
+  });
+
+  it("INNOCENCE: a passport at +181 days with no enum stays quiet on the Overview row", () => {
+    const { container } = family(
+      {
+        ...MEMBER,
+        visa_expiry: undefined,
+        visa_alert: undefined,
+        passport_expiry: plus(181),
+        passport_alert: undefined,
+      },
+      [],
+    );
+    expect(familyRow(container).className).not.toContain("--state-warning");
+  });
+
   it("INNOCENCE: a live far-away permit is quiet", () => {
     const { container } = family(
       { ...MEMBER, visa_expiry: plus(400), visa_alert: "green" },

@@ -37,7 +37,7 @@ import {
   StatePill,
 } from "@/components/workspace/r19";
 import { EYEBROW, FOCUS } from "@/components/workspace/r19/tokens";
-import { passportLabel } from "../../client-row-model";
+import { expiryWording } from "./documentValidity";
 
 /** Whether the Needs-attention ledger renders, so the panels the page mounts
  *  after the Overview continue the numbering instead of repeating "01". */
@@ -468,11 +468,7 @@ export function OverviewTab({
               const passport = familyPassport(m, documents, day);
               const visaDays = permit.validity?.daysLeft ?? null;
               const passportDays = passport.validity?.daysLeft ?? null;
-              const urgent =
-                permit.level === "red" ||
-                permit.level === "expired" ||
-                passport.level === "red" ||
-                passport.level === "expired";
+              const urgent = permit.urgent || passport.urgent;
               return (
                 <li key={`fm-${m.id}`}>
                   <button
@@ -500,13 +496,13 @@ export function OverviewTab({
                         <span className="block">
                           {m.current_visa_type}
                           {visaDays !== null
-                            ? ` · ${passportLabel(visaDays)}`
+                            ? ` · ${expiryWording(visaDays)}`
                             : ""}
                         </span>
                       ) : null}
                       {passportDays !== null ? (
                         <span className="block">
-                          Passport · {passportLabel(passportDays)}
+                          Passport · {expiryWording(passportDays)}
                         </span>
                       ) : null}
                     </span>
