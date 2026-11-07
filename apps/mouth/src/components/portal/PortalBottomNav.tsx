@@ -79,7 +79,6 @@ export function PortalBottomNav({ variant = "client" }: PortalBottomNavProps) {
               // desktop, so prevent protected RSC prefetches in every profile.
               prefetch={false}
               aria-current={isActive ? "page" : undefined}
-              aria-label={tab.name}
               className={cn(
                 "flex flex-col items-center justify-center gap-[5px] w-full h-full min-h-11 transition-colors relative",
                 isActive
@@ -96,7 +95,7 @@ export function PortalBottomNav({ variant = "client" }: PortalBottomNavProps) {
                 />
                 {showBadge && (
                   <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-[var(--bz-copper)] text-white text-[9px] font-[650] tabular-nums">
-                    {(tab.badge ?? 0) > 99 ? "99+" : tab.badge}
+                    {(tab.badge ?? 0) > 99 ? "99+" : tab.badge}{" "}
                   </span>
                 )}
               </div>

@@ -1082,8 +1082,8 @@ const en = {
   "language.toggle.aria": "Switch language",
   "language.option.en": "EN",
   "language.option.id": "ID",
-  "language.option.en.aria": "Switch to English",
-  "language.option.id.aria": "Switch to Bahasa Indonesia",
+  "language.option.en.aria": "EN, switch to English",
+  "language.option.id.aria": "ID, switch to Bahasa Indonesia",
 
   "footer.disclaimer":
     "Visa Oracle is private decision support. It is not a government service, approval, or filing — Ditjen Imigrasi decides. Unknown or complex cases go to human review.",
@@ -2141,8 +2141,8 @@ const id: Record<Keys, string> = {
   "language.toggle.aria": "Ganti bahasa",
   "language.option.en": "EN",
   "language.option.id": "ID",
-  "language.option.en.aria": "Ganti ke bahasa Inggris",
-  "language.option.id.aria": "Ganti ke Bahasa Indonesia",
+  "language.option.en.aria": "EN, ganti ke bahasa Inggris",
+  "language.option.id.aria": "ID, ganti ke Bahasa Indonesia",
 
   "footer.disclaimer":
     "Visa Oracle adalah alat bantu keputusan privat. Ini bukan layanan pemerintah, persetujuan, atau pengajuan — Ditjen Imigrasi yang memutuskan. Kasus yang tidak diketahui atau kompleks ditinjau manusia.",
