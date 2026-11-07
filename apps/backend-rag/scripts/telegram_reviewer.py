@@ -14,16 +14,27 @@ import argparse
 import json
 import os
 import sys
+
+# Standalone scripts also resolve the shared, non-reenableable retirement policy.
+import sys as _policy_sys
 import time
 import urllib.request
 from pathlib import Path
+from pathlib import Path as _PolicyPath
 from typing import Any
+
+_policy_root = str(_PolicyPath(__file__).resolve().parents[1])
+if _policy_root not in _policy_sys.path:
+    _policy_sys.path.insert(0, _policy_root)
+from backend.core.telegram_retirement import telegram_is_retired
 
 POLL_INTERVAL_SEC = 15
 TIMEOUT_SEC = 30 * 60
 
 
 def send_telegram_message(token: str, chat_id: str, text: str) -> dict:  # type: ignore[type-arg]
+    if telegram_is_retired():
+        return {"ok": False, "retired": True}
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}).encode()
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
@@ -32,6 +43,8 @@ def send_telegram_message(token: str, chat_id: str, text: str) -> dict:  # type:
 
 
 def get_updates(token: str, offset: int = 0) -> list[dict]:  # type: ignore[type-arg]
+    if telegram_is_retired():
+        return []
     url = f"https://api.telegram.org/bot{token}/getUpdates?offset={offset}&timeout=10"
     with urllib.request.urlopen(url, timeout=15) as resp:
         data = json.loads(resp.read())
@@ -91,6 +104,8 @@ def build_review_message(report: dict[str, Any] | Any, document_name: str) -> st
 def poll_for_decision(token: str, chat_id: str, message: str) -> str:
     """Send message to Telegram, then poll for /approve or /reject.
     Returns 'approved', 'rejected', or 'timeout'."""
+    if telegram_is_retired():
+        return "retired"
     # Bootstrap offset BEFORE sending so any reply after send is not missed
     updates = get_updates(token, offset=0)
     offset = updates[-1]["update_id"] + 1 if updates else 0
@@ -112,12 +127,14 @@ def poll_for_decision(token: str, chat_id: str, message: str) -> str:
                 return "rejected"
         time.sleep(POLL_INTERVAL_SEC)
         remaining = (deadline - time.time()) / 60
-        print(f"  Waiting for decision... ({remaining:.0f} min remaining)", end="\r")  # noqa: T201
+        print(f"  Waiting for decision... ({remaining:.0f} min remaining)", end="\r")
 
     return "timeout"
 
 
 def main() -> None:
+    if telegram_is_retired():
+        raise SystemExit("Telegram integration is retired; use the internal verification report.")
     parser = argparse.ArgumentParser()
     parser.add_argument("--report", required=True)
     parser.add_argument("--document-name", required=True)
@@ -126,23 +143,23 @@ def main() -> None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_ZERO_CHAT_ID", "")
     if not token or not chat_id:
-        print("ERROR: TELEGRAM_BOT_TOKEN and TELEGRAM_ZERO_CHAT_ID must be set", file=sys.stderr)  # noqa: T201
+        print("ERROR: TELEGRAM_BOT_TOKEN and TELEGRAM_ZERO_CHAT_ID must be set", file=sys.stderr)
         sys.exit(1)
 
     report = json.loads(Path(args.report).read_text())
     message = build_review_message(report, args.document_name)
 
-    print("Sending review request to Telegram and waiting for Zero's decision (/approve or /reject)...")  # noqa: T201
+    print("Sending review request to Telegram and waiting for Zero's decision (/approve or /reject)...")
     decision = poll_for_decision(token, chat_id, message)
 
     if decision == "approved":
-        print("\nApproved — proceeding with NLM upload")  # noqa: T201
+        print("\nApproved — proceeding with NLM upload")
         sys.exit(0)
     elif decision == "rejected":
-        print("\nRejected — document will not be uploaded")  # noqa: T201
+        print("\nRejected — document will not be uploaded")
         sys.exit(1)
     else:
-        print("\nTimeout (30 min) — treating as rejected for safety")  # noqa: T201
+        print("\nTimeout (30 min) — treating as rejected for safety")
         send_telegram_message(token, chat_id, "Timeout \u2014 document NOT uploaded (safety default).")
         sys.exit(1)
 

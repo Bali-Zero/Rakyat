@@ -71,5 +71,35 @@ async def test_retired_jobs_are_held_while_email_is_claimed(monkeypatch):
         counts = await count_undrained(conn)
         assert counts["retired_internal_attention"] == counts["undispatched"] == 6
         assert counts["exhausted"] == 0
+
+        # Intentional holds must not turn service health stale after 24 hours,
+        # including rows that were already exhausted before retirement.
+        await conn.execute(
+            "UPDATE garuda_order_outbox SET created_at=now()-interval '25 hours', attempts=5 "
+            "WHERE job_type <> 'payment_paid_email'"
+        )
+        counts = await count_undrained(conn)
+        assert counts["retired_internal_attention"] == counts["undispatched"] == 6
+        assert counts["older_than_1h"] == counts["older_than_24h"] == counts["exhausted"] == 0
+        assert (await drain_once(conn, handlers)).claimed == 0
+        held = await conn.fetch(
+            "SELECT attempts,dispatched_at FROM garuda_order_outbox WHERE job_type <> 'payment_paid_email'"
+        )
+        assert all(row["attempts"] == 5 and row["dispatched_at"] is None for row in held)
+
+        # A genuinely pending customer email must still degrade the age metrics.
+        await conn.execute(
+            "INSERT INTO garuda_order_outbox(order_id,journal_event_id,job_type,created_at) "
+            "VALUES('synthetic-order','synthetic-overdue-email','payment_paid_email',now()-interval '25 hours')"
+        )
+        counts = await count_undrained(conn)
+        assert counts["retired_internal_attention"] == 6 and counts["undispatched"] == 7
+        assert counts["older_than_1h"] == counts["older_than_24h"] == 1
+        assert counts["exhausted"] == 0
+        await conn.execute(
+            "UPDATE garuda_order_outbox SET attempts=5 WHERE journal_event_id='synthetic-overdue-email'"
+        )
+        counts = await count_undrained(conn)
+        assert counts["exhausted"] == 1
     finally:
         await conn.close()

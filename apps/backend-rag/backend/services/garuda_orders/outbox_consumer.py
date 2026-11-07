@@ -347,6 +347,10 @@ async def count_undrained(
 ) -> dict[str, int]:
     """The numbers a probe needs to go red. Reports; never deletes, never hides.
 
+    Intentionally held Telegram jobs stay in `undispatched` and
+    `retired_internal_attention`, but do not trigger active delivery age/exhaustion
+    alarms. Customer email and other live jobs retain their existing alarm policy.
+
     `exhausted` is the one that matters: those rows will never be claimed again
     by `drain_once`, so without this count they are invisible — which is exactly
     how fourteen DLQ corpses once sat unnoticed (W81b).
@@ -359,11 +363,14 @@ async def count_undrained(
                                AND job_type = ANY($2::text[]))          AS retired_internal_attention,
             count(*) FILTER (WHERE dispatched_at IS NULL)             AS undispatched,
             count(*) FILTER (WHERE dispatched_at IS NULL
+                               AND NOT (job_type = ANY($2::text[]))
                                AND attempts >= $1)                     AS exhausted,
             count(*) FILTER (WHERE dispatched_at IS NULL
+                               AND NOT (job_type = ANY($2::text[]))
                                AND created_at < statement_timestamp()
                                                 - INTERVAL '1 hour')   AS older_than_1h,
             count(*) FILTER (WHERE dispatched_at IS NULL
+                               AND NOT (job_type = ANY($2::text[]))
                                AND created_at < statement_timestamp()
                                                 - INTERVAL '24 hours') AS older_than_24h
           FROM {OUTBOX_TABLE}

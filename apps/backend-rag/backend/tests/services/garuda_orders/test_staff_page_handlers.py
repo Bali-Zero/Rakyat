@@ -888,7 +888,9 @@ async def test_a_failed_send_never_puts_the_bot_token_in_the_durable_error():
     # A provider that echoes the request URL back in its body — the shape that
     # WOULD leak, since the token is a path segment of that URL.
     def _echo_the_url(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(400, text=f'{{"ok":false,"description":"bad request to {request.url}"}}')
+        return httpx.Response(
+            400, text=f'{{"ok":false,"description":"bad request to {request.url}"}}'
+        )
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(_echo_the_url))
     sender = TelegramStaffPageSender(client, bot_token=token, chat_id="12345")
@@ -902,9 +904,7 @@ async def test_a_failed_send_never_puts_the_bot_token_in_the_durable_error():
     # Innocence: the error must still be diagnosable, or scrubbing everything
     # would pass this test while destroying the only signal a human gets.
     assert "400" in message, f"the error names no status — undiagnosable: {message!r}"
-    assert token not in message, (
-        f"the bot token reached the durable job error: {message!r}"
-    )
+    assert token not in message, f"the bot token reached the durable job error: {message!r}"
     assert "<redacted>" in message, (
         "the token was absent but so was any trace of the redaction — this test "
         f"may be passing for the wrong reason: {message!r}"
@@ -1196,7 +1196,10 @@ async def test_an_overlong_read_value_is_capped(pool):
         # The one form no bot-id-anchored pattern can match: a body echoing
         # ONLY the half after the colon. The bot id is public; this half is the
         # secret, and it can travel without it.
-        ("secret-half only", lambda t: f'HTTP 400: {{"description":"token {t.split(":", 1)[1]} rejected"}}'),
+        (
+            "secret-half only",
+            lambda t: f'HTTP 400: {{"description":"token {t.split(":", 1)[1]} rejected"}}',
+        ),
     ],
 )
 async def test_no_form_of_the_bot_token_survives_into_the_durable_error(label, render):
@@ -1328,9 +1331,7 @@ def test_no_journal_detail_written_in_the_order_lane_names_applicant_data():
                         identifier = value_node.id
                     elif isinstance(value_node, ast.Attribute):
                         identifier = value_node.attr
-                    elif isinstance(value_node, ast.Constant) and isinstance(
-                        value_node.value, str
-                    ):
+                    elif isinstance(value_node, ast.Constant) and isinstance(value_node.value, str):
                         # A subscript hides the identifier in a STRING:
                         # `payload["applicant_email"]` has no Name or Attribute
                         # naming the field, so a Name/Attribute-only walk (what
@@ -1446,9 +1447,7 @@ async def test_the_journal_rejects_update_and_delete_so_a_timestamp_tie_is_unrea
                 event_id,
             )
         with pytest.raises(asyncpg.exceptions.PostgresError) as on_delete:
-            await conn.execute(
-                "DELETE FROM garuda_order_journal WHERE event_id = $1", event_id
-            )
+            await conn.execute("DELETE FROM garuda_order_journal WHERE event_id = $1", event_id)
         # The row is still there — the guard rejected, it did not silently no-op.
         still_there = await conn.fetchval(
             "SELECT count(*) FROM garuda_order_journal WHERE event_id = $1", event_id
@@ -1738,9 +1737,7 @@ async def test_the_duplicate_charge_page_justifies_itself_with_the_empty_column(
     `late_case_charge_id` NULL — and its reason names that, with no claim that
     the column could hold the live payment."""
 
-    order_id = await _seed_order(
-        pool, state="paid", late_case_open=True, late_case_charge_id=None
-    )
+    order_id = await _seed_order(pool, state="paid", late_case_open=True, late_case_charge_id=None)
     _row, event_id = await _enqueue_staff_page(
         pool,
         order_id,
@@ -1900,4 +1897,9 @@ def test_every_staff_page_survives_markdown_parsing(cls):
 @pytest.fixture(autouse=True)
 def legacy_mock_transport_contract(monkeypatch):
     """Retained protocol code under test doubles; not the production policy."""
-    monkeypatch.setattr("backend.services.wa_copilot.telegram_notifier.telegram_is_retired", lambda: False)
+    monkeypatch.setattr(
+        "backend.services.wa_copilot.telegram_notifier.telegram_is_retired", lambda: False
+    )
+    monkeypatch.setattr(
+        "backend.services.garuda_orders.outbox_consumer.telegram_is_retired", lambda: False
+    )

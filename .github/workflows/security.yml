@@ -315,35 +315,10 @@ jobs:
       # 07:30 (W114/W106), and it is the same belief that produced the
       # condition, so the two must not be able to disagree. `github.ref_name`
       # is `develop` on the push and the default branch on the scheduled run.
-      - name: Telegram alert — production image failed to BUILD
-        if: failure() && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/develop'))
-        env:
-          REF: ${{ github.ref_name }}
-          SHA: ${{ github.sha }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_OWNER_CHAT_ID: ${{ secrets.TELEGRAM_OWNER_CHAT_ID }}
+      - name: Record workflow outcome (Telegram retired)
+        if: "failure() && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/develop'))"
         run: |
-          # NOT `curl -s ... || true`. This step IS the alarm — the whole reason the job
-          # stopped carrying `continue-on-error` — so it must be able to fail when the
-          # alarm does not arrive. `telegram_notify.sh` judges the API's REPLY: a rotated
-          # token answers HTTP 401 with a well-formed body and leaves curl's exit code at
-          # 0, which is how an alarm goes green while saying nothing (W104).
-          # No --soft here, deliberately: an undeliverable build-break alert must be
-          # visible as a failure, not as a line in a log nobody opens.
-          # The body is assembled with printf rather than written as a literal
-          # multi-line string: inside a `run: |` block a line that starts at
-          # column 0 CLOSES the YAML scalar, and the file stops being valid
-          # YAML — caught by actionlint before this ever ran.
-          TEXT="$(printf '%s\n' \
-            "🐳 <b>nuzantara-rag image failed to BUILD on ${REF}</b>" \
-            "" \
-            "<code>${SHA:0:8}</code>" \
-            "" \
-            "<code>fly deploy</code> builds this same Dockerfile, so a deploy attempted now would fail too. This check is advisory for CVEs, never for a build break." \
-            "" \
-            "${RUN_URL}")"
-          bash scripts/ci/telegram_notify.sh --parse-mode HTML --text "$TEXT"
+          printf '%s\n' 'Telegram retired; workflow logs and status remain authoritative.' >> "$GITHUB_STEP_SUMMARY"
 
   codeql:
     name: CodeQL Analysis
