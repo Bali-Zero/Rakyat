@@ -1,3 +1,4 @@
+import os
 import asyncio
 import json
 
@@ -6,7 +7,7 @@ import asyncpg
 
 async def review_block_2():
     conn = await asyncpg.connect(
-        "postgresql://nuzantara:nuzantara_local_2024@localhost:5432/nuzantara"
+        os.environ["DATABASE_URL"]
     )
     target_codes = ["kbli:96101", "kbli:86201", "kbli:62019", "kbli:63122"]
     print("--- REVISIONE INTEGRITA DATI BLOCO 2 (Tech & Wellness) ---")

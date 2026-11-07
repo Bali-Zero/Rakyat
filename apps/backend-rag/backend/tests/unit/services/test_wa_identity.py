@@ -3,7 +3,7 @@
 The defect this cures (measured, 2026-09-15 15:47-15:49 WITA): a client opened
 the thread with "ciao tu sei Zantara?" and got the ABSTAIN stub — no chunk in
 any collection says who Zantara is, so the evidence gate correctly refused.
-Asked again, plainly, "ti ho chiesto xiw zoc tu?", the bot repeated the
+Asked again, plainly, "ti ho chiesto chi sei tu?", the bot repeated the
 refusal, in ENGLISH, to a client writing Italian.
 
 The defect a careless cure would INTRODUCE: swallowing "chi deve firmare la
@@ -36,14 +36,14 @@ class TestGuilt:
         [
             # The two real production messages (measured, 2026-09-15).
             ("ciao tu sei Zantara?", "it"),
-            ("ti ho chiesto xiw zoc tu?", "it"),
+            ("ti ho chiesto chi sei tu?", "it"),
             # The mandate's Indonesian case.
             ("siapa kamu?", "id"),
             # Rest of the Italian phrase table.
-            ("xiw zoc", "it"),
-            ("xiw zoc tu", "it"),
-            ("tu xiw zoc", "it"),
-            ("ma xiw zoc", "it"),
+            ("chi sei", "it"),
+            ("chi sei tu", "it"),
+            ("tu chi sei", "it"),
+            ("ma chi sei", "it"),
             ("sei un bot", "it"),
             ("sei un robot", "it"),
             ("sei una macchina", "it"),
@@ -88,32 +88,32 @@ class TestGuilt:
         assert turn.text == _IDENTITY_REPLIES[language]
 
     def test_case_and_punctuation_do_not_matter(self) -> None:
-        turn = match_identity_question("Ti ho chiesto XIW ZOC TU???")
+        turn = match_identity_question("Ti ho chiesto CHI SEI TU???")
         assert turn is not None and turn.language == "it"
 
     def test_no_punctuation_ordinary_spelling_still_matches(self) -> None:
         """A real client rarely types the question mark."""
-        turn = match_identity_question("xiw zoc tu")
+        turn = match_identity_question("chi sei tu")
         assert turn is not None and turn.language == "it"
 
     def test_a_trailing_emoji_does_not_block_the_match(self) -> None:
-        turn = match_identity_question("xiw zoc? 😄")
+        turn = match_identity_question("chi sei? 😄")
         assert turn is not None and turn.language == "it"
 
     def test_a_whatsapp_list_ordinal_prefix_still_matches(self) -> None:
-        """ "11.  xiw zoc" — a client replying to a numbered menu.
+        """ "11.  chi sei" — a client replying to a numbered menu.
 
         Unlike `wa_greeting`, this module does not need a dedicated ordinal
         strip: the phrase match scans every whole-token WINDOW of the
         message (not just from position 0), so the leading "11" is simply an
-        extra token the scan skips past on its way to "xiw zoc".
+        extra token the scan skips past on its way to "chi sei".
         """
-        turn = match_identity_question("11.  xiw zoc")
+        turn = match_identity_question("11.  chi sei")
         assert turn is not None and turn.language == "it"
 
     def test_the_phrase_is_found_embedded_mid_sentence(self) -> None:
         """The docstring's own example: whole-token match, not whole-message."""
-        turn = match_identity_question("ti ho chiesto xiw zoc tu")
+        turn = match_identity_question("ti ho chiesto chi sei tu")
         assert turn is not None and turn.language == "it"
 
     def test_the_answer_names_what_the_bot_can_do(self) -> None:
@@ -172,7 +172,7 @@ class TestInnocence:
             # A message that carries an identity phrase but is far too long
             # to be a scripted turn (>120 chars).
             (
-                "Ciao, volevo chiederti xiw zoc tu esattamente e come funzioni "
+                "Ciao, volevo chiederti chi sei tu esattamente e come funzioni "
                 "perche' ho bisogno di sapere se posso fidarmi prima di mandarti "
                 "i documenti del mio passaporto e della mia KITAS"
             ),
@@ -200,7 +200,7 @@ class TestInnocence:
 
     def test_a_long_message_is_never_answered_from_the_script(self) -> None:
         """The character cap is a second, independent brake on over-match."""
-        long_message = "xiw zoc " * 20
+        long_message = "chi sei " * 20
         assert len(long_message) > 120
         assert match_identity_question(long_message) is None
 
@@ -223,13 +223,13 @@ class TestInnocence:
     def test_any_domain_veto_token_blocks_an_otherwise_matching_phrase(
         self, veto_token: str
     ) -> None:
-        """Structural veto, not a list of counter-examples: pair "xiw zoc"
+        """Structural veto, not a list of counter-examples: pair "chi sei"
         with each family's own token and confirm the veto still wins."""
-        assert match_identity_question(f"xiw zoc tu esperto di {veto_token}") is None
+        assert match_identity_question(f"chi sei tu esperto di {veto_token}") is None
 
 
 def test_the_return_type_is_frozen() -> None:
-    turn = match_identity_question("xiw zoc")
+    turn = match_identity_question("chi sei")
     assert isinstance(turn, IdentityTurn)
     with pytest.raises(dataclasses.FrozenInstanceError):
         turn.text = "something else"  # type: ignore[misc]

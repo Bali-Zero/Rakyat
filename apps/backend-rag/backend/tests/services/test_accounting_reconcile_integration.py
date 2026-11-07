@@ -109,7 +109,7 @@ async def test_confirm_payment_full_side_effects() -> None:
     conn, dbname, user = await _fresh_db()
     try:
         # seed
-        cid = await conn.fetchval("INSERT INTO clients (full_name) VALUES ('Pugu B') RETURNING id")
+        cid = await conn.fetchval("INSERT INTO clients (full_name) VALUES ('Dina B') RETURNING id")
         pid = await conn.fetchval(
             "INSERT INTO practices (client_id, payment_status) VALUES ($1, 'unpaid') RETURNING id", cid
         )
@@ -257,7 +257,7 @@ async def test_cashbook_summary_excludes_worksheet_from_totals() -> None:
                   pnbp_idr, margin_idr, final_price_idr)
                VALUES
                  ($1, '2026-W10', 'in', 'invoice_payment', 4000000,
-                  1000001, 1000001, 4000000),
+                  1000000, 1000000, 4000000),
                  ($1, '2026-W10', 'in', 'cashout_worksheet', 5000000,
                   0, 2000000, 5000000)""",
             date(2026, 3, 6),

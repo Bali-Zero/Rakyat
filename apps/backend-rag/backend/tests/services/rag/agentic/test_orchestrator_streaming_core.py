@@ -294,6 +294,64 @@ async def test_real_raw_react_stream_marks_every_terminal_path_exactly_once(
     assert any(event["type"] == "error" for event in events) is expect_error_event
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing_read", [1, 2, 3, 4])
+async def test_w8_a_failing_analytics_clock_costs_the_timings_never_the_stream(
+    failing_read: int,
+) -> None:
+    """Stage-timing spec W8 (gate 9198 r1): the reasoning clock is analytics-only.
+
+    A failing read (parametrized over each of the four reads: loop start, before and
+    after the one yield, loop end) must leave the user's stream intact (done, no
+    error event) and the analytics row written, without timings.
+    """
+    core = _RawReactCore("complete")
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value={"id": "00000000-0000-0000-0000-0000000000b8"})
+    ctx = AsyncMock()
+    ctx.__aenter__ = AsyncMock(return_value=conn)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    core.db_pool = SimpleNamespace(acquire=lambda: ctx)
+    extract = AsyncMock()
+    core.metrics_manager.extract_timings_from_state = extract
+    reads = {"n": 0}
+
+    def clock() -> float:
+        reads["n"] += 1
+        if reads["n"] == failing_read:
+            raise OSError("clock unavailable")
+        return 100.0
+
+    streaming_core = OrchestratorStreamingCore(
+        core=core,
+        streaming_manager=FakeStreamingManager(),
+    )
+    with (
+        patch.object(orchestrator_streaming_core, "_ANALYTICS_CLOCK", clock),
+        patch.object(streaming_core, "_mark_react_stream_unfinalized"),
+    ):
+        events = [
+            event
+            async for event in streaming_core.stream_query_core(
+                query="raw stream contract",
+                user_id="contract-user",
+                conversation_history=None,
+                session_id=None,
+                images=None,
+                tool_execution_counter={"count": 0},
+                correlation_id="contract-correlation",
+            )
+        ]
+
+    assert reads["n"] == 4  # start, before+after the one yield (M2), end
+    assert not any(event["type"] == "error" for event in events)
+    assert any(event["type"] == "done" for event in events)
+    extract.assert_not_called()
+    assert conn.fetchrow.await_count == 1
+    metadata = conn.fetchrow.call_args[0][1:]
+    assert not any(isinstance(arg, dict) and "timings" in arg for arg in metadata)
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # TOURNIQUET (2026-07-21) — CRM pre-call must be gated to authenticated
 # staff. The prefetch calls crm_tool.execute() DIRECTLY (bypasses

@@ -75,48 +75,39 @@ canonicalUrl: "https://balizero.com/business/export-import-business-guide"
 ogImage: "/static/insights/business/export-import-business-guide.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
-source_sha256: "a9c53ed2a860869af97b912becf4029a3d7e79adc386ab37a7429f34a1118ad2"
+source_sha256: "8cb5f9606582a932c442fe003d0c346fda16c20f6fb7c5f333d1117416b5e368"
 ---
 
-import {
-  JourneyMap,
-  ComparisonTable,
-  Checklist,
-  InfoCard,
-  GlossaryTerm,
-  AskZantara,
-} from "@/components/insights/interactive";
+# Impresa di Esportazione e Importazione in Indonesia 2026: Guida Completa
 
-# Impresa di Esportazione-Importazione in Indonesia 2026: Guida Completa
+La posizione strategica e il vasto mercato dell'Indonesia lo rendono ideale per il commercio internazionale. Ecco come gli stranieri possono allestire operazioni di import-export.
 
-La posizione strategica e il grande mercato dell'Indonesia lo rendono ideale per il commercio internazionale. Ecco come gli stranieri possono avviare operazioni di importazione-esportazione.
-
-## Panoramica sull'Impresa del Commercio
+## Panoramica del Commercio
 
 L'Indonesia offre:
 
-- **270 milioni** di consumatori
+- **Mercato di 270 milioni** di consumatori
 - Posizione strategica nell'ASEAN
 - Base manifatturiera in crescita
-- Risorse naturali ricche per l'esportazione
-- Accordi di libero scambio con mercati principali
+- Ricche risorse naturali per l'esportazione
+- Accordi di libero scambio con i principali mercati
 
 ---
 
-## Licenze per Importazione ed Esportazione
+## Licenze di Importazione ed Esportazione
 
 <ComparisonTable
   title="Tipi di Licenza API"
-  description="Licenze per importazione per diverse attività"
+  description="Licenze di importazione per diverse attività"
   items={[
     {
       name: "API-U (Generale)",
       subtitle: "Angka Pengenal Impor Umum",
       values: {
-        Purpose: "Import per trading/vendita",
+        Purpose: "Importazione per commercio/vendita",
         "Can Sell": "Sì, a chiunque",
         "Most Common": "Aziende di trading",
-        Restrictions: "Alcuni limiti sui prodotti",
+        Restrictions: "Limitazioni su alcuni prodotti",
       },
       highlight: true,
     },
@@ -124,7 +115,7 @@ L'Indonesia offre:
       name: "API-P (Produttore)",
       subtitle: "Angka Pengenal Impor Produsen",
       values: {
-        Purpose: "Import per produzione propria",
+        Purpose: "Importazione per produzione propria",
         "Can Sell": "Solo prodotti finiti",
         "Most Common": "Produttori",
         Restrictions: "Solo materie prime",
@@ -133,11 +124,11 @@ L'Indonesia offre:
   ]}
 />
 
-### Licenza per Esportazione
+### Licenza di Esportazione
 
 Per l'esportazione, è necessario:
 
-- **ET (Eksportir Terdaftar)** - Esportatore Registrato per certi prodotti
+- **ET (Eksportir Terdaftar)** - Esportatore registrato per determinati beni
 - Alcuni prodotti richiedono permessi di esportazione specifici
 - La maggior parte dei prodotti può essere esportata con solo NIB
 
@@ -147,16 +138,16 @@ Per l'esportazione, è necessario:
 
 ### PT PMA per il Trading
 
-Le aziende di trading di proprietà straniera possono:
+Le società di trading di proprietà straniera possono:
 
 - Importare merci per la rivendita
 - Esportare prodotti indonesiani
 - Agire come distributore
-- Vendere all'ingrosso ai dettaglianti
+- Fare all'ingrosso ai dettaglianti
 
-<InfoCard variant="note" title="Requisito di Investimento">
+<InfoCard variant="note" title="Requisiti di Investimento">
 
-Per una PT PMA di trading sono richiesti: - Investimento minimo di **IDR 10 miliardi** - Capitale versato **IDR 2,5 miliardi** - Strutture appropriate per il magazzino (per certi prodotti)
+Il trading PT PMA richiede: - Investimento minimo **IDR 10 miliardi** - Capitale versato **IDR 2,5 miliardi** - Adeguate strutture magazziniere (per alcuni beni)
 
 - Codici di importazione/esportazione registrati
 
@@ -164,89 +155,83 @@ Per una PT PMA di trading sono richiesti: - Investimento minimo di **IDR 10 mili
 
 ---
 
-## Processo di Setup
+## Processo di Allestimento
 
 <JourneyMap
-  title="Setup dell'Impresa di Importazione-Exportazione"
-  description="Dall'azienda al primo carico"
+  title="Allestimento Impresa Import-Export"
+  description="Dalla società al primo spedizione"
   estimatedTotal="8-12 settimane"
   steps={[
     {
       id: "company",
-      title: "Stabilire una PT PMA",
-      description: "Formare un'azienda di trading",
+      title: "Istituire PT PMA",
+      description: "Formare società di trading",
       duration: "4-6 settimane",
-      status: "richiesto",
+      status: "required",
       tips: [
-        "Scegliere i codici KBLI per il trading",
-        "Includere attività di importazione/esportazione",
+        "Scegliere codici KBLI per il trading",
+        "Includere attività di import-export",
         "Rispettare i requisiti di investimento",
       ],
     },
     {
       id: "nib",
-      title: "Ottenere il NIB",
+      title: "Ottenere NIB",
       description: "ID aziendale da OSS",
       duration: "1-2 settimane",
-      status: "richiesto",
-      tips: [
-        "Include la licenza di base per l'azienda",
-        "Richiesto per i passi successivi",
-      ],
+      status: "required",
+      tips: ["Include licenza di base per l'attività", "Necessaria per i passaggi successivi"],
     },
     {
       id: "api",
-      title: "Candidatura per la Licenza API",
-      description: "Numero di identificazione per l'importazione",
+      title: "Richiedere Licenza API",
+      description: "Numero identificativo importazione",
       duration: "2-4 settimane",
-      status: "richiesto",
+      status: "required",
       tips: [
         "API-U per il trading",
-        "API-P per la produzione",
+        "API-P per la manifattura",
         "Attraverso il sistema OSS",
       ],
     },
     {
       id: "nik",
-      title: "Ottenere il NIK (ID Doganale)",
+      title: "Ottenere NIK (ID Dogana)",
       description: "Registrazione doganale",
       duration: "1-2 settimane",
-      status: "richiesto",
-      tips: [
-        "Registrarsi con le Dogane (DJBC)",
-        "Richiesto per il clearing delle merci",
-      ],
+      status: "required",
+      tips: ["Registrarsi con la Dogana (DJBC)", "Necessaria per lo sdoganamento delle merci"],
     },
     {
       id: "warehouse",
-      title: "Configurare il Magazzino",
+      title: "Allestitura Magazzino",
       description: "Strutture di stoccaggio",
-      duration: "Varia",
-      status: "condizionale",
+      duration: "Variabile",
+      status: "conditional",
       tips: [
-        "Richiesto per certi prodotti",
-        "Opzioni di magazzino doganale",
-        "Raffreddamento se necessario",
+        "Necessario per alcuni beni",
+        "Opzioni magazzino doganale",
+        "Freddo se necessario",
       ],
     },
     {
       id: "supplier",
-      title: "Stabilire la Catena di Fornitura",
+      title: "Istituire Catena di Fornitura",
       description: "Fornitori e logistica",
-      duration: "Ongoing",
-      status: "richiesto",
+      duration: "Continuo",
+      status: "required",
       tips: [
         "Verificare la legittimità del fornitore",
         "Negoziazione dei termini",
-        "Scegliere un forwarder marittimo",
+        "Scegliere il forwarder doganale",
       ],
     },
     {
       id: "first",
-      title: "Primo Carico",
-      description: "Importare/esportare merci",
-      duration: "Varia",
-      status: "finale",
+      title: "Prima Spedizione",
+      description: "Importazione/esportazione merci",
+      duration: "Variabile",
+      status: "final",
       tips: [
         "Lavorare con un broker doganale",
         "Completare la documentazione",
@@ -261,7 +246,7 @@ Per una PT PMA di trading sono richiesti: - Investimento minimo di **IDR 10 mili
 ## Documenti Richiesti
 
 <Checklist
-  title="Documentazione per Importazione-Exportazione"
+  title="Documentazione Import-Export"
   description="Cosa serve per il trading"
   persistKey="impex-checklist"
   items={[
@@ -281,7 +266,7 @@ Per una PT PMA di trading sono richiesti: - Investimento minimo di **IDR 10 mili
     },
     {
       id: "nik",
-      label: "NIK (ID Doganale)",
+      label: "NIK (ID Dogana)",
       description: "Numero di registrazione doganale",
       required: true,
       category: "customs",
@@ -295,24 +280,24 @@ Per una PT PMA di trading sono richiesti: - Investimento minimo di **IDR 10 mili
     },
     {
       id: "warehouse",
-      label: "Registrazione del Magazzino",
-      description: "Per lo stoccaggio delle merci importate",
+      label: "Registrazione Magazzino",
+      description: "Per lo stoccaggio di merci importate",
       required: false,
       category: "operations",
     },
     {
       id: "product-license",
-      label: "Licenze specifiche per il prodotto",
-      description: "BPOM, SNI, ecc. se necessario",
+      label: "Licenze specifiche per prodotto",
+      description: "BPOM, SNI, ecc. secondo necessità",
       required: false,
       category: "product",
     },
   ]}
   categories={[
     { id: "company", label: "Azienda", color: "blue" },
-    { id: "trade", label: "Commercio", color: "green" },
-    { id: "customs", label: "Doganale", color: "amber" },
-    { id: "tax", label: "Fiscale", color: "red" },
+    { id: "trade", label: "Trading", color: "green" },
+    { id: "customs", label: "Dogana", color: "amber" },
+    { id: "tax", label: "Fisco", color: "red" },
     { id: "operations", label: "Operazioni", color: "purple" },
     { id: "product", label: "Prodotto", color: "cyan" },
   ]}
@@ -321,31 +306,31 @@ Per una PT PMA di trading sono richiesti: - Investimento minimo di **IDR 10 mili
 
 ---
 
-## Dogane e Dazi
+## Dogana e Dazi
 
 ### Dazi di Importazione
 
-| Categoria         | Tasso di Dazio | Note                          |
-| ----------------- | -------------- | ----------------------------- |
-| Materie prime     | 0-5%           | Spesso più basso              |
-| Semilavorati      | 5-15%          | Varia per prodotto            |
-| Prodotti finiti   | 10-40%         | Maggiore protezione           |
-| Prodotti di lusso | 20-200%        | Tassa aggiuntiva per il lusso |
+| Categoria       | Aliquota Dazio | Note                 |
+| -------------- | --------- | --------------------- |
+| Materie prime  | 0-5%      | Spesso inferiori      |
+| Semilavorati   | 5-15%     | Varia per prodotto    |
+| Prodotti finiti | 10-40%    | Maggiore protezione   |
+| Articoli di lusso   | 20-200%   | Tassa aggiuntiva sul lusso |
 
-### Altri Costi di Importazione
+### Altre Spese di Importazione
 
 - **IVA (PPN)**: 11% su CIF + dazio
 - **Imposta sul Reddito (PPh 22)**: 2,5% con API, 7,5% senza
-- **Tassa sul Lusso (PPnBM)**: Su certi prodotti
+- **Tassa sul Lusso (PPnBM)**: Su alcuni beni
 
-<InfoCard variant="tip" title="Ricerca del Codice HS">
-Ricerca il **Codice HS** (Harmonized System) del tuo prodotto per comprendere:
-- Il tasso di dazio applicabile
-- Le restrizioni all'importazione
-- I permessi richiesti
-- Le esigenze documentali
+<InfoCard variant="tip" title="Ricerca Codice HS">
+Ricercare il **Codice HS** (Sistema Armonizzato) del proprio prodotto per comprendere:
+- Aliquota dazio applicabile
+- Restrizioni all'importazione
+- Permessi richiesti
+- Necessità documentali
 
-Utilizza il portale INSW dell'Indonesia per la ricerca del codice HS.
+Utilizzare il portale INSW dell'Indonesia per la ricerca dei codici HS.
 
 </InfoCard>
 
@@ -357,19 +342,19 @@ Utilizza il portale INSW dell'Indonesia per la ricerca del codice HS.
 
 Alcuni prodotti richiedono permessi aggiuntivi:
 
-- **Cibo/Bevande**: Registrazione BPOM
+- **Cibo/Beverages**: Registrazione BPOM
 - **Elettronica**: Certificazione SNI
 - **Cosmetici**: BPOM + Halal
-- **Farmaci**: Licenze rigorose
-- **Tessuti**: Possono applicarsi sistemi di quota
+- **Farmaceutici**: Licenze rigorose
+- **Tessili**: Possono applicarsi sistemi di contingente
 
-### Prodotti Proibiti
+### Articoli Proibiti
 
-- Droga/narcotici
+- Droghe/stupefacenti
 - Armi (senza licenza)
-- Certi prodotti agricoli
+- Determinati prodotti agricoli
 - Prodotti che violano i diritti di proprietà intellettuale
-- Oggetti contrari ai valori pubblici
+- Oggetti contrari alla moralità pubblica
 
 ---
 
@@ -377,20 +362,20 @@ Alcuni prodotti richiedono permessi aggiuntivi:
 
 ### Principali Esportazioni Indonesiane
 
-1. Prodotti di olio di palma
+1. Prodotti dell'olio di palma
 2. Carbone e minerali
 3. Tessuti e abbigliamento
 4. Prodotti in gomma
 5. Elettronica
 6. Cibo trasformato
-7. Mobili e artigianato
+7. Arredamento e artigianato
 
 ### Requisiti per l'Esportazione
 
-- ET (Esportatore Registrato) per certi prodotti
-- Documentazione per l'esportazione (fattura, elenco di imballaggio, ecc.)
-- Ispezione pre-carico (per certi prodotti)
-- Certificato d'origine (per tariffe preferenziali)
+- ET (Esportatore Registrato) per alcuni beni
+- Documentazione di esportazione (fattura, lista di imballaggio, ecc.)
+- Ispezione pre-spedizione (per alcuni prodotti)
+- Certificato di origine (per aliquote preferenziali)
 
 ---
 
@@ -398,41 +383,41 @@ Alcuni prodotti richiedono permessi aggiuntivi:
 
 <GlossaryTerm
   term="Kawasan Berikat"
-  definition="Le zone doganali sono aree designate in cui le merci possono essere importate, immagazzinate, elaborate e re-esportate con sospensione del dazio."
+  definition="Le zone doganali sono aree designate dove le merci possono essere importate, stoccate, elaborate e riesportate con sospensione dei dazi."
 />
 
 ### Vantaggi delle Zone Doganali
 
 - Posticipare i dazi di importazione fino all'ingresso nel mercato interno
-- Agevolazioni IVA e imposta sul reddito
-- Procedure doganali semplificate
-- Ideale per la produzione per l'esportazione
+- Agevolazioni IVA e imposte sul reddito
+- Procedure doganali snelle
+- Ideale per la manifattura per l'esportazione
 
 ---
 
 ## Trasporto e Logistica
 
-### Porti Principali
+### Principali Porti
 
-- **Jakarta (Tanjung Priok)** - Più grande, più congestionato
-- **Surabaya (Tanjung Perak)** - Hub di Giava Orientale
-- **Semarang (Tanjung Emas)** - Giava Centrale
-- **Medan (Belawan)** - Sumatra Settentrionale
+- **Jakarta (Tanjung Priok)** - Il più grande, più congestionato
+- **Surabaya (Tanjung Perak)** - Hub dell'Est Java
+- **Semarang (Tanjung Emas)** - Centro Java
+- **Medan (Belawan)** - Nord Sumatra
 
-### Cargo Aereo
+### Merci Aeree
 
 - **Soekarno-Hatta (CGK)** - Principale internazionale
 - **Ngurah Rai (DPS)** - Bali
 - **Juanda (SUB)** - Surabaya
 
-### Forwarder Marittimi
+### Forwarder Doganali
 
-Lavora con forwarder stabiliti che possono:
+Lavorare con forwarder consolidati che possono:
 
-- Gestire il clearing doganale
+- Gestire lo sdoganamento
 - Gestire la documentazione
 - Organizzare il trasporto interno
-- Fornire un magazzino doganale
+- Fornire magazzino doganale
 
 ---
 
@@ -440,12 +425,12 @@ Lavora con forwarder stabiliti che possono:
 
 <InfoCard variant="error" title="Evita Questi Errori">
 
-1. **Tipo di API errato** - API-U vs API-P deve corrispondere all'attività
-2. **Ignorare le regolamentazioni del prodotto** - Alcuni prodotti richiedono permessi speciali
-3. **Sottostimare il valore delle merci** - Le penali doganali sono severe
-4. **Nessuna documentazione appropriata** - Ritardi e costi aggiuntivi
-5. **Codice HS errato** - Dazi diversi, potenziali penali
-6. **Ignorare le quote/restrizioni** - Alcuni prodotti sono limitati
+1. **Tipo API errato** - API-U e API-P devono corrispondere all'attività
+2. **Ignorare le normative sui prodotti** - Alcuni beni richiedono permessi speciali
+3. **Sottovalutazione delle merci** - Le sanzioni doganali sono severe
+4. **Mancanza di documentazione adeguata** - Rallentamenti e costi aggiuntivi
+5. **Codice HS errato** - Dazi diversi, possibili sanzioni
+6. **Ignorare i contingenti/restrizioni** - Alcuni prodotti limitati
 
 </InfoCard>
 
@@ -454,13 +439,13 @@ Lavora con forwarder stabiliti che possono:
 ## Domande Frequenti
 
 <AskZantara
-  context="Import export Indonesia, licenza API, dogane, commercio internazionale"
-  placeholder="Chiedi sul business di import-export..."
+  context="Import export Indonesia, licenza API, dogana, commercio internazionale"
+  placeholder="Chiedi sull'impresa di import-export..."
   suggestedQuestions={[
-    "Quanto tempo impiega il clearing doganale?",
+    "Quanto tempo richiede lo sdoganamento?",
     "Posso importare campioni senza API?",
-    "Quali sono i vantaggi del magazzino doganale?",
-    "Ho bisogno di un partner locale per l'importazione?",
+    "Quali sono i vantaggi dei magazzini doganali?",
+    "Ho bisogno di un partner locale per importare?",
   ]}
 />
 
@@ -469,5 +454,5 @@ Lavora con forwarder stabiliti che possono:
 ## Articoli Correlati
 
 - [Guida alla Registrazione PT PMA](/insights/business/foreign-company-incorporation-steps)
-- [Guida per Aziende E-commerce](/insights/business/ecommerce-business-guide)
-- [Guida per Aziende Manifatturiere](/insights/business/manufacturing-business-guide)
+- [Guida all'Impresa E-commerce](/insights/business/ecommerce-business-guide)
+- [Guida all'Impresa Manifatturiera](/insights/business/manufacturing-business-guide)

@@ -18,7 +18,7 @@ from backend.tests.unit.services.autonomous_lab.consul_fixtures import (
 NOW = datetime(2026, 9, 6, tzinfo=timezone.utc)
 
 
-@pytest.mark.parametrize("builder", ["tomen", "fable"])
+@pytest.mark.parametrize("builder", ["astra", "fable"])
 def test_both_consuls_can_build_with_independent_review(builder: Any) -> None:
     assert make_request(NOW, builder=builder).validate(NOW) is None
 
@@ -35,7 +35,7 @@ def test_changed_effective_bytes_invalidate_the_frozen_review(field: str) -> Non
 
 
 def test_a_consul_cannot_review_its_own_artifact() -> None:
-    request = make_request(NOW, builder="tomen", reviewer="tomen")
+    request = make_request(NOW, builder="astra", reviewer="astra")
     with pytest.raises(PermissionError, match="independent_consul"):
         request.validate(NOW)
 
@@ -123,7 +123,7 @@ def test_expiry_is_exclusive(field: str) -> None:
         {"criteria_version": "outdated"},
         {
             "verifier": {
-                "name": "com.balizero.consul.tomen",
+                "name": "com.balizero.consul.astra",
                 "version": "4",
                 "independence_class": "cross_family",
             }

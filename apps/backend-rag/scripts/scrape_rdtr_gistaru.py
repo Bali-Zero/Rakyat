@@ -8,6 +8,7 @@ Usage:
     PYTHONPATH=. python scripts/scrape_rdtr_gistaru.py [--dry-run] [--district tabanan|denpasar|all]
 """
 
+import os
 import argparse
 import asyncio
 import json
@@ -451,7 +452,7 @@ async def scrape_layer(layer: dict, dry_run: bool, db_pool) -> int:
 
 
 async def main(districts: list[str], dry_run: bool):
-    db_url = "postgresql://nuzantara:nuzantara_local_2024@localhost:5432/nuzantara"
+    db_url = os.environ["DATABASE_URL"]
 
     if dry_run:
         logger.info("DRY RUN mode — no DB writes")

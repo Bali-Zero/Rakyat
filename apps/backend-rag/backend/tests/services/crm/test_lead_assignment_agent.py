@@ -252,5 +252,33 @@ def test_the_garuda_codes_match_the_handoff_mapping_exactly() -> None:
     assert unrouted == set(), f"GARUDA practice types with no department: {sorted(unrouted)}"
 
 
-# Rakyat: `test_setup_is_a_real_department_with_assignable_people_behind_it` moved to the backstage — it reads the staff roster team_members.json, kept out of Rakyat (PII).
-# Original at a0f6cca8b44d:apps/backend-rag/backend/tests/services/crm/test_lead_assignment_agent.py; listed in PERIMETER.txt.
+def test_setup_is_a_real_department_with_assignable_people_behind_it() -> None:
+    """Turns the open question this lane carried into a measured one.
+
+    Mapping a practice type to a department only helps if someone IS in that
+    department with an assignable role — otherwise `assign_lead`'s Strategy 1
+    finds nobody and falls through to the same round-robin the mapping was
+    meant to replace, making the entry inert rather than wrong.
+
+    `team_members.department` is populated out-of-band (no migration writes it),
+    so the closest checkable source is the seeded roster the loader reads:
+    the off-repo roster (`TEAM_MEMBERS_JSON`) via `backend/scripts/seed_users.py`. RED if
+    the `setup` department disappears from that roster, or if everyone left in
+    it holds a role `assign_lead` will not assign to.
+    """
+
+    from backend.core.team_roster import load_team_roster
+    from backend.services.crm.assignment import ASSIGNABLE_ROLES
+
+    roster = load_team_roster()
+    if not roster:
+        pytest.skip("staff roster not supplied (TEAM_MEMBERS_JSON / TEAM_MEMBERS_FILE)")
+    setup_assignable = [
+        m
+        for m in roster
+        if m.get("department") == "setup" and m.get("role") in ASSIGNABLE_ROLES
+    ]
+    assert setup_assignable, (
+        "no seeded team member is in department 'setup' with an assignable role — "
+        "the GARUDA VOA department mapping would resolve to nobody"
+    )

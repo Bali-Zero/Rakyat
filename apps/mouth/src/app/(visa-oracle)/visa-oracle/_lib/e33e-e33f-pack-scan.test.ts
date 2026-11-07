@@ -35,7 +35,8 @@ const EXPECTED_UNTWINNED_E33E_RULES = [
 
 const NAMED_E33E_ELIGIBILITY_RULES = new Set(EXPECTED_UNTWINNED_E33E_RULES);
 
-const EXPECTED_GLOBAL_RULE_COUNT = 5;
+// Signed33 appends the explicit E28A bridging review, equally global for both routes.
+const EXPECTED_GLOBAL_RULE_COUNT = 6;
 
 const TWIN_IGNORED_KEYS = new Set([
   "rule_id",
@@ -731,6 +732,24 @@ describe("E33E vs E33F pack scan", () => {
     expect(scan.disputedBandExcludes, CURE_MESSAGE).toBe(false);
     expect(scan.disputedBandEffectType, CURE_MESSAGE).toBe("SUPPORT");
     expect(scan.disputedBandHasDepositTrio, CURE_MESSAGE).toBe(true);
+  });
+
+  it("the sixth global rule is restricted to explicitly requested investment bridging", () => {
+    const rule = newestSignedPack().rules.find(
+      (r) => r.rule_id === "review.e28a.bridging-origin",
+    );
+    expect(rule?.when).toMatchObject({
+      op: "all",
+      args: expect.arrayContaining([
+        { fact: "intent.purposes", op: "intersects", values: ["INVESTMENT"] },
+        { fact: "intent.requested_product_code", op: "eq", value: "E28A" },
+        {
+          fact: "process.application_channel",
+          op: "eq",
+          value: "STATUS_BRIDGING",
+        },
+      ]),
+    });
   });
 
   it("no rule targets both E33E and E33F", () => {

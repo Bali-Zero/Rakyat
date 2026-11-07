@@ -166,7 +166,7 @@ FASE 4 — PUBBLICAZIONE VIA API
 ────────────────────────────────
 
   Endpoint: POST /api/intel/scraper/submit
-  Auth: X-API-Key header con valore "internal-scraper-key"
+  Auth: X-API-Key header con valore "<redacted>"
   Fonte del secret: Fly.io secrets → SCRAPER_API_KEY
 
   Rate limit: 10 richieste al minuto.

@@ -22,7 +22,7 @@ os.environ.setdefault("JWT_SECRET_KEY", "test_jwt_secret_key_for_testing_only_mi
 os.environ.setdefault("API_KEYS", "test_api_key_1,test_api_key_2")
 os.environ.setdefault("OPENAI_API_KEY", "sk-test")
 os.environ.setdefault("QDRANT_URL", "http://localhost:6333")
-os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
+os.environ.setdefault("DATABASE_URL", "postgresql://test@localhost:5432/test")
 
 # Add backend directory to Python path
 backend_path = Path(__file__).parent.parent / "backend"

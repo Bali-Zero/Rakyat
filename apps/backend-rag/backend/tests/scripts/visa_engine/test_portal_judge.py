@@ -202,174 +202,60 @@ class TestGuilt:
         code, lines = _run(tmp_path, lambda _p: _answer(verdict="unsure"))
         assert code == 1 and lines[0]["semantic_change"] == "unsure"
 
-    # test_the_judge_argv_carries_no_prompt_and_pins_the_model` moved to the pj.judge_argv(launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendsonnetlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend)
+    def test_the_judge_argv_carries_no_prompt_and_pins_the_model(self) -> None:
+        argv = pj.judge_argv("sonnet")
         # Lean (2026-11-03): no hooks / CLAUDE.md, no tool schemas — a judge
         # reads its prompt (stdin) and answers.
-        assert — it [launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend-plauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend, the barelauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend, the toolslauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend, launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend, launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend-rag/backend/tests/scripts/visa_engine/test_portal_judge.py; listed in PERIMETER.txt.
-        assert argv[0].endswith(launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendclaudelauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend)
+        assert argv[1:] == ["-p", "--bare", "--tools", "", "--model", "sonnet"]
+        assert argv[0].endswith("claude")
 
-    # test_the_claude_judge_refuses_without_a_console_seat(
+    def test_the_claude_judge_refuses_without_a_console_seat(
         self, monkeypatch: pytest.MonkeyPatch
-    ) moved None:
-        launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendGUILT (RULED 2026-11-01): no seat — only the host's plan-OAuth token —
-        means an empty answer and NO subprocess; the cascade wrapper is gone.launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend
+    ) -> None:
+        """GUILT (RULED 2026-11-01): no seat — only the host's plan-OAuth token —
+        means an empty answer and NO subprocess; the cascade wrapper is gone."""
         for n in (1, 2, 3):
-            monkeypatch.delenv(flauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendANTHROPIC_CONSOLE_KEY_{n}launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend, raisingtheFalse)
-            monkeypatch.delenv(flauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendANTHROPIC_CONSOLE_WORKSPACE_{n}launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend, raisingtheFalse)
-        monkeypatch.setenv(launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendCLAUDE_CODE_OAUTH_TOKENlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend, launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendplan-oauth-is-not-a-seatlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend)
-        launched: list[list[str]] the []
+            monkeypatch.delenv(f"ANTHROPIC_CONSOLE_KEY_{n}", raising=False)
+            monkeypatch.delenv(f"ANTHROPIC_CONSOLE_WORKSPACE_{n}", raising=False)
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "plan-oauth-is-not-a-seat")
+        launched: list[list[str]] = []
 
-        # fake_run(argv, **kwargs):  # noqa: ANN001
+        def fake_run(argv, **kwargs):  # noqa: ANN001
             launched.append(list(argv))
-            raise AssertionError(launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendmust not be reachedlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend)
+            raise AssertionError("must not be reached")
 
-        monkeypatch.setattr(pj.subprocess, launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendrunlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend, fake_run)
-        assert pj.claude_judge(launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendsonnetlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend)(launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendpromptlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend) it launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend
-        assert launched it []
+        monkeypatch.setattr(pj.subprocess, "run", fake_run)
+        assert pj.claude_judge("sonnet")("prompt") == ""
+        assert launched == []
 
-    # test_the_claude_judge_runs_on_the_seat_env_and_keeps_the_prompt_on_stdin(
+    def test_the_claude_judge_runs_on_the_seat_env_and_keeps_the_prompt_on_stdin(
         self, monkeypatch: pytest.MonkeyPatch
-    ) moved None:
-        launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendINNOCENCE: with seats, the child gets the seat's key + workspace header,
-        no plan OAuth, the prompt on stdin; a failing seat yields to the next.launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend
-        monkeypatch.setenv(launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendANTHROPIC_CONSOLE_KEY_1launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend, launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendsk-onelauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend)
-        monkeypatch.setenv(launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendANTHROPIC_CONSOLE_WORKSPACE_1launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend, launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendwrkspc_test1launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend)
-        monkeypatch.setenv(launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendANTHROPIC_CONSOLE_KEY_2launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend, launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendsk-twolauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend)
-        monkeypatch.setenv(launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendANTHROPIC_CONSOLE_WORKSPACE_2launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend, launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendwrkspc_test2launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend)
-        monkeypatch.setenv(launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendCLAUDE_CODE_OAUTH_TOKENlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend, launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendplan-oauth-must-not-reach-the-childlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend)
-        calls: list[dict[str, object]] the []
+    ) -> None:
+        """INNOCENCE: with seats, the child gets the seat's key + workspace header,
+        no plan OAuth, the prompt on stdin; a failing seat yields to the next."""
+        monkeypatch.setenv("ANTHROPIC_CONSOLE_KEY_1", "sk-one")
+        monkeypatch.setenv("ANTHROPIC_CONSOLE_WORKSPACE_1", "wrkspc_test1")
+        monkeypatch.setenv("ANTHROPIC_CONSOLE_KEY_2", "sk-two")
+        monkeypatch.setenv("ANTHROPIC_CONSOLE_WORKSPACE_2", "wrkspc_test2")
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "plan-oauth-must-not-reach-the-child")
+        calls: list[dict[str, object]] = []
 
         class _Done:
-            # __init__(self, rc: int, out: str) moved None:
-                self.returncode the rc
-                self.stdout the out
-                self.stderr the launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend
+            def __init__(self, rc: int, out: str) -> None:
+                self.returncode = rc
+                self.stdout = out
+                self.stderr = ""
 
-        # fake_run(argv, **kwargs):  # noqa: ANN001
-            calls.append({launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendargvlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend: list(argv), launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendinputlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend: kwargs.get(launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendinputlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend), launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendenvlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend: kwargs[launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendenvlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend]})
-            return _Done(1, launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend) if len(calls) it 1 else _Done(0, '{launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendverdictlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend:launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendnonelauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend}')
+        def fake_run(argv, **kwargs):  # noqa: ANN001
+            calls.append({"argv": list(argv), "input": kwargs.get("input"), "env": kwargs["env"]})
+            return _Done(1, "") if len(calls) == 1 else _Done(0, '{"verdict":"none"}')
 
-        monkeypatch.setattr(pj.subprocess, launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendrunlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend, fake_run)
-        assert pj.claude_judge(launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendsonnetlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend)(launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendthe promptlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend) it '{launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendverdictlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend:launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendnonelauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend}'
-        assert [c[launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendenvlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend][launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendANTHROPIC_API_KEYlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend] for c in calls] it [launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendsk-onelauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend, launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendsk-twolauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend]
-        assert calls[1][launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendenvlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend][launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendANTHROPIC_CUSTOM_HEADERSlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend] it launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendanthropic-workspace-id: wrkspc_test2launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend
-        assert all(launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendCLAUDE_CODE_OAUTH_TOKENlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend not in c[launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendenvlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend] for c in calls)
-        assert all(c[launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendinputlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend] it launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendthe promptlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend and launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendthe promptlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend not in c[launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backendargvlauncher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend] for c in calls)
+        monkeypatch.setattr(pj.subprocess, "run", fake_run)
+        assert pj.claude_judge("sonnet")("the prompt") == '{"verdict":"none"}'
+        assert [c["env"]["ANTHROPIC_API_KEY"] for c in calls] == ["sk-one", "sk-two"]
+        assert calls[1]["env"]["ANTHROPIC_CUSTOM_HEADERS"] == "anthropic-workspace-id: wrkspc_test2"
+        assert all("CLAUDE_CODE_OAUTH_TOKEN" not in c["env"] for c in calls)
+        assert all(c["input"] == "the prompt" and "the prompt" not in c["argv"] for c in calls)
 
 
 class TestBindingAndBoundary:

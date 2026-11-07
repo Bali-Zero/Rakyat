@@ -3,7 +3,7 @@
  *
  * SAETTA-VOA W-VOA-V3 (2026-09-13). The console is served on the kita host,
  * whose theme block points --font-serif/--font-sans at the workspace stack.
- * R19 asks for Fraunces headlines and Manrope body HERE without changing that
+ * kita asks for IBM Plex Sans headlines and Manrope body HERE without changing that
  * for the rest of the workspace, so the two variables are re-pointed on this
  * subtree's root element only.
  *
@@ -17,7 +17,7 @@ import React from "react";
 import "../../portal/r19-fonts.css";
 
 const R19_TYPE = {
-  "--font-serif": '"Fraunces", ui-serif, Georgia, serif',
+  "--font-serif": '"IBM Plex Sans", ui-sans-serif, system-ui, sans-serif',
   fontFamily:
     '"Manrope", var(--font-sans), ui-sans-serif, system-ui, sans-serif',
 } as React.CSSProperties;

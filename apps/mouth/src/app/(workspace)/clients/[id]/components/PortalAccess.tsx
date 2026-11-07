@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { KeyRound, MailCheck, Clock, ShieldAlert, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { earlyKey, takeEarly } from "./early-fetch";
 import { api } from "@/lib/api";
 import type { PortalAccessStatus } from "@/lib/api/crm/crm.types";
 
@@ -26,10 +27,13 @@ export function PortalAccess({
   clientId,
   clientName,
   clientEmail,
+  embedded = false,
 }: {
   clientId: number;
   clientName: string;
   clientEmail?: string | null;
+  /** Inside the vault card: no panel chrome of its own, a quieter heading. */
+  embedded?: boolean;
 }) {
   const [status, setStatus] = useState<PortalAccessStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -38,7 +42,9 @@ export function PortalAccess({
 
   const loadStatus = useCallback(async () => {
     try {
-      const next = await api.crm.getPortalStatus(clientId);
+      const next = await (takeEarly<PortalAccessStatus>(
+        earlyKey("portal-status", clientId),
+      ) ?? api.crm.getPortalStatus(clientId));
       setStatus(next);
       setLoadFailed(false);
     } catch {
@@ -126,18 +132,31 @@ export function PortalAccess({
       : null;
 
   return (
-    <div className="bz-product-panel overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--bz-border)]">
+    <div
+      className={embedded ? undefined : "bz-product-panel overflow-hidden"}
+      data-testid="portal-access"
+    >
+      <div
+        className={
+          embedded
+            ? "flex items-center gap-2 pb-2"
+            : "flex items-center justify-between px-4 py-3 border-b border-[var(--bz-border)]"
+        }
+      >
         <div className="flex items-center gap-2">
           <KeyRound className="w-4 h-4 text-[var(--tx-secondary)]" />
           <h3 className="text-sm font-medium text-[var(--bz-text-1)]">
-            Client Portal Access
+            {embedded ? "Access" : "Client Portal Access"}
           </h3>
         </div>
-        <span className="text-xs text-[var(--bz-text-2)]">my.balizero.com</span>
+        {embedded ? null : (
+          <span className="text-xs text-[var(--bz-text-2)]">
+            my.balizero.com
+          </span>
+        )}
       </div>
 
-      <div className="px-4 py-4">
+      <div className={embedded ? undefined : "px-4 py-4"}>
         {isLoading ? (
           <div className="flex items-center justify-center py-4">
             <div className="w-5 h-5 border-2 border-[var(--line-control)] border-t-transparent rounded-full animate-spin" />

@@ -185,7 +185,7 @@ def test_word_prefix_of_token_needs_a_four_character_word(m):
         ("beralkohol minuman", ["minuman beralkohol"], False),  # order matters
         ("minuman izin beralkohol", ["minuman beralkohol"], False),  # not contiguous
         ("mi", ["miras"], False),  # 2-char token, keyword prefix
-        ("kodo", ["miras"], True),  # 4-char token prefixes the keyword
+        ("mira", ["miras"], True),  # 4-char token prefixes the keyword
         ("mir", ["miras"], False),  # 3 chars do not
         ("miras", ["miras"], True),
         ("mirasan", ["miras"], True),  # keyword (4+) prefixes the token + light suffix
