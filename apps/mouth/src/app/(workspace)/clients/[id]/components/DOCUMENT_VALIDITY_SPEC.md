@@ -84,7 +84,7 @@ OpenAPI schema does not change. `crm.types.ts` gains `as_of?: string`.
 - **The browser clock only asks for fresh data.** A `WitaClock` in `ClientDetailClient`
   compares `witaDateKey(Date.now())` with `as_of`. It checks every 60 s
   (`CLOCK_TICK_MS`), on window focus, and once on a timer set to the next 00:00 WITA.
-  When the two differ, it invalidates `clientDetailQueryKey(clientId)`, at most once per
+  When the browser day is past `as_of`, it invalidates `clientDetailQueryKey(clientId)`, at most once per
   tick.
   - Until the new payload lands, the card keeps showing the old payload, with its own
     `as_of` everywhere.
@@ -191,6 +191,10 @@ no row carries `status = 'expired'` today.
 | undated | no countdown |
 
 `spanValue` and `ExpiryText` take the state, so a day-0 permit reads "Expired".
+
+The function has two forms with one classification. The short form above is the
+documents form. The long form, "N days left" and "Expired N days ago", is the permit and
+passport card form (`ExpiryText`), kept as it is today.
 
 **Formatter.** Every visible date of these fields goes through
 `formatCalendarDate(expiry)`:
@@ -441,7 +445,7 @@ precedence.
     | SPT "Filed" (29) | a rejected SPT does not close the year | a live SPT with the same year and `company_id` shows Filed | `TaxTab.sections.test.tsx` "filed documents flip each section to Filed and list the history" and "INNOCENCE: two companies, an SPT carrying company_id closes only that company" |
     | Coretax / EFIN on file (30) | a rejected access or EFIN document shows "No ... on file" | a live one shows "... on file" with its date | `coretax.test.ts` "reads each document type independently, newest date wins"; `TaxTab.sections.test.tsx` "access + EFIN documents: both on file, access carries its date" |
     | Company vault slots (32) | a rejected PMA document leaves the slot empty and shows the signpost | a live document fills its slot | `CompanyTab.test.tsx` "document vault renders its fixed slots when a company is linked" |
-    | Holding counts (22, 33) | a rejected or removed document is not in "N expiring soon" nor in "N documents on file" | the live twin is counted | `DocumentsTab.test.tsx` "1 expiring soon" and "2 expiring soon" cases; `OverviewTab.test.tsx` "5 company documents on file"; `CompanyTab.test.tsx` documents-count case |
+    | Holding counts (22, 33, 36) | a rejected or removed document is not in "N expiring soon" nor in "N documents on file" | the live twin is counted | `DocumentsTab.test.tsx` "1 expiring soon" and "2 expiring soon" cases; `OverviewTab.test.tsx` "5 company documents on file"; `CompanyTab.test.tsx` documents-count case |
 12. Every existing test that pins old behaviour changes in the same PR and is named in the
     PR body.
 13. **Mutation:** one mutant per rule. The PR body reports killed/total and names any
