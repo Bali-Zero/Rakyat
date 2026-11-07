@@ -29,13 +29,24 @@ export type InfoCardVariant =
 
 type LegacyInfoCardVariant = InfoCardVariant | "danger";
 
+/** A labelled row, as the article composer emits for the Quick Summary box. */
+export interface InfoCardLabelledItem {
+  label: string;
+  value: string;
+}
+
+/** A row of the card body: a labelled pair or a plain (inline-bold) string. */
+export type InfoCardItem = string | InfoCardLabelledItem;
+
 export interface InfoCardProps {
   /** Variant determines color and icon */
   variant?: LegacyInfoCardVariant;
   /** Custom title (optional, uses default based on variant) */
   title?: string;
   /** Content */
-  children: React.ReactNode;
+  children?: React.ReactNode;
+  /** Rows rendered as a list above the children */
+  items?: readonly InfoCardItem[];
   /** Optional icon override */
   icon?: React.ReactNode;
   /** Collapsible */
@@ -139,6 +150,54 @@ const variantStyles: Record<
 };
 
 // ============================================================================
+// Items
+// ============================================================================
+
+/** Renders **bold** spans of a plain string row; MDX props are not parsed as markdown. */
+function renderInline(text: string): React.ReactNode[] {
+  return text.split(/\*\*(.+?)\*\*/g).map((part, i) =>
+    i % 2 === 1 ? (
+      <strong key={i} className="font-semibold text-white/90">
+        {part}
+      </strong>
+    ) : (
+      <React.Fragment key={i}>{part}</React.Fragment>
+    ),
+  );
+}
+
+function InfoCardItems({
+  items,
+  labelClassName,
+}: {
+  items: readonly InfoCardItem[];
+  labelClassName: string;
+}) {
+  return (
+    <ul className="space-y-2 list-none p-0 m-0 mb-2 last:mb-0">
+      {items.map((item, index) =>
+        typeof item === "string" ? (
+          <li key={index} className="flex gap-2">
+            <span aria-hidden="true" className={labelClassName}>
+              •
+            </span>
+            <span>{renderInline(item)}</span>
+          </li>
+        ) : (
+          <li key={index}>
+            <span className={cn("font-medium", labelClassName)}>
+              {item.label}
+            </span>
+            <span className="text-white/40">{": "}</span>
+            <span>{renderInline(item.value)}</span>
+          </li>
+        ),
+      )}
+    </ul>
+  );
+}
+
+// ============================================================================
 // Main Component
 // ============================================================================
 
@@ -146,6 +205,7 @@ export function InfoCard({
   variant = "info",
   title,
   children,
+  items,
   icon,
   collapsible = false,
   defaultCollapsed = false,
@@ -205,6 +265,9 @@ export function InfoCard({
       {(!collapsible || !isCollapsed) && (
         <div className="px-4 pb-4">
           <div className="text-sm text-white/70 leading-relaxed">
+            {items && items.length > 0 && (
+              <InfoCardItems items={items} labelClassName={styles.titleColor} />
+            )}
             {children}
           </div>
 
