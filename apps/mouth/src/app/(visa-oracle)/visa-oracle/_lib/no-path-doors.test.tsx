@@ -231,6 +231,8 @@ describe("no-path doors — the evidence behind every named alternative", () => 
     // `offshore/business/exploring/sponsor_no/no_route` leaves the
     // non-supported set (it is no longer a dead end on seq-32), so dead ends
     // go 30 -> 29; held (4) and missing-input (4) hold.
+    // Seq-33 (2026-11-04): canonical replay preserves 29 dead ends, 4 held
+    // and 4 missing-input walks; the pack identity advances to signed33.
     const states = replay.walks.map((walk) => walk.state);
     expect(
       states.filter((state) => state === "NO_SUPPORTED_PATH"),
@@ -239,7 +241,7 @@ describe("no-path doors — the evidence behind every named alternative", () => 
       states.filter((state) => state === "HUMAN_REVIEW_REQUIRED"),
     ).toHaveLength(4);
     expect(states.filter((state) => state === "NEEDS_INPUT")).toHaveLength(4);
-    expect(replay.pack.file).toBe("rulepack-prod-032.signed.json");
+    expect(replay.pack.file).toBe("rulepack-prod-033.signed.json");
   });
 
   for (const walk of replay.walks.filter(

@@ -95,9 +95,9 @@ def _persona_spec(code: str) -> dict:
     return json.loads((CORPUS_DIR / f"{code}.json").read_text(encoding="utf-8"))
 
 
-def test_the_parked_products_are_exactly_e30e_and_e30f_on_seq_32() -> None:
+def test_the_parked_products_are_exactly_e30e_and_e30f_on_seq_33() -> None:
     """The carve-out set is derived from the pack and pinned: it may not grow silently."""
-    assert _HIGHEST_SIGNED_PACK["payload"]["sequence"] == 32
+    assert _HIGHEST_SIGNED_PACK["payload"]["sequence"] == 33
     assert set(_route_not_assessed_codes()) == {"E30E", "E30F"}
 
 
@@ -180,3 +180,22 @@ def test_e31f_variants_decide_exactly_e31f_on_the_highest_signed_pack(case: str)
     out = _evaluate(spec["overrides"], spec["label"], as_of=_parse_utc(_AS_OF))
     assert out["actual"]["state"] == "SUPPORTED_CANDIDATES", case
     assert sorted(out["actual"]["candidates"] or []) == ["E31F"], case
+
+
+@pytest.mark.parametrize(
+    ("code", "specific"),
+    [
+        ("E28A", "investment.sponsoring_company_confirmed"),
+        ("E31A", "family.spouse_application_support_confirmed"),
+    ],
+)
+@pytest.mark.parametrize(
+    "answer", [{"status": "KNOWN", "value": False}, {"status": "UNKNOWN", "reason": "UNVERIFIED"}]
+)
+def test_positive_personas_need_specific_sponsor_confirmation(
+    code: str, specific: str, answer: dict
+) -> None:
+    spec = _persona_spec(code)
+    spec["overrides"][specific] = answer
+    result = _evaluate(spec["overrides"], spec["label"], as_of=_parse_utc(_AS_OF))
+    assert code not in result["actual"]["candidates"]

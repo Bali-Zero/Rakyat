@@ -62,6 +62,10 @@
     "person.nationalities": {
       "status": "KNOWN",
       "value": ["DE"]
+    },
+    "investment.sponsoring_company_confirmed": {
+      "status": "KNOWN",
+      "value": true
     }
   },
   "product_code": "E28A"
