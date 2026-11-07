@@ -26,6 +26,7 @@ import { ProcessTab } from "./ProcessTab";
 import { ValidityTrack } from "./ValidityTrack";
 import { VisaCard } from "./VisaCard";
 import { formatCardDate } from "./documentValidity";
+import { BROWSER_ZONES, asBrowserIn } from "./browserTimeZone.testutil";
 import { buildLedger } from "./attention";
 import { dayToInstant } from "./witaClock";
 
@@ -852,29 +853,6 @@ describe("Visa card (rows 3, 5, 9)", () => {
       screen.getByText("1 removed or rejected file is in Documents"),
     ).toBeInTheDocument();
   });
-
-  it("the formatter is calendar-day exact in every browser timezone", () => {
-    const original = process.env.TZ;
-    for (const tz of ["America/Los_Angeles", "Asia/Makassar"]) {
-      process.env.TZ = tz;
-      const view = render(
-        <VisaCard
-          client={CLIENT}
-          clientId={42}
-          documents={[doc({ id: 1, expiry_date: "2027-03-31" })]}
-          activePractices={[]}
-          formatDate={(d) => formatCardDate(d, true)}
-          formatCurrency={String}
-          onRefresh={vi.fn()}
-          day={DAY}
-        />,
-      );
-      expect(view.container.textContent).toContain("31 Mar 2027");
-      view.unmount();
-    }
-    if (original === undefined) delete process.env.TZ;
-    else process.env.TZ = original;
-  });
 });
 
 describe("Passport card (rows 4, 5)", () => {
@@ -1069,4 +1047,113 @@ describe("ProcessTab expiry chip (row 28)", () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+// ---------------------------------------------------------------------------
+// Obligation 5: a date-only expiry reads the same calendar day on every
+// surface, whatever the browser's timezone.
+// ---------------------------------------------------------------------------
+
+describe("the same calendar day on every surface, in every browser timezone", () => {
+  const EXPIRY = "2027-03-31";
+  const real = (d: string) => formatCardDate(d, true);
+
+  it.each(BROWSER_ZONES)("browser in %s", (tz) => {
+    asBrowserIn(tz, () => {
+      // Documents cell
+      const docs = render(
+        <DocumentsTab
+          clientId={1}
+          documents={[
+            doc({
+              id: 1,
+              document_type: "bank_statement",
+              document_category: "other",
+              expiry_date: EXPIRY,
+            }),
+          ]}
+          documentsByCategory={{ other: [] }}
+          formatDate={real}
+          onAddClick={vi.fn()}
+          onEditClick={vi.fn()}
+          onRefresh={vi.fn()}
+          day={DAY}
+        />,
+      );
+      expect(docs.container.textContent).toContain("31 Mar 2027");
+      docs.unmount();
+
+      // Immigration history text and the permit panel
+      const imm = render(
+        <ImmigrationTab
+          clientId={1}
+          documents={[
+            doc({ id: 1, expiry_date: "2028-03-31" }),
+            doc({ id: 2, expiry_date: EXPIRY }),
+          ]}
+          formatDate={real}
+          onAddClick={vi.fn()}
+          onEditClick={vi.fn()}
+          onRefresh={vi.fn()}
+          day={DAY}
+        />,
+      );
+      expect(imm.container.textContent).toContain("Valid until 31 Mar 2027");
+      expect(imm.container.textContent).toContain("31 Mar 2028");
+      imm.unmount();
+
+      // Family row
+      const fam = render(
+        <FamilyTab
+          clientId={1}
+          familyMembers={[{ ...MEMBER, visa_expiry: EXPIRY }]}
+          documents={[]}
+          formatDate={real}
+          onAddClick={vi.fn()}
+          onEditClick={vi.fn()}
+          onRefresh={vi.fn()}
+          day={DAY}
+        />,
+      );
+      expect(fam.container.textContent).toContain("31 Mar 2027");
+      fam.unmount();
+
+      // Visa card
+      const visa = render(
+        <VisaCard
+          client={CLIENT}
+          clientId={42}
+          documents={[doc({ id: 1, expiry_date: EXPIRY })]}
+          activePractices={[]}
+          formatDate={real}
+          formatCurrency={String}
+          onRefresh={vi.fn()}
+          day={DAY}
+        />,
+      );
+      expect(visa.container.textContent).toContain("31 Mar 2027");
+      visa.unmount();
+
+      // Process chip: the day count does not move with the zone
+      const proc = render(
+        <ProcessTab
+          clientId={1}
+          practices={[
+            {
+              id: 1,
+              status: "on_process",
+              practice_type_code: "KITAS",
+              practice_type_name: "KITAS",
+              expiry_date: "2026-11-27",
+            } as ClientProfile["practices"][number],
+          ]}
+          formatDate={real}
+          onRefresh={vi.fn()}
+          day={DAY}
+        />,
+      );
+      expect(proc.container.textContent).toContain("⏰ 20d left");
+      proc.unmount();
+    });
+  });
 });

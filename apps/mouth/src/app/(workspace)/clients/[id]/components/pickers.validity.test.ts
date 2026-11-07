@@ -278,6 +278,17 @@ describe("familyPassport", () => {
     expect(r.urgent).toBe(false);
   });
 
+  it("the enum source rule: a passport enum is not read when the date comes from a document", () => {
+    const r = familyPassport(
+      member({ passport_expiry: undefined, passport_alert: "red" }),
+      [passport({ id: 1, family_member_id: 5, expiry_date: "2028-01-01" })],
+      DAY,
+    );
+    expect(r.source).toBe("document");
+    expect(r.level).toBe("green");
+    expect(r.urgent).toBe(false);
+  });
+
   it("GUILT: a green enum never turns an expired passport better", () => {
     const r = familyPassport(
       member({ passport_expiry: "2026-10-01", passport_alert: "green" }),

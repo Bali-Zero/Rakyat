@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { BROWSER_ZONES, asBrowserIn } from "./browserTimeZone.testutil";
 import {
   dateValidity,
   dayNumber,
@@ -249,6 +250,11 @@ describe("urgency and enums", () => {
     expect(isUrgent(live("valid", 200), 90, "green")).toBe(false);
   });
 
+  it("an expired live document is urgent whatever the window", () => {
+    expect(isUrgent(live("expired", -3), -10)).toBe(true);
+    expect(isUrgent(live("expired", 0), -10)).toBe(true);
+  });
+
   it("an undated live document is never urgent by date", () => {
     expect(isUrgent(live("undated", null), 90)).toBe(false);
   });
@@ -285,21 +291,24 @@ describe("urgency and enums", () => {
 });
 
 describe("the date formatter", () => {
-  const original = process.env.TZ;
-  afterEach(() => {
-    if (original === undefined) delete process.env.TZ;
-    else process.env.TZ = original;
-  });
-
-  it.each(["America/Los_Angeles", "Asia/Makassar", "Pacific/Kiritimati"])(
-    "renders the same calendar day in %s",
+  it.each(BROWSER_ZONES)(
+    "renders the same calendar day in a browser set to %s",
     (tz) => {
-      process.env.TZ = tz;
-      expect(formatCalendarDate("2026-03-31")).toBe("31 Mar 2026");
-      expect(formatCalendarDate("2026-01-01")).toBe("1 Jan 2026");
-      expect(formatCalendarDate("2026-03-31T23:00:00Z")).toBe("31 Mar 2026");
+      asBrowserIn(tz, () => {
+        expect(formatCalendarDate("2026-03-31")).toBe("31 Mar 2026");
+        expect(formatCalendarDate("2026-01-01")).toBe("1 Jan 2026");
+        expect(formatCalendarDate("2026-03-31T23:00:00Z")).toBe("31 Mar 2026");
+      });
     },
   );
+
+  it("the simulated browser really does move a zone-less format (so the test above can fail)", () => {
+    const at = new Date(Date.UTC(2026, 2, 31));
+    const local = asBrowserIn("America/Los_Angeles", () =>
+      at.toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
+    );
+    expect(local).toBe("30 Mar");
+  });
 
   it("renders a null date as a dash", () => {
     expect(formatCalendarDate(null)).toBe("—");
@@ -313,7 +322,17 @@ describe("the date formatter", () => {
   });
 
   it("formatCardDate keeps local formatting for an instant", () => {
-    process.env.TZ = "Asia/Makassar";
-    expect(formatCardDate("2026-03-31T17:00:00Z", true)).toBe("1 Apr 2026");
+    // 17:00Z on the 31st is already the 1st in Bali and still the 31st in
+    // Los Angeles: an instant is shown in the browser's own zone.
+    expect(
+      asBrowserIn("Asia/Makassar", () =>
+        formatCardDate("2026-03-31T17:00:00Z", true),
+      ),
+    ).toBe("1 Apr 2026");
+    expect(
+      asBrowserIn("America/Los_Angeles", () =>
+        formatCardDate("2026-03-31T17:00:00Z", true),
+      ),
+    ).toBe("31 Mar 2026");
   });
 });
