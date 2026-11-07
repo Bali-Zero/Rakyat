@@ -44,7 +44,7 @@ class PluginCategory(str, Enum):
 class PluginMetadata(BaseModel):
     """Metadata for a plugin"""
 
-    name: str = Field(..., description="Unique plugin name (e.g., 'kuxas.send')")
+    name: str = Field(..., description="Unique plugin name (e.g., 'gmail.send')")
     version: str = Field(default="1.0.0", description="Semantic version")
     description: str = Field(..., description="What this plugin does")
     category: PluginCategory = Field(..., description="Plugin category")
@@ -72,7 +72,7 @@ class PluginMetadata(BaseModel):
     # Backward compatibility
     legacy_handler_key: str | None = Field(
         None,
-        description="Original handler key for backward compatibility (e.g., 'kuxas.send')",
+        description="Original handler key for backward compatibility (e.g., 'gmail.send')",
     )
 
     model_config = ConfigDict(use_enum_values=True)
@@ -132,10 +132,10 @@ class Plugin(ABC):
             @property
             def metadata(self) -> PluginMetadata:
                 return PluginMetadata(
-                    name="kuxas.send",
-                    description="Send email via Kuxas",
+                    name="gmail.send",
+                    description="Send email via Gmail",
                     category=PluginCategory.GOOGLE_WORKSPACE,
-                    tags=["email", "kuxas", "send"],
+                    tags=["email", "gmail", "send"],
                     requires_auth=True,
                     estimated_time=2.0,
                     rate_limit=10

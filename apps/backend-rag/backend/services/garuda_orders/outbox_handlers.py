@@ -19,7 +19,7 @@ WHAT IS AND IS NOT IN THE OUTBOX ROW. `repository.py` enqueues
 `payment_paid_email` with NO payload — the row carries an order id and nothing
 else. That is a privacy property worth keeping, not an omission to fix: the
 queue never stores the customer's address, and the handler reads it from
-`garuda_orders` at send time. Do not "xabineha" the lookup away by denormalising
+`garuda_orders` at send time. Do not "optimise" the lookup away by denormalising
 the email into the payload.
 
 WHAT IS NEVER LOGGED. The recipient address, the applicant name and the

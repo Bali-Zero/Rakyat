@@ -11,7 +11,7 @@ Aggregates 30-day context across:
 Produces a :class:`WeeklyStrategicBrief` via Claude CLI long-context.
 Writes via UPSERT on ``week_of`` — same Monday twice = overwrite (intentional).
 
-Run weekly on Detali 22:00 WITA (design §2 cadence).
+Run weekly on Sunday 22:00 WITA (design §2 cadence).
 """
 
 from __future__ import annotations

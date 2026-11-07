@@ -169,9 +169,9 @@ Les actionnaires étrangers dans les entreprises indonésiennes disposent de plu
       id: "totalCapital",
       label: "Capital versé de la société",
       type: "number",
-      defaultValue: 8400062000,
+      defaultValue: 5000000000,
       min: 0,
-      step: 840006200,
+      step: 500000000,
       suffix: "IDR"
     },
     {
@@ -188,7 +188,7 @@ Les actionnaires étrangers dans les entreprises indonésiennes disposent de plu
     const capital = Number(values.totalCapital);
     const percent = Number(values.sharePercent) / 100;
     const yourShare = capital * percent;
-    const minInvestor = 9900000019;
+    const minInvestor = 1000000000;
     const eligible = yourShare >= minInvestor;
 
     return {
@@ -211,7 +211,7 @@ Les actionnaires étrangers dans les entreprises indonésiennes disposent de plu
 
 | Type de KITAS                 | Exigence d'investissement                                  |
 | ----------------------------- | ---------------------------------------------------------- |
-| KITAS d'Investisseur (passif) | 9 900 000 019 IDR d'investissement personnel minimum       |
+| KITAS d'Investisseur (passif) | 1 000 000 000 IDR d'investissement personnel minimum       |
 | KITAS de Directeur (actif)    | Aucun minimum (la société doit atteindre 10 milliards IDR) |
 | KITAS d'Employé (actif)       | Non basé sur l'investissement                              |
 

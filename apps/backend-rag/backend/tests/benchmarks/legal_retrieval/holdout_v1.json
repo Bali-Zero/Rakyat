@@ -1,0 +1,1046 @@
+{
+  "schema_version": 1,
+  "name": "legal_retrieval_robustness_v1",
+  "source_url": "https://zenodo.org/records/21450375",
+  "source_license": "CC-BY-4.0",
+  "source_md5": {
+    "qrels_final.csv": "e17999fa2dcc615cf08d8dd541e151fc",
+    "ds_literal_final.csv": "f1d4da77917eaafc8bbedc949351cd5e",
+    "ds_semantic_final.csv": "1f09d2112ac164fbec8bf8263f3646d7",
+    "dataset_korpus_per_ayat.csv": "908208aff530eb96c122196d5ebcc597"
+  },
+  "selection_seed": "legal-robustness-v1-20261103",
+  "selection_method": "SHA-256(seed + separator + JSON key) ordering; four suffix articles first, then distinct regulations; ayat cases use distinct regulations; contrasts share regulation number and article across different years; published controls retain original qrels. Frozen before candidate evaluation.",
+  "coverage_note": "48 new reference formulations and 12 previously published controls. The source corpus was used by the existing benchmark; this is a robustness set, not an unseen corpus or a legal-answer gold set.",
+  "cases": [
+    {
+      "case_id": "citation-01",
+      "family": "citation_variant",
+      "query": "Tolong temukan Pasal 11a dalam Peraturan Presiden Nomor 72 Tahun 2020.",
+      "source_regulation": "nomor 72 tahun 2020",
+      "source_pasal": "11a",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_582": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-02",
+      "family": "citation_variant",
+      "query": "Perpres 77/2021: saya mencari bagian Pasal 8d.",
+      "source_regulation": "nomor 77 tahun 2021",
+      "source_pasal": "8d",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1088": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-03",
+      "family": "citation_variant",
+      "query": "Untuk tahun 2024, ambil Pasal 49a dari Perpres nomor 24.",
+      "source_regulation": "nomor 24 tahun 2024",
+      "source_pasal": "49a",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_587": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-04",
+      "family": "citation_variant",
+      "query": "PASAL 14b — PERATURAN PRESIDEN NO. 113 TAHUN 2025",
+      "source_regulation": "nomor 113 tahun 2025",
+      "source_pasal": "14b",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1212": 2,
+        "ayat_1213": 2,
+        "ayat_1214": 2,
+        "ayat_1215": 2,
+        "ayat_1216": 2,
+        "ayat_1217": 2,
+        "ayat_1218": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-05",
+      "family": "citation_variant",
+      "query": "Dokumen Perpres nomor 55, tahun 2025; buka pasal 1.",
+      "source_regulation": "nomor 55 tahun 2025",
+      "source_pasal": "1",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_344": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-06",
+      "family": "citation_variant",
+      "query": "Bisakah Anda menunjukkan pasal 7 pada Perpres 52 Tahun 2020?",
+      "source_regulation": "nomor 52 tahun 2020",
+      "source_pasal": "7",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1431": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-07",
+      "family": "citation_variant",
+      "query": "Rujukan yang saya perlukan adalah Peraturan Presiden 17/2023, Pasal 5.",
+      "source_regulation": "nomor 17 tahun 2023",
+      "source_pasal": "5",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1254": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-08",
+      "family": "citation_variant",
+      "query": "Cari kutipan pasal 3 di peraturan presiden nomor 51 tahun 2025.",
+      "source_regulation": "nomor 51 tahun 2025",
+      "source_pasal": "3",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_458": 2,
+        "ayat_459": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-09",
+      "family": "citation_variant",
+      "query": "Tolong temukan Pasal 3 dalam Peraturan Presiden Nomor 20 Tahun 2021.",
+      "source_regulation": "nomor 20 tahun 2021",
+      "source_pasal": "3",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1121": 2,
+        "ayat_1122": 2,
+        "ayat_1123": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-10",
+      "family": "citation_variant",
+      "query": "Perpres 109/2025: saya mencari bagian Pasal 5.",
+      "source_regulation": "nomor 109 tahun 2025",
+      "source_pasal": "5",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_489": 2,
+        "ayat_490": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-11",
+      "family": "citation_variant",
+      "query": "Untuk tahun 2025, ambil Pasal 45 dari Perpres nomor 106.",
+      "source_regulation": "nomor 106 tahun 2025",
+      "source_pasal": "45",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_674": 2,
+        "ayat_675": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-12",
+      "family": "citation_variant",
+      "query": "PASAL 17 — PERATURAN PRESIDEN NO. 94 TAHUN 2025",
+      "source_regulation": "nomor 94 tahun 2025",
+      "source_pasal": "17",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_439": 2,
+        "ayat_440": 2,
+        "ayat_441": 2,
+        "ayat_442": 2,
+        "ayat_443": 2,
+        "ayat_444": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-13",
+      "family": "citation_variant",
+      "query": "Dokumen Perpres nomor 76, tahun 2022; buka pasal 1.",
+      "source_regulation": "nomor 76 tahun 2022",
+      "source_pasal": "1",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_143": 2,
+        "ayat_144": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-14",
+      "family": "citation_variant",
+      "query": "Bisakah Anda menunjukkan pasal 4 pada Perpres 33 Tahun 2020?",
+      "source_regulation": "nomor 33 tahun 2020",
+      "source_pasal": "4",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_973": 2,
+        "ayat_974": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-15",
+      "family": "citation_variant",
+      "query": "Rujukan yang saya perlukan adalah Peraturan Presiden 22/2020, Pasal 5.",
+      "source_regulation": "nomor 22 tahun 2020",
+      "source_pasal": "5",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_468": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-16",
+      "family": "citation_variant",
+      "query": "Cari kutipan pasal 1 di peraturan presiden nomor 103 tahun 2020.",
+      "source_regulation": "nomor 103 tahun 2020",
+      "source_pasal": "1",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_5": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-17",
+      "family": "citation_variant",
+      "query": "Tolong temukan Pasal 3 dalam Peraturan Presiden Nomor 84 Tahun 2022.",
+      "source_regulation": "nomor 84 tahun 2022",
+      "source_pasal": "3",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1137": 2,
+        "ayat_1138": 2,
+        "ayat_1139": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-18",
+      "family": "citation_variant",
+      "query": "Perpres 36/2020: saya mencari bagian Pasal 29.",
+      "source_regulation": "nomor 36 tahun 2020",
+      "source_pasal": "29",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1358": 2,
+        "ayat_1359": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-19",
+      "family": "citation_variant",
+      "query": "Untuk tahun 2024, ambil Pasal 40 dari Perpres nomor 197.",
+      "source_regulation": "nomor 197 tahun 2024",
+      "source_pasal": "40",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_848": 2,
+        "ayat_849": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-20",
+      "family": "citation_variant",
+      "query": "PASAL 5 — PERATURAN PRESIDEN NO. 20 TAHUN 2020",
+      "source_regulation": "nomor 20 tahun 2020",
+      "source_pasal": "5",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_187": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-21",
+      "family": "citation_variant",
+      "query": "Dokumen Perpres nomor 86, tahun 2022; buka pasal 5.",
+      "source_regulation": "nomor 86 tahun 2022",
+      "source_pasal": "5",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1491": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-22",
+      "family": "citation_variant",
+      "query": "Bisakah Anda menunjukkan pasal 6 pada Perpres 88 Tahun 2022?",
+      "source_regulation": "nomor 88 tahun 2022",
+      "source_pasal": "6",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_325": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-23",
+      "family": "citation_variant",
+      "query": "Rujukan yang saya perlukan adalah Peraturan Presiden 76/2021, Pasal i.",
+      "source_regulation": "nomor 76 tahun 2021",
+      "source_pasal": "i",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_859": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "citation-24",
+      "family": "citation_variant",
+      "query": "Cari kutipan pasal 2 di peraturan presiden nomor 40 tahun 2021.",
+      "source_regulation": "nomor 40 tahun 2021",
+      "source_pasal": "2",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1174": 2,
+        "ayat_1175": 2,
+        "ayat_1176": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "ayat-01",
+      "family": "ayat_exact",
+      "query": "Tunjukkan hanya ayat (1) dari Pasal 1, Peraturan Presiden Nomor 37 Tahun 2021.",
+      "source_regulation": "nomor 37 tahun 2021",
+      "source_pasal": "1",
+      "source_ayat": "1",
+      "relevance": {
+        "ayat_94": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "ayat-02",
+      "family": "ayat_exact",
+      "query": "Tunjukkan hanya ayat (5) dari Pasal 13, Peraturan Presiden Nomor 103 Tahun 2020.",
+      "source_regulation": "nomor 103 tahun 2020",
+      "source_pasal": "13",
+      "source_ayat": "5",
+      "relevance": {
+        "ayat_41": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "ayat-03",
+      "family": "ayat_exact",
+      "query": "Tunjukkan hanya ayat (1) dari Pasal 3, Peraturan Presiden Nomor 51 Tahun 2025.",
+      "source_regulation": "nomor 51 tahun 2025",
+      "source_pasal": "3",
+      "source_ayat": "1",
+      "relevance": {
+        "ayat_458": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "ayat-04",
+      "family": "ayat_exact",
+      "query": "Tunjukkan hanya ayat (1) dari Pasal 1, Peraturan Presiden Nomor 81 Tahun 2022.",
+      "source_regulation": "nomor 81 tahun 2022",
+      "source_pasal": "1",
+      "source_ayat": "1",
+      "relevance": {
+        "ayat_983": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "ayat-05",
+      "family": "ayat_exact",
+      "query": "Tunjukkan hanya ayat (1) dari Pasal 18, Peraturan Presiden Nomor 36 Tahun 2020.",
+      "source_regulation": "nomor 36 tahun 2020",
+      "source_pasal": "18",
+      "source_ayat": "1",
+      "relevance": {
+        "ayat_1329": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "ayat-06",
+      "family": "ayat_exact",
+      "query": "Tunjukkan hanya ayat (3) dari Pasal 6, Peraturan Presiden Nomor 17 Tahun 2023.",
+      "source_regulation": "nomor 17 tahun 2023",
+      "source_pasal": "6",
+      "source_ayat": "3",
+      "relevance": {
+        "ayat_1257": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "ayat-07",
+      "family": "ayat_exact",
+      "query": "Tunjukkan hanya ayat (2) dari Pasal 3, Peraturan Presiden Nomor 58 Tahun 2025.",
+      "source_regulation": "nomor 58 tahun 2025",
+      "source_pasal": "3",
+      "source_ayat": "2",
+      "relevance": {
+        "ayat_881": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "ayat-08",
+      "family": "ayat_exact",
+      "query": "Tunjukkan hanya ayat (1) dari Pasal 1, Peraturan Presiden Nomor 101 Tahun 2021.",
+      "source_regulation": "nomor 101 tahun 2021",
+      "source_pasal": "1",
+      "source_ayat": "1",
+      "relevance": {
+        "ayat_1472": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "ayat-09",
+      "family": "ayat_exact",
+      "query": "Tunjukkan hanya ayat (2) dari Pasal 1, Peraturan Presiden Nomor 43 Tahun 2021.",
+      "source_regulation": "nomor 43 tahun 2021",
+      "source_pasal": "1",
+      "source_ayat": "2",
+      "relevance": {
+        "ayat_955": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "ayat-10",
+      "family": "ayat_exact",
+      "query": "Tunjukkan hanya ayat (2) dari Pasal 4, Peraturan Presiden Nomor 33 Tahun 2020.",
+      "source_regulation": "nomor 33 tahun 2020",
+      "source_pasal": "4",
+      "source_ayat": "2",
+      "relevance": {
+        "ayat_974": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "ayat-11",
+      "family": "ayat_exact",
+      "query": "Tunjukkan hanya ayat (5) dari Pasal 28, Peraturan Presiden Nomor 109 Tahun 2025.",
+      "source_regulation": "nomor 109 tahun 2025",
+      "source_pasal": "28",
+      "source_ayat": "5",
+      "relevance": {
+        "ayat_556": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "ayat-12",
+      "family": "ayat_exact",
+      "query": "Tunjukkan hanya ayat (1) dari Pasal 3, Peraturan Presiden Nomor 94 Tahun 2025.",
+      "source_regulation": "nomor 94 tahun 2025",
+      "source_pasal": "3",
+      "source_ayat": "1",
+      "relevance": {
+        "ayat_412": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": null
+    },
+    {
+      "case_id": "contrast-01a",
+      "family": "year_contrast",
+      "query": "Saya memilih Perpres Nomor 77 Tahun 2021. Temukan isi Pasal i pada versi tahun tersebut.",
+      "source_regulation": "nomor 77 tahun 2021",
+      "source_pasal": "i",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1080": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": "year-01"
+    },
+    {
+      "case_id": "contrast-01b",
+      "family": "year_contrast",
+      "query": "Saya memilih Perpres Nomor 77 Tahun 2023. Temukan isi Pasal i pada versi tahun tersebut.",
+      "source_regulation": "nomor 77 tahun 2023",
+      "source_pasal": "i",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_944": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": "year-01"
+    },
+    {
+      "case_id": "contrast-02a",
+      "family": "year_contrast",
+      "query": "Saya memilih Perpres Nomor 57 Tahun 2022. Temukan isi Pasal 1 pada versi tahun tersebut.",
+      "source_regulation": "nomor 57 tahun 2022",
+      "source_pasal": "1",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1277": 2,
+        "ayat_1278": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": "year-02"
+    },
+    {
+      "case_id": "contrast-02b",
+      "family": "year_contrast",
+      "query": "Saya memilih Perpres Nomor 57 Tahun 2025. Temukan isi Pasal 1 pada versi tahun tersebut.",
+      "source_regulation": "nomor 57 tahun 2025",
+      "source_pasal": "1",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_114": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": "year-02"
+    },
+    {
+      "case_id": "contrast-03a",
+      "family": "year_contrast",
+      "query": "Saya memilih Perpres Nomor 72 Tahun 2020. Temukan isi Pasal 1 pada versi tahun tersebut.",
+      "source_regulation": "nomor 72 tahun 2020",
+      "source_pasal": "1",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_567": 2,
+        "ayat_568": 2,
+        "ayat_569": 2,
+        "ayat_570": 2,
+        "ayat_571": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": "year-03"
+    },
+    {
+      "case_id": "contrast-03b",
+      "family": "year_contrast",
+      "query": "Saya memilih Perpres Nomor 72 Tahun 2024. Temukan isi Pasal 1 pada versi tahun tersebut.",
+      "source_regulation": "nomor 72 tahun 2024",
+      "source_pasal": "1",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_314": 2,
+        "ayat_315": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": "year-03"
+    },
+    {
+      "case_id": "contrast-04a",
+      "family": "year_contrast",
+      "query": "Saya memilih Perpres Nomor 20 Tahun 2020. Temukan isi Pasal 4 pada versi tahun tersebut.",
+      "source_regulation": "nomor 20 tahun 2020",
+      "source_pasal": "4",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_186": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": "year-04"
+    },
+    {
+      "case_id": "contrast-04b",
+      "family": "year_contrast",
+      "query": "Saya memilih Perpres Nomor 20 Tahun 2021. Temukan isi Pasal 4 pada versi tahun tersebut.",
+      "source_regulation": "nomor 20 tahun 2021",
+      "source_pasal": "4",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1124": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": "year-04"
+    },
+    {
+      "case_id": "contrast-05a",
+      "family": "year_contrast",
+      "query": "Saya memilih Perpres Nomor 74 Tahun 2020. Temukan isi Pasal 1 pada versi tahun tersebut.",
+      "source_regulation": "nomor 74 tahun 2020",
+      "source_pasal": "1",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_332": 2,
+        "ayat_333": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": "year-05"
+    },
+    {
+      "case_id": "contrast-05b",
+      "family": "year_contrast",
+      "query": "Saya memilih Perpres Nomor 74 Tahun 2024. Temukan isi Pasal 1 pada versi tahun tersebut.",
+      "source_regulation": "nomor 74 tahun 2024",
+      "source_pasal": "1",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_238": 2,
+        "ayat_239": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": "year-05"
+    },
+    {
+      "case_id": "contrast-06a",
+      "family": "year_contrast",
+      "query": "Saya memilih Perpres Nomor 81 Tahun 2020. Temukan isi Pasal 2 pada versi tahun tersebut.",
+      "source_regulation": "nomor 81 tahun 2020",
+      "source_pasal": "2",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_913": 2,
+        "ayat_914": 2,
+        "ayat_915": 2,
+        "ayat_916": 2,
+        "ayat_917": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": "year-06"
+    },
+    {
+      "case_id": "contrast-06b",
+      "family": "year_contrast",
+      "query": "Saya memilih Perpres Nomor 81 Tahun 2025. Temukan isi Pasal 2 pada versi tahun tersebut.",
+      "source_regulation": "nomor 81 tahun 2025",
+      "source_pasal": "2",
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1368": 2,
+        "ayat_1369": 2
+      },
+      "derivation": "structured_corpus_reference",
+      "source_query_id": null,
+      "is_new_formulation": true,
+      "pair_id": "year-06"
+    },
+    {
+      "case_id": "literal-01",
+      "family": "published_literal",
+      "query": "pt telekomunikasi indonesia tbk menyusun rencana percepatan transformasi digital pengadaan barang jasa pemerintah",
+      "source_regulation": null,
+      "source_pasal": null,
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1238": 1,
+        "ayat_1243": 1,
+        "ayat_1244": 2,
+        "ayat_1246": 2,
+        "ayat_1249": 2,
+        "ayat_1250": 1,
+        "ayat_1259": 2,
+        "ayat_1263": 2,
+        "ayat_1265": 2,
+        "ayat_1266": 2,
+        "ayat_1268": 1,
+        "ayat_1269": 1,
+        "ayat_1271": 1
+      },
+      "derivation": "published_qrels",
+      "source_query_id": "literal_1249",
+      "is_new_formulation": false,
+      "pair_id": null
+    },
+    {
+      "case_id": "literal-02",
+      "family": "published_literal",
+      "query": "universitas islam negeri siber syekh nurjati cirebon perguruan tinggi kementerian agama",
+      "source_regulation": null,
+      "source_pasal": null,
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1170": 1,
+        "ayat_1174": 1,
+        "ayat_131": 1,
+        "ayat_1393": 1,
+        "ayat_1404": 2,
+        "ayat_1405": 2,
+        "ayat_1406": 2,
+        "ayat_1407": 2,
+        "ayat_1408": 2,
+        "ayat_1409": 2,
+        "ayat_1411": 2,
+        "ayat_1412": 2,
+        "ayat_1413": 1,
+        "ayat_1414": 1,
+        "ayat_342": 1,
+        "ayat_353": 1,
+        "ayat_724": 1,
+        "ayat_779": 1
+      },
+      "derivation": "published_qrels",
+      "source_query_id": "literal_1406",
+      "is_new_formulation": false,
+      "pair_id": null
+    },
+    {
+      "case_id": "literal-03",
+      "family": "published_literal",
+      "query": "mengesahkan persetujuan kerangka kerja sama republik indonesia republik kosta rika",
+      "source_regulation": null,
+      "source_pasal": null,
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1279": 2,
+        "ayat_1280": 1,
+        "ayat_1281": 1,
+        "ayat_1282": 2,
+        "ayat_1283": 2,
+        "ayat_1284": 2
+      },
+      "derivation": "published_qrels",
+      "source_query_id": "literal_1284",
+      "is_new_formulation": false,
+      "pair_id": null
+    },
+    {
+      "case_id": "literal-04",
+      "family": "published_literal",
+      "query": "besaran uang penghargaan wakil menteri masa jabatan",
+      "source_regulation": null,
+      "source_pasal": null,
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1077": 1,
+        "ayat_1081": 1,
+        "ayat_1082": 2,
+        "ayat_1083": 2,
+        "ayat_1084": 2,
+        "ayat_1085": 1,
+        "ayat_1088": 1
+      },
+      "derivation": "published_qrels",
+      "source_query_id": "literal_1083",
+      "is_new_formulation": false,
+      "pair_id": null
+    },
+    {
+      "case_id": "literal-05",
+      "family": "published_literal",
+      "query": "jaminan prinsip pengelolaan risiko anggaran pendapatan belanja negara",
+      "source_regulation": null,
+      "source_pasal": null,
+      "source_ayat": null,
+      "relevance": {
+        "ayat_10": 2,
+        "ayat_1051": 1,
+        "ayat_37": 2,
+        "ayat_568": 1,
+        "ayat_579": 1,
+        "ayat_845": 1,
+        "ayat_873": 1
+      },
+      "derivation": "published_qrels",
+      "source_query_id": "literal_10",
+      "is_new_formulation": false,
+      "pair_id": null
+    },
+    {
+      "case_id": "literal-06",
+      "family": "published_literal",
+      "query": "percepatan transformasi digital pengadaan barang jasa pemerintah",
+      "source_regulation": null,
+      "source_pasal": null,
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1238": 2,
+        "ayat_1239": 2,
+        "ayat_1240": 2,
+        "ayat_1241": 2,
+        "ayat_1242": 2,
+        "ayat_1243": 2,
+        "ayat_1244": 2,
+        "ayat_1250": 2,
+        "ayat_1261": 1,
+        "ayat_1265": 2,
+        "ayat_1269": 2,
+        "ayat_1271": 2,
+        "ayat_844": 1
+      },
+      "derivation": "published_qrels",
+      "source_query_id": "literal_1238",
+      "is_new_formulation": false,
+      "pair_id": null
+    },
+    {
+      "case_id": "semantic-01",
+      "family": "published_semantic",
+      "query": "siapa yang mengawasi lembaga urus pengusaha",
+      "source_regulation": null,
+      "source_pasal": null,
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1003": 2,
+        "ayat_1036": 2,
+        "ayat_1037": 1,
+        "ayat_1222": 1,
+        "ayat_1313": 1,
+        "ayat_537": 1,
+        "ayat_540": 1,
+        "ayat_821": 1,
+        "ayat_829": 1
+      },
+      "derivation": "published_qrels",
+      "source_query_id": "semantic_1036",
+      "is_new_formulation": false,
+      "pair_id": null
+    },
+    {
+      "case_id": "semantic-02",
+      "family": "published_semantic",
+      "query": "bagaimana cara mendaftarkan penemuan biologis agar diakui global",
+      "source_regulation": null,
+      "source_pasal": null,
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1467": 1,
+        "ayat_390": 1,
+        "ayat_391": 2
+      },
+      "derivation": "published_qrels",
+      "source_query_id": "semantic_391",
+      "is_new_formulation": false,
+      "pair_id": null
+    },
+    {
+      "case_id": "semantic-03",
+      "family": "published_semantic",
+      "query": "kapan pengelolaan kekayaan alam bumi jadi satu pintu modern",
+      "source_regulation": null,
+      "source_pasal": null,
+      "source_ayat": null,
+      "relevance": {
+        "ayat_404": 1,
+        "ayat_406": 1,
+        "ayat_410": 1,
+        "ayat_414": 1,
+        "ayat_416": 2,
+        "ayat_432": 1
+      },
+      "derivation": "published_qrels",
+      "source_query_id": "semantic_416",
+      "is_new_formulation": false,
+      "pair_id": null
+    },
+    {
+      "case_id": "semantic-04",
+      "family": "published_semantic",
+      "query": "alasan ganti menteri untuk kemajuan negara",
+      "source_regulation": null,
+      "source_pasal": null,
+      "source_ayat": null,
+      "relevance": {
+        "ayat_127": 2,
+        "ayat_470": 1
+      },
+      "derivation": "published_qrels",
+      "source_query_id": "semantic_127",
+      "is_new_formulation": false,
+      "pair_id": null
+    },
+    {
+      "case_id": "semantic-05",
+      "family": "published_semantic",
+      "query": "buangan kotoran bisa diubah jadi tenaga tanpa merusak alam",
+      "source_regulation": null,
+      "source_pasal": null,
+      "source_ayat": null,
+      "relevance": {
+        "ayat_476": 2,
+        "ayat_477": 1,
+        "ayat_479": 2,
+        "ayat_482": 2,
+        "ayat_484": 2,
+        "ayat_509": 1,
+        "ayat_539": 1,
+        "ayat_542": 1,
+        "ayat_549": 2,
+        "ayat_552": 2,
+        "ayat_553": 1,
+        "ayat_554": 1
+      },
+      "derivation": "published_qrels",
+      "source_query_id": "semantic_479",
+      "is_new_formulation": false,
+      "pair_id": null
+    },
+    {
+      "case_id": "semantic-06",
+      "family": "published_semantic",
+      "query": "aturan internasional untuk rekaman tontonan yang disetujui indonesia",
+      "source_regulation": null,
+      "source_pasal": null,
+      "source_ayat": null,
+      "relevance": {
+        "ayat_1144": 1,
+        "ayat_200": 2,
+        "ayat_202": 2,
+        "ayat_205": 2,
+        "ayat_860": 1,
+        "ayat_863": 1,
+        "ayat_864": 1,
+        "ayat_978": 1
+      },
+      "derivation": "published_qrels",
+      "source_query_id": "semantic_202",
+      "is_new_formulation": false,
+      "pair_id": null
+    }
+  ]
+}

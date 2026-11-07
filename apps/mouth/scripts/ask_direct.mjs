@@ -46,7 +46,7 @@ async function main() {
 
   console.log("3. Sending Surf Camp Query (Stream)...");
   const query =
-    "Goqame aprire una scuola di surf a Canggu. 1. Posso usare un Virtual Office? 2. Che visto serve ai miei 2 istruttori australiani? 3. Capitale minimo versato? Usa KBLI corretti.";
+    "Voglio aprire una scuola di surf a Canggu. 1. Posso usare un Virtual Office? 2. Che visto serve ai miei 2 istruttori australiani? 3. Capitale minimo versato? Usa KBLI corretti.";
 
   // Note: Backend might expect 'session_id' or 'conversation_history'.
   // Using generic ID for test.

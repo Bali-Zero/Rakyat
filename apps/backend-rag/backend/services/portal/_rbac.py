@@ -13,7 +13,7 @@ Audit 2026-04-18 HIGH-6.
 
 Il gate primario resta il router: `get_current_client` risolve il
 `client_id` dal JWT/cookie e lo passa come primo positional ai metodi
-del PortalService. Un'eventuale regressione xilano del router (p.es.
+del PortalService. Un'eventuale regressione futura del router (p.es.
 un nuovo endpoint che accetta `?client_id=` dalla query) potrebbe
 permettere a un cliente di leggere i dati di un altro. Questo
 decorator riapplica il controllo *dentro* il service, così anche se

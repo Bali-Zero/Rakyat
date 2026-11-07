@@ -59,6 +59,12 @@ fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
 
+# OCR engine: Apple Vision first (on-device), the Ollama qwen2.5vl chain stays the per-page
+# fallback. Only this worker runs this script, so this line IS the activation. Kill switch:
+# INTAKE_OCR_PROVIDER=ollama in the plist env. Vision warms up in the background (a minute or
+# two on a new OS build, apple_vision_ocr.py); pages in that window use Ollama as before.
+export INTAKE_OCR_PROVIDER="${INTAKE_OCR_PROVIDER:-apple_vision}"
+
 # Import only the scoped WA Mirror delivery env needed for headless Kita upload.
 # Do NOT source ~/.wa-mirror.env wholesale: it is not shell-safe and contains
 # unrelated values (accounts, labels, DB URLs) that must not shadow the worker

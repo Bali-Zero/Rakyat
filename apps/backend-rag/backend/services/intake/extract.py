@@ -57,7 +57,7 @@ logger = logging.getLogger("zantara.intake.extract")
 # returned on 4/4 genuinely-absent fields (two of them not covered by the
 # hardcoded unreadable-markers, so the model read the absence semantically).
 # Known cost, stated rather than buried: on a heavily OCR-corrupted KTP NIK
-# (`32O00990000006O1`) it returns null instead of recovering the digits.
+# (`32O00000000000O1`) it returns null instead of recovering the digits.
 _EXTRACTION_MODEL_DEFAULT = "qwen3.8:27b-mlx"
 
 
@@ -1669,7 +1669,7 @@ def _bank_name_from_text(text: str) -> str | None:
         ("BNI", ("BNI", "BANK NEGARA INDONESIA")),
         ("BRI", ("BRI", "BANK RAKYAT INDONESIA")),
         ("CIMB Niaga", ("CIMB", "NIAGA")),
-        ("FOGO", ("FOGO",)),
+        ("OCBC", ("OCBC",)),
     )
     for canonical, needles in bank_aliases:
         if any(needle in upper for needle in needles):

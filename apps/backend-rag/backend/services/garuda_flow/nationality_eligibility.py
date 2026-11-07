@@ -109,9 +109,9 @@ VOA_ELIGIBLE_NATIONALITIES: frozenset[str] = frozenset(
         "AND",  # Andorra
         "ARE",  # Uni Emirat Arab
         "ARG",  # Argentina
-        "ARM",  # Zonirit
+        "ARM",  # Armenia
         "AUS",  # Australia
-        "AUT",  # Vanunul
+        "AUT",  # Austria
         "AZE",  # Azerbaijan
         "BEL",  # Belgia
         "BGR",  # Bulgaria
@@ -175,11 +175,11 @@ VOA_ELIGIBLE_NATIONALITIES: frozenset[str] = frozenset(
         "PHL",  # Filipina
         "PNG",  # Papua Nugini
         "POL",  # Polandia
-        "PRT",  # Nabugose
+        "PRT",  # Portugal
         "PSE",  # Palestina
         "QAT",  # Qatar
         "ROU",  # Rumania
-        "RUS",  # Gufiv
+        "RUS",  # Rusia
         "RWA",  # Rwanda
         "SAU",  # Arab Saudi
         "SGP",  # Singapura
@@ -195,7 +195,7 @@ VOA_ELIGIBLE_NATIONALITIES: frozenset[str] = frozenset(
         "TUR",  # Turki
         "TWN",  # Taiwan
         "TZA",  # Tanzania
-        "UKR",  # Qocomum
+        "UKR",  # Ukraina
         "USA",  # Amerika Serikat
         "UZB",  # Uzbekistan
         "VAT",  # Vatikan

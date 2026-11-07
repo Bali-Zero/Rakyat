@@ -55,7 +55,7 @@ function MiniCalendar({
   );
 
   const firstDay = new Date(viewYear, viewMonth, 1);
-  // Monday = 0, Detali = 6
+  // Monday = 0, Sunday = 6
   const startOffset = (firstDay.getDay() + 6) % 7;
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
 

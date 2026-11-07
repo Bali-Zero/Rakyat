@@ -1,0 +1,196 @@
+"""Contract tests for exact KBLI 2025 retrieval in the agentic RAG path."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from backend.services.rag.agentic import tools as tools_module
+from backend.services.rag.agentic.tools import KBLICanonicalLookupTool
+
+_REPO_ROOT = next(
+    parent
+    for parent in Path(__file__).resolve().parents
+    if (parent / "data/source_documents/KBLI_2025_FINAL_CLEAN.json").is_file()
+)
+_DATASET = _REPO_ROOT / "data/source_documents/KBLI_2025_FINAL_CLEAN.json"
+
+
+def test_default_dataset_path_tolerates_shallow_fly_layout(monkeypatch):
+    monkeypatch.setattr(tools_module, "__file__", "/app/backend/services/rag/agentic/tools.py")
+    assert tools_module._default_kbli_dataset_path() == Path(
+        "/app/source_documents/KBLI_2025_FINAL_CLEAN.json"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "cap", "condition"),
+    [
+        ("51101", 49, "single majority"),
+        ("79122", 0, "Islamic faith"),
+        ("25200", 49, "Menteri Pertahanan"),
+    ],
+)
+async def test_exact_lookup_returns_canonical_pma_fields(code, cap, condition):
+    tool = KBLICanonicalLookupTool(dataset_path=_DATASET)
+
+    payload = json.loads(await tool.execute(code=code))
+
+    assert payload["found"] is True
+    assert payload["code"] == code
+    assert payload["pma"]["status"] == "TERBATAS"
+    assert payload["pma"]["max_foreign_ownership_percent"] == cap
+    assert condition in payload["pma"]["condition"]
+    assert payload["pma"]["cap_verified"] is True
+    assert payload["source"]["dataset"] == "KBLI_2025_FINAL_CLEAN.json"
+
+
+@pytest.mark.asyncio
+async def test_nonexistent_2025_code_is_explicitly_absent_not_semantically_mapped():
+    tool = KBLICanonicalLookupTool(dataset_path=_DATASET)
+
+    payload = json.loads(await tool.execute(code="68200"))
+
+    assert payload == {
+        "found": False,
+        "code": "68200",
+        "reason": "CODE_NOT_IN_KBLI_2025_CANONICAL",
+        "source": {"dataset": "KBLI_2025_FINAL_CLEAN.json"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_missing_dataset_is_unavailable_not_a_false_code_absence(tmp_path):
+    tool = KBLICanonicalLookupTool(dataset_path=tmp_path / "missing.json")
+
+    payload = json.loads(await tool.execute(code="51101"))
+
+    assert payload == {
+        "found": False,
+        "code": "51101",
+        "error": "DATASET_UNAVAILABLE",
+        "source": {"dataset": "KBLI_2025_FINAL_CLEAN.json"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_null_scale_list_is_tolerated(tmp_path):
+    dataset = tmp_path / "kbli.json"
+    dataset.write_text(
+        json.dumps(
+            {
+                "data": [
+                    {
+                        "kode_kbli_2025": "99999",
+                        "judul": "Synthetic schema-edge record",
+                        "per_skala": [{"skala_usaha": None, "kategori_risiko": "Rendah"}],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    tool = KBLICanonicalLookupTool(dataset_path=dataset)
+
+    payload = json.loads(await tool.execute(code="99999"))
+
+    assert payload["found"] is True
+    assert payload["risk_at_large_scale"] == []
+
+
+@pytest.mark.asyncio
+async def test_lookup_exposes_only_the_reviewed_bali_verdict_shape():
+    tool = KBLICanonicalLookupTool(dataset_path=_DATASET)
+
+    # 02102 has a complete located national PMA tuple, so the independent
+    # Bali object is eligible for model-facing disclosure.
+    payload = json.loads(await tool.execute(code="02102"))
+
+    assert set(payload["bali"]) == {
+        "status",
+        "blocked",
+        "needs_review",
+        "reason",
+        "closure_url",
+        "closure_scope",
+        "conservative_reading",
+    }
+    assert payload["bali"]["blocked"] is False
+    assert payload["bali"]["needs_review"] is False
+    rendered = json.dumps(payload["bali"])
+    for internal_field in ("moratorium", "verdict", "verdict_state", "confidence"):
+        assert internal_field not in rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "scope", "conservative"),
+    [
+        ("68111", None, False),
+        ("55101", "building area under 6,000 m²", False),
+        ("47211", None, True),
+    ],
+)
+async def test_a_sourced_bali_closure_carries_source_scope_and_hedge_on_an_unverified_code(
+    code, scope, conservative
+):
+    """The canonical's Bali closures are nationally unverified, yet the tool
+    discloses them — so the source, the hotel scope and the conservative-reading
+    flag must travel as fields, not only inside the free-form reason."""
+    tool = KBLICanonicalLookupTool(dataset_path=_DATASET)
+
+    payload = json.loads(await tool.execute(code=code))
+
+    assert payload["pma"]["status"] == "NOT_VERIFIED"
+    assert payload["bali"]["status"] == "CHIUSO_BALI"
+    assert payload["bali"]["blocked"] is True
+    assert payload["bali"]["closure_url"].startswith("https://")
+    assert payload["bali"]["closure_scope"] == scope
+    assert payload["bali"]["conservative_reading"] is conservative
+
+
+@pytest.mark.asyncio
+async def test_exact_lookup_declared_gap_withholds_raw_pma_and_free_form_bali_reason():
+    tool = KBLICanonicalLookupTool(dataset_path=_DATASET)
+
+    payload = json.loads(await tool.execute(code="01111"))
+
+    assert payload["found"] is True
+    assert payload["pma"] == {
+        "status": "NOT_VERIFIED",
+        "max_foreign_ownership_percent": None,
+        "condition": None,
+        "verification_status": "declared_gap",
+        "official_basis": None,
+        "source_vintage": None,
+        "cap_special": False,
+        "cap_verified": False,
+    }
+    assert payload["bali"] == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["", "1234", "123456", "51A01"])
+async def test_lookup_rejects_non_five_digit_input(code):
+    tool = KBLICanonicalLookupTool(dataset_path=_DATASET)
+
+    payload = json.loads(await tool.execute(code=code))
+
+    assert payload["found"] is False
+    assert payload["reason"] == "INVALID_KBLI_CODE_FORMAT"
+
+
+def test_prompt_requires_exact_lookup_and_locks_curated_legal_traps():
+    from backend.prompts.zantara_core_v4 import TOOL_USAGE_POLICY
+
+    assert 'CALL kbli_lookup(code="...") FIRST' in TOOL_USAGE_POLICY
+    assert "error=DATASET_UNAVAILABLE" in TOOL_USAGE_POLICY
+    assert "Rp2.500.000.000" in TOOL_USAGE_POLICY
+    assert "Rp10.000.000.000" in TOOL_USAGE_POLICY
+    assert "NEVER describe Rp10.000.000.000 as paid-up capital" in TOOL_USAGE_POLICY
+    assert "56101, 56210, 56290, 56103, 56303, 68120, 11052" in TOOL_USAGE_POLICY
+    assert "does not state a fixed three-year SLHS validity" in TOOL_USAGE_POLICY
+    assert "island-wide and permanent" in TOOL_USAGE_POLICY

@@ -154,7 +154,7 @@ describe("seq-28 step B - the remote interview asks the yearly income", () => {
       "Berapa gaji atau penghasilan tahunan Anda, dalam dolar AS?",
     );
     expect(translate("id", "q.remote_annual_income_usd.hint")).toBe(
-      "Masukkan jumlah tahunan dalam dolar AS (angka soniz). Jika Anda dibayar dalam mata uang lain, masukkan nilai setaranya dalam dolar AS.",
+      "Masukkan jumlah tahunan dalam dolar AS (angka bulat). Jika Anda dibayar dalam mata uang lain, masukkan nilai setaranya dalam dolar AS.",
     );
   });
 });

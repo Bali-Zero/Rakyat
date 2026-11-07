@@ -1,8 +1,8 @@
 """Shared email branding helpers (logo, header HTML).
 
 The logo is hosted on https://kita.balizero.com/static/email/ — a public
-URL is required because Kuxas webview does NOT render data: URIs in <img
-src>, while a regular https URL works in every mail client (Kuxas, Apple
+URL is required because Gmail webview does NOT render data: URIs in <img
+src>, while a regular https URL works in every mail client (Gmail, Apple
 Mail, iOS, Outlook). The asset itself lives in `apps/mouth/public/static/email/`
 and ships with every Mouth/Vercel deploy.
 """
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 LOGO_URL = "https://kita.balizero.com/static/email/balizero-logo-email.png"
 
 # Public base for team member portraits. Same host as LOGO_URL — proven to
-# render in Kuxas/Apple Mail/Outlook (data: URIs do not). The photos ship with
+# render in Gmail/Apple Mail/Outlook (data: URIs do not). The photos ship with
 # every Mouth/Vercel deploy from apps/mouth/public/static/team/, and the SSOT
 # email->slug->photo mapping lives in apps/mouth/src/data/team-roster.ts
 # (team_members.avatar mirrors the same paths, migration 229).
@@ -169,7 +169,7 @@ def team_email_html(
             <td valign="top" style="font-family:Helvetica,Arial,sans-serif;
                        font-size:12px;color:{COLOR_MUTED};line-height:1.5;">
               <strong style="color:{COLOR_TEXT};">{signature}</strong><br>
-              Billing: asya@balizero.com · +62 840 0043 00000<br>
+              Billing: asya@balizero.com · +62 881 0384 67246<br>
               General: WhatsApp {settings.CLIENT_CONTACT_WHATSAPP} · balizero.com
             </td>
           </tr></table>

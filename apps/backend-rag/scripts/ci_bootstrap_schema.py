@@ -358,6 +358,39 @@ def main() -> int:
     SQLModel.metadata.create_all(engine)
     print(f"[bootstrap] create_all done against {db_url.split('@')[-1]}")
 
+    # Legacy 033 owns this non-SQLModel table. Migration 347 deliberately
+    # requires it rather than reconstructing it. Mirror the full historical
+    # definition and its four indexes after create_all provides clients(id).
+    # The W2 integration test compares this catalog with actual 033 DDL.
+    with engine.begin() as conn:
+        for stmt in (
+            """
+            CREATE TABLE IF NOT EXISTS client_family_members (
+                id SERIAL PRIMARY KEY,
+                client_id INT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+                full_name VARCHAR(255) NOT NULL,
+                relationship VARCHAR(50) NOT NULL,
+                date_of_birth DATE,
+                nationality VARCHAR(100),
+                passport_number VARCHAR(100),
+                passport_expiry DATE,
+                current_visa_type VARCHAR(50),
+                visa_expiry DATE,
+                email VARCHAR(255),
+                phone VARCHAR(50),
+                notes TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                created_by VARCHAR(255)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_family_members_client_id ON client_family_members(client_id)",
+            "CREATE INDEX IF NOT EXISTS idx_family_members_relationship ON client_family_members(relationship)",
+            "CREATE INDEX IF NOT EXISTS idx_family_members_visa_expiry ON client_family_members(visa_expiry)",
+            "CREATE INDEX IF NOT EXISTS idx_family_members_passport_expiry ON client_family_members(passport_expiry)",
+        ):
+            conn.execute(text(stmt))
+
     # Prod-only columns added by hand over time that never made it into a
     # migration file. The SQLModel `Client` class in
     # app/modules/crm/models.py doesn't declare them, so create_all()

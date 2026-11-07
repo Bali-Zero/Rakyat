@@ -159,7 +159,7 @@ Menemukan sekolah yang tepat adalah prioritas utama bagi keluarga ekspatriat. Be
       result: {
         title: "Sekolah Kurikulum Australia",
         description:
-          "Sistem Australia yang populer di Bali. Bagus untuk keluarga dari Australia atau yang berencana pindah ke bebu.",
+          "Sistem Australia yang populer di Bali. Bagus untuk keluarga dari Australia atau yang berencana pindah ke sana.",
       },
     },
     {
@@ -277,17 +277,17 @@ Menemukan sekolah yang tepat adalah prioritas utama bagi keluarga ekspatriat. Be
   ]}
   calculateResult={(values) => {
     const fees = {
-      premium: 840006100,
-      mid: 990000028,
-      national: 840005100,
+      premium: 400000000,
+      mid: 240000000,
+      national: 100000000,
       local: 25000000
     };
 
     const tuition = fees[values.tier] * values.children;
-    const bus = values.transport === "yes" ? 10000012 * values.children : 0;
+    const bus = values.transport === "yes" ? 15000000 * values.children : 0;
     const uniform = 3000000 * values.children;
     const books = 5000000 * values.children;
-    const activities = 84000510 * values.children;
+    const activities = 10000000 * values.children;
 
     const total = tuition + bus + uniform + books + activities;
 

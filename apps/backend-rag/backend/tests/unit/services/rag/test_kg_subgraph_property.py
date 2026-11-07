@@ -99,7 +99,7 @@ class TestResolvDesaCode:
         mock_resp.json.return_value = {
             "results": [
                 {
-                    "address_components": [{"short_name": "9900000011"}],
+                    "address_components": [{"short_name": "5103030005"}],
                 }
             ],
         }
@@ -110,7 +110,7 @@ class TestResolvDesaCode:
             "backend.services.rag.kg_subgraph_property._get_client", return_value=mock_client
         ):
             result = await _resolve_desa_code_from_latlng(-8.5, 115.2, "fake_key")
-        assert result == "9900000011"
+        assert result == "5103030005"
 
     @pytest.mark.asyncio
     async def test_no_match(self):
@@ -167,7 +167,7 @@ class TestFetchBadung:
         with patch(
             "backend.services.rag.kg_subgraph_property._get_client", return_value=mock_client
         ):
-            result = await _fetch_badung_provider("9900000011", mock_db_pool)
+            result = await _fetch_badung_provider("5103030005", mock_db_pool)
         assert result >= 0
 
     @pytest.mark.asyncio
@@ -180,7 +180,7 @@ class TestFetchBadung:
         with patch(
             "backend.services.rag.kg_subgraph_property._get_client", return_value=mock_client
         ):
-            result = await _fetch_badung_provider("9900000011", mock_db_pool)
+            result = await _fetch_badung_provider("5103030005", mock_db_pool)
         assert result == 0
 
     @pytest.mark.asyncio
@@ -190,7 +190,7 @@ class TestFetchBadung:
         with patch(
             "backend.services.rag.kg_subgraph_property._get_client", return_value=mock_client
         ):
-            result = await _fetch_badung_provider("9900000011", mock_db_pool)
+            result = await _fetch_badung_provider("5103030005", mock_db_pool)
         assert result == 0
 
     @pytest.mark.asyncio
@@ -211,7 +211,7 @@ class TestFetchBadung:
         with patch(
             "backend.services.rag.kg_subgraph_property._get_client", return_value=mock_client
         ):
-            result = await _fetch_badung_provider("9900000011", mock_db_pool)
+            result = await _fetch_badung_provider("5103030005", mock_db_pool)
         assert result == 0
 
 
@@ -245,7 +245,7 @@ class TestFetchGistaru:
         with patch(
             "backend.services.rag.kg_subgraph_property._get_client", return_value=mock_client
         ):
-            result = await _fetch_gistaru_provider("9900000012", mock_db_pool)
+            result = await _fetch_gistaru_provider("5104010001", mock_db_pool)
         assert result >= 0
 
     @pytest.mark.asyncio
@@ -258,7 +258,7 @@ class TestFetchGistaru:
         with patch(
             "backend.services.rag.kg_subgraph_property._get_client", return_value=mock_client
         ):
-            result = await _fetch_gistaru_provider("9900000012", mock_db_pool)
+            result = await _fetch_gistaru_provider("5104010001", mock_db_pool)
         assert result == 0
 
 
@@ -530,7 +530,7 @@ class TestFetchAndIngestDesa:
             "backend.services.rag.kg_subgraph_property._fetch_badung_provider",
             AsyncMock(return_value=5),
         ) as mock_badung:
-            result = await _fetch_and_ingest_desa("9900000011", mock_db_pool)
+            result = await _fetch_and_ingest_desa("5103030005", mock_db_pool)
         mock_badung.assert_awaited_once()
         assert result == 5
 
@@ -540,6 +540,6 @@ class TestFetchAndIngestDesa:
             "backend.services.rag.kg_subgraph_property._fetch_gistaru_provider",
             AsyncMock(return_value=3),
         ) as mock_gistaru:
-            result = await _fetch_and_ingest_desa("9900000013", mock_db_pool)
+            result = await _fetch_and_ingest_desa("5171010001", mock_db_pool)
         mock_gistaru.assert_awaited_once()
         assert result == 3

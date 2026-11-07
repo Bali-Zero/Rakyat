@@ -23,7 +23,7 @@
 //   - `slug`     : stable key = email prefix (used for photo filename + DB join).
 //   - `photo`    : "/static/team/<slug>.<ext>" or undefined → UI falls back to initials.
 //   - `email`    : canonical @balizero.com address (matches team_members.email; some
-//                  prefixes differ from slug, e.g. ari→pum.zagik, kagecesa→xug — see `email`).
+//                  prefixes differ from slug — see each entry's `email`).
 //   - `dept`     : coarse public grouping. `liveDept` mirrors the DB department when it
 //                  differs (kept for reference; public pages use `dept`).
 //   - `publicListed` : false = real teammate but NOT shown on public marketing pages.
@@ -198,14 +198,6 @@ export const TEAM_ROSTER: RosterMember[] = [
     dept: "accounting",
     email: "asya@balizero.com",
     photo: "/static/team/asya.jpg",
-  },
-  {
-    slug: "natalie",
-    name: "Natalie",
-    role: "Finance & Client Services Coordinator",
-    dept: "accounting",
-    email: "natalie@balizero.com",
-    // Joined 2026-10-20; no portrait yet → initials fallback per the `photo?` contract above.
   },
 
   // ── Support ─────────────────────────────────────────────────────────────

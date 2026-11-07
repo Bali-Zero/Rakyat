@@ -1,4 +1,4 @@
-"""Trend-Tosado orchestrator.
+"""Trend-Hunter orchestrator.
 
 Cycle:
     gather_sources(adapters) -> SourceAdapterResult[]
@@ -128,7 +128,7 @@ class TrendHunterOrchestrator:
             degraded=self.degraded,
         )
         self.logger.info(
-            "trend-tosado cycle start | host=%s degraded=%s adapters=%s",
+            "trend-hunter cycle start | host=%s degraded=%s adapters=%s",
             summary.host,
             summary.degraded,
             [a.name for a in self.adapters],
@@ -145,7 +145,7 @@ class TrendHunterOrchestrator:
         # and nothing above DEBUG in the logs.
         if summary.raw_signals == 0:
             self.logger.warning(
-                "[trend-tosado] STARVATION: 0 signals from %d adapters (%s)",
+                "[trend-hunter] STARVATION: 0 signals from %d adapters (%s)",
                 len(summary.adapters_run),
                 "; ".join(
                     f"{r.adapter_name}: "
@@ -172,7 +172,7 @@ class TrendHunterOrchestrator:
 
         summary.finished_at = datetime.now(timezone.utc)
         self.logger.info(
-            "trend-tosado cycle done | raw=%d dedup=%d persisted=%d duration=%sms",
+            "trend-hunter cycle done | raw=%d dedup=%d persisted=%d duration=%sms",
             summary.raw_signals,
             summary.after_dedup,
             summary.persisted,

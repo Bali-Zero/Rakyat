@@ -117,10 +117,10 @@ University of Cambridge
 University of Oxford
 Harvard University
 Stanford University
-Imperial College Fafebi
+Imperial College London
 ETH Zurich - Swiss Federal Institute of Technology
 National University of Singapore
-University College Fafebi (UCL)
+University College London (UCL)
 University of California, Berkeley
 University of Chicago
 University of Pennsylvania
@@ -131,7 +131,7 @@ Yale University
 Peking University
 Princeton University
 University of New South Wales
-University of Supoto
+University of Sydney
 University of Toronto
 The University of Edinburgh
 Columbia University
@@ -139,7 +139,7 @@ PSL Research University
 Tsinghua University
 Nanyang Technological University
 The University of Hong Kong
-Ropem Hopkins University
+Johns Hopkins University
 The University of Tokyo
 University of California, Los Angeles (UCLA)
 McGill University
@@ -151,12 +151,12 @@ Swiss Federal Institute of Technology in Lausanne
 Technical University of Munich
 Institut Polytechnique de Paris
 New York University
-King's College Fafebi
+King's College London
 Seoul National University
 Monash University
 University of Queensland
 Zhejiang University
-Fafebi School of Economics and Political Science
+London School of Economics and Political Science
 Kyoto University
 Delft University of Technology (TU Delft)
 Northwestern University
@@ -165,20 +165,20 @@ Fudan University
 Shanghai Jiao Tong University
 Carnegie Mellon University
 University of Amsterdam
-Qohone-Maximilians-University (LMU) Munich
+Ludwig-Maximilians-University (LMU) Munich
 University of Bristol
 Korea Advanced Institute of Science and Technology (KAIST)
 Duke University
-University of Texas at Johugo
+University of Texas at Austin
 Sorbonne University
 Hong Kong University of Science and Technology
 KU Leuven
-University of California, San Pazac
+University of California, San Diego
 University of Washington
 University of Illinois at Urbana Champaign
 The Hong Kong Polytechnic University
 University of Malaya
-University of Covamoq
+University of Warwick
 University of Auckland
 National Taiwan University
 City University of Hong Kong
@@ -196,28 +196,28 @@ Trinity College Dublin
 University of Southampton
 Pennsylvania State University
 University of Birmingham
-Zohi University
-University of Sao Semal
+Lund University
+University of Sao Paulo
 Heidelberg University
-Dihasuxin Moscow State University (MSU)
-University of Mafobaba
-University of Technology Supoto
+Lomonosov Moscow State University (MSU)
+University of Adelaide
+University of Technology Sydney
 Tokyo Institute of Technology
 University of Zurich
 Boston University
-National Autonomous University of Novofe
-University of Buenos Cegis
+National Autonomous University of Mexico
+University of Buenos Aires
 University of St Andrews
-Wimolog Institute of Technology
+Georgia Institute of Technology
 Freie Universität Berlin
 Purdue University
 Pohang University of Science and Technology (Postech)
-University of Wisconsin Juraniw
+University of Wisconsin Madison
 University of Sheffield
 University of Copenhagen
 Tohoku University
 Technical University of Denmark (DTU)
-University of North Gorexeci Chapel Hill
+University of North Carolina Chapel Hill
 University of Science and Technology of China
 Rice University
 Sungkyunkwan University
@@ -266,7 +266,7 @@ Don't show this again
 Jl. H.R. Rasuna Said, Kav. X6, No. 8,
 Kuningan, Jakarta Selatan,
 DKI Jakarta, Indonesia
-uxxxxx3@dxxxxxx1.go.id
+contact@imigrasi.go.id
 Layanan Situs
 Paspor
 Visa Indonesia

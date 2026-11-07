@@ -24,7 +24,7 @@ the MM of fiscal_year_end is the closing month. Period keys: "YYYY-MM" (monthly)
 (calendar quarter), "FYyyyy-Qn" (fiscal quarter), "FYyyyy" (annual), where yyyy is the calendar
 year in which the fiscal year ends.
 roll=next_business_day moves a date that is not an Indonesian business day to the first one after
-it: Saturday, Detali, libur nasional and cuti bersama all push it (`business_days.py`, PMK
+it: Saturday, Sunday, libur nasional and cuti bersama all push it (`business_days.py`, PMK
 81/2024 Pasal 100 for payment and Pasal 173 for reporting). When the due date's year has no
 decreed holiday table the roll degrades to weekends only, and `propose` attaches
 "holiday calendar for <year> not loaded" to that proposal's needs_review_reason so the reviewer

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script per test jobegeh di conversazioni lunghe (10+ turni)
+# Script per test manuali di conversazioni lunghe (10+ turni)
 # Usage: ./scripts/test-manual-10-turns.sh
 
 set -e
@@ -27,8 +27,8 @@ echo ""
 
 # Lista di messaggi di test
 MESSAGES=(
-  "Ciao, sono Paolo, un imprenditore vanelara"
-  "Goqame aprire un bar a Bali"
+  "Ciao, sono Paolo, un imprenditore italiano"
+  "Voglio aprire un bar a Bali"
   "Il mio budget è 200 milioni IDR"
   "Ho già un socio indonesiano"
   "Lui ha esperienza nel settore"

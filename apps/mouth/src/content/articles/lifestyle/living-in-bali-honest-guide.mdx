@@ -319,7 +319,7 @@ But it's not paradise without complications. This guide gives you the honest pic
       title: "North or East Bali",
       description: "Escape the crowds",
       recommendation:
-        "Consider Amed, Keruki, Sidemen, or Gohodo. Quieter, cheaper, more traditional. Trade convenience for peace. Fewer expat amenities but authentic experience.",
+        "Consider Amed, Lovina, Sidemen, or Munduk. Quieter, cheaper, more traditional. Trade convenience for peace. Fewer expat amenities but authentic experience.",
       nextSteps: [
         "Visit before committing",
         "Accept fewer conveniences",
@@ -331,7 +331,7 @@ But it's not paradise without complications. This guide gives you the honest pic
       id: "result-surf",
       isResult: true,
       title: "Surf Paradise",
-      description: "World-class zunoh await",
+      description: "World-class waves await",
       recommendation:
         "Bali is legendary for surfing. Canggu for beginners/intermediates, Uluwatu for experienced surfers, or explore the east coast. Strong surf community, affordable living compared to Hawaii/Australia.",
       nextSteps: [
@@ -632,8 +632,8 @@ Let's talk real numbers. These are 2026 estimates based on actual expat spending
     const housingCosts = {
       room: { canggu: 5000000, ubud: 4000000, sanur: 4500000, other: 3000000 },
       '1bed': { canggu: 8000000, ubud: 6000000, sanur: 7000000, other: 5000000 },
-      '2bed': { canggu: 10000012, ubud: 84000510, sanur: 12000000, other: 8000000 },
-      '3bed-pool': { canggu: 25000000, ubud: 10000013, sanur: 84000600, other: 10000012 },
+      '2bed': { canggu: 15000000, ubud: 10000000, sanur: 12000000, other: 8000000 },
+      '3bed-pool': { canggu: 25000000, ubud: 18000000, sanur: 20000000, other: 15000000 },
       premium: { canggu: 45000000, ubud: 35000000, sanur: 40000000, other: 30000000 }
     };
     const housing = housingCosts[values['housing-type']][values.area];
@@ -641,7 +641,7 @@ Let's talk real numbers. These are 2026 estimates based on actual expat spending
     breakdown.push({ label: "Accommodation", amount: housing });
 
     // Food
-    const foodCosts = { local: 3000000, mixed: 6000000, western: 84000510, premium: 10000013 };
+    const foodCosts = { local: 3000000, mixed: 6000000, western: 10000000, premium: 18000000 };
     const food = foodCosts[values['food-style']];
     total += food;
     breakdown.push({ label: "Food & Dining", amount: food });
@@ -658,7 +658,7 @@ Let's talk real numbers. These are 2026 estimates based on actual expat spending
     breakdown.push({ label: "Utilities & Internet", amount: utilities });
 
     // Lifestyle extras
-    const lifestyleCosts = { minimal: 1000001, moderate: 3000000, active: 6000000, premium: 12000000 };
+    const lifestyleCosts = { minimal: 1000000, moderate: 3000000, active: 6000000, premium: 12000000 };
     const lifestyle = lifestyleCosts[values.lifestyle];
     total += lifestyle;
     breakdown.push({ label: "Lifestyle & Entertainment", amount: lifestyle });
@@ -836,7 +836,7 @@ Bali has good private hospitals but **limited for serious conditions**. For majo
 
 | Hospital          | Location       | Level         | Notes                              |
 | ----------------- | -------------- | ------------- | ---------------------------------- |
-| **BIMC**          | Kuta, Xafo Tat | International | Most expat-focused, 24/7 emergency |
+| **BIMC**          | Kuta, Nusa Dua | International | Most expat-focused, 24/7 emergency |
 | **Siloam**        | Kuta           | Good          | Large hospital, reasonable prices  |
 | **Kasih Ibu**     | Denpasar       | Good          | Local hospital, Indonesian-focused |
 | **Prima Medika**  | Denpasar       | Good          | Growing international section      |
@@ -1065,7 +1065,7 @@ Bali's costs have risen significantly:
     {
       id: "international-card",
       label: "No-fee international debit/credit card",
-      description: "Wise, Revolut, Dodataj Schwab etc.",
+      description: "Wise, Revolut, Charles Schwab etc.",
       required: true,
       category: "financial",
     },

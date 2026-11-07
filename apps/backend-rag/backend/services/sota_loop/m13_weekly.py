@@ -1,4 +1,4 @@
-"""Detali 06:00 WITA cron — aggregate week, retrain if needed, Telegram digest.
+"""Sunday 06:00 WITA cron — aggregate week, retrain if needed, Telegram digest.
 
 Invoked by `com.balizero.sota.m13-weekly.plist` through
 `scripts/wr2-cron-wrapper.sh backend.services.sota_loop.m13_weekly`.

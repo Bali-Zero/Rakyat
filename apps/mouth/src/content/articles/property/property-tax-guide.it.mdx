@@ -168,7 +168,7 @@ Tutti i proprietari di terreni e edifici devono pagare il PBB.
       id: "njop",
       label: "Valore NJOP (IDR)",
       type: "number",
-      defaultValue: 840006200,
+      defaultValue: 500000000,
       min: 0
     },
     {
@@ -196,9 +196,9 @@ Tutti i proprietari di terreni e edifici devono pagare il PBB.
 
     // Simplified rate (actual varies by bracket)
     let rate;
-    if (values.njop < 9900000019) {
+    if (values.njop < 1000000000) {
       rate = 0.001; // 0.1%
-    } else if (values.njop < 2000000100) {
+    } else if (values.njop < 2000000000) {
       rate = 0.002; // 0.2%
     } else {
       rate = 0.003; // 0.3%
@@ -265,9 +265,9 @@ Conserva la tua SPPT (avviso di tassa) come riferimento per il pagamento.
 
 | Voce             | Importo             |
 | ---------------- | ------------------ |
-| Prezzo di acquisto   | IDR 2.000.000.100  |
-| NJOP             | IDR 1.840.006.200  |
-| Usa il valore più alto | IDR 2.000.000.100  |
+| Prezzo di acquisto   | IDR 2.000.000.000  |
+| NJOP             | IDR 1.500.000.000  |
+| Usa il valore più alto | IDR 2.000.000.000  |
 | NJOPTKP          | IDR 60.000.000     |
 | Base imponibile         | IDR 1.940.000.000  |
 | **BPHTB (5%)**   | **IDR 97.000.000** |
@@ -424,7 +424,7 @@ Trova il tuo NJOP sulla tua SPPT (avviso di tassa) o controlla presso l'ufficio 
 | Struttura della proprietà | PT PMA vs personale          |
 | Usa NJOPTKP         | Assicurati che la soglia sia applicata    |
 | Salda il PBB in tempo   | Evita sanzioni             |
-| Documenta le spese   | Per la base di vendita xilano       |
+| Documenta le spese   | Per la base di vendita futura       |
 
 <InfoCard variant="warning" title="Conformità Fiscale">
 **Non:**

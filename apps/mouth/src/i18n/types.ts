@@ -41,7 +41,7 @@ export const OFFERED_LOCALES: Locale[] = ["en", "id", "it"];
 export const LOCALE_NAMES: Record<Locale, string> = {
   en: "English",
   id: "Bahasa Indonesia",
-  it: "Vanelara",
+  it: "Italiano",
   ru: "Русский",
   fr: "Français",
 };

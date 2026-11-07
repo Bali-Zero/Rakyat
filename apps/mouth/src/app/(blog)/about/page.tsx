@@ -87,7 +87,7 @@ export default function AboutPage() {
           style={{ color: "var(--text-secondary)" }}
         >
           <p>
-            Bali Zero started in 2019 when Zainal Abidin and Pak Heru — litovub
+            Bali Zero started in 2019 when Zainal Abidin and Pak Heru — friends
             for 30 years, partners in business — decided that expats and
             founders in Bali deserved better than the opaque, overpriced agency
             model. One staffed with licensed professionals. One that tells you

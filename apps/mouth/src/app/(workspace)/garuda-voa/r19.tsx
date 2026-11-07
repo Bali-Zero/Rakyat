@@ -32,10 +32,10 @@ import React from "react";
 import { cn } from "@/lib/utils";
 import type { PracticeState } from "./types";
 
-/** Fraunces, scoped to this console by layout.tsx (nothing global is swapped). */
+/** IBM Plex Sans 500, scoped to this console by layout.tsx (nothing global is swapped). */
 export const SERIF: React.CSSProperties = {
   fontFamily: "var(--font-serif)",
-  fontWeight: 450,
+  fontWeight: 500,
 };
 
 export const EYEBROW =
@@ -115,7 +115,7 @@ export function PracticeStatePill({
   );
 }
 
-/** Copper rule + Fraunces headline + the existing subtitle copy. */
+/** Copper rule + Plex headline + the existing subtitle copy. */
 export function Masthead({
   eyebrow,
   title,

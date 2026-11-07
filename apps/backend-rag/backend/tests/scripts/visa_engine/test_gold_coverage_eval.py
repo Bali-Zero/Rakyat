@@ -76,7 +76,7 @@ def test_persona_gold_7_spouse_resolves_to_e31a_candidate(
 ) -> None:
     """Gold persona-7 (adult spouse, registered marriage, confirmed sponsor).
 
-    Overrides mirror ``test_evaluator_gold.PERSONAS[6]`` (id=7) verbatim.
+    The base persona7 is extended with explicit spouse-letter agreement for the positive coverage witness. The canonical production persona7 remains unchanged.
     Measured live 2026-08-28 against ``rulepack-prod-013.signed.json``
     (sequence=13): the pack resolves this persona to candidates
     ``["C1", "E31A", "E31B", "E31D"]`` — this test asserts only that
@@ -95,6 +95,10 @@ def test_persona_gold_7_spouse_resolves_to_e31a_candidate(
                     "family.sponsor_nationalities": {"status": "KNOWN", "value": ["ID"]},
                     "family.marriage_registered": {"status": "KNOWN", "value": True},
                     "family.sponsor_confirmed": {"status": "KNOWN", "value": True},
+                    "family.spouse_application_support_confirmed": {
+                        "status": "KNOWN",
+                        "value": True,
+                    },
                 },
                 "expected_state": "SUPPORTED_CANDIDATES",
                 "expected_candidates": ["E31A"],

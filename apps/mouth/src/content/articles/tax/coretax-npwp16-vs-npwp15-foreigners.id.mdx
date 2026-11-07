@@ -40,7 +40,7 @@ aiOptimization:
       name: "PMK 112/2022"
 faq:
   - question: "Bagaimana cara mengubah NPWP 15-digit lama saya menjadi 16 digit?"
-    answer: "Untuk orang asing, tambahkan angka 0 di depan NPWP 15-digit lama Anda. Sebagai contoh, jika NPWP lama Anda adalah 99.000.000.1-000.005, maka NPWP 16-digit baru Anda adalah 0123456789012345 (tanpa titik atau garis strip). Warga negara Indonesia menggunakan NIK 16-digit mereka sebagai gantinya."
+    answer: "Untuk orang asing, tambahkan angka 0 di depan NPWP 15-digit lama Anda. Sebagai contoh, jika NPWP lama Anda adalah 12.345.678.9-012.345, maka NPWP 16-digit baru Anda adalah 0123456789012345 (tanpa titik atau garis strip). Warga negara Indonesia menggunakan NIK 16-digit mereka sebagai gantinya."
   - question: "Apakah NPWP 15-digit lama masih berlaku?"
     answer: "NPWP 15-digit lama tidak lagi diterima untuk login CoreTax, e-Faktur, atau pelaporan pajak baru. Namun, pendaftaran pajak Anda tetap valid. Anda hanya perlu menggunakan format 16-digit untuk selanjutnya."
   - question: "Apakah saya perlu mengunjungi kantor pajak untuk memigrasi NPWP saya?"
@@ -112,7 +112,7 @@ Bagi warga asing (WNA - Warga Negara Asing), migrasi ini sederhana:
 **Contoh:**
 
 - NPWP lama: `74.523.891.2-904.000`
-- Zapaf format: `745238912904000`
+- Hapus format: `745238912904000`
 - Tambahkan nol di depan: `0745238912904000`
 - NPWP 16 digit baru: **0745238912904000**
 
@@ -125,7 +125,7 @@ Ini berlaku untuk:
 
 Warga Indonesia tidak menambahkan nol. Sebaliknya, NPWP mereka diganti sepenuhnya dengan NIK mereka:
 
-- NPWP lama: `99.000.000.1-000.005`
+- NPWP lama: `12.345.678.9-012.345`
 - NPWP baru: NIK 16 digit mereka (misalnya, `3174021507920003`)
 
 Inilah sebabnya sistem disebut "NPWP berbasis NIK."
@@ -163,7 +163,7 @@ Sistem OSS (Online Single Submission) untuk lisensi bisnis telah diperbarui untu
 
 ### Langkah 1: Tentukan NPWP Baru Anda
 
-Ambil NPWP lama 15 digit Anda dan tambahkan "0" di awal. Zapaf semua titik dan strip.
+Ambil NPWP lama 15 digit Anda dan tambahkan "0" di awal. Hapus semua titik dan strip.
 
 ### Langkah 2: Verifikasi di CoreTax
 
@@ -314,7 +314,7 @@ PT PMA Anda harus mengkomunikasikan NPWP 16 digit baru ke semua mitra bisnis. Te
 
 ### Bagaimana cara mengubah NPWP lama 15 digit saya menjadi 16 digit?
 
-Untuk warga asing, tambahkan 0 di awal NPWP lama 15 digit Anda. Misalnya, jika NPWP lama Anda adalah 99.000.000.1-000.005, NPWP 16 digit baru Anda adalah 0123456789012345 (tanpa titik atau strip). Warga Indonesia menggunakan NIK 16 digit mereka.
+Untuk warga asing, tambahkan 0 di awal NPWP lama 15 digit Anda. Misalnya, jika NPWP lama Anda adalah 12.345.678.9-012.345, NPWP 16 digit baru Anda adalah 0123456789012345 (tanpa titik atau strip). Warga Indonesia menggunakan NIK 16 digit mereka.
 
 ### Apakah NPWP lama 15 digit masih sah?
 

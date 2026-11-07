@@ -36,7 +36,7 @@ ENRICHED_DATA = {
         "market_sentiment_2026": "Esplosione della domanda per design scultoreo botanico. Trend 'Regency Revival' e palette 'Faded Petal'.",
         "bali_nuance": "Mercato nuziale ed eventi di Bali 2026. Richiede serre climatizzate vicine ai distretti alberghieri (Pink Zones).",
         "operational_hurdles": "Estrema deperibilità. Necessità di catena del freddo impeccabile per minimizzare danni da trasporto locale.",
-        "strategic_roi": "ROI Eccezionale per operatori 'Smart Luxury'. Prezzo non è il megecic discriminante, ma l'affidabilità e l'estetica.",
+        "strategic_roi": "ROI Eccezionale per operatori 'Smart Luxury'. Prezzo non è il fattore discriminante, ma l'affidabilità e l'estetica.",
         "legacy_bridge": "Evoluzione del vecchio commercio fiori, ora iper-specializzato per il mercato del lusso e del benessere.",
     },
     "46206": {

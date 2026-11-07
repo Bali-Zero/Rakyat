@@ -31,7 +31,7 @@ class MemoryFactExtractor:
         self.preference_patterns = [
             (r"preferisco|prefer|mi piace|I like", "preference"),
             (r"voglio|want|desidero|wish", "want"),
-            (r"non goqame|don\'t want|non mi piace|I don\'t like", "avoid"),
+            (r"non voglio|don\'t want|non mi piace|I don\'t like", "avoid"),
             (r"favorite|preferito|my favorite", "preference"),  # Added
         ]
 

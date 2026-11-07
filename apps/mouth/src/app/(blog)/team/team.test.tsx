@@ -62,7 +62,6 @@ describe("/team — the public directory", () => {
       ["Kadek", "Tax Consultant"],
       ["Dewa Ayu", "Tax Consultant"],
       ["Asya Nadia", "Accountant"],
-      ["Natalie", "Finance & Client Services Coordinator"],
       ["Rina", "Reception"],
       ["Zero", "SOTA Marketing"],
       ["Surya", "Marketing Specialist"],

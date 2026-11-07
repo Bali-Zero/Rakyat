@@ -55,7 +55,7 @@ function resolveSP(e: SPEntry): SocialProofMember {
 }
 
 // Founders — shown first and larger. The two men who started Bali Zero
-// and still run it. Litovub for 30 years, partners in the business.
+// and still run it. Friends for 30 years, partners in the business.
 const FOUNDERS_SPEC: SPEntry[] = [
   {
     slug: "zainal",

@@ -234,7 +234,7 @@ def mock_llm_response():
 # --- COMPOSE ENDPOINT TESTS ---
 
 
-@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch.dict("os.environ", {"ANTHROPIC_CONSOLE_KEY_1": "test-key", "ANTHROPIC_CONSOLE_WORKSPACE_1": "wrkspc_test1"})
 @patch("backend.app.routers.article_composer.call_claude_with_retry")
 def test_compose_article_success(
     mock_call,
@@ -262,7 +262,7 @@ def test_compose_article_success(
     assert mock_call.call_args.kwargs.get("model") == "claude-sonnet-5"
 
 
-@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch.dict("os.environ", {"ANTHROPIC_CONSOLE_KEY_1": "test-key", "ANTHROPIC_CONSOLE_WORKSPACE_1": "wrkspc_test1"})
 @patch("backend.app.routers.article_composer.call_claude_with_retry")
 def test_compose_article_priority_word_count(mock_call, test_client):
     """Test that facts section length varies by priority (high=600, medium=500, low=400 words)."""
@@ -313,7 +313,7 @@ def test_compose_article_priority_word_count(mock_call, test_client):
         assert word_count >= expected_words - 50
 
 
-@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch.dict("os.environ", {"ANTHROPIC_CONSOLE_KEY_1": "test-key", "ANTHROPIC_CONSOLE_WORKSPACE_1": "wrkspc_test1"})
 @patch("backend.app.routers.article_composer.call_claude_with_retry")
 def test_compose_article_json_cleanup(mock_call, test_client, sample_compose_request):
     """Test that markdown JSON blocks are cleaned correctly."""
@@ -371,10 +371,10 @@ def test_compose_article_missing_api_key(test_client, sample_compose_request):
     assert response.status_code == 500
     detail = response.json()["detail"]
     assert detail["code"] == "API_KEY_NOT_CONFIGURED"
-    assert "CLAUDE_CODE_OAUTH_TOKEN" in detail["message"]
+    assert "ANTHROPIC_CONSOLE_KEY_" in detail["message"]
 
 
-@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch.dict("os.environ", {"ANTHROPIC_CONSOLE_KEY_1": "test-key", "ANTHROPIC_CONSOLE_WORKSPACE_1": "wrkspc_test1"})
 @patch("backend.app.routers.article_composer.call_claude_with_retry")
 def test_compose_article_json_parse_error(
     mock_call,
@@ -400,7 +400,7 @@ def test_compose_article_json_parse_error(
     assert data["error"]["code"] in {"INVALID_JSON_RESPONSE", "JSON_PARSE_ERROR"}
 
 
-@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch.dict("os.environ", {"ANTHROPIC_CONSOLE_KEY_1": "test-key", "ANTHROPIC_CONSOLE_WORKSPACE_1": "wrkspc_test1"})
 @patch("backend.app.routers.article_composer.call_claude_with_retry")
 def test_compose_article_api_error(mock_call, test_client, sample_compose_request):
     """Test compose handles Claude OAuth errors."""
@@ -421,7 +421,7 @@ def test_compose_article_api_error(mock_call, test_client, sample_compose_reques
 
 def test_compose_status_configured(test_client):
     """Test compose status endpoint when configured"""
-    with patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"}):
+    with patch.dict("os.environ", {"ANTHROPIC_CONSOLE_KEY_1": "test-key", "ANTHROPIC_CONSOLE_WORKSPACE_1": "wrkspc_test1"}):
         response = test_client.get("/api/articles/compose/status")
 
         assert response.status_code == 200
@@ -429,7 +429,7 @@ def test_compose_status_configured(test_client):
         assert data["configured"] is True
         assert data["api_key_set"] is True
         assert data["model"] == "claude-sonnet-5"
-        assert data["provider"] == "claude_oauth"
+        assert data["provider"] == "claude_console"
         assert {"breaker_state", "last_error", "last_success_at"} <= set(data)
 
 
@@ -641,6 +641,81 @@ async def test_hero_publication_commits_article_cover_and_layout_atomically(
             "hero_main": "new-hero-story"
         }
     }
+
+
+async def _publish_at_position(mock_publisher, test_client, article, position):
+    mock_publisher.is_configured = True
+    mock_publisher.check_file_exists = AsyncMock(return_value=False)
+    mock_publisher.create_commit_with_files = AsyncMock(
+        return_value={"commit_sha": "slot123", "pull_request_number": 91}
+    )
+    return test_client.post(
+        "/api/articles/publish",
+        json=PublishRequest(article=article, position=position, slug="slot-story").model_dump(),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "position",
+    ["insight_1", "insight_2", "insight_3", "hero_2", "hero_5", "hero_6", "hero_7"],
+)
+@patch("backend.services.integrations.github_publisher.github_publisher")
+async def test_every_accepted_homepage_slot_is_written_and_reported(
+    mock_publisher,
+    test_client,
+    sample_enriched_article,
+    position,
+):
+    response = await _publish_at_position(
+        mock_publisher, test_client, sample_enriched_article, position
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["homepage_slot"] == position
+    assert mock_publisher.create_commit_with_files.await_args.kwargs[
+        "json_object_updates"
+    ] == {"apps/mouth/src/content/homepage-layout.json": {position: "slot-story"}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("position", ["normal", "latest", "main_featured", "secondary"])
+@patch("backend.services.integrations.github_publisher.github_publisher")
+async def test_unpinned_position_writes_no_layout_key_and_says_so(
+    mock_publisher,
+    test_client,
+    sample_enriched_article,
+    position,
+):
+    response = await _publish_at_position(
+        mock_publisher, test_client, sample_enriched_article, position
+    )
+
+    assert response.status_code == 200
+    assert response.json()["homepage_slot"] is None
+    assert mock_publisher.create_commit_with_files.await_args.kwargs["json_object_updates"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("position", ["insight_9", "hero_8", "hero_1", "latest_1", ""])
+@patch("backend.services.integrations.github_publisher.github_publisher")
+async def test_unknown_position_is_rejected_before_any_commit(
+    mock_publisher,
+    test_client,
+    sample_enriched_article,
+    position,
+):
+    mock_publisher.is_configured = True
+    mock_publisher.create_commit_with_files = AsyncMock()
+    payload = PublishRequest(article=sample_enriched_article).model_dump()
+    payload["position"] = position
+
+    response = test_client.post("/api/articles/publish", json=payload)
+
+    assert response.status_code == 422
+    mock_publisher.create_commit_with_files.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1138,7 +1213,7 @@ def test_build_enrichment_prompt_priority_instructions():
 # --- INTEGRATION TEST ---
 
 
-@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch.dict("os.environ", {"ANTHROPIC_CONSOLE_KEY_1": "test-key", "ANTHROPIC_CONSOLE_WORKSPACE_1": "wrkspc_test1"})
 @patch("backend.app.routers.article_composer.call_claude_with_retry")
 @patch("backend.services.integrations.github_publisher.github_publisher")
 def test_full_compose_and_publish_flow(
@@ -1196,7 +1271,7 @@ def test_full_compose_and_publish_flow(
     assert publish_data["commit_sha"] == "abc123"
 
 
-@patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "test-key"})
+@patch.dict("os.environ", {"ANTHROPIC_CONSOLE_KEY_1": "test-key", "ANTHROPIC_CONSOLE_WORKSPACE_1": "wrkspc_test1"})
 @patch(
     "backend.app.routers.article_composer.call_claude_with_retry",
     new_callable=AsyncMock,

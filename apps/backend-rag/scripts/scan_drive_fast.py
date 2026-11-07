@@ -132,7 +132,7 @@ async def scan_folder_recursive(
     existing_file_ids: set[str],
     orphans: list[dict[str, Any]],
 ):
-    """Recursively scan a BUkili folder and add missing files to orphans."""
+    """Recursively scan a GDrive folder and add missing files to orphans."""
     contents = await list_folder_contents_async(drive, folder_id)
 
     for item in contents:

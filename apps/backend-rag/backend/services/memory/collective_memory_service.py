@@ -20,6 +20,8 @@ from datetime import datetime
 
 import asyncpg
 
+from backend.security.pii_log_identifier import redact_identifier_for_log
+
 logger = logging.getLogger(__name__)
 
 
@@ -217,7 +219,7 @@ class CollectiveMemoryService:
                             )
 
                         logger.info(
-                            f"🧠 [Collective] User {user_id} confirmed fact #{memory_id} "
+                            f"🧠 [Collective] User {redact_identifier_for_log(user_id)} confirmed fact #{memory_id} "
                             f"(sources: {actual_source_count}, promoted: {updated['is_promoted']})",
                         )
 
@@ -258,7 +260,8 @@ class CollectiveMemoryService:
                     # Qdrant collection was empty and not needed for current use case
 
                     logger.info(
-                        f"🧠 [Collective] New fact #{memory_id} from {user_id}: {content[:50]}...",
+                        f"🧠 [Collective] New fact #{memory_id} from {redact_identifier_for_log(user_id)}: "
+                        f"{len(content or '')} chars",
                     )
 
                     return {
@@ -321,7 +324,8 @@ class CollectiveMemoryService:
                 )
 
                 logger.info(
-                    f"⚠️ [Collective] Fact #{memory_id} refuted by {user_id} (conf: {updated['confidence']:.2f})",
+                    f"⚠️ [Collective] Fact #{memory_id} refuted by {redact_identifier_for_log(user_id)} "
+                    f"(conf: {updated['confidence']:.2f})",
                 )
 
                 # Auto-remove if confidence too low

@@ -158,7 +158,7 @@ _CONFIDENCE_TOKEN_RE = re.compile(r"\b(?:" + "|".join(_CONFIDENCE_RANK) + r")\b"
 # original E33/GARUDA convention the fixture below models), and (b) the
 # answer starting INLINE on the same line as the label ("**FINAL
 # (client-facing):** The standard..."), used by 8 of the 14 Wave 1/2
-# dossiers (company-compliance, company-vesex-process, property-ownership,
+# dossiers (company-compliance, company-ptpma-process, property-ownership,
 # property-villa-rental, tax-corporate, tax-personal, visa-kitap,
 # visa-medical-crew). The old `\s*\n` right after the label required a
 # literal newline before the answer could start, so it silently failed to

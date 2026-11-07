@@ -19,7 +19,7 @@ const NUMERAL_SIZE: Record<NumeralSize, string> = {
 };
 
 /**
- * A Fraunces numeral, tabular, in one of three sizes — the 44/38 viewport-peak
+ * A Plex numeral, tabular, in one of three sizes — the 44/38 viewport-peak
  * KPI, the 22px desk-strip count, or the 18px 01/02/03 ordinal. Copper when
  * the record is asking for the viewer, forest when done, slate for
  * "ours"/moving, muted otherwise — the numeral is the ownership signal, and

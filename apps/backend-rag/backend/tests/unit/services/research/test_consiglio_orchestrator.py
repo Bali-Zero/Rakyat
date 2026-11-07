@@ -144,3 +144,48 @@ def test_a_permanently_failing_member_never_flips_agreement_or_dispute():
     # The one thing that DOES differ — confirms the bug is real, not that
     # nothing changed at all.
     assert len(with_phantom.votes) == len(without.votes) + 1
+
+
+# ── the claude member runs on a Console seat (RULED 2026-11-01) ──────────────
+
+
+def _no_seat(monkeypatch) -> None:
+    for n in (1, 2, 3):
+        monkeypatch.delenv(f"ANTHROPIC_CONSOLE_KEY_{n}", raising=False)
+        monkeypatch.delenv(f"ANTHROPIC_CONSOLE_WORKSPACE_{n}", raising=False)
+
+
+def test_ask_claude_refuses_without_a_console_seat(monkeypatch):
+    """GUILT: no seat is no door — `claude` is never run on the inherited
+    environment, whose plan-OAuth session is the shut fallback."""
+    from unittest.mock import patch
+
+    _no_seat(monkeypatch)
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "plan-oauth-is-not-a-seat")
+    with patch("subprocess.run") as run_mock:
+        try:
+            ConsiglioV1()._ask("claude", "question", None)
+        except RuntimeError as exc:
+            assert "ANTHROPIC_CONSOLE_KEY_" in str(exc)
+        else:  # pragma: no cover - guilt case
+            raise AssertionError("claude ran without a sanctioned seat")
+    run_mock.assert_not_called()
+
+
+def test_ask_claude_runs_on_the_seat_env_and_the_others_inherit(monkeypatch):
+    """INNOCENCE: with a seat the claude child gets the seat's key + header
+    and no plan OAuth; a non-claude member keeps its own auth (env=None)."""
+    from unittest.mock import patch
+
+    monkeypatch.setenv("ANTHROPIC_CONSOLE_KEY_1", "sk-test-seat")
+    monkeypatch.setenv("ANTHROPIC_CONSOLE_WORKSPACE_1", "wrkspc_test1")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "plan-oauth-must-not-reach-the-child")
+    fake_proc = type("P", (), {"returncode": 0, "stdout": '{"claims": []}', "stderr": ""})()
+    with patch("subprocess.run", return_value=fake_proc) as run_mock:
+        ConsiglioV1()._ask("claude", "question", None)
+        env = run_mock.call_args.kwargs["env"]
+        assert env["ANTHROPIC_API_KEY"] == "sk-test-seat"
+        assert env["ANTHROPIC_CUSTOM_HEADERS"] == "anthropic-workspace-id: wrkspc_test1"
+        assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+        ConsiglioV1()._ask("gemini", "question", None)
+        assert run_mock.call_args.kwargs["env"] is None

@@ -55,7 +55,7 @@ D: Quanto paga il mio direttore straniero in tasse?
 R: Dipende da:
    a) Se è PENDUDUK (>183 gg): PPh 21 progressivo sul netto (5-35%)
    b) Se non penduduk: PPh 26 flat 20% sul lordo (o ridotto se P3B)
-   Esempio: stipendio Rp 20 juta/mese, non penduduk vanelara:
+   Esempio: stipendio Rp 20 juta/mese, non penduduk italiano:
    PPh 26 ridotta (P3B) = 15% × 20 juta = Rp 3 juta/mese ritenuta. [TAX-041][TAX-069]
 
 D: Devo caricare la PPN (IVA) sul conto ai miei clienti?
@@ -92,7 +92,7 @@ R: Una PT PMA senza PKP presenta tipicamente:
 
 D: Cosa succede se dimentico di presentare una dichiarazione?
 R: Sanzione per mancata presentazione SPT Masa: Rp 100.000/mese.
-   Per SPT Tahunan Badan: Rp 1.000.001.
+   Per SPT Tahunan Badan: Rp 1.000.000.
    Se si scopre un'omissione: sanzione del 200% dell'imposta non
    dichiarata + interessi del 2%/mese. [TAX-010]
 
@@ -163,7 +163,7 @@ R: SÌ. Il rimpatrio dei dividendi verso l'estero è legale per le PT PMA.
 D: Devo fare la dichiarazione fiscale anche se non ho fatto nulla nell'anno?
 R: SÌ. Anche con omzet zero (azienda inattiva), la PT PMA deve
    presentare SPT Tahunan Badan con "NIHIL" (zero). [TAX-006]
-   Non presentarla porta comunque la sanzione di Rp 1.000.001.
+   Non presentarla porta comunque la sanzione di Rp 1.000.000.
    Se l'azienda è totalmente inoperativa, valutare la chiusura formale.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

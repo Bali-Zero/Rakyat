@@ -1,23 +1,26 @@
-"""LLM client for article_composer — back on the Claude OAuth door (v5).
+"""LLM client for article_composer — on the Claude Console door (v6).
 
 History:
 - v1: wrapped ``anthropic.Anthropic`` (pay-as-you-go API key).
-- v2: switched to Claude Max OAuth via ``claude -p`` subprocess
-  (``backend.llm.claude_oauth_client``) per project policy
-  ``memory/feedback_claude_oauth_only.md``.
+- v2: switched to the ``claude -p`` subprocess client
+  (``backend.llm.claude_oauth_client``), then on plan OAuth.
 - v3: migrated to DeepSeek because the ``claude`` CLI hangs inside the Fly
   container on Linux non-TTY (``memory/feedback_claude_cli_linux_hang.md``).
 - v4 (2026-08-29): re-pointed DeepSeek to the TP1 gateway.
-- v5 (this file, 2026-10-22): TP1 was cancelled by the owner (HTTP 403 on
-  every slug, no fallback), so the route is back on the only sanctioned
-  Claude door: ``backend.llm.claude_oauth_client`` (``claude -p`` on the
-  OAuth seats, MAX quota). Model default ``claude-sonnet-5``, override with
-  env ``ARTICLE_COMPOSER_MODEL``. ``max_tokens`` is accepted for signature
-  compatibility but the CLI door has no output cap; usage is estimated
-  (``len(text) // 4``) because the CLI reports no counters.
+- v5 (2026-10-22): TP1 was cancelled by the owner (HTTP 403 on every slug,
+  no fallback), so the route went back to ``backend.llm.claude_oauth_client``.
+- v6 (2026-11-03): that client now runs on Console seats — a linked-org key
+  pinned to its workspace, ``ANTHROPIC_CONSOLE_KEY_<n>`` +
+  ``ANTHROPIC_CONSOLE_WORKSPACE_<n>`` — and never on a plan's OAuth credential
+  (RULED 2026-11-01). Nothing here touches the credential: the seats and the
+  child's environment are the client's. Model default ``claude-sonnet-5``,
+  override with env ``ARTICLE_COMPOSER_MODEL``. ``max_tokens`` is accepted
+  for signature compatibility but the CLI door has no output cap; usage is
+  estimated (``len(text) // 4``) because the text path reports no counters.
+  The ``ClaudeOAuth*`` names below are kept for their callers.
 
 Public symbols preserved for router/backward-compat:
-- ``call_claude_with_retry`` — same signature, internally calls the Claude OAuth client.
+- ``call_claude_with_retry`` — same signature, internally calls the Claude CLI client.
 - ``ClaudeClientError`` — same retryable exception class.
 - ``ClaudeOAuthMessage`` (alias ``Message``) — same response shape
   (``content[0].text``, ``usage.input_tokens``, ``usage.output_tokens``).
@@ -46,7 +49,7 @@ from tenacity import (
 from backend.llm.claude_oauth_client import (
     ClaudeOAuthError,
     ClaudeOAuthNotAvailable,
-    _collect_tokens,
+    collect_seats,
     complete_async,
 )
 
@@ -221,11 +224,12 @@ def get_llm_health() -> dict[str, Any]:
 
 
 def oauth_configured() -> bool:
-    """True when at least one real OAuth token is in the environment.
+    """True when at least one Console seat is configured (key + workspace).
 
-    The keychain sentinel seat is ignored: it never exists in the container.
+    Name kept for its callers; since RULED 2026-11-01 the door is a Console
+    seat, and there is no keychain sentinel to discount any more.
     """
-    return any(tok for tok, _label in _collect_tokens())
+    return bool(collect_seats())
 
 
 class ClaudeBudgetExhausted(ClaudeClientError):

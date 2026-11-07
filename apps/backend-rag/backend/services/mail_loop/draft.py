@@ -1,9 +1,12 @@
 """Draft one reply, via the `claude` CLI. Never sends.
 
-Model access rule (CLAUDE.md §5, non-negotiable): the Anthropic SDK is BANNED in
-this repo. `ANTHROPIC_API_KEY` is a paid per-token path; the only sanctioned
-route is shelling out to the `claude` CLI carrying `CLAUDE_CODE_OAUTH_TOKEN`
-(MAX-plan quota). Do not "simplify" this into an SDK call.
+Model access rule (Builder Contract 3 + RULED 2026-11-01, `docs/rules/RULINGS.md`):
+the Anthropic SDK is BANNED in this repo, and a product lane reaches a Claude
+model only through a Console seat — `ANTHROPIC_CONSOLE_KEY_<n>` pinned to
+`ANTHROPIC_CONSOLE_WORKSPACE_<n>`, the three linked-org keys — never through plan
+OAuth (`CLAUDE_CODE_OAUTH_TOKEN`) or the CLI's own session. The transport is
+still the `claude` CLI; the seats and the child's environment come from
+`backend.llm.claude_oauth_client`. Do not "simplify" this into an SDK call.
 
 PII posture. To draft a reply the model has to read the client's message — there
 is no way around that — so the safeguard is applied to WHAT it reads, not to
@@ -32,6 +35,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
+from backend.llm.claude_oauth_client import build_seat_env, collect_seats
 from backend.services.mail_loop.style import redact
 
 logger = logging.getLogger(__name__)
@@ -168,23 +172,20 @@ def generate(request: DraftRequest, *, dry_run: bool = False) -> str:
         )
 
     cli = _resolve_cli()
-    if not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
-        # A WARNING and not a refusal. The env var is one of two sanctioned ways
-        # the CLI authenticates; the other is the OAuth session it keeps itself,
-        # which needs no variable at all and is what an interactive shell on this
-        # machine actually uses (verified live: the CLI answers with no token
-        # exported). Refusing here judged the PROXY — "is a variable set" —
-        # instead of the outcome, and would have reported every draft as
-        # impossible on a machine where drafting works.
-        #
-        # The SDK ban is untouched: the only path below is still the CLI.
-        # If the CLI has no usable session either, it exits non-zero and the
-        # real reason travels in the error a few lines down, which is strictly
-        # more informative than this guess was.
-        logger.warning(
-            "draft: CLAUDE_CODE_OAUTH_TOKEN is unset — falling back to the "
-            "CLI's own OAuth session. Under launchd that session may not be "
-            "reachable; export the token in the wrapper if drafts start failing."
+    seats = collect_seats()
+    if not seats:
+        # Fail closed. Until RULED 2026-11-01 this was a WARNING that let the
+        # CLI run on its own OAuth session when no token variable was set —
+        # and that session is the interactive seat's plan quota, the exact
+        # door the ruling shuts for the product perimeter. So "no seat" is no
+        # longer a proxy for "cannot authenticate": it IS the outcome, and the
+        # mail-loop wrapper has to carry the seat pair (Pro keeps them in
+        # ~/nuzantara/.secrets/, 0600). The SDK ban is untouched: the only
+        # path below is still the CLI.
+        raise DraftUnavailable(
+            "no Console seat configured: export ANTHROPIC_CONSOLE_KEY_<n> and "
+            "ANTHROPIC_CONSOLE_WORKSPACE_<n> in the mail-loop environment "
+            "(no plan-OAuth fallback, RULED 2026-11-01)"
         )
 
     # The prompt goes in on STDIN, never in argv.
@@ -204,34 +205,50 @@ def generate(request: DraftRequest, *, dry_run: bool = False) -> str:
     #
     # `claude -p` with no argument reads the prompt from stdin, so this is the
     # same invocation, minus the exposure. SYMBIOSIS Law 2 / UU PDP Art. 67-68.
-    argv = [cli, "-p", "--model", CLAUDE_MODEL]
-    try:
-        # No pipeline, no shell: the exit code must reach us intact. Piping this
-        # into anything is how an rc gets masked (W97).
-        completed = subprocess.run(  # argv list, never a shell string
-            argv,
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=TIMEOUT_SECONDS,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise DraftUnavailable(
-            f"claude CLI timed out after {TIMEOUT_SECONDS}s"
-        ) from exc
+    # Lean (2026-11-03): no hooks, no CLAUDE.md discovery, no tool schemas —
+    # a draft is text in, text out (see backend.llm.claude_oauth_client).
+    argv = [cli, "-p", "--bare", "--tools", "", "--model", CLAUDE_MODEL]
+    last_failure = "no seat was attempted"
+    for seat in seats:
+        try:
+            # No pipeline, no shell: the exit code must reach us intact. Piping
+            # this into anything is how an rc gets masked (W97). The child's
+            # environment is the seat's and nothing else (one key, one
+            # workspace header, sterile config dir — see build_seat_env).
+            completed = subprocess.run(  # argv list, never a shell string
+                argv,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=TIMEOUT_SECONDS,
+                check=False,
+                env=build_seat_env(seat),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise DraftUnavailable(
+                f"claude CLI timed out after {TIMEOUT_SECONDS}s via {seat.label}"
+            ) from exc
 
-    if completed.returncode != 0:
-        stderr = (completed.stderr or "").strip()[:400]
-        raise DraftUnavailable(
-            f"claude CLI exited {completed.returncode}: {stderr or '<no stderr>'}"
-        )
+        if completed.returncode != 0:
+            stderr = (completed.stderr or "").strip()[:400]
+            last_failure = (
+                f"claude CLI exited {completed.returncode} via {seat.label}: "
+                f"{stderr or '<no stderr>'}"
+            )
+            logger.warning(
+                "draft: %s exited %d — trying the next seat", seat.label, completed.returncode
+            )
+            continue
 
-    text = (completed.stdout or "").strip()
-    if not text:
-        raise DraftUnavailable("claude CLI exited 0 but produced no text")
+        text = (completed.stdout or "").strip()
+        if not text:
+            last_failure = f"claude CLI exited 0 but produced no text via {seat.label}"
+            logger.warning("draft: %s produced no text — trying the next seat", seat.label)
+            continue
 
-    return _strip_fences(text)
+        return _strip_fences(text)
+
+    raise DraftUnavailable(last_failure)
 
 
 def _strip_fences(text: str) -> str:

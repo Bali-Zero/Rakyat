@@ -121,7 +121,7 @@ export function NotificationSettings() {
             }
             void persist({ ...data, wa_phone: waPhone || null });
           }}
-          placeholder="628400022000"
+          placeholder="628123456789"
           className="w-full px-3 py-2 bg-[var(--bz-card)] rounded border border-[var(--bz-border)] text-sm text-[var(--bz-text-1)] disabled:opacity-60"
         />
         <p

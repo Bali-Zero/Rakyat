@@ -453,5 +453,5 @@ class TestGatewayClassification:
 
     def test_hybrid_domain(self) -> None:
         """Query with Indonesia + foreign country -> hybrid."""
-        gw = classify_query("confronto golden visa Indonesia e golden visa Nabugose")
+        gw = classify_query("confronto golden visa Indonesia e golden visa Portugal")
         assert gw.domain == "hybrid"

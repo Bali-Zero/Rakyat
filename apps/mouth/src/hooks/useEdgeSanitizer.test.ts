@@ -44,9 +44,7 @@ describe("useEdgeSanitizer", () => {
 
   it("redacts Indonesian phone numbers (08 prefix)", async () => {
     const { result } = renderHook(() => useEdgeSanitizer());
-    const sanitized = await result.current.sanitize(
-      "WhatsApp 084000220000",
-    );
+    const sanitized = await result.current.sanitize("WhatsApp 084000220000");
     expect(sanitized).toContain("[PHONE]");
     expect(sanitized).not.toContain("084000220000");
   });

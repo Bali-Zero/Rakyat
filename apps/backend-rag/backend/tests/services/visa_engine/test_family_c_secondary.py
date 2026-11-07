@@ -95,7 +95,7 @@ def test_verbatim_purpose_and_precise_citations(code):
     )
     if code == "C7":
         assert "1. undangan dari penyelenggara kegiatan," in requirement["text"]
-        assert "bersifat umum; atau 2. permohonan Visa dari nodolejuvuq" in requirement["text"]
+        assert "bersifat umum; atau 2. permohonan Visa dari impresariat" in requirement["text"]
     elif code == "C8":
         # The regulation actually uses both spellings. Preserve each occurrence.
         assert "olahraga yang tidak bersifat komersil," in requirement["text"]

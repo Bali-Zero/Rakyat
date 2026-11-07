@@ -452,7 +452,7 @@ async def test_classification_lowering_successor_rejected(db: asyncpg.Connection
 
 @pytest.mark.parametrize(
     "recorded_at",
-    ["2026-01-01T00:00:00.9900001Z", "2026-01-01t00:00:00Z"],
+    ["2026-01-01T00:00:00.1234567Z", "2026-01-01t00:00:00Z"],
     ids=["seven_fractional_digits", "lowercase_t_separator"],
 )
 async def test_malformed_write_path_instant_rejected_before_insert(

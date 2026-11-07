@@ -89,14 +89,29 @@ class EmpiricalIGAnalyzer:
             prompt_lines.append(f"post_id={p['post_id']}: {snippet}")
         prompt = "\n".join(prompt_lines)
 
+        # RULED 2026-11-01: `claude` runs on a Console seat only, never on the
+        # inherited environment (its plan-OAuth session is the shut fallback).
+        # No seat is the same outcome as no binary: every post stays unknown.
+        from backend.llm.claude_oauth_client import build_seat_env, collect_seats, default_model
+
+        seats = collect_seats()
+        if not seats:
+            logger.warning(
+                "claude: no Console seat configured (ANTHROPIC_CONSOLE_KEY_<n> + "
+                "ANTHROPIC_CONSOLE_WORKSPACE_<n>); %d posts stay unknown",
+                len(posts),
+            )
+            return {p["post_id"]: "unknown" for p in posts}
+
         try:
             result = subprocess.run(
-                ["claude", "-p", prompt],
+                ["claude", "-p", "--bare", "--tools", "", "--model", default_model(), "--", prompt],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=240,
                 check=False,
+                env=build_seat_env(seats[0]),
             )
         except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
             logger.warning("claude CLI invocation failed: %s", exc)

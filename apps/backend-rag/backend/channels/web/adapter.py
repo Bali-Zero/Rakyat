@@ -15,6 +15,7 @@ from typing import Any
 from backend.channels.base import BaseChannel, ChannelMessage, ChannelResponse
 from backend.channels.web.config import WebChannelConfig
 from backend.channels.web.formatter import WebMessageFormatter
+from backend.security.pii_log_identifier import redact_identifier_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +96,10 @@ class WebChannelAdapter(BaseChannel):
             }
 
             logger.info(
-                f"🌐 Web message received: user={user_id[:20]}, "
-                f"session={session_id}, text={text[:50]}...",
+                "🌐 Web message received: user=%s, session=%s, text_chars=%d",
+                redact_identifier_for_log(user_id),
+                redact_identifier_for_log(session_id),
+                len(text or ""),
             )
 
             return ChannelMessage(
@@ -135,7 +138,7 @@ class WebChannelAdapter(BaseChannel):
             "send_response() is a NO-OP delivery for the web channel (SSE-only); "
             "formatted %d chars but did NOT send to %s — caller must use stream_response()",
             len(formatted_text),
-            channel_id,
+            redact_identifier_for_log(channel_id),
         )
 
     async def send_status_update(self, channel_id: str, status: str) -> None:
@@ -149,7 +152,9 @@ class WebChannelAdapter(BaseChannel):
             channel_id: Session/correlation ID
             status: Status type ("processing", "thinking", etc.)
         """
-        logger.debug("📍 Web status update: %s (channel: %s)", status, channel_id)
+        logger.debug(
+            "📍 Web status update: %s (channel: %s)", status, redact_identifier_for_log(channel_id)
+        )
 
         # In stream_response(), we yield status events directly
         # This method is for non-streaming scenarios (rarely used)
@@ -197,7 +202,9 @@ class WebChannelAdapter(BaseChannel):
                 },
             )
 
-            logger.info("✅ Completed web stream for channel %s", channel_id)
+            logger.info(
+                "✅ Completed web stream for channel %s", redact_identifier_for_log(channel_id)
+            )
 
         except Exception as e:
             logger.error("Error streaming to web: %s", e, exc_info=True)

@@ -176,7 +176,7 @@ Tous les propriétaires de terrains et de bâtiments doivent payer le PBB.
       id: "njop",
       label: "Valeur NJOP (IDR)",
       type: "number",
-      defaultValue: 840006200,
+      defaultValue: 500000000,
       min: 0
     },
     {
@@ -204,9 +204,9 @@ Tous les propriétaires de terrains et de bâtiments doivent payer le PBB.
 
     // Simplified rate (actual varies by bracket)
     let rate;
-    if (values.njop < 9900000019) {
+    if (values.njop < 1000000000) {
       rate = 0.001; // 0.1%
-    } else if (values.njop < 2000000100) {
+    } else if (values.njop < 2000000000) {
       rate = 0.002; // 0.2%
     } else {
       rate = 0.003; // 0.3%

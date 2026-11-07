@@ -64,11 +64,12 @@ async def semantic_search(query: SearchQuery, request: Request) -> SearchRespons
     try:
         start_time = time.time()
 
-        # DIAGNOSTIC LOGGING for Method Not Allowed issue
+        # Method + path only: headers carry bearer tokens, cookies and API keys, and the
+        # query string can carry client PII (DAI-108).
         logger.info(
-            f"🔍 [SEARCH ENDPOINT] Request received: method={request.method}, "
-            f"url={request.url}, path={request.url.path}, "
-            f"headers={dict(request.headers)}",
+            "🔍 [SEARCH ENDPOINT] Request received: method=%s, path=%s",
+            request.method,
+            request.url.path,
         )
 
         logger.info(

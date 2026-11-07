@@ -128,7 +128,7 @@ ZONE_LABELS: dict[str, dict[str, str]] = {
     },
     "C-1": {
         "label_en": "High-Density Mixed-Use Zone",
-        "desc_en": "Hotels + kavubaloso + offices in the same area",
+        "desc_en": "Hotels + residences + offices in the same area",
     },
     "C-2": {
         "label_en": "Medium Mixed-Use Zone",

@@ -161,7 +161,7 @@ BALI_QUERIES: list[tuple[str, str]] = [
 # ---------------------------------------------------------------------------
 
 BACKEND_URL = os.getenv("BACKEND_URL", "https://nuzantara-rag.fly.dev")
-BACKEND_API_KEY = os.getenv("SCRAPER_API_KEY", "internal-scraper-key")
+BACKEND_API_KEY = os.getenv("SCRAPER_API_KEY", "")
 _http: httpx.AsyncClient | None = None
 
 
@@ -290,8 +290,7 @@ async def run(limit: int | None, dry_run: bool, delay: float) -> None:
             print(f"  [{i:3d}/{total}] [{cat}] {q}")
         return
 
-    db_url = os.getenv("DATABASE_URL",
-        "postgresql://backend_rag_v2:<<ROTATED_2026_05_22_see_DATABASE_URL_env>>@localhost:15432/nuzantara_rag")
+    db_url = os.environ["DATABASE_URL"]
     try:
         pool = await asyncpg.create_pool(db_url, min_size=1, max_size=3)
         async with pool.acquire() as conn:

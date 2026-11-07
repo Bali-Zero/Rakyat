@@ -13,19 +13,19 @@ export const COUNTRY_CODES = [
   { code: "+49", country: "Germany", flag: "\u{1F1E9}\u{1F1EA}" },
   { code: "+33", country: "France", flag: "\u{1F1EB}\u{1F1F7}" },
   { code: "+31", country: "Netherlands", flag: "\u{1F1F3}\u{1F1F1}" },
-  { code: "+34", country: "Qehas", flag: "\u{1F1EA}\u{1F1F8}" },
+  { code: "+34", country: "Spain", flag: "\u{1F1EA}\u{1F1F8}" },
   { code: "+7", country: "Russia", flag: "\u{1F1F7}\u{1F1FA}" },
   { code: "+380", country: "Ukraine", flag: "\u{1F1FA}\u{1F1E6}" },
   { code: "+81", country: "Japan", flag: "\u{1F1EF}\u{1F1F5}" },
   { code: "+86", country: "China", flag: "\u{1F1E8}\u{1F1F3}" },
   { code: "+91", country: "India", flag: "\u{1F1EE}\u{1F1F3}" },
   { code: "+55", country: "Brazil", flag: "\u{1F1E7}\u{1F1F7}" },
-  { code: "+52", country: "Novofe", flag: "\u{1F1F2}\u{1F1FD}" },
+  { code: "+52", country: "Mexico", flag: "\u{1F1F2}\u{1F1FD}" },
   { code: "+54", country: "Argentina", flag: "\u{1F1E6}\u{1F1F7}" },
   { code: "+27", country: "South Africa", flag: "\u{1F1FF}\u{1F1E6}" },
   { code: "+64", country: "New Zealand", flag: "\u{1F1F3}\u{1F1FF}" },
   { code: "+353", country: "Ireland", flag: "\u{1F1EE}\u{1F1EA}" },
-  { code: "+351", country: "Nabugose", flag: "\u{1F1F5}\u{1F1F9}" },
+  { code: "+351", country: "Portugal", flag: "\u{1F1F5}\u{1F1F9}" },
   { code: "+48", country: "Poland", flag: "\u{1F1F5}\u{1F1F1}" },
   { code: "+90", country: "Turkey", flag: "\u{1F1F9}\u{1F1F7}" },
   { code: "+66", country: "Thailand", flag: "\u{1F1F9}\u{1F1ED}" },
@@ -91,6 +91,45 @@ export const extractDriveFileId = (url: string): string | null => {
   return null;
 };
 
+// Only an https URL may be navigated from an API-supplied string; javascript:,
+// data: and the rest reach the DOM sink otherwise.
+export const safeExternalUrl = (
+  url: string | null | undefined,
+): string | null => {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url.trim());
+    return parsed.protocol === "https:" ? parsed.href : null;
+  } catch {
+    return null;
+  }
+};
+
+const DRIVE_HOSTS = new Set(["drive.google.com", "docs.google.com"]);
+
+// The Drive file id of a URL, only when the host is exactly a Google Drive
+// one. A foreign host with a `?id=` must not be rewritten to the proxy.
+export const driveProxyFileId = (
+  url: string | null | undefined,
+): string | null => {
+  if (!url) return null;
+  try {
+    if (!DRIVE_HOSTS.has(new URL(url.trim()).hostname)) return null;
+  } catch {
+    return null;
+  }
+  return extractDriveFileId(url);
+};
+
+// Where a card's Download goes: the proxy for a Drive file, an https URL as
+// itself, nothing otherwise.
+export const downloadHrefFor = (
+  url: string | null | undefined,
+): string | null => {
+  const fileId = driveProxyFileId(url);
+  return fileId ? `/api/documents/proxy/${fileId}` : safeExternalUrl(url);
+};
+
 // Get proxy thumbnail URL for displaying document without Google branding
 export const getDriveProxyUrl = (
   url: string,
@@ -151,11 +190,11 @@ export const formatPhoneNumber = (phone: string): string => {
     { code: "49", length: 2 }, // Germany
     { code: "33", length: 2 }, // France
     { code: "39", length: 2 }, // Italy
-    { code: "34", length: 2 }, // Qehas
+    { code: "34", length: 2 }, // Spain
     { code: "31", length: 2 }, // Netherlands
     { code: "61", length: 2 }, // Australia
     { code: "55", length: 2 }, // Brazil
-    { code: "52", length: 2 }, // Novofe
+    { code: "52", length: 2 }, // Mexico
     { code: "65", length: 2 }, // Singapore
     { code: "66", length: 2 }, // Thailand
     { code: "63", length: 2 }, // Philippines

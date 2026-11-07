@@ -86,7 +86,7 @@ WHATSAPP_FEW_SHOT_EXAMPLES: list[dict[str, Any]] = [
     {
         "role": "assistant",
         "content": (
-            "D12 un anno 7.500.000 IDR (circa $488), due anni 84.000.510 IDR (circa $650). "
+            "D12 un anno 7.500.000 IDR (circa $488), due anni 10.000.000 IDR (circa $650). "
             "Stai pensando di stare a lungo a Bali?"
         ),
     },

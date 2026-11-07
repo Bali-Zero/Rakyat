@@ -26,10 +26,10 @@ Complete conversation persistence system for the webapp with automatic memory re
    - Saves user query + assistant response after stream completes
    - **Unified endpoint**: streaming + persistence + 13+ event types
 
-3. **Cleanup Cron Job** (`backend/jobs/conversation_cleanup.py`)
-   - Daily cleanup of conversations > 30 days
-   - Anonymization of user_id after 7 days
-   - Integrated into AutonomousScheduler
+3. **Guarded Manual Cleanup** (`backend/jobs/conversation_cleanup.py`)
+   - Timed deletion is disabled by default
+   - Deletion and anonymization respect the 1,826-day retention floor
+   - The duplicate in-process scheduler path is removed by this source change
 
 ### Database Schema
 
@@ -116,23 +116,10 @@ Retrieve conversation history for a session.
 }
 ```
 
-### DELETE `/webhook/chat/cleanup`
+### No cleanup route under `/webhook/chat`
 
-Admin endpoint to cleanup old conversations.
-
-**Query Parameters:**
-
-- `days` (optional): Retention period in days (default: 30)
-
-**Response:**
-
-```json
-{
-  "success": true,
-  "deleted_count": 150,
-  "cutoff_days": 30
-}
-```
+There is no `DELETE /webhook/chat/cleanup` route. The guarded manual paths are
+described under [Cleanup & Maintenance](#cleanup--maintenance).
 
 ---
 
@@ -196,29 +183,30 @@ messages = await repo.get_messages(
 
 ## Cleanup & Maintenance
 
-### Automatic Cleanup (Daily)
+### Retention Policy
 
-The cleanup job runs daily via AutonomousScheduler:
-
-1. **Anonymize** user_id for conversations > 7 days
-   - Replaces `user_id` with `anonymized_{id}`
-   - Preserves conversation data for analytics
-
-2. **Delete** conversations > 30 days
-   - Permanent deletion from database
-   - Reduces storage costs
+The duplicate in-process scheduling path is removed by this source change. There is no
+daily conversation-cleanup task in AutonomousScheduler. Timed deletion remains
+disabled by `backend/core/retention_policy.py` unless its explicit opt-in is set;
+deletion and anonymization retain the existing 1,826-day floor. Anonymization is
+limited by that floor only, not by the deletion opt-in. This retirement does not
+enable retention actions.
 
 ### Manual Cleanup
 
 ```bash
-# Run cleanup job manually
-cd apps/backend-rag/backend
-python -m jobs.conversation_cleanup
-
-# Or via API (requires admin token)
-curl -X DELETE "http://localhost:8080/webhook/chat/cleanup?days=30" \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
+# Run the guarded manual CLI; it reports policy refusals
+cd apps/backend-rag
+python -m backend.jobs.conversation_cleanup
 ```
+
+The authenticated `POST /api/admin/conversation-cleanup` endpoint is the manual
+API alternative. It defaults to `dry_run=true` and the 1,826-day floor; its write
+path still requires the existing explicit retention-policy opt-in.
+The CLI has no dry-run mode: its floored anonymization pass can run before a
+deletion refusal. Use the API's default dry run for a non-mutating check.
+Source removal does not prove external schedules or deployed task state; verify
+those separately without enabling retention.
 
 ---
 
@@ -247,7 +235,6 @@ export JWT_TOKEN="your-jwt-token"
 - ✅ Save and retrieve messages
 - ✅ Message limit enforcement
 - ✅ Context persistence across requests
-- ✅ Automatic cleanup of old data
 - ✅ User data anonymization
 
 ---
@@ -298,8 +285,8 @@ ORDER BY date DESC;
 
 ### Data Privacy
 
-- User data anonymized after 7 days
-- Conversations deleted after 30 days
+- No timed anonymization or deletion runs by default; the guarded manual paths
+  keep the 1,826-day floor (see [Retention Policy](#retention-policy))
 - No PII in metadata by default
 
 ### Access Control
@@ -349,21 +336,11 @@ print(f"Retrieved {len(messages)} messages")
 
 ### Issue: Cleanup not running
 
-**Check:**
-
-1. AutonomousScheduler started
-2. `conversation_cleanup_enabled=True`
-3. Database pool available
-
-**Debug:**
-
-```bash
-# Check scheduler status
-curl http://localhost:8080/api/health/scheduler
-
-# Run cleanup manually
-python -m jobs.conversation_cleanup
-```
+This is the expected default: timed deletion is disabled and the in-process
+scheduler switch is removed by this source change. Use the guarded manual CLI or the
+authenticated `POST /api/admin/conversation-cleanup` endpoint described above.
+Check database availability and the existing retention-policy refusal rather
+than trying to enable a removed scheduler parameter.
 
 ---
 
@@ -376,14 +353,14 @@ If migrating from an existing conversation system:
 1. Existing `conversations` table is reused (no migration needed)
 2. Update frontend to use `/webhook/chat` instead of `/api/agentic-rag/query`
 3. Pass `session_id` in all requests
-4. Enable cleanup job in scheduler
+4. Keep clock-driven deletion disabled; use the guarded manual maintenance paths
 
 ### Rollback Plan
 
 If issues occur:
 
 1. Disable webhook_chat router in `router_registration.py`
-2. Disable cleanup job: `conversation_cleanup_enabled=False`
+2. Keep clock-driven deletion disabled under the existing retention policy
 3. Revert to previous chat endpoint
 4. Data remains in database for recovery
 

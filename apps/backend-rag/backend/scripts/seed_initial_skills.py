@@ -196,7 +196,7 @@ SEED_SKILLS: list[dict[str, Any]] = [
             "client_id=company_id (Lori import) with real client_id."
         ),
         "precondition": "Building portal history/receipts query for a client.",
-        "success_criterion": "VUW AC LEQU (11139) sees PT HANG LOOSE COMPAGNY (2327) reports.",
+        "success_criterion": "client 11139 sees the reports of its linked company 2327.",
         "confidence": 0.95,
     },
     {

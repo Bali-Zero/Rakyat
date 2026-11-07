@@ -75,7 +75,7 @@ def build_system_prompt(
             "no_context": "Nuovo cliente, nessun contesto precedente.",
             "greeting": "Questo e' il primo messaggio del cliente. Puoi salutare una volta.",
             "no_greeting": "NON salutare. Vai dritto alla risposta.",
-            "response_instruction": "🚨 CRITICO: Rispondi SEMPRE in VANELARA, tono naturale WhatsApp.",
+            "response_instruction": "🚨 CRITICO: Rispondi SEMPRE in ITALIANO, tono naturale WhatsApp.",
         },
         "en": {
             "client_name": f"Client name: {client_name}." if client_name else "",
@@ -99,7 +99,7 @@ def build_system_prompt(
             "no_context": "Klien baru, tidak ada konteks sebelumnya.",
             "greeting": "Ini pesan pertama klien. Anda bisa menyapa sekali.",
             "no_greeting": "JANGAN sapa. Langsung jawab.",
-            "response_instruction": "🚨 KRITIS: SELALU balas dalam BAHASA INDONESIA, deka WhatsApp natural.",
+            "response_instruction": "🚨 KRITIS: SELALU balas dalam BAHASA INDONESIA, nada WhatsApp natural.",
         },
         "de": {
             "client_name": f"Kundenname: {client_name}." if client_name else "",
@@ -185,9 +185,9 @@ def build_system_prompt(
         "de": (
             'KRITISCHE REGEL: Sagen Sie dem Kunden NIEMALS "ich habe keinen '
             'Zugriff", "ich habe keine Infos im System", "die Daten sind '
-            'nicht geladen" ponu "ich kann nicht suchen". Sie sind ein '
+            'nicht geladen" oder "ich kann nicht suchen". Sie sind ein '
             "Experte, keine Software. Wenn Sie etwas nicht wissen, sagen Sie "
-            '"ich kläre das mit dem Team und melde mich" ponu antworten mit '
+            '"ich kläre das mit dem Team und melde mich" oder antworten mit '
             "dem, was Sie wissen. "
             "DAS EINE, WAS SIE IMMER SAGEN DÜRFEN: Wenn es um etwas geht, das "
             "nur die internen Unterlagen von Bali Zero wissen können — der "
@@ -195,7 +195,7 @@ def build_system_prompt(
             "uns — und Sie es nicht sehen, sagen Sie es wie ein Berater: "
             '"das habe ich gerade nicht vorliegen, ich kläre das mit dem Team '
             'und melde mich." Behaupten Sie NIEMALS, die Sache eines Kunden '
-            "sei in Ordnung, erledigt ponu aktuell, wenn die geprüften Daten "
+            "sei in Ordnung, erledigt oder aktuell, wenn die geprüften Daten "
             "in diesem Gespräch das nicht sagen."
         ),
     }
@@ -292,8 +292,8 @@ def build_priming_turns(
         "id": (
             "[KONTEKS WHATSAPP]",
             "Selalu balas sebagai Zan dari Bali Zero, dengan natural, di "
-            "WhatsApp (tanpa markdown, deka manusiawi).",
-            "Mengerti — saya balas sebagai Zan di WhatsApp: deka natural, "
+            "WhatsApp (tanpa markdown, nada manusiawi).",
+            "Mengerti — saya balas sebagai Zan di WhatsApp: nada natural, "
             "tanpa markdown, fokus ke visa dan bisnis di Bali.",
         ),
         "de": (
@@ -325,7 +325,7 @@ FEW_SHOT_EXAMPLES = [
     },
     {
         "role": "assistant",
-        "content": "D12 un anno 7.500.000 IDR (circa $488), due anni 84.000.510 IDR (circa $650). Stai pensando di stare a lungo a Bali?",
+        "content": "D12 un anno 7.500.000 IDR (circa $488), due anni 10.000.000 IDR (circa $650). Stai pensando di stare a lungo a Bali?",
     },
     {
         "role": "user",

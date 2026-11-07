@@ -69,9 +69,14 @@ class CLIRunner(ABC):
 
 
 class ClaudeCLIRunner(CLIRunner):
-    """Runs `claude -p <prompt>` via OAuth Max subscription (no API key).
+    """Runs `claude -p <prompt>` on a Console seat (RULED 2026-11-01).
 
-    Strips ANTHROPIC_API_KEY: it conflicts with OAuth token auth.
+    The child's environment is the first seat's and nothing else — built by
+    ``backend.llm.claude_oauth_client.build_seat_env`` (one key, one
+    workspace header, every inherited credential stripped, sterile config
+    dir). No seat is no door: ``CLIRunnerError`` before any subprocess, never
+    the CLI's own OAuth session (this used to strip ANTHROPIC_API_KEY and run
+    on plan OAuth — the fallback the ruling shuts for this perimeter).
     Sets CLAUDE_PLUGIN_ROOT=/dev/null: disables SessionEnd hook which
     fires on every subprocess call and causes rc=1 even on success.
     Uses absolute path so launchd / cron (limited PATH) can find the binary.
@@ -90,16 +95,38 @@ class ClaudeCLIRunner(CLIRunner):
         )
         self.extra_args = extra_args or []
 
-    # NOTE: Claude CLI uses Max OAuth flat rate — no per-call tracking needed.
     async def run(
         self,
         prompt: str,
         timeout: int | None = None,
     ) -> RunnerResult:
+        from backend.llm.claude_oauth_client import build_seat_env, collect_seats, default_model
+
         eff_timeout = timeout or self.default_timeout
-        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        seats = collect_seats()
+        if not seats:
+            raise CLIRunnerError(
+                "claude: no Console seat configured (ANTHROPIC_CONSOLE_KEY_<n> + "
+                "ANTHROPIC_CONSOLE_WORKSPACE_<n>) — no plan-OAuth fallback, RULED 2026-11-01"
+            )
+        env = build_seat_env(seats[0])
         env["CLAUDE_PLUGIN_ROOT"] = "/dev/null"
-        cmd = [self.binary_path, "-p", prompt, *self.extra_args]
+        # Lean (2026-11-03): --bare skips hooks (the SessionEnd rc=1 below) and
+        # CLAUDE.md discovery; --tools "" — a council voice answers in text.
+        # `--` keeps a prompt that starts with "-" an operand.
+        # Pinned (2026-11-03): unpinned, the CLI's default is its priciest model.
+        cmd = [
+            self.binary_path,
+            "-p",
+            "--bare",
+            "--tools",
+            "",
+            "--model",
+            default_model(),
+            *self.extra_args,
+            "--",
+            prompt,
+        ]
         return await _run_subprocess(
             name=self.name,
             cmd=cmd,

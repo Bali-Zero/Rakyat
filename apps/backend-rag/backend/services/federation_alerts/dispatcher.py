@@ -7,9 +7,10 @@ Per spec B9: ConsiglioV1.deliberate() is sync (subprocess.run inside).
 We wrap it in asyncio.to_thread() with a hard timeout so the daemon
 event loop never blocks indefinitely if 2/4 LLMs are down.
 
-Per Golden Rule #13: ANTHROPIC_API_KEY is stripped from the subprocess
-env before invoking ai-dispatch.sh. Defense-in-depth even though the
-shell script does not source it.
+Per RULED 2026-11-01: no Anthropic credential or Claude selector reaches the
+ai-dispatch.sh child (``ANTHROPIC_*`` and ``CLAUDE_*`` are stripped), and the
+script's Claude commands — its plan-OAuth cascade — are refused before any
+subprocess; product code reaches Claude through backend.llm.claude_oauth_client.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,8 +31,31 @@ AI_DISPATCH_SCRIPT = PROJECT_ROOT / "scripts" / "ai-dispatch.sh"
 
 
 def _safe_env() -> dict[str, str]:
-    """Return os.environ with ANTHROPIC_API_KEY stripped (Golden Rule #13)."""
-    return {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    """Return os.environ without any Anthropic credential or Claude selector.
+
+    ai-dispatch.sh runs non-Claude CLIs here; none of them needs an
+    ``ANTHROPIC_*`` or ``CLAUDE_*`` variable, and none may reach a child that
+    could hand it to a ``claude`` it starts (RULED 2026-11-01).
+    """
+    return {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("ANTHROPIC_", "CLAUDE_"))
+    }
+
+
+def _reaches_claude(command: str, prompt: str) -> bool:
+    """True when this ai-dispatch.sh invocation would run its ``run_claude``.
+
+    ``run_claude`` (claude-review / claude-redteam / claude-explain) is the
+    script's plan-OAuth cascade — CLAUDE_CODE_OAUTH_TOKEN, then the keychain
+    session — which RULED 2026-11-01 shuts for the product perimeter (gate
+    round 3, 2026-11-03). ``parallel`` re-invokes the script per ``cmd:prompt``
+    spec, so a claude-* spec inside it counts too.
+    """
+    if command.startswith("claude"):
+        return True
+    return command == "parallel" and re.search(r"(?:^|\s)[\"']?claude[\w-]*:", prompt) is not None
 
 
 @dataclass(frozen=True)
@@ -54,13 +79,28 @@ async def dispatch_via_ai_dispatch(
 ) -> DispatchResult:
     """Run scripts/ai-dispatch.sh with the given command + prompt.
 
-    The shell script itself implements the LLM cascade (gemini 3.1 → 2.5,
-    claude OAuth token rotation, etc.). We just supervise the subprocess.
+    The shell script itself implements the LLM cascade for the non-Claude
+    CLIs. Its Claude commands (claude-*, or a ``parallel`` spec naming one) are
+    refused before any subprocess: they run on plan OAuth (RULED 2026-11-01).
 
     Returns DispatchResult — never raises on subprocess failure. The
     daemon decides whether a non-zero return code is a hard error or
     just degraded mode.
     """
+    if _reaches_claude(command, prompt):
+        # No subprocess: the script's Claude path is plan OAuth. A product
+        # caller that needs Claude uses backend.llm.claude_oauth_client, which
+        # runs on a Console seat.
+        return DispatchResult(
+            success=False,
+            stdout="",
+            stderr=(
+                f"refused: ai-dispatch.sh {command} reaches Claude through plan OAuth "
+                "(RULED 2026-11-01) — use backend.llm.claude_oauth_client (Console seats)"
+            ),
+            return_code=-1,
+            duration_sec=0.0,
+        )
     if not AI_DISPATCH_SCRIPT.exists():
         return DispatchResult(
             success=False,

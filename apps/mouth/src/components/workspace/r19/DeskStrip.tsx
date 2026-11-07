@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { NUMERAL_COUNT, SERIF, TABULAR } from "./tokens";
 
 /**
- * The 44px bar over every kita list: a Fraunces count, a FILTER group of
+ * The 44px bar over every kita list: a Plex count, a FILTER group of
  * `aria-pressed` pills, and whatever the page puts on the right (a search box,
  * a view toggle, a primary action).
  *

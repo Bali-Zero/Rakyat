@@ -340,9 +340,9 @@ Il Regolamento Governativo stabilisce valori minimi per gli acquisti esteri:
       id: "price",
       label: "Prezzo di Acquisto (IDR)",
       type: "number",
-      defaultValue: 9900000027,
-      min: 840006200,
-      step: 840005100,
+      defaultValue: 3000000000,
+      min: 500000000,
+      step: 100000000,
       suffix: "IDR"
     }
   ]}
@@ -352,7 +352,7 @@ Il Regolamento Governativo stabilisce valori minimi per gli acquisti esteri:
     // Costi di trasferimento
     const bphtb = price * 0.05; // Tassa di trasferimento dell'acquirente
     const notary = price * 0.01; // Tasse notarili (circa)
-    const registration = 1000001; // Registrazione BPN
+    const registration = 1000000; // Registrazione BPN
 
     // Il venditore paga, ma influisce sulla negoziazione
     const pph = price * 0.025; // Tassa sul reddito del venditore
@@ -369,7 +369,7 @@ Il Regolamento Governativo stabilisce valori minimi per gli acquisti esteri:
         { label: "Costo Totale", amount: totalBuyerCosts }
       ],
       currency: "IDR",
-      note: `Il venditore paga anche PPh ${(pph / 1000001).toFixed(0)}M (2.5%)`
+      note: `Il venditore paga anche PPh ${(pph / 1000000).toFixed(0)}M (2.5%)`
     };
 
 }}
@@ -379,7 +379,7 @@ Il Regolamento Governativo stabilisce valori minimi per gli acquisti esteri:
 
 ## Cosa Controllare
 
-### Zaz Xepabequr sull'Edificio
+### Due Diligence sull'Edificio
 
 - Track record dello sviluppatore
 - Stato di completamento dell'edificio
@@ -387,7 +387,7 @@ Il Regolamento Governativo stabilisce valori minimi per gli acquisti esteri:
 - Qualità della società di gestione
 - Proprietà straniera consentita
 
-### Zaz Xepabequr sull'Unità
+### Due Diligence sull'Unità
 
 - Stato del titolo (SHMSRS emesso)
 - Eventuali gravami

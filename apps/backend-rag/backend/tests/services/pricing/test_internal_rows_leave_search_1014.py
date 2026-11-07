@@ -46,13 +46,13 @@ from backend.services.visa_oracle.visa_oracle_service import VisaOracleService
 INTERNAL_RETIREMENT_ROWS: dict[str, str] = {
     "Retirement (Offshore)": "14.000.000 IDR",
     "Retirement (Altus/Onshore)": "16.000.000 IDR",
-    "Retirement (Extend)": "84.000.510 IDR",
+    "Retirement (Extend)": "10.000.000 IDR",
 }
 
 E33F_ROWS: dict[str, str] = {
     "E33F Second Home Senior (1 Year, Offshore)": "14.000.000 IDR",
     "E33F Second Home Senior (1 Year, Altus/Onshore)": "16.000.000 IDR",
-    "E33F Second Home Senior (Extend)": "84.000.510 IDR",
+    "E33F Second Home Senior (Extend)": "10.000.000 IDR",
 }
 
 CATALOG_PATH = Path(__file__).resolve().parents[3] / "data" / "bali_zero_official_prices_2026.json"

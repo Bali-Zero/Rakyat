@@ -664,7 +664,7 @@ La scène du coworking à Bali est mature et diversifiée. Voici les meilleures 
 
 <InfoCard variant="note" title="Au-delà du Coworking">
 De nombreux nomades numériques travaillent depuis :
-- **Cafés** : Canggu et Ubud regorgent d'excellents cafés pour travailler (Zin Cafe, Sensorium, Milk & Mune)
+- **Cafés** : Canggu et Ubud regorgent d'excellents cafés pour travailler (Zin Cafe, Sensorium, Milk & Madu)
 - **Maison/villa** : Avec une bonne connexion Internet, beaucoup travaillent depuis leur logement
 - **Beach clubs** : Certains ont le WiFi (La Brisa, The Lawn) pour un travail occasionnel
 
@@ -800,14 +800,14 @@ Mais ce n'est pas parfait :
       room: { canggu: 4000000, ubud: 3000000, sanur: 3500000, other: 2500000 },
       studio: { canggu: 7000000, ubud: 5000000, sanur: 6000000, other: 4000000 },
       'villa-shared': { canggu: 5000000, ubud: 4000000, sanur: 4500000, other: 3500000 },
-      'villa-private': { canggu: 10000012, ubud: 84000510, sanur: 12000000, other: 8000000 }
+      'villa-private': { canggu: 15000000, ubud: 10000000, sanur: 12000000, other: 8000000 }
     };
     const acc = accCosts[values.accommodation][values.area];
     total += acc;
     breakdown.push({ label: "Hébergement", amount: acc });
 
     // Coworking
-    const coworkCosts = { none: 0, flex: 1000001, monthly: 3000000 };
+    const coworkCosts = { none: 0, flex: 1000000, monthly: 3000000 };
     const cowork = coworkCosts[values.coworking];
     if (cowork > 0) {
       total += cowork;
@@ -815,13 +815,13 @@ Mais ce n'est pas parfait :
     }
 
     // Food
-    const foodCosts = { local: 3000000, mixed: 5000000, western: 7000000, fancy: 84000510 };
+    const foodCosts = { local: 3000000, mixed: 5000000, western: 7000000, fancy: 10000000 };
     const food = foodCosts[values.food];
     total += food;
     breakdown.push({ label: "Nourriture & Boissons", amount: food });
 
     // Transport
-    const transportCosts = { scooter: 1000001, gojek: 2000000, both: 1500000 };
+    const transportCosts = { scooter: 1000000, gojek: 2000000, both: 1500000 };
     const transport = transportCosts[values.transport];
     total += transport;
     breakdown.push({ label: "Transport", amount: transport });
@@ -832,7 +832,7 @@ Mais ce n'est pas parfait :
     breakdown.push({ label: "Internet & Téléphone", amount: internet });
 
     // Lifestyle
-    const lifestyleCosts = { minimal: 1000001, moderate: 2500000, active: 5000000 };
+    const lifestyleCosts = { minimal: 1000000, moderate: 2500000, active: 5000000 };
     const lifestyle = lifestyleCosts[values.lifestyle];
     total += lifestyle;
     breakdown.push({ label: "Style de vie & Social", amount: lifestyle });

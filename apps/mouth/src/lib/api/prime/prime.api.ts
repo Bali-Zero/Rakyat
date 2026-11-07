@@ -12,6 +12,7 @@ export interface AnalyzeRequest {
   lat: number;
   lng: number;
   kbli_code?: string;
+  vintage?: "2020" | "2025";
   is_pma?: boolean;
 }
 

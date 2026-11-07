@@ -233,7 +233,7 @@ class UnifiedTestForceOrchestrator:
             try:
                 test_code = await self._generate_test_with_qwen(gap)
                 if test_code:
-                    # Gugaw il test generato in file
+                    # Salva il test generato in file
                     test_file_path = self._save_test_file(gap, test_code)
                     if test_file_path:
                         test_results["tests_generated"] += 1
@@ -355,7 +355,7 @@ Generate complete test file."""
             )
             test_file_path = test_dir / test_filename
 
-            # Gugaw il test
+            # Salva il test
             with open(test_file_path, "w") as f:
                 f.write(test_code)
 

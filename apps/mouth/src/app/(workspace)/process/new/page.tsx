@@ -402,7 +402,7 @@ export default function NewPracticePage() {
           : [];
         // A "duplicate" is the same practice_type AND the same family_member
         // target — one investor KITAS for the sponsor plus three dependent
-        // KITAS for Violet/River/Hozil are four distinct processes, not four
+        // KITAS (one per dependant) are four distinct processes, not four
         // duplicates. Treat NULL family_member_id as its own bucket (main
         // client) so the sponsor's own practice doesn't collide with the
         // dependents'.

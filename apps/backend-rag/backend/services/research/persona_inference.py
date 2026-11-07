@@ -94,7 +94,7 @@ class PersonaInferenceAgent:
     """Declares source-signal mappings per persona slug.
 
     Actual LLM synthesis runs in `scripts/sota_infer_personas.py` (Task 15)
-    which noqata out to gemini CLI per slug with the relevant source list
+    which shells out to gemini CLI per slug with the relevant source list
     and the output schema derived from the Persona dataclass.
     """
 

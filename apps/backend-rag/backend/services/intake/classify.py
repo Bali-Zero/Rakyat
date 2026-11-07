@@ -19,6 +19,15 @@ condition is absent, the document image is not sent to cloud OCR. If Gemini is
 enabled but returns no usable text or errors, the path falls back to the local
 Ollama cascade below.
 
+``INTAKE_OCR_PROVIDER=apple_vision`` (aliases ``apple-vision``, ``vision``) makes
+Apple Vision the primary engine on a macOS host: on-device, nothing leaves the
+machine, ~0.3 s a page against the VLM's 120-240 s. ``intake-worker-run.sh`` sets
+it for the Pro worker; kill switch ``INTAKE_OCR_PROVIDER=ollama`` in the plist
+env. It is tried per page AFTER the text-layer fast path; a page it cannot read
+(empty or too short, error, timeout, still warming up, not macOS) falls through
+to the Ollama cascade below UNCHANGED, and never counts as an unreachable
+endpoint. See ``apple_vision_ocr.py`` for the engine and its cold start.
+
 Model choice (FASE 0 registry role ``ocr_vision``)
 --------------------------------------------------
 Registry role ``ocr_vision`` -> ``qwen2.5vl:7b`` is the PRIMARY OCR model
@@ -37,7 +46,9 @@ transcribed the SAME page cleanly (1148 verbatim chars). Under batch load the
 dual model-swap thrash (qwen3-vl <-> qwen2.5vl) drove Ollama into 500s and the
 2026-06-12 backlog run poisoned 782/812 review_pending proposals with empty
 OCR (PR #1359 commit message). This matches the standing CLAUDE.md S9
-invariant: vision = qwen2.5vl:7b ONLY.
+invariant: Ollama vision = qwen2.5vl:7b ONLY -- as the fallback behind Apple Vision on
+the Pro worker, as the default engine everywhere else, and for the one-word
+vision-classify call (classification, not OCR).
 
 The OCR path stays defensive:
   (a) call the resolved primary; if ``response`` has text, use it;
@@ -61,6 +72,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -68,6 +80,7 @@ import asyncpg
 import httpx
 
 from backend.llm.config import ModelName
+from backend.services.intake import apple_vision_ocr
 from backend.services.intake.inference_runtime import (
     ollama_inference_slot,
     ollama_keep_alive,
@@ -116,6 +129,15 @@ OCR_PAGE_TIMEOUT_SECONDS = 120.0
 OCR_NUM_PREDICT = 2048
 OCR_MAX_IMAGE_DIM = 0  # disabled by default; set INTAKE_OCR_MAX_IMAGE_DIM to bound latency
 
+# Apple Vision as the primary engine (INTAKE_OCR_PROVIDER=apple_vision). The label is the
+# page's "model" field and the classify stage's metric; the page "via" is "apple_vision".
+_APPLE_VISION_MODEL = "apple-vision-rev3"
+_VISION_VIAS = frozenset({"apple_vision", "response", "thinking", "fallback"})
+# Per page, the helper run only (INTAKE_APPLE_VISION_TIMEOUT_SECONDS).
+APPLE_VISION_TIMEOUT_SECONDS = 60
+# Non-whitespace characters below which the page goes to Ollama (INTAKE_APPLE_VISION_MIN_CHARS).
+APPLE_VISION_MIN_CHARS = 8
+
 _OCR_PROMPT = (
     "Transcribe ALL legible text from this document image verbatim. "
     "Preserve numbers, dates, names exactly as printed. "
@@ -158,7 +180,11 @@ def _ocr_max_image_dim() -> int:
 def _ocr_provider() -> str:
     """Return the configured OCR primary provider; fail closed to local Ollama."""
     provider = os.getenv("INTAKE_OCR_PROVIDER", "ollama").strip().lower()
-    return "gemini" if provider in {"gemini", "gemini_first", "gemini-first"} else "ollama"
+    if provider in {"gemini", "gemini_first", "gemini-first"}:
+        return "gemini"
+    if provider in {"apple_vision", "apple-vision", "vision"}:
+        return "apple_vision"
+    return "ollama"
 
 
 def _is_gemini_auth_error(exc: Exception) -> bool:
@@ -406,6 +432,58 @@ def _ensure_min_size(png: bytes) -> bytes:
         return png
 
 
+async def _apple_vision_text(png: bytes, idx: int) -> str:
+    """OCR one page with Apple Vision; "" means the Ollama cascade takes this page.
+
+    Never raises, never logs recognised text (client PII), and nothing that goes wrong here
+    counts as an unreachable Ollama endpoint.
+    """
+    if not png:
+        return ""
+    if not apple_vision_ocr.available():
+        logger.warning(
+            "intake OCR page=%d apple_vision unavailable on this host; using ollama", idx
+        )
+        return ""
+    started = time.monotonic()
+    try:
+        result = await apple_vision_ocr.recognize(png, _apple_vision_timeout())
+        # Reading the answer is part of the engine's work: a malformed one falls through to
+        # Ollama like any other failure (CancelledError is a BaseException and still propagates).
+        observations = result["observations"]
+        text = apple_vision_ocr.group_rows(observations)
+        count = len(observations)
+    except (apple_vision_ocr.AppleVisionUnavailable, apple_vision_ocr.AppleVisionError) as exc:
+        logger.warning("intake OCR page=%d apple_vision declined (%s); using ollama", idx, exc)
+        return ""
+    except Exception as exc:  # the primary engine must never take the page down
+        logger.warning(
+            "intake OCR page=%d apple_vision failed (%s); using ollama", idx, type(exc).__name__
+        )
+        return ""
+    chars = sum(1 for char in text if not char.isspace())
+    minimum = _apple_vision_min_chars()
+    if chars < minimum:
+        logger.warning("intake OCR page=%d apple_vision read %d chars (< %d)", idx, chars, minimum)
+        return ""
+    logger.info(
+        "intake OCR page=%d apple_vision observations=%d chars=%d ms=%d",
+        idx,
+        count,
+        chars,
+        int((time.monotonic() - started) * 1000),
+    )
+    return text
+
+
+def _apple_vision_timeout() -> int:
+    return _positive_env_int("INTAKE_APPLE_VISION_TIMEOUT_SECONDS", APPLE_VISION_TIMEOUT_SECONDS)
+
+
+def _apple_vision_min_chars() -> int:
+    return _positive_env_int("INTAKE_APPLE_VISION_MIN_CHARS", APPLE_VISION_MIN_CHARS)
+
+
 _ENDPOINT_UNREACHABLE = (httpx.ConnectError, httpx.ConnectTimeout)
 
 
@@ -418,7 +496,7 @@ async def ocr_pages(pages: list[Any]) -> list[dict[str, Any]]:
 
     Returns (per page):
         {"page": int, "text": str, "confidence": float, "model": str,
-         "via": "textlayer"|"response"|"thinking"|"fallback"|"empty"}
+         "via": "textlayer"|"apple_vision"|"gemini"|"response"|"thinking"|"fallback"|"empty"}
 
     Anti-hallucination: a page the model cannot read yields text="" and
     confidence 0.0 -- never invented content. The persistent client is reused
@@ -457,12 +535,20 @@ async def ocr_pages(pages: list[Any]) -> list[dict[str, Any]]:
             )
             continue
 
-        b64 = base64.b64encode(_ensure_min_size(png)).decode("ascii")
-
         text = ""
         via = "empty"
         model_used = primary
         saw_unreachable = False
+
+        # Apple Vision primary (INTAKE_OCR_PROVIDER=apple_vision): reads the page bytes
+        # as preprocess produced them, on-device. "" -> the cascade below, unchanged.
+        if _ocr_provider() == "apple_vision":
+            apple_text = await _apple_vision_text(png, idx)
+            if apple_text:
+                text, via, model_used = apple_text, "apple_vision", _APPLE_VISION_MODEL
+
+        # The Ollama/Gemini payload is only needed when nobody has read the page yet.
+        b64 = "" if text else base64.b64encode(_ensure_min_size(png)).decode("ascii")
 
         # Optional cloud OCR primary. This is disabled by default and requires
         # both INTAKE_OCR_PROVIDER=gemini and the shared cloud vision gate.
@@ -1209,6 +1295,17 @@ def build_stage_handler(pool: asyncpg.Pool) -> StageHandler:
     return handler
 
 
+def _stage_ocr_model(pages: list[dict[str, Any]]) -> str:
+    """The classify stage's ``intake_stage_metrics.model``: the registry OCR model as before, or
+    the engines that really read the pages when Apple Vision read some (not filed under qwen)."""
+    engines: list[str] = []
+    for page in pages:
+        model = page.get("model")
+        if page.get("via") in _VISION_VIAS and isinstance(model, str) and model not in engines:
+            engines.append(model)
+    return "+".join(engines) if _APPLE_VISION_MODEL in engines else _resolve_ocr_model()
+
+
 async def _run_classify_stage(pool: asyncpg.Pool, job: dict) -> dict:
     """preprocess -> OCR (all pages, local) -> classify. Returns stage payload."""
     from backend.services.intake import preprocess as _pre
@@ -1250,7 +1347,7 @@ async def _run_classify_stage(pool: asyncpg.Pool, job: dict) -> dict:
         "ocr_text_per_page": ocr,
         "n_pages": pre.n_pages,
         "source_page": cls["source_page"],
-        "model": _resolve_ocr_model(),
+        "model": _stage_ocr_model(ocr),
         "mime": pre.mime,
         "preprocess_notes": pre.notes,
         "type_scores": cls["scores"],

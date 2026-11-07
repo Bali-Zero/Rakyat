@@ -32,6 +32,7 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import httpx
 
@@ -100,7 +101,8 @@ class CrmPushResult:
 
     ok: bool
     status: str  # pushed | too_large | denied_rbac | rejected | server_error |
-    #              unreachable | no_token | missing_blob | error
+    #              unreachable | no_token | missing_blob | error |
+    #              identity_unresolved | practice_identity_unresolved
     fly_doc_id: int | None = None
     file_id: str | None = None
     file_url: str | None = None
@@ -235,6 +237,7 @@ async def push_committed_document(
     document_type: str,
     blob_path: str,
     practice_id: int | None = None,
+    practice_uuid: str | None = None,
     document_category: str | None = None,
     mime_type: str | None = None,
     expiry_date: str | None = None,
@@ -243,14 +246,24 @@ async def push_committed_document(
     base_url: str | None = None,
     sender_phone: str | None = None,
     client_full_name: str | None = None,
+    client_visible: bool | None = None,
 ) -> CrmPushResult:
     """Deliver one committed intake blob to the Fly CRM upload endpoint.
 
     Matches ``DocumentUploadBase64`` (crm_enhanced_documents.py) exactly:
     ``file`` (base64), ``file_name``, ``document_type`` + the optional
     ``mime_type`` / ``notes`` / ``document_category`` / ``expiry_date`` /
-    ``family_member_id`` / ``practice_id``. Fields the endpoint does not
-    accept (e.g. extracted_fields) are deliberately NOT sent.
+    ``family_member_id`` / ``practice_id`` / ``client_visible``. Fields the
+    endpoint does not accept (e.g. extracted_fields) are deliberately NOT sent.
+
+    A practice attachment requires ``practice_uuid`` from the canonical replica.
+    Its UUID string travels on the existing ``practice_id`` wire key so an older
+    integer-only endpoint rejects the request before uploading. The legacy
+    local ``practice_id`` argument alone fails closed.
+
+    ``client_visible=None`` (every caller that does not ask) leaves the key out
+    of the body, so the endpoint's database default applies exactly as before;
+    an explicit ``False`` is sent so the Fly row is born staff-only.
 
     Auth: prefer the reviewer's own ``Authorization: Bearer <jwt>``. Headless
     auto-attach can instead pass ``crm_write_key`` for the scoped internal upload
@@ -266,6 +279,22 @@ async def push_committed_document(
             status="no_token",
             detail="no bearer token or CRM service-write key available",
         )
+
+    if practice_id is not None and practice_uuid is None:
+        return CrmPushResult(
+            ok=False,
+            status="practice_identity_unresolved",
+            detail="a local numeric practice id cannot identify a canonical practice",
+        )
+    if practice_uuid is not None:
+        try:
+            practice_uuid = str(UUID(str(practice_uuid)))
+        except ValueError:
+            return CrmPushResult(
+                ok=False,
+                status="practice_identity_unresolved",
+                detail="invalid canonical practice UUID",
+            )
 
     path = Path(blob_path)
     try:
@@ -292,7 +321,10 @@ async def push_committed_document(
         "document_category": document_category,
         "expiry_date": expiry_date,
         "family_member_id": family_member_id,
-        "practice_id": practice_id,
+        # Keep the existing wire key: old integer-only servers reject this
+        # UUID before upload instead of silently ignoring an added field.
+        "practice_id": practice_uuid,
+        "client_visible": client_visible,
     }
     payload.update({key: value for key, value in optional_fields.items() if value is not None})
 
@@ -397,6 +429,20 @@ async def push_committed_document(
                     )
                     continue
                 return CrmPushResult(ok=False, status="server_error", detail=last_detail)
+            if resp.status_code == 409:
+                try:
+                    error = resp.json()
+                except ValueError:
+                    error = None
+                if (
+                    isinstance(error, dict)
+                    and error.get("detail") == "practice_identity_unresolved"
+                ):
+                    return CrmPushResult(
+                        ok=False,
+                        status="practice_identity_unresolved",
+                        detail="canonical practice identity could not be verified for this client",
+                    )
             if resp.status_code >= 400:
                 return CrmPushResult(
                     ok=False,

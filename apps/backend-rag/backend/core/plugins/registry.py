@@ -26,7 +26,7 @@ class PluginRegistry:
         await registry.register(EmailSenderPlugin)
 
         # Get a plugin
-        plugin = registry.get("kuxas.send")
+        plugin = registry.get("gmail.send")
 
         # List all plugins
         plugins = registry.list_plugins(category=PluginCategory.GOOGLE_WORKSPACE)

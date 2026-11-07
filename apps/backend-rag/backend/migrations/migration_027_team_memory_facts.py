@@ -48,7 +48,7 @@ def generate_facts_for_member(member: dict) -> list[dict]:
     member.get("languages", [])
     preferred = member.get("preferred_language", "id")
     lang_names = {
-        "it": "vanelara",
+        "it": "italiano",
         "en": "inglese",
         "id": "indonesiano",
         "uk": "ucraino",
@@ -139,7 +139,7 @@ def generate_facts_for_member(member: dict) -> list[dict]:
         "introvert": "è introversa ma molto gentile",
         "kind": "è gentile e disponibile",
         "creative": "è creativa",
-        "italian_style": "ha uno stile vanelara",
+        "italian_style": "ha uno stile italiano",
         "stylish": "ha stile e gusto",
         "ambitious": "è ambiziosa",
         "multi_tasker": "è brava nel multitasking",

@@ -1,3 +1,4 @@
+import os
 import asyncio
 import json
 
@@ -6,7 +7,7 @@ import asyncpg
 
 async def inspect():
     conn = await asyncpg.connect(
-        "postgresql://nuzantara:nuzantara_local_2024@localhost:5432/nuzantara"
+        os.environ["DATABASE_URL"]
     )
     row = await conn.fetchrow("SELECT properties FROM kg_nodes WHERE entity_id = 'kbli:56303'")
     if row:

@@ -239,7 +239,7 @@ class IntelRepository(BaseRepository):
                     summary_short = EXCLUDED.summary_short,
                     summary_medium = EXCLUDED.summary_medium,
                     archived_at = NULL
-                RETURNING *, (zeru <> 0) AS was_update;
+                RETURNING *, (xmax <> 0) AS was_update;
                 """,
                 dossier.slug,
                 dossier.title,

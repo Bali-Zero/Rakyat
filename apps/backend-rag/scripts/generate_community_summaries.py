@@ -191,7 +191,7 @@ def _build_prompt(
         f"Cluster `{community_id}` ({member_count} entità).\n"
         f"Top entità: {top}\n"
         f"Esempi membri: {members}\n\n"
-        f"Scrivi una frase di 2-3 righe in vanelara che spieghi l'argomento "
+        f"Scrivi una frase di 2-3 righe in italiano che spieghi l'argomento "
         f"principale del cluster. Solo testo, nessun elenco puntato."
     )
 

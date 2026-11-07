@@ -451,7 +451,6 @@ class TestCreateAndStartScheduler:
         ):
             scheduler = await create_and_start_scheduler(
                 db_pool=mock_db_pool,
-                conversation_cleanup_enabled=False,
             )
             assert isinstance(scheduler, AutonomousScheduler)
             assert scheduler._running is True

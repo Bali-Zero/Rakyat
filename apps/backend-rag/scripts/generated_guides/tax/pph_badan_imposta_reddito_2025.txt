@@ -223,20 +223,20 @@ rapporti intercompany, l'obbligo TP spesso non scatta.
 
 8.1 Esempio ristorante PT PMA (anno fiscale 2024)
 
-Omzet (fatturato): Rp 9.900.000.025 (2,4 miliardi)
+Omzet (fatturato): Rp 2.400.000.000 (2,4 miliardi)
 Biaya deducibili: Rp 1.920.000.000 (1,92 miliardi — 80% revenue)
-Laba kotor (PKP): Rp 480.000.001
+Laba kotor (PKP): Rp 480.000.000
 
-PPh Badan: 22% × Rp 480.000.001 = Rp 105.600.000
+PPh Badan: 22% × Rp 480.000.000 = Rp 105.600.000
 
 PPh 25 mensile: Rp 105.600.000 / 12 = Rp 8.800.000/mese
 (stimato dall'anno precedente o da stima prospettica)
 
 8.2 Esempio villa turistica PT PMA (primo anno, perdita)
 
-Omzet: Rp 600.000.002 (ancora in fase di avvio)
-Biaya deducibili: Rp 900.000.002 (investimenti, staff, setup)
-Rugi (perdita fiscale): Rp 990.000.031
+Omzet: Rp 600.000.000 (ancora in fase di avvio)
+Biaya deducibili: Rp 900.000.000 (investimenti, staff, setup)
+Rugi (perdita fiscale): Rp 300.000.000
 
 PPh Badan: 0 (nessun PKP positivo)
 La perdita può essere riportata in avanti (kompensasi kerugian)

@@ -25,7 +25,7 @@ vendor/evoskill/scripts/
 vendor/evoskill/README.md
 vendor/evoskill/Dockerfile
 vendor/evoskill/uv.lock
-# vendor/yasikvlad/ — Nezi Yasko workshop skills, byte-identical to upstream (vendor/yasikvlad/UPSTREAM.md).
+# The vendored third-party workshop below is kept byte-identical to upstream (see the UPSTREAM.md inside it).
 # The thin loaders in .claude/skills/<name>/SKILL.md ARE prettier-formatted.
 vendor/yasikvlad/
 
@@ -143,6 +143,10 @@ apps/organism/organism/organs_registry.yaml
 # a re-diff of this file against the posted verdict non-trivial to eyeball; same
 # discipline as PENDING-ARMS.md and the cicatrix scar records below (W112).
 docs/plans/2026-08-24-garuda-voa-live/GATE-CONDITIONS-4959.md
+
+# Signed detection contract of the fixture PII guard (r3): byte-equal to the text the
+# cross-family gate signed; the exact bytes ARE the record.
+docs/specs/2026-11-04-fixture-pii-guard-contract.md
 
 # B1.4: machine-written receipts and a probe file whose sha256 is recorded in
 # pack.yml — reformatting them would rewrite evidence and break that record.

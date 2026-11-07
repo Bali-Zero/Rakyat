@@ -56,7 +56,7 @@
     },
     "work.annual_foreign_income_usd": {
       "status": "KNOWN",
-      "value": 9900000019
+      "value": 1000000000
     },
     "investment.pt_pma_committed": { "status": "KNOWN", "value": false },
     "investment.investment_capital_idr": {
@@ -64,6 +64,10 @@
       "reason": "NOT_ASKED"
     },
     "investment.paid_up_capital_idr": {
+      "status": "UNKNOWN",
+      "reason": "NOT_ASKED"
+    },
+    "investment.sponsoring_company_confirmed": {
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"
     },
@@ -101,6 +105,10 @@
       "reason": "NOT_ASKED"
     },
     "family.sponsor_permit_basis": {
+      "status": "UNKNOWN",
+      "reason": "NOT_ASKED"
+    },
+    "family.spouse_application_support_confirmed": {
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"
     },

@@ -826,7 +826,7 @@ def create_default_user_context() -> dict[str, Any]:
     """Create default user context for public endpoints"""
     return {
         "id": "public_user",
-        "email": "uxxx12@dxxxxx1.dev",
+        "email": "public@zantara.dev",
         "name": "Public User",
         "role": "public",
         "status": "active",

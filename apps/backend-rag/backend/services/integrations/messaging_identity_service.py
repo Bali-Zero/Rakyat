@@ -12,7 +12,7 @@ Architecture:
 │                    MESSAGING IDENTITY SERVICE                    │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  WhatsApp: +628400022000  ──┐                                   │
+│  WhatsApp: +628123456789  ──┐                                   │
 │                              ├──→  user_id: abc-123             │
 │  Telegram: chat_id=98765    ─┘    (from user_profiles)          │
 │                                                                  │

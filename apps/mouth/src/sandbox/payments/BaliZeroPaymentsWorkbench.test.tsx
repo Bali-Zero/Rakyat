@@ -36,7 +36,7 @@ describe("BaliZeroPaymentsWorkbench", () => {
       screen.getByText(/Next milestone: Biometric appointment/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Zojev Focotitaj · Immigration · Documents approved/i),
+      screen.getByText(/Sample Client · Immigration · Documents approved/i),
     ).toBeInTheDocument();
     expect(screen.getByText("Partial payment captured")).toBeInTheDocument();
   });

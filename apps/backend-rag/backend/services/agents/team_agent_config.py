@@ -507,7 +507,7 @@ ROLE_MANAGER = replace(
     ),
 )
 
-# Finance & client services (Natalie, Zero 2026-10-20): sees every client and
+# Finance & client services (Zero 2026-10-20): sees every client and
 # practice, manages none — the read side of ROLE_CRM_FULL, writes limited to
 # logging and memory. Every practice/client/journey/Drive mutation is blocked
 # explicitly so a future widening of the allowed lists cannot re-enable it.
@@ -564,8 +564,6 @@ TEAM_AGENTS: dict[str, AgentRole] = {
     "surya@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
     "sahira@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
     "vino@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
-    # Finance & client services (sees everything, manages nothing)
-    "natalie@balizero.com": ROLE_FINANCE_VIEWER,
     # Manager of tax + setup (Veronika; login identity is tax@)
     "tax@balizero.com": ROLE_MANAGER,
     # Tax team

@@ -12,11 +12,11 @@ Completed the KBLI Navigator 2025 rebuild and switched the KBLI chat LLM from Ge
 
 1. **Enabled Claude Haiku 4.5** in `_generate_kbli_explanation_claude()`:
    - Previously the Claude path was disabled (fell straight through to Gemini Flash)
-   - Now calls `client.messages.create(model="claude-haiku-4-5-00000011", max_tokens=1024)`
+   - Now calls `client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=1024)`
    - Graceful fallback: if `ANTHROPIC_API_KEY` missing or call fails → Gemini Flash
    - Updated log messages and docstrings
 
-2. **Model:** `claude-haiku-4-5-00000011` — fast, cost-effective, fits KBLI chat use case
+2. **Model:** `claude-haiku-4-5-20251001` — fast, cost-effective, fits KBLI chat use case
 
 3. **Flow:**
    ```
@@ -513,7 +513,7 @@ The documents page at `https://kita.balizero.com/documents` was returning 500 er
 **Root Cause Analysis:**
 
 1. **OAuth Token Expired:** Backend logs showed `"error": "invalid_grant"` - OAuth token had expired
-2. **Service Account DISABLED:** The `uxxxxxxxxxxxxxxxxx1@dxxxxxxx1.dx4.dxxxxxxxxxxxxx1.com` service account was disabled in Google Cloud Console
+2. **Service Account DISABLED:** The `nuzantara-drive-bot@nuzantara.iam.gserviceaccount.com` service account was disabled in Google Cloud Console
 3. **Credentials Parsing Failure:** Both `GOOGLE_SERVICE_ACCOUNT_JSON` and `GOOGLE_SERVICE_ACCOUNT` env vars failed to parse
 
 **Error Logs:**
@@ -619,7 +619,7 @@ fly secrets set GOOGLE_SERVICE_ACCOUNT_JSON="$(cat nuzantara-2846d801caee.json)"
 
 ### Service Account Details
 
-**Service Account:** `uxxxxxxxxxxxxxxxxx1@dxxxxxxx1.dx4.dxxxxxxxxxxxxx1.com`
+**Service Account:** `nuzantara-drive-bot@nuzantara.iam.gserviceaccount.com`
 **Project:** Nuzantara
 **New Key ID:** `2846d801caeeccd1deda202e245ee644fe6d6b58`
 **Created:** 2026-01-23
@@ -1089,7 +1089,7 @@ Compatibility Notes:
 
 Resolves: GitHub Dependabot alerts (67 vulnerabilities)
 
-Co-Authored-By: Claude Sonnet 4.5 <betuqal@anthropic.com>
+Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 ```
 
 **Status:** ✅ Pushed to `origin/main`
@@ -1340,7 +1340,7 @@ RULE 2: IF PRICE NOT IN TOOL, SAY "DA VERIFICARE"
 - If get_pricing doesn't have a specific price → Say "Questo costo specifico è da verificare con il team"
 
 RULE 3: ONLY STATE FACTS YOU CAN VERIFY
-- ✅ CORRECT: "PT PMA costa Rp 84.000.600 [dal tool get_pricing]"
+- ✅ CORRECT: "PT PMA costa Rp 20.000.000 [dal tool get_pricing]"
 - ❌ WRONG: "Cambiare l'atto costa tra i 5 e i 10 milioni" (INVENTED!)
 ```
 
@@ -1392,7 +1392,7 @@ RULE 3: ONLY STATE FACTS YOU CAN VERIFY
 1. `/tmp/test_pricing_policy.py` - Test HTTP con autenticazione
 2. `/tmp/test_pricing_real.py` - Test diretto orchestrator
 3. `/tmp/verify_pricing_config.py` - Verifica statica configurazione
-4. `/tmp/MANUAL_PRICING_TESTS.md` - Guida test jobegeh
+4. `/tmp/MANUAL_PRICING_TESTS.md` - Guida test manuali
 
 **Problema Incontrato:**
 
@@ -1761,7 +1761,7 @@ LIMIT 1
 
 👤 _Cliente:_ John Doe
 📧 _Email:_ john@example.com
-📞 _Phone:_ +62 840 0022 0000
+📞 _Phone:_ +62 812 3456 7890
 🎯 _Pratica:_ Kitas
 
 📊 _Assegnazione:_ Specialty: kitas, Workload: 3 practices
@@ -1790,7 +1790,7 @@ user_stats.preferences = {
   "assigned_to": "lead@balizero.com",
   "status": "prospect",
   "full_name": "John Doe",
-  "phone": "+62840002200",
+  "phone": "+62812345678",
   "tags": ["vip"],
   "last_sync_at": "2026-01-18T10:30:00Z"
 }
@@ -1834,7 +1834,7 @@ python -m backend.db.migrate apply
 INSERT INTO messaging_users (user_id, telegram_chat_id, channel, active)
 VALUES (
     (SELECT id FROM user_profiles WHERE email = 'lead@balizero.com'),
-    990000013,  -- Get from Telegram /start command
+    123456789,  -- Get from Telegram /start command
     'telegram',
     true
 );
@@ -1888,7 +1888,7 @@ auto_crm = AutoCRMService(
 🎯 Lead assignment agent triggered for client 123
 🔍 No duplicates found for client_id=123
 ✅ Assigned client #123 to specialist@balizero.com (3 active practices)
-📨 Telegram notification sent to specialist@balizero.com (chat_id: 840005000)
+📨 Telegram notification sent to specialist@balizero.com (chat_id: 987654321)
 ✅ Lead assignment successful: client #123 → specialist@balizero.com, notified=True
 ```
 

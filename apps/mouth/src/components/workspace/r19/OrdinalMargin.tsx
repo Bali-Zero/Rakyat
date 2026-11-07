@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { Numeral, type NumeralTone } from "./NumberedList";
 
 /**
- * The ledger row / detail-section margin: an 18px Fraunces ordinal in a
+ * The ledger row / detail-section margin: an 18px Plex ordinal in a
  * fixed, right-aligned column, then a 1px vertical hairline separating it
  * from the content it numbers.
  *

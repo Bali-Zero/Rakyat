@@ -104,7 +104,7 @@ export default defineConfig({
         url: `http://127.0.0.1:${E2E_PORT}`,
         env: {
           NEXT_PUBLIC_HIDE_QUERY_DEVTOOLS: "1",
-          NEXT_PUBLIC_VISA_ORACLE_WHATSAPP_NUMBER: "628400022000",
+          NEXT_PUBLIC_VISA_ORACLE_WHATSAPP_NUMBER: "628123456789",
           // `visa/voa/**` fails CLOSED behind this flag (layout.tsx / flag.ts) —
           // without it every e2e spec touching that segment 404s regardless of
           // what it mocks, since the gate runs server-side before any route

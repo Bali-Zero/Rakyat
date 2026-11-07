@@ -23,6 +23,13 @@ export default function KBLILayout({
       data-presentation="r19"
       className="kbli-r19 relative min-h-screen bg-[var(--background)] text-[var(--foreground)] font-sans"
     >
+      {/* Above the fixed NavShell (300), below its mobile drawer (398). */}
+      <a
+        className="btn-primary absolute left-1 top-1 z-[301] -translate-y-[150%] focus:translate-y-0"
+        href="#main-content"
+      >
+        Skip to main content
+      </a>
       <NavShell
         logo={<BZLogo variant="full" />}
         items={navItems}
@@ -44,7 +51,11 @@ export default function KBLILayout({
         }
       />
       <SessionInit funnel="kbli" />
-      <div className="mx-auto max-w-6xl px-4 pt-14 pb-8 sm:px-6 lg:px-8">
+      <div
+        id="main-content"
+        tabIndex={-1}
+        className="mx-auto max-w-6xl px-4 pt-14 pb-8 sm:px-6 lg:px-8"
+      >
         {children}
       </div>
       {panel}

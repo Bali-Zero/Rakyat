@@ -2,11 +2,11 @@
 
 Evaluates retrieved documents BEFORE they enter the ReAct reasoning loop.
 Decides if context is sufficient for high-quality generation, or if
-additional retrieval strategies (XuRU, broader search) should be triggered.
+additional retrieval strategies (HyDE, broader search) should be triggered.
 
 Decisions:
   PASS  → Retrieved docs are sufficient. Proceed to reasoning.
-  RETRY → Docs are mediocre. Trigger XuRU expansion or broader search.
+  RETRY → Docs are mediocre. Trigger HyDE expansion or broader search.
   FAIL  → Docs are garbage or absent. Fall back to disclaimer.
 
 # Organo: backend-rag/grading → produce GradeResult → consuma da orchestrator_core

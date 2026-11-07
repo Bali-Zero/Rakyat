@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+import { PrimeApi, type AnalyzeRequest } from "@/lib/api/prime/prime.api";
+import type { IApiClient } from "@/lib/api/types/api-client.types";
 
 vi.mock("@/lib/logger", () => ({
   logger: {
@@ -26,13 +28,42 @@ function makeGetRequest(url: string): NextRequest {
   } as unknown as NextRequest;
 }
 
-describe("Prime v2 BFF routes preserve upstream HTTP error statuses", () => {
+describe("Prime v2 BFF routes", () => {
   const mockFetch = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
     global.fetch = mockFetch;
   });
+
+  it.each([
+    ["2020 reused code", { kbli_code: "56102", vintage: "2020" }],
+    ["2020 renumbered code", { kbli_code: "80100", vintage: "2020" }],
+    ["2025 exact code", { kbli_code: "56102", vintage: "2025" }],
+    ["omitted vintage", { kbli_code: "56102" }],
+    ["zone only", {}],
+    ["explicit empty code", { kbli_code: "" }],
+  ] satisfies [string, Partial<AnalyzeRequest>][])(
+    "forwards the browser analyze payload for %s",
+    async (_name, fields) => {
+      const input = { lat: -8.65, lng: 115.13, ...fields };
+      const request = vi.fn();
+      const prime = new PrimeApi({ request } as unknown as IApiClient);
+      await prime.analyze(input);
+      const [[endpoint, init]] = request.mock.calls;
+      expect(endpoint).toBe("/api/prime/v2/analyze");
+      mockFetch.mockResolvedValueOnce(Response.json({ status: "analyzed" }));
+      const response = await analyzePost(
+        new NextRequest(`http://browser${endpoint}`, init),
+      );
+      expect(response.status).toBe(200);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({
+        ...input,
+        is_pma: true,
+      });
+    },
+  );
 
   it("propagates upstream 503 on analyze, density, predict, regulations, temporal, and proposal", async () => {
     mockFetch.mockResolvedValue({

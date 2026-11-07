@@ -412,8 +412,18 @@ async def evaluate_applicant(
     # from applicant facts, even through an unkeyed hash.
     request_trace = uuid.uuid4().hex
 
+    binding_body = request_body.model_dump(mode="json", by_alias=True)
+    # Preserve the exact request binding created by each earlier reader.
+    # Explicit answers and other UNKNOWN reasons must remain in the binding.
+    for optional_path in (
+        "investment.sponsoring_company_confirmed",
+        "family.spouse_application_support_confirmed",
+    ):
+        if binding_body["facts"][optional_path] == {"status": "UNKNOWN", "reason": "NOT_ASKED"}:
+            del binding_body["facts"][optional_path]
+
     canonical_request = {
-        "body": request_body.model_dump(mode="json", by_alias=True),
+        "body": binding_body,
         "request_category": request_category,
         "traffic_source": traffic_source,
     }

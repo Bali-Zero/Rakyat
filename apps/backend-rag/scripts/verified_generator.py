@@ -173,17 +173,53 @@ def build_claims_summary(claims_db: dict[str, dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _dispatch_reaches_claude(command: str, args: tuple[str, ...]) -> bool:
+    """True when this ai-dispatch.sh invocation would run its ``run_claude``.
+
+    ``run_claude`` (claude-review / claude-redteam / claude-explain) is the
+    script's plan-OAuth cascade — CLAUDE_CODE_OAUTH_TOKEN, then the keychain
+    session — shut for the product perimeter by RULED 2026-11-01 (gate round 4,
+    2026-11-03). ``parallel`` re-invokes the script per ``cmd:prompt`` spec, so
+    a claude-* spec inside it counts too. Same rule as
+    backend.services.federation_alerts.dispatcher._reaches_claude, restated
+    here because this script is import-free.
+    """
+    if command.startswith("claude"):
+        return True
+    return command == "parallel" and any(
+        re.match(r"[\"']?claude[\w-]*:", arg.strip()) for arg in args
+    )
+
+
 def run_dispatch(command: str, *args: str, timeout: int = 300) -> str:
-    """Run ai-dispatch.sh command and return stdout. Empty string on failure."""
+    """Run ai-dispatch.sh command and return stdout. Empty string on failure.
+
+    Its Claude commands are refused before any subprocess (plan OAuth, see
+    _dispatch_reaches_claude): Claude is reached in this script only through
+    generate_document()'s Console seats. The child of the other commands
+    carries no ANTHROPIC_* / CLAUDE_* variable.
+    """
+    if _dispatch_reaches_claude(command, args):
+        logger.warning(
+            "ai-dispatch %s refused: it reaches Claude through plan OAuth (RULED 2026-11-01)",
+            command,
+        )
+        return ""
     if not AI_DISPATCH.exists():
         logger.warning("ai-dispatch.sh not found at %s", AI_DISPATCH)
         return ""
     cmd = [str(AI_DISPATCH), command] + list(args)
+    child_env = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith(("ANTHROPIC_", "CLAUDE_"))
+    }
     try:
         result = subprocess.run(
             cmd,
             capture_output=True, text=True, timeout=timeout,
             cwd=str(PROJECT_ROOT),
+            env=child_env,
         )
         if result.returncode != 0:
             logger.warning(
@@ -298,63 +334,117 @@ _GEN_AUTH_DIAGNOSTIC_RE = re.compile(
     r"auth required(?:\b.*)?|login required(?:\b.*)?|"
     r"please (?:log in|login)(?:\b.*)?|not (?:logged in|authenticated)(?:\b.*)?|"
     r"invalid[_ ](?:grant|token)(?:\b.*)?|token[_ ]revoked(?:\b.*)?|"
-    r"refresh_token(?:\b.*)?)\s*",
+    r"refresh_token(?:\b.*)?|"
+    # Console seat refusals, measured 2026-11-03 (bad key / header missing /
+    # key pinned to the wrong workspace — the CLI words the last as a model problem).
+    # This regex is FULL-matched on stdout: the three shapes carry no prose tail,
+    # so an answer that merely begins with the same words stays an answer.
+    r"invalid api key(?:\s*[\u00b7\u2022\-]\s*fix external api key)?\.?|"
+    r"api error:\s*400\s+this api key is not scoped to a workspace, so this request must include the "
+    r"anthropic-workspace-id header with the id of the workspace to use\.(?:\s+add the header, "
+    r"or use an api key that is scoped to a workspace\.)?|"
+    r"there(?:'s| is) an issue with the selected model \(claude-[a-z0-9][a-z0-9._-]{1,63}\)\. "
+    r"it may not exist or you may not have access to it\.(?:\s*run --model to pick a different model\.)?)\s*",
     re.IGNORECASE | re.DOTALL,
 )
 _GEN_EXHAUSTED: dict[str, str] = {}
-_OAUTH_SCRUB_KEYS = frozenset(
+# Console seats — RULED 2026-11-01: a product lane never falls back to plan
+# OAuth (CLAUDE_CODE_OAUTH_TOKEN) or the CLI's own session. Same contract as
+# backend.llm.claude_oauth_client (ANTHROPIC_CONSOLE_KEY_<n> pinned to
+# ANTHROPIC_CONSOLE_WORKSPACE_<n>, n in 1..3), restated here on purpose: this
+# script is import-free so it runs under launchd/cron on an interpreter that
+# has no backend package. test_claude_oauth_client.py::
+# test_product_perimeter_reads_no_plan_oauth keeps both on the same contract.
+_CONSOLE_SEAT_SLOTS = (1, 2, 3)
+_WORKSPACE_ID_RE = re.compile(r"^wrkspc_[A-Za-z0-9]{1,64}$")
+# What the child MAY inherit — an ALLOWLIST, the same one as
+# backend.llm.claude_oauth_client._CHILD_ENV_ALLOW_* (pinned by
+# test_seat_env_scrub_parity_across_spawners). Three gate rounds (2026-11-03)
+# each found more variables the CLI honours to pick a credential, an endpoint
+# or a credential store; a denylist can never be complete (cicatrix #3).
+_CHILD_ENV_ALLOW_EXACT = frozenset(
     {
-        "GOOGLE_APPLICATION_CREDENTIALS",
-        "CLOUD_ML_REGION",
-        "GOOGLE_API_KEY",
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "TZ",
+        "LANG",
+        "LANGUAGE",
+        "TERM",
+        "NO_COLOR",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "NODE_EXTRA_CA_CERTS",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
     }
 )
-_OAUTH_SCRUB_PREFIXES = (
-    "CLAUDE_CODE_OAUTH_TOKEN",
-    "CLAUDE_CODE_USE_",
-    "ANTHROPIC_",
-    "AWS_",
-    "VERTEX_AI_",
-    "OPENAI_",
-    "OPENROUTER_",
-    "GEMINI_",
-    "DEEPSEEK_",
-    "TOGETHER_",
-    "FIREWORKS_",
-    "MISTRAL_",
-    "COHERE_",
-    "GROQ_",
-    "XAI_",
-    "PERPLEXITY_",
-)
+_CHILD_ENV_ALLOW_PREFIXES = ("LC_",)
 
 
-def _gen_oauth_env(token: str) -> dict[str, str]:
+# The model this script runs on (2026-11-03, the owner's pick: Claude Sonnet 5.5,
+# $2/$10 per MTok). Unpinned, the CLI's default answered on claude-fable-5-1 at
+# $10/$50. Restates backend.llm.claude_oauth_client.DEFAULT_MODEL /
+# DEFAULT_MODEL_ENV (this script runs without the backend package); a unit test
+# pins the two copies together.
+_DEFAULT_MODEL = "claude-sonnet-5-5"
+_DEFAULT_MODEL_ENV = "NUZANTARA_CLAUDE_DEFAULT_MODEL"
+_MODEL_SLUG_RE = re.compile(r"^claude-[A-Za-z0-9][A-Za-z0-9._-]{1,63}$")
+
+
+def _gen_model() -> str:
+    """The pinned model, or ``$NUZANTARA_CLAUDE_DEFAULT_MODEL`` when it is a plain
+    ``claude-*`` slug (it reaches argv)."""
+    override = os.environ.get(_DEFAULT_MODEL_ENV, "").strip()
+    return override if _MODEL_SLUG_RE.match(override) else _DEFAULT_MODEL
+
+
+def _gen_seat_env(key: str, workspace: str) -> dict[str, str]:
     env = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in _OAUTH_SCRUB_KEYS
-        and not key.startswith(_OAUTH_SCRUB_PREFIXES)
+        name: value
+        for name, value in os.environ.items()
+        if name in _CHILD_ENV_ALLOW_EXACT or name.startswith(_CHILD_ENV_ALLOW_PREFIXES)
     }
-    if token:
-        env["CLAUDE_CODE_OAUTH_TOKEN"] = token
-    else:
-        env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+    env["ANTHROPIC_API_KEY"] = key
+    # A user-scoped key answers 400 without its workspace header (measured 2026-11-03).
+    env["ANTHROPIC_CUSTOM_HEADERS"] = f"anthropic-workspace-id: {workspace}"
+    # W132: a sterile config dir — no control-plane hooks, and no session to
+    # fall back to, which with a Console seat is a feature.
+    headless = os.environ.get("CLAUDE_OAUTH_HEADLESS_CONFIG_DIR", "").strip()
+    env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(headless or "~/.claude-oauth-headless")
+    # The CLI's non-essential traffic (telemetry, error reporting, update checks)
+    # is waited on around every one-shot call: on Pro, CLI 2.1.317 answered in
+    # 3.0 s with it and 1.75 s without, the API's share ~1.1 s either way
+    # (measured 2026-11-03). It carries nothing a headless call needs.
+    env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
     return env
 
 
-def _gen_token_chain() -> list[tuple[str, str]]:
-    chain: list[tuple[str, str]] = []
+def _gen_seat_chain() -> list[tuple[str, str, str]]:
+    """``(label, key, workspace)`` per configured Console slot, in order.
+
+    A slot is a seat only when both variables are set and the workspace id is
+    well-formed (it travels as a header line). Empty list = no door: the
+    caller reports it instead of trying a credential it must not use.
+    """
+    chain: list[tuple[str, str, str]] = []
     seen: set[str] = set()
-    for i in (1, 2, 3, 4, 5, 6):
-        tok = os.environ.get(f"CLAUDE_CODE_OAUTH_TOKEN_{i}", "").strip()
-        if tok and tok not in seen:
-            chain.append((f"token_{i}", tok))
-            seen.add(tok)
-    legacy = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
-    if legacy and legacy not in seen:
-        chain.append(("token_legacy", legacy))
-    chain.append(("keychain", ""))
+    for i in _CONSOLE_SEAT_SLOTS:
+        key = os.environ.get(f"ANTHROPIC_CONSOLE_KEY_{i}", "").strip()
+        workspace = os.environ.get(f"ANTHROPIC_CONSOLE_WORKSPACE_{i}", "").strip()
+        if not key or not _WORKSPACE_ID_RE.match(workspace) or key in seen:
+            continue
+        seen.add(key)
+        chain.append((f"console_{i}", key, workspace))
     return chain
 
 
@@ -403,8 +493,9 @@ def generate_document(
     reasoning_context: str,
     existing_text: str | None = None,
 ) -> str:
-    """Step 6: Generate T2 document via claude CLI (Max subscription).
-    Multi-account fallback: TOKEN_1→2→3→4→5→6 (Team, last-resort)→legacy→keychain."""
+    """Step 6: Generate T2 document via the claude CLI on a Console seat.
+    Fallback across the configured seats: console_1→2→3 (RULED 2026-11-01:
+    no plan-OAuth or keychain seat)."""
     claims_summary = build_claims_summary(claims_db)
 
     research_ctx = (research_context[:2000] if research_context else "Not available — proceed from claims_db only")
@@ -431,8 +522,14 @@ def generate_document(
         )
 
     deadline = time.monotonic() + 300
-    chain = _gen_token_chain()
-    for position, (label, token) in enumerate(chain):
+    chain = _gen_seat_chain()
+    if not chain:
+        logger.error(
+            "generate_document: no Console seat configured "
+            "(ANTHROPIC_CONSOLE_KEY_<n> + ANTHROPIC_CONSOLE_WORKSPACE_<n>)"
+        )
+        sys.exit(1)
+    for position, (label, key, workspace) in enumerate(chain):
         if label in _GEN_EXHAUSTED:
             continue
 
@@ -440,12 +537,15 @@ def generate_document(
         if remaining <= 0:
             break
         attempt_timeout = max(0.1, remaining / (len(chain) - position))
-        env = _gen_oauth_env(token)
+        env = _gen_seat_env(key, workspace)
 
         try:
             result = _run_process_group(
-                ["claude", "--print", "--dangerously-skip-permissions",
-                 "--max-budget-usd", "3"],
+                # Lean and toolless (2026-11-03): research, grounding and claims
+                # are in the prompt, so no tool is needed — and with none there
+                # is nothing for a permission bypass to wave through.
+                ["claude", "--print", "--bare", "--tools", "",
+                 "--model", _gen_model(), "--max-budget-usd", "3"],
                 input=prompt,
                 timeout=attempt_timeout, env=env,
             )
@@ -470,7 +570,7 @@ def generate_document(
             continue
         return output
 
-    logger.error("generate_document: all Claude tokens exhausted")
+    logger.error("generate_document: all Console seats exhausted")
     sys.exit(1)
 
 

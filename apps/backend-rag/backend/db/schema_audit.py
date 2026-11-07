@@ -699,14 +699,13 @@ async def _check_client_email_uniqueness(pool: asyncpg.Pool) -> list[Finding]:
         rows = await conn.fetch(
             """
             SELECT
-                LOWER(BTRIM(email)) AS normalized_email,
                 COUNT(*)::int AS count
             FROM clients
             WHERE email IS NOT NULL
               AND BTRIM(email) <> ''
             GROUP BY LOWER(BTRIM(email))
             HAVING COUNT(*) > 1
-            ORDER BY count DESC, normalized_email
+            ORDER BY count DESC
             LIMIT 25
             """,
         )
@@ -714,15 +713,7 @@ async def _check_client_email_uniqueness(pool: asyncpg.Pool) -> list[Finding]:
     if not rows:
         return []
 
-    duplicates = [
-        {
-            "normalized_email_sha256": hashlib.sha256(
-                str(row["normalized_email"]).encode("utf-8")
-            ).hexdigest(),
-            "count": int(row["count"]),
-        }
-        for row in rows
-    ]
+    duplicates = [{"count": int(row["count"])} for row in rows]
     return [
         Finding(
             code="client_email_duplicates",
@@ -849,8 +840,9 @@ async def _amain(argv: list[str] | None = None) -> int:
     try:
         report = await run_audit(database_url=db_url)
     except Exception as exc:
-        logger.exception("schema audit crashed")
-        sys.stderr.write(f"ERROR: schema audit crashed: {exc}\n")
+        error_type = type(exc).__name__
+        logger.error("schema audit crashed (error_type=%s)", error_type)
+        sys.stderr.write(f"ERROR: schema audit crashed ({error_type})\n")
         return 2
 
     if args.json:

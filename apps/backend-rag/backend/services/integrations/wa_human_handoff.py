@@ -13,7 +13,7 @@ discipline as the two siblings. Five languages: id, en, it, ru, uk.
 
 **THE VETO IS INVERTED HERE.** ``wa_identity`` vetoes any message naming a
 case topic, because a question about a case is not a question about the
-assistant. For THIS guard the opposite is true: "goqame parlare con una
+assistant. For THIS guard the opposite is true: "voglio parlare con una
 persona riguardo alla mia PT PMA" is exactly the message that must match — a
 client naming their case while asking for a human is the most valuable lead
 of all. There is deliberately no ``_DOMAIN_VETO_TOKENS`` here.
@@ -90,7 +90,7 @@ logger = logging.getLogger("zantara.backend")
 
 # Core phrases only ("parlare con una persona", not every modal-verb prefix
 # of it) — the whole-window scan below finds a core phrase anywhere inside a
-# longer sentence, so "goqame PARLARE CON UNA PERSONA riguardo alla mia PT
+# longer sentence, so "voglio PARLARE CON UNA PERSONA riguardo alla mia PT
 # PMA" and the bare core phrase match identically.
 _HUMAN_REQUEST_PHRASES: dict[str, str] = {
     # Italian

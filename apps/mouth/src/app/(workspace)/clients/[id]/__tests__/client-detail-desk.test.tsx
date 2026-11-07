@@ -15,7 +15,13 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { extname, join, sep } from "node:path";
 import React from "react";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import * as ts from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,7 +37,10 @@ const {
   mockGetUserProfile,
   stableTimeline,
   stableSearchParams,
+  teamOptions,
 } = vi.hoisted(() => ({
+  // Mutable so a case can seed the team directory (first-name rows).
+  teamOptions: [] as { value: string; label: string; avatar?: string }[],
   mockUpdateClient: vi.fn(),
   mockSetClientCache: vi.fn(),
   mockInvalidateClient: vi.fn(),
@@ -74,6 +83,8 @@ vi.mock("@/lib/api", () => ({
         cases: [],
       }),
       extractPassportForClient: vi.fn(),
+      getPortalStatus: vi.fn().mockResolvedValue({ has_portal_access: false }),
+      getPortalMessages: vi.fn().mockResolvedValue({ messages: [] }),
     },
     post: vi.fn(),
     request: vi.fn(),
@@ -94,7 +105,7 @@ vi.mock("@/hooks/useClientDetail", () => ({
 }));
 
 vi.mock("@/hooks/useTeamMembers", () => ({
-  useTeamMemberOptions: () => ({ options: [] }),
+  useTeamMemberOptions: () => ({ options: teamOptions }),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -105,7 +116,9 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("../components/OverviewTab", () => ({
+vi.mock("../components/OverviewTab", async (importOriginal) => ({
+  // Real pure helper (section count); only the heavy component is stubbed.
+  ...(await importOriginal<typeof import("../components/OverviewTab")>()),
   OverviewTab: () => <div data-testid="OverviewTab" />,
 }));
 vi.mock("../components/DocumentsTab", () => ({
@@ -125,9 +138,6 @@ vi.mock("../components/CompanyTab", () => ({
 }));
 vi.mock("../components/TaxTab", () => ({
   TaxTab: () => <div data-testid="TaxTab" />,
-}));
-vi.mock("../components/ActivityTab", () => ({
-  ActivityTab: () => <div data-testid="ActivityTab" />,
 }));
 vi.mock("../components/PortalMessages", () => ({
   PortalMessages: () => <div data-testid="PortalMessages" />,
@@ -164,6 +174,8 @@ function makeProfile(
     assignedTo?: string;
     activePracticesCount?: number;
     companyName?: string;
+    clientPatch?: Partial<ClientProfile["client"]>;
+    extra?: Partial<ClientProfile>;
   } = {},
 ): ClientProfile {
   const {
@@ -171,6 +183,8 @@ function makeProfile(
     assignedTo,
     activePracticesCount = 0,
     companyName,
+    clientPatch = {},
+    extra = {},
   } = overrides;
   return {
     client: {
@@ -184,6 +198,7 @@ function makeProfile(
       company_name: companyName,
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
+      ...clientPatch,
     },
     family_members: [],
     documents: [],
@@ -203,6 +218,7 @@ function makeProfile(
       red_alerts: 0,
       yellow_alerts: 0,
     },
+    ...extra,
   };
 }
 
@@ -231,6 +247,7 @@ const DETAIL_DIR = join(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  teamOptions.length = 0;
   mockGetUserProfile.mockReturnValue({ email: VIEWER_EMAIL });
   mockInvalidateClient.mockResolvedValue(undefined);
   mockUpdateClient.mockResolvedValue({});
@@ -246,11 +263,12 @@ describe("masthead", () => {
     expect(screen.getByText("CLIENT · #0412")).toBeInTheDocument();
   });
 
-  it("appends the company name to the eyebrow only when the field is set", async () => {
+  it("keeps the company OUT of the eyebrow (owner 2026-11-03): the PT shows under the name as a role line", async () => {
     await renderClient(makeProfile({ companyName: "PT Contoh Libic" }));
+    expect(screen.getByText("CLIENT · #0412")).toBeInTheDocument();
     expect(
-      screen.getByText("CLIENT · #0412 · PT Contoh Libic"),
-    ).toBeInTheDocument();
+      screen.queryByText("CLIENT · #0412 · PT Contoh Libic"),
+    ).not.toBeInTheDocument();
   });
 
   it("GUILT: a fixture with no active practices renders NO subtitle sentence", async () => {
@@ -299,6 +317,187 @@ describe("masthead", () => {
 // ---------------------------------------------------------------------------
 // 2. Status → tone, everywhere
 // ---------------------------------------------------------------------------
+
+const link = (over: Record<string, unknown> = {}) =>
+  ({
+    link_id: 1,
+    company_id: 10,
+    company_name: "PT Contoh Libic",
+    company_type: "PT PMA",
+    role: "director",
+    is_primary: true,
+    status: "active",
+    ...over,
+  }) as never;
+
+const kitasDoc = (over: Record<string, unknown> = {}) =>
+  ({
+    id: 5,
+    client_id: 412,
+    document_type: "kitas",
+    document_category: "immigration",
+    expiry_date: "2030-01-01",
+    permit_code: "E28A",
+    permit_label: "E28A — Investor KITAS",
+    ...over,
+  }) as never;
+
+describe("header lines (owner 2026-11-03): role in the PT, then the current permit", () => {
+  it("INNOCENCE: shows `Role · PT` and `code · popular name` under the title", async () => {
+    await renderClient(
+      makeProfile({
+        extra: {
+          company_links: [link()],
+          documents: [kitasDoc()],
+        },
+      }),
+    );
+    expect(screen.getByTestId("header-role").textContent).toBe(
+      "Director · PT Contoh Libic",
+    );
+    expect(screen.getByTestId("header-permit").textContent).toBe(
+      "E28A · Investor KITAS",
+    );
+  });
+
+  it("GUILT: no company role and no permit renders neither line", async () => {
+    await renderClient(makeProfile());
+    expect(screen.queryByTestId("header-role")).toBeNull();
+    expect(screen.queryByTestId("header-permit")).toBeNull();
+  });
+
+  it("GUILT: a link without a role never invents one; the permit line stands alone", async () => {
+    await renderClient(
+      makeProfile({
+        extra: {
+          company_links: [link({ role: "" })],
+          documents: [kitasDoc()],
+        },
+      }),
+    );
+    expect(screen.queryByTestId("header-role")).toBeNull();
+    expect(screen.getByTestId("header-permit")).toBeInTheDocument();
+  });
+
+  it("GUILT: a removed or archived permit is not the current one", async () => {
+    await renderClient(
+      makeProfile({
+        extra: {
+          documents: [kitasDoc({ deleted_at: "2026-10-01T00:00:00Z" })],
+        },
+      }),
+    );
+    expect(screen.queryByTestId("header-permit")).toBeNull();
+  });
+});
+
+describe("team block (owner 2026-11-03): Setup and Tax consultant by first name", () => {
+  it("INNOCENCE: Setup shows the first name from the team directory", async () => {
+    teamOptions.push({
+      value: "ayu.sample@example.test",
+      label: "Ayu Sample Person",
+    });
+    await renderClient(makeProfile({ assignedTo: "ayu.sample@example.test" }));
+    const team = screen.getByTestId("client-team");
+    expect(within(team).getByText("Setup")).toBeInTheDocument();
+    expect(screen.getByTestId("team-setup-name").textContent).toBe("Ayu");
+    expect(team.textContent).not.toContain("Sample Person");
+  });
+
+  it("falls back to the first segment of the email when the directory has no row", async () => {
+    await renderClient(makeProfile({ assignedTo: "kadek.tax@example.test" }));
+    expect(screen.getByTestId("team-setup-name").textContent).toBe("Kadek");
+  });
+
+  it("GUILT: a client that is not a tax client has no Tax consultant row", async () => {
+    await renderClient(makeProfile({ assignedTo: VIEWER_EMAIL }));
+    expect(screen.queryByTestId("team-tax-consultant")).toBeNull();
+    expect(
+      within(screen.getByTestId("client-team")).queryByText("Tax consultant"),
+    ).toBeNull();
+  });
+
+  it("INNOCENCE: a tax client shows the consultant row, first name only", async () => {
+    const { ClientDetailClient } = await import("../ClientDetailClient");
+    mockUseClientDetail.mockReturnValue({
+      data: makeProfile({
+        assignedTo: VIEWER_EMAIL,
+        clientPatch: { tax_consultant: "dewaayu.tax@example.test" },
+      }),
+      isLoading: false,
+      error: null,
+    });
+    render(
+      <ClientDetailClient
+        taxConsultants={[
+          { value: "dewaayu.tax@example.test", label: "Dewa Ayu" },
+        ]}
+      />,
+    );
+    const row = screen.getByTestId("team-tax-consultant");
+    expect(within(row).getByText("Tax consultant")).toBeInTheDocument();
+    const select = within(row).getByRole("combobox") as HTMLSelectElement;
+    expect(select.selectedOptions[0].textContent).toBe("Dewa");
+  });
+});
+
+describe("counters (owner 2026-11-03): read attention_stats, never the old view counts", () => {
+  it("INNOCENCE: shows `N expired` and `N urgent` from attention_stats", async () => {
+    await renderClient(
+      makeProfile({
+        extra: {
+          attention: [],
+          attention_stats: { expired: 2, urgent: 3, upcoming: 1, done: 4 },
+        },
+      }),
+    );
+    const counters = screen.getByTestId("attention-counters");
+    expect(counters.textContent).toContain("2 expired");
+    expect(counters.textContent).toContain("3 urgent");
+  });
+
+  it("GUILT: without attention_stats NO counter shows, even when the old stats are loud", async () => {
+    const profile = makeProfile();
+    profile.stats = { ...profile.stats, expired_count: 5, red_alerts: 7 };
+    await renderClient(profile);
+    expect(screen.queryByTestId("attention-counters")).toBeNull();
+    expect(screen.queryByText(/expired/)).toBeNull();
+    expect(screen.queryByText(/urgent/)).toBeNull();
+  });
+
+  it("GUILT: zero expired and zero urgent draws nothing", async () => {
+    await renderClient(
+      makeProfile({
+        extra: {
+          attention: [],
+          attention_stats: { expired: 0, urgent: 0, upcoming: 2, done: 1 },
+        },
+      }),
+    );
+    expect(screen.queryByTestId("attention-counters")).toBeNull();
+  });
+});
+
+describe("masthead wraps below the title block at tablet width", () => {
+  it("the actions group sits in a stacked container until xl, row from xl", async () => {
+    await renderClient(makeProfile({ clientPatch: { phone: "081200000000" } }));
+    const heading = screen.getByRole("heading", { level: 1 });
+    const section = heading.closest("section")!;
+    const cls = section.className;
+    // md must NOT re-establish a row (that is what crushed the title)...
+    expect(cls).not.toMatch(/(^|\s)md:flex-row/);
+    expect(cls).toContain("md:flex-col");
+    // ...and desktop keeps today's side-by-side layout.
+    expect(cls).toContain("xl:flex-row");
+    expect(cls).toContain("xl:items-end");
+    // the title block and the actions are siblings in that container
+    const actions = screen.getByRole("button", {
+      name: "WhatsApp",
+    }).parentElement!;
+    expect(actions.parentElement).toBe(section);
+    expect(actions.contains(heading)).toBe(false);
+  });
+});
 
 describe("status tone", () => {
   it("lost and inactive are NOT the same tone as completed", () => {
@@ -838,6 +1037,31 @@ const RAW_COLOR_LITERAL =
 const PALETTE_HUE_UTILITY =
   /\b(?:bg|text|border|from|via|to|ring|fill|stroke|outline|decoration|shadow|caret|divide|placeholder|accent)-(?:red|rose|orange|amber)-\d{2,3}\b/g;
 
+// Owner decision 2026-11-03: the Visa history's "Completed" pill is a light
+// red tint. That is the ONE sanctioned use of --state-danger under [id]/**:
+// the file `components/permit-status-pills.ts`, on the declaration of
+// COMPLETED_PILL (the name on the same line or the line above — prettier may
+// break the assignment). Everything else, in that file and every other, is
+// still an offender.
+const OWNER_RED_PILL_FILE = "/components/permit-status-pills.ts";
+function dropOwnerRedPill(
+  offenders: string[],
+  rel: string,
+  raw: string,
+): string[] {
+  if (!rel.endsWith(OWNER_RED_PILL_FILE)) return offenders;
+  const lines = raw.split("\n");
+  return offenders.filter((o) => {
+    const m = o.match(/:(\d+): --state-danger$/);
+    if (!m) return true;
+    const n = Number(m[1]);
+    return !(
+      (lines[n - 1] ?? "").includes("COMPLETED_PILL") ||
+      (lines[n - 2] ?? "").includes("COMPLETED_PILL")
+    );
+  });
+}
+
 describe("GLOB: no red / no state-danger / no raw colour literal / no template-built var name (R3b, strengthened by round-4 Q3/Q4, AST-based round-7)", () => {
   it("no non-test file under [id]/** (ts/tsx/css) carries --state-danger, --bz-neon-purple, a raw colour literal, a red/rose/orange/amber palette utility, or a template-built CSS var name", () => {
     const offenders: string[] = [];
@@ -848,7 +1072,11 @@ describe("GLOB: no red / no state-danger / no raw colour literal / no template-b
         offenders.push(...colorOffensesForCssSource(raw, rel));
       } else {
         offenders.push(
-          ...colorOffensesForTsSource(parseSourceFile(file, raw), rel),
+          ...dropOwnerRedPill(
+            colorOffensesForTsSource(parseSourceFile(file, raw), rel),
+            rel,
+            raw,
+          ),
         );
       }
     }
@@ -864,6 +1092,39 @@ describe("GLOB: no red / no state-danger / no raw colour literal / no template-b
   // resets `lastIndex` to 0 both before and after running, so it is safe
   // to reuse the same exported pattern object here AND in the offender
   // scan above without cross-contamination.
+  it("INNOCENCE (owner decision 2026-11-03): --state-danger on the COMPLETED_PILL declaration of permit-status-pills.ts is exempt", () => {
+    const raw =
+      'export const COMPLETED_PILL =\n  "text-[var(--state-danger)]";\n';
+    const offenders = colorOffensesForTsSource(
+      parseFixture(raw),
+      "/components/permit-status-pills.ts",
+    );
+    expect(offenders).not.toEqual([]);
+    expect(
+      dropOwnerRedPill(offenders, "/components/permit-status-pills.ts", raw),
+    ).toEqual([]);
+  });
+
+  it("GUILT: the exemption is narrow: another declaration in the same file, or the same line in any other file, is still caught", () => {
+    const sameFile = 'export const OTHER =\n  "text-[var(--state-danger)]";\n';
+    const o1 = colorOffensesForTsSource(
+      parseFixture(sameFile),
+      "/components/permit-status-pills.ts",
+    );
+    expect(
+      dropOwnerRedPill(o1, "/components/permit-status-pills.ts", sameFile),
+    ).not.toEqual([]);
+    const other =
+      'export const COMPLETED_PILL =\n  "text-[var(--state-danger)]";\n';
+    const o2 = colorOffensesForTsSource(
+      parseFixture(other),
+      "/components/ImmigrationTab.tsx",
+    );
+    expect(
+      dropOwnerRedPill(o2, "/components/ImmigrationTab.tsx", other),
+    ).not.toEqual([]);
+  });
+
   it("GUILT: a hex literal of ANY hue is caught, not just a red/copper one", () => {
     expect("color: #3b82f6;".match(RAW_COLOR_LITERAL)).not.toBeNull();
   });

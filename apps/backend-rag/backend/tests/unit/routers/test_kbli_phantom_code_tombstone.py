@@ -260,7 +260,7 @@ def test_the_tombstone_still_points_at_real_neighbours(make_client):
 
 
 def test_the_tombstone_is_cached_under_the_bumped_key(make_client):
-    """v8, not v7: the old entries are WRONG about existence and must be evicted."""
+    """The tombstone uses the same current cache generation as other detail responses."""
     client = make_client(membership=_membership())
     try:
         _get(client)
@@ -269,7 +269,7 @@ def test_the_tombstone_is_cached_under_the_bumped_key(make_client):
         _stop(client)
 
     key = cache.set.call_args.args[0]
-    assert key == "kbli_inspect_v8_74100", key
+    assert key == "kbli_inspect_v9_74100", key
 
 
 # --------------------------------------------------------------------------

@@ -47,18 +47,18 @@ const LOCALE_METADATA: Record<
   it: {
     title: "Visto Second Home E33 Indonesia 2026 | Fit Memo Gratuito",
     description:
-      "Visto Second Home indonesiano (E33): fino a 5 anni di soggiorno di lungo termine tramite un deposito di USD 130.000 intestato a te presso una banca statale indonesiana, oppure una proprietà strata-title completata da USD 1.000.001. Fit memo gratuito con Bali Zero.",
+      "Visto Second Home indonesiano (E33): fino a 5 anni di soggiorno di lungo termine tramite un deposito di USD 130.000 intestato a te presso una banca statale indonesiana, oppure una proprietà strata-title completata da USD 1.000.000. Fit memo gratuito con Bali Zero.",
     ogTitle: "Visto Second Home E33 Indonesia — Bali Zero",
     ogDescription:
-      "Fino a 5 anni di soggiorno in Indonesia, rinnovabile fino a 10. Qualificati con un deposito BUMN di USD 130.000 intestato a te oppure una proprietà strata-title completata da USD 1.000.001. Inizia con un fit memo gratuito.",
+      "Fino a 5 anni di soggiorno in Indonesia, rinnovabile fino a 10. Qualificati con un deposito BUMN di USD 130.000 intestato a te oppure una proprietà strata-title completata da USD 1.000.000. Inizia con un fit memo gratuito.",
   },
   id: {
     title: "Visa Second Home E33 Indonesia 2026 | Fit Memo Gratis",
     description:
-      "Visa Second Home Indonesia (E33): hingga 5 tahun izin tinggal jangka panjang melalui deposito USD 130.000 atas nama sendiri di bank BUMN Indonesia, atau properti strata-title senilai USD 1.000.001. Fit memo gratis dari Bali Zero.",
+      "Visa Second Home Indonesia (E33): hingga 5 tahun izin tinggal jangka panjang melalui deposito USD 130.000 atas nama sendiri di bank BUMN Indonesia, atau properti strata-title senilai USD 1.000.000. Fit memo gratis dari Bali Zero.",
     ogTitle: "Visa Second Home E33 Indonesia — Bali Zero",
     ogDescription:
-      "Hingga 5 tahun tinggal di Indonesia, dapat diperpanjang hingga 10 tahun. Memenuhi syarat dengan deposito bank BUMN USD 130.000 atas nama sendiri atau properti strata-title senilai USD 1.000.001. Mulai dengan fit memo gratis.",
+      "Hingga 5 tahun tinggal di Indonesia, dapat diperpanjang hingga 10 tahun. Memenuhi syarat dengan deposito bank BUMN USD 130.000 atas nama sendiri atau properti strata-title senilai USD 1.000.000. Mulai dengan fit memo gratis.",
   },
 };
 

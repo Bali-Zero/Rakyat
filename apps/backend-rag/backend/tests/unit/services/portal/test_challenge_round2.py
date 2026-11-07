@@ -25,7 +25,7 @@ class TestWorkingHoursBetween:
 
     def test_weekend_only_span_is_zero(self):
         start = datetime(2026, 10, 3, 12, 0, tzinfo=WITA)  # Saturday
-        end = datetime(2026, 10, 4, 12, 0, tzinfo=WITA)  # Detali
+        end = datetime(2026, 10, 4, 12, 0, tzinfo=WITA)  # Sunday
         assert r2.working_hours_between(start, end) == 0.0
 
     def test_inside_a_single_working_day(self):
@@ -178,7 +178,7 @@ def _synthetic_participants(n: int) -> frozenset[str]:
 
 ROSTER_ROWS = [
     _roster_row("surya@balizero.com", "Surya"),
-    _roster_row("ari.firda@balizero.com", "Pum Zagik"),
+    _roster_row("ari.firda@balizero.com", "Ari Firda"),
     _roster_row("krisna@balizero.com", "Krisna"),
     _roster_row("adit@balizero.com", "Adit"),
     _roster_row("vino@balizero.com", "Vino"),
@@ -252,8 +252,8 @@ class TestCarryRule:
         by_member = {e.member: e for e in snapshot.entries}
         assert by_member["surya"].carry_points == 0
         assert by_member["surya"].september_choice == "prize"
-        assert by_member["pum.zagik"].carry_points == 0
-        assert by_member["pum.zagik"].september_choice == "prize"
+        assert by_member["ari.firda"].carry_points == 0
+        assert by_member["ari.firda"].september_choice == "prize"
         assert by_member["krisna"].carry_points == 0
         assert by_member["krisna"].september_choice == "prize"
 
@@ -1118,7 +1118,7 @@ class TestSprintPoints:
         assert adit.sprint_points == -2
 
     def test_penalty_with_origin_before_but_start_after_sprint_counts(self):
-        # Origin Detali 11 Oct (before SPRINT_START); the working clock only
+        # Origin Sunday 11 Oct (before SPRINT_START); the working clock only
         # runs from Monday 09:00, so the penalty starts Monday 12:00 WITA.
         created = datetime(2026, 10, 11, 20, 0, tzinfo=WITA)
         assert created < SPRINT

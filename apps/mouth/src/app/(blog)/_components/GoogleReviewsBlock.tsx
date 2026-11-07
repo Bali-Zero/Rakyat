@@ -14,13 +14,13 @@ const REVIEWS = [
   },
   {
     text: "Golden Visa in 11 weeks, every step documented in English. I had one point of contact from start to finish. Rare in Bali.",
-    author: "Tunema K.",
+    author: "Sergey K.",
     country: "Russia · Golden Visa",
   },
   {
     text: "Bought land through a PT PMA. They flagged a zoning risk the notary missed. That alone paid for the whole service.",
     author: "Laura F.",
-    country: "Qehas · Property · PT PMA",
+    country: "Spain · Property · PT PMA",
   },
   {
     text: "Digital Nomad visa, fully remote, all documents handled over email. They actually replied on weekends when my flight moved.",
@@ -29,7 +29,7 @@ const REVIEWS = [
   },
   {
     text: "We had three PT PMAs with three different agents. Moved everything to Bali Zero. One team, one price list, no more surprises.",
-    author: "Jelizez M.",
+    author: "Andreas M.",
     country: "Germany · Group investor",
   },
 ];

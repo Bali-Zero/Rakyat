@@ -2,10 +2,42 @@
   "description": "Real sample from BS 22 AUG tab",
   "rows": [
     ["NEW CASHOUT 22 AUG"],
-    ["NAME", "PROCESS", "PNBP", "URGENT", "RPTKA/IMTA", "MARGIN BS", "FINAL PRICE"],
-    ["TIXAMUFI REMOWA", "BRIDGING VISA", "Rp1,000,000", "", "", "Rp3,000,000", "Rp4,000,000"],
+    [
+      "NAME",
+      "PROCESS",
+      "PNBP",
+      "URGENT",
+      "RPTKA/IMTA",
+      "MARGIN BS",
+      "FINAL PRICE"
+    ],
+    [
+      "TIXAMUFI REMOWA",
+      "BRIDGING VISA",
+      "Rp1,000,000",
+      "",
+      "",
+      "Rp3,000,000",
+      "Rp4,000,000"
+    ],
     [],
-    ["RUK HIBET CASTEL", "C1", "Rp1,000,000", "", "", "Rp600,000", "Rp1,600,000"],
-    ["MUDIVA EMILIANO JOTI", "C1", "Rp1,000,000", "", "", "Rp600,000", "Rp1,600,000"]
+    [
+      "RUK HIBET CASTEL",
+      "C1",
+      "Rp1,000,000",
+      "",
+      "",
+      "Rp600,000",
+      "Rp1,600,000"
+    ],
+    [
+      "MUDIVA EMILIANO JOTI",
+      "C1",
+      "Rp1,000,000",
+      "",
+      "",
+      "Rp600,000",
+      "Rp1,600,000"
+    ]
   ]
 }

@@ -28,7 +28,7 @@ class ChannelMessage:
     Allows the core business logic to be channel-agnostic.
     """
 
-    user_id: str  # Unique user identifier (e.g., "telegram_123456", "whatsapp_+6284000220000")
+    user_id: str  # Unique user identifier (e.g., "telegram_123456", "whatsapp_+6281234567890")
     session_id: str  # Session identifier for conversation continuity
     text: str  # Message text content
     media: list[str] | None = None  # URLs to images/videos/documents

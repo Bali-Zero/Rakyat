@@ -931,7 +931,7 @@ function CaseForm({
                     void mutate(() => testingApi.removeScreenshot(a.id))
                   }
                 >
-                  Zapaf lampiran
+                  Hapus lampiran
                 </button>
               </div>
             )}

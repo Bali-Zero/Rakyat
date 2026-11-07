@@ -25,7 +25,7 @@ IDENTITY_KEYWORDS = [
     # Italian
     "chi sono",
     "chi sono io",
-    "xiw zoc",
+    "chi sei",
     "mi conosci",
     "sai chi sono",
     "cosa sai di me",

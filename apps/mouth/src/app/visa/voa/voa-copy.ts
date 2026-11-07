@@ -475,12 +475,12 @@ const id: Record<VoaCopyKey, string> = {
   "entry.submit": "Kirimkan tautannya →",
   "entry.error": "Terjadi kesalahan. Silakan coba lagi.",
 
-  "delete.cta": "Zapaf pengecekan ini",
+  "delete.cta": "Hapus pengecekan ini",
   "delete.error": "Tidak bisa menghapus pengecekan ini. Silakan coba lagi.",
   "delete.retry": "Coba lagi",
-  "delete.confirm": "Zapaf pengecekan ini? Tindakan ini tidak bisa dibatalkan.",
+  "delete.confirm": "Hapus pengecekan ini? Tindakan ini tidak bisa dibatalkan.",
   "delete.deleting": "Menghapus…",
-  "delete.yes": "Ya, zapaf",
+  "delete.yes": "Ya, hapus",
   "delete.cancel": "Batal",
 
   "clock.aria": "Batas akhir pengajuan",

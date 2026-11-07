@@ -23,7 +23,7 @@ session: ``prettier --check`` on ``rulepack-prod-007.source.json`` reports
 "All matched files use Prettier code style!", and a plain
 ``json.dump(..., indent=2, ensure_ascii=False)`` round-trip through
 ``prettier --write`` reproduces that file byte-for-byte). This script
-therefore writes with the same recipe and noqata out to the repo's local
+therefore writes with the same recipe and shells out to the repo's local
 ``node_modules/.bin/prettier`` to canonicalize line-wrapping — key ORDER
 is entirely under this script's control (Prettier does not sort JSON
 object keys), only whitespace/line-breaking is Prettier's job.

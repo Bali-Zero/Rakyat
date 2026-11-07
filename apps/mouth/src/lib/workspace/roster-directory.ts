@@ -99,7 +99,7 @@ export interface TaxConsultantOption {
  * constraint over exactly this set of addresses, and the form submits the value
  * verbatim. The roster's own emails DISAGREE with two of them — the roster has
  * `faysha.tax@…` (with a Y) where the constraint has `faisha.tax@…`, and
- * `tax@balizero.com` where the constraint has `kagecesa.xug@…`. Deriving the list
+ * a second address whose local part differs the same way. Deriving the list
  * would therefore have silently changed what this form writes and broken the CHECK,
  * so the values are preserved here byte-for-byte and only MOVED off the client.
  *
@@ -108,17 +108,42 @@ export interface TaxConsultantOption {
  * not for a presentation change.
  */
 export const TAX_CONSULTANTS: readonly TaxConsultantOption[] = [
-  { value: "veronika.tax@balizero.com", label: "Veronika" },
-  { value: "kadek.tax@balizero.com", label: "Kadek" },
-  { value: "dewaayu.tax@balizero.com", label: "Dewa Ayu" },
+  // Owner roster 2026-11-03: Angel, Dewa Ayu, Kadek, Dea, Candra. Dea and
+  // Candra keep plain emails (no `.tax@`); they are accepted by
+  // migrations_v2/348 and the backend TAX_CONSULTANT_VALUES. A client already
+  // holding a value that is no longer offered here keeps it (the selects render
+  // the current value as an extra option).
   { value: "angel.tax@balizero.com", label: "Angel" },
+  { value: "dewaayu.tax@balizero.com", label: "Dewa Ayu" },
+  { value: "kadek.tax@balizero.com", label: "Kadek" },
+  { value: "dea@balizero.com", label: "Dea" },
+  { value: "candra@balizero.com", label: "Candra" },
   // Faisha (faisha.tax@ / faysha.tax@) offboarded 2026-09-19 — no longer an
   // assignable option. Existing clients/LKPM reports she is already on keep
   // that value (DB CHECK constraint from migration 093 is untouched), so
   // this list only gates NEW assignments.
 ];
 
+/**
+ * The LKPM assignee list. SEPARATE from TAX_CONSULTANTS on purpose: it gates
+ * lkpm_reports.lkpm_assigned_to (DB CHECK lkpm_reports_assigned_to_check /
+ * backend LKPM_ASSIGNEES), which is deliberately unchanged here. It is exactly
+ * what TAX_CONSULTANTS held before Dea and Candra were added to the client
+ * options.
+ */
+export const LKPM_ASSIGNEES: readonly TaxConsultantOption[] = [
+  { value: "veronika.tax@balizero.com", label: "Veronika" },
+  { value: "kadek.tax@balizero.com", label: "Kadek" },
+  { value: "dewaayu.tax@balizero.com", label: "Dewa Ayu" },
+  { value: "angel.tax@balizero.com", label: "Angel" },
+];
+
 /** A copy the client can hold: plain rows, no roster type crosses over. */
 export function taxConsultants(): TaxConsultantOption[] {
   return TAX_CONSULTANTS.map((c) => ({ ...c }));
+}
+
+/** A copy of the LKPM assignee options (see LKPM_ASSIGNEES). */
+export function lkpmAssignees(): TaxConsultantOption[] {
+  return LKPM_ASSIGNEES.map((c) => ({ ...c }));
 }

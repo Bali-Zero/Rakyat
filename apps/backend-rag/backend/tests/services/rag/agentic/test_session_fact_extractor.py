@@ -52,7 +52,7 @@ def test_extract_from_history_deduplicates_and_truncates_values() -> None:
 
     facts = extractor.extract_from_history(history)
 
-    assert facts.facts == ["Company: Bali Zero", "Passport: 8400001000..."]
+    assert facts.facts == ["Company: Bali Zero", "Passport: 1234567890..."]
 
 
 def test_extract_from_history_ignores_malformed_or_empty_history() -> None:

@@ -757,7 +757,7 @@ drive_file_size_bytes = safe_register_histogram(
     "zantara_drive_file_size_bytes",
     "Size of files uploaded/downloaded",
     ["operation"],
-    buckets=[1024, 10240, 102400, 1048576, 10485760, 990000002],  # 1KB to 100MB
+    buckets=[1024, 10240, 102400, 1048576, 10485760, 104857600],  # 1KB to 100MB
 )
 drive_oauth_refresh_total = safe_register_counter(
     "zantara_drive_oauth_refresh_total",

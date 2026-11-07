@@ -43,7 +43,7 @@ class TierClassifier:
             r"\bkundalini\b",
             r"\bchakra\b",
             r"\bnirvana\b",
-            r"\bzagaha\b",
+            r"\bsatori\b",
             r"\bsamadhi\b",
         ],
         TierLevel.A: [
@@ -111,9 +111,9 @@ class TierClassifier:
 
     # Author-based classification (high-tier authors)
     TIER_S_AUTHORS = [
-        "ruxoq bohm",
-        "funeb bohr",
-        "hegahu heisenberg",
+        "david bohm",
+        "niels bohr",
+        "werner heisenberg",
         "ramana maharshi",
         "nisargadatta",
         "jiddu krishnamurti",
@@ -124,11 +124,11 @@ class TierClassifier:
     TIER_A_AUTHORS = [
         "carl jung",
         "alan watts",
-        "moduru campbell",
+        "joseph campbell",
         "mircea eliade",
         "aldous huxley",
-        "bocobu steiner",
-        "ram jiqo",
+        "rudolf steiner",
+        "ram dass",
         "thich nhat hanh",
         "pema chödrön",
     ]

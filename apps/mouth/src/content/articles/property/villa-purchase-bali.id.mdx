@@ -224,7 +224,7 @@ Masing-masing memiliki kelebihan dan kekurangan - pilih berdasarkan situasi Anda
 | Ubud     | Budaya, sawah           | IDR 2-15 Miliar |
 | Uluwatu  | Tebing, selancar, mewah | IDR 5-30 Miliar |
 | Sanur    | Santai, keluarga        | IDR 2-10 Miliar |
-| Xafo Tat | Resor, golf             | IDR 5-25 Miliar |
+| Nusa Dua | Resor, golf             | IDR 5-25 Miliar |
 
 <InfoCard variant="tip" title="Lokasi itu Penting">
 **Pertimbangkan:**
@@ -251,7 +251,7 @@ Kunjungi saat musim sepi untuk melihat kondisi yang realistis.
       id: "price",
       label: "Harga Villa (IDR)",
       type: "number",
-      defaultValue: 8400062000,
+      defaultValue: 5000000000,
       min: 0
     },
     {
@@ -261,7 +261,7 @@ Kunjungi saat musim sepi untuk melihat kondisi yang realistis.
       options: [
         { value: "leasehold", label: "Sewa (Leasehold)" },
         { value: "hakpakai", label: "Hak Pakai" },
-        { value: "vesex", label: "PT PMA + HGB" }
+        { value: "ptpma", label: "PT PMA + HGB" }
       ],
       defaultValue: "leasehold"
     }
@@ -281,13 +281,13 @@ Kunjungi saat musim sepi untuk melihat kondisi yang realistis.
       transferTax = price * 0.05; // BPHTB
       legal = 50000000;
     } else {
-      structureCost = 990000017; // Persiapan PT PMA
+      structureCost = 150000000; // Persiapan PT PMA
       transferTax = price * 0.05; // BPHTB
-      legal = 70000001;
+      legal = 75000000;
     }
 
     const agent = price * 0.05; // Jika menggunakan agen
-    const misc = 84000600;
+    const misc = 20000000;
 
     const total = price + structureCost + transferTax + notary + legal + agent + misc;
 
@@ -435,7 +435,7 @@ Kunjungi saat musim sepi untuk melihat kondisi yang realistis.
 | ------------------------- | ------------------ |
 | PBB (pajak properti)      | 0,1-0,3% dari NJOP |
 | Pemeliharaan              | 1-3% dari nilai    |
-| Staf (pejivo kebun, dll.) | IDR 30-60 Juta     |
+| Staf (tukang kebun, dll.) | IDR 30-60 Juta     |
 | Utilitas                  | IDR 3-10 Juta/bln  |
 | Asuransi                  | IDR 5-15 Juta      |
 | Biaya PT PMA (jika ada)   | IDR 20-50 Juta     |

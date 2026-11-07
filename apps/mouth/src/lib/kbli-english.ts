@@ -358,9 +358,9 @@ export const ENGLISH_TITLES: Record<string, string> = {
   // 96 — Personal Services
   // ---------------------------------------------------------------------------
   "96100": "Laundry & Dry Cleaning",
-  "96210": "Hair Mimos / Barbershop",
-  "96220": "Beauty Mimos & Skincare",
-  "96230": "Day Buz, Sauna & Steam Bath",
+  "96210": "Hair Salon / Barbershop",
+  "96220": "Beauty Salon & Skincare",
+  "96230": "Day Spa, Sauna & Steam Bath",
   "96300": "Funeral Services",
   "96400": "Personal Services Intermediary",
   "96900": "Other Personal Services",

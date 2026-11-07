@@ -20,6 +20,20 @@ from backend.services.canva_renderer.claude_invoker import (
 )
 
 
+@pytest.fixture(autouse=True)
+def console_seat(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RULED 2026-11-01: `claude` runs only on a Console seat — every test that
+    reaches a (faked) subprocess needs one; the guilt test below removes it."""
+    monkeypatch.setenv("ANTHROPIC_CONSOLE_KEY_1", "sk-test-seat")
+    monkeypatch.setenv("ANTHROPIC_CONSOLE_WORKSPACE_1", "wrkspc_test1")
+
+
+def _no_seat(monkeypatch: pytest.MonkeyPatch) -> None:
+    for n in (1, 2, 3):
+        monkeypatch.delenv(f"ANTHROPIC_CONSOLE_KEY_{n}", raising=False)
+        monkeypatch.delenv(f"ANTHROPIC_CONSOLE_WORKSPACE_{n}", raising=False)
+
+
 class TestExtractCanvaUrls:
     def test_extracts_edit_and_view_urls_from_json_response(self) -> None:
         stdout = (
@@ -136,3 +150,51 @@ class TestInvokeClaudeApplyModelPin:
 
         model = captured["argv"][captured["argv"].index("--model") + 1]
         assert model == "claude-opus-5"
+
+    def test_refuses_without_a_console_seat(self, tmp_path, monkeypatch) -> None:
+        """GUILT (RULED 2026-11-01): no seat is no door — subprocess.run is
+        never reached, even with a plan-OAuth token in the environment."""
+        self._stub_runbook(tmp_path, monkeypatch)
+        _no_seat(monkeypatch)
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "plan-oauth-is-not-a-seat")
+        pending = tmp_path / "canva_pending.json"
+        pending.write_text(json.dumps({"pages": []}))
+        launched: list[list[str]] = []
+
+        def fake_run(argv, **kwargs):
+            launched.append(list(argv))
+            raise AssertionError("must not be reached")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        with pytest.raises(CanvaInvokeError, match="ANTHROPIC_CONSOLE_KEY_"):
+            invoke_claude_apply(pending)
+        assert launched == []
+
+    def test_child_env_is_the_seat_with_the_inherited_config_dir(self, tmp_path, monkeypatch) -> None:
+        """INNOCENCE: the seat's key + header reach the child, plan OAuth does
+        not, and — unlike the other spawners — the inherited CLAUDE_CONFIG_DIR
+        stays, because the Canva MCP connector is registered there."""
+        self._stub_runbook(tmp_path, monkeypatch)
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "plan-oauth-must-not-reach-the-child")
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "interactive-config"))
+        pending = tmp_path / "canva_pending.json"
+        pending.write_text(json.dumps({"pages": []}))
+        captured: dict[str, dict[str, str]] = {}
+
+        def fake_run(argv, **kwargs):
+            captured["env"] = dict(kwargs["env"])
+
+            class _R:
+                returncode = 0
+                stdout = '{"design_id":"DABC12345","edit_url":"https://www.canva.com/d/abc"}'
+                stderr = ""
+
+            return _R()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        invoke_claude_apply(pending)
+        env = captured["env"]
+        assert env["ANTHROPIC_API_KEY"] == "sk-test-seat"
+        assert env["ANTHROPIC_CUSTOM_HEADERS"] == "anthropic-workspace-id: wrkspc_test1"
+        assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+        assert env["CLAUDE_CONFIG_DIR"] == str(tmp_path / "interactive-config")

@@ -338,11 +338,11 @@ TIMEOUT_FALLBACK_BY_LANG: dict[str, str] = {
         "contacte-nous sur WhatsApp (+62 821-3454-721)."
     ),
     "es": (
-        "Nuestra IA está tardando más de lo habitual. Inténtalo de dozoz o "
+        "Nuestra IA está tardando más de lo habitual. Inténtalo de nuevo o "
         "escríbenos por WhatsApp (+62 821-3454-721)."
     ),
     "de": (
-        "Unsere KI braucht länger als üblich. Versuche es erneut ponu "
+        "Unsere KI braucht länger als üblich. Versuche es erneut oder "
         "schreib uns auf WhatsApp (+62 821-3454-721)."
     ),
     "ru": (

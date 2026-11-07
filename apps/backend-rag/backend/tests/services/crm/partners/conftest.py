@@ -44,6 +44,7 @@ import sys
 import types as _types
 import uuid
 from collections.abc import Callable, Coroutine
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -191,9 +192,9 @@ _DEFAULT_DB_URL = os.environ.get(
 _SCHEMA_SQL = """
 -- CATA-5: Production has NO `users` table. Team identity lives in
 -- team_members(id VARCHAR) with email-like string IDs (e.g. "zero@balizero.com").
--- NOTE: team_members is a REAL pre-existing production table in the dev DB.
--- We do NOT create or drop it — we only INSERT test rows (cleaned up in teardown).
--- This mirrors how clients is handled (client_factory inserts+deletes only).
+-- team_members and clients are private structural copies of canonical tables.
+-- The connection's search_path excludes public, so all unqualified DDL/DML
+-- below belongs to this fixture's unique schema.
 --
 -- Ensure the partner_id column is present (added by migration 119 in production).
 -- IF NOT EXISTS guard makes this idempotent.
@@ -201,22 +202,18 @@ DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'team_members' AND column_name = 'partner_id'
+        WHERE table_schema = current_schema()
+          AND table_name = 'team_members' AND column_name = 'partner_id'
     ) THEN
         ALTER TABLE team_members ADD COLUMN partner_id UUID;
     END IF;
 END $$;
 
--- NOTE: clients table already exists in the dev DB with many dependents.
--- We do NOT create/drop it — we use it as-is. The client_factory
--- inserts rows and cleans them up after each test.
+-- client_factory writes only to the private clients copy and identity sequence.
 
--- CATA-4 NOTE: practices is a real production table (id=INTEGER in dev DB).
--- We create a TEMPORARY TABLE practices that shadows the real one for this
--- connection session only (pg_temp schema is always first in search_path).
--- The temp table uses SERIAL PRIMARY KEY (INTEGER) matching production practices.id,
--- with the 4 columns CommissionEngine reads. It is dropped in teardown.
-CREATE TEMP TABLE IF NOT EXISTS practices (
+-- The private practices table uses INTEGER IDs and only the columns consumed
+-- by CommissionEngine. The canonical public table is never shadow-dropped.
+CREATE TABLE IF NOT EXISTS practices (
     id                 SERIAL PRIMARY KEY,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     status             TEXT NOT NULL DEFAULT 'pending',
@@ -227,9 +224,8 @@ CREATE TEMP TABLE IF NOT EXISTS practices (
     service_type       TEXT
 );
 
--- system_settings is shared with backend/tests/services/compliance/test_alert_feedback.py
--- and other tests — we must not DROP it on teardown (see _TEARDOWN_SQL).
--- In CI it's created by ci_bootstrap_schema.py with this shape; on a bare
+-- system_settings is private to this fixture. Its shape mirrors the canonical
+-- bootstrap so partner settings never overwrite other suites' rows. On a bare
 -- nuzantara_dev we create it here if it's missing. Schema mirrors
 -- ci_bootstrap_schema.py exactly (key VARCHAR(100), value TEXT NOT NULL,
 -- updated_at TIMESTAMPTZ DEFAULT NOW()) so both environments converge.
@@ -294,7 +290,7 @@ CREATE TABLE IF NOT EXISTS partner_referrals (
     partner_id           UUID NOT NULL REFERENCES partners(id) ON DELETE RESTRICT,
     -- NOTE: In production, partner_referrals.practice_id FK references practices(id) INTEGER.
     -- FK omitted: PostgreSQL disallows FK constraints on permanent tables referencing temp tables.
-    -- The temp practices table uses INTEGER (SERIAL) matching production. Type is enforced here.
+    -- The private practices table uses INTEGER (SERIAL) matching production. Type is enforced here.
     practice_id          INTEGER NOT NULL,
     share_percent        NUMERIC(5,2) NOT NULL DEFAULT 100.00
         CHECK (share_percent > 0 AND share_percent <= 100),
@@ -390,52 +386,69 @@ CREATE TABLE IF NOT EXISTS partner_email_outbox (
 );
 """
 
-_TEARDOWN_SQL = """
-DROP TABLE IF EXISTS partner_email_outbox;
-DROP TABLE IF EXISTS partner_audit_log;
-DROP TABLE IF EXISTS partner_commissions;
-DROP TABLE IF EXISTS partner_referrals;
-DROP TABLE IF EXISTS partners;
--- NOTE: system_settings is NOT dropped — it's shared with the rest of the
--- suite (CI bootstrap / dev DB). Clean only the partner-specific keys this
--- conftest seeded so the row count doesn't drift between runs.
-DELETE FROM system_settings WHERE key IN (
-    'partner_clawback_auto_writeoff_idr',
-    'partner_accrual_cooling_off_days',
-    'partner_withholding_rate_pph21',
-    'partner_withholding_rate_pph23',
-    'partner_withholding_no_npwp_surcharge'
-);
--- NOTE: team_members is NOT dropped here — it is a real pre-existing production
--- table in the dev DB. Test rows are cleaned up by the user_factory fixture
--- by tracking inserted IDs and deleting them in the fixture teardown.
-DROP TABLE IF EXISTS pg_temp.practices;
-"""
-
 # SQL used to clean up test-inserted team_members rows (parameterised by ID list).
 _TEAM_MEMBERS_CLEANUP_SQL = "DELETE FROM team_members WHERE id = ANY($1::varchar[])"
 
 
-@pytest_asyncio.fixture(scope="function")
-async def db_conn() -> asyncpg.Connection:
+@asynccontextmanager
+async def _isolated_partner_connection(database_url: str):
+    """Own one random schema; preserve public tables, FKs, rows and sequences.
+
+    Keep autocommit semantics: repository tests intentionally provoke statement
+    errors and then keep using the connection. An outer rollback transaction
+    would leave that connection aborted after such an error.
     """
-    Real asyncpg connection with all partner tables created for the test,
-    then torn down afterward. DDL (CREATE TABLE) commits immediately;
-    teardown DROPs ensure the next test sees a fresh schema.
-    """
-    conn = await asyncpg.connect(_DEFAULT_DB_URL)
-    # Teardown from any previous failed run first (drops partner tables + clears stray test members)
-    await conn.execute(_TEARDOWN_SQL)
-    await conn.execute("DELETE FROM team_members WHERE email LIKE '%@test.invalid'")
-    # Create fresh schema
-    await conn.execute(_SCHEMA_SQL)
+    conn = await asyncpg.connect(database_url)
+    schema = "nuz_partner_fixture_" + uuid.uuid4().hex
+    created = False
     try:
+        await conn.execute(f'CREATE SCHEMA "{schema}"')
+        created = True
+        await conn.execute(f'SET search_path TO "{schema}", pg_catalog')
+        # LIKE copies schema only, never application rows or foreign keys.
+        # Keep canonical columns/defaults/indexes without sharing write targets.
+        await conn.execute(
+            "CREATE TABLE team_members (LIKE public.team_members INCLUDING ALL);"
+            "CREATE TABLE clients (LIKE public.clients INCLUDING ALL);"
+            "CREATE TABLE events_outbox (LIKE public.events_outbox INCLUDING ALL);"
+        )
+        for table in ("clients", "events_outbox"):
+            identity = await conn.fetchval(
+                "SELECT attidentity <> '' FROM pg_attribute "
+                "WHERE attrelid=$1::regclass AND attname='id'",
+                table,
+            )
+            if not identity:
+                # LIKE copies SERIAL defaults pointing into public. Each
+                # private copy must own its sequence, including on older schemas.
+                await conn.execute(
+                    f"ALTER TABLE {table} ALTER COLUMN id DROP DEFAULT;"
+                    f"ALTER TABLE {table} ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY;"
+                )
+        await conn.execute(_SCHEMA_SQL)
+        # LIKE omits FKs. Preserve this canonical relationship in the private
+        # namespace too; the public FK is never altered or dropped.
+        await conn.execute(
+            "ALTER TABLE team_members ADD CONSTRAINT team_members_partner_id_fkey "
+            "FOREIGN KEY (partner_id) REFERENCES partners(id) ON DELETE SET NULL"
+        )
         yield conn
     finally:
-        await conn.execute(_TEARDOWN_SQL)
-        # Clean up any team_members rows inserted directly by tests (not via user_factory)
-        await conn.execute("DELETE FROM team_members WHERE email LIKE '%@test.invalid'")
-        await conn.close()
+        try:
+            if created:
+                # Only the unguessable namespace created by this invocation is
+                # eligible for cleanup. No public relation appears in this DDL.
+                await conn.execute("RESET search_path")
+                await conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+        finally:
+            await conn.close()
+
+
+@pytest_asyncio.fixture(scope="function")
+async def db_conn() -> asyncpg.Connection:
+    """A private partner schema on the configured disposable test database."""
+    async with _isolated_partner_connection(_DEFAULT_DB_URL) as conn:
+        yield conn
 
 
 # --------------------------------------------------------------------------
@@ -453,8 +466,8 @@ async def user_factory(
     IDs are generated as "test-<hex>@test.invalid" to mirror the production
     pattern of email-like string identifiers.
 
-    NOTE: team_members is a real pre-existing production table. This factory
-    only INSERT-s rows and cleans them up in its own teardown (like client_factory).
+    NOTE: team_members is the fixture-private canonical structure copy.
+    This factory inserts and cleans up only its own synthetic rows.
     It does NOT create or drop the table.
     """
     _inserted_ids: list[str] = []
@@ -484,7 +497,7 @@ async def user_factory(
 
     yield _create
 
-    # Teardown: delete test rows from the real production team_members table.
+    # Teardown: delete synthetic rows from the fixture-private copy.
     # partners.assigned_to FK is ON DELETE SET NULL, so this is safe.
     if _inserted_ids:
         await db_conn.execute(_TEAM_MEMBERS_CLEANUP_SQL, _inserted_ids)
@@ -623,12 +636,12 @@ async def admin(user_factory: Callable[..., Coroutine[Any, Any, "_StrWithId"]]) 
 
 @pytest_asyncio.fixture(scope="function")
 async def client_factory(db_conn: asyncpg.Connection):
-    """Returns an async callable that inserts a clients row (into the existing live table)
+    """Returns an async callable that inserts a row into the fixture-private clients copy
     and returns an _IntWithId (int subclass with .id property).
     Cleans up inserted rows after the test.
 
-    The live clients table uses INTEGER primary key (not UUID).
-    We never CREATE or DROP this table — only INSERT and DELETE rows by id.
+    The canonical INTEGER primary-key type is retained, with a private identity
+    sequence. No public client rows or sequences are modified.
     """
     _counter = [0]
     _inserted_ids: list[int] = []

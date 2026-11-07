@@ -1,5 +1,7 @@
 """Roster decisions of 2026-10-20 (Zero): Veronika is Manager of tax + setup,
-Natalie (finance & client services) sees everything and manages nothing."""
+the finance & client services role sees everything and manages nothing.
+
+Offboarding 2026-11-03: the person-level mapping for natalie@ is gone."""
 
 from backend.services.agents.team_agent_config import (
     ROLE_CRM_FULL,
@@ -26,12 +28,15 @@ class TestVeronikaManager:
         assert is_tool_allowed(ROLE_MANAGER, "create_practice")
 
 
-class TestNatalieFinanceViewer:
-    def test_maps_to_finance_viewer(self) -> None:
-        role = get_agent_role("natalie@balizero.com")
-        assert role is ROLE_FINANCE_VIEWER
-        assert role.client_scope == "all"
-        assert role.language == "id"
+class TestFinanceViewerRole:
+    def test_offboarded_person_has_no_agent_role(self) -> None:
+        assert get_agent_role("natalie@balizero.com") is None
+        assert "natalie@balizero.com" not in TEAM_AGENTS
+        assert ROLE_FINANCE_VIEWER not in TEAM_AGENTS.values()
+
+    def test_role_definition_is_kept_for_reuse(self) -> None:
+        assert ROLE_FINANCE_VIEWER.client_scope == "all"
+        assert ROLE_FINANCE_VIEWER.language == "id"
 
     def test_sees_everything(self) -> None:
         for tool in (

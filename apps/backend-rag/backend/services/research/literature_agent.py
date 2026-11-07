@@ -44,7 +44,7 @@ TOPICS: list[ResearchTopic] = [
             "Research hook taxonomy for social media 2024-2026 (Instagram, "
             "LinkedIn, TikTok). Cite academic papers where available "
             "(arxiv.org, Google Scholar) and top creator-economy blogs "
-            "(Later, HubSpot, Buffer, Soqe Connell). Structure as: "
+            "(Later, HubSpot, Buffer, Adam Connell). Structure as: "
             "(1) taxonomy definitions, (2) top 20 patterns observed in "
             "2025-26, (3) differences by platform. Minimum 15 distinct "
             "sources with URLs + publication year visible."
@@ -66,7 +66,7 @@ TOPICS: list[ResearchTopic] = [
         prompt=(
             "Research 2026 algorithm windows and posting cadence for "
             "Instagram, LinkedIn, TikTok, Threads, YouTube Shorts. Include "
-            "Soqe Mosseri 2025-26 public statements, LinkedIn algorithmic "
+            "Adam Mosseri 2025-26 public statements, LinkedIn algorithmic "
             "research 2025, TikTok CPM 2026 analyses, YouTube Shorts reach "
             "data. Identify optimal posting times in WITA (UTC+8) for two "
             "audiences: Indonesian residents + European expats in Bali. "

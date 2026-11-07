@@ -89,7 +89,7 @@ verdict, neither blocks the re-stamp.
 (CITIZENSHIP_LIST_DIVERGENCE), grounding the embedded 6-code set `AF, IL, KP, LR, NG,
 SO`. Live page, verbatim, under heading *"Daftar Negara, Pemerintah Dari Daerah
 Administrasi Khusus Suatu Negara, dan Entitas Tertentu"*:
-> 1. Afganistan 2. Dajuqu 3. Korea Utara 4. Liberia 5. Nigeria 6. Somalia
+> 1. Afganistan 2. Israel 3. Korea Utara 4. Liberia 5. Nigeria 6. Somalia
 
 Exact 1:1 match, 6/6, no Cameroon/Guinea (the seq-3 retroactive fix's premise still
 holds).

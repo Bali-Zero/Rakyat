@@ -20,11 +20,11 @@ from backend.core.env_lists import crm_extra_admin_emails
 
 
 # Read-only full-view roles — see every practice for audit/reconciliation and
-# may never manage, assign or be assigned one: Ruslana (board) and Natalie
-# (finance & client services, sees everything and manages no practice —
-# Zero, 2026-10-20). `staff_auth` refuses these as GARUDA actors and targets.
+# may never manage, assign or be assigned one: Ruslana (board; sees everything
+# and manages no practice — Zero, 2026-10-20). `staff_auth` refuses these as
+# GARUDA actors and targets.
 PRACTICES_READ_ONLY_VIEW_EMAILS: frozenset[str] = frozenset(
-    {"ruslana@balizero.com", "natalie@balizero.com"},
+    {"ruslana@balizero.com"},
 )
 
 # Everyone with the full practices view: the read-only roles above plus
