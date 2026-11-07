@@ -140,6 +140,23 @@ export function useInvalidateClient(clientId?: string | number | null) {
   };
 }
 
+/**
+ * Invalidates ONLY the client profile query. The card's WitaClock calls it
+ * when the browser's WITA day has moved past the payload's `as_of`, so the
+ * next payload carries the new day.
+ */
+export function useInvalidateClientProfile(clientId?: string | number | null) {
+  const queryClient = useQueryClient();
+  return () => {
+    if (!clientId || Number(clientId) <= 0) return Promise.resolve();
+    return queryClient.invalidateQueries({
+      queryKey: clientDetailQueryKey(clientId),
+      exact: true,
+      refetchType: "all",
+    });
+  };
+}
+
 export function useSetClientCache(clientId: string | number) {
   const queryClient = useQueryClient();
   return (client: Client) =>

@@ -18,9 +18,12 @@ import {
   getDriveProxyUrl,
   getPassportValidityColor,
   pickCurrentPassport,
+  countVoidPassports,
   downloadHrefFor,
 } from "./utils";
-import { daysUntil } from "./overview-brief";
+import { dateValidity } from "./documentValidity";
+import { resolveCardDay } from "./witaClock";
+import { RemovedSignpost } from "./RemovedSignpost";
 import { CardFrame, ExpiryText, Fact, Facts, NOT_RECORDED } from "./cardKit";
 
 export function PassportCard({
@@ -29,13 +32,20 @@ export function PassportCard({
   formatDate,
   onRefresh,
   clientId,
+  onOpenRemoved,
+  day: dayProp,
 }: {
   client: ClientProfile["client"];
   documents: ClientDocument[];
   formatDate: (d: string) => string;
   onRefresh: () => Promise<void>;
   clientId: number;
+  /** Opens the Documents "Removed or rejected" group. */
+  onOpenRemoved?: () => void;
+  /** The card's day (`YYYY-MM-DD`, the payload's `as_of`). */
+  day?: string;
 }) {
+  const day = resolveCardDay(dayProp);
   const [isExtracting, setIsExtracting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -52,7 +62,12 @@ export function PassportCard({
   const passportDoc = pickCurrentPassport(documents);
 
   // Get passport validity color and alert level
-  const passportValidity = getPassportValidityColor(client.passport_expiry);
+  const passportValidity = getPassportValidityColor(
+    client.passport_expiry,
+    day,
+  );
+  const expiry = dateValidity(client.passport_expiry, day);
+  const voidPassports = countVoidPassports(documents);
   // The scan is only ever FETCHED on demand (Download, Extract) — the card
   // never renders it, so opening the Overview loads no document bytes.
   const passportImageUrl = passportDoc?.google_drive_file_url;
@@ -61,7 +76,7 @@ export function PassportCard({
     passportImageUrl?.toLowerCase().includes(".pdf") ||
     passportDoc?.file_name?.toLowerCase().includes(".pdf");
 
-  const expiryDays = daysUntil(client.passport_expiry, Date.now());
+  const expiryDays = expiry.daysLeft;
 
   // Convert Drive view URL to direct download URL
   const getDownloadUrl = downloadHrefFor;
@@ -372,9 +387,9 @@ export function PassportCard({
             <Fact label="Issued">{formatDate(passportDoc.issue_date)}</Fact>
           ) : null}
           <Fact label="Expires" wide={!passportDoc?.issue_date}>
-            {client.passport_expiry ? (
+            {expiry.expiry ? (
               <span className="flex flex-wrap items-baseline gap-x-2">
-                <span>{formatDate(client.passport_expiry)}</span>
+                <span>{formatDate(expiry.expiry)}</span>
                 <ExpiryText days={expiryDays} />
               </span>
             ) : (
@@ -400,6 +415,11 @@ export function PassportCard({
               : "Expires very soon: contact the embassy now."}
         </p>
       ) : null}
+      <RemovedSignpost
+        count={voidPassports}
+        onOpen={onOpenRemoved}
+        className="mt-3"
+      />
       {ocrError ? (
         <p className="mt-2 text-[12px] text-[var(--state-warning)]">
           {ocrError}

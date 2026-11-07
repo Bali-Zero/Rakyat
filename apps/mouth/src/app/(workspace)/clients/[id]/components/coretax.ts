@@ -5,12 +5,12 @@
 // client's documents — a `coretax_access` document means access is on file, an
 // `efin` document means the EFIN is.
 
-export interface CoretaxDocumentLike {
+import { isLive, type LivenessFields } from "./documentValidity";
+
+export interface CoretaxDocumentLike extends LivenessFields {
   document_type: string;
   issue_date?: string;
   created_at?: string;
-  is_archived?: boolean;
-  deleted_at?: string | null;
 }
 
 /**
@@ -33,10 +33,6 @@ export interface CoretaxStatus {
   efin: { onFile: boolean; date: string | null };
 }
 
-function live(d: CoretaxDocumentLike): boolean {
-  return !d.is_archived && !d.deleted_at;
-}
-
 function newest(docs: CoretaxDocumentLike[]): string | null {
   const dates = docs
     .map((d) => d.issue_date || d.created_at || "")
@@ -49,9 +45,9 @@ export function coretaxStatus(
   docs: readonly CoretaxDocumentLike[],
 ): CoretaxStatus {
   const access = docs.filter(
-    (d) => d.document_type === "coretax_access" && live(d),
+    (d) => d.document_type === "coretax_access" && isLive(d),
   );
-  const efin = docs.filter((d) => d.document_type === "efin" && live(d));
+  const efin = docs.filter((d) => d.document_type === "efin" && isLive(d));
   return {
     coretaxAccess: { onFile: access.length > 0, date: newest(access) },
     efin: { onFile: efin.length > 0, date: newest(efin) },
