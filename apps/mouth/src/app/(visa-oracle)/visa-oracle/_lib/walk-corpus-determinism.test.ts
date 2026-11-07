@@ -69,7 +69,7 @@ import { DEFAULT_OUT_DIR } from "../../../../../scripts/visa-oracle/generate-wal
  * question and its first option is `idr` (tree.ts), so the untouched
  * defaults now also answer the now-reachable `investment_capital_idr` —
  * `investment.investment_capital_idr` moves UNKNOWN(NOT_ASKED) ->
- * KNOWN(9900000019) on all three, `pt_pma`/`property`/`bank_deposit` stay
+ * KNOWN(1000000000) on all three, `pt_pma`/`property`/`bank_deposit` stay
  * byte-identical (that branch, and the E28A rules that read it, are
  * deliberately untouched). See generate-walk-corpus.ts.
  *

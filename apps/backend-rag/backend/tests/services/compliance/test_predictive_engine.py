@@ -18,10 +18,10 @@ from backend.services.compliance.renewal_rules import RENEWAL_RULES
 SAMPLE_PRICES: dict = {
     "services": {
         "kitas_permits": {
-            "Investor KITAS 2 Years (Extend)": {"price": "10.000.013 IDR"},
+            "Investor KITAS 2 Years (Extend)": {"price": "18.000.000 IDR"},
             "Spouse 1 Year (Extend)": {"price": "9.000.000 IDR"},
-            "E33G Remote Worker (Extend)": {"price": "84.000.510 IDR"},
-            "Retirement (Extend)": {"price": "84.000.510 IDR"},
+            "E33G Remote Worker (Extend)": {"price": "10.000.000 IDR"},
+            "Retirement (Extend)": {"price": "10.000.000 IDR"},
             "Dependent 1 Year (Extend)": {"price": "9.000.000 IDR"},
             "Working KITAS (Extend)": {"price": "31.500.000 IDR"},
         },

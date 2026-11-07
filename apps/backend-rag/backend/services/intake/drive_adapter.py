@@ -61,17 +61,29 @@ the done lines add up to the ones the tick returns; a line's ``from_token`` is t
 fails: that ends the tick without a line of its own (nothing is lost, the cursor stays where it
 was) and its "Drive enumeration failed" WARNING is the terminal signal. A tick that cannot start
 (no scope folder, no Drive service) has no done line either; its WARNING says why.
+Re-enqueue by file id (``reenqueue_drive_files``): a change the feed dropped before the cursor discipline
+above, which nothing emits again, is read again by its Drive file id. Each id is read with files.get, goes
+through the SAME skips and scope walk as a change of the drain (``_ingest_change``) and is then only counted
+(dry run: no download, no enqueue; the queue row is looked up by ``source_ref``) or downloaded and enqueued
+(apply: ``enqueue`` is idempotent on ``intake_key``, so a second apply adds nothing). The cursor is never
+touched. Ids go one at a time with a short pause; before each id of an apply the disk floor is checked (below
+it the run stops, loudly, ``disk_hold=1``); a file Drive no longer serves is ``missing``, any other fault
+``errors``, with no retry. Logs carry ids and counts only.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
 import os
+import re
 import shutil
+import stat
 import time
 import traceback
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import ROUND_CEILING, Context, Decimal, InvalidOperation, Overflow
 from pathlib import Path
@@ -135,14 +147,75 @@ _GIB = 2**30
 # big) raises Overflow in the decimal arithmetic and is the default with a WARNING.
 _FLOOR_EMAX = 4000
 
+# A Drive file id as the Drive API issues them. The ids of a re-enqueue come from a file somebody wrote, and
+# an id becomes part of a path on disk and of a queue key: anything else is refused before any Drive call.
+_FILE_ID_RE = re.compile(r"[A-Za-z0-9_-]{10,100}")
+
+# Pause between two ids of a re-enqueue: one id at a time, no burst against the Drive API.
+_REENQUEUE_PAUSE_S = 0.25
+
 
 def _local_blob_path(file_id: str, file_name: str) -> Path:
     safe_name = file_name.replace("/", "_") if file_name else file_id
     return _BLOB_ROOT / file_id[:2] / f"{file_id}__{safe_name}"
 
 
+def _write_all(fd: int, data: bytes) -> None:
+    """os.write until every byte is out: one call may take fewer (the seam the tests break a write at)."""
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        if written <= 0:
+            raise OSError("a write made no progress")
+        view = view[written:]
+
+
+def _mode_of_the_blob(dest: Path, new_file_mode: int) -> int:
+    """The permission bits the blob at ``dest`` ends with: its own when it exists, else a new file's."""
+    try:
+        return stat.S_IMODE(dest.stat().st_mode)
+    except FileNotFoundError:
+        return new_file_mode
+
+
+def _write_atomically(dest: Path, data: bytes) -> None:
+    """Put ``data`` at ``dest`` in one step: it is staged beside the destination and renamed onto it.
+
+    A write that fails (disk full, an I/O error, an interrupt) leaves no file at ``dest`` and no stage: a
+    blob already there is never truncated and keeps its mode, and a missing one never shows up half
+    written. The stage lives in the destination's directory (so the rename stays inside one filesystem)
+    and carries a name of its own that holds no part of the Drive name.
+
+    The blob ends with the mode an in-place write would have left it: a blob already at ``dest`` keeps its
+    permission bits, a new one gets what the kernel gives a new file, 0o666 minus the umask, which is read
+    off the stage as it is born (os.umask() is process-global and racy, so it is never called). While the
+    bytes are written the stage is never more permissive than 0o600, whatever its final mode will be.
+    Atomic against a failed write, not against a power cut: nothing is fsynced, as before.
+    """
+    stage = dest.parent / f".stage-{os.urandom(8).hex()}.part"
+    fd = os.open(stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    try:
+        try:
+            born_with = stat.S_IMODE(os.fstat(fd).st_mode)
+            os.fchmod(fd, born_with & 0o600)  # narrowed before the first byte
+            _write_all(fd, data)
+            os.fchmod(fd, _mode_of_the_blob(dest, born_with))
+        finally:
+            os.close(fd)
+        os.replace(stage, dest)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(stage)
+        raise
+
+
 async def _download_file(drive_service, file_id: str, dest: Path) -> int:
-    """Download Drive file bytes to dest via get_media. Returns byte size."""
+    """Download Drive file bytes to dest via get_media. Returns byte size.
+
+    The file appears at ``dest`` whole or not at all (``_write_atomically``): the drain and the re-enqueue
+    both come through here, and a blob that ``enqueue`` hashes must never be a truncated one. A blob that
+    is downloaded again keeps the permission bits it had, as an in-place write leaves them.
+    """
     import asyncio
     import io
 
@@ -159,7 +232,7 @@ async def _download_file(drive_service, file_id: str, dest: Path) -> int:
 
     data = await asyncio.to_thread(_blocking_download)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(data)
+    _write_atomically(dest, data)
     return len(data)
 
 
@@ -171,6 +244,24 @@ async def _folder_meta(drive_service, folder_id: str) -> dict[str, Any]:
         return (
             drive_service.service.files()
             .get(fileId=folder_id, fields="id, name, parents", supportsAllDrives=True)
+            .execute()
+        )
+
+    return await asyncio.to_thread(_blocking_get)
+
+
+async def _file_meta(drive_service, file_id: str) -> dict[str, Any]:
+    """files.get for one file, with the fields a change of the feed carries (see list_changes_since)."""
+    import asyncio
+
+    def _blocking_get() -> dict[str, Any]:
+        return (
+            drive_service.service.files()
+            .get(
+                fileId=file_id,
+                fields="id, name, mimeType, parents, trashed",
+                supportsAllDrives=True,
+            )
             .execute()
         )
 
@@ -369,6 +460,24 @@ def _new_counters() -> dict[str, int]:
     }
 
 
+def _new_reenqueue_counters(requested: int) -> dict[str, int]:
+    """The counters of a re-enqueue. Each requested id lands in exactly one of them, except
+    ``disk_hold`` (a flag) and ``requested`` itself."""
+    return {
+        "requested": requested,
+        "would_enqueue_new": 0,
+        "enqueued_new": 0,
+        "already_present": 0,
+        "skipped_native": 0,
+        "skipped_removed": 0,
+        "skipped_out_of_scope": 0,
+        "missing": 0,
+        "errors": 0,
+        "not_attempted": 0,
+        "disk_hold": 0,
+    }
+
+
 def _clock() -> float:
     return time.monotonic()
 
@@ -509,6 +618,112 @@ class _Page:
     listed: bool = True
 
 
+async def _already_queued(pool: asyncpg.Pool, file_id: str) -> bool:
+    """True when the queue has a row for this Drive file, whatever its content or stage.
+
+    Only a plain True or False is an answer: anything else raises, so a dry run never guesses.
+    """
+    async with pool.acquire() as conn:
+        found = await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM intake_queue WHERE source_ref = $1)", f"drive:{file_id}"
+        )
+    if found is True or found is False:
+        return found
+    raise TypeError("the queue lookup did not answer with a boolean")
+
+
+async def _ingest_change(
+    pool: asyncpg.Pool,
+    drive_service,
+    scope_id: str,
+    change: dict[str, Any],
+    folder_cache: dict[str, dict[str, Any]],
+    counters: dict[str, int],
+    failures: list[tuple[str, bool]],
+    *,
+    dry_run: bool = False,
+) -> None:
+    """ONE change of the feed: skip it, or scope-check, download and enqueue it.
+
+    The body of the drain loop, moved here unchanged. It counts what it did in ``counters`` and
+    appends a change that failed to ``failures`` as ``(file_id, permanent Drive error of that
+    file?)``: a Drive, disk or DB fault of its own change is recorded there, never raised.
+    ``dry_run`` (a re-enqueue that only looks; the drain never sets it) stops after the scope walk:
+    no download, no enqueue, and the file counts as ``would_enqueue_new`` or ``already_present``.
+    """
+    if change.get("removed"):
+        counters["skipped_removed"] += 1
+        return
+    file_meta = change.get("file") or {}
+    file_id = change.get("fileId") or file_meta.get("id")
+    if not file_id or file_meta.get("trashed"):
+        counters["skipped_removed"] += 1
+        return
+    mime_type = file_meta.get("mimeType", "")
+    if mime_type.startswith(_GOOGLE_NATIVE_PREFIX):
+        # Google-native docs have no downloadable binary blob to hash.
+        # (Folders are google-apps.folder → also skipped here.)
+        counters["skipped_native"] += 1
+        return
+
+    # Scope filter (m227): only files whose ancestor chain reaches the
+    # watched root are ingested; the walk yields the relative folder path.
+    try:
+        rel_dir = await _resolve_relative_dir(
+            drive_service, file_meta.get("parents"), scope_id, folder_cache
+        )
+    except Exception as exc:
+        # A lookup that FAILED says nothing about the scope: retry the change (cursor
+        # held, same bookkeeping as a failed download), never count it out of scope.
+        why = _failure_summary(exc)
+        logger.warning("drain_drive: ancestor walk failed for file_id=%s (%s)", file_id, why)
+        counters["errors"] += 1
+        failures.append((file_id, _is_permanent_file_error(exc)))
+        return
+    if rel_dir is None:
+        counters["skipped_out_of_scope"] += 1
+        return
+
+    if dry_run:
+        # A look, not a load. The queue row is found by its source_ref; an apply decides by
+        # intake_key, which also holds the content hash.
+        try:
+            queued = await _already_queued(pool, file_id)
+        except Exception as exc:
+            why = _failure_summary(exc)
+            logger.error("drain_drive queue lookup failed for file_id=%s (%s)", file_id, why)
+            counters["errors"] += 1
+            failures.append((file_id, _is_permanent_file_error(exc)))
+            return
+        counters["already_present" if queued else "would_enqueue_new"] += 1
+        return
+
+    file_name = file_meta.get("name", file_id)
+    source_path = f"{rel_dir}/{file_name}" if rel_dir else file_name
+    dest = _local_blob_path(file_id, file_name)
+    try:
+        byte_size = await _download_file(drive_service, file_id, dest)
+        res = await enqueue(
+            pool,
+            source=_SOURCE,
+            source_ref=f"drive:{file_id}",
+            blob_path=dest,
+            mime_type=mime_type or None,
+            byte_size=byte_size,
+            source_path=source_path,
+        )
+    except Exception as exc:
+        why = _failure_summary(exc)
+        logger.error("drain_drive enqueue failed for file_id=%s (%s)", file_id, why)
+        counters["errors"] += 1
+        failures.append((file_id, _is_permanent_file_error(exc)))
+        return
+    if res.was_new:
+        counters["enqueued_new"] += 1
+    else:
+        counters["already_present"] += 1
+
+
 async def _drain_page(
     pool: asyncpg.Pool,
     drive_service,
@@ -538,63 +753,9 @@ async def _drain_page(
     failures: list[tuple[str, bool]] = []  # (file_id, permanent Drive error of that file?)
 
     for change in changes:
-        if change.get("removed"):
-            counters["skipped_removed"] += 1
-            continue
-        file_meta = change.get("file") or {}
-        file_id = change.get("fileId") or file_meta.get("id")
-        if not file_id or file_meta.get("trashed"):
-            counters["skipped_removed"] += 1
-            continue
-        mime_type = file_meta.get("mimeType", "")
-        if mime_type.startswith(_GOOGLE_NATIVE_PREFIX):
-            # Google-native docs have no downloadable binary blob to hash.
-            # (Folders are google-apps.folder → also skipped here.)
-            counters["skipped_native"] += 1
-            continue
-
-        # Scope filter (m227): only files whose ancestor chain reaches the
-        # watched root are ingested; the walk yields the relative folder path.
-        try:
-            rel_dir = await _resolve_relative_dir(
-                drive_service, file_meta.get("parents"), scope_id, folder_cache
-            )
-        except Exception as exc:
-            # A lookup that FAILED says nothing about the scope: retry the change (cursor
-            # held, same bookkeeping as a failed download), never count it out of scope.
-            why = _failure_summary(exc)
-            logger.warning("drain_drive: ancestor walk failed for file_id=%s (%s)", file_id, why)
-            counters["errors"] += 1
-            failures.append((file_id, _is_permanent_file_error(exc)))
-            continue
-        if rel_dir is None:
-            counters["skipped_out_of_scope"] += 1
-            continue
-
-        file_name = file_meta.get("name", file_id)
-        source_path = f"{rel_dir}/{file_name}" if rel_dir else file_name
-        dest = _local_blob_path(file_id, file_name)
-        try:
-            byte_size = await _download_file(drive_service, file_id, dest)
-            res = await enqueue(
-                pool,
-                source=_SOURCE,
-                source_ref=f"drive:{file_id}",
-                blob_path=dest,
-                mime_type=mime_type or None,
-                byte_size=byte_size,
-                source_path=source_path,
-            )
-        except Exception as exc:
-            why = _failure_summary(exc)
-            logger.error("drain_drive enqueue failed for file_id=%s (%s)", file_id, why)
-            counters["errors"] += 1
-            failures.append((file_id, _is_permanent_file_error(exc)))
-            continue
-        if res.was_new:
-            counters["enqueued_new"] += 1
-        else:
-            counters["already_present"] += 1
+        await _ingest_change(
+            pool, drive_service, scope_id, change, folder_cache, counters, failures
+        )
 
     # Move our cursor to the feed's continuation, unless a change of this page failed: then
     # HOLD it (the page is re-listed next tick; enqueue is idempotent). The hold has no tick
@@ -769,4 +930,86 @@ async def drain_drive(
         if stop != "continue":
             break
         page_token, held_ticks = page.cursor, 0
+    return counters
+
+
+async def _pause(seconds: float) -> None:
+    """The short wait between two ids of a re-enqueue (a function of its own so a test never sleeps)."""
+    import asyncio
+
+    await asyncio.sleep(seconds)
+
+
+async def reenqueue_drive_files(
+    pool: asyncpg.Pool,
+    drive_service,
+    scope_id: str,
+    file_ids: Sequence[str],
+    *,
+    apply: bool,
+    min_free_gib: float | Decimal | None = None,
+    pause_s: float | None = None,
+) -> dict[str, int]:
+    """Read again, by Drive file id, files the changes feed never delivered; enqueue them on ``apply``.
+
+    The cursor discipline (module docstring) keeps a tick from losing a change, but a change dropped
+    before it landed is never emitted again. For each id, one at a time: files.get, then the drain's own
+    skips (trashed, Google-native, out of scope) and scope walk (``_ingest_change``). ``apply=False`` only
+    looks: no download, no enqueue, and the file counts as ``would_enqueue_new`` or, when the queue
+    already has a row for its ``source_ref``, ``already_present``. ``apply=True`` downloads and enqueues
+    exactly as the drain does (``enqueue`` is idempotent on ``intake_key``: a second apply adds nothing).
+    The cursor is never touched.
+
+    Before every id of an apply the disk floor is checked (``_floor_bytes``, ``min_free_gib`` beats the
+    environment): below it the run stops, loudly, with ``disk_hold=1`` and the ids left in
+    ``not_attempted``. A file Drive no longer serves (a permanent error of files.get) is ``missing``; any
+    other fault of an id (Drive, disk, DB, an ancestor lookup) is ``errors``, with no retry. Logs carry
+    ids and counts only, never a name or a path.
+
+    Raises ValueError for an empty scope or an entry that is not a Drive file id, and TypeError when
+    ``apply`` is not a bool, all before any Drive call. Returns the counters of ``_new_reenqueue_counters``.
+    """
+    if not isinstance(apply, bool):
+        raise TypeError("apply must be True or False")
+    if not isinstance(scope_id, str) or not scope_id.strip():
+        raise ValueError("a scope folder id is required")
+    ids = list(file_ids)
+    for position, file_id in enumerate(ids):
+        if not isinstance(file_id, str) or _FILE_ID_RE.fullmatch(file_id) is None:
+            raise ValueError(f"entry {position} is not a Drive file id")
+
+    counters = _new_reenqueue_counters(len(ids))
+    min_free = _floor_bytes(min_free_gib)
+    pause = _REENQUEUE_PAUSE_S if pause_s is None else pause_s
+    folder_cache: dict[str, dict[str, Any]] = {}
+    for position, file_id in enumerate(ids):
+        if apply:
+            reason = _disk_floor_breach(min_free)
+            if reason is not None:
+                logger.error("reenqueue_drive: %s, stopping without downloading", reason)
+                counters["disk_hold"] = 1
+                counters["not_attempted"] = len(ids) - position
+                break
+        if position:
+            await _pause(pause)
+        try:
+            file_meta = await _file_meta(drive_service, file_id)
+        except Exception as exc:
+            why = _failure_summary(exc)
+            if _is_permanent_file_error(exc):
+                logger.warning(
+                    "reenqueue_drive: file_id=%s is gone or unreadable (%s)", file_id, why
+                )
+                counters["missing"] += 1
+            else:
+                logger.warning(
+                    "reenqueue_drive: files.get failed for file_id=%s (%s)", file_id, why
+                )
+                counters["errors"] += 1
+            continue
+        change = {"fileId": file_id, "removed": False, "file": file_meta}
+        await _ingest_change(
+            pool, drive_service, scope_id, change, folder_cache, counters, [], dry_run=not apply
+        )
+    logger.info("reenqueue_drive done: apply=%s %s", apply, counters)
     return counters

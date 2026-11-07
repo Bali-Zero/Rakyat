@@ -57,7 +57,7 @@ describe("UpgradedLoginPage (R19 concept F sign-in)", () => {
 
     expect(container.querySelector(".r19-gate")).not.toBeNull();
     expect(container.querySelector(".r19-hero")).not.toBeNull();
-    // The qihed-bentar gate scene, its starfield and its re-light class are gone.
+    // The candi-bentar gate scene, its starfield and its re-light class are gone.
     expect(container.querySelector(".gate-scene")).toBeNull();
     expect(container.querySelector("svg circle")).toBeNull();
   });
@@ -83,7 +83,7 @@ describe("UpgradedLoginPage (R19 concept F sign-in)", () => {
   it("the email field is the paper form control with a copper focus ring", () => {
     render(<UpgradedLoginPage />);
 
-    const email = screen.getByPlaceholderText("uxxxx4@dxxxxx2.com");
+    const email = screen.getByPlaceholderText("client@company.com");
     expect(email.className).toContain("r19-input");
 
     const eyebrow = screen.getByText("Sign in · step 1 of 2");
@@ -101,7 +101,7 @@ describe("UpgradedLoginPage (R19 concept F sign-in)", () => {
   it("email step advances to the PIN step with the R19 controls", async () => {
     render(<UpgradedLoginPage />);
 
-    fireEvent.change(screen.getByPlaceholderText("uxxxx4@dxxxxx2.com"), {
+    fireEvent.change(screen.getByPlaceholderText("client@company.com"), {
       target: { value: "synthetic.user@example.test" },
     });
     fireEvent.click(screen.getByRole("button", { name: /Continue/ }));

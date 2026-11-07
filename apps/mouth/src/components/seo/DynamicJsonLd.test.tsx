@@ -57,7 +57,7 @@ describe("DynamicJsonLd on /services/tax", () => {
     );
     expect(npwp).toBeDefined();
     expect(npwp).not.toHaveProperty("priceSpecification");
-    expect(npwp?.price).toBe("1000001");
+    expect(npwp?.price).toBe("1000000");
     expect(npwp?.priceCurrency).toBe("IDR");
   });
 

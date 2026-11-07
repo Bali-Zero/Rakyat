@@ -3045,7 +3045,7 @@ def test_corpus_has_the_expected_real_interview_walks(walks: dict[str, dict[str,
     `investment_currency` as their branch's new first question, and its
     first OPTION is `idr` (tree.ts), so the untouched default answers it and
     the now-reachable `investment_capital_idr` too — that fact moves
-    UNKNOWN(NOT_ASKED) -> KNOWN(9900000019) on all three, verified by
+    UNKNOWN(NOT_ASKED) -> KNOWN(1000000000) on all three, verified by
     `test_every_walk_ends_in_its_pinned_outcome` staying green on their
     unmoved EXPECTED_OUTCOME entries. `pt_pma`/`property`/`bank_deposit` are
     untouched, byte-for-byte — that branch, and the E28A rules that read it,

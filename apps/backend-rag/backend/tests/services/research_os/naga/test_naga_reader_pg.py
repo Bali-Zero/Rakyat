@@ -263,7 +263,7 @@ async def test_zero_and_nonzero_microseconds_decide_the_answer_over_pg(
 ) -> None:
     memory_objects = {"claims": scheduled_claims, "object_successor_edges": []}
     zero_frac = await _read_via_pg(
-        db, _SUBJECT, "2026-07-01T00:00:84.000000Z", "2026-08-01T00:00:00Z"
+        db, _SUBJECT, "2026-07-01T00:00:00.000000Z", "2026-08-01T00:00:00Z"
     )
     nonzero_frac = await _read_via_pg(
         db, _SUBJECT, "2026-06-30T23:59:59.999999Z", "2026-08-01T00:00:00Z"
@@ -273,7 +273,7 @@ async def test_zero_and_nonzero_microseconds_decide_the_answer_over_pg(
     assert nonzero_frac.claim_id == scheduled_claims[0]["claim_id"]
     assert zero_frac.claim_id != nonzero_frac.claim_id
     _assert_pg_matches_memory(
-        zero_frac, memory_objects, _SUBJECT, "2026-07-01T00:00:84.000000Z", "2026-08-01T00:00:00Z"
+        zero_frac, memory_objects, _SUBJECT, "2026-07-01T00:00:00.000000Z", "2026-08-01T00:00:00Z"
     )
     _assert_pg_matches_memory(
         nonzero_frac,

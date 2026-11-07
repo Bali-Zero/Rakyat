@@ -18,6 +18,14 @@ import type { LoginStage } from "./contract";
 import "../portal/r19-fonts.css";
 
 /**
+ * The root re-declares data-theme/data-product because the staff gate is kita
+ * by definition, while the pre-paint script derives the persona from the host
+ * and the stored theme: on any host that is not `kita.` (or with a stored
+ * editorial/dark choice) <html> resolves the editorial block, whose
+ * --font-serif is Cormorant and whose ground is night. The attributes make the
+ * kita block match THIS subtree, so the heading face (IBM Plex Sans) and the
+ * forest ground no longer depend on where the page is served.
+ *
  * The staff gate, on concept-K "SIAP".
  *
  * What went, and why. The page used to play theatre: a system sound on focus,
@@ -59,13 +67,13 @@ import "../portal/r19-fonts.css";
  */
 
 const FIELD =
-  "w-full h-[52px] bg-transparent border-0 border-b border-[var(--line-control)] " +
-  "px-0.5 text-[14px] text-[var(--tx-pure)] placeholder:text-[var(--tx-secondary)] " +
-  "focus:outline-none focus:border-[var(--bz-copper)] " +
-  "focus:shadow-[0_1px_0_0_var(--bz-copper)] disabled:opacity-50";
+  "w-full h-[52px] bg-transparent border-0 border-b border-[var(--bz-panel-line)] " +
+  "px-0.5 text-[14px] text-[var(--bz-on-panel)] placeholder:text-[var(--bz-on-panel-muted)] " +
+  "focus:outline-none focus:border-[var(--bz-panel-link)] " +
+  "focus:shadow-[0_1px_0_0_var(--bz-panel-link)] disabled:opacity-50";
 
 const LABEL =
-  "block text-[10px] font-[650] uppercase tracking-[0.14em] text-[var(--tx-secondary)]";
+  "block text-[10px] font-[650] uppercase tracking-[0.14em] text-[var(--bz-on-panel-muted)]";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -125,8 +133,12 @@ export default function LoginPage() {
         : null;
 
   return (
-    <div className="flex min-h-screen w-full flex-col bg-[var(--bz-base)] text-[var(--tx-pure)] lg:flex-row">
-      {/* The one forest surface in kita. A 120px band on a phone. */}
+    <div
+      data-theme="operative-light"
+      data-product="kita"
+      className="flex min-h-screen w-full flex-col bg-[var(--bz-panel)] text-[var(--bz-on-panel)] lg:flex-row"
+    >
+      {/* Forest, edge to edge. A 120px band on a phone. */}
       <section
         className="flex h-[120px] w-full shrink-0 flex-col justify-between px-6 py-5 lg:h-auto lg:min-h-screen lg:w-[40%] lg:px-14 lg:py-12"
         style={{
@@ -148,8 +160,7 @@ export default function LoginPage() {
               className="text-[26px] leading-none tracking-[-0.03em] lg:text-[34px]"
               style={{
                 fontFamily: "var(--font-serif)",
-                fontWeight: 450,
-                fontVariationSettings: '"opsz" 144',
+                fontWeight: 500,
               }}
             >
               kita.
@@ -169,27 +180,26 @@ export default function LoginPage() {
         <div className="w-full max-w-[380px]">
           <div
             aria-hidden="true"
-            className="mb-5 h-[3px] w-14 rounded-sm bg-[var(--bz-copper)]"
+            className="mb-5 h-[3px] w-14 rounded-sm bg-[var(--bz-panel-link)]"
           />
           <h1
             className="text-[28px] leading-[1.06] tracking-[-0.03em] lg:text-[30px]"
             style={{
               fontFamily: "var(--font-serif)",
-              fontWeight: 450,
-              fontVariationSettings: '"opsz" 144',
+              fontWeight: 500,
             }}
           >
             Welcome back.
           </h1>
 
-          <p className="mt-3 text-[13px] text-[var(--tx-secondary)]">
+          <p className="mt-3 text-[13px] text-[var(--bz-on-panel-muted)]">
             Sign in with your Bali Zero email and PIN.
           </p>
 
           {notice && (
             <p
               role="alert"
-              className="mt-5 border border-[var(--bz-copper)] px-3 py-2.5 text-[13px] text-[var(--bz-copper-text)]"
+              className="mt-5 border border-[var(--bz-panel-link)] px-3 py-2.5 text-[13px] text-[var(--bz-panel-link)]"
             >
               {notice}
             </p>
@@ -241,19 +251,19 @@ export default function LoginPage() {
               disabled={busy}
               className="mt-1 h-12 w-full text-[13px] font-[650] tracking-[0.02em] transition-opacity disabled:opacity-55"
               style={{
-                background: "var(--bz-panel)",
-                color: "var(--bz-on-panel)",
+                background: "var(--bz-on-panel)",
+                color: "var(--bz-panel)",
               }}
             >
               {loginStage === "authenticating" ? "Signing in…" : "Enter"}
             </button>
           </form>
 
-          <p className="mt-9 text-[12px] text-[var(--tx-secondary)]">
+          <p className="mt-9 text-[12px] text-[var(--bz-on-panel-muted)]">
             Looking for the client portal?{" "}
             <a
               href="https://my.balizero.com"
-              className="font-[650] text-[var(--bz-copper-text)] underline underline-offset-[3px]"
+              className="font-[650] text-[var(--bz-panel-link)] underline underline-offset-[3px]"
             >
               my.balizero.com
             </a>

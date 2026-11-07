@@ -76,18 +76,18 @@ ogImage: "/static/insights/business/restaurant-business-guide.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "id"
-source_sha256: "106b31e481cc43afe036aec79fdd8c1a52528f1f0c8e81029621865a930eca0e"
+source_sha256: "65776fc40ec3f2226bb8d45d2482aad7eb24719a43666c92f145b48625f8e55b"
 ---
 
-# Memulai Restoran di Indonesia 2026: Panduan Lengkap untuk Warga Asing
+# Memulai Restoran di Indonesia 2026: Panduan Lengkap untuk W asing
 
-Membuka restoran di Indonesia sebagai warga asing sangat mungkin dilakukan, namun memerlukan struktur dan perizinan yang tepat. Berikut adalah panduan lengkap Anda.
+Membuka restoran di Indonesia sebagai warga asing sepenuhnya mungkin, namun memerlukan struktur dan perizinan yang tepat. Berikut adalah panduan lengkap Anda.
 
 ## Apakah Warga Asing Bisa Membuka Restoran?
 
 <InfoCard variant="note" title="Ya, Tapi Dengan Syarat">
 
-Warga asing dapat memiliki restoran di Indonesia melalui **PT PMA** (perusahaan investasi asing). Syarat utama: - Investasi minimum: IDR 10 miliar (~USD 625.000) - Tidak bisa berupa warung kecil/jualan makanan jalanan - Harus merupakan usaha restoran formal - Memerlukan berbagai izin dan lisensi
+Warga asing dapat memiliki restoran di Indonesia melalui **PT PMA** (perusahaan investasi asing). Persyaratan utama: - Investasi minimum: IDR 10 miliar (~USD 625.000) - Tidak bisa berupa warung kecil/food street - Harus merupakan usaha restoran formal - Memerlukan berbagai izin dan perizinan
 
 </InfoCard>
 
@@ -101,7 +101,7 @@ Warga asing dapat memiliki restoran di Indonesia melalui **PT PMA** (perusahaan 
   items={[
     {
       name: "PT PMA (Langsung)",
-      subtitle: "Perusahaan yang dimiliki asing",
+      subtitle: "Perusahaan milik asing",
       values: {
         "Kepemilikan Asing": "100%",
         Investasi: "Minimal IDR 10Miliar",
@@ -111,7 +111,7 @@ Warga asing dapat memiliki restoran di Indonesia melalui **PT PMA** (perusahaan 
       highlight: true,
     },
     {
-      name: "PT Lokal + Penandatangan Nama",
+      name: "PT Lokal + Nominee",
       subtitle: "Perusahaan lokal (berisiko)",
       values: {
         "Kepemilikan Asing": "0% resmi",
@@ -124,18 +124,18 @@ Warga asing dapat memiliki restoran di Indonesia melalui **PT PMA** (perusahaan 
       name: "Franchise",
       subtitle: "Lisensi merek Indonesia",
       values: {
-        "Kepemilikan Asing": "Beragam",
-        Investasi: "Beragam",
-        Kontrol: "Berpisah",
+        "Kepemilikan Asing": "Berbeda-beda",
+        Investasi: "Berbeda-beda",
+        Kontrol: "Bersama",
         "Cocok Untuk": "Konsep yang dikenal",
       },
     },
   ]}
 />
 
-<InfoCard variant="warning" title="Hindari Penyusunan Penandatangan Nama">
+<InfoCard variant="warning" title="Hindari Penyusunan Nominee">
 
-Menggunakan penandatangan nama Indonesia untuk memegang saham adalah ilegal dan berisiko. Jika ditemukan, Anda bisa kehilangan segalanya. Gunakan struktur PT PMA yang tepat.
+Menggunakan nominee Indonesia untuk memegang saham adalah ilegal dan berisiko. Jika ditemukan, Anda bisa kehilangan segalanya. Gunakan struktur PT PMA yang tepat.
 
 </InfoCard>
 
@@ -184,7 +184,7 @@ Menggunakan penandatangan nama Indonesia untuk memegang saham adalah ilegal dan 
     }
   ]}
   calculateResult={(values) => {
-    // Biaya dasar setup berdasarkan lokasi
+    // Biaya dasar per lokasi
     const locationCosts = {
       "bali-premium": 4000000000,
       "bali-standard": 2500000000,
@@ -210,8 +210,8 @@ Menggunakan penandatangan nama Indonesia untuk memegang saham adalah ilegal dan 
     const base = locationCosts[values.location];
     const multiplier = sizeMultipliers[values.size];
     const addition = conceptAdditions[values.concept];
-    const companySetup = 100000000; // Setup PT PMA
-    const workingCapital = 1000000000; // Operasi 6 bulan
+    const companySetup = 100000000; // Pembentukan PT PMA
+    const workingCapital = 1000000000; // Operasional 6 bulan
 
     const setupCost = (base * multiplier) + addition;
     const total = setupCost + companySetup + workingCapital;
@@ -222,13 +222,13 @@ Menggunakan penandatangan nama Indonesia untuk memegang saham adalah ilegal dan 
     return {
       total: finalTotal,
       breakdown: [
-        { label: "Setup Restoran", amount: setupCost },
+        { label: "Pembangunan Restoran", amount: setupCost },
         { label: "Pembentukan PT PMA", amount: companySetup },
         { label: "Modal Kerja (6 bulan)", amount: workingCapital },
         { label: "Total Investasi", amount: finalTotal }
       ],
       currency: "IDR",
-      note: `Memenuhi minimal PMA IDR 10Miliar: ${finalTotal >= 10000000000 ? "Ya ✅" : "Perlu investasi tambahan"}`
+      note: `Memenuhi minimal PMA IDR 10B: ${finalTotal >= 10000000000 ? "Ya ✅" : "Perlu investasi tambahan"}`
     };
 
 }}
@@ -252,14 +252,14 @@ Menggunakan penandatangan nama Indonesia untuk memegang saham adalah ilegal dan 
     },
     {
       id: "izin-usaha",
-      label: "Izin Usaha (Lisensi Bisnis)",
-      description: "Izin aktivitas restoran",
+      label: "Izin Usaha",
+      description: "Izin kegiatan restoran",
       required: true,
       category: "company",
     },
     {
       id: "tdup",
-      label: "TDUP (Izin Bisnis Pariwisata)",
+      label: "TDUP (Izin Usaha Pariwisata)",
       description: "Jika di area wisata (Bali)",
       required: false,
       category: "industry",
@@ -273,14 +273,14 @@ Menggunakan penandatangan nama Indonesia untuk memegang saham adalah ilegal dan 
     },
     {
       id: "bpom",
-      label: "Pendaftaran BPOM",
+      label: "Registrasi BPOM",
       description: "Untuk makanan kemasan/olahan",
       required: false,
       category: "industry",
     },
     {
       id: "liquor",
-      label: "SIUP-MB (Lisensi Minuman Beralkohol)",
+      label: "SIUP-MB (Izin Minuman Beralkohol)",
       description: "Jika menyajikan alkohol",
       required: false,
       category: "special",
@@ -326,10 +326,10 @@ Menggunakan penandatangan nama Indonesia untuk memegang saham adalah ilegal dan 
 
 ---
 
-## Proses Setup
+## Proses Pembentukan
 
 <JourneyMap
-  title="Perjalanan Setup Restoran"
+  title="Jalur Pembentukan Restoran"
   description="Dari ide hingga pembukaan"
   estimatedTotal="4-6 bulan"
   steps={[
@@ -342,7 +342,7 @@ Menggunakan penandatangan nama Indonesia untuk memegang saham adalah ilegal dan 
       tips: [
         "Tentukan konsep restoran",
         "Riset opsi lokasi",
-        "Buat anggaran rinci",
+        "Buat anggaran terperinci",
         "Identifikasi pasar sasaran",
       ],
     },
@@ -381,20 +381,20 @@ Menggunakan penandatangan nama Indonesia untuk memegang saham adalah ilegal dan 
         "NIB melalui OSS",
         "Izin khusus industri",
         "Inspeksi departemen kesehatan",
-        "Lisensi alkohol jika diperlukan",
+        "Izin alkohol jika diperlukan",
       ],
     },
     {
       id: "build",
-      title: "Renovasi & Peralatan",
-      description: "Renovasi dan lengkapi peralatan",
+      title: "Pembangunan Interior",
+      description: "Renovasi dan peralatan",
       duration: "6-12 minggu",
       status: "required",
       tips: [
         "Desain dapur dan peralatan",
         "Desain interior",
         "Sistem keselamatan",
-        "Izin signage",
+        "Izin penandaan",
       ],
     },
     {
@@ -406,7 +406,7 @@ Menggunakan penandatangan nama Indonesia untuk memegang saham adalah ilegal dan 
       tips: [
         "Rekrut sebelum pembukaan",
         "Latih konsep dan layanan",
-        "Daftar dengan BPJS",
+        "Daftar ke BPJS",
         "Buat SOP",
       ],
     },
@@ -417,7 +417,7 @@ Menggunakan penandatangan nama Indonesia untuk memegang saham adalah ilegal dan 
       duration: "2-4 minggu",
       status: "final",
       tips: [
-        "Mulai dengan jam/daftar menu terbatas",
+        "Mulai dengan jam dan menu terbatas",
         "Kumpulkan umpan balik",
         "Perbaiki masalah operasional",
         "Pembukaan besar saat siap",
@@ -428,28 +428,28 @@ Menggunakan penandatangan nama Indonesia untuk memegang saham adalah ilegal dan 
 
 ---
 
-## Lisensi Alkohol (SIUP-MB)
+## Izin Minuman Beralkohol (SIUP-MB)
 
 Jika Anda ingin menyajikan alkohol:
 
-<InfoCard variant="warning" title="Lisensi Alkohol Itu Kompleks">
-Lisensi minuman beralkohol di Indonesia:
-- Sangat diatur
+<InfoCard variant="warning" title="Izin Alkohol Itu Kompleks">
+Izin minuman beralkohol di Indonesia:
+- Sangat diatur ketat
 - Bergantung lokasi (beberapa area melarang)
-- Mahal untuk didapatkan
-- Subjek tinjauan berkala
+- Mahal untuk diperoleh
+- Terikat tinjauan berkala
 
-Di Bali, lisensi lebih mudah diakses. Di area lain, mungkin mustahil.
+Di Bali, izin lebih mudah diakses. Di area lain, mungkin tidak mungkin.
 
 </InfoCard>
 
-### Jenis Lisensi
+### Jenis Izin
 
-| Tipe      | Deskripsi                                       | Di Mana             |
-| --------- | ----------------------------------------------- | ------------------- |
-| SIUP-MB A | Minuman beralkohol (bir, anggur, minuman keras) | Hotel, restoran     |
-| SIUP-MB B | Bir saja                                        | Bar, restoran       |
-| SIUP-MB C | Penjualan eceran                                | Toko dengan lisensi |
+| Tipe      | Deskripsi                               | Di Mana               |
+| --------- | --------------------------------------- | --------------------- |
+| SIUP-MB A | Minuman beralkohol (bir, anggur, spirit)| Hotel, restoran       |
+| SIUP-MB B | Bir saja                                | Bar, restoran         |
+| SIUP-MB C | Penjualan eceran                        | Toko dengan izin      |
 
 ---
 
@@ -457,21 +457,21 @@ Di Bali, lisensi lebih mudah diakses. Di area lain, mungkin mustahil.
 
 ### Karyawan Indonesia
 
-- Harus merekrut pekerja Indonesia
-- Daftar dengan BPJS (asuransi kesehatan dan pekerjaan)
+- Wajib merekrut pekerja Indonesia
+- Daftar ke BPJS (asuransi kesehatan dan ketenagakerjaan)
 - Ikuti upah minimum (UMR) per wilayah
-- Berikan kontrak kerja
+- Sediakan kontrak kerja
 
 ### Karyawan Asing
 
 - Terbatas pada posisi tertentu (koki, manajer)
 - Memerlukan RPTKA dan KITAS
-- Harus melatih rekan Indonesia
+- Wajib melatih rekan Indonesia
 - Biaya tambahan (DKP-TKA)
 
 <InfoCard variant="tip" title="Merekrut Koki Asing">
 
-Koki asing umum di Indonesia tetapi memerlukan: - Izin kerja (RPTKA + KITAS) - Justifikasi mengapa koki Indonesia tidak cocok - Sous chef Indonesia untuk belajar dari mereka
+Koki asing umum di Indonesia namun memerlukan: - Izin kerja (RPTKA + KITAS) - Justifikasi mengapa koki Indonesia tidak cocok - Sous chef Indonesia untuk belajar dari mereka
 
 </InfoCard>
 
@@ -479,24 +479,24 @@ Koki asing umum di Indonesia tetapi memerlukan: - Izin kerja (RPTKA + KITAS) - J
 
 ## Tantangan Umum
 
-1. **Minimal investasi tinggi** - IDR 10Miliar sangat substansial
-2. **Kompetisi lokasi** - Spot premium mahal
-3. **Kompleksitas izin** - Banyak lembaga terlibat
+1. **Investasi minimum tinggi** - IDR 10Miliar sangat substansial
+2. **Persaingan lokasi** - Spot premium mahal
+3. **Kompleksitas izin** - Melibatkan banyak instansi
 4. **Manajemen karyawan** - Pelatihan dan retensi
 5. **Bisnis musiman** - Terutama di area wisata
-6. **Pembatasan alkohol** - Membatasi di beberapa area
+6. **Pembatasan alkohol** - Terbatas di beberapa area
 
 ---
 
 ## Pertanyaan Umum
 
 <AskZantara
-  context="Bisnis restoran Indonesia, lisensi F&B, restoran PT PMA, buka restoran Bali"
+  context="Bisnis restoran Indonesia, izin F&B, PT PMA restoran, buka restoran Bali"
   placeholder="Tanya tentang bisnis restoran..."
   suggestedQuestions={[
     "Apakah saya bisa membuka kafe kecil dengan investasi lebih rendah?",
-    "Seberapa sulit mendapatkan lisensi alkohol di Bali?",
-    "Bagaimana ROI khas untuk restoran?",
+    "Seberapa sulit mendapatkan izin alkohol di Bali?",
+    "Apa ROI khas untuk restoran?",
     "Bisakah saya menggunakan resep sendiri tanpa masalah?",
   ]}
 />
@@ -506,6 +506,6 @@ Koki asing umum di Indonesia tetapi memerlukan: - Izin kerja (RPTKA + KITAS) - J
 ## Artikel Terkait
 
 - [Panduan Pendaftaran PT PMA](/insights/business/foreign-company-incorporation-steps)
-- [NIB Dijelaskan](/insights/business/nib-explained)
+- [Penjelasan NIB](/insights/business/nib-explained)
 - [Panduan Domisili Perusahaan](/insights/business/company-domicile-guide)
 - [Izin Kerja untuk Karyawan](/visas/working-kitas-e23-indonesias-revised-legal-framework-explained)

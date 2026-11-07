@@ -53,8 +53,8 @@ class TestHashSubject:
         assert hash_subject("") is None
 
     def test_deterministic(self):
-        first = hash_subject("ud16@d.com")
-        assert hash_subject("ud16@d.com") == first
+        first = hash_subject("ux16@d.com")
+        assert hash_subject("ux16@d.com") == first
 
     def test_distinct_for_different_inputs(self):
         assert hash_subject("g@d.com") != hash_subject("j@d.com")

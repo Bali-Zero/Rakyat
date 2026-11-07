@@ -2115,6 +2115,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/analytics/query-insights/latency": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Stage Latency
+     * @description p50/p95 seconds per pipeline stage (search, llm, reasoning, ...).
+     */
+    get: operations["get_stage_latency_api_analytics_query_insights_latency_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/analytics/query-insights/satisfaction": {
     parameters: {
       query?: never;
@@ -5216,6 +5236,26 @@ export interface paths {
      *     `POST /clients/{id}/ensure-drive-folder` to associate a Drive folder.
      */
     patch: operations["update_client_profile_api_crm_clients__client_id__profile_patch"];
+    trace?: never;
+  };
+  "/api/crm/clients/{client_id}/recap": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Client Recap
+     * @description Short AI recap for the kita client card; a model failure yields text=null, never a 5xx.
+     */
+    get: operations["get_client_recap_api_crm_clients__client_id__recap_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
     trace?: never;
   };
   "/api/crm/clients/{client_id}/summary": {
@@ -25707,7 +25747,7 @@ export interface components {
       cover_image_filename?: string | null;
       /**
        * Position
-       * @description Position: main_featured|secondary|normal
+       * @description Homepage slot written to homepage-layout.json (hero_main, hero_2-7, insight_1-3) or an unpinned value (normal, latest, main_featured, secondary) that writes no slot
        * @default normal
        */
       position: string;
@@ -25735,6 +25775,8 @@ export interface components {
       commit_sha?: string | null;
       /** Error */
       error?: string | null;
+      /** Homepage Slot */
+      homepage_slot?: string | null;
       /** Image Path */
       image_path?: string | null;
       /** Mdx Path */
@@ -32833,6 +32875,37 @@ export interface operations {
       };
     };
   };
+  get_stage_latency_api_analytics_query_insights_latency_get: {
+    parameters: {
+      query?: {
+        days?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   get_satisfaction_score_api_analytics_query_insights_satisfaction_get: {
     parameters: {
       query?: {
@@ -37191,6 +37264,42 @@ export interface operations {
         "application/json": components["schemas"]["ClientProfileUpdate"];
       };
     };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_client_recap_api_crm_clients__client_id__recap_get: {
+    parameters: {
+      query: {
+        scope: string;
+        company_id?: number | null;
+      };
+      header?: never;
+      path: {
+        client_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
     responses: {
       /** @description Successful Response */
       200: {

@@ -45,7 +45,7 @@
     },
     "investment.paid_up_capital_idr": {
       "status": "KNOWN",
-      "value": 9900000026
+      "value": 2500000000
     },
     "investment.proposed_role": {
       "status": "KNOWN",
@@ -62,6 +62,10 @@
     "person.nationalities": {
       "status": "KNOWN",
       "value": ["DE"]
+    },
+    "investment.sponsoring_company_confirmed": {
+      "status": "KNOWN",
+      "value": true
     }
   },
   "product_code": "E28A"

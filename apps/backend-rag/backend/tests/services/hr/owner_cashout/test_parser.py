@@ -41,7 +41,7 @@ class TestParseIdr:
         assert parse_idr("500000") == 500_000
 
     def test_with_dot_separator(self):
-        assert parse_idr("Rp1.000.001") == 1_000_000
+        assert parse_idr("Rp1.000.000") == 1_000_000
 
     def test_invalid_returns_zero(self):
         assert parse_idr("not a number") == 0

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { earlyKey, takeEarly } from "./early-fetch";
 import { api } from "@/lib/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { teamPortalUnreadKey } from "@/hooks/usePortalUnreadMessages";
@@ -20,9 +21,12 @@ import type { PortalMessageThread } from "@/lib/api/crm/crm.types";
 export function PortalMessages({
   clientId,
   clientName,
+  embedded = false,
 }: {
   clientId: number;
   clientName: string;
+  /** Inside the vault card: no panel chrome of its own. */
+  embedded?: boolean;
 }) {
   const queryClient = useQueryClient();
   const threadRef = useRef<HTMLDivElement>(null);
@@ -37,13 +41,16 @@ export function PortalMessages({
 
   const loadMessages = useCallback(async () => {
     try {
-      const data = await api.crm.getPortalMessages(clientId);
+      const data = await (takeEarly<
+        Awaited<ReturnType<typeof api.crm.getPortalMessages>>
+      >(earlyKey("portal-messages", clientId)) ??
+        api.crm.getPortalMessages(clientId));
       setMessages(data.messages || []);
       setLoadError(false);
       setIsLoading(false);
       if (document.visibilityState === "hidden") return;
       const unread = (data.messages || []).filter(
-        (msg) => msg.direction === "client_to_team" && !msg.read_at,
+        (msg) => msg.direction === "client_to_team" && !msg.is_read,
       );
       const readResults = await Promise.all(
         unread.map((msg) =>
@@ -131,14 +138,18 @@ export function PortalMessages({
   };
 
   const unreadCount = messages.filter(
-    (m) => m.direction === "client_to_team" && !m.read_at,
+    (m) => m.direction === "client_to_team" && !m.is_read,
   ).length;
 
   return (
     <div
       ref={threadRef}
       id="portal-messages"
-      className="bz-product-panel scroll-mt-20 overflow-hidden flex flex-col"
+      className={`scroll-mt-20 overflow-hidden flex flex-col ${
+        embedded
+          ? "rounded-lg border border-[var(--bz-border)] bg-[var(--bz-base)]"
+          : "bz-product-panel"
+      }`}
     >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--bz-border)]">
@@ -148,10 +159,14 @@ export function PortalMessages({
             style={{ color: "var(--tx-secondary)" }}
           />
           <h3 className="font-semibold text-sm text-[var(--bz-text-1)]">
-            Portal Messages
+            {embedded ? "Messages" : "Portal Messages"}
           </h3>
           {unreadCount > 0 && (
-            <span className="bg-[var(--state-warning)] text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+            <span
+              className="bg-[var(--state-warning)] text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+              data-testid="portal-unread"
+              aria-label={`${unreadCount} unread`}
+            >
               {unreadCount}
             </span>
           )}
@@ -187,7 +202,7 @@ export function PortalMessages({
           <div className="text-center py-8 text-[var(--bz-text-2)] text-sm">
             <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-30" />
             <p>No portal messages yet</p>
-            <p className="text-xs mt-1 opacity-60">
+            <p className="text-xs mt-1 text-[var(--bz-text-2)]">
               Send a message visible on {clientName}&apos;s portal
             </p>
           </div>
@@ -214,15 +229,15 @@ export function PortalMessages({
                   className={`flex gap-2 ${isTeam ? "justify-end" : "justify-start"}`}
                 >
                   {!isTeam && (
-                    <div className="w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center shrink-0 mt-1">
-                      <User className="w-3 h-3 text-blue-400" />
+                    <div className="w-6 h-6 rounded-full bg-[color-mix(in_srgb,var(--state-info)_18%,transparent)] flex items-center justify-center shrink-0 mt-1">
+                      <User className="w-3 h-3 text-[var(--state-info)]" />
                     </div>
                   )}
                   <div
                     className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
                       isTeam
                         ? "bg-[var(--bz-card)] text-[var(--bz-text-1)]"
-                        : "bg-blue-500/10 text-[var(--bz-text-1)]"
+                        : "bg-[color-mix(in_srgb,var(--state-info)_9%,transparent)] text-[var(--bz-text-1)]"
                     }`}
                   >
                     {msg.subject && (
@@ -238,10 +253,10 @@ export function PortalMessages({
                       )}
                       {isTeam && (
                         <CheckCheck
-                          className={`w-3 h-3 ml-1 ${msg.read_at ? "text-blue-400" : "text-[var(--bz-text-2)]"}`}
+                          className={`w-3 h-3 ml-1 ${msg.is_read ? "text-[var(--state-info)]" : "text-[var(--bz-text-2)]"}`}
                         />
                       )}
-                      {!isTeam && !msg.read_at && (
+                      {!isTeam && !msg.is_read && (
                         <span className="text-[var(--state-warning)] font-semibold ml-1">
                           NEW
                         </span>

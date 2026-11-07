@@ -195,7 +195,7 @@ def test_client_update_tax_consultant_invalid():
 
 
 @pytest.mark.parametrize(
-    "dxxx1",
+    "email",
     [
         "dea@balizero.com",
         "candra@balizero.com",
@@ -203,14 +203,14 @@ def test_client_update_tax_consultant_invalid():
         "kadek.tax@balizero.com",
     ],
 )
-def test_client_update_tax_consultant_accepts_assignable(dxxx1):
+def test_client_update_tax_consultant_accepts_assignable(email):
     from backend.app.routers.crm_clients import ClientUpdate
 
-    assert ClientUpdate(tax_consultant=dxxx1).tax_consultant == dxxx1
+    assert ClientUpdate(tax_consultant=email).tax_consultant == email
 
 
 @pytest.mark.parametrize(
-    "dxxx1",
+    "email",
     [
         "someone@balizero.com",
         "dea.tax@balizero.com",
@@ -219,11 +219,11 @@ def test_client_update_tax_consultant_accepts_assignable(dxxx1):
         "faisha.tax@balizero.com",  # offboarded: kept by the DB CHECK, not assignable
     ],
 )
-def test_client_update_tax_consultant_rejects_unknown_and_near_miss(dxxx1):
+def test_client_update_tax_consultant_rejects_unknown_and_near_miss(email):
     from backend.app.routers.crm_clients import ClientUpdate
 
     with pytest.raises(ValueError, match="tax_consultant must be one of"):
-        ClientUpdate(tax_consultant=dxxx1)
+        ClientUpdate(tax_consultant=email)
 
 
 def test_tax_consultant_validator_and_migration_stay_in_sync():

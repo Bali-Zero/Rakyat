@@ -1,0 +1,35 @@
+name: Perimeter check
+
+# PERIMETER.txt is the authority for what lives on the Rakyat track. This job fails a PR whose tree and that file
+# disagree: a tracked path no entry explains, or an entry whose path is gone. Not a required check.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perimeter-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  perimeter:
+    name: PERIMETER.txt matches the tree
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the perimeter against the tree
+        run: python3 scripts/ci/perimeter_check.py
+
+      - name: Self-test the check (guilt and innocence)
+        run: |
+          python3 -m pip install --quiet pytest
+          python3 -m pytest -q scripts/ci/test_perimeter_check.py
+
+      - name: Vercel ignored-build-step corpus (guilt and innocence)
+        run: bash scripts/tests/test_vercel_should_build.sh

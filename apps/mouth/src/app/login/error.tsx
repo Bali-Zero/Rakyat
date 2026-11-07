@@ -45,8 +45,7 @@ export default function LoginError({
           className="text-[28px] leading-[1.06] tracking-[-0.03em]"
           style={{
             fontFamily: "var(--font-serif)",
-            fontWeight: 450,
-            fontVariationSettings: '"opsz" 144',
+            fontWeight: 500,
           }}
         >
           The sign-in page did not load.

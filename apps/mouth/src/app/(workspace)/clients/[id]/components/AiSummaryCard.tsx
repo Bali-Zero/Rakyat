@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Info,
 } from "lucide-react";
+import { earlyKey, takeEarly } from "./early-fetch";
 import { api } from "@/lib/api";
 import { logger } from "@/lib/logger";
 import type {
@@ -43,6 +44,8 @@ interface AiSummaryCardProps {
   section: AiSummarySection;
   /** Auto-refresh interval in ms when status='pending'. Set to 0 to disable. */
   pollIntervalMs?: number;
+  /** Render nothing until there is a summary to show (no "not generated" box). */
+  hideWhenEmpty?: boolean;
 }
 
 const SECTION_TITLES: Record<AiSummarySection, string> = {
@@ -105,6 +108,7 @@ export function AiSummaryCard({
   clientId,
   section,
   pollIntervalMs = 30000,
+  hideWhenEmpty = false,
 }: AiSummaryCardProps) {
   const [response, setResponse] = useState<AiSummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -112,7 +116,9 @@ export function AiSummaryCard({
 
   const fetchSummary = useCallback(async () => {
     try {
-      const data = await api.crm.getClientAiSummary(clientId);
+      const data = await (takeEarly<AiSummaryResponse>(
+        earlyKey("ai-summary", clientId),
+      ) ?? api.crm.getClientAiSummary(clientId));
       setResponse(data);
       setError(null);
     } catch (err) {
@@ -140,6 +146,10 @@ export function AiSummaryCard({
   }, [response?.status, pollIntervalMs, fetchSummary]);
 
   const title = SECTION_TITLES[section];
+
+  // A quiet slot: no loading line, no error box, no empty box — only a summary.
+  if (hideWhenEmpty && (loading || error || response?.status !== "available"))
+    return null;
 
   // Loading state
   if (loading) {

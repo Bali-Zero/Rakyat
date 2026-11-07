@@ -51,6 +51,8 @@
    as `../clients-desk.module.css`'s sticky head). */
 .tabBar {
   display: flex;
+  min-width: 0;
+  max-width: 100%;
   gap: 4px;
   overflow-x: auto;
   border-bottom: 1px solid var(--line-control);

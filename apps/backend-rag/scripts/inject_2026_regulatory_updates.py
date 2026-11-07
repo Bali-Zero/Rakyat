@@ -5,9 +5,7 @@ import os
 import asyncpg
 
 # Database connection from environment or default local
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql://nuzantara:nuzantara_local_2024@localhost:5432/nuzantara"
-)
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 
 async def run():
