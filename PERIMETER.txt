@@ -194,6 +194,7 @@ packages/cell-core/tests/test_admission.py	test functions moved to backstage (li
 scripts/ci/shard_tests.py	the backend corpus is backend/tests/ only; the two scripts/bot suites (WA de-id tooling) are backstage
 scripts/ci/test_shard_tests.py	the outside-rootdir collision check may see an empty list now that no outside target exists
 scripts/tests/test_merah_putih_day_contrast.py	the in-job path sentinel and merge_group were removed from merah-putih-day-contrast.yml (bc ruling b): 17 sentinel tests dropped, merge_group asserted absent, every contrast-law test kept
+scripts/tests/test_vercel_should_build.sh	carried from the source tree with a data/kbli-filiera guilt case, a data/source_documents innocence case, and the pointer section reading apps/mouth/vercel.json when scripts/ci/vercel_ignore_build_step.sh is absent here
 .github/workflows/tests.yml	e2e "Start backend": a synthetic one-member TEAM_MEMBERS_JSON (the staff roster is not in this repository; prod reads the Fly secret), and a 180 s deadline-bounded /health poll that fails fast if uvicorn exits (was 30 x 2 s; a cold import measured ~66 s on a sandboxed host)
 
 # Added by P2 (not in the source tree): the surviving workflows, rewritten for hosted runners and the
