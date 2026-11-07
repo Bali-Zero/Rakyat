@@ -166,30 +166,69 @@ function renderInline(text: string): React.ReactNode[] {
   );
 }
 
+type NormalizedRow =
+  | { kind: "text"; text: string }
+  | { kind: "labelled"; label: string; value: string | null };
+
+/**
+ * MDX props are unchecked at runtime, so rows are coerced defensively:
+ * null/undefined and unusable objects are skipped, non-string scalars render
+ * as String(item), and a labelled row without a string value renders the
+ * label alone.
+ */
+function normalizeRow(item: unknown): NormalizedRow | null {
+  if (item === null || item === undefined) return null;
+  if (typeof item === "string") return { kind: "text", text: item };
+  if (
+    typeof item === "number" ||
+    typeof item === "boolean" ||
+    typeof item === "bigint"
+  ) {
+    return { kind: "text", text: String(item) };
+  }
+  if (typeof item !== "object") return null;
+  const { label, value } = item as { label?: unknown; value?: unknown };
+  const labelText = typeof label === "string" && label !== "" ? label : null;
+  const valueText = typeof value === "string" && value !== "" ? value : null;
+  if (labelText !== null) {
+    return { kind: "labelled", label: labelText, value: valueText };
+  }
+  return valueText !== null ? { kind: "text", text: valueText } : null;
+}
+
 function InfoCardItems({
   items,
   labelClassName,
 }: {
-  items: readonly InfoCardItem[];
+  items: readonly unknown[];
   labelClassName: string;
 }) {
+  const rows = items
+    .map(normalizeRow)
+    .flatMap((row, index) => (row ? [{ row, index }] : []));
+  if (rows.length === 0) return null;
+
   return (
     <ul className="space-y-2 list-none p-0 m-0 mb-2 last:mb-0">
-      {items.map((item, index) =>
-        typeof item === "string" ? (
+      {rows.map(({ row, index }) =>
+        row.kind === "text" ? (
           <li key={index} className="flex gap-2">
             <span aria-hidden="true" className={labelClassName}>
               •
             </span>
-            <span>{renderInline(item)}</span>
+            <span>{renderInline(row.text)}</span>
           </li>
         ) : (
           <li key={index}>
             <span className={cn("font-medium", labelClassName)}>
-              {item.label}
+              {row.label}
             </span>
-            <span className="text-white/40">{": "}</span>
-            <span>{renderInline(item.value)}</span>
+            {row.value !== null && (
+              <>
+                <span className="text-white/40">{": "}</span>
+                <span>{renderInline(row.value)}</span>
+              </>
+            )}
           </li>
         ),
       )}
@@ -265,7 +304,7 @@ export function InfoCard({
       {(!collapsible || !isCollapsed) && (
         <div className="px-4 pb-4">
           <div className="text-sm text-white/70 leading-relaxed">
-            {items && items.length > 0 && (
+            {Array.isArray(items) && items.length > 0 && (
               <InfoCardItems items={items} labelClassName={styles.titleColor} />
             )}
             {children}

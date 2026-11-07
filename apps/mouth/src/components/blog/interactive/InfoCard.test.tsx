@@ -78,4 +78,57 @@ describe("InfoCard", () => {
     expect(html).toContain("Should I Worry?");
     expect(html).toContain("December 31, 2026 is the last day on 0.5%");
   });
+
+  it("renders the label alone when a row has no string value", () => {
+    const items = [{ label: "Label" }] as unknown as InfoCardItem[];
+    const html = renderToString(<InfoCard title="T" items={items} />);
+
+    expect(html).toContain("Label");
+    expect(html).not.toContain("Label</span><span");
+    expect(html.match(/<li/g)).toHaveLength(1);
+  });
+
+  it("renders non-string scalar rows and skips null, undefined and unusable rows", () => {
+    const items = [
+      42,
+      null,
+      undefined,
+      {},
+      { value: 7 },
+      true,
+    ] as unknown as InfoCardItem[];
+    const html = renderToString(<InfoCard title="T" items={items} />);
+
+    expect(html).toContain("42");
+    expect(html).toContain("true");
+    expect(html.match(/<li/g)).toHaveLength(2);
+  });
+
+  it("renders a mixed array without throwing", () => {
+    const items = [
+      "plain **bold** row",
+      { label: "Ok", value: "fine" },
+      { label: "NoValue" },
+      7,
+      null,
+    ] as unknown as InfoCardItem[];
+    const html = renderToString(<InfoCard title="T" items={items} />);
+
+    expect(html).toContain("<strong");
+    expect(html).toContain("fine");
+    expect(html).toContain("NoValue");
+    expect(html).toContain(">7<");
+    expect(html.match(/<li/g)).toHaveLength(4);
+  });
+
+  it("renders no list when every row is unusable or items is not an array", () => {
+    const bad = [null, undefined, {}] as unknown as InfoCardItem[];
+    expect(renderToString(<InfoCard title="T" items={bad} />)).not.toContain(
+      "<ul",
+    );
+    const notArray = "oops" as unknown as InfoCardItem[];
+    expect(
+      renderToString(<InfoCard title="T" items={notArray} />),
+    ).not.toContain("<ul");
+  });
 });
