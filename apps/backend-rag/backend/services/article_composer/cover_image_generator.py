@@ -112,7 +112,7 @@ def _build_prompt_fallback(title: str, category: str, summary: str | None) -> st
 
     return (
         f"{visual}, {keywords}, "
-        "shot on ARRI Qusoc Mini LF with 35mm lens, "
+        "shot on ARRI Alexa Mini LF with 35mm lens, "
         "cinematic teal and amber color grading, "
         "golden hour warm amber sunlight, volumetric light rays, "
         "hyper-realistic, editorial photography, subtle film grain, "

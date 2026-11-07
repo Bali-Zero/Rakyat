@@ -22,6 +22,7 @@ Every guilt test below is paired with an innocence test, so a future "tidy-up"
 back to the binary fails loudly instead of silently.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -204,6 +205,122 @@ def test_non_pma_applicant_is_not_rejected_for_a_foreign_cap(eye: KBLIEye) -> No
 
 def test_unknown_code_still_errors(eye: KBLIEye) -> None:
     assert eye.get_decision("00000")["reason_code"] == "CODE_NOT_FOUND"
+
+
+@pytest.mark.parametrize("query, expected", [("10219", "10219"), (" 01111 ", "01111")])
+def test_current_lookup_preserves_digits_and_wins_over_earlier_alias(
+    eye: KBLIEye, query: str, expected: str
+) -> None:
+    # The earlier 10218 record has the alias 10219 in the actual catalogue.
+    decision = eye.get_decision(query)
+    assert decision["kbli_2025"] == expected
+    assert decision["resolution"]["vintage"] == "2025"
+    assert decision["resolution"]["basis"] == "EXACT_2025"
+
+
+@pytest.mark.parametrize("step", [1, -1])
+def test_current_lookup_is_independent_of_record_order(tmp_path: Path, step: int) -> None:
+    rows = [
+        {"kode_kbli_2025": "90001", "judul": "Former alias holder", "kbli_2020_source": "90002"},
+        {"kode_kbli_2025": "90002", "judul": "Current activity"},
+    ]
+    path = tmp_path / "catalogue.json"
+    path.write_text(json.dumps(rows[::step]))
+    decision = KBLIEye(db_path=str(path)).get_decision("90002")
+    assert decision["kbli_2025"] == "90002"
+
+
+@pytest.mark.parametrize("options", [{}, {"vintage": "2020"}])
+def test_historical_lookup_uses_bps_despite_three_conflicting_aliases(
+    eye: KBLIEye, options: dict
+) -> None:
+    decision = eye.get_decision(" 80100 ", **options)
+    assert decision["kbli_2025"] == "80110"
+    assert "state" in decision["audit"] and "pma_logic" in decision
+    resolution = decision["resolution"]
+    assert resolution["input_code"] == "80100"
+    assert resolution["vintage"] == "2020"
+    assert resolution["inferred"] is ("vintage" not in options)
+    assert resolution["basis"] == "UNIQUE_BPS_2020"
+    assert resolution["source_locator"] == {"lampiran": 10, "pdf_page": 426, "printed_page": 412}
+
+
+@pytest.mark.parametrize("options", [{}, {"vintage": "2020"}])
+def test_historical_56109_lists_all_candidates_without_an_audit(
+    eye: KBLIEye, options: dict
+) -> None:
+    decision = eye.get_decision("56109", **options)
+    assert decision["state"] == "ERROR"
+    assert decision["reason_code"] == "AMBIGUOUS_KBLI_TRANSITION"
+    assert decision["candidates"] == ["56101", "56102", "56400"]
+    assert "audit" not in decision and "pma_logic" not in decision
+
+
+def test_same_number_with_explicit_vintages(eye: KBLIEye) -> None:
+    implicit = eye.get_decision("56102")
+    explicit = eye.get_decision("56102", vintage="2025")
+    assert implicit["kbli_2025"] == explicit["kbli_2025"] == "56102"
+    assert implicit["resolution"]["inferred"] is True
+    assert explicit["resolution"]["inferred"] is False
+    assert explicit["kbli_2020_ref"] is None  # three parents, no scalar
+    assert eye.get_decision("55201")["kbli_2020_ref"] == "55130"
+    old = eye.get_decision("56102", vintage="2020")
+    assert old["reason_code"] == "AMBIGUOUS_KBLI_TRANSITION"
+    assert old["candidates"] == ["56101", "56400"]
+
+
+def test_explicit_vintage_never_falls_back_to_another_edition(eye: KBLIEye) -> None:
+    assert eye.get_decision("80100", vintage="2025")["reason_code"] == "CODE_NOT_FOUND"
+    assert eye.get_decision("56102", vintage="2017")["reason_code"] == "UNSUPPORTED_VINTAGE"
+    assert eye.get_decision("00000", vintage="2020")["reason_code"] == "CODE_NOT_FOUND"
+
+
+def test_historical_lookup_distinguishes_missing_source_from_missing_code(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "legacy.json"
+    path.write_text(
+        json.dumps([{"kode_kbli_2025": "55201", "judul": "Synthetic", "kbli_2020_source": "80100"}])
+    )
+    instance = KBLIEye(db_path=str(path))
+
+    # Legacy records still support exact current lookup but cannot certify a 2020 answer.
+    current = instance.get_decision("55201")
+    assert current["kbli_2025"] == "55201" and current["kbli_2020_ref"] is None
+    assert instance.get_decision("00000", vintage="2025")["reason_code"] == "CODE_NOT_FOUND"
+    for query in ("80100", "00000"):
+        assert instance.get_decision(query)["reason_code"] == "CROSSWALK_UNAVAILABLE"
+        assert (
+            instance.get_decision(query, vintage="2020")["reason_code"] == "CROSSWALK_UNAVAILABLE"
+        )
+
+
+@pytest.mark.parametrize("damage", ["missing_row", "changed_parent", "wrong_stamp", "duplicate"])
+def test_incomplete_or_tampered_relation_refuses_historical_lookup(
+    eye: KBLIEye, tmp_path: Path, damage: str
+) -> None:
+    # Mutate only the serialized fixture. Every intact record retains the real source stamp.
+    rows = [
+        {
+            "kode_kbli_2025": row["kode_kbli_2025"],
+            "judul": row["judul"],
+            "bps_2020_ancestors": dict(row["bps_2020_ancestors"]),
+        }
+        for row in eye.data
+    ]
+    if damage == "missing_row":
+        rows.pop()
+    elif damage == "changed_parent":
+        rows[0]["bps_2020_ancestors"]["codes"] = ["99998"]
+    elif damage == "wrong_stamp":
+        rows[0]["bps_2020_ancestors"]["parser_run_digest"] = "0" * 64
+    else:
+        rows.append(rows[0])
+    path = tmp_path / "damaged.json"
+    path.write_text(json.dumps({"data": rows}))
+    instance = KBLIEye(db_path=str(path))
+    assert instance.get_decision("56109", vintage="2020")["reason_code"] == "CROSSWALK_UNAVAILABLE"
+    assert instance.get_decision("56102")["kbli_2025"] == "56102"
 
 
 # --------------------------------------------------------------------------
@@ -408,3 +525,60 @@ def test_unloaded_database_reports_itself(tmp_path: Path) -> None:
     instance = KBLIEye(db_path=str(tmp_path / "nope.json"))
     assert instance.data == []
     assert instance.get_decision("62011")["reason_code"] == "DATABASE_NOT_LOADED"
+
+
+def test_default_loader_uses_tracked_canonical_without_a_relative_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    instance = KBLIEye()
+    assert instance.db_path.samefile(DATASET)
+    assert instance.get_decision("80100", vintage="2020")["kbli_2025"] == "80110"
+
+
+def test_runtime_relative_dataset_retains_precedence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    deployed = tmp_path / "source_documents" / DATASET.name
+    deployed.parent.mkdir()
+    deployed.write_text(json.dumps([{"kode_kbli_2025": "90001", "judul": "Runtime fixture"}]))
+    instance = KBLIEye()
+    assert instance.db_path.samefile(deployed)
+    assert instance.get_decision("90001")["title"] == "Runtime fixture"
+    assert instance.get_decision("80100", vintage="2020")["reason_code"] == "CROSSWALK_UNAVAILABLE"
+
+
+@pytest.mark.parametrize("content", ["{", json.dumps({"data": {}})])
+def test_invalid_explicit_dataset_remains_unloaded(tmp_path: Path, content: str) -> None:
+    path = tmp_path / "explicit.json"
+    path.write_text(content)
+    instance = KBLIEye(db_path=str(path))
+    assert instance.get_decision("56102") == {
+        "state": "ERROR",
+        "reason_code": "DATABASE_NOT_LOADED",
+    }
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_duplicate_current_code_refuses_only_that_exact_identity(
+    tmp_path: Path, reverse: bool
+) -> None:
+    records = [
+        {"kode_kbli_2025": "55106", "judul": "First conflicting record"},
+        {"kode_kbli_2025": "55106", "judul": "Second conflicting record"},
+        {"kode_kbli_2025": "55201", "judul": "Unique current record"},
+    ]
+    path = tmp_path / "duplicate.json"
+    path.write_text(json.dumps(list(reversed(records)) if reverse else records))
+    service = KBLIEye(str(path))
+    for vintage in ("2025", None):
+        assert service.get_decision("55106", vintage=vintage) == {
+            "state": "ERROR",
+            "reason_code": "DUPLICATE_CURRENT_CODE",
+            "input_code": "55106",
+            "vintage": "2025",
+            "inferred": vintage is None,
+        }
+        assert service.get_decision("55201", vintage=vintage)["kbli_2025"] == "55201"
+    assert service.get_decision("55106", vintage="2020")["reason_code"] == "CROSSWALK_UNAVAILABLE"

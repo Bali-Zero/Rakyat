@@ -34,14 +34,15 @@ _AS_OF = _HIGHEST_SIGNED_PACK["protected"]["signed_at"]
 
 #: The exact overrides of the canonical gold persona-7 ("adult spouse,
 #: registered marriage, confirmed sponsor" — ``test_evaluator_gold.PERSONAS``
-#: id=7), copied verbatim so this suite evaluates the same real-world shape
-#: the corpus-authoring lane will actually author, not a synthetic stand-in.
+#: id=7), extended with explicit spouse-letter agreement for positive coverage.
+#: The canonical production persona7 and its sequence33 expectations are unchanged.
 _PERSONA_7_OVERRIDES: dict[str, dict[str, Any]] = {
     "intent.purposes": {"status": "KNOWN", "value": ["FAMILY"]},
     "family.relation_to_sponsor": {"status": "KNOWN", "value": "SPOUSE"},
     "family.sponsor_nationalities": {"status": "KNOWN", "value": ["ID"]},
     "family.marriage_registered": {"status": "KNOWN", "value": True},
     "family.sponsor_confirmed": {"status": "KNOWN", "value": True},
+    "family.spouse_application_support_confirmed": {"status": "KNOWN", "value": True},
 }
 
 

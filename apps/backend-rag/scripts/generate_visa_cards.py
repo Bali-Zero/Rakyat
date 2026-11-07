@@ -357,7 +357,7 @@ VISAS = [
         "renewable": True,
         "cost_visa": "IDR 13,000,000 (offshore) / IDR 14,000,000 (onshore)",
         "cost_extension": "IDR 10,000,000",
-        "cost_details": {"offshore": "13000000", "onshore": "14000000", "extension": "84000510"},
+        "cost_details": {"offshore": "13000000", "onshore": "14000000", "extension": "10000000"},
         "requirements": [
             "Passport valid min 18 months",
             "Photo 4x6 red background",
@@ -461,7 +461,7 @@ VISAS = [
         "processing_time_normal": "~2-3 weeks",
         "renewable": False,
         "cost_visa": "IDR 7,500,000 (1Y) / IDR 10,000,000 (2Y)",
-        "cost_details": {"price_1y": "7500000", "price_2y": "84000510"},
+        "cost_details": {"price_1y": "7500000", "price_2y": "10000000"},
         "requirements": [
             "Passport valid min 18 months",
             "Photo 4x6 red background",
@@ -517,7 +517,7 @@ VISAS = [
         "cost_visa": "IDR 18,000,000 (5 years all-inclusive)",
         "cost_extension": "IDR 12,000,000",
         "cost_details": {
-            "total_5_years": "10000013",
+            "total_5_years": "18000000",
             "includes": "e-ITAS + Re-Entry Permit 5 years",
         },
         "requirements": [
@@ -702,8 +702,8 @@ VISAS = [
             "offshore": "11000000",
             "onshore": "13500000",
             "extension": "9000000",
-            "offshore_2y": "10000012",
-            "onshore_2y": "10000013",
+            "offshore_2y": "15000000",
+            "onshore_2y": "18000000",
         },
         "requirements": [
             "Marriage certificate (legalized)",
@@ -758,8 +758,8 @@ VISAS = [
             "offshore": "11000000",
             "onshore": "13500000",
             "extension": "9000000",
-            "offshore_2y": "10000012",
-            "onshore_2y": "10000013",
+            "offshore_2y": "15000000",
+            "onshore_2y": "18000000",
         },
         "requirements": [
             "Passport valid min 18 months",

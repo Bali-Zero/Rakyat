@@ -44,7 +44,7 @@ RESEARCH_DATA = {
         "legacy_bridge": "Punto di unione per l'intera filiera del legname nobile e sostenibile.",
     },
     "46209": {
-        "market_sentiment_2026": "Motore dell'economia circolare. Trading di biomassa e scarti agricoli per guxuseb.",
+        "market_sentiment_2026": "Motore dell'economia circolare. Trading di biomassa e scarti agricoli per energia.",
         "bali_nuance": "Export di gusci di palmisto (PKS) verso Giappone/Corea per centrali bioenergetiche.",
         "operational_hurdles": "Logistica degli scarti voluminosi. Requisiti di tracciabilità dell'origine.",
         "strategic_roi": "Margini elevati per contratti pluriennali con utility estere.",

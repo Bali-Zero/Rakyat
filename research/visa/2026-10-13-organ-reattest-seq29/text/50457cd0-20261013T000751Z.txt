@@ -78,13 +78,13 @@ Komponen Biaya:
 Biaya visa Rp 500.000
 Izin tinggal terbatas Rp 3.000.000
 Izin masuk kembali Rp 1.500.000
-Biaya Verifikasi I Rp 1.000.001
+Biaya Verifikasi I Rp 1.000.000
 Masa tinggal 2 tahun : Rp. 8.500.000,-
 Komponen Biaya:
 Biaya visa Rp 500.000
 Izin tinggal terbatas Rp 5.000.000
 Izin masuk kembali Rp 2.000.000
-Biaya Verifikasi I Rp 1.000.001
+Biaya Verifikasi I Rp 1.000.000
 Penjamin (Sponsor)
 Anda membutuhkan penjamin/sponsor untuk mengajukan visa ini.
 Pengajuan visa
@@ -133,7 +133,7 @@ Don't show this again
 Jl. H.R. Rasuna Said, Kav. X6, No. 8,
 Kuningan, Jakarta Selatan,
 DKI Jakarta, Indonesia
-uxxxxx3@dxxxxxx1.go.id
+contact@imigrasi.go.id
 Layanan Situs
 Paspor
 Visa Indonesia

@@ -1,3 +1,4 @@
+import os
 import asyncio
 import json
 
@@ -7,7 +8,7 @@ import asyncpg
 async def run():
     # Database connection with local credentials
     conn = await asyncpg.connect(
-        "postgresql://nuzantara:nuzantara_local_2024@localhost:5432/nuzantara"
+        os.environ["DATABASE_URL"]
     )
 
     real_estate_data = [
@@ -22,8 +23,8 @@ async def run():
                 "pb_umku": [
                     "Sertifikat Hak Guna Bangunan (HGB) - per entità legali",
                     "Hak Pakai - per stranieri (diritto d'uso/possesso)",
-                    "Persetujuan Bangunan Gedung (JEL) - ex IMB",
-                    "Sertifikat Laik Fungsi (GEQ)",
+                    "Persetujuan Bangunan Gedung (PBG) - ex IMB",
+                    "Sertifikat Laik Fungsi (SLF)",
                 ],
                 "obligations": [
                     "Laporan LKPM (Laporan Kegiatan Penanaman Modal) trimestrale",

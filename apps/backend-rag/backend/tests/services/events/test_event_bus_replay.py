@@ -10,11 +10,12 @@ by ``test_outbox.py``.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.services.events.event_bus import EventBus
+from backend.services.events.event_bus import EventBus, EventTrace
 
 
 def _make_bus_with_pool(pool=None) -> EventBus:
@@ -113,8 +114,9 @@ async def test_replay_dispatch_routes_through_handle_pg_event():
 
     captured: list[tuple[str, str]] = []
 
-    async def _spy(channel: str, payload: str) -> None:
+    async def _spy(channel: str, payload: str) -> EventTrace:
         captured.append((channel, payload))
+        return EventTrace(channel, 0, 1, 0)
 
     bus._handle_pg_event = _spy  # type: ignore[method-assign]
 
@@ -133,3 +135,69 @@ async def test_replay_dispatch_routes_through_handle_pg_event():
 
     # _handle_pg_event called once per channel, with the channel name.
     assert {ch for ch, _ in captured} == set(PG_CHANNEL_MAP.keys())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [RuntimeError, asyncio.TimeoutError])
+async def test_reconnect_preserves_failed_delivery_and_retries_after_recovery(failure, monkeypatch):
+    """Exercise real dispatch and replay with an idempotent, in-memory DB boundary."""
+    monkeypatch.setattr("backend.services.events.event_bus._HANDLER_TIMEOUT_S", 0.01)
+    consumed: set[int] = set()
+    deliveries: list[int] = []
+    successful_effects: set[int] = set()
+    should_fail = True
+
+    async def fetch(_sql, channel, _limit):
+        if channel != "practice_changed":
+            return []
+        return [
+            {"id": event_id, "channel": channel, "payload": {"practice_id": event_id}}
+            for event_id in (101, 102)
+            if event_id not in consumed
+        ]
+
+    async def execute(_sql, event_id, _consumer_id):
+        if event_id in consumed:
+            return "UPDATE 0"
+        consumed.add(event_id)
+        return "UPDATE 1"
+
+    conn = AsyncMock()
+    conn.fetch.side_effect = fetch
+    conn.execute.side_effect = execute
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+    bus = _make_bus_with_pool(pool)
+
+    async def idempotent_handler(payload):
+        successful_effects.add(payload["_outbox_id"])
+
+    async def recovering_handler(payload):
+        event_id = payload["_outbox_id"]
+        deliveries.append(event_id)
+        if should_fail and event_id == 101:
+            if failure is asyncio.TimeoutError:
+                await asyncio.sleep(1)
+            raise failure("synthetic delivery failure")
+
+    bus.subscribe("practice.status_changed", idempotent_handler)
+    bus.subscribe("practice.status_changed", recovering_handler)
+
+    await bus._replay_outbox_on_reconnect()
+
+    assert consumed == {102}
+    assert deliveries == [101, 102]
+    assert successful_effects == {101, 102}
+    assert len(bus._traces[0].errors) == 1
+
+    should_fail = False
+    await bus._replay_outbox_on_reconnect()
+
+    assert consumed == {101, 102}
+    assert deliveries == [101, 102, 101]
+    assert successful_effects == {101, 102}
+    assert not bus._traces[-1].errors
+
+    await bus._replay_outbox_on_reconnect()
+    assert deliveries == [101, 102, 101]

@@ -770,7 +770,7 @@ class TestPortalChallengeEndpoint:
             }
             for email, name in [
                 ("surya@balizero.com", "Surya"),
-                ("ari.firda@balizero.com", "Pum Zagik"),
+                ("ari.firda@balizero.com", "Ari Firda"),
                 ("krisna@balizero.com", "Krisna"),
                 ("adit@balizero.com", "Adit"),
                 ("vino@balizero.com", "Vino"),
@@ -840,7 +840,7 @@ class TestPortalChallengeEndpoint:
         by_member = {e["member"]: e for e in body["entries"]}
         assert by_member["surya"]["carry_points"] == 0
         assert by_member["surya"]["september_choice"] == "prize"
-        assert by_member["pum.zagik"]["carry_points"] == 0
+        assert by_member["ari.firda"]["carry_points"] == 0
         assert by_member["krisna"]["carry_points"] == 0
         assert by_member["adit"]["carry_points"] == 23
         assert by_member["adit"]["september_choice"] == "carry"
@@ -862,7 +862,7 @@ class TestPortalChallengeEndpoint:
         assert all(e["playoff_pending"] is False for e in by_member.values())
 
         # Zero's 2026-09-29 ruling: only the six September players are ranked.
-        assert member_names == {"surya", "pum.zagik", "krisna", "adit", "vino", "damar"}
+        assert member_names == {"surya", "ari.firda", "krisna", "adit", "vino", "damar"}
         # The live feed never shows a non-participant, in either feed field.
         assert [ev["display_name"] for ev in body["recent_events"]] == ["Adit"]
         assert [ev["display_name"] for ev in body["recent_activations"]] == ["Adit"]

@@ -95,6 +95,13 @@ CLAIMABLE_STATUSES: tuple[str, ...] = (
     "validated",
 )
 
+# --- Pipeline tags claimable ONLY through an explicit INTAKE_PIPELINE_VERSION_FILTER. ---
+# The filter is an include-filter: with it unset a worker claims every tag. A tag
+# listed here (exact, or batch-qualified ``tag:batch``) is skipped by that
+# unfiltered default worker, so its rows wait for the dedicated worker whose
+# filter names them. ``recovery-v1`` = the client-document-recovery producer.
+FILTER_ONLY_PIPELINE_VERSIONS: frozenset[str] = frozenset({"recovery-v1"})
+
 # --- v2 stage machine: status -> (stage_name, next_status). ---
 # The status KEY names the work ALREADY DONE; the tuple names the stage to run
 # next and the status that records its completion. Terminal next_status='done'
@@ -624,6 +631,13 @@ class IntakeWorker:
                   AND (lease_owner IS NULL OR lease_expires_at < now())
                   AND ($4::text IS NULL OR source = $4)
                   AND ($5::text IS NULL OR pipeline_version = $5)
+                  -- Filter-only tags (FILTER_ONLY_PIPELINE_VERSIONS): the
+                  -- unfiltered default worker never claims them; a worker whose
+                  -- filter is set is already restricted by the line above.
+                  AND ($5::text IS NOT NULL
+                       OR NOT COALESCE(
+                            split_part(pipeline_version, ':', 1) = ANY($6::text[]),
+                            false))
                 -- Downstream stages (extract/validate/route) cost ~3ms; the
                 -- classify+OCR stage costs ~50-90s on the local VLM. Pure FIFO
                 -- lets a backlog of 'pending' jobs starve the cheap downstream
@@ -666,6 +680,7 @@ class IntakeWorker:
             ttl,
             self.config.source_filter,
             self.config.pipeline_version_filter,
+            sorted(FILTER_ONLY_PIPELINE_VERSIONS),
         )
         if row is None:
             return None
@@ -683,7 +698,12 @@ class IntakeWorker:
         Boot sequence: remap legacy v1 statuses once, reap stale review claims,
         then poll. The reaper re-runs every REAP_INTERVAL_SECONDS.
         """
-        logger.info("intake worker %s started", self.worker_id)
+        logger.info(
+            "intake worker %s started (pipeline_version_filter=%s, filter-only tags=%s)",
+            self.worker_id,
+            self.config.pipeline_version_filter or "-",
+            ",".join(sorted(FILTER_ONLY_PIPELINE_VERSIONS)),
+        )
         try:
             await remap_legacy_statuses(self.pool)
             await reap_expired_review_claims(self.pool)

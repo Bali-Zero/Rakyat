@@ -43,7 +43,7 @@ export const metadata: Metadata = {
 };
 
 /**
- * Ground: `operative-light` — owner decision 2026-09-21, "goqame principale
+ * Ground: `operative-light` — owner decision 2026-09-21, "voglio principale
  * la versione day light e non la dark". This attribute is the ONLY place the
  * funnel's ground is chosen; `voa-r19.css` no longer names a theme in any of
  * its selectors (it is keyed on `[data-product="my"][data-garuda-voa="r19"]`,

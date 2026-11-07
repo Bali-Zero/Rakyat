@@ -439,7 +439,7 @@
       "when": {
         "op": "lt",
         "fact": "investment.paid_up_capital_idr",
-        "value": 9900000026
+        "value": 2500000000
       },
       "scope": "PRODUCTS",
       "stage": "HARD_FILTER",
@@ -477,7 +477,7 @@
           {
             "op": "gte",
             "fact": "investment.paid_up_capital_idr",
-            "value": 9900000026
+            "value": 2500000000
           },
           {
             "op": "gte",
@@ -577,7 +577,7 @@
           {
             "op": "gte",
             "fact": "secondhome.qualifying_property_value_usd",
-            "value": 1000001
+            "value": 1000000
           }
         ]
       },
@@ -622,7 +622,7 @@
               {
                 "op": "gte",
                 "fact": "secondhome.qualifying_property_value_usd",
-                "value": 1000001
+                "value": 1000000
               }
             ]
           },
@@ -665,7 +665,7 @@
                   {
                     "op": "gte",
                     "fact": "secondhome.qualifying_property_value_usd",
-                    "value": 1000001
+                    "value": 1000000
                   }
                 ]
               }
@@ -725,7 +725,7 @@
                   {
                     "op": "gte",
                     "fact": "secondhome.qualifying_property_value_usd",
-                    "value": 1000001
+                    "value": 1000000
                   }
                 ]
               }
@@ -770,7 +770,7 @@
                   {
                     "op": "gte",
                     "fact": "secondhome.qualifying_property_value_usd",
-                    "value": 1000001
+                    "value": 1000000
                   }
                 ]
               }
@@ -5577,7 +5577,7 @@
           {
             "op": "lt",
             "fact": "secondhome.qualifying_property_value_usd",
-            "value": 1000001
+            "value": 1000000
           }
         ]
       },

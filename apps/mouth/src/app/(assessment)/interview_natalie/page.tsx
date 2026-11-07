@@ -19,7 +19,7 @@ import {
   type FieldTelemetry,
 } from "./telemetry";
 
-const CANDIDATE = "Natalie Wuvufox";
+const CANDIDATE = "Natalie Mahodim";
 const ROLE = "Finance & Client Services Coordinator";
 const PANEL_INBOX = "zero@balizero.com";
 const STORAGE_KEY = "bz-interview-natalie-v1";
@@ -803,7 +803,7 @@ export default function InterviewNataliePage() {
               <div className="space-y-4">
                 <div className="rounded-lg border border-white/10 bg-white/[0.02] p-5 font-mono text-sm leading-relaxed text-white/70">
                   <div className="mb-3 space-y-0.5 text-xs text-white/40">
-                    <div>From: g.pinihoh@&lt;client&gt;.it</div>
+                    <div>From: g.ferrari@&lt;client&gt;.it</div>
                     <div>Sent: 21:40</div>
                     <div>Subject: Invoice — this is not acceptable</div>
                   </div>

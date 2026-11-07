@@ -77,7 +77,7 @@ export function VisaOracleTestingBanner({
       role="region"
       aria-label="Pengingat Uji Visa Oracle"
       data-testid="visa-oracle-testing-banner"
-      className="mb-4 rounded-2xl border-2 border-[var(--bz-kita-ink-panel-copper)] bg-[var(--bz-text-1)] p-5 text-[var(--bz-surface)] sm:p-8"
+      className="mb-4 rounded-2xl border-2 border-[var(--bz-kita-ink-panel-copper)] bg-[var(--bz-kita-ink-fill)] p-5 text-[var(--bz-surface)] sm:p-8"
     >
       <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
         <div className="max-w-3xl">

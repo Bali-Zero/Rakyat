@@ -32,7 +32,7 @@ _BACKEND_URL_LOCAL = os.getenv("BACKEND_URL", "https://nuzantara-rag.fly.dev")
 # process, whose uvicorn binds `::` while the container's /etc/hosts maps
 # localhost to 127.0.0.1 alone — "localhost" could never connect there.
 _BACKEND_URL_SERVER = os.getenv("NAGA_SELF_URL", "http://[::1]:8080")
-_API_KEY = os.getenv("SCRAPER_API_KEY", "internal-scraper-key")
+_API_KEY = os.getenv("SCRAPER_API_KEY", "")
 _GEMINI_MODEL = os.getenv("NAGA_GEMINI_MODEL", "gemini-3.1-pro-preview")
 
 # Persistent httpx client (Rule 10: never create in loops)

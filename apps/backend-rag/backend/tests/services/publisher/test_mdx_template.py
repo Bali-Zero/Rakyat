@@ -60,7 +60,8 @@ def test_build_slug_empty_topic_fallback():
 
 
 def test_build_slug_deterministic():
-    assert build_slug("x", DID) == build_slug("x", DID)
+    first = build_slug("x", DID)
+    assert build_slug("x", DID) == first
 
 
 def test_build_slug_different_topics_different_slug():

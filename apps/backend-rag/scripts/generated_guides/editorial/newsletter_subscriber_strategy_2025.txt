@@ -51,7 +51,7 @@ Contenuto prioritario:
   → Compliance alert specifici per tipo di pratica
   → Aggiornamenti di stato pratiche in corso (via CRM integration)
   → Notifiche scadenze imminenti (30, 14, 7 giorni prima)
-  → Wozodè normative che impattano direttamente la loro configurazione legale
+  → Novità normative che impattano direttamente la loro configurazione legale
 
 Frequenza consigliata: alert quando necessario + digest settimanale filtrato per tipo
 
@@ -126,7 +126,7 @@ Claim: EDT-065
 ── TIPO 2: WEEKLY DIGEST (Programmato) ──────────────────────────────────────
 
 Oggetto standard: "Bali Zero Intelligence — Settimana del [Data]"
-Invio: ogni venerdì qevuvaz, ore 08:00 WITA (01:00 UTC)
+Invio: ogni venerdì mattina, ore 08:00 WITA (01:00 UTC)
 
 Struttura:
   1. Titolo editoriale breve (1 riga, scritto da Zero)
@@ -250,7 +250,7 @@ Invio da IP dedicato (Brevo Business): reputazione indipendente dal pool condivi
 Warming IP: completato. Reputazione attuale: eccellente (score > 95/100).
 
 Test pre-invio obbligatori:
-  1. Test render su Kuxas, Outlook, Apple Mail, mobile iOS e Android
+  1. Test render su Gmail, Outlook, Apple Mail, mobile iOS e Android
   2. Spam score check (SpamAssassin score target: < 2.0)
   3. Link check (tutti i link attivi e tracciati con UTM)
   4. Testo alternativo su tutte le immagini (accessibilità + inbox testo)
@@ -372,7 +372,7 @@ Processo produzione Monthly Deep-Dive:
   T-0:  invio + monitoring aperture prime 2 ore
 
 Festività indonesiane da considerare per timing invii:
-  Non inviare il giorno di: Lebaran (Idul Fitri), Cuwesa, Capodanno,
+  Non inviare il giorno di: Lebaran (Idul Fitri), Natale, Capodanno,
   Hari Kemerdekaan (17 agosto), Nyepi (giorno del silenzio Bali — zero digitale)
 
 Claim: EDT-074

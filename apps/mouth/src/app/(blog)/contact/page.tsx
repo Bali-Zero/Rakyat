@@ -207,7 +207,7 @@ export default function ContactPage() {
               >
                 {[
                   ["Monday — Friday", "09:00 — 17:00"],
-                  ["Saturday, Detali, Public holidays", "Closed"],
+                  ["Saturday, Sunday, Public holidays", "Closed"],
                 ].map(([day, time]) => (
                   <li
                     key={day}

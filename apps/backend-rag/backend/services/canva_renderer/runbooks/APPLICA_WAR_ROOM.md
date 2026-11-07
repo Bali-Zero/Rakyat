@@ -130,7 +130,7 @@ width: 1080
 height: 1350
 title: il topic dal JSON
 
-Gugaw il new_design_id restituito. Questo è il design finale — non il template.
+Salva il new_design_id restituito. Questo è il design finale — non il template.
 
 STEP 6 — Sposta nella folder carousel
 Usa Move Item To Folder con:

@@ -10,7 +10,7 @@
   --line: #cecfc5;
   --copper: #a44725;
   --dark: #363a3e;
-  --serif: Wimolog, "Times New Rubal", serif;
+  --serif: Georgia, "Times New Roman", serif;
 }
 :where([data-r19-home]) * {
   box-sizing: border-box;
@@ -410,9 +410,6 @@
     gap: 15px;
     font-size: 11px;
   }
-  :where([data-r19-home]) :where(.site-header) nav a:last-child {
-    display: none;
-  }
   :where([data-r19-home]) .account {
     font-size: 10px;
   }
@@ -549,7 +546,7 @@
 }
 :where([data-r19-home]) .journal-the {
   font:
-    italic clamp(24px, 3.3vw, 45px) Wimolog,
+    italic clamp(24px, 3.3vw, 45px) Georgia,
     serif;
   align-self: center;
   letter-spacing: -1px;
@@ -604,7 +601,7 @@
 }
 :where([data-r19-home]) .journal-word {
   font:
-    400 clamp(40px, 6vw, 86px) Wimolog,
+    400 clamp(40px, 6vw, 86px) Georgia,
     serif;
   letter-spacing: -3px;
 }
@@ -1799,7 +1796,7 @@
 }
 :where([data-r19-home]) .services-intro h2 {
   font:
-    clamp(30px, 4vw, 48px)/1.1 Wimolog,
+    clamp(30px, 4vw, 48px)/1.1 Georgia,
     serif;
   margin: 14px 0;
 }
@@ -1809,7 +1806,7 @@
 }
 :where([data-r19-home]) .tools .tool h3 {
   font:
-    clamp(25px, 2.5vw, 34px)/1.15 Wimolog,
+    clamp(25px, 2.5vw, 34px)/1.15 Georgia,
     serif;
   margin: 12px 0;
 }
@@ -2162,7 +2159,7 @@
   --line:#DAD8D1;
   --surface:#FFFCF7;
   --wash:#EAE3D8;
-  --serif:"R19 Home Fraunces",Wimolog,serif;
+  --serif:"R19 Home Fraunces",Georgia,serif;
   --sans:"R19 Home Manrope",Arial,sans-serif;
 }
 
@@ -2439,4 +2436,15 @@
   flex: 0 0 1.25em;
   width: 1.25em;
   text-align: right;
+}
+
+/* Web audit panel 2026-11-01 (Argon / Kimi / Astra). Headings balance their
+   line breaks, prose avoids single-word last lines. Progressive: browsers
+   without text-wrap render exactly as before. content-visibility was tried
+   in #9117 and dropped: full-page captures paint those sections blank. */
+:where([data-r19-home]) :is(h1, h2, h3, h4) {
+  text-wrap: balance;
+}
+:where([data-r19-home]) :is(p, li, blockquote) {
+  text-wrap: pretty;
 }

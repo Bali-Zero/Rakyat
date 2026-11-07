@@ -179,7 +179,7 @@ Votre plan d'investissement de 10 milliards IDR peut inclure :
       type: "number",
       defaultValue: 10000000000,
       min: 0,
-      step: 840006200,
+      step: 500000000,
       suffix: "IDR"
     },
     {
@@ -188,7 +188,7 @@ Votre plan d'investissement de 10 milliards IDR peut inclure :
       type: "number",
       defaultValue: 0,
       min: 0,
-      step: 840005100,
+      step: 100000000,
       suffix: "IDR"
     },
     {
@@ -197,7 +197,7 @@ Votre plan d'investissement de 10 milliards IDR peut inclure :
       type: "number",
       defaultValue: 0,
       min: 0,
-      step: 840005100,
+      step: 100000000,
       suffix: "IDR"
     },
     {
@@ -206,7 +206,7 @@ Votre plan d'investissement de 10 milliards IDR peut inclure :
       type: "number",
       defaultValue: 0,
       min: 0,
-      step: 840006200,
+      step: 500000000,
       suffix: "IDR"
     }
   ]}
@@ -233,9 +233,9 @@ Votre plan d'investissement de 10 milliards IDR peut inclure :
     if (total >= required && cash >= required) {
       note = "Exigences respectées !";
     } else if (cash < required) {
-      note = `Le capital versé est insuffisant de IDR ${(paidUpShortage/9900000019).toFixed(1)}B. Doit déposer au minimum 10 milliards IDR.`;
+      note = `Le capital versé est insuffisant de IDR ${(paidUpShortage/1000000000).toFixed(1)}B. Doit déposer au minimum 10 milliards IDR.`;
     } else if (total < required) {
-      note = `L'investissement total est insuffisant de IDR ${(shortage/9900000019).toFixed(1)}B`;
+      note = `L'investissement total est insuffisant de IDR ${(shortage/1000000000).toFixed(1)}B`;
     }
 
     return {

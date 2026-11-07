@@ -172,8 +172,10 @@ COPY --from=node22 /usr/local/lib/node_modules /usr/local/lib/node_modules
 # `claude --version` IN-IMAGE with "Error: claude native binary not installed.":
 # its optionalDependencies demand `@anthropic-ai/claude-code-linux-x64@2.1.237`,
 # which upstream never published (`npm view` → E404, that package still at 2.1.236).
-# 2.1.236 is the last verified-good release. Bump deliberately after verifying the
-# install flow in a real build — never back to floating latest.
+# The pin is PINNED_VERSION in scripts/install-claude-code.sh (2.1.317 since
+# 2026-11-03; it was 2.1.236 after this incident) — that file records what was
+# verified for each bump. Bump deliberately after verifying the install flow in a
+# real build — never back to floating latest.
 #
 # READ THE FAILURE IN ORDER, because it is not where you would look. From the
 # build log of job 96279824564:

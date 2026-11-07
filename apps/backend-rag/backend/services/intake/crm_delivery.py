@@ -126,6 +126,22 @@ def _resolution_anchor(
     return None, None, None  # unreachable — a usable state implies a core
 
 
+def _delivery_client_visible(
+    plan: intake_writer.CommitPlan, payload: dict[str, Any]
+) -> bool | None:
+    """Explicit visibility to send with the upload, or None = send nothing.
+
+    ``plan_commit`` stamps ``payload['client_visible']`` for a staff-only tag
+    (``recovery-v1``). The tag is re-derived here as well, so a plan assembled
+    without that key (a script, a test) still delivers staff-only: this leg is
+    the one that creates the row the client portal reads.
+    """
+    visible = payload.get("client_visible")
+    if visible is None:
+        visible = intake_writer.explicit_client_visible(plan.pipeline_version)
+    return visible
+
+
 async def _resolve_and_push_locked(
     *,
     pool: asyncpg.Pool,
@@ -249,11 +265,24 @@ async def _resolve_and_push_locked(
                                 dup_owners,
                                 stable,
                             )
+            practice_uuid = None
+            if plan.practice_id is not None:
+                practice_uuid = await conn.fetchval(
+                    "SELECT uuid FROM practices WHERE id = $1 AND client_id = $2 FOR SHARE",
+                    plan.practice_id,
+                    plan.client_id,
+                )
+                if practice_uuid is None:
+                    return crm_push.CrmPushResult(
+                        ok=False,
+                        status="practice_identity_unresolved",
+                        detail="local practice has no verified canonical identity for this client",
+                    )
             push = await crm_push.push_committed_document(
                 bearer_token=bearer_token,
                 crm_write_key=crm_write_key,
                 client_id=int(plan.client_id),  # type: ignore[arg-type]  # committed means non-None
-                practice_id=plan.practice_id,
+                practice_uuid=str(practice_uuid) if practice_uuid is not None else None,
                 document_type=payload.get("document_type") or "unknown",
                 document_category=payload.get("document_category"),
                 file_name=payload.get("file_name") or os.path.basename(blob_path),
@@ -263,6 +292,7 @@ async def _resolve_and_push_locked(
                 notes=payload.get("notes"),
                 sender_phone=resolution_phone,
                 client_full_name=client_full_name,
+                client_visible=_delivery_client_visible(plan, payload),
             )
             if phone_digits is not None and phone_core is not None:
                 # Divergence detection for lock-BYPASSING writers: if ownership
@@ -381,7 +411,7 @@ async def deliver_committed_to_crm(
     if push.detail:
         crm_info["detail"] = push.detail
 
-    if push.status == "identity_unresolved":
+    if push.status in {"identity_unresolved", "practice_identity_unresolved"}:
         # Distinct, greppable marker (round-5 F8): the document IS committed
         # locally but could not be delivered to Kita because no unambiguous
         # Fly identity exists (no phone / shared phone / no service key).

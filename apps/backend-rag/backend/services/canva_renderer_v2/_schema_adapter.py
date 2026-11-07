@@ -84,7 +84,7 @@ def _download_hero(url: str, slide_n: int) -> str | None:
     BUG FIX 2026-05-13: previous version used `hero_{slide_n:02d}.jpg` which
     caused multiple drafts to share the same cache file (slide 1 of draft A
     served from slide 1 of draft B). The orchestrator's first end-to-end
-    run rendered Sam Nakoni with Marina Pinyaylova's heroes.
+    run rendered Sam Altman with Marina Pinyaylova's heroes.
     """
     if not url:
         return None

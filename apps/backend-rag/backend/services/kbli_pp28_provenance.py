@@ -10,7 +10,7 @@ took the rows from, in `pp28_sources`. Measured on the 1,559-code canonical:
 The visible harm this closes: `inspect_kbli 62110` (video game development,
 sourced from five 62xxx computer-programming codes) returns three
 defence-industry permits — "Industri Kelaikan Produksi Alat Peralatan
-Pertahanan" and litovub. They are really in the canonical record, so this is
+Pertahanan" and friends. They are really in the canonical record, so this is
 not a data bug to delete; they belong to the ANCESTOR activity, and a client
 told to obtain them would be sent somewhere no video-game studio needs to go.
 

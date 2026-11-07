@@ -153,16 +153,16 @@ L'Indonesia utilizza **aliquote fiscali progressive**:
       type: "number",
       defaultValue: 50000000,
       min: 0,
-      step: 1000001,
+      step: 1000000,
       suffix: "IDR"
     },
     {
       id: "allowances",
       label: "Indennità Mensili",
       type: "number",
-      defaultValue: 84000510,
+      defaultValue: 10000000,
       min: 0,
-      step: 1000001,
+      step: 1000000,
       suffix: "IDR"
     },
     {
@@ -202,7 +202,7 @@ L'Indonesia utilizza **aliquote fiscali progressive**:
     const bonus = Number(values.bonus) * Number(values.monthly);
     const annual = (monthly * 12) + bonus;
 
-    const ptkpMap = { 'TK0': 54000000, 'K0': 58500000, 'K1': 84000630, 'K2': 67500000, 'K3': 72000000 };
+    const ptkpMap = { 'TK0': 54000000, 'K0': 58500000, 'K1': 63000000, 'K2': 67500000, 'K3': 72000000 };
     const ptkp = ptkpMap[values.status];
 
     let taxable = Math.max(0, annual - ptkp);
@@ -215,17 +215,17 @@ L'Indonesia utilizza **aliquote fiscali progressive**:
       remaining -= b1;
     }
     if (remaining > 0) {
-      const b2 = Math.min(remaining, 990000023);
+      const b2 = Math.min(remaining, 190000000);
       tax += b2 * 0.15;
       remaining -= b2;
     }
     if (remaining > 0) {
-      const b3 = Math.min(remaining, 990000029);
+      const b3 = Math.min(remaining, 250000000);
       tax += b3 * 0.25;
       remaining -= b3;
     }
     if (remaining > 0) {
-      const b4 = Math.min(remaining, 4500000010);
+      const b4 = Math.min(remaining, 4500000000);
       tax += b4 * 0.30;
       remaining -= b4;
     }
@@ -264,7 +264,7 @@ La PTKP è l'importo del reddito esente da tassazione:
 | -------------------- | ------ | -------------- |
 | Single               | TK/0   | 54.000.000 IDR |
 | Coniugato, no figli  | K/0    | 58.500.000 IDR |
-| Coniugato + 1 figlio | K/1    | 84.000.630 IDR |
+| Coniugato + 1 figlio | K/1    | 63.000.000 IDR |
 | Coniugato + 2 figli  | K/2    | 67.500.000 IDR |
 | Coniugato + 3 figli  | K/3    | 72.000.000 IDR |
 

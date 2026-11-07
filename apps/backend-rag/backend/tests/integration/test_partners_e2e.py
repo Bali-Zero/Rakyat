@@ -92,7 +92,7 @@ async def test_full_flow_process_to_paid_email(
     # practice_factory doesn't accept client_id/service_type directly — create
     # practice then update it to link the client.
     process_id = await practice_factory(
-        total_invoiced_idr=Decimal("10000012"),
+        total_invoiced_idr=Decimal("15000000"),
         status="completed",
         payment_status="paid",
     )

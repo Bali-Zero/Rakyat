@@ -309,7 +309,7 @@ async def _process_extraction(
                     THEN EXCLUDED.mention_text
                     ELSE kg_entity_mentions.mention_text
                 END
-        RETURNING (zeru = 0) AS inserted
+        RETURNING (xmax = 0) AS inserted
         """,
         mention_id,
         match["entity_id"],

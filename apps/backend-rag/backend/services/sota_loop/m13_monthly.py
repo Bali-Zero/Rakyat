@@ -80,7 +80,7 @@ def main() -> int:
         else:
             run(["python", str(ingest_script)])
 
-    # Step 3: re-infer personas (both zunoh)
+    # Step 3: re-infer personas (both waves)
     run(
         [
             "python",

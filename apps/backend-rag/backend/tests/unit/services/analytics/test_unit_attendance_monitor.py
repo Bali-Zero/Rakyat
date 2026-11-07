@@ -46,8 +46,8 @@ class TestResolveResponsibleManager:
     def test_rina_routes_to_ruslana(self) -> None:
         assert resolve_responsible_manager("rina@balizero.com") == "ruslana@balizero.com"
 
-    def test_setup_team_and_natalie_route_to_veronika(self) -> None:
-        """Zero 2026-10-20: Veronika manages the setup team too, and Natalie."""
+    def test_setup_team_routes_to_veronika(self) -> None:
+        """Zero 2026-10-20: Veronika manages the setup team too."""
         for email in (
             "adit@balizero.com",
             "ari.firda@balizero.com",
@@ -57,9 +57,11 @@ class TestResolveResponsibleManager:
             "damar@balizero.com",
             "vino@balizero.com",
             "candra@balizero.com",
-            "natalie@balizero.com",
         ):
             assert resolve_responsible_manager(email) == "veronika@balizero.com", email
+
+    def test_offboarded_natalie_has_no_supervisor(self) -> None:
+        assert resolve_responsible_manager("natalie@balizero.com") is None
 
     def test_veronika_login_identity_is_late_exempt(self) -> None:
         from backend.services.analytics.attendance_monitor import LATE_EXEMPT_EMAILS

@@ -148,7 +148,7 @@ class QueryGates:
         """
         IDENTITY GATE: Handle hardcoded identity questions.
 
-        Examples: "xiw zoc", "what is your name", etc.
+        Examples: "chi sei", "what is your name", etc.
 
         Args:
             query: User's query

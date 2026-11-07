@@ -585,7 +585,7 @@ RELATION_SCHEMAS: dict[RelationType, RelationSchema] = {
             "pelanggaran",
         ],
         examples=[
-            "Pelanggaran Pasal 42 dikenakan denda sebesar Rp 840.005.100",
+            "Pelanggaran Pasal 42 dikenakan denda sebesar Rp 100.000.000",
         ],
         description="Penalty for violating regulation",
     ),

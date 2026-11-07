@@ -61,8 +61,8 @@ _ITALIAN_MARKERS = [
     "quanto",
     "costa",
     "io",
-    "xiw",
-    "zoc",
+    "chi",
+    "sei",
     "tu",
     "ti",
     "mi",
@@ -555,7 +555,7 @@ def get_language_instruction(language: str) -> str:
     instructions = {
         "it": """
 <language_instruction>
-    **LINGUA OBBLIGATORIA: VANELARA**
+    **LINGUA OBBLIGATORIA: ITALIANO**
     Tu sei ZANTARA, consulente esperto di Bali Zero.
     Il tuo tono è professionale, diretto e orientato alla soluzione.
     Inizia sempre con la risposta diretta.

@@ -174,6 +174,8 @@ class TestSponsorTypeRolloutDefault:
             "work_annual_foreign_income_usd",
             # E28A own-shareholding Step A, 2026-10-17.
             "investment_own_shareholding_idr",
+            "investment_sponsoring_company_confirmed",
+            "family_spouse_application_support_confirmed",
         }, (
             "ApplicantFactsData's optional-field set changed. If you added a "
             "field with a default, don't: every fact is required so that an "
@@ -640,3 +642,41 @@ class TestSponsorTypeIsUsableByARule:
         """Guards against the probe above passing because everything fails."""
         report = compile_rule_pack(M.RulePack.model_validate(loader.load_rule_pack_raw()))
         assert report.ok, [f"{e.code}: {e.message}" for e in report.errors]
+
+
+class TestE28ACompanySponsorConfirmation:
+    def test_older_interviews_do_not_imply_company_confirmation(self) -> None:
+        data = _all_unknown_facts()
+        del data["investment.sponsoring_company_confirmed"]
+        fact = M.ApplicantFactsData.model_validate(data).investment_sponsoring_company_confirmed
+        assert isinstance(fact, M.UnknownFact)
+        assert fact.reason == enums.UnknownReason.NOT_ASKED
+
+    @pytest.mark.parametrize("answer", [False, True])
+    def test_boolean_answer_survives_without_using_the_generic_sponsor_type(self, answer: bool) -> None:
+        data = _all_unknown_facts()
+        data["investment.sponsoring_company_confirmed"] = {"status": "KNOWN", "value": answer}
+        fact = M.ApplicantFactsData.model_validate(data).investment_sponsoring_company_confirmed
+        assert fact.status == "KNOWN" and fact.value is answer
+
+
+class TestE31ASpouseApplicationSupport:
+    @pytest.mark.parametrize("family_agreement", [False, True])
+    def test_old_family_answer_does_not_imply_spouse_agreement(
+        self, family_agreement: bool
+    ) -> None:
+        data = _all_unknown_facts()
+        del data["family.spouse_application_support_confirmed"]
+        data["family.sponsor_confirmed"] = {"status": "KNOWN", "value": family_agreement}
+        fact = M.ApplicantFactsData.model_validate(data).family_spouse_application_support_confirmed
+        assert fact == M.UnknownFact(status="UNKNOWN", reason=enums.UnknownReason.NOT_ASKED)
+
+    @pytest.mark.parametrize("answer", [False, True])
+    def test_spouse_application_answer_is_distinct_from_the_family_question(
+        self, answer: bool
+    ) -> None:
+        data = _all_unknown_facts()
+        data["family.sponsor_confirmed"] = {"status": "KNOWN", "value": not answer}
+        data["family.spouse_application_support_confirmed"] = {"status": "KNOWN", "value": answer}
+        fact = M.ApplicantFactsData.model_validate(data).family_spouse_application_support_confirmed
+        assert fact.status == "KNOWN" and fact.value is answer

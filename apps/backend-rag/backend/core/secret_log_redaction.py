@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import logging
 import re
+from urllib.parse import unquote_plus
 
 # `bot<digits>:<35ish url-safe chars>` — Telegram's own shape. The id half is
 # kept: it identifies WHICH bot in a debug session and authenticates nothing.
@@ -58,7 +59,7 @@ REDACTED = r"\1:<redacted>"
 # inside it cannot leave a tail behind. MEASURED LIMIT of that greed: a credential-free
 # URL survives byte-identical alone (`redis://localhost:6379`) and when followed by
 # whitespace — the two shapes a log actually carries, both pinned by tests — but glue a
-# later `@` on with no space (`redis://h:6379,g@d.com`) and the span IS rewritten.
+# later `@` on with no space (`redis://h:6379,a@x.com`) and the span IS rewritten.
 # Over-redacting a log line is the cheaper error, so the greed stays; "no credential,
 # no match" holds for real log shapes, not for every string.
 REDIS_URL_RE = re.compile(r"(rediss?://[^:/@\s]*):[^\s]+@", re.IGNORECASE)
@@ -170,3 +171,50 @@ def install_secret_log_redaction() -> None:
 # Historical name — every Telegram sender calls it at import time and the census test
 # looks for this exact call; both keep working, and both now also cure Redis URLs.
 install_telegram_token_redaction = install_secret_log_redaction
+
+
+# --- Access-log query values (DAI-105, 2026-11-03) ----------------------------------
+# uvicorn's access line carries the full request target: CRM client search puts tax
+# ids and names in `?search=` / `?q=`. Their VALUES go; keys, other params and the
+# path stay. Measured: `configure_logging()` holds `uvicorn.access` at WARNING, so
+# today the line is not emitted at all; this filter keeps the line clean even when
+# that level changes.
+_SENSITIVE_QUERY_KEYS = frozenset({"search", "q"})
+_ACCESS_LOGGERS = ("uvicorn.access",)
+
+
+def redact_query_values(target: str) -> str:
+    """`/p?search=x&page=2` -> `/p?search=***&page=2`. Fail closed: drop the query."""
+    base, sep, query = target.partition("?")
+    if not sep:
+        return target
+    try:
+        pairs = []
+        for pair in query.split("&"):
+            key, eq, _ = pair.partition("=")
+            if eq and unquote_plus(key).strip().lower() in _SENSITIVE_QUERY_KEYS:
+                pair = f"{key}=***"
+            pairs.append(pair)
+        return f"{base}?{'&'.join(pairs)}"
+    except Exception:
+        return base
+
+
+class AccessLogQueryRedactionFilter(logging.Filter):
+    """Rewrite the request-target arg of an access record. Never drops a record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                redact_query_values(a) if isinstance(a, str) and "?" in a else a
+                for a in record.args
+            )
+        return True
+
+
+def install_access_log_query_redaction() -> None:
+    """Attach the filter to the access logger(s). Idempotent."""
+    for name in _ACCESS_LOGGERS:
+        target = logging.getLogger(name)
+        if not any(isinstance(f, AccessLogQueryRedactionFilter) for f in target.filters):
+            target.addFilter(AccessLogQueryRedactionFilter())

@@ -67,7 +67,7 @@ client = await service.create_client(
     client_data={
         "full_name": "John Doe",
         "email": "john@example.com",
-        "phone": "+628400022000",
+        "phone": "+628123456789",
         "nationality": "US"
     },
     user_id="admin@example.com",
@@ -85,15 +85,15 @@ try:
     validated = ClientValidator(
         full_name="John Doe",
         email="john@example.com",
-        phone="0840-0022-0000"
+        phone="0812-3456-7890"
     )
     print(validated.phone)  # Normalizzato
 except ValueError as e:
     print(f"Invalid: {e}")
 
 # Normalizzazione telefono
-normalized = normalize_phone_e164("0840-0022-0000")
-# Result: "+6284000220000"
+normalized = normalize_phone_e164("0812-3456-7890")
+# Result: "+6281234567890"
 ```
 
 ### Caching
@@ -101,7 +101,7 @@ normalized = normalize_phone_e164("0840-0022-0000")
 ```python
 from backend.services.crm import crm_cache, invalidate_client_cache
 
-# Gugaw in cache
+# Salva in cache
 await crm_cache.set("key", value, ttl=300)
 
 # Recupera
@@ -141,8 +141,8 @@ logs, total = await auditor.get_audit_trail(
 ```python
 # Batch insert
 client_ids = await service.batch_create_clients([
-    {"full_name": "Client 1", "email": "u1@dxx1.com"},
-    {"full_name": "Client 2", "email": "u2@dxx1.com"},
+    {"full_name": "Client 1", "email": "c1@test.com"},
+    {"full_name": "Client 2", "email": "c2@test.com"},
 ])
 
 # Batch update

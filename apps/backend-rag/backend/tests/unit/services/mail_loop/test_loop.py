@@ -47,7 +47,7 @@ FOLDERS = [
     {"folder_id": "F-SENT", "folder_name": "Sent"},
     {"folder_id": "F-VISA", "folder_name": "_Visa"},
     {"folder_id": "F-TAX", "folder_name": "_Tax"},
-    {"folder_id": "F-VESEX", "folder_name": "_VESEX"},
+    {"folder_id": "F-PTPMA", "folder_name": "_PTPMA"},
     {"folder_id": "F-PROPERTY", "folder_name": "_Property"},
     {"folder_id": "F-ADMIN", "folder_name": "_Admin"},
     {"folder_id": "F-NOISE", "folder_name": "_Noise"},
@@ -174,7 +174,7 @@ def _loop(backend: FakeBackend, tmp_path: Path, *, dry_run: bool = False) -> Mai
 
 def test_routes_and_drafts(tmp_path: Path, stub_model: None) -> None:
     backend = FakeBackend(
-        inbox=[_msg("m1", "KITAS renewal", "zojev@x.example", "T1")],
+        inbox=[_msg("m1", "KITAS renewal", "sofia@x.example", "T1")],
         bodies={"m1": "My KITAS expires next month, what do you need?"},
     )
     summary = asyncio.run(_loop(backend, tmp_path).run())
@@ -184,7 +184,7 @@ def test_routes_and_drafts(tmp_path: Path, stub_model: None) -> None:
     assert summary.drafted == 1
     assert backend.moves == [(["m1"], "F-VISA")]
     assert backend.drafts[0]["subject"] == "Re: KITAS renewal"
-    assert backend.drafts[0]["to"] == ["zojev@x.example"]
+    assert backend.drafts[0]["to"] == ["sofia@x.example"]
     assert summary.degraded is False
 
 
@@ -396,14 +396,14 @@ def test_pending_buffer_holds_no_client_identifiers(tmp_path: Path, stub_model: 
     """
     backend = FakeBackend(
         inbox=[_msg("m1", "KITAS for Client Beta", "client.beta@client.example", "T9")],
-        bodies={"m1": "About my KITAS, my number is +62 840 0022 0000."},
+        bodies={"m1": "About my KITAS, my number is +62 812 3456 7890."},
     )
     asyncio.run(_loop(backend, tmp_path).run())
 
     raw = (tmp_path / "pending.json").read_text(encoding="utf-8")
     assert "client.beta@client.example" not in raw
     assert "Client Beta" not in raw
-    assert "840 0022 0000" not in raw
+    assert "812 3456 7890" not in raw
     assert "T9" in raw  # the thread id is the only external reference kept
 
 
@@ -444,7 +444,7 @@ def test_a_run_that_understood_nothing_is_clean(tmp_path: Path, stub_model: None
     backend = FakeBackend(
         inbox=[
             _msg("m1", "Re: lunch", "a@x.example", "T1"),
-            _msg("m2", "Photos from Detali", "b@x.example", "T2"),
+            _msg("m2", "Photos from Sunday", "b@x.example", "T2"),
         ],
         bodies={
             "m1": "Are we still on for Thursday? Let me know.",

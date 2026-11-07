@@ -526,16 +526,16 @@ You don't pay 35% on all your income if you earn over IDR 5 billion. Each bracke
       type: "number",
       defaultValue: 50000000,
       min: 0,
-      step: 1000001,
+      step: 1000000,
       suffix: "IDR"
     },
     {
       id: "allowances",
       label: "Monthly Allowances (housing, transport, etc.)",
       type: "number",
-      defaultValue: 10000012,
+      defaultValue: 15000000,
       min: 0,
-      step: 1000001,
+      step: 1000000,
       suffix: "IDR"
     },
     {
@@ -579,7 +579,7 @@ You don't pay 35% on all your income if you earn over IDR 5 billion. Each bracke
     const ptkpMap = {
       'single': 54000000,
       'married-0': 58500000,
-      'married-1': 84000630,
+      'married-1': 63000000,
       'married-2': 67500000,
       'married-3': 72000000
     };
@@ -602,21 +602,21 @@ You don't pay 35% on all your income if you earn over IDR 5 billion. Each bracke
 
     // Bracket 2: 60M-250M at 15%
     if (remaining > 0) {
-      const bracket2 = Math.min(remaining, 990000023);
+      const bracket2 = Math.min(remaining, 190000000);
       tax += bracket2 * 0.15;
       remaining -= bracket2;
     }
 
     // Bracket 3: 250M-500M at 25%
     if (remaining > 0) {
-      const bracket3 = Math.min(remaining, 990000029);
+      const bracket3 = Math.min(remaining, 250000000);
       tax += bracket3 * 0.25;
       remaining -= bracket3;
     }
 
     // Bracket 4: 500M-5B at 30%
     if (remaining > 0) {
-      const bracket4 = Math.min(remaining, 4500000010);
+      const bracket4 = Math.min(remaining, 4500000000);
       tax += bracket4 * 0.30;
       remaining -= bracket4;
     }

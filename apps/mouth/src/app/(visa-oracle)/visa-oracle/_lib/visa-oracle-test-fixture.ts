@@ -115,7 +115,7 @@ export function makeVisaOracleResponse(
     decision: {
       schema_version: "1.0.0",
       decision_id: evaluated ? DECISION_ID : null,
-      public_id: evaluated ? "abcdef8400001000" : null,
+      public_id: evaluated ? "abcdef1234567890" : null,
       state,
       effective_at: TEST_NOW,
       observed_at: TEST_NOW,

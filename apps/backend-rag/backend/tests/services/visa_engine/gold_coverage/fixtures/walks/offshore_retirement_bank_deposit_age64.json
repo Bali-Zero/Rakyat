@@ -81,6 +81,10 @@
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"
     },
+    "investment.sponsoring_company_confirmed": {
+      "status": "UNKNOWN",
+      "reason": "NOT_ASKED"
+    },
     "investment.own_shareholding_idr": {
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"
@@ -115,6 +119,10 @@
       "reason": "NOT_ASKED"
     },
     "family.sponsor_permit_basis": {
+      "status": "UNKNOWN",
+      "reason": "NOT_ASKED"
+    },
+    "family.spouse_application_support_confirmed": {
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"
     },
@@ -157,7 +165,7 @@
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"
     },
-    "secondhome.bank_deposit_usd": { "status": "KNOWN", "value": 9900000019 },
+    "secondhome.bank_deposit_usd": { "status": "KNOWN", "value": 1000000000 },
     "secondhome.bank_deposit_at_state_bank": {
       "status": "KNOWN",
       "value": true
@@ -169,7 +177,7 @@
     },
     "secondhome.passive_monthly_income_usd": {
       "status": "KNOWN",
-      "value": 9900000019
+      "value": 1000000000
     },
     "process.application_channel": {
       "status": "UNKNOWN",

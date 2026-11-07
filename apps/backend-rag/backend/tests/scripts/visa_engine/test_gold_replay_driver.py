@@ -22,7 +22,6 @@ from backend.tests.services.visa_engine import _gold_fixtures as gf
 from backend.tests.services.visa_engine.gold_replay import _persona_expected
 from backend.tests.services.visa_engine.test_evaluator_gold import (
     PERSONAS,
-    PRODUCTION_REPLAY_EXPECTATIONS,
     production_replay_expectations_for_sequence,
 )
 
@@ -108,7 +107,7 @@ def test_all_canonical_personas_map_to_the_real_wire_model() -> None:
         # is derived structurally above from `ApplicantFactsData.model_fields`
         # aliases, so this literal is a redundant pin, not the source of
         # truth — bump it in lockstep whenever that model gains a field.
-        assert len(payload["facts"]) == 59
+        assert len(payload["facts"]) == 61
         assert payload["disclosed_review_flags"] == []
 
 
@@ -313,7 +312,11 @@ def test_offline_replay_match_count_does_not_regress_below_measured_floor() -> N
     so a regression in the match count could land on main with every check
     green.
 
-    17 is a FLOOR to raise as divergences get cured, never a target to hold
+    Re-measured 2026-11-04 against signed33: 20/20, zero divergences. Persona9
+    requires sponsor.type; persona10 requires STATUS_BRIDGING_REVIEW. The
+    historical32 table and its two divergent channel cases remain pinned separately.
+
+    The match count is a FLOOR to raise as divergences get cured, never a target to hold
     steady at and never something to lower back down to make this test pass
     again. This test exists to catch the count going DOWN (a real engine or
     pack regression), not to celebrate it staying flat — if a fix legitimately
@@ -330,24 +333,26 @@ def test_offline_replay_match_count_does_not_regress_below_measured_floor() -> N
 
     summary = report["summary"]
     assert summary["personas_total"] == 20
-    assert summary["personas_match"] >= 18, (
+    floor = 20 if report["pack"]["sequence"] >= 33 else 18
+    ceiling = 20 - floor
+    assert summary["personas_match"] >= floor, (
         f"gold-persona offline replay regressed below the measured floor: "
-        f"{summary['personas_match']}/20 matched (floor=18), "
+        f"{summary['personas_match']}/20 matched (floor={floor}), "
         f"{summary['unexplained_divergences']} unexplained divergences "
-        f"(ceiling=2) against pack sequence={report['pack']['sequence']}"
+        f"(ceiling={ceiling}) against pack sequence={report['pack']['sequence']}"
     )
-    assert summary["unexplained_divergences"] <= 2
+    assert summary["unexplained_divergences"] <= ceiling
     unexplained_persona_ids = {
         row["persona_id"]
         for row in report["personas"]
         if row["divergence"]
         and (not isinstance(row["explanation"], str) or not row["explanation"].strip())
     }
-    assert unexplained_persona_ids == {9, 10}
+    assert unexplained_persona_ids == (set() if floor == 20 else {9, 10})
     _assert_engine_gap_pinned(report)
 
 
-# How personas 9 and 10 diverge TODAY (re-measured on seq-32): the engine ignores the
+# Historical signed32 channel gaps (re-measured before the signed33 correction): the engine ignores the
 # application channel, so both answer the pre-investment visit visa with no reason code at
 # all.  Since seq-32 the C2 business visit (no sponsor needed) rides along with D12.  The
 # gap is NOT closed: the gold still expects a dead end / human review for these two.
@@ -369,9 +374,28 @@ _ENGINE_GAP_ACTUALS = {
 }
 
 
+_SEQ33_CHANNEL_ACTUALS = {
+    9: {
+        "state": "NEEDS_INPUT",
+        "candidate_products": [],
+        "missing_facts": ["sponsor.type"],
+        "review_reason_codes": [],
+        "no_path_reason_codes": [],
+    },
+    10: {
+        "state": "HUMAN_REVIEW_REQUIRED",
+        "candidate_products": [],
+        "missing_facts": [],
+        "review_reason_codes": ["STATUS_BRIDGING_REVIEW"],
+        "no_path_reason_codes": [],
+    },
+}
+
+
 def _assert_engine_gap_pinned(report: dict) -> None:
     rows = {row["persona_id"]: row for row in report["personas"]}
-    for persona_id, pinned in _ENGINE_GAP_ACTUALS.items():
+    expected = _SEQ33_CHANNEL_ACTUALS if report["pack"]["sequence"] >= 33 else _ENGINE_GAP_ACTUALS
+    for persona_id, pinned in expected.items():
         actual = {key: rows[persona_id]["actual"][key] for key in pinned}
         assert actual == pinned, f"persona {persona_id} diverges differently now: {actual}"
 
@@ -409,11 +433,13 @@ def test_persona_1_expectation_matches_the_highest_pack_and_the_old_one_does_not
 
 
 def test_every_production_expectation_has_a_named_legal_basis() -> None:
-    assert set(PRODUCTION_REPLAY_EXPECTATIONS) == {persona.id for persona in PERSONAS}
-    for persona in PERSONAS:
-        expectation = PRODUCTION_REPLAY_EXPECTATIONS[persona.id]
-        assert expectation.legal_citations, persona.label
-        assert expectation.rationale, persona.label
+    for sequence in (27, 28, 32, 33):
+        expectations = production_replay_expectations_for_sequence(sequence)
+        assert set(expectations) == {persona.id for persona in PERSONAS}
+        for persona in PERSONAS:
+            expectation = expectations[persona.id]
+            assert expectation.legal_citations, (sequence, persona.label)
+            assert expectation.rationale, (sequence, persona.label)
 
 
 @pytest.mark.parametrize(
@@ -528,3 +554,13 @@ def test_offline_replay_applies_public_policy_adapter_to_every_persona(
 
     assert len(decisions) == len(PERSONAS)
     assert persona_calls == [driver._persona_assessment_id(persona.id) for persona in PERSONAS]
+
+
+def test_historical_seq32_channel_gap_remains_pinned(tmp_path: Path) -> None:
+    source = driver.PACKS_DIR / "rulepack-prod-032.signed.json"
+    (tmp_path / source.name).write_bytes(source.read_bytes())
+    report = driver.build_offline_report(generated_at=_OFFLINE_AT, packs_dir=tmp_path)
+    assert report["pack"]["sequence"] == 32
+    assert report["summary"]["personas_match"] == 18
+    assert {r["persona_id"] for r in report["personas"] if r["divergence"]} == {9, 10}
+    _assert_engine_gap_pinned(report)

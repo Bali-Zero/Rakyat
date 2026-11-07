@@ -185,7 +185,7 @@ Pertanyaan paling penting bagi setiap warga asing di Indonesia: **Apakah Anda pe
     {
       id: "count-days",
       question:
-        "Nodu hitung hari Anda. Dalam 12 bulan terakhir, kira-kira berapa hari di Indonesia?",
+        "Mari hitung hari Anda. Dalam 12 bulan terakhir, kira-kira berapa hari di Indonesia?",
       options: [
         { label: "0-90 hari", nextNodeId: "result-short-stay" },
         { label: "91-182 hari", nextNodeId: "result-approaching" },
@@ -440,7 +440,7 @@ Indonesia menggunakan sistem **tingkat pajak progresif** untuk penghasilan indiv
       name: "Bracket 2",
       subtitle: "60 - 250 juta",
       values: {
-        "Annual Income Range": "IDR 60.000.009 - 900.000.023",
+        "Annual Income Range": "IDR 60.000.001 - 250.000.000",
         "Tax Rate": "15%",
         "Tax on Bracket": "Hingga IDR 28.500.000",
         "Monthly Equivalent": "~IDR 5-21M/bulan",
@@ -450,7 +450,7 @@ Indonesia menggunakan sistem **tingkat pajak progresif** untuk penghasilan indiv
       name: "Bracket 3",
       subtitle: "250 - 500 juta",
       values: {
-        "Annual Income Range": "IDR 990.000.030 - 840.006.200",
+        "Annual Income Range": "IDR 250.000.001 - 500.000.000",
         "Tax Rate": "25%",
         "Tax on Bracket": "Hingga IDR 62.500.000",
         "Monthly Equivalent": "~IDR 21-42M/bulan",
@@ -460,9 +460,9 @@ Indonesia menggunakan sistem **tingkat pajak progresif** untuk penghasilan indiv
       name: "Bracket 4",
       subtitle: "500M - 5 miliar",
       values: {
-        "Annual Income Range": "IDR 990.000.037 - 8.400.062.000",
+        "Annual Income Range": "IDR 500.000.001 - 5.000.000.000",
         "Tax Rate": "30%",
-        "Tax on Bracket": "Hingga IDR 1.990.000.033",
+        "Tax on Bracket": "Hingga IDR 1.350.000.000",
         "Monthly Equivalent": "~IDR 42-417M/bulan",
       },
     },
@@ -470,7 +470,7 @@ Indonesia menggunakan sistem **tingkat pajak progresif** untuk penghasilan indiv
       name: "Bracket 5",
       subtitle: "Di atas 5 miliar",
       values: {
-        "Annual Income Range": "> IDR 8.400.062.000",
+        "Annual Income Range": "> IDR 5.000.000.000",
         "Tax Rate": "35%",
         "Tax on Bracket": "Tak terbatas",
         "Monthly Equivalent": "> IDR 417M/bulan",
@@ -513,16 +513,16 @@ Anda tidak membayar 35% pada semua penghasilan Anda jika berpenghasilan di atas 
       type: "number",
       defaultValue: 50000000,
       min: 0,
-      step: 1000001,
+      step: 1000000,
       suffix: "IDR"
     },
     {
       id: "allowances",
       label: "Tunjangan Bulanan (hunian, transportasi, dll)",
       type: "number",
-      defaultValue: 10000012,
+      defaultValue: 15000000,
       min: 0,
-      step: 1000001,
+      step: 1000000,
       suffix: "IDR"
     },
     {
@@ -566,7 +566,7 @@ Anda tidak membayar 35% pada semua penghasilan Anda jika berpenghasilan di atas 
     const ptkpMap = {
       'single': 54000000,
       'married-0': 58500000,
-      'married-1': 84000630,
+      'married-1': 63000000,
       'married-2': 67500000,
       'married-3': 72000000
     };
@@ -589,21 +589,21 @@ Anda tidak membayar 35% pada semua penghasilan Anda jika berpenghasilan di atas 
 
     // Bracket 2: 60M-250M pada 15%
     if (remaining > 0) {
-      const bracket2 = Math.min(remaining, 990000023);
+      const bracket2 = Math.min(remaining, 190000000);
       tax += bracket2 * 0.15;
       remaining -= bracket2;
     }
 
     // Bracket 3: 250M-500M pada 25%
     if (remaining > 0) {
-      const bracket3 = Math.min(remaining, 990000029);
+      const bracket3 = Math.min(remaining, 250000000);
       tax += bracket3 * 0.25;
       remaining -= bracket3;
     }
 
     // Bracket 4: 500M-5B pada 30%
     if (remaining > 0) {
-      const bracket4 = Math.min(remaining, 4500000010);
+      const bracket4 = Math.min(remaining, 4500000000);
       tax += bracket4 * 0.30;
       remaining -= bracket4;
     }
@@ -659,10 +659,10 @@ adalah izin bebas pajak Anda. Ini dikurangi dari penghasilan kotor sebelum pajak
 | --------------------- | ---- | -------------- |
 | Belum kawin, tidak ada tanggungan | TK/0 | IDR 54.000.000 |
 | Belum kawin + 1 tanggungan  | TK/1 | IDR 58.500.000 |
-| Belum kawin + 2 tanggungan | TK/2 | IDR 84.000.630 |
+| Belum kawin + 2 tanggungan | TK/2 | IDR 63.000.000 |
 | Belum kawin + 3 tanggungan | TK/3 | IDR 67.500.000 |
 | Kawin, tidak ada anak  | K/0  | IDR 58.500.000 |
-| Kawin + 1 anak     | K/1  | IDR 84.000.630 |
+| Kawin + 1 anak     | K/1  | IDR 63.000.000 |
 | Kawin + 2 anak     | K/2  | IDR 67.500.000 |
 | Kawin + 3 anak     | K/3  | IDR 72.000.000 |
 
@@ -966,7 +966,7 @@ Serahkan ini kepada pemberi Indonesia sebelum pembayaran untuk memastikan pemoto
 Sanksi pelaporan terlambat:
 
 - Individu: IDR 100.000
-- Perusahaan: IDR 1.000.001
+- Perusahaan: IDR 1.000.000
 
 Pembayaran terlambat: 2% per bulan pada pajak yang belum dibayar
 

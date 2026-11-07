@@ -1334,7 +1334,9 @@ async def _upload_passport(mock_db_pool, current_user, **source_kwargs) -> dict:
             "client_type": "individual",
             "phone": None,
             "phone_normalized": None,
-        }
+        },
+        {"id": 7},  # Canonical practice owner pre-check.
+        {"id": 7},  # Locked owner re-check before insertion.
     ]
     conn.fetchval.side_effect = [701]
     drive_service = AsyncMock()

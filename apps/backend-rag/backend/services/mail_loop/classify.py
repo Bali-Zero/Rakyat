@@ -238,7 +238,7 @@ _WEAK: frozenset[str] = frozenset(
         # PT_PMA — three letters that also spell "open source software" and sit
         # inside plenty of unrelated acronym soup.
         "oss",
-        # Signature-block furniture: "Budi Fijulek / Direktur Utama" says who
+        # Signature-block furniture: "Budi Santoso / Direktur Utama" says who
         # wrote the mail, not what it is about.
         "direktur",
     }

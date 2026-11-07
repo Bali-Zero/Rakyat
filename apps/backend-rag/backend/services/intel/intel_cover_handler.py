@@ -19,7 +19,7 @@ from backend.services.intel.intel_staging_service import assert_valid_item_id
 logger = logging.getLogger(__name__)
 
 # Damar's Telegram chat_id
-DAMAR_CHAT_ID = 9967890123
+DAMAR_CHAT_ID = 1813875994
 # Owner (Zero) chat_id — first in TELEGRAM_APPROVAL_CHAT_ID
 OWNER_CHAT_ID = None  # Will be set from env at runtime
 

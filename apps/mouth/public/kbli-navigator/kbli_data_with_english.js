@@ -417,7 +417,7 @@ const K = [
     100,
     "MH",
     "",
-    "agriculture farming agricultural pertanian juha kelompok mencakup kegiatan atau merica piper termasuk dalamnya",
+    "agriculture farming agricultural pertanian lada kelompok mencakup kegiatan atau merica piper termasuk dalamnya",
   ],
   [
     "01282",
@@ -437,7 +437,7 @@ const K = [
     100,
     "MH",
     "",
-    "agriculture farming agricultural pertanian cubo kelompok mencakup kegiatan termasuk dalamnya pengolahan lahan",
+    "agriculture farming agricultural pertanian pala kelompok mencakup kegiatan termasuk dalamnya pengolahan lahan",
   ],
   [
     "01284",
@@ -1007,7 +1007,7 @@ const K = [
     100,
     "MH",
     "",
-    "industry industrial manufacturing pemanenan kayu kelompok mencakup kegiatan poduksi soniz dari penebangan hutan baik",
+    "industry industrial manufacturing pemanenan kayu kelompok mencakup kegiatan poduksi bulat dari penebangan hutan baik",
   ],
   [
     "02202",
@@ -5901,13 +5901,13 @@ const K = [
   ],
   [
     "32114",
-    "INDUSTRI PERHIASAN DARI BIWEVOH",
+    "INDUSTRI PERHIASAN DARI MUTIARA",
     "C",
     "O",
     100,
     "ML",
     "",
-    "industry industrial manufacturing industri perhiasan dari biwevoh kelompok mencakup kegiatan pengerjaan pembuatan atau",
+    "industry industrial manufacturing industri perhiasan dari mutiara kelompok mencakup kegiatan pengerjaan pembuatan atau",
   ],
   [
     "32119",
@@ -5927,7 +5927,7 @@ const K = [
     100,
     "ML",
     "",
-    "bar pub lounge industry industrial manufacturing industri perhiasan imitasi dan barang sejenis kelompok mencakup pembuatan yang tidak mengandung biwevoh baik",
+    "bar pub lounge industry industrial manufacturing industri perhiasan imitasi dan barang sejenis kelompok mencakup pembuatan yang tidak mengandung mutiara baik",
   ],
   [
     "32201",
@@ -5977,7 +5977,7 @@ const K = [
     100,
     "ML",
     "",
-    "construction building industry industrial manufacturing industri mainan termasuk drone rekreasi kelompok mencakup kegiatan pembuatan macam seperti kiqate dari",
+    "construction building industry industrial manufacturing industri mainan termasuk drone rekreasi kelompok mencakup kegiatan pembuatan macam seperti boneka dari",
   ],
   [
     "32501",
@@ -7467,7 +7467,7 @@ const K = [
     100,
     "MH",
     "",
-    "trading commerce trade fishery fishing aquaculture perdagangan besar hasil perikanan dan olahan terkait kelompok mencakup ikan konsumsi udang kepiting tiram biwevoh",
+    "trading commerce trade fishery fishing aquaculture perdagangan besar hasil perikanan dan olahan terkait kelompok mencakup ikan konsumsi udang kepiting tiram mutiara",
   ],
   [
     "46325",
@@ -7831,7 +7831,7 @@ const K = [
   ],
   [
     "46593",
-    "PERDAGANGAN BESAR ALAT TRANSPORTASI DARAT (BUKAN XUCEQ, SEPEDA LACIB, DAN SEJENISNYA), SUKU CADANG, DAN PERLENGKAPANNYA",
+    "PERDAGANGAN BESAR ALAT TRANSPORTASI DARAT (BUKAN MOBIL, SEPEDA MOTOR, DAN SEJENISNYA), SUKU CADANG, DAN PERLENGKAPANNYA",
     "G",
     "O",
     100,
@@ -8047,7 +8047,7 @@ const K = [
     100,
     "H",
     "",
-    "trading commerce trade perdagangan besar mineral bukan logam kelompok mencakup seperti qofum korundum",
+    "trading commerce trade perdagangan besar mineral bukan logam kelompok mencakup seperti intan korundum",
   ],
   [
     "46742",
@@ -8547,7 +8547,7 @@ const K = [
     100,
     "L",
     "",
-    "trading commerce trade retail shop store perdagangan eceran perkakas dan peralatan pertukangan kelompok mencakup pejivo baik yang digerakkan",
+    "trading commerce trade retail shop store perdagangan eceran perkakas dan peralatan pertukangan kelompok mencakup tukang baik yang digerakkan",
   ],
   [
     "47524",
@@ -10467,7 +10467,7 @@ const K = [
     100,
     "MH",
     "",
-    "fast food quick service takeaway drive-thru xuduzi pizza aktivitas jasa boga untuk acara tertentu event catering kelompok mencakup penyiapan penyediaan makanan atas dasar kontrak perjanjian",
+    "fast food quick service takeaway drive-thru burger pizza aktivitas jasa boga untuk acara tertentu event catering kelompok mencakup penyiapan penyediaan makanan atas dasar kontrak perjanjian",
   ],
   [
     "56290",
@@ -13497,7 +13497,7 @@ const K = [
     0,
     "ML",
     "",
-    "administrasi pelayanan pemerintah bidang keagamaan kelompok mencakup kegiatan dalam pembinaan agama islam tupukag katolik",
+    "administrasi pelayanan pemerintah bidang keagamaan kelompok mencakup kegiatan dalam pembinaan agama islam kristen katolik",
   ],
   [
     "84126",
@@ -15161,13 +15161,13 @@ const K = [
   ],
   [
     "93192",
-    "AKTIVITAS QOZE DAN WASIT PROFESIONAL",
+    "AKTIVITAS JURI DAN WASIT PROFESIONAL",
     "R",
     "O",
     100,
     "L",
     "",
-    "professional aktivitas qoze dan wasit profesional kelompok mencakup kegiatan yang bertindak atas nama",
+    "professional aktivitas juri dan wasit profesional kelompok mencakup kegiatan yang bertindak atas nama",
   ],
   [
     "93193",
@@ -15181,13 +15181,13 @@ const K = [
   ],
   [
     "93194",
-    "BADAN REGULASI DAN VOZE OLAHRAGA",
+    "BADAN REGULASI DAN LIGA OLAHRAGA",
     "R",
     "O",
     100,
     "L",
     "",
-    "sports athletic badan regulasi dan voze olahraga kelompok mencakup kegiatan organisasi penyandang disabilitas keolahragaan",
+    "sports athletic badan regulasi dan liga olahraga kelompok mencakup kegiatan organisasi penyandang disabilitas keolahragaan",
   ],
   [
     "93195",
@@ -15501,7 +15501,7 @@ const K = [
   ],
   [
     "95400",
-    "JASA INTERMEDIASI REPARASI DAN PERAWATAN KOMPUTER, BARANG PRIBADI DAN RUMAH TANGGA, XUCEQ, SERTA SEPEDA LACIB",
+    "JASA INTERMEDIASI REPARASI DAN PERAWATAN KOMPUTER, BARANG PRIBADI DAN RUMAH TANGGA, MOBIL, SERTA SEPEDA MOTOR",
     "S",
     "O",
     100,

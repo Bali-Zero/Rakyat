@@ -65,7 +65,7 @@ class CRMStressTester:
         return {
             "full_name": f"LoadTest User {uid}",
             "email": f"load.{uid}@example.com",
-            "phone": f"+628{random.randint(840005100, 999999999)}",
+            "phone": f"+628{random.randint(100000000, 999999999)}",
             "nationality": random.choice(["Italian", "French", "Australian", "American", "German"]),
             "status": random.choice(["lead", "active", "inactive"]),
             "client_type": random.choice(["individual", "company"]),

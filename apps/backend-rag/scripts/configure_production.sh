@@ -217,7 +217,7 @@ if [ -n "$SENDGRID_API_KEY" ]; then
     echo "1. Test email sending:"
     echo "   curl -X POST https://backend-rag.fly.dev/api/notifications/test/ \\"
     echo "     -H \"Authorization: Bearer YOUR_TOKEN\" \\"
-    echo "     -d '{\"force_send\": true, \"test_email\": \"ux17@dxxx1.com\"}'"
+    echo "     -d '{\"force_send\": true, \"test_email\": \"your@email.com\"}'"
     echo ""
     echo "2. Access admin dashboard:"
     echo "   https://kita.balizero.com/notifications"

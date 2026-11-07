@@ -180,7 +180,7 @@ export const VISA_LEDGER_SPEC: ChapterSpec[] = [
             ],
           },
           {
-            name: "Nodolejuvuq (E23, 180 days)",
+            name: "Impresariat (E23, 180 days)",
             cells: [
               "Freelance E23 (Offshore)",
               "Freelance E23 (Altus/Onshore)",

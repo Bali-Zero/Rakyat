@@ -93,15 +93,16 @@ def test_inventory_counts_match_the_signed_pack(real_pack: M.RulePackPayload) ->
     # NEEDS_INPUT — A8.4's derived target. seq-29 adds the second and last
     # one: review.e31j-marital-status-other (E31J, marital status "other",
     # on_unknown NO_EFFECT), printed by the same command on the signed tree.
-    assert {rule.rule_id for rule in review_rules} == {
+    expected = {
         "review.e33.below-threshold-studio",
         "review.e31j-marital-status-other",
-    }, (
-        f"sequence {real_pack.sequence}: expected 2 HUMAN_REVIEW-stage rules "
-        f"(review.e33.below-threshold-studio, review.e31j-marital-status-other), "
-        f"got {len(review_rules)} — A8.4 derived exactly 1 for seq-23 and seq-29 "
-        "added the E31J marital-status review; a changed count on a later "
-        "sequence is real news, not a stale pin"
+    }
+    if real_pack.sequence >= 33:
+        expected.add("review.e28a.bridging-origin")
+    assert {rule.rule_id for rule in review_rules} == expected, (
+        f"sequence {real_pack.sequence}: expected HUMAN_REVIEW rules {sorted(expected)}, "
+        f"got {sorted(rule.rule_id for rule in review_rules)} — seq-33 adds the "
+        "explicit E28A bridging-origin review; other changes require a new pin"
     )
     assert len(escalations) == 0, (
         f"sequence {real_pack.sequence}: expected 0 on_unknown=HUMAN_REVIEW "

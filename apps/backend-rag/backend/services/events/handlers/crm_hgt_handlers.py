@@ -1,7 +1,7 @@
 """EventBus handlers for crm-cell HGT pattern broadcasting.
 
 Phase 3 TICKET A.2 — first production caller of ``CrmHGTBridge`` from
-``crm_cell.hgt_publisher`` (PR #632, commit ``99000003b``).
+``crm_cell.hgt_publisher`` (PR #632, commit ``84953041b``).
 
 Architecture (post 4-panel UNANIMOUS Option β, see
 ``docs/audits/2026-05-13-ticket-a2-spec-brainstorm/``):

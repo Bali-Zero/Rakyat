@@ -47,6 +47,7 @@ import {
   SECOND_HOME_STUDIO_REVIEW_REASON_CODE,
   SECOND_HOME_STUDIO_URL,
   REVIEW_REASON_ELEMENTS,
+  SHAREABLE_SPONSOR_CODES,
   UNMAPPED_REASON_COPY,
   isNoPathWithoutDoors,
   isSecondHomeStudioOnly,
@@ -228,6 +229,25 @@ function buildShareSummary(
       lines.push(parts.length > 0 ? `${name}: ${parts.join(" · ")}` : name);
     }
   }
+  const reasons =
+    outcome.state === "NO_SUPPORTED_PATH"
+      ? outcome.noPathReasons
+      : outcome.conditions;
+  const sponsorLines = reasons
+    .filter((reason) => SHAREABLE_SPONSOR_CODES.has(reason.code))
+    .map((reason) => localized(reason.message, language));
+  if (outcome.state === "NEEDS_INPUT") {
+    for (const input of outcome.missingInputs) {
+      if (
+        input.questionId === "investment_sponsoring_company_confirmed" ||
+        input.questionId === "family_sponsor_confirmed" ||
+        input.questionId === "family_spouse_application_support_confirmed"
+      ) {
+        sponsorLines.push(localized(input.message, language));
+      }
+    }
+  }
+  lines.push(...new Set(sponsorLines));
   return lines.join("\n");
 }
 

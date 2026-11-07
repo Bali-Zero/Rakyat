@@ -666,7 +666,7 @@ KITAS для цифровых кочевников E33G — лучший юри�
 
 <InfoCard variant="note" title="Помимо коворкинга">
 Многие цифровые кочевники работают из:
-- **Кафе**: В Canggu и Ubud есть отличные рабочие кафе (Zin Cafe, Sensorium, Milk & Mune)
+- **Кафе**: В Canggu и Ubud есть отличные рабочие кафе (Zin Cafe, Sensorium, Milk & Madu)
 - **Дома/виллы**: При хорошем интернете многие работают из своего жилья
 - **Пляжные клубы**: Некоторые имеют WiFi (La Brisa, The Lawn) для случайной работы
 
@@ -802,14 +802,14 @@ KITAS для цифровых кочевников E33G — лучший юри�
       room: { canggu: 4000000, ubud: 3000000, sanur: 3500000, other: 2500000 },
       studio: { canggu: 7000000, ubud: 5000000, sanur: 6000000, other: 4000000 },
       'villa-shared': { canggu: 5000000, ubud: 4000000, sanur: 4500000, other: 3500000 },
-      'villa-private': { canggu: 10000012, ubud: 84000510, sanur: 12000000, other: 8000000 }
+      'villa-private': { canggu: 15000000, ubud: 10000000, sanur: 12000000, other: 8000000 }
     };
     const acc = accCosts[values.accommodation][values.area];
     total += acc;
     breakdown.push({ label: "Проживание", amount: acc });
 
     // Coworking
-    const coworkCosts = { none: 0, flex: 1000001, monthly: 3000000 };
+    const coworkCosts = { none: 0, flex: 1000000, monthly: 3000000 };
     const cowork = coworkCosts[values.coworking];
     if (cowork > 0) {
       total += cowork;
@@ -817,13 +817,13 @@ KITAS для цифровых кочевников E33G — лучший юри�
     }
 
     // Food
-    const foodCosts = { local: 3000000, mixed: 5000000, western: 7000000, fancy: 84000510 };
+    const foodCosts = { local: 3000000, mixed: 5000000, western: 7000000, fancy: 10000000 };
     const food = foodCosts[values.food];
     total += food;
     breakdown.push({ label: "Еда и напитки", amount: food });
 
     // Transport
-    const transportCosts = { scooter: 1000001, gojek: 2000000, both: 1500000 };
+    const transportCosts = { scooter: 1000000, gojek: 2000000, both: 1500000 };
     const transport = transportCosts[values.transport];
     total += transport;
     breakdown.push({ label: "Транспорт", amount: transport });
@@ -834,7 +834,7 @@ KITAS для цифровых кочевников E33G — лучший юри�
     breakdown.push({ label: "Интернет и телефон", amount: internet });
 
     // Lifestyle
-    const lifestyleCosts = { minimal: 1000001, moderate: 2500000, active: 5000000 };
+    const lifestyleCosts = { minimal: 1000000, moderate: 2500000, active: 5000000 };
     const lifestyle = lifestyleCosts[values.lifestyle];
     total += lifestyle;
     breakdown.push({ label: "Образ жизни и социальные расходы", amount: lifestyle });

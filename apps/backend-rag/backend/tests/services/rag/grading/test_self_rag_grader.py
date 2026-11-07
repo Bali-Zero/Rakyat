@@ -60,15 +60,15 @@ class TestSelfRAGGrader:
         result = self.grader.grade(ctx)
         assert result.decision == GradeDecision.PASS
 
-    # ── RETRY cases (trigger XuRU) ──
+    # ── RETRY cases (trigger HyDE) ──
 
     def test_mediocre_docs_retry(self) -> None:
-        """Medium-quality docs → RETRY with XuRU hint."""
+        """Medium-quality docs → RETRY with HyDE hint."""
         docs = self._make_docs([0.45, 0.40, 0.35, 0.30])
         ctx = GradingContext(retrieved_documents=docs)
         result = self.grader.grade(ctx)
         assert result.decision == GradeDecision.RETRY
-        assert "xuru" in result.retry_hint.lower()
+        assert "hyde" in result.retry_hint.lower()
 
     def test_sparse_content_retry(self) -> None:
         """Docs have scores but minimal content → RETRY."""
@@ -90,7 +90,7 @@ class TestSelfRAGGrader:
         assert result.score == 0.0
 
     def test_garbage_docs_fail(self) -> None:
-        """Very low scores → FAIL (don't even bother with XuRU)."""
+        """Very low scores → FAIL (don't even bother with HyDE)."""
         docs = self._make_docs([0.05, 0.03, 0.02])
         ctx = GradingContext(retrieved_documents=docs)
         result = self.grader.grade(ctx)

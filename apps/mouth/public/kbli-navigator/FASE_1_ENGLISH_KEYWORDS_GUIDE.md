@@ -192,13 +192,13 @@ const K = [
 
   [
     "47911",
-    "PERDAGANGAN ECERAN MELALUI CEMI KAKI LIMA DAN PASAR",
+    "PERDAGANGAN ECERAN MELALUI STAN KAKI LIMA DAN PASAR",
     "G",
     "O",
     100,
     "L",
     "",
-    "retail shop store market stall street vendor kiosk perdagangan eceran toko kaki lima pasar cemi penjualan",
+    "retail shop store market stall street vendor kiosk perdagangan eceran toko kaki lima pasar stan penjualan",
   ],
 ];
 ```
@@ -1120,7 +1120,7 @@ Testing:
 - Performance: <10ms avg search (no degradation)
 - Reference: /tmp/phase1_test_results.md
 
-Co-Authored-By: Claude Sonnet 4.5 <betuqal@anthropic.com>"
+Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 ```
 
 #### 3. Push to Production

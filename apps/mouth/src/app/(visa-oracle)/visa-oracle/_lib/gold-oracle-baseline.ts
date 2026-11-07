@@ -150,7 +150,7 @@ const HUMAN_REVIEW_PERSONAS: readonly GoldOraclePersona[] = [
       facts.category === "family" &&
       facts.family_relation === "SPOUSE" &&
       facts.family_sponsor_nationalities === "ID" &&
-      facts.family_sponsor_confirmed === "yes" &&
+      facts.family_spouse_application_support_confirmed === "yes" &&
       facts.family_marriage_registered === "unsure" &&
       facts.review_gate === "none",
   },

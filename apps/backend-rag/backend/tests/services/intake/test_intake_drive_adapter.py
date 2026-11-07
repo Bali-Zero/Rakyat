@@ -62,8 +62,15 @@ class FakeDriveService:
     async def get_start_page_token(self) -> str:
         return "tok1"
 
-    async def list_changes_since(self, page_token: str) -> dict[str, Any]:
+    async def list_changes_since(
+        self, page_token: str, *, max_pages: int | None = None, page_size: int = 100
+    ) -> dict[str, Any]:
         return {"changes": self._changes, "new_page_token": "tok2"}
+
+
+@pytest.fixture(autouse=True)
+def _room_on_the_disk(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(da, "_free_bytes", lambda: 10**15)  # the disk guard has its own tests
 
 
 def _patch_io(monkeypatch: pytest.MonkeyPatch, svc: FakeDriveService) -> list[dict[str, Any]]:

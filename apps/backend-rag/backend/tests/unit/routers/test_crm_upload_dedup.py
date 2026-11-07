@@ -170,6 +170,8 @@ def test_upload_dedup_predicate_positive_control():
 async def test_upload_dedup_key_includes_practice_and_family_context():
     """(a) the same passport PDF attached to a SECOND practice is a new attachment."""
     pool, conn = _pool(dedup_hit=None)
+    client = next(conn.fetchrow.side_effect)
+    conn.fetchrow.side_effect = [client, {"id": 42}, {"id": 42}]
 
     await _upload(pool, _drive(), practice_id=42, family_member_id=7)
 

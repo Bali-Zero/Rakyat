@@ -12,7 +12,7 @@
 # Where the draft's condition cannot be expressed with profile attributes, the rule states the safe
 # superset and a needs_review_reason that the reviewer queue shows next to each proposal.
 # `verified` covers the legal basis and the statutory DUE DATE. The `roll` is sourced separately:
-# for DJP rules by DJP's own Coretax page (hari libur = Saturday, Detali, libur nasional, cuti
+# for DJP rules by DJP's own Coretax page (hari libur = Saturday, Sunday, libur nasional, cuti
 # bersama; payment moves to the next hari kerja), for BPJS by the regulation's own clause. Where
 # no such clause exists the rule keeps roll: none.
 # No client data in this file.
@@ -34,7 +34,7 @@ rules:
   - id: pph21_payment
     name: PPh 21/26 on salaries, payment (by the 15th of the following month)
     authority: DJP via Coretax
-    legal_source: "UU PPh (UU 36/2008) art. 21 and 26 — https://www.pajak.go.id/en/node/35337 ; UU KUP art. 9(1) caps the deposit at 15 days after the Masa Pajak ends — https://www.pajak.go.id/en/node/35330 ; PMK 81/2024 sets it on the 15th of the following month, and DJP states a deadline falling on a hari libur (Saturday, Detali, libur nasional, cuti bersama) moves to the next hari kerja — https://www.pajak.go.id/en/node/113710 (the article is reported as art. 94; the PMK PDF is a scan and the number was not read) ; PMK 168/2023 governs the TER calculation, not the deadline"
+    legal_source: "UU PPh (UU 36/2008) art. 21 and 26 — https://www.pajak.go.id/en/node/35337 ; UU KUP art. 9(1) caps the deposit at 15 days after the Masa Pajak ends — https://www.pajak.go.id/en/node/35330 ; PMK 81/2024 sets it on the 15th of the following month, and DJP states a deadline falling on a hari libur (Saturday, Sunday, libur nasional, cuti bersama) moves to the next hari kerja — https://www.pajak.go.id/en/node/113710 (the article is reported as art. 94; the PMK PDF is a scan and the number was not read) ; PMK 168/2023 governs the TER calculation, not the deadline"
     verified: true
     applies_if:
       - {attr: has_employees, op: is_true}
@@ -54,7 +54,7 @@ rules:
   - id: pph23_26_payment
     name: PPh 23 and 26 withholding, payment (by the 15th of the following month)
     authority: DJP via Coretax
-    legal_source: "UU PPh (UU 36/2008) art. 23 and 26 — https://www.pajak.go.id/en/node/35337 ; UU KUP art. 9(1) caps the deposit at 15 days after the Masa Pajak ends — https://www.pajak.go.id/en/node/35330 ; PMK 81/2024 sets it on the 15th of the following month, and DJP states a deadline falling on a hari libur (Saturday, Detali, libur nasional, cuti bersama) moves to the next hari kerja — https://www.pajak.go.id/en/node/113710 (the article is reported as art. 94; the PMK PDF is a scan and the number was not read)"
+    legal_source: "UU PPh (UU 36/2008) art. 23 and 26 — https://www.pajak.go.id/en/node/35337 ; UU KUP art. 9(1) caps the deposit at 15 days after the Masa Pajak ends — https://www.pajak.go.id/en/node/35330 ; PMK 81/2024 sets it on the 15th of the following month, and DJP states a deadline falling on a hari libur (Saturday, Sunday, libur nasional, cuti bersama) moves to the next hari kerja — https://www.pajak.go.id/en/node/113710 (the article is reported as art. 94; the PMK PDF is a scan and the number was not read)"
     verified: true
     applies_if:
       - {attr: company_type, op: in, value: [PT_PMA, PT_PMDN, CV, KP3A, KPPA, OTHER]}
@@ -147,7 +147,7 @@ rules:
       - {attr: pse_registered, op: is_false}
     due: {frequency: one_time, month: null, months_after_period_end: 0, roll: none}
     trigger: "serves_indonesian_users_online is true while pse_registered is false: register BEFORE the system is used by users (art. 2(3)), so the obligation is already late once the service is live"
-    notes: "Sanctions for NOT registering are art. 7(2): Pemutusan Akses to the electronic system, without the graduated warnings. The art. 7(3) ladder (warning, suspension, then access cut and revocation of the Tanda Daftar if the operator does not respond within 7 days) applies to a REGISTERED operator that fails to report a change or gave inaccurate data. Permenkomdigi 5/2025 replaced the Kominfo-era rule for PSE Lingkup Publik only; Permenkominfo 5/2020 still governs Lingkup Privat. Enforcement zunoh observed June 2025 and June 2026."
+    notes: "Sanctions for NOT registering are art. 7(2): Pemutusan Akses to the electronic system, without the graduated warnings. The art. 7(3) ladder (warning, suspension, then access cut and revocation of the Tanda Daftar if the operator does not respond within 7 days) applies to a REGISTERED operator that fails to report a change or gave inaccurate data. Permenkomdigi 5/2025 replaced the Kominfo-era rule for PSE Lingkup Publik only; Permenkominfo 5/2020 still governs Lingkup Privat. Enforcement waves observed June 2025 and June 2026."
 
   - id: pse_data_update
     name: PSE registration data update on change

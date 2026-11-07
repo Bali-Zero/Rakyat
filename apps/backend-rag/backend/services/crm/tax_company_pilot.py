@@ -433,13 +433,13 @@ def _ocean_map() -> TaxCompanyPilotMap:
         },
         persons=[
             TaxCompanyPilotPerson(
-                name="Vabav Kleimonov",
+                name="Natan Kleimonov",
                 folder_url=_drive_folder("1cEVr2XasfdL8x80vD3kqDxXWrN2XgRk3"),
                 evidence=["Passport"],
                 relationship_confidence="medium",
             ),
             TaxCompanyPilotPerson(
-                name="Cuvo Hagoqaj",
+                name="Ihor Osmanov",
                 folder_url=_drive_folder("1TEReUTgln8MPtTCMIBJjaZq988rMxPn8"),
                 evidence=[
                     "TIN card",
@@ -454,7 +454,7 @@ def _ocean_map() -> TaxCompanyPilotMap:
                 relationship_confidence="medium",
             ),
             TaxCompanyPilotPerson(
-                name="Rufewega Toveweho",
+                name="Yaroslav Voitenko",
                 folder_url=_drive_folder("1Caa_oMOSpl44KSX3fKZ8KCWlWRQTY-uB"),
                 evidence=["Passport"],
                 relationship_confidence="medium",
@@ -505,7 +505,7 @@ def _ocean_map() -> TaxCompanyPilotMap:
             ),
             TaxCompanyPilotGap(
                 code="confirm_individual_crm_folders",
-                label="Check whether Individual_CRM folders already exist for Vabav, Cuvo, and Rufewega.",
+                label="Check whether Individual_CRM folders already exist for Natan, Ihor, and Yaroslav.",
                 severity="medium",
             ),
             TaxCompanyPilotGap(
@@ -551,7 +551,7 @@ def _bimala_map() -> TaxCompanyPilotMap:
         },
         persons=[
             TaxCompanyPilotPerson(
-                name="Wefize Cej Cejuliv",
+                name="Giulia Del Giudice",
                 folder_url=_drive_folder("1Xy60Q9k5detu8oZhFWVWexDYh07Yx4LO"),
                 evidence=[
                     "ITAS E28A Investor",
@@ -566,7 +566,7 @@ def _bimala_map() -> TaxCompanyPilotMap:
                 relationship_confidence="confirmed",
             ),
             TaxCompanyPilotPerson(
-                name="Jeliqipi Cegosed",
+                name="Gianluca Morelli",
                 folder_url=_drive_folder("1a1LhqSttRqLwUgDXmOdV38QYTaYdMU6X"),
                 evidence=[
                     "ITAS E28A Investor",
@@ -581,17 +581,17 @@ def _bimala_map() -> TaxCompanyPilotMap:
                 relationship_confidence="confirmed",
             ),
             TaxCompanyPilotPerson(
-                name="Vekijob Emidio",
+                name="Giorgia Emidio",
                 evidence=["Child evisa file"],
                 relationship_confidence="unconfirmed",
             ),
             TaxCompanyPilotPerson(
-                name="Fohe Cegosed",
+                name="Iuma Morelli",
                 evidence=["Child evisa file"],
                 relationship_confidence="unconfirmed",
             ),
             TaxCompanyPilotPerson(
-                name="Zigaso Cegosed",
+                name="Mailen Morelli",
                 evidence=["Child evisa file"],
                 relationship_confidence="unconfirmed",
             ),
@@ -663,7 +663,7 @@ def _bimala_map() -> TaxCompanyPilotMap:
             ),
             TaxCompanyPilotGap(
                 code="confirm_individual_crm_folders",
-                label="Check whether Individual_CRM folders already exist for Wefize and Jeliqipi.",
+                label="Check whether Individual_CRM folders already exist for Giulia and Gianluca.",
                 severity="medium",
             ),
         ],
@@ -676,7 +676,7 @@ def _bimala_map() -> TaxCompanyPilotMap:
         ai_recap=[
             "Bimala is currently represented through Dewa Ayu's legacy working folder plus nested company and tax folders.",
             "The visible evidence covers Coretax access, tax registration documents, SPT proof/form, LKPM, bank PDFs, and company documents.",
-            "Wefize and Jeliqipi are visible person nodes; child-related evisa files should remain unconfirmed family edges until reviewed.",
+            "Giulia and Gianluca are visible person nodes; child-related evisa files should remain unconfirmed family edges until reviewed.",
         ],
     )
 

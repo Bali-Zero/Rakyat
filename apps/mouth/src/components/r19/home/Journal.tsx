@@ -46,7 +46,11 @@ export function Journal({
               <img
                 alt=""
                 className="brand-logo-3-img"
+                decoding="async"
+                height="120"
+                loading="lazy"
                 src="/assets/r19/brand-3.webp"
+                width="120"
               />
               <span>{"ALI"}</span>
               <span className="brand-zero">

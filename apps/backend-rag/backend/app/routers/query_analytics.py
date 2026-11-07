@@ -7,10 +7,13 @@ Endpoints:
 - GET  /api/analytics/query-insights/failed    - Top failed queries
 - GET  /api/analytics/query-insights/collections - Collection hit rates
 - GET  /api/analytics/query-insights/volume    - Query volume over time
+- GET  /api/analytics/query-insights/latency   - p50/p95 seconds per pipeline stage
 - GET  /api/analytics/query-insights/satisfaction - User satisfaction score
 - POST /api/analytics/query-insights/feedback  - Record user feedback
 """
 
+import contextlib
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,6 +21,8 @@ from pydantic import BaseModel
 
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.db.repositories.query_analytics_repository import QueryAnalyticsRepository
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/analytics/query-insights", tags=["query-analytics"])
 
@@ -101,6 +106,24 @@ async def get_query_volume(
         return await repo.get_query_volume(granularity=granularity, days=days)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get query volume: {e!s}") from e
+
+
+@router.get("/latency")
+async def get_stage_latency(
+    days: int = Query(7, ge=1, le=90),
+    repo: QueryAnalyticsRepository = Depends(_get_repo),
+    current_user=Depends(_verify_founder_access),
+) -> Any:
+    """p50/p95 seconds per pipeline stage (search, llm, reasoning, ...)."""
+    try:
+        return await repo.get_stage_latency(days=days)
+    except Exception:
+        # E2-b (brief 85bec76a): the response first, then one constant argument-free log
+        # call in its own guard; nothing derived from the exception reaches either.
+        err = HTTPException(status_code=500, detail="Failed to get stage latency")
+        with contextlib.suppress(Exception):
+            logger.warning("Failed to get stage latency")
+        raise err from None
 
 
 @router.get("/satisfaction")

@@ -39,11 +39,11 @@ Usage:
 Non-derivable knowledge:
 - #56 "PT The Nadc Group" in Lori's PDF has a typo; the real DB record is
   "PT The Nandc Group" (id=2624). Confirmed by the user.
-- #28 "PT Zunoh Are Live" is also a typo; real name is "PT Zunoh Xan Juva"
+- #28 "PT Waves Are Live" is also a typo; real name is "PT Waves Are Life"
   (id=2477). Not a company mismatch — just a spelling.
 - 5 PMAs had no match in DB and no Profil Perseroan available on 2026-04-07:
   Atlas Property Management, Alis Vloat Propertiis, Gharsat All Barakah,
-  Canna Bali Piwiho, World Obiac Cernandes. These are created minimal here
+  Canna Bali Dreams, World Obiac Cernandes. These are created minimal here
   (name + type='PT PMA' only). Fully populating them is a separate task.
 """
 
@@ -98,22 +98,22 @@ def _load_oss_credentials() -> dict[int, tuple[str, str]]:
 LORI_59: list[tuple[int, str, int | None]] = [
     (1, 'PT Meraki Creation Bali', 3097),
     (2, 'PT Amberger Holistic Support', 4066),
-    (3, 'PT Xafo Xilano Piq', 2277),
+    (3, 'PT Nusa Futura Wan', 2277),
     (4, 'PT Paradise Beach Brothers', 2962),
     (5, 'PT Nayat Ibiza Beauty', 3037),
     (6, 'PT Bali Accommodation Management', 16),
     (7, 'PT Atlas Property Management', None),
-    (8, 'PT Jebote Muvih Ruzon', 1978),
+    (8, 'PT Jungle Dream House', 1978),
     (9, 'PT BIMALA INVESTMENTS BALI', 1467),
     (10, 'PT MINGGU DIGITAL STUDIO', 4065),
     (11, 'PT Royal Aura Brands', 2380),
     (12, 'PT Karta Developers Paradise', 1999),
-    (13, 'PT Cibowin Pifixu Bojilag', 2375),
+    (13, 'PT Ventura Impact Positif', 2375),
     (14, 'PT Bali Nea Karma', 1382),
     (15, 'PT Urban Jungle Bali', 2520),
     (16, 'PT KHALI BALI UBUD', 2020),
     (17, 'PT Future Textile Solutions', 1770),
-    (18, 'PT Fapepo Tixomofo Bali', 2399),
+    (18, 'PT Sduare Property Bali', 2399),
     (19, 'PT Fashion Trading Center', 1734),
     (20, 'PT Karta Entertainment Found', 2000),
     (21, 'PT Triple Peak Properties', 2359),
@@ -121,9 +121,9 @@ LORI_59: list[tuple[int, str, int | None]] = [
     (23, 'PT Berkualitas Lestari Properti', 1455),
     (24, 'PT Kinoh Real Estate', 2024),
     (25, 'PT Oceane Group Bali', 3005),
-    (26, 'PT Hinexeco Jerihu Miwaf', 2959),
+    (26, 'PT Paradise Street Style', 2959),
     (27, 'PT Super Bagus Labs', 2685),
-    (28, 'PT Zunoh Xan Juva', 2477),
+    (28, 'PT Waves Are Life', 2477),
     # ---- page 2 ----
     (29, 'PT Alis Vloat Propertiis', None),
     (30, 'PT Ichnos West Sumbawa', 1897),
@@ -132,7 +132,7 @@ LORI_59: list[tuple[int, str, int | None]] = [
     (33, 'PT Gharsat All Barakah', None),
     (34, 'PT Canna Bali Dreams', None),
     (35, 'PT Disruptives Idea Indonesia', 1638),
-    (36, 'PT Raborukel Muw Bali', 2060),
+    (36, 'PT Landscape Art Bali', 2060),
     (37, 'PT Bali Social Raket', 2316),
     (38, 'PT Nepu Global Invest', 2345),
     (39, 'PT Cirera and Nello Investments', 2349),
@@ -141,19 +141,19 @@ LORI_59: list[tuple[int, str, int | None]] = [
     (42, 'PT World Obiac Cernandes', None),
     (43, 'PT Bayu Bali Nol', 98),
     (44, 'PT Rocco Leo Cecilia', 2840),
-    (45, 'PT Litovub kiv Zahasi', 1764),
+    (45, 'PT Friends and Family', 1764),
     (46, 'PT Bali Bliss Travel', 2336),
-    (47, 'PT NIKIKI SIBE QARUVEZ', 4067),
-    (48, 'PT Jikib Gafobekozoz Bali', 2758),
-    (49, 'PT Kuc Caraqar Zebafexo', 2625),
-    (50, 'PT Gosas Cizo Consulting', 1478),
-    (51, 'PT Talodopo Zaso Group', 2467),
+    (47, 'PT ALWAYS STAY PRESENT', 4067),
+    (48, 'PT Singa Investments Bali', 2758),
+    (49, 'PT The Manolia Ventures', 2625),
+    (50, 'PT Black Pork Consulting', 1478),
+    (51, 'PT Whatsyum Tech Group', 2467),
     (52, 'PT Villa Stella Belle', 2498),
     (53, 'PT Bale Glory Home', 15),
     (54, 'PT Domus Dei Amare', 1645),
     (55, 'PT Sea Vista Travel', 2797),
     (56, 'PT The Nandc Group', 2624),
-    (57, 'PT Xacu Supidegiru Studio', 2366),
+    (57, 'PT Yume Innovation Studio', 2366),
     (58, 'PT The Ping Group', 2612),
     (59, 'PT Indo Mita Consulting', 1906),
 ]

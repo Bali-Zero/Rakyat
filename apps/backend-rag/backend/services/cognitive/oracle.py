@@ -120,7 +120,7 @@ Regole:
 - Se non trovi mosse concrete, rispondi {{"moves": []}}. Meglio zero che rumore."""
 
 
-_JUDGE_PROMPT = """Sei il cejuliv Oracle del Consiglio Nuzantara.
+_JUDGE_PROMPT = """Sei il giudice Oracle del Consiglio Nuzantara.
 
 Queste sono le proposte delle 4 voci:
 

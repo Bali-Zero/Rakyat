@@ -17,6 +17,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
 from backend.app.core.config import settings
+from backend.security.pii_log_identifier import redact_identifier_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ class ServiceAccountDriveService:
                 service_account_info = parsed
                 logger.info("✅ Loaded Google credentials from raw JSON")
         except json.JSONDecodeError as e:
-            logger.debug("SA creds not raw JSON, trying base64: %s", e)
+            logger.debug("SA creds not raw JSON, trying base64: %s", type(e).__name__)
 
         # Try base64-encoded JSON
         if not service_account_info:
@@ -66,7 +67,7 @@ class ServiceAccountDriveService:
                     service_account_info = parsed
                     logger.info("✅ Loaded Google credentials from base64-encoded JSON")
             except Exception as e:
-                logger.debug("SA creds base64 decode failed: %s", e)
+                logger.debug("SA creds base64 decode failed: %s", type(e).__name__)
 
         if not service_account_info:
             raise ValueError(
@@ -85,7 +86,10 @@ class ServiceAccountDriveService:
         # Domain-wide delegation configured in Google Admin Console for this SA
         self.delegated_user = delegated_user or "zero@balizero.com"
         self.credentials = base_credentials.with_subject(self.delegated_user)
-        logger.info("✅ Using Domain-wide delegation, impersonating: %s", self.delegated_user)
+        logger.info(
+            "✅ Using Domain-wide delegation, impersonating: %s",
+            redact_identifier_for_log(self.delegated_user),
+        )
 
         # Build API client
         self.service = build("drive", "v3", credentials=self.credentials)
@@ -127,14 +131,15 @@ class ServiceAccountDriveService:
                     )
                 else:
                     logger.info(
-                        "✅ Drive folder %s OK: %s (%r)",
-                        env_name, folder_id, meta.get("name"),
+                        "✅ Drive folder %s OK: %s",
+                        env_name, folder_id,
                     )
             except Exception as e:
                 logger.error(
                     "🚨 Drive folder %s (%s) UNREACHABLE — clients of the matching type "
-                    "will fail to get a Drive folder. Error: %s",
-                    env_name, folder_id, e,
+                    "will fail to get a Drive folder. Error: %s (HTTP status: %s)",
+                    env_name, folder_id, type(e).__name__,
+                    getattr(getattr(e, "resp", None), "status", None),
                 )
 
     async def create_folder(
@@ -165,7 +170,7 @@ class ServiceAccountDriveService:
 
         folder = await asyncio.to_thread(request.execute)
 
-        logger.info(f"✅ Created folder: {name} (ID: {folder['id']})")
+        logger.info("✅ Created folder (ID: %s)", folder["id"])
         return folder
 
     async def get_file_metadata(self, file_id: str) -> dict[str, Any]:
@@ -297,7 +302,7 @@ class ServiceAccountDriveService:
         # Execute in thread pool to avoid blocking event loop
         file = await asyncio.to_thread(request.execute)
 
-        logger.info(f"✅ Uploaded: {file_name} ({file.get('size')} bytes)")
+        logger.info("✅ Uploaded (ID: %s, %s bytes)", file.get("id"), file.get("size"))
         return file
 
     # Advisory-lock class for per-client Drive folder creation, used as
@@ -521,9 +526,11 @@ class ServiceAccountDriveService:
                     found = await self.find_folder(root_folder_name, parent_folder_id)
                 except Exception as e:
                     logger.warning(
-                        "Drive lookup for existing folder %r failed (%s) — will create",
-                        root_folder_name,
-                        e,
+                        "Drive lookup for existing folder failed for client %s "
+                        "(%s, HTTP status: %s) — will create",
+                        client_id,
+                        type(e).__name__,
+                        getattr(getattr(e, "resp", None), "status", None),
                     )
 
                 if found:
@@ -566,7 +573,7 @@ class ServiceAccountDriveService:
                 root_folder_id, client_id=client_id, db_pool=db_pool
             )
             logger.info(
-                "✅ Created client folder structure for %s: %s", client_name, root_folder_id
+                "✅ Created client folder structure for client %s: %s", client_id, root_folder_id
             )
 
         return {
@@ -621,14 +628,18 @@ class ServiceAccountDriveService:
                     )
             except Exception as e:
                 logger.error(
-                    "Failed to persist root folder id for client %s: %s", client_id, e
+                    "Failed to persist root folder id for client %s: %s",
+                    client_id,
+                    type(e).__name__,
                 )
 
         subfolders = await self._create_standard_subfolders(
             root_folder_id, client_id=client_id, db_pool=db_pool
         )
 
-        logger.info("✅ Created client folder structure for %s: %s", client_name, root_folder_id)
+        logger.info(
+            "✅ Created client folder structure for client %s: %s", client_id, root_folder_id
+        )
 
         return {
             "success": True,
@@ -668,7 +679,13 @@ class ServiceAccountDriveService:
                 if len(parts) == 1:
                     folder_id_cache[name] = subfolder["id"]
             except Exception as e:
-                logger.error("Failed to create subfolder %s: %s", subfolder_path, e)
+                logger.error(
+                    "Failed to create subfolder under root %s for client %s: %s (HTTP status: %s)",
+                    root_folder_id,
+                    client_id,
+                    type(e).__name__,
+                    getattr(getattr(e, "resp", None), "status", None),
+                )
                 continue
 
         # Persist subfolder IDs to DB so DrivePollService can match files to clients
@@ -688,7 +705,11 @@ class ServiceAccountDriveService:
                             )
                 logger.info("✅ Drive folder IDs persisted to DB for client %s", client_id)
             except Exception as e:
-                logger.error("Failed to persist drive folder IDs for client %s: %s", client_id, e)
+                logger.error(
+                    "Failed to persist drive folder IDs for client %s: %s",
+                    client_id,
+                    type(e).__name__,
+                )
 
         return subfolders
 

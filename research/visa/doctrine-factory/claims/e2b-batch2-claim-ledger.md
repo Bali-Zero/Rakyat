@@ -542,7 +542,7 @@ ledger's own Method §2 vocabulary (`VERIFIED`/`CONFLICTING`/`STALE`/`UNVERIFIED
   - Source: `Permenkumham No. 11 Tahun 2024` Art. 33(2)(h)(9), Art. 50A(1); `Kepmen
     M.IP-08.GR.01.01/2025`.
   - **State: VERIFIED.** Products: E31J. Provenance: `E2B2-T1-E31J`.
-- **CL-E31J-02 — activities.** Permitted: tourism, shopping, visiting family/litovub, entry/exit during
+- **CL-E31J-02 — activities.** Permitted: tourism, shopping, visiting family/friends, entry/exit during
   MERP validity. Prohibited: overstaying, selling goods/services, receiving compensation/wages/
   commission from an Indonesian person or entity.
   - Source: `Kepmen M.IP-08.GR.01.01/2025`.

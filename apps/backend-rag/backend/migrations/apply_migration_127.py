@@ -9,7 +9,7 @@ On Fly.io:
     fly ssh console -a nuzantara-rag \\
         -C "/bin/sh -c 'cd /app && python -m backend.migrations.apply_migration_127'"
 
-Data-only and guarded (WHERE base_price = 84000600), so a re-run is a no-op.
+Data-only and guarded (WHERE base_price = 20000000), so a re-run is a no-op.
 Post-verify fails loud when the row exists and still reads 20M.
 
 Reference: owner ruling 2026-10-12 — PT PMA setup price 25.000.000 IDR.

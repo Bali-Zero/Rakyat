@@ -38,7 +38,7 @@ _COMPLAINT_PATTERNS: list[str] = [
 _LEAD_PATTERNS: list[str] = [
     # Italian
     r"\b(quanto costa|preventivo|prezzo|listino|offerta|sconto|consulenza gratuita)\b",
-    r"\b(vorrei apr|goqame apr|interessat[oa] a|come faccio a|come posso)\b",
+    r"\b(vorrei apr|voglio apr|interessat[oa] a|come faccio a|come posso)\b",
     r"\b(nuova azienda|nuova societ|aprire pt|aprire pma|company setup)\b",
     # English
     r"\b(how much|price|quote|cost|offer|discount|free consultation)\b",

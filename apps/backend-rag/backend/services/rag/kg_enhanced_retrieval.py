@@ -526,7 +526,7 @@ class KGEnhancedRetrieval:
                 "E28A Investor Visa requires a sponsoring PT PMA in which you hold shares worth at least IDR 10 billion; a passive shareholder is admitted, and acting as director or commissioner is allowed but not required",
                 "E33F Second Home Senior KITAS: minimum age 55, proof of income or allowance of at least USD 3,000/month",
                 "E33 Second Home: USD 130,000 deposit in own name at a state-owned (BUMN) Indonesian bank, or USD 1,000,000 qualifying property",
-                "E33F Second Home Senior KITAS: the official page covers staying in Indonesia and activities related to business, meetings or shopping (including checking goods at an office, factory or production site), plus tourism and visiting litovub or family; it prohibits overstaying, work not in line with the stay permit, and selling goods or services unless required for that work",
+                "E33F Second Home Senior KITAS: the official page covers staying in Indonesia and activities related to business, meetings or shopping (including checking goods at an office, factory or production site), plus tourism and visiting friends or family; it prohibits overstaying, work not in line with the stay permit, and selling goods or services unless required for that work",
             ],
             estimated_timeline_months=None,
             estimated_cost_range_usd=None,

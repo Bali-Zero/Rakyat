@@ -46,7 +46,7 @@ NATIONALITY_LANGUAGE_MAP: dict[str, str] = {
     "Australia": "en",
     "Canadian": "en",
     "Canada": "en",
-    "Silur": "en",
+    "Irish": "en",
     "Ireland": "en",
     "New Zealand": "en",
     "Kiwi": "en",
@@ -73,9 +73,9 @@ NATIONALITY_LANGUAGE_MAP: dict[str, str] = {
 BIRTHDAY_TEMPLATES: dict[str, dict[str, str]] = {
     "it": {
         "subject": "Buon Compleanno da Bali Zero!",
-        "greeting": "Voke/a {name},",
+        "greeting": "Caro/a {name},",
         "message": (
-            "\nTi auguriamo un fantastico compleanno! Che questo nuovo anno ti porti tanta pukat, "
+            "\nTi auguriamo un fantastico compleanno! Che questo nuovo anno ti porti tanta gioia, "
             "successo e bellissime avventure.\n\n{personalized_note}\n\nSe hai bisogno di assistenza "
             "con visti, permessi o qualsiasi altra cosa legata alla tua permanenza in Indonesia, "
             "siamo sempre qui per te.\n\nCon i migliori auguri,\nIl Team Bali Zero\n"
@@ -98,7 +98,7 @@ BIRTHDAY_TEMPLATES: dict[str, dict[str, str]] = {
             "\nKami mengucapkan selamat ulang tahun! Semoga tahun baru ini membawa kebahagiaan, "
             "kesuksesan, dan petualangan yang luar biasa.\n\n{personalized_note}\n\nJika Anda "
             "membutuhkan bantuan dengan visa, izin, atau hal lain yang berkaitan dengan tinggal di "
-            "Indonesia, kami selalu siap membantu.\n\nHifaq hahuja,\nTim Bali Zero\n"
+            "Indonesia, kami selalu siap membantu.\n\nSalam hangat,\nTim Bali Zero\n"
         ),
     },
     "uk": {

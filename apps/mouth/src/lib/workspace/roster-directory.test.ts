@@ -4,6 +4,8 @@ import {
   teamPhotoMap,
   taxConsultants,
   TAX_CONSULTANTS,
+  lkpmAssignees,
+  LKPM_ASSIGNEES,
 } from "./roster-directory";
 
 /**
@@ -137,10 +139,11 @@ describe("workspace roster directory", () => {
     //   roster tax@…  vs  constraint kagecesa.xug@…
     // This test exists to keep someone from "tidying" the list into a derivation.
     expect(TAX_CONSULTANTS.map((c) => c.value)).toEqual([
-      "veronika.tax@balizero.com",
-      "kadek.tax@balizero.com",
-      "dewaayu.tax@balizero.com",
       "angel.tax@balizero.com",
+      "dewaayu.tax@balizero.com",
+      "kadek.tax@balizero.com",
+      "dea@balizero.com",
+      "candra@balizero.com",
     ]);
     const rosterEmail = (slug: string) =>
       TEAM_ROSTER.find((m) => m.slug === slug)?.email;
@@ -156,10 +159,50 @@ describe("workspace roster directory", () => {
     );
   });
 
+  it("offers Dea and Candra and the three .tax@ addresses, not Veronika or Faisha", () => {
+    const values = taxConsultants().map((c) => c.value);
+    for (const v of [
+      "dea@balizero.com",
+      "candra@balizero.com",
+      "angel.tax@balizero.com",
+      "dewaayu.tax@balizero.com",
+      "kadek.tax@balizero.com",
+    ])
+      expect(values).toContain(v);
+    for (const v of [
+      "veronika.tax@balizero.com",
+      "faisha.tax@balizero.com",
+      "faysha.tax@balizero.com",
+    ])
+      expect(values).not.toContain(v);
+  });
+
+  it("keeps the LKPM assignee list at its previous four, without Dea or Candra", () => {
+    expect(lkpmAssignees()).toEqual([
+      { value: "veronika.tax@balizero.com", label: "Veronika" },
+      { value: "kadek.tax@balizero.com", label: "Kadek" },
+      { value: "dewaayu.tax@balizero.com", label: "Dewa Ayu" },
+      { value: "angel.tax@balizero.com", label: "Angel" },
+    ]);
+    const values = lkpmAssignees().map((c) => c.value);
+    expect(values).not.toContain("dea@balizero.com");
+    expect(values).not.toContain("candra@balizero.com");
+  });
+
+  it("hands out independent copies of the two lists", () => {
+    const a = lkpmAssignees();
+    a[0].label = "mutated";
+    a.push({ value: "x@example.test", label: "X" });
+    expect(lkpmAssignees()[0].label).toBe("Veronika");
+    expect(LKPM_ASSIGNEES).toHaveLength(4);
+    expect(lkpmAssignees()).not.toBe(LKPM_ASSIGNEES);
+    expect(taxConsultants()).not.toEqual(lkpmAssignees());
+  });
+
   it("hands the client a copy, not the module's own array", () => {
     const a = taxConsultants();
     a[0].label = "mutated";
-    expect(taxConsultants()[0].label).toBe("Veronika");
+    expect(taxConsultants()[0].label).toBe("Angel");
   });
 
   /**

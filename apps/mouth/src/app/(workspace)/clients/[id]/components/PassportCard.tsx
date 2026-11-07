@@ -1,14 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import {
-  CreditCard,
-  FileText,
-  Loader2,
-  Upload,
-  Download,
-  Trash2,
-} from "lucide-react";
+import { FileText, Loader2, Upload, Download, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { logger } from "@/lib/logger";
@@ -24,10 +17,11 @@ import {
   extractDriveFileId,
   getDriveProxyUrl,
   getPassportValidityColor,
-  isBirthdayToday,
   pickCurrentPassport,
+  downloadHrefFor,
 } from "./utils";
-import { formatLongSpan } from "@/lib/utils/format-date";
+import { daysUntil } from "./overview-brief";
+import { CardFrame, ExpiryText, Fact, Facts, NOT_RECORDED } from "./cardKit";
 
 export function PassportCard({
   client,
@@ -59,28 +53,24 @@ export function PassportCard({
 
   // Get passport validity color and alert level
   const passportValidity = getPassportValidityColor(client.passport_expiry);
+  // The scan is only ever FETCHED on demand (Download, Extract) — the card
+  // never renders it, so opening the Overview loads no document bytes.
   const passportImageUrl = passportDoc?.google_drive_file_url;
   const passportIsPdf =
     passportDoc?.file_name?.toLowerCase().endsWith(".pdf") ||
     passportImageUrl?.toLowerCase().includes(".pdf") ||
     passportDoc?.file_name?.toLowerCase().includes(".pdf");
 
-  // Check if birthday today
-  const isBirthday = isBirthdayToday(client.date_of_birth);
+  const expiryDays = daysUntil(client.passport_expiry, Date.now());
 
   // Convert Drive view URL to direct download URL
-  const getDownloadUrl = (url: string) => {
-    const fileId = extractDriveFileId(url);
-    if (fileId) {
-      return `/api/documents/proxy/${fileId}`;
-    }
-    return url;
-  };
+  const getDownloadUrl = downloadHrefFor;
 
   const handleDownload = (e: React.MouseEvent) => {
     e.preventDefault();
     if (passportImageUrl) {
       const downloadUrl = getDownloadUrl(passportImageUrl);
+      if (!downloadUrl) return;
       const link = document.createElement("a");
       link.href = downloadUrl;
       link.download = `passport_${client.full_name?.replace(/\s+/g, "_") || "document"}.pdf`;
@@ -252,394 +242,178 @@ export function PassportCard({
     });
   };
 
+  const hasData = Boolean(
+    client.passport_number ||
+    client.passport_expiry ||
+    client.date_of_birth ||
+    client.nationality,
+  );
+  const ocrBusy = ocrPolling || isExtracting;
+
   return (
-    <div className="bz-product-panel bz-product-panel--interactive transition-all duration-300 overflow-hidden flex flex-col h-full hover:-translate-y-1">
-      {/* OCR Processing Indicator */}
-      {ocrPolling && (
-        <div className="flex items-center gap-2 px-4 py-2 bg-blue-500/10 border-b border-blue-500/20 text-blue-400 text-xs">
-          <Loader2 className="w-3 h-3 animate-spin" />
-          OCR in corso...
-        </div>
-      )}
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--bz-border)]">
-        <h3 className="text-base font-semibold text-[var(--bz-text-1)] flex items-center gap-2">
-          <CreditCard className="w-5 h-5" />
-          Passport
-        </h3>
-        {/* Gender Badge */}
-        {client.gender && (
+    <CardFrame
+      tone="slate"
+      kicker="Identity document"
+      title="Passport"
+      art="passport"
+      testId="passport-card"
+      headerExtra={
+        ocrBusy ? (
           <span
-            className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-              client.gender === "M"
-                ? "bg-blue-500/20 text-blue-400"
-                : "bg-pink-500/20 text-pink-400"
-            }`}
+            role="status"
+            className="inline-flex items-center gap-1.5 text-[12px] text-[var(--state-info)]"
           >
-            {client.gender === "M" ? "M" : "F"}
+            <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+            Reading the scan…
           </span>
-        )}
-      </div>
-
-      {/* Content */}
-      <div className="p-4 flex-1 flex flex-col">
-        {passportImageUrl ? (
-          <div className="space-y-3 flex-1 flex flex-col">
-            <button
-              onClick={handleDownload}
-              className="w-full block relative group cursor-pointer"
-              title="Click to download passport"
-              aria-label="Download passport"
-            >
-              <div className="aspect-[3/2] rounded-lg overflow-hidden border-2 border-dashed border-[var(--bz-border)] bg-[var(--bz-base)]">
-                {passportIsPdf ? (
-                  <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-[var(--bz-text-2)]">
-                    <FileText className="w-12 h-12 opacity-60" />
-                    <span className="text-xs font-medium">PDF Document</span>
-                    <span className="text-[10px] opacity-60">
-                      Click to download
-                    </span>
-                  </div>
-                ) : (
-                  /* eslint-disable-next-line @next/next/no-img-element */
-                  <img
-                    src={getDriveProxyUrl(passportImageUrl) || passportImageUrl}
-                    alt="Passport"
-                    className="w-full h-full object-contain"
-                    onError={(e) => {
-                      // Fallback to Google preview if proxy fails
-                      (e.target as HTMLImageElement).src =
-                        passportImageUrl.replace("/view", "/preview");
-                    }}
-                  />
-                )}
-                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
-                  <div className="flex items-center gap-2 bg-white/90 rounded-lg px-3 py-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Download className="w-4 h-4 text-gray-700" />
-                    <span className="text-sm font-medium text-gray-700">
-                      Download
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </button>
-
-            {/* Passport Data with Alerts */}
-            <div className="space-y-2">
-              {/* Passport Number */}
-              {client.passport_number && (
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-[var(--bz-text-2)]">Number:</span>
-                  <span className="font-mono text-[var(--bz-text-1)]">
-                    {client.passport_number}
-                  </span>
-                </div>
-              )}
-
-              {/* Expiry Date with Alert */}
-              {client.passport_expiry && (
-                <div
-                  className={`rounded-lg p-2 ${passportValidity.bgClass} border ${
-                    passportValidity.alertLevel === "critical"
-                      ? "border-[var(--state-warning)]/50 animate-pulse"
-                      : passportValidity.alertLevel === "warning"
-                        ? "border-yellow-500/50"
-                        : "border-transparent"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase tracking-wider opacity-80">
-                      Expiry:
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className={`text-xs font-semibold ${passportValidity.textClass}`}
-                      >
-                        {formatDate(client.passport_expiry)}
-                      </span>
-                      {(() => {
-                        const days = Math.ceil(
-                          (new Date(client.passport_expiry!).getTime() -
-                            Date.now()) /
-                            86400000,
-                        );
-                        const label =
-                          days < 0
-                            ? `Exp ${Math.abs(days)}d ago`
-                            : days === 0
-                              ? "today"
-                              : days <= 365
-                                ? `⏰ ${days}d`
-                                : formatLongSpan(days);
-                        return (
-                          <span
-                            className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
-                              days < 0
-                                ? "bg-[var(--state-warning)]/20 text-[var(--state-warning)]"
-                                : days < 30
-                                  ? "bg-[var(--state-warning)]/15 text-[var(--state-warning)]"
-                                  : days < 180
-                                    ? "bg-yellow-500/20 text-yellow-400"
-                                    : "bg-green-500/10 text-green-400"
-                            }`}
-                          >
-                            {label}
-                          </span>
-                        );
-                      })()}
-                    </div>
-                  </div>
-
-                  {/* Alert Messages */}
-                  {passportValidity.alertLevel === "warning" && (
-                    <div className="mt-1 text-[10px] text-yellow-600 dark:text-yellow-300">
-                      ⚠️ 13 month alert: Contact embassy soon
-                    </div>
-                  )}
-                  {passportValidity.alertLevel === "critical" && (
-                    <div className="mt-1 text-[10px] text-[var(--state-warning)] font-bold">
-                      🚨 URGENT: Contact embassy immediately!
-                    </div>
-                  )}
-                  {passportValidity.alertLevel === "expired" && (
-                    <div className="mt-1 text-[10px] text-[var(--state-warning)] font-bold">
-                      ⛔ PASSPORT EXPIRED!
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Date of Birth with Birthday Glow */}
-              {client.date_of_birth && (
-                <div
-                  className={`flex items-center justify-between text-xs p-2 rounded-lg transition-all duration-500 ${
-                    isBirthday
-                      ? "bg-gradient-to-r from-[var(--state-warning)]/35 via-[var(--state-warning)]/20 to-[var(--state-warning)]/35 animate-pulse shadow-[0_0_15px_color-mix(in_srgb,var(--state-warning)_55%,transparent)]"
-                      : ""
-                  }`}
-                >
-                  <span
-                    className={`${isBirthday ? "text-yellow-700 dark:text-yellow-300 font-semibold" : "text-[var(--bz-text-2)]"}`}
-                  >
-                    {isBirthday ? "🎂 DOB:" : "DOB:"}
-                  </span>
-                  <span
-                    className={`${isBirthday ? "font-bold text-yellow-700 dark:text-yellow-300" : "text-[var(--bz-text-1)]"}`}
-                  >
-                    {formatDate(client.date_of_birth)}
-                    {isBirthday && " (Today!)"}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* OCR Error Message */}
-            {ocrError && (
-              <p className="text-xs text-[var(--state-warning)] text-center">
-                {ocrError}
-              </p>
+        ) : undefined
+      }
+      actions={
+        <>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/jpg,image/png,application/pdf"
+            aria-label="Upload passport"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 border-[var(--line-control)]"
+            onClick={handleDownload}
+            disabled={!passportImageUrl}
+            aria-label="Download passport"
+          >
+            <Download className="h-4 w-4" aria-hidden="true" />
+            Download
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 border-[var(--line-control)]"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+          >
+            {isUploading ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Upload className="h-4 w-4" aria-hidden="true" />
             )}
-
-            {/* Action Buttons */}
-            <div className="grid grid-cols-2 gap-2 pt-2 mt-auto">
+            {isUploading ? "Uploading…" : "Upload"}
+          </Button>
+          {passportImageUrl ? (
+            <span className="ml-auto flex items-center gap-1">
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
+                className="gap-1.5 text-[var(--tx-secondary)]"
                 onClick={handleExtractData}
                 disabled={isExtracting}
               >
                 {isExtracting ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  <Loader2
+                    className="h-4 w-4 animate-spin"
+                    aria-hidden="true"
+                  />
                 ) : (
-                  <FileText className="w-4 h-4 mr-2" />
+                  <FileText className="h-4 w-4" aria-hidden="true" />
                 )}
-                {isExtracting ? "Extracting..." : "Extract"}
+                {isExtracting ? "Extracting…" : "Extract"}
               </Button>
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
+                className="h-8 w-8 p-0 text-[var(--tx-secondary)]"
                 onClick={handleDelete}
                 disabled={isDeleting}
-                className="text-[var(--state-warning)] hover:opacity-80"
                 aria-label="Delete passport"
                 title="Delete passport"
               >
                 {isDeleting ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  <Loader2
+                    className="h-4 w-4 animate-spin"
+                    aria-hidden="true"
+                  />
                 ) : (
-                  <Trash2 className="w-4 h-4 mr-2" />
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
                 )}
-                {isDeleting ? "..." : "Del"}
               </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex-1 flex flex-col">
-            {/* Show extracted data if available, even without image */}
-            {client.passport_number ||
-            client.passport_expiry ||
-            client.date_of_birth ? (
-              <div className="space-y-3 flex-1">
-                <div className="aspect-[3/2] rounded-lg border-2 border-dashed border-[var(--bz-border)] flex flex-col items-center justify-center gap-1.5 bg-[var(--bz-base)]/50">
-                  <CreditCard className="w-8 h-8 text-[var(--bz-text-2)] opacity-40" />
-                  <span className="text-xs text-[var(--bz-text-2)]">
-                    No scan uploaded
-                  </span>
-                  <span className="text-[10px] text-[var(--bz-text-2)] opacity-60">
-                    Data extracted from records
-                  </span>
-                </div>
-
-                {/* Passport Data from OCR/records */}
-                <div className="space-y-2">
-                  {client.passport_number && (
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-[var(--bz-text-2)]">Number:</span>
-                      <span className="font-mono text-[var(--bz-text-1)] font-semibold">
-                        {client.passport_number}
-                      </span>
-                    </div>
-                  )}
-                  {client.passport_expiry && (
-                    <div
-                      className={`rounded-lg p-2 ${passportValidity.bgClass} border ${
-                        passportValidity.alertLevel === "critical"
-                          ? "border-[var(--state-warning)]/50 animate-pulse"
-                          : passportValidity.alertLevel === "warning"
-                            ? "border-yellow-500/50"
-                            : "border-transparent"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] uppercase tracking-wider opacity-80">
-                          Expiry:
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          <span
-                            className={`text-xs font-semibold ${passportValidity.textClass}`}
-                          >
-                            {formatDate(client.passport_expiry)}
-                          </span>
-                          {(() => {
-                            const days = Math.ceil(
-                              (new Date(client.passport_expiry!).getTime() -
-                                Date.now()) /
-                                86400000,
-                            );
-                            const label =
-                              days < 0
-                                ? `Exp ${Math.abs(days)}d ago`
-                                : days === 0
-                                  ? "today"
-                                  : days <= 365
-                                    ? `⏰ ${days}d`
-                                    : formatLongSpan(days);
-                            return (
-                              <span
-                                className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
-                                  days < 0
-                                    ? "bg-[var(--state-warning)]/20 text-[var(--state-warning)]"
-                                    : days < 30
-                                      ? "bg-[var(--state-warning)]/15 text-[var(--state-warning)]"
-                                      : days < 180
-                                        ? "bg-yellow-500/20 text-yellow-400"
-                                        : "bg-green-500/10 text-green-400"
-                                }`}
-                              >
-                                {label}
-                              </span>
-                            );
-                          })()}
-                        </div>
-                      </div>
-                      {passportValidity.alertLevel === "expired" && (
-                        <div className="mt-1 text-[10px] text-[var(--state-warning)] font-bold">
-                          ⛔ PASSPORT EXPIRED!
-                        </div>
-                      )}
-                      {passportValidity.alertLevel === "critical" && (
-                        <div className="mt-1 text-[10px] text-[var(--state-warning)] font-bold">
-                          🚨 URGENT: Contact embassy immediately!
-                        </div>
-                      )}
-                      {passportValidity.alertLevel === "warning" && (
-                        <div className="mt-1 text-[10px] text-yellow-600 dark:text-yellow-300">
-                          ⚠️ Expiring soon
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {client.date_of_birth && (
-                    <div
-                      className={`flex items-center justify-between text-xs p-2 rounded-lg transition-all duration-500 ${
-                        isBirthday
-                          ? "bg-gradient-to-r from-[var(--state-warning)]/35 via-[var(--state-warning)]/20 to-[var(--state-warning)]/35 animate-pulse shadow-[0_0_15px_color-mix(in_srgb,var(--state-warning)_55%,transparent)]"
-                          : ""
-                      }`}
-                    >
-                      <span
-                        className={`${isBirthday ? "text-yellow-700 dark:text-yellow-300 font-semibold" : "text-[var(--bz-text-2)]"}`}
-                      >
-                        {isBirthday ? "🎂 DOB:" : "DOB:"}
-                      </span>
-                      <span
-                        className={`${isBirthday ? "font-bold text-yellow-700 dark:text-yellow-300" : "text-[var(--bz-text-1)]"}`}
-                      >
-                        {formatDate(client.date_of_birth)}
-                        {isBirthday && " (Today!)"}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
+            </span>
+          ) : null}
+        </>
+      }
+    >
+      {hasData ? (
+        <Facts>
+          <Fact label="Passport number">
+            {client.passport_number ? (
+              <span
+                className="font-mono text-[13px]"
+                style={{ fontVariantNumeric: "tabular-nums" }}
+              >
+                {client.passport_number}
+              </span>
             ) : (
-              <div className="aspect-[3/2] rounded-lg border-2 border-dashed border-[var(--bz-border)] flex flex-col items-center justify-center gap-2 bg-[var(--bz-base)]/50">
-                <CreditCard className="w-10 h-10 text-[var(--bz-text-2)] opacity-50" />
-                <span className="text-sm text-[var(--bz-text-2)]">
-                  No passport
-                </span>
-              </div>
+              NOT_RECORDED
             )}
-
-            {/* Upload Button */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/jpg,image/png,application/pdf"
-              aria-label="Upload passport"
-              onChange={handleFileUpload}
-              className="hidden"
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full mt-3"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isUploading}
-            >
-              {isUploading ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <Upload className="w-4 h-4 mr-2" />
-              )}
-              {isUploading
-                ? "Uploading..."
-                : passportImageUrl
-                  ? "Upload Passport"
-                  : client.passport_number
-                    ? "Upload Scan"
-                    : "Upload Passport"}
-            </Button>
-          </div>
-        )}
-
-        {/* Caption */}
-        <p className="text-xs text-[var(--bz-text-2)] text-center mt-3">
-          {passportImageUrl
-            ? `${client.passport_number || "Passport"} • ${client.nationality || ""}`
-            : `Upload passport (JPG, PNG, PDF - max ${BASE64_UPLOAD_MAX_LABEL})`}
+          </Fact>
+          <Fact label="Nationality">{client.nationality || NOT_RECORDED}</Fact>
+          <Fact label="Date of birth">
+            {client.date_of_birth
+              ? formatDate(client.date_of_birth)
+              : NOT_RECORDED}
+          </Fact>
+          <Fact label="Place of birth">
+            {client.birthplace || NOT_RECORDED}
+          </Fact>
+          {passportDoc?.issue_date ? (
+            <Fact label="Issued">{formatDate(passportDoc.issue_date)}</Fact>
+          ) : null}
+          <Fact label="Expires" wide={!passportDoc?.issue_date}>
+            {client.passport_expiry ? (
+              <span className="flex flex-wrap items-baseline gap-x-2">
+                <span>{formatDate(client.passport_expiry)}</span>
+                <ExpiryText days={expiryDays} />
+              </span>
+            ) : (
+              NOT_RECORDED
+            )}
+          </Fact>
+        </Facts>
+      ) : (
+        <p className="text-[13px] leading-[1.5] text-[var(--tx-secondary)]">
+          No passport on file. Upload a scan (JPG, PNG or PDF, up to{" "}
+          {BASE64_UPLOAD_MAX_LABEL}) and the details are read from it.
         </p>
-      </div>
-    </div>
+      )}
+      {client.passport_expiry && passportValidity.alertLevel !== "ok" ? (
+        <p
+          className="mt-3 text-[12px] font-semibold text-[var(--state-warning)]"
+          data-testid="passport-alert"
+        >
+          {passportValidity.alertLevel === "warning"
+            ? "Inside the 13-month window: contact the embassy soon."
+            : passportValidity.alertLevel === "expired"
+              ? "This passport has expired: renewal comes first."
+              : "Expires very soon: contact the embassy now."}
+        </p>
+      ) : null}
+      {ocrError ? (
+        <p className="mt-2 text-[12px] text-[var(--state-warning)]">
+          {ocrError}
+        </p>
+      ) : null}
+      {passportDoc?.file_name ? (
+        <p
+          className="mt-3 truncate text-[12px] text-[var(--tx-secondary)]"
+          data-testid="passport-file"
+          title={passportDoc.file_name}
+        >
+          Scan on file: {passportDoc.file_name}
+        </p>
+      ) : null}
+    </CardFrame>
   );
 }

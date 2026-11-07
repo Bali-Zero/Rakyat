@@ -139,4 +139,24 @@ describe("TaxTab tax-consultant options", () => {
     );
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
   });
+
+  it("still shows a current value that is no longer offered, as the selected option", async () => {
+    const { TaxTab } = await import("./TaxTab");
+    const legacy = "veronika.tax@example.test";
+    render(
+      <TaxTab
+        clientId={7}
+        formatDate={(d: string) => d}
+        client={{ tax_consultant: legacy } as never}
+        taxConsultants={CONSULTANTS}
+      />,
+    );
+    const select = (await waitFor(() =>
+      screen.getByLabelText("Tax Consultant"),
+    )) as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe(legacy));
+    const selected = select.options[select.selectedIndex];
+    expect(selected.textContent).toBe("Veronika");
+    expect(select.options).toHaveLength(CONSULTANTS.length + 2);
+  });
 });

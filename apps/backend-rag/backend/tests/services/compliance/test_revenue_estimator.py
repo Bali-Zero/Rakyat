@@ -18,10 +18,10 @@ SAMPLE_PRICES: dict = {
             "C1 Tourism Extension": {"price": "1.700.000 IDR"},
         },
         "kitas_permits": {
-            "Investor KITAS 2 Years (Extend)": {"price": "10.000.013 IDR"},
+            "Investor KITAS 2 Years (Extend)": {"price": "18.000.000 IDR"},
             "Spouse 1 Year (Extend)": {"price": "9.000.000 IDR"},
-            "E33G Remote Worker (Extend)": {"price": "84.000.510 IDR"},
-            "Retirement (Extend)": {"price": "84.000.510 IDR"},
+            "E33G Remote Worker (Extend)": {"price": "10.000.000 IDR"},
+            "Retirement (Extend)": {"price": "10.000.000 IDR"},
             "Dependent 1 Year (Extend)": {"price": "9.000.000 IDR"},
             "Freelance E23 (Altus/Onshore)": {"price": "27.500.000 IDR"},
             "Working KITAS (Extend)": {"price": "31.500.000 IDR"},
@@ -32,7 +32,7 @@ SAMPLE_PRICES: dict = {
         "urgent_processing": {
             "Urgent 1 Hari": {"price": "3.000.000 IDR"},
             "Urgent 2 Hari": {"price": "2.500.000 IDR"},
-            "Urgent 3 Hari": {"price": "1.000.001 IDR"},
+            "Urgent 3 Hari": {"price": "1.000.000 IDR"},
         },
         "company_services": {
             "Revision Company": {"price": "Depend (Contact for quote)"},
@@ -43,7 +43,7 @@ SAMPLE_PRICES: dict = {
 
 class TestParseIDR:
     def test_standard_format(self) -> None:
-        assert _parse_idr("10.000.013 IDR") == 18_000_000
+        assert _parse_idr("18.000.000 IDR") == 18_000_000
 
     def test_no_currency_suffix(self) -> None:
         assert _parse_idr("9.000.000") == 9_000_000

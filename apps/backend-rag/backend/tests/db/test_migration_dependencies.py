@@ -99,6 +99,7 @@ class _DepCheckConnection:
 
     def __init__(self, applied_numbers: set[int]) -> None:
         self.applied_numbers = applied_numbers
+        self.fetchval_calls = 0
 
     async def execute(self, _sql: str, *_args: Any) -> None:
         return None
@@ -115,6 +116,7 @@ class _DepCheckConnection:
         ]
 
     async def fetchval(self, _sql: str, *args: Any) -> bool:
+        self.fetchval_calls += 1
         return args[0] in self.applied_numbers
 
 
@@ -151,6 +153,7 @@ async def test_check_dependencies_proceeds_when_dependency_applied(tmp_path: Pat
     conn = _DepCheckConnection(applied_numbers={277})
 
     await migration._check_dependencies(conn)  # noqa: SLF001 — no raise
+    assert conn.fetchval_calls == 1
 
 
 @pytest.mark.asyncio
@@ -167,6 +170,7 @@ async def test_check_dependencies_noops_without_declaration(tmp_path: Path) -> N
     conn = _DepCheckConnection(applied_numbers=set())
 
     await migration._check_dependencies(conn)  # noqa: SLF001 — no raise
+    assert conn.fetchval_calls == 0
 
 
 class _FakePool:
@@ -231,3 +235,46 @@ async def test_apply_all_pending_passes_dependencies_to_base_migration(
     assert result["failed"] == []
     dependent = next(m for m in captured if m.migration_number == 150)
     assert dependent.dependencies == [149]
+
+
+@pytest.mark.asyncio
+async def test_apply_single_passes_dependencies_to_base_migration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Numbered apply must preserve the same dependency metadata as apply-all."""
+    v2_dir = tmp_path / "migrations_v2"
+    v2_dir.mkdir()
+    (v2_dir / "150_dependent.sql").write_text(
+        "-- depends: 149\nCREATE TABLE dependent_tbl (id INT);\n"
+        "-- === ROLLBACK ===\nDROP TABLE dependent_tbl;\n",
+        encoding="utf-8",
+    )
+
+    import backend.db.migration_manager as mm
+
+    fake_parent = tmp_path / "db"
+    fake_parent.mkdir()
+    fake_file = fake_parent / "migration_manager.py"
+    fake_file.write_text("")
+    (fake_parent / "migrations_v2").symlink_to(v2_dir)
+    monkeypatch.setattr(mm, "__file__", str(fake_file))
+    monkeypatch.setattr(BaseMigration, "MIGRATIONS_DIR", v2_dir)
+
+    captured: list[BaseMigration] = []
+
+    async def fake_applied(_self: MigrationManager) -> list[dict[str, int]]:
+        return [{"migration_number": 149}]
+
+    async def fake_apply(self: MigrationManager, migration: BaseMigration) -> bool:
+        captured.append(migration)
+        return True
+
+    monkeypatch.setattr(MigrationManager, "get_applied_migrations", fake_applied)
+    monkeypatch.setattr(MigrationManager, "apply_migration", fake_apply)
+
+    mgr = MigrationManager(database_url="postgresql://fake/fake")
+    result = await mgr._apply_single_locked(150, dry_run=False)  # noqa: SLF001
+
+    assert result["applied"] == [150]
+    assert captured[0].dependencies == [149]

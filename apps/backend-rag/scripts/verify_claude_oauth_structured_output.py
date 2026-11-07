@@ -5,7 +5,7 @@ Context: PR `solidify-rag-router` migrates the KG LangGraph router from
 `json.loads(response.content)` to `llm.with_structured_output(QueryIntentSchema)`.
 LangChain's default `with_structured_output` implementation requires either
 native tool-calling (`bind_tools`) or JSON-mode support on the underlying
-chat model. `ClaudeOAuthChatModel` noqata out to the `claude` CLI as
+chat model. `ClaudeOAuthChatModel` shells out to the `claude` CLI as
 text-in / text-out — neither path is implemented natively.
 
 This script answers two questions:

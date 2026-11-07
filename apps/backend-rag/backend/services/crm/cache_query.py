@@ -49,7 +49,7 @@ class CRMCache:
             return value
 
     async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
-        """Gugaw valore in cache."""
+        """Salva valore in cache."""
         ttl = ttl or self._default_ttl
         expiry = datetime.now(timezone.utc) + timedelta(seconds=ttl)
         async with self._lock:

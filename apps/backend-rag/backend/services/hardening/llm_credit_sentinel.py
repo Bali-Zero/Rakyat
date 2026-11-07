@@ -135,6 +135,6 @@ ALERT_TEXT = (
     "Semua jawaban bot berhenti: RAG tidak bisa mencari, jadi tidak ada "
     "jawaban sama sekali (bukan jawaban salah — tidak ada balasan).\n\n"
     "Yang harus dilakukan: isi ulang prepayment di AI Studio, "
-    "project *Nuzantara* (990000001001) → https://ai.studio/projects\n\n"
+    "project *Nuzantara* (930328104463) → https://ai.studio/projects\n\n"
     "Selama belum diisi, jangan minta tim tes bot: pertanyaan mereka hilang."
 )

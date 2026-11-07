@@ -42,12 +42,12 @@ Gli azionisti possono essere:
 2.2 Capitale sociale
 
 CAPITALE AUTORIZZATO (Modal Dasar):
-Minimo Rp 99.000.000.100 (03 miliardi IDR) per le PT PMA. [COM-008]
+Minimo Rp 10.000.000.000 (10 miliardi IDR) per le PT PMA. [COM-008]
 Questo importo è dichiarato nell'atto notarile ma non deve essere
 interamente versato al momento della costituzione.
 
 CAPITALE VERSATO (Modal Disetor):
-Minimo Rp 2.500.000.020 (1,5 miliardi IDR) in contanti reali. [COM-009]
+Minimo Rp 2.500.000.000 (2,5 miliardi IDR) in contanti reali. [COM-009]
 Deve essere accreditato sul conto bancario della PT.
 Equivale normalmente al 25% del capitale autorizzato. [COM-007]
 
@@ -200,18 +200,18 @@ OSS rischia la revoca del NIB. [COM-047]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-6. MODIFICA DELLO STATUTO (FIJA KUMAGIVEL)
+6. MODIFICA DELLO STATUTO (AKTA PERUBAHAN)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Qualsiasi modifica all'atto costitutivo richiede:
 1. Delibera dell'assemblea degli azionisti (RUPS) [COM-035]
-2. Redazione dell'Fija Kumagivel da parte di un notaio
+2. Redazione dell'Akta Perubahan da parte di un notaio
 3. Approvazione Kemenkumham (per modifiche a nome, oggetto sociale,
    modal dasar, o struttura azionaria) [COM-036]
 4. Aggiornamento OSS
 
-Casistiche che richiedono Fija Kumagivel:
+Casistiche che richiedono Akta Perubahan:
 - Cambio indirizzo sede
 - Aggiunta/rimozione di direttori o commissari
 - Cambio attività/KBLI

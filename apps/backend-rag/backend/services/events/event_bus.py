@@ -20,7 +20,7 @@ Usage:
     bus.subscribe("practice.status_changed", another_handler)
 
     # Emit in-process events
-    await bus.emit("client.created", {"client_id": 123, "email": "b@j.com"})
+    await bus.emit("client.created", {"client_id": 123, "email": "x@y.com"})
 
     # PG events arrive automatically via LISTEN channels.
 """
@@ -466,11 +466,14 @@ class EventBus:
                 for pg_channel in PG_CHANNEL_MAP:
 
                     async def _dispatch(payload: dict[str, Any], _ch: str = pg_channel) -> None:
-                        await self._handle_pg_event(
+                        trace = await self._handle_pg_event(
                             # orjson 3-10× faster; .decode() because _handle_pg_event expects str
                             _ch,
                             orjson.dumps(payload, default=str).decode(),
                         )
+                        if trace is None or trace.errors:
+                            # replay_unconsumed only retains rows when dispatch raises.
+                            raise RuntimeError("EventBus replay delivery did not succeed")
 
                     try:
                         count = await replay_unconsumed(
@@ -522,8 +525,8 @@ class EventBus:
         """Synchronous callback from asyncpg — dispatch to async handler."""
         asyncio.ensure_future(self._handle_pg_event(channel, payload))
 
-    async def _handle_pg_event(self, channel: str, payload: str) -> None:
-        """Parse PG payload and route to the event bus."""
+    async def _handle_pg_event(self, channel: str, payload: str) -> EventTrace | None:
+        """Route PG payloads and return the delivery trace for replay acceptance."""
         try:
             data = json.loads(payload)
         except json.JSONDecodeError:
@@ -544,6 +547,7 @@ class EventBus:
         trace = await self.emit(event_type, data, source="pg_notify")
         if not trace.errors:
             await self._ack_outbox_if_present(data, event_type)
+        return trace
 
     async def _ack_outbox_if_present(
         self,

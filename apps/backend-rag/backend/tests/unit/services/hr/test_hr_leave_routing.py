@@ -29,8 +29,8 @@ class TestResolveApprover:
             ("damar@balizero.com", "tax@balizero.com"),
             ("vino@balizero.com", "tax@balizero.com"),
             ("candra@balizero.com", "tax@balizero.com"),
-            # finance & client services → Veronika
-            ("natalie@balizero.com", "tax@balizero.com"),
+            # offboarded 2026-11-03: no longer mapped, falls back to Zero
+            ("natalie@balizero.com", ZERO_EMAIL),
             ("rina@balizero.com", "ruslana@balizero.com"),
             ("tax@balizero.com", ZERO_EMAIL),  # Veronika → Zero
             ("asya@balizero.com", ZERO_EMAIL),
@@ -58,10 +58,13 @@ class TestBuildNotificationRecipients:
         result = build_notification_recipients("rina@balizero.com")
         assert result == {"to": "ruslana@balizero.com", "cc": [ZERO_EMAIL, ASYA_EMAIL]}
 
-    def test_setup_team_and_natalie_route_to_veronika(self) -> None:
-        for requester in ("dea@balizero.com", "natalie@balizero.com"):
-            result = build_notification_recipients(requester)
-            assert result == {"to": "tax@balizero.com", "cc": [ZERO_EMAIL, ASYA_EMAIL]}
+    def test_setup_team_routes_to_veronika(self) -> None:
+        result = build_notification_recipients("dea@balizero.com")
+        assert result == {"to": "tax@balizero.com", "cc": [ZERO_EMAIL, ASYA_EMAIL]}
+
+    def test_offboarded_natalie_falls_back_to_zero(self) -> None:
+        result = build_notification_recipients("natalie@balizero.com")
+        assert result == {"to": ZERO_EMAIL, "cc": [ASYA_EMAIL]}
 
     def test_zero_is_own_approver_no_duplicate_cc(self) -> None:
         result = build_notification_recipients("zero@balizero.com")

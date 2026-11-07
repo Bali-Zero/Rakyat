@@ -30,7 +30,7 @@ class MemoryFact(BaseModel):
     A single fact extracted from a conversation.
 
     Examples:
-    - "User's name is Muxared"
+    - "User's name is Roberto"
     - "User is 45 years old"
     - "User wants to open a law firm in Bali"
     """

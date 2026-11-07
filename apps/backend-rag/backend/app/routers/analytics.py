@@ -138,7 +138,7 @@ ALLOWED_EVENTS: frozenset[str] = FUNNEL_PAGE_EVENTS | FUNNEL_APP_EVENTS
 
 _PII_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 # Phone-like: optional +, digit, 6+ of digits/spaces/().-, ending on a digit
-# (e.g. "+62 840 0022 0000") — anchoring the end on a digit keeps trailing
+# (e.g. "+62 812 3456 7890") — anchoring the end on a digit keeps trailing
 # whitespace/punctuation out of the redaction.
 _PII_PHONE_RE = re.compile(r"\+?\d[\d\s().-]{6,}\d")
 _PII_REDACTED = "[redacted]"

@@ -120,7 +120,7 @@ class MatchRequest(BaseModel):
     client_fingerprint: str | None = Field(default=None, max_length=32)
     # Asked only for work purposes. EN "Is your work semi-independent, in the artistic or
     # sports field?" / ID "Apakah pekerjaan Anda semi-independen di bidang seni atau
-    # olahraga?". True -> Nodolejuvuq KITAS (E23-FREELANCE) ranked first.
+    # olahraga?". True -> Impresariat KITAS (E23-FREELANCE) ranked first.
     semi_independent_arts_sports: bool | None = None
 
     @field_validator("nationality")

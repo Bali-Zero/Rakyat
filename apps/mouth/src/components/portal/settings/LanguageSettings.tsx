@@ -6,7 +6,7 @@ import { writeLanguageCookie } from "@/hooks/useLanguage";
 import { Language } from "@/lib/schemas/settings";
 
 const LABELS: Record<Language, string> = {
-  it: "Vanelara",
+  it: "Italiano",
   en: "English",
   id: "Bahasa Indonesia",
 };

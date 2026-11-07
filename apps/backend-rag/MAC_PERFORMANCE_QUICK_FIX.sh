@@ -32,8 +32,8 @@ echo "3. Processi npm/node attivi (top 10 per CPU):"
 ps aux | grep -E "npm|node" | grep -v grep | awk '{if ($3 > 1.0) print "   PID " $2 ": " $3 "% CPU - " $11}' | sort -rn | head -10
 echo ""
 
-# 4. Istruzioni per azioni jobegeh
-echo "4. Azioni Jobegeh Richieste:"
+# 4. Istruzioni per azioni manuali
+echo "4. Azioni Manuali Richieste:"
 echo ""
 echo "   🔴 CRITICO - Chiudere VM non necessarie:"
 echo "      - Apri Activity Monitor"
@@ -50,6 +50,6 @@ echo "      sudo purge"
 echo ""
 echo "=== FINE ==="
 echo ""
-echo "Dopo le azioni jobegeh, verifica con:"
+echo "Dopo le azioni manuali, verifica con:"
 echo "  vm_stat | grep 'Pages free'"
 echo "  top -l 1 -o mem | head -10"

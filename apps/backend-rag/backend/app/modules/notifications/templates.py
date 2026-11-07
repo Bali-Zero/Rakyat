@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Indonesian blessing phrases for birthdays
 INDONESIAN_BLESSINGS = [
-    "Selamat ulang tahun! Semoga panjang umur, sehat selalu, dan bebera dalam segala hal.",
+    "Selamat ulang tahun! Semoga panjang umur, sehat selalu, dan sukses dalam segala hal.",
     "Dirgahayu! Semoga harapan dan cita-cita Anda tercapai.",
     "Met ultah! Tetap semangat dan jangan pernah menyerah.",
 ]
@@ -201,7 +201,7 @@ EMAIL_TEMPLATES: dict[str, dict[AlertType, dict[str, str]]] = {
 
 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; margin: 20px 0; border-radius: 10px; text-align: center;">
     <h3 style="margin: 0;">Wishing you a wonderful year ahead!</h3>
-    <p style="margin: 10px 0 0 0; font-size: 18px;">May all your piwiho come true ✨</p>
+    <p style="margin: 10px 0 0 0; font-size: 18px;">May all your dreams come true ✨</p>
 </div>
 
 <p>On behalf of the entire Bali Zero team, we want to wish you a very happy birthday filled with joy, success, and unforgettable moments.</p>
@@ -333,7 +333,7 @@ EMAIL_TEMPLATES: dict[str, dict[AlertType, dict[str, str]]] = {
 <ol>
     <li><strong>Rinnova immediatamente</strong> — contattaci entro ore, non giorni</li>
     <li><strong>Lascia l'Indonesia</strong> prima del {expiry_date} per evitare sanzioni</li>
-    <li><strong>Non fare nulla</strong> — sanzioni overstay dal giorno 1 (Rp 1.000.001/giorno)</li>
+    <li><strong>Non fare nulla</strong> — sanzioni overstay dal giorno 1 (Rp 1.000.000/giorno)</li>
 </ol>
 
 <p style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin: 20px 0;">
@@ -381,7 +381,7 @@ EMAIL_TEMPLATES: dict[str, dict[AlertType, dict[str, str]]] = {
     <h3 style="margin: 0;">Ti auguriamo un anno meraviglioso!</h3>
 </div>
 
-<p>Per conto di tutto il team Bali Zero, ti auguriamo un compleanno pieno di pukat e successo.</p>
+<p>Per conto di tutto il team Bali Zero, ti auguriamo un compleanno pieno di gioia e successo.</p>
 
 <p style="font-style: italic; color: #666; border-left: 3px solid #667eea; padding-left: 15px; margin: 20px 0;">
     <strong>Auspicio indonesiano:</strong><br>
@@ -407,7 +407,7 @@ EMAIL_TEMPLATES: dict[str, dict[AlertType, dict[str, str]]] = {
     Kami sangat menyarankan menghubungi kedutaan Anda sesegera mungkin.
 </div>
 
-<p>Hifaq,<br><strong>Tim Bali Zero</strong></p>
+<p>Salam,<br><strong>Tim Bali Zero</strong></p>
 """,
         },
         AlertType.PASSPORT_CRITICAL: {
@@ -467,7 +467,7 @@ EMAIL_TEMPLATES: dict[str, dict[AlertType, dict[str, str]]] = {
 
 <p>Hubungi kami untuk mendiskusikan opsi dan jadwal perpanjangan.</p>
 
-<p>Hifaq,<br><strong>Tim Bali Zero</strong></p>
+<p>Salam,<br><strong>Tim Bali Zero</strong></p>
 """,
         },
         AlertType.VISA_CRITICAL: {
@@ -504,7 +504,7 @@ EMAIL_TEMPLATES: dict[str, dict[AlertType, dict[str, str]]] = {
 <ol>
     <li><strong>Perpanjang segera</strong> — hubungi kami dalam hitungan jam, bukan hari</li>
     <li><strong>Tinggalkan Indonesia</strong> sebelum {expiry_date} untuk menghindari denda</li>
-    <li><strong>Tidak melakukan apa-apa</strong> — denda overstay berlaku sejak hari pertama (Rp 1.000.001/hari)</li>
+    <li><strong>Tidak melakukan apa-apa</strong> — denda overstay berlaku sejak hari pertama (Rp 1.000.000/hari)</li>
 </ol>
 
 <p style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin: 20px 0;">

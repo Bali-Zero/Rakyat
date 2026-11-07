@@ -1,5 +1,6 @@
-import { render, screen, act } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
+import { render, renderHook, screen, act } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { api } from "@/lib/api";
 import {
   PrimeNexusProvider,
   usePrimeNexus,
@@ -46,6 +47,25 @@ function Probe() {
 }
 
 describe("PrimeNexusContext layer + compare", () => {
+  it("omits the KBLI code for the map's coordinate-only analysis", async () => {
+    const request = vi.spyOn(api, "request").mockResolvedValueOnce({});
+    try {
+      const { result } = renderHook(() => usePrimeNexus(), {
+        wrapper: PrimeNexusProvider,
+      });
+      await act(() => result.current.analyzePoint(-8.65, 115.13));
+      const [[endpoint, options]] = request.mock.calls;
+      expect(endpoint).toBe("/api/prime/v2/analyze");
+      expect(JSON.parse(options!.body as string)).toEqual({
+        lat: -8.65,
+        lng: 115.13,
+        is_pma: true,
+      });
+    } finally {
+      request.mockRestore();
+    }
+  });
+
   it("starts with DEFAULT_MAP_LAYERS", () => {
     render(
       <PrimeNexusProvider>

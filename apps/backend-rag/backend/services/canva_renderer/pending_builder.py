@@ -193,7 +193,7 @@ IMAGE_ELEMENT_IDS: dict[int, str | None] = {
     11: None,
 }
 
-# WR2 Council register set (design doc §3.2). WR1 vavo legacy
+# WR2 Council register set (design doc §3.2). WR1 toni legacy
 # ("cinico", "istituzionale_severo") are rejected — see Council hard rules.
 VALID_TONES = frozenset(
     {

@@ -14,7 +14,7 @@ import type { KBLIRawCode } from "./kbli-types";
  * OSS scale row, a re-adjudicated `pma_status`) silently WITHDRAWS the
  * notice instead of narrating a claim the record no longer supports.
  *
- * Idea from the unmerged `kbli-pma-resolution-tomen` worktree
+ * Idea from the unmerged `kbli-pma-resolution-astra` worktree
  * (`kbli-pma-review.ts` / `kbli-pma-review-notices.json`), rewritten here:
  * that draft matched on `pma_nota` (a field this cure never touches) and had
  * no dedicated key for the notice string.

@@ -151,6 +151,20 @@ class ConsiglioV1:
         cmd = self._build_cmd(llm, prompt, context_files)
         if cmd is None:
             return []
+        env: dict[str, str] | None = None
+        if llm == "claude":
+            # RULED 2026-11-01: a product lane runs `claude` on a Console seat
+            # only — never on the inherited environment, whose plan-OAuth
+            # session is exactly the fallback the ruling shuts. No seat, no call.
+            from backend.llm.claude_oauth_client import build_seat_env, collect_seats
+
+            seats = collect_seats()
+            if not seats:
+                raise RuntimeError(
+                    "claude: no Console seat configured (ANTHROPIC_CONSOLE_KEY_<n> + "
+                    "ANTHROPIC_CONSOLE_WORKSPACE_<n>)"
+                )
+            env = build_seat_env(seats[0])
         result = subprocess.run(
             cmd,
             stdin=subprocess.DEVNULL,
@@ -158,6 +172,7 @@ class ConsiglioV1:
             text=True,
             timeout=self.timeout,
             check=False,
+            env=env,
         )
         if result.returncode != 0:
             raise RuntimeError(f"{llm} rc={result.returncode}: {result.stderr[-300:]}")
@@ -185,7 +200,11 @@ class ConsiglioV1:
         full_prompt = f"{prompt}\n\n{ctx}"
 
         if llm == "claude":
-            return ["claude", "-p", full_prompt]
+            # Lean: context files are inlined above, so the voice needs no tool.
+            # Pinned (2026-11-03): unpinned, the CLI's default is its priciest model.
+            from backend.llm.claude_oauth_client import default_model
+
+            return ["claude", "-p", "--bare", "--tools", "", "--model", default_model(), "--", full_prompt]
         if llm == "gemini":
             return ["gemini", "-m", "gemini-3.1-pro-preview", "-p", full_prompt]
         if llm == "kimi":

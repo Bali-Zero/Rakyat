@@ -1,8 +1,10 @@
-"""Smoke test: Claude Max OAuth via subprocess (claude -p).
+"""Smoke test: Claude on a Console seat via subprocess (claude -p).
 
 Run inside container with:
     fly ssh console -a nuzantara-rag --process-group api \
       -C "su nuzantara -c 'cd /app && python3 scripts/smoke_claude_oauth.py'"
+
+Prints seat labels only — never a key or a workspace id.
 """
 import asyncio
 import sys
@@ -13,13 +15,12 @@ async def main() -> int:
     from backend.llm.claude_oauth_client import (
         ClaudeOAuthError,
         ClaudeOAuthNotAvailable,
-        _collect_tokens,
+        collect_seats,
         complete_async,
     )
 
-    tokens = _collect_tokens()
-    print(f"[enum] labels: {[lab for _, lab in tokens]}")
-    print(f"[enum] non-empty tokens: {sum(1 for t, _ in tokens if t)}")
+    seats = collect_seats()
+    print(f"[enum] seats: {[seat.label for seat in seats]}")
 
     t0 = time.monotonic()
     try:
@@ -29,17 +30,18 @@ async def main() -> int:
             timeout_s=30,
         )
         print(f"[live] text={resp.text[:120]!r}")
-        print(f"[live] token={resp.token_label} attempts={resp.attempts}")
+        print(f"[live] seat={resp.token_label} attempts={resp.attempts}")
+        api = f"{resp.api_s:.1f}s" if resp.api_s is not None else "?"
         print(f"[live] elapsed={resp.elapsed_s:.1f}s (wrapper), "
-              f"{time.monotonic()-t0:.1f}s (wall)")
+              f"{time.monotonic()-t0:.1f}s (wall), api={api} — the rest is the CLI's own time")
         return 0
     except ClaudeOAuthNotAvailable as exc:
-        print(f"[fail] CLI missing: {exc}", file=sys.stderr)
+        print(f"[fail] no door (CLI missing or no seat): {exc}", file=sys.stderr)
         return 10
     except ClaudeOAuthError as exc:
-        print(f"[fail] every token failed: {exc}", file=sys.stderr)
+        print(f"[fail] every seat failed: {exc}", file=sys.stderr)
         return 20
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"[fail] unexpected {type(exc).__name__}: {exc}", file=sys.stderr)
         return 30
 

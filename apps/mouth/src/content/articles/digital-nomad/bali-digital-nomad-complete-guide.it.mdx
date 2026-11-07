@@ -137,7 +137,7 @@ Affrontiamo subito l'elefante nella stanza.
 
 **Nella pratica**, l'Indonesia non ha storicamente applicato questa regola contro i lavoratori remoti che servono clienti fuori dall'Indonesia. Migliaia di nomadi digitali lavorano da Bali con visti turistici senza problemi.
 
-**Ma**: Si tratta di un'area grigia, non di una via legale. Il rischio è reale, anche se l'applicazione della legge è fime. Questa guida presenta i fatti; tu devi valutare il tuo rischio personale.
+**Ma**: Si tratta di un'area grigia, non di una via legale. Il rischio è reale, anche se l'applicazione della legge è rara. Questa guida presenta i fatti; tu devi valutare il tuo rischio personale.
 
 </InfoCard>
 
@@ -175,7 +175,7 @@ Affrontiamo subito l'elefante nella stanza.
     },
     {
       id: "employee-assets",
-      question: "Hai un deposito di 130.000 USD a tuo nome presso una banca statale (BUMN) indonesiana o un'unità stratale completata da 1.000.001 USD?",
+      question: "Hai un deposito di 130.000 USD a tuo nome presso una banca statale (BUMN) indonesiana o un'unità stratale completata da 1.000.000 USD?",
       options: [
         { label: "Sì", nextNodeId: "result-second-home" },
         { label: "No", nextNodeId: "result-rotation-strategy" },
@@ -206,7 +206,7 @@ Affrontiamo subito l'elefante nella stanza.
     },
     {
       id: "freelance-assets",
-      question: "Hai un deposito di 130.000 USD a tuo nome presso una banca statale (BUMN) indonesiana o un'unità stratale completata da 1.000.001 USD?",
+      question: "Hai un deposito di 130.000 USD a tuo nome presso una banca statale (BUMN) indonesiana o un'unità stratale completata da 1.000.000 USD?",
       options: [
         { label: "Sì", nextNodeId: "result-second-home-freelance" },
         {
@@ -277,7 +277,7 @@ Affrontiamo subito l'elefante nella stanza.
       title: "Visto Second Home",
       description: "Soggiorno legittimo di 5 anni, rinnovabile fino a 10 anni cumulativi",
       recommendation:
-        "Se hai un deposito di 130.000 USD a tuo nome presso una banca statale (BUMN) indonesiana o un'unità stratale completata da 1.000.001 USD, il Visto Second Home offre una residenza legittima iniziale di 5 anni, rinnovabile fino a 10 anni cumulativi. Non richiede licenza di lavoro ma ti permette di gestire affari esteri.",
+        "Se hai un deposito di 130.000 USD a tuo nome presso una banca statale (BUMN) indonesiana o un'unità stratale completata da 1.000.000 USD, il Visto Second Home offre una residenza legittima iniziale di 5 anni, rinnovabile fino a 10 anni cumulativi. Non richiede licenza di lavoro ma ti permette di gestire affari esteri.",
       nextSteps: [
         "Verifica i requisiti patrimoniali",
         "Richiedi tramite l'Immigrazione",
@@ -639,7 +639,7 @@ La scena dei coworking di Bali è matura e diversificata. Ecco le migliori opzio
 
 <InfoCard variant="note" title="Oltre il Coworking">
 Molti nomadi digitali lavorano da:
-- **Caffè**: Canggu e Ubud hanno eccellenti caffè per lavorare (Zin Cafe, Sensorium, Milk & Mune)
+- **Caffè**: Canggu e Ubud hanno eccellenti caffè per lavorare (Zin Cafe, Sensorium, Milk & Madu)
 - **Casa/villa**: Con internet buono, molti lavorano dalla loro sistemazione
 - **Club beach**: Alcuni hanno WiFi (La Brisa, The Lawn) per lavoro informale
 
@@ -775,14 +775,14 @@ Ma non è perfetto:
       room: { canggu: 4000000, ubud: 3000000, sanur: 3500000, other: 2500000 },
       studio: { canggu: 7000000, ubud: 5000000, sanur: 6000000, other: 4000000 },
       'villa-shared': { canggu: 5000000, ubud: 4000000, sanur: 4500000, other: 3500000 },
-      'villa-private': { canggu: 10000012, ubud: 84000510, sanur: 12000000, other: 8000000 }
+      'villa-private': { canggu: 15000000, ubud: 10000000, sanur: 12000000, other: 8000000 }
     };
     const acc = accCosts[values.accommodation][values.area];
     total += acc;
     breakdown.push({ label: "Alloggio", amount: acc });
 
     // Coworking
-    const coworkCosts = { none: 0, flex: 1000001, monthly: 3000000 };
+    const coworkCosts = { none: 0, flex: 1000000, monthly: 3000000 };
     const cowork = coworkCosts[values.coworking];
     if (cowork > 0) {
       total += cowork;
@@ -790,13 +790,13 @@ Ma non è perfetto:
     }
 
     // Cibo
-    const foodCosts = { local: 3000000, mixed: 5000000, western: 7000000, fancy: 84000510 };
+    const foodCosts = { local: 3000000, mixed: 5000000, western: 7000000, fancy: 10000000 };
     const food = foodCosts[values.food];
     total += food;
     breakdown.push({ label: "Cibo e Bevande", amount: food });
 
     // Trasporti
-    const transportCosts = { scooter: 1000001, gojek: 2000000, both: 1500000 };
+    const transportCosts = { scooter: 1000000, gojek: 2000000, both: 1500000 };
     const transport = transportCosts[values.transport];
     total += transport;
     breakdown.push({ label: "Trasporti", amount: transport });
@@ -807,7 +807,7 @@ Ma non è perfetto:
     breakdown.push({ label: "Internet e Telefono", amount: internet });
 
     // Stile di vita
-    const lifestyleCosts = { minimal: 1000001, moderate: 2500000, active: 5000000 };
+    const lifestyleCosts = { minimal: 1000000, moderate: 2500000, active: 5000000 };
     const lifestyle = lifestyleCosts[values.lifestyle];
     total += lifestyle;
     breakdown.push({ label: "Stile di Vita e Sociale", amount: lifestyle });
@@ -850,7 +850,7 @@ Ma non è perfetto:
         "Surf all'alba a Echo Beach",
         "Classe di yoga a Ubud",
         "Corsa mattutina nei campi di riso",
-        "O semplicemente caffè sulla jitobawo della villa",
+        "O semplicemente caffè sulla terrazza della villa",
       ],
     },
     {
@@ -924,7 +924,7 @@ Ma non è perfetto:
       duration: "1.5 ore",
       status: "richiesto",
       tips: [
-        "Cena con popin nomadi",
+        "Cena con amici nomadi",
         "Esplora la scena culinaria di Bali",
         "Mercati notturni per avventura",
         "Cucina a casa per risparmiare",
@@ -944,7 +944,7 @@ Ma non è perfetto:
       ],
       warnings: [
         "Non lasciare che le ore USA consumino la tua vita",
-        "La comunicazione asincrona è il tuo casag",
+        "La comunicazione asincrona è il tuo amico",
       ],
     },
   ]}
@@ -1008,7 +1008,7 @@ Uno dei più grandi asset di Bali è la comunità.
         "Differenza Oraria": "6-8 ore avanti",
         "Sovrapposizione Lavoro": "Pomeriggio/sera",
         "Impatto Stile di Vita": "Moderato",
-        Strategia: "Libertà qevuvaz, lavoro pomeriggio",
+        Strategia: "Libertà mattina, lavoro pomeriggio",
       },
     },
     {
@@ -1026,7 +1026,7 @@ Uno dei più grandi asset di Bali è la comunità.
       subtitle: "Più difficile",
       values: {
         "Differenza Oraria": "15-16 ore avanti",
-        "Sovrapposizione Lavoro": "Chiamate cupoq notte",
+        "Sovrapposizione Lavoro": "Chiamate tarda notte",
         "Impatto Stile di Vita": "Alto",
         Strategia: "Cultura asincrona forte essenziale",
       },
@@ -1172,7 +1172,7 @@ Una visita ospedaliera può cancellare mesi di "risparmi".
 Funziona finché non smette. Costruisci verso qualcosa di stabile.
 
 **7. Solo lavoro, nessun gioco**
-Sei venuto a Bali. Ximi l'esperienza. Il laptop aspetterà.
+Sei venuto a Bali. Vivi l'esperienza. Il laptop aspetterà.
 
 </InfoCard>
 

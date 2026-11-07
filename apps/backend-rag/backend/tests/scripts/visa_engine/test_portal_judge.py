@@ -202,8 +202,60 @@ class TestGuilt:
         code, lines = _run(tmp_path, lambda _p: _answer(verdict="unsure"))
         assert code == 1 and lines[0]["semantic_change"] == "unsure"
 
-    # Rakyat: `test_the_cascade_argv_carries_no_prompt_and_stays_claude_only` moved to the backstage — it reads the claude-cascade.sh launcher wrapper (backstage).
-    # Original at 677e29bb3511:apps/backend-rag/backend/tests/scripts/visa_engine/test_portal_judge.py; listed in PERIMETER.txt.
+    def test_the_judge_argv_carries_no_prompt_and_pins_the_model(self) -> None:
+        argv = pj.judge_argv("sonnet")
+        # Lean (2026-11-03): no hooks / CLAUDE.md, no tool schemas — a judge
+        # reads its prompt (stdin) and answers.
+        assert argv[1:] == ["-p", "--bare", "--tools", "", "--model", "sonnet"]
+        assert argv[0].endswith("claude")
+
+    def test_the_claude_judge_refuses_without_a_console_seat(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """GUILT (RULED 2026-11-01): no seat — only the host's plan-OAuth token —
+        means an empty answer and NO subprocess; the cascade wrapper is gone."""
+        for n in (1, 2, 3):
+            monkeypatch.delenv(f"ANTHROPIC_CONSOLE_KEY_{n}", raising=False)
+            monkeypatch.delenv(f"ANTHROPIC_CONSOLE_WORKSPACE_{n}", raising=False)
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "plan-oauth-is-not-a-seat")
+        launched: list[list[str]] = []
+
+        def fake_run(argv, **kwargs):  # noqa: ANN001
+            launched.append(list(argv))
+            raise AssertionError("must not be reached")
+
+        monkeypatch.setattr(pj.subprocess, "run", fake_run)
+        assert pj.claude_judge("sonnet")("prompt") == ""
+        assert launched == []
+
+    def test_the_claude_judge_runs_on_the_seat_env_and_keeps_the_prompt_on_stdin(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """INNOCENCE: with seats, the child gets the seat's key + workspace header,
+        no plan OAuth, the prompt on stdin; a failing seat yields to the next."""
+        monkeypatch.setenv("ANTHROPIC_CONSOLE_KEY_1", "sk-one")
+        monkeypatch.setenv("ANTHROPIC_CONSOLE_WORKSPACE_1", "wrkspc_test1")
+        monkeypatch.setenv("ANTHROPIC_CONSOLE_KEY_2", "sk-two")
+        monkeypatch.setenv("ANTHROPIC_CONSOLE_WORKSPACE_2", "wrkspc_test2")
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "plan-oauth-must-not-reach-the-child")
+        calls: list[dict[str, object]] = []
+
+        class _Done:
+            def __init__(self, rc: int, out: str) -> None:
+                self.returncode = rc
+                self.stdout = out
+                self.stderr = ""
+
+        def fake_run(argv, **kwargs):  # noqa: ANN001
+            calls.append({"argv": list(argv), "input": kwargs.get("input"), "env": kwargs["env"]})
+            return _Done(1, "") if len(calls) == 1 else _Done(0, '{"verdict":"none"}')
+
+        monkeypatch.setattr(pj.subprocess, "run", fake_run)
+        assert pj.claude_judge("sonnet")("the prompt") == '{"verdict":"none"}'
+        assert [c["env"]["ANTHROPIC_API_KEY"] for c in calls] == ["sk-one", "sk-two"]
+        assert calls[1]["env"]["ANTHROPIC_CUSTOM_HEADERS"] == "anthropic-workspace-id: wrkspc_test2"
+        assert all("CLAUDE_CODE_OAUTH_TOKEN" not in c["env"] for c in calls)
+        assert all(c["input"] == "the prompt" and "the prompt" not in c["argv"] for c in calls)
 
 
 class TestBindingAndBoundary:

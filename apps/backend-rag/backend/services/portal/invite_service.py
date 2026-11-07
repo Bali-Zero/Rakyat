@@ -121,7 +121,7 @@ class InviteService:
             # A re-invite to the SAME address must not kill the link already
             # sitting in that inbox. It used to: every send expired the
             # previous live invitation, so a client who opened the first mail
-            # of a thread — the oldest, top of the Kuxas conversation — met
+            # of a thread — the oldest, top of the Gmail conversation — met
             # "This invitation has expired" on a link minutes old. Measured
             # on production 2026-09-21: 16 invitations superseded unused in
             # 30 days across 14 clients, one of them three times in 30

@@ -1017,6 +1017,13 @@ export function mapOracleFactsToApplicantFacts(
       0,
       Number.MAX_SAFE_INTEGER,
     ),
+    "investment.sponsoring_company_confirmed":
+      facts.investment_sponsoring_company_confirmed === "unconfirmed"
+        ? unknownFact(UNVERIFIED)
+        : facts.investment_sponsoring_company_confirmed === "yes" &&
+            facts.sponsor_category === "NONE"
+          ? unknownFact(CONFLICTING)
+          : booleanFact(facts.investment_sponsoring_company_confirmed),
     "investment.own_shareholding_idr": integerFact(
       facts.investment_own_shareholding_idr,
       0,
@@ -1066,6 +1073,10 @@ export function mapOracleFactsToApplicantFacts(
     // walk, so `pairedBooleanFact` resolves it the same way
     // `investment.pt_pma_committed` merges
     // `investment_pt_pma`/`remote_pt_pma` above.
+    "family.spouse_application_support_confirmed":
+      facts.family_spouse_application_support_confirmed === "pending"
+        ? unknownFact(UNVERIFIED)
+        : booleanFact(facts.family_spouse_application_support_confirmed),
     "family.sponsor_confirmed": pairedBooleanFact(
       facts.family_sponsor_confirmed,
       facts.business_sponsor_confirmed,

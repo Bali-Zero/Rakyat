@@ -966,6 +966,33 @@ export const QUESTIONS: Record<string, OracleQuestion> = {
     whyWeAsk: { i18nKey: "why.investment_paid_up_capital_idr" },
     notSure: { mode: "human-review", because: "money-payer-clients" },
   },
+  investment_sponsoring_company_confirmed: {
+    id: "investment_sponsoring_company_confirmed",
+    i18nKey: "q.investment_sponsoring_company_confirmed",
+    kind: "choice",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["investment.sponsoring_company_confirmed"],
+      unknownValues: ["unconfirmed"],
+    },
+    options: [
+      {
+        key: "yes",
+        labelI18nKey: "q.investment_sponsoring_company_confirmed.opt.yes",
+      },
+      {
+        key: "no",
+        labelI18nKey: "q.investment_sponsoring_company_confirmed.opt.no",
+      },
+      {
+        key: "unconfirmed",
+        labelI18nKey:
+          "q.investment_sponsoring_company_confirmed.opt.unconfirmed",
+      },
+    ],
+    whyWeAsk: { i18nKey: "why.investment_sponsoring_company_confirmed" },
+  },
   investment_own_shareholding_idr: {
     id: "investment_own_shareholding_idr",
     i18nKey: "q.investment_own_shareholding_idr",
@@ -1173,6 +1200,33 @@ export const QUESTIONS: Record<string, OracleQuestion> = {
     ],
     whyWeAsk: { i18nKey: "why.family_marriage_registered" },
     notSure: { mode: "human-review", because: "money-payer-clients" },
+  },
+  family_spouse_application_support_confirmed: {
+    id: "family_spouse_application_support_confirmed",
+    i18nKey: "q.family_spouse_application_support_confirmed",
+    kind: "choice",
+    group: "details",
+    decisionMapping: {
+      kind: "FACT",
+      factPaths: ["family.spouse_application_support_confirmed"],
+      unknownValues: ["pending"],
+    },
+    options: [
+      {
+        key: "yes",
+        labelI18nKey: "q.family_spouse_application_support_confirmed.opt.yes",
+      },
+      {
+        key: "no",
+        labelI18nKey: "q.family_spouse_application_support_confirmed.opt.no",
+      },
+      {
+        key: "pending",
+        labelI18nKey:
+          "q.family_spouse_application_support_confirmed.opt.pending",
+      },
+    ],
+    whyWeAsk: { i18nKey: "why.family_spouse_application_support_confirmed" },
   },
   family_sponsor_confirmed: {
     id: "family_sponsor_confirmed",

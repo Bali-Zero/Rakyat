@@ -1,4 +1,4 @@
-"""Unit tests for Trend-Tosado adapters + orchestrator."""
+"""Unit tests for Trend-Hunter adapters + orchestrator."""
 
 from __future__ import annotations
 
@@ -257,7 +257,7 @@ async def test_starvation_receptor_fires_on_zero_signals(caplog):
     starvation = [r for r in caplog.records if "STARVATION" in r.getMessage()]
     assert len(starvation) == 1
     msg = starvation[0].getMessage()
-    assert "[trend-tosado] STARVATION: 0 signals from 2 adapters" in msg
+    assert "[trend-hunter] STARVATION: 0 signals from 2 adapters" in msg
     assert "empty-a" in msg
     assert "empty-b" in msg
 
@@ -433,7 +433,7 @@ async def test_reddit_adapter_fetches_and_triages():
     assert "KITAS" in sig.topic
     assert sig.source_url == "https://www.reddit.com/r/bali/comments/xyz/"
     # The descriptive User-Agent is load-bearing (default UA -> 429).
-    assert "bali-zero-trend-tosado" in captured_headers[0]["user-agent"]
+    assert "bali-zero-trend-hunter" in captured_headers[0]["user-agent"]
 
 
 @pytest.mark.asyncio

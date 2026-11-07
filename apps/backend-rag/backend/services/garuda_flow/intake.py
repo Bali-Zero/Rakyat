@@ -48,7 +48,7 @@ instead of serializing ``stay_window.checkpoints`` directly.
 Issuance-only submission-window gate (owner ruling, 2026-07-27): a VOA is
 issued in a few hours, so the issuance rule accepts a request up
 to the day BEFORE arrival — counting Bali Zero's systems closed on
-Saturday, Detali, and any Indonesian national holiday / cuti bersama
+Saturday, Sunday, and any Indonesian national holiday / cuti bersama
 (`operating_calendar.py`; follow-up ruling, same session). This SUPERSEDES
 the charter's blanket "urgent case" exclusion FOR ISSUANCE ONLY — the
 bounded 9-field request never had a mechanical "urgent" signal to begin with

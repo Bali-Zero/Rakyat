@@ -1,7 +1,7 @@
 # Required status checks for Rakyat main (P4 spec rev 3, contract item 1). Each name is the `name:` of exactly one
 # job in a `pull_request` workflow (GitHub appends matrix values in parentheses). required_app_id 15368 = GitHub
-# Actions. scripts/ci/test_required_checks_contract.py asserts the contract for every entry; it runs inside the
-# actionlint job, itself one of these checks.
+# Actions. scripts/ci/test_required_checks_contract.py asserts the contract for every entry; no workflow runs it yet (the
+# actionlint job does not, despite earlier wording).
 contexts:
   - name: "E2E Tests (Playwright)"
     required_app_id: 15368

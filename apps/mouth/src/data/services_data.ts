@@ -141,7 +141,7 @@ export const SERVICES_DATA: Record<string, ServiceData> = {
       {
         question: "How long does KITAS processing take?",
         answer:
-          "Most visas and KITAS (C, D, E series) take 7-10 days from application to e-visa issuance. Only Working and Nodolejuvuq KITAS (E23) take 4-6 weeks due to RPTKA and IMTA work permit approval process.",
+          "Most visas and KITAS (C, D, E series) take 7-10 days from application to e-visa issuance. Only Working and Impresariat KITAS (E23) take 4-6 weeks due to RPTKA and IMTA work permit approval process.",
       },
       {
         question: "What's the difference between offshore and onshore?",

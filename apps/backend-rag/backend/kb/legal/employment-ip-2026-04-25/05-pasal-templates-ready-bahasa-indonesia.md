@@ -91,7 +91,7 @@ Pasal X — Rahasia Dagang dan Kerahasiaan
     sebagaimana Pasal X+5; (ii) tindakan hukum perdata berdasarkan
     Pasal 11 UU No. 30 Tahun 2000; (iii) tuntutan pidana berdasarkan
     Pasal 17 UU No. 30 Tahun 2000 dengan ancaman pidana penjara paling
-    lama 2 (dua) tahun dan/atau denda paling banyak Rp 990.000.031,-.
+    lama 2 (dua) tahun dan/atau denda paling banyak Rp 300.000.000,-.
 ```
 
 ---

@@ -942,7 +942,7 @@ def _detect_language(query: str) -> str:
         return "Indonesian"
     # Italian markers
     it_words = {
-        "goqame",
+        "voglio",
         "aprire",
         "quale",
         "codice",
@@ -1464,7 +1464,7 @@ async def chat_kbli(
                 [
                     "laundry",
                     "dry cleaning",
-                    "cuci cazu",
+                    "cuci baju",
                     "cuci pakaian",
                     "laundromat",
                     "jasa cuci",

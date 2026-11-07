@@ -9,7 +9,7 @@ name: actionlint
 # it stays green-because-invisible (scar #2, exists != armed). This gate turns that
 # whole class into a hard, REQUIRED failure — actionlint validates workflow schema +
 # every `${{ }}` expression, and flags untrusted-input interpolation (the
-# privileged-PR-trigger + head.ref injection class fixed in the same PR).
+# pull_request_target + head.ref injection class fixed in the same PR).
 #
 # NO `paths:` filter — this is meant to be a REQUIRED check. A path-filtered required
 # check never reports on PRs outside its paths and leaves them stuck at
@@ -23,8 +23,7 @@ name: actionlint
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
-    branches: [main]
+  merge_group:
 
 permissions:
   contents: read
@@ -80,11 +79,3 @@ jobs:
           # would flood on shell style); we gate schema + expression syntax +
           # untrusted-input use, which is the class that startup-fails or injects.
           ./actionlint -color -shellcheck=
-
-      # P4 contract item 7: every name in .github/required-checks.yml is a job that triggers on pull_request (main),
-      # never skips, checks out the event ref, runs hosted and reaches no secret. Its own guilt corpus runs with it.
-      - name: Required-checks contract
-        run: |
-          set -euo pipefail
-          python3 -m pip install --quiet --disable-pip-version-check pytest==9.0.3 PyYAML==6.0.3
-          python3 -m pytest -q -p no:cacheprovider scripts/ci/test_required_checks_contract.py

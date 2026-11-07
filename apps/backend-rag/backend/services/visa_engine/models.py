@@ -1131,7 +1131,8 @@ class ApplicantFactsData(BaseModel):
     qualification facts (2026-09-13) and ``person_guardian_consent``
     (2026-09-21, Slice A7-B), plus ``work_annual_foreign_income_usd``
     (2026-10-11, seq-28 Step A) and ``investment_own_shareholding_idr``
-    (2026-10-17, E28A Step A) below — all the same rollout mechanism.
+    (2026-10-17, E28A Step A) and the company and spouse application
+    confirmation fields below — all the same rollout mechanism.
     Field order mirrors ``enums.FactPath``'s
     ``person.*``/``immigration.*``/``intent.*``/``work.*``/``investment.*``/
     ``family.*``/``study.*``/``secondhome.*``/``process.*``/``commercial.*``
@@ -1289,6 +1290,15 @@ class ApplicantFactsData(BaseModel):
             default_factory=_OWN_SHAREHOLDING_ROLLOUT_DEFAULT.model_copy,
         ),
     ]
+    investment_sponsoring_company_confirmed: Annotated[
+        BooleanFact,
+        Field(
+            alias="investment.sponsoring_company_confirmed",
+            description="Whether the Indonesian company in which the applicant holds shares has confirmed it will sponsor this application.",
+            # Older interviews have no answer to the E28A-specific question.
+            default_factory=lambda: UnknownFact(status="UNKNOWN", reason="NOT_ASKED"),
+        ),
+    ]
     family_relation_to_sponsor: Annotated[RelationFact, Field(alias="family.relation_to_sponsor")]
     family_sponsor_nationalities: Annotated[
         CountrySetFact, Field(alias="family.sponsor_nationalities")
@@ -1296,6 +1306,17 @@ class ApplicantFactsData(BaseModel):
     family_sponsor_status_code: Annotated[StringFact, Field(alias="family.sponsor_status_code")]
     family_marriage_registered: Annotated[BooleanFact, Field(alias="family.marriage_registered")]
     family_sponsor_confirmed: Annotated[BooleanFact, Field(alias="family.sponsor_confirmed")]
+    family_spouse_application_support_confirmed: Annotated[
+        BooleanFact,
+        Field(
+            alias="family.spouse_application_support_confirmed",
+            description=(
+                "True if the Indonesian spouse has agreed to provide the visa application letter, "
+                "false only for an explicit refusal. Use UNKNOWN while awaiting an answer."
+            ),
+            default_factory=lambda: UnknownFact(status="UNKNOWN", reason="NOT_ASKED"),
+        ),
+    ]
     # family.stepchild_* — evidence for RelationType.STEPCHILD (2026-08-23
     # owner ruling: "figliastro = figlio del coniuge, serve akta nikah +
     # akta lahir"). Optional/defaulted for the same rollout reason as

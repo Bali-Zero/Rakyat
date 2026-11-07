@@ -93,21 +93,28 @@ describe("buildInspectorCopyLine — a retired code travels as retired", () => {
 
     const line = buildInspectorCopyLine(impostor);
     expect(line).toContain("PMA:");
-    expect(line).toContain("Risk:");
+    expect(line).toContain("Scope coverage not verified");
     expect(line).not.toContain("retired: this is a KBLI 2020 code");
   });
 });
 
-describe("innocence — a live code's line is byte-identical to the pre-cure one", () => {
-  it("56101 keeps all five segments in the same order", () => {
-    // The oracle is the expression this cure replaced, kept here deliberately:
-    // it is what "unchanged" MEANS for the 1,555 codes that are not retired.
-    const licList = summariseLicences(
-      live.licenses.map((l) => l.type),
-      live.licensing_status,
-    );
-    const legacy = `KBLI ${live.code} — ${live.title} | PMA: ${getPmaBadge(live).label} | Risk: ${getRiskBadge(live.risk_profile).label} | Licenses: ${licList} | Sector: ${live.sector}`;
+describe("innocence — a code outside native coverage keeps its copy format", () => {
+  it("an unaffected code keeps all five segments in the same order", () => {
+    // A synthetic variant preserves the historical snapshot above.
+    const unaffected = {
+      ...live,
+      code: "56304",
+      title: "Synthetic unscoped activity",
+    };
 
-    expect(buildInspectorCopyLine(live)).toBe(legacy);
+    // The oracle is the expression this cure replaced, kept here deliberately:
+    // Codes outside native coverage retain this format.
+    const licList = summariseLicences(
+      unaffected.licenses.map((l) => l.type),
+      unaffected.licensing_status,
+    );
+    const legacy = `KBLI ${unaffected.code} — ${unaffected.title} | PMA: ${getPmaBadge(unaffected).label} | Risk: ${getRiskBadge(unaffected.risk_profile).label} | Licenses: ${licList} | Sector: ${unaffected.sector}`;
+
+    expect(buildInspectorCopyLine(unaffected)).toBe(legacy);
   });
 });

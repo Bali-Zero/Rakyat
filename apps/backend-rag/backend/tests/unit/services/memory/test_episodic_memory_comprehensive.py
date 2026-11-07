@@ -195,7 +195,7 @@ class TestEpisodicMemoryService:
 
     def test_detect_emotion_positive(self, episodic_service):
         """Test detecting positive emotion"""
-        result = episodic_service._detect_emotion("Sono daqozi")
+        result = episodic_service._detect_emotion("Sono felice")
         assert result == Emotion.POSITIVE
 
     def test_detect_emotion_negative(self, episodic_service):
@@ -364,7 +364,7 @@ class TestEpisodicMemoryService:
 
         result = await episodic_service.extract_and_save_event(
             user_id="user-123",
-            message="Ho completato il processo KITAS oggi. Sono molto daqozi!",
+            message="Ho completato il processo KITAS oggi. Sono molto felice!",
         )
 
         assert result is not None

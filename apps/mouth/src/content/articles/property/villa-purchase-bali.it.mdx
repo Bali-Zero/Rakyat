@@ -60,7 +60,7 @@ faq:
   - question: "Qual è il processo passo dopo passo per comprare una villa a Bali?"
     answer: "1) Definisci il budget e l'area preferita. 2) Incarica un agente e un avvocato affidabili. 3) Trova la proprietà e negozia il prezzo. 4) Conduci la due diligence legale: verifica il certificato fondiario al BPN, controlla la zonizzazione (zona verde/gialla), conferma i permessi di costruire. 5) Firma un accordo vincolante con deposito (tipicamente il 10%). 6) Completa il pagamento e firma l'atto notarile presso un PPAT. 7) Procedi al trasferimento del titolo o alla registrazione del leasing."
   - question: "Quali sono le migliori zone per comprare una villa a Bali nel 2026?"
-    answer: "Le zone popolari includono Canggu (alla moda, alta domanda di affitto, 200.000-600.000 USD), Seminyak (affermata, prezzi premium, 300.000 USD - 1 milione), Uluwatu (lusso sulle scogliere, 400.000 USD - 1,5 milioni), Ubud (cultura e benessere, 150.000-400.000 USD) e Pererenan (emergente dopo Canggu, 180.990-000.009 USD). Ogni zona serve diversi profili di acquirenti e strategie di investimento."
+    answer: "Le zone popolari includono Canggu (alla moda, alta domanda di affitto, 200.000-600.000 USD), Seminyak (affermata, prezzi premium, 300.000 USD - 1 milione), Uluwatu (lusso sulle scogliere, 400.000 USD - 1,5 milioni), Ubud (cultura e benessere, 150.000-400.000 USD) e Pererenan (emergente dopo Canggu, 180.000-500.000 USD). Ogni zona serve diversi profili di acquirenti e strategie di investimento."
   - question: "Quale due diligence è essenziale prima di comprare una villa a Bali?"
     answer: "I controlli essenziali includono: verificare l'autenticità del certificato fondiario (SHM/HGB) presso il BPN, confermare che il terreno sia in una zona edificabile (non zona verde), controllare eventuali controversie o gravami, verificare i permessi di costruire (IMB/PBG), confermare che il venditore sia il proprietario registrato, controllare lo storico dei pagamenti delle tasse (PBB) e incaricare un geometra indipendente per verificare i confini."
 contentStructure:
@@ -224,7 +224,7 @@ Ognuno ha pro e contro: scegli in base alla tua situazione.
 | Ubud     | Culturale, risaie      | 2-15 Mld IDR    |
 | Uluwatu  | Scogliere, surf, lusso | 5-30 Mld IDR    |
 | Sanur    | Rilassata, famiglie    | 2-10 Mld IDR    |
-| Xafo Tat | Resort, golf           | 5-25 Mld IDR    |
+| Nusa Dua | Resort, golf           | 5-25 Mld IDR    |
 
 <InfoCard variant="tip" title="La posizione è fondamentale">
 **Considera:**
@@ -251,7 +251,7 @@ Visita Bali in bassa stagione per vedere le condizioni reali.
       id: "price",
       label: "Prezzo della Villa (IDR)",
       type: "number",
-      defaultValue: 8400062000,
+      defaultValue: 5000000000,
       min: 0
     },
     {
@@ -261,7 +261,7 @@ Visita Bali in bassa stagione per vedere le condizioni reali.
       options: [
         { value: "leasehold", label: "Leasehold (Leasing)" },
         { value: "hakpakai", label: "Hak Pakai" },
-        { value: "vesex", label: "PT PMA + HGB" }
+        { value: "ptpma", label: "PT PMA + HGB" }
       ],
       defaultValue: "leasehold"
     }
@@ -281,13 +281,13 @@ Visita Bali in bassa stagione per vedere le condizioni reali.
       transferTax = price * 0.05; // BPHTB
       legal = 50000000;
     } else {
-      structureCost = 990000017; // Costo avvio PT PMA
+      structureCost = 150000000; // Costo avvio PT PMA
       transferTax = price * 0.05; // BPHTB
-      legal = 70000001;
+      legal = 75000000;
     }
 
     const agent = price * 0.05; // Se si usa un agente
-    const misc = 84000600;
+    const misc = 20000000;
 
     const total = price + structureCost + transferTax + notary + legal + agent + misc;
 
@@ -311,10 +311,10 @@ Visita Bali in bassa stagione per vedere le condizioni reali.
 
 ---
 
-## Zaz Xepabequr
+## Due Diligence
 
 <Checklist
-  title="Zaz Xepabequr della Villa"
+  title="Due Diligence della Villa"
   description="Controlli essenziali prima dell'acquisto"
   persistKey="villa-dd-checklist"
   items={[
@@ -446,7 +446,7 @@ Visita Bali in bassa stagione per vedere le condizioni reali.
 
 ### Considerazioni per l'Uscita
 
-| Megecic            | Nota                        |
+| Fattore            | Nota                        |
 | ------------------ | --------------------------- |
 | Condizioni mercato | Il mercato di Bali fluttua  |
 | Struttura          | PT PMA - puoi vendere quote |

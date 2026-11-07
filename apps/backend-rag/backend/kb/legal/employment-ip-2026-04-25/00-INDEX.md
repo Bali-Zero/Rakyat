@@ -62,5 +62,5 @@ Use case primario: drafting di **PKWT (Perjanjian Kerja Waktu Tertentu)** che pr
 ## Cross-references
 
 - **PKWT Subhi v2** (case study di applicazione): `/research/hr/2026-04-25-contratto-subhi-probation-pkwt.md`
-- **Source contratto Damar** (sample PT Juxo Bali Jof B2B): Drive `13WZhFEhTykDTzrssZdBxOiohnDb0DdWn`
+- **Source contratto Damar** (sample PT Bayu Bali Nol B2B): Drive `13WZhFEhTykDTzrssZdBxOiohnDb0DdWn`
 - **NB-3 Company & Licensing** (sibling sources): `legal_labor_dispute`, `legal_ip_basics`, `riforma_lavoro_2025`

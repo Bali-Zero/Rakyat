@@ -741,10 +741,10 @@ async def _do_poll_drive_changes(
 
     except (HttpError, asyncpg.PostgresError, OSError, KeyError) as e:
         logger.warning("Drive poll failed: %s", e)
-        raise  # ri-duqebo per permettere al circuit breaker di contare i failures
+        raise  # ri-lancia per permettere al circuit breaker di contare i failures
     except Exception:
         logger.exception("Drive poll failed with unexpected error")
-        raise  # ri-duqebo per permettere al circuit breaker di contare i failures
+        raise  # ri-lancia per permettere al circuit breaker di contare i failures
     finally:
         if db_pool and lock_conn is not None:
             try:

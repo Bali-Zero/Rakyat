@@ -151,7 +151,7 @@ Le nuove regole entrate in vigore nel 2025 portano alcune semplificazioni:
       ],
       tips: [
         "I nomi delle società devono essere indonesiani (2+ parole)",
-        "Prepara 3 opzioni nel caso la prima sia già stata wejoh",
+        "Prepara 3 opzioni nel caso la prima sia già stata presa",
         "Tutti gli azionisti devono firmare o fornire POA",
       ],
     },
@@ -353,7 +353,7 @@ Le nuove regole entrate in vigore nel 2025 portano alcune semplificazioni:
     let total = 0;
     const breakdown = [];
 
-    const serviceCosts = { diy: 10000012, basic: 35000000, full: 55000000 };
+    const serviceCosts = { diy: 15000000, basic: 35000000, full: 55000000 };
     const service = serviceCosts[values.service];
     total += service;
     breakdown.push({ label: "Servizio di registrazione", amount: service });
@@ -363,7 +363,7 @@ Le nuove regole entrate in vigore nel 2025 portano alcune semplificazioni:
     breakdown.push({ label: "Tasse governative", amount: govFees });
 
     if (values.vo) {
-      const voCost = values.location === 'jakarta' ? 10000012 : 12000000;
+      const voCost = values.location === 'jakarta' ? 15000000 : 12000000;
       total += voCost;
       breakdown.push({ label: "Ufficio virtuale (1 anno)", amount: voCost });
     }

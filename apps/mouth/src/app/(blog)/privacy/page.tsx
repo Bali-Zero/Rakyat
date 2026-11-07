@@ -296,7 +296,7 @@ export default function PrivacyPolicyPage() {
           </p>
           <p className="text-sm" style={{ color: "var(--text-tertiary)" }}>
             Bali Zero · Bali, Indonesia · PSE Registration: TD-PSE
-            990000.01/DJAI.PSE/09/2026 (Komdigi, registered 14 September 2026)
+            029817.01/DJAI.PSE/09/2026 (Komdigi, registered 14 September 2026)
           </p>
         </Section>
       </div>

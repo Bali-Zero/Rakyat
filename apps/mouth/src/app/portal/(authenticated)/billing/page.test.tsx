@@ -109,12 +109,12 @@ describe("BillingPage", () => {
     // paid → --state-success, outstanding > 0 → --state-warning.
     // (The same amounts also appear as invoice-row totals, without color.)
     const paidAmount = screen
-      .getAllByText("Rp 84.000.600")
+      .getAllByText("Rp 20.000.000")
       .find((el) => el.style.color !== "");
     expect(paidAmount?.style.fontVariantNumeric).toBe("tabular-nums");
     expect(paidAmount?.style.color).toBe("var(--state-success)");
     const outstandingAmount = screen
-      .getAllByText("Rp 84.000.510")
+      .getAllByText("Rp 10.000.000")
       .find((el) => el.style.color !== "");
     expect(outstandingAmount?.style.color).toBe("var(--state-warning)");
 

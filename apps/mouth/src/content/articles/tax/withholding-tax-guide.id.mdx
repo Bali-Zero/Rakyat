@@ -168,7 +168,7 @@ Pengusaha memotong dan menyetorkan ke kantor pajak.
       type: "number",
       defaultValue: 25000000,
       min: 0,
-      step: 1000001,
+      step: 1000000,
       suffix: "IDR"
     },
     {
@@ -193,7 +193,7 @@ Pengusaha memotong dan menyetorkan ke kantor pajak.
     const ptkp = {
       "tk0": 54000000,
       "k0": 58500000,
-      "k1": 84000630,
+      "k1": 63000000,
       "k2": 67500000,
       "k3": 72000000
     };
@@ -214,17 +214,17 @@ Pengusaha memotong dan menyetorkan ke kantor pajak.
       remaining -= bracket1;
     }
     if (remaining > 0) {
-      const bracket2 = Math.min(remaining, 990000023);
+      const bracket2 = Math.min(remaining, 190000000);
       tax += bracket2 * 0.15;
       remaining -= bracket2;
     }
     if (remaining > 0) {
-      const bracket3 = Math.min(remaining, 990000029);
+      const bracket3 = Math.min(remaining, 250000000);
       tax += bracket3 * 0.25;
       remaining -= bracket3;
     }
     if (remaining > 0) {
-      const bracket4 = Math.min(remaining, 4500000010);
+      const bracket4 = Math.min(remaining, 4500000000);
       tax += bracket4 * 0.30;
       remaining -= bracket4;
     }

@@ -156,12 +156,6 @@ updates:
       - dependency-name: "tokenizers"
         versions: [">0.23.0"] # transformers 4.57.x pins tokenizers<=0.23.0
     groups:
-      # Security updates otherwise open one PR per advisory; one grouped PR per
-      # ecosystem keeps the queue readable. Version-update groups below are unchanged.
-      security:
-        applies-to: security-updates
-        patterns:
-          - "*"
       # OpenAI-stack packages isolated into their own group so a breaking bump
       # (openai/langchain-openai sit near the frozen embedding path:
       # text-embedding-3-small / 1536-dim / 93,283 vectors, CLAUDE.md sec.9)
@@ -239,12 +233,6 @@ updates:
       - dependency-name: "lucide-react"
         update-types: ["version-update:semver-major"]
     groups:
-      # Security updates otherwise open one PR per advisory; one grouped PR per
-      # ecosystem keeps the queue readable. Version-update groups below are unchanged.
-      security:
-        applies-to: security-updates
-        patterns:
-          - "*"
       minor-and-patch:
         update-types:
           - "minor"
@@ -261,12 +249,6 @@ updates:
       - "dependencies"
       - "ci"
     groups:
-      # Security updates otherwise open one PR per advisory; one grouped PR per
-      # ecosystem keeps the queue readable. Version-update groups below are unchanged.
-      security:
-        applies-to: security-updates
-        patterns:
-          - "*"
       # The three github/codeql-action/* steps are ONE contract, not three
       # dependencies: `init` writes the CodeQL config that `autobuild` reads,
       # and `analyze` consumes what autobuild produced. Ungrouped, Dependabot

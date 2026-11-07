@@ -27,6 +27,8 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
+from backend.core.secret_log_redaction import redact_query_values
+
 logger = logging.getLogger("zantara.backend")
 
 # Heavy route prefixes — requests matching these are forwarded to the rag process
@@ -244,6 +246,7 @@ async def proxy_intake_review_request(request: Request) -> Response:
     url = str(request.url.path)
     if request.url.query:
         url = f"{url}?{request.url.query}"
+    log_url = redact_query_values(url)  # ?search=/?q= carry client PII (DAI-105)
 
     headers = _build_forward_headers(request)
 
@@ -267,20 +270,20 @@ async def proxy_intake_review_request(request: Request) -> Response:
             follow_redirects=True,
         )
     except (httpx.ConnectError, httpx.ConnectTimeout) as e:
-        logger.error(f"intake-review proxy connect error for {request.method} {url}: {e}")
+        logger.error(f"intake-review proxy connect error for {request.method} {log_url}: {e}")
         return JSONResponse(status_code=503, content={"detail": "intake review reader offline"})
     except httpx.TimeoutException as e:
-        logger.error(f"intake-review proxy timeout for {request.method} {url}: {e}")
+        logger.error(f"intake-review proxy timeout for {request.method} {log_url}: {e}")
         return JSONResponse(status_code=503, content={"detail": "intake review reader offline"})
     except httpx.HTTPError as e:
-        logger.error(f"intake-review proxy transport error for {request.method} {url}: {e}")
+        logger.error(f"intake-review proxy transport error for {request.method} {log_url}: {e}")
         return JSONResponse(status_code=503, content={"detail": "intake review reader offline"})
 
     # Map a Cloudflare/tunnel-level 5xx (502/503/504 from the edge, not the app) to our 503
     # so the UI sees a consistent "reader offline" instead of a raw CF error page.
     if resp.status_code in (502, 503, 504):
         logger.error(
-            f"intake-review proxy upstream {resp.status_code} for {request.method} {url} — treating as offline"
+            f"intake-review proxy upstream {resp.status_code} for {request.method} {log_url} — treating as offline"
         )
         return JSONResponse(status_code=503, content={"detail": "intake review reader offline"})
 
@@ -303,6 +306,7 @@ async def proxy_request(request: Request) -> Response:
     url = str(request.url.path)
     if request.url.query:
         url = f"{url}?{request.url.query}"
+    log_url = redact_query_values(url)  # ?search=/?q= carry client PII (DAI-105)
 
     headers = _build_forward_headers(request)
 
@@ -342,14 +346,14 @@ async def proxy_request(request: Request) -> Response:
             media_type=content_type or None,
         )
     except httpx.ConnectError as e:
-        logger.error(f"RAG proxy connect error for {request.method} {url}: {e}")
+        logger.error(f"RAG proxy connect error for {request.method} {log_url}: {e}")
         return Response(
             content=b'{"detail":"RAG worker unavailable"}',
             status_code=503,
             media_type="application/json",
         )
     except httpx.TimeoutException as e:
-        logger.error(f"RAG proxy timeout for {request.method} {url}: {e}")
+        logger.error(f"RAG proxy timeout for {request.method} {log_url}: {e}")
         return Response(
             content=b'{"detail":"RAG worker timeout"}',
             status_code=504,

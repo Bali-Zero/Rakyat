@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 MIGRATION_ID = "075"
 DESCRIPTION = (
     "Add pg_notify triggers on practices table for status changes and payment_status "
-    "transitions. Hodudi real-time email dispatch (M5 + M4)."
+    "transitions. Powers real-time email dispatch (M5 + M4)."
 )
 
 
