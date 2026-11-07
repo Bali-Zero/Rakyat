@@ -10,7 +10,7 @@ echo ""
 
 # Set environment variables
 export PYTHONPATH="${PYTHONPATH}:$(pwd)/apps/backend-rag/backend"
-export DATABASE_URL="${DATABASE_URL:-postgresql://test:test@localhost:5432/test}"
+export DATABASE_URL="${DATABASE_URL:-postgresql://test@localhost:5432/test}"
 export QDRANT_URL="${QDRANT_URL:-http://localhost:6333}"
 export GOOGLE_API_KEY="${GOOGLE_API_KEY:-test_google_api_key_for_testing}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-test_openai_api_key_for_testing}"

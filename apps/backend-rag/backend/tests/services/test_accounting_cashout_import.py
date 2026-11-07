@@ -55,10 +55,10 @@ def _row(**kw) -> CashoutRow:
 
 
 def test_map_simple_row_from_real_pdf() -> None:
-    # NIMEPOXIKE KOVALENKO (RUSLANA) | Bridging Visa | PNBP 1.000.001 |
-    #   | | MARGIN BS 1.000.001 | FINAL 4.400.000
+    # ANASTASIIA KOVALENKO (RUSLANA) | Bridging Visa | PNBP 1.000.000 |
+    #   | | MARGIN BS 1.000.000 | FINAL 4.400.000
     row = _row(
-        client_name="NIMEPOXIKE JIGOBOWEC (RUSLANA)",
+        client_name="ANASTASIIA KOVALENKO (RUSLANA)",
         process="Bridging Visa",
         pnbp_idr=1_000_000,
         margin_bs_idr=1_000_000,
@@ -72,7 +72,7 @@ def test_map_simple_row_from_real_pdf() -> None:
     # GABUNGAN rows are Asya's worksheet (draft), not confirmed income — they
     # land as 'cashout_worksheet' until a reconciliation promotes them.
     assert out["type"] == "cashout_worksheet"
-    assert out["counterparty"] == "NIMEPOXIKE KOVALENKO (RUSLANA)"
+    assert out["counterparty"] == "ANASTASIIA KOVALENKO (RUSLANA)"
     assert out["category"] == "Bridging Visa"
     assert out["pnbp_idr"] == 1_000_000
     # the two margin columns collapse into the single margin_idr
@@ -138,11 +138,11 @@ def _make_gabungan_pdf() -> bytes:
     data = [
         ["NEW CASHOUT 6 MARCH 2026", "", "", "", "", "", "", ""],
         header,
-        ["BATISEXI VAFOH TITELIP", "C1", "Rp1.000.001", "", "", "Rp600.000", "Rp2.300.000", ""],
-        ["NICENE KIPELAZE", "C1 - Urgent", "Rp1.000.001", "Rp800.000", "", "Rp600.000", "Rp3.300.000", ""],
+        ["ETHIOPIA YESUF OMUJWOK", "C1", "Rp1.000.000", "", "", "Rp600.000", "Rp2.300.000", ""],
+        ["BIANCA ARCHETTI", "C1 - Urgent", "Rp1.000.000", "Rp800.000", "", "Rp600.000", "Rp3.300.000", ""],
         ["NEW CASHOUT 13 MARCH 2026", "", "", "", "", "", "", ""],
         header,
-        ["COSODA JAHESUFAR", "C1", "Rp1.000.001", "", "", "Rp600.000", "Rp2.300.000", ""],
+        ["SERENA GUARDIANI", "C1", "Rp1.000.000", "", "", "Rp600.000", "Rp2.300.000", ""],
     ]
     table = Table(data)
     # GRID lines so pdfplumber's line-based table detection sees it the way it
@@ -161,20 +161,20 @@ def test_parse_pdf_with_weeks_tracks_week_boundary(tmp_path) -> None:
 
     # three client rows across two weeks; no title/header rows leaked in
     names = [r["counterparty"] for r in rows]
-    assert "BATISEXI VAFOH TITELIP" in names
-    assert "COSODA JAHESUFAR" in names
+    assert "ETHIOPIA YESUF OMUJWOK" in names
+    assert "SERENA GUARDIANI" in names
     assert not any("CASHOUT" in n.upper() for n in names)
     assert not any(n == "NAME" for n in names)
 
     by_name = {r["counterparty"]: r for r in rows}
     # week 1 rows carry the 6 March date, week 2 rows carry 13 March
-    assert by_name["BATISEXI VAFOH TITELIP"]["movement_date"] == date(2026, 3, 6)
-    assert by_name["NICENE KIPELAZE"]["movement_date"] == date(2026, 3, 6)
-    assert by_name["COSODA JAHESUFAR"]["movement_date"] == date(2026, 3, 13)
+    assert by_name["ETHIOPIA YESUF OMUJWOK"]["movement_date"] == date(2026, 3, 6)
+    assert by_name["BIANCA ARCHETTI"]["movement_date"] == date(2026, 3, 6)
+    assert by_name["SERENA GUARDIANI"]["movement_date"] == date(2026, 3, 13)
 
     # amounts parsed through
-    assert by_name["BATISEXI VAFOH TITELIP"]["pnbp_idr"] == 1_000_000
-    assert by_name["NICENE KIPELAZE"]["urgent_idr"] == 800_000
+    assert by_name["ETHIOPIA YESUF OMUJWOK"]["pnbp_idr"] == 1_000_000
+    assert by_name["BIANCA ARCHETTI"]["urgent_idr"] == 800_000
 
 
 def test_parse_pdf_raises_on_no_week_title(tmp_path) -> None:
@@ -186,7 +186,7 @@ def test_parse_pdf_raises_on_no_week_title(tmp_path) -> None:
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4)
-    t = Table([["NAME", "PROCESS", "PNBP"], ["JOHN", "C1", "Rp1.000.001"]])
+    t = Table([["NAME", "PROCESS", "PNBP"], ["JOHN", "C1", "Rp1.000.000"]])
     t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.black)]))
     doc.build([t])
     pdf_path = tmp_path / "no-title.pdf"

@@ -21,7 +21,7 @@ from backend.services.autonomous_agents.knowledge_graph_builder import (
 
 async def test_persistence():
     print("🔌 Connecting to DB...")
-    db_url = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5433/nuzantara_dev")
+    db_url = os.getenv("DATABASE_URL", "postgresql://user@localhost:5433/nuzantara_dev")
     try:
         pool = await asyncpg.create_pool(db_url)
     except Exception as e:

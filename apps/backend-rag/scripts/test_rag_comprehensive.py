@@ -62,7 +62,7 @@ TEST_QUESTIONS = {
     "CULTURAL": [
         "Business etiquette in Indonesia?",
         "How to greet Indonesian partners?",
-        "Cirudut considerations for business?",
+        "Ramadan considerations for business?",
         "Indonesian negotiation style?",
         "Cultural tips for expats in Bali?",
     ],

@@ -137,7 +137,7 @@ def _patch_fuzzy(monkeypatch: pytest.MonkeyPatch, per_table: dict[str, list[dict
 @pytest.mark.asyncio
 async def test_match_folder_name_single_winner(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_fuzzy(monkeypatch, {
-        "clients": [{"table": "clients", "id": 7, "name": "Budi Fijulek",
+        "clients": [{"table": "clients", "id": 7, "name": "Budi Santoso",
                      "method": "fuzzy_full_name", "score": 0.86, "matched_value": "BUDI"}],
         "companies": [],
     })
@@ -186,7 +186,7 @@ async def test_match_folder_name_no_path() -> None:
     [
         # every folder segment + leaf stem is probed; non-client segments (kitas/scan/doc)
         # are harmless — they just never clear FUZZY_APPLY_THRESHOLD against a client name.
-        ("PEMEGANG KITAS/Budi Fijulek/kitas/scan.jpg", ["PEMEGANG KITAS", "Budi Fijulek", "kitas", "scan"]),
+        ("PEMEGANG KITAS/Budi Santoso/kitas/scan.jpg", ["PEMEGANG KITAS", "Budi Santoso", "kitas", "scan"]),
         ("EXTEND VISA/John Doe (2027)/###doc###.pdf", ["EXTEND VISA", "John Doe", "doc"]),
         ("A/A/x.pdf", []),  # all segments <3 chars → dropped
         ("file-at-root.pdf", ["file-at-root"]),  # leaf ext stripped
@@ -211,14 +211,14 @@ async def test_match_folder_name_deep_drive_path(monkeypatch: pytest.MonkeyPatch
     # The client folder is at DEPTH 2 under a staff/category root — the pre-fix
     # root-only matcher was blind to it. Now it resolves.
     _patch_fuzzy_by_name(monkeypatch, {
-        ("clients", "budi fijulek"): [{"table": "clients", "id": 7, "name": "Budi Fijulek",
+        ("clients", "budi santoso"): [{"table": "clients", "id": 7, "name": "Budi Santoso",
                                         "method": "fuzzy_full_name", "score": 0.91,
-                                        "matched_value": "budi fijulek"}],
+                                        "matched_value": "budi santoso"}],
     })
-    out = await rt._match_folder_name(None, "PEMEGANG KITAS/Budi Fijulek/kitas/scan.jpg")
+    out = await rt._match_folder_name(None, "PEMEGANG KITAS/Budi Santoso/kitas/scan.jpg")
     assert len(out) == 1
     assert (out[0]["table"], out[0]["id"], out[0]["method"]) == ("clients", 7, "folder_name")
-    assert out[0]["matched_value"] == "Budi Fijulek"
+    assert out[0]["matched_value"] == "Budi Santoso"
     assert out[0]["folder_sim"] == 0.91
 
 
@@ -228,7 +228,7 @@ async def test_match_folder_name_subthreshold_category_filtered(monkeypatch: pyt
     # but sub-FUZZY_APPLY_THRESHOLD (0.55) — it must be filtered, leaving only the deep
     # client. Proves the 0.70 gate suppresses category noise.
     _patch_fuzzy_by_name(monkeypatch, {
-        ("clients", "extend visa"): [{"table": "clients", "id": 99, "name": "Vista Hesuve",
+        ("clients", "extend visa"): [{"table": "clients", "id": 99, "name": "Vista Nendra",
                                       "method": "fuzzy_full_name", "score": 0.55, "matched_value": "extend visa"}],
         ("clients", "jane doe"): [{"table": "clients", "id": 3, "name": "Jane Doe",
                                    "method": "fuzzy_full_name", "score": 0.88, "matched_value": "jane doe"}],
@@ -243,12 +243,12 @@ async def test_match_folder_name_subthreshold_category_filtered(monkeypatch: pyt
 async def test_match_folder_name_two_client_segments_ambiguous(monkeypatch: pytest.MonkeyPatch) -> None:
     # Two DIFFERENT client segments in one path (misfiled/moved) → AMBIGUOUS, never guess.
     _patch_fuzzy_by_name(monkeypatch, {
-        ("clients", "budi fijulek"): [{"table": "clients", "id": 7, "name": "Budi Fijulek",
-                                       "method": "fuzzy_full_name", "score": 0.90, "matched_value": "budi fijulek"}],
-        ("clients", "kifa qerol"): [{"table": "clients", "id": 8, "name": "Kifa Qerol",
-                                     "method": "fuzzy_full_name", "score": 0.86, "matched_value": "kifa qerol"}],
+        ("clients", "budi santoso"): [{"table": "clients", "id": 7, "name": "Budi Santoso",
+                                       "method": "fuzzy_full_name", "score": 0.90, "matched_value": "budi santoso"}],
+        ("clients", "wira putra"): [{"table": "clients", "id": 8, "name": "Wira Putra",
+                                     "method": "fuzzy_full_name", "score": 0.86, "matched_value": "wira putra"}],
     })
-    out = await rt._match_folder_name(None, "Budi Fijulek/Kifa Qerol/doc.pdf")
+    out = await rt._match_folder_name(None, "Budi Santoso/Wira Putra/doc.pdf")
     assert {c["id"] for c in out} == {7, 8}
 
 
@@ -260,12 +260,12 @@ async def test_match_folder_name_two_clients_WIDE_gap_still_ambiguous(monkeypatc
     # the margin must NOT collapse them to a single confident pick. Two distinct client
     # folders in one path → AMBIGUOUS. (Pre-fix this returned client 7 alone.)
     _patch_fuzzy_by_name(monkeypatch, {
-        ("clients", "budi fijulek"): [{"table": "clients", "id": 7, "name": "Budi Fijulek",
-                                       "method": "fuzzy_full_name", "score": 1.00, "matched_value": "budi fijulek"}],
-        ("clients", "kifa qerol"): [{"table": "clients", "id": 8, "name": "Kifa Qerol",
-                                     "method": "fuzzy_full_name", "score": 0.80, "matched_value": "kifa qerol"}],
+        ("clients", "budi santoso"): [{"table": "clients", "id": 7, "name": "Budi Santoso",
+                                       "method": "fuzzy_full_name", "score": 1.00, "matched_value": "budi santoso"}],
+        ("clients", "wira putra"): [{"table": "clients", "id": 8, "name": "Wira Putra",
+                                     "method": "fuzzy_full_name", "score": 0.80, "matched_value": "wira putra"}],
     })
-    out = await rt._match_folder_name(None, "Budi Fijulek/Kifa Qerol/doc.pdf")
+    out = await rt._match_folder_name(None, "Budi Santoso/Wira Putra/doc.pdf")
     assert {c["id"] for c in out} == {7, 8}
 
 
@@ -273,12 +273,12 @@ async def test_match_folder_name_two_clients_WIDE_gap_still_ambiguous(monkeypatc
 async def test_match_folder_name_cyrillic_segment_not_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
     # A Cyrillic client-folder name (Russian/Ukrainian clients) must NOT be dropped as
     # "alpha-less" (Codex review 2026-07-18: the old [A-Za-z] check rejected it).
-    assert rt._folder_segments("Уиза Гпчхгхфх/passport.jpg") == ["Уиза Гпчхгхфх", "passport"]
+    assert rt._folder_segments("Іван Петренко/passport.jpg") == ["Іван Петренко", "passport"]
     _patch_fuzzy_by_name(monkeypatch, {
-        ("clients", "іван петренко"): [{"table": "clients", "id": 5, "name": "Уиза Гпчхгхфх",
+        ("clients", "іван петренко"): [{"table": "clients", "id": 5, "name": "Іван Петренко",
                                         "method": "fuzzy_full_name", "score": 0.93, "matched_value": "іван петренко"}],
     })
-    out = await rt._match_folder_name(None, "Уиза Гпчхгхфх/passport.jpg")
+    out = await rt._match_folder_name(None, "Іван Петренко/passport.jpg")
     assert len(out) == 1 and out[0]["id"] == 5
 
 
@@ -286,12 +286,12 @@ async def test_match_folder_name_cyrillic_segment_not_dropped(monkeypatch: pytes
 async def test_match_folder_name_same_client_two_segments_dedups(monkeypatch: pytest.MonkeyPatch) -> None:
     # Same client named in two segments → one candidate (dedup by (table,id), best score).
     _patch_fuzzy_by_name(monkeypatch, {
-        ("clients", "budi fijulek"): [{"table": "clients", "id": 7, "name": "Budi Fijulek",
-                                       "method": "fuzzy_full_name", "score": 0.78, "matched_value": "budi fijulek"}],
-        ("clients", "budi fijulek 2026"): [{"table": "clients", "id": 7, "name": "Budi Fijulek",
-                                            "method": "fuzzy_full_name", "score": 0.92, "matched_value": "budi fijulek 2026"}],
+        ("clients", "budi santoso"): [{"table": "clients", "id": 7, "name": "Budi Santoso",
+                                       "method": "fuzzy_full_name", "score": 0.78, "matched_value": "budi santoso"}],
+        ("clients", "budi santoso 2026"): [{"table": "clients", "id": 7, "name": "Budi Santoso",
+                                            "method": "fuzzy_full_name", "score": 0.92, "matched_value": "budi santoso 2026"}],
     })
-    out = await rt._match_folder_name(None, "Budi Fijulek 2026/Budi Fijulek/x.pdf")
+    out = await rt._match_folder_name(None, "Budi Santoso 2026/Budi Santoso/x.pdf")
     assert len(out) == 1
     assert out[0]["id"] == 7
     assert out[0]["folder_sim"] == 0.92  # best-scoring segment wins
@@ -349,7 +349,7 @@ class FakePool:
 
 @pytest.mark.asyncio
 async def test_resolve_entity_folder_match_no_strong_no_phone() -> None:
-    conn = FakeConn(client_fuzzy_rows=[{"id": 7, "name": "Budi Fijulek", "sim": 0.84}])
+    conn = FakeConn(client_fuzzy_rows=[{"id": 7, "name": "Budi Santoso", "sim": 0.84}])
     out = await rt.resolve_entity(
         {}, "unknown", FakePool(conn), source_path="BUDI/passport.jpg"
     )
@@ -364,7 +364,7 @@ async def test_resolve_entity_folder_match_no_strong_no_phone() -> None:
 async def test_resolve_entity_strong_id_skips_folder_query() -> None:
     conn = FakeConn(
         passport_rows=[{"id": 7, "full_name": "Alice Strong", "id_verified": True}],
-        client_fuzzy_rows=[{"id": 9, "name": "Budi Fijulek", "sim": 0.84}],
+        client_fuzzy_rows=[{"id": 9, "name": "Budi Santoso", "sim": 0.84}],
     )
     out = await rt.resolve_entity(
         {"passport_no": {"value": "ZZ9988770"}}, "passport",
@@ -377,12 +377,12 @@ async def test_resolve_entity_strong_id_skips_folder_query() -> None:
 @pytest.mark.asyncio
 async def test_resolve_entity_phone_wins_over_folder() -> None:
     conn = FakeConn(
-        phone_rows=[{"id": 42, "full_name": "Kifa Phone"}],
-        client_fuzzy_rows=[{"id": 7, "name": "Budi Fijulek", "sim": 0.84}],
+        phone_rows=[{"id": 42, "full_name": "Wira Phone"}],
+        client_fuzzy_rows=[{"id": 7, "name": "Budi Santoso", "sim": 0.84}],
     )
     out = await rt.resolve_entity(
         {}, "unknown", FakePool(conn),
-        sender_phone="08400022000", source_path="BUDI/passport.jpg",
+        sender_phone="08123456789", source_path="BUDI/passport.jpg",
     )
     assert out["decision"] == rt.DECISION_LINK_CANDIDATE
     assert out["candidates"][0]["method"] == "sender_phone"

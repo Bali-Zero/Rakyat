@@ -510,7 +510,7 @@ it("removes a private attachment after submission using the delete endpoint and 
   await user.click(
     await screen.findByRole("button", { name: /Kasus 1 · case-0/ }),
   );
-  await user.click(screen.getByRole("button", { name: "Zapaf lampiran" }));
+  await user.click(screen.getByRole("button", { name: "Hapus lampiran" }));
   await screen.findByText("Perubahan tersimpan di server.");
   expect(mocks.request.mock.calls[1][0]).toBe(
     "/api/visa-oracle/testing/assignment-0/screenshot",

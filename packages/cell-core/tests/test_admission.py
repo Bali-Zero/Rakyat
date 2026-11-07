@@ -20,7 +20,11 @@ from cell_core.admission_test import (
 )
 
 
+# Repo root (cell.yaml lives at <repo>/apps/bali-intel-scraper/cell.yaml)
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+_INTEL_SCRAPER_CELL_YAML = (
+    _REPO_ROOT / "apps" / "bali-intel-scraper" / "cell.yaml"
+)
 
 
 def _passing_cell() -> dict:
@@ -279,20 +283,90 @@ def test_load_cell_definition_root_not_mapping_raises(tmp_path: Path) -> None:
         load_cell_definition(p)
 
 
-# Rakyat: `test_intel_scraper_cell_yaml_exists` moved to the backstage — it reads apps/bali-intel-scraper/cell.yaml, which is not a Rakyat app.
-# Original at 677e29bb3511:packages/cell-core/tests/test_admission.py; listed in PERIMETER.txt.
+def test_intel_scraper_cell_yaml_exists() -> None:
+    """The Sprint 1 W1 cell.yaml MUST be on disk at the canonical path."""
+    assert _INTEL_SCRAPER_CELL_YAML.exists(), (
+        f"missing {_INTEL_SCRAPER_CELL_YAML} — Sprint 1 W1 declarative "
+        f"contract not in place"
+    )
 
 
-# Rakyat: `test_intel_scraper_cell_passes_admission` moved to the backstage — it reads apps/bali-intel-scraper/cell.yaml, which is not a Rakyat app.
-# Original at 677e29bb3511:packages/cell-core/tests/test_admission.py; listed in PERIMETER.txt.
+def test_intel_scraper_cell_passes_admission() -> None:
+    """The intel-scraper-cell definition PASSES all 7 Leggi (zero blockers).
+
+    This is the canonical Sprint 1 W1 acceptance test. If it ever fails,
+    either the cell definition drifted (fix cell.yaml) or the admission
+    rubric changed (fix admission_test.py). Both deserve a code review.
+    """
+    pytest.importorskip("yaml", reason="cell.yaml requires PyYAML to load")
+    cd = load_cell_definition(_INTEL_SCRAPER_CELL_YAML)
+    result = AdmissionTest().run_all(cd)
+    blockers = [v for v in result.violations if v.severity == "blocker"]
+    assert blockers == [], (
+        "intel-scraper-cell admission FAILED:\n" + result.summary()
+    )
+    assert result.passed is True, result.summary()
+    assert result.cell_name == "intel-scraper-cell"
 
 
-# Rakyat: `test_intel_scraper_cell_metadata_contracts` moved to the backstage — it reads apps/bali-intel-scraper/cell.yaml, which is not a Rakyat app.
-# Original at 677e29bb3511:packages/cell-core/tests/test_admission.py; listed in PERIMETER.txt.
+def test_intel_scraper_cell_metadata_contracts() -> None:
+    """Cell-yaml-only contract checks (not part of the 7 Leggi).
+
+    These are Sprint 1 W1 specific invariants that don't belong in the
+    generic admission_test runtime check but DO belong in the cell's
+    own test surface.
+    """
+    pytest.importorskip("yaml", reason="cell.yaml requires PyYAML to load")
+    cd = load_cell_definition(_INTEL_SCRAPER_CELL_YAML)
+
+    # Identity
+    assert cd["name"] == "intel-scraper-cell"
+    assert cd["level"] == "L1"
+    assert cd["runtime"] == "cron-agent-python"
+
+    # OSINT-blindato pre-declaration
+    assert cd["client_data_access"] is False
+    assert isinstance(cd["external_sources"], list)
+    assert len(cd["external_sources"]) >= 3
+
+    # Event contracts must include intel.scraper.run with the 8 declared fields
+    contracts = cd.get("event_contracts", [])
+    run_contracts = [c for c in contracts if c.get("name") == "intel.scraper.run"]
+    assert len(run_contracts) == 1, (
+        "exactly one intel.scraper.run contract expected"
+    )
+    fields = set(run_contracts[0].get("fields", {}).keys())
+    required_fields = {
+        "trace_id",
+        "status",
+        "sources_attempted",
+        "articles_found",
+        "scars_added",
+        "duration_ms",
+        "started_at",
+        "finished_at",
+    }
+    missing = required_fields - fields
+    assert not missing, f"intel.scraper.run contract missing fields: {missing}"
+
+    # HGT publish policy: structural patterns only (UU PDP scope)
+    assert cd.get("hgt_publish_only_structural_patterns") is True
 
 
-# Rakyat: `test_intel_scraper_cell_drift_blocks_when_fields_missing` moved to the backstage — it reads apps/bali-intel-scraper/cell.yaml, which is not a Rakyat app.
-# Original at 677e29bb3511:packages/cell-core/tests/test_admission.py; listed in PERIMETER.txt.
+def test_intel_scraper_cell_drift_blocks_when_fields_missing(tmp_path: Path) -> None:
+    """Defensive: simulate cell.yaml drift (e.g. someone removes
+    ``kill_switch``) and confirm admission FAILS with a clear blocker."""
+    pytest.importorskip("yaml", reason="cell.yaml requires PyYAML to load")
+    cd = load_cell_definition(_INTEL_SCRAPER_CELL_YAML)
+    # Corrupted copy
+    drifted = dict(cd)
+    drifted["kill_switch"] = False   # operator removed the kill switch
+    result = AdmissionTest().run_all(drifted)
+    assert result.passed is False
+    assert any(
+        v.legge == Legge.ZERO_FINAL_INSTANCE and v.severity == "blocker"
+        for v in result.violations
+    ), result.summary()
 
 
 # ── Sprint 1 W2 — hgt-coordinator-cell admission entry ────────────────────
@@ -371,6 +445,7 @@ def test_hgt_coordinator_cell_passes_admission() -> None:
 # ── Sprint 3 W2 — crm-cell + mata-garuda-cell admission entries ───────────
 
 _CRM_CELL_YAML = _REPO_ROOT / "apps" / "crm-cell" / "cell.yaml"
+_MATA_GARUDA_CELL_YAML = _REPO_ROOT / "apps" / "mata-garuda" / "cell.yaml"
 
 
 def test_crm_cell_yaml_exists() -> None:
@@ -515,13 +590,97 @@ def test_delivery_allowlist_with_client_data_passes() -> None:
     )
 
 
-# Rakyat: `test_mata_garuda_cell_yaml_exists` moved to the backstage — it reads apps/mata-garuda/cell.yaml, which is not a Rakyat app.
-# Original at 677e29bb3511:packages/cell-core/tests/test_admission.py; listed in PERIMETER.txt.
+def test_mata_garuda_cell_yaml_exists() -> None:
+    """The Sprint 3 W2 mata-garuda-cell.yaml MUST be on disk."""
+    assert _MATA_GARUDA_CELL_YAML.exists(), (
+        f"missing {_MATA_GARUDA_CELL_YAML} — Sprint 3 W2 declarative "
+        f"contract not in place"
+    )
 
 
-# Rakyat: `test_mata_garuda_cell_passes_admission` moved to the backstage — it reads apps/mata-garuda/cell.yaml, which is not a Rakyat app.
-# Original at 677e29bb3511:packages/cell-core/tests/test_admission.py; listed in PERIMETER.txt.
+def test_mata_garuda_cell_passes_admission() -> None:
+    """The mata-garuda-cell definition PASSES all 7 Leggi (zero blockers).
+
+    Sprint 3 W2 acceptance test. Mata-Garuda is L4.5 (meta-awareness)
+    rather than L1; the admission rubric does not gate on level value
+    — it gates on the 7 Leggi declarations themselves. OSINT blindato
+    is satisfied because external_sources=[] (no inbound cloud) and
+    client_data_access=False.
+    """
+    pytest.importorskip("yaml", reason="cell.yaml requires PyYAML to load")
+    cd = load_cell_definition(_MATA_GARUDA_CELL_YAML)
+    result = AdmissionTest().run_all(cd)
+    blockers = [v for v in result.violations if v.severity == "blocker"]
+    assert blockers == [], (
+        "mata-garuda-cell admission FAILED:\n" + result.summary()
+    )
+    assert result.passed is True, result.summary()
+    assert result.cell_name == "mata-garuda-cell"
 
 
-# Rakyat: `test_mata_garuda_cell_metadata_contracts` moved to the backstage — it reads apps/mata-garuda/cell.yaml, which is not a Rakyat app.
-# Original at 677e29bb3511:packages/cell-core/tests/test_admission.py; listed in PERIMETER.txt.
+def test_mata_garuda_cell_metadata_contracts() -> None:
+    """Cell-yaml-only contract checks (Sprint 3 W2 invariants)."""
+    pytest.importorskip("yaml", reason="cell.yaml requires PyYAML to load")
+    cd = load_cell_definition(_MATA_GARUDA_CELL_YAML)
+
+    # Identity — L4.5 meta-awareness
+    assert cd["name"] == "mata-garuda-cell"
+    assert cd["level"] == "L4.5"
+
+    # OSINT blindato: zero external_sources, zero client_data_access
+    assert cd["external_sources"] == [], (
+        "mata-garuda-cell must have empty external_sources (OSINT blindato — "
+        "Pro-local, no inbound cloud)"
+    )
+    assert cd["client_data_access"] is False, (
+        "mata-garuda-cell must NOT touch CRM client data (separate from "
+        "crm-cell domain)"
+    )
+
+    # Outbound contracts — both new channels declared
+    outbound = set(cd.get("events", {}).get("outbound", []))
+    assert "asset_provenance" in outbound, (
+        "mata-garuda-cell must declare asset_provenance in events.outbound "
+        "(emitted by mig 155 trigger)"
+    )
+    assert "asset_invalidated" in outbound, (
+        "mata-garuda-cell must declare asset_invalidated in events.outbound "
+        "(emitted by daily invalidation_sweeper sub-organelle)"
+    )
+
+    # Meta-awareness layer — cells observed must NOT include self
+    meta = cd.get("meta_awareness", {})
+    assert "self" in meta.get("does_not_observe", []), (
+        "mata-garuda-cell.meta_awareness.does_not_observe must include 'self' "
+        "to prevent feedback loop (cell adapter enforces this at runtime)"
+    )
+
+    # Sub-organelle: invalidation_sweeper at 04:13 WITA
+    suborganelles = {s["name"]: s for s in cd.get("sub_organelles", [])}
+    sweeper = suborganelles.get("invalidation_sweeper")
+    assert sweeper is not None
+    assert sweeper["schedule"] == "13 4 * * *", (
+        f"invalidation_sweeper schedule must be '13 4 * * *' (daily 04:13 WITA, "
+        f"off-minute off-hour), got {sweeper.get('schedule')!r}"
+    )
+
+    # Event contracts must include asset_provenance with all M2 + X5 fields
+    contracts = cd.get("event_contracts", [])
+    prov_contracts = [
+        c for c in contracts if c.get("name") == "mata_garuda.asset_provenance"
+    ]
+    assert len(prov_contracts) == 1
+    fields = set(prov_contracts[0].get("fields", {}).keys())
+    required_m2_x5 = {
+        "reliability",            # M2 admiralty
+        "credibility",            # M2 admiralty
+        "tlp",                    # M2 distribution control
+        "valid_until",            # X5 invalidation column
+        "invalidation_event_topic",  # X5 invalidation column
+        "invalidation_mode",      # X5 invalidation enum
+        "_outbox_id",             # mig 146 contract
+    }
+    missing = required_m2_x5 - fields
+    assert not missing, (
+        f"asset_provenance contract missing M2/X5 fields: {missing}"
+    )

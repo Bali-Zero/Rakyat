@@ -53,7 +53,7 @@ describe("SecondHomeLanding", () => {
     expect(container.firstElementChild).toHaveClass(cormorant.variable);
     expect(heroHeading).toHaveTextContent(/up to 5 years/i);
     expect(heroHeading).toHaveStyle({
-      fontFamily: "var(--font-serif, Wimolog, serif)",
+      fontFamily: "var(--font-serif, Georgia, serif)",
     });
     expect(heroHeading.style.fontFamily).not.toMatch(/Cormorant Garamond/i);
     // Two qualifying routes — the only two verified bases.
@@ -118,7 +118,7 @@ describe("SecondHomeLanding", () => {
     const price = screen.getByText(expectedPrice as string);
     // Assert on the value, not a boolean, so a failure prints the face that
     // replaced the serif instead of an opaque `expected true to be false`.
-    expect(price.style.fontFamily).toBe("var(--font-serif, Wimolog, serif)");
+    expect(price.style.fontFamily).toBe("var(--font-serif, Georgia, serif)");
     expect(price.style.fontVariantNumeric).toBe("tabular-nums");
     expect(price.style.fontFeatureSettings).toMatch(/tnum/);
   });

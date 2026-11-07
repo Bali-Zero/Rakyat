@@ -31,7 +31,7 @@ TEST_MESSAGES = [
     # Long
     (
         "long_1",
-        "Ho bisogno di aprire una società a Bali per un progetto di e-commerce, goqame vendere prodotti artigianali balinesi online e ho bisogno di capire quale tipo di società è meglio, PT PMA o CV, e quali sono i costi e i tempi",
+        "Ho bisogno di aprire una società a Bali per un progetto di e-commerce, voglio vendere prodotti artigianali balinesi online e ho bisogno di capire quale tipo di società è meglio, PT PMA o CV, e quali sono i costi e i tempi",
     ),
 ]
 

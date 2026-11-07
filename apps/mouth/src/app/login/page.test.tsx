@@ -116,7 +116,8 @@ export function findReds(markup: string): string[] {
  * Tailwind spelling would have watched the one place a copper fill could
  * actually appear and seen nothing.
  */
-const COPPER_RULE = /h-\[3px\] w-14 rounded-sm bg-\[var\(--bz-copper\)\]/g;
+const COPPER_RULE =
+  /h-\[3px\] w-14 rounded-sm bg-\[var\((?:--bz-copper|--bz-panel-link)\)\]/g;
 const COPPER_VALUE = /var\(--bz-copper[a-z-]*\)|#a44b36|#c46a52/i;
 
 export function findCopperFill(markup: string): string[] {
@@ -601,5 +602,123 @@ describe("the boundary and the skeleton wear the same alphabet", () => {
     ).not.toBeNull();
     expect(container.querySelectorAll(".h-\\[52px\\]").length).toBe(2);
     expect(findReds(container.innerHTML)).toEqual([]);
+  });
+});
+
+/**
+ * The login is a forest page in the kita face, and it is the same forest
+ * whichever host serves it. Guilt: the root without the kita attributes (the
+ * editorial block would win on a non-kita host, Cormorant on night). Innocence:
+ * the portal files stay byte-free of the new tokens.
+ */
+const globalsCss = readFileSync(join(__dirname, "..", "globals.css"), "utf8");
+
+function kitaBlock(theme: string): string {
+  const m = globalsCss.match(
+    new RegExp(
+      `\\[data-theme="${theme}"\\]\\[data-product="kita"\\]\\s*\\{([\\s\\S]*?)\\n\\}`,
+    ),
+  );
+  if (!m) throw new Error(`kita ${theme} block missing`);
+  return m[1];
+}
+
+function decl(block: string, name: string): string {
+  const m = block.match(new RegExp(`${name}:\\s*([^;]+);`));
+  if (!m) throw new Error(`${name} not declared`);
+  return m[1].trim();
+}
+
+function contrastOf(a: string, b: string): number {
+  const lum = (hex: string) => {
+    const ch = [1, 3, 5].map((i) => {
+      const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+  };
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+describe("LoginPage — forest ground, kita heading face", () => {
+  it("the root is forest and pins the kita product, so the face does not depend on the host", () => {
+    const { container } = render(<LoginPage />);
+    const root = container.firstElementChild as HTMLElement;
+
+    expect(root.getAttribute("data-product")).toBe("kita");
+    expect(root.getAttribute("data-theme")).toBe("operative-light");
+    expect(root.className).toContain("bg-[var(--bz-panel)]");
+    expect(root.className).not.toContain("bg-[var(--bz-base)]");
+    expect(container.querySelector("main")?.className).not.toMatch(/\bbg-/);
+  });
+
+  it("--bz-panel is the rail forest, in both kita themes", () => {
+    for (const theme of ["operative-light", "operative-dark"]) {
+      const block = kitaBlock(theme);
+      expect(decl(block, "--bz-panel")).toBe(decl(block, "--bz-kita-rail"));
+    }
+  });
+
+  it("both headings resolve --font-serif, which the kita blocks point at IBM Plex Sans", () => {
+    const { container } = render(<LoginPage />);
+    const heads = [
+      screen.getByRole("heading", { name: "Welcome back." }),
+      screen.getByText("kita."),
+    ];
+    for (const el of heads) {
+      expect(el.getAttribute("style")).toContain("var(--font-serif)");
+    }
+    expect(container.innerHTML).not.toMatch(/Fraunces|Cormorant|Georgia/);
+    for (const theme of ["operative-light", "operative-dark"]) {
+      expect(decl(kitaBlock(theme), "--font-serif")).toMatch(
+        /^"IBM Plex Sans"/,
+      );
+    }
+  });
+
+  it("guilt: the pre-fix root (no product attribute) would not have pinned kita", () => {
+    const source = readFileSync(join(__dirname, "page.tsx"), "utf8");
+    const stripped = source.replace(/data-product="kita"/g, "");
+    expect(stripped.includes('data-product="kita"')).toBe(false);
+    expect(source.includes('data-product="kita"')).toBe(true);
+  });
+
+  it("every foreground on the page is AA on the forest, computed", () => {
+    const block = kitaBlock("operative-light");
+    const forest = decl(block, "--bz-panel");
+    const onPanel = decl(block, "--bz-on-panel");
+    const muted = decl(block, "--bz-on-panel-muted");
+    const line = decl(block, "--bz-panel-line");
+    const link = decl(block, "--bz-panel-link");
+
+    expect(contrastOf(onPanel, forest)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastOf(muted, forest)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastOf(link, forest)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastOf(line, forest)).toBeGreaterThanOrEqual(3);
+    expect(contrastOf(forest, onPanel)).toBeGreaterThanOrEqual(4.5);
+    // innocence of the detector: the old copper link would have failed.
+    expect(contrastOf(decl(block, "--bz-copper-text"), forest)).toBeLessThan(3);
+  });
+
+  it("the page names no raw colour and no longer reads the paper tokens", () => {
+    const code = readFileSync(join(__dirname, "page.tsx"), "utf8").replace(
+      /\/\*[\s\S]*?\*\//g,
+      "",
+    );
+    expect(code).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    expect(code).not.toMatch(/--tx-secondary|--tx-pure|--bz-copper/);
+  });
+
+  it("the portal login and its theme block are untouched", () => {
+    const portalLogin = join(__dirname, "..", "portal");
+    const portalBlock = globalsCss.match(
+      /\[data-theme="operative-light"\]\[data-product="my"\]\s*\{[\s\S]*?\n\}/,
+    )![0];
+    expect(portalBlock).not.toContain("--bz-panel-link");
+    expect(portalBlock).toContain('"Fraunces"');
+    expect(readFileSync(join(portalLogin, "r19-fonts.css"), "utf8")).toContain(
+      "Fraunces",
+    );
   });
 });

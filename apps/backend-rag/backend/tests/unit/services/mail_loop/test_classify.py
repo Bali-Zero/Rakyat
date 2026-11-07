@@ -72,13 +72,13 @@ GUILT: list[tuple[str, str, str, Intent]] = [
         Intent.VISA,
     ),
     (
-        "vesex-kbli",
+        "ptpma-kbli",
         "KBLI for my new company",
         "Which KBLI covers frozen food distribution for a PT PMA?",
         Intent.PT_PMA,
     ),
     (
-        "vesex-it",
+        "ptpma-it",
         "Costituzione societa",
         "Vorrei aprire una societa in Indonesia, quali sono i soci necessari?",
         Intent.PT_PMA,
@@ -384,7 +384,7 @@ def test_bulk_header_wins_over_business_markers() -> None:
         {"Precedence": "bulk"},
         {"Auto-Submitted": "auto-generated"},
         {"From": "no-reply@notifications.example.com"},
-        {"From": "BeTuqal@Example.com"},
+        {"From": "NoReply@Example.com"},
     ],
 )
 def test_bulk_positive(headers: dict[str, str]) -> None:
@@ -396,7 +396,7 @@ def test_bulk_positive(headers: dict[str, str]) -> None:
     [
         None,
         {},
-        {"From": "zojev@client.example.com"},
+        {"From": "sofia@client.example.com"},
         {"Auto-Submitted": "no"},
         {"Precedence": "normal"},
         # "reply" is a substring of "no-reply" but this is a real human address:
@@ -673,7 +673,7 @@ def test_corroboration_set_is_a_subset_of_decisive() -> None:
         ("ho-visto-means-i-saw", "Buongiorno, ho visto il vostro sito e vorrei informazioni.", Intent.VISA),
         ("ci-siamo-visti-means-we-met", "Ci siamo visti la settimana scorsa in ufficio.", Intent.VISA),
         ("tanah-lot-is-a-landmark", "Company outing to Tanah Lot next month, who is coming?", Intent.PROPERTY),
-        ("direktur-is-a-signature", "Hifaq,\nBudi Fijulek\nDirektur Utama", Intent.PT_PMA),
+        ("direktur-is-a-signature", "Salam,\nBudi Santoso\nDirektur Utama", Intent.PT_PMA),
         ("imposte-are-also-shutters", "Le imposte delle finestre sono rotte, chi le ripara?", Intent.TAX),
         ("fiscal-year-is-boilerplate", "Summary for the fiscal year ending 31 December.", Intent.TAX),
         ("a-call-link-is-furniture", "Here is my zoom link for later, talk soon.", Intent.ADMIN),

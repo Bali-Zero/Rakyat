@@ -1,5 +1,6 @@
 """Export OCR-extracted company data to CSV, aggregated by company."""
 
+import os
 import asyncio
 import csv
 import json
@@ -10,7 +11,7 @@ import asyncpg
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-DB = "postgresql://backend_rag_v2:<<ROTATED_2026_05_22_see_DATABASE_URL_env>>@localhost:15432/nuzantara_rag?sslmode=disable"
+DB = os.environ["DATABASE_URL"]
 OUT = "/tmp/drive_reorg/companies_ocr_extract.csv"
 
 

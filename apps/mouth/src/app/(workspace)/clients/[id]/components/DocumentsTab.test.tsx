@@ -114,7 +114,14 @@ const renderTab = (
 describe("DocumentsTab — status pill is strictly deleted_at/status (GUILT)", () => {
   it("pill words come only from deleted_at/status — Removed/Valid/Processing/Rejected — and none of them is copper", () => {
     const documents = [
-      doc({ id: 1, status: "verified", document_category: "personal" }),
+      // "Valid" is a positive word: it needs a date that says so (the
+      // positive-label rule), so the verified fixture carries a far expiry.
+      doc({
+        id: 1,
+        status: "verified",
+        document_category: "personal",
+        expiry_date: daysFromNow(200),
+      }),
       doc({
         id: 2,
         status: "received",

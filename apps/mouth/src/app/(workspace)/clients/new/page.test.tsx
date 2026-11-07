@@ -235,7 +235,7 @@ describe("NewClientPage — duplicate phone names the existing client", () => {
       screen.getByText(/A client with this phone already exists\./),
     ).toBeTruthy();
     expect(
-      screen.getByText(/assigned to pum\.zagik@balizero\.com/),
+      screen.getByText(/assigned to ari\.firda@balizero\.com/),
     ).toBeTruthy();
     expect(screen.queryByText("[object Object]")).toBeNull();
     expect(push).not.toHaveBeenCalled();

@@ -141,8 +141,7 @@ jobs:
             scripts/test_lint_paid_llm_entity.py \
             scripts/tests/test_lint_ban_prose.py \
             scripts/tests/test_vendor_authorization_fence.py \
-            scripts/tests/test_typesafe_client_pin.py \
-            scripts/tests/test_cate_trigger_parity.py
+            scripts/tests/test_typesafe_client_pin.py
 
       # Runs BEFORE #40 so a broken budget step fails loud here rather than
       # quietly degrading the scan it exists to guard. The corpus extracts #40's

@@ -60,8 +60,6 @@ from pathlib import Path
 # tests" step no longer carries its own copy.
 DEFAULT_TARGETS = (
     "backend/tests/",
-    "../../scripts/bot/test_build_deid_corpus.py",
-    "../../scripts/bot/test_wa_blind_bench.py",
 )
 
 # Mirrors pytest's own `--ignore=backend/tests/e2e` in tests.yml — an explicitly
@@ -79,7 +77,9 @@ DEFAULT_TARGETS = (
 # catches it — and it predates sharding (the pre-split job carried the same
 # --ignore). Named here so the next reader does not mistake the guard for a
 # defence it never was.
-EXCLUDED_DIRS = ("backend/tests/e2e",)
+EXCLUDED_DIRS = (
+    "backend/tests/e2e",
+)
 
 # IMPACT_SELECTED_TESTS is published repo-root-relative; the shards run from
 # apps/backend-rag.

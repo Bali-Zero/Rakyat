@@ -43,11 +43,11 @@ def make_request(
     now: datetime,
     run_id: str = "dual-consul-synthetic",
     *,
-    builder: Literal["tomen", "fable"] = "tomen",
-    reviewer: Literal["tomen", "fable"] | None = None,
+    builder: Literal["astra", "fable"] = "astra",
+    reviewer: Literal["astra", "fable"] | None = None,
     grant_revision: int = 1,
 ) -> ConsulRequest:
-    reviewer = reviewer or ("fable" if builder == "tomen" else "tomen")
+    reviewer = reviewer or ("fable" if builder == "astra" else "astra")
     inputs = FrozenInputs(
         run_id=run_id,
         artifact=b"synthetic artifact",

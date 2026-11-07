@@ -56,7 +56,7 @@
     },
     "work.annual_foreign_income_usd": {
       "status": "KNOWN",
-      "value": 9900000019
+      "value": 1000000000
     },
     "investment.pt_pma_committed": { "status": "KNOWN", "value": true },
     "investment.investment_capital_idr": {

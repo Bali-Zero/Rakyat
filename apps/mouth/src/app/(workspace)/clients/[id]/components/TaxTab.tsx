@@ -4,7 +4,12 @@ import React, { useState, useCallback, memo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
-import type { Client, ClientCompanyLink } from "@/lib/api/crm/crm.types";
+import type {
+  Client,
+  ClientCompanyLink,
+  ClientDocument,
+  AttentionItem,
+} from "@/lib/api/crm/crm.types";
 import { lkpmApi } from "@/lib/api/workspace/lkpm.api";
 import type { LKPMBatchItem, LKPMReceipt } from "@/lib/api/portal/portal.types";
 import {
@@ -20,6 +25,27 @@ import {
   StatePill,
   type PillTone,
 } from "@/components/workspace/r19";
+import {
+  coretaxStatus,
+  formatNpwp,
+  isSixteenDigits,
+  type CoretaxStatus,
+} from "./coretax";
+import {
+  formatDayMonth,
+  formatFullDate,
+  isoDayMs,
+  sptFilings,
+  sptLabel,
+  sptStatus,
+  type SptDocumentLike,
+  type SptFiling,
+  type SptKind,
+  type SptState,
+  type AttentionState,
+} from "./tax-deadlines";
+import { witaDateKey } from "./overview-brief";
+import { dayToInstant, resolveCardDay } from "./witaClock";
 
 // ============================================
 // TAX CONSULTANT DROPDOWN (Bali Zero tax team)
@@ -37,6 +63,11 @@ import {
 // that stays in sync with backend migration 093's CHECK constraint). Only the
 // TYPE crosses this boundary, and `import type` is erased at compile time.
 import type { TaxConsultantOption } from "@/lib/workspace/roster-directory";
+import { legacyConsultantLabel } from "./header-facts";
+
+// Still importable from here (tests, older callers); it lives in header-facts
+// so the page can use it without statically importing this whole tab.
+export { legacyConsultantLabel };
 
 type TaxYear = number;
 
@@ -45,14 +76,16 @@ type TaxYear = number;
 // ============================================
 interface YearSelectorProps {
   selectedYear: TaxYear;
+  /** The card's year (WITA year of the payload's `as_of`), newest on the list. */
+  currentYear: TaxYear;
   onYearChange: (year: TaxYear) => void;
 }
 
 const YearSelector = memo(function YearSelector({
   selectedYear,
+  currentYear,
   onYearChange,
 }: YearSelectorProps) {
-  const currentYear = new Date().getFullYear();
   const years = Array.from({ length: 5 }, (_, i) => currentYear - i);
 
   return (
@@ -183,23 +216,33 @@ function TaxIdItem({
   value,
   fallbackValue,
   fallbackLabel,
+  note,
 }: {
   label: string;
   value?: string;
   fallbackValue?: string;
   fallbackLabel?: string;
+  /** Quiet sub-line under an own value (e.g. "NIK-based"). */
+  note?: string;
 }) {
   return (
     <div className="min-w-0">
       <p className={EYEBROW}>{label}</p>
       {value ? (
-        <p className="mt-1.5 truncate font-mono text-[13px] text-[var(--tx-pure)]">
-          {value}
-        </p>
+        <>
+          <p className="mt-1.5 truncate font-mono text-[13px] text-[var(--tx-pure)]">
+            {formatNpwp(value)}
+          </p>
+          {note ? (
+            <p className="mt-1 truncate text-[12px] text-[var(--tx-secondary)]">
+              {note}
+            </p>
+          ) : null}
+        </>
       ) : fallbackValue ? (
         <>
           <p className="mt-1.5 truncate font-mono text-[13px] text-[var(--tx-pure)]">
-            {fallbackValue}
+            {formatNpwp(fallbackValue)}
           </p>
           <p className="mt-1 truncate text-[12px] text-[var(--tx-secondary)]">
             via company{fallbackLabel ? ` · ${fallbackLabel}` : ""}
@@ -210,6 +253,184 @@ function TaxIdItem({
           Not registered
         </p>
       )}
+    </div>
+  );
+}
+
+// ============================================
+// CORETAX ACCESS — read from the client's documents, no database field
+// ============================================
+function CoretaxAccessItem({
+  status,
+  formatDate,
+}: {
+  status: CoretaxStatus;
+  formatDate: (d: string) => string;
+}) {
+  const { coretaxAccess, efin } = status;
+  return (
+    <div className="min-w-0" data-testid="coretax-access">
+      <p className={EYEBROW}>Coretax access</p>
+      <p
+        className="mt-1.5 text-[13px]"
+        style={{
+          color: coretaxAccess.onFile
+            ? "var(--state-success)"
+            : "var(--tx-secondary)",
+        }}
+      >
+        {coretaxAccess.onFile
+          ? "Coretax access on file"
+          : "No Coretax access on file"}
+        {coretaxAccess.onFile && coretaxAccess.date ? (
+          <span className="text-[var(--tx-secondary)]">
+            {" · "}
+            {formatDate(coretaxAccess.date)}
+          </span>
+        ) : null}
+      </p>
+      <p
+        className="mt-1 text-[12px]"
+        style={{
+          color: efin.onFile ? "var(--state-success)" : "var(--tx-secondary)",
+        }}
+      >
+        {efin.onFile ? "EFIN on file" : "No EFIN on file"}
+      </p>
+    </div>
+  );
+}
+
+// ============================================
+// SPT SECTIONS — Personal tax / Company tax
+// ============================================
+/** The line for an engine item: its state and date, our wording. */
+function attentionStatus(item: AttentionItem, fallbackYear: number) {
+  const deadlineMs = item.date ? isoDayMs(item.date) : NaN;
+  const hasDate = Number.isFinite(deadlineMs);
+  const deadlineLabel = hasDate ? formatDayMonth(deadlineMs) : "";
+  const opensMs = item.opens_on
+    ? isoDayMs(item.opens_on)
+    : hasDate
+      ? deadlineMs - 30 * 86_400_000
+      : NaN;
+  const yearInLabel = /(20\d{2})\s*$/.exec(item.label);
+  return {
+    fiscalYear: yearInLabel ? Number(yearInLabel[1]) : fallbackYear,
+    state: item.state,
+    label: sptLabel(
+      item.state,
+      item.days ?? 0,
+      deadlineLabel,
+      Number.isFinite(opensMs) ? formatFullDate(opensMs) : "",
+    ),
+  };
+}
+
+function SptBlock({
+  kind,
+  heading,
+  docs,
+  now,
+  attention,
+}: {
+  kind: SptKind;
+  heading?: string;
+  docs: readonly SptDocumentLike[];
+  now: Date;
+  /** The backend engine's item for this subject; wins over the local helper. */
+  attention?: AttentionItem;
+}) {
+  const filings: SptFiling[] = sptFilings(docs, kind);
+  const local = sptStatus(kind, new Set(filings.map((f) => f.fiscalYear)), now);
+  const status: {
+    fiscalYear: number;
+    state: SptState | AttentionState;
+    label: string;
+    isNext?: boolean;
+  } = attention ? attentionStatus(attention, local.fiscalYear) : local;
+  // The past year whose window closed with no filing: listed quietly in the
+  // history, never as an alarm.
+  const missingYear =
+    local.missingYear != null && status.state !== "done"
+      ? local.missingYear
+      : null;
+  const alarm = status.state === "urgent" || status.state === "overdue";
+  const quiet =
+    status.state === "none" ||
+    status.state === "upcoming" ||
+    status.state === "expired";
+  return (
+    <div data-testid={`spt-block-${kind}`} data-state={status.state}>
+      {heading ? <p className={MICRO_LABEL}>{heading}</p> : null}
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-2">
+        <span className="text-[13px] text-[var(--tx-pure)]">
+          {status.isNext ? "Next: " : ""}SPT fiscal year {status.fiscalYear}
+        </span>
+        {status.state === "done" ? (
+          <StatePill tone="ok" label="Filed" />
+        ) : (
+          <span
+            data-testid="spt-status"
+            className={`text-[13px]${alarm ? " font-semibold" : ""}`}
+            style={{
+              color: alarm
+                ? "var(--state-warning)"
+                : quiet
+                  ? "var(--tx-secondary)"
+                  : "var(--tx-pure)",
+            }}
+          >
+            {status.label}
+          </span>
+        )}
+      </div>
+      {filings.length > 0 || missingYear != null ? (
+        <ul
+          aria-label="Filing history"
+          className="border-t border-[var(--bz-border)]"
+        >
+          {missingYear != null ? (
+            <li
+              data-testid="spt-missing-year"
+              className="flex min-h-9 items-center gap-3 border-b border-[var(--bz-border)] text-[13px]"
+            >
+              <span className="text-[var(--tx-pure)]">FY {missingYear}</span>
+              <span className="text-[12px] text-[var(--tx-secondary)]">
+                no SPT on file
+              </span>
+            </li>
+          ) : null}
+          {filings.map((f) => (
+            <li
+              key={f.fiscalYear}
+              className="flex min-h-9 items-center justify-between gap-3 border-b border-[var(--bz-border)] text-[13px]"
+            >
+              <span>
+                <span className="text-[var(--tx-pure)]">FY {f.fiscalYear}</span>
+                {f.fileName ? (
+                  <span className="ml-2 text-[12px] text-[var(--tx-secondary)]">
+                    {f.fileName}
+                  </span>
+                ) : null}
+              </span>
+              {f.url ? (
+                <a
+                  href={f.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Open SPT FY ${f.fiscalYear}`}
+                  className={OPEN_LINK_CLASS}
+                >
+                  Open
+                </a>
+              ) : (
+                <span className="text-[var(--tx-secondary)]">—</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }
@@ -456,10 +677,52 @@ function LkpmQuarterGrid({ items }: { items: LKPMBatchItem[] }) {
 // LKPM RECEIPTS — OSS tanda terima per kegiatan usaha
 // ============================================
 const RECEIPT_COLS =
-  "3.5rem minmax(5.5rem,0.6fr) minmax(12rem,1.4fr) minmax(7rem,0.8fr) minmax(8rem,0.9fr) minmax(7.5rem,0.8fr) 3.25rem";
+  "3.5rem minmax(8rem,1fr) minmax(5.5rem,0.6fr) minmax(12rem,1.4fr) minmax(7rem,0.8fr) minmax(8rem,0.9fr) minmax(7.5rem,0.8fr) 3.25rem";
+
+/** Receipts shown before the "Show N more" disclosure. */
+const RECEIPTS_VISIBLE = 2;
+
+function receiptCompany(r: LKPMReceipt): string {
+  return r.company_name ?? r.nama_perusahaan_oss ?? "Unknown PT";
+}
 
 const OPEN_LINK_CLASS =
   "inline-flex min-h-6 items-center text-[13px] text-[var(--tx-pure)] underline-offset-4 hover:underline";
+
+function ReceiptGrid({
+  receipts,
+  formatDate,
+  withHead,
+}: {
+  receipts: LKPMReceipt[];
+  formatDate: (d: string) => string;
+  withHead: boolean;
+}) {
+  return (
+    <HairlineGrid
+      cols={RECEIPT_COLS}
+      className="max-[640px]:[&_.grid]:!grid-cols-[minmax(0,1fr)]"
+    >
+      {withHead ? (
+        <HairlineHead className="max-[640px]:hidden">
+          <span>Qtr</span>
+          <span>Company</span>
+          <span>KBLI</span>
+          <span>Nomor Laporan</span>
+          <span>Stage</span>
+          <span>Status</span>
+          <span>Date</span>
+          <span>PDF</span>
+        </HairlineHead>
+      ) : null}
+      <HairlineBody>
+        {receipts.map((r) => (
+          <LkpmReceiptRow key={r.id} receipt={r} formatDate={formatDate} />
+        ))}
+      </HairlineBody>
+    </HairlineGrid>
+  );
+}
 
 function LkpmReceiptRow({
   receipt: r,
@@ -472,6 +735,9 @@ function LkpmReceiptRow({
   return (
     <HairlineRow>
       <div className="px-2.5 py-3 text-[13px]">{r.quarter ?? "—"}</div>
+      <div className="min-w-0 truncate px-2.5 py-3 text-[13px]">
+        {receiptCompany(r)}
+      </div>
       <div className="truncate px-2.5 py-3 font-mono text-[13px]">
         {r.kbli_code ?? "—"}
       </div>
@@ -531,6 +797,10 @@ export function TaxTab({
   companyLinks,
   onRefresh,
   taxConsultants,
+  documents,
+  now,
+  attention,
+  day: dayProp,
 }: {
   clientId: number;
   formatDate: (d: string) => string;
@@ -544,10 +814,21 @@ export function TaxTab({
    * dropdown instead of failing the type check.
    */
   taxConsultants: readonly TaxConsultantOption[];
+  /** The client's documents (already loaded by the parent): Coretax access,
+   * EFIN and the SPT filings are read from them — no extra request. */
+  documents?: readonly ClientDocument[];
+  /** Test seam for the SPT deadlines; the card hands in its own day instead. */
+  now?: Date;
+  /** The card's day (`YYYY-MM-DD`, the payload's `as_of`). */
+  day?: string;
+  /** The profile's attention items; the SPT lines use them when present. */
+  attention?: readonly AttentionItem[];
 }) {
-  const [selectedYear, setSelectedYear] = useState<TaxYear>(
-    new Date().getFullYear(),
-  );
+  // One day for the whole tab: the card's day at 00:00 WITA. The year
+  // selector, its default and the SPT status all derive from it.
+  const clock = now ?? new Date(dayToInstant(resolveCardDay(dayProp)));
+  const clockYear = Number(witaDateKey(clock.getTime()).slice(0, 4));
+  const [selectedYear, setSelectedYear] = useState<TaxYear>(clockYear);
   const [lkpmItems, setLkpmItems] = useState<LKPMBatchItem[]>([]);
   const [lkpmLoading, setLkpmLoading] = useState(false);
   const [lkpmReceipts, setLkpmReceipts] = useState<LKPMReceipt[]>([]);
@@ -581,15 +862,16 @@ export function TaxTab({
     };
   }, [clientId]);
 
-  // Group receipts by company for the selected year
-  const receiptsByCompany = lkpmReceipts
+  // Receipts for the selected year, newest first across companies.
+  const yearReceipts = lkpmReceipts
     .filter((r) => r.year === selectedYear)
-    .reduce<Record<string, LKPMReceipt[]>>((acc, r) => {
-      const key = r.company_name ?? r.nama_perusahaan_oss ?? "Unknown PT";
-      if (!acc[key]) acc[key] = [];
-      acc[key].push(r);
-      return acc;
-    }, {});
+    .sort(
+      (a, b) =>
+        (b.tanggal_diterima ?? "").localeCompare(a.tanggal_diterima ?? "") ||
+        b.id - a.id,
+    );
+  const recentReceipts = yearReceipts.slice(0, RECEIPTS_VISIBLE);
+  const olderReceipts = yearReceipts.slice(RECEIPTS_VISIBLE);
 
   // Group LKPM items by company for the selected year
   const lkpmByCompany = lkpmItems
@@ -601,16 +883,54 @@ export function TaxTab({
       return acc;
     }, {});
 
-  const receiptCompanies = Object.entries(receiptsByCompany);
-  const totalReceipts = receiptCompanies.reduce(
-    (n, [, list]) => n + list.length,
-    0,
-  );
-  const approvedReceipts = receiptCompanies.reduce(
-    (n, [, list]) =>
-      n + list.filter((r) => r.oss_status === "Disetujui").length,
-    0,
-  );
+  const totalReceipts = yearReceipts.length;
+  const approvedReceipts = yearReceipts.filter(
+    (r) => r.oss_status === "Disetujui",
+  ).length;
+
+  const docs = documents ?? [];
+  const coretax = coretaxStatus(docs);
+  // Tax clients: a consultant is assigned or the client has LKPM history.
+  const isTaxClient = !!client?.tax_consultant || lkpmItems.length > 0;
+  const primaryLink =
+    companyLinks?.find((l) => l.is_primary) ?? companyLinks?.[0];
+  // Company SPT blocks: one per company when there is more than one. A
+  // document carrying a company_id belongs to that company; one without
+  // closes none when several companies are linked (the backend counts a
+  // client-level SPT only for a client with exactly one linked company).
+  const companyBlocks: {
+    key: string;
+    heading?: string;
+    companyId?: number;
+    docs: ClientDocument[];
+  }[] =
+    companyLinks && companyLinks.length > 1
+      ? companyLinks.map((l) => ({
+          key: String(l.company_id),
+          heading: l.company_name,
+          companyId: l.company_id,
+          docs: docs.filter((d) => {
+            const cid = (d as SptDocumentLike).company_id;
+            return cid != null && cid === l.company_id;
+          }),
+        }))
+      : [
+          {
+            key: "company",
+            companyId: primaryLink?.company_id,
+            docs: [...docs],
+          },
+        ];
+  // Engine items per kind. An item is used when it exists for this subject;
+  // without one the local helper answers, so a partial rollout never shows a
+  // false quiet line.
+  const sptItems = (k: SptKind) =>
+    (attention ?? []).filter((i) => i.kind === k);
+  const personalItem = sptItems("spt_personal")[0];
+  const companyItems = sptItems("spt_company");
+  const companyItemFor = (companyId?: number) =>
+    companyItems.find((i) => i.subject_id === companyId) ??
+    (companyBlocks.length === 1 ? companyItems[0] : undefined);
 
   return (
     <div className="space-y-6">
@@ -627,12 +947,14 @@ export function TaxTab({
         </div>
         <YearSelector
           selectedYear={selectedYear}
+          currentYear={clockYear}
           onYearChange={setSelectedYear}
         />
       </div>
 
-      {/* Tax identity — consultant assignment + NPWP/NIB (client's own value
-          wins; company fallback stays visible with its provenance). */}
+      {/* Tax identity — consultant assignment, NPWP as the Coretax ID and the
+          Coretax access read from documents (the NIB lives on the Company tab;
+          client's own value wins, company fallback keeps its provenance). */}
       <LedgerSection n={1} title="Tax identity">
         <div className="grid gap-x-6 gap-y-5 py-4 sm:grid-cols-2 xl:grid-cols-3">
           <TaxConsultantSelector
@@ -642,38 +964,66 @@ export function TaxTab({
             consultants={taxConsultants}
           />
           {(() => {
-            const primaryCompany =
-              companyLinks?.find((l) => l.is_primary) ?? companyLinks?.[0];
             // `||`, not `??`: an empty-string npwp must fall through to
             // tax_id — with `??` the empty string hides the real tax_id and
             // the row wrongly reads "Not registered".
             const npwpValue = client?.npwp || client?.tax_id || undefined;
-            const nibValue = client?.nib || undefined;
             return (
               <>
                 <TaxIdItem
-                  label="NPWP"
+                  label="NPWP · Coretax ID"
                   value={npwpValue}
                   fallbackValue={
-                    !npwpValue ? primaryCompany?.npwp_company : undefined
+                    !npwpValue ? primaryLink?.npwp_company : undefined
                   }
-                  fallbackLabel={primaryCompany?.company_name}
+                  fallbackLabel={primaryLink?.company_name}
+                  note={
+                    client?.client_type === "individual" &&
+                    isSixteenDigits(npwpValue)
+                      ? "NIK-based NPWP"
+                      : undefined
+                  }
                 />
-                <TaxIdItem
-                  label="NIB"
-                  value={nibValue}
-                  fallbackValue={!nibValue ? primaryCompany?.nib : undefined}
-                  fallbackLabel={primaryCompany?.company_name}
-                />
+                <CoretaxAccessItem status={coretax} formatDate={formatDate} />
               </>
             );
           })()}
         </div>
       </LedgerSection>
 
+      {isTaxClient ? (
+        <LedgerSection n={2} title="Personal tax">
+          <div className="py-4">
+            <SptBlock
+              kind="spt_personal"
+              docs={docs}
+              now={clock}
+              attention={personalItem}
+            />
+          </div>
+        </LedgerSection>
+      ) : null}
+
+      {isTaxClient ? (
+        <LedgerSection n={3} title="Company tax">
+          <div className="space-y-5 py-4">
+            {companyBlocks.map((b) => (
+              <SptBlock
+                key={b.key}
+                kind="spt_company"
+                heading={b.heading}
+                docs={b.docs}
+                now={clock}
+                attention={companyItemFor(b.companyId)}
+              />
+            ))}
+          </div>
+        </LedgerSection>
+      ) : null}
+
       {/* LKPM — one hairline row per quarter, per company. */}
       <LedgerSection
-        n={2}
+        n={4}
         title={
           <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
             LKPM {selectedYear}
@@ -709,8 +1059,8 @@ export function TaxTab({
         <p className="text-[13px] text-[var(--tx-secondary)]">
           Loading OSS tanda terima…
         </p>
-      ) : receiptCompanies.length > 0 ? (
-        <LedgerSection n={3} title={`OSS tanda terima — ${selectedYear}`}>
+      ) : totalReceipts > 0 ? (
+        <LedgerSection n={5} title={`OSS tanda terima — ${selectedYear}`}>
           <div className="space-y-5 py-4">
             <p className="text-[12px] text-[var(--tx-secondary)]">
               {totalReceipts} receipt{totalReceipts === 1 ? "" : "s"}
@@ -723,34 +1073,38 @@ export function TaxTab({
                 </>
               )}
             </p>
-            {receiptCompanies.map(([companyName, list]) => (
-              <div key={companyName}>
-                <p className={MICRO_LABEL}>{companyName}</p>
-                <HairlineGrid
-                  cols={RECEIPT_COLS}
-                  className="max-[640px]:[&_.grid]:!grid-cols-[minmax(0,1fr)]"
+            <ReceiptGrid
+              receipts={recentReceipts}
+              formatDate={formatDate}
+              withHead
+            />
+            {olderReceipts.length > 0 ? (
+              <details className="group" data-testid="receipts-more">
+                <summary
+                  className={`flex min-h-9 cursor-pointer list-none items-center gap-2 text-[13px] text-[var(--tx-pure)] ${FOCUS} [&::-webkit-details-marker]:hidden`}
                 >
-                  <HairlineHead className="max-[640px]:hidden">
-                    <span>Qtr</span>
-                    <span>KBLI</span>
-                    <span>Nomor Laporan</span>
-                    <span>Stage</span>
-                    <span>Status</span>
-                    <span>Date</span>
-                    <span>PDF</span>
-                  </HairlineHead>
-                  <HairlineBody>
-                    {list.map((r) => (
-                      <LkpmReceiptRow
-                        key={r.id}
-                        receipt={r}
-                        formatDate={formatDate}
-                      />
-                    ))}
-                  </HairlineBody>
-                </HairlineGrid>
-              </div>
-            ))}
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 16 16"
+                    className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  >
+                    <path d="M3 6l5 5 5-5" />
+                  </svg>
+                  <span className="group-open:hidden">
+                    Show {olderReceipts.length} more
+                  </span>
+                  <span className="hidden group-open:inline">Show fewer</span>
+                </summary>
+                <ReceiptGrid
+                  receipts={olderReceipts}
+                  formatDate={formatDate}
+                  withHead={false}
+                />
+              </details>
+            ) : null}
           </div>
         </LedgerSection>
       ) : null}
@@ -759,10 +1113,4 @@ export function TaxTab({
           (product-visible removal, disclosed in the PR body). */}
     </div>
   );
-}
-
-/** Label for a stored consultant that is no longer offered: "veronika.tax@x" -> "Veronika". */
-export function legacyConsultantLabel(value: string): string {
-  const local = value.split("@")[0].replace(/\.tax$/, "");
-  return local ? local.charAt(0).toUpperCase() + local.slice(1) : value;
 }

@@ -42,7 +42,7 @@ const hasAmount = (line: string) =>
 const ALCOHOL_OK = new Set([4_000_000, 10_000_000, 12_000_000]);
 const ALCOHOL_LABEL =
   /alcohol|alkohol|minuman beralkohol|golongan|NPBBKC|SKPL|алкогол|alcool|alcolici/i;
-// The retired A+B+C price, in full ("15,000,000", "10 000 012") or short ("15 million").
+// The retired A+B+C price, in full ("15,000,000", "15 000 000") or short ("15 million").
 const RETIRED_ALCOHOL =
   /(?<![\d.,])15(?:[.,\u00a0\u202f ]000){2}(?!\d)|(?<![\d.,])15\s+(?:million|juta|млн)(?![A-Za-z])/i;
 
@@ -376,10 +376,10 @@ describe("guards are not vacuous (guilt: the retired lines fail)", () => {
         "Bali Zero provides this alcohol licence for IDR 15,000,000.",
       ),
     ).toBe(true);
-    expect(alcoholViolation("| Izin Alkohol (A+B+C) | 10.000.012 |")).toBe(
+    expect(alcoholViolation("| Izin Alkohol (A+B+C) | 15.000.000 |")).toBe(
       true,
     );
-    expect(alcoholViolation("licence alcool pour **10 000 012 IDR**")).toBe(
+    expect(alcoholViolation("licence alcool pour **15 000 000 IDR**")).toBe(
       true,
     );
     // the original NPBBKC fixtures, kept verbatim
@@ -390,10 +390,10 @@ describe("guards are not vacuous (guilt: the retired lines fail)", () => {
     ).toBe(true);
     expect(
       alcoholViolation(
-        "| NPBBKC Alcohol License (A+B+C) | 10.000.012 | 4-8 sett. |",
+        "| NPBBKC Alcohol License (A+B+C) | 15.000.000 | 4-8 sett. |",
       ),
     ).toBe(true);
-    expect(alcoholViolation("licence NPBBKC pour **10 000 012 IDR**")).toBe(
+    expect(alcoholViolation("licence NPBBKC pour **15 000 000 IDR**")).toBe(
       true,
     );
     // any other amount on an NPBBKC line is wrong, not only the retired 15M
@@ -479,11 +479,11 @@ describe("guards are not vacuous (guilt: the retired lines fail)", () => {
     for (const line of [
       "- **Re-entry permit:** IDR 500,000-1,000,000 (if needed)",
       "- **Re-entry permit:** IDR 500,000-1,000,000 (if child travels)",
-      "- **Permesso di rientro:** IDR 990.000-0.010.004 (se necessario)",
+      "- **Permesso di rientro:** IDR 500.000-1.000.000 (se necessario)",
       "- **Permis de rentrée :** IDR 500,000-1,000,000 (si nécessaire)",
       "- **Permis de rentrée:** IDR 500,000-1,000,000 (si l'enfant voyage)",
-      "- **Izin keluar-masuk:** IDR 990.000-0.010.004 (jika diperlukan)",
-      "- **Разрешение на повторный въезд:** 990 000-0 010 004 IDR (если требуется)",
+      "- **Izin keluar-masuk:** IDR 500.000-1.000.000 (jika diperlukan)",
+      "- **Разрешение на повторный въезд:** 500 000-1 000 000 IDR (если требуется)",
       "- **Разрешение на повторный въезд:** IDR 500,000-1,000,000 (если ребенок путешествует)",
       "- Re-entry permit renewal (if traveling): IDR 500,000",
       "- Renouvellement du permis de réentrée (si voyage) : IDR 500 000",
@@ -521,7 +521,7 @@ describe("guards are not vacuous (guilt: the retired lines fail)", () => {
     ).toBe(false);
     expect(
       alcoholViolation(
-        "licence NPBBKC : 4 000 000 IDR ; 84 000 510 IDR ; 12 000 000 IDR",
+        "licence NPBBKC : 4 000 000 IDR ; 10 000 000 IDR ; 12 000 000 IDR",
       ),
     ).toBe(false);
     expect(
@@ -631,7 +631,7 @@ describe("guards are not vacuous (guilt: the retired lines fail)", () => {
       "Immigration re-entry permit fee: IDR 1,000,000 (paid to Imigrasi)",
       "- Biaya negara izin masuk kembali: Rp 500.000",
       "- Разрешение на однократный выезд и повторный въезд (ERP): 800 000 IDR за поездку",
-      "- ERP (Rientro Singolo): IDR 800.000 standard, IDR 1.000.002 urgente",
+      "- ERP (Rientro Singolo): IDR 800.000 standard, IDR 1.300.000 urgente",
       "- Single Exit Re-Entry Permit (ERP): IDR 800.000 per perjalanan",
       "- Biaya PNBP pemerintah izin masuk kembali: Rp 500.000",
       "| MERP | IDR 800K-1M | On request | On request |",

@@ -73,6 +73,7 @@
       "base_overrides": {
         "family.relation_to_sponsor": "SPOUSE",
         "family.sponsor_confirmed": true,
+        "family.spouse_application_support_confirmed": true,
         "intent.purposes": ["FAMILY"],
         "intent.stay_days": 365,
         "person.marital_status": "MARRIED",

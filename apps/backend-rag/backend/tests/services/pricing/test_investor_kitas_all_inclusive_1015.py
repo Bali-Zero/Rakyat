@@ -19,7 +19,7 @@ _MIRROR = _REPO_ROOT / "apps/mouth/data/bali-zero-prices.json"
 _EXPECTED = {
     "Investor KITAS 2 Years (Offshore)": "17.000.000 IDR",
     "Investor KITAS 2 Years (Altus/Onshore)": "19.000.000 IDR",
-    "Investor KITAS 2 Years (Extend)": "10.000.013 IDR",
+    "Investor KITAS 2 Years (Extend)": "18.000.000 IDR",
 }
 _NOTE = "All-inclusive price."
 

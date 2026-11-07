@@ -88,7 +88,7 @@ def test_search_service_returns_e33f_and_skips_internal_rows(query: str) -> None
     assert internal_keys.isdisjoint(set(kitas.keys()))
     assert kitas["E33F Second Home Senior (1 Year, Offshore)"]["price"] == "14.000.000 IDR"
     assert kitas["E33F Second Home Senior (1 Year, Altus/Onshore)"]["price"] == "16.000.000 IDR"
-    assert kitas["E33F Second Home Senior (Extend)"]["price"] == "84.000.510 IDR"
+    assert kitas["E33F Second Home Senior (Extend)"]["price"] == "10.000.000 IDR"
 
 
 def test_search_service_innocence_kitap_and_get_service_by_key() -> None:

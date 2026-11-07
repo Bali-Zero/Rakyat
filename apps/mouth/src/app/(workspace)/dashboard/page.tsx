@@ -5,7 +5,7 @@
  * (R19-KITA-20260914/fusion/concept.md §2 "02 Dashboard").
  *
  * A live operations ledger, not a set of cards: the page opens on a 40px
- * Fraunces masthead, then numbered hairline sections in the order the fusion
+ * Plex masthead, then numbered hairline sections in the order the fusion
  * freezes and §7 forbids reordering — Portal Champion (where PR #6483 shipped
  * it), Zantara, the action margin, the KPI band, team activity, ops, and the
  * pipeline / intelligence / role triple.

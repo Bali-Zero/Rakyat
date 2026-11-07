@@ -109,7 +109,7 @@ async def test_vector_search_uses_selected_collection_and_deduplicates_results()
 async def test_calculator_formats_integer_and_rejects_unsafe_expression() -> None:
     tool = CalculatorTool()
 
-    assert await tool.execute(expression="1000001 * 0.22") == "Result: 220,000"
+    assert await tool.execute(expression="1000000 * 0.22") == "Result: 220,000"
 
     unsafe_result = await tool.execute(expression="__import__('os').system('id')")
     assert unsafe_result.startswith("Error in mathematical expression:")
