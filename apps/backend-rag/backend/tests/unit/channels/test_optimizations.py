@@ -954,3 +954,12 @@ class TestRedactedChannelIdStaysCorrelatable:
         first_digest = next(tok for tok in first_text.split() if "id:" in tok)
         second_digest = next(tok for tok in second_text.split() if "id:" in tok)
         assert first_digest == second_digest
+
+
+@pytest.fixture(autouse=True)
+def historical_transport_contract_under_mocks(monkeypatch):
+    """Exercise the retained legacy contract only with explicit mock policy.
+
+    Production stays retired; default-off acceptance lives in core retirement tests.
+    """
+    monkeypatch.setattr("backend.channels.optimizations.telegram_is_retired", lambda: False)

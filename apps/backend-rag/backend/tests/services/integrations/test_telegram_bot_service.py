@@ -246,3 +246,9 @@ async def test_callback_file_download_and_edit_methods() -> None:
     assert client.gets[0]["url"] == (
         "https://api.telegram.org/file/bottelegram-token/docs/file.pdf"
     )
+
+
+@pytest.fixture(autouse=True)
+def legacy_mock_transport_contract(monkeypatch):
+    """Retained protocol code under test doubles; not the production policy."""
+    monkeypatch.setattr("backend.services.integrations.telegram_bot_service.telegram_is_retired", lambda: False)

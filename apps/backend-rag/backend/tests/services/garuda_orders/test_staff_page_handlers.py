@@ -1895,3 +1895,9 @@ _STAFF_PAGE_CLASSES = [
 def test_every_staff_page_survives_markdown_parsing(cls):
     text = cls(None, None)._compose(_anomaly_facts())
     assert _markdown_leftovers(text) == [], f"{cls.job_type}: {_markdown_leftovers(text)}"
+
+
+@pytest.fixture(autouse=True)
+def legacy_mock_transport_contract(monkeypatch):
+    """Retained protocol code under test doubles; not the production policy."""
+    monkeypatch.setattr("backend.services.wa_copilot.telegram_notifier.telegram_is_retired", lambda: False)

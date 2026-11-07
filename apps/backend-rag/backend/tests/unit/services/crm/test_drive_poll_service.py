@@ -740,3 +740,12 @@ class TestInferDocumentTypeFolderMap:
 
     def test_profile_perseroan_folder(self) -> None:
         assert _infer_document_type("file.pdf", "profile perseroan") == "profile_perseroan"
+
+
+@pytest.fixture(autouse=True)
+def historical_transport_contract_under_mocks(monkeypatch):
+    """Exercise the retained legacy contract only with explicit mock policy.
+
+    Production stays retired; default-off acceptance lives in core retirement tests.
+    """
+    monkeypatch.setattr("backend.services.crm.drive_poll_service.telegram_is_retired", lambda: False)

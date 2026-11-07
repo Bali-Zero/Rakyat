@@ -390,3 +390,9 @@ class TestEditMessageText:
             ms.telegram_bot_token = None
             with pytest.raises(ValueError):
                 await service.edit_message_text(chat_id=123, message_id=456, text="x")
+
+
+@pytest.fixture(autouse=True)
+def legacy_mock_transport_contract(monkeypatch):
+    """Retained protocol code under test doubles; not the production policy."""
+    monkeypatch.setattr("backend.services.integrations.telegram_bot_service.telegram_is_retired", lambda: False)

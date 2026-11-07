@@ -89,6 +89,8 @@ from typing import Any
 
 import asyncpg
 
+from backend.core.telegram_retirement import telegram_is_retired
+
 logger = logging.getLogger("garuda.orders.outbox_consumer")
 
 OUTBOX_TABLE = "garuda_order_outbox"
@@ -97,6 +99,17 @@ DEFAULT_BATCH_SIZE = 20
 DEFAULT_MAX_ATTEMPTS = 5
 
 KILL_SWITCH_ENV = "GARUDA_OUTBOX_CONSUMER_ENABLED"
+
+# Owner-retired transport. Original jobs remain durable and undispatched for
+# internal attention, without using retry attempts or starving customer emails.
+RETIRED_TELEGRAM_JOB_TYPES = (
+    "staff_page_duplicate_charge",
+    "staff_page_late_paid_after_refund",
+    "staff_page_late_paid_after_terminal",
+    "staff_page_charge_without_webhook",
+    "staff_page_payment_failure",
+    "staff_page_refund_out_of_order",
+)
 
 
 def is_consumer_enabled(env: dict[str, str] | None = None) -> bool:
@@ -185,6 +198,7 @@ async def _claim_one(
                  WHERE c.dispatched_at IS NULL
                    AND c.attempts < $1
                    AND NOT (c.id = ANY($2::bigint[]))
+                   AND NOT (c.job_type = ANY($3::text[]))
                  ORDER BY c.created_at ASC, c.id ASC
                  LIMIT 1
                  FOR UPDATE SKIP LOCKED
@@ -194,6 +208,7 @@ async def _claim_one(
         """,
         max_attempts,
         exclude_ids,
+        list(RETIRED_TELEGRAM_JOB_TYPES) if telegram_is_retired() else [],
     )
 
 
@@ -340,6 +355,8 @@ async def count_undrained(
     row = await conn.fetchrow(
         f"""
         SELECT
+            count(*) FILTER (WHERE dispatched_at IS NULL
+                               AND job_type = ANY($2::text[]))          AS retired_internal_attention,
             count(*) FILTER (WHERE dispatched_at IS NULL)             AS undispatched,
             count(*) FILTER (WHERE dispatched_at IS NULL
                                AND attempts >= $1)                     AS exhausted,
@@ -352,6 +369,7 @@ async def count_undrained(
           FROM {OUTBOX_TABLE}
         """,
         max_attempts,
+        list(RETIRED_TELEGRAM_JOB_TYPES) if telegram_is_retired() else [],
     )
     if row is None:
         # A bare aggregate SELECT always returns exactly one row, so this is
@@ -363,7 +381,14 @@ async def count_undrained(
             f"aggregate SELECT over {OUTBOX_TABLE} returned no row; "
             "the database did not answer a query that cannot be empty"
         )
-    return {k: int(v) for k, v in dict(row).items()}
+    counts = {k: int(v) for k, v in dict(row).items()}
+    if counts.get("retired_internal_attention", 0):
+        logger.warning(
+            "GARUDA retired Telegram work held for internal attention: count=%d; "
+            "rows remain undispatched and retry attempts are unchanged",
+            counts["retired_internal_attention"],
+        )
+    return counts
 
 
 __all__ = [

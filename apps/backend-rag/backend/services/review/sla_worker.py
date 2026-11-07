@@ -68,8 +68,8 @@ class SLAWorker:
     def __init__(
         self,
         repo: WarRoomRepository,
-        telegram: TelegramReviewAdapter,
-        owner_chat_id: str | int,
+        telegram: TelegramReviewAdapter | None = None,
+        owner_chat_id: str | int = "",
         *,
         soft_threshold_h: int = SOFT_ALERT_AFTER_HOURS,
         repeat_threshold_h: int = REPEAT_ALERT_AFTER_HOURS,
@@ -102,6 +102,9 @@ class SLAWorker:
                 if age >= self.expire_threshold:
                     await self._expire(draft)
                     result.expired_count += 1
+                    continue
+                if self.telegram is None:
+                    # Retired alert transport: leave review visible, retain expiry.
                     continue
                 if age >= self.repeat_threshold:
                     if self._needs_repeat_alert(draft, now):
@@ -203,6 +206,8 @@ class SLAWorker:
             RejectedBy.SYSTEM,
             reason_detail=f"SLA expired after {int(self.expire_threshold.total_seconds() // 3600)}h",
         )
+        if self.telegram is None:
+            return
         await self.telegram.send_message(
             chat_id=self.owner_chat_id,
             text=(

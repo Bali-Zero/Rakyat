@@ -334,3 +334,12 @@ async def test_mode_change_happy_path(mock_db_pool, admin_env, monkeypatch) -> N
     handled = await handle_fad_callback(cq, pool=pool, bot_token="t")
     assert handled is True
     conn.execute.assert_awaited_once()
+
+
+@pytest.fixture(autouse=True)
+def historical_transport_contract_under_mocks(monkeypatch):
+    """Exercise the retained legacy contract only with explicit mock policy.
+
+    Production stays retired; default-off acceptance lives in core retirement tests.
+    """
+    monkeypatch.setattr("backend.services.federation_alerts.webhook.telegram_is_retired", lambda: False)
