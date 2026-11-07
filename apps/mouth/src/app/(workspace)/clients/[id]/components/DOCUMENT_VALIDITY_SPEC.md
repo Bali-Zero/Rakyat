@@ -1,4 +1,4 @@
-# documentValidity(doc): one validity model for the kita client card, spec v3.2
+# documentValidity(doc): one validity model for the kita client card, spec v3.3
 
 Status: **proposed, gated before code** (orchestrator ruling 2026-11-05). The
 implementation lands in the same PR after this spec's gate; the final head gets its own
@@ -29,7 +29,7 @@ v2 kept **two days and two parsers**:
 
 ## Problem (measured on Rakyat main d8ff719b)
 
-The card decides document validity in the 35 rows of the surface table below. It uses
+The card decides document validity in the 36 rows of the surface table below. It uses
 four calculation families. Exactly one surface reads `status`: `DocumentsTab.tsx:70-73`,
 only to choose the Valid / Rejected pill. No other surface reads it when deciding validity.
 
@@ -334,13 +334,14 @@ precedence.
 | 26 | Family void documents | `.find()` may show one | Not shown on members; signpost. |
 | 27 | Overview family rows (`OverviewTab.tsx:455-466`) | Member fields only; enums | The same `familyPermit` / `familyPassport` result as row 25. |
 | 28 | ProcessTab practice chip (`ProcessTab.tsx:370-390`) | ceil; windows `< 0`, `0..14`, `15..30`; `alert_color` beyond; superseded neutral | A practice, not a document: no liveness, no `dateValidity` state. **Only the count changes** to `dayNumber(expiry) − dayNumber(day)` under the date grammar, with the formatter. Windows, `alert_color` fallback, superseded-first precedence and labels are unchanged. A null date shows no chip. |
-| 29 | Tax SPT "Filed" (`sptFilings`) and the SPT year clock (`TaxTab.tsx:84`, `:821`, `:884` → `:991`, `:1007` → `sptStatus` `:341`) | Excludes archived, removed; the year and clock come from the browser (`new Date()`) | Requires `live`. **Decided:** filed / overdue depends on the current year, so it is a validity decision and uses the card's day like every other validity module. `TaxTab` receives the card's day (`as_of`). The year selector, the initial selected year and the `now` handed to `sptStatus` derive from it: the `now` is a `Date` built from the day at 00:00 WITA. The `new Date()` calls at `:84`, `:821` and `:884` go, and so does the default `now: Date = new Date()` in `tax-deadlines.ts:135`. The `now` prop stays as the test seam. |
+| 29 | Tax SPT "Filed" (`sptFilings`) and the SPT year clock (`TaxTab.tsx:84`, `:821`, `:884` → `:991`, `:1007` → `sptStatus` `:341`) | Excludes archived, removed; the year and clock come from the browser (`new Date()`) | Requires `live`. **Decided:** filed / overdue depends on the current year, so it is a validity decision and uses the card's day like every other validity module. `TaxTab` receives the card's day (`as_of`). The year selector, the initial selected year and the `now` handed to `sptStatus` derive from it: the `now` is a `Date` built from the day at 00:00 WITA. The `new Date()` calls at `:84`, `:821` and `:884` go, and so does the default `now: Date = new Date()` in `tax-deadlines.ts:135`. The `now` prop stays as the test seam. **Side effect, stated:** the same `selectedYear` also filters the LKPM items and the OSS receipts (`TaxTab.tsx:858`, `:869`), so deriving the year from `as_of` changes those lists too, not only the SPT status. |
 | 30 | Coretax / EFIN on file (`coretax.ts:37`) | Excludes archived, removed | Requires `live`. |
 | 31 | `companyDocumentToClientDocument` | Forces `is_archived: false`, `deleted_at: null` | Maps `status` as received; Rule L reads it. (Today all are `active`.) |
 | 32 | Company vault slots | Drive id present | Filled only by a live document. A void PMA document gets the signpost. |
 | 33 | "N documents on file" (`CompanyTab.tsx:584`, `CompanyIdentity.tsx:127`) | Every document | Holding count: live only. |
 | 34 | `FilesBrowserPanel` | Drive folder listing | Out of the promise (see Visibility). Unchanged. |
 | 35 | AiSummaryCard (server L1 summary) | Server | Unchanged; it does not read documents. |
+| 36 | "N company documents on file" (`OverviewTab.tsx:535-544`, testid `company-docs-count`) | `stats.company_documents_count` from the backend | Unchanged. The count is already filtered at the source on `cd.status = 'active'` (`crm_enhanced.py:1307`, counted at `:1363`). The card applies no liveness of its own. Outside the mutant set. |
 
 ## Not in scope
 
@@ -464,13 +465,18 @@ precedence.
       formatter timezone).
     - **Shared-seam mutant:** the `live` field of `documentValidity` (Rule L), mutated once.
       A survivor is attributed to every surface-table row that consumes the model: rows 3,
-      4, 5, 6, 7, 9, 15, 16, 17, 20, 21, 25, 27 and 31.
+      4, 5, 6, 7, 9, 15, 16, 17, 20, 21, 25 and 27. Rows 18 and 19 also sit here: today
+      their liveness comes from the selection upstream, and this spec prescribes no guard of
+      their own for them. Row 24's empty state is not here: see the outside list.
     - **Own-guard mutants:** one per row that has its own liveness guard at its own site,
-      removing that guard: rows 1, 2, 13, 14, 18, 19, 22, 23, 24, 26, 29, 30, 32 and 33.
+      removing that guard: rows 1, 2, 13, 14, 22, 23, 26, 29, 30, 32 and 33.
     - **Outside the set, by row number:** 8 (server rows rendered as sent), 10 (numerals),
       11 (ValidityTrack, covered by its clamp rule mutant), 12 (urgency, covered by its rule
-      mutant), 28 (a practice, no liveness, row 28), 34 (out of the promise) and 35
-      (unchanged).
+      mutant), 24 (row-selection consequence, no liveness guard: `DocumentsTab.tsx:228`
+      `documents.length === 0` shows the empty state only when no row exists), 28 (a practice,
+      no liveness), 31 (an adapter that carries `status`; the liveness is downstream in
+      rows 29 and 30), 34 (out of the promise), 35 (unchanged) and 36 (backend count,
+      filtered at the source).
 
     **Survivor rule.** Any survivor in this set is a FAIL of the final gate, with no
       equivalent-mutant exception. A mutant outside the set may be named in the PR body with
