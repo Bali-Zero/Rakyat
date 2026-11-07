@@ -542,7 +542,7 @@ class GitHubPublisher:
                 "branch": head_branch,
                 "pull_request_url": existing_pr.get("html_url"),
                 "pull_request_number": existing_pr.get("number"),
-                "auto_merge_enabled": existing_pr.get("state") == "open",
+                "auto_merge_enabled": False,
                 "idempotent": True,
             }
 
@@ -559,7 +559,7 @@ class GitHubPublisher:
             f"{message}\n\n"
             f"{self._fingerprint_marker(publication_fingerprint)}\n\n"
             "Auto-opened by Article Composer (News Room publish). "
-            "Auto-merge enabled — merges once required checks pass."
+            "Merged by pro.rakyat_editorial_merger once its required checks pass."
         )
         pr = await self._create_pull_request(
             head_branch=head_branch,
@@ -567,7 +567,6 @@ class GitHubPublisher:
             title=pr_title,
             body=pr_body,
         )
-        auto_merge_enabled = await self._enable_auto_merge(pr["node_id"])
         return {
             "success": True,
             "commit_sha": branch_sha,
@@ -575,58 +574,9 @@ class GitHubPublisher:
             "branch": head_branch,
             "pull_request_url": pr["html_url"],
             "pull_request_number": pr["number"],
-            "auto_merge_enabled": auto_merge_enabled,
+            "auto_merge_enabled": False,
             "idempotent": True,
         }
-
-    async def _enable_auto_merge(self, pr_node_id: str) -> bool:
-        """
-        Enable auto-merge (squash) on a PR via the GraphQL API.
-
-        Once the branch protection's required status checks pass, GitHub
-        merges the PR automatically — no human intervention. Best-effort:
-        if auto-merge cannot be enabled (e.g. the repo setting is off), the
-        PR is still open and mergeable manually, so we log and return False
-        rather than raising.
-
-        Args:
-            pr_node_id: The PR's GraphQL ``node_id``.
-
-        Returns:
-            True if auto-merge was enabled, False otherwise.
-        """
-        client = self._get_client()
-        graphql_url = f"{self.BASE_URL}/graphql"
-        mutation = (
-            "mutation($id:ID!){enablePullRequestAutoMerge"
-            "(input:{pullRequestId:$id,mergeMethod:SQUASH})"
-            "{pullRequest{autoMergeRequest{enabledAt}}}}"
-        )
-        try:
-            response = await client.post(
-                graphql_url,
-                headers=self._get_headers(),
-                json={"query": mutation, "variables": {"id": pr_node_id}},
-                timeout=30.0,
-            )
-        except httpx.HTTPError as exc:
-            logger.warning("Auto-merge request failed (non-blocking): %s", exc)
-            return False
-        if response.status_code != 200:
-            logger.warning(
-                "Auto-merge not enabled (HTTP %s, non-blocking): %s",
-                response.status_code,
-                response.text,
-            )
-            return False
-        payload = response.json()
-        if payload.get("errors"):
-            logger.warning(
-                "Auto-merge not enabled (GraphQL errors, non-blocking): %s",
-                payload["errors"],
-            )
-            return False
-        return True
 
     async def create_commit_with_files(
         self,
@@ -651,15 +601,15 @@ class GitHubPublisher:
           unprotected.
         - ``pull_request=True``: the commit is placed on a fresh branch
           (``{pr_branch_prefix}/<short-sha>``), a PR into ``branch`` is
-          opened and auto-merge (squash) is enabled. This is the correct
-          path for protected branches (e.g. ``main`` with required status
-          checks), which reject direct pushes with HTTP 422.
+          opened and left for ``pro.rakyat_editorial_merger``, the only merger
+          of these PRs. GitHub auto-merge is never requested: Rakyat ``main``
+          has no required check, so it would merge before the checks finish.
 
         Args:
             files: List of dicts with 'path' and 'content' keys
             message: Commit message
             branch: Target branch (default: main)
-            pull_request: If True, publish via branch + PR + auto-merge.
+            pull_request: If True, publish via branch + PR.
             pr_branch_prefix: Prefix for the temporary PR branch name.
             idempotency_key: Stable publication identity used to resume one PR.
             must_not_exist_paths: Paths that must be absent from the exact base
@@ -670,7 +620,7 @@ class GitHubPublisher:
         Returns:
             Commit info. When ``pull_request=True`` also includes
             ``pull_request_url``, ``pull_request_number`` and
-            ``auto_merge_enabled``.
+            ``auto_merge_enabled``, always False, kept for the routers' responses.
         """
         if not self.is_configured:
             raise GitHubPublisherError("GitHub API not configured")
@@ -903,8 +853,7 @@ class GitHubPublisher:
 
         if pull_request:
             # Step 6 (PR path): land the commit on a fresh branch, then open a
-            # PR into `branch` with auto-merge. Required for protected branches
-            # (direct ref update returns HTTP 422).
+            # PR into `branch`, which pro.rakyat_editorial_merger merges.
             pr_branch = deterministic_branch or f"{pr_branch_prefix}/{new_commit_sha[:12]}"
             logger.debug("Step 6/6 (PR): creating branch '%s' + pull request", pr_branch)
             await self._create_branch_ref(pr_branch, new_commit_sha)
@@ -913,7 +862,7 @@ class GitHubPublisher:
                 f"{message}\n\n"
                 f"{self._fingerprint_marker(publication_fingerprint)}\n\n"
                 "Auto-opened by Article Composer (News Room publish). "
-                "Auto-merge enabled — merges once required checks pass."
+                "Merged by pro.rakyat_editorial_merger once its required checks pass."
             )
             try:
                 pr = await self._create_pull_request(
@@ -936,17 +885,15 @@ class GitHubPublisher:
                     if resumed is not None:
                         return resumed
                 raise
-            auto_merge_enabled = await self._enable_auto_merge(pr["node_id"])
 
             elapsed_ms = (time.time() - start_time) * 1000
             logger.info(
                 f"Article PR opened: #{pr['number']} {new_commit_sha[:7]} "
-                f"({len(files)} files, auto_merge={auto_merge_enabled}, {elapsed_ms:.0f}ms)",
+                f"({len(files)} files, {elapsed_ms:.0f}ms)",
                 extra={
                     "commit_sha": new_commit_sha,
                     "pull_request_number": pr["number"],
                     "pr_branch": pr_branch,
-                    "auto_merge_enabled": auto_merge_enabled,
                     "files_count": len(files),
                     "elapsed_ms": elapsed_ms,
                 },
@@ -958,7 +905,7 @@ class GitHubPublisher:
                 "branch": pr_branch,
                 "pull_request_url": pr["html_url"],
                 "pull_request_number": pr["number"],
-                "auto_merge_enabled": auto_merge_enabled,
+                "auto_merge_enabled": False,
             }
 
         # Step 6 (direct path): update branch reference (unprotected branches).
