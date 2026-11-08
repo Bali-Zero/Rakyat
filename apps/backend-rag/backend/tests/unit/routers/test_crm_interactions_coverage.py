@@ -386,7 +386,8 @@ def test_create_interaction_from_conversation_happy_path(client, mock_db_conn):
     interaction_row = MagicMock()
     interaction_row.__getitem__ = lambda self, k: {"id": 99}[k]
 
-    mock_db_conn.fetchrow.side_effect = [client_row, conv_row, interaction_row]
+    # the conversation is read first, before any client get-or-create
+    mock_db_conn.fetchrow.side_effect = [conv_row, client_row, interaction_row]
 
     with patch("backend.app.routers.crm_interactions.invalidate_cache", new=AsyncMock()):
         response = client.post(

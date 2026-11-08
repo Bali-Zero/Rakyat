@@ -7,6 +7,7 @@ innocence case (the owner asks).
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 from collections.abc import AsyncIterator
@@ -77,7 +78,8 @@ async def pool(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[asyncpg.Pool]:
                         last_interaction_date timestamptz
                     );
                     CREATE TABLE interactions (
-                        id SERIAL PRIMARY KEY, client_id int, conversation_id int,
+                        id SERIAL PRIMARY KEY, client_id int,
+                        conversation_id int REFERENCES conversations(id) ON DELETE SET NULL,
                         interaction_type text, channel text, summary text,
                         full_content text, team_member text, direction text,
                         interaction_date timestamptz
@@ -167,6 +169,8 @@ async def test_web_user_with_wa_session_id_leaves_the_whatsapp_row_alone(pool) -
 async def test_get_messages_is_bound_to_the_owner(pool) -> None:
     await seed(pool, ALICE, "s-get", ALICE_MSG)
     repo = ConversationRepository(pool)
+    # on the unbound signature the owner cannot even be passed
+    assert "user_id" in inspect.signature(repo.get_messages).parameters
     assert await repo.get_messages("s-get", BOB) == []
     assert await repo.get_messages("s-get", ALICE) == ALICE_MSG
 
@@ -273,14 +277,70 @@ async def import_content(pool, conversation_id: int, user: dict, team_member: st
     )
 
 
+async def crm_counts(pool) -> tuple[int, int]:
+    return (
+        await pool.fetchval("SELECT count(*) FROM clients"),
+        await pool.fetchval("SELECT count(*) FROM interactions"),
+    )
+
+
+async def refused_status(pool, conversation_id: int, user: dict, team_member: str) -> int:
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as caught:
+        await import_content(pool, conversation_id, user, team_member)
+    assert caught.value.detail == "Conversation not found"
+    return caught.value.status_code
+
+
 @pytest.mark.asyncio
-async def test_crm_import_non_owner_gets_empty_owner_and_admin_get_transcript(pool) -> None:
+async def test_crm_import_non_owner_gets_404_and_creates_nothing(pool) -> None:
     conv_id = await seed(pool, ALICE, "s-crm", ALICE_MSG)
-    assert await import_content(pool, conv_id, {"email": BOB, "role": "member"}, BOB) == ""
+    member_bob = {"email": BOB, "role": "member"}
+    assert await refused_status(pool, conv_id, member_bob, BOB) == 404
+    assert await crm_counts(pool) == (0, 0)  # no prospect auto-created
+    # a missing id is the same answer, for a member and for an admin
+    assert await refused_status(pool, conv_id + 999, member_bob, BOB) == 404
+    assert await refused_status(pool, conv_id + 999, {"email": BOB, "role": "admin"}, BOB) == 404
+    assert await crm_counts(pool) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_crm_import_owner_and_admin_get_the_transcript(pool) -> None:
+    conv_id = await seed(pool, ALICE, "s-crm-ok", ALICE_MSG)
     owner = await import_content(pool, conv_id, {"email": ALICE, "role": "member"}, ALICE)
     assert owner == "USER: alice private text"
     admin = await import_content(pool, conv_id, {"email": BOB, "role": "admin"}, BOB)
     assert admin == "USER: alice private text"
+    # the real FK is in force: deleting the conversation nulls the link, keeps the interaction
+    await pool.execute("DELETE FROM conversations WHERE id = $1", conv_id)
+    assert await pool.fetchval("SELECT count(*) FROM interactions") == 2
+    assert (
+        await pool.fetchval("SELECT count(*) FROM interactions WHERE conversation_id IS NULL") == 2
+    )
+
+
+@pytest.mark.asyncio
+async def test_crm_import_member_without_token_email_is_403_before_any_db_work() -> None:
+    from fastapi import HTTPException
+
+    from backend.app.routers.crm_interactions import create_interaction_from_conversation
+
+    class NoDatabase:
+        def acquire(self):
+            raise AssertionError("database touched")
+
+    for user in ({"role": "member"}, {"email": None, "role": "member"}, {"email": ""}):
+        with pytest.raises(HTTPException) as caught:
+            await create_interaction_from_conversation(
+                conversation_id=1,
+                client_email="client@example.test",
+                team_member="",
+                summary=None,
+                current_user=user,
+                db_pool=NoDatabase(),
+            )
+        assert caught.value.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -346,3 +406,73 @@ async def test_neural_pulse_last_activity_carries_no_session_id() -> None:
         result = await get_neural_pulse(db_pool=pool)
     assert result["last_activity"] == "Last chat recorded"
     assert PHONE not in json.dumps(result) and "wa_session" not in json.dumps(result)
+
+
+# ------------------------------------------- Telegram / Instagram readers (G1)
+
+
+@pytest.mark.asyncio
+async def test_telegram_and_instagram_never_serve_a_web_look_alike(pool) -> None:
+    from backend.app.routers.instagram_chat import (
+        get_instagram_conversations,
+        get_instagram_messages,
+    )
+    from backend.app.routers.telegram import get_telegram_conversations, get_telegram_messages
+
+    await seed(pool, ALICE, "tg_session_77", ALICE_MSG)
+    await seed(pool, ALICE, "ig_session_88", ALICE_MSG)
+    assert await get_telegram_messages("77", 100, pool) == []
+    assert await get_telegram_conversations(50, 0, pool) == []
+    assert await get_instagram_messages("88", 100, pool) == []
+    assert await get_instagram_conversations(50, 0, pool) == []
+
+    # innocence: rows owned by the channel are served
+    await seed(pool, "telegram_77", "tg_session_77", WA_MSG)
+    await seed(pool, "instagram_88", "ig_session_88", WA_MSG)
+    tg = await get_telegram_messages("77", 100, pool)
+    assert [m["message_text"] for m in tg] == ["whatsapp client text"]
+    assert len(await get_telegram_conversations(50, 0, pool)) == 1
+    ig = await get_instagram_messages("88", 100, pool)
+    assert [m["message_text"] for m in ig] == ["whatsapp client text"]
+    assert len(await get_instagram_conversations(50, 0, pool)) == 1
+
+
+# --------------------------------------- agentic history compatibility (G5)
+
+
+@pytest.mark.asyncio
+async def test_agentic_history_finds_email_rows_by_profile_id_and_any_case(pool) -> None:
+    from backend.app.routers.agentic_rag import get_conversation_history_for_agentic
+
+    await pool.execute("CREATE TABLE user_profiles (id uuid PRIMARY KEY, email text)")
+    profile_id = "00000000-0000-0000-0000-000000000042"
+    await pool.execute("INSERT INTO user_profiles VALUES ($1::uuid, $2)", profile_id, ALICE)
+    await seed(pool, ALICE, "s-profile", ALICE_MSG)
+    await seed(pool, "Carol@Example.Test", "s-mixed", BOB_MSG)
+
+    assert (
+        await get_conversation_history_for_agentic(None, "s-profile", profile_id, pool) == ALICE_MSG
+    )
+    assert (
+        await get_conversation_history_for_agentic(None, "s-mixed", "carol@example.test", pool)
+        == BOB_MSG
+    )
+    assert await get_conversation_history_for_agentic(None, "s-mixed", BOB, pool) == []
+
+
+# ------------------------------------------------------- API key principal (M1)
+
+
+def test_api_key_principal_email_is_unique_per_key_and_stable() -> None:
+    from backend.app.services.api_key_auth import APIKeyAuth
+
+    with patch("backend.app.services.api_key_auth.settings") as cfg:
+        cfg.api_keys = "synthetic-key-one,synthetic-key-two"
+        cfg.api_key_roles = "synthetic-key-one:admin,synthetic-key-two:admin"
+        auth = APIKeyAuth()
+    one = auth.validate_api_key("synthetic-key-one")
+    two = auth.validate_api_key("synthetic-key-two")
+    assert one["role"] == two["role"] == "admin"
+    assert one["email"] != two["email"]
+    assert auth.validate_api_key("synthetic-key-one")["email"] == one["email"]
+    assert "synthetic-key" not in one["email"] and one["email"].endswith("@zantara.dev")

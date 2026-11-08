@@ -615,14 +615,33 @@ async def create_interaction_from_conversation(
 
     This is called automatically when a chat session ends or at intervals
     """
-    user_email_from_token = current_user.get("email", "").lower()
+    user_email_from_token = (current_user.get("email") or "").lower()
     user_is_admin = is_crm_admin(current_user)
 
     # RBAC: Only allow if team_member matches current_user or is admin
-    if not user_is_admin and team_member.lower() != user_email_from_token:
+    if not user_is_admin and (
+        not user_email_from_token or team_member.lower() != user_email_from_token
+    ):
         raise HTTPException(status_code=403, detail="You can only create interactions for yourself")
     try:
         async with db_pool.acquire() as conn:
+            # Read the conversation first: a refused request must not create a prospect.
+            if user_is_admin:
+                conv_row = await conn.fetchrow(
+                    "SELECT messages FROM conversations WHERE id = $1",
+                    conversation_id,
+                )
+            else:
+                conv_row = await conn.fetchrow(
+                    "SELECT messages FROM conversations WHERE id = $1 AND lower(user_id) = $2",
+                    conversation_id,
+                    user_email_from_token,
+                )
+
+            if not conv_row:
+                # Same answer for "not yours" and "does not exist".
+                raise HTTPException(status_code=404, detail="Conversation not found")
+
             # Get or create client by email
             client_row = await conn.fetchrow(
                 "SELECT id FROM clients WHERE email = $1",
@@ -651,19 +670,6 @@ async def create_interaction_from_conversation(
                 raise HTTPException(status_code=500, detail="Failed to create client")
 
             client_id = client_row["id"]
-
-            # Get conversation from conversations table
-            if user_is_admin:
-                conv_row = await conn.fetchrow(
-                    "SELECT messages FROM conversations WHERE id = $1",
-                    conversation_id,
-                )
-            else:
-                conv_row = await conn.fetchrow(
-                    "SELECT messages FROM conversations WHERE id = $1 AND lower(user_id) = $2",
-                    conversation_id,
-                    user_email_from_token,
-                )
 
             full_content = ""
             if conv_row and conv_row.get("messages"):

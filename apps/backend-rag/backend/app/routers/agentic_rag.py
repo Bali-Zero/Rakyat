@@ -838,7 +838,7 @@ async def get_conversation_history_for_agentic(
                     """
                     SELECT messages
                     FROM conversations
-                    WHERE session_id = $1 AND user_id = $2
+                    WHERE session_id = $1 AND lower(user_id) = lower($2)
                     ORDER BY created_at DESC
                     LIMIT 1
                     """,
