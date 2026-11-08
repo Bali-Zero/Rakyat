@@ -239,17 +239,17 @@ _CONFLICT_SQL = """SELECT
     OR EXISTS(SELECT 1 FROM weekly_cashout WHERE receipt_drive_file_id=$1)"""
 
 
-def provenance(row: dict[str, Any]) -> dict[str, Any]:
+def provenance(row: dict[str, Any], *, keep_in_place: bool = False) -> dict[str, Any]:
     return {
         "source": SOURCE,
         "evidence_sha256": digest(row),
         "original_parent_id": row["source_parent_id"],
-        "planned_target_id": row["target_folder_id"],
-        "move_status": "pending",
+        "planned_target_id": None if keep_in_place else row["target_folder_id"],
+        "move_status": "not_planned" if keep_in_place else "pending",
     }
 
 
-async def inspect_record(conn, drive, row, *, snapshot=None):
+async def inspect_record(conn, drive, row, *, snapshot=None, keep_in_place=False):
     clients = await conn.fetch(
         _CLIENT_SQL + (" FOR UPDATE" if snapshot is not None else ""),
         row["client_id"],
@@ -297,8 +297,8 @@ async def inspect_record(conn, drive, row, *, snapshot=None):
     existing = await conn.fetch(
         _DOCUMENT_SQL + (" FOR UPDATE" if snapshot is not None else ""), row["file_id"]
     )
-    expected_notes = json.dumps(provenance(row), sort_keys=True)
-    expected_key = "repair:" + digest(row)
+    expected_notes = json.dumps(provenance(row, keep_in_place=keep_in_place), sort_keys=True)
+    expected_key = "repair:" + digest({"record": row, "keep_in_place": keep_in_place})
     if existing:
         if len(existing) != 1 or any(
             existing[0][k] != v
@@ -364,11 +364,11 @@ async def inspect_record(conn, drive, row, *, snapshot=None):
         row["target_folder_id"]
     ]:
         raise RepairRejected("TARGET_AMBIGUOUS")
-    source_acl, target_acl = [
-        await drive.permissions(row[k]) for k in ("file_id", "target_folder_id")
-    ]
+    source_acl = await drive.permissions(row["file_id"])
     acl_hash = acl_fingerprint(source_acl)
-    if acl_hash != acl_fingerprint(target_acl):
+    if not keep_in_place and acl_hash != acl_fingerprint(
+        await drive.permissions(row["target_folder_id"])
+    ):
         raise RepairRejected("ACL_MISMATCH")
     snapshot = {
         "evidence_sha256": digest(row),
@@ -379,18 +379,45 @@ async def inspect_record(conn, drive, row, *, snapshot=None):
     return snapshot, existing[0]["id"] if existing else None
 
 
-async def run_repair(conn, drive, manifest, *, apply=False, expected_plan_sha256=None):
+async def run_repair(
+    conn, drive, manifest, *, apply=False, expected_plan_sha256=None, keep_in_place=False
+):
     records = validate_manifest(manifest)
-    snapshots = [await inspect_record(conn, drive, row) for row in records]
-    plan_sha = digest({"manifest": manifest, "snapshots": [s[0] for s in snapshots]})
+    snapshots = [
+        await inspect_record(conn, drive, row, keep_in_place=keep_in_place) for row in records
+    ]
+    plan_sha = digest(
+        {
+            "manifest": manifest,
+            "snapshots": [s[0] for s in snapshots],
+            "keep_in_place": keep_in_place,
+        }
+    )
     if not apply:
-        return {"mode": "plan", "plan_sha256": plan_sha, "count": len(records), "writes": 0}
+        return {
+            "mode": "plan",
+            "plan_sha256": plan_sha,
+            "count": len(records),
+            "writes": 0,
+            "move_status": "not_planned" if keep_in_place else "pending",
+        }
     if expected_plan_sha256 != plan_sha:
         raise RepairRejected("PLAN_STALE")
     # Refresh external snapshots before the short DB transaction. The command
     # never mutates Drive; the separate move must still compare its source version.
-    refreshed = [await inspect_record(conn, drive, row) for row in records]
-    if digest({"manifest": manifest, "snapshots": [s[0] for s in refreshed]}) != plan_sha:
+    refreshed = [
+        await inspect_record(conn, drive, row, keep_in_place=keep_in_place) for row in records
+    ]
+    if (
+        digest(
+            {
+                "manifest": manifest,
+                "snapshots": [s[0] for s in refreshed],
+                "keep_in_place": keep_in_place,
+            }
+        )
+        != plan_sha
+    ):
         raise RepairRejected("PLAN_DRIFT")
     results = []
     async with conn.transaction(isolation="serializable"):
@@ -405,7 +432,7 @@ async def run_repair(conn, drive, manifest, *, apply=False, expected_plan_sha256
             )
             await conn.execute("SELECT pg_advisory_xact_lock($1)", lock_id)
         current = [
-            await inspect_record(conn, drive, row, snapshot=prior[0])
+            await inspect_record(conn, drive, row, snapshot=prior[0], keep_in_place=keep_in_place)
             for row, prior in zip(records, refreshed, strict=True)
         ]
         for row, (_, existing_id) in zip(records, current, strict=True):
@@ -426,10 +453,12 @@ async def run_repair(conn, drive, manifest, *, apply=False, expected_plan_sha256
                     "google_drive_file_url": f"https://drive.google.com/file/d/{row['file_id']}/view",
                     "client_visible": False,
                     "ocr_status": "skipped",
-                    "notes": json.dumps(provenance(row), sort_keys=True),
+                    "notes": json.dumps(
+                        provenance(row, keep_in_place=keep_in_place), sort_keys=True
+                    ),
                 },
                 proposal_id=None,
-                idempotency_key="repair:" + digest(row),
+                idempotency_key="repair:" + digest({"record": row, "keep_in_place": keep_in_place}),
                 registration_source=SOURCE,
             )
             results.append({"file_id": row["file_id"], "document_id": doc_id, "reused": False})
@@ -437,5 +466,5 @@ async def run_repair(conn, drive, manifest, *, apply=False, expected_plan_sha256
         "mode": "registered_hidden",
         "plan_sha256": plan_sha,
         "records": results,
-        "move_status": "pending",
+        "move_status": "not_planned" if keep_in_place else "pending",
     }

@@ -70,6 +70,7 @@ async def execute(args):
                 manifest,
                 apply=args.apply,
                 expected_plan_sha256=args.expected_plan_sha256,
+                keep_in_place=args.keep_in_place,
             )
     except RepairRejected as exc:
         raise CLIRejected(str(exc)) from None
@@ -84,6 +85,11 @@ def main(argv=None):
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--expected-plan-sha256")
+    parser.add_argument(
+        "--keep-in-place",
+        action="store_true",
+        help="Register hidden at its existing location; no future move is planned",
+    )
     try:
         args = parser.parse_args(argv)
         result = asyncio.run(execute(args))

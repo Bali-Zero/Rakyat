@@ -135,7 +135,9 @@ async def test_dry_run_is_read_only_then_hidden_apply_and_exact_retry(conn, mani
         original = getattr(drive, method)
 
         async def outside_transaction(*args, _original=original):
-            assert not conn.is_in_transaction(), "Drive I/O must precede the short write transaction"
+            assert not conn.is_in_transaction(), (
+                "Drive I/O must precede the short write transaction"
+            )
             return await _original(*args)
 
         setattr(drive, method, outside_transaction)
@@ -165,6 +167,91 @@ async def test_stale_digest_writes_nothing(conn, manifest):
     with pytest.raises(mod.RepairRejected, match="PLAN_STALE"):
         await mod.run_repair(conn, Drive(), manifest, apply=True, expected_plan_sha256="0" * 64)
     assert await conn.fetchval("SELECT count(*) FROM documents") == 0
+
+
+@pytest.mark.asyncio
+async def test_in_place_registration_preserves_different_acls_and_location(conn, manifest):
+    drive = Drive()
+    drive.acls["target-folder"][0]["role"] = "owner"
+    before = copy.deepcopy((drive.metadata_rows, drive.acls))
+    with pytest.raises(mod.RepairRejected, match="ACL_MISMATCH"):
+        await mod.run_repair(conn, drive, manifest)
+    plan = await mod.run_repair(conn, drive, manifest, keep_in_place=True)
+    assert plan["writes"] == 0 and plan["move_status"] == "not_planned"
+    result = await mod.run_repair(
+        conn,
+        drive,
+        manifest,
+        keep_in_place=True,
+        apply=True,
+        expected_plan_sha256=plan["plan_sha256"],
+    )
+    row = dict(await conn.fetchrow("SELECT * FROM documents"))
+    assert row["client_visible"] is False and row["ocr_status"] == "skipped"
+    assert json.loads(row["notes"])["move_status"] == result["move_status"] == "not_planned"
+    assert json.loads(row["notes"])["planned_target_id"] is None
+    repeat = await mod.run_repair(
+        conn,
+        drive,
+        manifest,
+        keep_in_place=True,
+        apply=True,
+        expected_plan_sha256=plan["plan_sha256"],
+    )
+    assert repeat["records"][0]["reused"] is True
+    assert dict(await conn.fetchrow("SELECT * FROM documents")) == row
+    assert (drive.metadata_rows, drive.acls) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initial_mode", [False, True])
+async def test_plan_is_bound_to_in_place_choice(conn, manifest, initial_mode):
+    drive = Drive()
+    plan = await mod.run_repair(conn, drive, manifest, keep_in_place=initial_mode)
+    with pytest.raises(mod.RepairRejected, match="PLAN_STALE"):
+        await mod.run_repair(
+            conn,
+            drive,
+            manifest,
+            keep_in_place=not initial_mode,
+            apply=True,
+            expected_plan_sha256=plan["plan_sha256"],
+        )
+    assert await conn.fetchval("SELECT count(*) FROM documents") == 0
+
+
+@pytest.mark.asyncio
+async def test_in_place_source_acl_drift_invalidates_plan(conn, manifest):
+    drive = Drive()
+    plan = await mod.run_repair(conn, drive, manifest, keep_in_place=True)
+    drive.acls["file000001A"][0]["role"] = "reader"
+    with pytest.raises(mod.RepairRejected, match="PLAN_STALE"):
+        await mod.run_repair(
+            conn,
+            drive,
+            manifest,
+            keep_in_place=True,
+            apply=True,
+            expected_plan_sha256=plan["plan_sha256"],
+        )
+    assert await conn.fetchval("SELECT count(*) FROM documents") == 0
+
+
+@pytest.mark.asyncio
+async def test_writer_rejects_in_place_provenance_with_planned_target(manifest):
+    conn = AsyncMock()
+    notes = mod.provenance(manifest["records"][0], keep_in_place=True)
+    notes["planned_target_id"] = "contradictory-target"
+    with pytest.raises(ValueError, match="REPAIR_PROVENANCE_REQUIRED"):
+        await write_client_document(
+            conn,
+            1,
+            {"notes": json.dumps(notes), "client_visible": False, "ocr_status": "skipped"},
+            proposal_id=None,
+            idempotency_key="test",
+            registration_source=mod.SOURCE,
+        )
+    conn.fetchval.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -387,6 +474,9 @@ def test_cli_defaults_to_plan_and_errors_are_safe(monkeypatch, capsys):
     monkeypatch.setattr(cli, "execute", run)
     assert cli.main(["--manifest", "synthetic-manifest.json"]) == 0
     assert captured[0].apply is False
+    assert captured[0].keep_in_place is False
+    assert cli.main(["--manifest", "synthetic-manifest.json", "--keep-in-place"]) == 0
+    assert captured[1].keep_in_place is True
 
     async def fail(args):
         raise RuntimeError("PRIVATE_PROVIDER_PAYLOAD")

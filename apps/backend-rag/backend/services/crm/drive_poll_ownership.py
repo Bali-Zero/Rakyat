@@ -3,6 +3,8 @@
 from collections import defaultdict
 from typing import Any
 
+from googleapiclient.errors import HttpError
+
 from backend.app.core.config import settings
 from backend.services.crm.drive_taxonomy import (
     canonical_folders,
@@ -20,8 +22,9 @@ def ownership_maps(subfolders: list, clients: list) -> tuple[dict, dict]:
     original_names: dict[str, set] = defaultdict(set)
     by_id = {c["id"]: c for c in clients}
     for client in clients:
-        if client.get("google_drive_folder_id"):
-            owners[client["google_drive_folder_id"]].add(client["id"])
+        for key in ("google_drive_folder_id", "drive_folder_id"):
+            if client.get(key):
+                owners[client[key]].add(client["id"])
     for folder in subfolders:
         owners[folder["subfolder_id"]].add(folder["client_id"])
         original_names[folder["subfolder_id"]].add(folder["subfolder_name"])
@@ -55,8 +58,9 @@ async def validate_client_root(
 ) -> tuple[str, str]:
     """Validate ownership and return (stored client type, existing physical layout)."""
     rows = await conn.fetch(
-        """SELECT id, google_drive_folder_id, client_type, deleted_at, status FROM clients
-           WHERE id = $1 OR google_drive_folder_id = $2""",
+        """SELECT id, google_drive_folder_id, drive_folder_id, client_type, deleted_at, status
+           FROM clients
+           WHERE id = $1 OR google_drive_folder_id = $2 OR drive_folder_id = $2""",
         client_id,
         root_id,
     )
@@ -139,7 +143,8 @@ async def revalidate_poll_owner(
             return False
         return not await conn.fetchval(
             """SELECT EXISTS(SELECT 1 FROM clients
-                 WHERE google_drive_folder_id = ANY($1::text[]) AND id <> $2)
+                 WHERE (google_drive_folder_id = ANY($1::text[])
+                   OR drive_folder_id = ANY($1::text[])) AND id <> $2)
                OR EXISTS(SELECT 1 FROM companies WHERE google_drive_folder_id = ANY($1::text[])
                  OR tax_dept_folder_id = ANY($1::text[]))
                OR NOT EXISTS(SELECT 1 FROM clients WHERE id = $2
@@ -151,6 +156,10 @@ async def revalidate_poll_owner(
             root_id,
             client_type,
         )
+    except HttpError as exc:
+        if exc.resp.status == 404:
+            return False
+        raise
     except (ValueError, KeyError):
         return False
 
