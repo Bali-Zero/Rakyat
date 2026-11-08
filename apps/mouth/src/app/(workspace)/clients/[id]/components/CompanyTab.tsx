@@ -49,6 +49,7 @@ import { CompanyDocUpload } from "./company/CompanyDocUpload";
 import { EditCompanyModal } from "./company/EditCompanyModal";
 import { AddCompanyModal } from "./modals/AddCompanyModal";
 import { CompanyIdentity } from "./company/CompanyIdentity";
+import { CompanyDriveSources } from "./company/CompanyDriveSources";
 import {
   clearCompanyDetailCache,
   fetchCompanyDetail,
@@ -811,6 +812,9 @@ export function CompanyTab({
           }
           onOpenDocuments={onOpenDocuments}
         />
+        {co?.company_id ? (
+          <CompanyDriveSources companyId={co.company_id} />
+        ) : null}
         {otherLinks.length > 0 ? (
           <div className="pb-4">
             <p className="text-[11px] font-[650] uppercase tracking-[0.14em] text-[var(--tx-secondary)]">

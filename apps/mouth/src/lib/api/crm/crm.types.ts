@@ -964,6 +964,18 @@ export interface ClientCompanyLink {
   custom_fields?: Record<string, unknown>;
 }
 
+/** Informational Drive links; these do not grant document access. */
+export interface CompanyDriveSources {
+  company_id: number;
+  sources: Array<{
+    url: string;
+    kinds: Array<"primary" | "restricted_tax" | "legacy">;
+  }>;
+  lineage_status: "none" | "valid" | "invalid";
+  merged_into_company_id: number | null;
+  historical_record_ids: number[];
+}
+
 export interface CompanyDocument {
   id: number;
   uuid: string;

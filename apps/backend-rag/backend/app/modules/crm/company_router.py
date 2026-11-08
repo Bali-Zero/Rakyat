@@ -11,6 +11,7 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.modules.crm.company_drive_sources import router as drive_sources_router
 from backend.app.modules.crm.company_schemas import (
     ClientCompanyLinkCreate,
     CompanyCreate,
@@ -24,6 +25,7 @@ from backend.services.common.background import spawn
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/crm/companies", tags=["CRM Companies"])
+router.include_router(drive_sources_router)
 
 
 # ========== HELPER FUNCTIONS ==========
