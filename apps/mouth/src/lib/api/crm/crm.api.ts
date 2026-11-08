@@ -21,6 +21,7 @@ import type {
   Company,
   ClientCompanyLink,
   CompanyDocument,
+  CompanyDriveSources,
   TaxRecord,
   PortalAccessStatus,
   PortalMessageThread,
@@ -1044,8 +1045,17 @@ export class CrmApi {
   }
 
   /**
-   * Get company documents
+   * Get informational Drive source links (staff only)
    */
+  async getCompanyDriveSources(
+    companyId: number,
+  ): Promise<CompanyDriveSources> {
+    return this.client.request<CompanyDriveSources>(
+      `/api/crm/companies/${companyId}/drive-sources`,
+    );
+  }
+
+  /** Get company documents. */
   async getCompanyDocuments(
     companyId: number,
     docType?: string,
