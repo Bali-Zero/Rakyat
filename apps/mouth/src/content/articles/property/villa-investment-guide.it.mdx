@@ -75,6 +75,7 @@ tableOfContents: true
 canonicalUrl: "https://balizero.com/property/villa-investment-guide"
 ogImage: "/static/insights/property/villa-bali.jpg"
 twitterCard: "summary_large_image"
+source_sha256: "2fc70464ed860098ccffcde88bfb1194a7fd5b9b56dc8e3d25a17c6218ab8231"
 ---
 
 import {
@@ -86,19 +87,33 @@ import {
   AskZantara,
 } from "@/components/insights/interactive";
 
-# Investimento in Villa a Bali 2026: Guida Completa per Stranieri
+# Investimento in ville a Bali nel 2026: guida completa per stranieri
 
-Le ville di Bali attirano investitori da tutto il mondo. Ecco uno sguardo onesto su ciò che comporta, i rendimenti e i rischi per gli investitori stranieri.
+Le ville a Bali attraggono investitori da tutto il mondo. Ecco una panoramica onesta di ciò che comportano, dei rendimenti e dei rischi per gli investitori stranieri.
 
-## La Realtà dell'Investimento in Ville
+<InfoCard
+  variant="danger"
+  title="2026 Regulatory Alert: Sustainable Land & Green Zones"
+>
 
-<InfoCard variant="warning" title="Non è così semplice come sembra">
+  Prima di acquistare o costruire una villa a Bali, è fondamentale verificare lo
+  **status LP2B** del terreno. Ai sensi della **Perda Bali 4/2026**, convertire
+  risaie protette in ville costituisce ora un reato. Molte proprietà in "Green Zone"
+  vengono vendute con promesse illegali. Proteggete il vostro investimento
+  comprendendo la nuova criminalizzazione della conversione delle risaie. [Leggete
+  l'aggiornamento sulla normativa fondiaria di Bali del 2026
+  →](/business/bali-rice-field-conversion-criminalization-perda-4-2026)
+</InfoCard>
+
+## La realtà dell'investimento in ville
+
+<InfoCard variant="warning" title="Not as Simple as It Seems">
 L'investimento in ville a Bali comporta:
 - Strutture legali complesse
-- Costi correnti significativi
+- Costi continuativi significativi
 - Sfide gestionali
 - Incertezza normativa
-- Concorrenza e sovraofferta in alcune aree
+- Concorrenza ed eccesso di offerta in alcune aree
 
 Il successo richiede aspettative realistiche e una pianificazione adeguata.
 
@@ -106,78 +121,77 @@ Il successo richiede aspettative realistiche e una pianificazione adeguata.
 
 ---
 
-## Opzioni di Proprietà
+## Opzioni di proprietà
 
 <ComparisonTable
-  title="Strutture di Proprietà delle Ville"
-  description="Modi legali per possedere o controllare una villa"
+  title="Villa Ownership Structures"
+  description="Legal ways to own or control a villa"
   items={[
     {
-      name: "Leasehold (Leasing)",
-      subtitle: "Il più comune per gli stranieri",
+      name: "Leasehold",
+      subtitle: "Most common for foreigners",
       values: {
-        Controllo: "Pieno durante il leasing",
-        Investimento: "Più basso",
-        Rischio: "Moderato",
-        Complessità: "Più bassa",
-        Uscita: "Vendita del leasing",
+        Control: "Full during lease",
+        Investment: "Lower",
+        Risk: "Moderate",
+        Complexity: "Lower",
+        Exit: "Sell lease",
       },
       highlight: true,
     },
     {
       name: "PT PMA",
-      subtitle: "La società possiede l'HGB",
+      subtitle: "Company owns HGB",
       values: {
-        Controllo: "Tramite la società",
-        Investimento: "Più alto (10Mld+ IDR)",
-        Rischio: "Più basso",
-        Complessità: "Più alta",
-        Uscita: "Vendita della società",
+        Control: "Through company",
+        Investment: "Higher (IDR 10B+)",
+        Risk: "Lower",
+        Complexity: "Higher",
+        Exit: "Sell company",
       },
     },
     {
       name: "Hak Pakai",
-      subtitle: "Personale con KITAS",
+      subtitle: "Personal with KITAS",
       values: {
-        Controllo: "Personale",
-        Investimento: "Moderato",
-        Rischio: "Moderato",
-        Complessità: "Moderata",
-        Uscita: "Vendita a acquirente idoneo",
+        Control: "Personal",
+        Investment: "Moderate",
+        Risk: "Moderate",
+        Complexity: "Moderate",
+        Exit: "Sell to eligible buyer",
       },
     },
     {
-      name: "Prestanome (Nominee)",
-      subtitle: "Nome indonesiano (ILLEGALE)",
+      name: "Nominee",
+      subtitle: "Indonesian name (ILLEGAL)",
       values: {
-        Controllo: "Nessuno (illegale)",
-        Investimento: "Variabile",
-        Rischio: "Molto alto",
-        Complessità: "Rischio nascosto",
-        Uscita: "Possibile perdita totale",
+        Control: "None (illegal)",
+        Investment: "Varies",
+        Risk: "Very high",
+        Complexity: "Hidden risk",
+        Exit: "May lose everything",
       },
     },
   ]}
 />
 
-<InfoCard variant="error" title="Gli accordi con prestanome sono illegali">
+<InfoCard variant="error" title="Nominee Arrangements Are Illegal">
 
-  Usare il nome di un cittadino indonesiano per detenere una proprietà è: -
-  Contrario alla legge indonesiana - Punibile con la confisca - Non azionabile
-  in tribunale - Comune ma estremamente rischioso
+  Utilizzare il nome di un cittadino indonesiano per detenere una proprietà è: - Contrario alla legge indonesiana -
+  Punibile con la confisca - Inapplicabile in tribunale - Comune, ma estremamente rischioso
 </InfoCard>
 
 ---
 
-## Calcolatore di Investimento
+## Calcolatore d'investimento
 
 <Calculator
-  title="Analisi dell'Investimento in Villa"
-  description="Stima i costi di investimento e i rendimenti"
+  title="Villa Investment Analysis"
+  description="Estimate investment costs and returns"
   fields={[
     {
       id: "purchasePrice",
-      label: "Prezzo di acquisto/leasing (IDR)",
+      label: "Purchase/Lease Price (IDR)",
       type: "number",
       defaultValue: 5000000000,
       min: 1000000000,
@@ -186,30 +200,30 @@ Il successo richiede aspettative realistiche e una pianificazione adeguata.
     },
     {
       id: "bedrooms",
-      label: "Camere da letto",
+      label: "Bedrooms",
       type: "select",
       options: [
-        { value: "2", label: "2 Camere da letto" },
-        { value: "3", label: "3 Camere da letto" },
-        { value: "4", label: "4 Camere da letto" },
-        { value: "5", label: "5+ Camere da letto" }
+        { value: "2", label: "2 Bedroom" },
+        { value: "3", label: "3 Bedroom" },
+        { value: "4", label: "4 Bedroom" },
+        { value: "5", label: "5+ Bedroom" }
       ],
       defaultValue: "3"
     },
     {
       id: "location",
-      label: "Posizione",
+      label: "Location",
       type: "select",
       options: [
-        { value: "premium", label: "Premium (Seminyak, centro Canggu)" },
-        { value: "good", label: "Buona (Pererenan, Umalas)" },
-        { value: "developing", label: "In via di sviluppo (Tabanan, Nord)" }
+        { value: "premium", label: "Premium (Seminyak, Canggu center)" },
+        { value: "good", label: "Good (Pererenan, Umalas)" },
+        { value: "developing", label: "Developing (Tabanan, North)" }
       ],
       defaultValue: "good"
     },
     {
       id: "occupancy",
-      label: "Occupazione prevista %",
+      label: "Expected Occupancy %",
       type: "number",
       defaultValue: 60,
       min: 20,
@@ -247,17 +261,17 @@ Il successo richiede aspettative realistiche e una pianificazione adeguata.
     return {
       total: netIncome,
       breakdown: [
-        { label: "Ricavo Annuo Lordo", amount: annualGross },
-        { label: "Gestione (20%)", amount: -management },
-        { label: "Manutenzione", amount: -maintenance },
-        { label: "Utenze", amount: -utilities },
+        { label: "Gross Annual Revenue", amount: annualGross },
+        { label: "Management (20%)", amount: -management },
+        { label: "Maintenance", amount: -maintenance },
+        { label: "Utilities", amount: -utilities },
         { label: "Marketing/OTA", amount: -marketing },
-        { label: "Assicurazione", amount: -insurance },
-        { label: "Tasse sull'affitto (10%)", amount: -tax },
-        { label: "Reddito Annuo Netto", amount: netIncome }
+        { label: "Insurance", amount: -insurance },
+        { label: "Rental Tax (10%)", amount: -tax },
+        { label: "Net Annual Income", amount: netIncome }
       ],
       currency: "IDR",
-      note: `Rendimento lordo: ${grossYield.toFixed(1)}% | Rendimento netto: ${netYield.toFixed(1)}%`
+      note: `Gross yield: ${grossYield.toFixed(1)}% | Net yield: ${netYield.toFixed(1)}%`
     };
 
 }}
@@ -265,89 +279,89 @@ Il successo richiede aspettative realistiche e una pianificazione adeguata.
 
 ---
 
-## Processo di Acquisto
+## Processo di acquisto
 
 <JourneyMap
-  title="Percorso di Investimento in Villa"
-  description="Dalla ricerca all'operatività"
-  estimatedTotal="3-6 mesi"
+  title="Villa Investment Journey"
+  description="From search to operation"
+  estimatedTotal="3-6 months"
   steps={[
     {
       id: "search",
-      title: "Ricerca Proprietà",
-      description: "Trova la villa adatta",
-      duration: "1-3 mesi",
+      title: "Property Search",
+      description: "Find suitable villa",
+      duration: "1-3 months",
       status: "required",
       tips: [
-        "Definisci budget e requisiti",
-        "Lavora con agenti affidabili",
-        "Visiona più proprietà",
-        "Considera il potenziale di affitto",
+        "Define budget and requirements",
+        "Work with reputable agents",
+        "View multiple properties",
+        "Consider rental potential",
       ],
     },
     {
       id: "due-diligence",
       title: "Due Diligence",
-      description: "Controlli legali e fisici",
-      duration: "2-4 settimane",
+      description: "Legal and physical checks",
+      duration: "2-4 weeks",
       status: "required",
       tips: [
-        "Verifica il titolo fondiario al BPN",
-        "Controlla i permessi di costruire",
-        "Ispezione fisica",
-        "Revisione legale dei documenti",
+        "Verify land title at BPN",
+        "Check building permits",
+        "Physical inspection",
+        "Legal review of documents",
       ],
     },
     {
       id: "negotiate",
-      title: "Negoziazione Termini",
-      description: "Prezzo e condizioni",
-      duration: "1-2 settimane",
+      title: "Negotiate Terms",
+      description: "Price and conditions",
+      duration: "1-2 weeks",
       status: "required",
       tips: [
-        "Termini di leasing e rinnovi",
-        "Cosa è incluso",
-        "Programma di pagamento",
-        "Condizioni di consegna",
+        "Lease terms and extensions",
+        "What's included",
+        "Payment schedule",
+        "Handover conditions",
       ],
     },
     {
       id: "legal",
-      title: "Processo Legale",
-      description: "Contratti e trasferimento",
-      duration: "2-4 settimane",
+      title: "Legal Process",
+      description: "Contracts and transfer",
+      duration: "2-4 weeks",
       status: "required",
       tips: [
-        "Incarica un avvocato immobiliare",
-        "Notaio per l'atto di leasing",
-        "Registrazione al BPN",
-        "Gestione dei pagamenti",
+        "Engage property lawyer",
+        "Notary for lease deed",
+        "Registration at BPN",
+        "Payment handling",
       ],
     },
     {
       id: "setup",
-      title: "Allestimento Operativo",
-      description: "Preparazione per l'affitto",
-      duration: "2-4 settimane",
+      title: "Operational Setup",
+      description: "Prepare for rentals",
+      duration: "2-4 weeks",
       status: "required",
       tips: [
-        "Società di gestione",
-        "Arredamento/attrezzature",
-        "Assunzione personale",
-        "Inserimento nelle OTA",
+        "Management company",
+        "Furniture/equipment",
+        "Staff hiring",
+        "OTA listings",
       ],
     },
     {
       id: "operate",
-      title: "Inizio Operazioni",
-      description: "Aperto alle prenotazioni",
-      duration: "Continuativo",
+      title: "Start Operations",
+      description: "Open for bookings",
+      duration: "Ongoing",
       status: "final",
       tips: [
-        "Monitora le prestazioni",
-        "Feedback degli ospiti",
-        "Programma di manutenzione",
-        "Monitoraggio finanziario",
+        "Monitor performance",
+        "Guest feedback",
+        "Maintenance schedule",
+        "Financial tracking",
       ],
     },
   ]}
@@ -355,169 +369,169 @@ Il successo richiede aspettative realistiche e una pianificazione adeguata.
 
 ---
 
-## Licenze per l'Affitto
+## Licenze per l'attività di locazione
 
-<InfoCard variant="warning" title="Licenza di affitto richiesta">
-Gestire una villa in affitto richiede:
-- Licenza **Pondok Wisata** per piccole strutture
-- **TDUP** per operazioni più grandi
+<InfoCard variant="warning" title="Rental License Required">
+La gestione di una villa in affitto richiede:
+- Licenza **Pondok Wisata** per strutture ricettive di piccole dimensioni
+- **TDUP** per attività di maggiori dimensioni
 - Registrazione turistica
-- Vari permessi locali
+- Diverse autorizzazioni locali
 
-Operare senza licenze comporta il rischio di multe, chiusura e problemi con il visto.
+Operare senza licenze comporta il rischio di sanzioni, chiusura e problemi relativi al visto.
 
 </InfoCard>
 
-### Requisiti per le Licenze
+### Requisiti delle licenze
 
-| Licenza       | Per                   | Emessa da          |
-| ------------- | --------------------- | ------------------ |
-| Pondok Wisata | Piccole guesthouse    | Governo locale     |
-| TDUP          | Strutture turistiche  | Dip. del Turismo   |
-| NIB           | Registrazione aziend. | OSS                |
-| Ambientale    | Impatto operativo     | Dip. dell'Ambiente |
-
----
-
-## Costi Operativi
-
-### Budget Operativo Mensile
-
-| Costo                 | Range (IDR/mese) | Note                         |
-| --------------------- | ---------------- | ---------------------------- |
-| Personale             | 8-20M            | Villa manager, pulizie       |
-| Piscina/giardino      | 3-5M             | Manutenzione                 |
-| Utenze                | 2-5M             | Elettricità, acqua, internet |
-| Riparazioni/manutenz. | 3-8M             | Media                        |
-| Gestione              | 15-25% ricavi    | Se si usa una società        |
-
-### Costi Fissi Annuali
-
-| Costo            | Importo (IDR/anno) | Note                 |
-| ---------------- | ------------------ | -------------------- |
-| PBB (tassa fon.) | 5-15M              | Dipende dalle dimen. |
-| Assicurazione    | 10-20M             | Edificio + respons.  |
-| Commissioni OTA  | 15-20% prenotaz.   | Airbnb, Booking.com  |
-| Marketing        | 12-24M             | Foto, contenuti, ads |
+| Licenza       | Per                   | Rilasciata da        |
+| ------------- | --------------------- | -------------------- |
+| Pondok Wisata | Piccole guesthouse    | Governo locale       |
+| TDUP          | Strutture turistiche  | Dipartimento turismo |
+| NIB           | Registrazione attività | OSS                 |
+| Ambientale    | Impatto dell'attività | Dipartimento ambiente |
 
 ---
 
-## Fattori di Successo
+## Costi operativi
+
+### Budget operativo mensile
+
+| Costo                | Fascia (IDR/mese) | Note                         |
+| ------------------- | ----------------- | ---------------------------- |
+| Personale           | 8-20M             | Villa manager, addetti pulizie |
+| Piscina/giardino    | 3-5M              | Manutenzione                  |
+| Utenze              | 2-5M              | Elettricità, acqua, internet |
+| Riparazioni/manutenzione | 3-8M         | Media                        |
+| Gestione            | 15-25% dei ricavi | Se si utilizza una società   |
+
+### Costi fissi annuali
+
+| Costo            | Importo (IDR/anno)  | Note                   |
+| --------------- | ------------------ | ---------------------- |
+| PBB (imposta fondiaria) | 5-15M       | Dipende dalle dimensioni |
+| Assicurazione    | 10-20M             | Edificio + responsabilità |
+| Commissioni OTA  | 15-20% delle prenotazioni | Airbnb, Booking.com |
+| Marketing        | 12-24M             | Foto, contenuti, annunci |
+
+---
+
+## Fattori di successo
 
 <Checklist
-  title="Checklist per il Successo della Villa"
-  description="Fattori chiave per un investimento redditizio"
+  title="Villa Success Checklist"
+  description="Key factors for profitable investment"
   persistKey="villa-success-checklist"
   items={[
     {
       id: "location",
-      label: "Posizione di pregio",
-      description: "Area accessibile e desiderabile",
+      label: "Prime location",
+      description: "Accessible, desirable area",
       required: true,
       category: "property",
     },
     {
       id: "quality",
-      label: "Finiture di alta qualità",
-      description: "Buona costruzione, comfort moderni",
+      label: "High-quality finishes",
+      description: "Good construction, modern amenities",
       required: true,
       category: "property",
     },
     {
       id: "unique",
-      label: "Punti di forza unici",
-      description: "Vista, piscina, design, ecc.",
+      label: "Unique selling points",
+      description: "View, pool, design, etc.",
       required: true,
       category: "property",
     },
     {
       id: "management",
-      label: "Gestione professionale",
-      description: "Villa manager esperto",
+      label: "Professional management",
+      description: "Experienced villa manager",
       required: true,
       category: "operations",
     },
     {
       id: "marketing",
-      label: "Forte presenza online",
-      description: "Foto professionali, ottime recensioni",
+      label: "Strong online presence",
+      description: "Professional photos, good reviews",
       required: true,
       category: "operations",
     },
     {
       id: "pricing",
-      label: "Prezzi competitivi",
-      description: "Tariffe adeguate al mercato",
+      label: "Competitive pricing",
+      description: "Market-appropriate rates",
       required: true,
       category: "operations",
     },
     {
       id: "legal",
-      label: "Licenze corrette",
-      description: "Tutti i permessi in regola",
+      label: "Proper licensing",
+      description: "All permits in place",
       required: true,
       category: "compliance",
     },
     {
       id: "maintenance",
-      label: "Manutenzione regolare",
-      description: "Mantenere la proprietà in ottime condizioni",
+      label: "Regular maintenance",
+      description: "Keep property in top condition",
       required: true,
       category: "operations",
     },
   ]}
   categories={[
-    { id: "property", label: "Proprietà", color: "blue" },
-    { id: "operations", label: "Operazioni", color: "green" },
-    { id: "compliance", label: "Conformità", color: "amber" },
+    { id: "property", label: "Property", color: "blue" },
+    { id: "operations", label: "Operations", color: "green" },
+    { id: "compliance", label: "Compliance", color: "amber" },
   ]}
   showProgress={true}
 />
 
 ---
 
-## Rischi Comuni
+## Rischi comuni
 
-### Rischi di Mercato
+### Rischi di mercato
 
-- Sovraofferta nelle zone popolari
+- Eccesso di offerta nelle aree popolari
 - Fluttuazioni del turismo
 - Concorrenza degli hotel
 - Cambiamenti normativi
 
-### Rischi Operativi
+### Rischi operativi
 
-- Problemi gestionali
+- Problemi di gestione
 - Problemi di manutenzione
 - Danni causati dagli ospiti
-- Sfide con il personale
+- Difficoltà con il personale
 
-### Rischi Legali
+### Rischi legali
 
 - Controversie sui titoli
-- Problemi con le licenze
-- Scadenza del leasing
+- Problemi di licenza
+- Scadenza del lease
 - Complicazioni fiscali
 
 ---
 
-## Domande Comuni
+## Domande frequenti
 
 <AskZantara
-  context="Investimento villa Bali, affitto vacanze, rendimenti immobiliari, proprietà villa straniero"
-  placeholder="Chiedi informazioni sull'investimento in ville..."
+  context="Villa investment Bali, vacation rental, property returns, villa ownership foreigner"
+  placeholder="Ask about villa investment..."
   suggestedQuestions={[
-    "Qual è un ROI realistico per le ville a Bali?",
-    "Dovrei gestire io stesso o assumere una società?",
-    "Vale ancora la pena investire in ville nel 2026?",
-    "Quali zone hanno la migliore domanda di affitto?",
+    "What's a realistic ROI for Bali villas?",
+    "Should I manage myself or hire a company?",
+    "Is villa investment still worth it in 2026?",
+    "What areas have the best rental demand?",
   ]}
 />
 
 ---
 
-## Articoli Correlati
+## Articoli correlati
 
-- [Guida all'investimento immobiliare](/insights/property/property-investment-guide)
+- [Guida agli investimenti immobiliari](/insights/property/property-investment-guide)
 - [Leasehold vs Freehold](/insights/property/leasehold-vs-freehold)
-- [Tasse sui redditi da locazione](/insights/property/rental-income-tax)
+- [Imposta sul reddito da locazione](/insights/property/rental-income-tax)
