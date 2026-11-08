@@ -54,8 +54,6 @@ describe("backend news slug allowlist", () => {
     ".",
     "..",
     "",
-    "-leading-hyphen",
-    "a".repeat(201),
     "bаli-news", // Cyrillic "а"
     "ｂali-news", // fullwidth "ｂ"
   ];
@@ -64,19 +62,21 @@ describe("backend news slug allowlist", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("a 200-character slug is still sent", async () => {
-    await getArticleBySlug("visas", "a".repeat(200));
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  it.each([
+    "bali-gets-direct-links",
+    "news_20261108_120000_abc123",
+    "-breaking-news-a1b2c3", // generate_news_slug on a title that starts with a symbol
+    "a".repeat(201),
+    "a".repeat(1000),
+    "-",
+    "_",
+    "--__--",
+    `${"how-to-get-a-kitas-in-bali-".repeat(5).slice(0, 126)}a1b2c3d`, // 133 chars, prod-shaped
+  ])("%s resolves and the URL is exact", async (slug) => {
+    const a = await getArticleBySlug("visas", slug);
+    expect(a?.title).toBe("Backend title");
+    expect(urls).toHaveLength(1);
+    expect(urls[0].endsWith(`/api/news/${slug}`)).toBe(true);
+    expect(new URL(urls[0]).pathname).toBe(`/api/news/${slug}`);
   });
-
-  it.each(["bali-gets-direct-links", "news_20261108_120000_abc123"])(
-    "%s resolves and the URL is exact",
-    async (slug) => {
-      const a = await getArticleBySlug("visas", slug);
-      expect(a?.title).toBe("Backend title");
-      expect(urls).toHaveLength(1);
-      expect(urls[0].endsWith(`/api/news/${slug}`)).toBe(true);
-      expect(new URL(urls[0]).pathname).toBe(`/api/news/${slug}`);
-    },
-  );
 });

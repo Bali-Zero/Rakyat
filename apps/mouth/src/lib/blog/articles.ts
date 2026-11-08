@@ -507,9 +507,13 @@ async function fetchBackendArticles(options?: {
   }
 }
 
-// What the backend writes into news_items.slug: generate_news_slug (lowercase [a-z0-9-] plus a
-// 6-hex suffix) and the staging ids news_<YYYYmmdd>_<HHMMSS>_<hash>. No slash, backslash, ?, #, %, dot or space.
-const BACKEND_NEWS_SLUG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/;
+// Which slugs may go to GET /api/news/{slug}: every one in the safe alphabet. The producers
+// (generate_news_slug incl. a leading "-" and unbounded length, staging ids, composer, and
+// caller-supplied scraper slugs) are tabulated in the 2026-11-09 slug spec. The security
+// property is the alphabet alone: no slash, backslash, dot, %, ?, #, whitespace, control or non-ASCII character, so
+// no accepted slug changes meaning on either hop. No position rule, no length cap. Declared
+// loss: a scraper slug outside the alphabet gets a 404 here (0 such rows on prod).
+const BACKEND_NEWS_SLUG = /^[A-Za-z0-9_-]+$/;
 
 async function fetchBackendArticleBySlug(
   slug: string,
