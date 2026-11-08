@@ -595,6 +595,49 @@ export function isArticleHidden(category: string, slug: string): boolean {
   return !parsed || !isPublishedFrontmatter(parsed.data);
 }
 
+const PIN_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/**
+ * The editors' Insight pins, read from their MDX files and nothing else: a pin
+ * counts only when exactly one article folder holds <slug>.mdx, the page for
+ * that folder's category resolves that same file, and the page's own reader
+ * returns it published and indexed. Backend rows and listings are not read, so
+ * a pin links to the page of the very file that was checked.
+ */
+export async function getPinnedMdxArticles(
+  slugs: readonly (string | undefined)[],
+): Promise<ArticleListItem[]> {
+  const pins: ArticleListItem[] = [];
+  for (const slug of slugs) {
+    if (!slug || !PIN_SLUG.test(slug)) continue;
+    const folders = ARTICLE_FOLDER_NAMES.filter((folder) =>
+      fs.existsSync(articleMdxPath(folder, slug)),
+    );
+    if (folders.length !== 1) continue;
+    const category = normalizeCategory(folders[0]);
+    if (findMdxFile(category, slug) !== articleMdxPath(folders[0], slug))
+      continue;
+    const article = await getMdxArticleBySlug(category, slug);
+    if (!article || article.noIndex) continue;
+    pins.push({
+      id: article.id,
+      slug,
+      title: article.title,
+      excerpt: article.excerpt,
+      coverImage: article.coverImage,
+      category,
+      author: article.author,
+      publishedAt: article.publishedAt ?? new Date(NaN),
+      readingTime: article.readingTime,
+      viewCount: article.viewCount,
+      featured: article.featured,
+      trending: article.trending,
+      aiGenerated: article.aiGenerated,
+    });
+  }
+  return pins;
+}
+
 async function getMdxArticleBySlug(
   category: string,
   slug: string,

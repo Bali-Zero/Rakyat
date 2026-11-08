@@ -43,6 +43,7 @@ vi.mock("fs", () => ({
 // picks up the mocked fs.
 const {
   getArticleBySlug,
+  getPinnedMdxArticles,
   getAllArticles,
   getArticleByLocale,
   getAvailableLocales,
@@ -338,5 +339,62 @@ describe("one publication rule for local MDX", () => {
     expect(total).toBe(2);
     const found = await searchArticles("KBLI");
     expect(found.map((a) => a.slug)).toEqual([SLUG]);
+  });
+
+  it("reads an Insight pin from its one published, indexed MDX file and nothing else", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: BACKEND_ITEM }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    disk({ [`business_regulations/${SLUG}.mdx`]: mdx("") });
+    const [pin] = await getPinnedMdxArticles([SLUG]);
+    expect([pin.category, pin.slug, pin.title]).toEqual([
+      "business",
+      SLUG,
+      "Local Title",
+    ]);
+    for (const line of [
+      "status: draft\n",
+      "status: review\n",
+      "status: false\n",
+      "status: Published\n",
+      "noIndex: true\n",
+    ]) {
+      disk({ [`business/${SLUG}.mdx`]: mdx(line) });
+      expect(await getPinnedMdxArticles([SLUG])).toEqual([]);
+    }
+    disk({ [`business/${SLUG}.mdx`]: "---\nbroken: [\n---\nBody\n" });
+    expect(await getPinnedMdxArticles([SLUG])).toEqual([]);
+    expect(await getPinnedMdxArticles([SLUG])).toEqual([]);
+    disk({});
+    expect(await getPinnedMdxArticles([SLUG])).toEqual([]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses an Insight pin with two MDX files or an unsafe slug, and links by the file's folder", async () => {
+    disk({
+      [`business/${SLUG}.mdx`]: mdx(""),
+      [`lifestyle/${SLUG}.mdx`]: mdx(""),
+    });
+    expect(await getPinnedMdxArticles([SLUG])).toEqual([]);
+    disk({ [`business/${SLUG}.mdx`]: mdx("") });
+    expect(
+      await getPinnedMdxArticles([
+        "../business/" + SLUG,
+        SLUG.toUpperCase(),
+        "",
+        undefined,
+      ]),
+    ).toEqual([]);
+    disk({
+      [`immigration/a-pin.mdx`]: mdx('slug: "other"\n', "A"),
+      [`tax/b-pin.mdx`]: mdx("", "B"),
+    });
+    const pins = await getPinnedMdxArticles(["b-pin", "a-pin"]);
+    expect(pins.map((p) => p.category + "/" + p.slug + "|" + p.title)).toEqual([
+      "taxes/b-pin|B",
+      "visas/a-pin|A",
+    ]);
   });
 });
