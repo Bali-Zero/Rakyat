@@ -85,20 +85,20 @@ import {
   AskZantara,
 } from "@/components/insights/interactive";
 
-# Servizi bancari per stranieri in Indonesia 2026: Guida completa
+# Servizi bancari per stranieri in Indonesia 2026: guida completa
 
-Avere un conto corrente indonesiano rende la vita molto più semplice. Ecco come gli stranieri possono aprire conti e gestire il proprio denaro.
+Avere un conto bancario indonesiano rende la vita molto più semplice. Ecco come gli stranieri possono aprire conti e gestire il denaro.
 
-## Gli stranieri possono aprire conti correnti?
+## Gli stranieri possono aprire conti bancari?
 
-<InfoCard variant="note" title="Sì, con dei requisiti">
-Gli stranieri possono aprire conti correnti indonesiani se possiedono:
+<InfoCard variant="note" title="Yes, With Requirements">
+Gli stranieri possono aprire conti bancari indonesiani se dispongono di:
 - Passaporto valido
 - **KITAS o KITAP** (per conti completi)
-- **NPWP** (codice fiscale indonesiano - spesso richiesto)
-- Prova di domicilio in Indonesia
+- **NPWP** (numero fiscale - spesso richiesto)
+- Prova di indirizzo in Indonesia
 
-Alcune banche consentono conti limitati per i turisti, ma i servizi completi richiedono la residenza.
+Alcune banche consentono conti limitati ai turisti, ma i servizi completi richiedono la residenza.
 
 </InfoCard>
 
@@ -107,38 +107,48 @@ Alcune banche consentono conti limitati per i turisti, ma i servizi completi ric
 ## Tipi di conto
 
 <ComparisonTable
-  title="Tipi di conto corrente"
-  description="Opzioni per gli stranieri"
+  title="Bank Account Types"
+  description="Options for foreigners"
   items={[
     {
-      name: "Risparmio (Tabungan)",
-      subtitle: "Conto standard",
+      name: "Savings (Tabungan)",
+      subtitle: "Standard account",
       values: {
-        "Deposito minimo": "500k-1M IDR",
-        "Carta ATM": "Sì",
-        "Online Banking": "Sì",
-        "Ideale per": "Uso quotidiano",
+        "Minimum Deposit": "IDR 500K-1M",
+        "ATM Card": "Yes",
+        "Online Banking": "Yes",
+        "Best For": "Daily use",
       },
       highlight: true,
     },
     {
-      name: "Corrente (Giro)",
-      subtitle: "Conto aziendale",
+      name: "Current (Giro)",
+      subtitle: "Business account",
       values: {
-        "Deposito minimo": "1-5M IDR",
-        "Carta ATM": "A volte",
-        "Online Banking": "Sì",
-        "Ideale per": "Transazioni business",
+        "Minimum Deposit": "IDR 1-5M",
+        "ATM Card": "Sometimes",
+        "Online Banking": "Yes",
+        "Best For": "Business transactions",
       },
     },
     {
-      name: "Valuta estera",
-      subtitle: "USD, SGD, ecc.",
+      name: "Foreign Currency",
+      subtitle: "USD, SGD, etc.",
       values: {
-        "Deposito minimo": "Variabile",
-        "Carta ATM": "No",
-        "Online Banking": "Limitato",
-        "Ideale per": "Detenere valuta estera",
+        "Minimum Deposit": "Varies",
+        "ATM Card": "No",
+        "Online Banking": "Limited",
+        "Best For": "Holding foreign currency",
+      },
+    },
+    {
+      name: "Tourist Account",
+      subtitle: "Without KITAS",
+      values: {
+        "Minimum Deposit": "Varies",
+        "ATM Card": "Limited",
+        "Online Banking": "Limited",
+        "Best For": "Short-term visitors",
       },
     },
   ]}
@@ -146,77 +156,245 @@ Alcune banche consentono conti limitati per i turisti, ma i servizi completi ric
 
 ---
 
-## Migliori banche per stranieri
+## Le migliori banche per stranieri
 
 ### Banche consigliate
 
-| Banca          | Punti di forza                  | Note                     |
-| :------------- | :------------------------------ | :----------------------- |
-| **BCA**        | Più popolare, migliore rete ATM | Orientata agli stranieri |
-| **Mandiri**    | Banca di Stato, stabile         | Ampia copertura          |
-| **CIMB Niaga** | Collegamenti regionali          | Ottima per Singapore     |
-| **HSBC**       | Internazionale                  | Servizi premium          |
+| Banca           | Ideale per                      | Note               |
+| --------------- | ------------------------------- | ------------------ |
+| **BCA**         | La più popolare, migliore rete ATM | Adatta agli stranieri |
+| **Mandiri**     | Banca statale, stabile          | Ampia copertura    |
+| **CIMB Niaga**  | Collegamenti regionali          | Ottima per Singapore |
+| **Permata**     | Trasferimenti internazionali    | Tassi competitivi  |
+| **HSBC**        | Clientela internazionale        | Servizi premium    |
 
-<InfoCard variant="tip" title="BCA è la scelta predefinita">
+<InfoCard variant="tip" title="BCA is the Default Choice">
 
-  La maggior parte degli expat sceglie **BCA** perché: - Ha la più vasta rete di
-  ATM in Indonesia - È accettata ovunque - Ha un'ottima app mobile - È
-  relativamente semplice per gli stranieri
+  La maggior parte degli expat sceglie **BCA** perché: - Ha la più ampia rete ATM in Indonesia -
+  È accettata ovunque - Ha una buona app mobile - È relativamente accessibile per gli stranieri
 </InfoCard>
+
+---
+
+## Procedura di apertura del conto
+
+<JourneyMap
+  title="Opening a Bank Account"
+  description="Step by step for foreigners"
+  estimatedTotal="1-2 hours"
+  steps={[
+    {
+      id: "choose",
+      title: "Choose Bank & Branch",
+      description: "Pick your bank",
+      duration: "Before visit",
+      status: "required",
+      tips: [
+        "Choose bank near your area",
+        "Some branches better for foreigners",
+        "Ask expat community for recommendations",
+      ],
+    },
+    {
+      id: "documents",
+      title: "Prepare Documents",
+      description: "Gather requirements",
+      duration: "Before visit",
+      status: "required",
+      documents: [
+        "Passport (original + copy)",
+        "KITAS/KITAP (original + copy)",
+        "NPWP (if available)",
+        "Proof of address",
+        "Initial deposit cash",
+      ],
+    },
+    {
+      id: "visit",
+      title: "Visit Branch",
+      description: "Go in person",
+      duration: "30-60 min",
+      status: "required",
+      tips: [
+        "Go early (avoid lunch rush)",
+        "Bring all originals",
+        "Be patient",
+      ],
+    },
+    {
+      id: "forms",
+      title: "Complete Forms",
+      description: "Application paperwork",
+      duration: "15-30 min",
+      status: "required",
+      tips: [
+        "Fill out application form",
+        "Specimen signature",
+        "Initial deposit",
+      ],
+    },
+    {
+      id: "card",
+      title: "Receive ATM Card",
+      description: "Get your card",
+      duration: "Same day or pickup",
+      status: "required",
+      tips: [
+        "Some banks issue immediately",
+        "Others require return visit",
+        "Activate card",
+      ],
+    },
+    {
+      id: "setup",
+      title: "Set Up Mobile Banking",
+      description: "Digital access",
+      duration: "15 min",
+      status: "final",
+      tips: [
+        "Download bank app",
+        "Register for mobile banking",
+        "Set up transfer limits",
+      ],
+    },
+  ]}
+/>
 
 ---
 
 ## Documenti richiesti
 
 <Checklist
-  title="Documenti per il conto corrente"
-  description="Cosa devi portare con te"
+  title="Bank Account Documents"
+  description="What you need to bring"
   persistKey="bank-docs-checklist"
   items={[
     {
       id: "passport",
-      label: "Passaporto (originale + copia)",
-      description: "Pagina con foto",
+      label: "Passport (original + copy)",
+      description: "Photo page",
       required: true,
       category: "identity",
     },
     {
       id: "kitas",
-      label: "KITAS o KITAP (originale + copia)",
-      description: "Permesso di soggiorno valido",
+      label: "KITAS or KITAP (original + copy)",
+      description: "Valid stay permit",
       required: true,
       category: "identity",
     },
     {
       id: "npwp",
       label: "NPWP",
-      description: "Codice fiscale indonesiano",
+      description: "Indonesian tax number",
       required: false,
       category: "tax",
     },
     {
       id: "address",
-      label: "Prova di domicilio",
-      description: "Bolletta, contratto di affitto o lettera di domicilio",
+      label: "Proof of address",
+      description: "Utility bill, lease, or domicile letter",
       required: true,
       category: "address",
     },
     {
+      id: "photos",
+      label: "Passport photos",
+      description: "Some banks require",
+      required: false,
+      category: "identity",
+    },
+    {
       id: "cash",
-      label: "Deposito iniziale",
-      description: "Minimo 500k-1M IDR",
+      label: "Initial deposit",
+      description: "IDR 500K-1M minimum",
       required: true,
       category: "financial",
     },
   ]}
   categories={[
-    { id: "identity", label: "Identità", color: "blue" },
-    { id: "tax", label: "Fisco", color: "green" },
-    { id: "address", label: "Indirizzo", color: "amber" },
-    { id: "financial", label: "Finanza", color: "purple" },
+    { id: "identity", label: "Identity", color: "blue" },
+    { id: "tax", label: "Tax", color: "green" },
+    { id: "address", label: "Address", color: "amber" },
+    { id: "financial", label: "Financial", color: "purple" },
   ]}
   showProgress={true}
 />
+
+---
+
+## Servizi bancari senza KITAS
+
+Se non hai KITAS:
+
+### Opzioni
+
+1. **Conti di risparmio per turisti** - Limitati, offerti da alcune banche
+2. **Banche digitali** - Alcune consentono l'apertura con il solo passaporto
+3. **Banche internazionali** - HSBC con rapporto bancario globale
+4. **App di pagamento** - GoPay, OVO (funzioni limitate)
+
+<InfoCard variant="warning" title="Limited Without KITAS">
+
+  Senza KITAS, le opzioni bancarie sono molto limitate. Valuta: - L'uso di
+  carte internazionali (Wise, Revolut) - I prelievi ATM con carte estere
+  - Le app di pagamento digitale per le spese quotidiane
+</InfoCard>
+
+---
+
+## Trasferimenti internazionali
+
+### Ricevere denaro in Indonesia
+
+| Metodo            | Velocità | Costo  | Note                  |
+| ----------------- | -------- | ------ | --------------------- |
+| **Wise**          | 1-2 giorni | Basso | Migliori tassi        |
+| **Bonifico bancario** | 2-5 giorni | Alto | Tradizionale          |
+| **PayPal**        | Immediato | Medio  | Prelievo limitato     |
+| **Western Union** | Immediato | Alto   | Ritiro in contanti    |
+
+### Inviare denaro all'estero
+
+- Soggetto a requisiti documentali
+- Potrebbe essere necessario dimostrare la provenienza dei fondi
+- Possibili implicazioni fiscali
+- Alcuni limiti sugli importi
+
+---
+
+## Mobile banking
+
+La maggior parte delle banche indonesiane dispone di app:
+
+### BCA Mobile
+
+- Trasferimenti
+- Pagamento delle bollette
+- Pagamenti QR (QRIS)
+- Verifica del saldo
+
+### Funzionalità da cercare
+
+- Opzione lingua inglese
+- Possibilità di effettuare trasferimenti internazionali
+- Buona UI/UX
+- Notifiche affidabili
+
+---
+
+## Commissioni e costi
+
+### Commissioni comuni
+
+| Tipo di commissione          | Fascia        | Note                    |
+| ---------------------------- | ------------- | ----------------------- |
+| Canone amministrativo mensile | IDR 0-15K    | Alcuni conti sono gratuiti |
+| Prelievo ATM (stessa banca)  | Gratuito      | Sulla propria rete      |
+| Prelievo ATM (altra banca)   | IDR 7,500-15K | Per transazione         |
+| Trasferimento (stessa banca) | Gratuito-5K   | Di solito gratuito      |
+| Trasferimento (altra banca)  | IDR 6,500-10K | Interbancario           |
+| SWIFT internazionale         | IDR 50-200K  | Più commissioni delle banche corrispondenti |
 
 ---
 
@@ -224,11 +402,12 @@ Alcune banche consentono conti limitati per i turisti, ma i servizi completi ric
 
 <AskZantara
   context="Banking Indonesia, foreigner bank account, expat banking, money transfer"
-  placeholder="Chiedi sui servizi bancari..."
+  placeholder="Ask about banking..."
   suggestedQuestions={[
-    "Posso aprire un conto senza NPWP?",
-    "Quale banca ha il miglior supporto in inglese?",
-    "Come ricevo trasferimenti internazionali?",
+    "Can I open account without NPWP?",
+    "Which bank has best English support?",
+    "How do I receive international transfers?",
+    "What are ATM limits for foreigners?",
   ]}
 />
 
@@ -238,4 +417,4 @@ Alcune banche consentono conti limitati per i turisti, ma i servizi completi ric
 
 - [NPWP per stranieri](/insights/tax-legal/npwp-foreigners-guide)
 - [Costo della vita a Bali](/insights/lifestyle/cost-of-living-bali)
-- [Opzioni di trasferimento denaro](/insights/lifestyle/money-transfer-indonesia)
+- [Opzioni per trasferire denaro](/insights/lifestyle/money-transfer-indonesia)
