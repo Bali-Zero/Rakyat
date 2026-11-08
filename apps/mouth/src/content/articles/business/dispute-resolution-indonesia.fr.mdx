@@ -101,9 +101,9 @@ Lorsque les relations commerciales tournent mal, vous devez connaître vos optio
       question: "Quelle est la situation ?",
       options: [
         { label: 'Vouloir préserver la relation', next: 'preserve' },
-        { label: 'Avoir besoin d'une résolution rapide', next: 'quick' },
+        { label: "Avoir besoin d'une résolution rapide", next: 'quick' },
         { label: 'Demande monétaire importante', next: 'large' },
-        { label: 'L'autre partie n'est pas coopérative', next: 'uncooperative' },
+        { label: "L'autre partie n'est pas coopérative", next: 'uncooperative' },
       ],
     },
     {
@@ -116,7 +116,7 @@ Lorsque les relations commerciales tournent mal, vous devez connaître vos optio
     },
     {
       id: 'quick',
-      question: 'Y a-t-il une clause d'arbitrage ?',
+      question: "Y a-t-il une clause d'arbitrage ?",
       options: [
         { label: 'Oui, dans le contrat', next: 'arbitration' },
         { label: 'Non, ou incertain', next: 'consider-arb' },
@@ -127,7 +127,7 @@ Lorsque les relations commerciales tournent mal, vous devez connaître vos optio
       result: {
         title: 'Arbitrage (BANI ou SIAC)',
         description:
-          'Pour les litiges commerciaux importants. Arbitres experts, décisions contraignantes, exécutoires à l'échelle internationale. Idéal pour les affaires commerciales complexes.',
+          "Pour les litiges commerciaux importants. Arbitres experts, décisions contraignantes, exécutoires à l'échelle internationale. Idéal pour les affaires commerciales complexes.",
       },
     },
     {
@@ -143,7 +143,7 @@ Lorsque les relations commerciales tournent mal, vous devez connaître vos optio
       result: {
         title: 'Arbitrage requis',
         description:
-          'Votre contrat spécifie l'arbitrage. Vous devez utiliser l'institution spécifiée (BANI, SIAC, etc.). Les tribunaux se référeront à la clause d'arbitrage.',
+          "Votre contrat spécifie l'arbitrage. Vous devez utiliser l'institution spécifiée (BANI, SIAC, etc.). Les tribunaux se référeront à la clause d'arbitrage.",
       },
     },
     {
@@ -151,7 +151,7 @@ Lorsque les relations commerciales tournent mal, vous devez connaître vos optio
       result: {
         title: 'Considérer toutes les options',
         description:
-          'Sans clause d'arbitrage, vous pouvez choisir : la négociation, la médiation ou le contentieux. Envisagez d'ajouter une clause d'arbitrage pour les futurs contrats.',
+          "Sans clause d'arbitrage, vous pouvez choisir : la négociation, la médiation ou le contentieux. Envisagez d'ajouter une clause d'arbitrage pour les futurs contrats.",
       },
     },
   ]}
@@ -254,7 +254,7 @@ Lorsque les relations commerciales tournent mal, vous devez connaître vos optio
       description: 'Les deux parties consentent',
       duration: '1 semaine',
       status: 'required',
-      tips: ['Sélectionner un médiateur', 'Signer l'accord de médiation', 'Établir un calendrier'],
+      tips: ['Sélectionner un médiateur', "Signer l'accord de médiation", 'Établir un calendrier'],
     },
     {
       id: 'prepare',
@@ -262,7 +262,7 @@ Lorsque les relations commerciales tournent mal, vous devez connaître vos optio
       description: 'Soumettre les mémoires de position',
       duration: '1-2 semaines',
       status: 'required',
-      tips: ['Échanger des documents', 'Identifier les points clés', 'Préparer la déclaration d'ouverture'],
+      tips: ['Échanger des documents', 'Identifier les points clés', "Préparer la déclaration d'ouverture"],
     },
     {
       id: 'session',
@@ -270,7 +270,7 @@ Lorsque les relations commerciales tournent mal, vous devez connaître vos optio
       description: 'Discussions facilitées',
       duration: '1-3 jours',
       status: 'required',
-      tips: ['Déclarations d'ouverture', 'Séances conjointes et privées', 'Explorer les solutions'],
+      tips: ["Déclarations d'ouverture", 'Séances conjointes et privées', 'Explorer les solutions'],
     },
     {
       id: 'agreement',
@@ -278,7 +278,7 @@ Lorsque les relations commerciales tournent mal, vous devez connaître vos optio
       description: 'Si une résolution est trouvée',
       duration: '1 semaine',
       status: 'final',
-      tips: ['Rédiger l'accord', 'Examen juridique', 'Signer un règlement contraignant'],
+      tips: ["Rédiger l'accord", 'Examen juridique', 'Signer un règlement contraignant'],
     },
   ]}
 />
@@ -477,7 +477,7 @@ La prévention est moins coûteuse que la résolution !
   context="Dispute resolution Indonesia, arbitration, litigation, BANI, business disputes"
   placeholder="Poser une question sur la résolution des litiges..."
   suggestedQuestions={[
-    'L'arbitrage est-il préférable à un procès ?',
+    "L'arbitrage est-il préférable à un procès ?",
     'Combien de temps dure un arbitrage BANI ?',
     'Puis-je faire exécuter un jugement étranger en Indonésie ?',
     'Combien coûte un litige commercial ?',
