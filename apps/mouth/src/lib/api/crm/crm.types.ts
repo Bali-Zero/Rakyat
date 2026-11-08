@@ -938,7 +938,9 @@ export interface ClientCompanyLink {
   shares_count?: number;
   share_nominal_value?: number;
   start_date?: string;
-  status: string;
+  /** Profile uses status; /by-client uses link_status. */
+  status?: string;
+  link_status?: string;
   notes?: string;
   // Company details
   kbli_code?: string;
@@ -962,6 +964,18 @@ export interface ClientCompanyLink {
   google_drive_folder_id?: string | null;
   tax_dept_folder_id?: string | null;
   custom_fields?: Record<string, unknown>;
+}
+
+/** Informational Drive links; these do not grant document access. */
+export interface CompanyDriveSources {
+  company_id: number;
+  sources: Array<{
+    url: string;
+    kinds: Array<"primary" | "restricted_tax" | "legacy">;
+  }>;
+  lineage_status: "none" | "valid" | "invalid";
+  merged_into_company_id: number | null;
+  historical_record_ids: number[];
 }
 
 export interface CompanyDocument {

@@ -15,6 +15,14 @@ describe("CrmApi", () => {
     crmApi = new CrmApi(mockClient as unknown as ApiClientBase);
   });
 
+  it("reads company Drive sources without requesting a mutation", async () => {
+    mockClient.request.mockResolvedValue({ company_id: 17, sources: [] });
+    await crmApi.getCompanyDriveSources(17);
+    expect(mockClient.request).toHaveBeenCalledExactlyOnceWith(
+      "/api/crm/companies/17/drive-sources",
+    );
+  });
+
   describe("getUpcomingRenewals", () => {
     it("should fetch upcoming renewals with default 90 days", async () => {
       const mockRenewals: RenewalAlert[] = [
