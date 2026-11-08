@@ -296,6 +296,8 @@ def test_legal_form_is_stated_as_recorded_trimmed_and_only_from_the_set():
 
 
 def test_lkpm_status_is_label_only():
+    for member in ("draft", "pending", "submitted", "approved"):
+        assert g.lkpm_status(f" {member.upper()} ") == member
     assert g.lkpm_status(" Approved ") == "approved"
     for bad in ("final", "", None, 3, "approved!"):
         assert g.lkpm_status(bad) is None

@@ -290,3 +290,10 @@ def test_every_lkpm_status_label_passes_the_allow_list_and_whitespace_collapses_
         )
         assert got["lkpm_latest"]["status"] == status
     assert r._s_slot("Visa   Extension") == "Visa Extension"
+
+
+def test_several_family_permits_ending_before_the_main_permit_are_worded_exactly():
+    p = {"family_members_count": 3, "family_permits_ending_before_main_count": 2}
+    assert rt.template_recap("immigration", p) == (
+        "Three family members are on file, two of them with permits that end before the main permit."
+    )
