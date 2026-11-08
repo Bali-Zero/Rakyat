@@ -397,4 +397,46 @@ describe("one publication rule for local MDX", () => {
       "visas/a-pin|A",
     ]);
   });
+
+  it("skips a pin the page could not render, alone, and keeps the others", async () => {
+    const raw = (lines: string) =>
+      `---\n${lines}category: business\npublishedAt: "2026-02-20"\n---\n\nBody.\n`;
+    disk({
+      [`business/good-pin.mdx`]: mdx("", "Good"),
+      [`business/object-title.mdx`]: raw("title:\n  text: Broken\n"),
+      [`business/number-excerpt.mdx`]: mdx("excerpt: 42\n", "Numeric excerpt"),
+      [`business/bad-date.mdx`]: mdx("", "Bad date").replace(
+        'publishedAt: "2026-02-20"',
+        "publishedAt: invalid",
+      ),
+      [`business/bad-update.mdx`]: mdx("updatedAt: nope\n", "Bad update"),
+      [`business/null-author.mdx`]: mdx("author: null\n", "Null author"),
+      [`business/text-faq.mdx`]: mdx('faq: "not a list"\n', "Text faq"),
+      [`business/null-mention.mdx`]: mdx(
+        "aiOptimization:\n  entityMentions:\n    - null\n",
+        "Null mention",
+      ),
+      [`business/number-title.mdx`]: raw("title: 42\n"),
+      [`business/good-faq.mdx`]: mdx(
+        "faq:\n  - question: Q\n    answer: A\n",
+        "Good faq",
+      ),
+    });
+    const pins = await getPinnedMdxArticles([
+      "object-title",
+      "number-excerpt",
+      "good-pin",
+      "bad-date",
+      "bad-update",
+      "null-author",
+      "text-faq",
+      "null-mention",
+      "number-title",
+      "good-faq",
+    ]);
+    expect(pins.map((p) => p.slug + "|" + p.title)).toEqual([
+      "good-pin|Good",
+      "good-faq|Good faq",
+    ]);
+  });
 });

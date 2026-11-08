@@ -146,4 +146,18 @@ describe("HomeJournal Insight row over the real reader", () => {
       [...row.querySelectorAll("a")].map((a) => a.getAttribute("href")),
     ).toEqual(["/business/pin-live"]);
   });
+
+  it("renders the home when a pin's title is not text, without that pin", async () => {
+    backendRows(["pin-object", "business"]);
+    layout.insight_3 = "pin-object";
+    for (let i = 0; i < 7; i++) article("feed-" + i, 20 - i);
+    article("pin-live", 3);
+    files["business/pin-object.mdx"] =
+      '---\ntitle:\n  text: Broken\ncategory: business\npublishedAt: "2026-10-02"\n---\n\nBody.\n';
+    render(await HomeJournal());
+    const row = screen.getByRole("region", { name: "Insight" });
+    expect(
+      [...row.querySelectorAll("a")].map((a) => a.getAttribute("href")),
+    ).toEqual(["/business/pin-live"]);
+  });
 });
