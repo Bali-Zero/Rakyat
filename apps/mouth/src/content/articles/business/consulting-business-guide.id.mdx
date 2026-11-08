@@ -120,6 +120,8 @@ translatedBy: Gemma3:12b + Gemini 3.1 Pro
 translatedFrom: en
 twitterCard: summary_large_image
 updatedAt: "2026-02-16"
+locale: "id"
+source_sha256: "eb14a94656a49bcddc22c60f92229771ad5a69cab3df2c8dab045a1fa95a23e3"
 ---
 
 import {
@@ -130,48 +132,401 @@ import {
   AskZantara,
 } from "@/components/insights/interactive";
 
-# Bisnis Konsultan di Indonesia 2026: Panduan untuk Konsultan Asing
+# Bisnis Konsultasi di Indonesia 2026: Panduan untuk Konsultan Asing
 
-Sektor layanan profesional dan konsultasi terus berkembang pesat di Indonesia. Berikut adalah panduan bagi konsultan asing untuk mendirikan operasional bisnis secara legal.
+Layanan profesional dan konsultasi terus berkembang di Indonesia. Berikut cara konsultan asing dapat membangun operasional yang legal.
 
-## Opsi Pendirian Bisnis Konsultasi
+## Pilihan Bisnis Konsultasi
 
 <DecisionTree
-  title="Pilih Struktur Bisnis Anda"
-  description="Temukan model legalitas yang paling sesuai untuk bisnis konsultasi Anda"
+  title="Choose Your Structure"
+  description="Find the right setup for your consulting business"
   nodes={[
     {
       id: "start",
-      question: "Di mana lokasi target klien Anda?",
+      question: "Where are your clients?",
       options: [
-        { label: "Klien Indonesia", next: "indo-clients" },
-        { label: "Hanya klien asing", next: "foreign-clients" },
-        { label: "Keduanya (Campuran)", next: "mixed" },
+        { label: "Indonesian clients", next: "indo-clients" },
+        { label: "Foreign clients only", next: "foreign-clients" },
+        { label: "Mix of both", next: "mixed" },
       ],
     },
     {
       id: "indo-clients",
-      question: "Bagaimana Anda akan memberikan layanan?",
+      question: "How will you deliver services?",
       options: [
-        { label: "Tatap muka, menetap di Indonesia", next: "pt-pma" },
-        { label: "Dapat dilakukan secara remote", next: "remote-indo" },
+        { label: "In-person, from Indonesia", next: "pt-pma" },
+        { label: "Remotely possible", next: "remote-indo" },
       ],
     },
     {
       id: "foreign-clients",
-      question: "Apakah Anda akan bekerja dari wilayah Indonesia?",
+      question: "Will you work from Indonesia?",
       options: [
-        { label: "Ya, menetap di Indonesia", next: "remote-visa" },
-        { label: "Tidak, hanya berkunjung sesekali", next: "no-company" },
+        { label: "Yes, living in Indonesia", next: "remote-visa" },
+        { label: "No, visiting occasionally", next: "no-company" },
       ],
     },
     {
       id: "mixed",
       result: {
-        title: "Direkomendasikan: PT PMA",
+        title: "PT PMA Recommended",
         description:
-          "Jika Anda memiliki klien domestik dan mancanegara, PT PMA memberikan fleksibilitas operasional maksimal. Anda dapat menerbitkan invoice secara lokal maupun internasional dengan perlindungan hukum yang penuh.",
+          "With both Indonesian and foreign clients, a PT PMA gives you the most flexibility. You can invoice locally and internationally.",
+      },
+    },
+    {
+      id: "pt-pma",
+      result: {
+        title: "PT PMA Required",
+        description:
+          "To serve Indonesian clients from Indonesia, you need a PT PMA. This allows you to invoice in IDR, hire local staff, and work legally.",
+      },
+    },
+    {
+      id: "remote-indo",
+      result: {
+        title: "Consider Both Options",
+        description:
+          "If services can be delivered remotely, you might invoice from a foreign company. But for best client relationships and payment collection, PT PMA is often better.",
+      },
+    },
+    {
+      id: "remote-visa",
+      result: {
+        title: "E33G Digital Nomad + Foreign Company",
+        description:
+          "You can work remotely for foreign clients on certain visas without Indonesian company. But you're limited in serving Indonesian market.",
+      },
+    },
+    {
+      id: "no-company",
+      result: {
+        title: "No Indonesian Company Needed",
+        description:
+          "If you don't live in Indonesia and only serve foreign clients, you don't need Indonesian company. Visit on business visa as needed.",
       },
     },
   ]}
 />
+
+---
+
+## PT PMA untuk Konsultasi
+
+### Kode KBLI untuk Konsultasi
+
+| Kode  | Kegiatan (KBLI 2025)                                 | Tingkat Risiko  | Status PMA   |
+| ----- | ---------------------------------------------------- | --------------- | ------------ |
+| 70209 | Konsultasi Manajemen dan Bisnis Lainnya              | Rendah          | TERBUKA 100% |
+| 70202 | Konsultansi Manajemen dan Bisnis Industri            | Menengah Tinggi | TERBUKA 100% |
+| 70203 | Konsultansi Manajemen dan Bisnis Perdagangan         | Rendah          | TERBUKA 100% |
+| 70201 | Konsultansi Manajemen dan Bisnis **Pariwisata**      | Rendah          | TERBUKA 100% |
+| 62209 | Konsultansi Komputer dan Manajemen Fasilitas Lainnya | -               | TERBUKA 100% |
+| 62201 | Konsultansi dan Manajemen Keamanan Siber             | -               | TERBUKA 100% |
+
+<InfoCard variant="warning" title="KBLI 2025: Old Codes Removed">
+Kode KBLI 2020 berikut **sudah tidak berlaku** dalam KBLI 2025:
+- ~~62020~~ (konsultasi TI) → Kini dipecah menjadi 62201, 62204, 62209
+- ~~69209~~ (layanan profesional lainnya) → Direstrukturisasi
+- ~~74909~~ (dukungan bisnis lainnya) → Direstrukturisasi
+
+Jika PT PMA Anda yang sudah ada menggunakan kode lama, Anda perlu melakukan migrasi ke KBLI 2025 sekarang karena masa transisi Juni 2026 telah berakhir (Peraturan BPS 7/2025).
+
+</InfoCard>
+
+<InfoCard variant="note" title="100% Foreign Ownership Confirmed">
+
+Semua kode KBLI konsultasi yang tercantum di atas memiliki status PMA **TERBUKA** dengan
+`pma_max_asing: 100%`. Tidak diperlukan mitra Indonesia. Sumber: Perpres
+10/2021, 49/2021, 14/2024.
+
+</InfoCard>
+
+### Persyaratan Investasi
+
+PT PMA konsultasi:
+
+- **Total investasi minimum**: IDR 10 miliar (~USD 625.000)
+- **Modal disetor minimum**: IDR 2,5 miliar (~USD 156.000)
+- Ini adalah batas minimum berdasarkan peraturan BKPM Regulation 5/2025
+
+<InfoCard variant="tip" title="Bali Zero Consulting Setup Costs">
+- **Perusahaan Baru (PT PMA):** IDR 25.000.000
+- **Virtual Office** (domisili perusahaan): IDR 5.000.000
+- **KITAS Kerja (Direktur E25B):** IDR 34.500.000 (Offshore), IDR 36.000.000 (Onshore), IDR 31.500.000 (Perpanjangan)
+
+Ini adalah biaya layanan Bali Zero, terpisah dari persyaratan modal berdasarkan peraturan di atas.
+
+</InfoCard>
+
+---
+
+## Perbandingan Struktur
+
+<ComparisonTable
+  title="Consulting Business Structures"
+  description="Options for professional services"
+  items={[
+    {
+      name: "PT PMA",
+      subtitle: "Indonesian company",
+      values: {
+        "Indonesian Clients": "Yes",
+        "Foreign Clients": "Yes",
+        "Local Staff": "Yes",
+        "Your Work Permit": "E25B Director KITAS",
+        Investment: "IDR 10B (statutory)",
+      },
+      highlight: true,
+    },
+    {
+      name: "Foreign Company + Remote Visa",
+      subtitle: "Invoice from abroad",
+      values: {
+        "Indonesian Clients": "Limited",
+        "Foreign Clients": "Yes",
+        "Local Staff": "No",
+        "Your Work Permit": "E33G Remote Worker visa",
+        Investment: "None in Indonesia",
+      },
+    },
+    {
+      name: "Freelancer",
+      subtitle: "Individual practice",
+      values: {
+        "Indonesian Clients": "Gray area",
+        "Foreign Clients": "Yes",
+        "Local Staff": "No",
+        "Your Work Permit": "Via E33G Digital Nomad",
+        Investment: "None",
+      },
+    },
+  ]}
+/>
+
+---
+
+## Mendirikan PT PMA Konsultasi
+
+<Checklist
+  title="Consulting PT PMA Setup"
+  description="Steps to establish your practice"
+  persistKey="consulting-setup-checklist"
+  items={[
+    {
+      id: "plan",
+      label: "Define services and KBLI codes",
+      description: "What consulting services will you offer?",
+      required: true,
+      category: "planning",
+    },
+    {
+      id: "company",
+      label: "Establish PT PMA",
+      description: "Company formation through notary",
+      required: true,
+      category: "company",
+    },
+    {
+      id: "nib",
+      label: "Obtain NIB through OSS",
+      description: "Business registration",
+      required: true,
+      category: "company",
+    },
+    {
+      id: "bank",
+      label: "Open corporate bank account",
+      description: "For invoicing and payments",
+      required: true,
+      category: "operations",
+    },
+    {
+      id: "kitas",
+      label: "Apply for Director KITAS (E25B)",
+      description:
+        "RPTKA + DKP-TKA + E25B visa. Bali Zero Working KITAS from IDR 31.5M",
+      required: true,
+      category: "immigration",
+    },
+    {
+      id: "npwp",
+      label: "Personal and company NPWP",
+      description: "Tax registrations",
+      required: true,
+      category: "tax",
+    },
+    {
+      id: "accounting",
+      label: "Set up accounting",
+      description: "Bookkeeper or accountant",
+      required: true,
+      category: "operations",
+    },
+    {
+      id: "contracts",
+      label: "Client contract templates",
+      description: "Bilingual agreements",
+      required: true,
+      category: "legal",
+    },
+  ]}
+  categories={[
+    { id: "planning", label: "Planning", color: "blue" },
+    { id: "company", label: "Company", color: "green" },
+    { id: "immigration", label: "Immigration", color: "amber" },
+    { id: "tax", label: "Tax", color: "red" },
+    { id: "operations", label: "Operations", color: "purple" },
+    { id: "legal", label: "Legal", color: "cyan" },
+  ]}
+  showProgress={true}
+/>
+
+---
+
+## Penagihan & Pembayaran
+
+### Menagih Klien Indonesia
+
+Dengan PT PMA, Anda dapat:
+
+- Menagih dalam IDR
+- Menerbitkan faktur pajak (Faktur Pajak)
+- Memungut PPN (11%)
+- Menerima transfer bank lokal
+
+### Menagih Klien Asing
+
+Dari PT PMA:
+
+- Menagih dalam USD atau mata uang lainnya
+- Menerima pembayaran ke rekening bank Indonesia
+- Mengonversi ke IDR
+- Mempertimbangkan nilai tukar mata uang asing
+
+<InfoCard variant="warning" title="VAT on Services">
+
+Jasa konsultasi dikenakan **PPN 11%**. Anda harus membebankan pajak ini kepada
+klien Indonesia dan menyetorkannya ke kantor pajak setiap bulan.
+
+</InfoCard>
+
+---
+
+## Pertimbangan Izin Kerja
+
+### Sebagai Direktur PT PMA Anda
+
+Anda memerlukan **KITAS Direktur (E25B - Visa Kerja Direktur Perusahaan)**:
+
+- RPTKA (tetap diperlukan bahkan untuk perusahaan sendiri)
+- Biaya DKP-TKA (USD 100/bulan)
+- KITAS Direktur E25B
+
+<InfoCard variant="tip" title="Bali Zero Working KITAS (E25B)">
+
+- **Offshore** (mengajukan dari luar negeri): IDR 34.500.000 - **Onshore** (mengajukan dari
+  Indonesia): IDR 36.000.000 - **Extend** (perpanjangan): IDR 31.500.000
+
+</InfoCard>
+
+### Mempekerjakan Konsultan Asing Lainnya
+
+Staf asing tambahan memerlukan:
+
+- RPTKA individual
+- Justifikasi posisi
+- Pelatihan pendamping Indonesia
+- Biaya izin penuh untuk setiap orang
+
+---
+
+## Kewajiban Pajak
+
+### Pajak Perusahaan
+
+| Pajak                   | Tarif           | Frekuensi       |
+| ----------------------- | --------------- | --------------- |
+| PPN                     | 11% atas jasa   | Bulanan         |
+| Pajak Penghasilan Badan | 22% atas laba   | Tahunan         |
+| Pemotongan atas pembayaran | Bervariasi   | Per transaksi   |
+
+### Pajak Pribadi
+
+Sebagai direktur/pemilik:
+
+- Gaji dikenakan PPh 21
+- Dividen dikenakan pajak
+- SPT tahunan wajib disampaikan
+
+---
+
+## Jenis Konsultasi yang Umum
+
+### Diizinkan untuk Orang Asing
+
+- Konsultasi manajemen
+- Konsultasi strategi
+- Konsultasi TI
+- Konsultasi keuangan (tidak teregulasi)
+- Konsultasi pemasaran
+- Konsultasi SDM (non-penempatan)
+- Konsultasi teknis
+
+### Bidang yang Dibatasi
+
+- Nasihat hukum (memerlukan pengacara Indonesia)
+- Nasihat pajak (secara teknis dibatasi)
+- Jasa audit (akuntan berlisensi)
+- Layanan keuangan tertentu
+
+<InfoCard variant="note" title="Partnerships">
+
+Untuk layanan yang dibatasi, pertimbangkan bekerja sama dengan profesional Indonesia
+berlisensi yang dapat menyediakan komponen layanan yang teregulasi.
+
+</InfoCard>
+
+---
+
+## Konsultasi Jarak Jauh
+
+### Bekerja dari Indonesia Tanpa PT PMA
+
+Jika klien seluruhnya berasal dari luar negeri:
+
+- Pilihan Visa Digital Nomad E33G
+- Menagih melalui perusahaan asing
+- Tidak ada hubungan kerja di Indonesia
+- Tidak dapat melayani klien Indonesia
+
+### Keterbatasan
+
+- Tidak dapat membangun basis klien Indonesia
+- Kesulitan rekening bank
+- Stabilitas jangka panjang terbatas
+- Perpanjangan visa diperlukan
+
+---
+
+## Pertanyaan Umum
+
+<AskZantara
+  context="Consulting business Indonesia, professional services, PT PMA consulting, foreign consultant"
+  placeholder="Ask about consulting business..."
+  suggestedQuestions={[
+    "Can I do consulting on tourist visa?",
+    "What if I just have one Indonesian client?",
+    "How do I price services in IDR vs USD?",
+    "Do I need professional certification?",
+  ]}
+/>
+
+---
+
+## Artikel Terkait
+
+- [Panduan Pendaftaran PT PMA](/insights/business/foreign-company-incorporation-steps)
+- [KITAS Direktur vs Karyawan](/insights/immigration/director-vs-employee-kitas)
+- [Panduan Pajak Freelancer](/insights/tax/freelancer-tax-guide)
