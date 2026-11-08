@@ -33,6 +33,7 @@ from backend.app.utils.tracing import add_span_event, set_span_status, trace_spa
 from backend.core.observability import init_observability, start_traced_span
 from backend.core.observability import is_enabled as _lf_enabled
 from backend.db.repositories.conversation_repository import ConversationRepository
+from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.agents.team_agent_config import (
     ROLE_ADMIN,
     AgentRole,
@@ -115,12 +116,10 @@ def clean_image_generation_response(text: str) -> str:
         # Skip lines with pollinations URLs (any subdomain)
         if (
             "pollinations" in line_lower
-            or ("image" in line_lower
-            and "http" in line_lower)
+            or ("image" in line_lower and "http" in line_lower)
             or re.search(r"!\[.*?\]\(.*?\)", line, re.IGNORECASE)
             or "![" in line
-            or ("](" in line
-            and "http" in line)
+            or ("](" in line and "http" in line)
             or line.strip().startswith("[Visualizza")
             or re.search(
                 r"^\s*\d+\.\s*\*{0,2}(Versione|Prima|Seconda|Opzione)",
@@ -208,10 +207,8 @@ async def _process_query_traced(
         name="agentic_rag.query",
         input={"query_hash": query_hash, "query_length": len(query_str)},
         metadata={
-            "user_id_hash": hashlib.sha256(
-                (authenticated_user_id or "").encode("utf-8"),
-            ).hexdigest()[:16],
-            "session_id": session_id,
+            "user_id_hash": redact_identifier_for_log(authenticated_user_id),
+            "session_id": redact_identifier_for_log(session_id),
             "query_id": query_id,
             "ab_variants": ab_variants,
             "route": "/api/agentic-rag/query",
@@ -527,9 +524,7 @@ async def query_agentic_rag(
     **A/B TESTING**: Automatically assigns users to retrieval strategy variants
     and records performance metrics for comparison.
     """
-    trusted_profile = await _resolve_trusted_wa_profile(
-        is_wa_inbox_bot, request.user_id, db_pool
-    )
+    trusted_profile = await _resolve_trusted_wa_profile(is_wa_inbox_bot, request.user_id, db_pool)
 
     # W-1 follow-up to P0-MEM (#3036), 2026-07-27: per-sender pseudonymous
     # memory subject for the trusted WA bot. Independent of `trusted_profile`
@@ -557,7 +552,7 @@ async def query_agentic_rag(
 
     # DIAGNOSTIC: Log identity info
     logger.info(
-        f"🔍 Sync query: user={authenticated_user_id} (authenticated: {current_user is not None})",
+        f"🔍 Sync query: user={redact_identifier_for_log(authenticated_user_id)} (authenticated: {current_user is not None})",
     )
 
     # A/B TESTING: Assign variants and get configurations
@@ -583,7 +578,7 @@ async def query_agentic_rag(
     )
 
     logger.info(
-        f"🧪 A/B Test variants for {authenticated_user_id}: "
+        f"🧪 A/B Test variants for {redact_identifier_for_log(authenticated_user_id)}: "
         f"hybrid={ab_variants['hybrid_vs_dense']}, "
         f"rerank={ab_variants['reranking_on_off']}, "
         f"expansion={ab_variants['query_expansion']}",
@@ -611,7 +606,9 @@ async def query_agentic_rag(
         # Priority 2: Try to retrieve from database if no frontend history
         elif authenticated_user_id and (request.conversation_id or request.session_id):
             logger.info(
-                f"🔍 Retrieving conversation history from DB: conversation_id={request.conversation_id}, session_id={request.session_id}, user_id={authenticated_user_id}",
+                f"🔍 Retrieving conversation history from DB: conversation_id={request.conversation_id}, "
+                f"session_id={redact_identifier_for_log(request.session_id)}, "
+                f"user_id={redact_identifier_for_log(authenticated_user_id)}",
             )
             conversation_history = await get_conversation_history_for_agentic(
                 conversation_id=request.conversation_id,
@@ -761,8 +758,9 @@ async def query_agentic_rag(
     except Exception as e:
         import traceback
 
-        tb = traceback.format_exc()
-        logger.error(f"❌ Error in query_agentic_rag: {e!s}\n{tb}")
+        # Frames only: the exception message is left out because it can carry row values.
+        frames = "".join(traceback.format_tb(e.__traceback__))
+        logger.error("❌ Error in query_agentic_rag: %s\n%s", type(e).__name__, frames)
         # Temporarily include traceback in response for debugging
         # Generic error message for production
         raise HTTPException(
@@ -791,7 +789,7 @@ async def get_conversation_history_for_agentic(
     """
     if not db_pool or not user_id:
         logger.debug(
-            f"⚠️ Cannot retrieve conversation history: db_pool={db_pool is not None}, user_id={user_id}",
+            f"⚠️ Cannot retrieve conversation history: db_pool={db_pool is not None}, user_id_present={bool(user_id)}",
         )
         return []
 
@@ -802,10 +800,7 @@ async def get_conversation_history_for_agentic(
 
             # If user_id doesn't look like an email, try to get email from team_members
             if "@" not in user_email:
-                logger.debug(
-                    "🔍 user_id '%s' doesn't look like email, trying to find email...",
-                    user_id,
-                )
+                logger.debug("🔍 user_id doesn't look like email, trying to find email...")
                 email_row = await conn.fetchrow(
                     """
                     SELECT email FROM user_profiles
@@ -816,9 +811,15 @@ async def get_conversation_history_for_agentic(
                 )
                 if email_row and email_row.get("email"):
                     user_email = email_row["email"]
-                    logger.info("✅ Found email for user_id '%s': %s", user_id, user_email)
+                    logger.info(
+                        "✅ Resolved email for non-email user_id (%s)",
+                        redact_identifier_for_log(user_id),
+                    )
                 else:
-                    logger.warning("⚠️ Could not find email for user_id '%s', using as-is", user_id)
+                    logger.warning(
+                        "⚠️ Could not find email for user_id (%s), using as-is",
+                        redact_identifier_for_log(user_id),
+                    )
 
             # Try conversation_id first, then session_id, then most recent
             if conversation_id:
@@ -868,7 +869,7 @@ async def get_conversation_history_for_agentic(
             return []
 
     except Exception as e:
-        logger.warning("⚠️ Failed to retrieve conversation history: %s", e)
+        logger.warning("⚠️ Failed to retrieve conversation history: %s", type(e).__name__)
         return []
 
 
@@ -901,7 +902,7 @@ async def stream_agentic_rag(
         )
 
     logger.info(
-        f"📡 Chat Stream: user={authenticated_user_id} (authenticated: {current_user is not None})",
+        f"📡 Chat Stream: user={redact_identifier_for_log(authenticated_user_id)} (authenticated: {current_user is not None})",
     )
     # Get correlation ID from request state (set by RequestTracingMiddleware)
     correlation_id = (
@@ -910,8 +911,7 @@ async def stream_agentic_rag(
         or http_request.headers.get("X-Correlation-ID", "unknown")
     )
 
-    # Safe query hash for logging (first 50 chars + hash)
-    query_preview = request_body.query[:50] if request_body.query else ""
+    # Safe query hash for logging (hash + length only, never any query text)
     query_hash = hashlib.sha256(
         request_body.query.encode() if request_body.query else b"",
     ).hexdigest()[:8]
@@ -920,10 +920,10 @@ async def stream_agentic_rag(
     start_time = time.time()
     logger.info(
         f"📥 SSE stream request started: correlation_id={correlation_id}, "
-        f"query_preview='{query_preview}...', query_hash={query_hash}, "
+        f"query_hash={query_hash}, "
         f"query_length={len(request_body.query) if request_body.query else 0}, "
-        f"user_id={authenticated_user_id[:8] + '...' if authenticated_user_id and len(authenticated_user_id) > 8 else authenticated_user_id}, "
-        f"session_id={request_body.session_id}",
+        f"user_id={redact_identifier_for_log(authenticated_user_id)}, "
+        f"session_id={redact_identifier_for_log(request_body.session_id)}",
     )
 
     # TRACING: Record span for streaming request (completes before response streams)
@@ -931,10 +931,12 @@ async def stream_agentic_rag(
     with trace_span(
         "agentic_rag.stream",
         {
-            "user_id": authenticated_user_id or "anonymous",
+            "user_id": redact_identifier_for_log(authenticated_user_id or "anonymous"),
             "query_length": len(request_body.query) if request_body.query else 0,
             "query_hash": query_hash,
-            "session_id": request_body.session_id or "none",
+            "session_id": redact_identifier_for_log(request_body.session_id)
+            if request_body.session_id
+            else "none",
             "correlation_id": correlation_id,
             "has_conversation_history": bool(request_body.conversation_history),
             "endpoint": "/api/agentic-rag/stream",
@@ -943,7 +945,7 @@ async def stream_agentic_rag(
         add_span_event(
             "stream_request_received",
             {
-                "query_preview": query_preview[:30] if query_preview else "",
+                "query_length": len(request_body.query) if request_body.query else 0,
             },
         )
 
@@ -999,7 +1001,8 @@ async def stream_agentic_rag(
             ):
                 logger.info(
                     f"🔍 Retrieving conversation history from DB: conversation_id={request_body.conversation_id}, "
-                    f"session_id={request_body.session_id}, user_id={authenticated_user_id} "
+                    f"session_id={redact_identifier_for_log(request_body.session_id)}, "
+                    f"user_id={redact_identifier_for_log(authenticated_user_id)} "
                     f"(correlation_id={correlation_id})",
                 )
                 try:
@@ -1014,7 +1017,11 @@ async def stream_agentic_rag(
                         f"(correlation_id={correlation_id})",
                     )
                 except Exception as e:
-                    logger.warning("Failed to load history: %s", e)
+                    logger.warning(
+                        "Failed to load history: %s (correlation_id=%s)",
+                        type(e).__name__,
+                        correlation_id,
+                    )
                     # Yield error but continue
                     error_event = {
                         "type": "error",
@@ -1136,7 +1143,7 @@ async def stream_agentic_rag(
 
                 except json.JSONEncodeError as e:
                     error_count += 1
-                    logger.error("JSON serialization failed: %s", e)
+                    logger.error("JSON serialization failed: %s", type(e).__name__)
                     error_event = {
                         "type": "error",
                         "data": {
@@ -1230,10 +1237,14 @@ async def stream_agentic_rag(
                     if persisted:
                         logger.info(
                             f"💾 Conversation persisted: conversation_id={conversation_id}, "
-                            f"session_id={request_body.session_id}",
+                            f"session_id={redact_identifier_for_log(request_body.session_id)}",
                         )
                 except Exception as persist_error:
-                    logger.warning("⚠️ Failed to persist conversation: %s", persist_error)
+                    logger.warning(
+                        "⚠️ Failed to persist conversation: %s (correlation_id=%s)",
+                        type(persist_error).__name__,
+                        correlation_id,
+                    )
                     persisted = False
 
             # Yield final metadata with persistence info
@@ -1375,7 +1386,7 @@ async def stream_workspace_agent(
     if not agent_role:
         logger.warning(
             "🚫 workspace-stream denied: %s is not a registered team agent",
-            user_email,
+            redact_identifier_for_log(user_email),
         )
         raise HTTPException(
             status_code=403,
@@ -1414,7 +1425,7 @@ async def stream_workspace_agent(
     query_hash = hashlib.sha256(request_body.query.encode()).hexdigest()[:8]
     start_time = time.time()
     logger.info(
-        f"📡 Workspace agent stream: user={user_email} role={agent_role.role_id} "
+        f"📡 Workspace agent stream: user={redact_identifier_for_log(user_email)} role={agent_role.role_id} "
         f"scope={agent_role.client_scope} correlation_id={correlation_id} "
         f"query_hash={query_hash}",
     )
@@ -1452,7 +1463,11 @@ async def stream_workspace_agent(
                         db_pool=db_pool,
                     )
                 except Exception as e:
-                    logger.warning("workspace-stream: failed to load history: %s", e)
+                    logger.warning(
+                        "workspace-stream: failed to load history: %s (correlation_id=%s)",
+                        type(e).__name__,
+                        correlation_id,
+                    )
 
             if await http_request.is_disconnected():
                 logger.warning(
@@ -1555,8 +1570,9 @@ async def stream_workspace_agent(
                     persisted = conversation_id_persisted is not None
                 except Exception as persist_error:
                     logger.warning(
-                        "workspace-stream: failed to persist conversation: %s",
-                        persist_error,
+                        "workspace-stream: failed to persist conversation: %s (correlation_id=%s)",
+                        type(persist_error).__name__,
+                        correlation_id,
                     )
                     persisted = False
 
@@ -1567,7 +1583,7 @@ async def stream_workspace_agent(
                     events_yielded += 1
 
             logger.info(
-                f"✅ workspace-stream done: user={user_email} role={agent_role.role_id} "
+                f"✅ workspace-stream done: user={redact_identifier_for_log(user_email)} role={agent_role.role_id} "
                 f"duration={duration:.2f}s events_yielded={events_yielded} "
                 f"final_answer_received={final_answer_received} persisted={persisted}",
             )
@@ -1642,7 +1658,7 @@ async def resolve_confirmation(
         "confirmation_resolved request_id=%s decision=%s user=%s",
         body.request_id,
         body.decision,
-        user_email,
+        redact_identifier_for_log(user_email),
     )
     return {"resolved": True, "request_id": body.request_id}
 
@@ -1675,7 +1691,8 @@ async def trigger_proactivity(
         # Check permissions? For now, strictly verify it matches or is system call.
         # Let's enforce authenticated user for safety unless it's a specific system token (not impl yet).
         logger.warning(
-            f"⚠️ Proactive trigger mismatch: Auth={authenticated_user_id}, Req={request_body.user_id}. Forcing Auth ID.",
+            f"⚠️ Proactive trigger mismatch: Auth={redact_identifier_for_log(authenticated_user_id)}, "
+            f"Req={redact_identifier_for_log(request_body.user_id)}. Forcing Auth ID.",
         )
         target_user_id = authenticated_user_id
 
@@ -1685,7 +1702,11 @@ async def trigger_proactivity(
         None,
     ) or http_request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
 
-    logger.info(f"⚡ [Proactive] Trigger received: {request_body.event_type} for {target_user_id}")
+    logger.info(
+        "⚡ [Proactive] Trigger received: %s for %s",
+        request_body.event_type,
+        redact_identifier_for_log(target_user_id),
+    )
 
     async def event_generator() -> None:
         # Yield initial status
@@ -1700,7 +1721,7 @@ async def trigger_proactivity(
                 event_json = json.dumps(event)
                 yield f"data: {event_json}\n\n"
         except Exception as e:
-            logger.error("❌ [Proactive] Stream Error: %s", e)
+            logger.error("❌ [Proactive] Stream Error: %s", type(e).__name__)
             yield f"data: {json.dumps({'type': 'error', 'data': {'message': str(e)}})}\n\n"
 
         yield f"data: {json.dumps({'type': 'done', 'data': None})}\n\n"
@@ -1883,9 +1904,7 @@ async def get_user_exposure(
     Useful for debugging and support.
     """
     # Only allow real team members to check other users' exposure
-    if not is_human_team_member(current_user.get("role")) and user_id != current_user.get(
-        "email"
-    ):
+    if not is_human_team_member(current_user.get("role")) and user_id != current_user.get("email"):
         raise HTTPException(
             status_code=403,
             detail="Can only view your own exposure history",

@@ -129,6 +129,7 @@ def _install(monkeypatch, endpoint, **kwargs):
     monkeypatch.setattr(conversations, "get_memory_cache", lambda: state.memory)
     monkeypatch.setattr(conversations, "metrics_collector", state.metrics)
     monkeypatch.setattr(conversations, "spawn", spawn)
+    monkeypatch.setattr(conversations.settings, "conversation_title_generation_enabled", True)
     monkeypatch.setattr(asyncio, "sleep", no_delay)
     return conversations, state
 

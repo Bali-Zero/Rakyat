@@ -206,6 +206,9 @@ async def _run_route_cell(
 
     monkeypatch.setattr(conversations_router, "get_memory_cache", lambda: memory)
     monkeypatch.setattr(conversations_router, "spawn", record_spawn)
+    monkeypatch.setattr(
+        conversations_router.settings, "conversation_title_generation_enabled", True
+    )
     monkeypatch.setattr(conversations_router, "log_success", record_success)
     monkeypatch.setattr(conversations_router, "metrics_collector", MagicMock())
 

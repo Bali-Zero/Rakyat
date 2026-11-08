@@ -18,6 +18,7 @@ from backend.app.utils.error_handlers import handle_database_error
 from backend.app.utils.json_utils import to_jsonb
 from backend.app.utils.logging_utils import get_logger, log_database_operation, log_success
 from backend.core.cache import cached, invalidate_cache
+from backend.security.pii_log_identifier import redact_identifier_for_log
 
 logger = get_logger(__name__)
 
@@ -216,7 +217,7 @@ async def create_interaction(
                 logger,
                 f"Logged {interaction.interaction_type} interaction",
                 interaction_id=new_interaction["id"],
-                team_member=interaction.team_member,
+                team_member=redact_identifier_for_log(interaction.team_member),
             )
             log_database_operation(
                 logger,
@@ -664,7 +665,11 @@ async def create_interaction_from_conversation(
                 )
                 if new_client_row:
                     client_row = new_client_row
-                    log_success(logger, "Auto-created prospect client", client_email=client_email)
+                    log_success(
+                        logger,
+                        "Auto-created prospect client",
+                        client_id=client_row["id"],
+                    )
 
             if not client_row:
                 raise HTTPException(status_code=500, detail="Failed to create client")
@@ -787,7 +792,11 @@ async def delete_interaction(
                 interaction_id,
             )
 
-            logger.info("Interaction %s deleted by %s", interaction_id, user_email)
+            logger.info(
+                "Interaction %s deleted by %s",
+                interaction_id,
+                redact_identifier_for_log(user_email),
+            )
 
             await invalidate_cache("zantara:crm_interactions_stats:*")
             return {

@@ -67,6 +67,21 @@ from backend.services.whatsapp_onboarding_detector import get_onboarding_detecto
 
 logger = logging.getLogger(__name__)
 
+
+def build_openclaw_context(ctx: dict[str, Any], *, send_stored_context: bool) -> dict[str, Any]:
+    """Context sent to the OpenClaw bridge. History and profile come from the
+    conversations row, so they leave only when the flag allows it; the keys stay."""
+    return {
+        "client_name": ctx.get("client_name"),
+        "client_profile": ctx.get("client_profile") if send_stored_context else {},
+        "conversation_history": ctx.get("conversation_history") if send_stored_context else [],
+        "detected_language": ctx.get("detected_language"),
+        "is_first_message": ctx.get("is_first_message"),
+        "sender_identity": ctx.get("sender_identity"),
+        "time_of_day": ctx.get("time_of_day"),
+    }
+
+
 # NB: media downloads do NOT happen on Fly (Law 2 — PII stays on the Pro). The
 # official-line media handoff publishes metadata only to events_outbox; the
 # sovereign Pro worker (scripts/wa_media_pull_worker.py) owns the blob root.
@@ -435,15 +450,10 @@ async def process_whatsapp_message(
                 message_text=message_text,
                 sender_name=sender_name,
                 message_id=message_id,
-                context={
-                    "client_name": ctx.get("client_name"),
-                    "client_profile": ctx.get("client_profile"),
-                    "conversation_history": ctx.get("conversation_history"),
-                    "detected_language": ctx.get("detected_language"),
-                    "is_first_message": ctx.get("is_first_message"),
-                    "sender_identity": ctx.get("sender_identity"),
-                    "time_of_day": ctx.get("time_of_day"),
-                },
+                context=build_openclaw_context(
+                    ctx,
+                    send_stored_context=settings.whatsapp_openclaw_send_stored_context,
+                ),
             )
 
             if openclaw_response:

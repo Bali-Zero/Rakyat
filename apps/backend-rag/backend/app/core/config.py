@@ -875,6 +875,22 @@ class Settings(BaseSettings):
             "Set via WHATSAPP_OPENCLAW_BRIDGE_SECRET env var."
         ),
     )
+    whatsapp_openclaw_send_stored_context: bool = Field(
+        default=False,
+        description=(
+            "Send the stored conversation history and client profile to the OpenClaw "
+            "WhatsApp bridge. Off by default: those come from the conversations row. "
+            "Set via WHATSAPP_OPENCLAW_SEND_STORED_CONTEXT env var."
+        ),
+    )
+    conversation_title_generation_enabled: bool = Field(
+        default=False,
+        description=(
+            "Generate a conversation title from the first user message on save. Off by "
+            "default: it sends message text to a title model. "
+            "Set via CONVERSATION_TITLE_GENERATION_ENABLED env var."
+        ),
+    )
     openclaw_webhook_secret: str | None = Field(
         default=None,
         description=(
@@ -1328,6 +1344,7 @@ class Settings(BaseSettings):
             "deploy's, not the product's) — see the PR that set it."
         ),
     )
+
     @field_validator("frontend_portal_url")
     @classmethod
     def _strip_portal_url_trailing_slash(cls, v: str) -> str:
