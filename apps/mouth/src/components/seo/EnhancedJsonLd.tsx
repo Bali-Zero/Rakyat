@@ -12,6 +12,7 @@
  * Sources: schema.org, Google Search Central, llmstxt.org
  */
 
+import { serializeJsonLd } from "@/lib/seo/serialize-json-ld";
 import type { FAQItem, EntityMention } from "@/lib/blog/types";
 
 const baseUrl = process.env.NEXT_PUBLIC_PUBLIC_URL || "https://balizero.com";
@@ -183,7 +184,7 @@ export function ArticleWithFAQJsonLd({
     <script
       id="article-faq-jsonld"
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
     />
   );
 }
@@ -286,7 +287,7 @@ export function EnhancedArticleJsonLd({
     <script
       id="enhanced-article-jsonld"
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
     />
   );
 }
@@ -338,7 +339,7 @@ export function HowToJsonLd({
     <script
       id="howto-jsonld"
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
     />
   );
 }
@@ -437,7 +438,7 @@ export function TopLevelArticleJsonLd({
     <script
       id="top-level-article-jsonld"
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
     />
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { serializeJsonLd } from "@/lib/seo/serialize-json-ld";
 import { usePathname } from "next/navigation";
 import { SERVICES_DATA } from "@/data/services_data";
 import { WA_NUMBER } from "@/lib/whatsapp-utm";
@@ -246,7 +247,7 @@ export function DynamicJsonLd() {
             id={uniqueId}
             type="application/ld+json"
             dangerouslySetInnerHTML={{
-              __html: JSON.stringify(schema).replace(/</g, "\\u003c"),
+              __html: serializeJsonLd(schema),
             }}
           />
         );

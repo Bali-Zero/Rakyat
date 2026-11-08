@@ -6,6 +6,7 @@
  * to ensure JSON-LD is present in the static HTML for Googlebot and validators.
  */
 
+import { serializeJsonLd } from "@/lib/seo/serialize-json-ld";
 import { GOOGLE_RATING, GOOGLE_REVIEW_COUNT } from "@/lib/trust-figures";
 import { WA_NUMBER } from "@/lib/whatsapp-utm";
 
@@ -49,7 +50,7 @@ export function OrganizationJsonLd() {
     <script
       id="organization-jsonld"
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
     />
   );
 }
@@ -99,7 +100,7 @@ export function LocalBusinessJsonLd() {
     <script
       id="localbusiness-jsonld"
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
     />
   );
 }
@@ -185,7 +186,7 @@ export function ArticleJsonLd({
     <script
       id="article-jsonld"
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
     />
   );
 }
@@ -218,7 +219,7 @@ export function FAQJsonLd({ items }: Readonly<FAQJsonLdProps>) {
     <script
       id="faq-jsonld"
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
     />
   );
 }
@@ -267,7 +268,7 @@ export function ServiceJsonLd({
     <script
       id="service-jsonld"
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
     />
   );
 }
@@ -298,7 +299,7 @@ export function BreadcrumbJsonLd({ items }: Readonly<BreadcrumbJsonLdProps>) {
     <script
       id="breadcrumb-jsonld"
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
     />
   );
 }
@@ -327,7 +328,7 @@ export function WebsiteJsonLd() {
     <script
       id="website-jsonld"
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
     />
   );
 }
@@ -367,7 +368,7 @@ export function AggregateRatingJsonLd() {
     <script
       id="aggregate-rating-jsonld"
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
     />
   );
 }
