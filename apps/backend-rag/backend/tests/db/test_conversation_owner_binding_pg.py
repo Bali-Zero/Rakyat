@@ -467,8 +467,10 @@ def test_api_key_principal_email_is_unique_per_key_and_stable() -> None:
     from backend.app.services.api_key_auth import APIKeyAuth
 
     with patch("backend.app.services.api_key_auth.settings") as cfg:
-        cfg.api_keys = "synthetic-key-one,synthetic-key-two"
-        cfg.api_key_roles = "synthetic-key-one:admin,synthetic-key-two:admin"
+        cfg.api_keys = "synthetic-key-one,synthetic-key-two"  # pragma: allowlist secret
+        cfg.api_key_roles = (
+            "synthetic-key-one:admin,synthetic-key-two:admin"  # pragma: allowlist secret
+        )
         auth = APIKeyAuth()
     one = auth.validate_api_key("synthetic-key-one")
     two = auth.validate_api_key("synthetic-key-two")
