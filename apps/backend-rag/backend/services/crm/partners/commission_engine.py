@@ -82,11 +82,11 @@ class CommissionEngine:
             (ON CONFLICT DO NOTHING via UNIQUE index on idempotency_key).
         """
         # Step 1: fetch practice — must be completed AND paid.
-        # NOTE: Column names confirmed from migration 075 trigger (practice_id, client_id,
-        # status, payment_status) and conftest.py stub DDL (total_invoiced_idr, completed_at).
+        # Eligibility first, on columns that exist in production. The amount columns
+        # are read only once a referral is resolved (Step 2b).
         proc = await self.conn.fetchrow(
             """
-            SELECT id, status, payment_status, total_invoiced_idr, completed_at
+            SELECT id, status, payment_status
             FROM practices WHERE id = $1
             """,
             practice_id,
@@ -119,6 +119,20 @@ class CommissionEngine:
             )
             return None
 
+        # Step 2b: only now read the amount columns, so a practice without a referral
+        # never touches them. The names are unchanged: which amount is the commission
+        # base is the owner's decision, and an absent column must fail loudly here.
+        amounts = await self.conn.fetchrow(
+            """
+            SELECT total_invoiced_idr, completed_at
+            FROM practices WHERE id = $1
+            """,
+            practice_id,
+        )
+        if amounts is None:
+            logger.debug("accrue_from_practice: practice %s vanished", practice_id)
+            return None
+
         # Step 3: resolve partner for snapshot values.
         partner = await self.repo.get_partner(referral.partner_id)
         if partner is None:
@@ -127,7 +141,7 @@ class CommissionEngine:
 
         # Step 4: compute amounts (all Decimal, no float).
         # base_amount_idr = practices.total_invoiced_idr (exact column name per stub DDL).
-        base = Decimal(str(proc["total_invoiced_idr"]))
+        base = Decimal(str(amounts["total_invoiced_idr"]))
 
         if partner.default_commission_type == "percentage":
             gross = base * partner.default_commission_value / Decimal("100")
@@ -148,7 +162,7 @@ class CommissionEngine:
 
         # Step 5: resolve cooling-off days from system_settings.
         cooling_days = await self._system_setting_int("partner_accrual_cooling_off_days", 30)
-        completed_at: datetime = proc["completed_at"] or datetime.now(timezone.utc)
+        completed_at: datetime = amounts["completed_at"] or datetime.now(timezone.utc)
         eligible = completed_at + timedelta(days=cooling_days)
 
         # Idempotency key: unique per practice + completed_at timestamp.
