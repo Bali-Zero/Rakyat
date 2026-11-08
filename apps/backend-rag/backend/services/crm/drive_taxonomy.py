@@ -1,5 +1,8 @@
 """Canonical CRM Drive folder names and legacy aliases, without Drive I/O."""
 
+from collections.abc import Mapping
+from typing import Any
+
 INDIVIDUAL_FOLDERS = ("01_Profile", "02_Immigration", "03_Company_and_Tax", "04_Archive")
 COMPANY_FOLDERS = (
     "01_Legal_and_Licensing",
@@ -85,3 +88,30 @@ def standard_subfolder_paths(client_type: str | None = "individual") -> tuple[st
             )
         )
     return tuple(dict.fromkeys((*folders, *nested)))
+
+
+def physical_root_layout(
+    root: Mapping[str, Any],
+    root_id: str,
+    client_type: str | None,
+    *,
+    individuals_parent: str | None,
+    companies_parent: str | None,
+) -> str:
+    """Select only the existing physical layout; this establishes no ownership."""
+    stored_type = client_type or "individual"
+    configured = {"individual": individuals_parent, "company": companies_parent}
+    layouts = [
+        kind for kind, parent in configured.items() if parent and root.get("parents") == [parent]
+    ]
+    if (
+        not root_id
+        or root.get("id") != root_id
+        or root.get("mimeType") != "application/vnd.google-apps.folder"
+        or root.get("trashed") is not False
+        or stored_type not in ("individual", "company")
+        or len(layouts) != 1
+        or (stored_type == "individual" and layouts[0] != "individual")
+    ):
+        raise ValueError("Invalid configured Drive root topology")
+    return layouts[0]

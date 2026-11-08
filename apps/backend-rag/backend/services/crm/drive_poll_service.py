@@ -25,6 +25,11 @@ from backend.core.cache import invalidate_crm_stats
 from backend.core.secret_log_redaction import install_telegram_token_redaction
 from backend.core.telegram_retirement import telegram_is_retired
 from backend.services.crm.document_categorizer import auto_categorize_document
+from backend.services.crm.drive_poll_ownership import (
+    is_billing_file,
+    ownership_maps,
+    revalidate_poll_owner,
+)
 from backend.services.crm.drive_registration_visibility import drive_default_client_visible
 from backend.services.crm.drive_taxonomy import canonical_folders
 from backend.services.crm_guardian.summary_queue import (
@@ -417,19 +422,14 @@ async def _do_poll_drive_changes(
                 "SELECT client_id, subfolder_name, subfolder_id FROM client_drive_subfolders",
             )
 
-        subfolder_map: dict[str, tuple[int, str]] = {}
-        for sf in subfolders:
-            subfolder_map[sf["subfolder_id"]] = (sf["client_id"], sf["subfolder_name"])
-
-        # Also build client root folder → client_id map (for fallback resolution)
         async with db_pool.acquire() as conn:
             clients_with_folders = await conn.fetch(
-                "SELECT id, google_drive_folder_id FROM clients WHERE google_drive_folder_id IS NOT NULL",
+                """SELECT id, google_drive_folder_id, drive_folder_id, client_type, deleted_at, status
+                   FROM clients""",
             )
-
-        root_folder_map: dict[str, int] = {}
-        for c in clients_with_folders:
-            root_folder_map[c["google_drive_folder_id"]] = c["id"]
+        subfolder_map, root_folder_map = ownership_maps(subfolders, clients_with_folders)
+        client_roots = {client_id: root_id for root_id, client_id in root_folder_map.items()}
+        registered_ids = {sf["subfolder_id"] for sf in subfolders}
 
         # Company folders are not inserted into client documents here, but a
         # company-level Drive change invalidates every linked client summary.
@@ -476,7 +476,17 @@ async def _do_poll_drive_changes(
             if not parents:
                 continue
 
+            if len(parents) != 1:
+                skipped += 1
+                continue
             parent_id = parents[0]
+            async with db_pool.acquire() as conn:
+                if await is_billing_file(conn, file_id):
+                    skipped += 1
+                    continue
+            if parent_id in registered_ids and parent_id not in subfolder_map:
+                skipped += 1
+                continue
 
             # Check if parent is a known subfolder (top-level OR nested)
             if parent_id in subfolder_map:
@@ -513,26 +523,37 @@ async def _do_poll_drive_changes(
                     parent_parents = parent_info.get("parents", [])
 
                     # Check if grandparent is a known subfolder (nested case)
-                    if parent_parents and parent_parents[0] in subfolder_map:
+                    if len(parent_parents) == 1 and parent_parents[0] in subfolder_map:
                         client_id, _ = subfolder_map[parent_parents[0]]
-                        folder_name = parent_name.lower()
-                        # Register this nested folder for future polls
+                        folder_name = parent_name
+                        # Recheck the current owner before registering a discovered child.
                         async with db_pool.acquire() as conn:
-                            await conn.execute(
+                            if not await revalidate_poll_owner(
+                                conn,
+                                drive_service,
+                                client_id,
+                                client_roots[client_id],
+                                parent_id,
+                                folder_name,
+                            ):
+                                skipped += 1
+                                continue
+                            registered = await conn.fetchval(
                                 """INSERT INTO client_drive_subfolders
                                 (client_id, subfolder_name, subfolder_id)
                                 VALUES ($1, $2, $3)
-                                ON CONFLICT (subfolder_id) DO NOTHING""",
+                                ON CONFLICT (client_id, subfolder_name) DO UPDATE
+                                SET subfolder_id = EXCLUDED.subfolder_id
+                                WHERE client_drive_subfolders.subfolder_id = EXCLUDED.subfolder_id
+                                RETURNING subfolder_id""",
                                 client_id,
                                 parent_name,
                                 parent_id,
                             )
+                            if registered != parent_id:
+                                skipped += 1
+                                continue
                         subfolder_map[parent_id] = (client_id, folder_name)
-                        logger.info(
-                            "Drive poll: registered nested folder '%s' for client %s",
-                            parent_name,
-                            client_id,
-                        )
                     elif parent_parents and parent_parents[0] in company_folder_map:
                         await _enqueue_guardian_company_folder(
                             db_pool,
@@ -632,26 +653,28 @@ async def _do_poll_drive_changes(
                 )
                 doc_category = "immigration"
 
-                # Visa rotation: if new file in Actual Visa, archive the old one
-                if subfolder_value == "Actual Visa":
-                    async with db_pool.acquire() as conn:
-                        old_actual = await conn.fetchrow(
-                            """SELECT id FROM documents
-                               WHERE client_id = $1 AND subfolder = 'Actual Visa'
-                                 AND (is_archived IS NOT TRUE)
-                               ORDER BY created_at DESC LIMIT 1""",
-                            client_id,
-                        )
-                        if old_actual:
-                            await conn.execute(
-                                "UPDATE documents SET subfolder = 'Previous Visa', updated_at = NOW() WHERE id = $1",
-                                old_actual["id"],
-                            )
-                            logger.info(
-                                f"Drive poll: rotated doc {old_actual['id']} to Previous Visa"
-                            )
-
             async with db_pool.acquire() as conn:
+                if not await revalidate_poll_owner(
+                    conn, drive_service, client_id, client_roots[client_id], parent_id, folder_name
+                ) or await is_billing_file(conn, file_id):
+                    skipped += 1
+                    continue
+                # Preserve visa rotation, but only after ownership and billing revalidation.
+                if subfolder_value == "Actual Visa":
+                    old_actual = await conn.fetchrow(
+                        """SELECT id FROM documents
+                           WHERE client_id = $1 AND subfolder = 'Actual Visa'
+                             AND (is_archived IS NOT TRUE)
+                           ORDER BY created_at DESC LIMIT 1""",
+                        client_id,
+                    )
+                    if old_actual:
+                        await conn.execute(
+                            "UPDATE documents SET subfolder = 'Previous Visa', updated_at = NOW() WHERE id = $1",
+                            old_actual["id"],
+                        )
+                        logger.info(f"Drive poll: rotated doc {old_actual['id']} to Previous Visa")
+
                 doc_id = await conn.fetchval(
                     """INSERT INTO documents (
                         client_id, document_type, document_category, file_name, file_id,

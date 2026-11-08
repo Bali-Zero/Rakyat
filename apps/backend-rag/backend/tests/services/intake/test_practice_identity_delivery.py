@@ -22,7 +22,8 @@ OTHER_UUID = UUID("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")
 
 
 @pytest.fixture
-def upload_context():
+def upload_context(monkeypatch):
+    monkeypatch.setattr(documents.settings, "gdrive_individuals_folder_id", "synthetic-individuals")
     state = {"owner": 11, "move_before_insert": False}
     client = {
         "id": 11,
@@ -56,6 +57,13 @@ def upload_context():
     pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
     pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
     drive = AsyncMock()
+    drive.get_file_metadata.return_value = {
+        "id": "synthetic-root",
+        "mimeType": "application/vnd.google-apps.folder",
+        "trashed": False,
+        "parents": ["synthetic-individuals"],
+    }
+    drive.resolve_canonical_folder.return_value = "synthetic-folder"
     drive.get_folder_structure.return_value = {
         "folders": [{"id": "synthetic-folder", "name": "00_Profile"}]
     }
