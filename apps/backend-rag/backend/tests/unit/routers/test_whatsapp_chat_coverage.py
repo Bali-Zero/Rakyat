@@ -636,6 +636,9 @@ class _FakeConversationConn:
     async def execute(self, query: str, *args: Any) -> None:
         self.executed.append((query, args))
 
+    def transaction(self) -> _FakeConversationAcquire:
+        return _FakeConversationAcquire(self)
+
 
 @pytest.mark.asyncio
 async def test_process_whatsapp_message_not_allowed():
@@ -893,7 +896,7 @@ async def test_save_conversation_inserts_messages_as_jsonb_array_text():
         phone="6281234567890",
     )
 
-    query, args = conn.executed[0]
+    query, args = next(item for item in conn.executed if "INSERT INTO conversations" in item[0])
     assert "$3::text::jsonb" in query
     assert "$4::text::jsonb" in query
     messages = json.loads(args[2])
@@ -912,7 +915,7 @@ async def test_save_conversation_appends_from_legacy_jsonb_string_messages():
     from backend.app.routers.whatsapp_chat import _save_conversation
 
     legacy_messages = json.dumps([{"role": "user", "content": "Old message"}])
-    conn = _FakeConversationConn(existing_row={"messages": legacy_messages})
+    conn = _FakeConversationConn(existing_row={"id": 42, "messages": legacy_messages})
 
     await _save_conversation(
         db_pool=_FakeConversationPool(conn),
@@ -926,7 +929,7 @@ async def test_save_conversation_appends_from_legacy_jsonb_string_messages():
         phone="6281234567890",
     )
 
-    query, args = conn.executed[0]
+    query, args = next(item for item in conn.executed if "UPDATE conversations" in item[0])
     assert "$1::text::jsonb" in query
     assert "$2::text::jsonb" in query
     messages = json.loads(args[0])
@@ -1277,3 +1280,405 @@ class TestRedactedPhoneStaysCorrelatable:
         first_digest = next(tok for tok in first_text.split() if "id:" in tok)
         second_digest = next(tok for tok in second_text.split() if "id:" in tok)
         assert first_digest == second_digest
+
+
+# R4 regression fixtures use only synthetic identifiers and stub all effects.
+_R4_PRIVATE = "R4_SYNTHETIC_PRIVATE_SENTINEL"
+
+
+def _r4_assert_logs(caplog, expected):
+    import backend.app.routers.whatsapp_chat as wa
+
+    records = [record for record in caplog.records if record.name == wa.logger.name]
+    assert any(expected in record.getMessage() for record in records)
+    for record in records:
+        assert _R4_PRIVATE not in record.getMessage()
+        assert _R4_PRIVATE not in repr(vars(record))
+        assert record.exc_info is None or record.exc_info is False
+        assert record.stack_info is None
+
+
+def _r4_pool():
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock()
+    conn.execute = AsyncMock()
+    conn.transaction.side_effect = lambda: _FakeConversationAcquire(conn)
+    pool = MagicMock()
+    pool.acquire.side_effect = lambda: _FakeConversationAcquire(conn)
+    return pool, conn
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "branch",
+    ["claim", "duplicate", "onboarding", "payload", "context", "ack", "processing", "send"],
+)
+async def test_r4_legacy_branches_keep_effects_without_private_logs(branch, monkeypatch, caplog):
+    import logging
+    from types import SimpleNamespace
+
+    import backend.app.routers.whatsapp_chat as wa
+    import backend.services.whatsapp_ack as ack
+    import backend.services.whatsapp_context_builder as context_builder
+    from backend.services.integrations.whatsapp_triage_service import TriageDecision
+
+    caplog.set_level(logging.DEBUG)
+    pool, _ = _r4_pool()
+    settings = _seeded_settings_mock()
+    settings.admin_telegram_chat_id = None
+    monkeypatch.setattr(wa, "settings", settings)
+    service = MagicMock()
+    service.mark_message_read = AsyncMock()
+    service.send_message = AsyncMock()
+    service.chunk_message.side_effect = lambda text, max_length: [text]
+    monkeypatch.setattr(wa, "whatsapp_service", service)
+    triage = MagicMock()
+    triage.is_allowed.return_value = True
+    decision = {
+        "context": TriageDecision.ESCALATE_PERSONAL,
+        "ack": TriageDecision.BOT_CAN_HANDLE,
+    }.get(branch, TriageDecision.OFFER_CHOICE)
+    triage.should_escalate = AsyncMock(return_value=(decision, "business_query"))
+    triage.get_welcome_message.return_value = "Synthetic welcome"
+    triage.get_escalation_message.return_value = "Synthetic handoff"
+    monkeypatch.setattr(wa, "whatsapp_triage_service", triage)
+    detector = SimpleNamespace(detect_and_trigger=AsyncMock(return_value=None))
+    monkeypatch.setattr(wa, "get_onboarding_detector", lambda: detector)
+    monkeypatch.setattr(wa, "_get_db_pool", lambda _: pool)
+    claim = AsyncMock(return_value=branch != "duplicate")
+    monkeypatch.setattr(wa, "_claim_wamid_reply", claim)
+    audit = AsyncMock()
+    save = AsyncMock()
+    notify = AsyncMock()
+    monkeypatch.setattr(wa, "_persist_audit_messages", audit)
+    monkeypatch.setattr(wa, "_save_conversation", save)
+    monkeypatch.setattr(wa, "notify_zero_conversation_log", AsyncMock())
+    monkeypatch.setattr(wa, "notify_human_telegram", notify)
+    context = {
+        "_wa_user_id": "synthetic",
+        "_session_id": "synthetic",
+        "_existing_row_id": None,
+        "client_name": "Synthetic",
+        "client_profile": {},
+        "conversation_history": [],
+        "detected_language": "en",
+        "is_first_message": False,
+        "sender_identity": {},
+        "time_of_day": "afternoon",
+    }
+    build = AsyncMock(return_value=context)
+    monkeypatch.setattr(context_builder, "build_context", build)
+    monkeypatch.setattr(ack, "should_send_ack", lambda *_: False)
+    monkeypatch.setattr(wa, "ask_openclaw_whatsapp", AsyncMock(return_value="Synthetic answer"))
+
+    if branch == "claim":
+        claim.side_effect = RuntimeError(_R4_PRIVATE)
+    elif branch == "onboarding":
+        detector.detect_and_trigger.side_effect = RuntimeError(_R4_PRIVATE)
+    elif branch == "payload":
+        detector.detect_and_trigger.return_value = {"chain": "synthetic", "payload": _R4_PRIVATE}
+    elif branch == "context":
+        build.side_effect = RuntimeError(_R4_PRIVATE)
+    elif branch == "ack":
+        monkeypatch.setattr(
+            ack, "should_send_ack", MagicMock(side_effect=RuntimeError(_R4_PRIVATE))
+        )
+    elif branch in {"processing", "send"}:
+        service.mark_message_read.side_effect = RuntimeError(_R4_PRIVATE)
+        if branch == "send":
+            service.send_message.side_effect = ValueError(_R4_PRIVATE)
+
+    assert (
+        await wa.process_whatsapp_message(
+            _R4_PRIVATE, "Synthetic question", "Synthetic", _R4_PRIVATE, MagicMock()
+        )
+        is None
+    )
+    if branch == "duplicate":
+        service.send_message.assert_not_awaited()
+        triage.should_escalate.assert_not_awaited()
+        _r4_assert_logs(caplog, "already claimed")
+    elif branch == "payload":
+        service.send_message.assert_awaited_once()
+        assert "onboarding" in service.send_message.await_args.kwargs["text"]
+        assert detector.detect_and_trigger.return_value["payload"] == _R4_PRIVATE
+        audit.assert_awaited_once()
+        _r4_assert_logs(caplog, "Auto-triggered onboarding")
+    elif branch == "context":
+        # Preserve the existing None-context fallback, including its outer error response.
+        assert service.send_message.await_count == 2
+        notify.assert_not_awaited()
+        _r4_assert_logs(caplog, "Error building context")
+    elif branch == "ack":
+        service.send_message.assert_awaited_once()
+        assert service.send_message.await_args.kwargs["text"] == "Synthetic answer"
+        save.assert_awaited_once()
+        _r4_assert_logs(caplog, "Concierge ack failed")
+    elif branch == "send":
+        service.send_message.assert_awaited_once()
+        audit.assert_not_awaited()
+        _r4_assert_logs(caplog, "Failed to send error message: ValueError")
+    else:
+        service.send_message.assert_awaited_once()
+        audit.assert_awaited_once()
+        _r4_assert_logs(
+            caplog,
+            {
+                "claim": "Cross-path claim failed",
+                "onboarding": "Onboarding detection failed",
+                "processing": "Error processing WhatsApp message",
+            }[branch],
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("branch", ["notify", "database", "mark"])
+async def test_r4_auxiliary_failures_keep_fallbacks(branch, monkeypatch, caplog):
+    import logging
+
+    import backend.app.dependencies as dependencies
+    import backend.app.routers.whatsapp_chat as wa
+    from backend.services.channels import inbound_webhook_repo
+
+    caplog.set_level(logging.DEBUG)
+    if branch == "notify":
+        settings = _seeded_settings_mock()
+        settings.admin_telegram_chat_id = "synthetic-chat"
+        monkeypatch.setattr(wa, "settings", settings)
+        sender = AsyncMock(side_effect=RuntimeError(_R4_PRIVATE))
+        monkeypatch.setattr(wa.telegram_bot, "send_message", sender)
+        assert (
+            await wa.notify_zero_conversation_log(
+                _R4_PRIVATE, "Synthetic", "Synthetic question", "Synthetic answer", "en"
+            )
+            is None
+        )
+        sender.assert_awaited_once()
+        expected = "Failed to send conversation log"
+    elif branch == "database":
+        getter = MagicMock(side_effect=RuntimeError(_R4_PRIVATE))
+        monkeypatch.setattr(dependencies, "get_database", getter)
+        assert wa._get_db_pool(MagicMock()) is None
+        getter.assert_called_once()
+        expected = "Error getting database"
+    else:
+        process = AsyncMock()
+        mark = AsyncMock(side_effect=RuntimeError(_R4_PRIVATE))
+        pool, _ = _r4_pool()
+        monkeypatch.setattr(wa, "process_whatsapp_message", process)
+        monkeypatch.setattr(wa, "_get_db_pool", lambda _: pool)
+        monkeypatch.setattr(inbound_webhook_repo, "mark_processed", mark)
+        assert (
+            await wa.process_whatsapp_message_and_mark_processed(
+                _R4_PRIVATE, "Synthetic", None, _R4_PRIVATE, MagicMock()
+            )
+            is None
+        )
+        process.assert_awaited_once()
+        mark.assert_awaited_once_with(pool, channel="whatsapp", dedup_key=_R4_PRIVATE)
+        expected = "failed to mark inbound row processed"
+    _r4_assert_logs(caplog, expected)
+    assert any("RuntimeError" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("branch", ["claim", "duplicate", "read"])
+async def test_r4_meta_inbox_claim_and_read_keep_database_effects(branch, monkeypatch, caplog):
+    import logging
+
+    import backend.app.routers.whatsapp_chat as wa
+
+    caplog.set_level(logging.DEBUG)
+    _, conn = _r4_pool()
+    conn.fetchrow.side_effect = [
+        {"thread_id": 7, "human_handling": False},
+        {"id": 8},
+        {"id": 9},
+    ]
+    claim = AsyncMock(return_value=branch != "duplicate")
+    if branch == "claim":
+        claim.side_effect = RuntimeError(_R4_PRIVATE)
+    monkeypatch.setattr(wa, "_claim_wamid_reply", claim)
+    monkeypatch.setattr(wa, "_manners_enabled", lambda: True)
+    read = AsyncMock(side_effect=RuntimeError(_R4_PRIVATE) if branch == "read" else None)
+    monkeypatch.setattr(wa.whatsapp_service, "mark_message_read", read)
+    msg = {
+        "id": _R4_PRIVATE,
+        "from": _R4_PRIVATE,
+        "type": "text",
+        "text": {"body": "Synthetic"},
+        "timestamp": "1712000000",
+    }
+    assert await wa._handle_meta_inbox_message(conn, msg, "Synthetic", 10) is None
+    if branch == "duplicate":
+        conn.fetchrow.assert_not_awaited()
+        read.assert_not_awaited()
+        expected = "already claimed"
+    else:
+        assert conn.fetchrow.await_count == 3
+        conn.execute.assert_awaited_once()
+        read.assert_awaited_once_with(_R4_PRIVATE)
+        expected = "cross-path claim failed" if branch == "claim" else "mark_message_read failed"
+    _r4_assert_logs(caplog, expected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("branch", ["parse", "processing", "mark", "recovery"])
+async def test_r4_meta_payload_fallbacks_keep_ack_and_recovery(branch, monkeypatch, caplog):
+    import logging
+
+    import backend.app.routers.whatsapp_chat as wa
+    from backend.services.channels import inbound_webhook_repo
+
+    caplog.set_level(logging.DEBUG)
+    pool, conn = _r4_pool()
+    payload = _make_webhook_payload(phone=_R4_PRIVATE, message_id=_R4_PRIVATE)
+    monkeypatch.setattr(wa, "_change_belongs_to_meta_inbox", lambda _: True)
+    monkeypatch.setattr(wa, "_change_belongs_to_team_bot_ingress", lambda _: False)
+    handle = AsyncMock()
+    monkeypatch.setattr(wa, "_handle_meta_inbox_message", handle)
+    monkeypatch.setattr(wa, "_resolve_webhook_id", AsyncMock(return_value=7))
+    mark = AsyncMock(side_effect=RuntimeError(_R4_PRIVATE))
+    monkeypatch.setattr(inbound_webhook_repo, "mark_processed", mark)
+    if branch in {"parse", "recovery"}:
+        monkeypatch.setattr(wa, "WhatsAppWebhook", MagicMock(side_effect=ValueError(_R4_PRIVATE)))
+    if branch == "processing":
+        conn.fetchrow.side_effect = RuntimeError(_R4_PRIVATE)
+        monkeypatch.setattr(
+            wa, "_resolve_webhook_id", AsyncMock(side_effect=RuntimeError(_R4_PRIVATE))
+        )
+    if branch == "recovery":
+        legacy = AsyncMock()
+        assert await wa.route_whatsapp_recovery(payload, db_pool=pool, legacy_route=legacy) is None
+        legacy.assert_awaited_once_with(payload)
+        expected = "defaulting to legacy route"
+    else:
+        assert await wa.process_meta_inbox_payload(payload, None, db_pool=pool) is (
+            branch != "processing"
+        )
+        if branch == "mark":
+            handle.assert_awaited_once()
+            mark.assert_awaited_once_with(pool, channel="whatsapp", dedup_key=_R4_PRIVATE)
+        else:
+            handle.assert_not_awaited()
+            mark.assert_not_awaited()
+        expected = {
+            "parse": "payload parse failed",
+            "processing": "processing failed",
+            "mark": "failed to mark inbound row processed",
+        }[branch]
+    _r4_assert_logs(caplog, expected)
+
+
+@pytest.mark.asyncio
+async def test_r4_media_handoff_failure_does_not_change_publish_payload(monkeypatch, caplog):
+    import logging
+    from types import SimpleNamespace
+
+    import backend.app.routers.whatsapp_chat as wa
+    import backend.channels.whatsapp.media_webhook_parse as media_parse
+    from backend.services.events import outbox
+
+    caplog.set_level(logging.DEBUG)
+    pool, _ = _r4_pool()
+    media = SimpleNamespace(
+        phone_number_id="synthetic-number",
+        media_id=_R4_PRIVATE,
+        mime_type="image/png",
+        message_type="image",
+        filename=_R4_PRIVATE,
+        declared_sha256=None,
+        wa_message_id=_R4_PRIVATE,
+        from_phone=_R4_PRIVATE,
+        sender_name="Synthetic",
+    )
+    monkeypatch.setattr(
+        media_parse, "parse_media_webhook", lambda _: SimpleNamespace(media=[media])
+    )
+    monkeypatch.setattr(wa, "META_INBOX_PHONE_NUMBER_IDS", {"synthetic-number"})
+    monkeypatch.setattr(wa, "_get_db_pool", lambda _: pool)
+    publish = AsyncMock(side_effect=RuntimeError(_R4_PRIVATE))
+    monkeypatch.setattr(outbox, "publish", publish)
+    assert await wa._ingest_meta_inbox_media({}, MagicMock()) is None
+    publish.assert_awaited_once()
+    assert publish.await_args.args[2]["media_id"] == _R4_PRIVATE
+    _r4_assert_logs(caplog, "media handoff failed: RuntimeError")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "branch", ["peer", "parse", "persist", "duplicate", "object", "field", "type"]
+)
+async def test_r4_webhook_diagnostics_preserve_response_and_scheduling(branch, monkeypatch, caplog):
+    import json
+    import logging
+
+    from fastapi import BackgroundTasks, HTTPException
+
+    import backend.app.routers.whatsapp_chat as wa
+    from backend.services.channels import inbound_webhook_repo
+
+    caplog.set_level(logging.DEBUG)
+    payload = _make_webhook_payload(phone=_R4_PRIVATE, message_id=_R4_PRIVATE)
+    if branch == "object":
+        payload["object"] = _R4_PRIVATE
+    elif branch == "field":
+        payload["entry"][0]["changes"][0]["field"] = _R4_PRIVATE
+    elif branch == "type":
+        payload["entry"][0]["changes"][0]["value"]["messages"][0]["type"] = _R4_PRIVATE
+    request = MagicMock()
+    request.body = AsyncMock(return_value=json.dumps(payload).encode())
+    request.client.host = _R4_PRIVATE
+    tasks = BackgroundTasks()
+    pool, _ = _r4_pool()
+    monkeypatch.setattr(wa, "_get_db_pool", lambda _: pool)
+    monkeypatch.setattr(wa, "_verify_whatsapp_signature", lambda *_: branch != "peer")
+    monkeypatch.setattr(wa, "_change_belongs_to_meta_inbox", lambda _: False)
+    monkeypatch.setattr(wa, "_change_belongs_to_team_bot_ingress", lambda _: False)
+    persist = AsyncMock(return_value=(1, branch != "duplicate"))
+    if branch == "persist":
+        persist.side_effect = RuntimeError(_R4_PRIVATE)
+    monkeypatch.setattr(inbound_webhook_repo, "persist", persist)
+    if branch == "parse":
+        request.body.return_value = _R4_PRIVATE.encode()
+    if branch in {"parse", "peer"}:
+        with pytest.raises(HTTPException) as exc:
+            await wa.whatsapp_webhook(request=request, background_tasks=tasks)
+        assert exc.value.status_code == (401 if branch == "peer" else 400)
+        assert tasks.tasks == []
+        persist.assert_not_awaited()
+        expected = "signature verification failed" if branch == "peer" else "body parse error"
+    else:
+        assert await wa.whatsapp_webhook(request=request, background_tasks=tasks) == {"status": "ok"}
+        assert len(tasks.tasks) == (0 if branch in {"duplicate", "field", "type"} else 1)
+        if tasks.tasks:
+            assert tasks.tasks[0].kwargs["message_id"] == _R4_PRIVATE
+        expected = {
+            "persist": "persist failed",
+            "duplicate": "Duplicate WhatsApp webhook skipped",
+            "object": "Webhook received",
+            "field": "Ignoring non-message change",
+            "type": "Ignoring non-text message",
+        }[branch]
+    _r4_assert_logs(caplog, expected)
+
+
+@pytest.mark.asyncio
+async def test_r4_verification_mode_is_not_logged(monkeypatch, caplog):
+    import logging
+
+    from fastapi import HTTPException
+
+    import backend.app.routers.whatsapp_chat as wa
+
+    caplog.set_level(logging.DEBUG)
+    request = MagicMock()
+    request.query_params = {
+        "hub.mode": _R4_PRIVATE,
+        "hub.verify_token": _R4_PRIVATE,
+        "hub.challenge": "synthetic",
+    }
+    with pytest.raises(HTTPException) as exc:
+        await wa.verify_webhook(request)
+    assert exc.value.status_code == 403
+    _r4_assert_logs(caplog, "verification requested")

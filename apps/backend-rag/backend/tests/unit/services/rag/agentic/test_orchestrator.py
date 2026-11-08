@@ -2136,6 +2136,7 @@ class TestMemoryLockTimeout:
     @pytest.mark.asyncio
     async def test_save_memory_lock_timeout(self, mock_db_pool):
         """Test memory save lock timeout - covers lines 407-412"""
+        from backend.security.pii_log_identifier import redact_identifier_for_log
 
         with (
             patch("backend.services.rag.agentic.orchestrator.IntentClassifier"),
@@ -2177,7 +2178,9 @@ class TestMemoryLockTimeout:
             await orch._save_conversation_memory(user_id, "query", "answer")
 
             # Verify timeout was recorded
-            mock_metrics.record_memory_lock_timeout.assert_called_once_with(user_id=user_id)
+            expected_label = redact_identifier_for_log(user_id)
+            mock_metrics.record_memory_lock_timeout.assert_called_once_with(user_id=expected_label)
+            assert user_id not in repr(mock_metrics.record_memory_lock_timeout.call_args)
 
             # Release lock
             lock.release()
@@ -2823,6 +2826,7 @@ class TestSaveConversationMemoryEdgeCases:
     @pytest.mark.asyncio
     async def test_save_memory_lock_timeout(self, mock_db_pool):
         """Test that lock timeout is handled gracefully"""
+        from backend.security.pii_log_identifier import redact_identifier_for_log
         with (
             patch("backend.services.rag.agentic.orchestrator.IntentClassifier"),
             patch("backend.services.rag.agentic.orchestrator.EmotionalAttunementService"),
@@ -2852,7 +2856,9 @@ class TestSaveConversationMemoryEdgeCases:
             await orch._save_conversation_memory(user_id, "test query", "test answer")
 
             # Should record timeout metric
-            mock_metrics.record_memory_lock_timeout.assert_called_once_with(user_id=user_id)
+            expected_label = redact_identifier_for_log(user_id)
+            mock_metrics.record_memory_lock_timeout.assert_called_once_with(user_id=expected_label)
+            assert user_id not in repr(mock_metrics.record_memory_lock_timeout.call_args)
 
             # Release lock for cleanup
             lock.release()

@@ -63,7 +63,9 @@ except ImportError:
     from contextlib import contextmanager
 
     @contextmanager
-    def trace_span(span_name: str, attributes: dict[str, Any] | None = None) -> Any:
+    def trace_span(
+        span_name: str, attributes: dict[str, Any] | None = None, *, safe_diagnostics: bool = False
+    ) -> Any:
         yield
 
     def set_span_attribute(key: str, value: Any) -> None:

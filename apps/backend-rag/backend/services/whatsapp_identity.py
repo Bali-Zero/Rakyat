@@ -169,14 +169,8 @@ async def resolve_sender_identity(
         OSError,
         TimeoutError,
     ):
-        logger.warning(
-            "Sender identity lookup failed for phone=%s",
-            redact_identifier_for_log(phone),
-            exc_info=True,
-        )
+        logger.warning('Sender identity lookup failed for phone=%s', redact_identifier_for_log(phone))
     except Exception:
-        logger.exception(
-            "Sender identity resolution failed for phone=%s", redact_identifier_for_log(phone)
-        )
+        logger.error('Sender identity resolution failed for phone=%s', redact_identifier_for_log(phone))
 
     return {"role": "unknown"}

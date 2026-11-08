@@ -130,9 +130,35 @@ async def test_retained_manual_cleanup_route_auth_policy_and_recovery(monkeypatc
 
     # The production manifest still exposes the real manual owner to API.
     assert "admin_conversation_cleanup" in {entry.name for entry in routers_for_group("api")}
-    conn = AsyncMock()
-    conn.fetchval.return_value = 0
-    conn.execute.return_value = "DELETE 2"
+    conn = MagicMock()
+    transaction = MagicMock()
+    transaction.__aenter__ = AsyncMock(return_value=None)
+    transaction.__aexit__ = AsyncMock(return_value=False)
+    conn.transaction.return_value = transaction
+    identities = [
+        {"id": 1, "session_id": "cleanup-fixture-delete"},
+        {"id": 2, "session_id": "cleanup-fixture-anonymize"},
+    ]
+
+    async def fetchval(query, *args):
+        if "hashtext" in query:
+            return {"cleanup-fixture-delete": 11, "cleanup-fixture-anonymize": 22}[args[0]]
+        return 0
+
+    async def execute(query, *args):
+        normalized = " ".join(query.split())
+        if normalized.startswith("DELETE FROM conversations"):
+            return "DELETE 1"
+        if normalized.startswith("UPDATE conversations"):
+            return "UPDATE 1"
+        assert normalized.startswith(
+            ("SELECT set_config(", "SET LOCAL ", "SELECT pg_advisory_xact_lock(")
+        )
+        return "SELECT 1"
+
+    conn.fetchval = AsyncMock(side_effect=fetchval)
+    conn.fetch = AsyncMock(side_effect=[identities, [{"id": 1}, {"id": 2}]])
+    conn.execute = AsyncMock(side_effect=execute)
     pool = MagicMock()
     pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
     pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -162,7 +188,25 @@ async def test_retained_manual_cleanup_route_auth_policy_and_recovery(monkeypatc
         recovered = await client.post(path, params={"dry_run": "false"}, headers=headers)
         assert recovered.status_code == 200
         assert recovered.json()["status"] == "ok"
-        assert conn.execute.await_count == 2
+        transaction.__aenter__.assert_awaited_once()
+        transaction.__aexit__.assert_awaited_once_with(None, None, None)
+        pool.acquire.return_value.__aenter__.assert_awaited_once()
+        pool.acquire.return_value.__aexit__.assert_awaited_once_with(None, None, None)
+        assert conn.fetch.await_count == 2
+        assert "FOR UPDATE" in conn.fetch.await_args_list[1].args[0]
+        assert conn.fetch.await_args_list[1].args[2] == [1, 2]
+        calls = [
+            (" ".join(call.args[0].split()), call.args[1:]) for call in conn.execute.await_args_list
+        ]
+        assert len(calls) == 5
+        assert sum(query.startswith("DELETE FROM conversations") for query, _ in calls) == 1
+        assert sum(query.startswith("UPDATE conversations") for query, _ in calls) == 1
+        assert calls[0] == ("SELECT set_config('statement_timeout', $1, true)", ("5.0s",))
+        assert calls[1] == ("SET LOCAL lock_timeout = '5s'", ())
+        # One exclusive coordination barrier, regardless of how many identities match.
+        assert [args for query, args in calls if query.startswith("SELECT pg_advisory_xact_lock(")] == [
+            (0x43564E43,)
+        ]
 
 
 @pytest.mark.asyncio

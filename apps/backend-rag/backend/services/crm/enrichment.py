@@ -490,9 +490,7 @@ async def _generate_title_via_ollama(
         if not result:
             return None
         title = _clean_title(result, max_length)
-        logger.info(
-            "✅ Generated title for conv %s via Ollama (%d chars)", conversation_id, len(title)
-        )
+        logger.info("Generated title for conv %s via Ollama", conversation_id)
         return title
     except (httpx.HTTPError, ValueError, KeyError) as e:
         logger.warning(
@@ -528,9 +526,7 @@ async def _generate_title_via_gemini(
         if not result or not result.get("text"):
             return None
         title = _clean_title(result["text"], max_length)
-        logger.info(
-            "✅ Generated title for conv %s via Gemini (%d chars)", conversation_id, len(title)
-        )
+        logger.info("Generated title for conv %s via Gemini", conversation_id)
         return title
     except (httpx.HTTPError, ValueError, KeyError) as e:
         logger.warning(

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 import asyncpg
 
+from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.rag.agentic._memory_identity import is_non_personal_memory_identity
 
 if TYPE_CHECKING:
@@ -96,7 +97,7 @@ class MemoryHandler:
                 await self._memory_orchestrator.initialize()
                 logger.info("MemoryOrchestrator initialized for AgenticRAG")
             except (asyncpg.PostgresError, asyncpg.InterfaceError, ValueError, RuntimeError) as e:
-                logger.warning("Failed to initialize MemoryOrchestrator: %s", e, exc_info=True)
+                logger.warning('Failed to initialize MemoryOrchestrator: %s', type(e).__name__)
                 return None
         return self._memory_orchestrator
 
@@ -180,10 +181,7 @@ class MemoryHandler:
                 )
 
                 if result.success and result.facts_saved > 0:
-                    logger.info(
-                        f"Saved {result.facts_saved}/{result.facts_extracted} "
-                        f"facts for {subject} ({result.processing_time_ms:.1f}ms)",
-                    )
+                    logger.info(f'Saved {result.facts_saved}/{result.facts_extracted} facts for {redact_identifier_for_log(subject)} ({result.processing_time_ms:.1f}ms)')
 
                 # Record lock contention metric
                 lock_wait_time = time.time() - lock_start_time
@@ -197,13 +195,11 @@ class MemoryHandler:
                 lock.release()
 
         except asyncio.TimeoutError:
-            logger.warning(
-                f"Memory save lock timeout for user {user_id} (timeout: {self._lock_timeout}s)",
-            )
+            logger.warning(f'Memory save lock timeout for user {redact_identifier_for_log(user_id)} (timeout: {self._lock_timeout}s)')
             if metrics_collector:
-                metrics_collector.record_memory_lock_timeout(user_id=user_id)
+                metrics_collector.record_memory_lock_timeout(user_id=redact_identifier_for_log(user_id))
         except (asyncpg.PostgresError, asyncpg.InterfaceError, ValueError, RuntimeError) as e:
-            logger.warning("Failed to save memory: %s", e, exc_info=True)
+            logger.warning('Failed to save memory: %s', type(e).__name__)
 
     def create_save_task(
         self,
@@ -269,4 +265,4 @@ class MemoryHandler:
             return
         exc = task.exception()
         if exc is not None:
-            logger.error("Memory save task failed: %s", exc, exc_info=exc)
+            logger.error('Memory save task failed: %s', type(exc).__name__)

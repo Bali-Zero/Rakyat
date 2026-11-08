@@ -62,7 +62,8 @@ class TestAlertCriticalFailure:
 
         assert result is None
         assert "Could not send Telegram alert for critical failure" in caplog.text
-        assert "Telegram unreachable" in caplog.text
+        assert "Telegram unreachable" not in caplog.text
+        assert "Exception" in caplog.text
 
     @pytest.mark.asyncio
     async def test_multiple_failures_in_message(self) -> None:
@@ -157,7 +158,8 @@ class TestAlertDegradedMode:
 
         assert result is None
         assert "Could not send Telegram alert for degraded mode" in caplog.text
-        assert "Telegram down" in caplog.text
+        assert "Telegram down" not in caplog.text
+        assert "Exception" in caplog.text
 
 
 # ═══════════════════════════════════════════════════════════════

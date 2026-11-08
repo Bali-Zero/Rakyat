@@ -437,7 +437,7 @@ class KnowledgeGraphRepository:
                 ]
 
         except Exception as e:
-            logger.warning("Error getting entity context: %s", e)
+            logger.warning('Error getting entity context: %s', type(e).__name__)
             return []
 
     async def semantic_search_entities(

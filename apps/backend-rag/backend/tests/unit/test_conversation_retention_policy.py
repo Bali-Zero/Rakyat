@@ -46,7 +46,12 @@ def _working_pool(execute_result: str = "DELETE 3", count: int = 3) -> tuple[Any
     pool = MagicMock()
     conn = AsyncMock()
     conn.execute.return_value = execute_result
+    conn.fetch.return_value = []
     conn.fetchval.return_value = count
+    tx = AsyncMock()
+    tx.__aenter__ = AsyncMock(return_value=None)
+    tx.__aexit__ = AsyncMock(return_value=False)
+    conn.transaction = MagicMock(return_value=tx)
     cm = AsyncMock()
     cm.__aenter__ = AsyncMock(return_value=conn)
     cm.__aexit__ = AsyncMock(return_value=False)

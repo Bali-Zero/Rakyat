@@ -15,7 +15,7 @@ Target: Test complete integration of conversation management
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -31,10 +31,14 @@ def mock_db_pool():
     """Mock PostgreSQL connection pool"""
     pool = MagicMock()
     conn = AsyncMock()
+    transaction = AsyncMock()
+    transaction.__aexit__.return_value = False
+    conn.transaction = MagicMock(return_value=transaction)
 
     # Mock acquire() to be a standard MagicMock that returns an async context manager
     cm = AsyncMock()
     cm.__aenter__.return_value = conn
+    cm.__aexit__.return_value = False
     pool.acquire.return_value = cm
     return pool
 
@@ -75,6 +79,17 @@ def conversation_service(mock_db_pool, mock_memory_cache):
         yield service
 
 
+def assert_committed_saves(pool, count=1):
+    """Successful service results follow transaction and pool-release acknowledgements."""
+    acquire_context = pool.acquire.return_value
+    conn = acquire_context.__aenter__.return_value
+    transaction = conn.transaction.return_value
+    assert conn.transaction.call_count == count
+    assert transaction.__aenter__.await_count == count
+    assert transaction.__aexit__.await_args_list == [call(None, None, None)] * count
+    assert acquire_context.__aexit__.await_args_list == [call(None, None, None)] * count
+
+
 class TestE2EConversationFlow:
     """End-to-End Conversation Flow Tests"""
 
@@ -97,7 +112,7 @@ class TestE2EConversationFlow:
         mock_row.__getitem__ = lambda self, key: {"id": 789}[key]
 
         conn = mock_db_pool.acquire.return_value.__aenter__.return_value
-        conn.fetchrow = AsyncMock(return_value=mock_row)
+        conn.fetchrow = AsyncMock(side_effect=[None, mock_row])
 
         result = await conversation_service.save_conversation(
             user_email=user_email,
@@ -108,6 +123,8 @@ class TestE2EConversationFlow:
 
         assert result["success"] is True
         assert result["conversation_id"] == 789
+        assert result["persistence_mode"] == "db"
+        assert_committed_saves(mock_db_pool)
         assert result["messages_saved"] == 2
         assert mock_memory_cache.add_message.call_count == 2
 
@@ -212,7 +229,7 @@ class TestE2EConversationFlow:
         mock_row2.__getitem__ = lambda self, key: {"id": 2}[key]
 
         conn = mock_db_pool.acquire.return_value.__aenter__.return_value
-        conn.fetchrow = AsyncMock(side_effect=[mock_row1, mock_row2])
+        conn.fetchrow = AsyncMock(side_effect=[None, mock_row1, mock_row1, mock_row2])
 
         # Save both turns
         result1 = await conversation_service.save_conversation(
@@ -230,6 +247,11 @@ class TestE2EConversationFlow:
         # Verify both saved
         assert result1["success"] is True
         assert result2["success"] is True
+        assert result1["conversation_id"] == 1
+        assert result2["conversation_id"] == 2
+        assert result1["persistence_mode"] == result2["persistence_mode"] == "db"
+        assert_committed_saves(mock_db_pool, count=2)
+        assert conn.fetchrow.await_count == 4
 
         # Verify memory cache has all messages
         assert mock_memory_cache.add_message.call_count == 4
@@ -257,7 +279,7 @@ class TestE2EConversationFlow:
         mock_row.__getitem__ = lambda self, key: {"id": 999}[key]
 
         conn = mock_db_pool.acquire.return_value.__aenter__.return_value
-        conn.fetchrow = AsyncMock(return_value=mock_row)
+        conn.fetchrow = AsyncMock(side_effect=[None, mock_row])
 
         # Mock EpisodicMemoryService
         with patch("backend.services.memory.EpisodicMemoryService") as mock_episodic:
@@ -276,6 +298,9 @@ class TestE2EConversationFlow:
 
             # Verify conversation saved
             assert result["success"] is True
+            assert result["conversation_id"] == 999
+            assert result["persistence_mode"] == "db"
+            assert_committed_saves(mock_db_pool)
 
             # In real flow, episodic memory would be linked via MemoryOrchestrator
             # This test verifies the integration point exists
@@ -302,7 +327,7 @@ class TestE2EConversationFlow:
         mock_row.__getitem__ = lambda self, key: {"id": 555}[key]
 
         conn = mock_db_pool.acquire.return_value.__aenter__.return_value
-        conn.fetchrow = AsyncMock(return_value=mock_row)
+        conn.fetchrow = AsyncMock(side_effect=[None, mock_row])
 
         # Save with metadata
         result = await conversation_service.save_conversation(
@@ -314,10 +339,26 @@ class TestE2EConversationFlow:
 
         # Verify metadata was included
         assert result["success"] is True
+        assert result["conversation_id"] == 555
+        assert result["persistence_mode"] == "db"
+        assert_committed_saves(mock_db_pool)
 
-        # Verify DB was called with metadata
-        # (In real implementation, metadata would be stored in DB)
-        conn.fetchrow.assert_called_once()
+        # The locked read precedes the insert, whose fourth value is the metadata.
+        assert conn.fetchrow.await_count == 2
+        select, insert = conn.fetchrow.await_args_list
+        assert " ".join(select.args[0].split()) == (
+            "SELECT id FROM conversations WHERE session_id = $1 "
+            "ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE"
+        )
+        assert select.args[1:] == ("test-session",)
+        assert " ".join(insert.args[0].split()) == (
+            "INSERT INTO conversations "
+            "(user_id, session_id, messages, metadata, created_at) "
+            "VALUES ($1, $2, $3, $4, $5) RETURNING id"
+        )
+        assert insert.args[1:5] == (user_email, "test-session", messages, metadata)
+        assert isinstance(insert.args[5], datetime)
+        assert insert.args[5].tzinfo is timezone.utc
 
     @pytest.mark.asyncio
     async def test_conversation_error_handling(

@@ -53,6 +53,7 @@ def _create_async_cm(return_value):
 def mock_db_pool():
     """Mock asyncpg.Pool with async context manager."""
     mock_conn = AsyncMock()
+    mock_conn.transaction = MagicMock(return_value=_create_async_cm(None))
     mock_pool = MagicMock()
     mock_pool.acquire.return_value = _create_async_cm(mock_conn)
     return mock_pool, mock_conn
@@ -288,14 +289,14 @@ class TestSecondHomeAndBoundaryMatching:
 
     # --- GUILT ---
     def test_second_home_english_triggers_second_home_prospect(self) -> None:
-        """"I want the Second Home Visa" tags SECOND HOME and types correctly."""
+        """ "I want the Second Home Visa" tags SECOND HOME and types correctly."""
         visas = extract_visa_mentions("I want the Second Home Visa")
         assert "SECOND HOME" in visas
         client_type = infer_client_type({"visa_discussed": visas})
         assert client_type == "second_home_prospect"
 
     def test_e33_base_tags_second_home_prospect(self) -> None:
-        """"interested in E33" tags E33 and types as second-home prospect."""
+        """ "interested in E33" tags E33 and types as second-home prospect."""
         visas = extract_visa_mentions("interested in E33")
         assert "E33" in visas
         assert "E33G" not in visas
@@ -303,7 +304,7 @@ class TestSecondHomeAndBoundaryMatching:
         assert client_type == "second_home_prospect"
 
     def test_e33e_senior_tags_retiree(self) -> None:
-        """"E33E senior route" tags E33E (not bare E33) and types as retiree."""
+        """ "E33E senior route" tags E33E (not bare E33) and types as retiree."""
         visas = extract_visa_mentions("E33E senior route")
         assert "E33E" in visas
         assert "E33" not in visas
@@ -311,7 +312,7 @@ class TestSecondHomeAndBoundaryMatching:
         assert client_type == "retiree"
 
     def test_rumah_kedua_triggers_second_home_prospect(self) -> None:
-        """"visa rumah kedua" tags RUMAH KEDUA and types correctly."""
+        """ "visa rumah kedua" tags RUMAH KEDUA and types correctly."""
         visas = extract_visa_mentions("visa rumah kedua")
         assert "RUMAH KEDUA" in visas
         client_type = infer_client_type({"visa_discussed": visas})
@@ -924,9 +925,13 @@ class TestBuildContext:
         )
 
         # Verify UPDATE was called with updated metadata
-        conn.execute.assert_called_once()
-        call_args = conn.execute.call_args
-        assert "UPDATE conversations SET metadata" in call_args[0][0]
+        update_calls = [
+            call for call in conn.execute.await_args_list if "UPDATE conversations" in call.args[0]
+        ]
+        assert len(update_calls) == 1
+        call_args = update_calls[0]
+        assert "UPDATE conversations" in call_args[0][0]
+        assert "SET metadata" in call_args[0][0]
         # Metadata should be JSON string
         saved_metadata = json.loads(call_args[0][1])
         assert saved_metadata["message_count"] == 4
@@ -974,6 +979,7 @@ class TestBuildContextIntegration:
         """Interests accumulate across messages when profile is loaded."""
         # Simulate loaded profile with existing interests
         mock_conn = AsyncMock()
+        mock_conn.transaction = MagicMock(return_value=_create_async_cm(None))
         pool = MagicMock()
         pool.acquire.return_value = _create_async_cm(mock_conn)
 
@@ -1002,10 +1008,58 @@ class TestBuildContextIntegration:
         assert "KITAS" in profile["visa_discussed"]
 
 
-
 class TestVisaPatternLists:
     """Structural guard for the strict zip in extract_visa_mentions."""
 
     def test_visa_codes_and_patterns_same_length(self) -> None:
         """If these lists diverge, the strict zip in extract_visa_mentions raises."""
         assert len(VISA_CODES) == len(_VISA_PATTERNS)
+
+
+# R4: exercise each context fallback with synthetic private exception text.
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["read", "identity", "save"])
+async def test_r4_context_fallback_logs_only_exception_type(failure, caplog):
+    import logging
+
+    import backend.services.whatsapp_context_builder as context_builder
+
+    marker = "R4_SYNTHETIC_PRIVATE_SENTINEL"
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(
+        side_effect=RuntimeError(marker)
+        if failure == "read"
+        else [{"id": 41, "messages": [], "metadata": {}}, {"id": 41}]
+    )
+    conn.execute = AsyncMock(side_effect=RuntimeError(marker) if failure == "save" else None)
+    pool = MagicMock()
+    pool.acquire.return_value = _create_async_cm(conn)
+    identity = AsyncMock(
+        side_effect=RuntimeError(marker) if failure == "identity" else None,
+        return_value={"role": "unknown"},
+    )
+    caplog.set_level(logging.DEBUG)
+    with (
+        patch("backend.services.whatsapp_identity.resolve_sender_identity", identity),
+        patch.object(
+            context_builder,
+            "conversation_write_connection",
+            side_effect=lambda _: _create_async_cm(conn),
+        ),
+        patch.object(context_builder, "lock_conversation_session", new=AsyncMock()),
+    ):
+        result = await build_context(marker, "Synthetic", "Hello", pool)
+
+    assert result["phone"] == marker
+    assert result["client_profile"]["channel"] == "whatsapp"
+    assert result["sender_identity"] == {"role": "unknown"}
+    assert result["_existing_row_id"] == (None if failure == "read" else 41)
+    if failure == "save":
+        conn.execute.assert_awaited_once()
+    records = [r for r in caplog.records if r.name == context_builder.logger.name]
+    assert any("RuntimeError" in r.getMessage() for r in records)
+    for record in records:
+        assert marker not in repr(vars(record))
+        assert marker not in record.getMessage()
+        assert record.exc_info is None or record.exc_info is False
+        assert record.stack_info is None
