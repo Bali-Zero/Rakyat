@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import BackgroundTasks
 
+from backend.app.core.config import settings
 from backend.services.crm.drive_registration_visibility import drive_default_client_visible
 
 
@@ -48,12 +49,42 @@ async def _poll_one_file(file_name: str) -> AsyncMock:
 
     conn = AsyncMock()
     conn.fetchrow.side_effect = [{"value": "start-token"}]
-    conn.fetch.side_effect = [
-        [{"client_id": 42, "subfolder_name": "01_Immigration", "subfolder_id": "folder-imm"}],
-        [],
-        [],
+    subfolders = [
+        {"client_id": 42, "subfolder_name": "01_Immigration", "subfolder_id": "folder-imm"}
     ]
-    conn.fetchval.side_effect = [None, 99]  # no existing doc by file_id; inserted id
+    clients = [
+        {
+            "id": 42,
+            "google_drive_folder_id": "client-root",
+            "drive_folder_id": None,
+            "client_type": "individual",
+            "deleted_at": None,
+            "status": "active",
+        }
+    ]
+
+    async def fetch(sql: str, *_args: Any) -> list[dict[str, Any]]:
+        if "FROM client_drive_subfolders" in sql:
+            return subfolders
+        if "FROM clients" in sql:
+            return clients
+        if "FROM companies" in sql:
+            return []
+        raise AssertionError(sql)
+
+    async def fetchval(sql: str, *_args: Any) -> Any:
+        if "SELECT EXISTS(SELECT 1 FROM invoices" in sql:
+            return False
+        if "SELECT EXISTS(SELECT 1 FROM clients" in sql:
+            return False
+        if "SELECT id FROM documents WHERE file_id" in sql:
+            return None
+        if "INSERT INTO documents" in sql:
+            return 99
+        raise AssertionError(sql)
+
+    conn.fetch.side_effect = fetch
+    conn.fetchval.side_effect = fetchval
     drive_service = AsyncMock()
     drive_service.list_changes_since.return_value = {
         "changes": [
@@ -71,8 +102,27 @@ async def _poll_one_file(file_name: str) -> AsyncMock:
         "more_pages": False,
         "pages_fetched": 1,
     }
-    drive_service.get_file_metadata.return_value = {"size": "0"}
+    metadata = {
+        "drive-file-1": {"id": "drive-file-1", "size": "0"},
+        "client-root": {
+            "id": "client-root",
+            "name": "Synthetic client",
+            "parents": ["individuals-parent"],
+            "mimeType": "application/vnd.google-apps.folder",
+            "trashed": False,
+        },
+        "folder-imm": {
+            "id": "folder-imm",
+            "name": "01_Immigration",
+            "parents": ["client-root"],
+            "mimeType": "application/vnd.google-apps.folder",
+            "trashed": False,
+        },
+    }
+    drive_service.get_file_metadata.side_effect = lambda fid: metadata[fid]
     with (
+        patch.object(settings, "gdrive_individuals_folder_id", "individuals-parent"),
+        patch.object(settings, "gdrive_companies_folder_id", "companies-parent"),
         patch(
             "backend.services.crm.drive_poll_service.asyncpg.create_pool",
             new=AsyncMock(return_value=_Pool(conn)),
@@ -95,7 +145,9 @@ async def _poll_one_file(file_name: str) -> AsyncMock:
 @pytest.mark.asyncio
 async def test_poll_registers_txt_note_hidden() -> None:
     conn = await _poll_one_file("WhatsApp Chat.txt")
-    insert = conn.fetchval.call_args_list[1]
+    inserts = [c for c in conn.fetchval.call_args_list if "INSERT INTO documents" in c.args[0]]
+    assert len(inserts) == 1
+    insert = inserts[0]
     assert "INSERT INTO documents" in insert.args[0]
     assert "client_visible" in insert.args[0]
     assert insert.args[-1] is False
@@ -104,7 +156,9 @@ async def test_poll_registers_txt_note_hidden() -> None:
 @pytest.mark.asyncio
 async def test_poll_registers_pdf_visible() -> None:
     conn = await _poll_one_file("passport.pdf")
-    assert conn.fetchval.call_args_list[1].args[-1] is True
+    inserts = [c for c in conn.fetchval.call_args_list if "INSERT INTO documents" in c.args[0]]
+    assert len(inserts) == 1
+    assert inserts[0].args[-1] is True
 
 
 async def _run_backfill(file_name: str) -> list[Any]:

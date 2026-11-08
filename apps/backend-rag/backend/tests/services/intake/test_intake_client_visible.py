@@ -202,6 +202,13 @@ class _FakeDrive:
             }
             for name in set(CATEGORY_TO_FOLDER.values())
         }
+        self.folders["root-folder"] = {
+            "id": "root-folder",
+            "name": "Synthetic client",
+            "parents": ["individuals-parent"],
+            "mimeType": "application/vnd.google-apps.folder",
+            "trashed": False,
+        }
 
     async def find_folder(self, name: str, parent_id: str) -> dict[str, Any] | None:
         matches = [
@@ -280,6 +287,8 @@ async def test_client_visible_follows_one_request_from_the_writer_to_both_insert
     fly_pool, fly_sql = fly_book
     monkeypatch.setenv("INTAKE_WRITER_ENABLED", "1")
     monkeypatch.setenv("INTAKE_CRM_PUSH_BASE_URL", "http://fly.test")
+    monkeypatch.setattr(settings, "gdrive_individuals_folder_id", "individuals-parent")
+    monkeypatch.setattr(settings, "gdrive_companies_folder_id", "companies-parent")
     monkeypatch.setattr(settings, "wa_mirror_crm_write_enabled", True, raising=False)
     monkeypatch.setattr(settings, "wa_mirror_crm_write_key", CHAIN_KEY, raising=False)
     for name, stand_in in {
