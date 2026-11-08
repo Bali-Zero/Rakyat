@@ -511,7 +511,7 @@ async function fetchBackendArticleBySlug(
   slug: string,
 ): Promise<BackendNewsItem | null> {
   try {
-    const url = `${BACKEND_URL}/api/news/${slug}`;
+    const url = `${BACKEND_URL}/api/news/${encodeURIComponent(slug)}`;
     const res = await fetch(url, {
       next: { revalidate: 60 },
       signal: AbortSignal.timeout(5000),
