@@ -1,13 +1,19 @@
 """Informational links are staff-only metadata, never a document access grant."""
 
+import json
+import os
+import re
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
+from urllib.parse import unquote, urlsplit
 
+import asyncpg
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.modules.crm.company_drive_sources import get_company_drive_sources
 from backend.app.modules.crm.company_router import router
 
 FOLDER = "synthetic_drive_folder_00001"
@@ -144,10 +150,39 @@ def test_json_custom_fields_and_historical_record_ids(harness):
     ]
     body = client.get(URL).json()
     assert len(body["sources"]) == 2
-    assert body["historical_record_ids"] == [8]
+    assert body["historical_record_ids"] == [8, 9]
 
 
-@pytest.mark.parametrize("ref", [True, "18", 18.0, 0, -1, 2**31, 17, {}, []])
+@pytest.mark.parametrize(
+    "ref",
+    [
+        True,
+        False,
+        18.0,
+        0,
+        -1,
+        2**31,
+        17,
+        {},
+        [],
+        "",
+        "0",
+        "00",
+        "018",
+        "+18",
+        "-18",
+        " 18",
+        "18 ",
+        "18\n",
+        "18.0",
+        "company",
+        "١٨",
+        "１８",
+        str(2**31),
+        "9" * 100,
+        "17",
+    ],
+)
 def test_invalid_lineage_is_not_exposed(harness, ref):
     client, conn, _ = harness
     conn.fetchrow.return_value["custom_fields"] = {"merged_into": ref}
@@ -163,30 +198,131 @@ def test_invalid_lineage_is_not_exposed(harness, ref):
         None,
         {"custom_fields": {"merged_into": 17}},
         {"custom_fields": {"merged_into": 19}},
+        {"custom_fields": {"merged_into": "17"}},
+        {"custom_fields": {"merged_into": "19"}},
         {"custom_fields": "bad"},
     ],
 )
-def test_missing_cycle_or_unverified_chain_is_rejected(harness, target):
+@pytest.mark.parametrize("ref", [18, "18"])
+def test_missing_cycle_or_unverified_chain_is_rejected(harness, target, ref):
     client, conn, _ = harness
-    source = dict(conn.fetchrow.return_value, custom_fields={"merged_into": 18})
+    source = dict(conn.fetchrow.return_value, custom_fields={"merged_into": ref})
     conn.fetchrow.side_effect = [source, target]
     body = client.get(URL).json()
     assert body["lineage_status"] == "invalid"
     assert body["merged_into_company_id"] is None
 
 
-def test_valid_lineage_only_exposes_target_id(harness):
+@pytest.mark.parametrize("ref", [1, "1", 18, "18", 2**31 - 1, str(2**31 - 1)])
+def test_valid_lineage_only_exposes_target_id(harness, ref):
     client, conn, _ = harness
-    source = dict(conn.fetchrow.return_value, custom_fields={"merged_into": 18})
+    source = dict(conn.fetchrow.return_value, custom_fields={"merged_into": ref})
     conn.fetchrow.side_effect = [source, {"custom_fields": {}}]
     body = client.get(URL).json()
     assert body["lineage_status"] == "valid"
-    assert body["merged_into_company_id"] == 18
+    assert body["merged_into_company_id"] == int(ref)
+    assert type(body["merged_into_company_id"]) is int
+    assert type(conn.fetchrow.await_args.args[1]) is int
+    assert conn.fetchrow.await_args.args[1] == int(ref)
     assert len(body["sources"]) == 1
     assert body["historical_record_ids"] == []
+
+
+@pytest.mark.parametrize("company_id", [1, 17])
+def test_reverse_lineage_accepts_canonical_string_and_revalidates_every_row(harness, company_id):
+    client, conn, _ = harness
+    refs = [
+        company_id,
+        str(company_id),
+        float(company_id),
+        True,
+        "0" + str(company_id),
+        str(company_id) + " ",
+        "+" + str(company_id),
+        "١",
+        "other",
+        str(2**31),
+    ]
+    conn.fetch.return_value = [
+        {"id": index + 30, "custom_fields": {"merged_into": ref}} for index, ref in enumerate(refs)
+    ]
+    body = client.get(f"/api/crm/companies/{company_id}/drive-sources").json()
+    assert body["historical_record_ids"] == [30, 31]
+    assert all(type(value) is int for value in body["historical_record_ids"])
+    assert conn.fetch.await_args.args[1] == company_id
+    assert type(conn.fetch.await_args.args[1]) is int
 
 
 def test_missing_company(harness):
     client, conn, _ = harness
     conn.fetchrow.return_value = None
     assert client.get(URL).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_postgres_numeric_and_string_lineage_use_the_same_integer_target():
+    dsn = os.environ["TEST_DATABASE_URL"]
+    test_database = r"(?:nuzantara|udb_[A-Za-z0-9_]+)_test(?:_[A-Za-z0-9_]+)?"
+    assert re.fullmatch(test_database, unquote(urlsplit(dsn).path.lstrip("/"))), (
+        "PostgreSQL lineage proof requires an isolated test database"
+    )
+    conn = await asyncpg.connect(dsn)
+    try:
+        assert re.fullmatch(test_database, await conn.fetchval("SELECT current_database()"))
+        async with conn.transaction():
+            await conn.execute("SET LOCAL search_path = pg_temp")
+            await conn.execute(
+                "CREATE TEMP TABLE companies (id int PRIMARY KEY, "
+                "google_drive_folder_id text, tax_dept_folder_id text, custom_fields jsonb) "
+                "ON COMMIT DROP"
+            )
+            refs = {
+                1: None,
+                2: 1,
+                3: "1",
+                4: True,
+                5: 1.0,
+                8: 17,
+                9: "17",
+                10: 17.0,
+                11: "017",
+                12: "17 ",
+                13: "١٧",
+                14: True,
+                15: str(2**31),
+                16: "company",
+                17: None,
+                18: "18",
+                22: "23",
+                30: "31",
+                31: "17",
+                40: "41",
+                41: "40",
+                42: str(2**31 - 1),
+                2**31 - 1: None,
+            }
+            await conn.executemany(
+                "INSERT INTO companies (id, custom_fields) VALUES ($1, $2::jsonb)",
+                [(key, json.dumps({"merged_into": value})) for key, value in refs.items()],
+            )
+
+            class Pool:
+                @asynccontextmanager
+                async def acquire(self):
+                    yield conn
+
+            for source_id, target_id in ((2, 1), (3, 1), (8, 17), (9, 17), (42, 2**31 - 1)):
+                result = await get_company_drive_sources(source_id, {"role": "admin"}, Pool())
+                assert result.lineage_status == "valid"
+                assert type(result.merged_into_company_id) is int
+                assert result.merged_into_company_id == target_id
+            result = await get_company_drive_sources(1, {"role": "admin"}, Pool())
+            assert result.historical_record_ids == [2, 3]
+            result = await get_company_drive_sources(17, {"role": "admin"}, Pool())
+            assert result.historical_record_ids == [8, 9, 31]
+            for source_id in (4, 5, 10, 11, 12, 13, 14, 15, 16, 18, 22, 30, 40, 41):
+                result = await get_company_drive_sources(source_id, {"role": "admin"}, Pool())
+                assert result.lineage_status == "invalid"
+                assert result.merged_into_company_id is None
+    finally:
+        await conn.close()
