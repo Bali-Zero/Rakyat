@@ -132,13 +132,52 @@ async def test_rejected_rewrite_logs_reason_codes_never_the_text(caplog):
 @pytest.mark.asyncio
 async def test_lkpm_lookup_failure_logs_type_only(caplog):
     conn = MagicMock()
-    conn.fetchrow = AsyncMock(side_effect=[{"company_type": "PT"}, _failure()])
-    conn.fetch = AsyncMock(return_value=[])
-    conn.fetchval = AsyncMock(return_value=None)
+    conn.fetchrow = AsyncMock(return_value={"company_type": "PT"})
+
+    async def fetch(sql, *args):
+        if "lkpm_reports" in sql:
+            raise _failure()
+        return []
+
+    conn.fetch = fetch
     with caplog.at_level(logging.DEBUG):
-        out = await r.fetch_company_inputs(conn, 9103, 55)
-    assert out["lkpm_latest"] is None
+        out = await r.fetch_company_inputs(conn, 55)
+    assert out["lkpm_rows"] is None
     assert _logged_from(caplog, r.__name__) == 1
+    assert "RuntimeError" in caplog.text
+    assert _leaks(caplog) == []
+
+
+@pytest.mark.asyncio
+async def test_visa_catalogue_failure_logs_type_only(caplog):
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(return_value=None)
+    conn.fetchval = AsyncMock(return_value=False)
+
+    async def fetch(sql, *args):
+        if "visa_types" in sql:
+            raise _failure()
+        return []
+
+    conn.fetch = fetch
+    with caplog.at_level(logging.DEBUG):
+        out = await r.fetch_immigration_inputs(conn, 9105)
+    assert out["catalogue"] is None
+    assert _logged_from(caplog, r.__name__) == 1
+    assert _leaks(caplog) == []
+
+
+@pytest.mark.asyncio
+async def test_kbli_catalogue_failure_logs_the_type_never_the_code_or_the_server_text(caplog):
+    import asyncpg
+
+    conn = MagicMock()
+    conn.fetch = AsyncMock(side_effect=asyncpg.UndefinedTableError(f"relation {SENTINEL}"))
+    with caplog.at_level(logging.DEBUG):
+        verdicts = await r._kbli_verdicts(conn, {"kbli_code": "62010"})
+    assert verdicts == {"62010": "UNKNOWN"}
+    assert "UndefinedTableError" in caplog.text
+    assert "62010" not in caplog.text
     assert _leaks(caplog) == []
 
 

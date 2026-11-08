@@ -82,6 +82,56 @@ def _family_label(family: str) -> str:
     return code if code == label else f"{code} — {label}"
 
 
+def _is_kitap(t: str) -> bool:
+    return (
+        "kitap" in t
+        or bool(re.search(r"\bitap\b", t))
+        or "permanent stay" in t
+        or "tinggal tetap" in t
+    )
+
+
+def _is_merp(t: str) -> bool:
+    return (
+        "merp" in t
+        or "re-entry" in t
+        or "reentry" in t
+        or "re entry" in t
+        or "multiple exit" in t
+        or "izin masuk kembali" in t
+    )
+
+
+def _is_kitas(t: str) -> bool:
+    return (
+        "kitas" in t
+        or bool(re.search(r"\bitas\b", t))
+        or "limited stay" in t
+        or "residence permit" in t
+        or "tinggal terbatas" in t
+    )
+
+
+def _is_itk(t: str) -> bool:
+    return "itk" in t or "visit stay" in t or "visit visa" in t or "izin tinggal kunjungan" in t
+
+
+def _is_evisa(t: str) -> bool:
+    # Collapse spaces/hyphens/underscores so "e_visa"/"e-visa"/"E Visa"/
+    # "evisa" all normalise to the same "evisa" token.
+    return "evisa" in re.sub(r"[\s_-]", "", t) or "telex" in t
+
+
+# Evaluation order of `_classify`; `permit_families` runs every test on its own.
+_FAMILY_TESTS = (
+    (FAMILY_KITAP, _is_kitap),
+    (FAMILY_MERP, _is_merp),
+    (FAMILY_KITAS, _is_kitas),
+    (FAMILY_ITK, _is_itk),
+    (FAMILY_EVISA, _is_evisa),
+)
+
+
 def _classify(text: str) -> str | None:
     """Keyword classification of a free-text permit label into one family.
 
@@ -92,39 +142,18 @@ def _classify(text: str) -> str | None:
     if not text:
         return None
     t = text.lower()
-
-    if "kitap" in t or re.search(r"\bitap\b", t) or "permanent stay" in t or "tinggal tetap" in t:
-        return FAMILY_KITAP
-
-    if (
-        "merp" in t
-        or "re-entry" in t
-        or "reentry" in t
-        or "re entry" in t
-        or "multiple exit" in t
-        or "izin masuk kembali" in t
-    ):
-        return FAMILY_MERP
-
-    if (
-        "kitas" in t
-        or re.search(r"\bitas\b", t)
-        or "limited stay" in t
-        or "residence permit" in t
-        or "tinggal terbatas" in t
-    ):
-        return FAMILY_KITAS
-
-    if "itk" in t or "visit stay" in t or "visit visa" in t or "izin tinggal kunjungan" in t:
-        return FAMILY_ITK
-
-    # Collapse spaces/hyphens/underscores so "e_visa"/"e-visa"/"E Visa"/
-    # "evisa" all normalise to the same "evisa" token.
-    compact = re.sub(r"[\s_-]", "", t)
-    if "evisa" in compact or "telex" in t:
-        return FAMILY_EVISA
-
+    for family, test in _FAMILY_TESTS:
+        if test(t):
+            return family
     return None
+
+
+def permit_families(text: str) -> frozenset[str]:
+    """EVERY family whose keyword test matches ``text`` (the first match does not win)."""
+    if not text:
+        return frozenset()
+    t = text.lower()
+    return frozenset(family for family, test in _FAMILY_TESTS if test(t))
 
 
 # ── Index parsing ───────────────────────────────────────────────────────────
@@ -175,6 +204,14 @@ def _parse_index_token(token: str) -> list[tuple[str, str | None]]:
                 candidates.append((code_with_letter, remainder))
 
     return candidates
+
+
+def code_shaped_tokens(text: str) -> list[list[tuple[str, str | None]]]:
+    """The full-length index parses of every alphanumeric token that has at least one."""
+    if not text:
+        return []
+    parsed = (_parse_index_token(token) for token in _TOKEN_RE.findall(text.upper()))
+    return [parses for parses in parsed if parses]
 
 
 def _best_candidate(
