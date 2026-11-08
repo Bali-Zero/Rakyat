@@ -170,6 +170,10 @@ def permit_families(text: str) -> frozenset[str]:
 # catalogue; among those, the longest CODE; with no catalogue match at all,
 # the longest-CODE split still wins (never invent which one is "real").
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+# The recap reads tokens in the alphabet the index grammar itself accepts (`\d` and `isdigit` are
+# Unicode-aware), so a full-width or Arabic-Indic digit cannot hide a code-shaped token. The
+# display resolver above keeps the ASCII alphabet.
+_UNICODE_TOKEN_RE = re.compile(r"[^\W_]+")
 _STAY_RE = re.compile(r"2[A-Z]\d{0,2}")
 
 
@@ -210,7 +214,7 @@ def code_shaped_tokens(text: str) -> list[list[tuple[str, str | None]]]:
     """The full-length index parses of every alphanumeric token that has at least one."""
     if not text:
         return []
-    parsed = (_parse_index_token(token) for token in _TOKEN_RE.findall(text.upper()))
+    parsed = (_parse_index_token(token) for token in _UNICODE_TOKEN_RE.findall(text.upper()))
     return [parses for parses in parsed if parses]
 
 

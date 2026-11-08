@@ -679,3 +679,34 @@ def test_one_practice_is_worded_singular():
         text(practices=[prac("on_process", "kitas")])
         == "An immigration practice is open: KITAS Extension."
     )
+
+
+# ── the tokenizer reads the alphabet of the index grammar ───────────────────
+
+CAT2 = {"E23": "Synthetic Work", "E28A": "Synthetic Investor"}
+
+
+@pytest.mark.parametrize(
+    "visa_type",
+    [
+        "E23 or E２８A",  # full-width digits beside a catalogue code
+        "E２３",  # full-width digits alone: code-shaped, not in the catalogue
+        "E٢٣",  # Arabic-Indic digits alone
+        "E23 or E٢٨A",
+    ],
+)
+def test_a_unicode_digit_code_shaped_token_makes_the_document_unclassifiable(visa_type):
+    d = doc("kitas", expiry=date(2027, 5, 2), ocr=ocr(visa_type))
+    result = classify_document(d, CAT2)
+    assert result is not None and result.classifiable is False
+    p = payload(documents=[d], catalogue=CAT2)
+    assert "current_permit" not in p and "itk_expiry_date" not in p
+    assert "permit" not in text(documents=[d], catalogue=CAT2).lower()
+
+
+def test_ascii_codes_still_classify_and_two_different_ascii_codes_do_not():
+    one = doc("kitas", expiry=date(2027, 5, 2), ocr=ocr("E23"))
+    assert classify_document(one, CAT2).code == "E23"
+    assert payload(documents=[one], catalogue=CAT2)["current_permit"]["code"] == "E23"
+    two = doc("kitas", expiry=date(2027, 5, 2), ocr=ocr("E23 or E28A"))
+    assert classify_document(two, CAT2).classifiable is False
