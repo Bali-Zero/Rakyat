@@ -338,11 +338,25 @@ function articleMdxPath(folder: ArticleFolderName, slug: string): string {
   );
 }
 
+// The translation locales an article file can carry. The one list: a locale from a request
+// is never joined into a path unless it is in it.
+const ARTICLE_TRANSLATION_LOCALES = ["id", "it", "ru", "fr"] as const;
+type ArticleTranslationLocale = (typeof ARTICLE_TRANSLATION_LOCALES)[number];
+
+function isArticleTranslationLocale(
+  value: string,
+): value is ArticleTranslationLocale {
+  return (ARTICLE_TRANSLATION_LOCALES as readonly string[]).includes(value);
+}
+
 function articleLocaleMdxPath(
   folder: ArticleFolderName,
   slug: string,
   locale: string,
 ): string {
+  if (!isArticleTranslationLocale(locale)) {
+    throw new Error("articleLocaleMdxPath: unknown article locale");
+  }
   return path.join(
     /*turbopackIgnore: true*/ articleFolderPath(folder),
     `${slug}.${locale}.mdx`,
@@ -804,6 +818,11 @@ export async function getArticleByLocale(
   if (!locale || locale === "en") {
     return getArticleBySlug(category, slug);
   }
+  // A locale outside the allowlist is an unknown language: the English article, and no path
+  // is ever built from the request value (it used to reach path.join as "<slug>.<locale>.mdx").
+  if (!isArticleTranslationLocale(locale)) {
+    return getArticleBySlug(category, slug);
+  }
   // A hidden English article hides its translations too.
   if (isArticleHidden(category, slug)) return null;
 
@@ -901,7 +920,7 @@ export function getAvailableLocales(category: string, slug: string): string[] {
   const normalizedCategory = normalizeCategory(category);
   const possibleFolders = CATEGORY_FOLDERS[normalizedCategory] || [category];
 
-  for (const locale of ["id", "it", "ru", "fr"] as const) {
+  for (const locale of ARTICLE_TRANSLATION_LOCALES) {
     for (const folder of possibleFolders) {
       if (!isArticleFolderName(folder)) continue;
       const localePath = articleLocaleMdxPath(folder, slug, locale);
