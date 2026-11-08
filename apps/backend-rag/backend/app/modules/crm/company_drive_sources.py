@@ -53,6 +53,15 @@ def _company_id(value: Any) -> bool:
     return type(value) is int and 0 < value <= MAX_COMPANY_ID
 
 
+def _merge_target(value: Any) -> int | None:
+    if _company_id(value):
+        return value
+    if isinstance(value, str) and re.fullmatch(r"[1-9][0-9]{0,9}", value):
+        normalized = int(value)
+        return normalized if _company_id(normalized) else None
+    return None
+
+
 @router.get("/{company_id}/drive-sources", response_model=CompanyDriveSources)
 async def get_company_drive_sources(
     company_id: int = Path(ge=1, le=MAX_COMPANY_ID),
@@ -90,19 +99,23 @@ async def get_company_drive_sources(
         ref = (fields or {}).get("merged_into")
         if fields is None or ref is not None:
             result.lineage_status = "invalid"
-            if _company_id(ref) and ref != company_id:
+            target_id = _merge_target(ref)
+            if target_id is not None and target_id != company_id:
                 target = await conn.fetchrow(
-                    "SELECT custom_fields FROM companies WHERE id = $1", ref
+                    "SELECT custom_fields FROM companies WHERE id = $1", target_id
                 )
                 target_fields = _custom_fields(target["custom_fields"]) if target else None
                 # One verified terminal hop only. Reject chains/cycles, never walk them.
                 if target_fields is not None and target_fields.get("merged_into") is None:
                     result.lineage_status = "valid"
-                    result.merged_into_company_id = ref
+                    result.merged_into_company_id = target_id
         else:
             historical = await conn.fetch(
                 "SELECT id, custom_fields FROM companies "
-                "WHERE custom_fields->'merged_into' = to_jsonb($1::int) "
+                "WHERE ((jsonb_typeof(custom_fields->'merged_into') = 'number' "
+                "AND custom_fields->'merged_into' = to_jsonb($1::int)) "
+                "OR (jsonb_typeof(custom_fields->'merged_into') = 'string' "
+                "AND custom_fields->'merged_into' = to_jsonb(($1::int)::text))) "
                 "AND id <> $1 ORDER BY id LIMIT 100",
                 company_id,
             )
@@ -111,7 +124,9 @@ async def get_company_drive_sources(
                 for record in historical
                 if _company_id(record["id"])
                 and record["id"] != company_id
-                and type((_custom_fields(record["custom_fields"]) or {}).get("merged_into")) is int
-                and (_custom_fields(record["custom_fields"]) or {}).get("merged_into") == company_id
+                and _merge_target(
+                    (_custom_fields(record["custom_fields"]) or {}).get("merged_into")
+                )
+                == company_id
             ]
         return result
