@@ -18,6 +18,7 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.metrics import metrics_collector
 from backend.app.utils.error_handlers import handle_database_error
@@ -379,7 +380,7 @@ async def save_conversation(
             ),
             None,
         )
-        if first_user_msg:
+        if first_user_msg and settings.conversation_title_generation_enabled:
             title_coroutine = _generate_and_update_title(
                 conversation_id=conversation_id,
                 first_user_message=first_user_msg,
@@ -724,7 +725,7 @@ async def list_conversations(
         log_error(
             logger, "Failed to list conversations", error_type=type(e).__name__, exc_info=False
         )
-        return ConversationListResponse(success=False, error='Request could not be completed.')
+        return ConversationListResponse(success=False, error="Request could not be completed.")
 
 
 @router.get("/{conversation_id}", response_model=SingleConversationResponse)
@@ -776,7 +777,7 @@ async def get_conversation(
         raise
     except Exception as e:
         log_error(logger, "Failed to get conversation", error_type=type(e).__name__, exc_info=False)
-        return SingleConversationResponse(success=False, error='Request could not be completed.')
+        return SingleConversationResponse(success=False, error="Request could not be completed.")
 
 
 @router.delete("/{conversation_id}")
@@ -897,5 +898,5 @@ async def get_user_memory_context(
         return UserMemoryContextResponse(
             success=False,
             user_id=user_email,
-            error='Request could not be completed.',
+            error="Request could not be completed.",
         )

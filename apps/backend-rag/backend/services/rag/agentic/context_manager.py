@@ -23,6 +23,7 @@ from typing import Any
 
 import asyncpg
 
+from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.memory import MemoryOrchestrator, get_memory_cache
 from backend.services.rag.agentic._memory_identity import is_non_personal_memory_identity
 
@@ -85,8 +86,8 @@ async def fetch_profile_and_history(
                 """
                 logger.info(
                     "🧠 [ContextManager] Executing profile query for user_id: %s, session_id: %s",
-                    user_id,
-                    session_id,
+                    redact_identifier_for_log(user_id),
+                    redact_identifier_for_log(session_id),
                 )
                 row = await conn.fetchrow(query_combined, user_id, session_id)
             else:
@@ -115,12 +116,12 @@ async def fetch_profile_and_history(
                 """
                 logger.info(
                     "🧠 [ContextManager] Executing profile query for user_id: %s (no session_id)",
-                    user_id,
+                    redact_identifier_for_log(user_id),
                 )
                 row = await conn.fetchrow(query_combined, user_id)
 
             if row:
-                logger.info(f"✅ [ContextManager] Found profile: {row['name']} ({row['role']})")
+                logger.info("✅ [ContextManager] Found profile (role=%s)", row["role"])
                 # Extract profile (including email and notes from team_members table)
                 context["profile"] = {
                     "id": row["id"],
@@ -151,7 +152,11 @@ async def fetch_profile_and_history(
                         context["entities"] = mem_cache.get_entities(conversation_id)
 
     except (asyncpg.PostgresError, asyncpg.InterfaceError, json.JSONDecodeError, KeyError) as e:
-        logger.error("Failed to fetch profile/history for %s: %s", user_id, e, exc_info=True)
+        logger.error(
+            "Failed to fetch profile/history for %s: %s",
+            redact_identifier_for_log(user_id),
+            type(e).__name__,
+        )
 
     return context
 
@@ -190,7 +195,10 @@ async def fetch_memory_facts(
         return memory_data
 
     try:
-        logger.warning("🧠 [ContextManager] Loading memory facts for user: %s", user_id)
+        logger.warning(
+            "🧠 [ContextManager] Loading memory facts for user: %s",
+            redact_identifier_for_log(user_id),
+        )
 
         # Pass query for query-aware collective memory retrieval
         memory_context = await memory_orchestrator.get_user_context(user_id, query=query)
@@ -206,24 +214,20 @@ async def fetch_memory_facts(
         logger.warning(
             f"✅ [ContextManager] Memory loaded: {len(memory_context.profile_facts)} personal facts, "
             f"{len(memory_context.collective_facts)} collective facts, "
-            f"{len(memory_context.kg_entities)} KG entities for {user_id}",
+            f"{len(memory_context.kg_entities)} KG entities for {redact_identifier_for_log(user_id)}",
         )
 
-        # DIAGNOSTIC: Log first 3 facts for debugging
-        if memory_context.profile_facts:
-            logger.warning(f"📋 [ContextManager] Sample facts: {memory_context.profile_facts[:3]}")
-        else:
+        if not memory_context.profile_facts:
             logger.warning(
                 "⚠️  [ContextManager] NO profile facts found for %s - user recognition will fail!",
-                user_id,
+                redact_identifier_for_log(user_id),
             )
 
     except (asyncpg.PostgresError, asyncpg.InterfaceError, ValueError, RuntimeError, KeyError) as e:
         logger.error(
             "❌ [ContextManager] Failed to fetch memory context for %s: %s",
-            user_id,
-            e,
-            exc_info=True,
+            redact_identifier_for_log(user_id),
+            type(e).__name__,
         )
 
     return memory_data
@@ -280,7 +284,8 @@ async def get_user_context(
     start_time = time.time()
 
     logger.warning(
-        f"🔍 [ContextManager] get_user_context called with user_id='{user_id}', session_id='{session_id}', query={query[:50] if query else None}...",
+        f"🔍 [ContextManager] get_user_context called with user_id={redact_identifier_for_log(user_id)}, "
+        f"session_id={redact_identifier_for_log(session_id)}, query_length={len(query) if query else 0}",
     )
     context = {"profile": None, "history": [], "facts": [], "collective_facts": [], "entities": {}}
 
@@ -296,7 +301,7 @@ async def get_user_context(
             logger.warning("Memory cache lookup skipped - user_id not found in cache")
             pass
         except (KeyError, ValueError, RuntimeError) as e:
-            logger.warning("⚠️ Memory cache lookup failed: %s", e, exc_info=True)
+            logger.warning("⚠️ Memory cache lookup failed: %s", type(e).__name__)
 
     # Key long-term facts on the per-sender pseudonymous subject when the
     # router derived one (W-1, 2026-07-27); otherwise on the user_id, as
@@ -357,7 +362,7 @@ async def get_user_context(
 
     # Handle profile result
     if isinstance(profile_data, Exception):
-        logger.error("❌ Profile fetch failed: %s", profile_data)
+        logger.error("❌ Profile fetch failed: %s", type(profile_data).__name__)
         profile_time = 0.0
     else:
         profile_result, profile_time = profile_data
@@ -366,7 +371,7 @@ async def get_user_context(
 
     # Handle memory result
     if isinstance(memory_data, Exception):
-        logger.error("❌ Memory fetch failed: %s", memory_data)
+        logger.error("❌ Memory fetch failed: %s", type(memory_data).__name__)
         # Fallback: empty facts (graceful degradation)
         context["facts"] = []
         context["collective_facts"] = []

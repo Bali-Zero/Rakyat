@@ -129,6 +129,10 @@ class TestSaveConversation:
                 side_effect=record_spawn,
             ) as mock_spawn,
             patch(
+                "backend.app.routers.conversations.settings.conversation_title_generation_enabled",
+                True,
+            ),
+            patch(
                 "backend.services.common.cache._invalidate_cache",
                 new_callable=AsyncMock,
             ),

@@ -855,6 +855,9 @@ async def test_release_failure_after_commit_keeps_route_in_db_mode(
 
     monkeypatch.setattr(conversations_router, "get_memory_cache", lambda: memory)
     monkeypatch.setattr(conversations_router, "spawn", close_spawn)
+    monkeypatch.setattr(
+        conversations_router.settings, "conversation_title_generation_enabled", True
+    )
 
     with caplog.at_level("ERROR"):
         response = await conversations_router.save_conversation(
@@ -1138,6 +1141,7 @@ async def test_title_scheduling_failure_leaves_exactly_one_committed_snapshot(co
         patch.object(
             conversations, "spawn", side_effect=RuntimeError("synthetic task factory failure")
         ),
+        patch.object(conversations.settings, "conversation_title_generation_enabled", True),
         patch.object(
             conversations.metrics_collector, "record_cache_db_consistency_error"
         ) as metric,

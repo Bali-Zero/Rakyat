@@ -67,17 +67,18 @@ async def ask_openclaw_whatsapp(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=10.0)) as client:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout_seconds, connect=10.0)
+        ) as client:
             response = await client.post(bridge_url, json=payload, headers=headers)
     except httpx.HTTPError as exc:
-        logger.warning("OpenClaw WhatsApp bridge call failed: %s", exc)
+        logger.warning("OpenClaw WhatsApp bridge call failed: %s", type(exc).__name__)
         return None
 
     if response.status_code >= 400:
         logger.warning(
-            "OpenClaw WhatsApp bridge rejected request: status=%s body=%s",
+            "OpenClaw WhatsApp bridge rejected request: status=%s",
             response.status_code,
-            response.text[:500],
         )
         return None
 
