@@ -774,6 +774,7 @@ async def test_process_whatsapp_message_onboarding_triggered():
         return_value={"chain": "new_client_onboarding", "status": "triggered"}
     )
 
+    mock_audit = AsyncMock()
     mock_telegram = MagicMock()
     mock_telegram.send_message = AsyncMock()
 
@@ -785,12 +786,13 @@ async def test_process_whatsapp_message_onboarding_triggered():
             return_value=mock_onboarding,
         ),
         patch("backend.app.routers.whatsapp_chat.telegram_bot", mock_telegram),
+        patch("backend.app.routers.whatsapp_chat._persist_audit_messages", mock_audit),
         patch(
             "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
         ) as mock_settings,
         patch("backend.app.routers.whatsapp_chat._get_db_pool", return_value=None),
     ):
-        mock_settings.admin_telegram_chat_id = "8037989885"
+        mock_settings.admin_telegram_chat_id = "synthetic-admin-chat"
         await process_whatsapp_message(
             phone="621234567890",
             message_text="I want to set up a company",
@@ -800,7 +802,9 @@ async def test_process_whatsapp_message_onboarding_triggered():
         )
 
     # Should send onboarding confirmation to client
-    mock_wa_service.send_message.assert_called()
+    mock_wa_service.send_message.assert_awaited_once()
+    mock_audit.assert_awaited_once()
+    mock_telegram.send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -42,13 +42,6 @@ export function Footer() {
             <a href="/careers">{"Careers"}</a>
             <a href="/press">{"Press"}</a>
             <FooterWhatsAppLink>{"WhatsApp"}</FooterWhatsAppLink>
-            <a
-              href={destinations.telegram.href}
-              rel="noopener noreferrer"
-              target="_blank"
-            >
-              {destinations.telegram.label}
-            </a>
             <a href="mailto:zantara@balizero.com">{"zantara@balizero.com"}</a>
             <a href="tel:+628213454721">{"+62 821 3454 721"}</a>
             <a

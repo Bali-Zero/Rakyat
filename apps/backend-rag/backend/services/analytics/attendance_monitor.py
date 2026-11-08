@@ -30,6 +30,7 @@ import httpx
 from backend.app.services.hr.hr_leave_routing import RUSLANA_EMAIL, VERONIKA_REPORTS
 from backend.app.utils.logging_utils import get_logger
 from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.services.common.background import get_bg_pool_semaphore
 
 install_telegram_token_redaction()
@@ -634,6 +635,8 @@ class AttendanceMonitor:
 
     async def send_clockin_reminder(self) -> None:
         """Send Telegram alert to Zero listing members who logged in but haven't clocked in."""
+        if telegram_is_retired():
+            return
         missing = await self.get_logged_in_not_clocked()
 
         if not missing:
@@ -1398,6 +1401,8 @@ class AttendanceMonitor:
         multiple sendMessage calls, each prefixed with "(part N/M)". The
         4096-char Telegram hard limit is otherwise easy to hit on heavy days.
         """
+        if telegram_is_retired():
+            return
         if not TELEGRAM_BOT_TOKEN:
             logger.debug("_send_telegram: no token configured — skipping")
             return
@@ -1459,6 +1464,8 @@ class AttendanceMonitor:
           • Currently escalated (ESCALATED state)
           • Closed today (RESOLVED / RESOLVED_LATE state changes today)
         """
+        if telegram_is_retired():
+            return False
         today = datetime.now(BALI_TZ).date()
 
         async with self.pool.acquire() as conn:

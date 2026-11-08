@@ -25,6 +25,7 @@ import urllib.request
 from typing import Any
 
 from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.services.federation_alerts.approval import callback_token_prefix
 from backend.services.federation_alerts.approval_models import encode_callback
 
@@ -107,6 +108,8 @@ def send_proposal_to_telegram(
     Keeping it sync avoids pulling httpx/aiohttp into the daemon
     runtime — urllib is standard library only.
     """
+    if telegram_is_retired():
+        return None
     if not bot_token or not chat_id:
         logger.warning("send_proposal_to_telegram: bot_token or chat_id missing")
         return None
@@ -166,6 +169,8 @@ def edit_message_after_decision(
 
     Best-effort: returns False on any error (caller logs).
     """
+    if telegram_is_retired():
+        return False
     if not bot_token or not chat_id or not message_id:
         return False
     # Decision footer is intentionally NOT appended here — Telegram's

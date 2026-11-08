@@ -18,6 +18,7 @@ import logging
 import os
 import sys
 
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.services.hardening.llm_credit_sentinel import (
     ALERT_TEXT,
     CreditState,
@@ -96,18 +97,20 @@ def _build_notifiers(number: str | None) -> dict:
                 await svc.close()
             # Meta answers 200 with a messages[] array on a real send. Outside the
             # 24h service window it refuses instead — which is expected at night
-            # and is exactly why Telegram below is not optional.
+            # and a failed optional send must not hide the local sentinel verdict.
             return bool(res and res.get("messages"))
 
         notifiers["whatsapp:surya"] = whatsapp
     else:
         logger.warning(
             "nessun numero WhatsApp per l'alert (%s vuoto e HR senza numero) — "
-            "resta solo Telegram",
+            "Telegram is retired; the local sentinel verdict remains visible",
             ALERT_WHATSAPP_ENV,
         )
 
     async def telegram(text: str) -> bool:
+        if telegram_is_retired():
+            return False
         from backend.services.integrations.telegram_bot_service import (
             TelegramBotService,
         )
@@ -117,7 +120,8 @@ def _build_notifiers(number: str | None) -> dict:
             return False
         return bool(await TelegramBotService().send_message(chat_id, text))
 
-    notifiers["telegram:owner"] = telegram
+    if not telegram_is_retired():
+        notifiers["telegram:owner"] = telegram
     return notifiers
 
 

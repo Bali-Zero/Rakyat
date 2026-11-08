@@ -71,81 +71,98 @@ ogImage: "/static/insights/tax/coretax-efiling-spt-guide.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "it"
+source_sha256: "e6fa260bc00e7df7f71919be22b90b852cb9c6239c14e3ec83b47955353047c6"
 ---
 
-## Comprendere il Sistema di e-Filing CoreTax dell'Indonesia
+import { HeaderWhatsAppCTA } from "@/components/blog/HeaderWhatsAppCTA";
+import { ArticleClusterCTA } from "@/components/blog/ArticleClusterCTA";
+import { KeyTakeaway } from "@/components/blog/interactive";
 
-Il Direktorat Jenderal Pajak (DJP) dell'Indonesia ha modernizzato l'amministrazione fiscale attraverso la piattaforma CoreTax, sostituendo il vecchio sistema e-Filing. Dalla sua completa implementazione nel 2025, CoreTax DJP Online è diventato il canale obbligatorio per l'invio elettronico della dichiarazione dei redditi SPT (Surat Pemberitahuan Tahunan). Questa guida completa ti accompagna in ogni fase della presentazione della tua dichiarazione annuale, sia come contribuente individuale che come entità aziendale.
+# Guida CoreTax e-Filing 2026: come presentare SPT Tahunan online in Indonesia
 
-Il sistema CoreTax integra tutti i servizi fiscali in un'unica piattaforma unificata accessibile su coretaxdjp.pajak.go.id. Offre convalida in tempo reale, calcoli automatici e archiviazione sicura dei documenti, riducendo significativamente gli errori di invio e i tempi di elaborazione. Capire come navigare in questo sistema è essenziale per adempiere ai propri obblighi fiscali ed evitare sanzioni.
+<KeyTakeaway>
+  **TL;DR:** Presenta SPT Tahunan su CoreTax (coretax.pajak.go.id) entro il 31 marzo
+  (persone fisiche) o il 30 aprile (società). Accedi con NPWP16 + password. Modulo
+  1770SS per dipendenti con un unico datore di lavoro, 1770S per redditi da più fonti,
+  1770 per imprenditori, 1771 per le società. Problema comune: login con NPWP15 —
+  passa a NPWP16 (aggiungi uno 0 iniziale prima del tuo vecchio numero).
+</KeyTakeaway>
 
-## Scadenze Fiscali Critiche per il 2026
+<HeaderWhatsAppCTA />
 
-L'Indonesia impone scadenze rigorose per la presentazione della dichiarazione dei redditi annuale, con sanzioni significative per l'invio tardivo:
+## Capire il sistema CoreTax E-Filing in Indonesia
 
-| Tipo di Contribuente       | Tipo di Modulo      | Fine Anno Fiscale | Scadenza Invio           | Sanzione Ritardo |
-| -------------------------- | ------------------- | ----------------- | ------------------------ | ---------------- |
-| Persona Fisica (Privato)   | 1770SS, 1770S, 1770 | 31 Dicembre 2025  | 31 Marzo 2026            | 100.000 IDR      |
-| Entità Aziendale (PT)      | 1771                | 31 Dicembre 2025  | 30 Aprile 2026           | 1.000.000 IDR    |
-| Periodo Contabile Speciale | 1771                | Varia             | 4 mesi dopo fine periodo | 1.000.000 IDR    |
+Il Direktorat Jenderal Pajak (DJP) dell'Indonesia ha modernizzato l'amministrazione fiscale attraverso la piattaforma CoreTax, che sostituisce il precedente sistema e-Filing. Dal suo lancio completo nel 2025, CoreTax DJP Online è diventato il canale obbligatorio per presentare elettronicamente le dichiarazioni fiscali SPT (Surat Pemberitahuan Tahunan). Questa guida completa ti accompagna in ogni fase della presentazione della dichiarazione annuale, sia che tu sia una persona fisica o una società.
 
-I contribuenti individuali hanno esattamente tre mesi dalla fine dell'anno per inviare il proprio SPT Tahunan Pribadi, mentre le società hanno quattro mesi. Queste scadenze sono assolute: l'invio il 1° aprile per le dichiarazioni personali o il 1° maggio per quelle aziendali fa scattare automaticamente l'accertamento della sanzione, indipendentemente dal fatto che si debbano tasse aggiuntive o meno.
+Il sistema CoreTax integra tutti i servizi fiscali in un'unica piattaforma unificata accessibile su coretaxdjp.pajak.go.id. Offre validazione in tempo reale, calcoli automatici e archiviazione sicura dei documenti, riducendo significativamente errori di compilazione e tempi di elaborazione. Saper utilizzare questo sistema è essenziale per rispettare gli obblighi fiscali ed evitare sanzioni.
 
-Oltre alle sanzioni pecuniarie, l'invio tardivo crea complicazioni per le richieste di visto, le gare d'appalto governative, i prestiti bancari e i rinnovi delle licenze commerciali. Molti processi amministrativi richiedono la prova della conformità fiscale tramite la conferma dell'ultimo invio dell'SPT.
+## Scadenze critiche per la dichiarazione 2026
 
-## Scegliere il Modulo SPT Giusto: 1770, 1770S o 1770SS
+L'Indonesia impone scadenze rigorose per la presentazione della dichiarazione annuale, con sanzioni rilevanti in caso di ritardo:
 
-L'Indonesia offre tre moduli per la dichiarazione dei redditi personale, ognuno progettato per diversi profili di contribuente. Scegliere il modulo sbagliato può comportare il rifiuto o il rischio di audit:
+| Tipo di contribuente          | Tipo di modulo      | Fine anno fiscale   | Scadenza di presentazione     | Sanzione per ritardo |
+| ------------------------- | ------------------- | ----------------- | ------------------------- | ------------- |
+| Persona fisica            | 1770SS, 1770S, 1770 | 31 dicembre 2025  | 31 marzo 2026             | IDR 100,000   |
+| Ente societario (PT)      | 1771                | 31 dicembre 2025  | 30 aprile 2026            | IDR 1,000,000 |
+| Periodo contabile speciale | 1771                | Varia             | 4 mesi dopo la fine del periodo | IDR 1,000,000 |
+
+Le persone fisiche hanno esattamente tre mesi dalla fine dell'anno per presentare il proprio SPT Tahunan Pribadi, mentre le società dispongono di quattro mesi. Queste scadenze sono assolute - presentare il 1° aprile per le persone fisiche o il 1° maggio per le società comporta automaticamente l'applicazione della sanzione, indipendentemente dal fatto che siano dovute imposte aggiuntive.
+
+Oltre alle sanzioni pecuniarie, la presentazione tardiva crea complicazioni per domande di visto, gare pubbliche, prestiti bancari e rinnovi di licenze commerciali. Molte procedure amministrative richiedono la prova della regolarità fiscale tramite la conferma di presentazione dell'ultimo SPT.
+
+## Scegliere il modulo SPT giusto: 1770, 1770S o 1770SS
+
+L'Indonesia offre tre moduli per le persone fisiche, ciascuno pensato per un diverso profilo di contribuente. Scegliere il modulo sbagliato può comportare rigetto o rischio di accertamento:
 
 ### Modulo 1770SS (Semplificato)
 
-Questo è il modulo più semplice, progettato per i dipendenti con redditi lineari:
+Questo è il modulo più semplice, pensato per i dipendenti con redditi lineari:
 
-**Criteri di Eleggibilità:**
+**Criteri di ammissibilità:**
 
-- Reddito lordo annuo inferiore a 60 milioni di IDR
-- Reddito derivante esclusivamente da un unico datore di lavoro (ritenuta PPh 21)
+- Reddito lordo annuo inferiore a IDR 60 milioni
+- Reddito esclusivamente da un unico datore di lavoro (ritenuta PPh 21)
 - Nessun reddito d'impresa, reddito da locazione o plusvalenze
 - Nessun reddito di fonte estera
-- Il datore di lavoro ha già effettuato le ritenute PPh 21 durante l'anno
+- Datore di lavoro che ha già applicato la ritenuta PPh 21 durante l'anno
 
-**Cosa si Dichiara:**
+**Cosa dichiari:**
 
-- Reddito da lavoro dipendente dal modulo 1721-A1 fornito dal datore di lavoro
+- Reddito da lavoro dipendente dal Modulo 1721-A1 fornito dal datore di lavoro
 - Soglie di reddito non imponibile (PTKP)
-- Tasse già trattenute (credito d'imposta)
+- Imposta già trattenuta (credito)
 - Richiesta di rimborso o imposta aggiuntiva dovuta
 
-Il modulo 1770SS richiede in genere 10-15 minuti per essere completato, poiché la maggior parte dei dati viene popolata automaticamente dai rapporti di ritenuta del datore di lavoro già inviati al DJP.
+Il modulo 1770SS richiede in genere 10-15 minuti perché la maggior parte dei dati è già precompilata dai report sulle ritenute presentati dal datore di lavoro a DJP.
 
 ### Modulo 1770S (Standard)
 
-Questo modulo accoglie situazioni di reddito personale più complesse:
+Questo modulo copre situazioni di reddito personale più complesse:
 
-**Criteri di Eleggibilità:**
+**Criteri di ammissibilità:**
 
-- Reddito annuo di 60 milioni di IDR o superiore
+- Reddito annuo pari o superiore a IDR 60 milioni
 - Reddito da più datori di lavoro
-- Reddito da freelance o servizi professionali senza contabilità formale
-- Reddito da proprietà in locazione
-- Reddito da investimenti (dividendi, interessi, plusvalenze)
+- Reddito da freelance o attività professionale senza contabilità formale
+- Reddito da locazione immobiliare
+- Redditi da investimento (dividendi, interessi, plusvalenze)
 - Reddito di fonte estera
 
-**Cosa si Dichiara:**
+**Cosa dichiari:**
 
-- Tutte le fonti di reddito categorizzate per tipo
-- Deduzioni ammissibili (contributi pensionistici, donazioni caritatevoli)
-- Crediti d'imposta dalle ritenute (PPh 21, 23, 26)
+- Tutte le fonti di reddito suddivise per tipologia
+- Deduzioni ammesse (contributi pensionistici, donazioni caritatevoli)
+- Crediti d'imposta da ritenute (PPh 21, 23, 26)
 - Crediti per zakat o donazioni religiose
-- Informazioni dettagliate sui familiari per il calcolo del PTKP
+- Informazioni dettagliate sui familiari per il calcolo PTKP
 
-Il modulo 1770S richiede 30-45 minuti e documenti di supporto come certificazioni dei redditi, rapporti sui dividendi e contratti di locazione.
+Il modulo 1770S richiede 30-45 minuti e documenti giustificativi come attestazioni di reddito, report sui dividendi e contratti di locazione.
 
-### Modulo 1771 (Aziendale)
+### Modulo 1771 (Societario)
 
-Tutte le entità aziendali indonesiane devono presentare il modulo 1771 per la dichiarazione annuale dei redditi:
+Tutte le società indonesiane devono presentare il Modulo 1771 per la dichiarazione annuale delle imposte sui redditi:
 
-**Applicabile a:**
+**Si applica a:**
 
 - PT (Perseroan Terbatas)
 - CV (Commanditaire Vennootschap)
@@ -153,16 +170,591 @@ Tutte le entità aziendali indonesiane devono presentare il modulo 1771 per la d
 - Stabili organizzazioni di società estere
 - Fondazioni con attività commerciali
 
-**Cosa si Dichiara:**
+**Cosa dichiari:**
 
 - Ricavi e costo del venduto
 - Spese operative
-- Altri redditi e oneri
-- Rettifiche fiscali e riconciliazioni
-- Riporto perdite fiscali
-- Calcoli delle tasse finali
+- Altri proventi e oneri
+- Rettifiche e riconciliazioni fiscali
+- Riporto delle perdite fiscali
+- Calcolo finale delle imposte
 - Acconti (PPh 25, crediti da ritenute)
 
-L'invio aziendale richiede il bilancio completo, prospetti di riconciliazione fiscale e vari allegati. La preparazione richiede in genere diversi giorni e spesso coinvolge consulenti fiscali professionisti.
+La compilazione societaria richiede bilanci completi, prospetti di riconciliazione fiscale e vari allegati. La preparazione richiede in genere diversi giorni e spesso coinvolge consulenti fiscali professionisti.
 
-... (proseguendo con la traduzione fedele del resto del contenuto tecnico)
+## Passo dopo passo: accedere a CoreTax DJP Online
+
+### Registrazione iniziale e login
+
+Se è la prima volta che usi CoreTax, segui questi passaggi:
+
+**1. Vai al portale CoreTax**
+Apri il browser e vai su https://coretaxdjp.pajak.go.id. Assicurati di essere sul sito ufficiale del governo - verifica che l'URL contenga "pajak.go.id" per evitare siti di phishing.
+
+**2. Prepara le tue credenziali**
+Ti serviranno:
+
+- NPWP (Nomor Pokok Wajib Pajak) - il tuo codice fiscale da 15 cifre
+- NIK (Nomor Induk Kependudukan) - il tuo numero di carta d'identità nazionale da 16 cifre
+- Password creata durante la registrazione dell'account DJP
+- Indirizzo email e numero di telefono registrati
+
+**3. Registrazione per la prima volta**
+Se non ti sei ancora registrato ai servizi DJP Online:
+
+- Fai clic su "Daftar" (Registrati)
+- Inserisci NPWP e NIK
+- Verifica l'identità tramite codice di conferma email
+- Crea una password sicura (minimo 8 caratteri, mix di lettere, numeri, simboli)
+- Imposta le domande di sicurezza per il recupero password
+- Registra email e telefono per la verifica OTP
+
+**4. Procedura di login**
+
+- Inserisci il tuo NPWP (formato: XX.XXX.XXX.X-XXX.XXX)
+- Inserisci la password
+- Completa la verifica CAPTCHA
+- Fai clic su "Login"
+
+**5. Autenticazione a due fattori**
+CoreTax richiede la verifica OTP:
+
+- Seleziona il metodo di verifica (email o SMS)
+- Inserisci il codice a 6 cifre ricevuto entro 5 minuti
+- Completa l'autenticazione
+
+### Navigazione della dashboard
+
+Una volta effettuato l'accesso, la dashboard CoreTax mostra:
+
+**Sezioni del menu principale:**
+
+- **Profil** - Aggiorna i dati del contribuente, conti bancari, recapiti
+- **Lapor** - Presenta vari report fiscali inclusi gli SPT
+- **Bayar** - Effettua pagamenti fiscali e visualizza i codici di fatturazione
+- **Layanan** - Richiedi certificati fiscali, ricorsi, servizi al contribuente
+- **Korespondensi** - Messaggi ufficiali da DJP, avvisi di accertamento, notifiche di rimborso
+
+**Indicatori chiave della dashboard:**
+
+- Stato di conformità (verde per regolare, rosso per problemi)
+- Obblighi in sospeso (dichiarazioni non presentate, accertamenti non pagati)
+- Invii recenti e loro stato di elaborazione
+- Promemoria importanti sulle scadenze
+
+## Presentare SPT Tahunan Pribadi (dichiarazione personale)
+
+### Modulo 1770SS passo dopo passo
+
+Per dipendenti con reddito semplice sotto IDR 60 milioni:
+
+**Fase 1: accedi al menu SPT**
+
+- Fai clic su "Lapor" dal menu principale
+- Seleziona "e-Filing"
+- Scegli "Buat SPT" (Crea SPT)
+- Seleziona l'anno fiscale: 2025
+- Tipo di modulo: "SPT Tahunan Pajak Penghasilan Orang Pribadi 1770SS"
+
+**Fase 2: verifica dell'identità**
+Il sistema mostra i tuoi dati registrati:
+
+- Nome completo come da KTP
+- NPWP
+- Indirizzo registrato
+- Occupazione
+- Stato civile
+
+Verificane l'esattezza. Se servono correzioni, aggiorna tramite il menu Profil prima di procedere.
+
+**Fase 3: sezione redditi**
+
+- Il sistema precompila automaticamente il reddito da lavoro dipendente dal Modulo 1721-A1 presentato dal datore di lavoro
+- Verifica che l'importo corrisponda alla tua certificazione annuale di stipendio
+- Controlla che indennità e bonus siano inclusi
+- Conferma la descrizione di posizione/occupazione
+
+**Fase 4: reddito non imponibile (PTKP)**
+Seleziona la tua categoria PTKP in base a stato civile e familiari a carico:
+
+| Stato                        | PTKP annuale   | Equivalente mensile |
+| ---------------------------- | -------------- | ------------------ |
+| TK/0 - Single, nessun familiare a carico | IDR 54,000,000 | IDR 4,500,000      |
+| K/0 - Coniugato/a, nessun familiare a carico | IDR 58,500,000 | IDR 4,875,000      |
+| K/1 - Coniugato/a, 1 familiare a carico   | IDR 63,000,000 | IDR 5,250,000      |
+| K/2 - Coniugato/a, 2 familiari a carico  | IDR 67,500,000 | IDR 5,625,000      |
+| K/3 - Coniugato/a, 3 familiari a carico  | IDR 72,000,000 | IDR 6,000,000      |
+
+I familiari a carico includono figli legittimi sotto i 21 anni o ancora in formazione scolastica (max 3).
+
+**Fase 5: calcolo dell'imposta**
+CoreTax calcola automaticamente:
+
+- Reddito imponibile = Reddito lordo - PTKP
+- Imposta dovuta con aliquote progressive
+- Crediti d'imposta da PPh 21 trattenuto dal datore di lavoro
+- Posizione finale: rimborso o versamento aggiuntivo
+
+**Fase 6: revisione e conferma**
+Controlla attentamente la pagina di riepilogo che mostra:
+
+- Reddito totale: IDR XX,XXX,XXX
+- Deduzione PTKP: IDR XX,XXX,XXX
+- Reddito imponibile: IDR XX,XXX,XXX
+- Imposta calcolata: IDR XX,XXX,XXX
+- Imposta trattenuta: IDR XX,XXX,XXX
+- Rimborso dovuto / Versamento aggiuntivo: IDR XX,XXX,XXX
+
+**Fase 7: allega il Modulo 1721-A1**
+Carica il certificato di reddito del datore di lavoro:
+
+- Formato file: solo PDF
+- Dimensione massima: 5MB
+- Assicurati che tutte le pagine siano chiare e leggibili
+- Il nome file non deve contenere caratteri speciali
+
+### Procedura di compilazione del Modulo 1770S
+
+Per contribuenti con redditi più complessi:
+
+**Fase 1: seleziona il Modulo 1770S**
+Segui gli stessi passaggi iniziali ma scegli "SPT Tahunan 1770S" quando selezioni il tipo di modulo.
+
+**Fase 2: reddito da lavoro dipendente**
+Se hai redditi da lavoro dipendente:
+
+- Sezione A: Reddito da uno o più datori di lavoro
+- Inserisci NPWP, nome e reddito annuo di ciascun datore di lavoro
+- Allega tutti i certificati Modulo 1721-A1 ricevuti
+- Il sistema verifica i dati rispetto ai report sulle ritenute dei datori di lavoro
+
+**Fase 3: altre fonti di reddito**
+Dichiara tutti i redditi aggiuntivi nelle sezioni dedicate:
+
+**Sezione B - Reddito d'impresa:**
+Per freelancer e professionisti che usano il calcolo forfettario del profitto presunto (norma penghitungan):
+
+- Ricavi lordi da servizi
+- Percentuale norma applicabile (varia per professione: 30-50%)
+- Reddito netto calcolato
+
+**Sezione C - Redditi da investimento:**
+
+- Dividendi da società indonesiane (allega il certificato fiscale)
+- Interessi attivi da depositi, obbligazioni
+- Plusvalenze da trading azionario (se non soggette a imposta definitiva)
+
+**Sezione D - Reddito da locazione:**
+
+- Ricavi da locazione immobiliare
+- Spese deducibili (manutenzione, imposta immobiliare)
+- Reddito netto da locazione
+
+**Sezione E - Reddito estero:**
+
+- Redditi da fonti estere
+- Imposte estere pagate (per il calcolo del credito)
+- Documentazione giustificativa
+
+**Fase 4: deduzioni**
+Richiedi le deduzioni ammesse:
+
+- Contributi al fondo pensione (max IDR 2.400.000 annui)
+- Pagamenti zakat a organizzazioni approvate
+- Donazioni caritatevoli a enti approvati (max 5% del reddito imponibile)
+
+Carica le ricevute giustificative per ogni deduzione richiesta.
+
+**Fase 5: crediti d'imposta**
+Inserisci le imposte già trattenute:
+
+- PPh 21 dai datori di lavoro
+- PPh 22 sulle importazioni (se applicabile)
+- PPh 23 su servizi, dividendi, interessi
+- PPh 24 su redditi esteri
+- Acconti PPh 25
+
+Allega tutti i certificati di ritenuta (bukti potong).
+
+**Fase 6: informazioni familiari**
+Fornisci dati familiari completi per un PTKP accurato:
+
+- Coniuge: nome, NIK, NPWP (se presente), occupazione
+- Familiari a carico: nome, NIK, data di nascita, relazione, stato di istruzione
+- Massimo 3 familiari a carico conteggiati per il PTKP
+
+**Fase 7: revisione finale**
+Il sistema genera il calcolo completo:
+
+- Reddito totale da tutte le fonti
+- Deduzioni applicate
+- PTKP in base allo stato di famiglia
+- Reddito imponibile
+- Imposta calcolata con aliquote progressive
+- Totale crediti d'imposta
+- Imposta netta a debito o a rimborso
+
+### Modulo 1770 versione completa
+
+Per imprenditori e soggetti tenuti a contabilità formale:
+
+Il Modulo 1770 richiede allegati tra cui:
+
+- Bilanci certificati (se i ricavi superano IDR 4,8 miliardi)
+- Prospetto di riconciliazione fiscale
+- Report dettagliati di ricavi e spese
+- Prospetti di attività e passività
+- Calcoli delle rettifiche fiscali
+
+Per la complessità, la maggior parte dei contribuenti che presenta il Modulo 1770 si affida a consulenti fiscali professionisti. L'interfaccia CoreTax consente il caricamento massivo dei prospetti richiesti e supporta l'importazione CSV per i dettagli delle transazioni.
+
+## Presentare SPT Tahunan Badan (dichiarazione societaria)
+
+### Compilazione societaria Modulo 1771
+
+Le dichiarazioni societarie comportano molta più complessità e documentazione:
+
+**Fase 1: accedi a e-Filing societario**
+
+- Accedi usando le credenziali NPWP della società
+- Vai su Lapor > e-Filing > SPT Tahunan Badan
+- Seleziona il Modulo 1771 e l'anno fiscale 2025
+
+**Fase 2: verifica del profilo societario**
+Conferma i dati registrati:
+
+- Denominazione legale e nome commerciale della società
+- Classificazione attività (codice KBLI)
+- Sede legale e sede operativa
+- Dati dell'amministratore/responsabile
+- Periodo contabile (anno solare o periodo speciale)
+
+**Fase 3: inserimento dei bilanci**
+
+**Conto economico:**
+
+- Ricavi operativi
+- Costo del venduto / costo dei servizi
+- Utile lordo
+- Spese operative (dettagliate)
+- Altri proventi e oneri
+- Utile prima delle imposte
+
+**Stato patrimoniale:**
+
+- Attività (correnti e non correnti)
+- Passività (correnti e non correnti)
+- Componenti del patrimonio netto
+- Saldi di fine anno
+
+Molte società caricano i dati contabili tramite modelli Excel forniti da CoreTax per la compilazione automatica.
+
+**Fase 4: rettifiche fiscali**
+Riconcilia l'utile contabile con il reddito imponibile:
+
+**Spese non deducibili da riprendere:**
+
+- Spese di rappresentanza oltre il 50% dei ricavi lordi
+- Spese personali dei soci
+- Sanzioni e multe
+- Donazioni a organizzazioni non approvate
+- Ammortamenti non calcolati con metodi fiscali
+- Riserve e accantonamenti (salvo casi specificamente ammessi)
+
+**Rettifiche di reddito:**
+
+- Redditi a imposta definitiva già dichiarati separatamente
+- Dividendi esenti da controllate indonesiane
+- Plusvalenze da riorganizzazione esenti
+
+**Riporto perdite fiscali:**
+Se gli anni precedenti hanno chiuso in perdita, applica i saldi inutilizzati (riporto max 5 anni).
+
+**Fase 5: calcolo dell'imposta**
+Aliquote societarie per il 2026:
+
+| Stato societario                 | Fatturato annuo           | Aliquota fiscale                             |
+| -------------------------------- | --------------------- | ---------------------------------------- |
+| PT standard                      | Oltre IDR 50 miliardi   | 22%                                      |
+| PT media                         | Sotto IDR 50 miliardi  | 22% su ricavi > 4,8B, 11% sui primi 4,8B |
+| PT quotata (40%+ sul mercato) | Qualsiasi importo            | 19%                                      |
+| PT piccola (ricavi < 4,8B)        | Sotto IDR 4,8 miliardi | 0,5% dei ricavi lordi (PP 55/2022)       |
+
+**Fase 6: acconti e crediti**
+Dichiara tutti gli acconti versati durante l'anno:
+
+- Rate mensili PPh 25
+- PPh 22 sulle importazioni
+- PPh 23 trattenuto dai clienti
+- PPh 24 su redditi esteri
+- PPh 26 trattenuto sulle distribuzioni di dividendi
+
+Somma tutti i crediti rispetto all'imposta calcolata per determinare il versamento finale o la posizione a rimborso.
+
+**Fase 7: allegati obbligatori**
+Carica tutti i documenti giustificativi:
+
+**Allegati obbligatori:**
+
+- Bilanci certificati (se ricavi > IDR 50 miliardi o come richiesto per legge)
+- Report di riconciliazione fiscale
+- Elenco soci con percentuali di partecipazione
+- Informativa sulle operazioni con parti correlate
+- Documentazione sui prezzi di trasferimento (se applicabile)
+- Piano di ammortamento
+- Elenco dei redditi definitivi soggetti a PPh 4(2)
+
+**Requisiti di formato:**
+
+- Solo file PDF
+- Massimo 10MB per documento
+- Nomi file chiaramente etichettati
+- Tutte le pagine devono essere complete e leggibili
+
+**Fase 8: dichiarazione dell'amministratore**
+La presentazione societaria richiede dichiarazione formale:
+
+- L'amministratore o firmatario autorizzato deve confermare l'esattezza
+- Dichiarazione che i bilanci sono redatti secondo gli standard applicabili
+- Presa d'atto delle sanzioni per dichiarazioni false
+- Applicazione della firma elettronica
+
+## Procedura di firma elettronica
+
+Tutti gli invii SPT richiedono firma elettronica per essere validi:
+
+### Firma elettronica temporanea (prima presentazione)
+
+Se non hai un certificato digitale:
+
+**Fase 1: richiedi la firma temporanea**
+
+- Dopo aver completato l'SPT, fai clic su "Kirim SPT"
+- Seleziona "e-Signature Sementara"
+- Il sistema invia un codice di verifica all'email e al telefono registrati
+
+**Fase 2: verifica**
+
+- Controlla email e SMS per il codice a 6 cifre
+- Inserisci il codice entro 5 minuti
+- Completa la verifica dell'identità
+
+**Fase 3: apponi la firma**
+
+- Il sistema genera la firma temporanea
+- L'SPT viene firmato digitalmente e inviato
+- Ricevi il numero di conferma (NTPS - Nomor Tanda Penerimaan Surat)
+
+La firma temporanea è valida ma consigliata solo per chi presenta occasionalmente.
+
+### Certificato digitale permanente
+
+Per chi presenta regolarmente, ottieni il certificato da fornitori autorizzati da DJP:
+
+**Fornitori di certificati approvati:**
+
+- Peruri (Zecca statale)
+- Privy
+- Mekari Sign
+- PrivyID
+- Tilaka
+
+**Tipi di certificato:**
+
+- Certificato personale (per persone fisiche)
+- Certificato societario (per amministratori di società)
+- Validità: in genere 1-3 anni
+- Costo: IDR 150.000 - 500.000 a seconda di fornitore e durata
+
+**Uso del certificato digitale:**
+
+- Installa il certificato sul tuo computer
+- Quando sei pronto a inviare l'SPT, fai clic su "Kirim dengan Sertifikat Digital"
+- Seleziona il tuo certificato dall'elenco
+- Inserisci il PIN del certificato
+- Conferma l'apposizione della firma
+- L'SPT viene inviato immediatamente
+
+I certificati digitali semplificano la procedura e sono obbligatori per le dichiarazioni societarie e le operazioni di alto valore.
+
+## Conferma di invio e conservazione dei documenti
+
+### Ricevere il tuo NTPS
+
+Al momento dell'invio riuscito:
+
+**Conferma immediata:**
+
+- Lo schermo mostra un messaggio di successo con numero NTPS
+- Formato: XXXXXX/XX/XX/XXXX/XX/XX
+- Questa è la prova di presentazione
+- Scarica la pagina di conferma in PDF
+
+**Conferma email:**
+Entro 15 minuti, ricevi un'email all'indirizzo registrato:
+
+- Numero NTPS
+- Data e ora di invio
+- Tipo di modulo
+- Anno fiscale
+- Riepilogo di reddito e imposta dichiarati
+- Allegato PDF dell'SPT presentato
+
+Conserva questa email in modo permanente - è richiesta per varie pratiche amministrative.
+
+### Requisiti di conservazione dei documenti
+
+La legge fiscale indonesiana richiede di conservare:
+
+**Persone fisiche:**
+
+- Copie degli SPT presentati: 10 anni
+- Documenti giustificativi (ricevute, certificati): 10 anni
+- Certificati di reddito da lavoro: 10 anni
+
+**Società:**
+
+- SPT presentati e allegati: 10 anni
+- Scritture contabili complete: 10 anni
+- Fatture e documenti delle transazioni: 10 anni
+- Registrazioni bancarie: 10 anni
+
+Conserva i documenti in modo sicuro, in formato cartaceo o elettronico. DJP può accertare le dichiarazioni fino a 10 anni retroattivamente.
+
+### Rettifiche e correzioni
+
+Se scopri errori dopo l'invio:
+
+**Entro il termine:**
+
+- Presenta un nuovo SPT contrassegnato come "Pembetulan" (rettifica)
+- Spiega le modifiche in una lettera allegata
+- Nessuna sanzione per rettifiche prima della scadenza
+
+**Dopo la scadenza:**
+
+- È comunque possibile presentare un SPT rettificativo
+- Si applica la sanzione per ritardo se non ancora accertata
+- Allega una spiegazione dettagliata delle rettifiche
+- Può comportare revisione o accertamento da parte di DJP
+
+Presenta prontamente le rettifiche quando scopri errori - meglio autocorreggersi che farsi scoprire discrepanze da DJP.
+
+## Errori comuni di compilazione e soluzioni
+
+### Messaggi di errore e correzioni
+
+**"NPWP tidak terdaftar atau tidak valid"**
+
+- **Causa:** NPWP non attivo o inserito in modo errato
+- **Soluzione:** Verifica il formato NPWP (15 cifre con punti/trattini), conferma lo stato presso KPP, riattivalo se necessario
+
+**"Data tidak sesuai dengan database DJP"**
+
+- **Causa:** Dati personali non corrispondenti tra KTP e registri DJP
+- **Soluzione:** Recati presso KPP con KTP, richiedi aggiornamento profilo, attendi 3-7 giorni per la sincronizzazione del sistema
+
+**"Bukti potong tidak ditemukan"**
+
+- **Causa:** Numero del certificato di ritenuta non presente nel sistema DJP
+- **Soluzione:** Contatta il sostituto d'imposta (datore di lavoro/cliente) per confermare che abbia presentato il report sulle ritenute, fornisci il numero di certificato corretto
+
+**"Upload dokumen gagal"**
+
+- **Causa:** Dimensione file oltre il limite, formato errato o file danneggiato
+- **Soluzione:** Comprimi il PDF sotto 5MB, assicurati che sia un singolo PDF (non immagini o altri formati), riscansiona se danneggiato
+
+**"Perhitungan tidak seimbang"**
+
+- **Causa:** Errori di calcolo manuale, dati mancanti in alcuni campi
+- **Soluzione:** Ricontrolla tutte le voci di reddito e credito, assicurati che il PTKP sia selezionato correttamente, usa il calcolo automatico del sistema
+
+**"E-Signature gagal"**
+
+- **Causa:** OTP scaduto, certificato non installato, PIN errato
+- **Soluzione:** Richiedi un nuovo OTP entro la finestra di 5 minuti, reinstalla il certificato digitale, reimposta il PIN tramite il fornitore
+
+### Problemi tecnici
+
+**Timeout di sistema o lentezza:**
+Nei periodi di punta (fine marzo, fine aprile) il sistema è molto carico:
+
+- Presenta nelle ore non di punta (mattina o tarda sera)
+- Usa una connessione internet stabile
+- Evita WiFi pubblici per sicurezza
+- Salva spesso la bozza per evitare perdite di dati
+
+**Compatibilità browser:**
+CoreTax funziona meglio con:
+
+- Google Chrome (consigliato)
+- Mozilla Firefox
+- Microsoft Edge
+- Safari (con alcune limitazioni)
+
+Disattiva le estensioni del browser che potrebbero interferire con la funzionalità dei moduli.
+
+**Compilazione da mobile:**
+Sebbene CoreTax sia mobile-responsive, moduli complessi come 1770S e 1771 sono meglio compilati su desktop/laptop per una gestione e revisione più agevole dei documenti.
+
+## Dopo la presentazione: cosa aspettarsi
+
+### Tempi di elaborazione
+
+**Ricevuta:** Immediata (NTPS emesso all'invio)
+
+**Elaborazione di validazione:** 1-3 giorni lavorativi
+
+- I sistemi DJP validano i dati rispetto ai report sulle ritenute
+- Incrocio con report di terze parti
+- Segnalazione di discrepanze per revisione
+
+**Aggiornamento stato di conformità:** 3-7 giorni lavorativi
+
+- Il tuo stato di conformità viene aggiornato a "Conforme" per l'anno in corso
+- Disponibile per download/visualizzazione nella dashboard
+
+**Elaborazione rimborso (se applicabile):**
+
+- Revisione preliminare: 30 giorni
+- Richiesta di documenti aggiuntivi: caso per caso
+- Approvazione rimborso e bonifico: 3-12 mesi a seconda dell'importo
+- Rimborsi sotto IDR 100 milioni: in genere 3-6 mesi
+- Rimborsi maggiori: possono richiedere accertamento, 6-12 mesi
+
+### Fattori di rischio di accertamento fiscale
+
+Alcune caratteristiche dell'SPT aumentano la probabilità di accertamento:
+
+**Indicatori di rischio più alto:**
+
+- Richieste di rimborso elevate (soprattutto la prima volta)
+- Calo significativo del reddito anno su anno
+- Rapporto spese/ricavi elevato
+- Operazioni con parti correlate
+- Redditi o attività estere
+- Attività ad alta intensità di contante
+- Precedenti rilievi di accertamento
+- Trend di non conformità del settore
+
+**Indicatori di rischio più basso:**
+
+- Storico di presentazioni coerente
+- Reddito corrispondente ai report di terze parti
+- Rapporti di spesa ragionevoli
+- Tutti i certificati di ritenuta verificati
+- Nessuna variazione significativa rispetto all'anno precedente
+
+Se selezionato per accertamento, DJP invierà avviso formale tramite raccomandata ed email. Rispondi prontamente e fornisci tutta la documentazione richiesta.
+
+## Hai bisogno di assistenza fiscale professionale?
+
+<ArticleClusterCTA slug="coretax-efiling-spt-guide" />
+
+Presentare correttamente l'SPT è essenziale per mantenere la conformità fiscale ed
+evitare sanzioni. Sebbene CoreTax semplifichi la procedura, situazioni di reddito complesse,
+dichiarazioni societarie e pianificazione fiscale richiedono competenza
+professionale. Parla con un consulente fiscale BaliZero per la preparazione SPT, il supporto
+alla compilazione mensile e la difesa in caso di accertamento.
+
+<HeaderWhatsAppCTA />

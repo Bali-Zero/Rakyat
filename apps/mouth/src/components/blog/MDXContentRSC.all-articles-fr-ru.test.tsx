@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import pinned from "./mdx-article-guard.fr-ru.baseline.json";
+import baseline from "./mdx-article-guard.fr-ru.baseline.json";
 import {
   ARTICLES_ROOT,
   compileArticlesInChunks,
   formatFailureAssertionMessage,
   walkMdxFiles,
 } from "./mdx-article-guard";
+
+const pinned: string[] = baseline;
 
 const files = walkMdxFiles(ARTICLES_ROOT).filter(
   (file) => file.endsWith(".fr.mdx") || file.endsWith(".ru.mdx"),

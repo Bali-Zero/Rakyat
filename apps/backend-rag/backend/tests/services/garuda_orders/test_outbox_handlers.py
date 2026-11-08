@@ -344,8 +344,8 @@ _HTML_BODY_RENDERERS: dict[str, Callable[[str], str]] = {
         _facts(case_type=case_type)
     ),
     "refund_email": lambda case_type: RefundEmailHandler._body(_facts(case_type=case_type)),
-    "late_refund_confirmation_email": lambda case_type: (
-        LateRefundConfirmationEmailHandler._body(_late_refund_facts(case_type=case_type))
+    "late_refund_confirmation_email": lambda case_type: LateRefundConfirmationEmailHandler._body(
+        _late_refund_facts(case_type=case_type)
     ),
     "practice_received_email": lambda case_type: PracticeReceivedEmailHandler._body(
         _facts(case_type=case_type)
@@ -539,14 +539,10 @@ async def test_a_retry_after_a_transient_failure_delivers(pool):
 
 
 async def test_unrouted_job_types_are_reported_not_delivered(pool):
-    """A job type with no registered handler must show as unroutable.
+    """Missing live handlers stay visible without spending retry attempts.
 
-    This used to assert on `practice_release`, then on `refund_email` — both
-    acquired handlers as the outbox drain grew. The specimen is now
-    `staff_page_duplicate_charge`, one of the five `staff_page_*` jobs
-    `build_handlers` deliberately never routes (module docstring). Repointing
-    rather than deleting keeps the property under test: `build_handlers` must
-    report what it cannot route instead of consuming it.
+    Use a known non-Telegram email job with its handler explicitly absent;
+    retirement remains enabled and its intentional holds are a separate policy.
     """
 
     order_id = await _seed_order(pool)
@@ -563,20 +559,31 @@ async def test_unrouted_job_types_are_reported_not_delivered(pool):
             conn,
             order_id=order_id,
             journal_event_id=event_id,
-            job_type="staff_page_duplicate_charge",
+            job_type="payment_paid_email",
         )
 
     rec = _Recorder()
     sender, client = _sender(rec)
+    # Remove a known live handler deliberately. A retired Telegram job is held
+    # before claiming and cannot represent a generic unroutable queue defect.
+    handlers = build_handlers(pool, sender)
+    handlers.pop("payment_paid_email")
     try:
         async with pool.acquire() as conn:
-            stats = await drain_once(conn, build_handlers(pool, sender))
+            stats = await drain_once(conn, handlers)
     finally:
         await client.aclose()
 
     assert stats.unroutable == 1
-    assert "staff_page_duplicate_charge" in stats.unroutable_types
+    assert "payment_paid_email" in stats.unroutable_types
     assert rec.requests == []
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT dispatched_at, attempts FROM garuda_order_outbox WHERE journal_event_id=$1",
+            event_id,
+        )
+    assert row["dispatched_at"] is None and row["attempts"] == 0
 
 
 # --------------------------------------------------------------------------
@@ -815,3 +822,46 @@ def _release_job(journal_event_id: str, job_id: int = 1):
         payload={},
         attempts=1,
     )
+
+
+async def test_missing_live_handler_remains_unroutable_under_true_retirement_without_db():
+    """Hermetic companion to the production-schema integration check above."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from backend.services.garuda_orders import outbox_consumer as consumer
+
+    assert consumer.telegram_is_retired() is True
+    conn = MagicMock()
+    transaction = AsyncMock()
+    transaction.__aexit__.return_value = False
+    conn.transaction.return_value = transaction
+    conn.fetchrow = AsyncMock(
+        side_effect=[
+            {
+                "id": 1,
+                "order_id": "synthetic-order",
+                "journal_event_id": "synthetic-event",
+                "job_type": "payment_paid_email",
+                "payload": {},
+                "attempts": 1,
+            },
+            None,
+        ]
+    )
+    conn.execute = AsyncMock()
+    rec = _Recorder()
+    sender, client = _sender(rec)
+    try:
+        handlers = build_handlers(MagicMock(), sender)
+        assert "payment_paid_email" in handlers
+        handlers.pop("payment_paid_email")
+        stats = await drain_once(conn, handlers)
+    finally:
+        await client.aclose()
+    assert stats.claimed == stats.unroutable == 1
+    assert stats.dispatched == stats.failed == 0
+    assert stats.unroutable_types == frozenset({"payment_paid_email"})
+    conn.execute.assert_not_awaited()
+    assert "payment_paid_email" not in conn.fetchrow.await_args_list[0].args[3]
+    assert set(conn.fetchrow.await_args_list[0].args[3]) == set(consumer.RETIRED_TELEGRAM_JOB_TYPES)
+    assert rec.requests == []

@@ -10,21 +10,17 @@ IMM = {
     "current_permit": {"code": "E23", "official_name": "E23 - Working KITAS",
                        "issue_date": "2026-03-14", "expiry_date": "2027-03-14"},
     "itk_expiry_date": "2027-01-15",
-    "previous_permits_count": 1,
-    "previous_permit_codes": ["E23"],
     "passport_expiry_date": "2027-06-01",
     "family_members_count": 2,
-    "family_permits": [{"relationship": "spouse", "permit_code": "E31", "permit_expiry_date": "2027-01-01"},
-                       {"relationship": "child", "permit_code": "E31", "permit_expiry_date": "2028-01-01"}],
-    "open_practices": [{"type": "KITAS_EXTENSION", "status": "on_process"}],
+    "family_permits_ending_before_main_count": 1,
+    "open_practices_count": 1,
+    "open_practice_types": ["KITAS_EXTENSION"],
 }  # fmt: skip
 
 CO = {
     "legal_form": "PT PMA", "established_date": "2024-02-01",
     "authorized_capital_idr": 10_000_000_000, "paid_up_capital_idr": 2_500_000_000,
-    "shareholders_count": 2, "directors_count": 1,
-    "kbli": [{"code": "62010", "title": "Computer Programming", "in_2025": True},
-             {"code": "74100", "title": "Design Activities", "in_2025": False}],
+    "shareholders_count": 2, "directors_count": 1, "kbli_count": 2,
     "lkpm_latest": {"year": 2026, "quarter": "Q2", "status": "approved"},
     "last_amendment_date": "2025-06-01",
 }  # fmt: skip
@@ -45,15 +41,15 @@ def test_passport_far_after_permit_is_omitted_and_kitas_gates_itk():
     assert "passport" not in t.template_recap("immigration", p)
     p = {"current_permit": {"code": "D12", "official_name": "D12 - Pre-Investment", "expiry_date": "2027-03-14"},
          "itk_expiry_date": "2027-01-15"}  # fmt: skip
-    assert "ITK" not in t.template_recap("immigration", p)
+    assert "ITK stamp runs until 15 January 2027" in t.template_recap("immigration", p)
 
 
 def test_company_template_content_and_shape():
     out = t.template_recap("company", CO)
     assert "PT PMA" in out and "1 February 2024" in out
     assert "IDR 10.0 billion" in out and "IDR 2.5 billion" in out
-    assert "two shareholders and one director" in out
-    assert "two KBLI lines" in out and "one code still on KBLI 2020" in out
+    assert "two shareholders and one director linked in the CRM" in out
+    assert "two KBLI lines" in out and "KBLI 2020" not in out and "catalogue" not in out
     assert "Q2 2026" in out and "1 June 2025" in out
     assert t.validate_recap(out, CO)[0], t.validate_recap(out, CO)
 
@@ -61,7 +57,7 @@ def test_company_template_content_and_shape():
 def test_partial_and_empty_payloads():
     assert t.template_recap("company", {}) == ""
     out = t.template_recap("immigration", {"passport_expiry_date": "2029-05-05"})
-    assert "5 May 2029" in out and "recorded" in out
+    assert out == "The passport expires on 5 May 2029."
     assert t.template_recap("company", {"legal_form": "PT"}) == "The company is a PT."
     assert t.based_on("immigration", IMM) == [
         "current permit",
@@ -69,7 +65,6 @@ def test_partial_and_empty_payloads():
         "passport",
         "family",
         "practices",
-        "previous permits",
     ]
     assert t.based_on("company", {}) == []
 
@@ -112,7 +107,9 @@ def test_validator_accepts_good_variants():
         "Permit E23 expires on March 14, 2027. The ITK runs to 15 Jan 2027.", IMM
     )[0]
     assert t.validate_recap("Capital is IDR 10 billion. The company has 2 shareholders.", CO)[0]
-    assert t.validate_recap("It uses KBLI 62010. One code is still on KBLI 2020.", CO)[0]
+    assert t.validate_recap(
+        "It is registered under two KBLI lines. Capital is IDR 10.0 billion.", CO
+    )[0]
     assert t.validate_recap(
         "Permit E23 is valid from March 2026. The permit ends 14 March 2027.", IMM
     )[0]
@@ -186,7 +183,7 @@ def test_builder_status_and_itk_belongs_to_current_permit():
             family_members=[],
             practices=[],
             passport_expiry=None,
-            catalogue=None,
+            catalogue={"E23": "E23 - Working KITAS"},
             today=today,
         )
 
@@ -210,11 +207,15 @@ def test_practice_prints_type_only():
 
     p = r.recap_payload(
         "immigration",
-        {"open_practices": [{"type": "KITAS Extension", "status": "sending invoices"}]},
+        {
+            "open_practices_count": 1,
+            "open_practice_types": ["KITAS Extension"],
+            "open_practices": [{"type": "Other", "status": "sending invoices"}],
+        },
     )
-    assert p["open_practices"] == [{"type": "KITAS Extension"}]
+    assert p == {"open_practices_count": 1, "open_practice_types": ["KITAS Extension"]}
     out = t.template_recap("immigration", p)
-    assert ": KITAS Extension" in out and "invoice" not in out
+    assert ": KITAS Extension" in out and "invoice" not in out and "Other" not in out
 
 
 @pytest.mark.parametrize(
@@ -346,7 +347,7 @@ def test_templates_read_naturally_and_pass_the_validator():
         and ";" not in imm
         and "company" not in imm.lower()
     )
-    assert "two family members are on file" in imm and "one earlier permit is on record" in imm
+    assert "two family members are on file" in imm and "earlier" not in imm
     assert t.validate_recap(imm, IMM, "immigration", TODAY) == (True, [])
     co = t.template_recap("company", CO, TODAY)
     assert ";" not in co and "client" not in co.lower()
@@ -369,11 +370,11 @@ def test_expired_permit_says_latest_and_practices_list_without_nested_parens():
     }
     out = t.template_recap("immigration", {"current_permit": cp}, TODAY)
     assert "latest permit is Working KITAS (E23)" in out and "current permit" not in out
-    p = {"open_practices": [{"type": "A"}, {"type": "B"}, {"type": "A"}]}
+    p = {"open_practices_count": 3, "open_practice_types": ["A", "B", "A"]}
     assert "Three immigration practices are open, including A and B" in t.template_recap(
         "immigration", p, TODAY
     )
-    p = {"open_practices": [{"type": "A"}, {"type": "B"}]}
+    p = {"open_practices_count": 2, "open_practice_types": ["A", "B"]}
     assert "Two immigration practices are open: A and B" in t.template_recap(
         "immigration", p, TODAY
     )

@@ -13,6 +13,7 @@ from datetime import date
 from pathlib import Path
 
 from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.services.sota_loop._promote import promote_research_output
 
 install_telegram_token_redaction()
@@ -49,13 +50,13 @@ def main() -> int:
         f"- Review of last {days} days deltas (see weekly reports)\n"
         f"- Go/Pivot/Kill decision per channel\n"
         f"- Update playbook version if needed\n\n"
-        f"## Decision request (Telegram to Zero)\n"
-        f"Reply with `/checkpoint day{days} decision=GO|PIVOT|KILL channel=<name>`\n",
+        f"## Decision request (internal checkpoint report)\n"
+        f"Record GO/PIVOT/KILL per channel in this report; Telegram is retired.\n",
         encoding="utf-8",
     )
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    if token:
+    if token and not telegram_is_retired():
         # Plain text (no Markdown) per Fase 0 lesson #8.
         import urllib.parse
         import urllib.request

@@ -59,6 +59,7 @@ import asyncpg
 import httpx
 
 from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.core.telegram_retirement import telegram_is_retired
 
 install_telegram_token_redaction()
 
@@ -209,6 +210,8 @@ async def send_telegram_message(
       - Network errors (timeout, connect error, OSError) → retry.
       - HTTP 200 → success.
     """
+    if telegram_is_retired():
+        return False, "Telegram integration retired"
     url = f"{TELEGRAM_API}/bot{bot_token}/sendMessage"
     payload = {
         "chat_id": chat_id,

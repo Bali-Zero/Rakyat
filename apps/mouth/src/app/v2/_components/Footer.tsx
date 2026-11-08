@@ -6,7 +6,6 @@ import {
   Phone,
   MapPin,
   MessageCircle,
-  Send,
   type LucideIcon,
 } from "lucide-react";
 import { buildWhatsAppLink } from "@/lib/whatsapp-utm";
@@ -118,13 +117,6 @@ export function Footer() {
                     payload: { trigger: "footer" },
                   })
                 }
-              />
-              <ContactLink
-                href="https://t.me/Balizerobot"
-                Icon={Send}
-                label="Telegram"
-                value="@Balizerobot"
-                external
               />
               <ContactLink
                 href="mailto:zantara@balizero.com"

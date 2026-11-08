@@ -19,6 +19,7 @@ from typing import Any
 import httpx
 
 from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.core.telegram_retirement import telegram_is_retired
 
 install_telegram_token_redaction()
 
@@ -160,6 +161,8 @@ class TelegramReviewAdapter:
     # ── internal ────────────────────────────────────────────────────
 
     async def _post(self, method: str, payload: dict) -> SendResult:
+        if telegram_is_retired():
+            return SendResult(ok=False, error="Telegram integration retired")
         start = time.perf_counter()
         client = self._client or _get_module_client(self.timeout)
 

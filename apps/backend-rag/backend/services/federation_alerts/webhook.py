@@ -32,6 +32,7 @@ from typing import Any
 import asyncpg
 
 from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.services.federation_alerts.approval import (
     is_admin_chat_id,
     verify_callback_token,
@@ -59,6 +60,8 @@ def _answer_callback(
     timeout_sec: int = 5,
 ) -> None:
     """Best-effort answer to acknowledge the inline-button press."""
+    if telegram_is_retired():
+        return
     if not bot_token or not callback_id:
         return
     payload = {
@@ -87,6 +90,8 @@ async def handle_fad_callback(
     bot_token: str,
 ) -> bool:
     """Process a fad:* callback. Returns True iff this handler owned it."""
+    if telegram_is_retired():
+        return False
     callback_data = callback_query.get("data", "")
     if not callback_data.startswith("fad:"):
         return False

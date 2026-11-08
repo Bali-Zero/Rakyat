@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.security.pii_log_identifier import redact_identifier_for_log
 
 install_telegram_token_redaction()
@@ -491,6 +492,8 @@ def notify_email_failure_critical(
     and shouldn't spawn an async client. Errors are swallowed — a failed
     Telegram ping must not cascade into the caller's retry logic.
     """
+    if telegram_is_retired():
+        return
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     if bot_token and not _OWNER_CHAT_ID:
         logger.warning(

@@ -12,6 +12,7 @@ import urllib.parse
 import urllib.request
 
 from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.core.telegram_retirement import telegram_is_retired
 
 install_telegram_token_redaction()
 
@@ -19,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 def send_telegram(text: str) -> None:
+    if telegram_is_retired():
+        return
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_OWNER_CHAT_ID", "").strip()
     if not token:

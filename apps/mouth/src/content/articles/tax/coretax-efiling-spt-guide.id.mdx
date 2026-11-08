@@ -71,98 +71,690 @@ ogImage: "/static/insights/tax/coretax-efiling-spt-guide.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "id"
+source_sha256: "e6fa260bc00e7df7f71919be22b90b852cb9c6239c14e3ec83b47955353047c6"
 ---
+
+import { HeaderWhatsAppCTA } from "@/components/blog/HeaderWhatsAppCTA";
+import { ArticleClusterCTA } from "@/components/blog/ArticleClusterCTA";
+import { KeyTakeaway } from "@/components/blog/interactive";
+
+# Panduan e-Filing CoreTax 2026: Cara Lapor SPT Tahunan Online di Indonesia
+
+<KeyTakeaway>
+  **TL;DR:** Laporkan SPT Tahunan di CoreTax (coretax.pajak.go.id) sebelum 31 Maret
+  (orang pribadi) atau 30 April (perusahaan). Masuk dengan NPWP16 + kata sandi. Formulir
+  1770SS untuk karyawan dengan satu pemberi kerja, 1770S untuk beberapa sumber penghasilan,
+  1770 untuk pemilik usaha, 1771 untuk perusahaan. Masalah umum: login NPWP15 —
+  beralih ke NPWP16 (tambahkan angka 0 di depan nomor lama Anda).
+</KeyTakeaway>
+
+<HeaderWhatsAppCTA />
 
 ## Memahami Sistem E-Filing CoreTax Indonesia
 
-Direktorat Jenderal Pajak (DJP) Indonesia telah memodernisasi administrasi perpajakan melalui platform CoreTax, menggantikan sistem e-Filing lama. Sejak peluncuran penuhnya pada tahun 2025, CoreTax DJP Online telah menjadi saluran wajib untuk menyampaikan laporan pajak SPT (Surat Pemberitahuan Tahunan) secara elektronik. Panduan komprehensif ini akan memandu Anda melalui setiap langkah pelaporan SPT tahunan Anda, baik sebagai wajib pajak orang pribadi maupun badan hukum.
+Direktorat Jenderal Pajak (DJP) Indonesia telah memodernisasi administrasi perpajakan melalui platform CoreTax, menggantikan sistem e-Filing lama. Sejak peluncuran penuh pada tahun 2025, CoreTax DJP Online telah menjadi kanal wajib untuk menyampaikan SPT (Surat Pemberitahuan Tahunan) secara elektronik. Panduan lengkap ini memandu Anda melalui setiap langkah pelaporan pajak tahunan, baik sebagai wajib pajak orang pribadi maupun badan usaha.
 
-Sistem CoreTax mengintegrasikan semua layanan perpajakan ke dalam satu platform terpadu yang dapat diakses di coretaxdjp.pajak.go.id. Platform ini menawarkan validasi waktu nyata, perhitungan otomatis, dan penyimpanan dokumen yang aman, yang secara signifikan mengurangi kesalahan pelaporan dan waktu pemrosesan. Memahami cara menavigasi sistem ini sangat penting untuk memenuhi kewajiban pajak Anda dan menghindari denda.
+Sistem CoreTax mengintegrasikan semua layanan perpajakan ke dalam satu platform terpadu yang dapat diakses di coretaxdjp.pajak.go.id. Sistem ini menawarkan validasi waktu nyata, perhitungan otomatis, dan penyimpanan dokumen yang aman, sehingga secara signifikan mengurangi kesalahan pelaporan dan waktu pemrosesan. Memahami cara menavigasi sistem ini sangat penting untuk memenuhi kewajiban perpajakan Anda dan menghindari sanksi.
 
-## Tenggat Waktu Pelaporan Pajak Penting untuk 2026
+## Batas Waktu Kritis Pelaporan Pajak untuk 2026
 
-Indonesia memberlakukan tenggat waktu yang ketat untuk pelaporan SPT tahunan, dengan denda yang signifikan untuk keterlambatan:
+Indonesia menetapkan batas waktu yang ketat untuk pelaporan SPT tahunan, dengan denda yang signifikan untuk keterlambatan penyampaian:
 
-| Tipe Wajib Pajak         | Tipe Formulir       | Akhir Tahun Pajak | Tenggat Pelaporan             | Denda Terlambat |
-| ------------------------ | ------------------- | ----------------- | ----------------------------- | --------------- |
-| Orang Pribadi (Individu) | 1770SS, 1770S, 1770 | 31 Desember 2025  | 31 Maret 2026                 | Rp 100.000      |
-| Badan Hukum (PT)         | 1771                | 31 Desember 2025  | 30 April 2026                 | Rp 1.000.000    |
-| Periode Akuntansi Khusus | 1771                | Bervariasi        | 4 bulan setelah akhir periode | Rp 1.000.000    |
+| Jenis Wajib Pajak         | Jenis Formulir          | Akhir Tahun Pajak | Batas Waktu Pelaporan     | Denda Keterlambatan |
+| ------------------------- | ------------------- | ----------------- | ------------------------- | ------------- |
+| Orang Pribadi             | 1770SS, 1770S, 1770 | 31 Desember 2025  | 31 Maret 2026             | IDR 100,000   |
+| Badan Usaha (PT)          | 1771                | 31 Desember 2025  | 30 April 2026             | IDR 1,000,000 |
+| Periode Pembukuan Khusus  | 1771                | Bervariasi        | 4 bulan setelah akhir periode | IDR 1,000,000 |
 
-Wajib pajak orang pribadi memiliki waktu tepat tiga bulan dari akhir tahun untuk menyampaikan SPT Tahunan Pribadi mereka, sementara badan hukum mendapatkan waktu empat bulan. Tenggat waktu ini bersifat mutlak — pelaporan pada tanggal 1 April untuk laporan pribadi atau 1 Mei untuk laporan badan secara otomatis memicu pengenaan denda, terlepas dari apakah Anda memiliki pajak tambahan yang harus dibayar atau tidak.
+Wajib pajak orang pribadi memiliki waktu tepat tiga bulan sejak akhir tahun untuk menyampaikan SPT Tahunan Pribadi, sedangkan perusahaan mendapatkan waktu empat bulan. Batas waktu ini bersifat mutlak - pelaporan pada 1 April untuk SPT orang pribadi atau 1 Mei untuk SPT perusahaan secara otomatis memicu penetapan denda, terlepas dari apakah Anda memiliki tambahan pajak terutang.
 
-Selain denda uang, keterlambatan pelaporan menciptakan kerumitan untuk aplikasi visa, tender pemerintah, pinjaman bank, dan pembaruan izin bisnis. Banyak proses administratif memerlukan bukti kepatuhan pajak melalui konfirmasi pelaporan SPT terbaru.
+Selain denda berupa uang, keterlambatan pelaporan menimbulkan komplikasi untuk permohonan visa, tender pemerintah, pinjaman bank, dan perpanjangan perizinan usaha. Banyak proses administrasi mensyaratkan bukti kepatuhan pajak melalui konfirmasi pelaporan SPT terbaru.
 
 ## Memilih Formulir SPT yang Tepat: 1770, 1770S, atau 1770SS
 
-Indonesia menawarkan tiga formulir SPT orang pribadi, masing-masing dirancang untuk profil wajib pajak yang berbeda. Memilih formulir yang salah dapat mengakibatkan penolakan atau risiko audit:
+Indonesia menyediakan tiga formulir SPT orang pribadi, yang masing-masing dirancang untuk profil wajib pajak yang berbeda. Memilih formulir yang salah dapat mengakibatkan penolakan atau risiko pemeriksaan:
 
-### Formulir 1770SS (Sangat Sederhana)
+### Formulir 1770SS (Sederhana)
 
-Ini adalah formulir yang paling sederhana, dirancang untuk karyawan dengan penghasilan langsung:
+Ini adalah formulir paling sederhana, dirancang untuk karyawan dengan penghasilan yang jelas:
 
 **Kriteria Kelayakan:**
 
-- Penghasilan bruto tahunan di bawah Rp 60 juta
-- Penghasilan semata-mata dari satu pemberi kerja (pemotongan PPh 21)
-- Tidak ada penghasilan bisnis, penghasilan sewa, atau keuntungan modal
-- Tidak ada penghasilan dari sumber luar negeri
-- Pemberi kerja sudah memotong PPh 21 sepanjang tahun
+- Penghasilan bruto tahunan di bawah IDR 60 juta
+- Penghasilan hanya dari satu pemberi kerja (pemotongan PPh 21)
+- Tidak ada penghasilan usaha, penghasilan sewa, atau keuntungan modal
+- Tidak ada penghasilan dari luar negeri
+- Pemberi kerja telah memotong PPh 21 sepanjang tahun
 
-**Apa yang Anda Laporkan:**
+**Yang Anda Laporkan:**
 
 - Penghasilan pekerjaan dari Formulir 1721-A1 yang diberikan oleh pemberi kerja
-- Ambang batas Penghasilan Tidak Kena Pajak (PTKP)
-- Pajak yang sudah dipotong (kredit pajak)
+- Batas penghasilan tidak kena pajak (PTKP)
+- Pajak yang telah dipotong (kredit)
 - Klaim pengembalian atau tambahan pajak terutang
 
-Formulir 1770SS biasanya membutuhkan waktu 10-15 menit untuk diselesaikan karena sebagian besar data terisi otomatis dari laporan pemotongan pemberi kerja yang sudah disampaikan ke DJP.
+Formulir 1770SS biasanya membutuhkan waktu 10-15 menit untuk diselesaikan karena sebagian besar data terisi otomatis dari laporan pemotongan pemberi kerja Anda yang telah disampaikan ke DJP.
 
-### Formulir 1770S (Sederhana)
+### Formulir 1770S (Standar)
 
 Formulir ini mengakomodasi situasi penghasilan pribadi yang lebih kompleks:
 
 **Kriteria Kelayakan:**
 
-- Penghasilan tahunan Rp 60 juta atau lebih
-- Penghasilan dari lebih dari satu pemberi kerja
-- Penghasilan dari pekerjaan bebas atau layanan profesional tanpa pembukuan formal
+- Penghasilan tahunan IDR 60 juta atau lebih
+- Penghasilan dari beberapa pemberi kerja
+- Penghasilan jasa lepas atau jasa profesional tanpa pembukuan formal
 - Penghasilan sewa properti
 - Penghasilan investasi (dividen, bunga, keuntungan modal)
-- Penghasilan dari sumber luar negeri
+- Penghasilan dari luar negeri
 
-**Apa yang Anda Laporkan:**
+**Yang Anda Laporkan:**
 
 - Semua sumber penghasilan yang dikategorikan berdasarkan jenisnya
-- Pengurangan yang diperbolehkan (iuran pensiun, donasi amal)
+- Pengurang yang diperbolehkan (iuran pensiun, sumbangan amal)
 - Kredit pajak dari pemotongan (PPh 21, 23, 26)
-- Kredit zakat atau donasi keagamaan
-- Informasi anggota keluarga yang terperinci untuk perhitungan PTKP
+- Kredit zakat atau sumbangan keagamaan
+- Informasi anggota keluarga yang rinci untuk perhitungan PTKP
 
 Formulir 1770S membutuhkan waktu 30-45 menit dan dokumen pendukung seperti laporan penghasilan, laporan dividen, dan perjanjian sewa.
 
-### Formulir 1771 (Badan)
+### Formulir 1771 (Perusahaan)
 
-Semua entitas badan hukum di Indonesia wajib menyampaikan Formulir 1771 untuk pelaporan pajak penghasilan tahunan:
+Seluruh badan usaha Indonesia wajib menyampaikan Formulir 1771 untuk pelaporan pajak penghasilan tahunan:
 
 **Berlaku Untuk:**
 
 - PT (Perseroan Terbatas)
 - CV (Commanditaire Vennootschap)
-- Koperasi
-- Bentuk Usaha Tetap (BUT) perusahaan asing
-- Yayasan dengan kegiatan bisnis
+- Koperasi (Cooperatives)
+- Bentuk usaha tetap perusahaan asing
+- Yayasan dengan kegiatan usaha
 
-**Apa yang Anda Laporkan:**
+**Yang Anda Laporkan:**
 
 - Pendapatan dan harga pokok penjualan
-- Biaya operasional
-- Penghasilan dan biaya lainnya
+- Beban operasional
+- Penghasilan dan beban lain-lain
 - Koreksi fiskal dan rekonsiliasi
 - Kompensasi kerugian pajak
 - Perhitungan pajak final
 - Pembayaran di muka (PPh 25, kredit pemotongan)
 
-Pelaporan badan memerlukan laporan keuangan lengkap, jadwal rekonsiliasi pajak, dan berbagai lampiran. Persiapan biasanya memakan waktu beberapa hari dan sering kali melibatkan konsultan pajak profesional.
+Pelaporan perusahaan membutuhkan laporan keuangan lengkap, jadwal rekonsiliasi pajak, dan berbagai lampiran. Persiapan biasanya membutuhkan waktu beberapa hari dan sering melibatkan konsultan pajak profesional.
 
-... (sisanya diterjemahkan dengan pola yang sama mengikuti konteks teknis pajak)
+## Langkah demi Langkah: Mengakses CoreTax DJP Online
+
+### Pendaftaran dan Login Awal
+
+Jika ini pertama kalinya Anda menggunakan CoreTax, ikuti langkah-langkah berikut:
+
+**1. Kunjungi Portal CoreTax**
+Buka peramban Anda dan kunjungi https://coretaxdjp.pajak.go.id. Pastikan Anda berada di situs resmi pemerintah - periksa URL mengandung "pajak.go.id" untuk menghindari situs phishing.
+
+**2. Siapkan Kredensial Anda**
+Anda membutuhkan:
+
+- NPWP (Nomor Pokok Wajib Pajak) - nomor identitas pajak 15 digit Anda
+- NIK (Nomor Induk Kependudukan) - nomor identitas nasional 16 digit Anda
+- Kata sandi yang dibuat saat pendaftaran akun DJP
+- Alamat email dan nomor telepon terdaftar
+
+**3. Pendaftaran Pertama Kali**
+Jika Anda belum terdaftar untuk layanan DJP Online:
+
+- Klik "Daftar" (Register)
+- Masukkan NPWP dan NIK
+- Verifikasi identitas melalui kode konfirmasi email
+- Buat kata sandi yang aman (minimal 8 karakter, kombinasi huruf, angka, simbol)
+- Tetapkan pertanyaan keamanan untuk pemulihan kata sandi
+- Daftarkan email dan telepon Anda untuk verifikasi OTP
+
+**4. Proses Login**
+
+- Masukkan NPWP Anda (format: XX.XXX.XXX.X-XXX.XXX)
+- Masukkan kata sandi Anda
+- Selesaikan verifikasi CAPTCHA
+- Klik "Login"
+
+**5. Autentikasi Dua Faktor**
+CoreTax mewajibkan verifikasi OTP:
+
+- Pilih metode verifikasi (email atau SMS)
+- Masukkan kode 6 digit yang diterima dalam waktu 5 menit
+- Selesaikan autentikasi
+
+### Navigasi Dasbor
+
+Setelah masuk, dasbor CoreTax menampilkan:
+
+**Bagian Menu Utama:**
+
+- **Profil** - Perbarui informasi wajib pajak, rekening bank, detail kontak
+- **Lapor** - Sampaikan berbagai laporan pajak termasuk SPT
+- **Bayar** - Lakukan pembayaran pajak dan lihat kode billing
+- **Layanan** - Minta surat keterangan pajak, pengajuan keberatan, layanan wajib pajak
+- **Korespondensi** - Pesan resmi dari DJP, pemberitahuan pemeriksaan, pemberitahuan pengembalian
+
+**Indikator Dasbor Utama:**
+
+- Status kepatuhan (hijau untuk patuh, merah untuk masalah)
+- Kewajiban yang belum dipenuhi (SPT yang belum dilaporkan, ketetapan yang belum dibayar)
+- Penyampaian terbaru dan status pemrosesannya
+- Pengingat batas waktu penting
+
+## Menyampaikan SPT Tahunan Pribadi (Personal Tax Return)
+
+### Formulir 1770SS Langkah demi Langkah
+
+Untuk karyawan dengan penghasilan sederhana di bawah IDR 60 juta:
+
+**Langkah 1: Akses Menu SPT**
+
+- Klik "Lapor" dari menu utama
+- Pilih "e-Filing"
+- Pilih "Buat SPT" (Create SPT)
+- Pilih tahun pajak: 2025
+- Jenis formulir: "SPT Tahunan Pajak Penghasilan Orang Pribadi 1770SS"
+
+**Langkah 2: Verifikasi Identitas**
+Sistem menampilkan data terdaftar Anda:
+
+- Nama lengkap sesuai KTP
+- NPWP
+- Alamat terdaftar
+- Pekerjaan
+- Status perkawinan
+
+Periksa keakuratannya. Jika perlu perbaikan, perbarui melalui menu Profil sebelum melanjutkan.
+
+**Langkah 3: Bagian Penghasilan**
+
+- Sistem mengisi otomatis penghasilan pekerjaan dari Formulir 1721-A1 yang disampaikan pemberi kerja Anda
+- Verifikasi jumlahnya sesuai dengan tanda terima gaji tahunan Anda
+- Periksa tunjangan dan bonus sudah termasuk
+- Konfirmasi deskripsi jabatan/pekerjaan
+
+**Langkah 4: Penghasilan Tidak Kena Pajak (PTKP)**
+Pilih kategori PTKP Anda berdasarkan status perkawinan dan tanggungan:
+
+| Status                       | PTKP Tahunan   | Setara Bulanan         |
+| ---------------------------- | -------------- | ------------------ |
+| TK/0 - Lajang, tanpa tanggungan | IDR 54,000,000 | IDR 4,500,000      |
+| K/0 - Menikah, tanpa tanggungan | IDR 58,500,000 | IDR 4,875,000      |
+| K/1 - Menikah, 1 tanggungan   | IDR 63,000,000 | IDR 5,250,000      |
+| K/2 - Menikah, 2 tanggungan  | IDR 67,500,000 | IDR 5,625,000      |
+| K/3 - Menikah, 3 tanggungan  | IDR 72,000,000 | IDR 6,000,000      |
+
+Tanggungan meliputi anak sah berusia di bawah 21 tahun atau masih dalam pendidikan formal (maksimal 3).
+
+**Langkah 5: Perhitungan Pajak**
+CoreTax secara otomatis menghitung:
+
+- Penghasilan kena pajak = Penghasilan bruto - PTKP
+- Pajak terutang menggunakan tarif progresif
+- Kredit pajak dari PPh 21 yang dipotong oleh pemberi kerja
+- Posisi akhir: pengembalian atau pembayaran tambahan
+
+**Langkah 6: Tinjau dan Konfirmasi**
+Tinjau dengan cermat halaman ringkasan yang menunjukkan:
+
+- Total penghasilan: IDR XX,XXX,XXX
+- Pengurang PTKP: IDR XX,XXX,XXX
+- Penghasilan kena pajak: IDR XX,XXX,XXX
+- Pajak yang dihitung: IDR XX,XXX,XXX
+- Pajak yang dipotong: IDR XX,XXX,XXX
+- Pengembalian / Pembayaran tambahan: IDR XX,XXX,XXX
+
+**Langkah 7: Lampirkan Formulir 1721-A1**
+Unggah surat keterangan penghasilan dari pemberi kerja Anda:
+
+- Format berkas: hanya PDF
+- Ukuran maksimum: 5MB
+- Pastikan semua halaman jelas dan dapat dibaca
+- Nama berkas tidak boleh mengandung karakter khusus
+
+### Proses Pelaporan Formulir 1770S
+
+Untuk wajib pajak dengan penghasilan yang lebih kompleks:
+
+**Langkah 1: Pilih Formulir 1770S**
+Ikuti langkah awal yang sama tetapi pilih "SPT Tahunan 1770S" saat memilih jenis formulir.
+
+**Langkah 2: Penghasilan Pekerjaan**
+Jika Anda memiliki penghasilan pekerjaan:
+
+- Bagian A: Penghasilan dari satu atau beberapa pemberi kerja
+- Masukkan NPWP, nama, dan penghasilan tahunan setiap pemberi kerja
+- Lampirkan semua sertifikat Formulir 1721-A1 yang diterima
+- Sistem memvalidasi terhadap laporan pemotongan pemberi kerja
+
+**Langkah 3: Sumber Penghasilan Lain**
+Laporkan semua penghasilan tambahan di bagian yang ditentukan:
+
+**Bagian B - Penghasilan Usaha:**
+Untuk pekerja lepas dan profesional yang menggunakan perhitungan laba neto norma (norma penghitungan):
+
+- Pendapatan bruto dari jasa
+- Persentase norma yang berlaku (bervariasi menurut profesi: 30-50%)
+- Penghasilan neto yang dihitung
+
+**Bagian C - Penghasilan Investasi:**
+
+- Dividen dari perusahaan Indonesia (lampirkan surat keterangan pajak)
+- Penghasilan bunga dari deposito, obligasi
+- Keuntungan modal dari perdagangan saham (jika tidak dikenakan pajak final)
+
+**Bagian D - Penghasilan Sewa:**
+
+- Pendapatan sewa properti
+- Beban yang dapat dikurangkan (pemeliharaan, pajak properti)
+- Penghasilan sewa neto
+
+**Bagian E - Penghasilan Luar Negeri:**
+
+- Penghasilan dari sumber luar negeri
+- Pajak asing yang dibayar (untuk perhitungan kredit)
+- Dokumen pendukung
+
+**Langkah 4: Pengurang**
+Klaim pengurang yang diperbolehkan:
+
+- Iuran dana pensiun (maks IDR 2,400,000 per tahun)
+- Pembayaran zakat ke organisasi yang disetujui
+- Sumbangan amal ke lembaga yang disetujui (maks 5% dari penghasilan kena pajak)
+
+Unggah tanda terima pendukung untuk setiap pengurang yang diklaim.
+
+**Langkah 5: Kredit Pajak**
+Masukkan pajak yang telah dipotong:
+
+- PPh 21 dari pemberi kerja
+- PPh 22 atas impor (jika berlaku)
+- PPh 23 atas jasa, dividen, bunga
+- PPh 24 atas penghasilan luar negeri
+- Pembayaran di muka PPh 25
+
+Lampirkan semua surat bukti pemotongan (bukti potong).
+
+**Langkah 6: Informasi Keluarga**
+Berikan data keluarga yang lengkap untuk PTKP yang akurat:
+
+- Pasangan: nama, NIK, NPWP (jika ada), pekerjaan
+- Tanggungan: nama, NIK, tanggal lahir, hubungan, status pendidikan
+- Maksimal 3 tanggungan dihitung untuk PTKP
+
+**Langkah 7: Tinjauan Akhir**
+Sistem menghasilkan perhitungan lengkap:
+
+- Total penghasilan dari semua sumber
+- Pengurang yang diterapkan
+- PTKP berdasarkan status keluarga
+- Penghasilan kena pajak
+- Pajak yang dihitung dengan tarif progresif
+- Total kredit pajak
+- Pajak neto terutang atau pengembalian
+
+### Formulir 1770 Versi Lengkap
+
+Untuk pemilik usaha dan mereka yang diwajibkan menyelenggarakan pembukuan formal:
+
+Formulir 1770 membutuhkan lampiran termasuk:
+
+- Laporan keuangan yang diaudit (jika pendapatan melebihi IDR 4,8 miliar)
+- Jadwal rekonsiliasi pajak
+- Laporan penghasilan dan beban yang rinci
+- Jadwal aset dan kewajiban
+- Perhitungan koreksi fiskal
+
+Karena kompleksitasnya, sebagian besar wajib pajak yang menyampaikan Formulir 1770 menggunakan jasa konsultan pajak profesional. Antarmuka CoreTax memungkinkan unggahan massal jadwal yang diwajibkan dan mendukung impor CSV untuk detail transaksi.
+
+## Menyampaikan SPT Tahunan Badan (Corporate Tax Return)
+
+### Pelaporan Perusahaan Formulir 1771
+
+SPT perusahaan melibatkan kompleksitas dan dokumentasi yang jauh lebih besar:
+
+**Langkah 1: Akses e-Filing Perusahaan**
+
+- Masuk menggunakan kredensial NPWP perusahaan
+- Navigasi ke Lapor > e-Filing > SPT Tahunan Badan
+- Pilih Formulir 1771 dan tahun pajak 2025
+
+**Langkah 2: Verifikasi Profil Perusahaan**
+Konfirmasi data terdaftar:
+
+- Nama legal perusahaan dan nama dagang
+- Klasifikasi usaha (kode KBLI)
+- Alamat terdaftar dan alamat operasional
+- Detail direktur/penanggung jawab
+- Periode akuntansi (tahun kalender atau periode khusus)
+
+**Langkah 3: Input Laporan Keuangan**
+
+**Laporan Laba Rugi:**
+
+- Pendapatan dari operasi
+- Harga pokok penjualan / harga pokok jasa
+- Laba bruto
+- Beban operasional (rinci)
+- Penghasilan dan beban lain-lain
+- Penghasilan sebelum pajak
+
+**Neraca:**
+
+- Aset (lancar dan tidak lancar)
+- Kewajiban (lancar dan tidak lancar)
+- Komponen ekuitas
+- Saldo akhir tahun
+
+Banyak perusahaan mengunggah data keuangan melalui templat Excel yang disediakan oleh CoreTax untuk pengisian otomatis.
+
+**Langkah 4: Koreksi Fiskal**
+Rekonsiliasi laba akuntansi ke penghasilan kena pajak:
+
+**Beban yang tidak dapat dikurangkan untuk dikoreksi positif:**
+
+- Hiburan yang melebihi 50% dari pendapatan bruto
+- Beban pribadi pemegang saham
+- Denda dan sanksi
+- Sumbangan ke organisasi yang tidak disetujui
+- Penyusutan yang tidak menggunakan metode fiskal
+- Cadangan dan provisi (kecuali secara khusus diperbolehkan)
+
+**Penyesuaian penghasilan:**
+
+- Penghasilan pajak final yang telah dilaporkan secara terpisah
+- Dividen yang dikecualikan dari anak perusahaan Indonesia
+- Keuntungan reorganisasi bebas pajak
+
+**Kompensasi kerugian pajak:**
+Jika tahun-tahun sebelumnya menunjukkan kerugian, terapkan sisa saldo yang belum digunakan (maks 5 tahun kompensasi).
+
+**Langkah 5: Perhitungan Pajak**
+Tarif pajak perusahaan untuk 2026:
+
+| Status Perusahaan                 | Omzet Tahunan             | Tarif Pajak                                  |
+| -------------------------------- | --------------------- | ---------------------------------------- |
+| PT Standar                       | Di atas IDR 50 miliar | 22%                                      |
+| PT Menengah                      | Di bawah IDR 50 miliar | 22% untuk omzet > 4,8M, 11% untuk 4,8M pertama |
+| PT Publik (40%+ diperdagangkan publik) | Berapa pun jumlahnya | 19%                                      |
+| PT Kecil (omzet < 4,8M)          | Di bawah IDR 4,8 miliar | 0,5% dari pendapatan bruto (PP 55/2022)       |
+
+**Langkah 6: Pembayaran di Muka dan Kredit**
+Laporkan semua pembayaran pajak di muka yang dilakukan selama tahun berjalan:
+
+- Angsuran bulanan PPh 25
+- PPh 22 atas impor
+- PPh 23 yang dipotong oleh klien
+- PPh 24 atas penghasilan luar negeri
+- PPh 26 yang dipotong atas distribusi dividen
+
+Jumlahkan semua kredit terhadap kewajiban pajak yang dihitung untuk menentukan posisi pembayaran final atau pengembalian.
+
+**Langkah 7: Lampiran yang Diwajibkan**
+Unggah semua dokumen pendukung:
+
+**Lampiran wajib:**
+
+- Laporan keuangan yang diaudit (jika pendapatan > IDR 50 miliar atau sebagaimana diwajibkan oleh undang-undang)
+- Laporan rekonsiliasi pajak
+- Daftar pemegang saham dengan persentase kepemilikan
+- Pengungkapan transaksi pihak berelasi
+- Dokumentasi transfer pricing (jika berlaku)
+- Jadwal penyusutan
+- Daftar penghasilan final yang dikenakan PPh 4(2)
+
+**Persyaratan format:**
+
+- Hanya berkas PDF
+- Maksimum 10MB per dokumen
+- Nama berkas yang diberi label jelas
+- Semua halaman harus lengkap dan dapat dibaca
+
+**Langkah 8: Pernyataan Direktur**
+Pelaporan perusahaan mewajibkan pernyataan formal:
+
+- Direktur atau penandatangan yang berwenang harus mengonfirmasi keakuratan
+- Pernyataan bahwa laporan keuangan disusun sesuai standar yang berlaku
+- Pengakuan atas sanksi untuk pelaporan yang tidak benar
+- Penerapan tanda tangan elektronik
+
+## Proses Tanda Tangan Elektronik
+
+Semua penyampaian SPT mewajibkan tanda tangan elektronik agar sah:
+
+### Tanda Tangan Elektronik Sementara (Pelapor Pertama Kali)
+
+Jika Anda tidak memiliki sertifikat digital:
+
+**Langkah 1: Minta Tanda Tangan Sementara**
+
+- Setelah menyelesaikan SPT, klik "Kirim SPT"
+- Pilih "e-Signature Sementara"
+- Sistem mengirimkan kode verifikasi ke email dan telepon terdaftar Anda
+
+**Langkah 2: Verifikasi**
+
+- Periksa email dan SMS untuk kode 6 digit
+- Masukkan kode dalam waktu 5 menit
+- Selesaikan verifikasi identitas
+
+**Langkah 3: Terapkan Tanda Tangan**
+
+- Sistem menghasilkan tanda tangan sementara
+- SPT ditandatangani secara digital dan disampaikan
+- Anda menerima nomor konfirmasi (NTPS - Nomor Tanda Penerimaan Surat)
+
+Tanda tangan sementara sah tetapi hanya disarankan untuk pelapor sesekali.
+
+### Sertifikat Digital Permanen
+
+Untuk pelapor rutin, dapatkan sertifikat dari penyedia yang disetujui DJP:
+
+**Penyedia Sertifikat yang Disetujui:**
+
+- Peruri (Government printing company)
+- Privy
+- Mekari Sign
+- PrivyID
+- Tilaka
+
+**Jenis Sertifikat:**
+
+- Sertifikat pribadi (untuk orang pribadi)
+- Sertifikat perusahaan (untuk direktur perusahaan)
+- Masa berlaku: biasanya 1-3 tahun
+- Biaya: IDR 150,000 - 500,000 tergantung penyedia dan masa berlaku
+
+**Menggunakan Sertifikat Digital:**
+
+- Instal sertifikat di komputer Anda
+- Saat siap menyampaikan SPT, klik "Kirim dengan Sertifikat Digital"
+- Pilih sertifikat Anda dari daftar
+- Masukkan PIN sertifikat
+- Konfirmasi penerapan tanda tangan
+- SPT langsung disampaikan
+
+Sertifikat digital menyederhanakan proses dan diwajibkan untuk SPT perusahaan dan transaksi bernilai tinggi.
+
+## Konfirmasi Penyampaian dan Penyimpanan Arsip
+
+### Menerima NTPS Anda
+
+Setelah penyampaian berhasil:
+
+**Konfirmasi Langsung:**
+
+- Layar menampilkan pesan berhasil dengan nomor NTPS
+- Format: XXXXXX/XX/XX/XXXX/XX/XX
+- Ini adalah bukti pelaporan
+- Unduh halaman konfirmasi sebagai PDF
+
+**Konfirmasi Email:**
+Dalam waktu 15 menit, Anda menerima email ke alamat terdaftar:
+
+- Nomor NTPS
+- Tanggal dan waktu penyampaian
+- Jenis formulir
+- Tahun pajak
+- Ringkasan penghasilan dan pajak yang dilaporkan
+- Lampiran PDF dari SPT yang disampaikan
+
+Simpan email ini secara permanen - diperlukan untuk berbagai keperluan administrasi.
+
+### Persyaratan Penyimpanan Dokumen
+
+Undang-undang perpajakan Indonesia mewajibkan penyimpanan:
+
+**Wajib Pajak Orang Pribadi:**
+
+- Salinan SPT yang dilaporkan: 10 tahun
+- Dokumen pendukung (tanda terima, sertifikat): 10 tahun
+- Surat keterangan penghasilan pekerjaan: 10 tahun
+
+**Wajib Pajak Badan:**
+
+- SPT yang dilaporkan dan lampiran: 10 tahun
+- Catatan akuntansi lengkap: 10 tahun
+- Faktur dan dokumen transaksi: 10 tahun
+- Catatan perbankan: 10 tahun
+
+Simpan dokumen dengan aman, baik fisik maupun elektronik. DJP dapat mengaudit SPT hingga 10 tahun ke belakang.
+
+### Pembetulan dan Koreksi
+
+Jika Anda menemukan kesalahan setelah penyampaian:
+
+**Dalam Periode Batas Waktu:**
+
+- Sampaikan SPT baru yang ditandai sebagai "Pembetulan" (correction)
+- Jelaskan perubahan dalam surat terlampir
+- Tidak ada denda untuk pembetulan sebelum batas waktu
+
+**Setelah Batas Waktu:**
+
+- Masih memungkinkan untuk menyampaikan SPT yang dibetulkan
+- Denda keterlambatan berlaku jika belum ditetapkan
+- Lampirkan penjelasan rinci tentang koreksi
+- Dapat memicu peninjauan atau pemeriksaan DJP
+
+Sampaikan koreksi segera ketika kesalahan ditemukan - lebih baik mengoreksi sendiri daripada DJP menemukan ketidaksesuaian.
+
+## Kesalahan Umum Pelaporan dan Solusinya
+
+### Pesan Kesalahan dan Perbaikan
+
+**"NPWP tidak terdaftar atau tidak valid"**
+
+- **Penyebab:** NPWP tidak aktif atau salah dimasukkan
+- **Solusi:** Verifikasi format NPWP (15 digit dengan titik/strip), konfirmasi status di KPP, aktifkan kembali jika diperlukan
+
+**"Data tidak sesuai dengan database DJP"**
+
+- **Penyebab:** Ketidaksesuaian data pribadi antara KTP dan catatan DJP
+- **Solusi:** Kunjungi KPP dengan KTP, minta pembaruan profil, tunggu 3-7 hari untuk sinkronisasi sistem
+
+**"Bukti potong tidak ditemukan"**
+
+- **Penyebab:** Nomor surat bukti pemotongan tidak ada dalam sistem DJP
+- **Solusi:** Hubungi pihak pemotong (pemberi kerja/klien) untuk memastikan mereka telah menyampaikan laporan pemotongan, berikan nomor sertifikat yang benar
+
+**"Upload dokumen gagal"**
+
+- **Penyebab:** Ukuran berkas melebihi batas, format salah, atau berkas rusak
+- **Solusi:** Kompres PDF di bawah 5MB, pastikan PDF tunggal (bukan gambar atau format lain), pindai ulang jika rusak
+
+**"Perhitungan tidak seimbang"**
+
+- **Penyebab:** Kesalahan perhitungan manual, data yang hilang di bidang tertentu
+- **Solusi:** Periksa kembali semua entri penghasilan dan kredit, pastikan PTKP dipilih dengan benar, gunakan perhitungan otomatis sistem
+
+**"E-Signature gagal"**
+
+- **Penyebab:** OTP kedaluwarsa, sertifikat tidak terinstal, PIN salah
+- **Solusi:** Minta OTP baru dalam jangka waktu 5 menit, instal ulang sertifikat digital, atur ulang PIN melalui penyedia
+
+### Kendala Teknis
+
+**Batas Waktu Sistem atau Kinerja Lambat:**
+Periode pelaporan puncak (akhir Maret, akhir April) mengalami beban sistem yang berat:
+
+- Lapor selama jam sepi (pagi atau malam hari)
+- Gunakan koneksi internet yang stabil
+- Hindari WiFi publik untuk keamanan
+- Simpan draf secara berkala untuk mencegah kehilangan data
+
+**Kompatibilitas Peramban:**
+CoreTax paling baik digunakan dengan:
+
+- Google Chrome (disarankan)
+- Mozilla Firefox
+- Microsoft Edge
+- Safari (dengan beberapa keterbatasan)
+
+Nonaktifkan ekstensi peramban yang dapat mengganggu fungsi formulir.
+
+**Pelaporan via Seluler:**
+Meskipun CoreTax responsif seluler, formulir kompleks seperti 1770S dan 1771 lebih baik diselesaikan di desktop/laptop untuk kemudahan penanganan dan peninjauan dokumen.
+
+## Setelah Pelaporan: Apa yang Diharapkan
+
+### Linimasa Pemrosesan
+
+**Pengakuan:** Langsung (NTPS diterbitkan setelah penyampaian)
+
+**Pemrosesan Validasi:** 1-3 hari kerja
+
+- Sistem DJP memvalidasi data terhadap laporan pemotongan
+- Pencocokan silang dengan pelaporan pihak ketiga
+- Menandai ketidaksesuaian untuk peninjauan
+
+**Pembaruan Status Kepatuhan:** 3-7 hari kerja
+
+- Status kepatuhan Anda diperbarui menjadi "Patuh" untuk tahun berjalan
+- Tersedia untuk diunduh/dilihat di dasbor
+
+**Pemrosesan Pengembalian (jika berlaku):**
+
+- Tinjauan pendahuluan: 30 hari
+- Permintaan dokumen tambahan: tergantung kasus
+- Persetujuan dan transfer pengembalian: 3-12 bulan tergantung jumlah
+- Pengembalian di bawah IDR 100 juta: biasanya 3-6 bulan
+- Pengembalian yang lebih besar: mungkin memerlukan pemeriksaan, 6-12 bulan
+
+### Faktor Risiko Pemeriksaan Pajak
+
+Karakteristik SPT tertentu meningkatkan probabilitas pemeriksaan:
+
+**Indikator Risiko Lebih Tinggi:**
+
+- Klaim pengembalian besar (terutama pertama kali)
+- Penurunan penghasilan signifikan dari tahun ke tahun
+- Rasio beban tinggi vs. pendapatan
+- Transaksi pihak berelasi
+- Penghasilan atau aset luar negeri
+- Usaha padat tunai
+- Temuan pemeriksaan sebelumnya
+- Tren ketidakpatuhan industri
+
+**Indikator Risiko Lebih Rendah:**
+
+- Riwayat pelaporan yang konsisten
+- Penghasilan sesuai dengan pelaporan pihak ketiga
+- Rasio beban yang wajar
+- Semua surat bukti pemotongan terverifikasi
+- Tidak ada perubahan signifikan dari tahun sebelumnya
+
+Jika terpilih untuk pemeriksaan, DJP akan mengirimkan pemberitahuan resmi melalui surat tercatat dan email. Tanggapi segera dan berikan semua dokumentasi yang diminta.
+
+## Butuh Bantuan Pajak Profesional?
+
+<ArticleClusterCTA slug="coretax-efiling-spt-guide" />
+
+Menyampaikan SPT dengan benar sangat penting untuk menjaga kepatuhan pajak dan
+menghindari sanksi. Meskipun CoreTax menyederhanakan prosesnya, situasi penghasilan yang kompleks,
+SPT perusahaan, dan perencanaan pajak membutuhkan keahlian profesional.
+Bicaralah dengan penasihat pajak BaliZero untuk penyusunan SPT, dukungan pelaporan bulanan,
+dan pembelaan pemeriksaan.
+
+<HeaderWhatsAppCTA />

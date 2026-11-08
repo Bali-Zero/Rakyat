@@ -313,13 +313,6 @@ async def process_whatsapp_message(
                     message_text=message_text,
                     response_text=onboarding_confirm_msg,
                 )
-                # Notify admin via Telegram
-                if settings.admin_telegram_chat_id:
-                    await telegram_bot.send_message(
-                        chat_id=settings.admin_telegram_chat_id,
-                        text=f"🚀 **Auto-Onboarding Triggered**\n\nPhone: +{phone}\nName: {sender_name or 'Unknown'}\nChain: {onboarding_result.get('chain')}\nStatus: {onboarding_result.get('status')}",
-                        parse_mode="Markdown",
-                    )
                 return
         except Exception as e:
             logger.error(

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { serialize } from "next-mdx-remote/serialize";
 import remarkGfm from "remark-gfm";
 import type { Article } from "@/lib/blog/types";
-import { getArticleBySlug } from "@/lib/blog/articles";
+import { getArticleBySlug, isArticleHidden } from "@/lib/blog/articles";
 import { logger } from "@/lib/logger";
 import { toError } from "@/lib/types/common";
 
@@ -68,6 +68,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    // A hidden article is not found: no demo stand-in replaces it.
+    if (isArticleHidden(category, slug)) {
+      return NextResponse.json({ error: "Article not found" }, { status: 404 });
+    }
+
     // Fallback to mock article for demo
     const mockArticle = getMockArticle(category, slug);
     if (mockArticle) {
@@ -82,9 +87,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       toError(error),
     );
 
-    // Try mock data as fallback
+    // Try mock data as fallback, never for a hidden article
     const { category, slug } = await params;
-    const mockArticle = getMockArticle(category, slug);
+    const mockArticle = isArticleHidden(category, slug)
+      ? null
+      : getMockArticle(category, slug);
     if (mockArticle) {
       return NextResponse.json(mockArticle);
     }

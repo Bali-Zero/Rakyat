@@ -241,6 +241,11 @@ def _dispatcher_links_kg() -> bool:
 
 
 def _folder_hint(category: str | None) -> str:
+    """Preserve unambiguous semantic OCR hints, not physical write destinations.
+
+    Canonical company/tax and profile/family parents combine categories; the
+    historical hint retains the category already recorded on this document.
+    """
     normalized = (category or "").lower()
     if normalized == "immigration":
         return "01_Immigration"

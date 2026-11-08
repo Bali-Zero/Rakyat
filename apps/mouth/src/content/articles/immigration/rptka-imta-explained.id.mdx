@@ -77,56 +77,276 @@ contentStructure:
 canonicalUrl: "https://balizero.com/immigration/rptka-imta-explained"
 ogImage: "/static/insights/immigration/rptka-imta.jpg"
 twitterCard: "summary_large_image"
+source_sha256: "47b110490b055e67e617b6d2c3fa6000efe2a78f8a3c2504eb74c8139f383f00"
 ---
+
+import {
+  JourneyMap,
+  ComparisonTable,
+  InfoCard,
+  GlossaryTerm,
+  AskZantara,
+} from "@/components/insights/interactive";
 
 # RPTKA & IMTA Dijelaskan: Sistem Otorisasi Kerja Indonesia 2026
 
-Saat mempekerjakan tenaga kerja asing di Indonesia, pemberi kerja harus memperoleh otorisasi SEBELUM pekerja mengajukan izin mereka. Ini melibatkan dua dokumen kunci: RPTKA dan Notifikasi (sebelumnya IMTA).
+Saat mempekerjakan tenaga kerja asing di Indonesia, pemberi kerja harus memperoleh otorisasi SEBELUM pekerja mengajukan izinnya. Proses ini melibatkan dua dokumen kunci: RPTKA dan Notifikasi (sebelumnya IMTA).
 
 ## Gambaran Umum Sistem
 
-| Aspek                 | RPTKA                                 | Notifikasi/IMTA        |
-| --------------------- | ------------------------------------- | ---------------------- |
-| Apa                   | Rencana Penggunaan Tenaga Kerja Asing | Notifikasi Izin Kerja  |
-| Siapa yang Mengajukan | Pemberi Kerja                         | Pemberi Kerja          |
-| Tujuan                | Membenarkan mempekerjakan orang asing | Otorisasi kerja aktual |
-| Sistem                | TKA Online                            | TKA Online             |
+<ComparisonTable
+  title="RPTKA vs IMTA/Notifikasi"
+  description="Understanding the two components"
+  items={[
+    {
+      name: "RPTKA",
+      subtitle: "Rencana Penggunaan Tenaga Kerja Asing",
+      values: {
+        What: "Foreign Worker Utilization Plan",
+        "Who Applies": "Employer",
+        Purpose: "Justify hiring foreigner",
+        System: "TKA Online",
+      },
+      highlight: true,
+    },
+    {
+      name: "Notifikasi",
+      subtitle: "Formerly IMTA",
+      values: {
+        What: "Work Permit Notification",
+        "Who Applies": "Employer",
+        Purpose: "Actual work authorization",
+        System: "TKA Online",
+      },
+    },
+  ]}
+/>
+
+---
 
 ## Apa itu RPTKA?
 
-**RPTKA (Rencana Penggunaan Tenaga Kerja Asing)** adalah rencana wajib yang harus diserahkan oleh perusahaan Indonesia untuk membenarkan mempekerjakan tenaga kerja asing.
+<GlossaryTerm
+  term="RPTKA"
+  definition="Rencana Penggunaan Tenaga Kerja Asing (Foreign Worker Utilization Plan) - a mandatory plan that Indonesian companies must submit to justify hiring foreign workers."
+/>
 
 RPTKA adalah rencana pemberi kerja yang menjelaskan:
 
-- **Mengapa** tenaga kerja asing diperlukan
-- **Posisi apa** yang akan mereka isi
-- **Berapa lama** mereka membutuhkan tenaga kerja asing
-- **Transfer keterampilan apa** yang akan terjadi
+- **Mengapa** tenaga kerja asing dibutuhkan
+- **Apa** jabatan yang akan diisi
+- **Berapa lama** tenaga kerja asing dibutuhkan
+- **Apa** alih keterampilan yang akan terjadi
 
 ### Persyaratan RPTKA
 
 Perusahaan harus menunjukkan:
 
-1. **Posisi tidak dapat diisi secara lokal** - Tidak ada orang Indonesia yang berkualifikasi tersedia
-2. **Rencana transfer keterampilan** - Bagaimana orang asing akan melatih staf lokal
-3. **Pendamping Indonesia** - Staf lokal yang ditugaskan untuk belajar dari orang asing
-4. **Batas waktu** - Rencana untuk akhirnya mengganti dengan orang Indonesia
+1. **Jabatan tidak dapat diisi secara lokal** - Tidak ada tenaga Indonesia yang memenuhi syarat
+2. **Rencana alih keterampilan** - Bagaimana tenaga asing akan melatih staf lokal
+3. **Pendamping Indonesia** - Staf lokal yang ditugaskan untuk belajar dari tenaga asing
+4. **Batas waktu** - Rencana untuk akhirnya digantikan oleh tenaga Indonesia
+
+<InfoCard variant="warning" title="RPTKA Validity">
+Persetujuan RPTKA terikat pada hal-hal spesifik:
+- Perusahaan (tidak dapat dialihkan antar perusahaan)
+- Jabatan (tidak dapat berganti peran)
+- Durasi (maksimal 5 tahun, biasanya 1-2)
+
+Perubahan memerlukan pengajuan RPTKA baru.
+
+</InfoCard>
+
+---
+
+## Proses Pengajuan RPTKA
+
+<JourneyMap
+  title="RPTKA Application Steps"
+  description="How employers apply for RPTKA"
+  estimatedTotal="1-2 weeks"
+  steps={[
+    {
+      id: "account",
+      title: "TKA Online Registration",
+      description: "Company registers on system",
+      duration: "1-2 days",
+      status: "required",
+      tips: ["Use company email", "Have NIB ready", "Director must sign up"],
+    },
+    {
+      id: "upload",
+      title: "Upload Company Documents",
+      description: "Submit legality documents",
+      duration: "1 day",
+      status: "required",
+      documents: [
+        "NIB (Business ID)",
+        "Company deed",
+        "Tax registration (NPWP)",
+        "Domicile letter",
+      ],
+    },
+    {
+      id: "rptka-form",
+      title: "Complete RPTKA Form",
+      description: "Fill in position details",
+      duration: "1 day",
+      status: "required",
+      tips: [
+        "Specify exact job title",
+        "List qualifications needed",
+        "Explain why foreigner required",
+        "Name Indonesian companion",
+      ],
+    },
+    {
+      id: "fee",
+      title: "Pay DKP-TKA Fee",
+      description: "USD 100/month compensation fund",
+      duration: "Same day",
+      status: "required",
+      tips: [
+        "USD 100 x number of months",
+        "Pay via bank transfer",
+        "Non-refundable",
+      ],
+    },
+    {
+      id: "review",
+      title: "Ministry Review",
+      description: "Manpower ministry evaluates",
+      duration: "5-10 days",
+      status: "required",
+      tips: [
+        "May request clarification",
+        "Check TKA Online for status",
+        "Can be rejected if position restricted",
+      ],
+    },
+    {
+      id: "approval",
+      title: "RPTKA Approval",
+      description: "Receive approval letter",
+      duration: "Auto-generated",
+      status: "final",
+      tips: [
+        "Download from TKA Online",
+        "Valid for stated duration",
+        "Proceed to Notifikasi",
+      ],
+    },
+  ]}
+/>
+
+---
+
+## Apa itu Notifikasi (IMTA)?
+
+Setelah persetujuan RPTKA, pemberi kerja mengajukan **Notifikasi** - notifikasi izin kerja yang sebenarnya untuk tenaga kerja asing tertentu.
+
+### Perbedaan Utama dari IMTA Lama
+
+| Aspek | IMTA Lama | Notifikasi Baru |
+| --------- | ---------------- | ------------------------- |
+| Format | Kartu fisik | Notifikasi elektronik |
+| Penerbitan | Proses terpisah | Dibuat otomatis dari RPTKA |
+| Perpanjangan | Pembaruan manual | Melalui TKA Online |
+| Masa Berlaku | Mengikuti KITAS | Mengikuti RPTKA |
+
+<InfoCard variant="note" title="Notifikasi is Automatic">
+
+Setelah RPTKA disetujui dan Anda menyampaikan detail tenaga kerja asing, Notifikasi
+dibuat secara otomatis melalui TKA Online. Tidak diperlukan pengajuan terpisah.
+
+</InfoCard>
+
+---
 
 ## DKP-TKA (Dana Kompensasi)
 
-Setiap pemberi kerja yang mempekerjakan tenaga kerja asing harus membayar **Dana Kompensasi Penggunaan TKA**:
+Setiap pemberi kerja yang mempekerjakan tenaga kerja asing wajib membayar **Dana Kompensasi Penggunaan TKA**:
 
 ### Struktur Biaya
 
 - **Tarif**: USD 100 per bulan
 - **Perhitungan**: Tarif bulanan × durasi izin kerja
-- **Contoh**: Izin 12 bulan = USD 1.200
+- **Contoh**: Izin 12 bulan = USD 1,200
 
 ### Aturan Pembayaran
 
 - Dibayar di muka saat mengajukan RPTKA
-- Tidak dapat dikembalikan (bahkan jika pekerja keluar lebih awal)
-- Harus diperbarui dengan setiap perpanjangan
-- Pendapatan pemerintah untuk pelatihan keterampilan
+- Tidak dapat dikembalikan (bahkan jika pekerja pulang lebih awal)
+- Harus diperbarui pada setiap perpanjangan
+- Penerimaan negara untuk pelatihan keterampilan
 
-[Panduan lengkap tersedia dalam versi bahasa Inggris]
+<InfoCard variant="tip" title="Budget Accordingly">
+
+Untuk KITAS 2 tahun: - DKP-TKA: USD 2,400 (24 bulan × $100) - Ini terpisah
+dari biaya KITAS dan visa
+
+</InfoCard>
+
+---
+
+## Pembatasan Jabatan (DKPTKA)
+
+**Daftar Jabatan yang Dilarang untuk TKA** mencantumkan jabatan yang tertutup bagi warga asing:
+
+### Jabatan yang Dilarang Meliputi:
+
+- Manajer Sumber Daya Manusia/Personalia
+- Jabatan Quality Assurance
+- Petugas Kesehatan & Keselamatan
+- Jabatan Supply Chain
+- Peran administratif
+- Banyak jabatan pengawas
+
+### Cara Memeriksa
+
+1. Lihat daftar Kementerian Ketenagakerjaan
+2. Gunakan judul jabatan yang tepat dalam RPTKA
+3. Bersiaplah memberikan justifikasi jika berada di batas
+
+<InfoCard variant="warning" title="Position Matching">
+
+Pekerjaan aktual Anda harus sesuai dengan jabatan dalam RPTKA. Bekerja dalam peran yang berbeda
+dari yang disetujui merupakan pelanggaran dan dapat mengakibatkan: - Pembatalan izin kerja -
+Denda bagi pemberi kerja - Deportasi bagi pekerja
+
+</InfoCard>
+
+---
+
+## Proses Perpanjangan
+
+Untuk memperpanjang RPTKA/Notifikasi:
+
+1. **Ajukan 30 hari sebelum kedaluwarsa** - Jangan menunggu hingga menit terakhir
+2. **Sistem TKA Online yang sama** - Tanpa pengajuan kertas
+3. **Bayar DKP-TKA baru** - Untuk periode perpanjangan
+4. **Justifikasi kebutuhan lanjutan** - Mengapa tenaga asing masih dibutuhkan
+5. **Tunjukkan progres alih keterampilan** - Apa yang telah diajarkan kepada staf lokal
+
+---
+
+## Pertanyaan Umum
+
+<AskZantara
+  context="RPTKA, IMTA, Notifikasi, TKA Online, foreign worker authorization Indonesia"
+  placeholder="Ask about RPTKA and IMTA..."
+  suggestedQuestions={[
+    "Can one RPTKA cover multiple foreign workers?",
+    "What if RPTKA is rejected?",
+    "How long does RPTKA approval take?",
+    "Can I change positions after RPTKA approval?",
+  ]}
+/>
+
+---
+
+## Artikel Terkait
+
+- [Panduan Izin Kerja KITAS](/visas/working-kitas-e23-indonesias-revised-legal-framework-explained)
+- [Biaya Izin Kerja](/insights/immigration/work-permit-costs)
+- [Panduan Pendaftaran PT PMA](/insights/business/foreign-company-incorporation-steps)
