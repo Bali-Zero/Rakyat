@@ -41,7 +41,13 @@ vi.mock("fs", () => ({
 
 // Imported AFTER the vi.mock("fs") factory above so the module under test
 // picks up the mocked fs.
-const { getArticleBySlug, getAllArticles } = await import("./articles");
+const {
+  getArticleBySlug,
+  getAllArticles,
+  getArticleByLocale,
+  getAvailableLocales,
+  searchArticles,
+} = await import("./articles");
 
 const SLUG = "kbli-2025-explained";
 const CATEGORY = "business";
@@ -218,5 +224,119 @@ describe("getArticleBySlug (MDX-first)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("one publication rule for local MDX", () => {
+  const mdx = (frontmatter: string, title = "Local Title") =>
+    `---\ntitle: "${title}"\ncategory: business\npublishedAt: "2026-02-20"\n${frontmatter}---\n\nBody.\n`;
+
+  function disk(files: Record<string, string>) {
+    const names = Object.keys(files);
+    const folders = new Set(names.map((name) => name.split("/")[0]));
+    existsSyncMock.mockImplementation((p: unknown) => {
+      const s = String(p);
+      if (s.endsWith("src/content/articles")) return true;
+      for (const folder of folders) {
+        if (s.endsWith(`src/content/articles/${folder}`)) return true;
+      }
+      return names.some((name) => s.endsWith(`articles/${name}`));
+    });
+    statSyncMock.mockReturnValue({ isDirectory: () => true });
+    readdirSyncMock.mockImplementation((p: unknown) => {
+      const s = String(p);
+      const folder = [...folders].find((f) => s.endsWith(`articles/${f}`));
+      if (!folder) return [];
+      return names
+        .filter((name) => name.startsWith(folder + "/"))
+        .map((name) => name.slice(folder.length + 1));
+    });
+    readFileSyncMock.mockImplementation((p: unknown) => {
+      const s = String(p);
+      const name = names.find((n) => s.endsWith(`articles/${n}`));
+      if (!name) throw new Error("ENOENT " + s);
+      return files[name];
+    });
+  }
+
+  it("a draft MDX hides the article, and no approved backend row stands in", async () => {
+    disk({ [`business/${SLUG}.mdx`]: mdx("status: draft\n") });
+    mockFetchOnce({ success: true, data: BACKEND_ITEM });
+    expect(await getArticleBySlug(CATEGORY, SLUG)).toBeNull();
+  });
+
+  it("counts only an absent status or exactly published", async () => {
+    mockFetchOnce({ success: false }, false);
+    for (const line of [
+      "status:\n",
+      "status: false\n",
+      'status: ""\n',
+      "status: Published\n",
+      "status: review\n",
+    ]) {
+      disk({ [`business/${SLUG}.mdx`]: mdx(line) });
+      expect(await getArticleBySlug(CATEGORY, SLUG)).toBeNull();
+    }
+    for (const line of ["", "status: published\n"]) {
+      disk({ [`business/${SLUG}.mdx`]: mdx(line) });
+      expect((await getArticleBySlug(CATEGORY, SLUG))?.title).toBe(
+        "Local Title",
+      );
+    }
+  });
+
+  it("keeps a broken frontmatter hidden on every read", async () => {
+    disk({
+      [`business/${SLUG}.mdx`]: "---\nstatus: draft\nbroken: [\n---\nBody\n",
+    });
+    mockFetchOnce({ success: true, data: BACKEND_ITEM });
+    expect(await getArticleBySlug(CATEGORY, SLUG)).toBeNull();
+    expect(await getArticleBySlug(CATEGORY, SLUG)).toBeNull();
+  });
+
+  it("skips a draft translation and never lists it", async () => {
+    mockFetchOnce({ success: false }, false);
+    disk({
+      [`business/${SLUG}.mdx`]: mdx("", "English Title"),
+      [`business/${SLUG}.it.mdx`]: mdx("status: draft\n", "Titolo"),
+    });
+    expect((await getArticleByLocale(CATEGORY, SLUG, "it"))?.title).toBe(
+      "English Title",
+    );
+    expect(getAvailableLocales(CATEGORY, SLUG)).toEqual(["en"]);
+    disk({
+      [`business/${SLUG}.mdx`]: mdx("", "English Title"),
+      [`business/${SLUG}.it.mdx`]: mdx("", "Titolo"),
+    });
+    expect((await getArticleByLocale(CATEGORY, SLUG, "it"))?.title).toBe(
+      "Titolo",
+    );
+    expect(getAvailableLocales(CATEGORY, SLUG)).toEqual(["en", "it"]);
+  });
+
+  it("hides every translation of a hidden article", async () => {
+    mockFetchOnce({ success: false }, false);
+    disk({
+      [`business/${SLUG}.mdx`]: mdx("status: draft\n"),
+      [`business/${SLUG}.it.mdx`]: mdx("", "Titolo"),
+    });
+    expect(await getArticleByLocale(CATEGORY, SLUG, "it")).toBeNull();
+  });
+
+  it("lists and finds only published articles", async () => {
+    disk({
+      "business/draft-a.mdx": mdx("status: draft\n"),
+      "business/live-b.mdx": mdx(""),
+    });
+    const rows = [
+      BACKEND_ITEM,
+      { ...BACKEND_ITEM, id: "news-43", slug: "draft-a" },
+    ];
+    mockFetchOnce({ success: true, data: rows, total: 2 });
+    const { articles, total } = await getAllArticles({});
+    expect(articles.map((a) => a.slug).sort()).toEqual([SLUG, "live-b"]);
+    expect(total).toBe(2);
+    const found = await searchArticles("KBLI");
+    expect(found.map((a) => a.slug)).toEqual([SLUG]);
   });
 });
