@@ -749,6 +749,19 @@ const nextConfig: NextConfig = {
         destination: "/visas/e31e-child-dependent-kitas-guide",
         permanent: true,
       },
+      // Editorial retirement (2026-11-09): the E311A guide duplicated
+      // retirement-visa-indonesia and carried the superseded facts. Must
+      // precede the /immigration/:slug* catch-all below.
+      {
+        source: "/immigration/e311a-retirement-visa-kitas-guide",
+        destination: "/visas/retirement-visa-indonesia",
+        permanent: true,
+      },
+      {
+        source: "/visas/e311a-retirement-visa-kitas-guide",
+        destination: "/visas/retirement-visa-indonesia",
+        permanent: true,
+      },
       {
         source: "/immigration/:slug*",
         destination: "/visas/:slug*",
