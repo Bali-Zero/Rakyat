@@ -44,3 +44,5 @@ Writer locks serialize application callers by parent/name across service-account
 ## Execution ledger
 
 2026-11-08: owner-authorized implementation in an isolated Rakyat worktree. Integrated local validation: 589 tests passed, changed Python files passed Ruff check/format, and diff whitespace validation passed. Independent pre-review requested B1 ownership uniqueness, B2 concurrent creation serialization and B3 reversible mapping evidence; all three were addressed with regression coverage. Final exact-head cross-family gate, hosted Actions, deployment and live cohort reconciliation remain pending and must be evidenced separately.
+
+2026-11-08 correction: the first exact-head Claude gate passed static review, but hosted Shard2 found missing public type annotations (one failure,12711 passes). That frozen candidate was not released. A fresh candidate from updated main adds annotations to four functions;590 focused/compliance tests pass. This candidate must earn its own final gate and hosted checks.

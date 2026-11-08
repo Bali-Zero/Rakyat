@@ -7,6 +7,7 @@ the companies table. Client mapping created_at defaults in migration 062.
 import hashlib
 import json
 import re
+from typing import Any
 
 from backend.services.crm.drive_taxonomy import canonical_folders
 
@@ -22,13 +23,13 @@ class RepairError(Exception):
     """A deliberately nonspecific failure, safe to report as a code."""
 
 
-def digest(value):
+def digest(value: Any) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
     ).hexdigest()
 
 
-def valid_ids(values):
+def valid_ids(values: list[str]) -> bool:
     return (
         bool(values)
         and len(values) <= MAX_ROOTS
@@ -55,7 +56,7 @@ def _metadata(item):
     }
 
 
-def inventory_root(drive, root_id, parent_id, kind):
+def inventory_root(drive: Any, root_id: str, parent_id: str, kind: str) -> dict[str, Any]:
     files = drive.files()
     root = _metadata(
         files.get(fileId=root_id, fields=META_FIELDS, supportsAllDrives=True).execute()
@@ -264,7 +265,7 @@ async def build_plan(conn, drive, roots, parent, kind, lock_reverse=False):
     return {"kind": kind, "parent": parent, "roots": entries}
 
 
-def public_plan(plan):
+def public_plan(plan: dict[str, Any]) -> dict[str, Any]:
     result = []
     for entry in plan["roots"]:
         inv = entry["inventory"]
