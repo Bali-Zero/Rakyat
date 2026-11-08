@@ -29,7 +29,7 @@ class TestConfig:
         monkeypatch.setenv("ENVIRONMENT", "development")
         monkeypatch.setenv(
             "DATABASE_URL",
-            "postgresql://nuzantara:nuzantara_local_2024@localhost:5432/nuzantara",
+            "postgresql://nuzantara:uxxx14@localhost:5432/nuzantara",
         )
         monkeypatch.setenv(
             "DATABASE_URL_LOCAL",
@@ -40,7 +40,7 @@ class TestConfig:
 
         assert (
             settings.database_url
-            == "postgresql://nuzantara:nuzantara_local_2024@localhost:5432/nuzantara"
+            == "postgresql://nuzantara:uxxx14@localhost:5432/nuzantara"
         )
 
     def test_database_url_normalizes_postgres_scheme(self, monkeypatch):

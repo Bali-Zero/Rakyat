@@ -83,10 +83,15 @@ set -u
 # a real build log, not from the setting: the build ran `next build --webpack` (the apps/mouth
 # value), never the root file's `npm run build -w apps/mouth`. It is still matched here on
 # purpose — if a root `vercel.json` ever comes back, rebuilding on it is the fail-open answer.
+# `data/kbli-filiera/` is included because apps/mouth/src/lib/kbli-editorial-certification.ts imports
+# data/kbli-filiera/pma-editorial-certifications.json from OUTSIDE apps/mouth: a commit that changes only
+# that file changes the bundle, and skipping it left production serving the old data. It is the only
+# import from apps/mouth/src or next.config.ts that leaves apps/mouth/ and packages/ (census 2026-11-07);
+# a new out-of-tree import must be added here in the same change.
 # Keep in step with BUNDLE_PATHS in scripts/vercel_prod_deploy.py and the `paths:` of
 # .github/workflows/frontend-live-sentinel.yml: a commit they call bundle-relevant must BUILD
 # here, or the sentinel goes red for a build this script declined to make.
-FRONTEND_RE='^(apps/mouth/|packages/|package\.json|package-lock\.json|vercel\.json|apps/mouth/vercel\.json)'
+FRONTEND_RE='^(apps/mouth/|packages/|data/kbli-filiera/|package\.json|package-lock\.json|vercel\.json|apps/mouth/vercel\.json)'
 
 PROD_BRANCH="${VERCEL_GIT_PROD_BRANCH:-main}"
 REF="${VERCEL_GIT_COMMIT_REF:-}"

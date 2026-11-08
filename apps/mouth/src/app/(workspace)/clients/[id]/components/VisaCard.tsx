@@ -14,8 +14,11 @@ import {
 import { useOcrPolling } from "@/hooks/useOcrPolling";
 import type { ClientProfile, ClientDocument } from "@/lib/api/crm/crm.types";
 import { downloadHrefFor, extractDriveFileId } from "./utils";
-import { pickCurrentVisa } from "./pickCurrentVisa";
-import { daysUntil, elapsedShare, humanize } from "./overview-brief";
+import { countVoidPermitsFor, pickCurrentVisa } from "./pickCurrentVisa";
+import { elapsedShare, humanize } from "./overview-brief";
+import { documentValidity } from "./documentValidity";
+import { resolveCardDay } from "./witaClock";
+import { RemovedSignpost } from "./RemovedSignpost";
 import { permitLine } from "./header-facts";
 import {
   CardFrame,
@@ -35,6 +38,8 @@ export function VisaCard({
   formatCurrency,
   onRefresh,
   clientId,
+  onOpenRemoved,
+  day: dayProp,
 }: {
   client: ClientProfile["client"];
   documents: ClientDocument[];
@@ -43,7 +48,12 @@ export function VisaCard({
   formatCurrency: (n: number) => string;
   onRefresh: () => Promise<void>;
   clientId: number;
+  /** Opens the Documents "Removed or rejected" group. */
+  onOpenRemoved?: () => void;
+  /** The card's day (`YYYY-MM-DD`, the payload's `as_of`). */
+  day?: string;
 }) {
+  const day = resolveCardDay(dayProp);
   const [isUploading, setIsUploading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
@@ -75,10 +85,11 @@ export function VisaCard({
 
   // Get visa dates from document metadata or practice
   const visaStartDate = latestVisa?.issue_date || visaProcess?.start_date;
-  const visaExpiryDate = latestVisa?.expiry_date;
-  const nowMs = Date.now();
-  const expiryDays = daysUntil(visaExpiryDate, nowMs);
-  const share = elapsedShare(latestVisa?.issue_date, visaExpiryDate, nowMs);
+  const validity = latestVisa ? documentValidity(latestVisa, day) : null;
+  const visaExpiryDate = validity?.expiry ?? null;
+  const expiryDays = validity?.daysLeft ?? null;
+  const share = elapsedShare(latestVisa?.issue_date, visaExpiryDate, day);
+  const voidPermits = countVoidPermitsFor(documents, null);
   const permitName = latestVisa ? permitLine(documents) : null;
   const address = client.address?.trim();
   const ocrBusy = ocrPolling || isExtracting;
@@ -383,10 +394,18 @@ export function VisaCard({
         </Facts>
       ) : (
         <p className="text-[13px] leading-[1.5] text-[var(--tx-secondary)]">
-          No visa or KITAS on file. Upload the permit (JPG, PNG or PDF, up to{" "}
-          {BASE64_UPLOAD_MAX_LABEL}) and its dates are read from it.
+          {voidPermits > 0
+            ? "No valid visa or KITAS on file."
+            : "No visa or KITAS on file."}{" "}
+          Upload the permit (JPG, PNG or PDF, up to {BASE64_UPLOAD_MAX_LABEL})
+          and its dates are read from it.
         </p>
       )}
+      <RemovedSignpost
+        count={voidPermits}
+        onOpen={onOpenRemoved}
+        className="mt-3"
+      />
       <div
         className={
           address

@@ -643,6 +643,81 @@ async def test_hero_publication_commits_article_cover_and_layout_atomically(
     }
 
 
+async def _publish_at_position(mock_publisher, test_client, article, position):
+    mock_publisher.is_configured = True
+    mock_publisher.check_file_exists = AsyncMock(return_value=False)
+    mock_publisher.create_commit_with_files = AsyncMock(
+        return_value={"commit_sha": "slot123", "pull_request_number": 91}
+    )
+    return test_client.post(
+        "/api/articles/publish",
+        json=PublishRequest(article=article, position=position, slug="slot-story").model_dump(),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "position",
+    ["insight_1", "insight_2", "insight_3", "hero_2", "hero_5", "hero_6", "hero_7"],
+)
+@patch("backend.services.integrations.github_publisher.github_publisher")
+async def test_every_accepted_homepage_slot_is_written_and_reported(
+    mock_publisher,
+    test_client,
+    sample_enriched_article,
+    position,
+):
+    response = await _publish_at_position(
+        mock_publisher, test_client, sample_enriched_article, position
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["homepage_slot"] == position
+    assert mock_publisher.create_commit_with_files.await_args.kwargs[
+        "json_object_updates"
+    ] == {"apps/mouth/src/content/homepage-layout.json": {position: "slot-story"}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("position", ["normal", "latest", "main_featured", "secondary"])
+@patch("backend.services.integrations.github_publisher.github_publisher")
+async def test_unpinned_position_writes_no_layout_key_and_says_so(
+    mock_publisher,
+    test_client,
+    sample_enriched_article,
+    position,
+):
+    response = await _publish_at_position(
+        mock_publisher, test_client, sample_enriched_article, position
+    )
+
+    assert response.status_code == 200
+    assert response.json()["homepage_slot"] is None
+    assert mock_publisher.create_commit_with_files.await_args.kwargs["json_object_updates"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("position", ["insight_9", "hero_8", "hero_1", "latest_1", ""])
+@patch("backend.services.integrations.github_publisher.github_publisher")
+async def test_unknown_position_is_rejected_before_any_commit(
+    mock_publisher,
+    test_client,
+    sample_enriched_article,
+    position,
+):
+    mock_publisher.is_configured = True
+    mock_publisher.create_commit_with_files = AsyncMock()
+    payload = PublishRequest(article=sample_enriched_article).model_dump()
+    payload["position"] = position
+
+    response = test_client.post("/api/articles/publish", json=payload)
+
+    assert response.status_code == 422
+    mock_publisher.create_commit_with_files.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 @patch("backend.services.integrations.github_publisher.github_publisher")
 async def test_existing_public_slug_is_never_overwritten(

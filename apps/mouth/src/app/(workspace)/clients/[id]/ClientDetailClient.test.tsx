@@ -97,6 +97,7 @@ vi.mock("@/hooks/useClientDetail", () => ({
     isLoading: false,
   }),
   useInvalidateClient: () => mockInvalidateClient,
+  useInvalidateClientProfile: () => vi.fn(),
   useSetClientCache: () => mockSetClientCache,
 }));
 

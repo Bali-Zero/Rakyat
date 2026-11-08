@@ -7,6 +7,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientDocument } from "@/lib/api/crm/crm.types";
+import { useFixedClock } from "./fixedClock.testutil";
 import { ImmigrationTab, isVisaFamilyDocument } from "./ImmigrationTab";
 import { pickCurrentVisa } from "./pickCurrentVisa";
 
@@ -30,6 +31,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 beforeEach(() => {
+  useFixedClock();
   push.mockClear();
   // The AI summary slot stays empty unless a test gives it text.
   getClientRecap.mockReset();

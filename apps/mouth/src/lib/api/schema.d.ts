@@ -25747,7 +25747,7 @@ export interface components {
       cover_image_filename?: string | null;
       /**
        * Position
-       * @description Position: main_featured|secondary|normal
+       * @description Homepage slot written to homepage-layout.json (hero_main, hero_2-7, insight_1-3) or an unpinned value (normal, latest, main_featured, secondary) that writes no slot
        * @default normal
        */
       position: string;
@@ -25775,6 +25775,8 @@ export interface components {
       commit_sha?: string | null;
       /** Error */
       error?: string | null;
+      /** Homepage Slot */
+      homepage_slot?: string | null;
       /** Image Path */
       image_path?: string | null;
       /** Mdx Path */

@@ -20,6 +20,8 @@ import { STATUS_COLORS, ALERT_COLORS } from "./constants";
 import { formatCurrency } from "./utils";
 import { AiSummaryCard } from "./AiSummaryCard";
 import { supersededVisaPracticeIds } from "./supersededVisaPractice";
+import { daysBetween } from "./documentValidity";
+import { resolveCardDay } from "./witaClock";
 
 const PRIORITY_BADGES: Record<string, { label: string; className: string }> = {
   urgent: {
@@ -44,13 +46,17 @@ export function ProcessTab({
   practices,
   formatDate,
   onRefresh,
+  day: dayProp,
 }: {
   clientId: number;
   practices: ClientProfile["practices"];
   formatDate: (d: string) => string;
   onRefresh: () => void;
+  /** The card's day (`YYYY-MM-DD`, the payload's `as_of`). */
+  day?: string;
 }) {
   const router = useRouter();
+  const day = resolveCardDay(dayProp);
   const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
   const [sortBy, setSortBy] = useState<
     "default" | "priority" | "expiry" | "amount"
@@ -367,10 +373,10 @@ export function ProcessTab({
               <div className="flex items-center gap-2 flex-wrap mt-1">
                 {practice.expiry_date &&
                   (() => {
-                    const daysLeft = Math.ceil(
-                      (new Date(practice.expiry_date).getTime() - Date.now()) /
-                        86400000,
-                    );
+                    // Whole calendar days from the card's day, under the
+                    // backend date grammar; no date, no chip.
+                    const daysLeft = daysBetween(practice.expiry_date, day);
+                    if (daysLeft === null) return null;
                     const isExpired = daysLeft < 0;
                     const isCritical = daysLeft >= 0 && daysLeft <= 14;
                     const isWarning = daysLeft > 14 && daysLeft <= 30;

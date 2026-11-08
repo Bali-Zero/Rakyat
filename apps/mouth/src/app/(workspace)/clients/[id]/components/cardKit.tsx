@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { SERIF_SECTION } from "@/components/workspace/r19/tokens";
-import { spanValue } from "./overview-brief";
+import { expiryWording } from "./documentValidity";
 
 /**
  * The shared shape of the Overview's identity cards (client, passport, visa)
@@ -180,13 +180,10 @@ export const NOT_RECORDED = (
   <span className="text-[13px] text-[var(--tx-secondary)]">Not recorded</span>
 );
 
-/** "62 days left" / "3y 10mo left" / "Expired 12 days ago" / "Expires today". */
+/** "62 days left" / "3y 10mo left" / "Expired 12 days ago" / "Expired today". */
 export function remainingLabel(days: number | null): string | null {
   if (days === null) return null;
-  if (days < 0) return `Expired ${-days} ${days === -1 ? "day" : "days"} ago`;
-  if (days === 0) return "Expires today";
-  const s = spanValue(days);
-  return s.unit ? `${s.value} ${s.unit} left` : `${s.value} left`;
+  return expiryWording(days, "long");
 }
 
 /** Same threshold the rest of the page uses for "soon": two months. */
@@ -195,7 +192,7 @@ export const SOON_DAYS = 60;
 export type ExpiryTone = "ok" | "soon" | "gone";
 
 export const expiryTone = (days: number | null): ExpiryTone =>
-  days === null ? "ok" : days < 0 ? "gone" : days <= SOON_DAYS ? "soon" : "ok";
+  days === null ? "ok" : days <= 0 ? "gone" : days <= SOON_DAYS ? "soon" : "ok";
 
 /** Words travel with the colour: the label already says expired / soon. */
 export function ExpiryText({

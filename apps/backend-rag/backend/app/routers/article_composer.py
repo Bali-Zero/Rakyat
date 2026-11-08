@@ -32,7 +32,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from prometheus_client import REGISTRY, Counter, Histogram
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -569,6 +569,22 @@ async def compose_status() -> dict[str, Any]:
 
 # --- PUBLISHING MODELS ---
 
+HOMEPAGE_LAYOUT_PATH = "apps/mouth/src/content/homepage-layout.json"
+
+# Slots of homepage-layout.json that a publication may pin. This is the
+# curated-slug census of the live layout file minus the rolling latest_* keys:
+# hero_main..hero_7 (read by the mouth homepage-hero route and the hero
+# strip) and insight_1..3 (offered by the News Room position picker).
+HOMEPAGE_LAYOUT_SLOTS: frozenset[str] = frozenset(
+    {"hero_main", "hero_2", "hero_3", "hero_4", "hero_5", "hero_6", "hero_7"}
+    | {"insight_1", "insight_2", "insight_3"}
+)
+
+# Values that mean "publish without pinning a slot"; they write no layout key.
+UNPINNED_POSITIONS: frozenset[str] = frozenset(
+    {"normal", "latest", "main_featured", "secondary"}
+)
+
 
 class PublishRequest(BaseModel):
     """Request to publish an article to the site"""
@@ -582,7 +598,14 @@ class PublishRequest(BaseModel):
         default=None,
         description="Cover image filename (e.g., 'article-cover.jpg')",
     )
-    position: str = Field(default="normal", description="Position: main_featured|secondary|normal")
+    position: str = Field(
+        default="normal",
+        description=(
+            "Homepage slot written to homepage-layout.json "
+            "(hero_main, hero_2-7, insight_1-3) or an unpinned value "
+            "(normal, latest, main_featured, secondary) that writes no slot"
+        ),
+    )
     slug: str | None = Field(
         default=None,
         description="Custom slug, auto-generated if not provided",
@@ -593,6 +616,16 @@ class PublishRequest(BaseModel):
         max_length=128,
         description="Stable internal identity used to resume the same publication PR",
     )
+
+    @field_validator("position")
+    @classmethod
+    def _position_is_known(cls, value: str) -> str:
+        if value not in HOMEPAGE_LAYOUT_SLOTS and value not in UNPINNED_POSITIONS:
+            raise ValueError(
+                f"Unknown homepage position {value!r}; expected one of "
+                f"{sorted(HOMEPAGE_LAYOUT_SLOTS | UNPINNED_POSITIONS)}"
+            )
+        return value
 
 
 class PublishResponse(BaseModel):
@@ -606,6 +639,7 @@ class PublishResponse(BaseModel):
     commit_sha: str | None = None
     pull_request_number: int | None = None
     auto_merge_enabled: bool | None = None
+    homepage_slot: str | None = None
     error: str | None = None
 
 
@@ -1058,11 +1092,11 @@ async def publish_article_internal(request: PublishRequest) -> PublishResponse:
         # Homepage placement belongs to the same atomic tree as the MDX and
         # cover. A PR must never contain the article while silently losing the
         # position Damar selected.
-        hero_positions = {"hero_main", "hero_2", "hero_3", "hero_4", "hero_5"}
+        homepage_slot = (
+            request.position if request.position in HOMEPAGE_LAYOUT_SLOTS else None
+        )
         layout_updates = (
-            {"apps/mouth/src/content/homepage-layout.json": {request.position: slug}}
-            if request.position in hero_positions
-            else None
+            {HOMEPAGE_LAYOUT_PATH: {homepage_slot: slug}} if homepage_slot else None
         )
 
         # 3. Commit files to GitHub via pull request + auto-merge.
@@ -1171,6 +1205,7 @@ async def publish_article_internal(request: PublishRequest) -> PublishResponse:
             commit_sha=result.get("commit_sha"),
             pull_request_number=result.get("pull_request_number"),
             auto_merge_enabled=result.get("auto_merge_enabled"),
+            homepage_slot=homepage_slot,
         )
 
     except ArticleGuardViolation:

@@ -1,6 +1,7 @@
 "use client";
 
 import type { ClientDocument } from "@/lib/api/crm/crm.types";
+import { daysBetween, isLive } from "./documentValidity";
 
 // Country codes with flags for phone input
 export const COUNTRY_CODES = [
@@ -223,6 +224,7 @@ export { formatIDR as formatCurrency } from "@balizero/core/utils";
 // Green: >14 months, Yellow: 9-13 months (13 month alert), Red: <9 months (9 month urgent alert)
 export const getPassportValidityColor = (
   expiryDate: string | undefined,
+  day: string,
 ): {
   color: string;
   label: string;
@@ -231,7 +233,8 @@ export const getPassportValidityColor = (
   alertLevel: "ok" | "warning" | "critical" | "expired";
   monthsUntil: number;
 } => {
-  if (!expiryDate)
+  const daysLeft = daysBetween(expiryDate, day);
+  if (daysLeft === null)
     return {
       color: "gray",
       label: "No expiry",
@@ -241,12 +244,9 @@ export const getPassportValidityColor = (
       monthsUntil: 999,
     };
 
-  const now = new Date();
-  const expiry = new Date(expiryDate);
-  const monthsUntilExpiry =
-    (expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24 * 30);
+  const monthsUntilExpiry = daysLeft / 30;
 
-  if (monthsUntilExpiry <= 0) {
+  if (daysLeft <= 0) {
     // A passport expiry is a DATE: urgency, never ownership, never danger.
     return {
       color: "warning",
@@ -256,7 +256,7 @@ export const getPassportValidityColor = (
       alertLevel: "expired",
       monthsUntil: monthsUntilExpiry,
     };
-  } else if (monthsUntilExpiry < 9) {
+  } else if (daysLeft < 270) {
     return {
       color: "warning",
       label: `${Math.floor(monthsUntilExpiry)} months`,
@@ -265,7 +265,7 @@ export const getPassportValidityColor = (
       alertLevel: "critical",
       monthsUntil: monthsUntilExpiry,
     };
-  } else if (monthsUntilExpiry < 14) {
+  } else if (daysLeft < 420) {
     return {
       color: "yellow",
       label: `${Math.floor(monthsUntilExpiry)} months`,
@@ -287,8 +287,8 @@ export const getPassportValidityColor = (
 };
 
 // The client's current passport for the Overview card: own passport only (no
-// family member), not removed by the client in the portal (deleted_at — the
-// profile keeps those rows for the "Removed" pill), not archived, newest upload
+// family member), live (Rule L: not removed, archived or rejected — the profile
+// keeps those rows for the Documents "Removed or rejected" group), newest upload
 // first (created_at, then id). The profile list is ordered by category/type,
 // so its first passport row is not necessarily the current one.
 export const pickCurrentPassport = (
@@ -297,8 +297,7 @@ export const pickCurrentPassport = (
   const candidates = documents.filter(
     (doc) =>
       !doc.family_member_id &&
-      !doc.deleted_at &&
-      !doc.is_archived &&
+      isLive(doc) &&
       doc.document_type?.toLowerCase().includes("passport"),
   );
   const uploadedAt = (doc: ClientDocument) =>
@@ -309,6 +308,17 @@ export const pickCurrentPassport = (
     return diff > 0 || (diff === 0 && doc.id > best.id) ? doc : best;
   }, undefined);
 };
+
+// How many of the client's own passport documents the pick drops because they
+// are void (removed, archived or rejected): the "removed or rejected files are
+// in Documents" signpost on the Passport card.
+export const countVoidPassports = (documents: ClientDocument[]): number =>
+  documents.filter(
+    (doc) =>
+      !doc.family_member_id &&
+      !isLive(doc) &&
+      doc.document_type?.toLowerCase().includes("passport"),
+  ).length;
 
 // Check if today is client's birthday
 export const isBirthdayToday = (dateOfBirth: string | undefined): boolean => {
@@ -323,13 +333,15 @@ export const isBirthdayToday = (dateOfBirth: string | undefined): boolean => {
 // Calculate visa expiry alert (2 months = red alert)
 export const getVisaAlertStatus = (
   expiryDate: string | undefined,
+  day: string,
 ): {
   alertLevel: "ok" | "warning" | "critical";
   monthsUntil: number;
   bgClass: string;
   textClass: string;
 } => {
-  if (!expiryDate) {
+  const daysLeft = daysBetween(expiryDate, day);
+  if (daysLeft === null) {
     return {
       alertLevel: "ok",
       monthsUntil: 999,
@@ -338,10 +350,7 @@ export const getVisaAlertStatus = (
     };
   }
 
-  const now = new Date();
-  const expiry = new Date(expiryDate);
-  const monthsUntilExpiry =
-    (expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24 * 30);
+  const monthsUntilExpiry = daysLeft / 30;
 
   if (monthsUntilExpiry <= 0) {
     return {

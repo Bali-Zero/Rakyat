@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { logger } from "@/lib/logger";
+import { isLive } from "./documentValidity";
+import { RemovedSignpost } from "./RemovedSignpost";
 import type { KbliResolution } from "@/lib/kbli-resolve";
 import type {
   ClientCompanyLink,
@@ -182,6 +184,7 @@ export function CompanyTab({
   formatDate,
   onRefresh,
   onOpenDocuments,
+  onOpenRemoved,
   companyLinks,
 }: {
   clientId: number;
@@ -191,11 +194,20 @@ export function CompanyTab({
   onRefresh: () => Promise<void>;
   /** Switches the client card to its Documents tab. */
   onOpenDocuments?: () => void;
+  /** Opens the Documents "Removed or rejected" group. */
+  onOpenRemoved?: () => void;
   /** The client's links from the profile already on screen: the identity
    * renders from them with no request of its own. */
   companyLinks?: ClientCompanyLink[];
 }) {
-  const pmaDocs = documents.filter((d) => d.document_category === "pma");
+  // Holding count (row 33): only a live document is on file. A removed,
+  // archived or rejected one is listed once, in Documents, and signposted.
+  const pmaDocs = documents.filter(
+    (d) => d.document_category === "pma" && isLive(d),
+  );
+  const voidPmaDocs = documents.filter(
+    (d) => d.document_category === "pma" && !isLive(d),
+  ).length;
 
   const [companyData, setCompanyData] = useState<{
     company_name: string;
@@ -1124,7 +1136,7 @@ export function CompanyTab({
               );
               const fromClient = !fromCompany
                 ? (documents || [])
-                    .filter((d) => d.document_category === "pma")
+                    .filter((d) => d.document_category === "pma" && isLive(d))
                     .find((d) => matchType(d.document_type))
                 : null;
               // Map ClientDocument to CompanyDocument-compatible shape for the vault slot
@@ -1164,6 +1176,11 @@ export function CompanyTab({
               );
             })}
           </div>
+          <RemovedSignpost
+            count={voidPmaDocs}
+            onOpen={onOpenRemoved}
+            className="pb-3"
+          />
         </LedgerSection>
       )}
 
