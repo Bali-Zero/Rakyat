@@ -49,7 +49,7 @@ async def test_conversation_repository_limit(mock_db_pool: tuple) -> None:
     repo = ConversationRepository(pool)
     msgs = [{"role": "user", "content": f"Msg {i}"} for i in range(10)]
     conn.fetchrow.return_value = {"messages": msgs}
-    result = await repo.get_messages(session_id="test", limit=5)
+    result = await repo.get_messages(session_id="test", user_id="test-user", limit=5)
     assert len(result) == 5
 
 

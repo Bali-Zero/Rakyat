@@ -326,9 +326,9 @@ async def test_reader_uses_same_tied_timestamp_order_as_writer(
         await conn.execute("""INSERT INTO conversations(user_id, session_id, messages, created_at) VALUES
             ('synthetic-user', 'synthetic-tie', '[{"content":"older-id"}]', '2026-01-01T00:00:00Z'),
             ('synthetic-user', 'synthetic-tie', '[{"content":"newer-id"}]', '2026-01-01T00:00:00Z')""")
-    assert await ConversationRepository(conversation_pool).get_messages("synthetic-tie") == [
-        {"content": "newer-id"}
-    ]
+    assert await ConversationRepository(conversation_pool).get_messages(
+        "synthetic-tie", "synthetic-user"
+    ) == [{"content": "newer-id"}]
 
 
 @pytest.mark.asyncio
@@ -352,7 +352,7 @@ async def test_concurrent_first_saves_have_one_id(conversation_pool: asyncpg.Poo
         *(
             repo.save_messages(
                 "synthetic-session",
-                f"synthetic-user-{i % 2}",
+                "synthetic-user",
                 [{"role": "user", "content": f"item-{i}"}],
             )
             for i in range(8)

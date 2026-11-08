@@ -597,7 +597,8 @@ async def get_neural_pulse(
                        ORDER BY created_at DESC LIMIT 1""",
                 )
                 if last_conv:
-                    last_activity = f"Last chat: {last_conv[:30]}..."
+                    # A WhatsApp session id embeds a phone number: never echo it.
+                    last_activity = "Last chat recorded"
                 else:
                     # Fallback to interactions table
                     last_int = await conn.fetchval(

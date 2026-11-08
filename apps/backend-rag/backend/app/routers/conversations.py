@@ -266,11 +266,12 @@ async def save_conversation(
                     await conn.fetchrow(
                         """
                         SELECT id FROM conversations
-                        WHERE session_id = $1
+                        WHERE session_id = $1 AND user_id = $2
                         ORDER BY created_at DESC, id DESC
                         LIMIT 1 FOR UPDATE
                         """,
                         session_id,
+                        user_email,
                     )
                     # Insert conversation atomically
                     row = await conn.fetchrow(

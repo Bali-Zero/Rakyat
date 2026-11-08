@@ -13,7 +13,7 @@ from backend.services.common import cache
 @pytest.mark.parametrize(
     "method,args,expected",
     [
-        ("get_messages", ("synthetic-session",), []),
+        ("get_messages", ("synthetic-session", "synthetic-user"), []),
         ("cleanup_old_conversations", (), 0),
         ("anonymize_user_data", (), 0),
     ],
