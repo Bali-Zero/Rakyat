@@ -710,3 +710,22 @@ def test_ascii_codes_still_classify_and_two_different_ascii_codes_do_not():
     assert payload(documents=[one], catalogue=CAT2)["current_permit"]["code"] == "E23"
     two = doc("kitas", expiry=date(2027, 5, 2), ocr=ocr("E23 or E28A"))
     assert classify_document(two, CAT2).classifiable is False
+
+
+def test_a_two_character_index_code_has_one_parse_and_reads_as_that_code():
+    # "C1" is CODE = letter + one digit: exactly one full-length parse. Read as two parses it
+    # would be unresolved, the ITK unclassifiable, and I1, I2, I3 and I6 would all be omitted.
+    permit = doc("visa", expiry=date(2027, 3, 14), ocr=ocr("E23 WORKING KITAS"))
+    itk = doc("visa", expiry=date(2026, 12, 1), ocr=ocr("C1 VISIT STAY PERMIT"))
+    assert text(documents=[permit, itk]) == (
+        "The client's current permit is Working KITAS (E23), valid until 14 March 2027. "
+        "The ITK stamp runs until 1 December 2026."
+    )
+    p = payload(documents=[permit, itk])
+    assert p["current_permit"]["code"] == "E23"
+    assert (p["itk_expiry_date"], p["itk_status"]) == ("2026-12-01", "valid")
+    result = classify_document(itk, CATALOGUE)
+    assert (result.classifiable, result.family, result.code) == (True, "itk", "C1")
+    one_digit = doc("kitas", expiry=date(2027, 5, 2), ocr=ocr("D1"))
+    got = payload(documents=[one_digit], catalogue={"D1": "Synthetic One"})
+    assert got["current_permit"]["code"] == "D1"
