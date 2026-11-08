@@ -468,8 +468,8 @@ class TestMouthContentSecondHomeDuration:
             ),
             pytest.param(
                 "articles/immigration/visa-agent-vs-diy-indonesia.id.mdx",
-                "| E33G Pekerja Jarak Jauh | Rp 5.000.000-10.000.000  | "
-                "Rp 13.000.000-20.000.000 | Rp 5-10 jt      |",
+                "| E33G Remote Worker  | IDR 5.000.000-10.000.000 | "
+                "IDR 13.000.000-20.000.000 | IDR 5-10 juta  |",
                 id="rupiah-money-range",
             ),
             pytest.param(
