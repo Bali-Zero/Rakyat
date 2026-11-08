@@ -19,6 +19,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from backend.app.utils.tracing import add_span_event
+from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.rag.agentic.orchestrator_core import OrchestratorCore
 from backend.services.rag.agentic.orchestrator_streaming import OrchestratorStreamingManager
 from backend.services.rag.agentic.query_helpers import wrap_query_with_language_instruction
@@ -359,13 +360,16 @@ class OrchestratorStreamingCore:
         )
 
         # 5. Execute ReAct loop streaming
-        logger.info("🧠 [Stream] Processing query with ReAct loop for user %s", user_id)
+        logger.info(
+            "🧠 [Stream] Processing query with ReAct loop for user %s",
+            redact_identifier_for_log(user_id),
+        )
 
         add_span_event(
             "react.stream.start",
             {
                 "model_tier": model_tier,
-                "user_id": user_id,
+                "user_id": redact_identifier_for_log(user_id),
             },
         )
 

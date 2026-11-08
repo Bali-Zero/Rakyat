@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import time
+import traceback
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -756,8 +757,6 @@ async def query_agentic_rag(
             detected_entities=detected_entities_list if detected_entities_list else None,
         )
     except Exception as e:
-        import traceback
-
         # Frames only: the exception message is left out because it can carry row values.
         frames = "".join(traceback.format_tb(e.__traceback__))
         logger.error("❌ Error in query_agentic_rag: %s\n%s", type(e).__name__, frames)
@@ -1102,7 +1101,27 @@ async def stream_agentic_rag(
                         event["data"] = clean_image_generation_response(event["data"])
 
                     # Serialize and yield
-                    event_json = json.dumps(event)
+                    try:
+                        event_json = json.dumps(event)
+                    except (TypeError, ValueError) as serialization_error:
+                        error_count += 1
+                        logger.error(
+                            "JSON serialization failed: %s (correlation_id=%s)",
+                            type(serialization_error).__name__,
+                            correlation_id,
+                        )
+                        serialization_event = {
+                            "type": "error",
+                            "data": {
+                                "error_type": "serialization_error",
+                                "message": "Failed to serialize event",
+                                "non_fatal": True,
+                                "correlation_id": correlation_id,
+                            },
+                        }
+                        yield f"data: {json.dumps(serialization_event)}\n\n"
+                        events_yielded += 1
+                        continue
                     yield f"data: {event_json}\n\n"
                     events_yielded += 1
 
@@ -1141,24 +1160,14 @@ async def stream_agentic_rag(
                     ):
                         final_answer_received = True
 
-                except json.JSONEncodeError as e:
-                    error_count += 1
-                    logger.error("JSON serialization failed: %s", type(e).__name__)
-                    error_event = {
-                        "type": "error",
-                        "data": {
-                            "error_type": "serialization_error",
-                            "message": "Failed to serialize event",
-                            "non_fatal": True,
-                            "correlation_id": correlation_id,
-                        },
-                    }
-                    yield f"data: {json.dumps(error_event)}\n\n"
-                    events_yielded += 1
-
                 except Exception as e:
                     error_count += 1
-                    logger.exception("Error processing stream event: %s", e)
+                    logger.error(
+                        "Error processing stream event: %s (correlation_id=%s)\n%s",
+                        type(e).__name__,
+                        correlation_id,
+                        "".join(traceback.format_tb(e.__traceback__)),
+                    )
                     error_event = {
                         "type": "error",
                         "data": {
@@ -1186,7 +1195,12 @@ async def stream_agentic_rag(
             events_yielded += 1
 
         except Exception as e:
-            logger.exception("Fatal error in stream: %s", e)
+            logger.error(
+                "Fatal error in stream: %s (correlation_id=%s)\n%s",
+                type(e).__name__,
+                correlation_id,
+                "".join(traceback.format_tb(e.__traceback__)),
+            )
             fatal_error_event = {
                 "type": "error",
                 "data": {
@@ -1529,7 +1543,12 @@ async def stream_workspace_agent(
             events_yielded += 1
 
         except Exception as e:
-            logger.exception("workspace-stream fatal error: %s", e)
+            logger.error(
+                "workspace-stream fatal error: %s (correlation_id=%s)\n%s",
+                type(e).__name__,
+                correlation_id,
+                "".join(traceback.format_tb(e.__traceback__)),
+            )
             yield (
                 f"data: {json.dumps({'type': 'error', 'data': {'error_type': 'fatal_error', 'message': str(e), 'fatal': True, 'correlation_id': correlation_id}})}\n\n"
             )

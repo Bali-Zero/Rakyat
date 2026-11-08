@@ -14,12 +14,14 @@ Questo modulo è testabile in isolamento mockando event sources.
 import asyncio
 import logging
 import time
+import traceback
 from collections.abc import AsyncGenerator
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
 from backend.app.metrics import metrics_collector
+from backend.security.pii_log_identifier import redact_identifier_for_log
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)  # Info level for streaming operations (verbose)
@@ -123,13 +125,19 @@ class OrchestratorStreamingManager:
                 validated_event = StreamEvent(**raw_event)
                 return validated_event.model_dump(exclude_none=True)
             except ValidationError as e:
+                # Shape only: the event text and the validator's input echo are left out.
+                raw_type = raw_event.get("type")
                 logger.error(
                     "❌ [Stream] Event validation failed: %s",
-                    e,
+                    type(e).__name__,
                     extra={
                         "correlation_id": correlation_id,
-                        "validation_errors": str(e.errors()),
-                        "raw_event": str(raw_event)[:200],
+                        "validation_errors": [
+                            {"loc": list(err["loc"]), "type": err["type"]} for err in e.errors()
+                        ],
+                        "event_type": raw_type if isinstance(raw_type, str) else None,
+                        "event_keys": sorted(str(key) for key in raw_event),
+                        "raw_event_length": len(str(raw_event)),
                     },
                 )
                 metrics_collector.stream_event_validation_failed_total.inc()
@@ -188,12 +196,17 @@ class OrchestratorStreamingManager:
                 error_context = get_error_context(
                     e,
                     correlation_id=correlation_id,
-                    user_id=user_id,
+                    user_id=redact_identifier_for_log(user_id),
                     event_error_count=event_error_count,
                 )
+                # The exception message can carry event content; keep type and frames only.
+                error_context.pop("error_message", None)
+                frames = "".join(traceback.format_tb(e.__traceback__))
 
-                logger.exception(
-                    "❌ [Stream] Unexpected error processing event",
+                logger.error(
+                    "❌ [Stream] Unexpected error processing event: %s\n%s",
+                    type(e).__name__,
+                    frames,
                     extra=error_context,
                 )
                 metrics_collector.stream_event_processing_error_total.inc()
