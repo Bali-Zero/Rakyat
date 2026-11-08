@@ -75,6 +75,7 @@ tags:
 canonicalUrl: "https://balizero.com/digital-nomad/freelancing-legally-indonesia"
 ogImage: "/static/insights/lifestyle/freelancing.jpg"
 twitterCard: "summary_large_image"
+source_sha256: "05e6a4efc5bc01002b86a35db25f4e7d9dbd033f99582bee27bdb96c19540634"
 ---
 
 import {
@@ -86,63 +87,63 @@ import {
   AskZantara,
 } from "@/components/insights/interactive";
 
-# Bekerja Freelance Secara Legal di Indonesia 2026: Panduan Lengkap
+# Bekerja Lepas Secara Legal di Indonesia 2026: Panduan Lengkap
 
-Banyak digital nomad yang bekerja freelance saat berada di Indonesia. Berikut cara memahami lanskap hukum dan tetap patuh.
+Banyak nomaden digital bekerja lepas selama berada di Indonesia. Berikut cara memahami lanskap hukum dan tetap patuh.
 
-## Pertanyaan tentang Freelancing
+## Pertanyaan tentang Kerja Lepas
 
 <DecisionTree
-  title="Bisakah Anda Freelance di Indonesia?"
-  description="Pahami situasi Anda"
+  title="Can You Freelance in Indonesia?"
+  description="Understand your situation"
   nodes={[
     {
       id: "start",
-      question: "Tipe pekerjaan apa yang Anda lakukan?",
+      question: "What type of work do you do?",
       options: [
-        { label: "Remote untuk klien asing saja", next: "foreign" },
-        { label: "Campuran klien asing dan Indonesia", next: "mixed" },
-        { label: "Klien/perusahaan Indonesia saja", next: "indonesian" },
+        { label: "Remote for foreign clients only", next: "foreign" },
+        { label: "Mix of foreign and Indonesian clients", next: "mixed" },
+        { label: "Indonesian clients/companies only", next: "indonesian" },
       ],
     },
     {
       id: "foreign",
-      question: "Status visa Anda?",
+      question: "What's your visa status?",
       options: [
-        { label: "Turis/VOA", next: "foreign-tourist" },
-        { label: "Pemegang KITAS", next: "foreign-kitas" },
+        { label: "Tourist/VOA", next: "foreign-tourist" },
+        { label: "KITAS holder", next: "foreign-kitas" },
       ],
     },
     {
       id: "mixed",
       result: {
-        title: "Perusahaan Diperlukan",
+        title: "Company Required",
         description:
-          "Bekerja dengan klien Indonesia memerlukan struktur bisnis yang tepat (PT PMA) dan izin kerja. Klien asing-only memiliki fleksibilitas lebih.",
+          "Working with Indonesian clients requires proper business structure (PT PMA) and work permit. Foreign-only clients have more flexibility.",
       },
     },
     {
       id: "indonesian",
       result: {
-        title: "PT PMA Diperlukan",
+        title: "PT PMA Required",
         description:
-          "Bekerja dengan perusahaan Indonesia memerlukan PT PMA dan izin kerja yang tepat (KITAS). Ini tidak opsional - menagih entitas Indonesia tanpa struktur yang tepat adalah ilegal.",
+          "Working with Indonesian companies requires a PT PMA and proper work permit (KITAS). This is not optional - invoicing Indonesian entities without proper structure is illegal.",
       },
     },
     {
       id: "foreign-tourist",
       result: {
-        title: "Area Abu-abu",
+        title: "Gray Area",
         description:
-          "Secara teknis Anda seharusnya tidak bekerja dengan visa turis. Tetapi kerja remote untuk klien asing, dibayar ke rekening asing, secara luas ditolerir. Pertimbangkan Visa Digital Nomad E33G untuk tinggal lebih lama.",
+          "Technically you shouldn't work on tourist visa. But remote work for foreign clients, paid to foreign accounts, is widely tolerated. Consider E33G Digital Nomad Visa for longer stays.",
       },
     },
     {
       id: "foreign-kitas",
       result: {
-        title: "Periksa Tipe KITAS",
+        title: "Check KITAS Type",
         description:
-          "KITAS Anda mungkin mengizinkan atau tidak mengizinkan freelancing. KITAS izin-kerja biasanya mengikat Anda ke satu employer. Investor KITAS melalui PT PMA sendiri memberikan fleksibilitas paling banyak.",
+          "Your KITAS may or may not allow freelancing. Work-permit KITAS typically ties you to one employer. Investor KITAS through your own PT PMA gives most flexibility.",
       },
     },
   ]}
@@ -153,48 +154,48 @@ Banyak digital nomad yang bekerja freelance saat berada di Indonesia. Berikut ca
 ## Struktur Hukum
 
 <ComparisonTable
-  title="Opsi Legal Freelance"
-  description="Cara bekerja secara legal di Indonesia"
+  title="Freelance Legal Options"
+  description="Ways to work legally in Indonesia"
   items={[
     {
       name: "Remote Only",
-      subtitle: "Klien asing, pembayaran asing",
+      subtitle: "Foreign clients, foreign pay",
       values: {
-        Legality: "Area abu-abu",
-        Tax: "Negara asal",
-        Complexity: "Tidak ada",
-        "Best For": "Nomad jangka pendek",
+        Legality: "Gray area",
+        Tax: "Home country",
+        Complexity: "None",
+        "Best For": "Short-term nomads",
       },
     },
     {
       name: "PT PMA",
-      subtitle: "Perusahaan Indonesia",
+      subtitle: "Indonesian company",
       values: {
-        Legality: "Sepenuhnya legal",
-        Tax: "Indonesia",
-        Complexity: "Tinggi",
-        "Best For": "Klien Indonesia",
+        Legality: "Fully legal",
+        Tax: "Indonesian",
+        Complexity: "High",
+        "Best For": "Indonesian clients",
       },
     },
     {
       name: "PT PMA + Self-employ",
-      subtitle: "Direktur perusahaan sendiri",
+      subtitle: "Director of own company",
       values: {
-        Legality: "Sepenuhnya legal",
-        Tax: "Indonesia korporat + personal",
-        Complexity: "Tinggi",
-        "Best For": "Freelancer serius",
+        Legality: "Fully legal",
+        Tax: "Indonesian corporate + personal",
+        Complexity: "High",
+        "Best For": "Serious freelancers",
       },
       highlight: true,
     },
     {
       name: "Foreign Company",
-      subtitle: "Tagih dari luar negeri",
+      subtitle: "Invoice from abroad",
       values: {
-        Legality: "Legal (kerja asing)",
-        Tax: "Entitas asing",
-        Complexity: "Sedang",
-        "Best For": "Freelancer mapan",
+        Legality: "Legal (foreign work)",
+        Tax: "Foreign entity",
+        Complexity: "Medium",
+        "Best For": "Established freelancers",
       },
     },
   ]}
@@ -204,22 +205,22 @@ Banyak digital nomad yang bekerja freelance saat berada di Indonesia. Berikut ca
 
 ## Penjelasan Area Abu-abu
 
-<InfoCard variant="warning" title="Pahami Realitasnya">
-**Apa yang secara teknis ilegal:**
+<InfoCard variant="warning" title="Understand the Reality">
+**Hal yang secara teknis ilegal:**
 - Bekerja dengan visa turis/sosial
-- Memberikan layanan ke klien Indonesia tanpa PT PMA
-- Mendapatkan pendapatan bersumber Indonesia tanpa struktur yang tepat
+- Memberikan layanan kepada klien Indonesia tanpa PT PMA
+- Memperoleh penghasilan bersumber dari Indonesia tanpa struktur yang tepat
 
-**Apa yang secara luas ditolerir:**
+**Hal yang ditoleransi secara luas:**
 
-- Kerja remote untuk klien asing
+- Kerja jarak jauh untuk klien asing
 - Dibayar ke rekening bank asing
 - Tidak bersaing dengan pekerja Indonesia
-- Tinggal/berbelanja di Indonesia sebagai "turist"
+- Tinggal/membelanjakan uang di Indonesia sebagai "turis"
 
 **Risikonya:**
 
-- Masalah imigrasi (jarang)
+- Masalah imigrasi (jarang terjadi)
 - Implikasi pajak jika tinggal 183+ hari
 - Tidak ada perlindungan hukum untuk sengketa kerja
 
@@ -232,26 +233,26 @@ Banyak digital nomad yang bekerja freelance saat berada di Indonesia. Berikut ca
 ### Residensi Pajak
 
 <Calculator
-  title="Kalkulator Residensi Pajak"
-  description="Periksa apakah Anda residen pajak Indonesia"
+  title="Tax Residency Calculator"
+  description="Check if you're an Indonesian tax resident"
   fields={[
     {
       id: "days",
-      label: "Hari di Indonesia Tahun Ini",
+      label: "Days in Indonesia This Year",
       type: "number",
       defaultValue: 120,
       min: 0,
       max: 365,
-      suffix: "hari"
+      suffix: "days"
     },
     {
       id: "intention",
-      label: "Berencana Tinggal Jangka Panjang?",
+      label: "Plan to Stay Long-term?",
       type: "select",
       options: [
-        { value: "no", label: "Tidak, hanya sementara" },
-        { value: "maybe", label: "Mungkin, belum yakin" },
-        { value: "yes", label: "Ya, berencana tinggal" }
+        { value: "no", label: "No, temporary only" },
+        { value: "maybe", label: "Maybe, unsure" },
+        { value: "yes", label: "Yes, planning to stay" }
       ],
       defaultValue: "maybe"
     }
@@ -260,42 +261,42 @@ Banyak digital nomad yang bekerja freelance saat berada di Indonesia. Berikut ca
     const days = Number(values.days);
     const intention = values.intention;
 
-    let status = "Non-residen";
-    let risk = "Rendah";
+    let status = "Non-resident";
+    let risk = "Low";
 
     if (days >= 183) {
-      status = "Kemungkinan Residen Pajak";
-      risk = "Tinggi";
+      status = "Likely Tax Resident";
+      risk = "High";
     } else if (days >= 120 && intention === "yes") {
-      status = "Kemungkinan Residen Pajak";
-      risk = "Sedang";
+      status = "Possible Tax Resident";
+      risk = "Medium";
     } else if (days >= 90 && intention === "yes") {
-      status = "Kemungkinan Residen Pajak";
-      risk = "Rendah-Sedang";
+      status = "Possible Tax Resident";
+      risk = "Low-Medium";
     }
 
     return {
       total: days,
       breakdown: [
-        { label: "Hari di Indonesia", amount: days },
-        { label: "Ambang Batas Residensi Pajak", amount: 183 }
+        { label: "Days in Indonesia", amount: days },
+        { label: "Threshold for Tax Residency", amount: 183 }
       ],
-      currency: "hari",
-      note: `Status: ${status} | Tingkat Risiko: ${risk}`
+      currency: "days",
+      note: `Status: ${status} | Risk Level: ${risk}`
     };
 
 }}
 />
 
-### Tarif Pajak untuk Residen
+### Tarif Pajak untuk Penduduk
 
-| Pendapatan (IDR) | Tarif Pajak |
-| ---------------- | ----------- |
-| 0 - 60M          | 5%          |
-| 60M - 250M       | 15%         |
-| 250M - 500M      | 25%         |
-| 500M - 5B        | 30%         |
-| Di atas 5B       | 35%         |
+| Penghasilan (IDR) | Tarif Pajak |
+| ----------------- | ----------- |
+| 0 - 60M           | 5%          |
+| 60M - 250M        | 15%         |
+| 250M - 500M       | 25%         |
+| 500M - 5B         | 30%         |
+| Over 5B           | 35%         |
 
 ---
 
@@ -310,22 +311,22 @@ Banyak digital nomad yang bekerja freelance saat berada di Indonesia. Berikut ca
 
 ### Biaya PT PMA
 
-| Item                 | Biaya              |
-| -------------------- | ------------------ |
-| Setup                | IDR 50-100M        |
-| Persyaratan modal    | IDR 10B (komitmen) |
-| Pemeliharaan tahunan | IDR 30-50M         |
-| Izin kerja (KITAS)   | IDR 20-30M         |
+| Pos                 | Biaya               |
+| ------------------- | ------------------- |
+| Pendirian           | IDR 50-100M         |
+| Kebutuhan modal     | IDR 10B (komitmen)  |
+| Pemeliharaan tahunan| IDR 30-50M          |
+| Izin kerja (KITAS)  | IDR 20-30M          |
 
-<InfoCard variant="note" title="Apakah PT PMA Layak?">
+<InfoCard variant="note" title="Is PT PMA Worth It?">
 Untuk sebagian besar freelancer yang hanya bekerja dengan klien asing, PT PMA berlebihan.
 
 **Pertimbangkan PT PMA jika:**
 
 - Klien Indonesia ingin membayar Anda
 - Pendapatan membenarkan biayanya (IDR 100M+/tahun)
-- Anda menginginkan ketenangan pikiran hukum penuh
-- Anda membangun bisnis, bukan hanya freelancing
+- Anda menginginkan ketenangan pikiran secara hukum penuh
+- Anda sedang membangun bisnis, bukan sekadar bekerja lepas
 
 </InfoCard>
 
@@ -333,67 +334,67 @@ Untuk sebagian besar freelancer yang hanya bekerja dengan klien asing, PT PMA be
 
 ## Pendekatan Praktis
 
-### Pendekatan 1: Pure Remote
+### Pendekatan 1: Murni Remote
 
 <Checklist
-  title="Strategi Remote-Only"
-  description="Untuk freelancer klien asing"
+  title="Remote-Only Strategy"
+  description="For foreign-client freelancers"
   persistKey="remote-freelance-checklist"
   items={[
     {
       id: "visa",
-      label: "Visa yang sesuai (E33G Digital Nomad)",
-      description: "Bukan visa turis untuk tinggal lama",
+      label: "Appropriate visa (E33G Digital Nomad)",
+      description: "Not tourist visa for extended stays",
       required: true,
       category: "legal",
     },
     {
       id: "foreign-bank",
-      label: "Rekening bank asing",
-      description: "Menerima pembayaran di luar Indonesia",
+      label: "Foreign bank account",
+      description: "Receive payments outside Indonesia",
       required: true,
       category: "financial",
     },
     {
       id: "foreign-clients",
-      label: "Klien asing saja",
-      description: "Tidak ada faktur Indonesia",
+      label: "Foreign clients only",
+      description: "No Indonesian invoices",
       required: true,
       category: "work",
     },
     {
       id: "home-tax",
-      label: "Bayar pajak di negara asal",
-      description: "Pertahankan kewajiban pajak",
+      label: "Pay taxes in home country",
+      description: "Maintain tax obligations",
       required: true,
       category: "tax",
     },
     {
       id: "days-track",
-      label: "Lacak hari di Indonesia",
-      description: "Waspadai ambang batas 183 hari",
+      label: "Track days in Indonesia",
+      description: "Stay aware of 183-day threshold",
       required: true,
       category: "tax",
     },
   ]}
   categories={[
     { id: "legal", label: "Legal", color: "blue" },
-    { id: "financial", label: "Finansial", color: "green" },
-    { id: "work", label: "Kerja", color: "amber" },
-    { id: "tax", label: "Pajak", color: "red" },
+    { id: "financial", label: "Financial", color: "green" },
+    { id: "work", label: "Work", color: "amber" },
+    { id: "tax", label: "Tax", color: "red" },
   ]}
   showProgress={true}
 />
 
-### Pendekatan 2: Setup Indonesia yang Benar
+### Pendekatan 2: Pengaturan Indonesia yang Benar
 
-Untuk mereka yang menginginkan legalitas penuh:
+Bagi mereka yang menginginkan legalitas penuh:
 
 1. **Dirikan PT PMA** (~3-6 bulan)
-2. **Dapatkan Director KITAS** (melalui perusahaan Anda)
-3. **Daftar pajak** (NPWP, PKP jika diperlukan)
-4. **Faktur dengan benar** (faktur pajak Indonesia)
-5. **Bayar pajak Indonesia** (korporat dan personal)
+2. **Dapatkan KITAS Direktur** (melalui perusahaan Anda)
+3. **Daftar untuk pajak** (NPWP, PKP jika diperlukan)
+4. **Buat faktur dengan benar** (faktur pajak Indonesia)
+5. **Bayar pajak Indonesia** (korporat dan pribadi)
 
 ---
 
@@ -403,26 +404,26 @@ Beberapa freelancer menggunakan perusahaan asing:
 
 ### Manfaat
 
-- Tagih klien secara profesional
-- Pisahkan bisnis dari personal
+- Membuat faktur kepada klien secara profesional
+- Memisahkan bisnis dari pribadi
 - Peluang perencanaan pajak
-- Tidak perlu setup Indonesia
+- Tidak perlu pendirian di Indonesia
 
 ### Yurisdiksi Populer
 
-- Singapura (mahal tetapi dekat)
+- Singapura (mahal tapi dekat)
 - Hong Kong (ramah bisnis)
-- USA LLC (untuk residen AS)
-- Estonia e-Residency (akses EU)
+- USA LLC (untuk penduduk AS)
+- Estonia e-Residency (akses UE)
 
-<InfoCard variant="tip" title="Singapura vs Lainnya">
-Singapura populer untuk freelancer berbasis Indonesia:
+<InfoCard variant="tip" title="Singapore vs Others">
+Singapura populer bagi freelancer yang berbasis di Indonesia:
 - Zona waktu dekat
 - Ramah bisnis
-- Perbankan bagus
+- Perbankan yang baik
 - Citra profesional
 
-Tetapi biaya tahunan $2-5K+.
+Namun biaya tahunan $2-5K+.
 
 </InfoCard>
 
@@ -438,11 +439,11 @@ Tetapi biaya tahunan $2-5K+.
 
 ### Cakupan yang Direkomendasikan
 
-| Asuransi                   | Tujuan                         |
-| -------------------------- | ------------------------------ |
-| Asuransi kesehatan         | Cakupan medis                  |
-| Tanggung jawab profesional | Sengketa klien                 |
-| Peralatan                  | Perlindungan laptop, peralatan |
+| Asuransi               | Tujuan                  |
+| ---------------------- | ----------------------- |
+| Asuransi kesehatan     | Cakupan medis           |
+| Tanggung jawab profesional | Sengketa klien      |
+| Peralatan              | Perlindungan laptop, peralatan |
 
 ---
 
@@ -450,36 +451,36 @@ Tetapi biaya tahunan $2-5K+.
 
 ### Untuk Freelancer Remote
 
-| Solusi           | Keunggulan                      | Kekurangan            |
-| ---------------- | ------------------------------- | --------------------- |
-| Wise             | Multi-mata uang, transfer murah | Bukan bank penuh      |
-| Revolut          | Bagus untuk pengeluaran         | Terbatas di Indonesia |
-| Bank negara asal | Stabil, familiar                | Biaya transfer        |
-| Bank Indonesia   | Pembayaran lokal                | Butuh KITAS           |
+| Solusi               | Kelebihan                       | Kekurangan              |
+| -------------------- | ------------------------------- | ----------------------- |
+| Wise                 | Multi-mata uang, transfer murah | Bukan bank penuh        |
+| Revolut              | Baik untuk belanja              | Terbatas di Indonesia   |
+| Bank negara asal     | Stabil, familiar                | Biaya transfer          |
+| Bank lokal Indonesia | Pembayaran lokal                | Membutuhkan KITAS       |
 
 ---
 
 ## Kesalahan Umum
 
 1. **Bekerja dengan visa turis jangka panjang** - Dapatkan visa yang tepat
-2. **Menagih perusahaan Indonesia** - Butuh PT PMA
-3. **Mengabaikan residensi pajak** - Lacak hari Anda
-4. **Tidak ada kontrak** - Selalu memiliki perjanjian
-5. **Tidak melacak pendapatan** - Simpan catatan
-6. **Mencampur personal/bisnis** - Rekening terpisah
-7. **Mengasumsikan tidak ada yang peduli** - Aturan dapat berubah
+2. **Membuat faktur kepada perusahaan Indonesia** - Membutuhkan PT PMA
+3. **Mengabaikan residensi pajak** - Pantau hari Anda
+4. **Tidak ada kontrak** - Selalu miliki perjanjian
+5. **Tidak mencatat pendapatan** - Simpan catatan
+6. **Mencampur pribadi/bisnis** - Pisahkan rekening
+7. **Menganggap tidak ada yang peduli** - Aturan dapat berubah
 
 ---
 
-## Kapan Mendapat Bantuan Profesional
+## Kapan Mendapatkan Bantuan Profesional
 
-Pertimbangkan berkonsultasi dengan profesional jika:
+Pertimbangkan untuk berkonsultasi dengan profesional jika:
 
 - Klien Indonesia ingin mempekerjakan Anda
 - Anda tinggal 183+ hari
 - Anda menginginkan kepatuhan hukum penuh
-- Anda mendapatkan pendapatan signifikan
-- Anda membangun bisnis
+- Anda memperoleh penghasilan yang signifikan
+- Anda sedang membangun bisnis
 
 ---
 
@@ -487,12 +488,12 @@ Pertimbangkan berkonsultasi dengan profesional jika:
 
 <AskZantara
   context="Freelancing Indonesia, digital nomad tax, legal work indonesia, PT PMA freelancer"
-  placeholder="Tanyakan tentang freelancing secara legal..."
+  placeholder="Ask about freelancing legally..."
   suggestedQuestions={[
-    "Apakah saya perlu membayar pajak Indonesia?",
-    "Bisakah saya menagih perusahaan Indonesia?",
-    "Visa apa yang terbaik untuk freelancer?",
-    "Haruskah saya mendirikan PT PMA?",
+    "Do I need to pay Indonesian tax?",
+    "Can I invoice Indonesian companies?",
+    "What visa is best for freelancers?",
+    "Should I set up a PT PMA?",
   ]}
 />
 
@@ -500,6 +501,6 @@ Pertimbangkan berkonsultasi dengan profesional jika:
 
 ## Artikel Terkait
 
-- [Opsi Visa Digital Nomad](/visas/e33g-remote-worker-visa-guide?lang=id)
-- [Panduan Pajak Penghasilan Personal](/taxes/pph-21-expat-guide?lang=id)
-- [Panduan Setup PT PMA](/business/foreign-company-incorporation-steps?lang=id)
+- [Opsi Visa Digital Nomad](/visas/e33g-remote-worker-visa-guide)
+- [Panduan Pajak Penghasilan Pribadi](/taxes/pph-21-expat-guide)
+- [Panduan Pendirian PT PMA](/business/foreign-company-incorporation-steps)

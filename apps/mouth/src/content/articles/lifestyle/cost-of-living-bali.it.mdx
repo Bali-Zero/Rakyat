@@ -77,6 +77,7 @@ locale: "it"
 canonicalUrl: "https://balizero.com/it/lifestyle/cost-of-living-bali"
 ogImage: "/static/insights/lifestyle/cost-of-living-bali.jpg"
 twitterCard: "summary_large_image"
+source_sha256: "ed377c8286cfcd3a428544dd894484feb7614fbd7e84c9464375c9513658b861"
 ---
 
 import {
@@ -88,41 +89,66 @@ import {
 
 # Costo della vita a Bali 2026: Guida completa al budget per expat
 
-Bali può essere sorprendentemente economica o sorprendentemente costosa, a seconda delle tue scelte di vita. Ecco una ripartizione realistica.
+Bali può essere sorprendentemente economica o sorprendentemente costosa - a seconda delle tue scelte di stile di vita. Ecco una ripartizione realistica.
 
 ## Calcolatore del budget
 
 <Calculator
-  title="Calcolatore del budget mensile a Bali"
-  description="Stima i tuoi costi mensili"
+  title="Monthly Bali Budget Calculator"
+  description="Estimate your monthly costs"
   fields={[
     {
       id: "accommodation",
-      label: "Stile di alloggio",
+      label: "Accommodation Style",
       type: "select",
       options: [
-        { value: "basic", label: "Camera semplice/kos" },
-        { value: "apartment", label: "Monolocale/appartamento" },
-        { value: "villa-share", label: "Villa in condivisione" },
-        { value: "villa", label: "Villa privata (2 camere)" },
-        { value: "luxury", label: "Villa di lusso (3+ camere)" }
+        { value: "basic", label: "Basic room/kos" },
+        { value: "apartment", label: "Apartment/studio" },
+        { value: "villa-share", label: "Villa share" },
+        { value: "villa", label: "Private villa (2br)" },
+        { value: "luxury", label: "Luxury villa (3br+)" }
       ],
       defaultValue: "apartment"
     },
     {
       id: "food",
-      label: "Stile alimentare",
+      label: "Food Style",
       type: "select",
       options: [
-        { value: "local", label: "Prevalentemente locale (warung)" },
-        { value: "mixed", label: "Misto locale + caffè" },
-        { value: "western", label: "Prevalentemente caffè occidentali" },
-        { value: "premium", label: "Ristoranti di alto livello" }
+        { value: "local", label: "Mostly local (warungs)" },
+        { value: "mixed", label: "Mixed local + cafes" },
+        { value: "western", label: "Mostly western cafes" },
+        { value: "premium", label: "Restaurants + dining out" }
       ],
       defaultValue: "mixed"
+    },
+    {
+      id: "transport",
+      label: "Transport",
+      type: "select",
+      options: [
+        { value: "scooter", label: "Rent scooter" },
+        { value: "own-scooter", label: "Own scooter" },
+        { value: "car", label: "Rent car" },
+        { value: "driver", label: "Car + driver" }
+      ],
+      defaultValue: "scooter"
+    },
+    {
+      id: "lifestyle",
+      label: "Activities & Social",
+      type: "select",
+      options: [
+        { value: "minimal", label: "Minimal" },
+        { value: "moderate", label: "Moderate" },
+        { value: "active", label: "Active social life" },
+        { value: "full", label: "Full lifestyle" }
+      ],
+      defaultValue: "moderate"
     }
   ]}
   calculateResult={(values) => {
+    // Accommodation costs
     const accommodationCosts = {
       "basic": 3000000,
       "apartment": 7000000,
@@ -131,6 +157,7 @@ Bali può essere sorprendentemente economica o sorprendentemente costosa, a seco
       "luxury": 35000000
     };
 
+    // Food costs
     const foodCosts = {
       "local": 3000000,
       "mixed": 6000000,
@@ -138,23 +165,44 @@ Bali può essere sorprendentemente economica o sorprendentemente costosa, a seco
       "premium": 18000000
     };
 
+    // Transport costs
+    const transportCosts = {
+      "scooter": 1000000,
+      "own-scooter": 500000,
+      "car": 6000000,
+      "driver": 12000000
+    };
+
+    // Lifestyle costs
+    const lifestyleCosts = {
+      "minimal": 1500000,
+      "moderate": 4000000,
+      "active": 8000000,
+      "full": 15000000
+    };
+
     const accommodation = accommodationCosts[values.accommodation];
     const food = foodCosts[values.food];
-    const transport = 1000000; // scooter
-    const utilities = 1000000; // utenze varie
+    const transport = transportCosts[values.transport];
+    const lifestyle = lifestyleCosts[values.lifestyle];
+    const utilities = 500000;
+    const internet = 500000;
+    const phone = 200000;
 
-    const total = accommodation + food + transport + utilities;
+    const total = accommodation + food + transport + lifestyle + utilities + internet + phone;
 
     return {
       total: total,
       breakdown: [
-        { label: "Alloggio", amount: accommodation },
-        { label: "Cibo e ristorazione", amount: food },
-        { label: "Trasporti", amount: transport },
-        { label: "Utenze e varie", amount: utilities }
+        { label: "Accommodation", amount: accommodation },
+        { label: "Food & Dining", amount: food },
+        { label: "Transport", amount: transport },
+        { label: "Lifestyle & Activities", amount: lifestyle },
+        { label: "Utilities", amount: utilities },
+        { label: "Internet & Phone", amount: internet + phone }
       ],
       currency: "IDR",
-      note: `Circa ${Math.round(total / 16000)} USD/mese`
+      note: `Approximately USD ${Math.round(total / 16000)}/month`
     };
 
 }}
@@ -165,38 +213,48 @@ Bali può essere sorprendentemente economica o sorprendentemente costosa, a seco
 ## Livelli di stile di vita
 
 <ComparisonTable
-  title="Budget mensile per stile di vita"
-  description="Fasce realistiche per diversi standard"
+  title="Monthly Budget by Lifestyle"
+  description="Realistic ranges for different living standards"
   items={[
     {
-      name: "Economico",
-      subtitle: "Backpacker/Nomade",
+      name: "Budget",
+      subtitle: "Backpacker/Nomad",
       values: {
-        "Totale mensile": "8-12M IDR",
-        "Equivalente in €": "500-750€",
-        Alloggio: "Camera semplice/kos",
-        Cibo: "Warung locali",
+        "Monthly Total": "IDR 8-12M",
+        "USD Equivalent": "$500-750",
+        Accommodation: "Basic kos/room",
+        Food: "Local warungs",
       },
     },
     {
-      name: "Confortevole",
-      subtitle: "Nomade Digitale",
+      name: "Comfortable",
+      subtitle: "Digital Nomad",
       values: {
-        "Totale mensile": "15-25M IDR",
-        "Equivalente in €": "1.000-1.500€",
-        Alloggio: "Appartamento/Villa condivisa",
-        Cibo: "Misto locale + caffè",
+        "Monthly Total": "IDR 15-25M",
+        "USD Equivalent": "$1,000-1,500",
+        Accommodation: "Apartment/villa share",
+        Food: "Mixed local + cafes",
       },
       highlight: true,
     },
     {
-      name: "Premium",
-      subtitle: "Stile Lusso",
+      name: "Good Life",
+      subtitle: "Expat Standard",
       values: {
-        "Totale mensile": "70M+ IDR",
-        "Equivalente in €": "4.500€+",
-        Alloggio: "Villa di lusso",
-        Cibo: "Fine dining",
+        "Monthly Total": "IDR 30-50M",
+        "USD Equivalent": "$2,000-3,000",
+        Accommodation: "Private villa",
+        Food: "Western + dining",
+      },
+    },
+    {
+      name: "Premium",
+      subtitle: "Luxury Lifestyle",
+      values: {
+        "Monthly Total": "IDR 70M+",
+        "USD Equivalent": "$4,500+",
+        Accommodation: "Luxury villa",
+        Food: "Fine dining",
       },
     },
   ]}
@@ -208,45 +266,174 @@ Bali può essere sorprendentemente economica o sorprendentemente costosa, a seco
 
 ### Fasce di affitto mensile
 
-| Tipo              | Range mensile (IDR) | Euro (circa)  | Note               |
-| ----------------- | ------------------- | ------------- | ------------------ |
-| Kos (camera)      | 1,5-4M              | 90-250€       | Essenziale         |
-| Monolocale        | 5-10M               | 300-600€      | Con cucina         |
-| Appartamento 1 ch | 8-15M               | 500-900€      | In buona zona      |
-| Villa 2 camere    | 12-25M              | 750-1.500€    | Piscina e giardino |
-| Villa 3+ camere   | 20-50M+             | 1.250-3.000€+ | Famiglia/premium   |
+| Tipo              | Intervallo mensile (IDR) | USD           | Note              |
+| ----------------- | ------------------------ | ------------- | ----------------- |
+| Kos (camera)      | 1.5-4M                   | $100-250      | Semplice, zona locale |
+| Monolocale        | 5-10M                    | $300-600      | Con cucina        |
+| Appartamento 1BR  | 8-15M                    | $500-900      | In buona zona     |
+| Villa 2BR         | 12-25M                   | $750-1,500    | Piscina, giardino |
+| Villa 3BR+        | 20-50M+                  | $1,250-3,000+ | Famiglia/premium  |
+
+### Impatto della posizione
+
+| Zona      | Livello di prezzo | Caratteristiche   |
+| --------- | ----------------- | ----------------- |
+| Seminyak  | $$$$$             | Premium, centrale |
+| Canggu    | $$$$              | Alla moda, nomadi |
+| Ubud      | $$$               | Tranquilla, cultura |
+| Sanur     | $$$               | Famiglia, rilassata |
+| Pererenan | $$$               | Emergente         |
+| Uluwatu   | $$$               | Surf, scogliere   |
+| Tabanan   | $$                | Locale, tranquilla |
+
+<InfoCard variant="tip" title="Long-term Savings">
+
+  - La tariffa mensile è più economica di quella giornaliera/settimanale - il contratto di 6-12 mesi offre le
+  tariffe migliori - Negozia durante la bassa stagione - Valuta di includere le utenze nell'affitto
+</InfoCard>
 
 ---
 
 ## Cibo e ristorazione
 
-| Opzione         | Costo per pasto | Mensile (3x/giorno) |
-| --------------- | --------------- | ------------------- |
-| Warung (locale) | 20-40k IDR      | 2-3,5M IDR          |
-| Pasto in caffè  | 60-100k IDR     | 5-9M IDR            |
-| Ristorante      | 100-200k IDR    | 9-18M IDR           |
-| Cucinare a casa | 15-30k IDR      | 1,5-3M IDR          |
+### Opzioni per mangiare
+
+| Opzione           | Costo per pasto | Mensile (3x/giorno) |
+| ----------------- | --------------- | ------------------- |
+| Warung (locale)   | IDR 20-40K      | IDR 2-3.5M          |
+| Pasto al caffè    | IDR 60-100K     | IDR 5-9M            |
+| Ristorante        | IDR 100-200K    | IDR 9-18M           |
+| Alta cucina       | IDR 300K+       | IDR 27M+            |
+| Cucinare a casa   | IDR 15-30K      | IDR 1.5-3M          |
+
+### Spesa alimentare
+
+| Prodotto          | Costo approssimativo |
+| ----------------- | -------------------- |
+| Riso (5kg)        | IDR 60-80K           |
+| Uova (30)         | IDR 50-60K           |
+| Pollo (1kg)       | IDR 35-50K           |
+| Formaggio importato | IDR 80-150K        |
+| Vino (bottiglia)  | IDR 200-400K         |
+| Birra (Bintang)   | IDR 25-40K           |
 
 ---
 
 ## Trasporti
 
-| Mezzo            | Costo mensile | Note           |
-| ---------------- | ------------- | -------------- |
-| Noleggio scooter | 0,8-1,5M IDR  | Il più comune  |
-| Acquisto scooter | 15-25M IDR    | Una tantum     |
-| Benzina scooter  | 200-400k IDR  | Mensile        |
-| Noleggio auto    | 5-8M IDR      | Guida autonoma |
-| Auto + autista   | 10-15M IDR    | Tempo pieno    |
+### Opzioni e costi
+
+| Mezzo            | Costo mensile   | Note          |
+| ---------------- | --------------- | ------------- |
+| Noleggio scooter | IDR 800K-1.5M  | Il più comune |
+| Acquisto scooter | IDR 15-25M      | Una tantum    |
+| Benzina scooter  | IDR 200-400K    | Mensile       |
+| Noleggio auto    | IDR 5-8M        | Guida autonoma |
+| Auto + autista   | IDR 10-15M      | A tempo pieno |
+| Gojek/Grab       | IDR 1-3M        | Su richiesta  |
+
+<InfoCard variant="note" title="Scooter is Essential">
+La maggior parte degli expat a Bali noleggia o acquista uno scooter. È:
+- Il più pratico nel traffico
+- Economico
+- Facile da parcheggiare
+- Flessibile
+
+Stipula un'assicurazione adeguata e indossa sempre il casco!
+
+</InfoCard>
 
 ---
 
-## Suggerimenti per risparmiare
+## Altri costi mensili
 
-1. **Mangia locale** - I warung sono deliziosi ed economici.
-2. **Affitto a lungo termine** - Negozia per 6-12 mesi.
-3. **Compra uno scooter** - Più conveniente del noleggio a lungo termine.
-4. **SIM locale** - Molto più economica del roaming.
+### Utenze e servizi
+
+| Voce                 | Costo mensile  |
+| -------------------- | -------------- |
+| Elettricità          | IDR 300-800K   |
+| Acqua                | IDR 100-200K   |
+| Internet (fibra)     | IDR 400-800K   |
+| Telefono/dati        | IDR 100-300K   |
+| Pulizie (settimanale) | IDR 400-800K  |
+| Manutenzione piscina | IDR 500K-1M    |
+
+### Salute e fitness
+
+| Voce                 | Costo                |
+| -------------------- | -------------------- |
+| Abbonamento in palestra | IDR 500K-1.5M/mese |
+| Lezione di yoga      | IDR 150-200K/lezione |
+| Lezione di surf      | IDR 400-600K/sessione |
+| Massaggio            | IDR 150-300K         |
+| Visita medica        | IDR 300-600K         |
+
+### Intrattenimento
+
+| Voce                          | Costo        |
+| ----------------------------- | ------------ |
+| Ingresso beach club           | IDR 250K-1M  |
+| Biglietto del cinema          | IDR 50-80K   |
+| Serata in discoteca           | IDR 500K-2M  |
+| Pass giornaliero coworking    | IDR 100-200K |
+| Abbonamento mensile coworking | IDR 1.5-3M   |
+
+---
+
+## Bali vs altre destinazioni
+
+<ComparisonTable
+  title="Monthly Cost Comparison"
+  description="Bali vs other nomad destinations"
+  items={[
+    {
+      name: "Bali, Indonesia",
+      values: {
+        Comfortable: "$1,000-1,500",
+        Good: "$2,000-3,000",
+        Visa: "E33G Digital Nomad",
+      },
+      highlight: true,
+    },
+    {
+      name: "Chiang Mai, Thailand",
+      values: {
+        Comfortable: "$1,000-1,500",
+        Good: "$1,500-2,500",
+        Visa: "60 days + extend",
+      },
+    },
+    {
+      name: "Lisbon, Portugal",
+      values: {
+        Comfortable: "$2,500-3,500",
+        Good: "$3,500-5,000",
+        Visa: "D7/Nomad",
+      },
+    },
+    {
+      name: "Mexico City",
+      values: {
+        Comfortable: "$1,500-2,000",
+        Good: "$2,500-3,500",
+        Visa: "180 days tourist",
+      },
+    },
+  ]}
+/>
+
+---
+
+## Consigli per risparmiare
+
+1. **Mangia locale** - I warung sono deliziosi ed economici
+2. **Affitto a lungo termine** - Negozia per 6-12 mesi
+3. **Acquista uno scooter** - Più economico che noleggiare a lungo termine
+4. **Cucina qualche volta** - I mercati offrono ottimi prodotti freschi
+5. **Bassa stagione** - Evita l'alta stagione per l'alloggio
+6. **SIM locale** - Molto più economica del roaming
+7. **Bintang invece delle importate** - La birra locale è economica
+8. **Spiagge gratuite** - Evita i costosi beach club
 
 ---
 
@@ -254,11 +441,12 @@ Bali può essere sorprendentemente economica o sorprendentemente costosa, a seco
 
 <AskZantara
   context="Cost of living Bali, expat budget, digital nomad costs, living expenses Indonesia"
-  placeholder="Chiedi sul costo della vita..."
+  placeholder="Ask about cost of living..."
   suggestedQuestions={[
-    "Bali sta diventando più cara?",
-    "Qual è la zona più economica?",
-    "Quanto costa per una famiglia di 4 persone?",
+    "Is Bali getting more expensive?",
+    "What's the cheapest area to live?",
+    "How much for a family of 4?",
+    "Are there hidden costs?",
   ]}
 />
 
@@ -266,6 +454,6 @@ Bali può essere sorprendentemente economica o sorprendentemente costosa, a seco
 
 ## Articoli correlati
 
-- [Guide Visti e Immigrazione](/immigration)
-- [Banche per stranieri](/insights/lifestyle/banking-for-foreigners)
-- [Assicurazione sanitaria](/insights/lifestyle/health-insurance-foreigners)
+- [Guide a visti e immigrazione](/immigration)
+- [Servizi bancari per stranieri](/insights/lifestyle/banking-for-foreigners)
+- [Assicurazione sanitaria per stranieri](/insights/lifestyle/health-insurance-foreigners)

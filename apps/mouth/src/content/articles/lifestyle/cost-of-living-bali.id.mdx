@@ -77,6 +77,7 @@ locale: "id"
 canonicalUrl: "https://balizero.com/id/lifestyle/cost-of-living-bali"
 ogImage: "/static/insights/lifestyle/cost-of-living-bali.jpg"
 twitterCard: "summary_large_image"
+source_sha256: "ed377c8286cfcd3a428544dd894484feb7614fbd7e84c9464375c9513658b861"
 ---
 
 import {
@@ -86,43 +87,68 @@ import {
   AskZantara,
 } from "@/components/insights/interactive";
 
-# Biaya Hidup di Bali 2026: Panduan Lengkap Anggaran Ekspatriat
+# Biaya Hidup di Bali 2026: Panduan Lengkap Anggaran Ekspat
 
-Bali bisa menjadi sangat terjangkau atau sangat mahal - tergantung pada pilihan gaya hidup Anda. Berikut adalah rincian realistisnya.
+Bali bisa sangat terjangkau atau sangat mahal - tergantung pilihan gaya hidup Anda. Berikut perincian yang realistis.
 
 ## Kalkulator Anggaran
 
 <Calculator
-  title="Kalkulator Anggaran Bulanan Bali"
-  description="Estimasi biaya bulanan Anda"
+  title="Monthly Bali Budget Calculator"
+  description="Estimate your monthly costs"
   fields={[
     {
       id: "accommodation",
-      label: "Gaya Akomodasi",
+      label: "Accommodation Style",
       type: "select",
       options: [
-        { value: "basic", label: "Kamar kos dasar" },
-        { value: "apartment", label: "Apartemen/studio" },
-        { value: "villa-share", label: "Berbagi vila" },
-        { value: "villa", label: "Vila pribadi (2 KT)" },
-        { value: "luxury", label: "Vila mewah (3 KT+)" }
+        { value: "basic", label: "Basic room/kos" },
+        { value: "apartment", label: "Apartment/studio" },
+        { value: "villa-share", label: "Villa share" },
+        { value: "villa", label: "Private villa (2br)" },
+        { value: "luxury", label: "Luxury villa (3br+)" }
       ],
       defaultValue: "apartment"
     },
     {
       id: "food",
-      label: "Gaya Makan",
+      label: "Food Style",
       type: "select",
       options: [
-        { value: "local", label: "Dominan lokal (warung)" },
-        { value: "mixed", label: "Campur lokal + kafe" },
-        { value: "western", label: "Dominan kafe barat" },
-        { value: "premium", label: "Restoran mewah" }
+        { value: "local", label: "Mostly local (warungs)" },
+        { value: "mixed", label: "Mixed local + cafes" },
+        { value: "western", label: "Mostly western cafes" },
+        { value: "premium", label: "Restaurants + dining out" }
       ],
       defaultValue: "mixed"
+    },
+    {
+      id: "transport",
+      label: "Transport",
+      type: "select",
+      options: [
+        { value: "scooter", label: "Rent scooter" },
+        { value: "own-scooter", label: "Own scooter" },
+        { value: "car", label: "Rent car" },
+        { value: "driver", label: "Car + driver" }
+      ],
+      defaultValue: "scooter"
+    },
+    {
+      id: "lifestyle",
+      label: "Activities & Social",
+      type: "select",
+      options: [
+        { value: "minimal", label: "Minimal" },
+        { value: "moderate", label: "Moderate" },
+        { value: "active", label: "Active social life" },
+        { value: "full", label: "Full lifestyle" }
+      ],
+      defaultValue: "moderate"
     }
   ]}
   calculateResult={(values) => {
+    // Accommodation costs
     const accommodationCosts = {
       "basic": 3000000,
       "apartment": 7000000,
@@ -131,6 +157,7 @@ Bali bisa menjadi sangat terjangkau atau sangat mahal - tergantung pada pilihan 
       "luxury": 35000000
     };
 
+    // Food costs
     const foodCosts = {
       "local": 3000000,
       "mixed": 6000000,
@@ -138,23 +165,44 @@ Bali bisa menjadi sangat terjangkau atau sangat mahal - tergantung pada pilihan 
       "premium": 18000000
     };
 
+    // Transport costs
+    const transportCosts = {
+      "scooter": 1000000,
+      "own-scooter": 500000,
+      "car": 6000000,
+      "driver": 12000000
+    };
+
+    // Lifestyle costs
+    const lifestyleCosts = {
+      "minimal": 1500000,
+      "moderate": 4000000,
+      "active": 8000000,
+      "full": 15000000
+    };
+
     const accommodation = accommodationCosts[values.accommodation];
     const food = foodCosts[values.food];
-    const transport = 1000000; // default scooter
-    const utilities = 1000000; // phone, electricity, internet
+    const transport = transportCosts[values.transport];
+    const lifestyle = lifestyleCosts[values.lifestyle];
+    const utilities = 500000;
+    const internet = 500000;
+    const phone = 200000;
 
-    const total = accommodation + food + transport + utilities;
+    const total = accommodation + food + transport + lifestyle + utilities + internet + phone;
 
     return {
       total: total,
       breakdown: [
-        { label: "Akomodasi", amount: accommodation },
-        { label: "Makan & Minum", amount: food },
-        { label: "Transportasi", amount: transport },
-        { label: "Utilitas & Lainnya", amount: utilities }
+        { label: "Accommodation", amount: accommodation },
+        { label: "Food & Dining", amount: food },
+        { label: "Transport", amount: transport },
+        { label: "Lifestyle & Activities", amount: lifestyle },
+        { label: "Utilities", amount: utilities },
+        { label: "Internet & Phone", amount: internet + phone }
       ],
       currency: "IDR",
-      note: `Sekitar USD ${Math.round(total / 16000)}/bulan`
+      note: `Approximately USD ${Math.round(total / 16000)}/month`
     };
 
 }}
@@ -162,41 +210,51 @@ Bali bisa menjadi sangat terjangkau atau sangat mahal - tergantung pada pilihan 
 
 ---
 
-## Tingkatan Gaya Hidup
+## Tingkat Gaya Hidup
 
 <ComparisonTable
-  title="Anggaran Bulanan per Gaya Hidup"
-  description="Rentang realistis untuk standar hidup yang berbeda"
+  title="Monthly Budget by Lifestyle"
+  description="Realistic ranges for different living standards"
   items={[
     {
-      name: "Hemat",
+      name: "Budget",
       subtitle: "Backpacker/Nomad",
       values: {
-        "Total Bulanan": "Rp 8-12jt",
-        "Setara USD": "$500-750",
-        Akomodasi: "Kamar kos dasar",
-        Makan: "Warung lokal",
+        "Monthly Total": "IDR 8-12M",
+        "USD Equivalent": "$500-750",
+        Accommodation: "Basic kos/room",
+        Food: "Local warungs",
       },
     },
     {
-      name: "Nyaman",
+      name: "Comfortable",
       subtitle: "Digital Nomad",
       values: {
-        "Total Bulanan": "Rp 15-25jt",
-        "Setara USD": "$1.000-1.500",
-        Akomodasi: "Apartemen/Vila share",
-        Makan: "Campur lokal + kafe",
+        "Monthly Total": "IDR 15-25M",
+        "USD Equivalent": "$1,000-1,500",
+        Accommodation: "Apartment/villa share",
+        Food: "Mixed local + cafes",
       },
       highlight: true,
     },
     {
-      name: "Mewah",
-      subtitle: "Standar Ekspatriat",
+      name: "Good Life",
+      subtitle: "Expat Standard",
       values: {
-        "Total Bulanan": "Rp 70jt+",
-        "Setara USD": "$4.500+",
-        Akomodasi: "Vila mewah",
-        Makan: "Restoran fine dining",
+        "Monthly Total": "IDR 30-50M",
+        "USD Equivalent": "$2,000-3,000",
+        Accommodation: "Private villa",
+        Food: "Western + dining",
+      },
+    },
+    {
+      name: "Premium",
+      subtitle: "Luxury Lifestyle",
+      values: {
+        "Monthly Total": "IDR 70M+",
+        "USD Equivalent": "$4,500+",
+        Accommodation: "Luxury villa",
+        Food: "Fine dining",
       },
     },
   ]}
@@ -206,50 +264,178 @@ Bali bisa menjadi sangat terjangkau atau sangat mahal - tergantung pada pilihan 
 
 ## Biaya Akomodasi
 
-### Rentang Sewa Bulanan
+### Kisaran Sewa Bulanan
 
-| Jenis            | Rentang Bulanan (Rp) | USD           | Catatan             |
-| :--------------- | :------------------- | :------------ | :------------------ |
-| Kos (kamar)      | 1,5-4jt              | $100-250      | Dasar, area lokal   |
-| Apartemen studio | 5-10jt               | $300-600      | Dengan dapur        |
-| Apartemen 1 KT   | 8-15jt               | $500-900      | Di area bagus       |
-| Vila 2 KT        | 12-25jt              | $750-1.500    | Kolam renang, kebun |
-| Vila 3 KT+       | 20-50jt+             | $1.250-3.000+ | Keluarga/premium    |
+| Tipe             | Kisaran Bulanan (IDR) | USD           | Catatan                 |
+| ---------------- | --------------------- | ------------- | ----------------------- |
+| Kos (kamar)      | 1.5-4M                | $100-250      | Dasar, area lokal       |
+| Apartemen studio | 5-10M                 | $300-600      | Dengan dapur            |
+| Apartemen 1BR    | 8-15M                 | $500-900      | Di area yang bagus      |
+| Vila 2BR         | 12-25M                | $750-1,500    | Kolam renang, taman     |
+| Vila 3BR+        | 20-50M+               | $1,250-3,000+ | Keluarga/premium        |
+
+### Dampak Lokasi
+
+| Area      | Tingkat Harga | Karakteristik          |
+| --------- | ------------ | ---------------------- |
+| Seminyak  | $$$$$        | Premium, pusat         |
+| Canggu    | $$$$         | Trendi, nomad          |
+| Ubud      | $$$          | Tenang, budaya         |
+| Sanur     | $$$          | Keluarga, santai       |
+| Pererenan | $$$          | Sedang berkembang      |
+| Uluwatu   | $$$          | Selancar, tebing       |
+| Tabanan   | $$           | Lokal, tenang          |
+
+<InfoCard variant="tip" title="Long-term Savings">
+
+  - Tarif bulanan lebih murah daripada tarif harian/mingguan - Masa sewa 6-12 bulan menawarkan harga terbaik
+  - Negosiasikan saat musim sepi
+  - Pertimbangkan untuk memasukkan biaya utilitas dalam harga sewa
+</InfoCard>
 
 ---
 
-## Makan & Minum
+## Makanan & Bersantap
 
-### Opsi Makan
+### Pilihan Makan
 
-| Opsi            | Biaya per Makan | Bulanan (3x/hari) |
-| :-------------- | :-------------- | :---------------- |
-| Warung (lokal)  | Rp 20-40rb      | Rp 2-3,5jt        |
-| Kafe            | Rp 60-100rb     | Rp 5-9jt          |
-| Restoran        | Rp 100-200rb    | Rp 9-18jt         |
-| Memasak sendiri | Rp 15-30rb      | Rp 1,5-3jt        |
+| Pilihan         | Biaya per Makan | Bulanan (3x/hari) |
+| --------------- | --------------- | ----------------- |
+| Warung (lokal)  | IDR 20-40K      | IDR 2-3.5M        |
+| Makanan kafe    | IDR 60-100K     | IDR 5-9M          |
+| Restoran        | IDR 100-200K    | IDR 9-18M         |
+| Fine dining     | IDR 300K+       | IDR 27M+          |
+| Memasak di rumah | IDR 15-30K     | IDR 1.5-3M        |
+
+### Bahan Makanan
+
+| Barang          | Perkiraan Biaya |
+| --------------- | --------------- |
+| Beras (5kg)     | IDR 60-80K      |
+| Telur (30)      | IDR 50-60K      |
+| Ayam (1kg)      | IDR 35-50K      |
+| Keju impor      | IDR 80-150K     |
+| Anggur (botol)  | IDR 200-400K    |
+| Bir (Bintang)   | IDR 25-40K      |
 
 ---
 
 ## Transportasi
 
-| Moda          | Biaya Bulanan    | Catatan      |
-| :------------ | :--------------- | :----------- |
-| Sewa motor    | Rp 800rb - 1,5jt | Paling umum  |
-| Beli motor    | Rp 15-25jt       | Sekali bayar |
-| Bensin motor  | Rp 200-400rb     | Bulanan      |
-| Sewa mobil    | Rp 5-8jt         | Lepas kunci  |
-| Mobil + supir | Rp 10-15jt       | Full-time    |
+### Pilihan dan Biaya
+
+| Moda             | Biaya Bulanan | Catatan            |
+| ---------------- | ------------- | ------------------ |
+| Sewa skuter      | IDR 800K-1.5M | Paling umum        |
+| Beli skuter      | IDR 15-25M    | Sekali bayar       |
+| Bensin skuter    | IDR 200-400K  | Bulanan            |
+| Sewa mobil       | IDR 5-8M      | Mengemudi sendiri  |
+| Mobil + sopir    | IDR 10-15M    | Penuh waktu        |
+| Gojek/Grab       | IDR 1-3M      | Sesuai kebutuhan   |
+
+<InfoCard variant="note" title="Scooter is Essential">
+Sebagian besar ekspat di Bali menyewa atau membeli skuter. Alasannya:
+
+- Paling praktis untuk menghadapi lalu lintas
+- Terjangkau
+- Mudah diparkir
+- Fleksibel
+
+Dapatkan asuransi yang memadai dan selalu gunakan helm!
+
+</InfoCard>
 
 ---
 
-## Tips Hemat Uang
+## Biaya Bulanan Lainnya
 
-1. **Makan lokal** - Warung itu lezat dan murah
+### Utilitas & Layanan
+
+| Barang                | Biaya Bulanan |
+| --------------------- | ------------- |
+| Listrik               | IDR 300-800K  |
+| Air                   | IDR 100-200K  |
+| Internet (fiber)      | IDR 400-800K  |
+| Telepon/data          | IDR 100-300K  |
+| Pembersih (mingguan)  | IDR 400-800K  |
+| Perawatan kolam       | IDR 500K-1M   |
+
+### Kesehatan & Kebugaran
+
+| Barang             | Biaya                |
+| ------------------ | -------------------- |
+| Keanggotaan gym    | IDR 500K-1.5M/bulan  |
+| Kelas yoga         | IDR 150-200K/kelas   |
+| Pelajaran selancar | IDR 400-600K/sesi    |
+| Pijat              | IDR 150-300K         |
+| Kunjungan dokter   | IDR 300-600K         |
+
+### Hiburan
+
+| Barang                    | Biaya         |
+| ------------------------- | ------------- |
+| Masuk beach club          | IDR 250K-1M   |
+| Tiket bioskop             | IDR 50-80K    |
+| Malam di klub malam       | IDR 500K-2M   |
+| Coworking harian          | IDR 100-200K |
+| Coworking bulanan         | IDR 1.5-3M   |
+
+---
+
+## Bali vs Destinasi Lain
+
+<ComparisonTable
+  title="Monthly Cost Comparison"
+  description="Bali vs other nomad destinations"
+  items={[
+    {
+      name: "Bali, Indonesia",
+      values: {
+        Comfortable: "$1,000-1,500",
+        Good: "$2,000-3,000",
+        Visa: "E33G Digital Nomad",
+      },
+      highlight: true,
+    },
+    {
+      name: "Chiang Mai, Thailand",
+      values: {
+        Comfortable: "$1,000-1,500",
+        Good: "$1,500-2,500",
+        Visa: "60 days + extend",
+      },
+    },
+    {
+      name: "Lisbon, Portugal",
+      values: {
+        Comfortable: "$2,500-3,500",
+        Good: "$3,500-5,000",
+        Visa: "D7/Nomad",
+      },
+    },
+    {
+      name: "Mexico City",
+      values: {
+        Comfortable: "$1,500-2,000",
+        Good: "$2,500-3,500",
+        Visa: "180 days tourist",
+      },
+    },
+  ]}
+/>
+
+---
+
+## Tips Menghemat Uang
+
+1. **Makan lokal** - Warung lezat dan murah
 2. **Sewa jangka panjang** - Negosiasikan untuk 6-12 bulan
-3. **Beli motor** - Lebih murah daripada menyewa jangka panjang
-4. **Masak sendiri** - Pasar tradisional punya bahan segar yang bagus
-5. **SIM lokal** - Jauh lebih murah daripada roaming
+3. **Beli skuter** - Lebih murah daripada menyewa dalam jangka panjang
+4. **Sesekali memasak** - Pasar menyediakan bahan makanan segar yang berkualitas
+5. **Di luar musim puncak** - Hindari musim ramai untuk akomodasi
+6. **SIM lokal** - Jauh lebih murah daripada roaming
+7. **Pilih Bintang daripada impor** - Bir lokal terjangkau
+8. **Pantai gratis** - Lewati beach club yang mahal
 
 ---
 
@@ -257,11 +443,12 @@ Bali bisa menjadi sangat terjangkau atau sangat mahal - tergantung pada pilihan 
 
 <AskZantara
   context="Cost of living Bali, expat budget, digital nomad costs, living expenses Indonesia"
-  placeholder="Tanya tentang biaya hidup..."
+  placeholder="Ask about cost of living..."
   suggestedQuestions={[
-    "Apakah Bali semakin mahal?",
-    "Area mana yang termurah?",
-    "Berapa biaya untuk keluarga dengan 2 anak?",
+    "Is Bali getting more expensive?",
+    "What's the cheapest area to live?",
+    "How much for a family of 4?",
+    "Are there hidden costs?",
   ]}
 />
 
