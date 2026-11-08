@@ -14,6 +14,7 @@ import re
 from typing import Any
 
 from backend.app.utils.logging_utils import get_logger
+from backend.services.crm.drive_taxonomy import CATEGORY_TO_FOLDER  # noqa: F401
 
 logger = get_logger(__name__)
 
@@ -210,15 +211,6 @@ CATEGORIZATION_RULES: dict[str, dict[str, list[str]]] = {
     },
 }
 
-CATEGORY_TO_FOLDER: dict[str, str] = {
-    "family": "04_Family",
-    "personal": "00_Profile",
-    "immigration": "01_Immigration",
-    "pma": "02_Company",
-    "tax": "03_Tax",
-    "other": "99_Misc",
-}
-
 
 def auto_categorize_document(filename: str) -> dict[str, Any]:
     """Automatically categorize a document based on its filename."""
@@ -358,4 +350,3 @@ def get_categorization_stats(categorizations: list[dict[str, Any]]) -> dict[str,
         "avg_confidence": confidence_sum / len(categorizations),
         "uncategorized": by_category.get("other", 0),
     }
-

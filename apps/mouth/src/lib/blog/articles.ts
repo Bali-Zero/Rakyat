@@ -13,6 +13,14 @@ import matter from "gray-matter";
 import { unstable_cache } from "next/cache";
 import type { Article, ArticleListItem, ArticleCategory } from "./types";
 import { CATEGORY_MAP, normalizeCategory } from "./categories";
+import { isPublishedFrontmatter } from "./publication";
+
+// gray-matter caches by content string when called without options, so a file with broken YAML
+// throws on the first parse and returns empty data from the cache on the second. An options object
+// bypasses the cache, keeping the throw that callers use to skip corrupted articles.
+function parseFrontmatter(fileContents: string) {
+  return matter(fileContents, {});
+}
 
 const ARTICLES_PATH = path.join(process.cwd(), "src/content/articles");
 const ARTICLE_FOLDER_NAMES = Object.freeze([
@@ -548,49 +556,57 @@ async function getAllMdxSlugs(): Promise<
   return slugs;
 }
 
+/** Parse one MDX file through parseFrontmatter, so a broken file stays broken. */
+function readMdxFile(
+  filePath: string,
+): { data: Record<string, any>; content: string } | null {
+  try {
+    const parsed = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
+    return { data: parsed.data, content: parsed.content };
+  } catch {
+    return null;
+  }
+}
+
+/** The MDX file the page for this category and slug resolves to, if any. */
+function findMdxFile(category: string, slug: string): string | null {
+  const normalizedCategory = normalizeCategory(category);
+  const possibleFolders = CATEGORY_FOLDERS[normalizedCategory] || [category];
+  for (const folder of possibleFolders) {
+    if (!isArticleFolderName(folder)) continue;
+    const tryPath = articleMdxPath(folder, slug);
+    if (fs.existsSync(tryPath)) return tryPath;
+  }
+  if (isArticleFolderName(category)) {
+    const directPath = articleMdxPath(category, slug);
+    if (fs.existsSync(directPath)) return directPath;
+  }
+  return null;
+}
+
+/**
+ * When the page finds its MDX file, that file decides: an unpublished or
+ * unreadable file hides the article, and no backend row or stand-in replaces it.
+ */
+export function isArticleHidden(category: string, slug: string): boolean {
+  const filePath = findMdxFile(category, slug);
+  if (!filePath) return false;
+  const parsed = readMdxFile(filePath);
+  return !parsed || !isPublishedFrontmatter(parsed.data);
+}
+
 async function getMdxArticleBySlug(
   category: string,
   slug: string,
 ): Promise<Article | null> {
-  const normalizedCategory = normalizeCategory(category);
-  const possibleFolders = CATEGORY_FOLDERS[normalizedCategory] || [category];
-
-  let filePath = "";
-  let actualFolderCategory = category;
-
-  for (const folder of possibleFolders) {
-    if (!isArticleFolderName(folder)) continue;
-    const tryPath = articleMdxPath(folder, slug);
-    if (fs.existsSync(tryPath)) {
-      filePath = tryPath;
-      actualFolderCategory = folder;
-      break;
-    }
-  }
-
-  if (!filePath && isArticleFolderName(category)) {
-    const directPath = articleMdxPath(category, slug);
-    if (fs.existsSync(directPath)) {
-      filePath = directPath;
-      actualFolderCategory = category;
-    }
-  }
-
+  const filePath = findMdxFile(category, slug);
   if (!filePath) return null;
 
-  let fileContents: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let frontmatter: Record<string, any>;
-  let content: string;
-  try {
-    fileContents = fs.readFileSync(filePath, "utf8");
-    const parsed = matter(fileContents);
-    frontmatter = parsed.data;
-    content = parsed.content;
-  } catch {
-    // Skip articles with corrupted frontmatter (bad YAML)
-    return null;
-  }
+  // Unreadable (bad YAML) and unpublished files do not exist for readers.
+  const parsed = readMdxFile(filePath);
+  if (!parsed || !isPublishedFrontmatter(parsed.data)) return null;
+  const frontmatter = parsed.data;
+  const content = parsed.content;
 
   const author =
     typeof frontmatter.author === "object"
@@ -682,6 +698,7 @@ export async function getArticleBySlug(
   if (mdxArticle) {
     return mdxArticle;
   }
+  if (isArticleHidden(category, slug)) return null;
 
   // Fallback to backend API (news_items) when no local MDX exists.
   const backendItem = await fetchBackendArticleBySlug(slug);
@@ -704,6 +721,8 @@ export async function getArticleByLocale(
   if (!locale || locale === "en") {
     return getArticleBySlug(category, slug);
   }
+  // A hidden English article hides its translations too.
+  if (isArticleHidden(category, slug)) return null;
 
   // Try locale-specific MDX file
   const normalizedCategory = normalizeCategory(category);
@@ -713,18 +732,11 @@ export async function getArticleByLocale(
     if (!isArticleFolderName(folder)) continue;
     const localePath = articleLocaleMdxPath(folder, slug, locale);
     if (fs.existsSync(localePath)) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let frontmatter: Record<string, any>;
-      let content: string;
-      try {
-        const fileContents = fs.readFileSync(localePath, "utf8");
-        const parsed = matter(fileContents);
-        frontmatter = parsed.data;
-        content = parsed.content;
-      } catch {
-        // Skip locale files with corrupted frontmatter
-        continue;
-      }
+      // Skip unreadable and unpublished locale files.
+      const parsed = readMdxFile(localePath);
+      if (!parsed || !isPublishedFrontmatter(parsed.data)) continue;
+      const frontmatter = parsed.data;
+      const content = parsed.content;
 
       const author =
         typeof frontmatter.author === "object"
@@ -810,7 +822,9 @@ export function getAvailableLocales(category: string, slug: string): string[] {
     for (const folder of possibleFolders) {
       if (!isArticleFolderName(folder)) continue;
       const localePath = articleLocaleMdxPath(folder, slug, locale);
-      if (fs.existsSync(localePath)) {
+      if (!fs.existsSync(localePath)) continue;
+      const parsed = readMdxFile(localePath);
+      if (parsed && isPublishedFrontmatter(parsed.data)) {
         locales.push(locale);
         break;
       }
@@ -848,6 +862,7 @@ export const getAllArticles = unstable_cache(
     if (backendResult) {
       for (const item of backendResult.items) {
         const listItem = backendToArticleListItem(item);
+        if (isArticleHidden(listItem.category, item.slug)) continue;
         if (
           options?.featured !== undefined &&
           listItem.featured !== options.featured
@@ -983,7 +998,7 @@ export async function getNoIndexSlugs(): Promise<Set<string>> {
       const filePath = articleMdxPath(folderCategory, slug);
       if (!fs.existsSync(filePath)) continue;
       const fileContents = fs.readFileSync(filePath, "utf8");
-      const { data: frontmatter } = matter(fileContents);
+      const { data: frontmatter } = parseFrontmatter(fileContents);
       if (frontmatter.noIndex) {
         noIndexSlugs.add(slug);
       }
@@ -1010,7 +1025,9 @@ export async function searchArticles(
   });
 
   if (backendResult && backendResult.items.length > 0) {
-    return backendResult.items.map(backendToArticleListItem);
+    return backendResult.items
+      .map(backendToArticleListItem)
+      .filter((article) => !isArticleHidden(article.category, article.slug));
   }
 
   // Fallback to in-memory MDX search

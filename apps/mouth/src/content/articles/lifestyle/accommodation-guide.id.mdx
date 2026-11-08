@@ -75,6 +75,7 @@ locale: "id"
 canonicalUrl: "https://balizero.com/id/lifestyle/accommodation-guide"
 ogImage: "/static/insights/lifestyle/accommodation.jpg"
 twitterCard: "summary_large_image"
+source_sha256: "f6a85d30ddbe56fcbba8eb03f454c470cb0829e00cfc061976b2b3677cb12c4f"
 ---
 
 import {
@@ -88,95 +89,95 @@ import {
 
 # Akomodasi di Indonesia 2026: Panduan Hunian Ekspatriat
 
-Menemukan tempat tinggal yang tepat sangat penting untuk pengalaman Anda di Indonesia. Inilah yang perlu Anda ketahui.
+Menemukan tempat tinggal yang tepat sangat penting untuk pengalaman Anda di Indonesia. Berikut hal yang perlu Anda ketahui.
 
 ## Jenis Akomodasi
 
 <DecisionTree
-  title="Jenis Apa yang Cocok untuk Anda?"
-  description="Temukan akomodasi ideal Anda"
+  title="What Type Suits You?"
+  description="Find your ideal accommodation"
   nodes={[
     {
       id: "start",
-      question: "Berapa lama Anda akan tinggal?",
+      question: "How long are you staying?",
       options: [
-        { label: "1-3 bulan", next: "short" },
-        { label: "3-12 bulan", next: "medium" },
-        { label: "1+ tahun", next: "long" },
+        { label: "1-3 months", next: "short" },
+        { label: "3-12 months", next: "medium" },
+        { label: "1+ years", next: "long" },
       ],
     },
     {
       id: "short",
-      question: "Berapa anggaran Anda?",
+      question: "What's your budget?",
       options: [
-        { label: "Budget (< Rp 7,5jt/bln)", next: "short-budget" },
-        { label: "Menengah (Rp 7,5jt-22,5jt)", next: "short-mid" },
-        { label: "Nyaman (> Rp 22,5jt)", next: "short-comfort" },
+        { label: "Budget (< $500/month)", next: "short-budget" },
+        { label: "Mid-range ($500-1500)", next: "short-mid" },
+        { label: "Comfort ($1500+)", next: "short-comfort" },
       ],
     },
     {
       id: "medium",
-      question: "Apa prioritas Anda?",
+      question: "What's your priority?",
       options: [
-        { label: "Harga ekonomis", next: "medium-value" },
-        { label: "Lokasi & komunitas", next: "medium-location" },
-        { label: "Ruang & privasi", next: "medium-space" },
+        { label: "Value for money", next: "medium-value" },
+        { label: "Location & community", next: "medium-location" },
+        { label: "Space & privacy", next: "medium-space" },
       ],
     },
     {
       id: "long",
       result: {
-        title: "Sewa Jangka Panjang atau Beli",
+        title: "Long-term Rental or Purchase",
         description:
-          "Pertimbangkan sewa vila/apartemen tahunan untuk harga terbaik. Anda juga bisa mengeksplorasi investasi properti melalui struktur hukum Indonesia.",
+          "Consider yearly villa/apartment rental for best rates. May also explore property investment through Indonesian structure.",
       },
     },
     {
       id: "short-budget",
       result: {
-        title: "Guesthouse atau Kos",
+        title: "Guesthouse or Kos",
         description:
-          "Guesthouse bulanan atau 'kos-kosan' menawarkan opsi jangka pendek yang terjangkau. Sederhana tapi fungsional.",
+          "Monthly guesthouses or 'kos-kosan' (boarding rooms) offer affordable short-term options. Basic but functional.",
       },
     },
     {
       id: "short-mid",
       result: {
-        title: "Apartemen Servis atau Vila Bulanan",
+        title: "Serviced Apartment or Monthly Villa",
         description:
-          "Sewa bulanan tersedia di Airbnb, situs pemesanan, atau agen lokal. Keseimbangan yang baik antara kenyamanan dan fleksibilitas.",
+          "Monthly rentals available on Airbnb, booking sites, or local agents. Good balance of comfort and flexibility.",
       },
     },
     {
       id: "short-comfort",
       result: {
-        title: "Vila atau Apartemen Premium",
+        title: "Villa or Premium Apartment",
         description:
-          "Sewa vila jangka pendek atau apartemen servis dengan fasilitas premium. Harga lebih tinggi tetapi kenyamanan maksimal.",
+          "Short-term villa rentals or serviced apartments with premium amenities. Higher prices but maximum comfort.",
       },
     },
     {
       id: "medium-value",
       result: {
-        title: "Kontrak Vila/Apartemen 6 Bulan",
+        title: "6-Month Villa/Apartment Lease",
         description:
-          "Negosiasikan sewa 6 bulan untuk harga yang lebih baik daripada bulanan. Seringkali diskon 20-30% dari harga jangka pendek.",
+          "Negotiate 6-month lease for better rates than monthly. Often 20-30% discount over short-term rates.",
       },
     },
     {
       id: "medium-location",
       result: {
-        title: "Co-living atau Kompleks Apartemen",
+        title: "Co-living or Apartment Complex",
         description:
-          "Ruang co-living menawarkan komunitas. Kompleks apartemen menyediakan keamanan dan fasilitas di lokasi sentral.",
+          "Co-living spaces offer community. Apartment complexes provide security and amenities in central locations.",
       },
     },
     {
       id: "medium-space",
       result: {
-        title: "Vila atau Rumah Pribadi",
+        title: "Private Villa or House",
         description:
-          "Sewa seluruh vila atau rumah untuk privasi dan ruang. Harga terbaik dengan komitmen 6-12 bulan.",
+          "Rent entire villa or house for privacy and space. Best rates with 6-12 month commitment.",
       },
     },
   ]}
@@ -187,48 +188,48 @@ Menemukan tempat tinggal yang tepat sangat penting untuk pengalaman Anda di Indo
 ## Biaya Sewa Berdasarkan Area
 
 <ComparisonTable
-  title="Biaya Sewa Bulanan"
-  description="Harga tipikal berdasarkan lokasi"
+  title="Monthly Rental Costs"
+  description="Typical prices by location"
   items={[
     {
       name: "Canggu, Bali",
-      subtitle: "Pusat digital nomad",
+      subtitle: "Digital nomad hub",
       values: {
-        "Studio/Kamar": "Rp 5-10jt",
-        "Vila 1 Kamar": "Rp 10-20jt",
-        "Vila 2 Kamar": "Rp 15-35jt",
-        "Vila Mewah": "Rp 40jt+",
+        "Studio/Room": "IDR 5-10M",
+        "1BR Villa": "IDR 10-20M",
+        "2BR Villa": "IDR 15-35M",
+        "Luxury Villa": "IDR 40M+",
       },
       highlight: true,
     },
     {
       name: "Ubud, Bali",
-      subtitle: "Pusat budaya",
+      subtitle: "Cultural center",
       values: {
-        "Studio/Kamar": "Rp 4-8jt",
-        "Vila 1 Kamar": "Rp 8-15jt",
-        "Vila 2 Kamar": "Rp 12-25jt",
-        "Vila Mewah": "Rp 30jt+",
+        "Studio/Room": "IDR 4-8M",
+        "1BR Villa": "IDR 8-15M",
+        "2BR Villa": "IDR 12-25M",
+        "Luxury Villa": "IDR 30M+",
       },
     },
     {
       name: "Seminyak, Bali",
-      subtitle: "Gaya hidup pantai",
+      subtitle: "Beach lifestyle",
       values: {
-        "Studio/Kamar": "Rp 7-15jt",
-        "Vila 1 Kamar": "Rp 15-25jt",
-        "Vila 2 Kamar": "Rp 20-45jt",
-        "Vila Mewah": "Rp 50jt+",
+        "Studio/Room": "IDR 7-15M",
+        "1BR Villa": "IDR 15-25M",
+        "2BR Villa": "IDR 20-45M",
+        "Luxury Villa": "IDR 50M+",
       },
     },
     {
-      name: "Jakarta (Pusat)",
-      subtitle: "Pusat bisnis",
+      name: "Jakarta (Central)",
+      subtitle: "Business center",
       values: {
-        "Studio/Kamar": "Rp 5-10jt",
-        "Apartemen 1 Kamar": "Rp 10-20jt",
-        "Apartemen 2 Kamar": "Rp 15-35jt",
-        Mewah: "Rp 40jt+",
+        "Studio/Room": "IDR 5-10M",
+        "1BR Apartment": "IDR 10-20M",
+        "2BR Apartment": "IDR 15-35M",
+        Luxury: "IDR 40M+",
       },
     },
   ]}
@@ -239,18 +240,18 @@ Menemukan tempat tinggal yang tepat sangat penting untuk pengalaman Anda di Indo
 ## Kalkulator Anggaran Bulanan
 
 <Calculator
-  title="Anggaran Hunian"
-  description="Estimasi biaya akomodasi Anda"
+  title="Housing Budget"
+  description="Estimate your accommodation costs"
   fields={[
     {
       id: "type",
-      label: "Jenis Akomodasi",
+      label: "Accommodation Type",
       type: "select",
       options: [
-        { value: "room", label: "Kamar/Studio" },
-        { value: "apartment", label: "Apartemen/Vila 1 Kamar" },
-        { value: "villa2", label: "Vila 2 Kamar" },
-        { value: "luxury", label: "Vila Mewah" }
+        { value: "room", label: "Room/Studio" },
+        { value: "apartment", label: "1BR Apartment/Villa" },
+        { value: "villa2", label: "2BR Villa" },
+        { value: "luxury", label: "Luxury Villa" }
       ],
       defaultValue: "apartment"
     },
@@ -269,17 +270,18 @@ Menemukan tempat tinggal yang tepat sangat penting untuk pengalaman Anda di Indo
     },
     {
       id: "term",
-      label: "Jangka Waktu Sewa",
+      label: "Rental Term",
       type: "select",
       options: [
-        { value: "monthly", label: "Bulanan" },
-        { value: "6month", label: "6 Bulan" },
-        { value: "yearly", label: "Tahunan" }
+        { value: "monthly", label: "Monthly" },
+        { value: "6month", label: "6 months" },
+        { value: "yearly", label: "Yearly" }
       ],
       defaultValue: "monthly"
     }
   ]}
   calculateResult={(values) => {
+    // Base prices by area and type (IDR)
     const prices = {
       canggu: { room: 7000000, apartment: 15000000, villa2: 25000000, luxury: 50000000 },
       ubud: { room: 5000000, apartment: 12000000, villa2: 18000000, luxury: 35000000 },
@@ -288,6 +290,7 @@ Menemukan tempat tinggal yang tepat sangat penting untuk pengalaman Anda di Indo
       jakarta: { room: 7000000, apartment: 15000000, villa2: 25000000, luxury: 45000000 }
     };
 
+    // Term discounts
     const discounts = {
       monthly: 1.0,
       "6month": 0.85,
@@ -298,6 +301,7 @@ Menemukan tempat tinggal yang tepat sangat penting untuk pengalaman Anda di Indo
     const discount = discounts[values.term];
     const monthlyRent = basePrice * discount;
 
+    // Additional costs
     const utilities = 500000;
     const internet = 500000;
     const cleaning = values.type === "room" ? 0 : 400000;
@@ -307,13 +311,13 @@ Menemukan tempat tinggal yang tepat sangat penting untuk pengalaman Anda di Indo
     return {
       total: Math.round(total),
       breakdown: [
-        { label: "Sewa (dengan diskon jangka waktu)", amount: Math.round(monthlyRent) },
-        { label: "Estimasi Utilitas", amount: utilities },
+        { label: "Rent (with term discount)", amount: Math.round(monthlyRent) },
+        { label: "Utilities estimate", amount: utilities },
         { label: "Internet", amount: internet },
-        { label: "Pembersihan (jika ada)", amount: cleaning }
+        { label: "Cleaning (if applicable)", amount: cleaning }
       ],
       currency: "IDR",
-      note: `~USD ${Math.round(total / 16000)}/bulan`
+      note: `~USD ${Math.round(total / 16000)}/month`
     };
 
 }}
@@ -324,111 +328,171 @@ Menemukan tempat tinggal yang tepat sangat penting untuk pengalaman Anda di Indo
 ## Proses Sewa
 
 <Checklist
-  title="Daftar Periksa Sewa"
-  description="Langkah-langkah menyewa akomodasi"
+  title="Rental Checklist"
+  description="Steps to rent accommodation"
   persistKey="rental-checklist"
   items={[
     {
       id: "search",
-      label: "Cari dan lihat properti",
-      description: "Online + tatap muka",
+      label: "Search and view properties",
+      description: "Online + in person",
       required: true,
       category: "search",
     },
     {
       id: "negotiate",
-      label: "Negosiasi syarat dan harga",
-      description: "Terutama untuk jangka panjang",
+      label: "Negotiate terms and price",
+      description: "Especially for longer terms",
       required: true,
       category: "negotiate",
     },
     {
       id: "inspect",
-      label: "Inspeksi menyeluruh",
-      description: "Pastikan semuanya berfungsi",
+      label: "Thorough inspection",
+      description: "Check everything works",
       required: true,
       category: "inspect",
     },
     {
       id: "contract",
-      label: "Tinjau perjanjian sewa",
-      description: "Dapatkan secara tertulis",
+      label: "Review rental agreement",
+      description: "Get in writing",
       required: true,
       category: "legal",
     },
     {
       id: "deposit",
-      label: "Bayar deposit",
-      description: "Biasanya 1-2 bulan",
+      label: "Pay deposit",
+      description: "Usually 1-2 months",
       required: true,
       category: "payment",
     },
     {
       id: "inventory",
-      label: "Dokumentasikan kondisi/inventaris",
-      description: "Foto, daftar barang",
+      label: "Document condition/inventory",
+      description: "Photos, list of items",
       required: true,
       category: "protect",
     },
     {
       id: "utilities",
-      label: "Siapkan utilitas",
-      description: "Listrik, air, internet",
+      label: "Set up utilities",
+      description: "Electricity, water, internet",
       required: true,
       category: "setup",
     },
   ]}
   categories={[
-    { id: "search", label: "Cari", color: "blue" },
-    { id: "negotiate", label: "Negosiasi", color: "green" },
-    { id: "inspect", label: "Inspeksi", color: "amber" },
+    { id: "search", label: "Search", color: "blue" },
+    { id: "negotiate", label: "Negotiate", color: "green" },
+    { id: "inspect", label: "Inspect", color: "amber" },
     { id: "legal", label: "Legal", color: "red" },
-    { id: "payment", label: "Pembayaran", color: "purple" },
-    { id: "protect", label: "Perlindungan", color: "cyan" },
-    { id: "setup", label: "Persiapan", color: "pink" },
+    { id: "payment", label: "Payment", color: "purple" },
+    { id: "protect", label: "Protection", color: "cyan" },
+    { id: "setup", label: "Setup", color: "pink" },
   ]}
   showProgress={true}
 />
 
 ---
 
-## Di Mana Mencari Sewaan
+## Di Mana Mencari Sewa
 
 ### Platform Online
 
-| Platform        | Terbaik Untuk          | Catatan              |
-| :-------------- | :--------------------- | :------------------- |
-| Grup Facebook   | Sewaan lokal           | Sangat aktif di Bali |
-| Airbnb          | Jangka pendek          | Diskon bulanan       |
-| Rumah.com       | Listing Indonesia      | Pasar lokal          |
-| OLX             | Opsi budget            | Bisa dinegosiasi     |
-| Agen real estat | Premium/jangka panjang | Layanan profesional  |
+| Platform           | Paling Cocok Untuk    | Catatan              |
+| ------------------ | ------------------- | -------------------- |
+| Facebook Groups    | Sewa lokal          | Sangat aktif di Bali |
+| Airbnb             | Jangka pendek, terverifikasi | Diskon bulanan |
+| Rumah.com          | Listing Indonesia | Pasar lokal          |
+| OLX                | Pilihan hemat      | Bisa dinegosiasi     |
+| Real estate agents | Premium/jangka panjang | Layanan profesional |
+
+### Grup Facebook (Bali)
+
+- Bali Accommodation
+- Ubud Community Housing
+- Canggu Community
+- Bali Expat Forum
+
+---
+
+## Hal yang Perlu Diperiksa
+
+<InfoCard variant="warning" title="Before Signing">
+
+  **Selalu verifikasi:** - Tekanan air dan pemanas - Tes kecepatan internet - AC
+  berfungsi - Peralatan dapur - Keamanan (kunci, area aman) - Tingkat
+  kebisingan - Parkir (jika diperlukan) - Genset/listrik cadangan - Kondisi hama -
+  Responsivitas pemilik
+</InfoCard>
 
 ---
 
 ## Tips Perjanjian Sewa
 
-### Poin Penting yang Harus Disertakan
+### Istilah Penting yang Harus Dicantumkan
 
-| Istilah      | Apa yang Harus Diperiksa       |
-| :----------- | :----------------------------- |
-| Durasi       | Tanggal mulai/akhir jelas      |
-| Jumlah sewa  | Total dan jadwal pembayaran    |
-| Deposit      | Jumlah dan syarat pengembalian |
-| Utilitas     | Siapa membayar apa             |
-| Pemeliharaan | Tanggung jawab perbaikan       |
-| Pemutusan    | Periode pemberitahuan, sanksi  |
-| Inventaris   | Daftar barang yang disertakan  |
+| Istilah     | Hal yang Diperiksa           |
+| ----------- | ---------------------------- |
+| Durasi      | Tanggal mulai/berakhir jelas |
+| Jumlah sewa | Total dan jadwal pembayaran  |
+| Deposit     | Jumlah dan syarat pengembalian |
+| Utilitas    | Siapa membayar apa           |
+| Perawatan   | Tanggung jawab perbaikan     |
+| Pemutusan   | Masa pemberitahuan, denda    |
+| Inventaris  | Daftar barang yang termasuk  |
 
-<InfoCard variant="tip" title="Dapatkan Secara Tertulis">
-Bahkan sewaan informal harus memiliki:
+<InfoCard variant="tip" title="Get It in Writing">
+Bahkan sewa informal pun sebaiknya memiliki:
 - Perjanjian tertulis (bisa sederhana)
-- Kuitansi pembayaran
+- Kwitansi pembayaran
 - Dokumentasi kondisi
 - Detail kontak pemilik
 
-Kontrak di Indonesia dapat ditegakkan secara hukum - pastikan Anda memilikinya!
+Kontrak Indonesia dapat ditegakkan secara hukum - pastikan Anda memilikinya!
 
+</InfoCard>
+
+---
+
+## Berperabot vs Tanpa Perabot
+
+### Bali/Area Wisata
+
+Sebagian besar sewa **berperabot lengkap**:
+
+- Tempat tidur, kasur, sprei
+- Furnitur ruang tamu
+- Dapur lengkap
+- AC
+- Air panas
+- Sering termasuk WiFi
+
+### Jakarta/Kota-kota
+
+Pilihan beragam:
+
+- Apartemen servis: berperabot lengkap
+- Apartemen reguler: perabot dasar
+- Rumah: mungkin tanpa perabot
+
+---
+
+## Penghematan Jangka Panjang
+
+| Jangka Waktu | Diskon Umum |
+| --------- | ---------------- |
+| Bulanan   | Harga penuh      |
+| 3 bulan   | diskon 5-10%     |
+| 6 bulan   | diskon 15-25%    |
+| 12 bulan  | diskon 25-40%    |
+
+<InfoCard variant="tip" title="Negotiate!">
+
+  Tips untuk tarif lebih baik: - Minta langsung (jangan terima harga pertama) - Tawarkan
+  jangka waktu lebih panjang - Bayar di muka jika memungkinkan - Musim sepi = penawaran lebih baik - Langsung
+  dengan pemilik = tanpa biaya agen
 </InfoCard>
 
 ---
@@ -437,12 +501,12 @@ Kontrak di Indonesia dapat ditegakkan secara hukum - pastikan Anda memilikinya!
 
 <AskZantara
   context="Accommodation Indonesia, rental Bali, expat housing, villa rental"
-  placeholder="Tanya tentang akomodasi..."
+  placeholder="Ask about accommodation..."
   suggestedQuestions={[
-    "Area mana yang terbaik untuk digital nomad?",
-    "Dapatkah saya menyewa tanpa KITAS?",
-    "Berapa deposit yang normal?",
-    "Bagaimana jika saya ada masalah dengan pemilik?",
+    "What's the best area for digital nomads?",
+    "Can I rent without KITAS?",
+    "How much deposit is normal?",
+    "What if I have problems with landlord?",
   ]}
 />
 

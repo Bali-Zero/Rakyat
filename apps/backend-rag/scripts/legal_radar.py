@@ -13,11 +13,20 @@ import logging
 import os
 import subprocess
 import sys
+
+# Standalone scripts also resolve the shared, non-reenableable retirement policy.
+import sys as _policy_sys
 import urllib.request
 from datetime import date
 from pathlib import Path
+from pathlib import Path as _PolicyPath
 
 from dotenv import load_dotenv
+
+_policy_root = str(_PolicyPath(__file__).resolve().parents[1])
+if _policy_root not in _policy_sys.path:
+    _policy_sys.path.insert(0, _policy_root)
+from backend.core.telegram_retirement import telegram_is_retired
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
@@ -67,6 +76,8 @@ def build_radar_message(domain_results: dict[str, str], scan_date: date) -> str:
 
 
 def send_telegram_message(token: str, chat_id: str, text: str) -> None:
+    if telegram_is_retired():
+        return
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}).encode()
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
@@ -78,21 +89,24 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_ZERO_CHAT_ID", "")
-    if not token or not chat_id:
+    if not telegram_is_retired() and (not token or not chat_id):
         logger.error("TELEGRAM_BOT_TOKEN and TELEGRAM_ZERO_CHAT_ID must be set")
         sys.exit(1)
 
     scan_date = date.today()
-    print(f"Legal Radar scan — {scan_date}")  # noqa: T201
+    print(f"Legal Radar scan — {scan_date}")
 
     domain_results: dict[str, str] = {}
     for domain in DOMAINS:
-        print(f"  Searching: {domain}...")  # noqa: T201
+        print(f"  Searching: {domain}...")
         domain_results[domain] = dispatch_gemini_search(SEARCH_QUERIES[domain])
 
     message = build_radar_message(domain_results, scan_date)
-    send_telegram_message(token, chat_id, message)
-    print("Legal Radar summary sent to Telegram")  # noqa: T201
+    if telegram_is_retired():
+        logger.info("Legal Radar scan complete; Telegram is retired")
+    else:
+        send_telegram_message(token, chat_id, message)
+        print("Legal Radar summary sent to Telegram")
 
 
 if __name__ == "__main__":

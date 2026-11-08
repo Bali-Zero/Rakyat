@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.security.pii_log_identifier import redact_identifier_for_log
 
 install_telegram_token_redaction()
@@ -592,6 +593,8 @@ class DeliveryManager:
 
     async def _alert_exhausted(self, row: Any, error: str) -> None:
         """Send Telegram alert when a DLQ message is permanently exhausted."""
+        if telegram_is_retired():
+            return
         try:
             from backend.core.config import settings
 

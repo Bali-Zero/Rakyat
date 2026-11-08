@@ -1,7 +1,8 @@
 import type { AttentionItem, ClientDocument } from "@/lib/api/crm/crm.types";
-import { daysUntil, spanValue, witaDateKey } from "./overview-brief";
+import { spanValue, witaDateKey } from "./overview-brief";
 import { permitLine } from "./header-facts";
 import { permitDisplay } from "./permit-label";
+import { documentValidity } from "./documentValidity";
 import { pickCurrentVisa } from "./pickCurrentVisa";
 
 /**
@@ -239,8 +240,9 @@ function visaRowFromDocument(
   const doc = pickCurrentVisa(documents);
   const line = permitLine(documents);
   if (!doc || !line) return null;
-  const days = daysUntil(doc.expiry_date, now);
-  const until = shortDate(doc.expiry_date ?? null, now);
+  const validity = documentValidity(doc, witaDateKey(now));
+  const days = validity.daysLeft;
+  const until = shortDate(validity.expiry, now);
   if (days === null || !until) {
     return {
       key: "visa-doc",
@@ -252,7 +254,7 @@ function visaRowFromDocument(
       tone: "warning",
     };
   }
-  if (days < 0) {
+  if (validity.state === "expired") {
     return {
       key: "visa-doc",
       area: "Visa",
@@ -271,8 +273,8 @@ function visaRowFromDocument(
     headline: true,
     route: { card: "visa-card" },
     title: `${line} — valid until ${until} · ${left}`,
-    word: days <= 60 ? "Expiring" : "Valid",
-    tone: days <= 60 ? "warning" : "calm",
+    word: validity.state === "expiring" ? "Expiring" : "Valid",
+    tone: validity.state === "expiring" ? "warning" : "calm",
   };
 }
 

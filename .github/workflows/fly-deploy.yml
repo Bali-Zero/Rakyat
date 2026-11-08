@@ -139,14 +139,10 @@ jobs:
           name: pre-deploy-gate-results
           path: apps/backend-rag/test-results-gate.xml
 
-      - name: Notifica Telegram — gate fallito
-        if: failure()
+      - name: Record workflow outcome (Telegram retired)
+        if: "failure()"
         run: |
-          MESSAGE="🔴 <b>Pre-deploy gate FALLITO</b>%0A%0ACommit: ${{ github.sha }}%0AAutore: ${{ github.actor }}%0A%0ACheck GitHub Actions per dettagli."
-          curl -s "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.TELEGRAM_OWNER_CHAT_ID }}" \
-            -d "text=${MESSAGE}" \
-            -d "parse_mode=HTML" || true
+          printf '%s\n' 'Telegram retired; workflow logs and status remain authoritative.' >> "$GITHUB_STEP_SUMMARY"
 
   run-migrations:
     name: Run DB migrations on Fly.io
@@ -387,59 +383,21 @@ jobs:
           echo "applied_count=$APPLIED" >> $GITHUB_OUTPUT
           echo "::notice::SQL v2 post-deploy: $APPLIED migrations applied on fresh image"
 
-      - name: Telegram — post-deploy migrations actually applied
-        if: success() && steps.migrate.outputs.applied_count != '0'
+      - name: Record workflow outcome (Telegram retired)
+        if: "success() && steps.migrate.outputs.applied_count != '0'"
         run: |
-          MESSAGE="🆕 *SQL v2 post-deploy applied*%0A%0A\`${{ steps.migrate.outputs.applied_count }}\` migrazioni sull'immagine fresca dopo deploy.%0A%0AImage tag: \`${{ steps.sentinel.outputs.tag }}\`%0AMachine: \`${{ steps.sentinel.outputs.machine }}\`%0ACommit: \`${{ github.sha }}\`%0AAutore: ${{ github.actor }}%0A%0ASegnale che il job pre-deploy stava mascherando nuovi SQL (cicatrix STRUCTURAL 2026-04-26 — fix verificato in produzione)."
-          # NOTE: no parse_mode. github.actor is untrusted for Markdown V1 —
-          # a merge-queue/dependabot/app actor login routinely contains `[`
-          # (e.g. `github-merge-queue[bot]`, `dependabot[bot]`), which Markdown
-          # V1 reserves; Telegram then answers 400 "can't parse entities" and
-          # the alert never sends. Plain text loses bold/monospace, which is a
-          # trivial cost against silently dropping the alert (cicatrix #3).
-          STATUS=$(curl -s -o /tmp/tg_resp.json -w "%{http_code}" \
-            "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.TELEGRAM_OWNER_CHAT_ID }}" \
-            -d "text=${MESSAGE}" || echo "000")
-          if [ "$STATUS" != "200" ]; then
-            echo "::warning::Telegram notification failed (HTTP $STATUS): $(cat /tmp/tg_resp.json 2>/dev/null | head -c 300)"
-          fi
+          printf '%s\n' 'Telegram retired; workflow logs and status remain authoritative.' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Fail loud on migration error
-        if: failure()
+      - name: Record migration failure
+        if: "failure()"
         run: |
           echo "::error::Post-deploy SQL v2 migration failed. Manual investigation required."
           if [ -f migration_output.txt ]; then
             echo "--- migration_output.txt (head 100) ---"
             head -100 migration_output.txt || true
           fi
-          MESSAGE="🔴 *SQL v2 post-deploy FAILED*%0A%0AMigration runner errored on fresh image after deploy.%0A%0ACommit: \`${{ github.sha }}\`%0AAutore: ${{ github.actor }}%0ARun: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}%0A%0A⚠️ Backend live ma schema potenzialmente disallineato. Investigare subito."
-          # No parse_mode — see the identical comment in the "applied" step above.
-          STATUS=$(curl -s -o /tmp/tg_resp.json -w "%{http_code}" \
-            "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.TELEGRAM_OWNER_CHAT_ID }}" \
-            -d "text=${MESSAGE}" || echo "000")
-          if [ "$STATUS" != "200" ]; then
-            echo "::warning::Telegram notification failed (HTTP $STATUS): $(cat /tmp/tg_resp.json 2>/dev/null | head -c 300)"
-          fi
+          printf '%s\n' 'Telegram retired; workflow logs and status remain authoritative.' >> "$GITHUB_STEP_SUMMARY"
 
-  # Historical Python migrations 119-121 were adopted by SQL v2 migrations
-  # 345-347. The canonical runner above is now the only deploy-time schema
-  # executor; historical Python modules remain source archaeology only.
-
-  # Health must still run when the canonical fresh-image migration pass fails:
-  # the image is already serving at that point, and the health result decides
-  # whether image rollback is needed. `always()` keeps that recovery path live.
-
-  # Rollback scope, stated so the alert below can't imply more than it does:
-  # `flyctl releases rollback` reverts the IMAGE only. It cannot and does not
-  # revert the DATABASE — run-migrations (pre-deploy) already applied schema
-  # changes before `deploy` ran. A rollback here means "old code, new-or-
-  # partially-new schema", safe only if those migrations were backward-
-  # compatible. That's a pre-existing property of this workflow's ONE
-  # rollback mechanism, not something this fix introduces — this fix only
-  # keeps that mechanism reachable when the canonical fresh-image migration
-  # pass fails.
   post-deploy-health:
     name: Post-deploy health check + rollback
     needs: [deploy, run-sql-v2-migrations-post-deploy]
@@ -508,79 +466,21 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Notifica Telegram — deploy fallito + rollback
-        if: failure()
+      - name: Record workflow outcome (Telegram retired)
+        if: "failure()"
         run: |
-          MESSAGE="🔴 *Deploy Nuzantara FALLITO*%0A%0AHealth check non passato dopo 5 min.%0ARollback automatico eseguito (SOLO immagine — lo schema DB applicato dalle migration pre-deploy NON viene revertito).%0A%0ACommit: ${{ github.sha }}%0AAutore: ${{ github.actor }}"
-          # No parse_mode — see the identical comment in run-sql-v2-migrations-post-deploy above.
-          STATUS=$(curl -s -o /tmp/tg_resp.json -w "%{http_code}" \
-            "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.TELEGRAM_OWNER_CHAT_ID }}" \
-            -d "text=${MESSAGE}" || echo "000")
-          if [ "$STATUS" != "200" ]; then
-            echo "::warning::Telegram notification failed (HTTP $STATUS): $(cat /tmp/tg_resp.json 2>/dev/null | head -c 300)"
-          fi
+          printf '%s\n' 'Telegram retired; workflow logs and status remain authoritative.' >> "$GITHUB_STEP_SUMMARY"
 
-      # Task #19 follow-up (2026-07-26): this job's `if:` now runs even when a
-      # post-deploy migration failed (see the header comment above), but
-      # `success()` at step level reflects ONLY this job's own steps — it does
-      # NOT look at `needs.*.result`. Before this split, a migration failure
-      # meant this job was skipped entirely, so no success message could ever
-      # fire alongside a failure one. After the fix, a healthy service +
-      # failed migration produces BOTH: the migration job's own 🔴 alert, then
-      # this step's unqualified ✅ — a green message arriving after a red one
-      # reads as "resolved, disregard the above," which is false. So the two
-      # notification steps below are gated on the canonical migration job's result, not
-      # just on step success: a genuinely clean deploy gets the unqualified ✅,
-      # a healthy-but-migration-failed deploy gets its own degraded message
-      # that says so explicitly.
-      - name: Notifica Telegram — deploy OK
-        if: |
-          success() &&
-          needs.run-sql-v2-migrations-post-deploy.result == 'success'
+      - name: Record workflow outcome (Telegram retired)
+        if: "success() &&\nneeds.run-sql-v2-migrations-post-deploy.result == 'success'\n"
         run: |
-          MESSAGE="✅ *Deploy Nuzantara OK*%0A%0ABackend sano. Health check passato. Migration post-deploy pulite.%0A%0ACommit: ${{ github.sha }}%0AAutore: ${{ github.actor }}"
-          # No parse_mode — see the identical comment in run-sql-v2-migrations-post-deploy above.
-          STATUS=$(curl -s -o /tmp/tg_resp.json -w "%{http_code}" \
-            "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.TELEGRAM_OWNER_CHAT_ID }}" \
-            -d "text=${MESSAGE}" || echo "000")
-          if [ "$STATUS" != "200" ]; then
-            echo "::warning::Telegram notification failed (HTTP $STATUS): $(cat /tmp/tg_resp.json 2>/dev/null | head -c 300)"
-          fi
+          printf '%s\n' 'Telegram retired; workflow logs and status remain authoritative.' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Notifica Telegram — deploy sano, migration post-deploy degradata
-        if: |
-          success() &&
-          needs.run-sql-v2-migrations-post-deploy.result != 'success'
+      - name: Record workflow outcome (Telegram retired)
+        if: "success() &&\nneeds.run-sql-v2-migrations-post-deploy.result != 'success'\n"
         run: |
-          MESSAGE="⚠️ *Deploy Nuzantara — servizio sano, migration degradata*%0A%0AHealth check passato: il backend risponde. MA la migration canonica post-deploy NON è andata a buon fine.%0A%0Arun-sql-v2-migrations-post-deploy: \`${{ needs.run-sql-v2-migrations-post-deploy.result }}\`%0A%0ASchema state NON verificato — non è 'tutto ok', è 'il servizio non è stato riavviato'. Investigare la migration fallita PRIMA di considerare il deploy completo.%0A%0ACommit: ${{ github.sha }}%0AAutore: ${{ github.actor }}"
-          # No parse_mode — see the identical comment in run-sql-v2-migrations-post-deploy above.
-          STATUS=$(curl -s -o /tmp/tg_resp.json -w "%{http_code}" \
-            "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.TELEGRAM_OWNER_CHAT_ID }}" \
-            -d "text=${MESSAGE}" || echo "000")
-          if [ "$STATUS" != "200" ]; then
-            echo "::warning::Telegram notification failed (HTTP $STATUS): $(cat /tmp/tg_resp.json 2>/dev/null | head -c 300)"
-          fi
+          printf '%s\n' 'Telegram retired; workflow logs and status remain authoritative.' >> "$GITHUB_STEP_SUMMARY"
 
-  # ---------------------------------------------------------------------------
-  # Edge-case coverage: upstream crashes *before* post-deploy-health runs.
-  #
-  # The `post-deploy-health` job chains `needs: deploy`, so when the `deploy` or
-  # `run-migrations` jobs fail outright (flyctl crash, network error, image
-  # build fail, timeout), GitHub Actions marks `post-deploy-health` as SKIPPED
-  # — not failed — and none of its Telegram alerts or rollback steps ever fire.
-  #
-  # This job watches those upstream failures and sends the Telegram notification
-  # that would otherwise be silently swallowed. No rollback is issued: if
-  # `run-migrations` or `deploy` crash, no new Fly release has shipped yet, so
-  # the previous release remains live. We only need visibility.
-  #
-  # The `if:` guard uses `always()` so the job still evaluates when upstream
-  # jobs fail/skip (otherwise GitHub skips it too). The inner expression then
-  # fires the alert only when one of the two upstream jobs actually failed.
-  # ---------------------------------------------------------------------------
   deploy-failure-alert:
     name: Alert on deploy/migration crash (pre-health)
     needs: [run-migrations, deploy]
@@ -621,16 +521,6 @@ jobs:
             echo "detail=flyctl deploy crashed before the rolling swap reached health check. Previous release still live." >> $GITHUB_OUTPUT
           fi
 
-      - name: Telegram alert (deploy crash before health)
+      - name: Record workflow outcome (Telegram retired)
         run: |
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          MESSAGE="${{ steps.stage.outputs.icon }} *Deploy Nuzantara CRASH*%0A%0AStage fallito: \`${{ steps.stage.outputs.stage }}\`%0A${{ steps.stage.outputs.detail }}%0A%0ACommit: \`${{ github.sha }}\`%0AAutore: ${{ github.actor }}%0ARun: ${RUN_URL}%0A%0A⚠️ Nessun rollback necessario (vecchia release ancora attiva). Controlla i log del run."
-          # No parse_mode — see the identical comment in run-sql-v2-migrations-post-deploy above.
-          STATUS=$(curl -s -o /tmp/tg_resp.json -w "%{http_code}" \
-            "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.TELEGRAM_OWNER_CHAT_ID }}" \
-            -d "text=${MESSAGE}" \
-            -d "disable_web_page_preview=true" || echo "000")
-          if [ "$STATUS" != "200" ]; then
-            echo "::warning::Telegram notification failed (HTTP $STATUS): $(cat /tmp/tg_resp.json 2>/dev/null | head -c 300)"
-          fi
+          printf '%s\n' 'Telegram retired; workflow logs and status remain authoritative.' >> "$GITHUB_STEP_SUMMARY"

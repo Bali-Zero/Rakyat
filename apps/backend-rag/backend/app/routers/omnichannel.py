@@ -18,6 +18,7 @@ from backend.app.dependencies import get_current_user
 from backend.app.deps.auth import reject_portal_roles
 from backend.app.deps.crm_access import can_view_all_clients
 from backend.core.cache import invalidate_cache
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.security.pii_log_identifier import redact_identifier_for_log
 
 logger = logging.getLogger(__name__)
@@ -316,31 +317,33 @@ async def assign_thread(
 
     await tm.assign_thread(thread_id, assignee)
 
-    # Notify via Telegram
-    try:
-        from backend.core.config import settings
-        from backend.services.integrations.telegram_bot_service import TelegramBotService
+    # Assignment remains active; Telegram side effects are permanently retired.
+    if not telegram_is_retired():
+        # Notify via Telegram
+        try:
+            from backend.core.config import settings
+            from backend.services.integrations.telegram_bot_service import TelegramBotService
 
-        bot = TelegramBotService()
-        owner_chat = getattr(settings, "telegram_owner_chat_id", None) or ""
+            bot = TelegramBotService()
+            owner_chat = getattr(settings, "telegram_owner_chat_id", None) or ""
 
-        thread_row = await db_pool.fetchrow(
-            "SELECT subject, last_message_preview FROM conversation_threads WHERE id = $1",
-            thread_id,
-        )
-        subject = thread_row["subject"] if thread_row else "New thread"
-        preview = thread_row["last_message_preview"] if thread_row else ""
-
-        if owner_chat:
-            await bot.send_message(
-                chat_id=owner_chat,
-                text=f"📋 Thread assigned to *{assignee}*\n_{subject}_\n`{preview[:100]}`",
-                parse_mode="Markdown",
+            thread_row = await db_pool.fetchrow(
+                "SELECT subject, last_message_preview FROM conversation_threads WHERE id = $1",
+                thread_id,
             )
-        else:
-            logger.warning("Assignment notification skipped: TELEGRAM_OWNER_CHAT_ID not set")
-    except Exception as e:
-        logger.debug("Assignment notification failed (non-fatal): %s", e)
+            subject = thread_row["subject"] if thread_row else "New thread"
+            preview = thread_row["last_message_preview"] if thread_row else ""
+
+            if owner_chat:
+                await bot.send_message(
+                    chat_id=owner_chat,
+                    text=f"📋 Thread assigned to *{assignee}*\n_{subject}_\n`{preview[:100]}`",
+                    parse_mode="Markdown",
+                )
+            else:
+                logger.warning("Assignment notification skipped: TELEGRAM_OWNER_CHAT_ID not set")
+        except Exception as e:
+            logger.debug("Assignment notification failed (non-fatal): %s", e)
 
     await invalidate_cache("zantara:omnichannel:*")
     return {"status": "assigned", "thread_id": str(thread_id), "assigned_to": assignee}

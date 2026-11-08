@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.notifications.email_audit import _bounded_scrub
 from backend.services.notifications.email_http import get_email_client
@@ -508,6 +509,8 @@ class EmailHealthMonitor:
 
 
 def _post_telegram(text: str) -> None:
+    if telegram_is_retired():
+        return
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     if not bot_token:
         logger.warning(

@@ -11,6 +11,7 @@ import os
 import re
 from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 MAX_CHARS = 450
 # Bump whenever the template wording, the validator or the allow-list changes: it is hashed
 # with the facts, so cached texts written by older logic are regenerated.
-RECAP_SCHEMA_VERSION = "2026-11-04.v4"
+RECAP_SCHEMA_VERSION = "2026-11-07.v5"
 _MONTHS = [
     "January", "February", "March", "April", "May", "June", "July",
     "August", "September", "October", "November", "December",
@@ -44,11 +45,15 @@ def fmt_date(iso: str | None) -> str | None:
 
 
 def fmt_idr(n: int | None) -> str | None:
+    """Words only when the one-decimal short form equals the amount exactly; else full digits."""
     if n is None:
         return None
     for unit, size in (("trillion", 10**12), ("billion", 10**9), ("million", 10**6)):
         if n >= size:
-            return f"IDR {n / size:.1f} {unit}"
+            tenths, remainder = divmod(n * 10, size)
+            if remainder == 0:
+                return f"IDR {tenths // 10}.{tenths % 10} {unit}"
+            break
     return f"IDR {n:,}"
 
 
@@ -108,17 +113,19 @@ def based_on(scope: str, payload: Mapping[str, Any]) -> list[str]:
         pairs = [
             ("current permit", "current_permit"), ("ITK", "itk_expiry_date"),
             ("passport", "passport_expiry_date"), ("family", "family_members_count"),
-            ("practices", "open_practices"), ("previous permits", "previous_permits_count"),
+            ("practices", "open_practices_count"),
         ]  # fmt: skip
     else:
         pairs = [
             ("legal form", "legal_form"), ("establishment", "established_date"),
             ("capital", "authorized_capital_idr"), ("ownership", "shareholders_count"),
-            ("KBLI", "kbli"), ("LKPM", "lkpm_latest"), ("amendments", "last_amendment_date"),
+            ("KBLI", "kbli_count"), ("LKPM", "lkpm_latest"), ("amendments", "last_amendment_date"),
         ]  # fmt: skip
     out = [label for label, key in pairs if p.get(key) not in (None, [], {}, 0)]
     if scope == "company" and "capital" not in out and p.get("paid_up_capital_idr") is not None:
         out.append("capital")
+    if scope == "company" and "KBLI" not in out and p.get("kbli_not_in_catalogue"):
+        out.append("KBLI")
     return out
 
 
@@ -142,24 +149,19 @@ def _imm_clauses(p: Mapping[str, Any], today: date) -> list[str]:
         label = f"{_strip_code(name, code)} ({code})" if code and code != name else name
     elif code:
         label = code
-    if label:
+    if label and expiry:
         s = f"the client's {which} permit is {label}"
         if cp.get("issue_date"):
-            s += f", issued on {fmt_date(cp['issue_date'])}"
-            if expiry:
-                s += f" and {verb} {fmt_date(cp['expiry_date'])}"
-        elif expiry:
+            s += (
+                f", issued on {fmt_date(cp['issue_date'])} and {verb} {fmt_date(cp['expiry_date'])}"
+            )
+        else:
             s += f", {verb} {fmt_date(cp['expiry_date'])}"
         clauses.append(s)
-    elif expiry:
-        clauses.append(f"the client's {which} permit is {verb} {fmt_date(cp['expiry_date'])}")
-    else:
-        clauses.append("no current stay permit is recorded for the client")
 
-    practices = p.get("open_practices") or []
-    if practices:
-        n = len(practices)
-        types = list(dict.fromkeys(x["type"] for x in practices if x.get("type")))[:4]
+    n = p.get("open_practices_count") or 0
+    if n:
+        types = list(dict.fromkeys(p.get("open_practice_types") or []))
         s = (
             "an immigration practice is open"
             if n == 1
@@ -170,7 +172,7 @@ def _imm_clauses(p: Mapping[str, Any], today: date) -> list[str]:
             s += lead + _join(types)
         clauses.append(s)
     itk = _d(p.get("itk_expiry_date"))
-    if itk and ("kitas" in str(name or "").lower() or str(code or "").startswith("E")):
+    if itk:
         itk_expired = p["itk_status"] == "expired" if p.get("itk_status") else itk < today
         v = "expired on" if itk_expired else "runs until"
         clauses.append(f"the ITK stamp {v} {fmt_date(p['itk_expiry_date'])}")
@@ -182,13 +184,7 @@ def _imm_clauses(p: Mapping[str, Any], today: date) -> list[str]:
     fam_n = p.get("family_members_count") or 0
     if fam_n:
         s = f"{num(fam_n)} family {_plural(fam_n, 'member is', 'members are')} on file"
-        k = len(
-            [
-                f
-                for f in p.get("family_permits") or []
-                if expiry and (fe := _d(f.get("permit_expiry_date"))) and fe < expiry
-            ]
-        )
+        k = p.get("family_permits_ending_before_main_count") or 0
         if k:
             s += (
                 ", one of them with a permit that ends before the main permit"
@@ -196,9 +192,6 @@ def _imm_clauses(p: Mapping[str, Any], today: date) -> list[str]:
                 else f", {num(k)} of them with permits that end before the main permit"
             )
         clauses.append(s)
-    prev = p.get("previous_permits_count") or 0
-    if prev:
-        clauses.append(f"{num(prev)} earlier {_plural(prev, 'permit is', 'permits are')} on record")
     return clauses
 
 
@@ -211,9 +204,12 @@ def _company_clauses(p: Mapping[str, Any]) -> list[str]:
         clauses.append(f"the company is a {form}")
     elif est:
         clauses.append(f"the company was established on {fmt_date(est)}")
-    auth, paid = fmt_idr(p.get("authorized_capital_idr")), fmt_idr(p.get("paid_up_capital_idr"))
-    if auth and paid:
+    auth_n, paid_n = p.get("authorized_capital_idr"), p.get("paid_up_capital_idr")
+    auth, paid = fmt_idr(auth_n), fmt_idr(paid_n)
+    if auth and paid and paid_n <= auth_n:
         clauses.append(f"authorized capital is {auth}, of which {paid} is paid up")
+    elif auth and paid:
+        clauses.append(f"authorized capital is {auth} and paid-up capital is {paid}")
     elif auth:
         clauses.append(f"authorized capital is {auth}")
     elif paid:
@@ -225,17 +221,12 @@ def _company_clauses(p: Mapping[str, Any]) -> list[str]:
     if di:
         bits.append(f"{num(di)} {_plural(di, 'director')}")
     if bits:
-        clauses.append("it has " + " and ".join(bits))
-    kbli = p.get("kbli") or []
-    if kbli:
-        s = f"it is registered under {num(len(kbli))} KBLI {_plural(len(kbli), 'line')}"
-        titles = [k["title"] for k in kbli if k.get("title")][:2]
-        if titles:
-            s += " (" + ", ".join(titles) + ")"
-        old = sum(1 for k in kbli if k.get("in_2025") is False)
-        if old:
-            s += f", and {num(old)} {_plural(old, 'code')} still on KBLI 2020"
-        clauses.append(s)
+        clauses.append("it has " + " and ".join(bits) + " linked in the CRM")
+    kbli_n = p.get("kbli_count") or 0
+    if kbli_n:
+        clauses.append(f"it is registered under {num(kbli_n)} KBLI {_plural(kbli_n, 'line')}")
+    elif p.get("kbli_not_in_catalogue"):
+        clauses.append("at least one KBLI code on file is not in the KBLI 2025 catalogue")
     lk = p.get("lkpm_latest") or {}
     if lk.get("year") and lk.get("quarter"):
         s = f"the latest LKPM on record is {lk['quarter']} {lk['year']}"
@@ -289,6 +280,15 @@ _WORD_RE = re.compile(r"\b(" + "|".join(_WORD_VALUE) + r")\b")
 _UNIT = {"trillion": 10**12, "billion": 10**9, "million": 10**6, None: 1, "": 1}
 
 
+def _money_value(number: str, unit: str | None) -> Decimal | None:
+    """The exact value of an amount in text (a trailing sentence dot is not part of it)."""
+    digits = number.rstrip(".,").replace(",", "")
+    try:
+        return Decimal(digits) * _UNIT[(unit or "").lower() or None]
+    except InvalidOperation:
+        return None
+
+
 def _leaves(v: Any):
     if isinstance(v, Mapping):
         for x in v.values():
@@ -303,7 +303,7 @@ def _leaves(v: Any):
 def _payload_facts(payload: Mapping[str, Any]) -> tuple[set[date], set[str], set[int], list[int]]:
     dates: set[date] = set()
     codes: set[str] = set()
-    ints: set[int] = {1, 2020, 2025}
+    ints: set[int] = {1, 2025}  # 2025 names the KBLI 2025 catalogue
     amounts: list[int] = []
     for key, val in payload.items():
         if key.endswith("_idr") and isinstance(val, int):
@@ -322,18 +322,6 @@ def _payload_facts(payload: Mapping[str, Any]) -> tuple[set[date], set[str], set
     for v in payload.values():
         if isinstance(v, (list, tuple)):
             ints.add(len(v))
-    kbli = payload.get("kbli") or []
-    ints.add(sum(1 for k in kbli if k.get("in_2025") is False))
-    ints.add(len(payload.get("previous_permit_codes") or []))
-    permit_end = _d((payload.get("current_permit") or {}).get("expiry_date"))
-    if permit_end:
-        ints.add(
-            sum(
-                1
-                for f in payload.get("family_permits") or []
-                if (fe := _d(f.get("permit_expiry_date"))) and fe < permit_end
-            )
-        )
     return dates, codes, ints, amounts
 
 
@@ -479,15 +467,12 @@ def _dropped_facts(template: str, text: str, payload: Mapping[str, Any]) -> list
     }:
         out.append("dropped_date")
 
-    def amounts(s: str) -> list[float]:
-        return [
-            float(m[1].replace(",", "")) * _UNIT[(m[2] or "").lower() or None]
-            for m in _MONEY_RE.finditer(s)
-            if m[1].replace(",", "").replace(".", "", 1).isdigit()
-        ]
+    def amounts(s: str) -> list[Decimal]:
+        found = (_money_value(m[1], m[2]) for m in _MONEY_RE.finditer(s))
+        return [v for v in found if v is not None]
 
     x_amounts = amounts(x_rest)
-    if any(not any(abs(a - b) <= max(a * 0.006, 1) for b in x_amounts) for a in amounts(t_rest)):
+    if any(a not in x_amounts for a in amounts(t_rest)):
         out.append("dropped_amount")
     t_clean, x_clean = _MONEY_RE.sub(" ", t_rest), _MONEY_RE.sub(" ", x_rest)
     if not set(_CODE_RE.findall(t_clean)) <= set(_CODE_RE.findall(x_clean)):
@@ -554,12 +539,10 @@ def validate_recap(
             reasons.append("invented_date")
             break
     for m in _MONEY_RE.finditer(rest):
-        try:
-            value = float(m[1].replace(",", "")) * _UNIT[(m[2] or "").lower() or None]
-        except ValueError:
+        value = _money_value(m[1], m[2])
+        if value is None:
             reasons.append("bad_amount")
-            continue
-        if not any(abs(value - a) <= max(a * 0.006, 1) for a in amounts):
+        elif value not in amounts:
             reasons.append("invented_amount")
     rest = _MONEY_RE.sub(" ", rest)
     for c in _CODE_RE.findall(rest):

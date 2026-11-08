@@ -25,6 +25,7 @@ from pathlib import Path
 import asyncpg
 
 from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.services.measurer.m13_feedback_loop import M13FeedbackLoop
 from backend.services.sota_loop._promote import promote_research_output
 
@@ -233,6 +234,8 @@ def _notify_telegram(
 ) -> None:
     """Send digest as plain text — Markdown nested with emoji + backticks
     triggers HTTP 400 from Telegram (Fase 0 lesson #8)."""
+    if telegram_is_retired():
+        return
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat = os.environ.get("TELEGRAM_OWNER_CHAT_ID", "").strip()
     if not token:

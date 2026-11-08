@@ -16,31 +16,18 @@ from typing import Any
 
 import asyncpg
 
+from backend.services.crm.drive_taxonomy import standard_subfolder_paths
 from backend.services.crm_guardian.base import (
     GuardianAction,
     GuardianEvent,
     GuardianRunContext,
     record_event,
 )
+from backend.services.integrations.service_account_drive_service import canonical_folder_lock
 
 logger = logging.getLogger(__name__)
 
-STANDARD_SUBFOLDERS = [
-    "00_Profile",
-    "01_Immigration",
-    "02_Company",
-    "02_Company/AKTA",
-    "02_Company/NIB",
-    "02_Company/NPWP",
-    "02_Company/Profile Perseroan",
-    "03_Tax",
-    "03_Tax/SPT company",
-    "03_Tax/SPT personal",
-    "03_Tax/LKPM reports",
-    "03_Tax/NPWP personal",
-    "04_Family",
-    "99_Misc",
-]
+STANDARD_SUBFOLDERS = standard_subfolder_paths()
 
 
 # ============================================================
@@ -178,23 +165,47 @@ def _safe_filename_component(name: str, max_len: int = 60) -> str:
 # ============================================================
 # I1 provisioning — create canonical folder + template
 # ============================================================
-def provision_canonical_folder(drive: Any, client_id: int, full_name: str, parent_id: str) -> dict:
-    """Create a new canonical folder under parent_id with the full subfolder template.
+async def _guardian_resolve_folder(
+    conn: asyncpg.Connection,
+    drive: Any,
+    name: str,
+    parent_id: str,
+    cached_id: str | None = None,
+) -> tuple[dict, bool]:
+    async with canonical_folder_lock(conn, parent_id, name):
+        matches = [ch for ch in _drive_list_children(drive, parent_id) if ch["name"] == name]
+        if len(matches) > 1 or (
+            matches and matches[0]["mimeType"] != "application/vnd.google-apps.folder"
+        ):
+            raise RuntimeError("Ambiguous canonical Drive destination")
+        if cached_id and (not matches or matches[0]["id"] != cached_id):
+            raise RuntimeError("Stale canonical Drive destination")
+        created = not matches
+        if created:
+            _drive_create_folder(drive, name, parent_id)
+            matches = [ch for ch in _drive_list_children(drive, parent_id) if ch["name"] == name]
+            if len(matches) != 1 or matches[0]["mimeType"] != "application/vnd.google-apps.folder":
+                raise RuntimeError("Created canonical Drive folder cannot be verified")
+        return matches[0], created
 
-    Returns:
-        dict {root_id, subfolders: {name→id}} where 'subfolders' includes nested paths.
-    """
+
+async def provision_canonical_folder(
+    drive: Any,
+    client_id: int,
+    full_name: str,
+    parent_id: str,
+    *,
+    conn: asyncpg.Connection,
+) -> dict:
+    """Provision or reuse a client root and template under distributed name locks."""
     root_name = f"{client_id}_{full_name}"
-    root = _drive_create_folder(drive, root_name, parent_id)
+    root, _ = await _guardian_resolve_folder(conn, drive, root_name, parent_id)
     root_id = root["id"]
-
     subfolders: dict[str, str] = {"": root_id}
     for path in STANDARD_SUBFOLDERS:
         parent_path, _, leaf = path.rpartition("/")
-        parent_leaf_id = subfolders.get(parent_path, root_id)
-        created = _drive_create_folder(drive, leaf, parent_leaf_id)
+        created, _ = await _guardian_resolve_folder(conn, drive, leaf, subfolders[parent_path])
         subfolders[path] = created["id"]
-
     return {"root_id": root_id, "root_name": root_name, "subfolders": subfolders}
 
 
@@ -306,16 +317,13 @@ async def apply_consolidation_for_client(
         **kw,
     )
 
-    # If misc_id is missing from the plan (older audit), look it up now.
-    if not misc_id:
-        for ch in _drive_list_children(drive, canonical_id):
-            if ch["mimeType"] == "application/vnd.google-apps.folder" and ch["name"] == "99_Misc":
-                misc_id = ch["id"]
-                break
-        if not misc_id and not dry:
-            # Create 99_Misc on the fly so consolidation has a destination.
-            created = _drive_create_folder(drive, "99_Misc", canonical_id)
-            misc_id = created["id"]
+    # Re-check the canonical archive inside the same name lock used by writers.
+    if not dry:
+        archive, created = await _guardian_resolve_folder(
+            conn, drive, "04_Archive", canonical_id, misc_id
+        )
+        misc_id = archive["id"]
+        if created:
             await record_event(
                 conn,
                 ev(
@@ -323,8 +331,7 @@ async def apply_consolidation_for_client(
                     target_type="folder",
                     target_id=misc_id,
                     status="success",
-                    after_state={"name": "99_Misc", "parent": canonical_id},
-                    notes="99_Misc was missing under canonical; created on-demand",
+                    after_state={"name": "04_Archive", "parent": canonical_id},
                 ),
             )
 
@@ -562,9 +569,11 @@ async def apply_provision_and_consolidate(
         return await apply_consolidation_for_client(conn, drive, plan_for_dry, context)
 
     # Real run — create canonical
-    provisioned = provision_canonical_folder(drive, client_id, full_name, parent_id)
+    provisioned = await provision_canonical_folder(
+        drive, client_id, full_name, parent_id, conn=conn
+    )
     canonical_id = provisioned["root_id"]
-    misc_id = provisioned["subfolders"]["99_Misc"]
+    misc_id = provisioned["subfolders"]["04_Archive"]
 
     await record_event(
         conn,

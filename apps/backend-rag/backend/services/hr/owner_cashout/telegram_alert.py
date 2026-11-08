@@ -15,6 +15,7 @@ import httpx
 
 from backend.core.env_lists import owner_telegram_chat_id
 from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.core.telegram_retirement import telegram_is_retired
 
 install_telegram_token_redaction()
 
@@ -25,6 +26,8 @@ TG_TIMEOUT_S = 10.0
 
 async def send_alert(message: str) -> None:
     """Send a Telegram message to owner chat. Never raises."""
+    if telegram_is_retired():
+        return
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
         logger.warning("[CASHOUT] TELEGRAM_BOT_TOKEN missing — skipping alert")

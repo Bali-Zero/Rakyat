@@ -75,6 +75,7 @@ locale: "it"
 canonicalUrl: "https://balizero.com/it/lifestyle/accommodation-guide"
 ogImage: "/static/insights/lifestyle/accommodation.jpg"
 twitterCard: "summary_large_image"
+source_sha256: "f6a85d30ddbe56fcbba8eb03f454c470cb0829e00cfc061976b2b3677cb12c4f"
 ---
 
 import {
@@ -86,97 +87,97 @@ import {
   AskZantara,
 } from "@/components/insights/interactive";
 
-# Alloggi in Indonesia 2026: Guida alla casa per expat
+# Alloggi in Indonesia 2026: Guida agli alloggi per expat
 
-Trovare il posto giusto dove vivere è fondamentale per la tua esperienza in Indonesia. Ecco cosa devi sapere.
+Trovare il posto giusto in cui vivere è fondamentale per la tua esperienza in Indonesia. Ecco cosa devi sapere.
 
 ## Tipi di alloggio
 
 <DecisionTree
-  title="Quale tipo fa per te?"
-  description="Trova il tuo alloggio ideale"
+  title="What Type Suits You?"
+  description="Find your ideal accommodation"
   nodes={[
     {
       id: "start",
-      question: "Quanto tempo rimarrai?",
+      question: "How long are you staying?",
       options: [
-        { label: "1-3 mesi", next: "short" },
-        { label: "3-12 mesi", next: "medium" },
-        { label: "1+ anni", next: "long" },
+        { label: "1-3 months", next: "short" },
+        { label: "3-12 months", next: "medium" },
+        { label: "1+ years", next: "long" },
       ],
     },
     {
       id: "short",
-      question: "Qual è il tuo budget?",
+      question: "What's your budget?",
       options: [
-        { label: "Economico (< 500€/mese)", next: "short-budget" },
-        { label: "Medio (500-1500€)", next: "short-mid" },
-        { label: "Comfort (1500€+)", next: "short-comfort" },
+        { label: "Budget (< $500/month)", next: "short-budget" },
+        { label: "Mid-range ($500-1500)", next: "short-mid" },
+        { label: "Comfort ($1500+)", next: "short-comfort" },
       ],
     },
     {
       id: "medium",
-      question: "Qual è la tua priorità?",
+      question: "What's your priority?",
       options: [
-        { label: "Rapporto qualità-prezzo", next: "medium-value" },
-        { label: "Posizione e comunità", next: "medium-location" },
-        { label: "Spazio e privacy", next: "medium-space" },
+        { label: "Value for money", next: "medium-value" },
+        { label: "Location & community", next: "medium-location" },
+        { label: "Space & privacy", next: "medium-space" },
       ],
     },
     {
       id: "long",
       result: {
-        title: "Affitto a lungo termine o acquisto",
+        title: "Long-term Rental or Purchase",
         description:
-          "Considera l'affitto annuale di una villa o appartamento per le tariffe migliori. Puoi anche esplorare l'investimento immobiliare tramite strutture indonesiane.",
+          "Consider yearly villa/apartment rental for best rates. May also explore property investment through Indonesian structure.",
       },
     },
     {
       id: "short-budget",
       result: {
-        title: "Guesthouse o Kos",
+        title: "Guesthouse or Kos",
         description:
-          "Le guesthouse mensili o i 'kos-kosan' (camere in affitto) offrono opzioni economiche a breve termine. Essenziali ma funzionali.",
+          "Monthly guesthouses or 'kos-kosan' (boarding rooms) offer affordable short-term options. Basic but functional.",
       },
     },
     {
       id: "short-mid",
       result: {
-        title: "Appartamento servito o villa mensile",
+        title: "Serviced Apartment or Monthly Villa",
         description:
-          "Affitti mensili disponibili su Airbnb o tramite agenti locali. Buon equilibrio tra comfort e flessibilità.",
+          "Monthly rentals available on Airbnb, booking sites, or local agents. Good balance of comfort and flexibility.",
       },
     },
     {
       id: "short-comfort",
       result: {
-        title: "Villa o appartamento premium",
+        title: "Villa or Premium Apartment",
         description:
-          "Affitti di ville a breve termine o appartamenti serviti con servizi premium. Prezzi più alti ma massimo comfort.",
+          "Short-term villa rentals or serviced apartments with premium amenities. Higher prices but maximum comfort.",
       },
     },
     {
       id: "medium-value",
       result: {
-        title: "Contratto di 6 mesi",
+        title: "6-Month Villa/Apartment Lease",
         description:
-          "Negozia un contratto di 6 mesi per tariffe migliori rispetto al mensile. Spesso si ottiene uno sconto del 20-30%.",
+          "Negotiate 6-month lease for better rates than monthly. Often 20-30% discount over short-term rates.",
       },
     },
     {
       id: "medium-location",
       result: {
-        title: "Co-living o complesso residenziale",
+        title: "Co-living or Apartment Complex",
         description:
-          "Gli spazi di co-living offrono comunità. I complessi di appartamenti garantiscono sicurezza e servizi in posizioni centrali.",
+          "Co-living spaces offer community. Apartment complexes provide security and amenities in central locations.",
       },
     },
     {
       id: "medium-space",
       result: {
-        title: "Villa o casa privata",
+        title: "Private Villa or House",
         description:
-          "Affitta un'intera villa o casa per privacy e spazio. Tariffe migliori con un impegno di 6-12 mesi.",
+          "Rent entire villa or house for privacy and space. Best rates with 6-12 month commitment.",
       },
     },
   ]}
@@ -184,41 +185,51 @@ Trovare il posto giusto dove vivere è fondamentale per la tua esperienza in Ind
 
 ---
 
-## Costi di affitto per area
+## Costi di affitto per zona
 
 <ComparisonTable
-  title="Costi mensili di affitto"
-  description="Prezzi tipici per località"
+  title="Monthly Rental Costs"
+  description="Typical prices by location"
   items={[
     {
       name: "Canggu, Bali",
-      subtitle: "Hub dei nomadi digitali",
+      subtitle: "Digital nomad hub",
       values: {
-        "Monolocale/Camera": "5-10M IDR",
-        "Villa 1 stanza": "10-20M IDR",
-        "Villa 2 stanze": "15-35M IDR",
-        "Villa di lusso": "40M+ IDR",
+        "Studio/Room": "IDR 5-10M",
+        "1BR Villa": "IDR 10-20M",
+        "2BR Villa": "IDR 15-35M",
+        "Luxury Villa": "IDR 40M+",
       },
       highlight: true,
     },
     {
       name: "Ubud, Bali",
-      subtitle: "Centro culturale",
+      subtitle: "Cultural center",
       values: {
-        "Monolocale/Camera": "4-8M IDR",
-        "Villa 1 stanza": "8-15M IDR",
-        "Villa 2 stanze": "12-25M IDR",
-        "Villa di lusso": "30M+ IDR",
+        "Studio/Room": "IDR 4-8M",
+        "1BR Villa": "IDR 8-15M",
+        "2BR Villa": "IDR 12-25M",
+        "Luxury Villa": "IDR 30M+",
       },
     },
     {
-      name: "Giacarta Centrale",
-      subtitle: "Centro affari",
+      name: "Seminyak, Bali",
+      subtitle: "Beach lifestyle",
       values: {
-        "Monolocale/Camera": "5-10M IDR",
-        "Appartamento 1 stanza": "10-20M IDR",
-        "Appartamento 2 stanze": "15-35M IDR",
-        Lusso: "40M+ IDR",
+        "Studio/Room": "IDR 7-15M",
+        "1BR Villa": "IDR 15-25M",
+        "2BR Villa": "IDR 20-45M",
+        "Luxury Villa": "IDR 50M+",
+      },
+    },
+    {
+      name: "Jakarta (Central)",
+      subtitle: "Business center",
+      values: {
+        "Studio/Room": "IDR 5-10M",
+        "1BR Apartment": "IDR 10-20M",
+        "2BR Apartment": "IDR 15-35M",
+        Luxury: "IDR 40M+",
       },
     },
   ]}
@@ -229,18 +240,18 @@ Trovare il posto giusto dove vivere è fondamentale per la tua esperienza in Ind
 ## Calcolatore del budget mensile
 
 <Calculator
-  title="Budget per la casa"
-  description="Stima i tuoi costi di alloggio"
+  title="Housing Budget"
+  description="Estimate your accommodation costs"
   fields={[
     {
       id: "type",
-      label: "Tipo di alloggio",
+      label: "Accommodation Type",
       type: "select",
       options: [
-        { value: "room", label: "Camera/Monolocale" },
-        { value: "apartment", label: "Appartamento/Villa 1 stanza" },
-        { value: "villa2", label: "Villa 2 stanze" },
-        { value: "luxury", label: "Villa di lusso" }
+        { value: "room", label: "Room/Studio" },
+        { value: "apartment", label: "1BR Apartment/Villa" },
+        { value: "villa2", label: "2BR Villa" },
+        { value: "luxury", label: "Luxury Villa" }
       ],
       defaultValue: "apartment"
     },
@@ -253,23 +264,24 @@ Trovare il posto giusto dove vivere è fondamentale per la tua esperienza in Ind
         { value: "ubud", label: "Ubud" },
         { value: "seminyak", label: "Seminyak" },
         { value: "sanur", label: "Sanur" },
-        { value: "jakarta", label: "Giacarta" }
+        { value: "jakarta", label: "Jakarta" }
       ],
       defaultValue: "canggu"
     },
     {
       id: "term",
-      label: "Durata affitto",
+      label: "Rental Term",
       type: "select",
       options: [
-        { value: "monthly", label: "Mensile" },
-        { value: "6month", label: "6 mesi" },
-        { value: "yearly", label: "Annuale" }
+        { value: "monthly", label: "Monthly" },
+        { value: "6month", label: "6 months" },
+        { value: "yearly", label: "Yearly" }
       ],
       defaultValue: "monthly"
     }
   ]}
   calculateResult={(values) => {
+    // Base prices by area and type (IDR)
     const prices = {
       canggu: { room: 7000000, apartment: 15000000, villa2: 25000000, luxury: 50000000 },
       ubud: { room: 5000000, apartment: 12000000, villa2: 18000000, luxury: 35000000 },
@@ -278,6 +290,7 @@ Trovare il posto giusto dove vivere è fondamentale per la tua esperienza in Ind
       jakarta: { room: 7000000, apartment: 15000000, villa2: 25000000, luxury: 45000000 }
     };
 
+    // Term discounts
     const discounts = {
       monthly: 1.0,
       "6month": 0.85,
@@ -288,6 +301,7 @@ Trovare il posto giusto dove vivere è fondamentale per la tua esperienza in Ind
     const discount = discounts[values.term];
     const monthlyRent = basePrice * discount;
 
+    // Additional costs
     const utilities = 500000;
     const internet = 500000;
     const cleaning = values.type === "room" ? 0 : 400000;
@@ -297,13 +311,13 @@ Trovare il posto giusto dove vivere è fondamentale per la tua esperienza in Ind
     return {
       total: Math.round(total),
       breakdown: [
-        { label: "Affitto (con sconto durata)", amount: Math.round(monthlyRent) },
-        { label: "Stima utenze", amount: utilities },
+        { label: "Rent (with term discount)", amount: Math.round(monthlyRent) },
+        { label: "Utilities estimate", amount: utilities },
         { label: "Internet", amount: internet },
-        { label: "Pulizie (se applicabile)", amount: cleaning }
+        { label: "Cleaning (if applicable)", amount: cleaning }
       ],
       currency: "IDR",
-      note: `~${Math.round(total / 16000)} USD/mese`
+      note: `~USD ${Math.round(total / 16000)}/month`
     };
 
 }}
@@ -311,71 +325,71 @@ Trovare il posto giusto dove vivere è fondamentale per la tua esperienza in Ind
 
 ---
 
-## Processo di affitto
+## Procedura di affitto
 
 <Checklist
-  title="Checklist per l'affitto"
-  description="Passaggi per affittare un alloggio"
+  title="Rental Checklist"
+  description="Steps to rent accommodation"
   persistKey="rental-checklist"
   items={[
     {
       id: "search",
-      label: "Cerca e visita le proprietà",
-      description: "Online + di persona",
+      label: "Search and view properties",
+      description: "Online + in person",
       required: true,
       category: "search",
     },
     {
       id: "negotiate",
-      label: "Negozia termini e prezzo",
-      description: "Soprattutto per lunghi periodi",
+      label: "Negotiate terms and price",
+      description: "Especially for longer terms",
       required: true,
       category: "negotiate",
     },
     {
       id: "inspect",
-      label: "Ispezione accurata",
-      description: "Controlla che tutto funzioni",
+      label: "Thorough inspection",
+      description: "Check everything works",
       required: true,
       category: "inspect",
     },
     {
       id: "contract",
-      label: "Revisiona il contratto",
-      description: "Metti tutto per iscritto",
+      label: "Review rental agreement",
+      description: "Get in writing",
       required: true,
       category: "legal",
     },
     {
       id: "deposit",
-      label: "Paga il deposito",
-      description: "Solitamente 1-2 mesi",
+      label: "Pay deposit",
+      description: "Usually 1-2 months",
       required: true,
       category: "payment",
     },
     {
       id: "inventory",
-      label: "Documenta lo stato/inventario",
-      description: "Foto, lista oggetti",
+      label: "Document condition/inventory",
+      description: "Photos, list of items",
       required: true,
       category: "protect",
     },
     {
       id: "utilities",
-      label: "Attiva le utenze",
-      description: "Luce, acqua, internet",
+      label: "Set up utilities",
+      description: "Electricity, water, internet",
       required: true,
       category: "setup",
     },
   ]}
   categories={[
-    { id: "search", label: "Ricerca", color: "blue" },
-    { id: "negotiate", label: "Negoziazione", color: "green" },
-    { id: "inspect", label: "Ispezione", color: "amber" },
-    { id: "legal", label: "Legale", color: "red" },
-    { id: "payment", label: "Pagamento", color: "purple" },
-    { id: "protect", label: "Protezione", color: "cyan" },
-    { id: "setup", label: "Attivazione", color: "pink" },
+    { id: "search", label: "Search", color: "blue" },
+    { id: "negotiate", label: "Negotiate", color: "green" },
+    { id: "inspect", label: "Inspect", color: "amber" },
+    { id: "legal", label: "Legal", color: "red" },
+    { id: "payment", label: "Payment", color: "purple" },
+    { id: "protect", label: "Protection", color: "cyan" },
+    { id: "setup", label: "Setup", color: "pink" },
   ]}
   showProgress={true}
 />
@@ -384,55 +398,117 @@ Trovare il posto giusto dove vivere è fondamentale per la tua esperienza in Ind
 
 ## Dove trovare affitti
 
-### Piattaforme Online
+### Piattaforme online
 
-| Piattaforma        | Ideale per          | Note                   |
-| ------------------ | ------------------- | ---------------------- |
-| Gruppi Facebook    | Affitti locali      | Molto attivi a Bali    |
-| Airbnb             | Breve termine       | Sconti mensili         |
-| Rumah.com          | Annunci indonesiani | Mercato locale         |
-| OLX                | Opzioni economiche  | Trattabile             |
-| Agenti immobiliari | Premium/lungo term. | Servizio professionale |
+| Piattaforma | Ideale per | Note |
+| ------------------ | ------------------- | -------------------- |
+| Facebook Groups | Affitti locali | Molto attivo a Bali |
+| Airbnb | Breve termine, verificati | Sconti mensili |
+| Rumah.com | Annunci indonesiani | Mercato locale |
+| OLX | Opzioni economiche | Negoziabile |
+| Agenti immobiliari | Premium/lungo termine | Servizio professionale |
+
+### Gruppi Facebook (Bali)
+
+- Bali Accommodation
+- Ubud Community Housing
+- Canggu Community
+- Bali Expat Forum
 
 ---
 
-## Suggerimenti per il contratto di affitto
+## Cosa controllare
+
+<InfoCard variant="warning" title="Before Signing">
+
+  **Verifica sempre:** - Pressione dell'acqua e riscaldamento - Test della
+  velocità internet - Aria condizionata funzionante - Elettrodomestici da
+  cucina - Sicurezza (serrature, zona sicura) - Livelli di rumore - Parcheggio
+  (se necessario) - Generatore/energia di riserva - Situazione parassiti -
+  Reattività del proprietario
+</InfoCard>
+
+---
+
+## Consigli per il contratto di affitto
 
 ### Termini chiave da includere
 
-| Termine      | Cosa controllare               |
-| ------------ | ------------------------------ |
-| Durata       | Date inizio/fine chiare        |
-| Canone       | Totale e scadenze pagamenti    |
-| Deposito     | Importo e condizioni reso      |
-| Utenze       | Chi paga cosa                  |
-| Manutenzione | Responsabilità per riparazioni |
-| Recesso      | Preavviso e penali             |
-| Inventario   | Lista degli oggetti inclusi    |
+| Termine | Cosa controllare |
+| ----------- | ---------------------------- |
+| Durata | Date di inizio/fine chiare |
+| Importo dell'affitto | Totale e piano dei pagamenti |
+| Deposito | Importo e condizioni di restituzione |
+| Utenze | Chi paga cosa |
+| Manutenzione | Responsabilità per le riparazioni |
+| Risoluzione | Periodo di preavviso, penali |
+| Inventario | Elenco degli articoli inclusi |
 
-<InfoCard variant="tip" title="Metti tutto per iscritto">
-Anche per affitti informali dovresti avere:
-- Contratto scritto (può essere semplice)
+<InfoCard variant="tip" title="Get It in Writing">
+Anche gli affitti informali dovrebbero avere:
+- Accordo scritto (può essere semplice)
 - Ricevute di pagamento
-- Documentazione dello stato dell'immobile
-- Contatti del proprietario
+- Documentazione delle condizioni
+- Recapiti del proprietario
 
-I contratti indonesiani sono legalmente validi: pretendi di averne uno!
+I contratti indonesiani sono esecutivi - fanne uno!
 
 </InfoCard>
 
 ---
 
-## Domande comuni
+## Ammobiliato vs Non ammobiliato
+
+### Bali/Aree turistiche
+
+La maggior parte degli affitti è **completamente ammobiliata**:
+
+- Letto, materasso, biancheria
+- Mobili del soggiorno
+- Cucina attrezzata
+- Aria condizionata
+- Acqua calda
+- Spesso include WiFi
+
+### Jakarta/Città
+
+Mix di opzioni:
+
+- Appartamenti serviti: completamente ammobiliati
+- Appartamenti normali: arredamento di base
+- Case: possono essere non ammobiliate
+
+---
+
+## Risparmio sul lungo termine
+
+| Durata | Sconto tipico |
+| --------- | ---------------- |
+| Mensile | Prezzo intero |
+| 3 mesi | 5-10% di sconto |
+| 6 mesi | 15-25% di sconto |
+| 12 mesi | 25-40% di sconto |
+
+<InfoCard variant="tip" title="Negotiate!">
+
+  Consigli per tariffe migliori: - Chiedi direttamente (non accettare il primo
+  prezzo) - Offri un periodo più lungo - Paga in anticipo se possibile - Bassa
+  stagione = offerte migliori - Direttamente con il proprietario = nessuna
+  commissione di agenzia
+</InfoCard>
+
+---
+
+## Domande frequenti
 
 <AskZantara
   context="Accommodation Indonesia, rental Bali, expat housing, villa rental"
-  placeholder="Chiedi sull'alloggio..."
+  placeholder="Ask about accommodation..."
   suggestedQuestions={[
-    "Qual è l'area migliore per i nomadi digitali?",
-    "Posso affittare senza KITAS?",
-    "A quanto ammonta solitamente il deposito?",
-    "Cosa fare in caso di problemi col proprietario?",
+    "What's the best area for digital nomads?",
+    "Can I rent without KITAS?",
+    "How much deposit is normal?",
+    "What if I have problems with landlord?",
   ]}
 />
 
@@ -441,5 +517,5 @@ I contratti indonesiani sono legalmente validi: pretendi di averne uno!
 ## Articoli correlati
 
 - [Costo della vita a Bali](/insights/lifestyle/cost-of-living-bali)
-- [Guida all'investimento immobiliare](/insights/property/property-investment-guide)
-- [Banche per stranieri](/insights/lifestyle/banking-for-foreigners)
+- [Guida agli investimenti immobiliari](/insights/property/property-investment-guide)
+- [Servizi bancari per stranieri](/insights/lifestyle/banking-for-foreigners)

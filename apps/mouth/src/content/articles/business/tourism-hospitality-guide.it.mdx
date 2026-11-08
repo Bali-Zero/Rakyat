@@ -47,215 +47,430 @@ faq:
     answer: "Sì, proprietà straniera 100% consentita per hotel 3+ stelle tramite PT PMA. Hotel 1-2 stelle richiedono partner locale. Capitale minimo IDR 10 miliardi."
   - question: "Quanto costa avviare un business turistico a Bali?"
     answer: "Capitale minimo PT PMA IDR 10 miliardi. Costi di costituzione inclusi notaio, OSS, licenze settoriali circa IDR 50-100 milioni tramite agente professionale."
+source_sha256: "82b8fac84b1dccd23a3498ddf64bf2b8d2323d616b43e7575eebb52ef069dc82"
 ---
 
-# Guida al Business Turismo e Ospitalità Bali 2026
+import {
+  DecisionTree,
+  JourneyMap,
+  ComparisonTable,
+  Checklist,
+  InfoCard,
+  AskZantara,
+} from "@/components/insights/interactive";
 
-Bali rimane la principale destinazione per investimenti turistici in Indonesia. Questa guida copre tutto ciò che devi sapere per avviare un business turistico o di ospitalità a Bali.
+# Attività turistica e ricettiva in Indonesia nel 2026: guida per stranieri
 
-## Panoramica Investimenti Turismo Bali
+Il turismo è un settore importante in Indonesia, soprattutto a Bali, Lombok e nelle destinazioni emergenti. Ecco come gli stranieri possono partecipare.
 
-Bali attira oltre 6 milioni di turisti stranieri ogni anno, rendendola un mercato attraente per gli investimenti nel turismo. L'industria turistica contribuisce per circa il 60% all'economia di Bali.
+## Tipi di attività turistiche
 
-## Tipi di Business Turistico
-
-### 1. Hotel e Alloggi
-
-| Tipo           | Codice KBLI | Proprietà Straniera | Capitale Minimo |
-| -------------- | ----------- | ------------------- | --------------- |
-| Hotel 5 stelle | 55111       | 100%                | IDR 10 miliardi |
-| Hotel 4 stelle | 55112       | 100%                | IDR 10 miliardi |
-| Hotel 3 stelle | 55113       | 100%                | IDR 10 miliardi |
-| Villa di lusso | 55193       | 100%                | IDR 10 miliardi |
-| Guest house    | 55194       | Limitata            | IDR 10 miliardi |
-
-### 2. Ristoranti e F&B
-
-| Tipo              | Codice KBLI | Proprietà Straniera | Note            |
-| ----------------- | ----------- | ------------------- | --------------- |
-| Ristorante grande | 56101       | 100%                | Minimo 20 posti |
-| Catering          | 56210       | 100%                | -               |
-| Caffè             | 56301       | 100%                | Minimo 20 posti |
-
-### 3. Agenzie di Viaggio e Tour
-
-| Tipo               | Codice KBLI | Proprietà Straniera | Note                 |
-| ------------------ | ----------- | ------------------- | -------------------- |
-| Agenzia di viaggio | 79120       | Max 67%             | Serve partner locale |
-| Tour operator      | 79121       | 100%                | -                    |
-| Tour avventura     | 79122       | 100%                | -                    |
-
-### 4. Spa e Benessere
-
-| Tipo                   | Codice KBLI | Proprietà Straniera | Note                  |
-| ---------------------- | ----------- | ------------------- | --------------------- |
-| Centro spa e benessere | 96102       | 100%                | -                     |
-| Studio yoga            | 85410       | 100%                | Formazione/educazione |
-| Centro fitness         | 93110       | Max 49%             | Serve partner locale  |
-
-## Requisiti Normativi
-
-### Permessi Base Richiesti
-
-1. **NIB** (Nomor Induk Berusaha) - Tramite sistema OSS
-2. **TDUP** (Tanda Daftar Usaha Pariwisata) - Dal Dinas Pariwisata
-3. **Permesso di localizzazione** - Dal governo locale
-4. **Permesso ambientale** - AMDAL/UKL-UPL se richiesto
-5. **Certificato di Idoneità Funzionale (SLF)** - Per edifici
-6. **HO (Hinder Ordonnantie)** - Permesso di disturbo
-
-### Requisiti Specifici Hotel/Villa
-
-| Requisito                | Specifica                                       |
-| ------------------------ | ----------------------------------------------- |
-| Camere minime            | 10 camere per classificazione hotel             |
-| Servizi autonomi         | Elettricità, acqua, fognatura                   |
-| Certificazione sicurezza | Sistema di sicurezza e attrezzature antincendio |
-| Assicurazione            | Polizza assicurativa proprietà e responsabilità |
-
-## Processo di Licenziamento
-
-### Passo 1: Registrazione PT PMA
-
-- Capitale minimo IDR 10 miliardi
-- Processo 4-8 settimane
-- Codice KBLI appropriato per tipo di alloggio
-
-### Passo 2: Permesso di Localizzazione e Edifici
-
-- KKPR (Kesesuaian Kegiatan Pemanfaatan Ruang)
-- IMB (Izin Mendirikan Bangunan) / PBG
-- SLF (Sertifikat Laik Fungsi)
-
-### Passo 3: Permesso Operativo Turistico
-
-- TDUP dal Dinas Pariwisata
-- Classificazione stellare (opzionale)
-- Licenza alcolica (NPBBKC) se si vende alcol
-
-### Passo 4: Permessi di Supporto
-
-- HO (Hinder Ordonnantie)
-- TDI (Tanda Daftar Industri) se c'è ristorante
-- Permesso gestione rifiuti
-
-## Analisi dei Costi
-
-### Stima Investimento Iniziale
-
-| Componente                   | Costo (IDR)     | Note                                 |
-| ---------------------------- | --------------- | ------------------------------------ |
-| Setup PT PMA                 | 20-30 milioni   | Inclusi legali, notaio               |
-| Terra/affitto                | Variabile       | La localizzazione determina il costo |
-| Costruzione/ristrutturazione | 2-50 miliardi   | Dipende dalla scala                  |
-| Arredamento e attrezzature   | 1-20 miliardi   | Dipende dal concept                  |
-| Licenze                      | 50-200 milioni  | Tutti i permessi sopra               |
-| Marketing iniziale           | 100-500 milioni | Branding, sito web                   |
-| Capitale circolante          | 6-12 mesi       | Operativo                            |
-
-### Costi Operativi Mensili (Stima)
-
-Per hotel scala media (20 camere):
-
-| Voce                | Costo Mensile (IDR) |
-| ------------------- | ------------------- |
-| Stipendi dipendenti | 80-150 milioni      |
-| Elettricità e acqua | 15-30 milioni       |
-| Manutenzione        | 10-20 milioni       |
-| Marketing           | 20-50 milioni       |
-| Tasse e licenze     | 10-20 milioni       |
-| Altro               | 15-25 milioni       |
-| **Totale**          | **150-295 milioni** |
-
-## Vantaggi e Sfide
-
-### Vantaggi Investimento Turismo Bali
-
-✅ **Alta domanda**: 6+ milioni di turisti all'anno
-✅ **Margini elevati**: Specialmente nel segmento di lusso
-✅ **Crescita sostenibile**: Il turismo continua a crescere
-✅ **Diversificazione**: Cibo, spa, tour, eventi
-✅ **Lungo termine**: Immobili in apprezzamento
-
-### Sfide
-
-⚠️ **Concorrenza intensa**: Molti nuovi attori
-⚠️ **Normative che cambiano**: Regolamenti turistici in evoluzione
-⚠️ **Stagionalità**: Pattern di alta/bassa stagione
-⚠️ **Forza lavoro**: Reclutamento e retention del personale
-⚠️ **Infrastrutture**: Alcune aree hanno limitazioni
-
-## Raccomandazioni Strategiche
-
-### 1. Scegli con Cura la Localizzazione
-
-| Area            | Mercato Target                   | Caratteristiche       |
-| --------------- | -------------------------------- | --------------------- |
-| Seminyak/Canggu | Turisti giovani, nomadi digitali | Trendy, vivace        |
-| Ubud            | Wellness, turisti spirituali     | Tranquillo, culturale |
-| Uluwatu         | Surf, lusso                      | Esclusivo, spiaggia   |
-| Sanur           | Famiglie, turisti senior         | Tranquillo, spiaggia  |
-| Nusa Dua        | MICE, lusso                      | Resort, golf          |
-
-### 2. Concentrati su una Niche
-
-- **Wellness retreat**: Yoga, spa, cibo sano
-- **Surf camp**: Lezioni di surf, fronte mare
-- **Digital nomad hub**: Co-working, lungo soggiorno
-- **Wedding venue**: Matrimoni di destinazione
-- **Eco-tourism**: Sostenibile, biologico
-
-### 3. Costruisci un Team Locale Forte
-
-- Manager operativo esperto
-- Staff formato in hospitality
-- Partner marketing digitale
-- Agenti travel connessi
-
-## Checklist di Conformità
-
-### Pre-Operativo
-
-- [ ] PT PMA registrata
-- [ ] NIB attivo
-- [ ] TDUP ottenuto
-- [ ] Licenze locali complete
-- [ ] Certificato di idoneità funzionale
-- [ ] Assicurazione attivata
-- [ ] Staff reclutato e formato
-
-### Operativo Regolare
-
-- [ ] Dichiarazioni fiscali mensili
-- [ ] Rapporti LKPM trimestrali
-- [ ] BPJS dipendenti
-- [ ] Rinnovo annuale TDUP
-- [ ] Audit sicurezza periodico
-- [ ] Ricertificazione (se applicabile)
-
-## Risorse e Contatti
-
-### Agenzie Governative
-
-- **Dinas Pariwisata Bali**: +62 361 222387
-- **BKPM Bali**: +62 361 262395
-- **OSS Helpdesk**: 1500767
-
-### Associazioni di Settore
-
-- **PHRI Bali**: Associazione Hotel e Ristoranti
-- **ASITA Bali**: Associazione Agenti di Viaggio
+<DecisionTree
+  title="What Tourism Business?"
+  description="Find the right segment for you"
+  nodes={[
+    {
+      id: "start",
+      question: "What type of business interests you?",
+      options: [
+        { label: "Accommodation (hotel, villa)", next: "accommodation" },
+        { label: "Tours & activities", next: "tours" },
+        { label: "Travel agency", next: "travel" },
+        { label: "Adventure/outdoor", next: "adventure" },
+      ],
+    },
+    {
+      id: "accommodation",
+      question: "What scale of accommodation?",
+      options: [
+        { label: "Hotel (15+ rooms)", next: "hotel" },
+        { label: "Villa rental (&lt;15 units)", next: "villa" },
+        { label: "Boutique guesthouse", next: "guesthouse" },
+      ],
+    },
+    {
+      id: "tours",
+      question: "What kind of tours?",
+      options: [
+        { label: "Day tours & excursions", next: "day-tours" },
+        { label: "Multi-day packages", next: "packages" },
+        { label: "Transport services", next: "transport" },
+      ],
+    },
+    {
+      id: "hotel",
+      result: {
+        title: "Hotel PT PMA",
+        description:
+          "Hotels require PT PMA with tourism KBLI codes, TDUP license, substantial investment. Highly regulated but 100% foreign ownership allowed.",
+      },
+    },
+    {
+      id: "villa",
+      result: {
+        title: "Villa Rental Business",
+        description:
+          "Villa rentals are complex - may require Pondok Wisata license, zoning permits, and tourism registration. Foreigners often face restrictions.",
+      },
+    },
+    {
+      id: "guesthouse",
+      result: {
+        title: "Pondok Wisata License",
+        description:
+          "Small guesthouses need Pondok Wisata license. Foreign ownership varies by location - some areas restrict or prohibit foreign-owned small accommodation.",
+      },
+    },
+    {
+      id: "day-tours",
+      result: {
+        title: "Tour Operator PT PMA",
+        description:
+          "Tour operators need PT PMA with tour business license. Can operate day tours, excursions, and activities.",
+      },
+    },
+    {
+      id: "packages",
+      result: {
+        title: "Travel Agent License",
+        description:
+          "Multi-day packages often require travel agent license (BPW). Different from simple tour operator.",
+      },
+    },
+    {
+      id: "transport",
+      result: {
+        title: "Tourist Transport",
+        description:
+          "Tourist transport requires specific licenses. Vehicle permits, driver licenses, insurance requirements apply.",
+      },
+    },
+    {
+      id: "travel",
+      result: {
+        title: "Travel Agency (BPW)",
+        description:
+          "Full travel agencies can book flights, hotels, and packages. Requires BPW license and financial guarantees.",
+      },
+    },
+    {
+      id: "adventure",
+      result: {
+        title: "Adventure Tourism",
+        description:
+          "Diving, surfing, rafting require specific licenses, safety certifications, and often guide qualifications.",
+      },
+    },
+  ]}
+/>
 
 ---
 
-**Hai bisogno di aiuto per avviare il tuo business turistico a Bali?**
+## Struttura dell'attività turistica
 
-Contatta Bali Zero per consulenza completa:
+<ComparisonTable
+  title="Tourism Business Options"
+  description="Ownership and investment comparison"
+  items={[
+    {
+      name: "Hotel (15+ rooms)",
+      subtitle: "Full-scale hotel",
+      values: {
+        "Foreign Ownership": "100%",
+        Investment: "IDR 10B+",
+        License: "TDUP Hotel",
+        "Star Rating": "Optional but beneficial",
+      },
+      highlight: true,
+    },
+    {
+      name: "Tour Operator",
+      subtitle: "Day tours & activities",
+      values: {
+        "Foreign Ownership": "100%",
+        Investment: "IDR 10B",
+        License: "TDUP Tour",
+        "Star Rating": "N/A",
+      },
+    },
+    {
+      name: "Travel Agency (BPW)",
+      subtitle: "Full travel services",
+      values: {
+        "Foreign Ownership": "100%",
+        Investment: "IDR 10B",
+        License: "BPW License",
+        "Star Rating": "N/A",
+      },
+    },
+    {
+      name: "Villa Rental",
+      subtitle: "Small-scale accommodation",
+      values: {
+        "Foreign Ownership": "Restricted",
+        Investment: "Varies",
+        License: "Pondok Wisata",
+        "Star Rating": "N/A",
+      },
+    },
+  ]}
+/>
 
-- Setup PT PMA turismo
-- Licenziamento completo
-- Consulenza operativa
-- Conformità regolare
+---
 
-**WhatsApp**: +62 821 3454 721
-**Email**: info@balizero.com
+## Investimento alberghiero
+
+### Requisiti della licenza alberghiera
+
+<Checklist
+  title="Hotel Business Checklist"
+  description="Requirements for hotel operation"
+  persistKey="hotel-checklist"
+  items={[
+    {
+      id: "pt-pma",
+      label: "PT PMA establishment",
+      description: "Tourism KBLI codes",
+      required: true,
+      category: "company",
+    },
+    {
+      id: "nib",
+      label: "NIB (Business ID)",
+      description: "Through OSS",
+      required: true,
+      category: "company",
+    },
+    {
+      id: "tdup",
+      label: "TDUP (Tourism Business License)",
+      description: "Specific to hotel category",
+      required: true,
+      category: "tourism",
+    },
+    {
+      id: "building",
+      label: "IMB/PBG (Building Permit)",
+      description: "For the property",
+      required: true,
+      category: "property",
+    },
+    {
+      id: "amdal",
+      label: "Environmental Permit",
+      description: "SPPL, UKL-UPL, or AMDAL",
+      required: true,
+      category: "property",
+    },
+    {
+      id: "fire",
+      label: "Fire Safety Certificate",
+      description: "Inspection and approval",
+      required: true,
+      category: "safety",
+    },
+    {
+      id: "health",
+      label: "Health Department Approval",
+      description: "Sanitation inspection",
+      required: true,
+      category: "safety",
+    },
+    {
+      id: "star",
+      label: "Star Rating (optional)",
+      description: "Through tourism ministry",
+      required: false,
+      category: "tourism",
+    },
+  ]}
+  categories={[
+    { id: "company", label: "Company", color: "blue" },
+    { id: "tourism", label: "Tourism", color: "green" },
+    { id: "property", label: "Property", color: "amber" },
+    { id: "safety", label: "Safety", color: "red" },
+  ]}
+  showProgress={true}
+/>
+
+### Classificazioni alberghiere a stelle
+
+| Stelle  | Requisiti             | Numero tipico di camere |
+| ------- | --------------------- | ----------------------- |
+| 1 stella | Servizi essenziali    | 15+                     |
+| 2 stelle | Strutture standard    | 20+                     |
+| 3 stelle | Servizio completo     | 30+                     |
+| 4 stelle | Servizio premium      | 50+                     |
+| 5 stelle | Standard di lusso     | 100+                    |
+
+<InfoCard variant="note" title="Star Rating Benefits">
+
+Sebbene opzionali, le classificazioni a stelle aiutano con: - Marketing e visibilità - Posizionamento presso le agenzie di viaggio online (OTA) - Programmi turistici governativi - Prenotazioni aziendali
+
+</InfoCard>
+
+---
+
+## Attività di tour operator
+
+### Avvio di un tour operator
+
+<JourneyMap
+  title="Tour Operator Journey"
+  description="Setting up tour operations"
+  estimatedTotal="8-12 weeks"
+  steps={[
+    {
+      id: "company",
+      title: "Establish PT PMA",
+      description: "Tourism company formation",
+      duration: "4-6 weeks",
+      status: "required",
+      tips: [
+        "Tourism KBLI codes",
+        "Include activities you'll offer",
+        "IDR 10B investment",
+      ],
+    },
+    {
+      id: "licenses",
+      title: "Obtain Licenses",
+      description: "TDUP and related permits",
+      duration: "4-6 weeks",
+      status: "required",
+      tips: [
+        "TDUP for tour operator",
+        "Transport permits if needed",
+        "Activity-specific licenses",
+      ],
+    },
+    {
+      id: "insurance",
+      title: "Secure Insurance",
+      description: "Tour operator insurance",
+      duration: "1-2 weeks",
+      status: "required",
+      tips: [
+        "Liability insurance",
+        "Vehicle insurance if applicable",
+        "Activity insurance (diving, etc.)",
+      ],
+    },
+    {
+      id: "guides",
+      title: "Hire Guides",
+      description: "Licensed tour guides",
+      duration: "Ongoing",
+      status: "required",
+      tips: [
+        "Indonesian guides with license",
+        "Foreign guides limited",
+        "Language capabilities",
+      ],
+    },
+    {
+      id: "vehicles",
+      title: "Set Up Transport",
+      description: "Vehicles and drivers",
+      duration: "Varies",
+      status: "conditional",
+      tips: [
+        "Own or partner vehicles",
+        "Tourist transport permits",
+        "Driver requirements",
+      ],
+    },
+    {
+      id: "operations",
+      title: "Launch Operations",
+      description: "Start taking bookings",
+      duration: "Ongoing",
+      status: "final",
+      tips: ["Online booking systems", "OTA partnerships", "Direct marketing"],
+    },
+  ]}
+/>
+
+---
+
+## Turismo d'avventura
+
+Considerazioni specifiche per le attività d'avventura:
+
+### Operazioni di immersione
+
+- **Affiliazione PADI/SSI** - Certificazione richiesta
+- **Responsabile della sicurezza subacquea** - Personale formato
+- **Standard delle attrezzature** - Manutenzione regolare
+- **Assicurazione** - Copertura specifica per immersioni
+- **Prontezza al soccorso** - Protocolli di emergenza
+
+### Sport acquatici
+
+- **Scuole di surf** - Certificazioni degli istruttori
+- **Operatori di rafting** - Permessi fluviali, attrezzatura di sicurezza
+- **Tour di snorkeling** - Formazione delle guide, attrezzatura
+
+<InfoCard variant="warning" title="Safety First">
+
+Il turismo d'avventura comporta rischi di responsabilità. Un'assicurazione adeguata, guide certificate e protocolli di sicurezza sono essenziali, non solo per la conformità ma anche per la vostra protezione.
+
+</InfoCard>
+
+---
+
+## Difficoltà degli affitti di ville
+
+<InfoCard variant="error" title="Villa Rental Restrictions">
+
+L'affitto di ville su piccola scala è uno degli ambiti più limitati per gli stranieri: - Molte aree vietano Pondok Wisata di proprietà straniera - Bali dispone di regolamenti specifici che limitano le operazioni di ville straniere - Gli accordi con un “nominee” sono illegali e rischiosi - Affittare il terreno e costruire una villa comporta complicazioni di proprietà
+
+</InfoCard>
+
+### Opzioni per gli stranieri
+
+1. **Classificazione alberghiera** (15+ unità) - Possibile con PT PMA
+2. **Gestione immobiliare** - Gestire le ville di altri
+3. **Joint venture** - Con un partner indonesiano (rischioso)
+4. **Investimento leasehold** - Controllo limitato
+
+---
+
+## Agenzia di viaggi (BPW)
+
+Le agenzie di viaggio complete possono:
+
+- Prenotare biglietti aerei
+- Organizzare prenotazioni alberghiere
+- Creare pacchetti turistici
+- Gestire la biglietteria
+
+### Requisiti BPW
+
+- PT PMA con KBLI per agenzia di viaggi
+- TDUP per agenzia di viaggi
+- Prova della capacità finanziaria
+- Personale autorizzato
+
+---
+
+## Domande comuni
+
+<AskZantara
+  context="Tourism business Indonesia, hotel investment, tour operator, travel agency Bali"
+  placeholder="Ask about tourism business..."
+  suggestedQuestions={[
+    "Can I run a surf school as a foreigner?",
+    "What about Airbnb hosting?",
+    "How do I get tour guide licenses for my staff?",
+    "Are there restrictions in specific areas?",
+  ]}
+/>
+
+---
+
+## Articoli correlati
+
+- [Guida alla registrazione di PT PMA](/insights/business/foreign-company-incorporation-steps)
+- [Guida all'attività di ristorazione](/insights/business/restaurant-business-guide)
+- [Guida all'investimento immobiliare](/insights/property/property-investment-guide)

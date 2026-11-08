@@ -21,6 +21,19 @@ import {
   type PillTone,
 } from "@/components/workspace/r19";
 import { getDocumentOpenUrl } from "./utils";
+import {
+  URGENT_WINDOW_DAYS,
+  VOID_LABEL,
+  dayNumber,
+  documentValidity,
+  parseCalendarDate,
+  expiryWording,
+  type DocumentValidity,
+} from "./documentValidity";
+import { resolveCardDay } from "./witaClock";
+
+/** The filter group that lists every void document of the profile, once. */
+const REMOVED_GROUP = "removed";
 
 const CATEGORY_ORDER = [
   "immigration",
@@ -52,61 +65,57 @@ const CATEGORY_LABELS: Record<string, string> = {
 const COLS = "minmax(180px,1.7fr) 104px 100px 92px";
 
 /**
- * Status pill = strictly `deleted_at` and `status` — a due DATE is never a
- * tone (r19: ObligationsTable.tsx ~20-31/~299-305, README law 1 — "where
- * ownership is not derivable, use wait"; this component derives no
- * ownership signal at all, so `you` is never reachable here). Urgency lives
- * on the Expires cell instead, see `expiryCountdown` below.
+ * Status pill, by the shared precedence: a void document reads its reason
+ * (Removed, Archived, Rejected) and nothing else; a live one reads its
+ * status, and a positive word ("Valid") needs the date to say so. A due DATE
+ * is never a tone on the pill (r19: README law 1) — urgency lives on the
+ * Expires cell, see `expiryCountdown` below.
  *
  * A document that EXISTS but carries no recognised status (`pending`, or no
- * `status` at all) renders no pill — the old component's own behaviour: it
- * only ever rendered a word for `deleted_at` or `status === "verified"`,
- * nothing otherwise, and never the word "Missing" for a document that is
- * plainly on file.
+ * `status` at all) renders no pill, and never the word "Missing" for a
+ * document that is plainly on file.
  */
 function documentStatusPill(
   d: ClientDocument,
+  v: DocumentValidity,
 ): { tone: PillTone; label: string } | null {
-  if (d.deleted_at) return { tone: "wait", label: "Removed" };
-  if (d.status === "verified") return { tone: "ok", label: "Valid" };
+  if (v.voidReason) return { tone: "wait", label: VOID_LABEL[v.voidReason] };
+  if (d.status === "verified") {
+    if (v.state === "expired") return { tone: "wait", label: "Expired" };
+    if (v.state === "undated") return { tone: "wait", label: "Verified" };
+    return { tone: "ok", label: "Valid" };
+  }
   if (d.status === "received") return { tone: "ours", label: "Processing" };
-  if (d.status === "rejected") return { tone: "wait", label: "Rejected" };
   return null;
 }
 
 /**
- * The old component's expiry countdown (`getExpiryBadge`, origin/main
- * before this restyle) restored onto the DATE CELL rather than the status
- * pill. Its own `daysLeft <= 30` and `daysLeft <= 90` branches produced
- * byte-identical output (same label shape, same class) for every
- * `daysLeft` in 1..90 — that redundant pair collapses into one `<= 90`
- * check with no change in what was ever rendered for any input. Beyond 90
- * days the cell stays plain — the boundary this restyle's acceptance
- * criteria pins, not a further loss of the old >90/>365 muted tiers (which
- * carried no urgency signal to begin with).
+ * The expiry countdown on the DATE CELL of a live document: past, today and
+ * the next 90 days read the shared ladder and are urgent; beyond 90 days the
+ * cell stays plain. A void document shows its date and no countdown.
  */
-function expiryCountdown(expiryDate?: string): {
+function expiryCountdown(v: DocumentValidity): {
   label?: string;
   urgent: boolean;
 } {
-  if (!expiryDate) return { urgent: false };
-  const daysLeft = Math.ceil(
-    (new Date(expiryDate).getTime() - Date.now()) / 86400000,
-  );
-  if (daysLeft < 0) {
-    return { label: `Expired ${Math.abs(daysLeft)}d ago`, urgent: true };
-  }
-  if (daysLeft === 0) return { label: "Expires today", urgent: true };
-  if (daysLeft <= 90) return { label: `⏰ ${daysLeft}d left`, urgent: true };
+  if (!v.live || v.daysLeft === null) return { urgent: false };
+  if (v.daysLeft <= URGENT_WINDOW_DAYS)
+    return { label: expiryWording(v.daysLeft), urgent: true };
   return { urgent: false };
+}
+
+/** Holding count: a live, dated document with 90 days or fewer left. */
+function isExpiringSoon(d: ClientDocument, day: string): boolean {
+  const v = documentValidity(d, day);
+  return v.live && v.daysLeft !== null && v.daysLeft <= URGENT_WINDOW_DAYS;
 }
 
 /** Nearest expiry first; documents without one sort last. */
 function byExpiryUrgency(a: ClientDocument, b: ClientDocument): number {
-  const rank = (d: ClientDocument) =>
-    d.expiry_date
-      ? new Date(d.expiry_date).getTime()
-      : Number.POSITIVE_INFINITY;
+  const rank = (d: ClientDocument) => {
+    const key = parseCalendarDate(d.expiry_date);
+    return key ? dayNumber(key) : Number.POSITIVE_INFINITY;
+  };
   return rank(a) - rank(b);
 }
 
@@ -145,16 +154,26 @@ export function DocumentsTab({
   onAddClick,
   onEditClick,
   onRefresh,
+  initialGroup = "all",
+  day: dayProp,
 }: {
   clientId: number;
+  /** Every row the tab lists: the live general documents plus every void
+   *  document of the profile, of whatever kind. */
   documents: ClientDocument[];
+  /** The LIVE general documents, by category. */
   documentsByCategory: Record<string, ClientDocument[]>;
   formatDate: (d: string) => string;
   onAddClick: () => void;
   onEditClick: (doc: ClientDocument) => void;
   onRefresh: () => void;
+  /** The group shown first: "removed" when a signpost sent the reader here. */
+  initialGroup?: string;
+  /** The card's day (`YYYY-MM-DD`, the payload's `as_of`). */
+  day?: string;
 }) {
-  const [activeCategory, setActiveCategory] = useState<string>("all");
+  const day = resolveCardDay(dayProp);
+  const [activeCategory, setActiveCategory] = useState<string>(initialGroup);
 
   // Archive, never delete: DELETE without ?permanent sets is_archived (row and
   // Drive file kept). Same confirm-toast pattern as ImmigrationTab.
@@ -196,34 +215,40 @@ export function DocumentsTab({
     return map;
   }, [documentsByCategory]);
 
+  const voidDocuments = useMemo(
+    () => documents.filter((d) => !documentValidity(d, day).live),
+    [documents, day],
+  );
+
   const filteredDocuments = useMemo(() => {
     const base =
       activeCategory === "all"
         ? documents
-        : (documentsByCategory[activeCategory] ?? []);
+        : activeCategory === REMOVED_GROUP
+          ? voidDocuments
+          : (documentsByCategory[activeCategory] ?? []);
     return [...base].sort(byExpiryUrgency);
-  }, [activeCategory, documents, documentsByCategory]);
+  }, [activeCategory, documents, documentsByCategory, voidDocuments]);
 
-  // Aggregate across ALL documents regardless of the active filter — same
-  // scope the old `totalUrgent` used (origin/main before this restyle).
+  // Holding count across ALL listed documents regardless of the active
+  // filter: only live, dated documents count as "expiring soon".
   const totalExpiringSoon = useMemo(
-    () => documents.filter((d) => expiryCountdown(d.expiry_date).urgent).length,
-    [documents],
+    () => documents.filter((d) => isExpiringSoon(d, day)).length,
+    [documents, day],
   );
 
   // Per-category total + expiring-soon, for the filter pill label — same
-  // `expiryCountdown` function as `totalExpiringSoon` above.
+  // `isExpiringSoon` as `totalExpiringSoon` above.
   const categoryStats = useMemo(() => {
     const stats = new Map<string, { total: number; expiringSoon: number }>();
     for (const [cat, docs] of Object.entries(documentsByCategory)) {
       stats.set(cat, {
         total: docs.length,
-        expiringSoon: docs.filter((d) => expiryCountdown(d.expiry_date).urgent)
-          .length,
+        expiringSoon: docs.filter((d) => isExpiringSoon(d, day)).length,
       });
     }
     return stats;
-  }, [documentsByCategory]);
+  }, [documentsByCategory, day]);
 
   if (documents.length === 0) {
     return (
@@ -286,6 +311,14 @@ export function DocumentsTab({
                 />
               );
             })}
+            {voidDocuments.length > 0 && (
+              <StatePill
+                tone="wait"
+                label={`Removed or rejected · ${voidDocuments.length}`}
+                pressed={activeCategory === REMOVED_GROUP}
+                onClick={() => setActiveCategory(REMOVED_GROUP)}
+              />
+            )}
           </>
         }
         right={
@@ -329,10 +362,11 @@ export function DocumentsTab({
             const displayName = d.file_name || d.document_type;
             const typeLabel = formatDocumentType(d.document_type);
             const openUrl = getDocumentOpenUrl(d);
-            const pillState = documentStatusPill(d);
-            const countdown = expiryCountdown(d.expiry_date);
-            const expiresLabel = d.expiry_date
-              ? formatDate(d.expiry_date)
+            const validity = documentValidity(d, day);
+            const pillState = documentStatusPill(d, validity);
+            const countdown = expiryCountdown(validity);
+            const expiresLabel = validity.expiry
+              ? formatDate(validity.expiry)
               : "—";
             const expiresColor = countdown.urgent
               ? "var(--state-warning)"

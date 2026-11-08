@@ -91,6 +91,8 @@ translatedBy: Gemma3:12b + Gemini 3.1 Pro
 translatedFrom: en
 twitterCard: summary_large_image
 updatedAt: "2026-01-15"
+locale: "id"
+source_sha256: "8cb5f9606582a932c442fe003d0c346fda16c20f6fb7c5f333d1117416b5e368"
 ---
 
 import {
@@ -104,45 +106,45 @@ import {
 
 # Bisnis Ekspor-Impor di Indonesia 2026: Panduan Lengkap
 
-Lokasi strategis dan pasar Indonesia yang luas menjadikannya destinasi ideal untuk perdagangan internasional. Berikut adalah panduan komprehensif bagi investor asing untuk mendirikan operasional ekspor-impor.
+Lokasi strategis dan pasar Indonesia yang besar menjadikannya ideal untuk perdagangan internasional. Berikut cara warga asing dapat mendirikan kegiatan impor-ekspor.
 
-## Tinjauan Bisnis Perdagangan
+## Gambaran Umum Bisnis Perdagangan
 
-Indonesia menawarkan berbagai keunggulan kompetitif:
+Indonesia menawarkan:
 
-- **270 juta** basis konsumen
-- Posisi strategis di kawasan ASEAN
-- Sektor manufaktur yang terus berkembang
-- Kekayaan sumber daya alam melimpah untuk komoditas ekspor
-- Perjanjian perdagangan bebas (FTA) dengan berbagai pasar global utama
+- Pasar konsumen **270 juta**
+- Posisi strategis di ASEAN
+- Basis manufaktur yang berkembang
+- Sumber daya alam yang melimpah untuk ekspor
+- Perjanjian perdagangan bebas dengan pasar utama
 
 ---
 
-## Perbandingan Lisensi Impor
+## Lisensi Impor vs Ekspor
 
 <ComparisonTable
-  title="Tipe Lisensi API"
-  description="Izin impor berdasarkan jenis aktivitas bisnis"
+  title="API License Types"
+  description="Import licenses for different activities"
   items={[
     {
-      name: "API-U (Umum)",
+      name: "API-U (General)",
       subtitle: "Angka Pengenal Impor Umum",
       values: {
-        Tujuan: "Impor untuk diperdagangkan/dijual kembali",
-        Distribusi: "Bisa dijual kepada siapa saja",
-        "Pengguna Umum": "Perusahaan trading (perdagangan)",
-        Pembatasan: "Limitasi pada kategori produk tertentu",
+        Purpose: "Import for trading/selling",
+        "Can Sell": "Yes, to anyone",
+        "Most Common": "Trading companies",
+        Restrictions: "Some product limits",
       },
       highlight: true,
     },
     {
-      name: "API-P (Produsen)",
+      name: "API-P (Producer)",
       subtitle: "Angka Pengenal Impor Produsen",
       values: {
-        Tujuan: "Impor untuk kebutuhan produksi sendiri",
-        Distribusi: "Hanya untuk barang hasil produksi sendiri",
-        "Pengguna Umum": "Pabrik / Manufaktur",
-        Pembatasan: "Hanya untuk bahan baku/penolong",
+        Purpose: "Import for own production",
+        "Can Sell": "Only finished goods",
+        "Most Common": "Manufacturers",
+        Restrictions: "Raw materials only",
       },
     },
   ]}
@@ -150,8 +152,334 @@ Indonesia menawarkan berbagai keunggulan kompetitif:
 
 ### Lisensi Ekspor
 
-Untuk melakukan kegiatan ekspor, Anda memerlukan:
+Untuk ekspor, Anda memerlukan:
 
-- **ET (Eksportir Terdaftar)** - Status Eksportir Terdaftar untuk komoditas tertentu
-- Izin ekspor khusus untuk produk-produk yang dibatasi
-- Sebagian besar produk dapat diekspor dengan persyaratan administratif standar melalui sistem OSS dan KBLI yang sesuai.
+- **ET (Eksportir Terdaftar)** - Eksportir Terdaftar untuk barang tertentu
+- Beberapa produk memerlukan izin ekspor khusus
+- Sebagian besar produk dapat diekspor hanya dengan NIB
+
+---
+
+## Struktur Bisnis
+
+### PT PMA untuk Perdagangan
+
+Perusahaan perdagangan milik asing dapat:
+
+- Mengimpor barang untuk dijual kembali
+- Mengekspor produk Indonesia
+- Bertindak sebagai distributor
+- Menjual grosir kepada pengecer
+
+<InfoCard variant="note" title="Investment Requirement">
+
+PT PMA perdagangan memerlukan: - Investasi minimum **IDR 10 miliar** - Modal
+disetor **IDR 2,5 miliar** - Fasilitas gudang yang memadai (untuk barang tertentu)
+
+- Kode impor/ekspor yang terdaftar
+
+</InfoCard>
+
+---
+
+## Proses Pendirian
+
+<JourneyMap
+  title="Import-Export Business Setup"
+  description="From company to first shipment"
+  estimatedTotal="8-12 weeks"
+  steps={[
+    {
+      id: "company",
+      title: "Establish PT PMA",
+      description: "Form trading company",
+      duration: "4-6 weeks",
+      status: "required",
+      tips: [
+        "Choose trading KBLI codes",
+        "Include import-export activities",
+        "Meet investment requirements",
+      ],
+    },
+    {
+      id: "nib",
+      title: "Obtain NIB",
+      description: "Business ID from OSS",
+      duration: "1-2 weeks",
+      status: "required",
+      tips: ["Includes basic business license", "Required for next steps"],
+    },
+    {
+      id: "api",
+      title: "Apply for API License",
+      description: "Import identification number",
+      duration: "2-4 weeks",
+      status: "required",
+      tips: [
+        "API-U for trading",
+        "API-P for manufacturing",
+        "Through OSS system",
+      ],
+    },
+    {
+      id: "nik",
+      title: "Get NIK (Customs ID)",
+      description: "Customs registration",
+      duration: "1-2 weeks",
+      status: "required",
+      tips: ["Register with Customs (DJBC)", "Required for clearing goods"],
+    },
+    {
+      id: "warehouse",
+      title: "Set Up Warehouse",
+      description: "Storage facilities",
+      duration: "Varies",
+      status: "conditional",
+      tips: [
+        "Required for certain goods",
+        "Bonded warehouse options",
+        "Cold storage if needed",
+      ],
+    },
+    {
+      id: "supplier",
+      title: "Establish Supply Chain",
+      description: "Suppliers and logistics",
+      duration: "Ongoing",
+      status: "required",
+      tips: [
+        "Verify supplier legitimacy",
+        "Negotiate terms",
+        "Choose freight forwarder",
+      ],
+    },
+    {
+      id: "first",
+      title: "First Shipment",
+      description: "Import/export goods",
+      duration: "Varies",
+      status: "final",
+      tips: [
+        "Work with customs broker",
+        "Complete documentation",
+        "Pay duties and taxes",
+      ],
+    },
+  ]}
+/>
+
+---
+
+## Dokumen yang Diperlukan
+
+<Checklist
+  title="Import-Export Documentation"
+  description="What you need for trading"
+  persistKey="impex-checklist"
+  items={[
+    {
+      id: "nib",
+      label: "NIB (Business ID)",
+      description: "Basic company registration",
+      required: true,
+      category: "company",
+    },
+    {
+      id: "api",
+      label: "API License (API-U or API-P)",
+      description: "Import authorization",
+      required: true,
+      category: "trade",
+    },
+    {
+      id: "nik",
+      label: "NIK (Customs ID)",
+      description: "Customs registration number",
+      required: true,
+      category: "customs",
+    },
+    {
+      id: "npwp",
+      label: "Company NPWP",
+      description: "Tax registration",
+      required: true,
+      category: "tax",
+    },
+    {
+      id: "warehouse",
+      label: "Warehouse registration",
+      description: "For storing imported goods",
+      required: false,
+      category: "operations",
+    },
+    {
+      id: "product-license",
+      label: "Product-specific licenses",
+      description: "BPOM, SNI, etc. as needed",
+      required: false,
+      category: "product",
+    },
+  ]}
+  categories={[
+    { id: "company", label: "Company", color: "blue" },
+    { id: "trade", label: "Trade", color: "green" },
+    { id: "customs", label: "Customs", color: "amber" },
+    { id: "tax", label: "Tax", color: "red" },
+    { id: "operations", label: "Operations", color: "purple" },
+    { id: "product", label: "Product", color: "cyan" },
+  ]}
+  showProgress={true}
+/>
+
+---
+
+## Bea Cukai & Bea Masuk
+
+### Bea Masuk Impor
+
+| Kategori | Tarif Bea Masuk | Catatan |
+| --- | --- | --- |
+| Bahan baku | 0-5% | Sering kali lebih rendah |
+| Barang setengah jadi | 5-15% | Berbeda menurut produk |
+| Barang jadi | 10-40% | Perlindungan lebih tinggi |
+| Barang mewah | 20-200% | Pajak barang mewah tambahan |
+
+### Biaya Impor Lainnya
+
+- **PPN**: 11% atas CIF + bea masuk
+- **Pajak Penghasilan (PPh 22)**: 2,5% dengan API, 7,5% tanpa API
+- **Pajak Barang Mewah (PPnBM)**: Untuk barang tertentu
+
+<InfoCard variant="tip" title="HS Code Research">
+Teliti **HS Code** (Harmonized System) produk Anda untuk memahami:
+- Tarif bea masuk yang berlaku
+- Pembatasan impor
+- Izin yang diperlukan
+- Kebutuhan dokumentasi
+
+Gunakan portal INSW Indonesia untuk pencarian HS Code.
+
+</InfoCard>
+
+---
+
+## Pembatasan Produk
+
+### Pembatasan Impor
+
+Beberapa produk memerlukan izin tambahan:
+
+- **Makanan/Minuman**: Pendaftaran BPOM
+- **Elektronik**: Sertifikasi SNI
+- **Kosmetik**: BPOM + Halal
+- **Farmasi**: Perizinan ketat
+- **Tekstil**: Sistem kuota mungkin berlaku
+
+### Barang Terlarang
+
+- Obat-obatan/narkotika
+- Senjata (tanpa lisensi)
+- Produk pertanian tertentu
+- Produk yang melanggar hak kekayaan intelektual
+- Barang yang bertentangan dengan kesusilaan
+
+---
+
+## Peluang Ekspor
+
+### Ekspor Utama Indonesia
+
+1. Produk minyak sawit
+2. Batu bara dan mineral
+3. Tekstil dan garmen
+4. Produk karet
+5. Elektronik
+6. Makanan olahan
+7. Furnitur dan kerajinan tangan
+
+### Persyaratan Ekspor
+
+- ET (Eksportir Terdaftar) untuk barang tertentu
+- Dokumen ekspor (faktur, daftar kemasan, dan sebagainya)
+- Pemeriksaan sebelum pengiriman (untuk beberapa produk)
+- Surat keterangan asal (untuk tarif preferensial)
+
+---
+
+## Kawasan Berikat
+
+<GlossaryTerm
+  term="Kawasan Berikat"
+  definition="Bonded zones are designated areas where goods can be imported, stored, processed, and re-exported with duty suspension."
+/>
+
+### Manfaat Kawasan Berikat
+
+- Menunda bea masuk hingga barang memasuki pasar domestik
+- Fasilitas PPN dan pajak penghasilan
+- Prosedur bea cukai yang lebih efisien
+- Ideal untuk manufaktur berorientasi ekspor
+
+---
+
+## Pengangkutan dan Logistik
+
+### Pelabuhan Utama
+
+- **Jakarta (Tanjung Priok)** - Terbesar, paling padat
+- **Surabaya (Tanjung Perak)** - Hub Jawa Timur
+- **Semarang (Tanjung Emas)** - Jawa Tengah
+- **Medan (Belawan)** - Sumatra Utara
+
+### Kargo Udara
+
+- **Soekarno-Hatta (CGK)** - Internasional utama
+- **Ngurah Rai (DPS)** - Bali
+- **Juanda (SUB)** - Surabaya
+
+### Freight Forwarder
+
+Bekerja samalah dengan freight forwarder berpengalaman yang dapat:
+
+- Menangani customs clearance
+- Mengelola dokumentasi
+- Mengatur transportasi darat
+- Menyediakan gudang berikat
+
+---
+
+## Kesalahan Umum
+
+<InfoCard variant="error" title="Avoid These Errors">
+
+1. **Jenis API yang salah** - API-U vs API-P harus sesuai dengan kegiatan
+2. **Mengabaikan regulasi produk** - Beberapa barang memerlukan izin khusus
+3. **Merendahkan nilai barang** - Sanksi bea cukai sangat berat
+4. **Tidak memiliki dokumentasi yang memadai** - Keterlambatan dan biaya tambahan
+5. **HS Code yang salah** - Bea masuk berbeda, potensi sanksi
+6. **Mengabaikan kuota/pembatasan** - Beberapa produk dibatasi
+
+</InfoCard>
+
+---
+
+## Pertanyaan Umum
+
+<AskZantara
+  context="Import export Indonesia, API license, customs, international trade"
+  placeholder="Ask about import-export business..."
+  suggestedQuestions={[
+    "How long does customs clearance take?",
+    "Can I import samples without API?",
+    "What are bonded warehouse benefits?",
+    "Do I need a local partner to import?",
+  ]}
+/>
+
+---
+
+## Artikel Terkait
+
+- [Panduan Pendaftaran PT PMA](/insights/business/foreign-company-incorporation-steps)
+- [Panduan Bisnis E-commerce](/insights/business/ecommerce-business-guide)
+- [Panduan Bisnis Manufaktur](/insights/business/manufacturing-business-guide)
