@@ -653,10 +653,17 @@ async def create_interaction_from_conversation(
             client_id = client_row["id"]
 
             # Get conversation from conversations table
-            conv_row = await conn.fetchrow(
-                "SELECT messages FROM conversations WHERE id = $1",
-                conversation_id,
-            )
+            if user_is_admin:
+                conv_row = await conn.fetchrow(
+                    "SELECT messages FROM conversations WHERE id = $1",
+                    conversation_id,
+                )
+            else:
+                conv_row = await conn.fetchrow(
+                    "SELECT messages FROM conversations WHERE id = $1 AND lower(user_id) = $2",
+                    conversation_id,
+                    user_email_from_token,
+                )
 
             full_content = ""
             if conv_row and conv_row.get("messages"):

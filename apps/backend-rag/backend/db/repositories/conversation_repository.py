@@ -195,11 +195,12 @@ class ConversationRepository(BaseRepository):
             existing = await conn.fetchrow(
                 """
             SELECT id, messages FROM conversations
-            WHERE session_id = $1
+            WHERE session_id = $1 AND user_id = $2
             ORDER BY created_at DESC, id DESC
             LIMIT 1 FOR UPDATE
             """,
                 session_id,
+                user_id,
             )
 
             if existing:
@@ -272,6 +273,7 @@ class ConversationRepository(BaseRepository):
     async def get_messages(
         self,
         session_id: str,
+        user_id: str,
         limit: int = 20,
     ) -> list[dict]:
         """
@@ -279,6 +281,7 @@ class ConversationRepository(BaseRepository):
 
         Args:
             session_id: Session identifier
+            user_id: Owner of the conversation; another owner's row is never returned
             limit: Maximum number of messages to return (0 = all)
 
         Returns:
@@ -289,11 +292,12 @@ class ConversationRepository(BaseRepository):
                 row = await conn.fetchrow(
                     """
                     SELECT messages FROM conversations
-                    WHERE session_id = $1
+                    WHERE session_id = $1 AND user_id = $2
                     ORDER BY created_at DESC, id DESC
                     LIMIT 1
                     """,
                     session_id,
+                    user_id,
                 )
 
                 if row and row["messages"]:
