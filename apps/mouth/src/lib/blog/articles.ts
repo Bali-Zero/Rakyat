@@ -14,6 +14,13 @@ import { unstable_cache } from "next/cache";
 import type { Article, ArticleListItem, ArticleCategory } from "./types";
 import { CATEGORY_MAP, normalizeCategory } from "./categories";
 
+// gray-matter caches by content string when called without options, so a file with broken YAML
+// throws on the first parse and returns empty data from the cache on the second. An options object
+// bypasses the cache, keeping the throw that callers use to skip corrupted articles.
+function parseFrontmatter(fileContents: string) {
+  return matter(fileContents, {});
+}
+
 const ARTICLES_PATH = path.join(process.cwd(), "src/content/articles");
 const ARTICLE_FOLDER_NAMES = Object.freeze([
   "immigration",
@@ -584,7 +591,7 @@ async function getMdxArticleBySlug(
   let content: string;
   try {
     fileContents = fs.readFileSync(filePath, "utf8");
-    const parsed = matter(fileContents);
+    const parsed = parseFrontmatter(fileContents);
     frontmatter = parsed.data;
     content = parsed.content;
   } catch {
@@ -718,7 +725,7 @@ export async function getArticleByLocale(
       let content: string;
       try {
         const fileContents = fs.readFileSync(localePath, "utf8");
-        const parsed = matter(fileContents);
+        const parsed = parseFrontmatter(fileContents);
         frontmatter = parsed.data;
         content = parsed.content;
       } catch {
@@ -983,7 +990,7 @@ export async function getNoIndexSlugs(): Promise<Set<string>> {
       const filePath = articleMdxPath(folderCategory, slug);
       if (!fs.existsSync(filePath)) continue;
       const fileContents = fs.readFileSync(filePath, "utf8");
-      const { data: frontmatter } = matter(fileContents);
+      const { data: frontmatter } = parseFrontmatter(fileContents);
       if (frontmatter.noIndex) {
         noIndexSlugs.add(slug);
       }
