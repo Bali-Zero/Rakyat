@@ -249,6 +249,24 @@ export function CompanyTab({
   const [isAddingCompany, setIsAddingCompany] = useState(false);
   const [isSyncingDrive, setIsSyncingDrive] = useState(false);
   const [reloadTrigger, setReloadTrigger] = useState(0);
+  const [driveSourceSelection, setDriveSourceSelection] = useState<{
+    key: string;
+    companyId: number;
+  } | null>(null);
+  // Stable across equivalent profile arrays; changes when the selected link,
+  // its status, the client or a reload changes. Old source links hide at once.
+  const linkSelectionKey = JSON.stringify([
+    clientId,
+    client.company_name,
+    client.full_name,
+    reloadTrigger,
+    companyLinks?.map((l) => [
+      l.company_id,
+      l.is_primary,
+      l.status,
+      l.link_status,
+    ]),
+  ]);
   // Every mutation made from this tab (edit, Sync Drive, Add company, a vault
   // upload) goes through here: the cached detail is dropped first, so the
   // next open of the tab never shows a stale copy of the staff's own change.
@@ -299,6 +317,7 @@ export function CompanyTab({
 
   useEffect(() => {
     let cancelled = false;
+    setDriveSourceSelection(null);
 
     async function loadCompanyData() {
       try {
@@ -325,6 +344,19 @@ export function CompanyTab({
         }
         if (!cancelled && primary) {
           const co = primary;
+          const linkStates = [co.status, co.link_status].filter(
+            (status) => status !== undefined,
+          );
+          if (
+            co.company_id &&
+            linkStates.length > 0 &&
+            linkStates.every((status) => status === "active")
+          ) {
+            setDriveSourceSelection({
+              key: linkSelectionKey,
+              companyId: co.company_id,
+            });
+          }
           setCompanyData({
             company_name: co.company_name,
             company_type: co.company_type,
@@ -472,10 +504,15 @@ export function CompanyTab({
     return () => {
       cancelled = true;
     };
-    // companyLinks is read once per load on purpose (a new array identity on
-    // every parent render must not refetch).
+    // Track semantic link selection, not a fresh parent array identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId, client.company_name, client.full_name, reloadTrigger]);
+  }, [
+    clientId,
+    client.company_name,
+    client.full_name,
+    reloadTrigger,
+    linkSelectionKey,
+  ]);
 
   // ── LOADING ────────────────────────────────────────────────────────────
   if (isLoading) {
@@ -812,7 +849,9 @@ export function CompanyTab({
           }
           onOpenDocuments={onOpenDocuments}
         />
-        {co?.company_id ? (
+        {co?.company_id &&
+        driveSourceSelection?.companyId === co.company_id &&
+        driveSourceSelection.key === linkSelectionKey ? (
           <CompanyDriveSources companyId={co.company_id} />
         ) : null}
         {otherLinks.length > 0 ? (

@@ -938,7 +938,9 @@ export interface ClientCompanyLink {
   shares_count?: number;
   share_nominal_value?: number;
   start_date?: string;
-  status: string;
+  /** Profile uses status; /by-client uses link_status. */
+  status?: string;
+  link_status?: string;
   notes?: string;
   // Company details
   kbli_code?: string;
