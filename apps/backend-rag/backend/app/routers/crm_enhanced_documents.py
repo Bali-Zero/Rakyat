@@ -33,7 +33,8 @@ from backend.db.repositories.client_repository import CORE_OWNER_IDS_SQL
 from backend.phone_lock import lock_cores, phone_core, phone_value_state
 from backend.services.common.background import spawn
 from backend.services.crm.admin_document_visibility import admin_document_not_deleted_clause
-from backend.services.crm.document_categorizer import CATEGORY_TO_FOLDER, auto_categorize_document
+from backend.services.crm.document_categorizer import auto_categorize_document
+from backend.services.crm.drive_taxonomy import folder_for_category
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 
 logger = get_logger(__name__)
@@ -817,7 +818,6 @@ async def upload_document_base64(
         else:
             cat_result = auto_categorize_document(data.file_name)
             category = cat_result["document_category"]
-        folder_name = CATEGORY_TO_FOLDER.get(category, "99_Misc")
 
         async with pool.acquire() as conn:
             client = await conn.fetchrow(
@@ -945,6 +945,7 @@ async def upload_document_base64(
                         client_name=client["full_name"],
                         client_type=client["client_type"] or "individual",
                         db_pool=pool,
+                        conn=conn,
                     )
                     root_folder_id = ensure_result["root_folder_id"]
                 except Exception as e:
@@ -954,34 +955,15 @@ async def upload_document_base64(
                         detail=f"Failed to create root folder: {e}",
                     ) from e
 
-            # Ensure Subfolder Exists (Find or Create)
+            folder_name = folder_for_category(category, client["client_type"] or "individual")
             try:
-                structure = await drive_service.get_folder_structure(
-                    root_folder_id=root_folder_id,
+                subfolder_id = await drive_service.resolve_canonical_folder(
+                    folder_name, root_folder_id, conn=conn
                 )
             except Exception as e:
-                # If structure fetch fails, maybe root folder is missing/deleted?
-                # We'll just fail for now, or could try to recreate
                 raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to access folder structure: {e}",
+                    status_code=409, detail="Cannot verify Drive destination"
                 ) from e
-
-            subfolder = next((f for f in structure["folders"] if f["name"] == folder_name), None)
-            if not subfolder:
-                # Create subfolder
-                try:
-                    subfolder_data = await drive_service.create_folder(
-                        name=folder_name,
-                        parent_id=root_folder_id,
-                    )
-                    subfolder_id = subfolder_data["id"]
-                except Exception as e:
-                    raise HTTPException(
-                        status_code=500, detail=f"Failed to create subfolder: {e}"
-                    ) from e
-            else:
-                subfolder_id = subfolder["id"]
 
             # Handle subfolder_hint for nested subfolders (e.g. "Actual Visa" inside 01_Immigration)
             target_subfolder_id = subfolder_id
@@ -989,29 +971,14 @@ async def upload_document_base64(
 
             if data.subfolder_hint and data.subfolder_hint in ("Actual Visa", "Previous Visa"):
                 subfolder_value = data.subfolder_hint
-                # Find or create the nested subfolder inside the category folder
                 try:
-                    nested_structure = await drive_service.get_folder_structure(
-                        root_folder_id=subfolder_id,
+                    target_subfolder_id = await drive_service.resolve_canonical_folder(
+                        data.subfolder_hint, subfolder_id, conn=conn
                     )
-                    nested_folder = next(
-                        (
-                            f
-                            for f in nested_structure["folders"]
-                            if f["name"] == data.subfolder_hint
-                        ),
-                        None,
-                    )
-                    if not nested_folder:
-                        nested_data = await drive_service.create_folder(
-                            name=data.subfolder_hint,
-                            parent_id=subfolder_id,
-                        )
-                        target_subfolder_id = nested_data["id"]
-                    else:
-                        target_subfolder_id = nested_folder["id"]
                 except Exception as e:
-                    logger.warning(f"Could not resolve subfolder_hint '{data.subfolder_hint}': {e}")
+                    raise HTTPException(
+                        status_code=409, detail="Cannot verify Drive destination"
+                    ) from e
 
                 # Visa rotation: if uploading to "Actual Visa", move existing actual to "Previous Visa"
                 if data.subfolder_hint == "Actual Visa":
@@ -1023,31 +990,15 @@ async def upload_document_base64(
                         client_id,
                     )
                     if existing_actual and existing_actual["file_id"]:
-                        # Find or create "Previous Visa" folder
-                        prev_folder = (
-                            next(
-                                (
-                                    f
-                                    for f in nested_structure["folders"]
-                                    if f["name"] == "Previous Visa"
-                                ),
-                                None,
+                        try:
+                            prev_folder_id = await drive_service.resolve_canonical_folder(
+                                "Previous Visa", subfolder_id, conn=conn
                             )
-                            if nested_structure
-                            else None
-                        )
-                        if not prev_folder:
-                            try:
-                                prev_data = await drive_service.create_folder(
-                                    name="Previous Visa",
-                                    parent_id=subfolder_id,
-                                )
-                                prev_folder_id = prev_data["id"]
-                            except Exception as e:
-                                logger.error("Failed to create Previous Visa folder: %s", e)
-                                prev_folder_id = None
-                        else:
-                            prev_folder_id = prev_folder["id"]
+                        except Exception as e:
+                            logger.error(
+                                "Failed to verify Previous Visa folder: %s", type(e).__name__
+                            )
+                            prev_folder_id = None
 
                         if prev_folder_id:
                             try:

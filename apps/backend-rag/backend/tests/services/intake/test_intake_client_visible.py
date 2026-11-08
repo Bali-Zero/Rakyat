@@ -30,6 +30,7 @@ from backend.services.crm.document_categorizer import CATEGORY_TO_FOLDER
 from backend.services.intake import crm_delivery, crm_push
 from backend.services.intake import writer as intake_writer
 from backend.services.intake.enqueue import enqueue
+from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 
 DSN = os.environ.get("INTAKE_TEST_DSN", "postgresql://localhost:5432/nuzantara_test")
 
@@ -183,15 +184,54 @@ CHAIN_KEY = "chain-test-crm-write-key"
 
 
 class _FakeDrive:
-    """The route's Drive hop (external storage): the one collaborator replaced inside the route."""
+    """Synthetic Drive metadata; exercise the real verified destination resolver."""
 
-    async def get_folder_structure(self, **_: Any) -> dict[str, Any]:
-        return {"folders": [{"id": f"f-{n}", "name": n} for n in set(CATEGORY_TO_FOLDER.values())]}
+    resolve_canonical_folder = ServiceAccountDriveService.resolve_canonical_folder
+    _resolve_canonical_folder_unlocked = (
+        ServiceAccountDriveService._resolve_canonical_folder_unlocked
+    )
 
-    async def create_folder(self, **_: Any) -> dict[str, Any]:
-        return {"id": "created-folder"}
+    def __init__(self) -> None:
+        self.folders = {
+            f"f-{name}": {
+                "id": f"f-{name}",
+                "name": name,
+                "parents": ["root-folder"],
+                "mimeType": "application/vnd.google-apps.folder",
+                "trashed": False,
+            }
+            for name in set(CATEGORY_TO_FOLDER.values())
+        }
 
-    async def upload_file_to_folder(self, **_: Any) -> dict[str, Any]:
+    async def find_folder(self, name: str, parent_id: str) -> dict[str, Any] | None:
+        matches = [
+            f
+            for f in self.folders.values()
+            if f["name"] == name and parent_id in f["parents"] and not f["trashed"]
+        ]
+        if len(matches) > 1:
+            raise RuntimeError("Ambiguous Drive folder name")
+        return matches[0] if matches else None
+
+    async def get_file_metadata(self, file_id: str) -> dict[str, Any]:
+        return self.folders[file_id]
+
+    async def create_folder(self, name: str, parent_id: str) -> dict[str, Any]:
+        folder = {
+            "id": f"f-{name}",
+            "name": name,
+            "parents": [parent_id],
+            "mimeType": "application/vnd.google-apps.folder",
+            "trashed": False,
+        }
+        self.folders[folder["id"]] = folder
+        return folder
+
+    async def upload_file_to_folder(self, **kwargs: Any) -> dict[str, Any]:
+        folder = self.folders[kwargs["folder_id"]]
+        assert folder["name"] in CATEGORY_TO_FOLDER.values()
+        assert folder["parents"] == ["root-folder"]
+        assert folder["mimeType"] == "application/vnd.google-apps.folder" and not folder["trashed"]
         return {"id": "drive-chain-file", "webViewLink": "https://drive.example.test/d/chain-file"}
 
 

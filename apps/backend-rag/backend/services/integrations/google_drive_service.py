@@ -367,6 +367,8 @@ class GoogleDriveService:
             "fields": "nextPageToken, files(id, name, mimeType, size, modifiedTime, iconLink, webViewLink, thumbnailLink, parents)",
             "orderBy": "folder, name",
             "pageSize": page_size,
+            "supportsAllDrives": True,
+            "includeItemsFromAllDrives": True,
         }
 
         if page_token:
@@ -412,7 +414,8 @@ class GoogleDriveService:
         response = await client.get(
             f"{self.API_BASE}/files/{file_id}",
             params={
-                "fields": "id, name, mimeType, size, modifiedTime, iconLink, webViewLink, thumbnailLink, parents, permissions",
+                "fields": "id, name, mimeType, size, modifiedTime, iconLink, webViewLink, thumbnailLink, parents, permissions, trashed",
+                "supportsAllDrives": True,
             },
             headers={"Authorization": f"Bearer {access_token}"},
         )
@@ -591,7 +594,7 @@ class GoogleDriveService:
         response = await client.post(
             f"{self.API_BASE}/files",
             json=folder_metadata,
-            params={"fields": "id, name, webViewLink, parents"},
+            params={"fields": "id, name, webViewLink, parents", "supportsAllDrives": True},
             headers={
                 "Authorization": f"Bearer {access_token}",
                 "Content-Type": "application/json",
@@ -635,23 +638,9 @@ class GoogleDriveService:
             dict with folder_ids and urls
         """
         from backend.app.core.config import settings
+        from backend.services.crm.drive_taxonomy import standard_subfolder_paths
 
-        STANDARD_SUBFOLDERS = [
-            "00_Profile",
-            "01_Immigration",
-            "02_Company",
-            "02_Company/AKTA",
-            "02_Company/NIB",
-            "02_Company/NPWP",
-            "02_Company/Profile Perseroan",
-            "03_Tax",
-            "03_Tax/SPT company",
-            "03_Tax/SPT personal",
-            "03_Tax/LKPM reports",
-            "03_Tax/NPWP personal",
-            "04_Family",
-            "99_Misc",
-        ]
+        STANDARD_SUBFOLDERS = standard_subfolder_paths(client_type)
 
         try:
             # Determine parent folder based on client type
@@ -666,49 +655,37 @@ class GoogleDriveService:
             if not parent_folder_id:
                 parent_folder_id = getattr(settings, "google_drive_root_folder_id", None)
 
-            # Create root folder: "[ID]_[Name]"
-            root_folder_name = f"{client_id}_{client_name}"
-            root_folder = await self.create_folder(
-                user_id=GoogleDriveService.SYSTEM_USER_ID,
-                name=root_folder_name,
-                parent_id=parent_folder_id,
+            # All folder creations use the same distributed parent/name lock as CRM.
+            from backend.services.integrations.service_account_drive_service import (
+                resolve_oauth_canonical_folder,
             )
 
-            root_folder_id = root_folder["id"]
-
-            # Create subfolders (supports nested paths like "02_Company/AKTA")
-            subfolders = {}
-            folder_id_cache = {"": root_folder_id}
-            for subfolder_path in STANDARD_SUBFOLDERS:
-                try:
-                    parts = subfolder_path.split("/")
-                    if len(parts) == 1:
-                        parent_id = root_folder_id
-                        name = parts[0]
-                    else:
-                        parent_path = parts[0]
-                        name = parts[1]
-                        parent_id = folder_id_cache.get(parent_path, root_folder_id)
-
-                    subfolder = await self.create_folder(
-                        user_id=GoogleDriveService.SYSTEM_USER_ID,
-                        name=name,
-                        parent_id=parent_id,
-                    )
-                    subfolders[subfolder_path] = {
-                        "id": subfolder["id"],
-                        "url": subfolder.get("webViewLink", ""),
-                    }
-                    if len(parts) == 1:
-                        folder_id_cache[name] = subfolder["id"]
-                except Exception as e:
-                    logger.error(
-                        "[GDRIVE] Failed to create subfolder under root %s for client %s: %s",
-                        root_folder_id,
-                        client_id,
-                        type(e).__name__,
-                    )
-                    continue
+            if self.db_pool is None:
+                raise RuntimeError("Distributed Drive folder lock unavailable")
+            root_folder_name = f"{client_id}_{client_name}"
+            async with self.db_pool.acquire() as conn:
+                root_folder_id = await resolve_oauth_canonical_folder(
+                    self, root_folder_name, parent_folder_id, None, conn
+                )
+                subfolders = {}
+                folder_id_cache = {"": root_folder_id}
+                for subfolder_path in STANDARD_SUBFOLDERS:
+                    try:
+                        parent_path, _, name = subfolder_path.rpartition("/")
+                        parent_id = folder_id_cache[parent_path]
+                        folder_id = await resolve_oauth_canonical_folder(
+                            self, name, parent_id, None, conn
+                        )
+                        subfolders[subfolder_path] = {"id": folder_id, "url": ""}
+                        folder_id_cache[subfolder_path] = folder_id
+                    except Exception as e:
+                        logger.error(
+                            "[GDRIVE] Failed to create subfolder under root %s for client %s: %s",
+                            root_folder_id,
+                            client_id,
+                            type(e).__name__,
+                        )
+                        continue
 
             logger.info(
                 "[GDRIVE] Created client folder structure for client %s: %s",
@@ -719,7 +696,7 @@ class GoogleDriveService:
             return {
                 "success": True,
                 "root_folder_id": root_folder_id,
-                "root_folder_url": root_folder.get("webViewLink", ""),
+                "root_folder_url": f"https://drive.google.com/drive/folders/{root_folder_id}",
                 "subfolders": subfolders,
             }
 

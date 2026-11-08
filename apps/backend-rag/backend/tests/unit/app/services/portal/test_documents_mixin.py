@@ -54,13 +54,12 @@ def test_classify_document_category_keywords() -> None:
 
 
 def test_get_drive_folder_for_category() -> None:
-    assert PortalService._get_drive_folder_for_category("IMMIGRATION") == "01_Immigration"
-    assert PortalService._get_drive_folder_for_category("personal") == "00_Profile"
-    assert PortalService._get_drive_folder_for_category("pma") == "02_Company"
-    assert PortalService._get_drive_folder_for_category("tax") == "03_Tax"
-    assert PortalService._get_drive_folder_for_category("family") == "04_Family"
-    assert PortalService._get_drive_folder_for_category("unknown") == "99_Misc"
-    assert PortalService._get_drive_folder_for_category("") == "99_Misc"
+    assert PortalService._get_drive_folder_for_category("IMMIGRATION") == "02_Immigration"
+    assert PortalService._get_drive_folder_for_category("personal") == "01_Profile"
+    assert PortalService._get_drive_folder_for_category("pma") == "03_Company_and_Tax"
+    assert PortalService._get_drive_folder_for_category("tax") == "03_Company_and_Tax"
+    assert PortalService._get_drive_folder_for_category("family") == "01_Profile"
+    assert PortalService._get_drive_folder_for_category("unknown") == "04_Archive"
 
 
 def test_extract_drive_file_id_variants() -> None:
@@ -1137,6 +1136,7 @@ async def test_upload_with_service_account_routes_through_service_account_drive_
     }
 
     mock_sa_instance = MagicMock()
+    mock_sa_instance.resolve_canonical_folder = AsyncMock(return_value="profile_subfolder_1")
     mock_sa_instance.upload_file_to_folder = AsyncMock(
         return_value={
             "id": "sa_file_1",
@@ -1183,7 +1183,7 @@ async def test_upload_with_service_account_routes_through_service_account_drive_
     assert out["file_id"] == "sa_file_1"
     assert out["file_url"] == "https://drive.google.com/file/d/sa_file_1/view"
     assert out["method"] == "service_account"
-    assert out["folder_path"] == "1_Client One!/00_Profile"
+    assert out["folder_path"] == "1_Client One!/01_Profile"
 
 
 @pytest.mark.asyncio
@@ -1246,6 +1246,7 @@ def _sa_service_and_conn(
         return_value={"id": "sa_file_2", "webViewLink": "https://drive.google.com/x"}
     )
     sa.ensure_client_folder = AsyncMock(return_value={"root_folder_id": "made_root_9"})
+    sa.resolve_canonical_folder = AsyncMock(return_value="made_subfolder_9")
     sa.find_folder = AsyncMock(return_value=None)
     sa.create_folder = AsyncMock(return_value={"id": "made_subfolder_9"})
     return service, mock_conn, sa
@@ -1285,14 +1286,12 @@ async def test_service_account_upload_creates_client_root_and_category_subfolder
 
     sa.ensure_client_folder.assert_awaited_once()
     assert sa.ensure_client_folder.call_args.kwargs["client_id"] == 42
-    sa.find_folder.assert_awaited_once_with("01_Immigration", "made_root_9")
-    assert sa.create_folder.call_args.kwargs == {
-        "name": "01_Immigration",
-        "parent_id": "made_root_9",
-    }
+    sa.resolve_canonical_folder.assert_awaited_once_with(
+        "02_Immigration", "made_root_9", None, conn=mock_conn
+    )
     assert sa.upload_file_to_folder.call_args.kwargs["folder_id"] == "made_subfolder_9"
     assert out["success"] is True
-    assert out["folder_path"] == "42_Client Two/01_Immigration"
+    assert out["folder_path"] == "42_Client Two/02_Immigration"
 
 
 @pytest.mark.asyncio
@@ -1300,7 +1299,7 @@ async def test_service_account_upload_reuses_existing_category_subfolder_from_dr
     """Root known, no client_drive_subfolders row, but the folder exists in
     Drive: reuse it instead of creating a twin."""
     service, mock_conn, sa = _sa_service_and_conn(root="crm_root_7", subfolder_row=None)
-    sa.find_folder = AsyncMock(return_value={"id": "found_tax_7"})
+    sa.resolve_canonical_folder = AsyncMock(return_value="found_tax_7")
 
     with patch(
         "backend.services.integrations.service_account_drive_service.ServiceAccountDriveService",
@@ -1320,7 +1319,7 @@ async def test_service_account_upload_reuses_existing_category_subfolder_from_dr
     sa.ensure_client_folder.assert_not_awaited()
     sa.create_folder.assert_not_awaited()
     assert sa.upload_file_to_folder.call_args.kwargs["folder_id"] == "found_tax_7"
-    assert out["folder_path"] == "7_Client Three/03_Tax"
+    assert out["folder_path"] == "7_Client Three/03_Company_and_Tax"
 
 
 @pytest.mark.asyncio
@@ -1354,45 +1353,102 @@ async def test_service_account_upload_fails_closed_when_folder_unresolvable() ->
 
 
 @pytest.mark.asyncio
-async def test_upload_to_drive_oauth_success() -> None:
-    service, _mock_conn = _make_service_with_fetchrow(row=None)
-    drive_service = MagicMock()
-    drive_service.is_configured.return_value = True
-    drive_service.get_valid_token = AsyncMock(return_value="access-token")
-    drive_service.upload_file_to_folder = AsyncMock(
-        return_value={
-            "id": "drive_file_10",
-            "webViewLink": "https://drive.google.com/file/d/drive_file_10/view",
-        }
+async def test_upload_to_drive_oauth_uses_verified_canonical_client_folder() -> None:
+    service, _ = _make_service_with_fetchrow(row=None)
+    conn = AsyncMock()
+    conn.fetchrow.return_value = {"google_drive_folder_id": "crm_root", "client_type": "individual"}
+    conn.fetchval.return_value = "canonical_profile"
+    drive = MagicMock()
+    drive.is_configured.return_value = True
+    drive.get_valid_token = AsyncMock(return_value="synthetic-token")
+    root = {
+        "id": "crm_root",
+        "name": "root",
+        "mimeType": "application/vnd.google-apps.folder",
+        "trashed": False,
+    }
+    folder = {
+        "id": "canonical_profile",
+        "name": "01_Profile",
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": ["crm_root"],
+        "trashed": False,
+    }
+    drive.get_file = AsyncMock(
+        side_effect=lambda _user, file_id: root if file_id == "crm_root" else folder
     )
-    service._get_or_create_drive_folder = AsyncMock(
-        side_effect=["root_folder", "client_folder", "type_folder"],
-    )
-
+    drive.list_files = AsyncMock(return_value={"files": [folder], "next_page_token": None})
+    drive.upload_file_to_folder = AsyncMock(return_value={"id": "oauth_file"})
+    service._upload_with_service_account = AsyncMock()
     with patch(
-        "backend.services.integrations.google_drive_service.GoogleDriveService"
-    ) as drive_cls:
-        drive_cls.return_value = drive_service
-
+        "backend.services.integrations.google_drive_service.GoogleDriveService", return_value=drive
+    ):
         result = await service._upload_to_drive(
-            conn=AsyncMock(),
+            conn=conn,
             client_id=1,
-            client_name="Client One!",
-            document_type="passport_scan",
+            client_name="Client One",
+            document_type="passport",
             file_content=b"PDF",
             file_name="passport.pdf",
             mime_type="application/pdf",
         )
-
     assert result["success"] is True
-    assert result["file_id"] == "drive_file_10"
-    assert result["file_url"] == "https://drive.google.com/file/d/drive_file_10/view"
-    assert result["folder_path"] == "Zantara Portal Uploads/1_Client One/Passport Scan"
-    drive_service.upload_file_to_folder.assert_awaited_once()
-    assert drive_service.upload_file_to_folder.call_args.kwargs["folder_id"] == "type_folder"
-    assert drive_service.upload_file_to_folder.call_args.kwargs["file_name"].endswith(
-        "_passport.pdf"
+    assert result["folder_path"] == "1_Client One/01_Profile"
+    drive.list_files.assert_awaited_once_with(
+        "SYSTEM", folder_id="crm_root", page_token=None, page_size=1000
     )
+    assert drive.upload_file_to_folder.await_args.kwargs["folder_id"] == "canonical_profile"
+    service._upload_with_service_account.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_oauth_upload_rejects_duplicate_canonical_folders():
+    service, _ = _make_service_with_fetchrow(row=None)
+    conn = AsyncMock()
+    conn.fetchrow.return_value = {"google_drive_folder_id": "crm_root", "client_type": "individual"}
+    conn.fetchval.return_value = None
+    drive = MagicMock()
+    drive.is_configured.return_value = True
+    drive.get_valid_token = AsyncMock(return_value="synthetic-token")
+    drive.get_file = AsyncMock(
+        return_value={
+            "id": "crm_root",
+            "mimeType": "application/vnd.google-apps.folder",
+            "trashed": False,
+        }
+    )
+    drive.list_files = AsyncMock(
+        return_value={
+            "files": [
+                {
+                    "id": "one",
+                    "name": "01_Profile",
+                    "mimeType": "application/vnd.google-apps.folder",
+                },
+                {
+                    "id": "two",
+                    "name": "01_Profile",
+                    "mimeType": "application/vnd.google-apps.folder",
+                },
+            ],
+            "next_page_token": None,
+        }
+    )
+    drive.upload_file_to_folder = AsyncMock()
+    with patch(
+        "backend.services.integrations.google_drive_service.GoogleDriveService", return_value=drive
+    ):
+        result = await service._upload_to_drive(
+            conn=conn,
+            client_id=1,
+            client_name="Client One",
+            document_type="passport",
+            file_content=b"PDF",
+            file_name="passport.pdf",
+            mime_type="application/pdf",
+        )
+    assert result["success"] is False
+    drive.upload_file_to_folder.assert_not_awaited()
 
 
 # =============================================================================
@@ -1682,3 +1738,44 @@ async def test_timeline_failure_does_not_break_soft_delete() -> None:
     )
 
     assert result is not None and result["deleted"] is True
+
+
+@pytest.mark.asyncio
+async def test_oauth_missing_client_root_is_persisted_under_creation_lock(monkeypatch) -> None:
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(settings, "gdrive_individuals_folder_id", "people-root")
+    service, _ = _make_service_with_fetchrow(row=None)
+    conn = AsyncMock()
+    conn.fetchrow.return_value = {"google_drive_folder_id": None, "client_type": "individual"}
+    conn.fetchval.side_effect = [None, None]
+    drive = MagicMock()
+    drive.is_configured.return_value = True
+    drive.get_valid_token = AsyncMock(return_value="synthetic-token")
+    drive.get_file = AsyncMock(
+        return_value={
+            "id": "client-root",
+            "mimeType": "application/vnd.google-apps.folder",
+            "trashed": False,
+        }
+    )
+    drive.upload_file_to_folder = AsyncMock(return_value={"id": "oauth-file"})
+    service._resolve_oauth_folder = AsyncMock(side_effect=["client-root", "profile-folder"])
+    with patch(
+        "backend.services.integrations.google_drive_service.GoogleDriveService", return_value=drive
+    ):
+        result = await service._upload_to_drive(
+            conn, 42, "Example", "passport", b"PDF", "passport.pdf"
+        )
+    assert result["success"] is True
+    assert service._resolve_oauth_folder.await_args_list[0].args == (
+        drive,
+        "42_Example",
+        "people-root",
+    )
+    operations = [(call.args[0], call.args[1:]) for call in conn.execute.await_args_list]
+    assert "pg_advisory_lock" in operations[0][0]
+    assert "UPDATE clients" in operations[1][0]
+    assert operations[1][1] == ("client-root", 42)
+    assert "pg_advisory_unlock" in operations[2][0]
+    assert drive.upload_file_to_folder.await_args.kwargs["folder_id"] == "profile-folder"

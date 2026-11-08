@@ -132,14 +132,47 @@ def _folder_poster(fail_on: int | None = None) -> Callable[..., httpx.Response]:
     return post
 
 
+def _folder_client(fail_on: int | None = None) -> AsyncMock:
+    """In-memory Drive API supporting list, metadata and creation."""
+    files: dict[str, dict[str, Any]] = {}
+    calls = count(1)
+
+    def post(_url: str, **kwargs: Any) -> httpx.Response:
+        number = next(calls)
+        if number == fail_on:
+            return _drive_error(403)
+        body = kwargs["json"]
+        file_id = f"created-{number}"
+        files[file_id] = {
+            "id": file_id,
+            "name": body["name"],
+            "mimeType": _FOLDER_MIME,
+            "parents": body["parents"],
+            "trashed": False,
+            "webViewLink": f"https://drive.example.invalid/{file_id}",
+        }
+        return _response(200, files[file_id])
+
+    def get(url: str, **kwargs: Any) -> httpx.Response:
+        if url.endswith("/files"):
+            query = kwargs["params"]["q"]
+            parent = query.split("'", 2)[1]
+            return _response(200, {"files": [f for f in files.values() if parent in f["parents"]]})
+        return _response(200, files[url.rsplit("/", 1)[-1]])
+
+    return _client(post=post, get=get)
+
+
 def _folder_settings() -> Any:
-    """The parent folders create_client_folder_async reads through its function-local import."""
-    configured = SimpleNamespace(
+    """Override only Drive parents, leaving other application settings intact."""
+    from backend.app.core.config import settings
+
+    return patch.multiple(
+        settings,
         gdrive_individuals_folder_id="individuals-id-3",
         gdrive_companies_folder_id="companies-id-4",
         google_drive_root_folder_id="root-id-2",
     )
-    return patch("backend.app.core.config.settings", configured)
 
 
 def _module_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
@@ -333,7 +366,7 @@ async def test_create_folder_failure_logs_the_status_not_the_google_body(
 async def test_client_folder_structure_lines_carry_ids_never_the_client_name(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    client = _client(post=_folder_poster())
+    client = _folder_client()
     service = _connected(client)
     with _folder_settings(), caplog.at_level(logging.DEBUG, logger=_LOGGER):
         caplog.clear()
@@ -357,15 +390,15 @@ async def test_client_folder_structure_lines_carry_ids_never_the_client_name(
 async def test_subfolder_failure_logs_ids_and_class_not_the_path_or_the_error_text(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    service = _connected(_client(post=_folder_poster(fail_on=5)))
+    service = _connected(_folder_client(fail_on=5))
     with _folder_settings(), caplog.at_level(logging.DEBUG, logger=_LOGGER):
         caplog.clear()
         result = await service.create_client_folder_async(32, _CLIENT_NAME, "individual")
 
     assert result["success"] is True
     assert len(result["subfolders"]) == 13
-    assert "02_Company/AKTA" not in result["subfolders"]
-    _assert_clean(caplog, _CLIENT_NAME, "02_Company/AKTA", _BODY_TEXT)
+    assert "04_Archive" not in result["subfolders"]
+    _assert_clean(caplog, _CLIENT_NAME, _BODY_TEXT)
     before = [("INFO", f"{_TAG} Created folder with ID: created-{n}") for n in range(1, 5)]
     failed = [
         ("ERROR", f"{_TAG} Create folder failed: HTTP 403"),
@@ -383,7 +416,7 @@ async def test_subfolder_failure_logs_ids_and_class_not_the_path_or_the_error_te
 async def test_root_folder_failure_logs_the_client_id_and_the_class_not_the_name(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    service = _connected(_client(post=_folder_poster(fail_on=1)))
+    service = _connected(_folder_client(fail_on=1))
     with _folder_settings(), caplog.at_level(logging.DEBUG, logger=_LOGGER):
         caplog.clear()
         result = await service.create_client_folder_async(33, _CLIENT_NAME, "individual")

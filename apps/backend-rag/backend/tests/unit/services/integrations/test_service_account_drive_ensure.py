@@ -29,13 +29,19 @@ class _FakeConn:
     def __init__(self, state: dict[str, Any], lock: asyncio.Lock) -> None:
         self._state = state
         self._lock = lock
+        self._name_locks: dict[tuple[int, int], asyncio.Lock] = state.setdefault("_name_locks", {})
 
     async def execute(self, sql: str, *args: Any) -> str:
-        if "pg_advisory_lock" in sql:
-            await self._lock.acquire()
-            return "SELECT 1"
-        if "pg_advisory_unlock" in sql:
-            self._lock.release()
+        if "pg_advisory_lock" in sql or "pg_advisory_unlock" in sql:
+            lock = (
+                self._lock
+                if args[0] == 742001
+                else self._name_locks.setdefault(tuple(args), asyncio.Lock())
+            )
+            if "pg_advisory_unlock" in sql:
+                lock.release()
+            else:
+                await lock.acquire()
             return "SELECT 1"
         if "UPDATE clients SET google_drive_folder_id" in sql:
             self._state["google_drive_folder_id"] = args[0]

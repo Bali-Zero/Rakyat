@@ -947,7 +947,7 @@ async def sync_company_drive_folder(
                             db_pool=ocr_pool,
                             client_id=primary_client_id,
                             file_id=fid,
-                            folder_name="02_Company",
+                            folder_name="02_Company",  # Semantic OCR hint, not a Drive destination.
                             filename=fname,
                             doc_id=None,  # company_documents id, not documents id
                             document_type=dtype,
