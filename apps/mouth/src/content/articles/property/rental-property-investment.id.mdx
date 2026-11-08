@@ -75,6 +75,7 @@ tableOfContents: true
 canonicalUrl: "https://balizero.com/property/rental-property-investment"
 ogImage: "/static/insights/property/rental-investment.jpg"
 twitterCard: "summary_large_image"
+source_sha256: "825211df02b6d7c722f4f51047d9104f1e76806efa8125741db723d1111cf15c"
 ---
 
 import {
@@ -88,61 +89,61 @@ import {
 
 # Investasi Properti Sewa Indonesia 2026: Panduan Investor
 
-Properti sewa di Indonesia dapat memberikan imbal hasil yang baik, namun Anda memerlukan struktur dan strategi yang tepat. Inilah panduan lengkap Anda.
+Properti sewa di Indonesia dapat memberikan imbal hasil yang baik, tetapi Anda membutuhkan struktur dan strategi yang tepat. Berikut panduan lengkap Anda.
 
 ## Opsi Investasi
 
 <DecisionTree
-  title="Jalur Investasi Mana?"
-  description="Temukan pendekatan Anda"
+  title="Which Investment Path?"
+  description="Find your approach"
   nodes={[
     {
       id: "start",
-      question: "Berapa ukuran investasi Anda?",
+      question: "What's your investment size?",
       options: [
-        { label: "Di bawah USD 100 ribu", next: "small" },
-        { label: "USD 100-500 ribu", next: "medium" },
-        { label: "Di atas USD 500 ribu", next: "large" },
+        { label: "Under USD 100K", next: "small" },
+        { label: "USD 100-500K", next: "medium" },
+        { label: "Over USD 500K", next: "large" },
       ],
     },
     {
       id: "small",
       result: {
-        title: "Apartemen atau Vila Leasehold",
+        title: "Apartment or Leasehold Villa",
         description:
-          "Apartemen strata-title atau pengaturan vila leasehold. Titik masuk lebih rendah, struktur lebih sederhana. Fokus pada area wisata untuk pendapatan sewa jangka pendek.",
+          "Strata-title apartment or leasehold villa arrangement. Lower entry point, simpler structures. Focus on tourist areas for short-term rental income.",
       },
     },
     {
       id: "medium",
-      question: "Sewa jangka pendek atau panjang?",
+      question: "Short or long-term rental?",
       options: [
-        { label: "Jangka pendek (Airbnb)", next: "short-term" },
-        { label: "Jangka panjang (tahunan)", next: "long-term" },
+        { label: "Short-term (Airbnb)", next: "short-term" },
+        { label: "Long-term (yearly)", next: "long-term" },
       ],
     },
     {
       id: "large",
       result: {
-        title: "PT PMA + Beberapa Properti",
+        title: "PT PMA + Multiple Properties",
         description:
-          "Perusahaan investasi asing yang memegang sertifikat HGB. Dapat membangun portofolio properti sewa. Struktur hukum yang tepat untuk skala besar.",
+          "Foreign investment company holding HGB titles. Can build portfolio of rental properties. Proper legal structure for scale.",
       },
     },
     {
       id: "short-term",
       result: {
-        title: "Vila Sewa Wisata",
+        title: "Tourist Rental Villa",
         description:
-          "Vila di area wisata (Canggu, Seminyak, Ubud) untuk Airbnb/VRBO. Imbal hasil lebih tinggi tetapi manajemen lebih intensif. Pertimbangkan PT PMA untuk struktur yang tepat.",
+          "Villa in tourist area (Canggu, Seminyak, Ubud) for Airbnb/VRBO. Higher returns but more management. Consider PT PMA for proper structure.",
       },
     },
     {
       id: "long-term",
       result: {
-        title: "Pasar Sewa Ekspatriat",
+        title: "Expatriate Rental Market",
         description:
-          "Properti yang menargetkan penyewa ekspatriat jangka panjang. Pendapatan stabil, manajemen lebih sedikit. Bagus di area dengan populasi ekspatriat (Jakarta, Bali).",
+          "Properties targeting long-term expat tenants. Steady income, less management. Good in areas with expat populations (Jakarta, Bali).",
       },
     },
   ]}
@@ -153,52 +154,52 @@ Properti sewa di Indonesia dapat memberikan imbal hasil yang baik, namun Anda me
 ## Struktur Kepemilikan
 
 <ComparisonTable
-  title="Perbandingan Struktur"
-  description="Untuk investasi properti sewa"
+  title="Structure Comparison"
+  description="For rental property investment"
   items={[
     {
       name: "Leasehold",
-      subtitle: "Sewa jangka panjang",
+      subtitle: "Long-term lease",
       values: {
-        Kepemilikan: "Sewa dari pemilik tanah",
-        Durasi: "Umumnya 25-30 tahun",
-        "Boleh disewakan": "Ya (dengan struktur)",
-        Kompleksitas: "Sederhana",
-        "Terbaik untuk": "Investasi kecil",
+        Ownership: "Lease from landowner",
+        Duration: "25-30 years typical",
+        "Rental allowed": "Yes (with structure)",
+        Complexity: "Simple",
+        "Best for": "Small investment",
       },
     },
     {
       name: "Strata Title",
-      subtitle: "Kepemilikan apartemen",
+      subtitle: "Apartment ownership",
       values: {
-        Kepemilikan: "Kepemilikan unit",
-        Durasi: "Selamanya (dengan syarat)",
-        "Boleh disewakan": "Biasanya ya",
-        Kompleksitas: "Sederhana",
-        "Terbaik untuk": "Investasi perkotaan",
+        Ownership: "Unit ownership",
+        Duration: "Perpetual (with conditions)",
+        "Rental allowed": "Usually yes",
+        Complexity: "Simple",
+        "Best for": "Urban investment",
       },
     },
     {
       name: "PT PMA + HGB",
-      subtitle: "Kepemilikan perusahaan",
+      subtitle: "Company ownership",
       values: {
-        Kepemilikan: "Perusahaan memegang hak",
-        Durasi: "30+20+20 tahun",
-        "Boleh disewakan": "Ya (komersial)",
-        Kompleksitas: "Lebih tinggi",
-        "Terbaik untuk": "Investor serius",
+        Ownership: "Company holds title",
+        Duration: "30+20+20 years",
+        "Rental allowed": "Yes (commercial)",
+        Complexity: "Higher",
+        "Best for": "Serious investors",
       },
       highlight: true,
     },
     {
       name: "Nominee",
-      subtitle: "WNI yang memegang",
+      subtitle: "Indonesian holds",
       values: {
-        Kepemilikan: "Tidak langsung berisiko",
-        Durasi: "Variabel",
-        "Boleh disewakan": "Tidak jelas",
-        Kompleksitas: "Risiko tinggi",
-        "Terbaik untuk": "Tidak direkomendasikan",
+        Ownership: "Risky indirect",
+        Duration: "Variable",
+        "Rental allowed": "Unclear",
+        Complexity: "High risk",
+        "Best for": "Not recommended",
       },
     },
   ]}
@@ -208,52 +209,52 @@ Properti sewa di Indonesia dapat memberikan imbal hasil yang baik, namun Anda me
 
 ## Ekspektasi Imbal Hasil
 
-### Yield Tipikal
+### Hasil Tipikal
 
-| Tipe Properti              | Yield Kotor | Yield Bersih |
-| -------------------------- | ----------- | ------------ |
-| Vila Bali (jangka pendek)  | 8-15%       | 5-10%        |
-| Vila Bali (jangka panjang) | 5-8%        | 4-6%         |
-| Apartemen Jakarta          | 5-7%        | 4-5%         |
-| Serviced apartment         | 6-10%       | 4-7%         |
+| Jenis Properti | Imbal Hasil Bruto | Imbal Hasil Bersih |
+| ----------------------- | ----------- | --------- |
+| Vila Bali (jangka pendek) | 8-15%       | 5-10%     |
+| Vila Bali (jangka panjang)  | 5-8%        | 4-6%      |
+| Apartemen Jakarta       | 5-7%        | 4-5%      |
+| Apartemen servis      | 6-10%       | 4-7%      |
 
-<InfoCard variant="warning" title="Ekspektasi Realistis">
+<InfoCard variant="warning" title="Realistic Expectations">
 **Bersikaplah realistis:**
 
-- Yield kotor mengabaikan pengeluaran
-- Yield bersih lebih penting
-- Okupansi bervariasi (tipikal 60-80% untuk jangka pendek)
-- Biaya pemeliharaan bertambah
+- Hasil bruto mengabaikan biaya
+- Hasil bersih lebih penting
+- Tingkat hunian bervariasi (60-80% umum untuk jangka pendek)
+- Biaya perawatan bertambah
 - Biaya manajemen 15-25%
-- Pajak mengurangi imbal hasil lebih lanjut
+- Pajak semakin mengurangi imbal hasil
 
-Targetkan pengembalian bersih 5-8% untuk perencanaan yang realistis.
+Targetkan imbal hasil bersih 5-8% untuk perencanaan yang realistis.
 
 </InfoCard>
 
 ### Kalkulator Imbal Hasil
 
 <Calculator
-  title="Estimasi Pengembalian Sewa"
-  description="Hitung potensi imbal hasil"
+  title="Rental Return Estimate"
+  description="Calculate potential returns"
   fields={[
     {
       id: "purchase",
-      label: "Nilai Properti (IDR)",
+      label: "Property Value (IDR)",
       type: "number",
       defaultValue: 3000000000,
       min: 0
     },
     {
       id: "monthlyRate",
-      label: "Tarif Sewa Bulanan (IDR)",
+      label: "Monthly Rental Rate (IDR)",
       type: "number",
       defaultValue: 25000000,
       min: 0
     },
     {
       id: "occupancy",
-      label: "Okupansi yang Diharapkan (%)",
+      label: "Expected Occupancy (%)",
       type: "number",
       defaultValue: 70,
       min: 0,
@@ -261,11 +262,11 @@ Targetkan pengembalian bersih 5-8% untuk perencanaan yang realistis.
     },
     {
       id: "managed",
-      label: "Manajemen Properti?",
+      label: "Property Management?",
       type: "select",
       options: [
-        { value: "yes", label: "Ya (20% dari pendapatan)" },
-        { value: "no", label: "Tidak (kelola sendiri)" }
+        { value: "yes", label: "Yes (20% of revenue)" },
+        { value: "no", label: "No (self-manage)" }
       ],
       defaultValue: "yes"
     }
@@ -286,17 +287,17 @@ Targetkan pengembalian bersih 5-8% untuk perencanaan yang realistis.
     return {
       total: Math.round(netIncome),
       breakdown: [
-        { label: "Sewa kotor tahunan", amount: Math.round(annualGross) },
-        { label: "Manajemen properti", amount: -Math.round(managementFee) },
-        { label: "Pemeliharaan (10%)", amount: -Math.round(maintenance) },
-        { label: "Estimasi utilitas", amount: -Math.round(utilities) },
-        { label: "Pajak sewa (10%)", amount: -Math.round(tax) },
-        { label: "PENDAPATAN BERSIH TAHUNAN", amount: Math.round(netIncome) },
-        { label: "Yield kotor", amount: `${grossYield.toFixed(1)}%` },
-        { label: "Yield bersih", amount: `${netYield.toFixed(1)}%` }
+        { label: "Annual gross rental", amount: Math.round(annualGross) },
+        { label: "Property management", amount: -Math.round(managementFee) },
+        { label: "Maintenance (10%)", amount: -Math.round(maintenance) },
+        { label: "Utilities estimate", amount: -Math.round(utilities) },
+        { label: "Rental tax (10%)", amount: -Math.round(tax) },
+        { label: "NET ANNUAL INCOME", amount: Math.round(netIncome) },
+        { label: "Gross yield", amount: `${grossYield.toFixed(1)}%` },
+        { label: "Net yield", amount: `${netYield.toFixed(1)}%` }
       ],
       currency: "IDR",
-      note: `Yield bersih: ${netYield.toFixed(1)}% (~USD ${Math.round(netIncome / 16000).toLocaleString()}/tahun)`
+      note: `Net yield: ${netYield.toFixed(1)}% (~USD ${Math.round(netIncome / 16000).toLocaleString()}/year)`
     };
 
 }}
@@ -308,21 +309,21 @@ Targetkan pengembalian bersih 5-8% untuk perencanaan yang realistis.
 
 ### Sewa Jangka Pendek (Airbnb/VRBO)
 
-| Kelebihan                          | Kekurangan              |
-| ---------------------------------- | ----------------------- |
-| Potensi pendapatan lebih tinggi    | Manajemen lebih banyak  |
-| Fleksibilitas menggunakan properti | Fluktuasi musiman       |
-| Dapat menyesuaikan harga           | Masalah tamu            |
-| Pasar pariwisata yang berkembang   | Ketidakpastian regulasi |
+| Kelebihan | Kekurangan |
+| --------------------------- | ---------------------- |
+| Potensi pendapatan lebih tinggi    | Pengelolaan lebih banyak        |
+| Fleksibilitas untuk menggunakan properti | Fluktuasi musiman   |
+| Dapat menyesuaikan harga          | Masalah tamu           |
+| Pasar pariwisata yang berkembang      | Ketidakpastian regulasi |
 
 ### Sewa Jangka Panjang
 
-| Kelebihan               | Kekurangan                      |
-| ----------------------- | ------------------------------- |
-| Pendapatan stabil       | Imbal hasil lebih rendah        |
-| Manajemen lebih sedikit | Kurang fleksibilitas            |
-| Arus kas terprediksi    | Masalah penyewa mungkin terjadi |
-| Keausan lebih rendah    | Kekosongan lebih lama           |
+| Kelebihan | Kekurangan |
+| --------------------- | ---------------------- |
+| Pendapatan stabil         | Imbal hasil lebih rendah          |
+| Pengelolaan lebih sedikit       | Fleksibilitas lebih sedikit       |
+| Arus kas yang dapat diprediksi | Kemungkinan masalah penyewa   |
+| Kerusakan lebih rendah   | Kekosongan lebih lama       |
 
 ---
 
@@ -331,37 +332,37 @@ Targetkan pengembalian bersih 5-8% untuk perencanaan yang realistis.
 ### Kelola Sendiri vs Profesional
 
 <ComparisonTable
-  title="Opsi Manajemen"
-  description="Cara mengelola sewaan Anda"
+  title="Management Options"
+  description="How to manage your rental"
   items={[
     {
-      name: "Kelola Sendiri",
-      subtitle: "Anda menangani semuanya",
+      name: "Self-Manage",
+      subtitle: "You handle everything",
       values: {
-        Biaya: "Gratis",
-        Waktu: "Signifikan",
-        "Terbaik untuk": "Dekat, properti tunggal",
-        Kontrol: "Penuh",
+        Cost: "Free",
+        Time: "Significant",
+        "Best for": "Nearby, single property",
+        Control: "Full",
       },
     },
     {
-      name: "Manajer Properti",
-      subtitle: "Manajer individu",
+      name: "Property Manager",
+      subtitle: "Individual manager",
       values: {
-        Biaya: "15-20% dari pendapatan",
-        Waktu: "Minimal",
-        "Terbaik untuk": "Sewa jangka panjang",
-        Kontrol: "Moderat",
+        Cost: "15-20% of revenue",
+        Time: "Minimal",
+        "Best for": "Long-term rentals",
+        Control: "Moderate",
       },
     },
     {
-      name: "Perusahaan Manajemen",
-      subtitle: "Layanan lengkap",
+      name: "Management Company",
+      subtitle: "Full service",
       values: {
-        Biaya: "20-30% dari pendapatan",
-        Waktu: "Tidak ada",
-        "Terbaik untuk": "Jangka pendek, pemilik tidak di tempat",
-        Kontrol: "Terbatas",
+        Cost: "20-30% of revenue",
+        Time: "None",
+        "Best for": "Short-term, absent owner",
+        Control: "Limited",
       },
       highlight: true,
     },
@@ -371,79 +372,79 @@ Targetkan pengembalian bersih 5-8% untuk perencanaan yang realistis.
 ### Daftar Periksa Manajemen
 
 <Checklist
-  title="Tugas Manajemen Properti"
-  description="Apa yang perlu dilakukan"
+  title="Property Management Tasks"
+  description="What needs to be done"
   persistKey="rental-management-checklist"
   items={[
     {
       id: "listing",
-      label: "Manajemen listing",
-      description: "Foto, deskripsi, harga",
+      label: "Listing management",
+      description: "Photos, descriptions, pricing",
       required: true,
       category: "marketing",
     },
     {
       id: "bookings",
-      label: "Manajemen pemesanan",
-      description: "Pertanyaan, reservasi",
+      label: "Booking management",
+      description: "Inquiries, reservations",
       required: true,
       category: "operations",
     },
     {
       id: "checkin",
       label: "Check-in/check-out",
-      description: "Kedatangan, keberangkatan tamu",
+      description: "Guest arrivals, departures",
       required: true,
       category: "operations",
     },
     {
       id: "cleaning",
-      label: "Koordinasi pembersihan",
-      description: "Antar tamu",
+      label: "Cleaning coordination",
+      description: "Between guests",
       required: true,
       category: "maintenance",
     },
     {
       id: "maintenance",
-      label: "Masalah pemeliharaan",
-      description: "Perbaikan, masalah",
+      label: "Maintenance issues",
+      description: "Repairs, problems",
       required: true,
       category: "maintenance",
     },
     {
       id: "supplies",
-      label: "Penyediaan perlengkapan",
-      description: "Alat mandi, linen",
+      label: "Supplies restocking",
+      description: "Toiletries, linens",
       required: true,
       category: "maintenance",
     },
     {
       id: "payments",
-      label: "Penagihan pembayaran",
-      description: "Dari tamu/platform",
+      label: "Payment collection",
+      description: "From guests/platforms",
       required: true,
       category: "finance",
     },
     {
       id: "accounting",
-      label: "Akuntansi/pelaporan",
-      description: "Lacak pendapatan, pengeluaran",
+      label: "Accounting/reporting",
+      description: "Track income, expenses",
       required: true,
       category: "finance",
     },
     {
       id: "taxes",
-      label: "Kepatuhan pajak",
-      description: "Pelaporan pendapatan sewa",
+      label: "Tax compliance",
+      description: "Rental income reporting",
       required: true,
       category: "finance",
     },
   ]}
   categories={[
-    { id: "marketing", label: "Pemasaran", color: "blue" },
-    { id: "operations", label: "Operasi", color: "green" },
-    { id: "maintenance", label: "Pemeliharaan", color: "amber" },
-    { id: "finance", label: "Keuangan", color: "purple" },
+    { id: "marketing", label: "Marketing", color: "blue" },
+    { id: "operations", label: "Operations", color: "green" },
+    { id: "maintenance", label: "Maintenance", color: "amber" },
+    { id: "finance", label: "Finance", color: "purple" },
   ]}
   showProgress={false}
 />
@@ -454,52 +455,52 @@ Targetkan pengembalian bersih 5-8% untuk perencanaan yang realistis.
 
 ### Pajak Penghasilan Sewa
 
-<InfoCard variant="note" title="Pajak Final 10%">
-Pendapatan sewa dari properti tunduk pada:
+<InfoCard variant="note" title="10% Final Tax">
+Pendapatan sewa dari properti dikenakan:
 
-**Pajak Final 10%** dari pendapatan sewa kotor
+**Pajak Final 10%** atas pendapatan sewa bruto
 
-- Tidak ada pengurangan biaya
-- Final (tidak ditambahkan ke pendapatan lain)
-- Dipotong oleh penyewa korporasi
-- Dinilai sendiri oleh penyewa individu
+- Tanpa pengurangan untuk biaya
+- Final (tidak ditambahkan ke penghasilan lain)
+- Dipotong oleh penyewa korporat
+- Dihitung sendiri untuk penyewa perorangan
 </InfoCard>
 
 ### Melalui PT PMA
 
-| Item              | Perlakuan            |
-| ----------------- | -------------------- |
-| Pendapatan sewa   | Pendapatan korporasi |
-| Pengeluaran       | Dapat dikurangi      |
-| Depresiasi        | Bangunan: 5%/tahun   |
-| Pajak laba bersih | 22% CIT              |
-| Dividen           | 10% WHT              |
+| Pos | Perlakuan |
+| -------------- | ----------------- |
+| Pendapatan sewa  | Penghasilan korporat  |
+| Biaya       | Dapat dikurangkan        |
+| Penyusutan   | Bangunan: 5%/tahun |
+| Pajak laba bersih | 22% CIT           |
+| Dividen       | 10% WHT           |
 
 ---
 
-## Due Diligence
+## Uji Tuntas
 
 ### Sebelum Membeli
 
-| Cek               | Mengapa                       |
-| ----------------- | ----------------------------- |
-| Analisis lokasi   | Permintaan sewa               |
-| Sewa sebanding    | Tarif pasar                   |
-| Data okupansi     | Ekspektasi realistis          |
-| Status regulasi   | Legal untuk disewakan?        |
-| Kualitas bangunan | Biaya pemeliharaan            |
-| Opsi manajemen    | Siapa yang akan mengelolanya? |
-| Strategi keluar   | Bisakah Anda menjual?         |
+| Pengecekan | Alasan |
+| ------------------ | ---------------------- |
+| Analisis lokasi  | Permintaan sewa          |
+| Sewa pembanding | Tarif pasar           |
+| Data hunian     | Ekspektasi realistis |
+| Status regulasi  | Legal untuk disewakan?         |
+| Kualitas bangunan   | Biaya perawatan      |
+| Opsi manajemen | Siapa yang akan mengelolanya?       |
+| Strategi keluar      | Bisakah Anda menjualnya?          |
 
-### Bendera Merah
+### Tanda Bahaya
 
-| Tanda Peringatan           | Kekhawatiran              |
-| -------------------------- | ------------------------- |
-| Yield terlalu tinggi       | Proyeksi tidak realistis  |
-| Kepemilikan tidak jelas    | Masalah hukum             |
-| Tidak ada riwayat sewa     | Pasar belum terbukti      |
-| Sewaan kelolaan pengembang | Konflik kepentingan       |
-| Lokasi terpencil           | Akses, masalah permintaan |
+| Tanda Peringatan | Kekhawatiran |
+| --------------------- | ----------------------- |
+| Imbal hasil terlalu bagus       | Proyeksi tidak realistis |
+| Kepemilikan tidak jelas     | Masalah hukum            |
+| Tanpa riwayat sewa     | Pasar belum terbukti         |
+| Sewa yang dijalankan pengembang | Konflik kepentingan    |
+| Lokasi terpencil       | Masalah akses, permintaan   |
 
 ---
 
@@ -507,26 +508,26 @@ Pendapatan sewa dari properti tunduk pada:
 
 ### Menjual Properti Sewa
 
-| Pertimbangan     | Faktor                      |
-| ---------------- | --------------------------- |
-| Capital gains    | 2,5% dari nilai jual        |
-| Mencari pembeli  | Kondisi pasar               |
-| Komitmen sewa    | Penyewa saat ini            |
-| Penjualan PT PMA | Jual saham sebagai gantinya |
-| Waktu            | Siklus pasar                |
+| Pertimbangan | Faktor |
+| ----------------- | ------------------- |
+| Keuntungan modal     | 2.5% dari nilai penjualan  |
+| Mencari pembeli    | Kondisi pasar   |
+| Komitmen sewa | Penyewa saat ini     |
+| Penjualan PT PMA       | Jual saham sebagai gantinya |
+| Waktu            | Siklus pasar       |
 
 ---
 
 ## Pertanyaan Umum
 
 <AskZantara
-  context="Investasi properti sewa Indonesia, imbal hasil properti, pendapatan sewa, manajemen properti Bali"
-  placeholder="Tanyakan tentang properti sewa..."
+  context="Rental property investment Indonesia, property returns, rental income, property management Bali"
+  placeholder="Ask about rental property..."
   suggestedQuestions={[
-    "Berapa imbal hasil yang bisa saya harapkan dari vila di Bali?",
-    "Haruskah saya menggunakan manajer properti?",
-    "Apakah Airbnb legal di Bali?",
-    "Bagaimana pajak pendapatan sewa?",
+    "What returns can I expect from a Bali villa?",
+    "Should I use a property manager?",
+    "Is Airbnb legal in Bali?",
+    "How is rental income taxed?",
   ]}
 />
 
@@ -536,4 +537,4 @@ Pendapatan sewa dari properti tunduk pada:
 
 - [Panduan Investasi Properti](/insights/property/property-investment-guide)
 - [Aturan Kepemilikan Tanah](/insights/property/land-ownership-rules)
-- [Pembelian Vila Bali](/insights/property/villa-purchase-bali)
+- [Pembelian Vila di Bali](/insights/property/villa-purchase-bali)
