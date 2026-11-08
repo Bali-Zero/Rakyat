@@ -1,16 +1,23 @@
 """AI recap for the kita client card (Immigration / Company tabs).
 
-Pipeline per request: build facts from rows kita already holds -> reduce them
-through ONE allow-list (``recap_payload``) -> sha256 of the canonical JSON ->
-return the cached row when the hash is unchanged, otherwise generate with
-Gemini, upsert, return. A changed fact set therefore refreshes the recap by
-itself; an unchanged one never costs a model call.
+Every statement follows one row of RECAP_SPEC.md (numbers spec v3.3, strict parsing): a recorded
+value read through a strict grammar, or a count over identities the database defines. A value
+that does not parse is omitted, never repaired. A count or a selection over a set with any
+unparseable or unknown member is omitted as a whole.
 
-PII boundary (hard rule): only what ``recap_payload`` lets through reaches the
-prompt, and it lets through codes, enums, counts, ISO dates and capital
-amounts. Never names (client, family, shareholders, staff, companies),
-passport/permit/NIB/NPWP/AHU numbers, addresses, emails, phones, sponsors or
-file names. Documents and images are never sent.
+Pipeline per request: build facts from rows kita already holds -> reduce them through ONE
+allow-list (``recap_payload``) -> sha256 of the canonical JSON -> return the cached row when the
+hash is unchanged, otherwise store the deterministic template, return it, and let a configured
+provider rewrite it in the background. A changed fact set therefore refreshes the recap by itself;
+an unchanged one never costs a model call.
+
+PII boundary (hard rule): only what ``recap_payload`` lets through reaches the template, the cache
+or a prompt, and it lets through codes, enums, counts, ISO dates, capital amounts and the names of
+database catalogue rows (``visa_types.name``, ``practice_types.name``). Never names of a client,
+family member, shareholder, staff member or company; never passport/permit/NIB/NPWP/AHU numbers,
+addresses, emails, phones, sponsors or file names; never company free text such as
+``kbli_description``. Documents and images are never sent. No log line carries a client value:
+exception type names and fixed reason codes only.
 """
 
 from __future__ import annotations
@@ -23,10 +30,9 @@ import re
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timezone
 from typing import Any
-from zoneinfo import ZoneInfo
 
-from backend.app.utils.json_utils import from_jsonb
 from backend.services.common.background import spawn
+from backend.services.crm.client_attention import _usable
 from backend.services.crm.client_recap_text import (
     RecapProvider,
     based_on,
@@ -34,40 +40,64 @@ from backend.services.crm.client_recap_text import (
     rewrite_with_retry,
     template_recap,
 )
-from backend.services.crm.permit_label import (
-    FAMILY_EVISA,
-    FAMILY_ITK,
-    FAMILY_KITAP,
-    FAMILY_KITAS,
-    resolve_permit_label,
+from backend.services.crm.permit_label import FAMILY_ITK
+from backend.services.crm.recap_grammar import (
+    CODE_LIST_MALFORMED,
+    DIRECTOR,
+    IMMIGRATION,
+    LINK_ROLES,
+    OPEN,
+    PRACTICE_CATEGORIES,
+    PRACTICE_STATUSES,
+    SHAREHOLDER,
+    UNKNOWN,
+    classify,
+    closed_key,
+    decode_jsonb,
+    legal_form,
+    lkpm_status,
+    parse_code_list,
+    parse_date,
+    parse_kbli_code,
+    parse_lkpm_period,
+    parse_nonneg_int,
+    today_wita,
 )
+from backend.services.crm.recap_permits import (
+    ISSUE_CONFLICTING,
+    STAY_FAMILIES,
+    classify_document,
+    pick_current_permit,
+)
+from backend.services.kbli_catalogue_membership import (
+    ABSENT,
+    CANONICAL,
+    catalogue_verdict,
+    fetch_catalogue_membership,
+)
+from backend.services.kbli_catalogue_membership import UNKNOWN as VERDICT_UNKNOWN
 
 logger = logging.getLogger(__name__)
 
 SCOPE_IMMIGRATION = "immigration"
 SCOPE_COMPANY = "company"
-# Off by the owner on 2026-11-05: gate round 7 on Rakyat #22 found recap counts
-# that are still not exact, and this live version predates that lane's fixes.
-# The endpoint answers text=null (the card hides it) until a strict-parsing
-# spec passes its gate and a fresh lane turns this back on.
-RECAP_ENABLED = False
+# The switch of PR #31. The recap serves again since the strict-parsing lane (RECAP_SPEC.md v3.3)
+# landed; setting this to False answers text=null (the card hides it) with no fact query,
+# no generation and no cache write.
+RECAP_ENABLED = True
 SCOPES = (SCOPE_IMMIGRATION, SCOPE_COMPANY)
 
 TEMPLATE_MODEL = "template"
 REWRITE_RETRY_AFTER_S = 600
+# Bounded output size: more distinct KBLI codes than this omit C5 and C6 (and cap the catalogue
+# round trips a single recap request can make).
+MAX_KBLI_CODES = 50
+MAX_PRACTICE_TYPE_NAMES = 4
 
-# Documents that are one person's stay-permit race (latest wins); ITK stamps
-# and MERP re-entry permits are not part of it.
-_STAY_RACE_FAMILIES = {FAMILY_KITAS, FAMILY_KITAP, FAMILY_EVISA}
-_CLOSED_PRACTICE_STATUSES = {"completed", "cancelled", "canceled", "closed", "done", "rejected"}
-_RELATIONSHIPS = {"spouse", "child", "parent", "sibling", "other"}
-
+_FAMILY_CODES = {"KITAS / ITAS": "KITAS", "KITAP / ITAP": "KITAP"}
 _CODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 /_-]{0,15}$")
-_ENUM_RE = re.compile(r"^[a-z0-9_]{1,40}$")
-_PRACTICE_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
-_KBLI_RE = re.compile(r"^\d{4,5}$")
+_QUARTER_RE = re.compile(r"^Q[1-4]$")
 _TITLE_RE = re.compile(r"^[A-Za-z0-9 ()/.,&'+-]{1,120}$")
-_ISSUE_DATE_KEYS = ("issue_date", "date_of_issue", "issued_date", "tanggal_terbit")
 
 _SQL_SELECT = """
     SELECT facts_hash, text, model, generated_at
@@ -90,31 +120,18 @@ _SQL_UPSERT = """
 
 
 def _s_date(v: Any) -> str | None:
-    if isinstance(v, datetime):
-        return v.date().isoformat()
-    if isinstance(v, date):
-        return v.isoformat()
-    if isinstance(v, str):
-        try:
-            return date.fromisoformat(v[:10]).isoformat()
-        except ValueError:
-            return None
-    return None
+    d = parse_date(v)
+    return d.isoformat() if d else None
 
 
 def _s_int(v: Any) -> int | None:
-    if isinstance(v, bool):
-        return None
-    if isinstance(v, int):
-        return v
-    if isinstance(v, float) and v == int(v):
-        return int(v)
-    if isinstance(v, str) and re.fullmatch(r"\d{1,18}", v.strip()):
-        return int(v.strip())
-    return None
+    """A real non-negative ``int`` only: the builders emit ints, the allow-list takes nothing else."""
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
 
 
-_FAMILY_CODES = {"KITAS / ITAS": "KITAS", "KITAP / ITAP": "KITAP"}
+def _s_count(v: Any) -> int | None:
+    n = _s_int(v)
+    return n or None
 
 
 def _s_code(v: Any) -> str | None:
@@ -137,7 +154,11 @@ def _s_status(v: Any) -> str | None:
 
 
 def _s_enum(v: Any) -> str | None:
-    return v.strip().lower() if isinstance(v, str) and _ENUM_RE.match(v.strip().lower()) else None
+    return v if v in ("draft", "pending", "submitted", "approved") else None
+
+
+def _s_quarter(v: Any) -> str | None:
+    return v if isinstance(v, str) and _QUARTER_RE.match(v) else None
 
 
 _SLOT_BANNED_RE = re.compile(
@@ -147,8 +168,8 @@ _SLOT_BANNED_RE = re.compile(
 
 
 def _s_slot(v: Any, maxlen: int = 60) -> str | None:
-    """Free-text slot that comes from a catalogue/OCR value: shape-checked, length-bounded and
-    stripped of anything that reads as an instruction or a meta phrase."""
+    """A label from a database catalogue: shape-checked, length-bounded and stripped of anything
+    that reads as an instruction or a meta phrase."""
     t = _s_title(v)
     if not t:
         return None
@@ -160,12 +181,8 @@ def _s_title(v: Any) -> str | None:
     return v.strip() if isinstance(v, str) and _TITLE_RE.match(v.strip()) else None
 
 
-def _s_practice_code(v: Any) -> str | None:
-    return v.strip() if isinstance(v, str) and _PRACTICE_CODE_RE.match(v.strip()) else None
-
-
-def _s_kbli(v: Any) -> str | None:
-    return v.strip() if isinstance(v, str) and _KBLI_RE.match(v.strip()) else None
+def _s_legal_form(v: Any) -> str | None:
+    return legal_form(v)
 
 
 def _prune(d: dict[str, Any]) -> dict[str, Any]:
@@ -179,46 +196,16 @@ def _list(v: Any, fn, limit: int) -> list[Any]:
     return [x for x in out if x not in (None, {}, [])][:limit]
 
 
-def _person_permit(v: Any) -> dict[str, Any]:
-    v = v if isinstance(v, Mapping) else {}
-    return _prune(
-        {
-            "relationship": _s_enum(v.get("relationship"))
-            if v.get("relationship") in _RELATIONSHIPS
-            else None,
-            "permit_code": _s_code(v.get("permit_code")),
-            "permit_expiry_date": _s_date(v.get("permit_expiry_date")),
-        }
-    )
-
-
-def _practice(v: Any) -> dict[str, Any]:
-    v = v if isinstance(v, Mapping) else {}
-    return _prune({"type": _s_slot(v.get("type"))})
-
-
 def _mapping(v: Any) -> Mapping[str, Any]:
     return v if isinstance(v, Mapping) else {}
 
 
-def _kbli_item(v: Any) -> dict[str, Any]:
-    v = v if isinstance(v, Mapping) else {}
-    in_2025 = v.get("in_2025")
-    return _prune(
-        {
-            "code": _s_kbli(v.get("code")),
-            "title": _s_slot(v.get("title"), 100),
-            "in_2025": in_2025 if isinstance(in_2025, bool) else None,
-        }
-    )
-
-
 def recap_payload(scope: str, facts: Mapping[str, Any]) -> dict[str, Any]:
-    """THE allow-list: the only function whose output reaches the prompt.
+    """THE allow-list: the only function whose output reaches the template, the cache or a prompt.
 
-    Any key not named here is dropped, every value is re-validated against a
-    strict shape (code / enum / ISO date / integer), so a free-text field
-    (name, number, address, ...) cannot pass even if a builder leaked it.
+    Any key not named here is dropped, every value is re-validated against a strict shape
+    (code / enum / ISO date / integer), so a free-text field (name, number, address, ...)
+    cannot pass even if a builder leaked it.
     """
     f = facts if isinstance(facts, Mapping) else {}
     if scope == SCOPE_IMMIGRATION:
@@ -236,31 +223,34 @@ def recap_payload(scope: str, facts: Mapping[str, Any]) -> dict[str, Any]:
                 ),
                 "itk_expiry_date": _s_date(f.get("itk_expiry_date")),
                 "itk_status": _s_status(f.get("itk_status")),
-                "previous_permits_count": _s_int(f.get("previous_permits_count")),
-                "previous_permit_codes": _list(f.get("previous_permit_codes"), _s_code, 10),
                 "passport_expiry_date": _s_date(f.get("passport_expiry_date")),
                 "passport_status": _s_status(f.get("passport_status")),
-                "family_members_count": _s_int(f.get("family_members_count")),
-                "family_permits": _list(f.get("family_permits"), _person_permit, 10),
-                "open_practices": _list(f.get("open_practices"), _practice, 10),
+                "family_members_count": _s_count(f.get("family_members_count")),
+                "family_permits_ending_before_main_count": _s_count(
+                    f.get("family_permits_ending_before_main_count")
+                ),
+                "open_practices_count": _s_count(f.get("open_practices_count")),
+                "open_practice_types": _list(
+                    f.get("open_practice_types"), _s_slot, MAX_PRACTICE_TYPE_NAMES
+                ),
             }
         )
     if scope == SCOPE_COMPANY:
         lk = _mapping(f.get("lkpm_latest"))
         return _prune(
             {
-                "legal_form": _s_slot(f.get("legal_form")),
+                "legal_form": _s_legal_form(f.get("legal_form")),
                 "established_date": _s_date(f.get("established_date")),
                 "authorized_capital_idr": _s_int(f.get("authorized_capital_idr")),
                 "paid_up_capital_idr": _s_int(f.get("paid_up_capital_idr")),
-                "total_shares": _s_int(f.get("total_shares")),
-                "shareholders_count": _s_int(f.get("shareholders_count")),
-                "directors_count": _s_int(f.get("directors_count")),
-                "kbli": _list(f.get("kbli"), _kbli_item, 15),
+                "shareholders_count": _s_count(f.get("shareholders_count")),
+                "directors_count": _s_count(f.get("directors_count")),
+                "kbli_count": _s_count(f.get("kbli_count")),
+                "kbli_not_in_catalogue": True if f.get("kbli_not_in_catalogue") is True else None,
                 "lkpm_latest": _prune(
                     {
                         "year": _s_int(lk.get("year")),
-                        "quarter": _s_code(lk.get("quarter")),
+                        "quarter": _s_quarter(lk.get("quarter")),
                         "status": _s_enum(lk.get("status")),
                     }
                 ),
@@ -285,15 +275,38 @@ def facts_hash(payload: Mapping[str, Any]) -> str:
 # ── fact builders (pure) ────────────────────────────────────────────────────
 
 
-def _issue_date(ocr: Any) -> str | None:
-    raw = _mapping(ocr).get("raw_response")
-    if not isinstance(raw, dict):
-        return None
-    for key in _ISSUE_DATE_KEYS:
-        d = _s_date(raw.get(key))
-        if d:
-            return d
-    return None
+def _status_of(d: date, today: date) -> str:
+    return "expired" if d < today else "valid"
+
+
+def open_immigration_practices(
+    practices: Sequence[Mapping[str, Any]],
+) -> tuple[int, list[str]] | None:
+    """I7: (count, up to four type names), or ``None`` when a row could be an open immigration
+    practice without being counted. Every row arrives: nothing was filtered in SQL."""
+    rows: dict[Any, tuple[str, str, str | None]] = {}
+    for i, p in enumerate(practices):
+        key = p.get("id")
+        key = ("row", i) if key is None else key
+        cat = classify(p.get("category"), PRACTICE_CATEGORIES)
+        name = p.get("practice_type_name")
+        status = classify(p.get("status"), PRACTICE_STATUSES)
+        name = name if isinstance(name, str) else None
+        if key in rows and rows[key] != (status, cat, name):
+            cat, name = UNKNOWN, None  # one primary key, two type answers: not a certain category
+        rows[key] = (status, cat, name)
+    count = 0
+    names: set[str] = set()
+    for status, cat, name in rows.values():
+        if status == UNKNOWN and cat in (IMMIGRATION, UNKNOWN):
+            return None
+        if status == OPEN and cat == UNKNOWN:
+            return None
+        if status == OPEN and cat == IMMIGRATION:
+            count += 1
+            if name:
+                names.add(name)
+    return count, sorted(names)[:MAX_PRACTICE_TYPE_NAMES]
 
 
 def build_immigration_facts(
@@ -305,178 +318,234 @@ def build_immigration_facts(
     catalogue: Mapping[str, str] | None,
     today: date | None = None,
 ) -> dict[str, Any]:
-    """Minimal immigration facts. Documents are the client's own (family_member_id
-    NULL); deleted/archived/rejected rows are expected to be filtered by the caller
-    (and rejected ones are skipped here as well)."""
-    stay: list[tuple[Any, ...]] = []
-    itk_dates: list[str] = []
-    for d in documents:
-        if (
-            d.get("family_member_id") is not None
-            or str(d.get("status") or "").lower() == "rejected"
-        ):
-            continue
-        ocr = from_jsonb(d.get("ocr_extracted_data")) if d.get("ocr_extracted_data") else None
-        permit = resolve_permit_label(d.get("document_type"), ocr, catalogue=catalogue)
-        if not permit:
-            continue
-        expiry = _s_date(d.get("expiry_date"))
-        if permit["permit_family"] == FAMILY_ITK:
-            if expiry:
-                itk_dates.append(expiry)
-        elif permit["permit_family"] in _STAY_RACE_FAMILIES:
-            issue = _issue_date(ocr)
-            created = _s_date(d.get("created_at")) or ""
-            stay.append((expiry or "", issue or "", created, permit["permit_code"], issue, expiry))
-    stay.sort(reverse=True)
-    today = today or datetime.now(ZoneInfo("Asia/Makassar")).date()
+    """Immigration facts, one RECAP_SPEC row at a time (I1-I7). Documents arrive unfiltered: Rule L
+    (``_usable``) and the client's-own test are applied here, after classification."""
+    today = today or today_wita()
     facts: dict[str, Any] = {}
-    if stay:
-        top = stay[0]
-        code = top[3]
-        name = (catalogue or {}).get(str(code).upper())
-        permit_expiry = _s_date(top[5])
+
+    permit_docs = []
+    for d in documents:
+        if d.get("family_member_id") is not None or not _usable(d):
+            continue
+        pd = classify_document(d, catalogue)
+        if pd is not None:
+            permit_docs.append(pd)
+
+    current = None
+    stay = [p for p in permit_docs if p.family in STAY_FAMILIES]
+    if (
+        stay
+        and all(p.classifiable for p in permit_docs)
+        and all(p.expiry is not None for p in stay)
+    ):
+        current = pick_current_permit(stay)
+    if current:
         facts["current_permit"] = {
-            "code": code,
-            "official_name": name,
-            "issue_date": top[4],
-            "expiry_date": top[5],
-            "status": "expired"
-            if permit_expiry and date.fromisoformat(permit_expiry) < today
-            else "valid",
+            "code": current.code,
+            "official_name": (catalogue or {}).get(current.code),
+            "issue_date": current.issue.isoformat() if current.issue else None,
+            "expiry_date": current.expiry.isoformat(),
+            "status": _status_of(current.expiry, today),
         }
-        facts["previous_permits_count"] = len(stay) - 1
-        facts["previous_permit_codes"] = sorted({s[3] for s in stay[1:]})
-    if stay:
-        issue, expiry = stay[0][4], stay[0][5]
-        mine = [
-            d for d in itk_dates
-            if (issue and d >= issue)
-            or (not issue and date.fromisoformat(d) >= today and (not expiry or d <= expiry))
-        ]  # fmt: skip
-        if mine:
-            facts["itk_expiry_date"] = max(mine)
-            facts["itk_status"] = "expired" if date.fromisoformat(max(mine)) < today else "valid"
-    facts["passport_expiry_date"] = _s_date(passport_expiry)
-    if facts["passport_expiry_date"]:
-        facts["passport_status"] = (
-            "expired" if date.fromisoformat(facts["passport_expiry_date"]) < today else "valid"
-        )
+        itks = [p for p in permit_docs if p.family == FAMILY_ITK]
+        if (
+            itks
+            and all(p.expiry is not None for p in itks)
+            and current.issue_state != ISSUE_CONFLICTING
+        ):
+            eligible = [
+                p.expiry
+                for p in itks
+                if p.expiry is not None
+                and (
+                    p.expiry >= current.issue
+                    if current.issue is not None
+                    else today <= p.expiry <= current.expiry
+                )
+            ]
+            if eligible:
+                facts["itk_expiry_date"] = max(eligible).isoformat()
+                facts["itk_status"] = _status_of(max(eligible), today)
+
+    passport = parse_date(passport_expiry)
+    if passport:
+        facts["passport_expiry_date"] = passport.isoformat()
+        facts["passport_status"] = _status_of(passport, today)
+
     facts["family_members_count"] = len(family_members)
-    fam: list[dict[str, Any]] = []
-    for fm in family_members:
-        p = resolve_permit_label(fm.get("current_visa_type"), None, catalogue=catalogue)
-        fam.append(
-            {
-                "relationship": fm.get("relationship"),
-                "permit_code": p["permit_code"] if p else None,
-                "permit_expiry_date": fm.get("visa_expiry"),
-            }
-        )
-    facts["family_permits"] = fam
-    facts["open_practices"] = [
-        {"type": p.get("practice_type_name"), "status": p.get("status")}
-        for p in practices
-        if str(p.get("status") or "").lower() not in _CLOSED_PRACTICE_STATUSES
-        and p.get("practice_type_name")
-    ]
+    if current:
+        holders = [
+            fm
+            for fm in family_members
+            if _has_text_or_value(fm.get("current_visa_type")) or fm.get("visa_expiry") is not None
+        ]
+        ends = [parse_date(fm.get("visa_expiry")) for fm in holders]
+        if all(e is not None for e in ends):
+            facts["family_permits_ending_before_main_count"] = sum(
+                1 for e in ends if e is not None and e < current.expiry
+            )
+
+    open_practices = open_immigration_practices(practices)
+    if open_practices:
+        facts["open_practices_count"], facts["open_practice_types"] = open_practices
     return facts
 
 
-def _cf_value(cf: Mapping[str, Any], key: str) -> Any:
-    v = cf.get(key)
-    if isinstance(v, str) and v[:1] in "[{":
-        try:
-            return json.loads(v)
-        except ValueError:
+def _has_text_or_value(v: Any) -> bool:
+    return bool(v.strip()) if isinstance(v, str) else v is not None
+
+
+def collect_kbli_codes(company: Mapping[str, Any]) -> list[str] | None:
+    """The distinct KBLI codes on file, or ``None`` when the set is malformed (C5/C6 omitted)."""
+    codes: list[str] = []
+    primary = company.get("kbli_code")
+    if primary is not None and primary != "":
+        code = parse_kbli_code(primary)
+        if code is None:
             return None
-    return v
+        codes.append(code)
+    ok, cf = decode_jsonb(company.get("custom_fields"))
+    if not ok:
+        return None
+    state, items = parse_code_list(cf, "kbli_codes")
+    if state == CODE_LIST_MALFORMED:
+        return None
+    for item in items:
+        code = parse_kbli_code(item)
+        if code is None:
+            return None
+        codes.append(code)
+    return list(dict.fromkeys(codes))
+
+
+def _link_counts(links: Sequence[Mapping[str, Any]]) -> tuple[int | None, int | None]:
+    """C4: (shareholders, directors) as distinct client ids, each ``None`` when it cannot be exact."""
+    holders: set[Any] = set()
+    directors: set[Any] = set()
+    holders_exact = directors_exact = True
+    for link in links:
+        role = classify(link.get("role"), LINK_ROLES)
+        shares = link.get("shares_count")
+        if shares is None:
+            shares = 0
+        if isinstance(shares, bool) or not isinstance(shares, int) or shares < 0:
+            holders_exact = False  # an unreadable share count: the link might be a holder
+            shares = 0
+        if role == SHAREHOLDER or shares > 0:
+            holders.add(link.get("client_id"))
+        elif role == UNKNOWN:
+            holders_exact = False
+        if role == DIRECTOR:
+            directors.add(link.get("client_id"))
+        elif role == UNKNOWN:
+            directors_exact = False
+    return (len(holders) if holders_exact else None, len(directors) if directors_exact else None)
+
+
+def latest_lkpm(
+    company_id: Any,
+    linked_client_ids: set[Any],
+    rows: Sequence[Mapping[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """C7: the latest period of this company's reports, or ``None`` (omit) when it cannot be exact."""
+    if rows is None:
+        return None
+    candidates = []
+    for row in rows:
+        if row.get("company_id") is None:
+            if row.get("client_id") in linked_client_ids:
+                return None  # a client-level row cannot be attributed and could be the latest
+        elif row.get("company_id") == company_id:
+            candidates.append(row)
+    if not candidates:
+        return None
+    periods = [parse_lkpm_period(r.get("year"), r.get("quarter")) for r in candidates]
+    if any(p is None for p in periods):
+        return None
+    latest = max(p for p in periods if p is not None)
+    statuses = {
+        closed_key(r.get("status")) for r, p in zip(candidates, periods, strict=True) if p == latest
+    }
+    out: dict[str, Any] = {"year": latest[0], "quarter": f"Q{latest[1]}"}
+    if len(statuses) == 1:
+        out["status"] = lkpm_status(next(iter(statuses)))
+    return out
 
 
 def build_company_facts(
     *,
     company: Mapping[str, Any],
     links: Sequence[Mapping[str, Any]],
-    lkpm_latest: Mapping[str, Any] | None,
-    kbli_in_2025: Mapping[str, bool] | None = None,
+    lkpm_rows: Sequence[Mapping[str, Any]] | None,
+    company_id: Any = None,
+    kbli_verdicts: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    cf = from_jsonb(company.get("custom_fields")) if company.get("custom_fields") else {}
-    cf = cf if isinstance(cf, dict) else {}
-    holders = [
-        link
-        for link in links
-        if "shareholder" in str(link.get("role") or "").lower() or link.get("shares_count")
-    ]
-    cf_holders = _cf_value(cf, "shareholders")
-    holders_count = len(holders) or (len(cf_holders) if isinstance(cf_holders, list) else None)
-    directors = [
-        link for link in links if re.search(r"director|direktur", str(link.get("role") or ""), re.I)
-    ]
-    kbli: list[dict[str, Any]] = []
-    primary = _s_kbli(str(company.get("kbli_code") or "").strip())
-    if primary:
-        kbli.append({"code": primary, "title": company.get("kbli_description")})
-    extra = _cf_value(cf, "kbli_codes")
-    for code in extra if isinstance(extra, list) else []:
-        c = _s_kbli(str(code).strip())
-        if c and c != primary:
-            kbli.append({"code": c})
-    for item in kbli:
-        if kbli_in_2025 and item["code"] in kbli_in_2025:
-            item["in_2025"] = kbli_in_2025[item["code"]]
-    amendment = company.get("akta_perubahan_date") or _cf_value(cf, "akta_date")
-    return {
-        "legal_form": company.get("company_type"),
-        "established_date": company.get("akta_pendirian_date"),
-        "authorized_capital_idr": _cf_value(cf, "authorized_capital"),
-        "paid_up_capital_idr": _cf_value(cf, "paid_up_capital"),
-        "total_shares": _cf_value(cf, "total_shares"),
-        "shareholders_count": holders_count,
-        "directors_count": len(directors) or None,
-        "kbli": kbli,
-        "lkpm_latest": dict(lkpm_latest) if lkpm_latest else None,
-        "last_amendment_date": amendment,
+    """Company facts, one RECAP_SPEC row at a time (C1-C7)."""
+    ok, cf = decode_jsonb(company.get("custom_fields"))
+    cf = cf if ok and isinstance(cf, Mapping) else {}
+    facts: dict[str, Any] = {
+        "legal_form": legal_form(company.get("company_type")),
+        "established_date": _s_date(company.get("akta_pendirian_date")),
+        "last_amendment_date": _s_date(company.get("akta_perubahan_date")),
+        "authorized_capital_idr": parse_nonneg_int(cf.get("authorized_capital")),
+        "paid_up_capital_idr": parse_nonneg_int(cf.get("paid_up_capital")),
     }
+    facts["shareholders_count"], facts["directors_count"] = _link_counts(links)
+
+    codes = collect_kbli_codes(company)
+    if codes and len(codes) <= MAX_KBLI_CODES:
+        verdicts = [(kbli_verdicts or {}).get(c, VERDICT_UNKNOWN) for c in codes]
+        if all(v == CANONICAL for v in verdicts):
+            facts["kbli_count"] = len(codes)
+        elif VERDICT_UNKNOWN not in verdicts and ABSENT in verdicts:
+            facts["kbli_not_in_catalogue"] = True
+
+    linked = {link.get("client_id") for link in links}
+    facts["lkpm_latest"] = latest_lkpm(company_id, linked, lkpm_rows)
+    return facts
 
 
 # ── DB access + cache ───────────────────────────────────────────────────────
 
+# No status filter and no category filter, and a LEFT JOIN: a row whose status or type cannot be
+# classified must reach the builder (RECAP_SPEC I7, Rule 0.4).
+_SQL_PRACTICES = """
+    SELECT p.id, p.status, pt.category AS category, pt.name AS practice_type_name
+      FROM practices p
+      LEFT JOIN practice_types pt
+        ON pt.id = p.practice_type_id
+        OR (p.practice_type_id IS NULL AND pt.code = p.practice_type_code)
+     WHERE p.client_id = $1
+"""
+# Every document of the client, live or not: Rule L (`_usable`) decides in the builder.
+_SQL_DOCUMENTS = """
+    SELECT d.document_type, d.status, d.expiry_date, d.deleted_at, d.is_archived,
+           d.family_member_id, d.ocr_extracted_data
+      FROM documents d
+     WHERE d.client_id = $1
+"""
+_SQL_LKPM = """
+    SELECT client_id, company_id, year, quarter, status
+      FROM lkpm_reports
+     WHERE company_id = $1
+        OR (company_id IS NULL
+            AND client_id IN (SELECT client_id FROM client_company_links WHERE company_id = $1))
+"""
+
 
 async def fetch_immigration_inputs(conn: Any, client_id: int) -> dict[str, Any]:
-    from backend.services.crm.admin_document_visibility import (
-        admin_document_not_team_deleted_clause,
-    )
-
     client = await conn.fetchrow("SELECT passport_expiry FROM clients WHERE id = $1", client_id)
-    documents = await conn.fetch(
-        f"""
-        SELECT d.document_type, d.status, d.expiry_date, d.created_at,
-               d.family_member_id, d.ocr_extracted_data
-          FROM documents d
-         WHERE d.client_id = $1
-           AND d.deleted_at IS NULL
-           AND (d.is_archived IS NULL OR d.is_archived = false)
-           AND {admin_document_not_team_deleted_clause("d")}
-        """,
-        client_id,
-    )
+    documents = await conn.fetch(_SQL_DOCUMENTS, client_id)
     family = await conn.fetch(
-        "SELECT relationship, current_visa_type, visa_expiry FROM client_family_members WHERE client_id = $1",
+        "SELECT current_visa_type, visa_expiry FROM client_family_members WHERE client_id = $1",
         client_id,
     )
-    practices = await conn.fetch(
-        """
-        SELECT p.status, pt.name AS practice_type_name
-          FROM practices p
-          JOIN practice_types pt ON p.practice_type_id = pt.id
-         WHERE p.client_id = $1
-        """,
-        client_id,
-    )
+    practices = await conn.fetch(_SQL_PRACTICES, client_id)
     try:
         rows = await conn.fetch("SELECT upper(code) AS code, name FROM visa_types")
         catalogue: dict[str, str] | None = {r["code"]: r["name"] for r in rows}
-    except Exception:
+    except Exception as exc:
+        logger.warning("recap: visa catalogue lookup failed: %s", type(exc).__name__)
         catalogue = None
     return {
         "documents": [dict(r) for r in documents],
@@ -501,63 +570,42 @@ async def resolve_company_id(conn: Any, client_id: int, company_id: int | None) 
     )
 
 
-async def fetch_company_inputs(conn: Any, client_id: int, company_id: int) -> dict[str, Any]:
+async def fetch_company_inputs(conn: Any, company_id: int) -> dict[str, Any]:
+    """Whichever linked client opens the recap, the inputs are the same (RECAP_SPEC C7)."""
     company = await conn.fetchrow(
         """
-        SELECT company_type, kbli_code, kbli_description, akta_pendirian_date,
-               akta_perubahan_date, custom_fields
+        SELECT company_type, kbli_code, akta_pendirian_date, akta_perubahan_date, custom_fields
           FROM companies WHERE id = $1
         """,
         company_id,
     )
     links = await conn.fetch(
-        "SELECT role, shares_count FROM client_company_links WHERE company_id = $1", company_id
+        "SELECT client_id, role, shares_count FROM client_company_links WHERE company_id = $1",
+        company_id,
     )
     lkpm = None
     try:
-        row = await conn.fetchrow(
-            "SELECT year, quarter, status FROM lkpm_reports WHERE client_id = $1 "
-            "AND (company_id = $2 OR (company_id IS NULL AND "
-            "(SELECT count(*) FROM client_company_links WHERE client_id = $1) = 1)) "
-            "ORDER BY year DESC, quarter DESC LIMIT 1",
-            client_id,
-            company_id,
-        )
-        lkpm = dict(row) if row else None
+        lkpm = [dict(r) for r in await conn.fetch(_SQL_LKPM, company_id)]
     except Exception as exc:
         # The exception text can echo a client value; log the type only.
         logger.warning("recap: lkpm lookup failed: %s", type(exc).__name__)
+    company_row = dict(company) if company else {}
     return {
-        "company": dict(company) if company else {},
+        "company": company_row,
         "links": [dict(r) for r in links],
-        "lkpm_latest": lkpm,
-        "kbli_in_2025": await _kbli_in_2025(conn, dict(company) if company else {}),
+        "lkpm_rows": lkpm,
+        "company_id": company_id,
+        "kbli_verdicts": await _kbli_verdicts(conn, company_row),
     }
 
 
-async def _kbli_in_2025(conn: Any, company: Mapping[str, Any]) -> dict[str, bool]:
-    """Code -> in the KBLI 2025 catalogue, from ``kbli_documents`` (the service the
-    kbli tools already use). UNKNOWN verdicts are omitted: absence of evidence says nothing."""
-    from backend.services.kbli_catalogue_membership import (
-        ABSENT,
-        CANONICAL,
-        catalogue_verdict,
-        fetch_catalogue_membership,
-    )
-
-    cf = from_jsonb(company.get("custom_fields")) if company.get("custom_fields") else {}
-    cf = cf if isinstance(cf, dict) else {}
-    extra = _cf_value(cf, "kbli_codes")
-    codes = [company.get("kbli_code")] + (extra if isinstance(extra, list) else [])
-    out: dict[str, bool] = {}
-    for raw in codes[:15]:
-        code = _s_kbli(str(raw or "").strip())
-        if not code or code in out:
-            continue
-        verdict = catalogue_verdict(await fetch_catalogue_membership(conn, code))
-        if verdict in (CANONICAL, ABSENT):
-            out[code] = verdict == CANONICAL
-    return out
+async def _kbli_verdicts(conn: Any, company: Mapping[str, Any]) -> dict[str, str]:
+    """Code -> CANONICAL / ABSENT / UNKNOWN for the codes on file; nothing is asked of the
+    catalogue when the set is malformed or over the bound."""
+    codes = collect_kbli_codes(company)
+    if not codes or len(codes) > MAX_KBLI_CODES:
+        return {}
+    return {code: catalogue_verdict(await fetch_catalogue_membership(conn, code)) for code in codes}
 
 
 _locks: dict[tuple[int, str, str], asyncio.Lock] = {}

@@ -143,7 +143,7 @@ def make_client():
 @pytest.mark.parametrize(
     "error",
     [
-        asyncpg.UndefinedTableError("relation \"kbli_documents\" does not exist"),
+        asyncpg.UndefinedTableError('relation "kbli_documents" does not exist'),
         asyncpg.InsufficientPrivilegeError("permission denied for table kbli_documents"),
         asyncpg.QueryCanceledError("canceling statement due to statement timeout"),
     ],
@@ -247,7 +247,9 @@ async def test_fetch_logs_the_fault_rather_than_swallowing_it_silently(caplog):
         await fetch_catalogue_membership(conn, "74100")
 
     assert [r for r in caplog.records if r.levelname == "WARNING"], caplog.text
-    # The CODE must be in the rendered message — an alert that cannot name which code
-    # went dark is an alert nobody can act on.
-    assert "74100" in caplog.text
+    # The exception TYPE names the fault. Neither the code nor the server's text is logged:
+    # the client recap feeds this a code read from a client's company (RECAP_SPEC.md,
+    # "Output boundary and logging"), and asyncpg echoes the offending value in its message.
     assert "UndefinedTableError" in caplog.text
+    assert "74100" not in caplog.text
+    assert "relation gone" not in caplog.text
