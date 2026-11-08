@@ -89,3 +89,54 @@ describe("R19 Journal Insight row", () => {
     expect(screen.queryByRole("region", { name: "Insight" })).toBeNull();
   });
 });
+
+describe("R19 Journal homepage position markers", () => {
+  const placed: JournalArticle[] = ["hero_main", "hero_2", undefined].map(
+    (slot, i) => ({
+      ...articles[0],
+      title: "Placed story " + i,
+      slug: "placed-" + i,
+      sourceUrl: "/business/placed-" + i,
+      localHref: "/business/placed-" + i,
+      ...(slot ? { homepagePosition: slot } : {}),
+    }),
+  );
+  it("keeps every featured story's link in the page with its slot, the inactive ones hidden", () => {
+    const { container } = render(<Journal articles={placed} />);
+    const marked = () =>
+      [...container.querySelectorAll("a[data-homepage-position]")].map((a) => [
+        a.getAttribute("data-homepage-position"),
+        a.getAttribute("href"),
+        a.closest("[hidden]") !== null,
+      ]);
+    expect(marked()).toEqual([
+      ["hero_main", "/business/placed-0", false],
+      ["hero_2", "/business/placed-1", true],
+    ]);
+    expect(screen.queryByRole("link", { name: "Placed story 1" })).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Next editorial story" }),
+    );
+    expect(marked()).toEqual([
+      ["hero_2", "/business/placed-1", false],
+      ["hero_main", "/business/placed-0", true],
+    ]);
+  });
+  it("marks the Insight cards with their insight slots", () => {
+    const pins: JournalArticle[] = [1, 2].map((i) => ({
+      ...articles[0],
+      title: "Pin " + i,
+      slug: "pin-" + i,
+      sourceUrl: "/visas/pin-" + i,
+      localHref: "/visas/pin-" + i,
+      homepagePosition: "insight_" + i,
+    }));
+    render(<Journal articles={articles} insights={pins} />);
+    const row = screen.getByRole("region", { name: "Insight" });
+    expect(
+      [...row.querySelectorAll("a")].map((a) =>
+        a.getAttribute("data-homepage-position"),
+      ),
+    ).toEqual(["insight_1", "insight_2"]);
+  });
+});

@@ -124,6 +124,20 @@ export function Journal({
                 ) : null}
               </div>
               {stories.length > 1 ? (
+                // The stories behind "Next" stay in the page, hidden, as the
+                // earlier hero carousel kept its inactive slides: their links
+                // carry their homepage slot for the News Room live verifier.
+                <div hidden>
+                  {stories.map((story, storyIndex) =>
+                    storyIndex === currentIndex ? null : (
+                      <ArticleDestination article={story} key={story.slug}>
+                        {story.title}
+                      </ArticleDestination>
+                    ),
+                  )}
+                </div>
+              ) : null}
+              {stories.length > 1 ? (
                 <div className="carousel-controls">
                   <button
                     aria-label="Previous editorial story"

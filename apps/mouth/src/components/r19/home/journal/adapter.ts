@@ -33,18 +33,18 @@ export function selectJournalArticles(
 ): JournalArticle[] {
   const bySlug = new Map(articles.map((article) => [article.slug, article]));
   const seen = new Set<string>();
-  const ordered = [
-    ...slots.map((slot) => bySlug.get(layout[slot])),
-    ...articles,
+  const ordered: { article: ArticleListItem | undefined; slot?: string }[] = [
+    ...slots.map((slot) => ({ article: bySlug.get(layout[slot]), slot })),
+    ...articles.map((article) => ({ article })),
   ];
-  return ordered
-    .filter((article): article is ArticleListItem => {
-      if (!isPublishable(article) || seen.has(article.slug)) return false;
-      seen.add(article.slug);
-      return true;
-    })
-    .slice(0, limit)
-    .map(toJournalArticle);
+  const picked: JournalArticle[] = [];
+  for (const { article, slot } of ordered) {
+    if (picked.length >= limit) break;
+    if (!isPublishable(article) || seen.has(article.slug)) continue;
+    seen.add(article.slug);
+    picked.push(toJournalArticle(article, slot));
+  }
+  return picked;
 }
 
 /**
@@ -58,17 +58,20 @@ export function selectInsightArticles(
 ): JournalArticle[] {
   const bySlug = new Map(articles.map((article) => [article.slug, article]));
   const seen = new Set(shown);
-  const picked: ArticleListItem[] = [];
+  const picked: JournalArticle[] = [];
   for (const slot of insightSlots) {
     const article = bySlug.get(layout[slot]);
     if (!isPublishable(article) || seen.has(article.slug)) continue;
     seen.add(article.slug);
-    picked.push(article);
+    picked.push(toJournalArticle(article, slot));
   }
-  return picked.map(toJournalArticle);
+  return picked;
 }
 
-function toJournalArticle(article: ArticleListItem): JournalArticle {
+function toJournalArticle(
+  article: ArticleListItem,
+  homepagePosition?: string,
+): JournalArticle {
   const date = new Date(article.publishedAt);
   const href = "/" + article.category + "/" + article.slug;
   return {
@@ -93,5 +96,6 @@ function toJournalArticle(article: ArticleListItem): JournalArticle {
     finalSourceUrl: null,
     localHref: href,
     destinationStatus: "available",
+    ...(homepagePosition ? { homepagePosition } : {}),
   };
 }

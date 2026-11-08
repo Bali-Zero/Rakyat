@@ -24,6 +24,7 @@ export function ArticleDestination({
       className={className}
       id={id}
       href={article.localHref ?? article.finalSourceUrl ?? article.sourceUrl}
+      data-homepage-position={article.homepagePosition}
     >
       {children}
     </a>
