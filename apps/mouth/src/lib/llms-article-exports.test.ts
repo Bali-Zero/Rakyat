@@ -61,6 +61,10 @@ it.each([["0"], ["1"]])(
         ["archived.id.mdx", "Archived ID", "2026-09-08", "noIndex: true\n"],
         ["draft.mdx", "Draft EN", "2026-09-08", "status: draft\n"],
         ["draft.id.mdx", "Draft ID", "2026-09-08", "status: draft\n"],
+        ["review.mdx", "Review EN", "2026-09-01", "status: review\n"],
+        ["falsy.mdx", "Falsy EN", "2026-09-01", "status: false\n"],
+        ["hbase.mdx", "Hidden Base", "2026-09-01", "status: draft\n"],
+        ["hbase.id.mdx", "Terjemahan Tersembunyi", "2026-09-01", ""],
       ]) {
         writeFileSync(
           join(articles, file),
@@ -112,6 +116,9 @@ it.each([["0"], ["1"]])(
       expect(idOrder.every((at) => at >= 0)).toBe(true);
       expect(idOrder).toEqual([...idOrder].sort((a, b) => a - b));
       expect(en + id).not.toMatch(/Archived|Draft|stale/);
+      expect(en + id).not.toMatch(
+        /Review EN|Falsy EN|Hidden Base|Terjemahan Tersembunyi/,
+      );
       const directory = readFileSync(join(output, "llms.txt"), "utf8");
       expect(directory).toContain(
         [
