@@ -333,11 +333,10 @@ test.describe("R19 home contact actions", () => {
     });
   }
 
-  test("the footer keeps the contact destinations of the pre-R19 footer", async ({
+  test("@offline the footer keeps active contact destinations and offers no Telegram", async ({
     page,
   }) => {
-    // Production's values for the two destinations the R19 footer had dropped.
-    const TELEGRAM = "https://t.me/Balizerobot";
+    // Telegram is retired; active support contacts remain.
     const LOCATION = "https://maps.google.com/?q=Bali+Indonesia";
     const contacts = () =>
       page.evaluate(() =>
@@ -352,10 +351,10 @@ test.describe("R19 home contact actions", () => {
         })),
       );
     await page.goto("/");
+    await expect(page.locator("footer a[href*='t.me/']")).toHaveCount(0);
     const r19 = await contacts();
     expect(r19.map((c) => c.href)).toEqual([
       HOME_LINK,
-      TELEGRAM,
       `mailto:${EMAIL}`,
       `tel:+${WA_NUMBER}`,
       LOCATION,
@@ -364,8 +363,9 @@ test.describe("R19 home contact actions", () => {
       expect(c.target).toBe("_blank");
       expect(c.rel).toBe("noopener noreferrer");
     }
-    // And they are the ones the v2 footer still renders today.
+    // The v2 footer must expose the same active contacts, without Telegram.
     await page.goto("/v2");
+    await expect(page.locator("footer a[href*='t.me/']")).toHaveCount(0);
     const live = await contacts();
     expect(live.map((c) => c.href).sort()).toEqual(
       r19.map((c) => c.href).sort(),

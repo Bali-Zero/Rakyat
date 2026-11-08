@@ -23,6 +23,7 @@ from googleapiclient.errors import HttpError
 
 from backend.core.cache import invalidate_crm_stats
 from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.services.crm.document_categorizer import auto_categorize_document
 from backend.services.crm.drive_registration_visibility import drive_default_client_visible
 from backend.services.crm_guardian.summary_queue import (
@@ -144,6 +145,8 @@ def _drive_poll_max_pages_per_cycle() -> int:
 
 def _send_telegram_alert(message: str) -> None:
     """Invia alert Telegram quando il circuit breaker si apre."""
+    if telegram_is_retired():
+        return
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_OWNER_CHAT_ID", "").strip()
     if not bot_token:

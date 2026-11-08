@@ -41,10 +41,19 @@ import re
 import signal
 import subprocess
 import sys
+
+# Standalone scripts also resolve the shared, non-reenableable retirement policy.
+import sys as _policy_sys
 import tempfile
 import time
 from pathlib import Path
+from pathlib import Path as _PolicyPath
 from typing import Any
+
+_policy_root = str(_PolicyPath(__file__).resolve().parents[1])
+if _policy_root not in _policy_sys.path:
+    _policy_sys.path.insert(0, _policy_root)
+from backend.core.telegram_retirement import telegram_is_retired
 
 logger = logging.getLogger(__name__)
 
@@ -598,6 +607,8 @@ def run_auto_verifier(document_path: str, claims_db_path: str) -> tuple[int, str
 
 def run_telegram_review(document_path: str, report_path: str, document_name: str) -> str:
     """Optional: Run telegram_reviewer.py subprocess. Returns decision string."""
+    if telegram_is_retired():
+        return "retired"
     reviewer = SCRIPTS_DIR / "telegram_reviewer.py"
     if not reviewer.exists():
         logger.info("telegram_reviewer.py not found — skipping human review")
@@ -704,7 +715,7 @@ def main() -> None:
         print("  BLOCKED — could not load verification report")
 
     # Optional: Telegram human review
-    if not args.skip_telegram:
+    if not args.skip_telegram and not telegram_is_retired():
         print("\nStep 7b: Requesting human review via Telegram...")
         decision = run_telegram_review(str(output_path), report_path, f"{args.domain} — {args.topic}")
         if decision == "approved":

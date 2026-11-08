@@ -1,5 +1,6 @@
 """Tests for Drive Changes Polling Service."""
 
+import importlib
 import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -740,3 +741,13 @@ class TestInferDocumentTypeFolderMap:
 
     def test_profile_perseroan_folder(self) -> None:
         assert _infer_document_type("file.pdf", "profile perseroan") == "profile_perseroan"
+
+
+@pytest.fixture(autouse=True)
+def historical_transport_contract_under_mocks(monkeypatch):
+    """Exercise the retained legacy contract only with explicit mock policy.
+
+    Production stays retired; default-off acceptance lives in core retirement tests.
+    """
+    module = importlib.import_module("backend.services.crm.drive_poll_service")
+    monkeypatch.setattr(module, "telegram_is_retired", lambda: False)

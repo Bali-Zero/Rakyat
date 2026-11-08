@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from unittest.mock import AsyncMock, MagicMock
 
@@ -129,3 +130,13 @@ async def test_exception_wraps_cleanly():
     result = await a.send_message(chat_id=1, text="x")
     assert result.ok is False
     assert "ConnectError" in (result.error or "")
+
+
+@pytest.fixture(autouse=True)
+def legacy_mock_transport_contract(monkeypatch):
+    """Retained protocol code under test doubles; not the production policy."""
+    monkeypatch.setattr(
+        importlib.import_module("backend.services.review.telegram_adapter"),
+        "telegram_is_retired",
+        lambda: False,
+    )

@@ -54,41 +54,30 @@ async def test_get_logged_in_not_clocked_empty(mock_pool):
 
 
 @pytest.mark.asyncio
-async def test_send_clockin_reminder_sends_telegram(mock_pool):
-    """Should send Telegram message listing missing members."""
+async def test_retired_clockin_reminder_ignores_stale_telegram_configuration(mock_pool):
+    """Retirement blocks transport construction, independently of attendance data."""
     from backend.services.analytics.attendance_monitor import AttendanceMonitor
 
     pool, conn = mock_pool
     monitor = AttendanceMonitor(pool)
+    conn.fetch.return_value = [{"email": "member@example.test"}]
 
-    conn.fetch.return_value = [
-        {"email": "ari.firda@balizero.com"},
-        {"email": "dea@balizero.com"},
-    ]
-
-    with patch.dict(
-        "os.environ", {"TELEGRAM_BOT_TOKEN": "fake-token", "TELEGRAM_OWNER_CHAT_ID": "12345"}
+    with (
+        patch.dict(
+            "os.environ", {"TELEGRAM_BOT_TOKEN": "fake-token", "TELEGRAM_OWNER_CHAT_ID": "12345"}
+        ),
+        patch("backend.services.analytics.attendance_monitor.httpx.AsyncClient") as client,
     ):
-        with patch("backend.services.analytics.attendance_monitor.httpx.AsyncClient") as mock_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.post.return_value = MagicMock(status_code=200)
-            mock_cls.return_value = mock_client
+        result = await monitor.send_clockin_reminder()
 
-            await monitor.send_clockin_reminder()
-
-            mock_client.post.assert_called_once()
-            call_args = mock_client.post.call_args
-            body = call_args[1]["json"] if "json" in call_args[1] else call_args[0][1]
-            text = str(body)
-            assert "Pum Zagik" in text or "ari" in text.lower()
-            assert "Dea" in text or "dea" in text.lower()
+    assert result is None
+    client.assert_not_called()
+    client.return_value.post.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_send_clockin_reminder_skips_when_all_clocked(mock_pool):
-    """Should not send Telegram when nobody is missing."""
+async def test_retired_clockin_reminder_remains_inert_with_no_missing_members(mock_pool):
+    """The retired default remains inert for empty attendance data."""
     from backend.services.analytics.attendance_monitor import AttendanceMonitor
 
     pool, conn = mock_pool
@@ -101,8 +90,8 @@ async def test_send_clockin_reminder_skips_when_all_clocked(mock_pool):
 
 
 @pytest.mark.asyncio
-async def test_send_clockin_reminder_handles_no_token(mock_pool):
-    """Should handle missing TELEGRAM_BOT_TOKEN gracefully."""
+async def test_retired_clockin_reminder_remains_inert_without_token(mock_pool):
+    """The retired default remains inert without a Telegram token."""
     from backend.services.analytics.attendance_monitor import AttendanceMonitor
 
     pool, conn = mock_pool

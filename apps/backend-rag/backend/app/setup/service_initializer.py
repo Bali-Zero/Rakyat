@@ -43,6 +43,7 @@ from fastapi import FastAPI
 from backend.app.core.config import settings
 from backend.app.core.database import DatabasePoolPolicy, create_database_pool
 from backend.app.core.service_health import ServiceStatus, service_registry
+from backend.core.telegram_retirement import telegram_is_retired
 
 logger = logging.getLogger("zantara.backend")
 
@@ -1095,7 +1096,7 @@ async def initialize_channel_router(
 
         # Register Telegram adapter (if configured)
         telegram_token = settings.telegram_bot_token
-        if telegram_token:
+        if telegram_token and not telegram_is_retired():
             telegram_config = {
                 "bot_token": telegram_token,
                 "max_message_length": 4096,
@@ -1106,7 +1107,7 @@ async def initialize_channel_router(
             channel_router.register_adapter("telegram", telegram_adapter)
             logger.info("✅ TelegramChannelAdapter registered")
         else:
-            logger.warning("⚠️ TELEGRAM_BOT_TOKEN not configured, Telegram adapter disabled")
+            logger.info("Telegram adapter disabled (integration retired)")
 
         # Register Web adapter (always enabled)
         web_config = {

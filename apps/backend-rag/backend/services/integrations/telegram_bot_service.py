@@ -11,6 +11,7 @@ import httpx
 from backend.app.core.config import settings
 from backend.app.core.constants import HttpTimeoutConstants
 from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.security.pii_log_identifier import redact_identifier_for_log
 
 install_telegram_token_redaction()
@@ -38,6 +39,8 @@ class TelegramBotService:
         return f"{TELEGRAM_API_BASE}{self.token}"
 
     async def _get_client(self) -> httpx.AsyncClient:
+        if telegram_is_retired():
+            raise RuntimeError("Telegram integration retired; no network request permitted")
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(timeout=HttpTimeoutConstants.TELEGRAM_TIMEOUT)
         return self._client

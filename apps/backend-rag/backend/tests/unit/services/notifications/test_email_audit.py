@@ -257,6 +257,9 @@ def _owner_chat_configured(monkeypatch):
     from backend.services.notifications import email_audit
 
     monkeypatch.setattr(email_audit, "_OWNER_CHAT_ID", "990000001")
+    # This file tests the retained wire contract with a mocked urllib transport.
+    # Production retirement (including stale tokens) is tested separately.
+    monkeypatch.setattr(email_audit, "telegram_is_retired", lambda: False)
 
 
 # ----------------------------------------------------------------------

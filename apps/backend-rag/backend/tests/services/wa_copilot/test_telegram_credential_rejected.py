@@ -17,6 +17,7 @@ that over-matches is the same defect as one that under-matches (superscar #3).
 
 from __future__ import annotations
 
+import importlib
 import logging
 
 import httpx
@@ -143,3 +144,13 @@ def test_5xx_is_not_in_the_rejected_set() -> None:
     """A transient server error must keep retrying, not be declared fatal."""
     assert 500 not in CREDENTIAL_REJECTED_STATUSES
     assert 502 not in CREDENTIAL_REJECTED_STATUSES
+
+
+@pytest.fixture(autouse=True)
+def legacy_mock_transport_contract(monkeypatch):
+    """Retained protocol code under test doubles; not the production policy."""
+    monkeypatch.setattr(
+        importlib.import_module("backend.services.wa_copilot.telegram_notifier"),
+        "telegram_is_retired",
+        lambda: False,
+    )

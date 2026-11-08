@@ -35,6 +35,15 @@ if str(BACKEND_ROOT) not in sys.path:
 
 import re
 
+# Standalone scripts also resolve the shared, non-reenableable retirement policy.
+import sys as _policy_sys
+from pathlib import Path as _PolicyPath
+
+_policy_root = str(_PolicyPath(__file__).resolve().parents[1])
+if _policy_root not in _policy_sys.path:
+    _policy_sys.path.insert(0, _policy_root)
+from backend.core.telegram_retirement import telegram_is_retired
+
 
 def _require_env(name: str) -> str:
     import os as _os
@@ -108,6 +117,8 @@ TELEGRAM_STEP = int(os.environ.get("ENTITY_LINKER_TELEGRAM_STEP", "10000"))
 
 
 async def _maybe_notify(message: str) -> None:
+    if telegram_is_retired():
+        return
     if TELEGRAM_BOT_TOKEN and not TELEGRAM_CHAT_ID:
         logger.warning("TELEGRAM_OWNER_CHAT_ID not set, skipping Telegram notification")
         return

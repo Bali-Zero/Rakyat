@@ -1,6 +1,9 @@
 """Telegram notify is best-effort: never raises, swallows network errors."""
 
+import importlib
 from unittest.mock import patch
+
+import pytest
 
 from backend.services.canva_renderer_v2._telegram import send_telegram
 
@@ -18,9 +21,7 @@ def test_send_telegram_success(monkeypatch):
 def test_send_telegram_swallows_network_error(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
     monkeypatch.setenv("TELEGRAM_OWNER_CHAT_ID", "990000001")
-    with patch(
-        "urllib.request.urlopen", side_effect=OSError("network down")
-    ) as mock_open:
+    with patch("urllib.request.urlopen", side_effect=OSError("network down")) as mock_open:
         assert send_telegram("hello") is None  # MUST NOT raise
     # Without this the test is vacuous: any future early return — a missing
     # chat id, a feature flag — would make it pass while never reaching the
@@ -41,3 +42,16 @@ def test_send_telegram_without_chat_id_skips_the_send(monkeypatch):
     with patch("urllib.request.urlopen") as mock_open:
         assert send_telegram("hello") is None
     assert not mock_open.called
+
+
+@pytest.fixture(autouse=True)
+def historical_transport_contract_under_mocks(monkeypatch):
+    """Exercise the retained legacy contract only with explicit mock policy.
+
+    Production stays retired; default-off acceptance lives in core retirement tests.
+    """
+    monkeypatch.setattr(
+        importlib.import_module("backend.services.canva_renderer_v2._telegram"),
+        "telegram_is_retired",
+        lambda: False,
+    )

@@ -545,3 +545,48 @@ async def test_count_undrained_reports_every_bucket_and_deletes_nothing(conn):
     assert await conn.fetchval("SELECT count(*) FROM garuda_order_outbox") == 2, (
         "reporting must never remove a row"
     )
+
+
+async def test_retired_staff_pages_stay_pending_while_customer_email_dispatches(conn):
+    from backend.services.garuda_orders.outbox_consumer import RETIRED_TELEGRAM_JOB_TYPES
+
+    order_id = await _seed_order(conn)
+    held = [await _enqueue(conn, order_id, kind) for kind in RETIRED_TELEGRAM_JOB_TYPES]
+    email_id = await _enqueue(conn, order_id, "payment_paid_email")
+    seen = []
+    handlers = {kind: _recording_handler(seen) for kind in RETIRED_TELEGRAM_JOB_TYPES}
+    handlers["payment_paid_email"] = _recording_handler(seen)
+    stats = await drain_once(conn, handlers)
+    assert stats.dispatched == 1 and stats.failed == 0
+    assert [job.id for job in seen] == [email_id]
+    for row_id in held:
+        row = await _row(conn, row_id)
+        assert row["attempts"] == 0 and row["dispatched_at"] is None
+    counts = await count_undrained(conn)
+    assert counts["retired_internal_attention"] == counts["undispatched"] == 6
+
+    # Age/exhaustion of an intentional hold does not degrade live delivery health.
+    await conn.execute(
+        "UPDATE garuda_order_outbox SET attempts=5, created_at=now()-interval '25 hours' "
+        "WHERE id=ANY($1::bigint[])",
+        held,
+    )
+    counts = await count_undrained(conn)
+    assert counts["retired_internal_attention"] == counts["undispatched"] == 6
+    assert counts["exhausted"] == counts["older_than_1h"] == counts["older_than_24h"] == 0
+    assert (await drain_once(conn, handlers)).claimed == 0
+    for row_id in held:
+        row = await _row(conn, row_id)
+        assert row["attempts"] == 5 and row["dispatched_at"] is None
+
+    late_email = await _enqueue(conn, order_id, "payment_paid_email")
+    await conn.execute(
+        "UPDATE garuda_order_outbox SET created_at=now()-interval '25 hours' WHERE id=$1",
+        late_email,
+    )
+    counts = await count_undrained(conn)
+    assert counts["retired_internal_attention"] == 6 and counts["undispatched"] == 7
+    assert counts["older_than_1h"] == counts["older_than_24h"] == 1
+    assert counts["exhausted"] == 0
+    await conn.execute("UPDATE garuda_order_outbox SET attempts=5 WHERE id=$1", late_email)
+    assert (await count_undrained(conn))["exhausted"] == 1

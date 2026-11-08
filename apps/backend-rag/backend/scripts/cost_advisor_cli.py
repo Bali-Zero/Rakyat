@@ -27,6 +27,7 @@ from decimal import Decimal
 from typing import Any
 
 from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.llm.claude_oauth_client import complete_async as claude_complete
 from backend.services.observability.cost_advisor import CostAdvisor
 
@@ -67,6 +68,8 @@ class _ClaudeOAuthJudgeAdapter:
 
 def send_telegram(*, text: str, chat_id: str = TELEGRAM_CHAT_ID) -> None:
     """Send a Telegram message via direct Bot API. Logs and swallows errors."""
+    if telegram_is_retired():
+        return
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     if not bot_token:
         logger.warning(
