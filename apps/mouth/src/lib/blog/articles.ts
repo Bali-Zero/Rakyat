@@ -331,7 +331,18 @@ function articleFolderPath(folder: ArticleFolderName): string {
   return path.join(/*turbopackIgnore: true*/ ARTICLES_PATH, folder);
 }
 
+// The closed grammar of a corpus file name (every real .mdx slug matches it, one ends in a
+// hyphen, so it is not PIN_SLUG). A slug outside it never becomes part of a file path.
+const ARTICLE_SLUG_FILE = /^[a-z0-9][a-z0-9-]*$/;
+
+function isArticleFileSlug(slug: string): boolean {
+  return typeof slug === "string" && ARTICLE_SLUG_FILE.test(slug);
+}
+
 function articleMdxPath(folder: ArticleFolderName, slug: string): string {
+  if (!isArticleFileSlug(slug)) {
+    throw new Error("articleMdxPath: slug outside the article file grammar");
+  }
   return path.join(
     /*turbopackIgnore: true*/ articleFolderPath(folder),
     `${slug}.mdx`,
@@ -356,6 +367,11 @@ function articleLocaleMdxPath(
 ): string {
   if (!isArticleTranslationLocale(locale)) {
     throw new Error("articleLocaleMdxPath: unknown article locale");
+  }
+  if (!isArticleFileSlug(slug)) {
+    throw new Error(
+      "articleLocaleMdxPath: slug outside the article file grammar",
+    );
   }
   return path.join(
     /*turbopackIgnore: true*/ articleFolderPath(folder),
@@ -584,6 +600,8 @@ function readMdxFile(
 
 /** The MDX file the page for this category and slug resolves to, if any. */
 function findMdxFile(category: string, slug: string): string | null {
+  // No file can carry such a slug: no MDX, and no path is built from it.
+  if (!isArticleFileSlug(slug)) return null;
   const normalizedCategory = normalizeCategory(category);
   const possibleFolders = CATEGORY_FOLDERS[normalizedCategory] || [category];
   for (const folder of possibleFolders) {
@@ -820,7 +838,7 @@ export async function getArticleByLocale(
   }
   // A locale outside the allowlist is an unknown language: the English article, and no path
   // is ever built from the request value (it used to reach path.join as "<slug>.<locale>.mdx").
-  if (!isArticleTranslationLocale(locale)) {
+  if (!isArticleTranslationLocale(locale) || !isArticleFileSlug(slug)) {
     return getArticleBySlug(category, slug);
   }
   // A hidden English article hides its translations too.
@@ -917,6 +935,7 @@ export async function getArticleByLocale(
  */
 export function getAvailableLocales(category: string, slug: string): string[] {
   const locales = ["en"]; // English always available
+  if (!isArticleFileSlug(slug)) return locales;
   const normalizedCategory = normalizeCategory(category);
   const possibleFolders = CATEGORY_FOLDERS[normalizedCategory] || [category];
 
