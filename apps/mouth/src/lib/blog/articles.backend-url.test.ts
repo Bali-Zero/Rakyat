@@ -18,17 +18,10 @@ afterEach(() => {
 
 // A slug no corpus file carries, so the backend fallback is what answers.
 describe("backend news URL", () => {
-  it("encodes a traversal slug into one path segment", async () => {
-    await getArticleBySlug("visas", "../x");
-    expect(urls).toHaveLength(1);
-    expect(new URL(urls[0]).pathname).toBe("/api/news/..%2Fx");
-    expect(urls[0]).toMatch(/\/api\/news\/\.\.%2Fx$/);
-  });
-
-  it("encodes a query-ish slug", async () => {
-    await getArticleBySlug("visas", "a?b=c#d");
-    expect(new URL(urls[0]).pathname).toBe("/api/news/a%3Fb%3Dc%23d");
-    expect(new URL(urls[0]).search).toBe("");
+  // The encoding is defence in depth: these slugs are refused before any request.
+  it.each(["../x", "a?b=c#d"])("%j is refused, never encoded", async (slug) => {
+    await getArticleBySlug("visas", slug);
+    expect(urls).toHaveLength(0);
   });
 
   it("leaves a normal slug byte for byte as it was", async () => {

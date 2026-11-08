@@ -507,12 +507,16 @@ async function fetchBackendArticles(options?: {
   }
 }
 
+// What the backend writes into news_items.slug: generate_news_slug (lowercase [a-z0-9-] plus a
+// 6-hex suffix) and the staging ids news_<YYYYmmdd>_<HHMMSS>_<hash>. No slash, backslash, ?, #, %, dot or space.
+const BACKEND_NEWS_SLUG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/;
+
 async function fetchBackendArticleBySlug(
   slug: string,
 ): Promise<BackendNewsItem | null> {
-  // encodeURIComponent leaves "." and ".." alone and the URL parser collapses them, so an
-  // empty or dot-segment slug would request "/api/news/" or "/api/". Not a news slug.
-  if (!slug || slug === "." || slug === "..") return null;
+  // Only a slug the backend can have generated goes out. The backend proxy decodes the path
+  // again on its second hop, so an encoded "/", "?", "#" or ".." would change meaning there.
+  if (typeof slug !== "string" || !BACKEND_NEWS_SLUG.test(slug)) return null;
   try {
     const url = `${BACKEND_URL}/api/news/${encodeURIComponent(slug)}`;
     const res = await fetch(url, {

@@ -92,9 +92,9 @@ describe("article slug grammar", () => {
   it.each(hostile)("%j never returns another article", async (slug) => {
     const r = await getArticleBySlug(A.cat, slug);
     expect(r?.title).not.toBe(titleOf(B.folder, B.slug));
-    // outside the grammar, so no MDX: the backend fallback is what answers, here with "not found"
+    // outside the file grammar there is no MDX, and outside the backend grammar no request
     expect(r).toBeNull();
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("a hostile slug builds no locale path", async () => {
