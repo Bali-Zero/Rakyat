@@ -32,6 +32,7 @@ from typing import Any
 import asyncpg
 
 from backend.agents.services.kg_repository import KnowledgeGraphRepository
+from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.memory.collective_memory_service import CollectiveMemoryService
 from backend.services.memory.episodic_memory_service import EpisodicMemoryService
 from backend.services.memory.memory_fact_extractor import MemoryFactExtractor
@@ -191,40 +192,36 @@ class MemoryOrchestrator:
             logger.info("✅ Memory service initialized and verified")
 
         except Exception as e:
-            critical_failures.append(("memory_service", str(e)))
-            logger.error(
-                "❌ CRITICAL: Memory service initialization failed: %s",
-                e,
-                extra={"error_type": type(e).__name__},
-            )
+            critical_failures.append(("memory_service", type(e).__name__))
+            logger.error('❌ CRITICAL: Memory service initialization failed: %s', type(e).__name__, extra={'error_type': type(e).__name__})
 
         try:
             # NON-CRITICAL: Fact extractor
             self._fact_extractor = MemoryFactExtractor()
         except Exception as e:
-            non_critical_failures.append(("fact_extractor", str(e)))
-            logger.warning("⚠️ Fact extractor initialization failed: %s", e)
+            non_critical_failures.append(("fact_extractor", type(e).__name__))
+            logger.warning('⚠️ Fact extractor initialization failed: %s', type(e).__name__)
 
         try:
             # NON-CRITICAL: Collective memory
             self._collective_memory = CollectiveMemoryService(pool=self._db_pool)
         except Exception as e:
-            non_critical_failures.append(("collective_memory", str(e)))
-            logger.warning("⚠️ Collective memory initialization failed: %s", e)
+            non_critical_failures.append(("collective_memory", type(e).__name__))
+            logger.warning('⚠️ Collective memory initialization failed: %s', type(e).__name__)
 
         try:
             # NON-CRITICAL: Episodic memory
             self._episodic_memory = EpisodicMemoryService(pool=self._db_pool)
         except Exception as e:
-            non_critical_failures.append(("episodic_memory", str(e)))
-            logger.warning("⚠️ Episodic memory initialization failed: %s", e)
+            non_critical_failures.append(("episodic_memory", type(e).__name__))
+            logger.warning('⚠️ Episodic memory initialization failed: %s', type(e).__name__)
 
         try:
             # NON-CRITICAL: Knowledge graph repository
             self._kg_repository = KnowledgeGraphRepository(db_pool=self._db_pool)
         except Exception as e:
-            non_critical_failures.append(("kg_repository", str(e)))
-            logger.warning("⚠️ Knowledge graph repository initialization failed: %s", e)
+            non_critical_failures.append(("kg_repository", type(e).__name__))
+            logger.warning('⚠️ Knowledge graph repository initialization failed: %s', type(e).__name__)
 
         # Determine status
         if critical_failures:
@@ -301,7 +298,7 @@ class MemoryOrchestrator:
                 metadata={"component": "memory_orchestrator", "failures": dict(failures)},
             )
         except Exception as e:
-            logger.warning("Could not send Telegram alert for critical failure: %s", e)
+            logger.warning('Could not send Telegram alert for critical failure: %s', type(e).__name__)
 
     async def _alert_degraded_mode(self, failures: list[tuple[str, str]]) -> None:
         """Alert on degraded mode activation via logger + Telegram."""
@@ -334,7 +331,7 @@ class MemoryOrchestrator:
                 },
             )
         except Exception as e:
-            logger.debug("Could not send Telegram alert for degraded mode: %s", e)
+            logger.debug('Could not send Telegram alert for degraded mode: %s', type(e).__name__)
 
     async def close(self) -> None:
         """
@@ -387,7 +384,7 @@ class MemoryOrchestrator:
 
         if self._status == MemoryServiceStatus.DEGRADED:
             # In degraded mode, return limited context
-            logger.debug("Returning degraded context for %s", user_email)
+            logger.debug('Returning degraded context for %s', redact_identifier_for_log(user_email))
             try:
                 from backend.app.metrics import memory_context_degraded_total
 
@@ -424,7 +421,7 @@ class MemoryOrchestrator:
                                 limit=10,
                             )
                     except Exception as e:
-                        logger.warning("Failed to get collective memory: %s", e)
+                        logger.warning('Failed to get collective memory: %s', type(e).__name__)
 
                 # Get episodic memory (timeline of events)
                 timeline_summary: str = ""
@@ -435,9 +432,9 @@ class MemoryOrchestrator:
                             limit=5,
                         )
                         if timeline_summary:
-                            logger.debug("Retrieved timeline summary for %s", user_email)
+                            logger.debug('Retrieved timeline summary for %s', redact_identifier_for_log(user_email))
                     except Exception as e:
-                        logger.warning("Failed to get episodic memory: %s", e)
+                        logger.warning('Failed to get episodic memory: %s', type(e).__name__)
 
                 # Get knowledge graph entities for context
                 kg_entities: list[dict] = []
@@ -450,7 +447,7 @@ class MemoryOrchestrator:
                         if kg_entities:
                             logger.debug(f"Retrieved {len(kg_entities)} KG entities for query")
                     except Exception as e:
-                        logger.warning("Failed to get KG entities: %s", e)
+                        logger.warning('Failed to get KG entities: %s', type(e).__name__)
 
                 # Build context
                 has_data = (
@@ -477,19 +474,14 @@ class MemoryOrchestrator:
                 )
 
                 if has_data:
-                    logger.info(
-                        f"✅ Retrieved context for {user_email}: "
-                        f"{len(context.profile_facts)} personal facts, {len(collective_facts)} collective facts",
-                    )
+                    logger.info(f'✅ Retrieved context for {redact_identifier_for_log(user_email)}: {len(context.profile_facts)} personal facts, {len(collective_facts)} collective facts')
                 else:
-                    logger.debug("📝 No existing memory for %s", user_email)
+                    logger.debug('📝 No existing memory for %s', redact_identifier_for_log(user_email))
 
                 return context
 
         except Exception as e:
-            logger.exception(
-                "Failed to get user context", extra={"user_email": user_email, "error": str(e)}
-            )
+            logger.error('Failed to get user context', extra={'user_email': redact_identifier_for_log(user_email), 'error': str(type(e).__name__)})
             try:
                 from backend.app.metrics import memory_context_failed_total
 
@@ -564,7 +556,7 @@ class MemoryOrchestrator:
                 )
 
                 if not raw_facts:
-                    logger.debug("No facts extracted for %s", user_email)
+                    logger.debug('No facts extracted for %s', redact_identifier_for_log(user_email))
                     return MemoryProcessResult(
                         facts_extracted=0,
                         facts_saved=0,
@@ -603,7 +595,7 @@ class MemoryOrchestrator:
                             if success:
                                 facts_saved += 1
                         except Exception as e:
-                            logger.warning("Failed to save fact: %s", e)
+                            logger.warning('Failed to save fact: %s', type(e).__name__)
 
                     # Update conversation counter
                     try:
@@ -612,7 +604,7 @@ class MemoryOrchestrator:
                             counter_name="conversations",
                         )
                     except Exception as e:
-                        logger.warning("Failed to increment counter: %s", e)
+                        logger.warning('Failed to increment counter: %s', type(e).__name__)
 
                 # Extract and save episodic events (timeline)
                 if self._episodic_memory:
@@ -623,19 +615,14 @@ class MemoryOrchestrator:
                             ai_response=ai_response,
                         )
                         if event_result and event_result.get("status") == "created":
-                            logger.info(
-                                f"📅 Saved episodic event: {event_result.get('title', '')[:50]}",
-                            )
+                            logger.info('Saved episodic event')
                     except Exception as e:
-                        logger.warning("Failed to extract episodic event: %s", e)
+                        logger.warning('Failed to extract episodic event: %s', type(e).__name__)
 
                 processing_time = (time.time() - start_time) * 1000
 
                 if facts_saved > 0:
-                    logger.info(
-                        f"💾 Saved {facts_saved}/{facts_extracted} facts for {user_email} "
-                        f"({processing_time:.1f}ms)",
-                    )
+                    logger.info(f'💾 Saved {facts_saved}/{facts_extracted} facts for {redact_identifier_for_log(user_email)} ({processing_time:.1f}ms)')
 
                 return MemoryProcessResult(
                     facts_extracted=facts_extracted,
@@ -648,7 +635,7 @@ class MemoryOrchestrator:
                 lock.release()
 
         except asyncio.TimeoutError:
-            logger.warning("Write lock timeout for user %s", user_email)
+            logger.warning('Write lock timeout for user %s', redact_identifier_for_log(user_email))
             # Return empty result instead of failing
             return MemoryProcessResult(
                 facts_extracted=0,
@@ -656,7 +643,7 @@ class MemoryOrchestrator:
                 processing_time_ms=(time.time() - start_time) * 1000,
             )
         except Exception as e:
-            logger.error("❌ Error processing conversation for %s: %s", user_email, e)
+            logger.error('❌ Error processing conversation for %s: %s', redact_identifier_for_log(user_email), type(e).__name__)
             return MemoryProcessResult(
                 error=str(e),
                 processing_time_ms=(time.time() - start_time) * 1000,

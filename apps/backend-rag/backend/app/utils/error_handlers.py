@@ -57,29 +57,29 @@ def handle_database_error(e: Exception) -> HTTPException:
         HTTPException: Appropriate HTTP exception with user-friendly message
     """
     if isinstance(e, asyncpg.UniqueViolationError):
-        logger.warning("Unique constraint violation: %s", e)
+        logger.warning('Unique constraint violation: %s', type(e).__name__)
         return HTTPException(
             status_code=400,
             detail="A record with this information already exists",
         )
 
     if isinstance(e, asyncpg.ForeignKeyViolationError):
-        logger.warning("Foreign key violation: %s", e)
+        logger.warning('Foreign key violation: %s', type(e).__name__)
         return HTTPException(status_code=400, detail="Referenced record does not exist")
 
     if isinstance(e, asyncpg.CheckViolationError):
-        logger.warning("Check constraint violation: %s", e)
+        logger.warning('Check constraint violation: %s', type(e).__name__)
         return HTTPException(status_code=400, detail="Invalid data provided")
 
     if isinstance(e, asyncpg.PostgresError):
-        logger.error("Database error: %s", e)
+        logger.error('Database error: %s', type(e).__name__)
         return HTTPException(status_code=503, detail="Database service temporarily unavailable")
 
     # asyncpg.InterfaceError: "connection was closed in the middle of operation"
     # Happens on first request after Fly.io cold start — stale pool connection.
     # Return 503 so the client retries; the next request will get a fresh connection.
     if isinstance(e, asyncpg.InterfaceError):
-        logger.warning("Stale DB connection (likely cold start): %s", e)
+        logger.warning('Stale DB connection (likely cold start): %s', type(e).__name__)
         return HTTPException(
             status_code=503,
             detail="Database connection temporarily unavailable. Please retry.",
@@ -87,5 +87,5 @@ def handle_database_error(e: Exception) -> HTTPException:
         )
 
     # Generic fallback
-    logger.error(f"Unexpected error [{type(e).__name__}]: {e}")
+    logger.error(f'Unexpected error [{type(e).__name__}]: {type(e).__name__}')
     return HTTPException(status_code=500, detail="Internal server error")

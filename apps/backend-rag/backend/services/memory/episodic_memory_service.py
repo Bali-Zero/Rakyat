@@ -21,6 +21,8 @@ from typing import Any
 
 import asyncpg
 
+from backend.security.pii_log_identifier import redact_identifier_for_log
+
 logger = logging.getLogger(__name__)
 
 
@@ -310,7 +312,7 @@ class EpisodicMemoryService:
                     metadata or {},
                 )
 
-                logger.info("Added episodic event for %s: %s", user_id, title)
+                logger.info('Added episodic event for %s', redact_identifier_for_log(user_id))
 
                 return {
                     "status": "created",
@@ -322,7 +324,7 @@ class EpisodicMemoryService:
                 }
 
         except Exception as e:
-            logger.error("Failed to add event: %s", e)
+            logger.error('Failed to add event: %s', type(e).__name__)
             return {"status": "error", "message": str(e)}
 
     async def get_timeline(
@@ -415,7 +417,7 @@ class EpisodicMemoryService:
                 ]
 
         except Exception as e:
-            logger.error("Failed to get timeline: %s", e)
+            logger.error('Failed to get timeline: %s', type(e).__name__)
             return []
 
     async def get_recent_events(
@@ -486,7 +488,7 @@ class EpisodicMemoryService:
         )
 
         if result.get("status") == "created":
-            logger.info("Extracted episodic event from conversation: %s", title)
+            logger.info('Extracted episodic event from conversation')
             return result
 
         return None

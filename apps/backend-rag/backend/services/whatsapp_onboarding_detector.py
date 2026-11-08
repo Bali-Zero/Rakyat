@@ -126,11 +126,7 @@ class OnboardingIntentDetector:
             )
             return result
         except Exception as e:
-            logger.error(
-                "Failed to trigger onboarding chain for %s: %s",
-                redact_identifier_for_log(phone),
-                e,
-            )
+            logger.error('Failed to trigger onboarding chain for %s: %s', redact_identifier_for_log(phone), type(e).__name__)
             return None
 
     def _has_onboarding_intent(self, message_text: str) -> bool:
@@ -217,7 +213,7 @@ class OnboardingIntentDetector:
 
         # Note: The actual implementation depends on how the MCP chain is exposed
         # This is a placeholder that would need to be connected to the actual MCP invocation
-        logger.info("Would trigger chain_new_client_onboarding with: %s", payload)
+        logger.info('Would trigger chain_new_client_onboarding')
 
         # Return mock result for now
         return {

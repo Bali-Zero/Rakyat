@@ -393,7 +393,7 @@ class CollectiveMemoryService:
                 return [row["content"] for row in rows]
 
             except Exception as e:
-                logger.error("Failed to get collective context: %s", e)
+                logger.error('Failed to get collective context: %s', type(e).__name__)
                 return []
 
     async def get_all_memories(
