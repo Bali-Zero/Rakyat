@@ -763,8 +763,9 @@ async def write_client_document(
     client_id: int,
     payload: dict[str, Any],
     *,
-    proposal_id: int,
+    proposal_id: int | None,
     idempotency_key: str,
+    registration_source: str = "intake",
 ) -> int:
     """Pure-DB document writer — extracted from create_document, side-effects removed.
 
@@ -773,14 +774,29 @@ async def write_client_document(
     P0#2: UPSERT on (client_id, intake_idempotency_key) ALWAYS RETURNING the canonical
     doc_id; a re-commit of the same intake instance is a no-op that returns the same id.
 
-    NOT reachable in FASE 5B: execute_commit refuses to run the real path while the
-    flag is OFF, so this never fires against the CRM in 5B.
+    Intake commits retain their feature flag. Operator repairs may supply a null
+    proposal only with explicit hidden, OCR-skipped repair provenance.
     """
+    if proposal_id is None:
+        provenance = _as_dict(payload.get("notes"))
+        if (
+            registration_source != "drive-repair-v1"
+            or provenance.get("source") != registration_source
+            or re.fullmatch(r"[0-9a-f]{64}", str(provenance.get("evidence_sha256", ""))) is None
+            or not provenance.get("original_parent_id")
+            or not provenance.get("planned_target_id")
+            or provenance.get("move_status") != "pending"
+            or payload.get("client_visible") is not False
+            or payload.get("ocr_status") != "skipped"
+        ):
+            raise ValueError("REPAIR_PROVENANCE_REQUIRED")
     # ocr_status column may not exist in every environment (absent in nuzantara_dev).
     has_ocr = await conn.fetchval(
         "SELECT 1 FROM information_schema.columns "
         "WHERE table_name='documents' AND column_name='ocr_status'"
     )
+    if proposal_id is None and not has_ocr:
+        raise ValueError("REPAIR_OCR_SCHEMA_REQUIRED")
     # Explicit visibility: None = the column is not named, so the database
     # DEFAULT applies exactly as before. A value is written in this SAME INSERT.
     # ON CONFLICT below leaves an existing row alone: a re-commit never

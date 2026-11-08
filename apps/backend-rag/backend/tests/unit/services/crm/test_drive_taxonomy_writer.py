@@ -11,6 +11,14 @@ from backend.services.crm.drive_taxonomy import (
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 
 
+@pytest.fixture(autouse=True)
+def _physical_drive_roots(monkeypatch):
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(settings, "gdrive_individuals_folder_id", "individuals")
+    monkeypatch.setattr(settings, "gdrive_companies_folder_id", "companies")
+
+
 def test_canonical_taxonomy_and_confluent_paths():
     assert canonical_folders("individual") == (
         "01_Profile",
@@ -198,6 +206,13 @@ async def test_portal_refuses_to_upload_when_cached_destination_cannot_be_verifi
     conn.fetchval.return_value = "invalid-cache"
     conn.fetchrow.return_value = {"google_drive_folder_id": "root", "client_type": "individual"}
     drive = AsyncMock()
+    drive.get_file_metadata.return_value = {
+        "id": "root",
+        "name": "Root",
+        "mimeType": "application/vnd.google-apps.folder",
+        "trashed": False,
+        "parents": ["individuals"],
+    }
     drive.resolve_canonical_folder.side_effect = RuntimeError("invalid cache")
     with pytest.raises(RuntimeError):
         await portal._resolve_client_drive_folder(

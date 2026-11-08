@@ -66,6 +66,13 @@ def _pool(dedup_hit, insert_id=701):
 
 def _drive():
     drive = AsyncMock()
+    drive.get_file_metadata.return_value = {
+        "id": "root",
+        "name": "Root",
+        "mimeType": "application/vnd.google-apps.folder",
+        "trashed": False,
+        "parents": ["individuals"],
+    }
     drive.get_folder_structure.return_value = {"folders": [{"id": "p", "name": "00_Profile"}]}
     drive.upload_file_to_folder.return_value = {"id": "drive-file", "webViewLink": "https://d/x"}
     return drive
@@ -78,6 +85,8 @@ async def _upload(pool, drive, **context):
     )
 
     with (
+        patch("backend.app.core.config.settings.gdrive_individuals_folder_id", "individuals"),
+        patch("backend.app.core.config.settings.gdrive_companies_folder_id", "companies"),
         patch("backend.app.routers.crm_enhanced_documents.invalidate_cache", new=AsyncMock()),
         patch(
             "backend.app.routers.crm_enhanced_documents.ServiceAccountDriveService",

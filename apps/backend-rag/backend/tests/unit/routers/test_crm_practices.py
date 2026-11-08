@@ -2661,6 +2661,13 @@ class TestUploadClientDocument:
         mock_db_conn.fetchval = AsyncMock(side_effect=[None, 501])
         mock_db_conn.execute = AsyncMock(return_value="UPDATE 1")
         drive_service = AsyncMock()
+        drive_service.get_file_metadata.return_value = {
+            "id": "root",
+            "name": "Root",
+            "mimeType": "application/vnd.google-apps.folder",
+            "trashed": False,
+            "parents": ["individuals"],
+        }
         drive_service.get_folder_structure.return_value = {
             "folders": [{"id": "profile", "name": "00_Profile"}],
         }
@@ -2674,6 +2681,8 @@ class TestUploadClientDocument:
         )
 
         with (
+            patch("backend.app.core.config.settings.gdrive_individuals_folder_id", "individuals"),
+            patch("backend.app.core.config.settings.gdrive_companies_folder_id", "companies"),
             patch.object(crm_practices, "invalidate_cache", new=AsyncMock()),
             patch.object(crm_enhanced_documents, "invalidate_cache", new=AsyncMock()),
             patch.object(

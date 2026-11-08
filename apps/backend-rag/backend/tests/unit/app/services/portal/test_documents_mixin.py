@@ -25,6 +25,14 @@ class UndefinedColumnError(Exception):
     sqlstate = "42703"
 
 
+@pytest.fixture(autouse=True)
+def _physical_drive_roots(monkeypatch):
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(settings, "gdrive_individuals_folder_id", "individuals")
+    monkeypatch.setattr(settings, "gdrive_companies_folder_id", "companies")
+
+
 def _make_service_with_fetchrow(row: dict[str, Any] | None) -> tuple[PortalService, AsyncMock]:
     mock_conn = AsyncMock()
     mock_conn.fetchrow.return_value = row
@@ -1136,6 +1144,15 @@ async def test_upload_with_service_account_routes_through_service_account_drive_
     }
 
     mock_sa_instance = MagicMock()
+    mock_sa_instance.get_file_metadata = AsyncMock(
+        side_effect=lambda fid: {
+            "id": fid,
+            "name": "01_Profile",
+            "mimeType": "application/vnd.google-apps.folder",
+            "trashed": False,
+            "parents": ["individuals"],
+        }
+    )
     mock_sa_instance.resolve_canonical_folder = AsyncMock(return_value="profile_subfolder_1")
     mock_sa_instance.upload_file_to_folder = AsyncMock(
         return_value={
@@ -1246,6 +1263,19 @@ def _sa_service_and_conn(
         return_value={"id": "sa_file_2", "webViewLink": "https://drive.google.com/x"}
     )
     sa.ensure_client_folder = AsyncMock(return_value={"root_folder_id": "made_root_9"})
+    sa.get_file_metadata = AsyncMock(
+        side_effect=lambda fid: {
+            "id": fid,
+            "name": (
+                "Root"
+                if fid in (root, "made_root_9")
+                else sa.resolve_canonical_folder.call_args.args[0]
+            ),
+            "mimeType": "application/vnd.google-apps.folder",
+            "trashed": False,
+            "parents": ["individuals"],
+        }
+    )
     sa.resolve_canonical_folder = AsyncMock(return_value="made_subfolder_9")
     sa.find_folder = AsyncMock(return_value=None)
     sa.create_folder = AsyncMock(return_value={"id": "made_subfolder_9"})
@@ -1363,6 +1393,7 @@ async def test_upload_to_drive_oauth_uses_verified_canonical_client_folder() -> 
     drive.get_valid_token = AsyncMock(return_value="synthetic-token")
     root = {
         "id": "crm_root",
+        "parents": ["individuals"],
         "name": "root",
         "mimeType": "application/vnd.google-apps.folder",
         "trashed": False,
@@ -1413,6 +1444,7 @@ async def test_oauth_upload_rejects_duplicate_canonical_folders():
     drive.get_file = AsyncMock(
         return_value={
             "id": "crm_root",
+            "parents": ["individuals"],
             "mimeType": "application/vnd.google-apps.folder",
             "trashed": False,
         }
@@ -1755,6 +1787,7 @@ async def test_oauth_missing_client_root_is_persisted_under_creation_lock(monkey
     drive.get_file = AsyncMock(
         return_value={
             "id": "client-root",
+            "parents": ["people-root"],
             "mimeType": "application/vnd.google-apps.folder",
             "trashed": False,
         }

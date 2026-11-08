@@ -17,6 +17,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Qu
 from pydantic import BaseModel, BeforeValidator, Field, StrictInt
 from pydantic_core import PydanticCustomError
 
+from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.crm_service_write import verify_crm_write_key
 from backend.app.routers.crm_enhanced import (
@@ -34,7 +35,7 @@ from backend.phone_lock import lock_cores, phone_core, phone_value_state
 from backend.services.common.background import spawn
 from backend.services.crm.admin_document_visibility import admin_document_not_deleted_clause
 from backend.services.crm.document_categorizer import auto_categorize_document
-from backend.services.crm.drive_taxonomy import folder_for_category
+from backend.services.crm.drive_taxonomy import folder_for_category, physical_root_layout
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 
 logger = get_logger(__name__)
@@ -955,8 +956,16 @@ async def upload_document_base64(
                         detail=f"Failed to create root folder: {e}",
                     ) from e
 
-            folder_name = folder_for_category(category, client["client_type"] or "individual")
             try:
+                root = await drive_service.get_file_metadata(root_folder_id)
+                layout = physical_root_layout(
+                    root,
+                    root_folder_id,
+                    client["client_type"],
+                    individuals_parent=settings.gdrive_individuals_folder_id,
+                    companies_parent=settings.gdrive_companies_folder_id,
+                )
+                folder_name = folder_for_category(category, layout)
                 subfolder_id = await drive_service.resolve_canonical_folder(
                     folder_name, root_folder_id, conn=conn
                 )

@@ -20,6 +20,7 @@ from backend.app.utils.service_accounts import CLIENT_ROLES, EXTERNAL_ROLES, nor
 from backend.services.integrations.service_account_drive_service import (
     ServiceAccountDriveService,
 )
+from backend.services.portal._document_visibility import document_visibility_clause
 
 logger = logging.getLogger(__name__)
 
@@ -281,8 +282,53 @@ async def _get_drive_access_token() -> str:
 # "the registry is self-authorising for a caller who can WRITE").
 _CLIENT_OWNS_FOLDER_SQL = """
     SELECT 1 FROM clients
-     WHERE id = $1
+     WHERE id = $1 AND deleted_at IS NULL
+       AND lower(coalesce(status, '')) <> 'archived'
        AND (google_drive_folder_id = ANY($2::text[]) OR drive_folder_id = ANY($2::text[]))
+"""
+
+
+# Historical/archived references still conflict: do not pick a survivor from a
+# shared root. This predicate only applies to writes, never the staff reader.
+_CLIENT_FOREIGN_FOLDER_SQL = """
+    SELECT 1 WHERE EXISTS (
+        SELECT 1 FROM clients WHERE id <> $1
+          AND (google_drive_folder_id = ANY($2::text[]) OR drive_folder_id = ANY($2::text[]))
+    ) OR EXISTS (
+        SELECT 1 FROM companies
+         WHERE google_drive_folder_id = ANY($2::text[]) OR tax_dept_folder_id = ANY($2::text[])
+    )
+"""
+
+_CLIENT_ACTIVE_SQL = """
+    SELECT 1 FROM clients WHERE id = $1 AND deleted_at IS NULL
+      AND lower(coalesce(status, '')) <> 'archived'
+"""
+
+# Explicit file ownership outranks folder ancestry. Unknown/organizational
+# references conflict with an individual-client registration. URL IDs are exact,
+# so a prefix of another registered ID cannot establish ownership.
+_CLIENT_FILE_OWNERSHIP_SQL = """
+    WITH owners AS (
+        SELECT client_id FROM documents
+         WHERE file_id = $1
+            OR substring(google_drive_file_url from '/d/([A-Za-z0-9_-]+)') = $1
+            OR substring(google_drive_file_url from '[?&]id=([A-Za-z0-9_-]+)') = $1
+            OR substring(file_url from '/d/([A-Za-z0-9_-]+)') = $1
+            OR substring(file_url from '[?&]id=([A-Za-z0-9_-]+)') = $1
+        UNION ALL SELECT client_id FROM invoices WHERE drive_file_id = $1
+        UNION ALL SELECT client_id FROM practices
+            WHERE documents->'invoice'->>'invoice_drive_id' = $1
+        UNION ALL SELECT NULL::integer FROM company_documents
+         WHERE google_drive_file_id = $1
+            OR substring(google_drive_file_url from '/d/([A-Za-z0-9_-]+)') = $1
+            OR substring(google_drive_file_url from '[?&]id=([A-Za-z0-9_-]+)') = $1
+        UNION ALL SELECT NULL::integer FROM lkpm_receipts WHERE file_drive_id = $1
+        UNION ALL SELECT NULL::integer FROM weekly_cashout WHERE receipt_drive_file_id = $1
+    )
+    SELECT coalesce(bool_or(client_id = $2), false) AS owned,
+           coalesce(bool_or(client_id IS DISTINCT FROM $2), false) AS conflict
+      FROM owners
 """
 
 _COMPANY_OWNS_FOLDER_SQL = """
@@ -325,6 +371,11 @@ async def _assert_file_descends_from_owner(
     access_token = await _get_drive_access_token()
 
     async def _owned(folder_ids: list[str]) -> bool:
+        if (
+            owner_sql == _CLIENT_OWNS_FOLDER_SQL
+            and await conn.fetchrow(_CLIENT_FOREIGN_FOLDER_SQL, owner_id, folder_ids) is not None
+        ):
+            raise HTTPException(status_code=403, detail="Drive folder ownership is ambiguous")
         return await conn.fetchrow(owner_sql, owner_id, folder_ids) is not None
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -399,9 +450,20 @@ async def assert_drive_file_belongs_to_client(
 ) -> None:
     """Write-time guard for `POST .../clients/{client_id}/documents` (+ bulk
     twin) and `PATCH .../clients/{client_id}/documents/{doc_id}`: refuse a
-    `file_id` that does not descend from THIS client's own registered Drive
-    folder. Takes the caller's ALREADY-OPEN connection — see
+    `file_id` with incompatible ownership. An unambiguous existing registration
+    to this active client is sufficient; otherwise require its own unique Drive
+    folder ancestry. Takes the caller's ALREADY-OPEN connection — see
     `_assert_file_descends_from_owner`'s docstring for why."""
+    _assert_file_id_shape(file_id)
+    if await conn.fetchrow(_CLIENT_ACTIVE_SQL, client_id) is None:
+        raise HTTPException(status_code=403, detail="Client cannot receive documents")
+    ownership = await conn.fetchrow(_CLIENT_FILE_OWNERSHIP_SQL, file_id, client_id)
+    if ownership["conflict"]:
+        raise HTTPException(
+            status_code=403, detail="Drive file has incompatible registered ownership"
+        )
+    if ownership["owned"]:
+        return
     await _assert_file_descends_from_owner(
         file_id, conn, owner_sql=_CLIENT_OWNS_FOLDER_SQL, owner_id=client_id
     )
@@ -419,11 +481,12 @@ async def assert_drive_file_belongs_to_company(
     )
 
 
-_CLIENT_REGISTERED_FILE_SQL = """
+_CLIENT_REGISTERED_FILE_SQL = f"""
     SELECT 1
     WHERE EXISTS (
             SELECT 1 FROM documents d
              WHERE d.client_id = $2
+               AND {document_visibility_clause("d")}
                AND (
                    d.file_id = $1
                    OR strpos(coalesce(d.google_drive_file_url, ''), '/d/' || $1) > 0
