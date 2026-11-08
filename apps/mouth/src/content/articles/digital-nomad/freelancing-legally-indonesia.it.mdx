@@ -72,6 +72,7 @@ tags:
 canonicalUrl: "https://balizero.com/digital-nomad/freelancing-legally-indonesia"
 ogImage: "/static/insights/lifestyle/freelancing.jpg"
 twitterCard: "summary_large_image"
+source_sha256: "05e6a4efc5bc01002b86a35db25f4e7d9dbd033f99582bee27bdb96c19540634"
 ---
 
 import {
@@ -83,63 +84,63 @@ import {
   AskZantara,
 } from "@/components/insights/interactive";
 
-# Lavorare come Freelance Legalmente in Indonesia 2026: Guida Completa
+# Lavoro freelance legale in Indonesia nel 2026: guida completa
 
-Molti nomadi digitali lavorano come freelance mentre si trovano in Indonesia. Ecco come comprendere il panorama legale e rimanere in regola.
+Molti nomadi digitali lavorano come freelance mentre si trovano in Indonesia. Ecco come comprendere il quadro legale e restare in regola.
 
-## La Questione del Freelancing
+## La questione del freelance
 
 <DecisionTree
-  title="Puoi lavorare come freelance in Indonesia?"
-  description="Comprendi la tua situazione"
+  title="Can You Freelance in Indonesia?"
+  description="Understand your situation"
   nodes={[
     {
       id: "start",
-      question: "Che tipo di lavoro svolgi?",
+      question: "What type of work do you do?",
       options: [
-        { label: "Remoto solo per clienti stranieri", next: "foreign" },
-        { label: "Mix di clienti stranieri e indonesiani", next: "mixed" },
-        { label: "Solo clienti/aziende indonesiane", next: "indonesian" },
+        { label: "Remote for foreign clients only", next: "foreign" },
+        { label: "Mix of foreign and Indonesian clients", next: "mixed" },
+        { label: "Indonesian clients/companies only", next: "indonesian" },
       ],
     },
     {
       id: "foreign",
-      question: "Qual è il tuo status del visto?",
+      question: "What's your visa status?",
       options: [
-        { label: "Turista/VOA", next: "foreign-tourist" },
-        { label: "Titolare di KITAS", next: "foreign-kitas" },
+        { label: "Tourist/VOA", next: "foreign-tourist" },
+        { label: "KITAS holder", next: "foreign-kitas" },
       ],
     },
     {
       id: "mixed",
       result: {
-        title: "Società Richiesta",
+        title: "Company Required",
         description:
-          "Lavorare con clienti indonesiani richiede una struttura aziendale adeguata (PT PMA) e un permesso di lavoro. I clienti solo stranieri offrono maggiore flessibilità.",
+          "Working with Indonesian clients requires proper business structure (PT PMA) and work permit. Foreign-only clients have more flexibility.",
       },
     },
     {
       id: "indonesian",
       result: {
-        title: "PT PMA Richiesta",
+        title: "PT PMA Required",
         description:
-          "Lavorare con aziende indonesiane richiede una PT PMA e un permesso di lavoro adeguato (KITAS). Questo non è opzionale: fatturare a entità indonesiane senza una struttura adeguata è illegale.",
+          "Working with Indonesian companies requires a PT PMA and proper work permit (KITAS). This is not optional - invoicing Indonesian entities without proper structure is illegal.",
       },
     },
     {
       id: "foreign-tourist",
       result: {
-        title: "Zona Grigia",
+        title: "Gray Area",
         description:
-          "Tecnicamente non dovresti lavorare con un visto turistico. Tuttavia, il lavoro remoto per clienti stranieri, pagato su conti esteri, è ampiamente tollerato. Considera il Visto per Nomadi Digitali E33G per soggiorni più lunghi.",
+          "Technically you shouldn't work on tourist visa. But remote work for foreign clients, paid to foreign accounts, is widely tolerated. Consider E33G Digital Nomad Visa for longer stays.",
       },
     },
     {
       id: "foreign-kitas",
       result: {
-        title: "Controlla il Tipo di KITAS",
+        title: "Check KITAS Type",
         description:
-          "Il tuo KITAS potrebbe consentire o meno il lavoro freelance. Il KITAS per permesso di lavoro in genere ti lega a un unico datore di lavoro. Il KITAS per investitori tramite la propria PT PMA offre la massima flessibilità.",
+          "Your KITAS may or may not allow freelancing. Work-permit KITAS typically ties you to one employer. Investor KITAS through your own PT PMA gives most flexibility.",
       },
     },
   ]}
@@ -147,51 +148,51 @@ Molti nomadi digitali lavorano come freelance mentre si trovano in Indonesia. Ec
 
 ---
 
-## Strutture Legali
+## Strutture legali
 
 <ComparisonTable
-  title="Opzioni Legali per Freelance"
-  description="Modi per lavorare legalmente in Indonesia"
+  title="Freelance Legal Options"
+  description="Ways to work legally in Indonesia"
   items={[
     {
-      name: "Solo Remoto",
-      subtitle: "Clienti stranieri, pagamento all'estero",
+      name: "Remote Only",
+      subtitle: "Foreign clients, foreign pay",
       values: {
-        Legalità: "Zona grigia",
-        Tasse: "Paese d'origine",
-        Complessità: "Nessuna",
-        "Ideale per": "Nomadi a breve termine",
+        Legality: "Gray area",
+        Tax: "Home country",
+        Complexity: "None",
+        "Best For": "Short-term nomads",
       },
     },
     {
       name: "PT PMA",
-      subtitle: "Società indonesiana",
+      subtitle: "Indonesian company",
       values: {
-        Legalità: "Pienamente legale",
-        Tasse: "Indonesiane",
-        Complessità: "Alta",
-        "Ideale per": "Clienti indonesiani",
+        Legality: "Fully legal",
+        Tax: "Indonesian",
+        Complexity: "High",
+        "Best For": "Indonesian clients",
       },
     },
     {
-      name: "PT PMA + Lavoro Autonomo",
-      subtitle: "Direttore della propria società",
+      name: "PT PMA + Self-employ",
+      subtitle: "Director of own company",
       values: {
-        Legalità: "Pienamente legale",
-        Tasse: "Indonesiane aziendali + personali",
-        Complessità: "Alta",
-        "Ideale per": "Freelance professionisti",
+        Legality: "Fully legal",
+        Tax: "Indonesian corporate + personal",
+        Complexity: "High",
+        "Best For": "Serious freelancers",
       },
       highlight: true,
     },
     {
-      name: "Società Estera",
-      subtitle: "Fatturazione dall'estero",
+      name: "Foreign Company",
+      subtitle: "Invoice from abroad",
       values: {
-        Legalità: "Legale (lavoro estero)",
-        Tasse: "Entità estera",
-        Complessità: "Media",
-        "Ideale per": "Freelance affermati",
+        Legality: "Legal (foreign work)",
+        Tax: "Foreign entity",
+        Complexity: "Medium",
+        "Best For": "Established freelancers",
       },
     },
   ]}
@@ -199,9 +200,9 @@ Molti nomadi digitali lavorano come freelance mentre si trovano in Indonesia. Ec
 
 ---
 
-## La Zona Grigia Spiegata
+## La zona grigia spiegata
 
-<InfoCard variant="warning" title="Comprendere la Realtà">
+<InfoCard variant="warning" title="Understand the Reality">
 **Cosa è tecnicamente illegale:**
 - Lavorare con visto turistico/sociale
 - Fornire servizi a clienti indonesiani senza PT PMA
@@ -209,7 +210,7 @@ Molti nomadi digitali lavorano come freelance mentre si trovano in Indonesia. Ec
 
 **Cosa è ampiamente tollerato:**
 
-- Lavoro remoto per clienti stranieri
+- Lavoro da remoto per clienti stranieri
 - Pagamenti su conti bancari esteri
 - Non competere con i lavoratori indonesiani
 - Vivere/spendere in Indonesia come "turista"
@@ -217,38 +218,38 @@ Molti nomadi digitali lavorano come freelance mentre si trovano in Indonesia. Ec
 **Il rischio:**
 
 - Problemi di immigrazione (rari)
-- Implicazioni fiscali se si soggiorna per più di 183 giorni
-- Nessuna protezione legale per controversie di lavoro
+- Implicazioni fiscali in caso di permanenza di oltre 183 giorni
+- Nessuna tutela legale per le controversie di lavoro
 
 </InfoCard>
 
 ---
 
-## Implicazioni Fiscali
+## Implicazioni fiscali
 
-### Residenza Fiscale
+### Residenza fiscale
 
 <Calculator
-  title="Calcolatore della Residenza Fiscale"
-  description="Verifica se sei un residente fiscale indonesiano"
+  title="Tax Residency Calculator"
+  description="Check if you're an Indonesian tax resident"
   fields={[
     {
       id: "days",
-      label: "Giorni in Indonesia quest'anno",
+      label: "Days in Indonesia This Year",
       type: "number",
       defaultValue: 120,
       min: 0,
       max: 365,
-      suffix: "giorni"
+      suffix: "days"
     },
     {
       id: "intention",
-      label: "Pianifichi di restare a lungo termine?",
+      label: "Plan to Stay Long-term?",
       type: "select",
       options: [
-        { value: "no", label: "No, solo temporaneamente" },
-        { value: "maybe", label: "Forse, non sono sicuro" },
-        { value: "yes", label: "Sì, ho intenzione di restare" }
+        { value: "no", label: "No, temporary only" },
+        { value: "maybe", label: "Maybe, unsure" },
+        { value: "yes", label: "Yes, planning to stay" }
       ],
       defaultValue: "maybe"
     }
@@ -257,246 +258,246 @@ Molti nomadi digitali lavorano come freelance mentre si trovano in Indonesia. Ec
     const days = Number(values.days);
     const intention = values.intention;
 
-    let status = "Non residente";
-    let risk = "Basso";
+    let status = "Non-resident";
+    let risk = "Low";
 
     if (days >= 183) {
-      status = "Probabile Residente Fiscale";
-      risk = "Alto";
+      status = "Likely Tax Resident";
+      risk = "High";
     } else if (days >= 120 && intention === "yes") {
-      status = "Possibile Residente Fiscale";
-      risk = "Medio";
+      status = "Possible Tax Resident";
+      risk = "Medium";
     } else if (days >= 90 && intention === "yes") {
-      status = "Possibile Residente Fiscale";
-      risk = "Basso-Medio";
+      status = "Possible Tax Resident";
+      risk = "Low-Medium";
     }
 
     return {
       total: days,
       breakdown: [
-        { label: "Giorni in Indonesia", amount: days },
-        { label: "Soglia per la residenza fiscale", amount: 183 }
+        { label: "Days in Indonesia", amount: days },
+        { label: "Threshold for Tax Residency", amount: 183 }
       ],
-      currency: "giorni",
-      note: `Stato: ${status} | Livello di Rischio: ${risk}`
+      currency: "days",
+      note: `Status: ${status} | Risk Level: ${risk}`
     };
 
 }}
 />
 
-### Aliquote Fiscali per i Residenti
+### Aliquote fiscali per i residenti
 
-| Reddito (IDR) | Aliquota Fiscale |
-| ------------- | ---------------- |
-| 0 - 60M       | 5%               |
-| 60M - 250M    | 15%              |
-| 250M - 500M   | 25%              |
-| 500M - 5B     | 30%              |
-| Oltre 5B      | 35%              |
+| Reddito (IDR) | Aliquota fiscale |
+| ------------ | -------- |
+| 0 - 60M      | 5%       |
+| 60M - 250M   | 15%      |
+| 250M - 500M  | 25%      |
+| 500M - 5B    | 30%      |
+| Over 5B      | 35%      |
 
 ---
 
-## PT PMA per Freelance
+## PT PMA per i freelance
 
-### Quando hai bisogno di una PT PMA
+### Quando serve una PT PMA
 
 - Lavorare con clienti indonesiani
-- Desiderare la piena legalità
+- Volere la piena legalità
 - Costruire una presenza a lungo termine
-- Necessità di contratti indonesiani
+- Avere bisogno di contratti indonesiani
 
 ### Costi della PT PMA
 
-| Voce                       | Costo                           |
-| -------------------------- | ------------------------------- |
-| Configurazione             | IDR 50-100M                     |
-| Requisito di capitale      | IDR 10B (capitale sottoscritto) |
-| Manutenzione annuale       | IDR 30-50M                      |
-| Permesso di lavoro (KITAS) | IDR 20-30M                      |
+| Voce                | Costo               |
+| ------------------- | ------------------- |
+| Costituzione               | IDR 50-100M         |
+| Requisito di capitale | IDR 10B (committed) |
+| Manutenzione annuale  | IDR 30-50M          |
+| Permesso di lavoro (KITAS) | IDR 20-30M          |
 
-<InfoCard variant="note" title="La PT PMA ne vale la pena?">
+<InfoCard variant="note" title="Is PT PMA Worth It?">
 Per la maggior parte dei freelance che lavorano solo con clienti stranieri, la PT PMA è eccessiva.
 
-**Considera la PT PMA se:**
+**Valuta una PT PMA se:**
 
 - I clienti indonesiani vogliono pagarti
-- Il fatturato giustifica il costo (oltre 100M IDR/anno)
-- Desideri la piena tranquillità legale
-- Stai costruendo un'attività, non solo facendo il freelance
+- I ricavi giustificano il costo (IDR 100M+/anno)
+- Vuoi la piena tranquillità legale
+- Stai costruendo un'impresa, non solo lavorando come freelance
 
 </InfoCard>
 
 ---
 
-## Approcci Pratici
+## Approcci pratici
 
-### Approccio 1: Puramente Remoto
+### Approccio 1: Solo da remoto
 
 <Checklist
-  title="Strategia Solo Remoto"
-  description="Per freelance con clienti stranieri"
+  title="Remote-Only Strategy"
+  description="For foreign-client freelancers"
   persistKey="remote-freelance-checklist"
   items={[
     {
       id: "visa",
-      label: "Visto appropriato (Nomade Digitale E33G)",
-      description: "Non il visto turistico per soggiorni prolungati",
+      label: "Appropriate visa (E33G Digital Nomad)",
+      description: "Not tourist visa for extended stays",
       required: true,
       category: "legal",
     },
     {
       id: "foreign-bank",
-      label: "Conto bancario estero",
-      description: "Ricevere pagamenti fuori dall'Indonesia",
+      label: "Foreign bank account",
+      description: "Receive payments outside Indonesia",
       required: true,
       category: "financial",
     },
     {
       id: "foreign-clients",
-      label: "Solo clienti stranieri",
-      description: "Nessuna fattura indonesiana",
+      label: "Foreign clients only",
+      description: "No Indonesian invoices",
       required: true,
       category: "work",
     },
     {
       id: "home-tax",
-      label: "Pagare le tasse nel paese d'origine",
-      description: "Mantenere gli obblighi fiscali",
+      label: "Pay taxes in home country",
+      description: "Maintain tax obligations",
       required: true,
       category: "tax",
     },
     {
       id: "days-track",
-      label: "Monitorare i giorni in Indonesia",
-      description: "Essere consapevoli della soglia dei 183 giorni",
+      label: "Track days in Indonesia",
+      description: "Stay aware of 183-day threshold",
       required: true,
       category: "tax",
     },
   ]}
   categories={[
-    { id: "legal", label: "Legale", color: "blue" },
-    { id: "financial", label: "Finanziario", color: "green" },
-    { id: "work", label: "Lavoro", color: "amber" },
-    { id: "tax", label: "Tasse", color: "red" },
+    { id: "legal", label: "Legal", color: "blue" },
+    { id: "financial", label: "Financial", color: "green" },
+    { id: "work", label: "Work", color: "amber" },
+    { id: "tax", label: "Tax", color: "red" },
   ]}
   showProgress={true}
 />
 
-### Approccio 2: Configurazione Indonesiana Adeguata
+### Approccio 2: Assetto indonesiano in piena regola
 
 Per chi desidera la piena legalità:
 
-1. **Costituire una PT PMA** (~3-6 mesi)
-2. **Ottenere il KITAS da Direttore** (tramite la propria società)
-3. **Registrarsi per le tasse** (NPWP, PKP se necessario)
-4. **Fatturare correttamente** (fatture fiscali indonesiane)
-5. **Pagare le tasse indonesiane** (aziendali e personali)
+1. **Costituisci una PT PMA** (~3-6 mesi)
+2. **Ottieni la KITAS da direttore** (tramite la tua società)
+3. **Registrati ai fini fiscali** (NPWP, PKP se necessario)
+4. **Emetti fatture correttamente** (fatture fiscali indonesiane)
+5. **Paga le tasse indonesiane** (societarie e personali)
 
 ---
 
-## Opzione Società Estera
+## Opzione società estera
 
 Alcuni freelance utilizzano una società estera:
 
 ### Vantaggi
 
-- Fatturare ai clienti in modo professionale
-- Separare l'attività dal privato
+- Fatturare i clienti in modo professionale
+- Separare l'attività dalla sfera personale
 - Opportunità di pianificazione fiscale
-- Nessuna configurazione indonesiana necessaria
+- Nessuna costituzione in Indonesia necessaria
 
-### Giurisdizioni Comuni
+### Giurisdizioni popolari
 
 - Singapore (costosa ma vicina)
-- Hong Kong (favorevole al business)
-- USA LLC (per residenti negli USA)
-- Estonia e-Residency (accesso all'UE)
+- Hong Kong (favorevole alle imprese)
+- USA LLC (per residenti statunitensi)
+- Estonia e-Residency (accesso EU)
 
-<InfoCard variant="tip" title="Singapore vs Altri">
-Singapore è popolare per i freelance che vivono in Indonesia:
+<InfoCard variant="tip" title="Singapore vs Others">
+Singapore è popolare tra i freelance basati in Indonesia:
 - Fuso orario vicino
-- Favorevole al business
-- Ottimi servizi bancari
+- Favorevole alle imprese
+- Buoni servizi bancari
 - Immagine professionale
 
-Ma i costi annuali sono di 2-5k $ +.
+Ma i costi annuali sono di $2-5K+.
 
 </InfoCard>
 
 ---
 
-## Assicurazione e Contratti
+## Assicurazione e contratti
 
 ### Senza PT PMA
 
-- Difficile far valere i contratti indonesiani
-- Protezione legale limitata
+- Difficile far rispettare i contratti indonesiani
+- Tutela legale limitata
 - L'assicurazione potrebbe avere limitazioni
 
-### Copertura Raccomandata
+### Copertura consigliata
 
-| Assicurazione                | Scopo                         |
-| ---------------------------- | ----------------------------- |
-| Assicurazione sanitaria      | Copertura medica              |
-| Responsabilità professionale | Controversie con i clienti    |
-| Attrezzatura                 | Protezione laptop e strumenti |
-
----
-
-## Soluzioni Bancarie
-
-### Per Freelance Remoti
-
-| Soluzione                 | Pro                                   | Contro                       |
-| ------------------------- | ------------------------------------- | ---------------------------- |
-| Wise                      | Multi-valuta, trasferimenti economici | Non è una banca completa     |
-| Revolut                   | Ottimo per le spese                   | Limitato in Indonesia        |
-| Banca nel paese d'origine | Stabile, familiare                    | Commissioni di trasferimento |
-| Banca indonesiana         | Pagamenti locali                      | Richiede KITAS               |
+| Assicurazione              | Scopo                 |
+| ---------------------- | ----------------------- |
+| Assicurazione sanitaria       | Copertura medica        |
+| Responsabilità professionale | Controversie con i clienti         |
+| Attrezzatura              | Protezione di laptop e attrezzature |
 
 ---
 
-## Errori Comuni
+## Soluzioni bancarie
 
-1. **Lavorare con visto turistico a lungo termine** - Ottieni un visto adeguato
-2. **Fatturare ad aziende indonesiane** - Richiede PT PMA
-3. **Ignorare la residenza fiscale** - Monitora i tuoi giorni
-4. **Nessun contratto** - Avere sempre degli accordi
-5. **Non tracciare il reddito** - Tenere i registri
-6. **Mischiare conti personali e aziendali** - Conti separati
-7. **Presumere che non importi a nessuno** - Le regole possono cambiare
+### Per i freelance da remoto
+
+| Soluzione          | Vantaggi                            | Svantaggi                 |
+| ----------------- | ------------------------------- | -------------------- |
+| Wise              | Multi-valuta, trasferimenti economici | Non è una banca completa      |
+| Revolut           | Buona per le spese               | Limitata in Indonesia |
+| Banca del paese d'origine | Stabile, familiare                | Commissioni di trasferimento        |
+| Banca indonesiana   | Pagamenti locali                  | Richiede KITAS          |
 
 ---
 
-## Quando Rivolgersi a un Professionista
+## Errori comuni
 
-Considera di consultare un professionista se:
+1. **Lavorare a lungo termine con visto turistico** - Ottieni un visto adeguato
+2. **Fatturare società indonesiane** - Serve una PT PMA
+3. **Ignorare la residenza fiscale** - Tieni traccia dei tuoi giorni
+4. **Nessun contratto** - Abbi sempre degli accordi
+5. **Non tracciare il reddito** - Conserva le registrazioni
+6. **Mescolare personale e attività** - Separa i conti
+7. **Presumere che a nessuno importi** - Le regole possono cambiare
+
+---
+
+## Quando chiedere aiuto professionale
+
+Valuta di consultare un professionista se:
 
 - I clienti indonesiani vogliono assumerti
-- Soggiorni per più di 183 giorni
-- Desideri la piena conformità legale
+- Rimani per oltre 183 giorni
+- Vuoi la piena conformità legale
 - Guadagni un reddito significativo
-- Stai costruendo un'attività
+- Stai costruendo un'impresa
 
 ---
 
-## Domande Comuni
+## Domande frequenti
 
 <AskZantara
   context="Freelancing Indonesia, digital nomad tax, legal work indonesia, PT PMA freelancer"
-  placeholder="Chiedi come lavorare legalmente come freelance..."
+  placeholder="Ask about freelancing legally..."
   suggestedQuestions={[
-    "Devo pagare le tasse in Indonesia?",
-    "Posso fatturare ad aziende indonesiane?",
-    "Qual è il visto migliore per i freelance?",
-    "Dovrei creare una PT PMA?",
+    "Do I need to pay Indonesian tax?",
+    "Can I invoice Indonesian companies?",
+    "What visa is best for freelancers?",
+    "Should I set up a PT PMA?",
   ]}
 />
 
 ---
 
-## Articoli Correlati
+## Articoli correlati
 
-- [Opzioni di Visto per Nomadi Digitali](/visas/e33g-remote-worker-visa-guide?lang=it)
-- [Guida all'Imposta sul Reddito delle Persone Fisiche](/taxes/pph-21-expat-guide?lang=it)
-- [Guida alla Configurazione della PT PMA](/business/foreign-company-incorporation-steps?lang=it)
+- [Opzioni di visto per nomadi digitali](/visas/e33g-remote-worker-visa-guide)
+- [Guida all'imposta sul reddito personale](/taxes/pph-21-expat-guide)
+- [Guida alla costituzione di una PT PMA](/business/foreign-company-incorporation-steps)
