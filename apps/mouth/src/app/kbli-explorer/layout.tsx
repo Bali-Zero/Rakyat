@@ -1,3 +1,4 @@
+import { serializeJsonLd } from "@/lib/seo/serialize-json-ld";
 import React from "react";
 import type { Metadata } from "next";
 import "@/styles/kbli-r19-wrapper.css";
@@ -52,7 +53,7 @@ function KBLIExplorerJsonLd() {
     <script
       id="kbli-explorer-jsonld"
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
     />
   );
 }
