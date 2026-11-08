@@ -13,6 +13,7 @@ import matter from "gray-matter";
 import { unstable_cache } from "next/cache";
 import type { Article, ArticleListItem, ArticleCategory } from "./types";
 import { CATEGORY_MAP, normalizeCategory } from "./categories";
+import { isPublishedFrontmatter } from "./publication";
 
 const ARTICLES_PATH = path.join(process.cwd(), "src/content/articles");
 const ARTICLE_FOLDER_NAMES = Object.freeze([
@@ -548,11 +549,7 @@ async function getAllMdxSlugs(): Promise<
   return slugs;
 }
 
-/**
- * Parse one MDX file. Always pass an options object: without one, gray-matter
- * caches by content, and a parse that threw leaves an empty frontmatter in
- * that cache for the next read of the same file.
- */
+/** Parse one MDX file, without gray-matter's content cache (see ./publication). */
 function readMdxFile(
   filePath: string,
 ): { data: Record<string, any>; content: string } | null {
@@ -562,18 +559,6 @@ function readMdxFile(
   } catch {
     return null;
   }
-}
-
-/**
- * The one publication rule for local MDX, base and locale files alike: a file
- * counts only when its frontmatter parsed and its status is absent or exactly
- * "published".
- */
-function isPublishedFrontmatter(data: Record<string, unknown>): boolean {
-  return (
-    !Object.prototype.hasOwnProperty.call(data, "status") ||
-    data.status === "published"
-  );
 }
 
 /** The MDX file the page for this category and slug resolves to, if any. */
@@ -594,9 +579,9 @@ function findMdxFile(category: string, slug: string): string | null {
 
 /**
  * When the page finds its MDX file, that file decides: an unpublished or
- * unreadable file hides the article, and no backend row stands in for it.
+ * unreadable file hides the article, and no backend row or stand-in replaces it.
  */
-function hasHiddenMdx(category: string, slug: string): boolean {
+export function isArticleHidden(category: string, slug: string): boolean {
   const filePath = findMdxFile(category, slug);
   if (!filePath) return false;
   const parsed = readMdxFile(filePath);
@@ -706,7 +691,7 @@ export async function getArticleBySlug(
   if (mdxArticle) {
     return mdxArticle;
   }
-  if (hasHiddenMdx(category, slug)) return null;
+  if (isArticleHidden(category, slug)) return null;
 
   // Fallback to backend API (news_items) when no local MDX exists.
   const backendItem = await fetchBackendArticleBySlug(slug);
@@ -730,7 +715,7 @@ export async function getArticleByLocale(
     return getArticleBySlug(category, slug);
   }
   // A hidden English article hides its translations too.
-  if (hasHiddenMdx(category, slug)) return null;
+  if (isArticleHidden(category, slug)) return null;
 
   // Try locale-specific MDX file
   const normalizedCategory = normalizeCategory(category);
@@ -870,7 +855,7 @@ export const getAllArticles = unstable_cache(
     if (backendResult) {
       for (const item of backendResult.items) {
         const listItem = backendToArticleListItem(item);
-        if (hasHiddenMdx(listItem.category, item.slug)) continue;
+        if (isArticleHidden(listItem.category, item.slug)) continue;
         if (
           options?.featured !== undefined &&
           listItem.featured !== options.featured
@@ -1035,7 +1020,7 @@ export async function searchArticles(
   if (backendResult && backendResult.items.length > 0) {
     return backendResult.items
       .map(backendToArticleListItem)
-      .filter((article) => !hasHiddenMdx(article.category, article.slug));
+      .filter((article) => !isArticleHidden(article.category, article.slug));
   }
 
   // Fallback to in-memory MDX search
