@@ -784,8 +784,13 @@ async def write_client_document(
             or provenance.get("source") != registration_source
             or re.fullmatch(r"[0-9a-f]{64}", str(provenance.get("evidence_sha256", ""))) is None
             or not provenance.get("original_parent_id")
-            or not provenance.get("planned_target_id")
-            or provenance.get("move_status") != "pending"
+            or not (
+                (provenance.get("move_status") == "pending" and provenance.get("planned_target_id"))
+                or (
+                    provenance.get("move_status") == "not_planned"
+                    and provenance.get("planned_target_id") is None
+                )
+            )
             or payload.get("client_visible") is not False
             or payload.get("ocr_status") != "skipped"
         ):
@@ -1199,7 +1204,9 @@ async def _revert_document_enrichment(
     fetch_cols = [c for c in (*identifier_cols, "custom_fields") if c in existing_cols]
     if not fetch_cols:
         return []
-    row = await conn.fetchrow(f"SELECT {', '.join(fetch_cols)} FROM clients WHERE id = $1", client_id)
+    row = await conn.fetchrow(
+        f"SELECT {', '.join(fetch_cols)} FROM clients WHERE id = $1", client_id
+    )
     if row is None:
         return []
     current = dict(row)

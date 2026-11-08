@@ -424,7 +424,8 @@ async def _do_poll_drive_changes(
 
         async with db_pool.acquire() as conn:
             clients_with_folders = await conn.fetch(
-                "SELECT id, google_drive_folder_id, client_type, deleted_at, status FROM clients",
+                """SELECT id, google_drive_folder_id, drive_folder_id, client_type, deleted_at, status
+                   FROM clients""",
             )
         subfolder_map, root_folder_map = ownership_maps(subfolders, clients_with_folders)
         client_roots = {client_id: root_id for root_id, client_id in root_folder_map.items()}

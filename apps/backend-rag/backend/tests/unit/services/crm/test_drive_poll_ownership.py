@@ -3,6 +3,8 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from googleapiclient.errors import HttpError
+from httplib2 import Response
 
 from backend.app.core.config import settings
 from backend.services.crm.drive_poll_ownership import (
@@ -359,3 +361,73 @@ def test_company_aliases_collapse_only_when_classification_agrees():
     assert not ownership_maps(refs + [folder(name="99_Archive")], [client(client_type="company")])[
         0
     ]
+
+
+@pytest.mark.parametrize("legacy_owner", [11, 12])
+@pytest.mark.parametrize("legacy_folder", ["root", "profile"])
+def test_legacy_references_block_only_foreign_owner(legacy_owner, legacy_folder):
+    owner = client(drive_folder_id=legacy_folder if legacy_owner == 11 else None)
+    clients = [owner]
+    if legacy_owner != 11:
+        clients.append(client(12, root=None, drive_folder_id=legacy_folder, deleted_at="archived"))
+    folders, roots = ownership_maps([folder()], clients)
+    assert ("profile" in folders) == (legacy_owner == 11)
+    assert ("root" in roots) == (legacy_owner == 11 or legacy_folder != "root")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [404, 503])
+@pytest.mark.parametrize("missing_root", [True, False])
+async def test_drive_revalidation_skips_only_missing_folder(status, missing_root):
+    conn, drive = valid_context()
+    error = HttpError(Response({"status": str(status)}), b'{"error":{"message":"synthetic"}}')
+    drive.get_file_metadata.side_effect = (
+        [error] if missing_root else [metadata("root", "Client", "individuals"), error]
+    )
+    if status == 404:
+        assert not await revalidate_poll_owner(conn, drive, 11, "root", "profile", "01_Profile")
+    else:
+        with pytest.raises(HttpError) as caught:
+            await revalidate_poll_owner(conn, drive, 11, "root", "profile", "01_Profile")
+        assert caught.value is error
+    conn.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("foreign_owner", [True, False])
+async def test_validate_root_considers_legacy_only_references(foreign_owner):
+    conn, drive = valid_context()
+
+    async def lookup(sql, cid, root):
+        assert " OR drive_folder_id = $2" in sql
+        assert "google_drive_folder_id, drive_folder_id," in sql
+        rows = [client(drive_folder_id="root")]
+        if foreign_owner:
+            rows.append(client(12, root=None, drive_folder_id="root", deleted_at="archived"))
+        return rows
+
+    conn.fetch.side_effect = lookup
+    if foreign_owner:
+        with pytest.raises(ValueError, match="Ambiguous"):
+            await validate_client_root(conn, drive, 11, "root")
+        drive.get_file_metadata.assert_not_awaited()
+    else:
+        assert await validate_client_root(conn, drive, 11, "root") == ("individual", "individual")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("foreign_owner", [True, False])
+@pytest.mark.parametrize("legacy_folder", ["root", "profile"])
+async def test_final_write_boundary_catches_late_legacy_reference(foreign_owner, legacy_folder):
+    conn, drive = valid_context()
+
+    async def lookup(sql, path, cid, root, client_type):
+        assert "OR drive_folder_id = ANY($1::text[])" in sql
+        assert ") AND id <> $2" in sql
+        references = [(12 if foreign_owner else cid, legacy_folder)]
+        return any(owner != cid and folder_id in path for owner, folder_id in references)
+
+    conn.fetchval.side_effect = lookup
+    assert await revalidate_poll_owner(conn, drive, 11, "root", "profile", "01_Profile") is (
+        not foreign_owner
+    )

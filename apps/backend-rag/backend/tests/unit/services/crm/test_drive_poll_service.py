@@ -807,3 +807,99 @@ def historical_transport_contract_under_mocks(monkeypatch):
     """
     module = importlib.import_module("backend.services.crm.drive_poll_service")
     monkeypatch.setattr(module, "telegram_is_retired", lambda: False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scenario", ["missing-root", "transient-root", "legacy-conflict", "same-owner"]
+)
+async def test_poll_cursor_and_legacy_owner_boundaries(scenario):
+    from googleapiclient.errors import HttpError
+    from httplib2 import Response
+
+    from backend.services.crm.drive_poll_service import _do_poll_drive_changes
+
+    conn = AsyncMock()
+    conn.fetchrow.return_value = {"value": "start-token"}
+    clients = [{"id": 42, "google_drive_folder_id": "client-root-folder"}]
+    if scenario == "legacy-conflict":
+        clients.append(
+            {
+                "id": 43,
+                "google_drive_folder_id": None,
+                "drive_folder_id": "client-root-folder",
+                "deleted_at": "archived",
+            }
+        )
+    if scenario == "same-owner":
+        clients[0]["drive_folder_id"] = "client-root-folder"
+    conn.fetch.side_effect = [
+        [{"client_id": 42, "subfolder_name": "01_Profile", "subfolder_id": "profile"}],
+        clients,
+        [],
+    ]
+    conn.fetchval.side_effect = [None, 99]
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    pool.close = AsyncMock()
+    drive = AsyncMock()
+    drive.list_changes_since.return_value = {
+        "changes": [
+            {
+                "file": {
+                    "id": "drive-file-1",
+                    "name": "scan.pdf",
+                    "mimeType": "application/pdf",
+                    "parents": ["profile"],
+                }
+            }
+        ],
+        "new_page_token": "next-token",
+    }
+    _configure_current_ownership(conn, drive)
+    original_metadata = drive.get_file_metadata.side_effect
+    error = HttpError(
+        Response({"status": "503" if scenario == "transient-root" else "404"}),
+        b'{"error":{"message":"synthetic"}}',
+    )
+
+    def metadata_or_error(fid):
+        if fid == "client-root-folder" and scenario in ("missing-root", "transient-root"):
+            raise error
+        return original_metadata(fid)
+
+    drive.get_file_metadata.side_effect = metadata_or_error
+    with (
+        patch(
+            "backend.services.crm.drive_poll_service.asyncpg.create_pool",
+            AsyncMock(return_value=pool),
+        ),
+        patch(
+            "backend.services.integrations.service_account_drive_service.ServiceAccountDriveService",
+            return_value=drive,
+        ),
+        patch("backend.services.crm.drive_poll_service._enqueue_guardian_client", AsyncMock()),
+        patch("backend.services.crm.drive_poll_service.invalidate_crm_stats", AsyncMock()),
+        patch.dict("os.environ", {"DATABASE_URL": "postgresql://test/ownership"}),
+    ):
+        if scenario == "transient-root":
+            with pytest.raises(HttpError) as caught:
+                await _do_poll_drive_changes(inline_ocr=False, acquire_advisory_lock=False)
+            assert caught.value is error
+        else:
+            result = await _do_poll_drive_changes(inline_ocr=False, acquire_advisory_lock=False)
+            assert result["processed"] == (1 if scenario == "same-owner" else 0)
+    cursor_writes = [
+        c for c in conn.execute.call_args_list if "UPDATE system_settings" in c.args[0]
+    ]
+    assert len(cursor_writes) == (0 if scenario == "transient-root" else 1)
+    document_inserts = [
+        c for c in conn.fetchval.call_args_list if "INSERT INTO documents" in c.args[0]
+    ]
+    assert len(document_inserts) == (1 if scenario == "same-owner" else 0)
+    owner_reads = [c.args[0] for c in conn.fetch.call_args_list if "FROM clients" in c.args[0]]
+    assert owner_reads and all(
+        "google_drive_folder_id, drive_folder_id" in sql for sql in owner_reads
+    )
+    pool.close.assert_awaited_once()
