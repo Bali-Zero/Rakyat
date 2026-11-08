@@ -26,6 +26,7 @@ from backend.core.secret_log_redaction import install_telegram_token_redaction
 from backend.core.telegram_retirement import telegram_is_retired
 from backend.services.crm.document_categorizer import auto_categorize_document
 from backend.services.crm.drive_registration_visibility import drive_default_client_visible
+from backend.services.crm.drive_taxonomy import canonical_folders
 from backend.services.crm_guardian.summary_queue import (
     enqueue_client,
     enqueue_clients_for_company_folder,
@@ -279,6 +280,7 @@ async def poll_drive_changes(
         _send_telegram_alert(alert_msg)
 
     try:
+
         async def _run_poll() -> dict[str, Any]:
             return await _do_poll_drive_changes(
                 inline_ocr=inline_ocr,
@@ -769,16 +771,11 @@ async def _do_poll_drive_changes(
 def _infer_document_type(filename: str, folder_name: str) -> str:
     """Infer document type from filename and folder name.
 
-    Matches the official folder schema:
-    - 00_Profile: passport, foto, address
-    - 01_Immigration: e-visa, IMK/ITK, KITAS (NOT passport)
-    - 02_Company: AKTA, NIB, NPWP company, Profile Perseroan
-    - 03_Tax: SPT, LKPM, NPWP personal
-    - 04_Family: passport/visa/kitas of family members
-    - 99_Misc: everything else
+    Read both canonical and historical folders. Filename evidence has priority;
+    the combined company/tax folder alone cannot distinguish those categories.
     """
     fn = filename.lower()
-    fl = folder_name.lower()
+    fl = folder_name.lower().rsplit("/", 1)[-1]
 
     # Keyword-based detection (priority order)
     if "passport" in fn or "paspor" in fn:
@@ -805,7 +802,17 @@ def _infer_document_type(filename: str, folder_name: str) -> str:
         return "profile_perseroan"
 
     # Fallback by folder (supports nested: "02_company/akta" → "akta")
+    profile, immigration, company_tax, archive = canonical_folders("individual")
+    legal, tax, finance, company_archive = canonical_folders("company")
     folder_map = {
+        profile.lower(): "profile_document",
+        immigration.lower(): "immigration_document",
+        company_tax.lower(): "other",
+        archive.lower(): "misc_document",
+        legal.lower(): "company_document",
+        tax.lower(): "tax_document",
+        finance.lower(): "other",
+        company_archive.lower(): "misc_document",
         "00_profile": "profile_document",
         "01_immigration": "immigration_document",
         "02_company": "company_document",

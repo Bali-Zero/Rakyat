@@ -177,7 +177,14 @@ def _service(
     service.service = SimpleNamespace(files=lambda: files)
     service.root_folder_id = "root-id-1"
     if subfolders is not None:
-        service.STANDARD_SUBFOLDERS = subfolders
+        monkeypatch.setattr(
+            drive_module, "standard_subfolder_paths", lambda client_type: subfolders
+        )
+
+        async def resolve_for_log_test(name: str, parent: str, *, conn: Any) -> str:
+            return (await service.create_folder(name, parent_id=parent))["id"]
+
+        service.resolve_canonical_folder = resolve_for_log_test
     return service
 
 
@@ -470,42 +477,19 @@ async def test_uploaded_line_carries_the_id_and_the_byte_size_not_the_file_name(
 
 
 @pytest.mark.asyncio
-async def test_ensure_logs_the_lookup_failure_and_the_new_structure_without_the_client_name(
+async def test_ensure_fails_closed_when_lookup_fails(
     caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     files = _FakeFiles(list_outcome=_http_error(404, f"11_{_CLIENT_NAME}"))
-    service = _service(
-        monkeypatch,
-        files,
-        subfolders=["00_Profile", "01_Immigration", "01_Immigration/Actual Visa"],
-    )
+    service = _service(monkeypatch, files)
     pool = _FakePool()
-    with caplog.at_level(logging.DEBUG, logger=_LOGGER):
-        caplog.clear()
-        result = await service.ensure_client_folder(
+    with caplog.at_level(logging.DEBUG, logger=_LOGGER), pytest.raises(HttpError):
+        await service.ensure_client_folder(
             client_id=11, client_name=_CLIENT_NAME, client_type="individual", db_pool=pool
         )
-
-    assert result["created"] is True
-    assert result["root_folder_id"] == "created-1"
-    assert files.created_bodies[0] == {
-        "name": f"11_{_CLIENT_NAME}",
-        "mimeType": "application/vnd.google-apps.folder",
-        "parents": ["individuals-id-3"],
-    }
-    assert pool.state["google_drive_folder_id"] == "created-1"
+    assert files.created_bodies == []
+    assert "google_drive_folder_id" not in pool.state
     _assert_clean(caplog)
-    assert [r.levelname for r in _module_records(caplog)] == ["WARNING"] + ["INFO"] * 6
-    assert _lines(caplog) == [
-        "Drive lookup for existing folder failed for client 11 (HttpError, HTTP status: 404)"
-        " — will create",
-        f"{_OK} Created folder (ID: created-1)",
-        f"{_OK} Created folder (ID: created-2)",
-        f"{_OK} Created folder (ID: created-3)",
-        f"{_OK} Created folder (ID: created-4)",
-        f"{_OK} Drive folder IDs persisted to DB for client 11",
-        f"{_OK} Created client folder structure for client 11: created-1",
-    ]
 
 
 @pytest.mark.asyncio
@@ -517,6 +501,7 @@ async def test_ensure_reuse_line_keeps_the_client_id_and_the_folder_id(
             "files": [
                 {
                     "id": "twin-id",
+                    "mimeType": "application/vnd.google-apps.folder",
                     "name": f"11_{_CLIENT_NAME}",
                     "webViewLink": "https://drive.example/twin-id",
                 }
@@ -545,7 +530,7 @@ async def test_create_client_folder_structure_line_carries_the_client_id_not_the
     with caplog.at_level(logging.DEBUG, logger=_LOGGER):
         caplog.clear()
         result = await service.create_client_folder(
-            client_id=12, client_name=_CLIENT_NAME, client_type="company", db_pool=None
+            client_id=12, client_name=_CLIENT_NAME, client_type="company", db_pool=_FakePool()
         )
 
     assert result["root_folder_id"] == "created-1"
@@ -554,6 +539,7 @@ async def test_create_client_folder_structure_line_carries_the_client_id_not_the
     assert _lines(caplog) == [
         f"{_OK} Created folder (ID: created-1)",
         f"{_OK} Created folder (ID: created-2)",
+        f"{_OK} Drive folder IDs persisted to DB for client 12",
         f"{_OK} Created client folder structure for client 12: created-1",
     ]
 
@@ -569,27 +555,13 @@ async def test_root_id_persist_failure_logs_the_exception_class_not_its_text(
     )
     with caplog.at_level(logging.DEBUG, logger=_LOGGER):
         caplog.clear()
-        result = await service.create_client_folder(
-            client_id=12, client_name=_CLIENT_NAME, client_type="company", db_pool=pool
-        )
-
-    assert result["success"] is True
-    assert result["root_folder_id"] == "created-1"
+        with pytest.raises(pg_exceptions.ConnectionDoesNotExistError):
+            await service.create_client_folder(
+                client_id=12, client_name=_CLIENT_NAME, client_type="company", db_pool=pool
+            )
+    assert "google_drive_folder_id" not in pool.state
     _assert_clean(caplog, _DB_DETAIL)
-    assert [r.levelname for r in _module_records(caplog)] == [
-        "INFO",
-        "ERROR",
-        "INFO",
-        "INFO",
-        "INFO",
-    ]
-    assert _lines(caplog) == [
-        f"{_OK} Created folder (ID: created-1)",
-        "Failed to persist root folder id for client 12: ConnectionDoesNotExistError",
-        f"{_OK} Created folder (ID: created-2)",
-        f"{_OK} Drive folder IDs persisted to DB for client 12",
-        f"{_OK} Created client folder structure for client 12: created-1",
-    ]
+    assert _lines(caplog) == [f"{_OK} Created folder (ID: created-1)"]
 
 
 @pytest.mark.asyncio
@@ -601,7 +573,7 @@ async def test_subfolder_failure_logs_ids_class_and_status_not_the_path_or_the_e
     with caplog.at_level(logging.DEBUG, logger=_LOGGER):
         caplog.clear()
         subfolders = await service._create_standard_subfolders(
-            "root-id-5", client_id=13, db_pool=None
+            "root-id-5", client_id=13, db_pool=None, conn=_FakeConn(_FakePool())
         )
 
     assert list(subfolders) == ["00_Profile"]

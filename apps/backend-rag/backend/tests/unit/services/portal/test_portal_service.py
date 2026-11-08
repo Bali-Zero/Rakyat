@@ -308,16 +308,16 @@ class TestPortalServiceHelpers:
         assert self.cls._classify_document_category("unknown", "random.pdf") == "other"
 
     def test_get_drive_folder_immigration(self) -> None:
-        assert self.cls._get_drive_folder_for_category("immigration") == "01_Immigration"
+        assert self.cls._get_drive_folder_for_category("immigration") == "02_Immigration"
 
     def test_get_drive_folder_personal(self) -> None:
-        assert self.cls._get_drive_folder_for_category("personal") == "00_Profile"
+        assert self.cls._get_drive_folder_for_category("personal") == "01_Profile"
 
     def test_get_drive_folder_pma(self) -> None:
-        assert self.cls._get_drive_folder_for_category("pma") == "02_Company"
+        assert self.cls._get_drive_folder_for_category("pma") == "03_Company_and_Tax"
 
     def test_get_drive_folder_unknown(self) -> None:
-        assert self.cls._get_drive_folder_for_category("unknown") == "99_Misc"
+        assert self.cls._get_drive_folder_for_category("unknown") == "04_Archive"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -565,9 +565,7 @@ class TestPortalServiceMessages:
         assert result["sent_by"] == "client-1@example.com"
 
     @pytest.mark.asyncio
-    async def test_mark_message_read_rejects_client_to_team_message(
-        self, mock_pool: tuple
-    ) -> None:
+    async def test_mark_message_read_rejects_client_to_team_message(self, mock_pool: tuple) -> None:
         """Guilt: a client_to_team message (the client's own outbound
         message) must NOT be marked read via this path — the SQL guard
         (direction = 'team_to_client') means the UPDATE matches zero rows
@@ -589,9 +587,7 @@ class TestPortalServiceMessages:
         assert "direction = 'team_to_client'" in executed_sql
 
     @pytest.mark.asyncio
-    async def test_mark_message_read_accepts_team_to_client_message(
-        self, mock_pool: tuple
-    ) -> None:
+    async def test_mark_message_read_accepts_team_to_client_message(self, mock_pool: tuple) -> None:
         """Innocence: a genuine team_to_client message is still markable."""
         from backend.services.portal.portal_service import PortalService
 

@@ -659,39 +659,39 @@ async def test_rollback_commit_undoes_document(pool, seed, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# Company-document folder routing (regression: NIB/akta were filed to 99_Misc)
+# Company-document folder routing (regression: NIB/akta were filed to 04_Archive)
 # Pure unit — no DB. Falsifies the company→folder mismatch end to end.
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "doc_type, expected_category, expected_folder",
     [
-        ("nib", "pma", "02_Company"),
-        ("akta_pendirian", "pma", "02_Company"),
-        ("profil_perseroan", "pma", "02_Company"),
-        ("sk_kemenkumham", "pma", "02_Company"),
-        ("oss", "pma", "02_Company"),
-        ("passport", "immigration", "01_Immigration"),
-        ("visa", "immigration", "01_Immigration"),
-        ("kitas", "immigration", "01_Immigration"),
-        ("itap", "immigration", "01_Immigration"),
-        ("itk", "immigration", "01_Immigration"),
-        ("ktp", "personal", "00_Profile"),
-        ("family_card", "family", "04_Family"),
-        ("birth_certificate", "family", "04_Family"),
-        ("marriage_certificate", "family", "04_Family"),
-        ("payment_receipt", "other", "99_Misc"),
-        ("travel_ticket", "other", "99_Misc"),
-        ("bank_statement", "other", "99_Misc"),
-        ("medical_insurance", "other", "99_Misc"),
-        ("npwp", "tax", "03_Tax"),
-        ("skt", "tax", "03_Tax"),
+        ("nib", "pma", "03_Company_and_Tax"),
+        ("akta_pendirian", "pma", "03_Company_and_Tax"),
+        ("profil_perseroan", "pma", "03_Company_and_Tax"),
+        ("sk_kemenkumham", "pma", "03_Company_and_Tax"),
+        ("oss", "pma", "03_Company_and_Tax"),
+        ("passport", "immigration", "02_Immigration"),
+        ("visa", "immigration", "02_Immigration"),
+        ("kitas", "immigration", "02_Immigration"),
+        ("itap", "immigration", "02_Immigration"),
+        ("itk", "immigration", "02_Immigration"),
+        ("ktp", "personal", "01_Profile"),
+        ("family_card", "family", "01_Profile"),
+        ("birth_certificate", "family", "01_Profile"),
+        ("marriage_certificate", "family", "01_Profile"),
+        ("payment_receipt", "other", "04_Archive"),
+        ("travel_ticket", "other", "04_Archive"),
+        ("bank_statement", "other", "04_Archive"),
+        ("medical_insurance", "other", "04_Archive"),
+        ("npwp", "tax", "03_Company_and_Tax"),
+        ("skt", "tax", "03_Company_and_Tax"),
     ],
 )
 def test_company_doc_category_maps_to_company_folder(doc_type, expected_category, expected_folder):
     """Intake-derived category must be the CANONICAL one that resolves to the
     right Drive folder. Before the fix, nib/akta produced category='company',
-    which is absent from CATEGORY_TO_FOLDER → fell through to '99_Misc' (Drive
-    'Misc' instead of '02_Company'). This test fails if either side drifts:
+    which is absent from CATEGORY_TO_FOLDER → fell through to '04_Archive' (Drive
+    'Misc' instead of '03_Company_and_Tax'). This test fails if either side drifts:
     the intake category map, OR the folder map.
     """
     from backend.services.crm.document_categorizer import CATEGORY_TO_FOLDER
@@ -706,9 +706,9 @@ def test_company_doc_category_maps_to_company_folder(doc_type, expected_category
         f"{doc_type}: intake produced category={category!r}, "
         f"expected canonical {expected_category!r}"
     )
-    # The category MUST be a real key (not a silent 99_Misc fallthrough).
+    # The category MUST be a real key (not a silent 04_Archive fallthrough).
     assert category in CATEGORY_TO_FOLDER, (
-        f"category {category!r} missing from CATEGORY_TO_FOLDER → would file to 99_Misc"
+        f"category {category!r} missing from CATEGORY_TO_FOLDER → would file to 04_Archive"
     )
     assert CATEGORY_TO_FOLDER[category] == expected_folder
 
@@ -992,9 +992,7 @@ async def test_m248_chain_resolver_to_leva2_commit(pool, seed, monkeypatch):
         status = await conn.fetchval(
             "SELECT status FROM document_routing_proposal WHERE id=$1", seed["p_a"]
         )
-        npwp_after = await conn.fetchval(
-            "SELECT npwp FROM clients WHERE id=$1", seed["cid_a"]
-        )
+        npwp_after = await conn.fetchval("SELECT npwp FROM clients WHERE id=$1", seed["cid_a"])
     assert status == "auto_routed"
     # enricher canonicalized the formatted card value to bare digits in the same TX
     assert npwp_after == npwp_digits
@@ -1020,9 +1018,7 @@ async def test_m248_chain_dup_npwp_degrades_and_gate_refuses(pool, seed, monkeyp
             phone,
             seed["cid_a"],
         )
-        await conn.execute(
-            "UPDATE clients SET npwp=$1 WHERE id=$2", dup, seed["cid_b"]
-        )
+        await conn.execute("UPDATE clients SET npwp=$1 WHERE id=$2", dup, seed["cid_b"])
 
     entity = await resolve_entity({"npwp_number": dup}, "npwp", pool)
     assert entity["decision"] == "AMBIGUOUS"
@@ -1157,9 +1153,7 @@ async def test_npwp_company_collision_after_routing_refuses(pool, seed, monkeypa
         assert "company" in verdict["reason"]
     finally:
         async with pool.acquire() as conn:
-            await conn.execute(
-                "DELETE FROM companies WHERE company_name=$1", company_name
-            )
+            await conn.execute("DELETE FROM companies WHERE company_name=$1", company_name)
 
 
 async def test_malformed_matched_value_fails_closed(pool, seed, monkeypatch):
@@ -1518,9 +1512,7 @@ async def test_delivery_blocks_on_stale_normalized_phone_duplicate(pool, seed, m
             )
             # Simulate the historical stale row: wipe phone_normalized directly
             # (trg_normalize_phone fires only ON UPDATE OF phone, so this sticks).
-            await conn.execute(
-                "UPDATE clients SET phone_normalized=NULL WHERE id=$1", dup_cid
-            )
+            await conn.execute("UPDATE clients SET phone_normalized=NULL WHERE id=$1", dup_cid)
             locked = await conn.fetchrow(
                 "SELECT id, queue_id, doc_index, pipeline_version, status, "
                 "entity_resolution, routing, commit_gate "
@@ -1781,9 +1773,7 @@ async def test_upsert_match_sql_finds_raw_only_owner(pool):
                 f"rawonly-{uuid.uuid4().hex[:6]}",
                 "0" + tail,
             )
-            await conn.execute(
-                "UPDATE clients SET phone_normalized = NULL WHERE id=$1", cid
-            )
+            await conn.execute("UPDATE clients SET phone_normalized = NULL WHERE id=$1", cid)
             check = await conn.fetchrow(
                 "SELECT phone, phone_normalized FROM clients WHERE id=$1", cid
             )
@@ -1974,9 +1964,7 @@ async def test_delivery_fails_closed_when_selected_client_has_no_phone(pool, see
     monkeypatch.setattr(crm_push, "push_committed_document", _capture_push)
 
     async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE clients SET phone_normalized=NULL WHERE id=$1", seed["cid_a"]
-        )
+        await conn.execute("UPDATE clients SET phone_normalized=NULL WHERE id=$1", seed["cid_a"])
         await conn.execute(
             "UPDATE intake_queue SET sender_phone=$1 "
             "WHERE id=(SELECT queue_id FROM document_routing_proposal WHERE id=$2)",
@@ -2176,9 +2164,7 @@ async def test_dup_owner_sql_sees_raw_phone_behind_stale_normalized(pool):
             )
             # Stale divergent normalized via direct update (trigger fires only
             # ON UPDATE OF phone, so the bogus value sticks).
-            await conn.execute(
-                "UPDATE clients SET phone_normalized=$1 WHERE id=$2", stale_b, cid
-            )
+            await conn.execute("UPDATE clients SET phone_normalized=$1 WHERE id=$2", stale_b, cid)
             cores = incoming_phone_cores("62" + tail_a, None)
             assert cores == [tail_a]
             dup = await conn.fetchrow(DUP_OWNER_SQL, cores)
@@ -2283,6 +2269,7 @@ async def test_core_owner_ids_sql_sees_archived_coowner(pool):
             for cid in ids:
                 await conn.execute("DELETE FROM clients WHERE id=$1", cid)
 
+
 async def test_delivery_resolves_whatsapp_only_client(pool, seed, monkeypatch):
     """Round-17 F26 innocence: a selected client whose ONLY phone-ish value
     is whatsapp must still DELIVER — F24 made whatsapp a veto (co-owner
@@ -2306,8 +2293,7 @@ async def test_delivery_resolves_whatsapp_only_client(pool, seed, monkeypatch):
     wa_value = "+62 " + core
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE clients SET phone_normalized=NULL, phone=NULL, whatsapp=$1 "
-            "WHERE id=$2",
+            "UPDATE clients SET phone_normalized=NULL, phone=NULL, whatsapp=$1 WHERE id=$2",
             wa_value,
             seed["cid_a"],
         )
@@ -2326,7 +2312,6 @@ async def test_delivery_resolves_whatsapp_only_client(pool, seed, monkeypatch):
         result=SimpleNamespace(doc_id=None, audit_id=None),
     )
     assert captured["sender_phone"] == "62" + core
-
 
 
 # --------------------------------------------------------------------------- #
@@ -2354,7 +2339,9 @@ async def test_enrichment_skips_conflicting_passport_fill_only(pool, seed):
             "passport",
             {"passport_no": {"value": "ZZ999999"}},
         )
-        after = await conn.fetchrow("SELECT passport_number FROM clients WHERE id=$1", seed["cid_a"])
+        after = await conn.fetchrow(
+            "SELECT passport_number FROM clients WHERE id=$1", seed["cid_a"]
+        )
     assert "passport_number" not in written
     assert written["_skipped_conflicts"] == ["passport_number"]
     assert after["passport_number"] == "AB123456", "conflicting id must not overwrite the card"
@@ -2397,7 +2384,14 @@ class _FakeNpwpNibConn:
     async def fetch(self, _query: str, *_args) -> list[dict[str, str]]:
         return [
             {"column_name": c}
-            for c in ("full_name", "passport_number", "kitas_number", "npwp", "nib", "custom_fields")
+            for c in (
+                "full_name",
+                "passport_number",
+                "kitas_number",
+                "npwp",
+                "nib",
+                "custom_fields",
+            )
         ]
 
     async def fetchrow(self, _query: str, *_args) -> dict:
@@ -2430,7 +2424,9 @@ async def test_enrichment_npwp_nib_fill_only_conflict_and_fill():
     assert written2["nib"] == "1234567890123"
 
 
-async def test_execute_commit_logs_and_skips_conflicting_identifier(pool, seed, monkeypatch, caplog):
+async def test_execute_commit_logs_and_skips_conflicting_identifier(
+    pool, seed, monkeypatch, caplog
+):
     """Writer call site (F1): a conflict surfaced by the enricher is logged with the
     proposal id + column name (never the values, Law 2), and the document commit
     still succeeds — a skipped identifier field must never roll back the file."""
@@ -2451,12 +2447,12 @@ async def test_execute_commit_logs_and_skips_conflicting_identifier(pool, seed, 
     assert r.json()["outcome"] == "committed", "a skipped identifier must not block the doc commit"
 
     async with pool.acquire() as conn:
-        after = await conn.fetchrow("SELECT passport_number FROM clients WHERE id=$1", seed["cid_a"])
+        after = await conn.fetchrow(
+            "SELECT passport_number FROM clients WHERE id=$1", seed["cid_a"]
+        )
     assert after["passport_number"] == "AB123456"
 
-    messages = [
-        rec.getMessage() for rec in caplog.records if rec.name == "zantara.intake.writer"
-    ]
+    messages = [rec.getMessage() for rec in caplog.records if rec.name == "zantara.intake.writer"]
     assert any(
         "enrichment_conflict_skipped" in m and str(seed["p_a"]) in m and "passport_number" in m
         for m in messages
@@ -2543,7 +2539,9 @@ async def test_rollback_reverts_passport_number_on_cas_hit(pool, seed, monkeypat
     idem_key = r.json()["would_commit"]["idempotency_key"]
 
     async with pool.acquire() as conn:
-        before = await conn.fetchrow("SELECT passport_number FROM clients WHERE id=$1", seed["cid_a"])
+        before = await conn.fetchrow(
+            "SELECT passport_number FROM clients WHERE id=$1", seed["cid_a"]
+        )
     assert before["passport_number"] == "YC0000001"
 
     async with pool.acquire() as conn:
@@ -2557,7 +2555,9 @@ async def test_rollback_reverts_passport_number_on_cas_hit(pool, seed, monkeypat
     assert res.outcome == "rolled_back"
 
     async with pool.acquire() as conn:
-        after = await conn.fetchrow("SELECT passport_number FROM clients WHERE id=$1", seed["cid_a"])
+        after = await conn.fetchrow(
+            "SELECT passport_number FROM clients WHERE id=$1", seed["cid_a"]
+        )
     assert after["passport_number"] is None, "CAS hit — value unchanged since commit, must revert"
 
 
@@ -2588,8 +2588,12 @@ async def test_rollback_leaves_passport_number_on_cas_miss(pool, seed, monkeypat
     assert res.outcome == "rolled_back"
 
     async with pool.acquire() as conn:
-        after = await conn.fetchrow("SELECT passport_number FROM clients WHERE id=$1", seed["cid_a"])
-    assert after["passport_number"] == "CORRECTED9", "CAS miss — newer human truth must survive rollback"
+        after = await conn.fetchrow(
+            "SELECT passport_number FROM clients WHERE id=$1", seed["cid_a"]
+        )
+    assert after["passport_number"] == "CORRECTED9", (
+        "CAS miss — newer human truth must survive rollback"
+    )
 
 
 async def test_rollback_skips_deenrichment_for_legacy_audit(pool, seed, monkeypatch, caplog):
@@ -2627,10 +2631,12 @@ async def test_rollback_skips_deenrichment_for_legacy_audit(pool, seed, monkeypa
     assert res.outcome == "rolled_back"
 
     async with pool.acquire() as conn:
-        after = await conn.fetchrow("SELECT passport_number FROM clients WHERE id=$1", seed["cid_a"])
-    assert after["passport_number"] == "YC0000001", "legacy audit → no de-enrichment, value survives"
+        after = await conn.fetchrow(
+            "SELECT passport_number FROM clients WHERE id=$1", seed["cid_a"]
+        )
+    assert after["passport_number"] == "YC0000001", (
+        "legacy audit → no de-enrichment, value survives"
+    )
 
-    messages = [
-        rec.getMessage() for rec in caplog.records if rec.name == "zantara.intake.writer"
-    ]
+    messages = [rec.getMessage() for rec in caplog.records if rec.name == "zantara.intake.writer"]
     assert any("deenrich_skip_legacy" in m for m in messages), messages
