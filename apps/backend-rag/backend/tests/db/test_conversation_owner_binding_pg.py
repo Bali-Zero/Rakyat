@@ -461,20 +461,3 @@ async def test_agentic_history_finds_email_rows_by_profile_id_and_any_case(pool)
 
 
 # ------------------------------------------------------- API key principal (M1)
-
-
-def test_api_key_principal_email_is_unique_per_key_and_stable() -> None:
-    from backend.app.services.api_key_auth import APIKeyAuth
-
-    with patch("backend.app.services.api_key_auth.settings") as cfg:
-        cfg.api_keys = "synthetic-key-one,synthetic-key-two"  # pragma: allowlist secret
-        cfg.api_key_roles = (
-            "synthetic-key-one:admin,synthetic-key-two:admin"  # pragma: allowlist secret
-        )
-        auth = APIKeyAuth()
-    one = auth.validate_api_key("synthetic-key-one")
-    two = auth.validate_api_key("synthetic-key-two")
-    assert one["role"] == two["role"] == "admin"
-    assert one["email"] != two["email"]
-    assert auth.validate_api_key("synthetic-key-one")["email"] == one["email"]
-    assert "synthetic-key" not in one["email"] and one["email"].endswith("@zantara.dev")

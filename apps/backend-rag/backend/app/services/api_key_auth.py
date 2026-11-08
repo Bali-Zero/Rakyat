@@ -3,7 +3,6 @@ API Key Authentication Service
 Provides simple API key validation to bypass database dependency for testing
 """
 
-import hashlib
 import hmac
 import logging
 from datetime import datetime, timezone
@@ -12,12 +11,6 @@ from typing import Any
 from backend.app.core.config import settings
 
 logger = logging.getLogger(__name__)
-
-
-def _principal_email(role: str, api_key: str) -> str:
-    """Per-key synthetic email: role plus a one-way digest, never key material."""
-    digest = hashlib.sha256(b"api-key-principal:" + api_key.encode()).hexdigest()[:16]
-    return f"{role}-{digest}@zantara.dev"
 
 
 class APIKeyAuth:
@@ -134,7 +127,7 @@ class APIKeyAuth:
 
         return {
             "id": f"api_key_{api_key[:8]}",
-            "email": _principal_email(key_info["role"], api_key),
+            "email": f"{key_info['role']}@zantara.dev",
             "name": f"API User ({key_info['role']})",
             "role": key_info["role"],
             "status": "active",
@@ -183,7 +176,7 @@ class APIKeyAuth:
                 logger.info(f"S03: API key resolved from DB (role={db_role['role']})")
                 return {
                     "id": f"api_key_{api_key[:8]}",
-                    "email": _principal_email(db_role["role"], api_key),
+                    "email": f"{db_role['role']}@zantara.dev",
                     "name": f"API User ({db_role['role']})",
                     "role": db_role["role"],
                     "status": "active",
