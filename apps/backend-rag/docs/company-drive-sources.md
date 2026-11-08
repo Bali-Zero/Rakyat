@@ -43,8 +43,8 @@ Generic labels avoid copying stored folder names. Loading, empty, failure and in
 
 ## Acceptance and release ledger
 
-| Date       | State    | Observation / remaining gate                                                                                                                          |
-| ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Date       | State    | Observation / remaining gate                                                                                                                                |
+| ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-11-08 | Prepared | Typed staff-only endpoint, active-link CompanyTab selection guard, synthetic backend and UI tests; coordinator must independently accept, gate and release. |
 
 Bites: the staff Company tab renders direct Drive links with their retained
