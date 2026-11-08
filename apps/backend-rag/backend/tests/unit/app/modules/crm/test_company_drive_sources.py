@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.modules.crm.company_router import router
 
-FOLDER = "1SyntheticDriveFolderAbCdEf123456"
+FOLDER = "synthetic_drive_folder_00001"
 URL = "/api/crm/companies/17/drive-sources"
 
 
