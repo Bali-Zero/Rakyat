@@ -479,6 +479,18 @@ class _FakeOwnerPool:
 
     async def fetchrow(self, sql, *args):
         self.calls.append((sql, args))
+        if sql is self._mod._CLIENT_ACTIVE_SQL:
+            return (1,) if args[0] in self._client_folders else None
+        if sql is self._mod._CLIENT_FILE_OWNERSHIP_SQL:
+            return {"owned": False, "conflict": False}
+        if sql is self._mod._CLIENT_FOREIGN_FOLDER_SQL:
+            owner_id, folder_ids = args
+            foreign = any(
+                folders.intersection(folder_ids)
+                for other_id, folders in self._client_folders.items()
+                if other_id != owner_id
+            ) or any(folders.intersection(folder_ids) for folders in self._company_folders.values())
+            return (1,) if foreign else None
         owner_id, folder_ids = args
         if sql is self._mod._CLIENT_OWNS_FOLDER_SQL:
             owned = self._client_folders.get(owner_id, set())
@@ -516,7 +528,11 @@ async def test_write_guard_innocence_a_file_nested_under_the_owning_client_passe
     sitting in `<client>/01_Immigration/Actual Visa/…` must still be provable —
     the write guard cannot be stricter than the thing it authorises for."""
     fake_client = _FakeDriveFileClient(
-        {"fileA0001Z": ["actual-visa"], "actual-visa": ["immigration"], "immigration": ["client-1-folder"]}
+        {
+            "fileA0001Z": ["actual-visa"],
+            "actual-visa": ["immigration"],
+            "immigration": ["client-1-folder"],
+        }
     )
     _patch_drive_client(monkeypatch, mod, fake_client)
     pool = _FakeOwnerPool(mod, client_folders={1: {"client-1-folder"}})
@@ -625,6 +641,12 @@ class _BareConn:
         self._client_folders = client_folders
 
     async def fetchrow(self, sql, *args):
+        if sql is self._mod._CLIENT_ACTIVE_SQL:
+            return (1,) if args[0] in self._client_folders else None
+        if sql is self._mod._CLIENT_FILE_OWNERSHIP_SQL:
+            return {"owned": False, "conflict": False}
+        if sql is self._mod._CLIENT_FOREIGN_FOLDER_SQL:
+            return None
         owner_id, folder_ids = args
         assert sql is self._mod._CLIENT_OWNS_FOLDER_SQL
         owned = self._client_folders.get(owner_id, set())

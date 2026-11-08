@@ -25,10 +25,15 @@ from typing import Any
 
 import asyncpg
 
+from backend.app.core.config import settings
 from backend.app.utils.logging_utils import get_logger
 from backend.services.common.background import spawn
 from backend.services.common.cache import cache_invalidating
-from backend.services.crm.drive_taxonomy import folder_for_category
+from backend.services.crm.drive_taxonomy import (
+    canonical_folders,
+    folder_for_category,
+    physical_root_layout,
+)
 from backend.services.pii.violation_store import hash_subject
 from backend.services.portal._document_visibility import document_visibility_clause
 from backend.services.portal._drive_fetch import fetch_drive_file
@@ -894,7 +899,6 @@ class PortalDocumentsMixin:
             client_type = row["client_type"] or "individual"
             root_id = row["google_drive_folder_id"]
             if not root_id:
-                from backend.app.core.config import settings
                 from backend.services.integrations.service_account_drive_service import (
                     ServiceAccountDriveService,
                 )
@@ -937,14 +941,15 @@ class PortalDocumentsMixin:
                     )
 
             root = await drive.get_file("SYSTEM", root_id)
-            if (
-                root.get("id") != root_id
-                or root.get("mimeType") != "application/vnd.google-apps.folder"
-                or root.get("trashed") is not False
-            ):
-                raise RuntimeError("Client Drive root is not an active folder")
+            layout = physical_root_layout(
+                root,
+                root_id,
+                client_type,
+                individuals_parent=settings.gdrive_individuals_folder_id,
+                companies_parent=settings.gdrive_companies_folder_id,
+            )
             category = self._classify_document_category(document_type, file_name)
-            folder_name = folder_for_category(category, client_type)
+            folder_name = folder_for_category(category, layout)
             cached_id = await conn.fetchval(
                 "SELECT subfolder_id FROM client_drive_subfolders WHERE client_id = $1 AND subfolder_name = $2 LIMIT 1",
                 client_id,
@@ -1033,8 +1038,18 @@ class PortalDocumentsMixin:
         if not root_folder_id:
             raise RuntimeError(f"No Drive root folder for client {client_id}")
 
+        root = await sa_drive.get_file_metadata(root_folder_id)
+        layout = physical_root_layout(
+            root,
+            root_folder_id,
+            row["client_type"] if row else None,
+            individuals_parent=settings.gdrive_individuals_folder_id,
+            companies_parent=settings.gdrive_companies_folder_id,
+        )
         if category is not None:
-            category_folder = folder_for_category(category, (row["client_type"] if row else None))
+            category_folder = folder_for_category(category, layout)
+        elif category_folder not in canonical_folders(layout):
+            raise ValueError("Destination does not match the physical Drive layout")
         subfolder_id = await conn.fetchval(
             """SELECT subfolder_id FROM client_drive_subfolders
                WHERE client_id = $1 AND subfolder_name = $2 LIMIT 1""",
@@ -1107,7 +1122,8 @@ class PortalDocumentsMixin:
                 category_folder=category_folder,
                 category=category,
             )
-            folder_path = f"{client_id}_{client_name}/{category_folder}"
+            destination = await sa_drive.get_file_metadata(target_folder_id)
+            folder_path = f"{client_id}_{client_name}/{destination['name']}"
             uploaded_file = await sa_drive.upload_file_to_folder(
                 folder_id=target_folder_id,
                 file_content=file_content,
