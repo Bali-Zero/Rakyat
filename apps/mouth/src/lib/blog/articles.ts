@@ -510,6 +510,9 @@ async function fetchBackendArticles(options?: {
 async function fetchBackendArticleBySlug(
   slug: string,
 ): Promise<BackendNewsItem | null> {
+  // encodeURIComponent leaves "." and ".." alone and the URL parser collapses them, so an
+  // empty or dot-segment slug would request "/api/news/" or "/api/". Not a news slug.
+  if (!slug || slug === "." || slug === "..") return null;
   try {
     const url = `${BACKEND_URL}/api/news/${encodeURIComponent(slug)}`;
     const res = await fetch(url, {

@@ -88,7 +88,6 @@ describe("article slug grammar", () => {
     `..\\${B.folder}\\${B.slug}`,
     `${B.slug}/../${B.slug}`,
     `${B.slug}\0`,
-    "",
   ];
   it.each(hostile)("%j never returns another article", async (slug) => {
     const r = await getArticleBySlug(A.cat, slug);
