@@ -258,6 +258,7 @@ class Pulse:
             WHERE t.relkind = 'r' AND a.attnum > 0 AND NOT a.attisdropped
               AND n.nspname = 'public'
               AND pg_get_serial_sequence(t.relname::text, a.attname::text) IS NOT NULL
+              AND has_table_privilege(t.oid, 'SELECT')
         """
         try:
             async with self._pool.acquire() as conn:
