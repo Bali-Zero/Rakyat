@@ -783,8 +783,10 @@ describe("Needs attention — the backend could not build the list", () => {
   });
 
   it("the numbering counts the notice as a section, and Family & companies is always one", () => {
-    expect(overviewLedgerCount([], [], [], "attention_build_failed")).toBe(2);
-    expect(overviewLedgerCount([], [], [], null)).toBe(1);
+    expect(
+      overviewLedgerCount([], [], [], "attention_build_failed", "2026-11-03"),
+    ).toBe(2);
+    expect(overviewLedgerCount([], [], [], null, "2026-11-03")).toBe(1);
   });
 });
 

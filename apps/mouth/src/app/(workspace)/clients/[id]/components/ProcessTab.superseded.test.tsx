@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientProfile } from "@/lib/api/crm/crm.types";
+import { FIXED_NOW, useFixedClock } from "./fixedClock.testutil";
 import { ProcessTab } from "./ProcessTab";
 
 vi.mock("@/lib/api", () => ({ api: { crm: { deletePractice: vi.fn() } } }));
@@ -10,8 +11,13 @@ vi.mock("sonner", () => ({
 }));
 vi.mock("./AiSummaryCard", () => ({ AiSummaryCard: () => null }));
 
+beforeEach(useFixedClock);
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 const inDays = (n: number) =>
-  new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+  new Date(FIXED_NOW.getTime() + n * 86_400_000).toISOString().slice(0, 10);
 
 type P = ClientProfile["practices"][number];
 const oldVisa = {

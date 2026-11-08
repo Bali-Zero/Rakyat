@@ -28,9 +28,7 @@ describe("Visa Oracle Privacy Policy V1", () => {
     const user = userEvent.setup();
     render(<VisaOraclePrivacyPage />);
 
-    await user.click(
-      screen.getByRole("button", { name: "Switch to Bahasa Indonesia" }),
-    );
+    await user.click(screen.getByRole("button", { name: /bahasa indonesia/i }));
 
     expect(
       screen.getByRole("heading", { name: "Data Visa Oracle Anda" }),
@@ -47,9 +45,7 @@ describe("Visa Oracle Privacy Policy V1", () => {
     const user = userEvent.setup();
     render(<VisaOraclePrivacyPage />);
 
-    await user.click(
-      screen.getByRole("button", { name: "Switch to Bahasa Indonesia" }),
-    );
+    await user.click(screen.getByRole("button", { name: /bahasa indonesia/i }));
 
     expect(
       screen.getByText(
