@@ -347,10 +347,10 @@ class TestE2EConversationFlow:
         assert conn.fetchrow.await_count == 2
         select, insert = conn.fetchrow.await_args_list
         assert " ".join(select.args[0].split()) == (
-            "SELECT id FROM conversations WHERE session_id = $1 "
+            "SELECT id FROM conversations WHERE session_id = $1 AND user_id = $2 "
             "ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE"
         )
-        assert select.args[1:] == ("test-session",)
+        assert select.args[1:] == ("test-session", user_email)
         assert " ".join(insert.args[0].split()) == (
             "INSERT INTO conversations "
             "(user_id, session_id, messages, metadata, created_at) "

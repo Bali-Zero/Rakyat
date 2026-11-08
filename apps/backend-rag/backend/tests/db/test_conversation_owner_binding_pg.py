@@ -234,6 +234,26 @@ async def test_save_route_lookup_sql_carries_the_owner() -> None:
     assert "user_id = $2" in lookup_sql and lookup_args == ["s-x", BOB]
 
 
+@pytest.mark.asyncio
+async def test_conversation_service_lookup_sql_carries_the_owner() -> None:
+    from backend.services.misc import conversation_service as module
+
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(return_value={"id": 7})
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=conn)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    with (
+        patch.object(module, "conversation_write_connection", return_value=cm),
+        patch.object(module, "lock_conversation_session", new=AsyncMock()),
+    ):
+        await module.ConversationService(MagicMock()).save_conversation(
+            user_email=BOB, messages=BOB_MSG, session_id="s-x"
+        )
+    lookup_sql, *lookup_args = conn.fetchrow.await_args_list[0].args
+    assert "user_id = $2" in lookup_sql and lookup_args == ["s-x", BOB]
+
+
 # ------------------------------------------------------- CRM interaction import
 
 
