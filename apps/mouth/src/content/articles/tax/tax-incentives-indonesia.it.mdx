@@ -73,6 +73,7 @@ tags:
 canonicalUrl: "https://balizero.com/it/tax/tax-incentives-indonesia"
 ogImage: "/static/insights/tax/tax-incentives.jpg"
 twitterCard: "summary_large_image"
+source_sha256: "f4817a85f9bcb07a7f2f86d01ea61458d4dfaf2c2f85f336b851f5392a2ea06e"
 ---
 
 import {
@@ -80,57 +81,66 @@ import {
   Checklist,
   InfoCard,
   AskZantara,
+  KeyTakeaway,
 } from "@/components/insights/interactive";
+import { HeaderWhatsAppCTA } from "@/components/blog/HeaderWhatsAppCTA";
+import { ArticleClusterCTA } from "@/components/blog/ArticleClusterCTA";
 
-# Incentivi Fiscali Indonesia 2026: Guida ai Benefici Aziendali
+# Incentivi fiscali Indonesia 2026: Tax Holiday, Allowance e Pioneer Industries
 
-L'Indonesia offre vari incentivi fiscali per attrarre investimenti. Ecco cosa è disponibile per le imprese idonee.
+Il sistema di incentivi fiscali dell'Indonesia è uno dei più aggressivi del Sud-est asiatico — e uno dei meno compresi dagli investitori stranieri. Il programma di punta, il Tax Holiday, offre l'esenzione del 100% dalla Corporate Income Tax per un massimo di 20 anni per le pioneer industries qualificate con investimenti superiori a IDR 100 miliardi. Al di sotto di tale soglia, il Tax Allowance prevede una deduzione aggiuntiva del 30% in sei anni. Per le imprese ad alta intensità di R&D, il Super Deduction si spinge oltre: una deduzione del 300% sulle spese di ricerca qualificate. Questa guida copre tutti i principali incentivi, chi ne ha diritto, quanto dura il beneficio e come presentare domanda — con l'elenco delle pioneer industries 2026 e le soglie di investimento verificate rispetto alle normative BKPM vigenti.
 
-## Incentivi Disponibili
+<KeyTakeaway>
+  **TL;DR:** L'Indonesia offre 4 principali incentivi fiscali per gli investitori. Tax Holiday: esenzione CIT del 100% per 5–20 anni (pioneer industries, IDR 100B+). Tax Allowance: deduzione del 30% in 6 anni (settori più ampi). Super Deduction: 300% R&D / 200% formazione professionale. Aliquota SME: 0,5% dei ricavi se inferiori a IDR 4,8B/anno. Domanda tramite OSS.
+</KeyTakeaway>
+
+<HeaderWhatsAppCTA />
+
+## Incentivi disponibili
 
 <ComparisonTable
-  title="Principali Incentivi Fiscali"
-  description="Cosa è disponibile"
+  title="Main Tax Incentives"
+  description="What's available"
   items={[
     {
       name: "Tax Holiday",
-      subtitle: "Esenzione totale IRES",
+      subtitle: "Full CIT exemption",
       values: {
-        Beneficio: "100% esenzione IRES",
-        Durata: "5-20 anni",
-        Per: "Industrie pioniere, grandi investimenti",
-        Minimo: "100-500+ miliardi IDR",
+        Benefit: "100% CIT exemption",
+        Duration: "5-20 years",
+        For: "Pioneer industries, large investment",
+        Minimum: "IDR 100B-500B+",
       },
       highlight: true,
     },
     {
       name: "Tax Allowance",
-      subtitle: "Deduzione investimenti",
+      subtitle: "Investment deduction",
       values: {
-        Beneficio: "30% deduzione extra",
-        Durata: "6 anni",
-        Per: "Vari settori",
-        Minimo: "Dipende dal settore",
+        Benefit: "30% additional deduction",
+        Duration: "6 years",
+        For: "Various sectors",
+        Minimum: "Sector dependent",
       },
     },
     {
       name: "Super Deduction",
-      subtitle: "R&D e formazione",
+      subtitle: "R&D and training",
       values: {
-        Beneficio: "200-300% deduzione",
-        Durata: "Per attività",
-        Per: "R&D, formazione professionale",
-        Minimo: "Nessun minimo",
+        Benefit: "200-300% deduction",
+        Duration: "Per activity",
+        For: "R&D, vocational training",
+        Minimum: "No minimum",
       },
     },
     {
-      name: "Aliquota PMI",
-      subtitle: "Aliquota ridotta",
+      name: "SME Tax Rate",
+      subtitle: "Reduced rate",
       values: {
-        Beneficio: "0,5% del fatturato",
-        Durata: "Finché idonei",
-        Per: "Fatturato sotto 4,8 Mld IDR",
-        Minimo: "N/A",
+        Benefit: "0.5% of turnover",
+        Duration: "While eligible",
+        For: "Under IDR 4.8B revenue",
+        Minimum: "N/A",
       },
     },
   ]}
@@ -142,47 +152,47 @@ L'Indonesia offre vari incentivi fiscali per attrarre investimenti. Ecco cosa è
 
 ### Cos'è?
 
-<InfoCard variant="note" title="Esenzione totale IRES">
-**La Tax Holiday offre:**
+<InfoCard variant="note" title="Full CIT Exemption">
+**Tax Holiday prevede:**
 
-- 100% di esenzione dall'imposta sul reddito delle società (IRES)
+- Esenzione del 100% dalla Corporate Income Tax
 - Per 5-20 anni a seconda dell'investimento
 - Riduzione del 50% per i 2 anni successivi
-- Per le industrie pioniere
+- Per le pioneer industries
 
 Questo è l'incentivo più generoso disponibile.
 
 </InfoCard>
 
-### Idoneità
+### Requisiti
 
-| Requisito           | Criteri                              |
-| ------------------- | ------------------------------------ |
-| Industria pioniera  | Lista specifica di settori           |
-| Investimento minimo | 100+ miliardi IDR (alcuni settori)   |
-| Nuovo investimento  | Non espansione di attività esistenti |
-| Entità legale       | PT PMA o PT                          |
-| Piani               | Business plan approvato              |
+| Requisito | Criteri |
+| ------------------ | ------------------------------- |
+| Pioneer industry | Elenco specifico di settori |
+| Investimento minimo | IDR 100 miliardi+ (alcuni settori) |
+| Nuovo investimento | Non ampliamento di attività esistente |
+| Entità giuridica | PT PMA o PT |
+| Piani | Business plan approvato |
 
 ### Durata in base all'investimento
 
 | Investimento (IDR) | Periodo di esenzione |
-| ------------------ | -------------------- |
-| 100M - 500M        | 5 anni               |
-| 500M - 1T          | 7 anni               |
-| 1T - 5T            | 10 anni              |
-| 5T - 15T           | 15 anni              |
-| Oltre 15T          | 20 anni              |
+| ---------------- | -------------- |
+| 100B - 500B | 5 anni |
+| 500B - 1T | 7 anni |
+| 1T - 5T | 10 anni |
+| 5T - 15T | 15 anni |
+| Oltre 15T | 20 anni |
 
-### Le industrie pioniere includono
+### Le Pioneer Industries includono
 
 - Metalli di base
 - Raffinazione del petrolio
 - Petrolchimica
 - Macchinari industriali
 - Telecomunicazioni
-- Infrastrutture per l'economia digitale
-- Certi altri settori
+- Infrastrutture dell'economia digitale
+- Alcuni altri
 
 ---
 
@@ -190,76 +200,76 @@ Questo è l'incentivo più generoso disponibile.
 
 ### Cos'è?
 
-<InfoCard variant="note" title="Deduzione investimenti">
-**La Tax Allowance offre:**
+<InfoCard variant="note" title="Investment Deduction">
+**Tax Allowance prevede:**
 
-- 30% di deduzione supplementare sull'investimento
+- Deduzione aggiuntiva del 30% sull'investimento
 - In 6 anni (5% all'anno)
 - Ammortamento accelerato
 - Riporto delle perdite fino a 10 anni
 - Ritenuta ridotta sui dividendi
 
-Più accessibile della Tax Holiday per investimenti più piccoli.
+Più accessibile rispetto al Tax Holiday per investimenti di minore entità.
 
 </InfoCard>
 
-### Settori Idonei
+### Settori ammissibili
 
-| Categoria                | Esempi                 |
-| ------------------------ | ---------------------- |
-| Manifatturiero           | Varie industrie        |
-| Agricoltura              | Piantagioni, aziende   |
-| Turismo                  | Hotel, attrazioni      |
-| Infrastrutture           | Energia, trasporti     |
-| Zone economiche speciali | In base alla posizione |
+| Categoria | Esempi |
+| ---------------------- | -------------------- |
+| Manifattura | Vari settori industriali |
+| Agricoltura | Piantagioni, coltivazioni |
+| Turismo | Hotel, attrazioni |
+| Infrastrutture | Energia, trasporti |
+| Zone economiche speciali | In base alla localizzazione |
 
 ### Requisiti
 
 <Checklist
-  title="Requisiti Tax Allowance"
-  description="Criteri di idoneità"
+  title="Tax Allowance Requirements"
+  description="Eligibility criteria"
   persistKey="tax-allowance-checklist"
   items={[
     {
       id: "sector",
-      label: "Settore aziendale idoneo",
-      description: "Presente nella lista approvata",
+      label: "Eligible business sector",
+      description: "On approved list",
       required: true,
       category: "eligibility",
     },
     {
       id: "investment",
-      label: "Nuovo investimento",
-      description: "Non attività esistente",
+      label: "New investment",
+      description: "Not existing business",
       required: true,
       category: "eligibility",
     },
     {
       id: "employment",
-      label: "Creazione di posti di lavoro",
-      description: "Assunzione di lavoratori indonesiani",
+      label: "Employment creation",
+      description: "Hire Indonesian workers",
       required: true,
       category: "requirements",
     },
     {
       id: "location",
-      label: "Posizione prioritaria",
-      description: "Alcune posizioni hanno la priorità",
+      label: "Priority location",
+      description: "Some locations get priority",
       required: false,
       category: "requirements",
     },
     {
       id: "application",
-      label: "Richiesta tramite OSS",
-      description: "Corretto processo di domanda",
+      label: "Apply through OSS",
+      description: "Proper application process",
       required: true,
       category: "process",
     },
   ]}
   categories={[
-    { id: "eligibility", label: "Idoneità", color: "blue" },
-    { id: "requirements", label: "Requisiti", color: "green" },
-    { id: "process", label: "Processo", color: "amber" },
+    { id: "eligibility", label: "Eligibility", color: "blue" },
+    { id: "requirements", label: "Requirements", color: "green" },
+    { id: "process", label: "Process", color: "amber" },
   ]}
   showProgress={true}
 />
@@ -268,187 +278,191 @@ Più accessibile della Tax Holiday per investimenti più piccoli.
 
 ## Super Deduction
 
-### Super Deduzione R&D
+### Super Deduction R&D
 
-| Caratteristica | Dettagli                               |
-| -------------- | -------------------------------------- |
-| Beneficio      | 300% di deduzione                      |
-| Per            | Attività di Ricerca e Sviluppo         |
-| Ambito         | In Indonesia, per benefici indonesiani |
-| Domanda        | Deve essere approvata                  |
+| Caratteristica | Dettagli |
+| ----------- | ------------------------------------ |
+| Beneficio | Deduzione del 300% |
+| Per | Attività di ricerca e sviluppo |
+| Ambito | In Indonesia, a beneficio dell'Indonesia |
+| Domanda | Deve essere approvata |
 
-### Formazione Professionale
+### Formazione professionale
 
-| Caratteristica | Dettagli                          |
-| -------------- | --------------------------------- |
-| Beneficio      | 200% di deduzione                 |
-| Per            | Formazione lavoratori indonesiani |
-| Ambito         | Programmi di formazione approvati |
-| Partnership    | Con istituzioni professionali     |
+| Caratteristica | Dettagli |
+| ----------- | ---------------------------- |
+| Beneficio | Deduzione del 200% |
+| Per | Formazione di lavoratori indonesiani |
+| Ambito | Programmi di formazione approvati |
+| Partnership | Con istituti professionali |
 
 ---
 
 ## Zone Economiche Speciali (KEK)
 
-### Benefici della Zona
+### Vantaggi delle zone
 
-<InfoCard variant="tip" title="Incentivi KEK">
-**Le Zone Economiche Speciali offrono:**
+<InfoCard variant="tip" title="KEK Incentives">
+**Le Special Economic Zones offrono:**
 
-- Disponibilità di Tax Holiday
+- Accesso al Tax Holiday
 - Esenzioni dai dazi all'importazione
 - Permessi semplificati
-- Supporto alle infrastrutture
-- Benefici del cluster
+- Supporto infrastrutturale
+- Vantaggi di cluster
 
-Considera le posizioni KEK per il settore manifatturiero e l'esportazione.
+Valuta le sedi KEK per manifattura ed export.
 
 </InfoCard>
 
 ### Principali KEK
 
-| Zona           | Posizione              | Focus                    |
-| -------------- | ---------------------- | ------------------------ |
-| Sei Mangkei    | Sumatra Settentrionale | Olio di palma, industria |
-| Tanjung Lesung | Banten                 | Turismo                  |
-| Mandalika      | Lombok                 | Turismo                  |
-| Galang Batang  | Bintan                 | Industria                |
-| Kendal         | Giava Centrale         | Industria                |
+| Zona | Localizzazione | Specializzazione |
+| -------------- | ------------- | ----------------------- |
+| Sei Mangkei | North Sumatra | Olio di palma, manifattura |
+| Tanjung Lesung | Banten | Turismo |
+| Mandalika | Lombok | Turismo |
+| Galang Batang | Bintan | Manifattura |
+| Kendal | Central Java | Manifattura |
 
 ---
 
-## Benefici sui Dazi all'Importazione
+## Benefici sui dazi all'importazione
 
-### Struttura KITE
+### Strumento KITE
 
-| Caratteristica | Beneficio                       |
-| -------------- | ------------------------------- |
-| Cosa           | Esenzione dazi all'importazione |
-| Per            | Produttori orientati all'export |
-| Condizione     | Esportazione 75%+               |
-| Articoli       | Materie prime, componenti       |
+| Caratteristica | Beneficio |
+| --------- | ----------------------------- |
+| Cosa | Esenzione dai dazi all'importazione |
+| Per | Produttori orientati all'export |
+| Condizione | Obbligo di esportare il 75%+ |
+| Beni | Materie prime, componenti |
 
-### Zona Franca (Bonded Zone)
+### Bonded Zone
 
-| Caratteristica | Beneficio                        |
-| -------------- | -------------------------------- |
-| Cosa           | Sospensione dei dazi             |
-| Per            | Operazioni manifatturiere        |
-| Condizione     | Situata in area franca           |
-| Articoli       | Importazione per ri-esportazione |
+| Caratteristica | Beneficio |
+| --------- | ------------------------ |
+| Cosa | Sospensione dei dazi |
+| Per | Attività manifatturiere |
+| Condizione | Sede in area bonded |
+| Beni | Importazioni per riesportazione |
 
 ---
 
-## Benefici per le PMI
+## Benefici SME
 
-### Aliquota Piccole Imprese
+### Aliquota per piccole imprese
 
-<InfoCard variant="note" title="0,5% Imposta Finale">
+<InfoCard variant="note" title="0.5% Final Tax">
 **Per le piccole imprese:**
 
-- Fatturato inferiore a 4,8 miliardi IDR/anno
-- Pagano lo 0,5% del fatturato (non dell'utile)
-- Imposta finale (conformità semplice)
-- Può continuare fino al superamento della soglia
+- Ricavi inferiori a IDR 4,8 miliardi/anno
+- Versamento dello 0,5% dei ricavi (non dell'utile)
+- Imposta sostitutiva (adempimenti semplificati)
+- Applicabile fino al superamento della soglia
 
-Vantaggio significativo per le nuove attività.
+Vantaggio significativo per le imprese in fase di avvio.
 
 </InfoCard>
 
 ---
 
-## Processo di Candidatura
+## Procedura di domanda
 
-### Come Presentare Domanda
+### Come presentare domanda
 
-| Incentivo       | Canale di Domanda            |
-| --------------- | ---------------------------- |
-| Tax Holiday     | OSS / Ministero Investimenti |
-| Tax Allowance   | OSS / Ufficio delle Entrate  |
-| Super Deduction | Ufficio delle Entrate        |
-| Benefici KEK    | Amministratore KEK           |
-| KITE            | Dogana                       |
+| Incentivo | Canale di domanda |
+| --------------- | ------------------------- |
+| Tax Holiday | OSS / Investment Ministry |
+| Tax Allowance | OSS / Tax Office |
+| Super Deduction | Tax Office |
+| KEK benefits | KEK Administrator |
+| KITE | Customs |
 
-### Processo Generale
+### Procedura generale
 
-| Passo | Azione                   |
-| ----- | ------------------------ |
-| 1     | Determinare l'idoneità   |
-| 2     | Preparare documentazione |
-| 3     | Inviare la domanda       |
-| 4     | Revisione autorità       |
-| 5     | Decisione emessa         |
-| 6     | Implementazione          |
-| 7     | Conformità continua      |
+| Fase | Azione |
+| ---- | --------------------- |
+| 1 | Verifica dell'ammissibilità |
+| 2 | Preparazione della documentazione |
+| 3 | Presentazione della domanda |
+| 4 | Esame da parte delle autorità |
+| 5 | Emissione della decisione |
+| 6 | Attuazione |
+| 7 | Conformità continua |
 
 ---
 
-## Requisiti di Conformità
+## Obblighi di conformità
 
-### Mantenimento dei Benefici
+### Mantenimento dei benefici
 
-| Requisito             | Frequenza              |
-| --------------------- | ---------------------- |
-| Rapporto al BKPM      | Trimestrale/Annuale    |
-| Dichiarazioni fiscali | Mensile/Annuale        |
-| Realizzare investim.  | Secondo cronoprogramma |
-| Target occupazionali  | Come concordato        |
-| Target di produzione  | Come concordato        |
+| Requisito | Frequenza |
+| ------------------ | ---------------- |
+| Report a BKPM | Trimestrale/Annuale |
+| Dichiarazioni fiscali | Mensile/Annuale |
+| Realizzazione dell'investimento | Secondo cronoprogramma |
+| Obiettivi occupazionali | Come da impegni |
+| Obiettivi produttivi | Come da impegni |
 
-<InfoCard variant="warning" title="Revoca dei Benefici">
+<InfoCard variant="warning" title="Loss of Benefits">
 **Gli incentivi possono essere revocati se:**
 
-- Non si realizza l'investimento
-- Non si raggiungono i target occupazionali
-- Si cambiano le attività aziendali
-- Si violano i termini
+- Mancata realizzazione dell'investimento
+- Mancato raggiungimento degli obiettivi occupazionali
+- Modifica delle attività d'impresa
+- Violazione delle condizioni
 - Problemi di conformità fiscale
 
-Mantieni la conformità con cura!
+Mantieni la conformità con attenzione!
 
 </InfoCard>
 
 ---
 
-## Ne Vale la Pena?
+## Ne vale la pena?
 
 ### Considerazioni
 
-| Pro                         | Contro                       |
-| --------------------------- | ---------------------------- |
-| Notevole risparmio fiscale  | Complessità della domanda    |
-| Benefici a lungo termine    | Onere di conformità          |
-| Miglioramento del cash flow | Impegni richiesti            |
-| Vantaggio competitivo       | Può limitare la flessibilità |
+| Pro | Contro |
+| ----------------------- | ---------------------- |
+| Risparmio fiscale significativo | Complessità della domanda |
+| Benefici a lungo termine | Onere di conformità |
+| Miglioramento del flusso di cassa | Impegni richiesti |
+| Vantaggio competitivo | Possibile riduzione della flessibilità |
 
-### Chi Dovrebbe Fare Domanda?
+### Chi dovrebbe presentare domanda?
 
-| Ottimi Candidati         | Potrebbe Non Valerne la Pena |
-| ------------------------ | ---------------------------- |
-| Grandi investimenti      | Piccole operazioni           |
-| Industrie pioniere       | Imprese di servizi           |
-| Settore manifatturiero   | Progetti a breve termine     |
-| Operazioni a lungo term. | Business plan incerti        |
+| Candidati ideali | Potrebbe non convenire |
+| -------------------- | ------------------------- |
+| Grandi investimenti | Piccole operazioni |
+| Pioneer industries | Imprese di servizi |
+| Manifattura | Progetti a rapida realizzazione |
+| Operazioni a lungo termine | Piani d'impresa incerti |
 
 ---
 
-## Domande Comuni
+<ArticleClusterCTA slug="tax-incentives-indonesia" />
+
+## Domande frequenti
 
 <AskZantara
-  context="Incentivi fiscali Indonesia, tax holiday, benefici investimenti, tax allowance"
-  placeholder="Chiedi sugli incentivi fiscali..."
+  context="Tax incentives Indonesia, tax holiday, investment benefits, tax allowance"
+  placeholder="Ask about tax incentives..."
   suggestedQuestions={[
-    "La mia azienda ha diritto alla tax holiday?",
-    "Quanto tempo richiede la domanda?",
-    "Posso perdere l'incentivo?",
-    "La tax allowance è meglio della tax holiday?",
+    "Does my business qualify for tax holiday?",
+    "How long does application take?",
+    "Can I lose the incentive?",
+    "Is tax allowance better than tax holiday?",
   ]}
 />
 
 ---
 
-## Articoli Correlati
+## Articoli correlati
 
-- [Imposta sul Reddito delle Società](/it/insights/tax-legal/corporate-income-tax)
-- [Guida alla Configurazione PT PMA](/business/foreign-company-incorporation-steps?lang=it)
-- [Guida al Business Manifatturiero](/it/insights/business/manufacturing-business-guide)
+- [Imposta dello 0% dell'Indonesia sui redditi esteri](/tax/indonesia-zero-tax-foreign-income-2026)
+- [Elenco Pioneer Industries Tax Holiday 2026](/tax/tax-holiday-pioneer-industries-list-2026)
+- [Bali KEK: agevolazioni fiscali in stile Dubai per gli investitori](/visas/bali-kek-financial-zone-targets-dubai-style-tax-breaks-for-investors)
+- [Residenza fiscale in Indonesia: la regola dei 183 giorni](/tax/tax-residency-indonesia)
+- [Implicazioni fiscali KBLI 2025](/business/kbli-2025-tax-implications-klu)
