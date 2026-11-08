@@ -21,6 +21,13 @@ export interface JournalArticle {
   readonly finalSourceUrl: string | null;
   readonly destinationStatus: JournalDestinationStatus;
   readonly localHref?: string;
+  /**
+   * The homepage-layout.json slot that placed this article on the home
+   * (hero_main..hero_5, latest_1..latest_5, insight_1..insight_3). Rendered as
+   * data-homepage-position on its links, which the News Room live verifier
+   * reads; absent for an article that fills the Journal from the feed.
+   */
+  readonly homepagePosition?: string;
   readonly summary?: string;
   readonly featured?: boolean;
   readonly reading?: {

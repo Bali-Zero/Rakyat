@@ -98,3 +98,33 @@ describe("R19 Journal Insight row", () => {
     ).toEqual([]);
   });
 });
+
+describe("R19 Journal homepage positions", () => {
+  it("marks each article with the layout slot that placed it, and none for feed fill-ins", () => {
+    const rows = selectJournalArticles(
+      [story("feed"), story("main"), story("second"), story("latest")],
+      {
+        hero_main: "main",
+        hero_2: "second",
+        hero_3: "main",
+        latest_1: "latest",
+      },
+    );
+    expect(rows.map((row) => [row.slug, row.homepagePosition])).toEqual([
+      ["main", "hero_main"],
+      ["second", "hero_2"],
+      ["latest", "latest_1"],
+      ["feed", undefined],
+    ]);
+  });
+  it("marks an Insight pin with its insight slot", () => {
+    const rows = selectInsightArticles([story("a"), story("b")], {
+      insight_2: "b",
+      insight_3: "a",
+    });
+    expect(rows.map((row) => [row.slug, row.homepagePosition])).toEqual([
+      ["b", "insight_2"],
+      ["a", "insight_3"],
+    ]);
+  });
+});
