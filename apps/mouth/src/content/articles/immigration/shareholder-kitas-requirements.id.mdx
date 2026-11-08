@@ -77,66 +77,318 @@ contentStructure:
 canonicalUrl: "https://balizero.com/immigration/shareholder-kitas-requirements"
 ogImage: "/static/insights/immigration/shareholder.jpg"
 twitterCard: "summary_large_image"
+source_sha256: "8b313fe8f2b7dbac5beb30485f24b9a10480b62c4dd8a48ebf3817105571cd93"
 ---
+
+import {
+  DecisionTree,
+  ComparisonTable,
+  Calculator,
+  InfoCard,
+  AskZantara,
+} from "@/components/insights/interactive";
 
 # Persyaratan KITAS Pemegang Saham di Indonesia 2026
 
-Pemegang saham asing di perusahaan Indonesia memiliki beberapa opsi KITAS tergantung pada peran dan tingkat investasi mereka.
+Pemegang saham asing di perusahaan Indonesia memiliki beberapa pilihan KITAS tergantung pada peran dan tingkat investasi mereka.
 
-## Opsi KITAS untuk Pemegang Saham
+## Pilihan KITAS Pemegang Saham
 
-### Jalur 1: Investor Murni (IDR 1M+ investasi, tidak bekerja)
+<DecisionTree
+  title="Which KITAS for Shareholders?"
+  description="Find the right permit for your situation"
+  nodes={[
+    {
+      id: "start",
+      question: "Do you want to actively work in the company?",
+      options: [
+        { label: "Yes, I'll work/manage the business", next: "work" },
+        { label: "No, passive investor only", next: "passive" },
+      ],
+    },
+    {
+      id: "work",
+      question: "What role will you have?",
+      options: [
+        { label: "Director (in company deed)", next: "director" },
+        { label: "Other working role (manager, etc.)", next: "worker" },
+      ],
+    },
+    {
+      id: "passive",
+      question: "Do you meet IDR 1B+ investment?",
+      options: [
+        { label: "Yes, I have IDR 1B+ invested", next: "investor-kitas" },
+        { label: "No, less than IDR 1B", next: "no-investor" },
+      ],
+    },
+    {
+      id: "director",
+      result: {
+        title: "Director KITAS with RPTKA",
+        description:
+          "As a working director, you need full work authorization. RPTKA + KITAS required. Company sponsors you. DKP-TKA fees apply.",
+      },
+    },
+    {
+      id: "worker",
+      result: {
+        title: "Employee KITAS with RPTKA",
+        description:
+          "Working in a non-director role requires employee KITAS. RPTKA based on your position. Normal qualification requirements.",
+      },
+    },
+    {
+      id: "investor-kitas",
+      result: {
+        title: "Investor KITAS (C313)",
+        description:
+          "Passive investors with IDR 1B+ can get Investor KITAS without RPTKA. No DKP-TKA fees. Can attend board meetings and receive dividends.",
+      },
+    },
+    {
+      id: "no-investor",
+      result: {
+        title: "No Direct KITAS Pathway",
+        description:
+          "If under IDR 1B and not working, you can't get KITAS as a shareholder. Consider increasing investment to IDR 1B or taking a working role.",
+      },
+    },
+  ]}
+/>
+
+---
+
+## Persyaratan Investasi bagi Pemegang Saham
+
+<Calculator
+  title="Shareholder Investment Calculator"
+  description="Check your KITAS eligibility"
+  fields={[
+    {
+      id: "totalCapital",
+      label: "Company Paid-Up Capital",
+      type: "number",
+      defaultValue: 5000000000,
+      min: 0,
+      step: 500000000,
+      suffix: "IDR"
+    },
+    {
+      id: "sharePercent",
+      label: "Your Ownership Percentage",
+      type: "number",
+      defaultValue: 30,
+      min: 1,
+      max: 100,
+      suffix: "%"
+    }
+  ]}
+  calculateResult={(values) => {
+    const capital = Number(values.totalCapital);
+    const percent = Number(values.sharePercent) / 100;
+    const yourShare = capital * percent;
+    const minInvestor = 1000000000;
+    const eligible = yourShare >= minInvestor;
+
+    return {
+      total: yourShare,
+      breakdown: [
+        { label: "Total Company Capital", amount: capital },
+        { label: `Your Share (${values.sharePercent}%)`, amount: yourShare },
+        { label: "Investor KITAS Minimum", amount: minInvestor }
+      ],
+      currency: "IDR",
+      note: eligible
+        ? "✅ Eligible for Investor KITAS (passive)"
+        : "❌ Below IDR 1B - need to work or increase investment"
+    };
+
+}}
+/>
+
+### Ambang Batas Minimum
+
+| Jenis KITAS              | Persyaratan Investasi                         |
+| ------------------------ | --------------------------------------------- |
+| Investor KITAS (pasif)   | investasi pribadi minimum IDR 1,000,000,000   |
+| Direktur KITAS (bekerja) | Tidak ada minimum (perusahaan harus memenuhi IDR 10B) |
+| Karyawan KITAS (bekerja) | Tidak berbasis investasi                      |
+
+---
+
+## Tiga Jalur bagi Pemegang Saham
+
+<ComparisonTable
+  title="Shareholder KITAS Paths"
+  description="Options based on role and investment"
+  items={[
+    {
+      name: "Path 1: Pure Investor",
+      subtitle: "IDR 1B+ investment, no work",
+      values: {
+        RPTKA: "Not required",
+        "DKP-TKA": "Not required",
+        Activities: "Board meetings, dividends",
+        "Best For": "Passive income",
+      },
+    },
+    {
+      name: "Path 2: Investor-Director",
+      subtitle: "Shareholder + Director role",
+      values: {
+        RPTKA: "Required",
+        "DKP-TKA": "Required",
+        Activities: "Full business operations",
+        "Best For": "Running your business",
+      },
+      highlight: true,
+    },
+    {
+      name: "Path 3: Working Shareholder",
+      subtitle: "Shareholder + employee role",
+      values: {
+        RPTKA: "Required",
+        "DKP-TKA": "Required",
+        Activities: "Specific job role",
+        "Best For": "Specialist work + equity",
+      },
+    },
+  ]}
+/>
+
+---
+
+## Investor Murni (Tanpa Bekerja)
 
 Jika Anda adalah pemegang saham pasif:
 
-**Apa yang BOLEH Anda Lakukan:**
+### Apa yang BOLEH Anda Lakukan
 
-- Hadir dalam rapat umum tahunan
+- Menghadiri rapat umum tahunan
 - Berpartisipasi dalam keputusan pemegang saham
 - Menerima dividen
 - Meninjau laporan perusahaan
 - Mengunjungi investasi Anda
 
-**Apa yang TIDAK BOLEH Anda Lakukan:**
+### Apa yang TIDAK BOLEH Anda Lakukan
 
-- Mengelola operasi harian
+- Mengelola operasional harian
 - Mengarahkan karyawan
 - Menandatangani kontrak sebagai perwakilan perusahaan
 - Mewakili perusahaan kepada klien
 - Membuat keputusan operasional
 
-### Jalur 2: Investor-Direktur
+<InfoCard variant="warning" title="Line Between Active and Passive">
 
-Jika Anda adalah pemegang saham yang juga menjabat sebagai direktur:
+Imigrasi dapat mempertanyakan apakah Anda "benar-benar" hanya seorang investor jika Anda
+terus-menerus berada di kantor. Jaga aktivitas Anda tetap pasif jika menggunakan
+Investor KITAS.
 
-- Memerlukan KITAS Direktur dengan RPTKA
-- Biaya DKP-TKA berlaku
-- Perusahaan mensponsori Anda
-- Dapat mengelola operasi bisnis penuh
+</InfoCard>
 
-### Jalur 3: Pemegang Saham Pekerja
+---
 
-Jika Anda adalah pemegang saham yang juga bekerja dalam peran non-direktur:
+## Dokumen untuk KITAS Pemegang Saham
 
-- Memerlukan KITAS Karyawan dengan RPTKA
-- Kualifikasi normal berlaku
-- Pekerjaan spesifik sesuai posisi
+### Semua Pemegang Saham Membutuhkan
 
-## Persyaratan Investasi untuk Pemegang Saham
+- Paspor (masa berlaku 24+ bulan)
+- Foto paspor (4x6, latar belakang merah)
+- CV/Resume
+- Akta perusahaan yang menunjukkan kepemilikan saham
 
-| Jenis KITAS            | Persyaratan Investasi                                 |
-| ---------------------- | ----------------------------------------------------- |
-| KITAS Investor (pasif) | Minimum investasi pribadi IDR 1.000.000.000           |
-| KITAS Direktur (kerja) | Tidak ada minimum (perusahaan harus memenuhi IDR 10B) |
-| KITAS Karyawan (kerja) | Tidak berbasis investasi                              |
+### Untuk Investor KITAS (Pasif)
+
+- Bukti setoran modal (bagian Anda IDR 1B+)
+- Rekening koran bank
+- Sertifikat saham (jika tersedia)
+- NIB dan dokumen perusahaan
+
+### Untuk Pemegang Saham Bekerja (Direktur/Karyawan)
+
+- Semua dokumen di atas
+- Dokumen aplikasi RPTKA
+- Deskripsi pekerjaan
+- Kualifikasi (gelar, pengalaman)
+
+---
+
+## Beberapa Pemegang Saham
+
+Jika PT PMA Anda memiliki beberapa pemegang saham asing:
+
+| Pemegang Saham | Investasi per Orang               | Total Modal Perusahaan |
+| ------------ | ---------------------- | --------------------- |
+| 1 orang asing  | IDR 1B+                | minimum IDR 10B       |
+| 2 orang asing | IDR 1B+ masing-masing = IDR 2B+ | minimum IDR 10B       |
+| 3 orang asing | IDR 1B+ masing-masing = IDR 3B+ | minimum IDR 10B       |
+
+<InfoCard variant="note" title="Each Foreigner Needs IDR 1B">
+
+Untuk Investor KITAS, setiap pemegang saham asing harus memiliki setidaknya IDR 1 miliar
+yang diinvestasikan atas nama mereka. Anda tidak dapat membagi satu IDR 1B untuk dua orang.
+
+</InfoCard>
+
+---
+
+## Pemegang Saham Tanpa KITAS?
+
+Tidak semua pemegang saham membutuhkan KITAS:
+
+### Ketika KITAS Tidak Diperlukan
+
+- Anda tinggal di luar Indonesia
+- Anda berkunjung hanya dengan visa turis/bisnis
+- Anda tidak perlu bekerja di Indonesia
+- Anda hanya menghadiri rapat sesekali
+
+### Ketika KITAS Dianjurkan
+
+- Anda ingin tinggal di Indonesia
+- Anda perlu hadir secara rutin
+- Anda ingin mengelola bisnis
+- Anda menginginkan stabilitas/tinggal jangka panjang
+
+---
 
 ## Jalur Menuju Residensi Permanen
 
-Pemegang saham dapat berupaya menuju KITAP (tinggal tetap):
+Pemegang saham dapat menuju KITAP (tinggal permanen):
 
 1. **3 tahun berturut-turut dengan KITAS** (kategori yang sama)
-2. **Rekam jejak kepatuhan yang baik**
+2. **Riwayat kepatuhan yang baik**
 3. **Investasi yang dipertahankan** (jika investor)
-4. **Ajukan KITAP** (izin 5 tahun)
+4. **Mengajukan KITAP** (izin 5 tahun)
 
-[Panduan lengkap tersedia dalam versi bahasa Inggris]
+<InfoCard variant="tip" title="KITAP Benefits for Investors">
+
+- Masa berlaku 5 tahun - Masuk berulang - Perpanjangan lebih mudah - Lebih stabil - Jalur
+  menuju naturalisasi (opsional)
+
+</InfoCard>
+
+---
+
+## Pertanyaan Umum
+
+<AskZantara
+  context="Shareholder KITAS, PT PMA ownership, investor visa, foreign shareholder Indonesia"
+  placeholder="Ask about shareholder KITAS..."
+  suggestedQuestions={[
+    "Can I sell shares and keep my KITAS?",
+    "What if my shareholding decreases?",
+    "Can I own shares in multiple companies?",
+    "Does my spouse get residence too?",
+  ]}
+/>
+
+---
+
+## Artikel Terkait
+
+- [Panduan Investor KITAS](/insights/immigration/investor-kitas-guide)
+- [Direktur vs Karyawan KITAS](/insights/immigration/director-vs-employee-kitas)
+- [Persyaratan Modal PT PMA](/insights/business/pt-pma-capital-requirements)
+- [Panduan Pendaftaran PT PMA](/insights/business/foreign-company-incorporation-steps)
