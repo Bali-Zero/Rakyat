@@ -74,28 +74,36 @@ canonicalUrl: "https://balizero.com/tax/tax-treaties-explained"
 ogImage: "/static/insights/tax/tax-treaties.jpg"
 twitterCard: "summary_large_image"
 locale: "it"
+source_sha256: "922b47266091b2b7d89d03394c702903aaadc41d0d6f3caefd5dc24670e0c58e"
 ---
 
-# Trattati Fiscali: Evitare la Doppia Imposizione in Indonesia 2026
+import {
+  ComparisonTable,
+  InfoCard,
+  Checklist,
+  AskZantara,
+} from "@/components/insights/interactive";
 
-L'Indonesia ha trattati fiscali (P3B) con più di 70 paesi per prevenire la doppia imposizione sullo stesso reddito. Ecco come usufruirne.
+# Trattati fiscali: evitare la doppia imposizione in Indonesia 2026
 
-## Come Funzionano i Trattati
+L'Indonesia ha trattati fiscali (P3B) con oltre 70 paesi per evitare che lo stesso reddito venga tassato due volte. Ecco come beneficiarne.
 
-I trattati fiscali forniscono:
+## Come aiutano i trattati
 
-1. **Tassi di ritenuta ridotti** - Tassazione inferiore su dividendi, interessi, royalties
+I trattati fiscali offrono:
+
+1. **Aliquote di ritenuta ridotte** - Imposta ridotta su dividendi, interessi, royalty
 2. **Crediti d'imposta** - Credito per le imposte pagate in Indonesia contro l'imposta del paese di origine
-3. **Regole di risoluzione dei conflitti** - Quando si è residenti in due paesi
-4. **Esenzioni** - Alcuni tipi di reddito potrebbero essere esenti
+3. **Regole di spareggio** - Quando sei residente in due paesi
+4. **Esenzioni** - Alcuni tipi di reddito possono essere esenti
 
 ---
 
-## Tassi Chiave dei Trattati
+## Aliquote chiave dei trattati
 
 <ComparisonTable
-  title="Tassi dei Trattati per Paese"
-  description="Tassi di ritenuta comunemente applicati in base ai trattati (rispetto al 20% standard)"
+  title="Treaty Rates by Country"
+  description="Common withholding tax rates under treaties (vs 20% standard)"
   items={[
     {
       name: "Australia",
@@ -107,7 +115,7 @@ I trattati fiscali forniscono:
       },
     },
     {
-      name: "Stati Uniti",
+      name: "United States",
       values: {
         Dividends: "10-15%",
         Interest: "10%",
@@ -116,7 +124,7 @@ I trattati fiscali forniscono:
       },
     },
     {
-      name: "Regno Unito",
+      name: "United Kingdom",
       values: {
         Dividends: "10-15%",
         Interest: "10%",
@@ -134,7 +142,7 @@ I trattati fiscali forniscono:
       },
     },
     {
-      name: "Giappone",
+      name: "Japan",
       values: {
         Dividends: "10-15%",
         Interest: "10%",
@@ -143,7 +151,7 @@ I trattati fiscali forniscono:
       },
     },
     {
-      name: "Germania",
+      name: "Germany",
       values: {
         Dividends: "10-15%",
         Interest: "10%",
@@ -152,7 +160,7 @@ I trattati fiscali forniscono:
       },
     },
     {
-      name: "Paesi Bassi",
+      name: "Netherlands",
       values: {
         Dividends: "10-15%",
         Interest: "10%",
@@ -163,122 +171,121 @@ I trattati fiscali forniscono:
   ]}
 />
 
-\*Services 0% significa che i servizi non creano una stabile organizzazione se a breve termine
+\*Servizi 0% significa che i servizi non creano una stabile organizzazione se di breve durata
 
 ---
 
-## Come Richiedere i Benefici del Trattato
+## Come richiedere i benefici dei trattati
 
 <Checklist
-  title="Requisiti per i Benefici del Trattato"
-  description="Cosa serve per richiedere tassi ridotti"
+  title="Treaty Benefit Requirements"
+  description="What you need to claim reduced rates"
   persistKey="treaty-benefits-checklist"
   items={[
     {
       id: "skd",
-      label: "SKD (Certificato di Domicilio)",
-      description: "Dall'autorità fiscale del paese di origine",
+      label: "SKD (Certificate of Domicile)",
+      description: "From your home country tax authority",
       required: true,
       category: "documents",
     },
     {
       id: "dgt",
-      label: "Modulo DGT (Indonesia)",
-      description:
-        "Modulo indonesiano per la richiesta dei benefici del trattato",
+      label: "DGT Form (Indonesia)",
+      description: "Indonesian form claiming treaty benefits",
       required: true,
       category: "documents",
     },
     {
       id: "beneficial",
-      label: "Dichiarazione di beneficiario effettivo",
-      description: "Dimostrare di essere il vero beneficiario",
+      label: "Beneficial owner declaration",
+      description: "Prove you're the true recipient",
       required: true,
       category: "documents",
     },
     {
       id: "timing",
-      label: "Presentare prima del pagamento",
-      description:
-        "Consegnare al versante indonesiano prima di ricevere il reddito",
+      label: "Submit before payment",
+      description: "Give to Indonesian payer before receiving income",
       required: true,
       category: "process",
     },
   ]}
   categories={[
-    { id: "documents", label: "Documenti", color: "blue" },
-    { id: "process", label: "Processo", color: "green" },
+    { id: "documents", label: "Documents", color: "blue" },
+    { id: "process", label: "Process", color: "green" },
   ]}
   showProgress={true}
 />
 
 ---
 
-## La Procedura
+## La procedura
 
-<InfoCard variant="note" title="Richiesta dei Benefici del Trattato">
-1. **Ottenere l'SKD** dall'ufficio delle imposte del paese di origine
-2. **Compilare il modulo DGT** (modulo indonesiano)
-3. **Consegnare al versante** prima che ti paghi
-4. **Il versante trattiene** alla tariffa del trattato invece del 20%
+<InfoCard variant="note" title="Claiming Treaty Benefits">
+1. **Ottieni l'SKD** dall'ufficio fiscale del tuo paese di origine
+2. **Compila il modulo DGT** (modulo indonesiano)
+3. **Consegnalo al pagatore** prima che ti paghi
+4. **Il pagatore applica la ritenuta** all'aliquota del trattato invece del 20%
 
-Se non si forniscono i documenti, il versante deve trattenere al 20%. Potrebbe essere possibile richiedere un rimborso in seguito, ma è complicato.
+Se non fornisci i documenti, il pagatore deve applicare la ritenuta del 20%. Potresti riuscire a richiedere un rimborso in seguito, ma è complicato.
 
 </InfoCard>
 
 ---
 
-## Paesi con Trattato
+## Paesi con trattato
 
-L'Indonesia ha trattati con più di 70 paesi tra cui:
+L'Indonesia ha trattati con oltre 70 paesi, tra cui:
 
-### Partner con Trattato Completo
+### Partner con trattato completo
 
 - Tutti i principali paesi dell'UE
 - USA, Canada, Australia, Nuova Zelanda
 - Giappone, Corea del Sud, Cina
 - Singapore, Malesia, Thailandia
 - India, Pakistan, Bangladesh
-- Arabia Saudita, Kuwait, Egitto, Marocco
-- Emirati Arabi Uniti
+- Emirati Arabi Uniti, Arabia Saudita, Kuwait
+- Sudafrica, Egitto, Marocco
 
-<InfoCard variant="tip" title="Verifica il Tuo Paese">
-Cerca "trattato fiscale Indonesia [tuo paese]" o controlla il sito web del DJP per l'elenco completo e i tassi specifici.
+<InfoCard variant="tip" title="Check Your Country">
 
+  Cerca "Indonesia tax treaty [your country]" o controlla il sito web DJP per
+  l'elenco completo e le aliquote specifiche.
 </InfoCard>
 
 ---
 
-## Crediti d'Imposta per Residenti
+## Crediti d'imposta per i residenti
 
-Se sei un residente fiscale indonesiano con reddito estero:
+Se sei un residente fiscale indonesiano con redditi esteri:
 
-1. Dichiara il reddito estero nella SPT (Modulo 1770)
+1. Dichiara il reddito estero su SPT (Form 1770)
 2. Calcola l'imposta indonesiana sul reddito totale
-3. Richiedi un credito per le imposte estere pagate
-4. Paga solo la differenza (se presente)
+3. Richiedi il credito per le imposte estere pagate
+4. Paga solo la differenza (se dovuta)
 
-**Credito limitato a**: Tasso d'imposta indonesiano su quel reddito
+**Credito limitato a**: aliquota fiscale indonesiana su quel reddito
 
 ---
 
-## Domande Frequenti
+## Domande frequenti
 
 <AskZantara
-  context="Trattati fiscali, doppia imposizione, P3B, benefici del trattato, credito d'imposta estero"
-  placeholder="Chiedi informazioni sui trattati fiscali..."
+  context="Tax treaties, double taxation, P3B, treaty benefits, foreign tax credit"
+  placeholder="Ask about tax treaties..."
   suggestedQuestions={[
-    "Come ottengo un SKD?",
-    "Cosa succede se sono residente in due paesi?",
-    "Posso richiedere un rimborso se è stata trattenuta troppa imposta?",
-    "Il mio paese ha un trattato?",
+    "How do I get an SKD?",
+    "What if I'm resident in two countries?",
+    "Can I claim refund if too much withheld?",
+    "Does my country have a treaty?",
   ]}
 />
 
 ---
 
-## Articoli Correlati
+## Articoli correlati
 
-- [Guida Fiscale in Indonesia per gli Stranieri](/insights/tax-legal/indonesia-tax-guide-for-foreigners)
-- [Residenza Fiscale in Indonesia](/insights/tax-legal/tax-residency-indonesia)
-- [Guida alla Dichiarazione dei Redditi Annuale (SPT)](/insights/tax-legal/annual-tax-return-guide)
+- [Guida fiscale dell'Indonesia per stranieri](/insights/tax-legal/indonesia-tax-guide-for-foreigners)
+- [Residenza fiscale in Indonesia](/insights/tax-legal/tax-residency-indonesia)
+- [Guida alla dichiarazione annuale (SPT)](/insights/tax-legal/annual-tax-return-guide)

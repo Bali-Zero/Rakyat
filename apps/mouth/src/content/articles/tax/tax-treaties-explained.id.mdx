@@ -74,28 +74,36 @@ canonicalUrl: "https://balizero.com/tax/tax-treaties-explained"
 ogImage: "/static/insights/tax/tax-treaties.jpg"
 twitterCard: "summary_large_image"
 locale: "id"
+source_sha256: "922b47266091b2b7d89d03394c702903aaadc41d0d6f3caefd5dc24670e0c58e"
 ---
 
-# Perjanjian Pajak: Menghindari Pengenaan Pajak Berganda di Indonesia 2026
+import {
+  ComparisonTable,
+  InfoCard,
+  Checklist,
+  AskZantara,
+} from "@/components/insights/interactive";
 
-Indonesia memiliki perjanjian pajak (P3B) dengan 70+ negara untuk mencegah penghasilan yang sama dikenakan pajak dua kali. Berikut cara untuk mendapatkan manfaatnya.
+# Perjanjian Pajak: Menghindari Pajak Berganda di Indonesia 2026
 
-## Bagaimana Perjanjian Membantu
+Indonesia memiliki perjanjian pajak (P3B) dengan 70+ negara untuk mencegah penghasilan yang sama dikenakan pajak dua kali. Berikut cara memanfaatkannya.
+
+## Cara Perjanjian Membantu
 
 Perjanjian pajak memberikan:
 
-1. **Tingkat pemotongan yang lebih rendah** - Pajak lebih rendah atas dividen, bunga, royalti
-2. **Kredit pajak** - Kredit pajak yang dibayarkan di Indonesia terhadap pajak negara asal
-3. **Aturan pemecah ikatan** - Ketika Anda berdomisili di dua negara
-4. **Pengecualian** - Beberapa jenis penghasilan mungkin dikecualikan
+1. **Tarif pemotongan yang lebih rendah** - Pajak lebih rendah atas dividen, bunga, royalti
+2. **Kredit pajak** - Kreditkan pajak yang dibayar di Indonesia terhadap pajak negara asal
+3. **Aturan tie-breaker** - Ketika Anda menjadi residen di dua negara
+4. **Pembebasan** - Beberapa jenis penghasilan dapat dibebaskan
 
 ---
 
-## Tingkat Perjanjian Utama
+## Tarif Perjanjian Utama
 
 <ComparisonTable
-  title="Tingkat Perjanjian Berdasarkan Negara"
-  description="Tingkat pemotongan pajak umum di bawah perjanjian (vs 20% standar)"
+  title="Treaty Rates by Country"
+  description="Common withholding tax rates under treaties (vs 20% standard)"
   items={[
     {
       name: "Australia",
@@ -163,50 +171,49 @@ Perjanjian pajak memberikan:
   ]}
 />
 
-\*Layanan 0% berarti layanan tidak menciptakan bentuk usaha tetap jika jangka pendek
+\*Jasa 0% berarti jasa tidak menimbulkan bentuk usaha tetap jika berjangka pendek
 
 ---
 
 ## Cara Mengklaim Manfaat Perjanjian
 
 <Checklist
-  title="Persyaratan Manfaat Perjanjian"
-  description="Apa yang Anda butuhkan untuk mengklaim tarif yang dikurangi"
+  title="Treaty Benefit Requirements"
+  description="What you need to claim reduced rates"
   persistKey="treaty-benefits-checklist"
   items={[
     {
       id: "skd",
-      label: "SKD (Sertifikat Tempat Tinggal)",
-      description: "Dari otoritas pajak negara asal Anda",
+      label: "SKD (Certificate of Domicile)",
+      description: "From your home country tax authority",
       required: true,
       category: "documents",
     },
     {
       id: "dgt",
-      label: "Formulir DGT (Indonesia)",
-      description: "Formulir Indonesia yang mengklaim manfaat perjanjian",
+      label: "DGT Form (Indonesia)",
+      description: "Indonesian form claiming treaty benefits",
       required: true,
       category: "documents",
     },
     {
       id: "beneficial",
-      label: "Deklarasi pemilik manfaat",
-      description: "Buktikan Anda adalah penerima sebenarnya",
+      label: "Beneficial owner declaration",
+      description: "Prove you're the true recipient",
       required: true,
       category: "documents",
     },
     {
       id: "timing",
-      label: "Ajukan sebelum pembayaran",
-      description:
-        "Berikan kepada pembayar Indonesia sebelum menerima penghasilan",
+      label: "Submit before payment",
+      description: "Give to Indonesian payer before receiving income",
       required: true,
       category: "process",
     },
   ]}
   categories={[
-    { id: "documents", label: "Dokumen", color: "blue" },
-    { id: "process", label: "Proses", color: "green" },
+    { id: "documents", label: "Documents", color: "blue" },
+    { id: "process", label: "Process", color: "green" },
   ]}
   showProgress={true}
 />
@@ -215,63 +222,63 @@ Perjanjian pajak memberikan:
 
 ## Prosesnya
 
-<InfoCard variant="note" title="Mengklaim Manfaat Perjanjian">
+<InfoCard variant="note" title="Claiming Treaty Benefits">
 1. **Dapatkan SKD** dari kantor pajak negara asal Anda
 2. **Lengkapi Formulir DGT** (formulir Indonesia)
 3. **Berikan kepada pembayar** sebelum mereka membayar Anda
 4. **Pembayar memotong** dengan tarif perjanjian, bukan 20%
 
-Jika Anda tidak memberikan dokumen, pembayar harus memotong dengan tarif 20%. Anda mungkin dapat mengajukan pengembalian dana nanti, tetapi itu rumit.
+Jika Anda tidak memberikan dokumen, pembayar harus memotong sebesar 20%. Anda mungkin dapat mengajukan pengembalian kelebihan pembayaran di kemudian hari, tetapi prosesnya rumit.
 
 </InfoCard>
 
 ---
 
-## Negara Mitra Perjanjian
+## Negara-Negara Perjanjian
 
-Indonesia memiliki perjanjian dengan 70+ negara termasuk:
+Indonesia memiliki perjanjian dengan 70+ negara, termasuk:
 
 ### Mitra Perjanjian Penuh
 
-- Semua negara Uni Eropa utama
-- USA, Kanada, Australia, Selandia Baru
+- Semua negara utama Uni Eropa
+- AS, Kanada, Australia, Selandia Baru
 - Jepang, Korea Selatan, China
 - Singapura, Malaysia, Thailand
 - India, Pakistan, Bangladesh
 - UEA, Arab Saudi, Kuwait
 - Afrika Selatan, Mesir, Maroko
 
-<InfoCard variant="tip" title="Periksa Negara Anda">
-Cari "perjanjian pajak Indonesia [negara Anda]" atau periksa situs web DJP untuk
-daftar lengkap dan tarif khusus.
+<InfoCard variant="tip" title="Check Your Country">
 
+  Cari "Indonesia tax treaty [negara Anda]" atau periksa situs web DJP untuk
+  daftar lengkap dan tarif spesifik.
 </InfoCard>
 
 ---
 
-## Kredit Pajak untuk Wajib Pajak
+## Kredit Pajak bagi Residen
 
-Jika Anda adalah penduduk pajak Indonesia dengan penghasilan luar negeri:
+Jika Anda adalah residen pajak Indonesia dengan penghasilan luar negeri:
 
 1. Laporkan penghasilan luar negeri pada SPT (Formulir 1770)
-2. Hitung pajak Indonesia atas penghasilan total
-3. Klaim kredit untuk pajak asing yang dibayarkan
+2. Hitung pajak Indonesia atas total penghasilan
+3. Klaim kredit atas pajak luar negeri yang telah dibayar
 4. Bayar hanya selisihnya (jika ada)
 
-**Kredit terbatas pada**: Tarif pajak Indonesia atas penghasilan tersebut
+**Kredit terbatas pada**: tarif pajak Indonesia atas penghasilan tersebut
 
 ---
 
 ## Pertanyaan Umum
 
 <AskZantara
-  context="Perjanjian pajak, pengenaan pajak berganda, P3B, manfaat perjanjian, kredit pajak luar negeri"
-  placeholder="Tanyakan tentang perjanjian pajak..."
+  context="Tax treaties, double taxation, P3B, treaty benefits, foreign tax credit"
+  placeholder="Ask about tax treaties..."
   suggestedQuestions={[
-    "Bagaimana cara mendapatkan SKD?",
-    "Bagaimana jika saya berdomisili di dua negara?",
-    "Bisakah saya mengajukan pengembalian dana jika terlalu banyak dipotong?",
-    "Apakah negara saya memiliki perjanjian?",
+    "How do I get an SKD?",
+    "What if I'm resident in two countries?",
+    "Can I claim refund if too much withheld?",
+    "Does my country have a treaty?",
   ]}
 />
 
@@ -281,4 +288,4 @@ Jika Anda adalah penduduk pajak Indonesia dengan penghasilan luar negeri:
 
 - [Panduan Pajak Indonesia untuk Orang Asing](/insights/tax-legal/indonesia-tax-guide-for-foreigners)
 - [Residensi Pajak di Indonesia](/insights/tax-legal/tax-residency-indonesia)
-- [Panduan Laporan Pajak Tahunan (SPT)](/insights/tax-legal/annual-tax-return-guide)
+- [Panduan Surat Pemberitahuan Tahunan (SPT)](/insights/tax-legal/annual-tax-return-guide)
