@@ -106,10 +106,10 @@ def main() -> int:
                 TIKTOKEN_CACHE_DIR="/tmp/data-gym-cache",
                 API_KEYS="synthetic-test-only",  # pragma: allowlist secret
                 JWT_SECRET_KEY="synthetic-key-used-only-inside-disposable-tests",  # pragma: allowlist secret
-                TELEGRAM_BOT_TOKEN="123456:synthetic",
+                TELEGRAM_BOT_TOKEN="123456:synthetic",  # pragma: allowlist secret
                 TG_DRY_RUN="1",
                 OPENAI_API_KEY="synthetic-not-a-key",  # pragma: allowlist secret
-                GOOGLE_API_KEY="synthetic-not-a-key",
+                GOOGLE_API_KEY="synthetic-not-a-key",  # pragma: allowlist secret
                 QDRANT_URL="http://127.0.0.1:1",
                 REDIS_URL="redis://127.0.0.1:1/0",
             )
