@@ -324,12 +324,13 @@ class TestQuotaExhaustionAlertsInnocence:
 
     @pytest.mark.asyncio
     async def test_second_quota_alert_within_cooldown_is_suppressed(
-        self, gateway_with_raw_client,
+        self,
+        gateway_with_raw_client,
     ):
         """End-to-end dedup: reuses the REAL AlertService (not a mock) so its
         existing escalating-cooldown/dedup logic actually runs. Simulates the
         2026-07-22 shape — primary tier AND fallback tier both hit quota in
-        the same request window — and asserts only ONE Telegram send fires.
+        the same request window — and asserts only ONE mocked supported-channel send fires.
 
         Limitation stated per mandate requirement #3: AlertService's cooldown
         state (`_last_alert_time`/`_alert_repeat`) is an in-memory dict on the
@@ -339,30 +340,50 @@ class TestQuotaExhaustionAlertsInnocence:
         within the same cooldown window (up to N alerts, not N*requests).
         """
         gateway, mock_client = gateway_with_raw_client
-        mock_client._client.aio.models.generate_content = AsyncMock(
-            side_effect=_make_client_error(),
-        )
+        err = _make_client_error()
+        mock_client._client.aio.models.generate_content = AsyncMock(side_effect=err)
 
-        from backend.services.monitoring.alert_service import AlertService
+        from importlib import import_module
 
-        real_service = AlertService()
-        real_service.enable_telegram = True
-        real_service.telegram_bot_token = "fake-token-for-test"
-        real_service.telegram_admin_chat_id = "12345"
+        alert_service = import_module("backend.services.monitoring.alert_service")
+        real_service = alert_service.AlertService()
+        assert alert_service.telegram_is_retired() is True
+        assert real_service.enable_telegram is False
+        assert real_service.enable_logging is True
+        real_service.enable_slack = True
+        real_service.enable_discord = False
 
-        with patch(
-            "backend.services.monitoring.alert_service.get_alert_service",
-            return_value=real_service,
-        ), patch.object(
-            real_service, "_send_telegram_alert", new_callable=AsyncMock,
-        ) as mock_send_telegram:
+        with (
+            patch.object(
+                alert_service,
+                "get_alert_service",
+                return_value=real_service,
+            ),
+            patch.object(
+                real_service,
+                "_send_slack_alert",
+                new_callable=AsyncMock,
+            ) as mock_send_slack,
+            patch.object(
+                real_service,
+                "_send_telegram_alert",
+                new_callable=AsyncMock,
+            ) as mock_send_telegram,
+        ):
             for _ in range(2):  # primary tier fails, then fallback tier fails
-                with pytest.raises(ClientError):
+                with pytest.raises(ClientError) as exc_info:
                     await gateway._call_model(
-                        "gemini-3-flash", with_tools=False, chat=None, message="hi", images=None,
+                        "gemini-3-flash",
+                        with_tools=False,
+                        chat=None,
+                        message="hi",
+                        images=None,
                     )
+                assert exc_info.value is err
 
-        mock_send_telegram.assert_awaited_once()
+        mock_send_slack.assert_awaited_once()
+        mock_send_telegram.assert_not_awaited()
+        assert real_service.enable_telegram is False
 
 
 # ============================================================================
