@@ -139,6 +139,29 @@ def test_the_char_cap_is_450_and_the_template_drops_trailing_clauses_to_fit():
     assert len(rt.template_recap("immigration", one, TODAY)) > 450  # a single clause is never cut
 
 
+def test_a_builder_payload_that_renders_exactly_max_chars_keeps_every_clause():
+    documents = [
+        doc("kitas", expiry=date(2027, 3, 14), ocr=ocr("E23", issue_date="2026-01-01")),
+        doc("itk", expiry=date(2027, 2, 1)),
+    ]
+    practices = [
+        {"id": i, "status": "on_process", "category": "kitas", "practice_type_name": letter * 33}
+        for i, letter in enumerate("ABCD")
+    ]
+    facts = r.build_immigration_facts(
+        documents=documents,
+        family_members=[{"current_visa_type": "E31", "visa_expiry": date(2027, 1, 1)}],
+        practices=practices,
+        passport_expiry=date(2027, 5, 1),
+        catalogue={"E23": "YY"},
+        today=TODAY,
+    )
+    out = rt.template_recap("immigration", r.recap_payload("immigration", facts), TODAY)
+    assert len(out) == rt.MAX_CHARS
+    assert "one family member is on file" in out
+    assert "one of them with a permit that ends before the main permit" in out
+
+
 def test_clauses_fold_into_at_most_three_sentences():
     two = rt.template_recap(
         "company", {"legal_form": "PT", "established_date": "2024-02-01", "kbli_count": 1}
