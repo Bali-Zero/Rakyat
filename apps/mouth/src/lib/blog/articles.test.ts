@@ -43,6 +43,7 @@ vi.mock("fs", () => ({
 // picks up the mocked fs.
 const {
   getArticleBySlug,
+  getPinnedMdxArticles,
   getAllArticles,
   getArticleByLocale,
   getAvailableLocales,
@@ -338,5 +339,104 @@ describe("one publication rule for local MDX", () => {
     expect(total).toBe(2);
     const found = await searchArticles("KBLI");
     expect(found.map((a) => a.slug)).toEqual([SLUG]);
+  });
+
+  it("reads an Insight pin from its one published, indexed MDX file and nothing else", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: BACKEND_ITEM }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    disk({ [`business_regulations/${SLUG}.mdx`]: mdx("") });
+    const [pin] = await getPinnedMdxArticles([SLUG]);
+    expect([pin.category, pin.slug, pin.title]).toEqual([
+      "business",
+      SLUG,
+      "Local Title",
+    ]);
+    for (const line of [
+      "status: draft\n",
+      "status: review\n",
+      "status: false\n",
+      "status: Published\n",
+      "noIndex: true\n",
+    ]) {
+      disk({ [`business/${SLUG}.mdx`]: mdx(line) });
+      expect(await getPinnedMdxArticles([SLUG])).toEqual([]);
+    }
+    disk({ [`business/${SLUG}.mdx`]: "---\nbroken: [\n---\nBody\n" });
+    expect(await getPinnedMdxArticles([SLUG])).toEqual([]);
+    expect(await getPinnedMdxArticles([SLUG])).toEqual([]);
+    disk({});
+    expect(await getPinnedMdxArticles([SLUG])).toEqual([]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses an Insight pin with two MDX files or an unsafe slug, and links by the file's folder", async () => {
+    disk({
+      [`business/${SLUG}.mdx`]: mdx(""),
+      [`lifestyle/${SLUG}.mdx`]: mdx(""),
+    });
+    expect(await getPinnedMdxArticles([SLUG])).toEqual([]);
+    disk({ [`business/${SLUG}.mdx`]: mdx("") });
+    expect(
+      await getPinnedMdxArticles([
+        "../business/" + SLUG,
+        SLUG.toUpperCase(),
+        "",
+        undefined,
+      ]),
+    ).toEqual([]);
+    disk({
+      [`immigration/a-pin.mdx`]: mdx('slug: "other"\n', "A"),
+      [`tax/b-pin.mdx`]: mdx("", "B"),
+    });
+    const pins = await getPinnedMdxArticles(["b-pin", "a-pin"]);
+    expect(pins.map((p) => p.category + "/" + p.slug + "|" + p.title)).toEqual([
+      "taxes/b-pin|B",
+      "visas/a-pin|A",
+    ]);
+  });
+
+  it("skips a pin the page could not render, alone, and keeps the others", async () => {
+    const raw = (lines: string) =>
+      `---\n${lines}category: business\npublishedAt: "2026-02-20"\n---\n\nBody.\n`;
+    disk({
+      [`business/good-pin.mdx`]: mdx("", "Good"),
+      [`business/object-title.mdx`]: raw("title:\n  text: Broken\n"),
+      [`business/number-excerpt.mdx`]: mdx("excerpt: 42\n", "Numeric excerpt"),
+      [`business/bad-date.mdx`]: mdx("", "Bad date").replace(
+        'publishedAt: "2026-02-20"',
+        "publishedAt: invalid",
+      ),
+      [`business/bad-update.mdx`]: mdx("updatedAt: nope\n", "Bad update"),
+      [`business/null-author.mdx`]: mdx("author: null\n", "Null author"),
+      [`business/text-faq.mdx`]: mdx('faq: "not a list"\n', "Text faq"),
+      [`business/null-mention.mdx`]: mdx(
+        "aiOptimization:\n  entityMentions:\n    - null\n",
+        "Null mention",
+      ),
+      [`business/number-title.mdx`]: raw("title: 42\n"),
+      [`business/good-faq.mdx`]: mdx(
+        "faq:\n  - question: Q\n    answer: A\n",
+        "Good faq",
+      ),
+    });
+    const pins = await getPinnedMdxArticles([
+      "object-title",
+      "number-excerpt",
+      "good-pin",
+      "bad-date",
+      "bad-update",
+      "null-author",
+      "text-faq",
+      "null-mention",
+      "number-title",
+      "good-faq",
+    ]);
+    expect(pins.map((p) => p.slug + "|" + p.title)).toEqual([
+      "good-pin|Good",
+      "good-faq|Good faq",
+    ]);
   });
 });

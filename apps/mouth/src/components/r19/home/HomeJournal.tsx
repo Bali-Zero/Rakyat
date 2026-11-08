@@ -1,10 +1,15 @@
-import { getAllArticles } from "@/lib/blog/articles";
+import { getAllArticles, getPinnedMdxArticles } from "@/lib/blog/articles";
 import homepageLayout from "@/content/homepage-layout.json";
 import { Journal } from "./Journal";
-import { selectJournalArticles } from "./journal/adapter";
+import {
+  insightSlots,
+  selectInsightArticles,
+  selectJournalArticles,
+} from "./journal/adapter";
 
 export async function HomeJournal() {
   let articles: ReturnType<typeof selectJournalArticles> = [];
+  let insights: ReturnType<typeof selectInsightArticles> = [];
   let status: "ready" | "empty" | "unavailable" = "empty";
   try {
     const result = await getAllArticles({});
@@ -14,7 +19,30 @@ export async function HomeJournal() {
     // Handle reader/adapter failure here; React rendering stays outside the catch.
     status = "unavailable";
   }
-  return <Journal articles={articles} status={status} indexHref="/news" />;
+  if (status === "ready") {
+    try {
+      // Pins come from their own MDX files, never from the feed or the backend.
+      const layout: Record<string, string> = homepageLayout;
+      const pins = await getPinnedMdxArticles(
+        insightSlots.map((slot) => layout[slot]),
+      );
+      insights = selectInsightArticles(
+        pins,
+        layout,
+        articles.map((article) => article.slug),
+      );
+    } catch {
+      insights = [];
+    }
+  }
+  return (
+    <Journal
+      articles={articles}
+      insights={insights}
+      status={status}
+      indexHref="/news"
+    />
+  );
 }
 
 export function JournalPending() {

@@ -595,6 +595,89 @@ export function isArticleHidden(category: string, slug: string): boolean {
   return !parsed || !isPublishedFrontmatter(parsed.data);
 }
 
+const PIN_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/**
+ * The editors' Insight pins, read from their MDX files and nothing else: a pin
+ * counts only when exactly one article folder holds <slug>.mdx, the page for
+ * that folder's category resolves that same file, and the page's own reader
+ * returns it published and indexed. Backend rows and listings are not read, so
+ * a pin links to the page of the very file that was checked. A pin the page
+ * could not render (a non-text title, a date toISOString rejects) or whose
+ * read throws is skipped alone; the other pins stay.
+ */
+export async function getPinnedMdxArticles(
+  slugs: readonly (string | undefined)[],
+): Promise<ArticleListItem[]> {
+  const pins: ArticleListItem[] = [];
+  for (const slug of slugs) {
+    if (!slug || !PIN_SLUG.test(slug)) continue;
+    let article: Article | null;
+    let category: ArticleCategory;
+    try {
+      const folders = ARTICLE_FOLDER_NAMES.filter((folder) =>
+        fs.existsSync(articleMdxPath(folder, slug)),
+      );
+      if (folders.length !== 1) continue;
+      category = normalizeCategory(folders[0]);
+      if (findMdxFile(category, slug) !== articleMdxPath(folders[0], slug))
+        continue;
+      article = await getMdxArticleBySlug(category, slug);
+    } catch {
+      continue;
+    }
+    if (!article || article.noIndex || !isRenderablePin(article)) continue;
+    pins.push({
+      id: article.id,
+      slug,
+      title: article.title,
+      excerpt: article.excerpt,
+      coverImage: article.coverImage,
+      category,
+      author: article.author,
+      publishedAt: article.publishedAt ?? new Date(NaN),
+      readingTime: article.readingTime,
+      viewCount: article.viewCount,
+      featured: article.featured,
+      trending: article.trending,
+      aiGenerated: article.aiGenerated,
+    });
+  }
+  return pins;
+}
+
+const isValidDate = (date: unknown): boolean =>
+  date instanceof Date && !Number.isNaN(date.getTime());
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const isAbsentOrRecords = (value: unknown): boolean =>
+  value === undefined ||
+  value === null ||
+  (Array.isArray(value) && value.every(isRecord));
+
+/**
+ * What the article page dereferences without a guard (page.tsx, metadata.ts,
+ * EnhancedJsonLd.tsx, ArticleClient.tsx): a text title, the dates it formats,
+ * an author object with a name, and faq / entityMentions as lists of objects.
+ */
+function isRenderablePin(article: Article): boolean {
+  const fields = article as unknown as Record<string, unknown>;
+  const ai = fields.aiOptimization;
+  return (
+    typeof article.title === "string" &&
+    article.title.trim() !== "" &&
+    isValidDate(article.createdAt) &&
+    isValidDate(article.updatedAt) &&
+    (article.publishedAt === undefined || isValidDate(article.publishedAt)) &&
+    isRecord(fields.author) &&
+    typeof fields.author.name === "string" &&
+    isAbsentOrRecords(fields.faq) &&
+    (!isRecord(ai) || isAbsentOrRecords(ai.entityMentions))
+  );
+}
+
 async function getMdxArticleBySlug(
   category: string,
   slug: string,
