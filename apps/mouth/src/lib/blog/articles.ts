@@ -15,6 +15,13 @@ import type { Article, ArticleListItem, ArticleCategory } from "./types";
 import { CATEGORY_MAP, normalizeCategory } from "./categories";
 import { isPublishedFrontmatter } from "./publication";
 
+// gray-matter caches by content string when called without options, so a file with broken YAML
+// throws on the first parse and returns empty data from the cache on the second. An options object
+// bypasses the cache, keeping the throw that callers use to skip corrupted articles.
+function parseFrontmatter(fileContents: string) {
+  return matter(fileContents, {});
+}
+
 const ARTICLES_PATH = path.join(process.cwd(), "src/content/articles");
 const ARTICLE_FOLDER_NAMES = Object.freeze([
   "immigration",
@@ -549,12 +556,12 @@ async function getAllMdxSlugs(): Promise<
   return slugs;
 }
 
-/** Parse one MDX file, without gray-matter's content cache (see ./publication). */
+/** Parse one MDX file through parseFrontmatter, so a broken file stays broken. */
 function readMdxFile(
   filePath: string,
 ): { data: Record<string, any>; content: string } | null {
   try {
-    const parsed = matter(fs.readFileSync(filePath, "utf8"), {});
+    const parsed = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
     return { data: parsed.data, content: parsed.content };
   } catch {
     return null;
@@ -991,7 +998,7 @@ export async function getNoIndexSlugs(): Promise<Set<string>> {
       const filePath = articleMdxPath(folderCategory, slug);
       if (!fs.existsSync(filePath)) continue;
       const fileContents = fs.readFileSync(filePath, "utf8");
-      const { data: frontmatter } = matter(fileContents, {});
+      const { data: frontmatter } = parseFrontmatter(fileContents);
       if (frontmatter.noIndex) {
         noIndexSlugs.add(slug);
       }

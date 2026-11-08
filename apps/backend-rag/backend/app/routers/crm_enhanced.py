@@ -1399,7 +1399,7 @@ async def get_client_recap(
                     return recap.empty_recap(scope)
                 subject_key = str(resolved)
                 facts = recap.build_company_facts(
-                    **await recap.fetch_company_inputs(conn, client_id, resolved)
+                    **await recap.fetch_company_inputs(conn, resolved)
                 )
         except Exception as exc:
             logger.warning(
