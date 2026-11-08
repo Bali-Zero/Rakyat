@@ -69,258 +69,316 @@ ogImage: "/static/insights/immigration/indonesia-visa-timeline-comparison.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "fr"
+source_sha256: "1ef20bf1a0c34800a9b86b1f4685781b319f2805d9bedaaf72e65fcc55299afb"
 ---
 
-## Chronologie Principale : Tous les types de visas indonésiens comparés
+import { HeaderWhatsAppCTA } from "@/components/blog/HeaderWhatsAppCTA";
 
-Planifier votre déménagement en Indonesia commence par comprendre le temps de traitement de chaque visa. Que vous ayez besoin d'être à Bali la semaine prochaine ou que vous puissiez planifier des mois à l'avance, ce guide vous aide à choisir le bon visa en fonction de votre calendrier.
+## Calendrier principal : tous les types de visas pour l’Indonésie comparés
 
-Tous les délais de traitement ci-dessous représentent des jours ouvrables (du lundi au vendredi, hors jours fériés nationaux indonésiens) et supposent une documentation complète soumise dès la première tentative.
+Planifier votre installation en Indonesia commence par comprendre le délai de traitement de chaque visa. Que vous deviez être à Bali la semaine prochaine ou puissiez planifier plusieurs mois à l’avance, ce guide vous aide à choisir le visa adapté à votre calendrier.
 
-## Référence Rapide : Aperçu des délais de traitement
+Tous les délais de traitement ci-dessous sont exprimés en jours ouvrables (du lundi au vendredi, hors jours fériés nationaux indonésiens) et supposent que le dossier complet est soumis dès la première tentative.
 
-| Type de visa                | Code  | Durée totale de traitement | Étapes | Peut postuler depuis l'étranger ? |
-| --------------------------- | ----- | -------------------------- | ------ | --------------------------------- |
-| E-VOA                       | -     | Instantané - 24 heures     | 1      | Oui (en ligne seulement)          |
-| Visa Free                   | -     | Instantané (à l'aéroport)  | 1      | Non (à l'arrivée)                 |
-| B211A Visite Sociale        | B211A | 3-5 jours ouvrables        | 2      | Oui                               |
-| B211A Visite d'Affaires     | B211A | 3-5 jours ouvrables        | 2      | Oui                               |
-| E23 Employé KITAS           | E23   | 30-45 jours ouvrables      | 4      | Doit entrer avec un télex         |
-| E25B Directeur KITAS        | E25B  | 30-45 jours ouvrables      | 4      | Doit entrer avec un télex         |
-| E28A Investisseur KITAS     | E28A  | 45-60 jours ouvrables      | 4      | Doit entrer avec un télex         |
-| E33G Travailleur à Distance | E33G  | 14-21 jours ouvrables      | 3      | Oui                               |
-| E33E Enfant à Charge        | E33E  | 21-30 jours ouvrables      | 3      | Doit entrer avec un télex         |
-| E33F Conjoint à Charge      | E33F  | 21-30 jours ouvrables      | 3      | Doit entrer avec un télex         |
-| E311A Retraite              | E311A | 30-45 jours ouvrables      | 3      | Doit entrer avec un télex         |
-| Visa Seconde Résidence      | SHV   | 14-30 jours ouvrables      | 2      | Oui                               |
-| KITAP                       | -     | 60-90 jours ouvrables      | 3      | Non (doit détenir un KITAS)       |
-| Golden Visa (5 ans)         | -     | 90-120 jours ouvrables     | 5      | Oui                               |
-| Golden Visa (10 ans)        | -     | 90-120 jours ouvrables     | 5      | Oui                               |
+## Référence rapide : aperçu des délais de traitement
 
-## Répartition Détaillée des Délais
+| Type de visa             | Code  | Délai total de traitement | Étapes | Peut-on faire la demande depuis l’étranger ? |
+| ------------------------ | ----- | -------------------------- | ------ | --------------------------------------------- |
+| E-VOA                    | -     | Instantané - 24 heures     | 1      | Oui (en ligne uniquement)                     |
+| Visa gratuit             | -     | Instantané (à l’aéroport)  | 1      | Non (à l’arrivée)                              |
+| Visite sociale B211A     | B211A | 3-5 jours ouvrables        | 2      | Oui                                            |
+| Visite d’affaires B211A  | B211A | 3-5 jours ouvrables        | 2      | Oui                                            |
+| KITAS employé E23        | E23   | 30-45 jours ouvrables      | 4      | Entrée obligatoire avec telex                  |
+| KITAS directeur E25B     | E25B  | 30-45 jours ouvrables      | 4      | Entrée obligatoire avec telex                  |
+| KITAS investisseur E28A  | E28A  | 45-60 jours ouvrables      | 4      | Entrée obligatoire avec telex                  |
+| Travailleur à distance E33G | E33G  | 14-21 jours ouvrables   | 3      | Oui                                            |
+| Enfant à charge E31E     | E31E  | 21-30 jours ouvrables      | 3      | Entrée obligatoire avec telex                  |
+| Conjoint à charge E31B   | E31B  | 21-30 jours ouvrables      | 3      | Entrée obligatoire avec telex                  |
+| Retraite E33E/E33F       | E33E/E33F | 30-45 jours ouvrables   | 3      | Entrée obligatoire avec telex                  |
+| Visa Second Home         | SHV   | 14-30 jours ouvrables      | 2      | Oui                                            |
+| KITAP                    | -     | 60-90 jours ouvrables      | 3      | Non (doit détenir un KITAS)                    |
+| Golden Visa (5 ans)      | -     | 90-120 jours ouvrables     | 5      | Oui                                            |
+| Golden Visa (10 ans)     | -     | 90-120 jours ouvrables     | 5      | Oui                                            |
 
-### E-VOA (Visa Électronique à l'Arrivée)
+## Détail des calendriers
 
-**Total : Instantané à 24 heures**
+### E-VOA (visa électronique à l’arrivée)
 
-| Étape                    | Durée        | Ce qui se passe                                 |
-| ------------------------ | ------------ | ----------------------------------------------- |
-| Demande en ligne         | 15 minutes   | Remplir le formulaire sur molina.imigrasi.go.id |
-| Traitement du paiement   | Instantané   | Carte de crédit débitée de 500 000 IDR          |
-| Email d'approbation      | 1-24 heures  | Lettre d'approbation PDF envoyée par email      |
-| Immigration à l'aéroport | 5-10 minutes | Passeport tamponné à l'arrivée                  |
+**Total : instantané à 24 heures**
 
-**Liste de contrôle des documents :**
+| Étape               | Durée        | Ce qui se passe                         |
+| ------------------- | ------------ | --------------------------------------- |
+| Demande en ligne    | 15 minutes   | Remplissez le formulaire sur molina.imigrasi.go.id |
+| Traitement du paiement | Instantané | Carte de crédit débitée de 500 000 IDR  |
+| E-mail d’approbation | 1-24 heures | Lettre d’approbation PDF envoyée par e-mail |
+| Immigration à l’aéroport | 5-10 minutes | Passeport tamponné à l’arrivée      |
 
-- Passeport (valide 6+ mois, 2 pages vierges)
-- Photo d'identité (numérique, fond blanc)
+**Liste des documents :**
+
+- Passeport (valide pendant plus de 6 mois, 2 pages vierges)
+- Photo de passeport (numérique, fond blanc)
 - Carte de crédit/débit pour le paiement
-- Preuve de voyage ultérieur (vol retour ou prochaine destination)
+- Preuve de poursuite du voyage (vol retour ou prochaine destination)
 
-### B211A Visa de Visite Sociale/Culturelle
+### Visa de visite sociale/culturelle B211A
 
 **Total : 3-5 jours ouvrables**
 
-| Étape                      | Durée                    | Ce qui se passe                                   |
-| -------------------------- | ------------------------ | ------------------------------------------------- |
-| Préparation des documents  | 1-2 jours                | Rassembler la lettre de parrainage, les documents |
-| Soumission en ligne        | 30 minutes               | Soumettre via molina.imigrasi.go.id               |
-| Examen par l'immigration   | 2-3 jours ouvrables      | L'agent examine la demande                        |
-| Notification d'approbation | Le jour même de l'examen | Notification par email avec approbation du visa   |
-| Entrée en Indonesia        | Dans les 90 jours        | Doit entrer avant l'expiration du visa            |
+| Étape                 | Durée              | Ce qui se passe                              |
+| --------------------- | ------------------ | --------------------------------------------- |
+| Préparation des documents | 1-2 jours       | Rassemblez la lettre du sponsor et les documents |
+| Soumission en ligne   | 30 minutes         | Soumettez via molina.imigrasi.go.id           |
+| Examen par l’immigration | 2-3 jours ouvrables | L’agent examine la demande                |
+| Notification d’approbation | Le même jour que l’examen | Notification par e-mail avec l’approbation du visa |
+| Entrée en Indonesia   | Dans les 90 jours  | Vous devez entrer avant l’expiration du visa  |
 
-**Liste de contrôle des documents :**
+**Liste des documents :**
 
-- Passeport (valide 12+ mois)
-- Photo d'identité (4x6 cm, fond blanc, numérique)
-- Lettre de parrainage d'un citoyen ou d'une institution indonésienne
+- Passeport (valide pendant plus de 12 mois)
+- Photo de passeport (4x6 cm, fond blanc, numérique)
+- Lettre de sponsor d’un citoyen ou d’une institution indonésienne
 - Relevé bancaire (solde minimum de 2 000 USD)
-- Preuve de vol retour ou de voyage ultérieur
+- Vol retour ou preuve de poursuite du voyage
 - Itinéraire de voyage
-- Preuve d'hébergement (réservation d'hôtel ou lettre d'invitation)
+- Preuve d’hébergement (réservation d’hôtel ou lettre d’invitation)
 
-### E25B KITAS de Directeur
+### KITAS directeur E25B
 
 **Total : 30-45 jours ouvrables**
 
-| Étape                          | Durée                     | Ce qui se passe                                        |
-| ------------------------------ | ------------------------- | ------------------------------------------------------ |
-| préparation du RPTKA           | 3-5 jours                 | Compiler les documents de l'entreprise et personnels   |
-| soumission du RPTKA (Kemnaker) | 10-15 jours ouvrables     | Le Ministère de la Main-d'œuvre examine et approuve    |
-| Demande de visa télex          | 5-10 jours ouvrables      | Le QG de l'immigration délivre l'autorisation d'entrée |
-| Entrée en Indonesia            | Entrer avec un visa télex | 1 jour                                                 |
-| conversion du KITAS            | 5-7 jours ouvrables       | Le bureau d'immigration local traite le KITAS          |
-| production de la carte KITAS   | 3-5 jours ouvrables       | Carte physique produite et récupérée                   |
-| enregistrement SKTT            | 3-5 jours ouvrables       | Enregistrer le domicile auprès du kelurahan local      |
+| Étape                       | Durée              | Ce qui se passe                                  |
+| --------------------------- | ------------------ | ------------------------------------------------- |
+| Préparation du RPTKA        | 3-5 jours          | Compilation des documents de l’entreprise et personnels |
+| Soumission du RPTKA (Kemnaker) | 10-15 jours ouvrables | Le ministère de la Main-d’œuvre examine et approuve |
+| Demande de visa telex       | 5-10 jours ouvrables | Le siège de l’immigration délivre l’autorisation d’entrée |
+| Entrée en Indonesia         | 1 jour             | Entrée avec le visa telex                         |
+| Conversion en KITAS         | 5-7 jours ouvrables | Le bureau local de l’immigration traite le KITAS |
+| Production de la carte KITAS | 3-5 jours ouvrables | La carte physique est produite et retirée       |
+| Enregistrement SKTT         | 3-5 jours ouvrables | Enregistrez le domicile auprès du kelurahan local |
 
-**Liste de contrôle des documents :**
+**Liste des documents :**
 
-- Passeport (valide 24+ mois)
-- Photos d'identité (4x6 cm, fond rouge, 10 exemplaires)
-- CV/curriculum vitae en Bahasa Indonesia
+- Passeport (valide pendant plus de 24 mois)
+- Photos de passeport (4x6 cm, fond rouge, 10 exemplaires)
+- CV en Bahasa Indonesia
 - Diplôme universitaire (apostillé et traduit en indonésien)
 - Acte de constitution de la société (Akta Pendirian)
-- SK Menkumham de la société (approbation du Ministère)
-- NPWP de la société (ID fiscal)
-- NIB de la société (enregistrement commercial)
+- SK Menkumham de la société (approbation ministérielle)
+- NPWP de la société (identifiant fiscal)
+- NIB de la société (enregistrement d’entreprise)
 - Lettre de domicile de la société (SKDP)
-- formulaire de demande de RPTKA
+- Formulaire de demande RPTKA
 - Plan de transfert de compétences (Rencana Penggunaan TKA)
-- Organigramme montrant le poste de directeur
-- Lettre de nomination du conseil d'administration (SK Direksi)
+- Organigramme indiquant le poste de directeur
+- Lettre de nomination du conseil d’administration (SK Direksi)
 
-### E28A KITAS d'Investisseur
+### KITAS investisseur E28A
 
 **Total : 45-60 jours ouvrables**
 
-| Étape                          | Durée                     | Ce qui se passe                                                    |
-| ------------------------------ | ------------------------- | ------------------------------------------------------------------ |
-| Documentation d'investissement | 5-7 jours                 | Préparer la preuve d'investissement, les documents de l'entreprise |
-| coordination BKPM              | 10-15 jours ouvrables     | Le conseil d'investissement examine l'éligibilité                  |
-| soumission du RPTKA (Kemnaker) | 10-15 jours ouvrables     | Le Ministère de la Main-d'œuvre examine                            |
-| Demande de visa télex          | 7-10 jours ouvrables      | Le QG de l'immigration délivre l'autorisation                      |
-| Entrée en Indonesia            | Entrer avec un visa télex | 1 jour                                                             |
-| conversion du KITAS            | 5-7 jours ouvrables       | L'immigration locale traite le KITAS                               |
-| production de la carte KITAS   | 3-5 jours ouvrables       | Carte physique produite                                            |
+| Étape                       | Durée              | Ce qui se passe                                  |
+| --------------------------- | ------------------ | ------------------------------------------------- |
+| Documentation d’investissement | 5-7 jours       | Préparez la preuve d’investissement et les documents de la société |
+| Coordination BKPM           | 10-15 jours ouvrables | L’organisme d’investissement examine l’éligibilité |
+| Soumission du RPTKA (Kemnaker) | 10-15 jours ouvrables | Le ministère de la Main-d’œuvre examine      |
+| Demande de visa telex       | 7-10 jours ouvrables | Le siège de l’immigration délivre l’autorisation |
+| Entrée en Indonesia         | 1 jour             | Entrée avec le visa telex                         |
+| Conversion en KITAS         | 5-7 jours ouvrables | L’immigration locale traite le KITAS             |
+| Production de la carte KITAS | 3-5 jours ouvrables | La carte physique est produite                   |
 
-**Liste de contrôle des documents :**
+**Liste des documents :**
 
-- Tous les documents E25B listés ci-dessus, plus :
-- Preuve d'investissement (relevés de virement bancaire, certificats d'actions)
-- Plan d'investissement et projections commerciales
-- enregistrement BKPM ou lettre d'approbation
-- Accord d'actionnaires
-- États financiers de la société (si société existante)
-- Rapport de réalisation de l'investissement (LKPM) le cas échéant
+- Tous les documents E25B mentionnés ci-dessus, plus :
+- Preuve d’investissement (relevés de virements bancaires, certificats d’actions)
+- Plan d’investissement et projections commerciales
+- Enregistrement ou lettre d’approbation BKPM
+- Pacte d’actionnaires
+- États financiers de la société (si la société existe déjà)
+- Rapport de réalisation de l’investissement (LKPM), le cas échéant
 
-### E33G Visa de Travailleur à Distance
+### Visa travailleur à distance E33G
 
 **Total : 14-21 jours ouvrables**
 
-| Étape                     | Durée                | Ce qui se passe                                                    |
-| ------------------------- | -------------------- | ------------------------------------------------------------------ |
-| Préparation des documents | 3-5 jours            | Rassembler la preuve de revenus, l'assurance, le casier judiciaire |
-| Demande en ligne          | 1 jour               | Soumettre via le portail d'immigration                             |
-| Examen par l'immigration  | 7-10 jours ouvrables | L'agent examine les revenus et les documents                       |
-| Approbation du visa       | 1-2 jours ouvrables  | Notification d'approbation envoyée                                 |
-| Entrée en Indonesia       | Dans les 90 jours    | Entrer et activer le visa                                          |
-| conversion du KITAS       | 3-5 jours ouvrables  | Le bureau local traite le permis de séjour                         |
+| Étape                | Durée             | Ce qui se passe                                  |
+| -------------------- | ----------------- | ------------------------------------------------- |
+| Préparation des documents | 3-5 jours     | Rassemblez les preuves de revenus, l’assurance et le casier judiciaire |
+| Demande en ligne     | 1 jour            | Soumettez via le portail de l’immigration         |
+| Examen par l’immigration | 7-10 jours ouvrables | L’agent examine les revenus et les documents |
+| Approbation du visa  | 1-2 jours ouvrables | Notification d’approbation envoyée              |
+| Entrée en Indonesia  | Dans les 90 jours | Entrez et activez le visa                         |
+| Conversion en KITAS  | 3-5 jours ouvrables | Le bureau local traite le permis de séjour      |
 
-**Liste de contrôle des documents :**
+**Liste des documents :**
 
-- Passeport (valide 24+ mois)
-- Photos d'identité (4x6 cm, fond blanc)
-- Preuve de revenus de 60 000 USD+/an (relevés bancaires, contrat, déclaration fiscale)
+- Passeport (valide pendant plus de 24 mois)
+- Photos de passeport (4x6 cm, fond blanc)
+- Preuve de revenus de plus de 60 000 USD/an (relevés bancaires, contrat, déclaration fiscale)
 - Contrat de travail ou accords de freelance avec des entités étrangères
-- Assurance maladie (couverture minimum de 25 000 USD, valide en Indonesia)
-- Extrait de casier judiciaire du pays d'origine (apostillé)
-- Déclaration personnelle/lettre de motivation expliquant l'arrangement de travail à distance
+- Assurance santé (couverture minimale de 25 000 USD, valide en Indonesia)
+- Extrait de casier judiciaire du pays d’origine (apostillé)
+- Déclaration personnelle/lettre de motivation expliquant l’organisation du travail à distance
 
-### E311A KITAS de Retraite
+### KITAS retraite E33E/E33F
 
 **Total : 30-45 jours ouvrables**
 
-| Étape                         | Durée                 | Ce qui se passe                                   |
-| ----------------------------- | --------------------- | ------------------------------------------------- |
-| Préparation des documents     | 5-7 jours             | Preuve de pension, assurance, certificat de santé |
-| Soumission de la demande      | 1 jour                | Soumettre via un agent à l'immigration            |
-| Examen par l'immigration      | 15-20 jours ouvrables | L'agent examine l'éligibilité                     |
-| Délivrance du visa télex      | 5-7 jours ouvrables   | Autorisation d'entrée délivrée                    |
-| Entrée et conversion du KITAS | 5-7 jours ouvrables   | Le bureau local traite le KITAS                   |
+| Étape                      | Durée              | Ce qui se passe                                 |
+| -------------------------- | ------------------ | ----------------------------------------------- |
+| Préparation des documents  | 5-7 jours          | Preuve de revenus ou de pension, assurance, certificat médical |
+| Soumission de la demande   | 1 jour             | Soumission à l’immigration par l’intermédiaire d’un agent |
+| Examen par l’immigration   | 15-20 jours ouvrables | L’agent examine l’éligibilité                |
+| Délivrance du visa telex   | 5-7 jours ouvrables | Autorisation d’entrée délivrée                 |
+| Entrée et conversion en KITAS | 5-7 jours ouvrables | Le bureau local traite le KITAS              |
 
-**Liste de contrôle des documents :**
+**Liste des documents :**
 
-- Passeport (valide 24+ mois)
-- Photos d'identité (4x6 cm, fond rouge)
-- Preuve de pension ou de revenus de retraite (minimum 1 500 USD/mois)
-- Assurance maladie valide en Indonesia
-- Certificat de santé d'un médecin agréé
+- Passeport (valide pendant plus de 24 mois)
+- Photos de passeport (4x6 cm, fond rouge)
+- Preuve de pension ou de revenus de retraite (minimum 3 000 USD/mois, plus un dépôt de 50 000 USD auprès d’une banque d’État pour le E33E de 5 ans)
+- Sponsor local (Penjamin) pour le E33F d’un an ; le E33E de 5 ans est déposé directement sans sponsor
+- Assurance santé valide en Indonesia
+- Certificat médical d’un médecin agréé
 - Extrait de casier judiciaire (apostillé)
-- Preuve d'hébergement en Indonesia (contrat de location ou propriété)
-- Assurance maladie indonésienne ou inscription au BPJS
-- CV/historique personnel
-- Déclaration d'intention de résider en Indonesia
+- Preuve d’hébergement en Indonesia (contrat de location ou bien immobilier)
+- Assurance santé indonésienne ou affiliation BPJS
+- CV/parcours personnel
+- Déclaration d’intention de résider en Indonesia
 
-### Visa Seconde Résidence
+### Visa Second Home
 
 **Total : 14-30 jours ouvrables**
 
-| Étape                    | Durée                | Ce qui se passe                                          |
-| ------------------------ | -------------------- | -------------------------------------------------------- |
-| Documentation financière | 3-5 jours            | Préparer les relevés bancaires ou la preuve de propriété |
-| Soumission de la demande | 1 jour               | Soumettre à l'immigration                                |
-| Vérification financière  | 5-10 jours ouvrables | L'immigration vérifie les fonds/la propriété             |
-| Approbation du visa      | 3-7 jours ouvrables  | Approbation délivrée                                     |
-| Entrée et activation     | 1-3 jours ouvrables  | Visa activé à l'entrée                                   |
+| Étape                   | Durée             | Ce qui se passe                              |
+| ----------------------- | ----------------- | --------------------------------------------- |
+| Documentation financière | 3-5 jours        | Préparez les relevés bancaires ou la preuve de propriété |
+| Soumission de la demande | 1 jour          | Soumettez à l’immigration                     |
+| Vérification financière | 5-10 jours ouvrables | L’immigration vérifie les fonds/la propriété |
+| Approbation du visa     | 3-7 jours ouvrables | Approbation délivrée                        |
+| Entrée et activation    | 1-3 jours ouvrables | Visa activé à l’entrée                      |
 
-**Liste de contrôle des documents :**
+**Liste des documents :**
 
-- Passeport (valide 60+ mois recommandé pour un visa de 5 ans)
-- Relevés bancaires montrant un solde de 2 000 000 000 IDR+, OU
-- Documentation de propriété en Indonesia
-- Assurance maladie valide en Indonesia
+- Passeport (validité de plus de 60 mois recommandée pour le visa de 5 ans)
+- Relevés bancaires montrant un solde de plus de 2 000 000 000 IDR, OU
+- Documents de propriété immobilière en Indonesia
+- Assurance santé valide en Indonesia
 - Extrait de casier judiciaire
-- Photos d'identité
+- Photos de passeport
 
-### KITAP (Permis de Séjour Permanent)
+### KITAP (permis de séjour permanent)
 
 **Total : 60-90 jours ouvrables**
 
-| Étape                         | Durée                 | Ce qui se passe                                            |
-| ----------------------------- | --------------------- | ---------------------------------------------------------- |
-| Vérification de l'éligibilité | 5-7 jours             | Confirmer 3+ ans de KITAS continu                          |
-| Compilation des documents     | 5-10 jours            | Préparation d'un dossier de documents complet              |
-| Soumission de la demande      | 1 jour                | Soumettre au bureau d'immigration local                    |
-| Examen local                  | 15-20 jours ouvrables | Le bureau d'immigration examine et effectue des entretiens |
-| Examen du QG de Jakarta       | 20-30 jours ouvrables | La Direction Générale prend la décision finale             |
-| Production de la carte KITAP  | 10-15 jours ouvrables | Carte produite dans l'établissement central                |
+| Étape                    | Durée              | Ce qui se passe                                  |
+| ------------------------ | ------------------ | ------------------------------------------------- |
+| Vérification de l’éligibilité | 5-7 jours      | Confirmez plus de 3 années continues de KITAS    |
+| Compilation des documents | 5-10 jours       | Préparation d’un dossier documentaire complet    |
+| Soumission de la demande | 1 jour            | Soumettez au bureau local de l’immigration       |
+| Examen local             | 15-20 jours ouvrables | Le bureau de l’immigration examine et mène un entretien |
+| Examen du siège à Jakarta | 20-30 jours ouvrables | Directorate General prend la décision finale |
+| Production de la carte KITAP | 10-15 jours ouvrables | Carte produite dans l’établissement central |
 
-**Liste de contrôle des documents :**
+**Liste des documents :**
 
-- KITAS valide actuel
-- Tous les documents KITAS précédents (historique de 3+ ans)
-- Passeport (valide 60+ mois)
-- Photos d'identité (4x6 cm, fond rouge, 15 exemplaires)
-- Preuve de maîtrise de la langue Bahasa Indonesia
+- KITAS actuellement valide
+- Tous les documents KITAS antérieurs (historique de plus de 3 ans)
+- Passeport (valide pendant plus de 60 mois)
+- Photos de passeport (4x6 cm, fond rouge, 15 exemplaires)
+- Preuve de maîtrise du Bahasa Indonesia
 - Connaissance du Pancasila et de la culture indonésienne
 - États financiers (3 ans)
-- Documents de la société de parrainage (actuels et valides)
+- Documents de la société sponsor (actuels et valides), pour un KITAS sponsorisé (le KITAS retraite E33E est déposé directement)
 - Certificats de conformité fiscale (3 ans de déclarations SPT)
 - Lettre de domicile (SKTT)
-- Extrait de casier judiciaire (SKCK) de la police indonésienne
+- Certificat de police (SKCK) de la police indonésienne
 - Lettres de référence de la communauté locale (RT/RW)
 
 ### Golden Visa
 
 **Total : 90-120 jours ouvrables**
 
-| Étape                             | Durée                 | Ce qui se passe                                           |
-| --------------------------------- | --------------------- | --------------------------------------------------------- |
-| Structuration de l'investissement | 10-15 jours           | Préparer le véhicule d'investissement et la documentation |
-| Examen BKPM                       | 20-30 jours ouvrables | Le conseil d'investissement évalue la proposition         |
-| Évaluation de l'immigration       | 15-20 jours ouvrables | L'immigration évalue l'éligibilité du demandeur           |
-| Habilitation de sécurité          | 15-20 jours ouvrables | Vérification des antécédents par les agences compétentes  |
-| Approbation interinstitutions     | 10-15 jours ouvrables | Coordination finale entre le BKPM et l'immigration        |
-| Délivrance du visa                | 5-10 jours ouvrables  | Golden Visa délivré                                       |
-| Entrée et activation              | 3-5 jours ouvrables   | Visa activé, permis de séjour accordé                     |
+| Étape                  | Durée              | Ce qui se passe                                    |
+| ---------------------- | ------------------ | --------------------------------------------------- |
+| Structuration de l’investissement | 10-15 jours | Préparez le véhicule d’investissement et la documentation |
+| Examen BKPM            | 20-30 jours ouvrables | L’organisme d’investissement évalue la proposition |
+| Évaluation par l’immigration | 15-20 jours ouvrables | L’immigration évalue l’éligibilité du demandeur |
+| Contrôle de sécurité   | 15-20 jours ouvrables | Vérifications d’antécédents par les organismes compétents |
+| Approbation interinstitutionnelle | 10-15 jours ouvrables | Coordination finale entre BKPM et l’immigration |
+| Délivrance du visa     | 5-10 jours ouvrables | Golden Visa délivré                                |
+| Entrée et activation   | 3-5 jours ouvrables | Visa activé, permis de séjour accordé              |
 
-**Liste de contrôle des documents :**
+**Liste des documents :**
 
-- Passeport (valide 60+ mois pour un visa de 5 ans, 120+ mois pour un visa de 10 ans)
-- Preuve d'investissement atteignant le seuil minimum
-- Pour les particuliers : 350 000 USD+ en obligations d'État indonésiennes, dépôts ou actions de sociétés
-- Pour les directeurs d'entreprise : Investissement de la société de 2,5 millions USD+ en Indonesia
-- Plan d'investissement détaillé
+- Passeport (valide pendant plus de 60 mois pour 5 ans, plus de 120 mois pour 10 ans)
+- Preuve d’investissement atteignant le seuil minimum
+- Pour les particuliers : plus de 350 000 USD en obligations d’État indonésiennes, dépôts ou actions de sociétés
+- Pour les directeurs de sociétés : investissement de la société de plus de 2,5 M USD en Indonesia
+- Plan d’investissement détaillé
 - Extrait de casier judiciaire (apostillé)
-- Certificat de santé
+- Certificat médical
 - CV professionnel
-- États financiers (personnels, 3 ans)
-- Documents de l'entreprise (si demande d'entreprise)
-- Lettre d'intention expliquant les objectifs d'investissement
+- États financiers personnels (3 ans)
+- Documents de la société (en cas de demande d’entreprise)
+- Lettre d’intention expliquant les objectifs d’investissement
 
-## Ce qui cause les retards (et comment les éviter)
+## Ce qui cause des retards (et comment les éviter)
 
 ### Les 5 principales causes de retard
 
-| Cause | Retard typique ajouté | Prévention |
-| ----- | --------------------- | ---------- |
+| Cause                              | Retard habituellement ajouté | Prévention                                                    |
+| ---------------------------------- | ---------------------------- | ------------------------------------------------------------- |
+| Documents incomplets               | 2-4 semaines                 | Utilisez une liste détaillée ; faites examiner le dossier par un agent avant la soumission |
+| Jours fériés gouvernementaux       | 1-2 semaines                 | Consultez le calendrier des jours fériés indonésiens avant de planifier |
+| Pannes de système (Molina/TKA Online) | 1-5 jours                  | Soumettez tôt ; n’attendez pas la date limite                 |
+| Arriéré de haute saison            | 1-3 semaines                 | Évitez juillet-août et décembre-janvier                       |
+| Traitement de l’apostille          | 2-6 semaines                 | Commencez le processus d’apostille 2 mois avant la demande de visa |
+
+### Jours fériés nationaux indonésiens qui influent sur le traitement
+
+Indonesia compte 15 à 17 jours fériés nationaux par an, auxquels s’ajoutent des jours de congé collectif (cuti bersama) pouvant ajouter 2 à 4 jours non ouvrables supplémentaires autour des principales fêtes. Les périodes les plus importantes sont :
+
+- **Eid al-Fitr (Lebaran) :** généralement 1 à 2 semaines de perturbations (avril-mai, variable selon les années)
+- **Noël/Nouvel An :** du 24 décembre au 2 janvier (traitement minimal)
+- **Jour de l’Indépendance :** 17 août (1 jour, mais souvent prolongé)
+- **Galungan/Kuningan (Bali) :** les bureaux d’immigration de Bali peuvent avoir des effectifs réduits
+
+### Conseils pratiques pour un traitement plus rapide
+
+1. **Soumettez un dossier complet dès la première tentative.** Chaque demande de correction vous replace en fin de file d’attente.
+2. **Commencez tôt les démarches d’apostille et de légalisation.** Il s’agit de l’étape préparatoire la plus longue et elle ne peut pas être accélérée.
+3. **Faites appel à un agent réputé pour les KITAS et les catégories supérieures.** Ses relations existantes avec les agents chargés des dossiers accélèrent légitimement le traitement.
+4. **Déposez votre demande pendant les mois creux** (février-avril, septembre-novembre).
+5. **Conservez des copies numériques de tout.** Si un document disparaît pendant le traitement, vous pourrez le soumettre à nouveau immédiatement.
+6. **Assurez un suivi proactif.** Demandez à votre agent de vérifier le statut tous les 3 à 5 jours ouvrables. Les demandes sans suivi peuvent rester indéfiniment dans une file d’attente.
+7. **Assurez-vous que la validité du passeport dépasse d’au moins 12 mois la durée du visa.** Un passeport qui expire bientôt peut entraîner une suspension de l’examen.
+
+## Planifier le calendrier de votre visa
+
+### Si vous devez être en Indonesia dans 2 semaines
+
+Vos seules options sont l’E-VOA (instantané) ou le B211A (3-5 jours). Les KITAS et catégories supérieures ne sont pas possibles dans ce délai.
+
+### Si vous avez 1 mois pour planifier
+
+Le visa travailleur à distance E33G est réalisable si vos documents sont déjà préparés. Le B211A offre une marge de temps confortable.
+
+### Si vous avez 2 à 3 mois pour planifier
+
+Le KITAS directeur E25B et le KITAS retraite E33E/E33F sont réalisables. Commencez immédiatement la préparation du RPTKA pour l’E25B.
+
+### Si vous avez 4 à 6 mois pour planifier
+
+Tous les types de visas, y compris le KITAS investisseur E28A et le KITAP, sont réalisables. Pour le Golden Visa, la phase de structuration de l’investissement devrait commencer.
+
+### Si vous avez plus de 6 mois pour planifier
+
+Le Golden Visa est réalisable avec une marge confortable pour les retards. C’est également le calendrier idéal pour les demandes de KITAP.
+
+---
+
+**Besoin d’aide pour planifier le calendrier de votre visa ?** Bali Zero fournit des calendriers de visa personnalisés avec suivi des étapes clés. Nous gérons chaque étape, de la préparation des documents à la collecte de la carte KITAS.
+
+- **E-mail :** hello@balizero.com
+<HeaderWhatsAppCTA />
+- **Site web :** [balizero.com](https://balizero.com)
