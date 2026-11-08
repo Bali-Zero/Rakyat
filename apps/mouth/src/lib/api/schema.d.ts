@@ -5492,6 +5492,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/crm/companies/{company_id}/drive-sources": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Company Drive Sources
+     * @description Return validated direct links, never documents or raw custom fields.
+     */
+    get: operations["get_company_drive_sources_api_crm_companies__company_id__drive_sources_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/crm/companies/{company_id}/sync-drive": {
     parameters: {
       query?: never;
@@ -20991,6 +21011,30 @@ export interface components {
       issue_date?: string | null;
       /** Mime Type */
       mime_type?: string | null;
+    };
+    /** CompanyDriveSource */
+    CompanyDriveSource: {
+      /** Kinds */
+      kinds: ("primary" | "restricted_tax" | "legacy")[];
+      /** Url */
+      url: string;
+    };
+    /** CompanyDriveSources */
+    CompanyDriveSources: {
+      /** Company Id */
+      company_id: number;
+      /** Historical Record Ids */
+      historical_record_ids?: number[];
+      /**
+       * Lineage Status
+       * @default none
+       * @enum {string}
+       */
+      lineage_status: "none" | "valid" | "invalid";
+      /** Merged Into Company Id */
+      merged_into_company_id?: number | null;
+      /** Sources */
+      sources?: components["schemas"]["CompanyDriveSource"][];
     };
     /** CompanyUpdate */
     CompanyUpdate: {
@@ -37833,6 +37877,37 @@ export interface operations {
           "application/json": {
             [key: string]: unknown;
           };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_company_drive_sources_api_crm_companies__company_id__drive_sources_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        company_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CompanyDriveSources"];
         };
       };
       /** @description Validation Error */

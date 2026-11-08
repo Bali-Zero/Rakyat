@@ -45,7 +45,7 @@ Generic labels avoid copying stored folder names. Loading, empty, failure and in
 
 | Date       | State    | Observation / remaining gate                                                                                                                          |
 | ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-11-08 | Prepared | Typed staff-only endpoint, minimal CompanyTab import/render, synthetic backend and UI tests; coordinator must independently accept, gate and release. |
+| 2026-11-08 | Prepared | Typed staff-only endpoint, active-link CompanyTab selection guard, synthetic backend and UI tests; coordinator must independently accept, gate and release. |
 
 Bites: the staff Company tab renders direct Drive links with their retained
 provenance from the new endpoint; denied roles receive 403 before a database read.
@@ -66,5 +66,5 @@ Frontend dependencies were installed with `npm ci --prefer-offline --ignore-scri
 the tracked lockfile was unchanged. No database or Drive writes were performed.
 
 Integration note: another open CompanyTab change (PR 27) may overlap the nearby
-identity section. This concern adds one import and one component render only;
-resolve against that change without replacing its existing content.
+identity section. Preserve the source component plus its active-link selection
+state, semantic key, effect dependency and render guard alongside existing content.
