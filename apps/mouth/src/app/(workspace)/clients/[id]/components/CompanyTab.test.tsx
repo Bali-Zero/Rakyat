@@ -17,12 +17,14 @@ const {
   mockSearchCompanyByName,
   mockPost,
   mockGetClientRecap,
+  mockGetCompanyDriveSources,
 } = vi.hoisted(() => ({
   mockGetClientCompanies: vi.fn(),
   mockGetCompany: vi.fn().mockResolvedValue({ associates: [], documents: [] }),
   mockSearchCompanyByName: vi.fn().mockResolvedValue(null),
   mockPost: vi.fn(),
   mockGetClientRecap: vi.fn(),
+  mockGetCompanyDriveSources: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -33,6 +35,7 @@ vi.mock("@/lib/api", () => ({
       searchCompanyByName: mockSearchCompanyByName,
       getCompanyDocuments: vi.fn().mockResolvedValue([]),
       getClientRecap: mockGetClientRecap,
+      getCompanyDriveSources: mockGetCompanyDriveSources,
     },
     post: mockPost,
   },
@@ -133,6 +136,18 @@ beforeEach(() => {
   mockGetClientRecap.mockRejectedValue(new Error("no recap"));
   mockGetCompany.mockResolvedValue({ associates: [], documents: [] });
   mockSearchCompanyByName.mockResolvedValue(null);
+  mockGetCompanyDriveSources.mockImplementation(async (companyId: number) => ({
+    company_id: companyId,
+    sources: [
+      {
+        url: `https://drive.google.com/drive/folders/synthetic_folder_${companyId}`,
+        kinds: ["primary"],
+      },
+    ],
+    lineage_status: "none",
+    merged_into_company_id: null,
+    historical_record_ids: [],
+  }));
 });
 
 describe("CompanyTab — r19 kv-grid ledger", () => {
@@ -1047,5 +1062,135 @@ describe("CompanyTab — section numbers follow what renders; 390px layout", () 
     expect(actions.className).toContain("max-sm:basis-full");
     expect(actions.className).toContain("max-sm:flex-wrap");
     expect(actions.parentElement!.className).toContain("max-sm:flex-wrap");
+  });
+});
+
+describe("CompanyTab — Drive source attribution", () => {
+  it("does not request Drive sources for a by-name fallback match", async () => {
+    mockGetClientCompanies.mockResolvedValueOnce([]);
+    mockSearchCompanyByName.mockResolvedValueOnce({
+      ...link(),
+      id: 90,
+      company_name: "Synthetic name match",
+    });
+    render(
+      <CompanyTab
+        clientId={412}
+        client={{ ...CLIENT, company_name: "Synthetic" }}
+        documents={[]}
+        formatDate={(d) => d}
+        onRefresh={async () => {}}
+      />,
+    );
+    await screen.findByText("Synthetic name match");
+    expect(
+      screen.queryByRole("region", { name: "Company Drive sources" }),
+    ).toBeNull();
+    expect(mockGetCompanyDriveSources).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { status: "inactive", link_status: undefined },
+    { status: undefined, link_status: "inactive" },
+    { status: undefined, link_status: undefined },
+    { status: "active", link_status: "inactive" },
+    { status: "inactive", link_status: "active" },
+  ])(
+    "does not request Drive sources for an unconfirmed active link %j",
+    async (statuses) => {
+      if (
+        statuses.status === "inactive" &&
+        statuses.link_status === undefined
+      ) {
+        render(
+          <CompanyTab
+            clientId={412}
+            client={CLIENT}
+            documents={[]}
+            formatDate={(d) => d}
+            onRefresh={async () => {}}
+            companyLinks={[link(statuses)]}
+          />,
+        );
+      } else {
+        mockGetClientCompanies.mockResolvedValueOnce([link(statuses)]);
+        renderTab();
+      }
+      await screen.findByText("PT Synthetic Studio");
+      expect(
+        screen.queryByRole("region", { name: "Company Drive sources" }),
+      ).toBeNull();
+      expect(mockGetCompanyDriveSources).not.toHaveBeenCalled();
+    },
+  );
+
+  it("requests sources for the exact active by-client link_status selection", async () => {
+    mockGetClientCompanies.mockResolvedValueOnce([
+      link({ status: undefined, link_status: "active" }),
+    ]);
+    renderTab();
+    await screen.findByRole("link", { name: "Primary" });
+    expect(mockGetCompanyDriveSources).toHaveBeenCalledExactlyOnceWith(90);
+  });
+
+  it("does not borrow active status from another linked company", async () => {
+    mockGetClientCompanies.mockResolvedValueOnce([
+      link({ status: "inactive", is_primary: true }),
+      link({ company_id: 91, link_id: 2, status: "active", is_primary: false }),
+    ]);
+    renderTab();
+    await screen.findByRole("list", { name: "Other linked companies" });
+    expect(
+      screen.queryByRole("region", { name: "Company Drive sources" }),
+    ).toBeNull();
+    expect(mockGetCompanyDriveSources).not.toHaveBeenCalled();
+  });
+
+  it("rechecks profile selection and hides stale sources when its link becomes inactive", async () => {
+    const props = {
+      clientId: 412,
+      client: CLIENT,
+      documents: [],
+      formatDate: (d: string) => d,
+      onRefresh: async () => {},
+    };
+    const { rerender } = render(
+      <CompanyTab {...props} companyLinks={[link()]} />,
+    );
+    const first = await screen.findByRole("link", { name: "Primary" });
+    expect(first).toHaveAttribute("href", expect.stringContaining("_90"));
+
+    const second = link({
+      company_id: 91,
+      link_id: 2,
+      company_name: "PT Second Synthetic",
+    });
+    rerender(<CompanyTab {...props} companyLinks={[second]} />);
+    expect(screen.queryByRole("link", { name: "Primary" })).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "Primary" })).toHaveAttribute(
+        "href",
+        expect.stringContaining("_91"),
+      ),
+    );
+    expect(mockGetCompanyDriveSources.mock.calls.map(([id]) => id)).toEqual([
+      90, 91,
+    ]);
+
+    rerender(
+      <CompanyTab
+        {...props}
+        companyLinks={[{ ...second, status: "inactive" }]}
+      />,
+    );
+    expect(
+      screen.queryByRole("region", { name: "Company Drive sources" }),
+    ).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByText("PT Second Synthetic")).toBeInTheDocument(),
+    );
+    expect(mockGetCompanyDriveSources.mock.calls.map(([id]) => id)).toEqual([
+      90, 91,
+    ]);
   });
 });
