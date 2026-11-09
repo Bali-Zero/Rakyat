@@ -1,8 +1,7 @@
 import "@/styles/kbli-r19-wrapper.css";
 import { NavShell, BZLogo } from "@balizero/core";
 import { SessionInit } from "@/components/funnel/SessionInit";
-import { WhatsAppLeadButton } from "@/components/lead/WhatsAppLeadButton";
-import { buildWhatsAppLink } from "@/lib/whatsapp-utm";
+import { KBLIHeaderCTA } from "./_components/KBLIHeaderCTA";
 import { getFunnelNavItems } from "@/components/funnel/funnel-nav";
 import { MobileNav } from "@/app/v2/_components/MobileNav";
 import { Footer } from "@/app/v2/_components/Footer";
@@ -34,21 +33,7 @@ export default function KBLILayout({
         logo={<BZLogo variant="full" />}
         items={navItems}
         slotAfter={<MobileNav items={navItems} funnel="kbli" paper />}
-        actions={
-          <WhatsAppLeadButton
-            source="kbli_navigator"
-            whatsappContext={[{ label: "Source", value: "KBLI Navigator" }]}
-            utm={{ page: "/kbli" }}
-            fallbackHref={buildWhatsAppLink("kbli")}
-            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-md text-[11px] font-semibold uppercase tracking-wide"
-            style={{
-              background: "var(--accent-funnel)",
-              color: "var(--text-on-accent)",
-            }}
-          >
-            Get Started
-          </WhatsAppLeadButton>
-        }
+        actions={<KBLIHeaderCTA />}
       />
       <SessionInit funnel="kbli" />
       <div
