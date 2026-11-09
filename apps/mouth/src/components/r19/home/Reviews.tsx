@@ -39,7 +39,7 @@ export function Reviews() {
       </a>
       <figure className={styles.reviewPortrait}>
         <img
-          alt="Adit, Bali Zero Supervisor and Lead Setup"
+          alt="Adit, Bali Zero Direktur and Lead Setup"
           src="/assets/r19/adit-site-bg.webp"
           width="1023"
           height="1537"
@@ -48,7 +48,7 @@ export function Reviews() {
         <figcaption>
           <span>From the Bali Zero team</span>
           <strong>Adit</strong>
-          <span>Supervisor · Lead Setup</span>
+          <span>Direktur · Lead Setup</span>
         </figcaption>
       </figure>
     </section>

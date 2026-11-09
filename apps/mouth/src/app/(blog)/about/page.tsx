@@ -26,8 +26,8 @@ const TEAM_MEMBERS = publicEntries([
   { slug: "zainal", roleOverride: "CEO · Founder" },
   { slug: "heru", roleOverride: "Komisaris · Founder" },
   { slug: "ruslana" },
-  { slug: "krisna", roleOverride: "Setup Lead" },
-  { slug: "asya", roleOverride: "Accountant" },
+  { slug: "krisna", roleOverride: "Senior Consultant" },
+  { slug: "asya", roleOverride: "HR & Accounting" },
 ]).map((e) => {
   const r = rosterBySlug(e.slug);
   return {
