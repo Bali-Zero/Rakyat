@@ -43,7 +43,7 @@ describe("team public listing filter", () => {
     expect(rosterBySlug("sahira")?.name).toBe("Sahira");
     expect(rosterBySlug("faisha")?.name).toBe("Faisha");
     expect(rosterBySlug("faisha")?.role).toBe("Tax Care");
-    expect(TEAM_ROSTER).toHaveLength(20);
+    expect(TEAM_ROSTER).toHaveLength(19);
   });
 
   it("honours publicListed:false as well as the excluded slugs", () => {

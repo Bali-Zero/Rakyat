@@ -185,7 +185,9 @@ const TaxConsultantSelector = memo(function TaxConsultantSelector({
         >
           <option value="">— not assigned —</option>
           {value && !consultants.some((c) => c.value === value) && (
-            <option value={value}>{legacyConsultantLabel(value)}</option>
+            <option value={value} disabled>
+              {legacyConsultantLabel(value)}
+            </option>
           )}
           {consultants.map((c) => (
             <option key={c.value} value={c.value}>

@@ -78,25 +78,27 @@ const LEADERSHIP: TeamMember[] = compose([
     slug: "ruslana",
     roleOverride: "Special Advisory",
   },
-  {
-    slug: "veronika",
-    roleOverride: "Manager",
-  },
 ]);
+
+// The leadership copy counts the people it lists, so it cannot drift from LEADERSHIP.
+const NUMBER_WORDS = ["no", "one", "two", "three", "four", "five", "six"];
+const LEADERSHIP_COUNT_WORD =
+  NUMBER_WORDS[LEADERSHIP.length] ?? String(LEADERSHIP.length);
 
 const SETUP_TEAM: TeamMember[] = compose([
   {
     slug: "adit",
+    roleOverride: "Direktur",
   },
   {
     slug: "ari",
-    roleOverride: "Supervisor",
+    roleOverride: "Tax Responsible",
     // The tool Ari is responsible for, on its real page.
     project: { label: "Second Home Studio", href: "/visa/second-home/studio" },
   },
   {
     slug: "krisna",
-    roleOverride: "Specialist Consultant",
+    roleOverride: "Senior Consultant",
   },
   {
     slug: "dea",
@@ -134,7 +136,7 @@ const TAX_TEAM: TeamMember[] = compose([
 const ACCOUNTING_TEAM: TeamMember[] = compose([
   {
     slug: "asya",
-    roleOverride: "Accountant",
+    roleOverride: "HR & Accounting",
   },
   {
     slug: "rina",
@@ -322,10 +324,10 @@ export default function TeamPage() {
         <section aria-labelledby="leadership" className={styles.section}>
           <div className={styles.leadershipIntro}>
             <span className={styles.eyebrow}>Leadership</span>
-            <h2 id="leadership">The founders, the advisors, the manager</h2>
+            <h2 id="leadership">The founders and the advisor</h2>
             <p className={styles.sectionSubtitle}>
-              The four people who set direction and sign off on every high-risk
-              file.
+              The {LEADERSHIP_COUNT_WORD} people who set direction and sign off on
+              every high-risk file.
             </p>
           </div>
           <div className={styles.leadershipGrid}>

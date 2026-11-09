@@ -47,7 +47,7 @@ describe("/about", () => {
       expect(screen.getByText(name), `${name} is missing`).toBeInTheDocument();
     }
     expect(screen.getByText("CEO · Founder")).toBeInTheDocument();
-    expect(screen.getByText("Setup Lead")).toBeInTheDocument();
+    expect(screen.getByText("Senior Consultant")).toBeInTheDocument();
   });
 
   it("drops a person the filter excludes, whoever it is", async () => {

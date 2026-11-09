@@ -707,6 +707,45 @@ describe("ClientDetailClient", () => {
     expect(select.value).toBe("consultant.one@example.test");
   });
 
+  // GUILT/INNOCENCE: a stored consultant that is no longer offered is shown as a
+  // disabled "Former staff" option in BOTH selects, so it cannot be re-selected
+  // (which would re-save the historical value); a live option still saves.
+  it("both Overview selects keep a retired consultant visible but not selectable, and a live one still saves", async () => {
+    mockUpdateClient.mockClear();
+    mockUpdateClient.mockResolvedValue({});
+    mockUseClientDetail.mockReturnValue({
+      data: companyLessProfile({ tax_consultant: "retired.tax@example.test" }),
+      isLoading: false,
+      error: null,
+    });
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    const selects = Array.from(
+      document.querySelectorAll("select"),
+    ).filter((el) =>
+      Array.from(el.options).some((o) => o.value === "consultant.one@example.test"),
+    ) as HTMLSelectElement[];
+    expect(selects.length).toBeGreaterThanOrEqual(1);
+    for (const select of selects) {
+      expect(select.value).toBe("retired.tax@example.test");
+      const former = select.options[select.selectedIndex];
+      expect(former.textContent).toBe("Former staff");
+      expect(former.disabled).toBe(true);
+      await userEvent.selectOptions(select, "retired.tax@example.test");
+    }
+    expect(mockUpdateClient).not.toHaveBeenCalled();
+
+    await userEvent.selectOptions(selects[0], "consultant.one@example.test");
+    await waitFor(() =>
+      expect(mockUpdateClient).toHaveBeenCalledWith(
+        7,
+        { tax_consultant: "consultant.one@example.test" },
+        "synthetic.team@example.test",
+      ),
+    );
+  });
+
   // GUILT: a failed save must not leave the select showing a consultant the
   // server never stored. Dies without the `setTaxConsultantValue(previous)`
   // revert in the catch branch.

@@ -84,7 +84,7 @@ export const TEAM_ROSTER: RosterMember[] = [
   {
     slug: "adit",
     name: "Adit",
-    role: "Supervisor · Lead Setup",
+    role: "Direktur",
     dept: "setup",
     email: "adit@balizero.com",
     photo: "/static/team/adit.jpg",
@@ -92,7 +92,7 @@ export const TEAM_ROSTER: RosterMember[] = [
   {
     slug: "ari",
     name: "Ari",
-    role: "Team Leader",
+    role: "Tax Responsible",
     dept: "setup",
     email: "ari.firda@balizero.com",
     photo: "/static/team/ari.jpg",
@@ -100,7 +100,7 @@ export const TEAM_ROSTER: RosterMember[] = [
   {
     slug: "krisna",
     name: "Krisna",
-    role: "Executive Consultant",
+    role: "Senior Consultant",
     dept: "setup",
     email: "krisna@balizero.com",
     photo: "/static/team/krisna-20260927.jpg",
@@ -148,17 +148,9 @@ export const TEAM_ROSTER: RosterMember[] = [
 
   // ── Tax ─────────────────────────────────────────────────────────────────
   {
-    slug: "veronika",
-    name: "Veronika",
-    role: "Manager · Tax & Setup", // Zero 2026-10-20: manages the tax department AND the setup team
-    dept: "tax",
-    email: "tax@balizero.com",
-    // Zero 2026-10-28: portrait removed from every surface — initials only.
-  },
-  {
     slug: "angel",
     name: "Angel",
-    role: "Tax Lead",
+    role: "Tax Supervisor",
     dept: "tax",
     email: "angel.tax@balizero.com",
     photo: "/static/team/angel.jpg",
@@ -194,7 +186,7 @@ export const TEAM_ROSTER: RosterMember[] = [
   {
     slug: "asya",
     name: "Asya Nadia",
-    role: "Accounting",
+    role: "HR & Accounting",
     dept: "accounting",
     email: "asya@balizero.com",
     photo: "/static/team/asya.jpg",

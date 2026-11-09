@@ -36,7 +36,7 @@ const consultantLabel = (
   email: string | null | undefined,
 ) =>
   email
-    ? (consultants.find((c) => c.value === email)?.label ?? email.split("@")[0])
+    ? (consultants.find((c) => c.value === email)?.label ?? "Former staff")
     : null;
 
 const QUARTERS = ["Q1", "Q2", "Q3", "Q4"] as const;
@@ -484,6 +484,14 @@ export default function LkpmBatchClient({
                           aria-label={`Assign ${item.company_name} tax consultant`}
                         >
                           <option value="">— none —</option>
+                          {item.lkpm_assigned_to &&
+                            !taxConsultants.some(
+                              (c) => c.value === item.lkpm_assigned_to,
+                            ) && (
+                              <option value={item.lkpm_assigned_to} disabled>
+                                Former staff
+                              </option>
+                            )}
                           {taxConsultants.map((c) => (
                             <option key={c.value} value={c.value}>
                               {c.label}

@@ -132,7 +132,6 @@ export const TAX_CONSULTANTS: readonly TaxConsultantOption[] = [
  * options.
  */
 export const LKPM_ASSIGNEES: readonly TaxConsultantOption[] = [
-  { value: "veronika.tax@balizero.com", label: "Veronika" },
   { value: "kadek.tax@balizero.com", label: "Kadek" },
   { value: "dewaayu.tax@balizero.com", label: "Dewa Ayu" },
   { value: "angel.tax@balizero.com", label: "Angel" },

@@ -37,9 +37,8 @@ const KEYS_THE_HANDWRITTEN_MAP_HAD = [
  * Two keys the hand-written map ALSO had, and that the derived map must now NOT
  * answer for. Their portraits were withdrawn from `public/` under the owner's
  * decision D6 (2026-09-15): the files were fetchable by anyone who guessed the URL,
- * and the URL was the person's name. Veronika joined the list on 2026-10-28 when
- * the owner withdrew her portrait from every surface. The roster entries keep no
- * `photo`, so these members render the initials fallback on internal surfaces.
+ * and the URL was the person's name. The roster entries keep no `photo`, so these
+ * members render the initials fallback on internal surfaces.
  *
  * Kept as a SEPARATE list rather than silently dropped from the one above: the
  * test above exists to catch a derivation that quietly loses a key, and removing
@@ -47,7 +46,7 @@ const KEYS_THE_HANDWRITTEN_MAP_HAD = [
  * hand. Here the absence is pinned as the decision it is — so restoring any
  * portrait turns this red and has to be done on purpose.
  */
-const KEYS_WITHDRAWN_UNDER_D6 = ["faisha", "sahira", "veronika"] as const;
+const KEYS_WITHDRAWN_UNDER_D6 = ["faisha", "sahira"] as const;
 
 describe("workspace roster directory", () => {
   it("still answers for every key the hand-written photo map had", () => {
@@ -136,7 +135,7 @@ describe("workspace roster directory", () => {
     // faysha.tax@…) was offboarded 2026-09-19 and removed from this dropdown
     // entirely (no longer an assignable option); the CHECK constraint itself
     // is untouched so her 12 existing lkpm_assigned_to rows stay valid.
-    //   roster tax@…  vs  constraint kagecesa.xug@…
+    // (the retired roster identity tax@… is no longer in the roster at all)
     // This test exists to keep someone from "tidying" the list into a derivation.
     expect(TAX_CONSULTANTS.map((c) => c.value)).toEqual([
       "angel.tax@balizero.com",
@@ -147,19 +146,15 @@ describe("workspace roster directory", () => {
     ]);
     const rosterEmail = (slug: string) =>
       TEAM_ROSTER.find((m) => m.slug === slug)?.email;
-    expect(rosterEmail("veronika")).toBe("tax@balizero.com");
-    // …which is NOT what the dropdown submits. The disagreement is real and is
-    // reported as a finding, not resolved here.
-    expect(TAX_CONSULTANTS.map((c) => c.value)).not.toContain(
-      rosterEmail("veronika"),
-    );
+    // Reorganisation 2026-11-09: the retired tax@ identity left the roster.
+    expect(TEAM_ROSTER.some((m) => m.email === "tax@balizero.com")).toBe(false);
     // Faisha stays off the dropdown regardless of the roster's own email spelling.
     expect(TAX_CONSULTANTS.map((c) => c.value)).not.toContain(
       rosterEmail("faisha"),
     );
   });
 
-  it("offers Dea and Candra and the three .tax@ addresses, not Veronika or Faisha", () => {
+  it("offers Dea and Candra and the three .tax@ addresses, not the retired addresses or Faisha", () => {
     const values = taxConsultants().map((c) => c.value);
     for (const v of [
       "dea@balizero.com",
@@ -177,9 +172,8 @@ describe("workspace roster directory", () => {
       expect(values).not.toContain(v);
   });
 
-  it("keeps the LKPM assignee list at its previous four, without Dea or Candra", () => {
+  it("keeps the LKPM assignee list at its three tax consultants, without Dea or Candra", () => {
     expect(lkpmAssignees()).toEqual([
-      { value: "veronika.tax@balizero.com", label: "Veronika" },
       { value: "kadek.tax@balizero.com", label: "Kadek" },
       { value: "dewaayu.tax@balizero.com", label: "Dewa Ayu" },
       { value: "angel.tax@balizero.com", label: "Angel" },
@@ -193,8 +187,8 @@ describe("workspace roster directory", () => {
     const a = lkpmAssignees();
     a[0].label = "mutated";
     a.push({ value: "x@example.test", label: "X" });
-    expect(lkpmAssignees()[0].label).toBe("Veronika");
-    expect(LKPM_ASSIGNEES).toHaveLength(4);
+    expect(lkpmAssignees()[0].label).toBe("Kadek");
+    expect(LKPM_ASSIGNEES).toHaveLength(3);
     expect(lkpmAssignees()).not.toBe(LKPM_ASSIGNEES);
     expect(taxConsultants()).not.toEqual(lkpmAssignees());
   });

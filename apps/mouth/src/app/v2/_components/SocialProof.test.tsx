@@ -37,14 +37,14 @@ beforeEach(() => {
 });
 
 describe("SocialProof — the default render (what /v2 gets)", () => {
-  it("still shows the founders and the four people behind them", async () => {
+  it("still shows the founders and the three people behind them", async () => {
     await renderSocialProof();
 
     expect(screen.getByText("Zainal & Heru")).toBeInTheDocument();
     expect(screen.getByText("Zainal Abidin")).toBeInTheDocument();
     expect(screen.getByText("Pak Heru")).toBeInTheDocument();
     expect(screen.getByText("The team behind them")).toBeInTheDocument();
-    for (const name of ["Ruslana", "Veronika", "Adit", "Angel"]) {
+    for (const name of ["Ruslana", "Adit", "Angel"]) {
       expect(screen.getByText(name), `${name} is missing`).toBeInTheDocument();
     }
     expect(screen.getByRole("link", { name: /All 18\+/ })).toHaveAttribute(
@@ -72,7 +72,7 @@ describe("SocialProof — the founder-band variant (what the home opts into)", (
     expect(screen.getByText("Zainal Abidin")).toBeInTheDocument();
     expect(screen.getByText("Pak Heru")).toBeInTheDocument();
     expect(screen.queryByText("The team behind them")).toBeNull();
-    for (const name of ["Ruslana", "Veronika", "Adit", "Angel"]) {
+    for (const name of ["Ruslana", "Adit", "Angel"]) {
       expect(screen.queryByText(name), `${name} should not be here`).toBeNull();
     }
   });
