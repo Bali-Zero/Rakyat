@@ -42,12 +42,20 @@ class TestIsCrmAdmin:
 
 
 class TestCanViewAllPractices:
-    """Zero 2026-10-20: Veronika (Manager of tax + setup, login tax@) and
-    Ruslana see every practice without being admins."""
+    """Ruslana and, since the 2026-11-09 reorganisation, the Tax Supervisor, the Tax
+    Responsible and the Direktur see every practice without being admins."""
 
-    def test_veronika_and_ruslana_see_all_practices(self):
-        for email in ("tax@balizero.com", "ruslana@balizero.com"):
+    def test_department_heads_and_ruslana_see_all_practices(self):
+        for email in (
+            "angel.tax@balizero.com",
+            "ari.firda@balizero.com",
+            "adit@balizero.com",
+            "ruslana@balizero.com",
+        ):
             assert can_view_all_practices({"email": email, "role": "member"}) is True, email
+
+    def test_the_retired_tax_login_no_longer_sees_all_practices(self):
+        assert can_view_all_practices({"email": "tax@balizero.com", "role": "member"}) is False
 
     def test_offboarded_natalie_sees_only_assigned(self):
         assert can_view_all_practices({"email": "natalie@balizero.com", "role": "member"}) is False

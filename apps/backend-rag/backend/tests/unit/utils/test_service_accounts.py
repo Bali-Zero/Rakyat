@@ -319,3 +319,10 @@ class TestNoCallSiteUsesClientAsAProxyForStaff:
                 f"{name} is allowlisted as a deliberate exception, but no longer contains "
                 "the pattern — remove the now-unnecessary exemption"
             )
+
+
+def test_reorganisation_2026_11_09_titles_are_human_team_roles() -> None:
+    from backend.app.utils.service_accounts import is_human_team_member
+
+    for role in ("Direktur", "Tax Supervisor", "Tax Responsible", "Senior Consultant", "HR & Accounting"):
+        assert is_human_team_member(role), role

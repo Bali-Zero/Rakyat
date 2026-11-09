@@ -53,6 +53,12 @@ const TEAM_ROLES = new Set([
   // Finance & Client Services Coordinator
   "manager",
   "finance & client services coordinator",
+  // reorganisation 2026-11-09: new job titles, same people, same access
+  "direktur",
+  "tax supervisor",
+  "tax responsible",
+  "senior consultant",
+  "hr & accounting",
 ]);
 
 export function isTeamRole(role: string | null | undefined): boolean {

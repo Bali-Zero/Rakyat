@@ -1290,7 +1290,7 @@ class TestDeriveWaAgentRole:
         )
 
         result = _derive_wa_agent_role(
-            {"role": "team", "name": "Adit", "email": "adit@balizero.com"}
+            {"role": "team", "name": "Krisna", "email": "krisna@balizero.com"}
         )
         assert result is ROLE_EXECUTIVE_CONSULTANT
         assert result is not ROLE_ADMIN  # regression guard: never over-grants
@@ -1501,8 +1501,8 @@ class TestWaAgentRoleFlagWiring:
             is_wa_inbox_bot=True,
             identity={
                 "role": "team",
-                "team_member": "Adit",
-                "team_member_email": "adit@balizero.com",
+                "team_member": "Krisna",
+                "team_member_email": "krisna@balizero.com",
             },
             user_id="whatsapp_62811000222",
         )

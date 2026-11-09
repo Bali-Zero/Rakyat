@@ -31,8 +31,8 @@ def sample_review_args() -> dict:
         "request_id": 99,
         "requester_email": "kadek.tax@balizero.com",
         "requester_name": "Kadek",
-        "reviewer_email": "tax@balizero.com",
-        "reviewer_name": "Veronika",
+        "reviewer_email": "angel.tax@balizero.com",
+        "reviewer_name": "Reviewer",
         "leave_type_name": "Annual Leave",
         "start_date": date(2026, 12, 15),
         "end_date": date(2026, 12, 19),
@@ -59,7 +59,7 @@ class TestNotifyLeaveRequestPending:
 
         assert mock_send.call_count == 1
         kwargs = mock_send.call_args.kwargs
-        assert kwargs["to"] == "tax@balizero.com"
+        assert kwargs["to"] == "angel.tax@balizero.com"
         assert kwargs["cc"] == ["zero@balizero.com", "asya@balizero.com"]
         assert "Kadek" in kwargs["subject"]
         assert "5 days" in kwargs["subject"]
@@ -138,8 +138,9 @@ class TestNotifyLeaveRequestPending:
             await notify_leave_request_pending(**sample_pending_args)
 
         kwargs = mock_send.call_args.kwargs
-        # Asya is the requester → cc list is empty → cc=None passed to client
-        assert kwargs["cc"] is None
+        # Asya is the requester → approver is the Direktur, Zero stays in CC, Asya is not
+        assert kwargs["to"] == "adit@balizero.com"
+        assert kwargs["cc"] == ["zero@balizero.com"]
 
 
 # ─── notify_leave_request_reviewed ─────────────────────────────────────────
@@ -161,12 +162,12 @@ class TestNotifyLeaveRequestReviewed:
         kwargs = mock_send.call_args.kwargs
         # TO is the requester, not the reviewer
         assert kwargs["to"] == "kadek.tax@balizero.com"
-        # Veronika reviewed → both Zero and Asya in CC
+        # the Tax Supervisor reviewed → both Zero and Asya in CC
         assert kwargs["cc"] == ["zero@balizero.com", "asya@balizero.com"]
         assert "Approved" in kwargs["subject"]
         assert "5 days" in kwargs["subject"]
         assert "approved" in kwargs["body"]
-        assert "Veronika" in kwargs["body"]
+        assert "Reviewer" in kwargs["body"]
         assert "Annual Leave" in kwargs["body"]
         assert "2026-12-15 → 2026-12-19" in kwargs["body"]
         # No rejection reason on approval

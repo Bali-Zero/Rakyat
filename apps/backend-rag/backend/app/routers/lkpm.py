@@ -51,7 +51,6 @@ def _safe_lkpm_failure(
 # constraint from migration 093. Adding a new consultant requires updating
 # all three (Python model + CRM router + DB migration).
 LKPM_ASSIGNEES: set[str] = {
-    "veronika.tax@balizero.com",
     "kadek.tax@balizero.com",
     "dewaayu.tax@balizero.com",
     "angel.tax@balizero.com",

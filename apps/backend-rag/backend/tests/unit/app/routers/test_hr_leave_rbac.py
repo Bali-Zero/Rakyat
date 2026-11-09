@@ -56,23 +56,22 @@ class TestRequireCanReviewLeave:
 
     # ─── Supervisor delegation ───────────────────────────────────────
     @pytest.mark.asyncio
-    async def test_veronika_approves_kadek(self) -> None:
+    async def test_tax_supervisor_approves_kadek(self) -> None:
         service = _mock_service_returning_request("kadek.tax@balizero.com")
         req = await _require_can_review_leave(
             service,
-            {"email": "tax@balizero.com", "role": "member"},
+            {"email": "angel.tax@balizero.com", "role": "member"},
             1,
         )
         assert req["id"] == 1
 
     @pytest.mark.asyncio
-    async def test_veronika_approves_dea_as_setup_manager(self) -> None:
-        # Zero 2026-10-20: Veronika manages the setup team, so Dea's approver
-        # is no longer Ruslana but her (tax@ is her login identity).
+    async def test_direktur_approves_dea_as_setup_lead(self) -> None:
+        # Reorganisation 2026-11-09: the Direktur leads the setup team.
         service = _mock_service_returning_request("dea@balizero.com")
         req = await _require_can_review_leave(
             service,
-            {"email": "tax@balizero.com", "role": "member"},
+            {"email": "adit@balizero.com", "role": "member"},
             1,
         )
         assert req["id"] == 1
@@ -123,8 +122,8 @@ class TestRequireCanReviewLeave:
         assert exc.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_veronika_cannot_self_approve(self) -> None:
-        service = _mock_service_returning_request("tax@balizero.com")
+    async def test_retired_tax_login_can_no_longer_approve(self) -> None:
+        service = _mock_service_returning_request("kadek.tax@balizero.com")
         with pytest.raises(HTTPException) as exc:
             await _require_can_review_leave(
                 service,
@@ -152,7 +151,7 @@ class TestRequireCanReviewLeave:
         service = _mock_service_returning_request("kadek.tax@balizero.com")
         req = await _require_can_review_leave(
             service,
-            {"email": "  TAX@BALIZERO.COM  ", "role": "member"},
+            {"email": "  ANGEL.TAX@BALIZERO.COM  ", "role": "member"},
             1,
         )
         assert req["id"] == 1

@@ -29,9 +29,15 @@ class TestIsHrAdmin:
     def test_not_admin(self) -> None:
         assert not is_hr_admin({"email": "team@balizero.com", "role": "member"})
 
-    def test_veronika_is_hr_admin_by_login_identity(self) -> None:
-        # Manager of tax + setup (Zero 2026-10-20); her team_members.email is tax@.
-        assert is_hr_admin({"email": "tax@balizero.com", "role": "member"})
+    def test_department_heads_and_the_retired_login_are_not_hr_admins(self) -> None:
+        # Reorganisation 2026-11-09: salary visibility stays with the global admins.
+        for email in (
+            "tax@balizero.com",
+            "angel.tax@balizero.com",
+            "ari.firda@balizero.com",
+            "adit@balizero.com",
+        ):
+            assert not is_hr_admin({"email": email, "role": "member"}), email
         assert not is_hr_admin({"email": "natalie@balizero.com", "role": "member"})
 
     def test_case_insensitive_email(self) -> None:

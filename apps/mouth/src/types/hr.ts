@@ -224,6 +224,10 @@ export interface LeaveRequest {
   rejection_reason: string | null;
   employee_name: string;
   employee_email: string;
+  /** Server-computed: the caller owns this request. Absent on older responses = treat as own. */
+  is_mine?: boolean;
+  /** Server-computed: the caller may approve/reject this row (admin or the requester's approver). */
+  can_review?: boolean;
 }
 
 export interface TeamLeaveSummaryRow {

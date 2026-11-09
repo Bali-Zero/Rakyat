@@ -112,10 +112,16 @@ TEAM_ROLES = frozenset(
         "Consultant",
         "Reception",
         "member",
-        # roster decisions of 2026-10-20 (Zero): Veronika becomes Manager of the
-        # tax department and the setup team; Natalie joins finance & client services
+        # roster decisions of 2026-10-20 (Zero): the Manager and finance &
+        # client services titles
         "Manager",
         "Finance & Client Services Coordinator",
+        # reorganisation 2026-11-09: new job titles, same people, same access
+        "Direktur",
+        "Tax Supervisor",
+        "Tax Responsible",
+        "Senior Consultant",
+        "HR & Accounting",
     )
 )
 

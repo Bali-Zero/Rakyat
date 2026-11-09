@@ -45,7 +45,12 @@ INTERNAL_ROLES_ALWAYS_ALLOWED: frozenset[str] = frozenset(
         "supervisor",
         "tax lead",
         "tax manager",
-        "manager",  # Veronika, Manager of tax + setup (2026-10-20)
+        "manager",  # department head title (2026-10-20)
+        "direktur",  # reorganisation 2026-11-09
+        "tax supervisor",
+        "tax responsible",
+        "senior consultant",
+        "hr & accounting",
         "tax care",
         "accounting",
         "marketing & accounting",

@@ -15,25 +15,27 @@ class TestResolveApprover:
     @pytest.mark.parametrize(
         "requester,expected",
         [
-            ("kadek.tax@balizero.com", "tax@balizero.com"),
-            ("angel.tax@balizero.com", "tax@balizero.com"),
-            ("dewa.ayu.tax@balizero.com", "tax@balizero.com"),
-            ("faysha.tax@balizero.com", "tax@balizero.com"),
-            ("dewaayu.tax@balizero.com", "tax@balizero.com"),
-            # setup team → Veronika, Manager of tax + setup (Zero 2026-10-20)
-            ("adit@balizero.com", "tax@balizero.com"),
-            ("ari.firda@balizero.com", "tax@balizero.com"),
-            ("krisna@balizero.com", "tax@balizero.com"),
-            ("dea@balizero.com", "tax@balizero.com"),
-            ("surya@balizero.com", "tax@balizero.com"),
-            ("damar@balizero.com", "tax@balizero.com"),
-            ("vino@balizero.com", "tax@balizero.com"),
-            ("candra@balizero.com", "tax@balizero.com"),
-            # offboarded 2026-11-03: no longer mapped, falls back to Zero
+            # tax team → Tax Supervisor (reorganisation 2026-11-09)
+            ("kadek.tax@balizero.com", "angel.tax@balizero.com"),
+            ("dewa.ayu.tax@balizero.com", "angel.tax@balizero.com"),
+            ("faysha.tax@balizero.com", "angel.tax@balizero.com"),
+            ("dewaayu.tax@balizero.com", "angel.tax@balizero.com"),
+            ("angel.tax@balizero.com", ZERO_EMAIL),  # Tax Supervisor → Zero
+            # setup team, Tax Responsible and HR & Accounting → Direktur
+            ("ari.firda@balizero.com", "adit@balizero.com"),
+            ("krisna@balizero.com", "adit@balizero.com"),
+            ("dea@balizero.com", "adit@balizero.com"),
+            ("surya@balizero.com", "adit@balizero.com"),
+            ("damar@balizero.com", "adit@balizero.com"),
+            ("vino@balizero.com", "adit@balizero.com"),
+            ("candra@balizero.com", "adit@balizero.com"),
+            ("asya@balizero.com", "adit@balizero.com"),
+            ("adit@balizero.com", ZERO_EMAIL),  # Direktur → Zero
+            # not mapped, falls back to Zero
             ("natalie@balizero.com", ZERO_EMAIL),
             ("rina@balizero.com", "ruslana@balizero.com"),
-            ("tax@balizero.com", ZERO_EMAIL),  # Veronika → Zero
-            ("asya@balizero.com", ZERO_EMAIL),
+            # the retired tax@ address is no longer anyone's requester identity
+            ("tax@balizero.com", ZERO_EMAIL),
             ("ruslana@balizero.com", ZERO_EMAIL),
             ("zero@balizero.com", ZERO_EMAIL),
             ("random@balizero.com", ZERO_EMAIL),  # unknown → Zero
@@ -43,24 +45,24 @@ class TestResolveApprover:
         assert resolve_approver(requester) == expected
 
     def test_case_insensitive(self) -> None:
-        assert resolve_approver("KADEK.TAX@BALIZERO.COM") == "tax@balizero.com"
+        assert resolve_approver("KADEK.TAX@BALIZERO.COM") == "angel.tax@balizero.com"
 
     def test_whitespace_stripped(self) -> None:
-        assert resolve_approver("  kadek.tax@balizero.com  ") == "tax@balizero.com"
+        assert resolve_approver("  kadek.tax@balizero.com  ") == "angel.tax@balizero.com"
 
 
 class TestBuildNotificationRecipients:
     def test_tax_team_kadek(self) -> None:
         result = build_notification_recipients("kadek.tax@balizero.com")
-        assert result == {"to": "tax@balizero.com", "cc": [ZERO_EMAIL, ASYA_EMAIL]}
+        assert result == {"to": "angel.tax@balizero.com", "cc": [ZERO_EMAIL, ASYA_EMAIL]}
 
     def test_rina_routes_to_ruslana(self) -> None:
         result = build_notification_recipients("rina@balizero.com")
         assert result == {"to": "ruslana@balizero.com", "cc": [ZERO_EMAIL, ASYA_EMAIL]}
 
-    def test_setup_team_routes_to_veronika(self) -> None:
+    def test_setup_team_routes_to_the_direktur(self) -> None:
         result = build_notification_recipients("dea@balizero.com")
-        assert result == {"to": "tax@balizero.com", "cc": [ZERO_EMAIL, ASYA_EMAIL]}
+        assert result == {"to": "adit@balizero.com", "cc": [ZERO_EMAIL, ASYA_EMAIL]}
 
     def test_offboarded_natalie_falls_back_to_zero(self) -> None:
         result = build_notification_recipients("natalie@balizero.com")
@@ -72,11 +74,11 @@ class TestBuildNotificationRecipients:
 
     def test_asya_as_requester_not_in_cc(self) -> None:
         result = build_notification_recipients("asya@balizero.com")
-        assert result == {"to": ZERO_EMAIL, "cc": []}
+        assert result == {"to": "adit@balizero.com", "cc": [ZERO_EMAIL]}
 
-    def test_veronika_as_requester(self) -> None:
-        result = build_notification_recipients("tax@balizero.com")
-        assert result == {"to": ZERO_EMAIL, "cc": [ASYA_EMAIL]}
+    def test_department_heads_as_requester_go_to_zero(self) -> None:
+        for head in ("angel.tax@balizero.com", "adit@balizero.com"):
+            assert build_notification_recipients(head) == {"to": ZERO_EMAIL, "cc": [ASYA_EMAIL]}
 
     def test_ruslana_as_requester(self) -> None:
         result = build_notification_recipients("ruslana@balizero.com")
@@ -94,10 +96,10 @@ class TestBuildReviewRecipients:
     either the reviewer or the requester themselves (no self-CC).
     """
 
-    def test_kadek_request_reviewed_by_veronika(self) -> None:
+    def test_kadek_request_reviewed_by_the_tax_supervisor(self) -> None:
         result = build_review_recipients(
             requester_email="kadek.tax@balizero.com",
-            reviewer_email="tax@balizero.com",
+            reviewer_email="angel.tax@balizero.com",
         )
         assert result == {
             "to": "kadek.tax@balizero.com",
@@ -149,7 +151,7 @@ class TestBuildReviewRecipients:
     def test_case_insensitive(self) -> None:
         result = build_review_recipients(
             requester_email="  KADEK.TAX@BALIZERO.COM  ",
-            reviewer_email="  TAX@BALIZERO.COM  ",
+            reviewer_email="  ANGEL.TAX@BALIZERO.COM  ",
         )
         assert result == {
             "to": "kadek.tax@balizero.com",

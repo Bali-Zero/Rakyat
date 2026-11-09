@@ -21,7 +21,7 @@ from backend.app.services.hr.hr_leave_notifier import (
     notify_leave_request_pending,
     notify_leave_request_reviewed,
 )
-from backend.app.services.hr.hr_leave_routing import resolve_approver
+from backend.app.services.hr.hr_leave_routing import reports_of, resolve_approver
 from backend.app.services.hr.hr_service import HRService
 from backend.app.utils.hr_utils import is_hr_admin
 from backend.core.cache import invalidate_cache
@@ -470,14 +470,37 @@ async def list_leave_requests(
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
     """List leave requests."""
+    # Scope (kept out of the docstring: it is the OpenAPI description). HR admins see
+    # everyone; an approver who is not an HR admin sees their own requests plus their
+    # direct reports'; everyone else sees their own. Each row carries `is_mine` and
+    # `can_review` so the UI shows approve/reject only where the review endpoints allow it.
     service = _get_hr_service(db_pool)
+    admin = is_hr_admin(current_user)
+    user_email = (current_user.get("email") or "").lower().strip()
+    reports = frozenset() if admin else reports_of(user_email)
 
-    if not is_hr_admin(current_user):
+    if admin:
+        requests = await service.list_leave_requests(employee_id, status)
+    elif reports:
+        own = await service.get_employee_by_email(current_user["email"])
+        requests = await service.list_leave_requests_scoped(
+            own["id"] if own else None, sorted(reports), status
+        )
+    else:
         my_id = await _get_my_employee_id(service, current_user)
-        employee_id = my_id
+        requests = await service.list_leave_requests(my_id, status)
 
-    requests = await service.list_leave_requests(employee_id, status)
-    return {"requests": requests, "count": len(requests)}
+    out = []
+    for r in requests:
+        requester = (r.get("employee_email") or "").lower().strip()
+        mine = bool(user_email) and requester == user_email
+        can_review = (
+            r.get("status") == "pending"
+            and not mine
+            and (admin or resolve_approver(requester) == user_email)
+        )
+        out.append({**r, "is_mine": mine, "can_review": can_review})
+    return {"requests": out, "count": len(out)}
 
 
 @router.get("/leave/balance")

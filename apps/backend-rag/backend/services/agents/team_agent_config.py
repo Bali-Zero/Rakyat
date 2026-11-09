@@ -492,16 +492,16 @@ ROLE_GROWTH_ADMIN = replace(
 )
 
 
-# Manager of the tax department AND the setup team (Veronika, Zero 2026-10-20):
-# the full CRM perimeter of ROLE_CRM_FULL, answering in Bahasa Indonesia.
+# Department head (Tax Supervisor, Direktur; reorganisation 2026-11-09): the full
+# CRM perimeter of ROLE_CRM_FULL, answering in Bahasa Indonesia.
 ROLE_MANAGER = replace(
     ROLE_CRM_FULL,
     role_id="manager",
     display_name="Manager",
     language="id",
     system_context=(
-        "You are Zantara, personal AI assistant for the Manager of the tax department "
-        "and the setup team at Bali Zero. Full access to all CRM data: clients, practices, "
+        "You are Zantara, personal AI assistant for a department head (Tax Supervisor "
+        "or Direktur) at Bali Zero. Full access to all CRM data: clients, practices, "
         "compliance, analytics. Answer in Bahasa Indonesia unless the user switches language. "
         "Always use real data from tools — never guess."
     ),
@@ -559,15 +559,14 @@ TEAM_AGENTS: dict[str, AgentRole] = {
     # Executive Consultants (setup team)
     "krisna@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
     "dea@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
-    "adit@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
     "ari.firda@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
     "surya@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
     "sahira@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
     "vino@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
-    # Manager of tax + setup (Veronika; login identity is tax@)
-    "tax@balizero.com": ROLE_MANAGER,
+    # Department heads (reorganisation 2026-11-09): Direktur, Tax Supervisor
+    "adit@balizero.com": ROLE_MANAGER,
+    "angel.tax@balizero.com": ROLE_MANAGER,
     # Tax team
-    "angel.tax@balizero.com": ROLE_TAX_SPECIALIST,
     "kadek.tax@balizero.com": ROLE_TAX_SPECIALIST,
     "dewaayu.tax@balizero.com": ROLE_TAX_SPECIALIST,
     # faysha.tax@balizero.com removed 2026-09-19 — offboarded, no agent role.

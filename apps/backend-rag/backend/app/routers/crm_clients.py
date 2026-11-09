@@ -326,7 +326,6 @@ class ClientCreate(BaseModel):
 
 
 TAX_CONSULTANT_VALUES: set[str] = {
-    "veronika.tax@balizero.com",
     "kadek.tax@balizero.com",
     "dewaayu.tax@balizero.com",
     "angel.tax@balizero.com",
