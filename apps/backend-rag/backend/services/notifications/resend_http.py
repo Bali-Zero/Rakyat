@@ -32,6 +32,7 @@ import os
 from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.notifications.email_audit import _bounded_scrub
 from backend.services.notifications.email_http import get_email_client
+from backend.services.notifications.recipient_redirects import split_recipients
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ async def send_via_resend(
 
     payload: dict = {
         "from": f"{from_name} <{from_email}>",
-        "to": [to_email],
+        "to": split_recipients(to_email),
         "subject": subject,
         "html": body,
     }

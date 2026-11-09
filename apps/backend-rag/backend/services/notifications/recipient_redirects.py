@@ -35,23 +35,28 @@ def redirect_address(addr: object) -> object:
     return RECIPIENT_REDIRECTS.get(_norm(addr), addr)
 
 
+def split_recipients(addr: object) -> list:
+    """The addresses a recipient value names: a comma-joined string is split, anything else is one entry."""
+    if isinstance(addr, str) and "," in addr:
+        return [part.strip() for part in addr.split(",") if part.strip()]
+    return [addr]
+
+
 def redirect_recipients(
     to: object,
     cc_list: list | None,
     bcc_list: list | None,
 ) -> tuple[object, list | None, list | None]:
     """Return ``(to, cc_list, bcc_list)`` with every redirected address replaced in place, same seat, and an
-    address that is already present in an earlier seat (or earlier in the same list) dropped. ``None`` lists stay
-    ``None``; non-string entries pass through untouched."""
-    new_to = redirect_address(to)
-    seen: set[str] = {k for k in (_norm(new_to),) if k}
+    address that is already present in an earlier seat (or earlier in the same list) dropped. A comma-joined
+    string counts as the addresses it names, because notifiers do send ``"a, b"``. ``None`` lists stay ``None``;
+    non-string entries pass through untouched; a ``to`` with nothing to change comes back byte-identical."""
+    seen: set[str] = set()
 
-    def rewrite(lst: list | None) -> list | None:
-        if lst is None:
-            return None
+    def rewrite_parts(addr: object) -> list:
         out: list = []
-        for addr in lst:
-            target = redirect_address(addr)
+        for part in split_recipients(addr):
+            target = redirect_address(part)
             key = _norm(target)
             if key and key in seen:
                 continue
@@ -59,5 +64,19 @@ def redirect_recipients(
                 seen.add(key)
             out.append(target)
         return out
+
+    def rewrite(lst: list | None) -> list | None:
+        if lst is None:
+            return None
+        return [target for addr in lst for target in rewrite_parts(addr)]
+
+    to_parts = split_recipients(to)
+    new_to_parts = rewrite_parts(to)
+    if new_to_parts == to_parts:
+        new_to = to
+    elif all(isinstance(part, str) for part in new_to_parts):
+        new_to = ", ".join(new_to_parts)
+    else:
+        new_to = new_to_parts[0] if new_to_parts else to
 
     return new_to, rewrite(cc_list), rewrite(bcc_list)

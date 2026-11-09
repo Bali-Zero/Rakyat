@@ -62,3 +62,37 @@ def test_unredirected_recipients_and_non_strings_pass_through():
         ["krisna@balizero.com", None],
         ["zero@balizero.com"],
     )
+
+
+def test_a_retired_address_inside_a_multi_address_to_is_redirected():
+    to, _, _ = redirect_recipients("kadek.tax@balizero.com, tax@balizero.com", None, None)
+    assert to == f"kadek.tax@balizero.com, {TARGET}"
+
+
+def test_a_cc_that_redirects_onto_an_address_already_in_a_multi_address_to_is_dropped():
+    to, cc, bcc = redirect_recipients(
+        f"kadek.tax@balizero.com, {TARGET}",
+        ["tax@balizero.com", "zero@balizero.com"],
+        ["nakhoda@balizero.com"],
+    )
+    assert to == f"kadek.tax@balizero.com, {TARGET}"
+    assert cc == ["zero@balizero.com"]
+    assert bcc == []
+
+
+def test_a_comma_joined_list_entry_is_expanded_redirected_and_deduplicated():
+    _, cc, _ = redirect_recipients(TARGET, ["tax@balizero.com, zero@balizero.com"], None)
+    assert cc == ["zero@balizero.com"]
+
+
+def test_two_retired_addresses_in_one_to_collapse_to_one_mailbox():
+    to, _, _ = redirect_recipients("tax@balizero.com, nakhoda@balizero.com", None, None)
+    assert to == TARGET
+
+
+def test_a_multi_address_to_with_nothing_to_redirect_is_returned_byte_identical():
+    original = "kadek.tax@balizero.com,  dewaayu.tax@balizero.com"
+    to, cc, bcc = redirect_recipients(original, None, None)
+    assert to == original
+    assert cc is None
+    assert bcc is None

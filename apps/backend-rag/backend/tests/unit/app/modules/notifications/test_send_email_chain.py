@@ -11,13 +11,14 @@ These tests exercise the chain order without going to the network.
 from __future__ import annotations
 
 import logging
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from backend.app.modules.notifications.router import (
     SendEmailRequest,
     _enforce_balizero_cc,
+    _send_via_brevo,
     _send_via_zoho_smtp,
     send_direct_email,
 )
@@ -666,3 +667,28 @@ class TestRecipientRedirectAtTheChokePoint:
         # the retired address in bcc already satisfies the Bali Zero copy rule, so no cc is forced
         assert brevo.call_args.args[3] is None
         assert brevo.call_args.args[4] == ["angel.tax@balizero.com"]
+
+
+@pytest.mark.parametrize(
+    ("api_key", "read_to"),
+    [
+        ("xkeysib-test", lambda payload: payload["to"]),
+        ("SG.test", lambda payload: payload["personalizations"][0]["to"]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_comma_joined_to_becomes_one_entry_per_address(monkeypatch, api_key, read_to):
+    monkeypatch.setenv("SENDGRID_API_KEY", api_key)
+    response = MagicMock(status_code=202, text="{}")
+    client = MagicMock()
+    client.post = AsyncMock(return_value=response)
+    with patch(
+        "backend.app.modules.notifications.router.get_email_client",
+        new=AsyncMock(return_value=client),
+    ):
+        accepted = await _send_via_brevo("alice@example.com, bob@example.com", "s", "b", None, None, None)
+    assert accepted is True
+    assert read_to(client.post.await_args.kwargs["json"]) == [
+        {"email": "alice@example.com"},
+        {"email": "bob@example.com"},
+    ]

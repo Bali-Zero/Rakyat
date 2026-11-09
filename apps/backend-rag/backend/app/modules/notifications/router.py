@@ -28,7 +28,7 @@ from backend.app.utils.internal_api_auth import verify_internal_api_key
 from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.notifications.email_audit import _bounded_scrub
 from backend.services.notifications.email_http import get_email_client
-from backend.services.notifications.recipient_redirects import redirect_recipients
+from backend.services.notifications.recipient_redirects import redirect_recipients, split_recipients
 
 logger = logging.getLogger(__name__)
 
@@ -651,7 +651,7 @@ async def _send_via_brevo(
 
     payload: dict = {
         "sender": {"email": "zantara@balizero.com", "name": "Zantara"},
-        "to": [{"email": to_email}],
+        "to": [{"email": address} for address in split_recipients(to_email)],
         "subject": subject,
         "htmlContent": body,
     }
@@ -683,7 +683,7 @@ async def _send_via_brevo(
 
     if not is_brevo:
         payload = {
-            "personalizations": [{"to": [{"email": to_email}]}],
+            "personalizations": [{"to": [{"email": address} for address in split_recipients(to_email)]}],
             "from": {"email": "zantara@balizero.com", "name": "Zantara"},
             "subject": subject,
             "content": [{"type": "text/html", "value": body}],
