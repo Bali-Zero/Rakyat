@@ -265,8 +265,9 @@ async def enqueue_commission_earned(
     if c.practice_id is not None:
         proc = await conn.fetchrow(
             """
-            SELECT p.service_type, c.full_name AS client_name
+            SELECT pt.name AS service_type, c.full_name AS client_name
             FROM practices p
+            LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
             LEFT JOIN clients c ON c.id = p.client_id
             WHERE p.id = $1
             """,
@@ -444,8 +445,9 @@ async def send_commission_earned(conn: Any, commission_id: UUID) -> None:
     if c.practice_id is not None:
         proc = await conn.fetchrow(
             """
-            SELECT p.service_type, c.full_name AS client_name
+            SELECT pt.name AS service_type, c.full_name AS client_name
             FROM practices p
+            LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
             LEFT JOIN clients c ON c.id = p.client_id
             WHERE p.id = $1
             """,

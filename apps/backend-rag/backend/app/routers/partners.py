@@ -435,10 +435,11 @@ async def me_referrals(
         rows = await conn.fetch(
             """
             SELECT pr.id, pr.practice_id, pr.referred_at,
-                   p.status AS process_status, p.service_type,
+                   p.status AS process_status, pt.name AS service_type,
                    c.full_name AS client_name
             FROM partner_referrals pr
             LEFT JOIN practices p ON p.id = pr.practice_id
+            LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
             LEFT JOIN clients c ON c.id = p.client_id
             WHERE pr.partner_id = $1
             ORDER BY pr.referred_at DESC

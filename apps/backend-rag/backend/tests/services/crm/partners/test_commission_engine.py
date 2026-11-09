@@ -42,7 +42,7 @@ async def test_accrue_creates_accrued_row_with_cooling_off(
     )
     await db_conn.execute("UPDATE partners SET npwp = '01.234.567.8-901.000' WHERE id = $1", p.id)
     proc = await practice_factory(
-        total_invoiced_idr=Decimal("10000000"),
+        actual_price=Decimal("10000000"),
         status="completed",
         payment_status="paid",
     )
@@ -142,7 +142,7 @@ async def test_flat_commission_type(engine, partner_factory, practice_factory, r
         tax_withholding_category="exempt",
     )
     proc = await practice_factory(
-        total_invoiced_idr=Decimal("10000000"),
+        actual_price=Decimal("10000000"),
         status="completed",
         payment_status="paid",
     )
@@ -325,7 +325,7 @@ async def test_accrue_uses_pph23_rate_from_system_settings(
         "UPDATE partners SET npwp = '01.234.567.8-901.000' WHERE id = $1", p.id
     )
     proc = await practice_factory(
-        total_invoiced_idr=Decimal("10000000"),
+        actual_price=Decimal("10000000"),
         status="completed",
         payment_status="paid",
     )
@@ -353,7 +353,7 @@ async def test_accrue_applies_no_npwp_surcharge_on_pph21(
     # Explicitly ensure npwp is NULL (factory default; just making the intent clear).
     await engine.repo.conn.execute("UPDATE partners SET npwp = NULL WHERE id = $1", p.id)
     proc = await practice_factory(
-        total_invoiced_idr=Decimal("10000000"),
+        actual_price=Decimal("10000000"),
         status="completed",
         payment_status="paid",
     )
@@ -385,7 +385,7 @@ async def test_accrue_reads_rate_from_updated_system_setting(
     # Partner has NPWP → no surcharge
     await db_conn.execute("UPDATE partners SET npwp = '99.999.999.9-999.000' WHERE id = $1", p.id)
     proc = await practice_factory(
-        total_invoiced_idr=Decimal("10000000"),
+        actual_price=Decimal("10000000"),
         status="completed",
         payment_status="paid",
     )

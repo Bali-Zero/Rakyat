@@ -85,7 +85,7 @@ async def test_handle_practice_status_changed_creates_accrual(
 
     p = await partner_factory(tax_withholding_category="exempt")
     proc_id = await practice_factory(
-        total_invoiced_idr=Decimal("5000000"),
+        actual_price=Decimal("5000000"),
         status="completed",
         payment_status="paid",
     )

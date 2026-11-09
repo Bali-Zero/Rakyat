@@ -19,9 +19,10 @@ Append-only ledger exception (spec §Q9, plan Step 5.2):
 Pre-flight note (2026-04-20, outcome c — updated CATA-1):
   accrue_from_practice() reads from the `practices` table, which is the
   real production domain table (not a stub). Column names confirmed from
-  migration 075 trigger and conftest stub DDL:
-      status TEXT, payment_status TEXT,
-      total_invoiced_idr NUMERIC(16,2), completed_at TIMESTAMPTZ, client_id.
+  migration 075 trigger. Commission inputs (owner decision 2026-11-09):
+      date = practices.completion_date,
+      base = COALESCE(practices.actual_price, practices.quoted_price), read as IDR
+      (practices.currency is ignored: its USD is only the column default).
 """
 
 from __future__ import annotations
@@ -77,16 +78,18 @@ class CommissionEngine:
             (not completed, not paid, no referral, or wrong partner_id).
 
         Idempotency:
-            key = f"accrual:{practice_id}:{completed_at.isoformat()}"
-            A second call for the same practice+completed_at is a no-op
+            key = f"accrual:{practice_id}:{completion_date.isoformat()}"
+            A second call for the same practice+completion_date is a no-op
             (ON CONFLICT DO NOTHING via UNIQUE index on idempotency_key).
         """
         # Step 1: fetch practice — must be completed AND paid.
-        # Eligibility first, on columns that exist in production. The amount columns
-        # are read only once a referral is resolved (Step 2b).
+        # One snapshot for eligibility and amounts. Base = actual_price, else
+        # quoted_price (owner decision); the date is completion_date.
         proc = await self.conn.fetchrow(
             """
-            SELECT id, status, payment_status
+            SELECT id, status, payment_status,
+                   COALESCE(actual_price, quoted_price) AS base_price,
+                   completion_date
             FROM practices WHERE id = $1
             """,
             practice_id,
@@ -119,18 +122,14 @@ class CommissionEngine:
             )
             return None
 
-        # Step 2b: only now read the amount columns, so a practice without a referral
-        # never touches them. The names are unchanged: which amount is the commission
-        # base is the owner's decision, and an absent column must fail loudly here.
-        amounts = await self.conn.fetchrow(
-            """
-            SELECT total_invoiced_idr, completed_at
-            FROM practices WHERE id = $1
-            """,
-            practice_id,
-        )
-        if amounts is None:
-            logger.debug("accrue_from_practice: practice %s vanished", practice_id)
+        # A referral exists but the practice has no base or no date: never write a zero
+        # commission, and never fall back to now() (it would make the key unstable).
+        if proc["base_price"] is None or proc["completion_date"] is None:
+            logger.warning(
+                "accrue_from_practice: practice %s has no commission base or completion date "
+                "- no commission written",
+                practice_id,
+            )
             return None
 
         # Step 3: resolve partner for snapshot values.
@@ -140,8 +139,7 @@ class CommissionEngine:
             return None
 
         # Step 4: compute amounts (all Decimal, no float).
-        # base_amount_idr = practices.total_invoiced_idr (exact column name per stub DDL).
-        base = Decimal(str(amounts["total_invoiced_idr"]))
+        base = Decimal(str(proc["base_price"]))
 
         if partner.default_commission_type == "percentage":
             gross = base * partner.default_commission_value / Decimal("100")
@@ -162,12 +160,12 @@ class CommissionEngine:
 
         # Step 5: resolve cooling-off days from system_settings.
         cooling_days = await self._system_setting_int("partner_accrual_cooling_off_days", 30)
-        completed_at: datetime = amounts["completed_at"] or datetime.now(timezone.utc)
-        eligible = completed_at + timedelta(days=cooling_days)
+        completion_date: datetime = proc["completion_date"]
+        eligible = completion_date + timedelta(days=cooling_days)
 
-        # Idempotency key: unique per practice + completed_at timestamp.
-        # If completed_at changes (e.g. re-completion edge case), a new accrual fires.
-        key = f"accrual:{practice_id}:{completed_at.isoformat()}"
+        # Idempotency key: unique per practice + completion_date timestamp.
+        # If completion_date changes (e.g. re-completion edge case), a new accrual fires.
+        key = f"accrual:{practice_id}:{completion_date.isoformat()}"
 
         try:
             cid = await self.repo.insert_commission(

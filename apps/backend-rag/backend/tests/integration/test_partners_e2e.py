@@ -89,17 +89,22 @@ async def test_full_flow_process_to_paid_email(
     # ── Step 2: Create client + process + referral ───────────────────────────
     client_id = await client_factory(full_name="Mario Rossi")
 
-    # practice_factory doesn't accept client_id/service_type directly — create
+    # practice_factory does not accept client_id or a practice type directly — create
     # practice then update it to link the client.
     process_id = await practice_factory(
-        total_invoiced_idr=Decimal("15000000"),
+        actual_price=Decimal("15000000"),
         status="completed",
         payment_status="paid",
     )
     # Link client and service_type to the practice
+    type_id = await db_conn.fetchval(
+        "INSERT INTO practice_types (code, name) VALUES ('kitas_e33g', 'KITAS E33G') "
+        "ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name RETURNING id"
+    )
     await db_conn.execute(
-        "UPDATE practices SET client_id = $1, service_type = 'KITAS E33G' WHERE id = $2",
+        "UPDATE practices SET client_id = $1, practice_type_id = $2 WHERE id = $3",
         int(client_id),
+        type_id,
         int(process_id),
     )
 
