@@ -760,9 +760,6 @@ async def test_crm_memory_success(mock_app):
             "backend.services.memory.MemoryServicePostgres",
         ) as mock_mem,
         patch(
-            "backend.services.misc.conversation_service.ConversationService",
-        ),
-        patch(
             "backend.services.memory.collective_memory_workflow.create_collective_memory_workflow",
         ),
         patch(

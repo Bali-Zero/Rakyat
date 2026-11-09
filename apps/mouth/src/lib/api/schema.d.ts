@@ -3044,53 +3044,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/bali-zero/conversations/save": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Save Conversation
-     * @description Save conversation messages to PostgreSQL
-     *     + Auto-populate CRM with client/practice data
-     *
-     *     SECURITY: User identity is extracted from JWT token, not request body.
-     *
-     *     Body:
-     *     {
-     *         "messages": [{"role": "user", "content": "..."}, ...],
-     *         "session_id": "optional-session-id",
-     *         "metadata": {"key": "value"}
-     *     }
-     *
-     *     Returns:
-     *     {
-     *         "success": true,
-     *         "conversation_id": 123,
-     *         "messages_saved": 10,
-     *         "user_email": "authenticated-user@example.com",
-     *         "crm": {
-     *             "processed": true,
-     *             "client_id": 42,
-     *             "client_created": false,
-     *             "client_updated": true,
-     *             "practice_id": 15,
-     *             "practice_created": true,
-     *             "interaction_id": 88
-     *         }
-     *     }
-     */
-    post: operations["save_conversation_api_bali_zero_conversations_save_post"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   "/api/bali-zero/conversations/stats": {
     parameters: {
       query?: never;
@@ -26601,19 +26554,6 @@ export interface components {
       /** Version */
       version: string;
     };
-    /** SaveConversationRequest */
-    SaveConversationRequest: {
-      /** Messages */
-      messages: {
-        [key: string]: unknown;
-      }[];
-      /** Metadata */
-      metadata?: {
-        [key: string]: unknown;
-      } | null;
-      /** Session Id */
-      session_id?: string | null;
-    };
     /**
      * SaveDraftRequest
      * @description Request body for saving a draft.
@@ -34058,41 +33998,6 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["UserMemoryContextResponse"];
-        };
-      };
-    };
-  };
-  save_conversation_api_bali_zero_conversations_save_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["SaveConversationRequest"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": {
-            [key: string]: unknown;
-          };
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };

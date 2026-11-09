@@ -276,7 +276,7 @@ async def test_shutdown_closes_sync_and_async_services_and_continues_after_error
     app.state.search_service = SimpleNamespace(close=async_close)
     app.state.ai_client = SimpleNamespace(close=sync_close)
     app.state.memory_service = SimpleNamespace(close=failing_close)
-    app.state.conversation_service = SimpleNamespace(close=close_after_failure)
+    app.state.activity_logger = SimpleNamespace(close=close_after_failure)
     monkeypatch.setattr(app_factory.asyncio, "create_task", _close_created_coroutine)
 
     async with app_factory.lifespan(app):

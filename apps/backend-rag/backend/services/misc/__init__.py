@@ -17,7 +17,6 @@ from . import autonomous_scheduler
 from .autonomous_research_service import AutonomousResearchService
 from .autonomous_scheduler import AutonomousScheduler
 from .clarification_service import ClarificationService
-from .conversation_service import ConversationService
 from .cultural_insights_service import CulturalInsightsService
 from .cultural_rag_service import CulturalRAGService
 from .emotional_attunement import EmotionalAttunementService, ToneStyle
@@ -66,7 +65,6 @@ __all__ = [
     "ClarificationService",
     # Lazy
     "ClientJourneyOrchestrator",
-    "ConversationService",
     "CulturalInsightsService",
     "CulturalRAGService",
     "EmotionalAttunementService",

@@ -558,7 +558,6 @@ async def lifespan(app: FastAPI):
         "mcp_client",
         "faq_cache",
         "memory_service",
-        "conversation_service",
         "activity_logger",
         "team_drive_service",
         "vision_rag",

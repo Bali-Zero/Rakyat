@@ -883,14 +883,6 @@ class Settings(BaseSettings):
             "Set via WHATSAPP_OPENCLAW_SEND_STORED_CONTEXT env var."
         ),
     )
-    conversation_title_generation_enabled: bool = Field(
-        default=False,
-        description=(
-            "Generate a conversation title from the first user message on save. Off by "
-            "default: it sends message text to a title model. "
-            "Set via CONVERSATION_TITLE_GENERATION_ENABLED env var."
-        ),
-    )
     openclaw_webhook_secret: str | None = Field(
         default=None,
         description=(

@@ -15,11 +15,10 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from backend.app.core.config import Settings, settings
+from backend.app.core.config import Settings
 from backend.app.routers import agentic_rag as agentic
 from backend.app.routers import whatsapp_chat
 from backend.app.routers.agentic_rag import AgenticQueryRequest
-from backend.app.routers.conversations import router as conversations_router
 from backend.app.routers.crm_interactions import router as crm_router
 from backend.services.integrations import openclaw_whatsapp_bridge as bridge
 
@@ -387,63 +386,6 @@ def test_openclaw_call_site_builds_context_through_the_helper() -> None:
 # --- Change 3: title generation ----------------------------------------------
 
 
-def _save_client(mock_db_pool) -> TestClient:
-    from backend.app.dependencies import get_current_user, get_database_pool
-
-    class _Tx:
-        async def __aenter__(self):
-            return None
-
-        async def __aexit__(self, *exc):
-            return False
-
-    conn = mock_db_pool._mock_conn
-    conn.fetchrow.return_value = {"id": 42}
-    conn.transaction.return_value = _Tx()
-    app = FastAPI()
-    app.include_router(conversations_router)
-    app.dependency_overrides[get_current_user] = lambda: {"email": "test@balizero.com"}
-    app.dependency_overrides[get_database_pool] = lambda: mock_db_pool
-    return TestClient(app)
-
-
-def _save(client: TestClient):
-    with (
-        patch("backend.app.routers.conversations.get_memory_cache", return_value=MagicMock()),
-        patch("backend.services.common.cache._invalidate_cache", new_callable=AsyncMock),
-    ):
-        return client.post(
-            "/api/bali-zero/conversations/save",
-            json={
-                "messages": [{"role": "user", "content": CANARY_TEXT}],
-                "session_id": "synthetic-session",
-            },
-        )
-
-
-@pytest.mark.parametrize("enabled", [False, True])
-def test_save_spawns_title_only_when_flag_is_on(enabled, monkeypatch, mock_db_pool) -> None:
-    monkeypatch.setattr(settings, "conversation_title_generation_enabled", enabled)
-    title_fn = MagicMock(side_effect=lambda **_k: AsyncMock()())
-    with (
-        patch("backend.app.routers.conversations._generate_and_update_title", title_fn),
-        patch(
-            "backend.app.routers.conversations.spawn", side_effect=lambda coro, name: coro.close()
-        ) as spawn,
-    ):
-        response = _save(_save_client(mock_db_pool))
-    assert response.status_code == 200
-    body = response.json()
-    assert body["conversation_id"] == 42
-    assert body["persistence_mode"] == "db"
-    if enabled:
-        title_fn.assert_called_once()
-        spawn.assert_called_once()
-    else:
-        title_fn.assert_not_called()
-        spawn.assert_not_called()
-
-
-def test_both_flags_default_to_false() -> None:
+def test_stored_context_is_off_and_the_title_flag_is_gone() -> None:
     assert Settings.model_fields["whatsapp_openclaw_send_stored_context"].default is False
-    assert Settings.model_fields["conversation_title_generation_enabled"].default is False
+    assert "conversation_title_generation_enabled" not in Settings.model_fields
