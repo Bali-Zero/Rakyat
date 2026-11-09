@@ -125,8 +125,8 @@ class OrchestratorStreamingManager:
                 validated_event = StreamEvent(**raw_event)
                 return validated_event.model_dump(exclude_none=True)
             except ValidationError as e:
-                # Shape only: the event text and the validator's input echo are left out.
-                raw_type = raw_event.get("type")
+                # Counts and field paths only: event text, key names and the validator's
+                # input echo are left out because they are free text.
                 logger.error(
                     "❌ [Stream] Event validation failed: %s",
                     type(e).__name__,
@@ -135,8 +135,6 @@ class OrchestratorStreamingManager:
                         "validation_errors": [
                             {"loc": list(err["loc"]), "type": err["type"]} for err in e.errors()
                         ],
-                        "event_type": raw_type if isinstance(raw_type, str) else None,
-                        "event_keys": sorted(str(key) for key in raw_event),
                         "raw_event_length": len(str(raw_event)),
                     },
                 )

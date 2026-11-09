@@ -1115,12 +1115,15 @@ async def stream_agentic_rag(
                             "data": {
                                 "error_type": "serialization_error",
                                 "message": "Failed to serialize event",
-                                "non_fatal": True,
+                                "non_fatal": error_count < max_errors,
+                                "fatal": error_count >= max_errors,
                                 "correlation_id": correlation_id,
                             },
                         }
                         yield f"data: {json.dumps(serialization_event)}\n\n"
                         events_yielded += 1
+                        if error_count >= max_errors:
+                            break
                         continue
                     yield f"data: {event_json}\n\n"
                     events_yielded += 1
@@ -1172,8 +1175,9 @@ async def stream_agentic_rag(
                         "type": "error",
                         "data": {
                             "error_type": "processing_error",
-                            "message": str(e),
+                            "message": "Failed to process stream event",
                             "non_fatal": error_count < max_errors,
+                            "fatal": error_count >= max_errors,
                             "correlation_id": correlation_id,
                         },
                     }
@@ -1183,16 +1187,17 @@ async def stream_agentic_rag(
                     if error_count >= max_errors:
                         break
 
-            # Yield final status
-            final_status = {
-                "type": "status",
-                "data": {
-                    "status": "completed",
-                    "correlation_id": correlation_id,
-                },
-            }
-            yield f"data: {json.dumps(final_status)}\n\n"
-            events_yielded += 1
+            # Yield final status; an abort at the error limit is not a completion.
+            if error_count < max_errors:
+                final_status = {
+                    "type": "status",
+                    "data": {
+                        "status": "completed",
+                        "correlation_id": correlation_id,
+                    },
+                }
+                yield f"data: {json.dumps(final_status)}\n\n"
+                events_yielded += 1
 
         except Exception as e:
             logger.error(

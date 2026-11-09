@@ -15,6 +15,7 @@ Questo modulo coordina lo streaming usando tutti i moduli specializzati.
 import asyncio
 import logging
 import time
+import traceback
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -323,7 +324,7 @@ class OrchestratorStreamingCore:
                             f"🚀 [CRM Pre-call] Injected {len(crm_result)} bytes of CRM data into context"
                         )
                 except Exception as e:
-                    logger.warning("[CRM Pre-call] Failed: %s", e)
+                    logger.warning("[CRM Pre-call] Failed: %s", type(e).__name__)
 
         # 3. Prepare ReAct execution (common logic)
         # If CRM pre-call returned data, mark as trusted (skip evidence check)
@@ -516,11 +517,15 @@ class OrchestratorStreamingCore:
             except Exception as analytics_err:
                 logger.warning(
                     "Failed to log streaming query analytics (non-critical): %s",
-                    analytics_err,
+                    type(analytics_err).__name__,
                 )
 
         except Exception as e:
-            logger.error("❌ [Stream] ReAct loop failed: %s", e, exc_info=True)
+            logger.error(
+                "❌ [Stream] ReAct loop failed: %s\n%s",
+                type(e).__name__,
+                "".join(traceback.format_tb(e.__traceback__)),
+            )
             yield self.streaming_manager.create_error_event(
                 error_type="react_loop_error",
                 message=str(e),
@@ -536,7 +541,7 @@ class OrchestratorStreamingCore:
             except Exception as marker_error:
                 logger.warning(
                     "[FinalizationSpine] stream gap marker failed: %s",
-                    marker_error,
+                    type(marker_error).__name__,
                 )
 
     @staticmethod
