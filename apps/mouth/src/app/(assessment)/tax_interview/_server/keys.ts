@@ -100,7 +100,7 @@ export const KEY = {
     notes: {
       r3: "Invoice 5.550.000, kurang 50.000 (bukan 2% PPh 23 = 100.000). Tanyakan klien, kemungkinan biaya transfer.",
       r8: "Jumlah dan referensi sama dengan r7; kelebihan bayar/uang muka pelanggan, bukan pendapatan.",
-      r9: "Setoran pajak bukan biaya operasional; dicatat sebagai pembayaran/utang pajak sesuai jenis pajaknya.",
+      r9: "Setoran PPN Masa 09 melunasi kewajiban pajak, bukan biaya operasional; tidak boleh dicatat sebagai Biaya lain-lain, melainkan sebagai pelunasan utang/pajak dibayar di muka PPN.",
       r10: "Invoice 33.300.000, kurang 600.000 = 2% x 30.000.000 (PPh 23 dipotong pelanggan). Minta bukti potong.",
       r11: "Tidak ada invoice atau referensi; jangan dicatat penjualan tanpa dasar.",
     } as Record<string, string>,
@@ -126,7 +126,7 @@ export const KEY = {
     redFlags: [
       "menjanjikan tidak ada sanksi",
       "menyalahkan klien atau rekan",
-      "catatan lebih dari 120 kata",
+      "catatan lebih dari 80 kata",
     ],
     reference:
       "Denda tetap SPT Masa PPN yang terlambat adalah Rp 500.000. Tidak ada bagian dari kunci yang bergantung pada aturan force majeure.",

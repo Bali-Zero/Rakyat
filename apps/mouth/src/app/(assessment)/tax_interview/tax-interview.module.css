@@ -210,11 +210,14 @@
 }
 .brandName {
   font-family: var(--font-serif);
-  font-size: 17px;
+  font-size: clamp(14px, 4vw, 17px);
   line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+.brand {
+  flex: 1 1 auto;
+}
+.barTools {
+  flex: 0 0 auto;
 }
 .clock {
   font-size: 12px;

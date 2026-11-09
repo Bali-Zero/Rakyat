@@ -93,7 +93,7 @@ export const CONTENT: Content = {
         {
           from: "nindy",
           at: "09.20",
-          text: "Aku lagi isi papan kalender tim, tapi tanggalnya terlepas dari kartunya, hehe. Bantu pasangkan ya. Satu tanggal tidak dipakai. Lalu pasangkan juga denda tetap keterlambatan.",
+          text: "Aku lagi isi papan kalender tim, tapi tanggalnya terlepas dari kartunya, hehe. Bantu pasangkan ya. Dua tanggal tidak dipakai. Lalu pasangkan juga denda tetap keterlambatan.",
         },
       ],
       widget: {
@@ -416,7 +416,7 @@ export const CONTENT: Content = {
           {
             id: "r9",
             date: "15/10",
-            memo: "SETOR PAJAK KODE BILLING",
+            memo: "SETOR PPN MASA 09 KODE BILLING",
             dk: "D",
             amount: "4.000.000",
             booked: "Biaya lain-lain",
