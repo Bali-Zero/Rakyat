@@ -9,8 +9,8 @@
 // included. The C1/C2 "60 days + 4 extensions" bundles (8.5M / 13.9M) were not
 // derivable from catalogue rows and were deleted rather than re-invented.
 //
-// WHAT IT PINS. (1) every language of the e-VOA guide states the catalogue VOA
-// and extension prices; (2) no line of the e-VOA guide carries the stale
+// WHAT IT PINS. (1) when the guide quotes numeric prices, they match the catalogue;
+// omission is allowed while PricingTool/catalogue divergence awaits verification; (2) no line of the e-VOA guide carries the stale
 // 2,300,000 / 13,900,000 figures; (3) no article anywhere pairs
 // "Bali Zero" + a VOA extension on one line with 2,300,000.
 // The expected numbers come from the JSON, not from this file.
@@ -75,12 +75,20 @@ describe("e-VOA guide Bali Zero prices follow the catalogue", () => {
   });
 
   it.each(EVOA.map((f) => [path.basename(f), f]))(
-    "%s states the catalogue VOA and extension prices and no stale bundle",
+    "%s quotes both catalogue prices or no unverified price, never a stale bundle",
     (_name, file) => {
       const lines = fs.readFileSync(file as string, "utf8").split("\n");
       const all = lines.flatMap(amounts);
-      expect(all).toContain(cat.voa);
-      expect(all).toContain(cat.extension);
+      // No price is safer than selecting between contradictory sources. Keep
+      // parity whenever either catalogue price is present; do not force a quote.
+      if (all.includes(cat.voa) || all.includes(cat.extension)) {
+        expect(all).toContain(cat.voa);
+        expect(all).toContain(cat.extension);
+      } else {
+        expect(lines.join("\n")).not.toMatch(
+          /(?:IDR|Rp|USD|EUR)\s*\d|\d[\d., ]*\s*(?:IDR|USD|EUR)/,
+        );
+      }
       for (const stale of [2300000, 13900000]) {
         const hit = lines.find(
           (l) => amounts(l).includes(stale) && !/3[ .,]?600[ .,]?000/.test(l),
