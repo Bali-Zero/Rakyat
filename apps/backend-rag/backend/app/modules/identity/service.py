@@ -238,7 +238,7 @@ class IdentityService:
             "Tax Manager": ["tax", "finance", "reports", "clients"],
             # 2026-10-20: Manager title, full perimeter
             "Manager": ["all", "setup", "tax", "finance", "hr", "reports", "clients", "team"],
-            # 2026-10-20: Natalie — sees everything, manages no practice
+            # 2026-10-20: finance & client services — sees everything, manages no practice
             "Finance & Client Services Coordinator": ["finance", "clients", "reports"],
             # reorganisation 2026-11-09
             "Direktur": ["setup", "tax", "finance", "reports", "clients", "team"],

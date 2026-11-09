@@ -112,8 +112,8 @@ TEAM_ROLES = frozenset(
         "Consultant",
         "Reception",
         "member",
-        # roster decisions of 2026-10-20 (Zero): the Manager title and Natalie joins
-        # finance & client services
+        # roster decisions of 2026-10-20 (Zero): the Manager and finance &
+        # client services titles
         "Manager",
         "Finance & Client Services Coordinator",
         # reorganisation 2026-11-09: new job titles, same people, same access

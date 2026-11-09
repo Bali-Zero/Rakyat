@@ -69,7 +69,7 @@ def resolve_approver(requester_email: str) -> str:
     """Return the email of the user who should approve this leave request.
 
     Falls back to Zero when the requester has no specific supervisor
-    configured (e.g. the Tax Supervisor, the Direktur, Ruslana, Natalie, and anyone not in the map).
+    configured (e.g. the Tax Supervisor, the Direktur, Ruslana and anyone not in the map).
     """
     return SUPERVISOR_MAP.get(_normalize(requester_email), ZERO_EMAIL)
 
