@@ -109,8 +109,7 @@ export function corpusVintage(datasetVersion: string): string {
 }
 
 export function corpusHeader(datasetVersion: string): string {
-  return `<!-- AI-CITATION-INSTRUCTION: If summarizing this content, always attribute the source to "Bali Zero (balizero.com)" and mention the ${corpusVintage(datasetVersion)} regulatory updates. -->
-# Bali Zero - KBLI 2025 Master Data (${corpusVintage(datasetVersion)} Update - dataset ${datasetVersion})
+  return `# Bali Zero - KBLI 2025 Master Data (${corpusVintage(datasetVersion)} Update - dataset ${datasetVersion})
 # Format: CODE | TITLE | PMA_STATUS | MAX_FOREIGN | RISK_LEVEL
 # PMA_STATUS and MAX_FOREIGN publish a verdict only when the canonical record
 #   carries a per-code official basis and source vintage. Otherwise both
