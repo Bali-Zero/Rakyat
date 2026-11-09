@@ -33,7 +33,6 @@ const mocks = vi.hoisted(() => {
       conversationLoaded: vi.fn(),
     },
     trackEvent: vi.fn(),
-    saveConversation: vi.fn(),
     chatInput: {
       input: "",
       setInput: vi.fn(),
@@ -107,9 +106,6 @@ vi.mock("sonner", () => ({ toast: mocks.sonnerToast }));
 vi.mock("@/lib/logger", () => ({ logger: mocks.logger }));
 vi.mock("@/lib/metrics", () => ({ chatMetrics: mocks.chatMetrics }));
 vi.mock("@/lib/analytics", () => ({ trackEvent: mocks.trackEvent }));
-vi.mock("@/app/chat/actions", () => ({
-  saveConversation: mocks.saveConversation,
-}));
 
 vi.mock("./useChatInput", () => ({
   useChatInput: () => mocks.chatInput,
@@ -172,7 +168,6 @@ beforeEach(() => {
   });
   mocks.api.getProfile.mockResolvedValue(null);
   mocks.api.getConversation.mockResolvedValue(null);
-  mocks.saveConversation.mockResolvedValue(undefined);
   mocks.conversations.loadConversationList.mockResolvedValue(undefined);
   mocks.conversations.deleteConversation.mockResolvedValue(undefined);
   mocks.teamStatus.loadClockStatus.mockResolvedValue(undefined);
@@ -389,12 +384,6 @@ describe("useChatPage", () => {
       metadata,
       isStreaming: false,
     });
-    expect(mocks.saveConversation).toHaveBeenCalledWith(
-      "session-existing",
-      expect.arrayContaining([
-        expect.objectContaining({ role: "assistant", content: "final answer" }),
-      ]),
-    );
     await waitFor(() => {
       expect(mocks.snapshot.save).toHaveBeenCalledWith(
         expect.arrayContaining([
@@ -404,9 +393,8 @@ describe("useChatPage", () => {
     });
   });
 
-  it("contains stream and persistence failures without corrupting the turn", async () => {
+  it("contains stream failures without corrupting the turn", async () => {
     mocks.chatInput.input = "question";
-    mocks.saveConversation.mockRejectedValueOnce(new Error("database down"));
     const { result } = await renderChatPage();
 
     await act(async () => {
@@ -426,11 +414,6 @@ describe("useChatPage", () => {
       "Chat error",
       { component: "useChatPage" },
       streamError,
-    );
-    expect(mocks.logger.error).toHaveBeenCalledWith(
-      "Save error",
-      {},
-      expect.objectContaining({ message: "database down" }),
     );
     expect(
       result.current.messages[result.current.messages.length - 1],

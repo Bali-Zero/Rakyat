@@ -46,7 +46,7 @@ describe("Conversation Flow Integration Tests", () => {
   });
 
   describe("Complete Conversation Lifecycle", () => {
-    it("should create, save, list, and delete conversation", async () => {
+    it("should create, list, and delete conversation", async () => {
       // Step 1: Send initial message
       const chatResponse = {
         answer: "Hello! How can I help you?",
@@ -66,30 +66,7 @@ describe("Conversation Flow Integration Tests", () => {
       const messageResult = await api.sendMessage("Hello");
       expect(messageResult.response).toBe("Hello! How can I help you?");
 
-      // Step 2: Save conversation
-      const saveResponse = {
-        success: true,
-        conversation_id: 1,
-        messages_saved: 2,
-      };
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        headers: new Headers({ "content-type": "application/json" }),
-        json: async () => saveResponse,
-      });
-
-      const saveResult = await api.saveConversation(
-        [
-          { role: "user", content: "Hello" },
-          { role: "assistant", content: "Hello! How can I help you?" },
-        ],
-        "session-123",
-      );
-      expect(saveResult.conversation_id).toBe(1);
-
-      // Step 3: List conversations
+      // Step 2: List conversations
       const listResponse = {
         success: true,
         conversations: [
@@ -115,7 +92,7 @@ describe("Conversation Flow Integration Tests", () => {
       const conversations = await api.listConversations();
       expect(conversations.conversations).toHaveLength(1);
 
-      // Step 4: Get conversation details
+      // Step 3: Get conversation details
       const getResponse = {
         success: true,
         id: 1,
@@ -138,7 +115,7 @@ describe("Conversation Flow Integration Tests", () => {
       const conversation = await api.getConversation(1);
       expect(conversation.messages).toHaveLength(2);
 
-      // Step 5: Delete conversation
+      // Step 4: Delete conversation
       const deleteResponse = {
         success: true,
         deleted_id: 1,

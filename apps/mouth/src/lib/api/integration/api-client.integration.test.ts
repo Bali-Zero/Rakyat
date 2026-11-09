@@ -191,7 +191,7 @@ describe("ApiClient Integration Tests", () => {
       api.setToken("test-token");
     });
 
-    it("should send message and save conversation", async () => {
+    it("should send message and return response with sources", async () => {
       // Mock sendMessage
       const chatResponse = {
         answer: "Hello! How can I help you?",
@@ -212,31 +212,6 @@ describe("ApiClient Integration Tests", () => {
 
       expect(messageResult.response).toBe("Hello! How can I help you?");
       expect(messageResult.sources).toHaveLength(1);
-
-      // Mock saveConversation
-      const saveResponse = {
-        success: true,
-        conversation_id: 1,
-        messages_saved: 2,
-      };
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        headers: new Headers({ "content-type": "application/json" }),
-        json: async () => saveResponse,
-      });
-
-      const saveResult = await api.saveConversation(
-        [
-          { role: "user", content: "Hello" },
-          { role: "assistant", content: "Hello! How can I help you?" },
-        ],
-        "session-123",
-      );
-
-      expect(saveResult.success).toBe(true);
-      expect(saveResult.conversation_id).toBe(1);
     });
 
     it("should handle streaming with conversation history", async () => {

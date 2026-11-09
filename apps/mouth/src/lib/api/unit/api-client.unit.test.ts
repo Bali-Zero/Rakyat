@@ -135,21 +135,24 @@ describe("ApiClient Unit Tests", () => {
       api.setCsrfToken("csrf-token");
       api.setToken("test-token");
 
-      // Test PUT through a real API call (e.g., saveConversation uses PUT internally)
-      mockFetch.mockResolvedValueOnce({
+      mockFetch.mockResolvedValue({
         ok: true,
         status: 200,
         headers: new Headers({ "content-type": "application/json" }),
-        json: async () => ({
-          success: true,
-          conversation_id: 1,
-          messages_saved: 1,
-        }),
+        json: async () => ({ success: true }),
       });
 
-      await api.saveConversation([{ role: "user", content: "test" }]);
-      const callArgs = mockFetch.mock.calls[0];
-      expect(callArgs[1].headers["X-CSRF-Token"]).toBe("csrf-token");
+      await api.put("/test", { value: 1 });
+      await api.patch("/test", { value: 2 });
+
+      expect(mockFetch.mock.calls[0][1].method).toBe("PUT");
+      expect(mockFetch.mock.calls[0][1].headers["X-CSRF-Token"]).toBe(
+        "csrf-token",
+      );
+      expect(mockFetch.mock.calls[1][1].method).toBe("PATCH");
+      expect(mockFetch.mock.calls[1][1].headers["X-CSRF-Token"]).toBe(
+        "csrf-token",
+      );
     });
   });
 
@@ -306,28 +309,6 @@ describe("ApiClient Unit Tests", () => {
       const result = await api.listConversations();
       expect(result.conversations).toEqual([]);
       expect(result.total).toBe(0);
-    });
-
-    it("should handle saveConversation without sessionId", async () => {
-      const mockResponse = {
-        success: true,
-        conversation_id: 1,
-        messages_saved: 2,
-      };
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        headers: new Headers({ "content-type": "application/json" }),
-        json: async () => mockResponse,
-      });
-
-      const result = await api.saveConversation([
-        { role: "user", content: "Hello" },
-        { role: "assistant", content: "Hi!" },
-      ]);
-
-      expect(result.success).toBe(true);
     });
   });
 

@@ -39,16 +39,6 @@ export interface MessageMetadata {
   followup_questions?: string[];
 }
 
-/**
- * Stream event types for useOptimisticChat hook
- */
-export type StreamEvent =
-  | { type: "token"; data: string }
-  | { type: "status"; data: string }
-  | { type: "sources"; data: Source[] }
-  | { type: "error"; data: string }
-  | { type: "done" };
-
 // Backend API URL
 const BACKEND_URL =
   process.env.BACKEND_RAG_URL || "https://nuzantara-rag.fly.dev";
@@ -59,51 +49,6 @@ const BACKEND_URL =
 async function getAuthToken(): Promise<string | null> {
   const cookieStore = await cookies();
   return cookieStore.get("nz_access_token")?.value || null;
-}
-
-/**
- * Server Action: Save conversation to backend
- */
-export async function saveConversation(
-  messages: ChatMessage[],
-  sessionId: string,
-): Promise<{ success: boolean; conversationId?: number }> {
-  const token = await getAuthToken();
-
-  if (!token) {
-    return { success: false };
-  }
-
-  try {
-    const response = await fetch(
-      `${BACKEND_URL}/api/bali-zero/conversations/save`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          session_id: sessionId,
-          messages: messages.map((m) => ({
-            role: m.role,
-            content: m.content,
-            sources: m.sources,
-            timestamp: m.timestamp.toISOString(),
-          })),
-        }),
-      },
-    );
-
-    if (!response.ok) {
-      throw new Error("Failed to save");
-    }
-
-    const data = await response.json();
-    return { success: true, conversationId: data.conversation_id };
-  } catch {
-    return { success: false };
-  }
 }
 
 /**

@@ -25,30 +25,6 @@ export class ConversationsApi {
     );
   }
 
-  async saveConversation(
-    messages: Array<{
-      role: string;
-      content: string;
-      sources?: Array<{ title?: string; content?: string }>;
-      imageUrl?: string;
-    }>,
-    sessionId?: string,
-    metadata?: Record<string, unknown>,
-  ): Promise<{
-    success: boolean;
-    conversation_id: number;
-    messages_saved: number;
-  }> {
-    return this.client.request("/api/bali-zero/conversations/save", {
-      method: "POST",
-      body: JSON.stringify({
-        messages,
-        session_id: sessionId,
-        metadata,
-      }),
-    });
-  }
-
   async clearConversations(
     sessionId?: string,
   ): Promise<{ success: boolean; deleted_count: number }> {

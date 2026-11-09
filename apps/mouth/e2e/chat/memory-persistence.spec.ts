@@ -152,17 +152,6 @@ test.describe("Memory Persistence", () => {
         });
       });
 
-      // Mock conversation save
-      await page.route("**/api/bali-zero/conversations/save", async (route) => {
-        await route.fulfill({
-          json: {
-            success: true,
-            conversation_id: 1,
-            messages_saved: 2,
-          },
-        });
-      });
-
       await page.goto("/chat");
       await page.waitForLoadState("networkidle");
 
@@ -211,12 +200,6 @@ test.describe("Memory Persistence", () => {
           status: 200,
           contentType: "text/event-stream",
           body: chunks.join(""),
-        });
-      });
-
-      await page.route("**/api/bali-zero/conversations/save", async (route) => {
-        await route.fulfill({
-          json: { success: true, conversation_id: 1, messages_saved: 2 },
         });
       });
 
