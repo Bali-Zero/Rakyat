@@ -62,8 +62,8 @@ class TestWaSenderSensitiveToolEndToEnd:
         admin one."""
         trusted_profile = {
             "role": "team",
-            "name": "Adit",
-            "email": "adit@balizero.com",
+            "name": "Krisna",
+            "email": "krisna@balizero.com",
         }
         derived_role = _derive_wa_agent_role(trusted_profile)
         assert derived_role is ROLE_EXECUTIVE_CONSULTANT  # sanity: real scope, not admin

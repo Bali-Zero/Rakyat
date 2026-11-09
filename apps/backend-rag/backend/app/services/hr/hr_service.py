@@ -865,6 +865,34 @@ class HRService:
             rows = await conn.fetch(query, *params)
             return [dict(r) for r in rows]
 
+    async def list_leave_requests_scoped(
+        self,
+        own_employee_id: int | None,
+        requester_emails: list[str],
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Leave requests of one employee plus those of the given requester emails (an approver's view).
+
+        Same leave-only columns as `list_leave_requests`; no payroll or employee-finance column is joined.
+        """
+        async with self.db_pool.acquire() as conn:
+            query = """
+                SELECT lr.*, tm.full_name as employee_name, tm.email as employee_email,
+                       lt.name as leave_type_name
+                FROM hr_leave_requests lr
+                JOIN hr_employees e ON e.id = lr.employee_id
+                JOIN team_members tm ON tm.id = e.team_member_id
+                JOIN hr_leave_types lt ON lt.id = lr.leave_type_id
+                WHERE (lr.employee_id = $1 OR lower(tm.email) = ANY($2::text[]))
+            """
+            params: list[Any] = [own_employee_id, [e.lower() for e in requester_emails]]
+            if status is not None:
+                query += " AND lr.status = $3"
+                params.append(status)
+            query += " ORDER BY lr.requested_at DESC"
+            rows = await conn.fetch(query, *params)
+            return [dict(r) for r in rows]
+
     # ─── DASHBOARD ───────────────────────────────────────────────────
 
     async def get_admin_dashboard(self) -> dict[str, Any]:

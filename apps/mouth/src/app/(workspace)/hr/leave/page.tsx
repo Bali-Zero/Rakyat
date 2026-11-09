@@ -776,6 +776,11 @@ export default function LeavePage() {
   }, []);
 
   const pendingTeam = requests.filter((r) => r.status === "pending");
+  // A non-admin approver: the rows the server says they may review, and their own.
+  const myRequests = requests.filter((r) => r.is_mine !== false);
+  const toReview = requests.filter(
+    (r) => r.can_review === true && r.status === "pending",
+  );
 
   const handleApprove = async (id: number) => {
     try {
@@ -968,6 +973,22 @@ export default function LeavePage() {
             <MiniCalendar requests={requests} />
           </div>
 
+          {toReview.length > 0 && (
+            <div>
+              <p
+                className="text-xs font-semibold uppercase tracking-wider mb-3"
+                style={{ color: "var(--bz-text-2)" }}
+              >
+                Pending Approval
+              </p>
+              <div className="space-y-2">
+                {toReview.map((req) => (
+                  <RequestRow key={req.id} req={req} isAdmin {...rejectProps} />
+                ))}
+              </div>
+            </div>
+          )}
+
           <div>
             <p
               className="text-xs font-semibold uppercase tracking-wider mb-3"
@@ -975,7 +996,7 @@ export default function LeavePage() {
             >
               My Requests
             </p>
-            {requests.length === 0 ? (
+            {myRequests.length === 0 ? (
               <div
                 className="border rounded-xl p-6 text-center text-sm"
                 style={{ ...PANEL, color: "var(--bz-text-2)" }}
@@ -990,7 +1011,7 @@ export default function LeavePage() {
               </div>
             ) : (
               <div className="space-y-2">
-                {requests.map((req) => (
+                {myRequests.map((req) => (
                   <RequestRow
                     key={req.id}
                     req={req}

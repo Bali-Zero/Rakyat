@@ -65,6 +65,14 @@ def _normalize(email: str) -> str:
     return email.lower().strip()
 
 
+def reports_of(approver_email: str) -> frozenset[str]:
+    """The requester emails whose leave `approver_email` approves (empty for a non-approver)."""
+    approver = _normalize(approver_email)
+    if not approver:
+        return frozenset()
+    return frozenset(req for req, appr in SUPERVISOR_MAP.items() if appr == approver)
+
+
 def resolve_approver(requester_email: str) -> str:
     """Return the email of the user who should approve this leave request.
 
