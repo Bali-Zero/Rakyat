@@ -17,6 +17,10 @@ import Link from "next/link";
 import { AlertTriangle, Archive, MessageSquare } from "lucide-react";
 import { usePortalMatter } from "@/hooks";
 import { PortalBackButton } from "@/components/portal";
+import {
+  PortalLoadTimeout,
+  usePortalLoadTimeout,
+} from "@/components/portal/PortalLoadTimeout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -264,6 +268,7 @@ export default function PortalMatterDetailPage() {
   const params = useParams<{ id?: string | string[] }>();
   const matterId = parseMatterId(params?.id);
   const { data, isLoading, isError, refetch } = usePortalMatter(matterId);
+  const loadTimeout = usePortalLoadTimeout(isLoading);
   const { formatDate } = usePortalDateFormat();
 
   if (!matterId) {
@@ -277,6 +282,10 @@ export default function PortalMatterDetailPage() {
         </Alert>
       </div>
     );
+  }
+
+  if (loadTimeout.timedOut) {
+    return <PortalLoadTimeout onRetry={loadTimeout.retry} />;
   }
 
   if (isLoading) return <LoadingState />;

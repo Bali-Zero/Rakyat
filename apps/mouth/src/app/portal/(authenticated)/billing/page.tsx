@@ -17,6 +17,10 @@ import React from "react";
 import { Download, FileText, Receipt, AlertTriangle } from "lucide-react";
 import { usePortalBilling } from "@/hooks/usePortalBilling";
 import {
+  PortalLoadTimeout,
+  usePortalLoadTimeout,
+} from "@/components/portal/PortalLoadTimeout";
+import {
   StatusBadge,
   CountdownChip,
   PortalCardSkeleton,
@@ -55,6 +59,7 @@ function BillingMasthead() {
 
 export default function BillingPage() {
   const { data, isLoading, isError, refetch } = usePortalBilling();
+  const loadTimeout = usePortalLoadTimeout(isLoading);
   const { error: toastError } = useToast();
   const { formatDate } = usePortalDateFormat();
 
@@ -75,6 +80,10 @@ export default function BillingPage() {
       logger.error("Failed to get invoice PDF URL", {}, err as Error);
     }
   };
+
+  if (loadTimeout.timedOut) {
+    return <PortalLoadTimeout onRetry={loadTimeout.retry} />;
+  }
 
   if (isLoading) {
     return (
