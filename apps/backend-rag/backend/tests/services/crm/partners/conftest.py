@@ -218,10 +218,18 @@ CREATE TABLE IF NOT EXISTS practices (
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     status             TEXT NOT NULL DEFAULT 'pending',
     payment_status     TEXT NOT NULL DEFAULT 'pending',
-    total_invoiced_idr NUMERIC(16,2) NOT NULL DEFAULT 0,
-    completed_at       TIMESTAMPTZ,
+    quoted_price       NUMERIC(14,2),
+    actual_price       NUMERIC(14,2),
+    completion_date    TIMESTAMPTZ,
     client_id          INTEGER,
-    service_type       TEXT
+    practice_type_id   INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS practice_types (
+    id       SERIAL PRIMARY KEY,
+    code     TEXT NOT NULL UNIQUE,
+    name     TEXT NOT NULL,
+    category TEXT
 );
 
 -- system_settings is private to this fixture. Its shape mirrors the canonical
@@ -512,33 +520,33 @@ def practice_factory(db_conn: asyncpg.Connection) -> Callable[..., Coroutine[Any
     auto-assigns the id; we return the RETURNING id as _IntWithId.
 
     Accepts optional kwargs for columns required by CommissionEngine:
-    - total_invoiced_idr: NUMERIC(16,2), default 0
+    - actual_price: NUMERIC(14,2), default 0 (the commission base)
     - status: TEXT, default 'pending'
     - payment_status: TEXT, default 'pending'
-    - completed_at: TIMESTAMPTZ, default None (NULL → engine falls back to now())
+    - completion_date: TIMESTAMPTZ, default now() when status is completed (as in production)
     """
 
     async def _create(
         *,
-        total_invoiced_idr: Decimal = Decimal("0"),
+        actual_price: Decimal = Decimal("0"),
         status: str = "pending",
         payment_status: str = "pending",
-        completed_at: datetime | None = None,
+        completion_date: datetime | None = None,
     ) -> _IntWithId:
-        _completed_at = completed_at or (
+        _completion_date = completion_date or (
             datetime.now(timezone.utc) if status == "completed" else None
         )
         row = await db_conn.fetchrow(
             """
             INSERT INTO practices
-                (total_invoiced_idr, status, payment_status, completed_at)
+                (actual_price, status, payment_status, completion_date)
             VALUES ($1, $2, $3, $4)
             RETURNING id
             """,
-            total_invoiced_idr,
+            actual_price,
             status,
             payment_status,
-            _completed_at,
+            _completion_date,
         )
         return _IntWithId(row["id"])
 
@@ -712,13 +720,18 @@ def commission_factory(
         prac_id = await practice_factory(
             status="completed" if status in ("approved", "paid") else "pending",
             payment_status="paid" if status == "paid" else "pending",
-            total_invoiced_idr=_gross,
+            actual_price=_gross,
         )
         # If client provided, update the practice to link it + set a service_type
         if practice_client_id is not None:
+            type_id = await db_conn.fetchval(
+                "INSERT INTO practice_types (code, name) VALUES ('kitas_e33g', 'KITAS E33G') "
+                "ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name RETURNING id"
+            )
             await db_conn.execute(
-                "UPDATE practices SET client_id = $1, service_type = 'KITAS E33G' WHERE id = $2",
+                "UPDATE practices SET client_id = $1, practice_type_id = $2 WHERE id = $3",
                 int(practice_client_id),
+                type_id,
                 int(prac_id),
             )
 
