@@ -17,6 +17,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import {
+  PortalLoadTimeout,
+  usePortalLoadTimeout,
+} from "@/components/portal/PortalLoadTimeout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, User, Baby } from "lucide-react";
@@ -81,6 +85,11 @@ export default function PortalFamilyPage() {
     queryFn: fetchFamily,
     staleTime: 5 * 60 * 1000,
   });
+  const loadTimeout = usePortalLoadTimeout(isLoading);
+
+  if (loadTimeout.timedOut) {
+    return <PortalLoadTimeout onRetry={loadTimeout.retry} />;
+  }
 
   if (isLoading) {
     return (

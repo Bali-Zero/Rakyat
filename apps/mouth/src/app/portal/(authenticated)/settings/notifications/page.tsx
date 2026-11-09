@@ -15,6 +15,10 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import {
+  PortalLoadTimeout,
+  usePortalLoadTimeout,
+} from "@/components/portal/PortalLoadTimeout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
@@ -47,6 +51,7 @@ export default function NotificationsSettingsPage() {
     queryKey: ["portal", "notification_prefs"],
     queryFn: fetchPrefs,
   });
+  const loadTimeout = usePortalLoadTimeout(isLoading);
 
   const [emailEnabled, setEmailEnabled] = useState(true);
   const [waEnabled, setWaEnabled] = useState(false);
@@ -87,6 +92,10 @@ export default function NotificationsSettingsPage() {
       wa_phone: phone || null,
     });
   };
+
+  if (loadTimeout.timedOut) {
+    return <PortalLoadTimeout onRetry={loadTimeout.retry} />;
+  }
 
   if (isLoading) {
     return (

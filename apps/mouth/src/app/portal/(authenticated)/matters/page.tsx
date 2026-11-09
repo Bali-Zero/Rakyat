@@ -17,6 +17,10 @@ import Link from "next/link";
 import { MatterCard } from "@balizero/core";
 import { usePortalMatters } from "@/hooks";
 import { PortalListSkeleton } from "@/components/portal";
+import {
+  PortalLoadTimeout,
+  usePortalLoadTimeout,
+} from "@/components/portal/PortalLoadTimeout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle } from "lucide-react";
@@ -45,6 +49,11 @@ function MattersMasthead() {
 
 export default function PortalMattersPage() {
   const { data, isLoading, isError, refetch } = usePortalMatters();
+  const loadTimeout = usePortalLoadTimeout(isLoading);
+
+  if (loadTimeout.timedOut) {
+    return <PortalLoadTimeout onRetry={loadTimeout.retry} />;
+  }
 
   if (isLoading) {
     return (
