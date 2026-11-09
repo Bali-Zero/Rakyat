@@ -62,7 +62,7 @@ export function firstName(
   return capitalise(segment);
 }
 
-/** Label for a stored consultant that is no longer offered: "veronika.tax@x" -> "Veronika". */
+/** Label for a stored consultant that is no longer offered: "legacy.tax@x" -> "Legacy". */
 export function legacyConsultantLabel(value: string): string {
   const local = value.split("@")[0].replace(/\.tax$/, "");
   return local ? local.charAt(0).toUpperCase() + local.slice(1) : value;

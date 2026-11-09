@@ -79,20 +79,14 @@ const TEAM_SPEC: SPEntry[] = [
     accent: "#a78bfa",
   },
   {
-    slug: "veronika",
-    roleOverride: "Manager",
-    department: "Leadership",
-    accent: "#06b6d4",
-  },
-  {
     slug: "adit",
-    roleOverride: "Supervisor Lead",
+    roleOverride: "Direktur",
     department: "Setup",
     accent: "#f59e0b",
   },
   {
     slug: "angel",
-    roleOverride: "Supervisor",
+    roleOverride: "Tax Supervisor",
     department: "Tax",
     accent: "#22c55e",
   },

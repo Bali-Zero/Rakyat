@@ -51,17 +51,16 @@ describe("/team — the public directory", () => {
       ["Pak Heru", "Komisaris · Founder (30 years)"],
       ["Zainal Abidin", "Chief Executive Officer · Founder"],
       ["Ruslana", "Special Advisory"],
-      ["Veronika", "Manager"],
-      ["Adit", "Supervisor · Lead Setup"],
-      ["Ari", "Supervisor"],
-      ["Krisna", "Specialist Consultant"],
+      ["Adit", "Direktur"],
+      ["Ari", "Tax Responsible"],
+      ["Krisna", "Senior Consultant"],
       ["Dea", "Executive Consultant"],
       ["Candra", "Consultant"],
       ["Vino", "Junior Consultant"],
       ["Angel", "Tax Supervisor"],
       ["Kadek", "Tax Consultant"],
       ["Dewa Ayu", "Tax Consultant"],
-      ["Asya Nadia", "Accountant"],
+      ["Asya Nadia", "HR & Accounting"],
       ["Rina", "Reception"],
       ["Zero", "SOTA Marketing"],
       ["Surya", "Marketing Specialist"],
@@ -77,7 +76,7 @@ describe("/team — the public directory", () => {
         `${name} lost the role label "${role}"`,
       ).toContain(role);
     }
-    // 20 people, no more: the two excluded are the only difference from the
+    // 19 people, no more: the two excluded are the only difference from the
     // composition this page shipped before.
     expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(
       expected.length,

@@ -78,25 +78,22 @@ const LEADERSHIP: TeamMember[] = compose([
     slug: "ruslana",
     roleOverride: "Special Advisory",
   },
-  {
-    slug: "veronika",
-    roleOverride: "Manager",
-  },
 ]);
 
 const SETUP_TEAM: TeamMember[] = compose([
   {
     slug: "adit",
+    roleOverride: "Direktur",
   },
   {
     slug: "ari",
-    roleOverride: "Supervisor",
+    roleOverride: "Tax Responsible",
     // The tool Ari is responsible for, on its real page.
     project: { label: "Second Home Studio", href: "/visa/second-home/studio" },
   },
   {
     slug: "krisna",
-    roleOverride: "Specialist Consultant",
+    roleOverride: "Senior Consultant",
   },
   {
     slug: "dea",
@@ -134,7 +131,7 @@ const TAX_TEAM: TeamMember[] = compose([
 const ACCOUNTING_TEAM: TeamMember[] = compose([
   {
     slug: "asya",
-    roleOverride: "Accountant",
+    roleOverride: "HR & Accounting",
   },
   {
     slug: "rina",
