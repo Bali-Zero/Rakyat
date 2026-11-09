@@ -293,3 +293,21 @@ async def test_exception_log_does_not_leak_the_recipient_or_exception_text(monke
     joined = "\n".join(r.getMessage() for r in caplog.records)
     assert "carol@example.com" not in joined
     assert "id:" in joined
+
+
+@pytest.mark.asyncio
+async def test_a_comma_joined_to_becomes_one_entry_per_address(monkeypatch):
+    monkeypatch.setenv("RESEND_API_KEY", "test-key")
+    client = MagicMock()
+    client.post = AsyncMock(return_value=_mk_response(202))
+    with patch(
+        "backend.services.notifications.resend_http.get_email_client",
+        new=AsyncMock(return_value=client),
+    ):
+        result = await send_via_resend(
+            to_email="alice@example.com, bob@example.com",
+            subject="hello",
+            body="<p>hi</p>",
+        )
+    assert result is True
+    assert client.post.await_args.kwargs["json"]["to"] == ["alice@example.com", "bob@example.com"]

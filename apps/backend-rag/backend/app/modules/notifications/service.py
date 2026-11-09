@@ -321,7 +321,7 @@ class NotificationService:
                     if team_leader:
                         bcc.append(team_leader)
 
-            # A team identity read elsewhere (tax@ -> nakhoda@) is delivered to that mailbox, still hidden.
+            # A team identity read elsewhere (tax@ -> angel.tax@) is delivered to that mailbox, still hidden.
             _, _, bcc_with_mirrors = redirect_recipients(client_email, None, bcc or None)
 
             # Send email
