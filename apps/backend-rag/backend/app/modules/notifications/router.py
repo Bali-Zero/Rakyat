@@ -504,7 +504,7 @@ async def send_direct_email(
     cc_list, bcc_list = _enforce_balizero_cc(
         request.to, cc_list, bcc_list, request.email_type, request.assigned_to
     )
-    # An identity that is read elsewhere (Veronika: tax@/veronika@/veronika.tax@ -> nakhoda@) is
+    # An identity that is read elsewhere (tax@/veronika@/veronika.tax@/nakhoda@ -> angel.tax@) is
     # rewritten in its own seat, for every email type: a credential delivery keeps its single
     # recipient, it just lands in the mailbox the person reads.
     to_addr, cc_list, bcc_list = redirect_recipients(request.to, cc_list, bcc_list)

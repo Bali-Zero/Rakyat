@@ -459,6 +459,9 @@ ASSIGNABLE_ROLES = {
     "Tax Lead",
     "Tax Care",
     "Tax Manager",
+    "Senior Consultant",
+    "Tax Responsible",
+    "Tax Supervisor",
 }
 
 # Map practice types to departments for specialty routing.

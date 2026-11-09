@@ -174,7 +174,7 @@ def can_manage_garuda_practices(user: dict[str, Any] | None) -> bool:
         return False
     if email in PRACTICES_READ_ONLY_VIEW_EMAILS:
         # (2026-10-20: the exclusion is the READ-ONLY half of the full view —
-        # Veronika, Manager of tax + setup, sees everything AND manages.)
+        # the department heads see everything AND manage.)
         # tp1-qwen3.8-max council finding #1: dropping accounting from the
         # ADMIN set is not enough -- an active `team_members` row with a
         # staff role would still pass `_is_staff_role` below and be able to

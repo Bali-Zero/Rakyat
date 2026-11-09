@@ -51,7 +51,6 @@ def _safe_lkpm_failure(
 # constraint from migration 093. Adding a new consultant requires updating
 # all three (Python model + CRM router + DB migration).
 LKPM_ASSIGNEES: set[str] = {
-    "veronika.tax@balizero.com",
     "kadek.tax@balizero.com",
     "dewaayu.tax@balizero.com",
     "angel.tax@balizero.com",
@@ -735,7 +734,7 @@ async def assign_lkpm_report(
     Assign (or unassign) an LKPM report to a tax consultant.
 
     RBAC: any CRM admin OR any of the 5 tax consultants in LKPM_ASSIGNEES.
-    The tax team is collaborative — Veronika/Kadek/Dewa Ayu/Angel/Faisha
+    The tax team is collaborative — Kadek/Dewa Ayu/Angel/Faisha
     can re-route reports between themselves without going through an admin.
     Users outside both groups get 403.
 

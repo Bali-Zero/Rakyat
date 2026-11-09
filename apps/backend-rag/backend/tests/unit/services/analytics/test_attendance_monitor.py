@@ -525,4 +525,5 @@ class TestConstants:
     def test_exempt_emails(self) -> None:
         assert "zero@balizero.com" in LATE_EXEMPT_EMAILS
         assert "ruslana@balizero.com" in LATE_EXEMPT_EMAILS
-        assert "veronika@balizero.com" in LATE_EXEMPT_EMAILS
+        assert "veronika@balizero.com" not in LATE_EXEMPT_EMAILS
+        assert "tax@balizero.com" not in LATE_EXEMPT_EMAILS

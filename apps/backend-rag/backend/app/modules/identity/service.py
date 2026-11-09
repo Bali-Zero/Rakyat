@@ -236,10 +236,15 @@ class IdentityService:
             "Junior Consultant": ["setup", "clients"],
             "Crew Lead": ["setup", "clients", "team"],
             "Tax Manager": ["tax", "finance", "reports", "clients"],
-            # 2026-10-20: Veronika, Manager of the tax department and the setup team
+            # 2026-10-20: Manager title, full perimeter
             "Manager": ["all", "setup", "tax", "finance", "hr", "reports", "clients", "team"],
             # 2026-10-20: Natalie — sees everything, manages no practice
             "Finance & Client Services Coordinator": ["finance", "clients", "reports"],
+            # reorganisation 2026-11-09
+            "Direktur": ["setup", "tax", "finance", "reports", "clients", "team"],
+            "Tax Supervisor": ["tax", "finance", "reports", "clients"],
+            "Tax Responsible": ["setup", "tax", "reports", "clients"],
+            "Senior Consultant": ["setup", "finance", "clients", "reports"],
             "Tax Expert": ["tax", "reports", "clients"],
             "Tax Consultant": ["tax", "clients"],
             "Tax Care": ["tax", "clients"],

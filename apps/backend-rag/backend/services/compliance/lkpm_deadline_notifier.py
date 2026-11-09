@@ -30,11 +30,11 @@ _EMAIL_API_URL: str = os.getenv(
 _EMAIL_API_KEY: str = os.getenv("NUZANTARA_API_KEY", "")
 
 ADMIN_EMAIL: str = "zero@balizero.com"
-TAX_CONSULTANT_MANAGER: str = "veronika.tax@balizero.com"
-TAX_CONSULTANTS_NON_MANAGER: tuple[str, ...] = (
+# Tax Supervisor takes the manager seat (reorganisation 2026-11-09).
+TAX_SUPERVISOR: str = "angel.tax@balizero.com"
+TAX_CONSULTANTS_NON_SUPERVISOR: tuple[str, ...] = (
     "kadek.tax@balizero.com",
     "dewaayu.tax@balizero.com",
-    "angel.tax@balizero.com",
     # faisha.tax@balizero.com removed 2026-09-19 — offboarded, must not keep
     # receiving LKPM deadline notifications. Her 12 existing lkpm_assigned_to
     # rows still need a human reassignment decision (see PLAN.md).
@@ -239,8 +239,8 @@ class LKPMDeadlineNotifier:
         rows: list[dict[str, Any]],
     ) -> None:
         n = len(rows)
-        to_list = ", ".join(TAX_CONSULTANTS_NON_MANAGER)
-        cc_list = f"{TAX_CONSULTANT_MANAGER}, {ADMIN_EMAIL}"
+        to_list = ", ".join(TAX_CONSULTANTS_NON_SUPERVISOR)
+        cc_list = f"{TAX_SUPERVISOR}, {ADMIN_EMAIL}"
         subject = f"[LKPM] Alert: {n} laporan LKPM belum di-assign"
         body = self._build_email_body("Tim Tax", rows)
         await self._post_email(

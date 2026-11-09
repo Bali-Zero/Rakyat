@@ -183,8 +183,15 @@ def test_client_update_normalize_gender():
 def test_client_update_tax_consultant_valid():
     from backend.app.routers.crm_clients import ClientUpdate
 
-    u = ClientUpdate(tax_consultant="veronika.tax@balizero.com")
-    assert u.tax_consultant == "veronika.tax@balizero.com"
+    u = ClientUpdate(tax_consultant="angel.tax@balizero.com")
+    assert u.tax_consultant == "angel.tax@balizero.com"
+
+
+def test_client_update_tax_consultant_rejects_the_retired_manager():
+    from backend.app.routers.crm_clients import ClientUpdate
+
+    with pytest.raises(ValueError, match="tax_consultant must be one of"):
+        ClientUpdate(tax_consultant="veronika.tax@balizero.com")
 
 
 def test_client_update_tax_consultant_invalid():
@@ -199,7 +206,7 @@ def test_client_update_tax_consultant_invalid():
     [
         "dea@balizero.com",
         "candra@balizero.com",
-        "veronika.tax@balizero.com",
+        "angel.tax@balizero.com",
         "kadek.tax@balizero.com",
     ],
 )

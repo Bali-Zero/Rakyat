@@ -599,11 +599,11 @@ class TestSendChainLoggingDoesNotLeakTheRecipient:
 
 
 class TestRecipientRedirectAtTheChokePoint:
-    """Veronika reads nakhoda@ only (Zero 2026-10-20/21): any email naming xug@, kagecesa@ or
-    kagecesa.xug@ is DELIVERED to nakhoda@ in the same seat, for every email type."""
+    """Reorganisation 2026-11-09: any email naming tax@, veronika@, veronika.tax@ or nakhoda@ is
+    DELIVERED to angel.tax@ in the same seat, for every email type."""
 
     @pytest.mark.asyncio
-    async def test_email_to_tax_is_sent_to_nakhoda_with_no_cc(self):
+    async def test_email_to_tax_is_sent_to_the_tax_supervisor_with_no_cc(self):
         req = SendEmailRequest(to="tax@balizero.com", subject="hi", body="<p>x</p>")
         with patch(
             "backend.app.modules.notifications.router._send_via_zoho_smtp",
@@ -611,12 +611,12 @@ class TestRecipientRedirectAtTheChokePoint:
         ) as zoho:
             resp = await send_direct_email(req, _auth={})
         assert resp.success is True
-        assert zoho.call_args.args[0] == "nakhoda@balizero.com"
+        assert zoho.call_args.args[0] == "angel.tax@balizero.com"
         assert zoho.call_args.args[3] is None
-        assert "nakhoda@balizero.com" in resp.message
+        assert "angel.tax@balizero.com" in resp.message
 
     @pytest.mark.asyncio
-    async def test_cc_veronika_on_a_client_email_becomes_cc_nakhoda(self):
+    async def test_cc_retired_address_on_a_client_email_becomes_cc_the_tax_supervisor(self):
         req = SendEmailRequest(
             to="alice@example.com",
             subject="hi",
@@ -630,10 +630,10 @@ class TestRecipientRedirectAtTheChokePoint:
             resp = await send_direct_email(req, _auth={})
         assert resp.success is True
         assert brevo.call_args.args[0] == "alice@example.com"
-        assert brevo.call_args.args[3] == ["nakhoda@balizero.com"]
+        assert brevo.call_args.args[3] == ["angel.tax@balizero.com"]
 
     @pytest.mark.asyncio
-    async def test_credential_delivery_to_tax_lands_on_nakhoda_still_alone(self):
+    async def test_credential_delivery_to_tax_lands_on_the_tax_supervisor_still_alone(self):
         req = SendEmailRequest(
             to="tax@balizero.com",
             subject="login",
@@ -646,11 +646,11 @@ class TestRecipientRedirectAtTheChokePoint:
         ) as zoho:
             resp = await send_direct_email(req, _auth={})
         assert resp.success is True
-        assert zoho.call_args.args[0] == "nakhoda@balizero.com"
+        assert zoho.call_args.args[0] == "angel.tax@balizero.com"
         assert zoho.call_args.args[3] is None and zoho.call_args.args[4] is None
 
     @pytest.mark.asyncio
-    async def test_dead_kagecesa_xug_in_bcc_is_delivered_hidden_to_nakhoda(self):
+    async def test_retired_address_in_bcc_is_delivered_hidden_to_the_tax_supervisor(self):
         req = SendEmailRequest(
             to="alice@example.com",
             subject="hi",
@@ -663,6 +663,6 @@ class TestRecipientRedirectAtTheChokePoint:
         ) as brevo:
             resp = await send_direct_email(req, _auth={})
         assert resp.success is True
-        # kagecesa.xug@ in bcc already satisfies the Bali Zero copy rule, so no cc is forced
+        # the retired address in bcc already satisfies the Bali Zero copy rule, so no cc is forced
         assert brevo.call_args.args[3] is None
-        assert brevo.call_args.args[4] == ["nakhoda@balizero.com"]
+        assert brevo.call_args.args[4] == ["angel.tax@balizero.com"]

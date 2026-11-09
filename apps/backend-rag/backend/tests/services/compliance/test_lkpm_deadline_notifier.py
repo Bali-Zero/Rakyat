@@ -20,8 +20,8 @@ import backend.services.compliance.lkpm_deadline_notifier as mod
 from backend.services.compliance.lkpm_deadline_notifier import (
     ADMIN_EMAIL,
     KILLSWITCH_KEY,
-    TAX_CONSULTANT_MANAGER,
-    TAX_CONSULTANTS_NON_MANAGER,
+    TAX_CONSULTANTS_NON_SUPERVISOR,
+    TAX_SUPERVISOR,
     LKPMDeadlineNotifier,
     _compute_days_until_deadline,
     _first_name_from_email,
@@ -302,13 +302,13 @@ class TestScanAndClassify:
 
         result = await notifier.check_and_notify()
         assert result["emails_sent"] == 1
-        # TO = 4 non-manager consultants
+        # TO = the non-supervisor consultants
         to = sent_emails[0]["to"]
-        for consultant in TAX_CONSULTANTS_NON_MANAGER:
+        for consultant in TAX_CONSULTANTS_NON_SUPERVISOR:
             assert consultant in to
-        # CC = manager + admin
+        # CC = Tax Supervisor + admin
         cc = sent_emails[0]["cc"]
-        assert TAX_CONSULTANT_MANAGER in cc
+        assert TAX_SUPERVISOR in cc
         assert ADMIN_EMAIL in cc
 
     async def test_grouping_by_assignee(

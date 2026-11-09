@@ -35,21 +35,23 @@ BALI_TZ = ZoneInfo("Asia/Makassar")
 
 
 class TestResolveResponsibleManager:
-    """Routing rules from Zero, 2026-04-07."""
+    """Routing rules from Zero, 2026-04-07, reorganised 2026-11-09."""
 
-    def test_tax_team_routes_to_veronika(self) -> None:
-        assert resolve_responsible_manager("kadek.tax@balizero.com") == "veronika@balizero.com"
-        assert resolve_responsible_manager("angel.tax@balizero.com") == "veronika@balizero.com"
-        assert resolve_responsible_manager("dewaayu.tax@balizero.com") == "veronika@balizero.com"
-        assert resolve_responsible_manager("faysha.tax@balizero.com") == "veronika@balizero.com"
+    def test_tax_team_routes_to_the_tax_supervisor(self) -> None:
+        assert resolve_responsible_manager("kadek.tax@balizero.com") == "angel.tax@balizero.com"
+        assert resolve_responsible_manager("dewaayu.tax@balizero.com") == "angel.tax@balizero.com"
+        assert resolve_responsible_manager("faysha.tax@balizero.com") == "angel.tax@balizero.com"
+
+    def test_the_tax_supervisor_has_no_manager_line(self) -> None:
+        assert resolve_responsible_manager("angel.tax@balizero.com") is None
 
     def test_rina_routes_to_ruslana(self) -> None:
         assert resolve_responsible_manager("rina@balizero.com") == "ruslana@balizero.com"
 
-    def test_setup_team_routes_to_veronika(self) -> None:
-        """Zero 2026-10-20: Veronika manages the setup team too."""
+    def test_setup_team_routes_to_the_direktur(self) -> None:
+        """Reorganisation 2026-11-09: the Direktur leads the setup team; Asya assists him."""
         for email in (
-            "adit@balizero.com",
+            "asya@balizero.com",
             "ari.firda@balizero.com",
             "krisna@balizero.com",
             "dea@balizero.com",
@@ -58,32 +60,34 @@ class TestResolveResponsibleManager:
             "vino@balizero.com",
             "candra@balizero.com",
         ):
-            assert resolve_responsible_manager(email) == "veronika@balizero.com", email
+            assert resolve_responsible_manager(email) == "adit@balizero.com", email
 
     def test_offboarded_natalie_has_no_supervisor(self) -> None:
         assert resolve_responsible_manager("natalie@balizero.com") is None
 
-    def test_veronika_login_identity_is_late_exempt(self) -> None:
+    def test_the_direktur_has_no_manager_line(self) -> None:
+        assert resolve_responsible_manager("adit@balizero.com") is None
+
+    def test_retired_tax_login_is_no_longer_late_exempt(self) -> None:
         from backend.services.analytics.attendance_monitor import LATE_EXEMPT_EMAILS
 
-        assert "tax@balizero.com" in LATE_EXEMPT_EMAILS
+        assert "tax@balizero.com" not in LATE_EXEMPT_EMAILS
 
     def test_other_emails_have_no_supervisor(self) -> None:
-        # Setup consultants moved under Veronika on 2026-10-20; the people with
-        # no manager line are those outside tax, setup and finance.
+        # The people with no manager line are those outside tax and setup (and
+        # the two department heads themselves).
         assert resolve_responsible_manager("sahira@balizero.com") is None
-        assert resolve_responsible_manager("asya@balizero.com") is None
         assert resolve_responsible_manager("zero@balizero.com") is None
 
     def test_routing_is_case_insensitive(self) -> None:
-        assert resolve_responsible_manager("KADEK.TAX@balizero.com") == "veronika@balizero.com"
-        assert resolve_responsible_manager("DEA@balizero.com") == "veronika@balizero.com"
-        assert resolve_responsible_manager("  Adit@balizero.com  ") == "veronika@balizero.com"
+        assert resolve_responsible_manager("KADEK.TAX@balizero.com") == "angel.tax@balizero.com"
+        assert resolve_responsible_manager("DEA@balizero.com") == "adit@balizero.com"
+        assert resolve_responsible_manager("  Krisna@balizero.com  ") == "adit@balizero.com"
         assert resolve_responsible_manager("  RINA@balizero.com  ") == "ruslana@balizero.com"
 
     def test_tax_substring_must_be_local_part_suffix(self) -> None:
         # An address whose local part merely *contains* "tax" should NOT route
-        # to Veronika — only addresses ending in ".tax" do.
+        # to the Tax Supervisor — only addresses ending in ".tax" do.
         assert resolve_responsible_manager("taxman@balizero.com") is None
         assert resolve_responsible_manager("ataxia@balizero.com") is None
 

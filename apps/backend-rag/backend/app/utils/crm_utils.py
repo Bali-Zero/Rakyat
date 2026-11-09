@@ -28,10 +28,14 @@ PRACTICES_READ_ONLY_VIEW_EMAILS: frozenset[str] = frozenset(
 )
 
 # Everyone with the full practices view: the read-only roles above plus
-# Veronika (Manager of tax + setup, login tax@balizero.com), who both sees and
-# manages — Zero, 2026-10-20. Separate from admin because none of them is an
+# the Tax Supervisor, the Tax Responsible and the Direktur, who see and manage
+# (reorganisation 2026-11-09). Separate from admin because none of them is an
 # admin for anything else.
-PRACTICES_EXTRA_VIEW_EMAILS: frozenset[str] = PRACTICES_READ_ONLY_VIEW_EMAILS | {"tax@balizero.com"}
+PRACTICES_EXTRA_VIEW_EMAILS: frozenset[str] = PRACTICES_READ_ONLY_VIEW_EMAILS | {
+    "angel.tax@balizero.com",
+    "ari.firda@balizero.com",
+    "adit@balizero.com",
+}
 
 
 # ============================================================
@@ -123,7 +127,9 @@ def is_crm_admin(user: dict) -> bool:
 
 #: Job titles (``team_members.role``, lower-cased) that may flip a document's
 #: client visibility besides the CRM admins.
-DOCUMENT_VISIBILITY_ROLES = frozenset({"team leader", "tax lead", "supervisor"})
+DOCUMENT_VISIBILITY_ROLES = frozenset(
+    {"team leader", "tax lead", "supervisor", "direktur", "tax supervisor", "tax responsible"}
+)
 
 
 def can_change_document_visibility(user: dict) -> bool:

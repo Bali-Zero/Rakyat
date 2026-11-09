@@ -27,7 +27,13 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from backend.app.services.hr.hr_leave_routing import RUSLANA_EMAIL, VERONIKA_REPORTS
+from backend.app.services.hr.hr_leave_routing import (
+    RUSLANA_EMAIL,
+    SETUP_DIRECTOR_EMAIL,
+    SETUP_DIRECTOR_REPORTS,
+    TAX_SUPERVISOR_EMAIL,
+    TAX_SUPERVISOR_REPORTS,
+)
 from backend.app.utils.logging_utils import get_logger
 from backend.core.secret_log_redaction import install_telegram_token_redaction
 from backend.core.telegram_retirement import telegram_is_retired
@@ -67,8 +73,6 @@ LATE_EXEMPT_EMAILS: frozenset[str] = frozenset(
     {
         "zero@balizero.com",
         "ruslana@balizero.com",
-        "veronika@balizero.com",
-        "tax@balizero.com",  # Veronika's login identity (team_members.email)
     }
 )
 
@@ -113,13 +117,12 @@ TELEGRAM_DIGEST_CHAT_ID: str = os.getenv("TELEGRAM_OWNER_CHAT_ID", "").strip()
 TELEGRAM_MAX_MSG_LEN: int = 4000
 
 # Manager routing: which supervisor to CC on the ultimatum email. The reporting
-# lines are the leave-approval ones (hr_leave_routing.VERONIKA_REPORTS), so a
+# lines are the leave-approval ones (hr_leave_routing.*_REPORTS), so a
 # change there is a change here.
-# - tax team (any *.tax@balizero.com), setup team -> Veronika
-#   (Manager of the tax department and the setup team, Zero 2026-10-20)
-# - rina                                                  -> Ruslana
-# - everyone else                                         -> only zero@ in CC
-TAX_MANAGER_EMAIL: str = "veronika@balizero.com"
+# - tax team (any *.tax@balizero.com)   -> Tax Supervisor (reorganisation 2026-11-09)
+# - setup team, HR & Accounting         -> Direktur
+# - rina                                -> Ruslana
+# - everyone else                       -> only zero@ in CC
 RUSLANA_REPORTS: frozenset[str] = frozenset({"rina@balizero.com"})
 
 # Background scheduler intervals.
@@ -136,18 +139,23 @@ def resolve_responsible_manager(email: str) -> str | None:
     no specific supervisor (in which case only ``zero@balizero.com`` is CC'd).
 
     Routing rules (per Zero, 2026-04-07 and 2026-10-20):
-        - *.tax@balizero.com, setup team            -> veronika@balizero.com
+        - *.tax@balizero.com                        -> angel.tax@balizero.com
+        - setup team, asya@                         -> adit@balizero.com
         - rina@                                    -> ruslana@balizero.com
         - everyone else                            -> None (zero@ only)
     """
     normalized = email.lower().strip()
     if normalized in RUSLANA_REPORTS:
         return RUSLANA_EMAIL
-    if normalized in VERONIKA_REPORTS:
-        return TAX_MANAGER_EMAIL
+    if normalized in TAX_SUPERVISOR_REPORTS:
+        return TAX_SUPERVISOR_EMAIL
+    if normalized in SETUP_DIRECTOR_REPORTS:
+        return SETUP_DIRECTOR_EMAIL
+    if normalized == TAX_SUPERVISOR_EMAIL:
+        return None
     local_part = normalized.split("@", 1)[0]
     if local_part.endswith(".tax"):
-        return TAX_MANAGER_EMAIL
+        return TAX_SUPERVISOR_EMAIL
     return None
 
 
@@ -483,7 +491,7 @@ class AttendanceMonitor:
           * 09:30 <= clock_in < 09:40      → gentle reminder only (Indonesian, no incident)
           * clock_in >= 09:40              → incident opened (handled by commit 2)
 
-        Skips members in LATE_EXEMPT_EMAILS (zero, ruslana, veronika) and members
+        Skips members in LATE_EXEMPT_EMAILS (zero, ruslana) and members
         who have an approved leave request covering today.
 
         Args:
@@ -1331,7 +1339,7 @@ class AttendanceMonitor:
         Stage 4 — ultimatum (English, CC zero@ + supervisor if any).
 
         Sent when a REMINDER_SENT incident is older than 24 additional working
-        hours. Switches to English because the supervisor (Ruslana / Veronika)
+        hours. Switches to English because the supervisor (Ruslana / Direktur)
         is on the thread.
 
         No reply link is included: the conduct review is now formal and any

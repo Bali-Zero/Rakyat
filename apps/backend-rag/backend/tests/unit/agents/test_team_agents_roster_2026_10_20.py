@@ -1,5 +1,5 @@
-"""Roster decisions of 2026-10-20 (Zero): Veronika is Manager of tax + setup,
-the finance & client services role sees everything and manages nothing.
+"""Roster decisions of 2026-10-20 and the 2026-11-09 reorganisation (Tax Supervisor and
+Direktur are department heads with the manager role); the finance & client services role sees everything and manages nothing.
 
 Offboarding 2026-11-03: the person-level mapping for natalie@ is gone."""
 
@@ -13,9 +13,22 @@ from backend.services.agents.team_agent_config import (
 )
 
 
-class TestVeronikaManager:
-    def test_login_identity_maps_to_manager(self) -> None:
-        role = get_agent_role("tax@balizero.com")
+class TestDepartmentHeadManager:
+    def test_retired_tax_login_has_no_agent_role(self) -> None:
+        assert get_agent_role("tax@balizero.com") is None
+        assert "tax@balizero.com" not in TEAM_AGENTS
+
+    def test_tax_supervisor_and_direktur_are_managers(self) -> None:
+        assert get_agent_role("angel.tax@balizero.com") is ROLE_MANAGER
+        assert get_agent_role("adit@balizero.com") is ROLE_MANAGER
+
+    def test_hr_and_setup_roles_are_unchanged(self) -> None:
+        assert get_agent_role("asya@balizero.com").role_id == "hr_manager"
+        assert get_agent_role("ari.firda@balizero.com").role_id == "executive_consultant"
+        assert get_agent_role("krisna@balizero.com").role_id == "executive_consultant"
+
+    def test_manager_role_shape(self) -> None:
+        role = get_agent_role("angel.tax@balizero.com")
         assert role is ROLE_MANAGER
         assert role.role_id == "manager"
         assert role.language == "id"
