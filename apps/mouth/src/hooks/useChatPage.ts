@@ -20,7 +20,6 @@ import { toast as sonnerToast } from "sonner";
 import { logger } from "@/lib/logger";
 import { chatMetrics } from "@/lib/metrics";
 import { trackEvent } from "@/lib/analytics";
-import { saveConversation } from "@/app/chat/actions";
 import { useChatInput } from "./useChatInput";
 import { useChatSidebar } from "./useChatSidebar";
 import { useChatSend } from "./useChatSend";
@@ -262,33 +261,6 @@ export function useChatPage(): UseChatPageReturn {
         }
         return newMsgs;
       });
-
-      // Salvataggio conversazione
-      try {
-        const title =
-          messages.length === 0
-            ? chatInput.input.slice(0, 50) +
-              (chatInput.input.length > 50 ? "..." : "")
-            : "Nuova Conversazione";
-
-        // L'API di actions.ts si aspetta un oggetto con title, messages, e options
-
-        // L'API di actions.ts (saveConversation) richiede: sessionId (string) e messages (ChatMessage[])
-
-        // Force types
-        await saveConversation(
-          sessionId as any,
-          [
-            ...(messages.map((m) => ({
-              role: m.role,
-              content: m.content || "",
-            })) as any),
-            { role: "assistant", content: fullResponse } as any,
-          ] as any,
-        );
-      } catch (e) {
-        logger.error("Save error", {}, e as Error);
-      }
     },
     onError: (error: Error) => {
       logger.error("Chat error", { component: "useChatPage" }, error);

@@ -149,7 +149,7 @@
 ### Flusso Dati (Chat)
 
 ```
-User Input → ChatInputBar → useChat Hook → ChatApi.sendMessageStreaming()
+User Input → ChatInputBar → useChatPage  → ChatApi.sendMessageStreaming()
                                                       │
                                                       ▼
                                             API Proxy (/api/[...path])
@@ -161,7 +161,7 @@ User Input → ChatInputBar → useChat Hook → ChatApi.sendMessageStreaming()
                                             Parse Stream Events
                                                       │
                                                       ▼
-          MessageBubble ← useChatMessages ← Update State
+          MessageBubble ← useChatPage ← Update State
 ```
 
 ---
@@ -233,8 +233,7 @@ apps/mouth/
 │   │       └── digital-nomad/        # 5 articles
 │   │
 │   ├── hooks/                        # Custom React Hooks
-│   │   ├── useChat.ts
-│   │   ├── useChatMessages.ts
+│   │   ├── useChatPage.ts
 │   │   ├── useChatStreaming.ts
 │   │   ├── useConversations.ts
 │   │   ├── useMemoryContext.ts
@@ -668,13 +667,8 @@ type StreamEvent =
 ### Custom Hooks
 
 ```typescript
-// useChat - Main chat logic
-const { input, setInput, messages, isLoading, handleSend, generateSessionId } =
-  useChat();
-
-// useChatMessages - Message state
-const { messages, setMessages, addMessage, updateMessage, appendContent } =
-  useChatMessages();
+// useChatPage - Main chat logic, used by app/chat/page.tsx
+const chat = useChatPage();
 
 // useChatStreaming - Stream handling
 const { isStreaming, currentSteps, sendStreamingMessage } = useChatStreaming();
@@ -684,7 +678,6 @@ const {
   conversations,
   currentConversation,
   loadConversations,
-  saveConversation,
   deleteConversation,
 } = useConversations();
 
@@ -1135,18 +1128,6 @@ test('renders message content', () => {
   expect(screen.getByText('Hello')).toBeInTheDocument();
 });
 
-// Hook test
-import { renderHook, act } from '@testing-library/react';
-import { useChatMessages } from '@/hooks/useChatMessages';
-
-test('adds message', () => {
-  const { result } = renderHook(() => useChatMessages());
-  act(() => {
-    result.current.addMessage({ content: 'Test', role: 'user' });
-  });
-  expect(result.current.messages).toHaveLength(1);
-});
-
 // API test
 import { ChatApi } from '@/lib/api/chat';
 
@@ -1325,7 +1306,7 @@ import { ChatInputBar } from "@/components/chat/ChatInputBar";
 import { ArticleCard } from "@/components/blog/ArticleCard";
 
 // Hooks
-import { useChat } from "@/hooks/useChat";
+import { useChatPage } from "@/hooks/useChatPage";
 import { useConversations } from "@/hooks/useConversations";
 
 // API

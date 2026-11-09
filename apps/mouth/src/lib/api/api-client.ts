@@ -432,27 +432,6 @@ export class ApiClient extends ApiClientBase {
     return this.conversationsApi.getConversationHistory(sessionId);
   }
 
-  async saveConversation(
-    messages: Array<{
-      role: string;
-      content: string;
-      sources?: Array<{ title?: string; content?: string }>;
-      imageUrl?: string;
-    }>,
-    sessionId?: string,
-    metadata?: Record<string, unknown>,
-  ): Promise<{
-    success: boolean;
-    conversation_id: number;
-    messages_saved: number;
-  }> {
-    return this.conversationsApi.saveConversation(
-      messages,
-      sessionId,
-      metadata,
-    );
-  }
-
   async clearConversations(
     sessionId?: string,
   ): Promise<{ success: boolean; deleted_count: number }> {

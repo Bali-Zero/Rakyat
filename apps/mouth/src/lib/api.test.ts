@@ -446,65 +446,6 @@ describe("ApiClient", () => {
   });
 
   // ============================================================================
-  // Save Conversation Tests
-  // ============================================================================
-  describe("saveConversation", () => {
-    beforeEach(() => {
-      api.setToken("test-token");
-    });
-
-    it("should save conversation", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        headers: new Headers({ "content-type": "application/json" }),
-        json: () =>
-          Promise.resolve({
-            success: true,
-            conversation_id: 1,
-            messages_saved: 2,
-          }),
-      });
-
-      const messages = [
-        { role: "user", content: "Hello" },
-        { role: "assistant", content: "Hi!" },
-      ];
-      const result = await api.saveConversation(messages);
-
-      expect(result.success).toBe(true);
-      expect(result.messages_saved).toBe(2);
-    });
-
-    it("should include metadata if provided", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        headers: new Headers({ "content-type": "application/json" }),
-        json: () =>
-          Promise.resolve({
-            success: true,
-            conversation_id: 1,
-            messages_saved: 1,
-          }),
-      });
-
-      await api.saveConversation(
-        [{ role: "user", content: "test" }],
-        "session-1",
-        {
-          tag: "important",
-        },
-      );
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining("important"),
-        }),
-      );
-    });
-  });
-
-  // ============================================================================
   // Clear Conversations Tests
   // ============================================================================
   describe("clearConversations", () => {
