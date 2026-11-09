@@ -587,3 +587,15 @@ describe("BZ-011: sitemap lastModified reflects content updates and never runtim
     expect(dateless?.lastModified).toBeUndefined();
   });
 });
+
+describe("sitemap lists HTML pages only", () => {
+  it("positive control: the static pages are still listed", async () => {
+    const urls = (await sitemap()).map((e) => e.url);
+    expect(urls).toContain(`${BASE}/kbli`);
+  });
+
+  it("has no .txt <loc> (llms*.txt stay reachable directly)", async () => {
+    const urls = (await sitemap()).map((e) => e.url);
+    expect(urls.filter((u) => /\.txt$/.test(u))).toEqual([]);
+  });
+});

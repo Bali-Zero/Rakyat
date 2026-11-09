@@ -47,9 +47,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     "/team",
     "/contact",
     "/kbli-explorer",
-    "/llms.txt",
-    "/llms-full.txt",
-    "/llms-id.txt",
+    // llms*.txt are not listed: the sitemap holds HTML pages only. Those
+    // files stay reachable at their URLs, allowed in robots.ts and linked
+    // from the root layout's <head>.
   ];
   routes.push(...staticPaths.map((p) => ({ url: `${baseUrl}${p}` })));
 
