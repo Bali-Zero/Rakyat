@@ -123,7 +123,8 @@ class World:
             return
         await c.execute(
             "CREATE TABLE public.conversations (id serial PRIMARY KEY, "
-            "user_id varchar(255) NOT NULL, session_id varchar(255), messages jsonb)"
+            "user_id varchar(255) NOT NULL, session_id varchar(255), messages jsonb, "
+            "metadata jsonb, created_at timestamptz DEFAULT now())"
         )
         await c.execute(f'ALTER TABLE public.conversations OWNER TO "{self.owner}"')
         # Premise: the owned sequence follows the table owner, like production.
@@ -238,7 +239,7 @@ async def test_missing_insert_non_owner_raises_and_stays_missing(world: World) -
     error = await world.apply(RUNTIME_ROLE)
 
     assert error is not None and error.sqlstate == "P0001"
-    assert "missing INSERT" in error.message
+    assert "missing table-level INSERT" in error.message
     assert "GRANT INSERT ON TABLE public.conversations TO backend_rag_v2" in error.message
     assert await world.has("INSERT") is False
     assert await world.has("DELETE") is False
@@ -500,3 +501,37 @@ async def test_superuser_role_with_absent_table_still_raises_and_is_reported(wor
     assert error is not None and "superuser" in error.message
     [finding] = await _audit(world)
     assert finding.code == "runtime_role_superuser"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_column_level_insert_is_reported_by_contract_even_though_a_real_insert_works(
+    world: World,
+) -> None:
+    """Policy pin: the contract is TABLE-level. Column grants that let the repository
+    INSERT work are still reported as missing; changing that means changing the contract."""
+    await world.build(privs=("SELECT", "UPDATE"))
+    await world.conn.execute(
+        "GRANT INSERT (user_id, session_id, messages, metadata, created_at) "
+        f'ON public.conversations TO "{RUNTIME_ROLE}"'
+    )
+    assert await world.has("INSERT") is False  # table-level answer
+
+    error = await world.apply(RUNTIME_ROLE)
+    assert error is not None and "missing table-level INSERT" in error.message
+    [finding] = await _audit(world)
+    assert finding.code == "conversations_runtime_privilege_missing"
+    assert finding.details["missing"] == ["INSERT on public.conversations"]
+
+    try:
+        async with world.conn.transaction():
+            await world.conn.execute(f'SET ROLE "{RUNTIME_ROLE}"')
+            new_id = await world.conn.fetchval(
+                "INSERT INTO public.conversations (user_id, session_id, messages, metadata, created_at) "
+                "VALUES ($1, $2, '[]', '{}', now()) RETURNING id",
+                "synthetic-user",
+                "synthetic-session",
+            )
+    finally:
+        await world.conn.execute("RESET ROLE")
+    assert new_id is not None

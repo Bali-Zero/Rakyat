@@ -11,9 +11,12 @@
 -- INSERT by hand that day. This migration makes a rebuilt environment fail loudly at apply
 -- time and, on a database applied by the table owner, grants the privileges.
 --
--- Asserted for backend_rag_v2: SELECT, INSERT, UPDATE on public.conversations
--- and USAGE or UPDATE on the sequence behind conversations.id (nextval() works
--- with either; the manual statement offered is GRANT USAGE).
+-- Contract: backend_rag_v2 must hold table-level SELECT, INSERT and UPDATE on
+-- public.conversations, USAGE or UPDATE on the sequence behind conversations.id
+-- (nextval() works with either; the manual statement offered is GRANT USAGE),
+-- and must not be a superuser. This is deliberately stricter than what
+-- PostgreSQL would accept: column-level grants are reported as missing, and
+-- moving to them means changing this contract first.
 --
 -- Who runs what:
 -- - In production release_command runs as session_user backend_rag_migrator with
@@ -111,21 +114,21 @@ BEGIN
 
     IF NOT has_table_privilege(runtime_role, object_reg, 'SELECT') THEN
         RAISE EXCEPTION
-            'backend_rag_v2 is missing SELECT on %; apply manual grant with an owner/admin role: GRANT SELECT ON TABLE % TO backend_rag_v2',
+            'backend_rag_v2 is missing table-level SELECT on %; apply manual grant with an owner/admin role: GRANT SELECT ON TABLE % TO backend_rag_v2',
             object_name,
             object_name;
     END IF;
 
     IF NOT has_table_privilege(runtime_role, object_reg, 'INSERT') THEN
         RAISE EXCEPTION
-            'backend_rag_v2 is missing INSERT on %; apply manual grant with an owner/admin role: GRANT INSERT ON TABLE % TO backend_rag_v2',
+            'backend_rag_v2 is missing table-level INSERT on %; apply manual grant with an owner/admin role: GRANT INSERT ON TABLE % TO backend_rag_v2',
             object_name,
             object_name;
     END IF;
 
     IF NOT has_table_privilege(runtime_role, object_reg, 'UPDATE') THEN
         RAISE EXCEPTION
-            'backend_rag_v2 is missing UPDATE on %; apply manual grant with an owner/admin role: GRANT UPDATE ON TABLE % TO backend_rag_v2',
+            'backend_rag_v2 is missing table-level UPDATE on %; apply manual grant with an owner/admin role: GRANT UPDATE ON TABLE % TO backend_rag_v2',
             object_name,
             object_name;
     END IF;

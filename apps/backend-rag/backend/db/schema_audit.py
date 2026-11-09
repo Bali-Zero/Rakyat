@@ -31,11 +31,14 @@ Checks implemented in this PR:
 4. **Client email uniqueness.** The CRM treats email as an identity key;
    duplicates after trim/lowercase normalization are a data-quality failure
    because PostgreSQL's legacy ``UNIQUE(email)`` constraint is case-sensitive.
-5. **Conversations runtime privileges.** ``backend_rag_v2`` must hold
-   SELECT, INSERT, UPDATE on ``public.conversations`` and USAGE or UPDATE on the
-   sequence behind its ``id`` (``nextval()`` accepts either), and must not be a
-   superuser (which would make the privilege answers meaningless), even when the
-   table is absent. Migration 351 asserts this once; this check
+5. **Conversations runtime privileges.** Contract: ``backend_rag_v2`` must
+   hold table-level SELECT, INSERT and UPDATE on ``public.conversations``,
+   USAGE or UPDATE on the sequence behind its ``id`` (``nextval()`` accepts
+   either), and must not be a superuser (which would make the privilege answers
+   meaningless), even when the table is absent. This is deliberately stricter
+   than what PostgreSQL would accept: column-level grants are reported as
+   missing, and moving to them means changing this contract first. Migration 351
+   asserts the contract once; this check
    asserts it on every release, because ``release_command`` runs the audit each
    time. DELETE is neither required nor forbidden: it waits on the owner's
    decision on the semantics of ``/clear``, ``DELETE /{id}`` and admin cleanup.
@@ -765,7 +768,12 @@ WHERE r.rolname = $1
 
 
 async def _check_conversations_runtime_privileges(pool: asyncpg.Pool) -> list[Finding]:
-    """Fail when the runtime role cannot persist chat (it failed silently once)."""
+    """Enforce the table-level grant contract for backend_rag_v2 on conversations.
+
+    Required: table-level SELECT, INSERT, UPDATE and USAGE or UPDATE on the id
+    sequence; not a superuser. Column-level grants count as missing by design.
+    The role went without INSERT silently once; DELETE is neither required nor forbidden.
+    """
     async with pool.acquire() as conn:
         row = await conn.fetchrow(_CONVERSATIONS_PRIVILEGES_SQL, _CONVERSATIONS_RUNTIME_ROLE)
 
@@ -807,8 +815,9 @@ async def _check_conversations_runtime_privileges(pool: asyncpg.Pool) -> list[Fi
             code="conversations_runtime_privilege_missing",
             severity="error",
             message=(
-                f"{_CONVERSATIONS_RUNTIME_ROLE} is missing {', '.join(missing)}; "
-                "chat persistence fails until an owner/admin role grants it"
+                f"{_CONVERSATIONS_RUNTIME_ROLE} is missing required privileges: "
+                f"{', '.join(missing)}; column-level grants do not count; "
+                "an owner/admin role must grant them"
             ),
             details={"missing": missing, "manual_grants": grants},
         ),
