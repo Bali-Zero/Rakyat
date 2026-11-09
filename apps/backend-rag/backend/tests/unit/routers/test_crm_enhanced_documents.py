@@ -68,6 +68,14 @@ def mock_current_user():
 # ============================================================
 
 
+@pytest.fixture(autouse=True)
+def _physical_drive_roots(monkeypatch):
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(settings, "gdrive_individuals_folder_id", "individuals")
+    monkeypatch.setattr(settings, "gdrive_companies_folder_id", "companies")
+
+
 def test_parse_date_or_none_valid():
     from backend.app.routers.crm_enhanced_documents import _parse_date_or_none
 
@@ -1228,6 +1236,14 @@ async def test_upload_document_base64_mirrors_company_upload_to_company_document
     ]
 
     drive_service = AsyncMock()
+    drive_service.get_file_metadata.side_effect = lambda fid: {
+        "id": fid,
+        "name": "Root",
+        "mimeType": "application/vnd.google-apps.folder",
+        "trashed": False,
+        "parents": ["individuals"],
+    }
+
     drive_service.get_folder_structure.return_value = {
         "folders": [{"id": "company-folder", "name": "02_Company"}],
     }
@@ -1334,10 +1350,20 @@ async def _upload_passport(mock_db_pool, current_user, **source_kwargs) -> dict:
             "client_type": "individual",
             "phone": None,
             "phone_normalized": None,
-        }
+        },
+        {"id": 7},  # Canonical practice owner pre-check.
+        {"id": 7},  # Locked owner re-check before insertion.
     ]
     conn.fetchval.side_effect = [701]
     drive_service = AsyncMock()
+    drive_service.get_file_metadata.side_effect = lambda fid: {
+        "id": fid,
+        "name": "Root",
+        "mimeType": "application/vnd.google-apps.folder",
+        "trashed": False,
+        "parents": ["individuals"],
+    }
+
     drive_service.get_folder_structure.return_value = {
         "folders": [{"id": "profile", "name": "00_Profile"}],
     }
@@ -1507,6 +1533,14 @@ async def test_upload_recheck_under_lock_catches_midflight_phone_move(
     conn.fetch.return_value = [{"id": 1}]  # sole-owner set (F18) stays clean
 
     drive_service = AsyncMock()
+    drive_service.get_file_metadata.side_effect = lambda fid: {
+        "id": fid,
+        "name": "Root",
+        "mimeType": "application/vnd.google-apps.folder",
+        "trashed": False,
+        "parents": ["individuals"],
+    }
+
     drive_service.get_folder_structure.return_value = {
         "folders": [{"id": "cat", "name": "01_Immigration"}],
     }
@@ -1576,6 +1610,14 @@ async def test_upload_with_owned_expected_core_proceeds(
     conn.fetchval.side_effect = [701]  # documents.id
 
     drive_service = AsyncMock()
+    drive_service.get_file_metadata.side_effect = lambda fid: {
+        "id": fid,
+        "name": "Root",
+        "mimeType": "application/vnd.google-apps.folder",
+        "trashed": False,
+        "parents": ["individuals"],
+    }
+
     drive_service.get_folder_structure.return_value = {
         "folders": [{"id": "cat", "name": "01_Immigration"}],
     }
@@ -1691,6 +1733,14 @@ async def test_upload_recheck_locks_client_row_for_update(
     conn.fetchval.side_effect = [701]
 
     drive_service = AsyncMock()
+    drive_service.get_file_metadata.side_effect = lambda fid: {
+        "id": fid,
+        "name": "Root",
+        "mimeType": "application/vnd.google-apps.folder",
+        "trashed": False,
+        "parents": ["individuals"],
+    }
+
     drive_service.get_folder_structure.return_value = {
         "folders": [{"id": "cat", "name": "01_Immigration"}],
     }
@@ -1816,6 +1866,14 @@ async def test_upload_refuses_when_second_owner_appears_mid_flight(
     ]
 
     drive_service = AsyncMock()
+    drive_service.get_file_metadata.side_effect = lambda fid: {
+        "id": fid,
+        "name": "Root",
+        "mimeType": "application/vnd.google-apps.folder",
+        "trashed": False,
+        "parents": ["individuals"],
+    }
+
     drive_service.get_folder_structure.return_value = {
         "folders": [{"id": "cat", "name": "01_Immigration"}],
     }
@@ -1948,6 +2006,14 @@ async def test_upload_allows_absent_raw_phone_with_matching_normalized(
     conn.fetchval.side_effect = [701]
 
     drive_service = AsyncMock()
+    drive_service.get_file_metadata.side_effect = lambda fid: {
+        "id": fid,
+        "name": "Root",
+        "mimeType": "application/vnd.google-apps.folder",
+        "trashed": False,
+        "parents": ["individuals"],
+    }
+
     drive_service.get_folder_structure.return_value = {
         "folders": [{"id": "cat", "name": "01_Immigration"}],
     }
@@ -2019,6 +2085,14 @@ async def test_upload_succeeds_for_whatsapp_only_owner(
     conn.fetchval.side_effect = [703]
 
     drive_service = AsyncMock()
+    drive_service.get_file_metadata.side_effect = lambda fid: {
+        "id": fid,
+        "name": "Root",
+        "mimeType": "application/vnd.google-apps.folder",
+        "trashed": False,
+        "parents": ["individuals"],
+    }
+
     drive_service.get_folder_structure.return_value = {
         "folders": [{"id": "cat", "name": "01_Immigration"}],
     }

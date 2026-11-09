@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -243,8 +244,8 @@ class OutsideRootdirNodeidsAreUnique(unittest.TestCase):
             for t in st.DEFAULT_TARGETS
             if t.startswith("../../")
         ]
-        # Rakyat's DEFAULT_TARGETS has no outside-rootdir entry today, so the
-        # list may be empty; the check stays to catch the first one added.
+        if not outside:
+            self.skipTest("no DEFAULT_TARGETS outside apps/backend-rag: nothing can fold")
         self.assertEqual(_name_collisions(outside), [])
 
     def _collide(self, a_src, b_src):
@@ -521,6 +522,62 @@ class CommandLine(unittest.TestCase):
     def test_chunk_rejects_an_out_of_range_shard(self):
         result = self._run(["chunk", "--shards", "3", "--shard", "4"], self.root)
         self.assertNotEqual(result.returncode, 0)
+
+
+class HostedFanInCheckout(unittest.TestCase):
+    """Lazy blobs must preserve full history and every adjudication guard."""
+
+    @staticmethod
+    def _assert_checkout_contract(job):
+        checkout = re.search(
+            r"      - name: Checkout(?: code)?\n(?P<body>.*?)(?=\n      - name:)",
+            job,
+            re.S,
+        )
+        assert checkout is not None, "checkout is missing"
+        body = checkout.group("body")
+        assert "fetch-depth: 0" in body, "trusted base needs complete commit history"
+        assert "filter: blob:none" in body, "historical blobs must remain lazy"
+        assert "sparse-checkout:" not in body, "guards need the full current tree"
+
+    def test_real_fan_in_uses_lazy_blobs_without_losing_history_or_gates(self):
+        workflow = Path(__file__).resolve().parents[2] / ".github/workflows/tests.yml"
+        # A job body is indented more than its two-space peer job keys.
+        job = workflow.read_text().split("\n  backend-tests:\n", 1)[1]
+        job = re.split(r"\n  [a-zA-Z0-9_-]+:", job, maxsplit=1)[0]
+        self._assert_checkout_contract(job)
+        for guard in (
+            "timeout-minutes: 15",
+            "Assert every upstream job succeeded",
+            "Extract trusted partitioner (base ref)",
+            "Partition guard — the shards tiled the corpus exactly",
+            "Prove each shard reported executed tests",
+            "Combine shard coverage and enforce the threshold",
+        ):
+            self.assertIn(guard, job)
+        self.assertIn('git show "${BASE_SHA}:scripts/ci/shard_tests.py"', job)
+
+    def test_guilt_eager_historical_blobs_are_rejected(self):
+        with self.assertRaisesRegex(AssertionError, "lazy"):
+            self._assert_checkout_contract(
+                "      - name: Checkout code\n        with:\n          fetch-depth: 0\n"
+                "      - name: Setup Python\n"
+            )
+
+    def test_guilt_sparse_guard_inputs_are_rejected(self):
+        with self.assertRaisesRegex(AssertionError, "full current tree"):
+            self._assert_checkout_contract(
+                "      - name: Checkout code\n        with:\n          fetch-depth: 0\n"
+                "          filter: blob:none\n          sparse-checkout: scripts/ci\n"
+                "      - name: Setup Python\n"
+            )
+
+    def test_guilt_shallow_history_is_rejected(self):
+        with self.assertRaisesRegex(AssertionError, "history"):
+            self._assert_checkout_contract(
+                "      - name: Checkout code\n        with:\n          fetch-depth: 1\n"
+                "          filter: blob:none\n      - name: Setup Python\n"
+            )
 
 
 if __name__ == "__main__":

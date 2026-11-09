@@ -35,7 +35,7 @@ describe("LanguageSettings", () => {
     render(<LanguageSettings />);
     const radios = screen.getAllByRole("radio");
     expect(radios).toHaveLength(3);
-    expect(screen.getByLabelText(/Vanelara/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Italiano/)).toBeInTheDocument();
     expect(screen.getByLabelText(/English/)).toBeInTheDocument();
     expect(screen.getByLabelText(/Bahasa Indonesia/)).toBeInTheDocument();
   });
@@ -53,7 +53,7 @@ describe("LanguageSettings", () => {
     });
 
     render(<LanguageSettings />);
-    expect(screen.getByLabelText(/Vanelara/)).toBeChecked();
+    expect(screen.getByLabelText(/Italiano/)).toBeChecked();
     expect(screen.getByLabelText(/English/)).not.toBeChecked();
   });
 
@@ -82,7 +82,7 @@ describe("LanguageSettings", () => {
     });
 
     render(<LanguageSettings />);
-    fireEvent.click(screen.getByLabelText(/Vanelara/));
+    fireEvent.click(screen.getByLabelText(/Italiano/));
 
     expect(screen.getByLabelText(/English/)).toBeChecked();
     expect(document.cookie).not.toMatch(/bz_lang=it/);

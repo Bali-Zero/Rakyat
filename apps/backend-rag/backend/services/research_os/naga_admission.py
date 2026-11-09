@@ -116,7 +116,7 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-#: ONE number token, with at most one consistent grouping separator: "9.900.001", "4,321", "13".
+#: ONE number token, with at most one consistent grouping separator: "1.234.567", "4,321", "13".
 _NUMBER_TOKEN_RE = re.compile(r"\d{1,3}(?:([.,])\d{3}(?:\1\d{3})*)?|\d+")
 _SEPARATORS = ".,"
 

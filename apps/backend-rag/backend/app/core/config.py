@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # The number a CLIENT is invited to write to — NOT the same thing as
     # SUPPORT_WHATSAPP above, and the two must be free to differ.
     # SUPPORT_WHATSAPP is the bot's INBOUND identity: the line Meta delivers
-    # webhooks for, which no human answers. This is Tuw'i line, where a human
+    # webhooks for, which no human answers. This is the human support line, where a human
     # does. On 2026-08-31 a fix for a real defect (two halves of the price
     # list naming different numbers) resolved the tie toward SUPPORT_WHATSAPP
     # and shipped the bot's inbound number to clients; the owner reversed it
@@ -800,7 +800,7 @@ class Settings(BaseSettings):
             "Comma-separated list of personal contact phone numbers (no + prefix). "
             "Messages from these numbers will always escalate to human. "
             "Set via WHATSAPP_PERSONAL_CONTACTS env var. "
-            "Example: '990000001000,628400022000'"
+            "Example: '6280000000001,6280000000002'"
         ),
     )
     whatsapp_allowed_numbers: str | None = Field(
@@ -809,7 +809,7 @@ class Settings(BaseSettings):
             "Comma-separated whitelist of phone numbers allowed to interact with WhatsApp bot (no + prefix). "
             "If set, messages from numbers NOT in this list are silently ignored (no response sent). "
             "Set via WHATSAPP_ALLOWED_NUMBERS env var. "
-            "Example: '6284000310000' — leave empty to allow everyone."
+            "Example: '6282230102328' — leave empty to allow everyone."
         ),
     )
     whatsapp_team_allowlist: str = Field(
@@ -818,7 +818,7 @@ class Settings(BaseSettings):
             "Comma-separated list of Bali Zero team/staff phone numbers allowed as "
             "outbound /api/whatsapp/send recipients WITHOUT a CRM client record. "
             "Entries are normalized to digits-only before comparison, so "
-            "'+62 840-0041-0000', '6284000410000' and '+6284000410000' all match. "
+            "'+62 800-0000-0001', '6280000000001' and '+6280000000001' all match. "
             "Set via WHATSAPP_TEAM_ALLOWLIST env var. Leave empty to require CRM "
             "validation for every recipient (default)."
         ),
@@ -873,6 +873,22 @@ class Settings(BaseSettings):
         description=(
             "Shared secret for the WhatsApp OpenClaw bridge. "
             "Set via WHATSAPP_OPENCLAW_BRIDGE_SECRET env var."
+        ),
+    )
+    whatsapp_openclaw_send_stored_context: bool = Field(
+        default=False,
+        description=(
+            "Send the stored conversation history and client profile to the OpenClaw "
+            "WhatsApp bridge. Off by default: those come from the conversations row. "
+            "Set via WHATSAPP_OPENCLAW_SEND_STORED_CONTEXT env var."
+        ),
+    )
+    conversation_title_generation_enabled: bool = Field(
+        default=False,
+        description=(
+            "Generate a conversation title from the first user message on save. Off by "
+            "default: it sends message text to a title model. "
+            "Set via CONVERSATION_TITLE_GENERATION_ENABLED env var."
         ),
     )
     openclaw_webhook_secret: str | None = Field(
@@ -1328,6 +1344,7 @@ class Settings(BaseSettings):
             "deploy's, not the product's) — see the PR that set it."
         ),
     )
+
     @field_validator("frontend_portal_url")
     @classmethod
     def _strip_portal_url_trailing_slash(cls, v: str) -> str:

@@ -59,4 +59,18 @@ describe("ClientDetailPage (server boundary)", () => {
       taxConsultants().some((c) => c.value === "injected@example.test"),
     ).toBe(false);
   });
+
+  it("offers Dea and Candra in the options it passes down", async () => {
+    const { default: ClientDetailPage } = await import("./page");
+    const options = (
+      ClientDetailPage() as React.ReactElement<{
+        taxConsultants: { value: string; label: string }[];
+      }>
+    ).props.taxConsultants;
+    expect(options).toContainEqual({ value: "dea@balizero.com", label: "Dea" });
+    expect(options).toContainEqual({
+      value: "candra@balizero.com",
+      label: "Candra",
+    });
+  });
 });

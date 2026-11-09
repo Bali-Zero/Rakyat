@@ -48,7 +48,7 @@ from backend.services.visa_engine.enums import (
 from backend.services.visa_engine.errors import FactValidationError
 from backend.services.visa_engine.models import ApplicantFacts
 
-JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+JsonValue: TypeAlias = bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"] | None
 """A JSON-safe value — what :func:`canonical_fact_payload` returns members of."""
 
 _INDONESIA_COUNTRY_CODE = "ID"
@@ -235,7 +235,7 @@ def _spec(
 #: seq-28 Step A — declared annual foreign income for E33G), plus
 #: ``investment.own_shareholding_idr`` (2026-10-17, E28A Step A — the
 #: applicant's own shareholding value in the sponsoring company)
-#: — 63 entries total.
+#: and the confirmation of sponsorship by that company — 64 entries total.
 #: PII classification rationale: immigration status/violation history and
 #: investment capital/income amounts are SENSITIVE (UU PDP heightened-treatment
 #: analogues per CLAUDE.md §14 — closest to "criminal"/"financial" data in
@@ -412,6 +412,9 @@ _DEFAULT_SPECS: tuple[FactSpec, ...] = (
         pii_class=PiiClass.SENSITIVE,
     ),
     _spec(
+        FactPath.INVESTMENT_SPONSORING_COMPANY_CONFIRMED, FactValueKind.BOOLEAN, "boolean"
+    ),
+    _spec(
         FactPath.FAMILY_RELATION_TO_SPONSOR,
         FactValueKind.STRING,
         "relation_enum",
@@ -455,6 +458,7 @@ _DEFAULT_SPECS: tuple[FactSpec, ...] = (
     _spec(FactPath.SPONSOR_DIPLOMATIC_HOUSEHOLD, FactValueKind.BOOLEAN, "boolean"),
     _spec(FactPath.SPONSOR_TRADE_OFFICE, FactValueKind.BOOLEAN, "boolean"),
     _spec(FactPath.FAMILY_SPONSOR_CONFIRMED, FactValueKind.BOOLEAN, "boolean"),
+    _spec(FactPath.FAMILY_SPOUSE_APPLICATION_SUPPORT_CONFIRMED, FactValueKind.BOOLEAN, "boolean"),
     # family.stepchild_* — evidence for RelationType.STEPCHILD (2026-08-23
     # owner ruling: "figliastro = figlio del coniuge, serve akta nikah +
     # akta lahir"). Modeled exactly like the two specs immediately above

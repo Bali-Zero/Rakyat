@@ -25,7 +25,7 @@ async def get_telegram_conversations(
         async with db.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT id, session_id, user_id, messages, metadata, created_at FROM conversations "
-                "WHERE session_id LIKE 'tg_session_%' OR user_id LIKE 'telegram_%' "
+                "WHERE session_id LIKE 'tg_session_%' AND user_id LIKE 'telegram_%' "
                 "ORDER BY created_at DESC LIMIT $1 OFFSET $2",
                 limit,
                 offset,
@@ -84,8 +84,10 @@ async def get_telegram_messages(
     try:
         async with db.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT id, messages, created_at FROM conversations WHERE session_id = $1 ORDER BY created_at DESC LIMIT 1",
+                "SELECT id, messages, created_at FROM conversations "
+                "WHERE session_id = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT 1",
                 f"tg_session_{chat_id}",
+                f"telegram_{chat_id}",
             )
             if not row:
                 return []

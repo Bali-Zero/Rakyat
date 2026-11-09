@@ -75,7 +75,7 @@ class TestSaveConversation:
 
         # Mock DB insert returning conversation ID
         conn = mock_db_pool._mock_conn
-        conn.fetchrow.return_value = {"id": 42}
+        conn.fetchrow.return_value = {"id": 42, "session_id": "test-session-001"}
 
         response = client.post(
             "/api/bali-zero/conversations/save",
@@ -90,6 +90,130 @@ class TestSaveConversation:
         assert data["success"] is True
         assert data["messages_saved"] == 2
         assert data["user_email"] == "test@balizero.com"
+
+    def test_save_conversation_publishes_side_effects_once_after_commit(
+        self,
+        client,
+        mock_db_pool,
+        sample_messages,
+    ):
+        """Cache sync and title scheduling happen once, after commit."""
+        events: list[str] = []
+
+        class _TrackingTransaction:
+            async def __aenter__(self):
+                events.append("transaction_enter")
+
+            async def __aexit__(self, exc_type, exc, tb):
+                events.append("transaction_commit")
+                return False
+
+        conn = mock_db_pool._mock_conn
+        conn.fetchrow.return_value = {"id": 42}
+        conn.transaction.return_value = _TrackingTransaction()
+
+        mock_cache = MagicMock()
+        mock_cache.mark_synced.side_effect = lambda *_args: events.append("cache_sync")
+
+        def record_spawn(coro, *, name):
+            events.append("title_spawn")
+            coro.close()
+
+        with (
+            patch(
+                "backend.app.routers.conversations.get_memory_cache",
+                return_value=mock_cache,
+            ),
+            patch(
+                "backend.app.routers.conversations.spawn",
+                side_effect=record_spawn,
+            ) as mock_spawn,
+            patch(
+                "backend.app.routers.conversations.settings.conversation_title_generation_enabled",
+                True,
+            ),
+            patch(
+                "backend.services.common.cache._invalidate_cache",
+                new_callable=AsyncMock,
+            ),
+        ):
+            response = client.post(
+                "/api/bali-zero/conversations/save",
+                json={
+                    "messages": sample_messages,
+                    "session_id": "synthetic-success-session",
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["persistence_mode"] == "db"
+        assert response.json()["conversation_id"] == 42
+        assert events == [
+            "transaction_enter",
+            "transaction_commit",
+            "cache_sync",
+            "title_spawn",
+        ]
+        assert conn.fetchrow.await_count == 2
+        mock_cache.mark_synced.assert_called_once()
+        mock_spawn.assert_called_once()
+
+    def test_save_conversation_commit_failure_does_not_publish_db_success(
+        self,
+        client,
+        mock_db_pool,
+        sample_messages,
+    ):
+        """An ambiguous commit result is never retried or published as success."""
+
+        class _CommitFails:
+            async def __aenter__(self):
+                return None
+
+            async def __aexit__(self, exc_type, exc, tb):
+                raise RuntimeError("synthetic commit failure")
+
+        conn = mock_db_pool._mock_conn
+        conn.fetchrow.return_value = {"id": 42, "session_id": "test-session-001"}
+        conn.transaction.side_effect = lambda: _CommitFails()
+        mock_cache = MagicMock()
+
+        with (
+            patch(
+                "backend.app.routers.conversations.get_memory_cache",
+                return_value=mock_cache,
+            ),
+            patch("backend.app.routers.conversations.spawn") as mock_spawn,
+            patch(
+                "backend.services.common.cache._invalidate_cache",
+                new_callable=AsyncMock,
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            patch("backend.app.routers.conversations.metrics_collector"),
+        ):
+            response = client.post(
+                "/api/bali-zero/conversations/save",
+                json={
+                    "messages": sample_messages,
+                    "session_id": "synthetic-failed-commit-session",
+                },
+            )
+
+        assert response.status_code == 503
+        assert response.json() == {
+            "detail": {
+                "code": "conversation_commit_unknown",
+                "retryable": False,
+                "message": "Save outcome could not be confirmed. Check history before retrying.",
+            }
+        }
+        assert "retry-after" not in response.headers
+        # One row-lock lookup and one insert; no second transaction attempt.
+        assert conn.fetchrow.await_count == 2
+        assert conn.transaction.call_count == 1
+        mock_cache.add_message.assert_not_called()
+        mock_cache.mark_synced.assert_not_called()
+        mock_spawn.assert_not_called()
 
     @patch("backend.app.routers.conversations.get_memory_cache")
     def test_save_conversation_no_db_pool(
@@ -284,6 +408,23 @@ class TestClearConversationHistory:
         data = response.json()
         assert data["deleted_count"] == 1
 
+    def test_empty_session_query_preserves_clear_all_behavior(self, client, mock_db_pool):
+        """An explicit empty query retains the existing erase-all API contract."""
+        conn = mock_db_pool._mock_conn
+        conn.fetch.side_effect = [
+            [{"id": identifier, "session_id": None} for identifier in (1, 2, 3)],
+            [{"id": identifier} for identifier in (1, 2, 3)],
+        ]
+        conn.execute.return_value = "DELETE 3"
+        response = client.delete("/api/bali-zero/conversations/clear?session_id=")
+
+        assert response.status_code == 200
+        assert response.json() == {"success": True, "deleted_count": 3}
+        delete = conn.execute.await_args_list[-1]
+        assert "DELETE FROM conversations" in delete.args[0]
+        assert "session_id =" not in delete.args[0]
+        assert delete.args[1:] == ("test@balizero.com", [1, 2, 3])
+
     def test_clear_db_error(self, client, mock_db_pool):
         """DB error during clear raises 500."""
         conn = mock_db_pool._mock_conn
@@ -459,7 +600,7 @@ class TestDeleteConversation:
     def test_delete_conversation_success(self, client, mock_db_pool):
         """Delete existing conversation."""
         conn = mock_db_pool._mock_conn
-        conn.fetchrow.return_value = {"id": 42}
+        conn.fetchrow.return_value = {"id": 42, "session_id": "test-session-001"}
         conn.execute.return_value = "DELETE 1"
 
         response = client.delete("/api/bali-zero/conversations/42")
@@ -521,3 +662,29 @@ class TestGetUserMemoryContext:
         assert data["success"] is True
         assert data["has_data"] is False
         assert data["error"] == "Memory service not available"
+
+
+@pytest.mark.asyncio
+async def test_r4_memory_initialization_fallback_logs_only_exception_type(caplog):
+    import logging
+
+    import backend.app.routers.conversations as conversations
+
+    marker = "R4_SYNTHETIC_PRIVATE_SENTINEL"
+    orchestrator = MagicMock()
+    orchestrator.initialize = AsyncMock(side_effect=RuntimeError(marker))
+    caplog.set_level(logging.DEBUG)
+    with (
+        patch.object(conversations, "_memory_orchestrator", None),
+        patch.object(conversations, "MemoryOrchestrator", return_value=orchestrator),
+    ):
+        assert await conversations.get_memory_orchestrator(None) is None
+
+    orchestrator.initialize.assert_awaited_once()
+    records = [r for r in caplog.records if r.name == conversations.logger.name]
+    assert any("RuntimeError" in r.getMessage() for r in records)
+    for record in records:
+        assert marker not in repr(vars(record))
+        assert marker not in record.getMessage()
+        assert record.exc_info is None or record.exc_info is False
+        assert record.stack_info is None

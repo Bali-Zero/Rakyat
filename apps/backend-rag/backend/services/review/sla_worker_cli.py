@@ -5,8 +5,7 @@ Usage:
 
 Env:
     DATABASE_URL             (required)
-    TELEGRAM_BOT_TOKEN       (required for alerts)
-    TELEGRAM_OWNER_CHAT_ID   (required — Zero's chat id)
+    Telegram is retired. Expiry runs without an alert adapter or chat id.
 
 Exit codes:
     0  sweep completed (any combination of soft/repeat/expire counts)
@@ -24,7 +23,6 @@ import sys
 import asyncpg
 
 from backend.services.review.sla_worker import SLAWorker
-from backend.services.review.telegram_adapter import TelegramReviewAdapter
 from backend.services.war_room.repository import WarRoomRepository
 
 logger = logging.getLogger("review.sla.cli")
@@ -40,12 +38,8 @@ def _configure_logging() -> None:
 async def run() -> int:
     _configure_logging()
     dsn = os.environ.get("DATABASE_URL")
-    owner_chat_id = os.environ.get("TELEGRAM_OWNER_CHAT_ID")
     if not dsn:
         logger.error("DATABASE_URL not set")
-        return 1
-    if not owner_chat_id:
-        logger.error("TELEGRAM_OWNER_CHAT_ID not set")
         return 1
 
     try:
@@ -61,12 +55,7 @@ async def run() -> int:
 
     try:
         repo = WarRoomRepository(db_pool=pool)
-        telegram = TelegramReviewAdapter()
-        worker = SLAWorker(
-            repo=repo,
-            telegram=telegram,
-            owner_chat_id=owner_chat_id,
-        )
+        worker = SLAWorker(repo=repo)
         result = await worker.sweep_once()
         sys.stdout.write(
             json.dumps(

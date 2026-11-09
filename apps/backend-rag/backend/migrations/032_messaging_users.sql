@@ -64,7 +64,7 @@ CREATE TRIGGER messaging_users_updated_at
 -- Comments
 COMMENT ON TABLE messaging_users IS 'Maps messaging channel identifiers (phone, telegram_chat_id) to user_profiles (team members + portal clients) for unified identity';
 COMMENT ON COLUMN messaging_users.user_id IS 'Reference to user_profiles.id (supports both team members and portal clients)';
-COMMENT ON COLUMN messaging_users.phone IS 'WhatsApp phone number (normalized without + prefix, e.g. 628400022000)';
+COMMENT ON COLUMN messaging_users.phone IS 'WhatsApp phone number (normalized without + prefix, e.g. 628123456789)';
 COMMENT ON COLUMN messaging_users.telegram_chat_id IS 'Telegram numeric chat ID from message.chat.id';
 COMMENT ON COLUMN messaging_users.channel IS 'Primary channel type for this mapping (whatsapp or telegram)';
 COMMENT ON COLUMN messaging_users.verified IS 'True if user confirmed association (e.g. via PIN or admin approval)';

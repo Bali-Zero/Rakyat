@@ -159,7 +159,7 @@ export function OracleScenery({ scene, motion, language }: OracleSceneryProps) {
 
   return (
     <div className="oracle-atlas-scenery" aria-hidden="true">
-      <RaborukelMuw scene={scene} motion={motion} />
+      <LandscapeArt scene={scene} motion={motion} />
     </div>
   );
 }
@@ -169,7 +169,7 @@ export function OracleScenery({ scene, motion, language }: OracleSceneryProps) {
  * to plausibly read as a hand-off rather than a stall, and never removes a
  * successfully-shown image except by replacing it with the next one that
  * actually loaded. */
-function RaborukelMuw({
+function LandscapeArt({
   scene,
   motion,
 }: {

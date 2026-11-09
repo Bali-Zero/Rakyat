@@ -43,7 +43,7 @@ from backend.services.rag.agentic.memory_handler import MemoryHandler
 
 SALT = "test-salt-do-not-use-in-prod"
 PHONE_A = "+62 821-3465-159"
-PHONE_B = "+62 840-0019-000"
+PHONE_B = "+62 811-9999-000"
 
 
 # ============================================================

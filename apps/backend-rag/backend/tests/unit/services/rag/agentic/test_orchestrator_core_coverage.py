@@ -398,7 +398,10 @@ class TestTrackWorkflow:
             mock_logger.warning.assert_called_once()
             warn_args = mock_logger.warning.call_args.args
             assert "Failed to track workflow analytics" in warn_args[0]
-            assert "db fail" in str(warn_args[1])
+            assert warn_args[1] == "RuntimeError"
+        assert "db fail" not in warn_args[0] % warn_args[1:]
+        assert not mock_logger.warning.call_args.kwargs.get("exc_info")
+        MockRepo.return_value.log_workflow.assert_awaited_once()
 
 
 # ============================================================================

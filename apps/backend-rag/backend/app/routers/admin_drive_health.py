@@ -480,7 +480,7 @@ async def backfill_drive_documents(
     """One-time backfill: scan all client Drive folders and register schema-compliant files.
 
     Runs in background. Only adds files NOT already in the documents table.
-    Skips generic files (surat kuasa, WhatsApp images, reha.pdf, etc.).
+    Skips generic files (surat kuasa, WhatsApp images, agus.pdf, etc.).
     """
     _require_backfill_admin(current_user)
 

@@ -350,7 +350,7 @@ Mais ce n'est pas le paradis sans complications. Ce guide vous donne une image h
       title: "Nord ou Est de Bali",
       description: "Échappez aux foules",
       recommendation:
-        "Considérez Amed, Keruki, Sidemen ou Gohodo. Plus calme, moins cher, plus traditionnel. Échangez la commodité contre la paix. Moins de commodités pour les expatriés mais une expérience authentique.",
+        "Considérez Amed, Lovina, Sidemen ou Munduk. Plus calme, moins cher, plus traditionnel. Échangez la commodité contre la paix. Moins de commodités pour les expatriés mais une expérience authentique.",
       nextSteps: [
         "Visitez avant de vous engager",
         "Acceptez moins de commodités",
@@ -663,8 +663,8 @@ Parlons chiffres réels. Ce sont des estimations pour 2026 basées sur les dépe
     const housingCosts = {
       room: { canggu: 5000000, ubud: 4000000, sanur: 4500000, other: 3000000 },
       '1bed': { canggu: 8000000, ubud: 6000000, sanur: 7000000, other: 5000000 },
-      '2bed': { canggu: 10000012, ubud: 84000510, sanur: 12000000, other: 8000000 },
-      '3bed-pool': { canggu: 25000000, ubud: 10000013, sanur: 84000600, other: 10000012 },
+      '2bed': { canggu: 15000000, ubud: 10000000, sanur: 12000000, other: 8000000 },
+      '3bed-pool': { canggu: 25000000, ubud: 18000000, sanur: 20000000, other: 15000000 },
       premium: { canggu: 45000000, ubud: 35000000, sanur: 40000000, other: 30000000 }
     };
     const housing = housingCosts[values['housing-type']][values.area];
@@ -672,7 +672,7 @@ Parlons chiffres réels. Ce sont des estimations pour 2026 basées sur les dépe
     breakdown.push({ label: "Accommodation", amount: housing });
 
     // Food
-    const foodCosts = { local: 3000000, mixed: 6000000, western: 84000510, premium: 10000013 };
+    const foodCosts = { local: 3000000, mixed: 6000000, western: 10000000, premium: 18000000 };
     const food = foodCosts[values['food-style']];
     total += food;
     breakdown.push({ label: "Food & Dining", amount: food });
@@ -689,7 +689,7 @@ Parlons chiffres réels. Ce sont des estimations pour 2026 basées sur les dépe
     breakdown.push({ label: "Utilities & Internet", amount: utilities });
 
     // Lifestyle extras
-    const lifestyleCosts = { minimal: 1000001, moderate: 3000000, active: 6000000, premium: 12000000 };
+    const lifestyleCosts = { minimal: 1000000, moderate: 3000000, active: 6000000, premium: 12000000 };
     const lifestyle = lifestyleCosts[values.lifestyle];
     total += lifestyle;
     breakdown.push({ label: "Lifestyle & Entertainment", amount: lifestyle });
@@ -855,7 +855,7 @@ Parlons chiffres réels. Ce sont des estimations pour 2026 basées sur les dépe
 ## Soins de santé à Bali
 
 <InfoCard variant="warning" title="Vérification de la réalité des soins de santé">
-Bali dispose de bons hôpitaux privés mais avec des **capacités limitées pour les affections reteba**. Pour une chirurgie majeure, un traitement contre le cancer ou des problèmes complexes, vous devrez peut-être vous rendre à Singapour ou rentrer chez vous.
+Bali dispose de bons hôpitaux privés mais avec des **capacités limitées pour les affections graves**. Pour une chirurgie majeure, un traitement contre le cancer ou des problèmes complexes, vous devrez peut-être vous rendre à Singapour ou rentrer chez vous.
 
 **Ayez toujours :**
 
@@ -868,7 +868,7 @@ Bali dispose de bons hôpitaux privés mais avec des **capacités limitées pour
 
 | Hôpital           | Emplacement    | Niveau        | Remarques                                              |
 | ----------------- | -------------- | ------------- | ------------------------------------------------------ |
-| **BIMC**          | Kuta, Xafo Tat | International | Le plus axé sur les expatriés, urgences 24h/24 et 7j/7 |
+| **BIMC**          | Kuta, Nusa Dua | International | Le plus axé sur les expatriés, urgences 24h/24 et 7j/7 |
 | **Siloam**        | Kuta           | Bon           | Grand hôpital, prix raisonnables                       |
 | **Kasih Ibu**     | Denpasar       | Bon           | Hôpital local, axé sur l'Indonésie                     |
 | **Prima Medika**  | Denpasar       | Bon           | Section internationale en croissance                   |
@@ -1049,7 +1049,7 @@ Les coûts à Bali ont considérablement augmenté :
 
 <Checklist
   title="Préparation avant le déménagement"
-  description="Complétez nupa avant de vous installer à Bali"
+  description="Complétez ceci avant de vous installer à Bali"
   persistKey="bali-move-checklist"
   items={[
     {
@@ -1099,7 +1099,7 @@ Les coûts à Bali ont considérablement augmenté :
     {
       id: "international-card",
       label: "Carte de débit/crédit internationale sans frais",
-      description: "Wise, Revolut, Dodataj Schwab, etc.",
+      description: "Wise, Revolut, Charles Schwab, etc.",
       required: true,
       category: "financial",
     },
@@ -1156,12 +1156,12 @@ Les coûts à Bali ont considérablement augmenté :
 
 Malgré les défis, des milliers d'expatriés construisent chaque année une vie épanouissante à Bali. L'île offre :
 
-- Une **beauté naturelle** qui cohazad réellement
+- Une **beauté naturelle** qui nourrit réellement
 - Une **communauté** de personnes partageant les mêmes idées
 - Moins de **stress** (une fois adapté)
 - Une **culture riche** à explorer
 - Un **climat** que beaucoup préfèrent
-- Une **valeur** (si vous êtes lulaj)
+- Une **valeur** (si vous êtes malin)
 
 La clé est de venir avec des **attentes réalistes**. Ce n'est pas une échappatoire aux défis de la vie – c'est un ensemble de défis différents dans un cadre magnifique.
 

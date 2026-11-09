@@ -362,7 +362,7 @@ import {
     let total = 0;
     const breakdown = [];
 
-    const serviceCosts = { diy: 10000012, basic: 35000000, full: 55000000 };
+    const serviceCosts = { diy: 15000000, basic: 35000000, full: 55000000 };
     const service = serviceCosts[values.service];
     total += service;
     breakdown.push({ label: "Регистрационные услуги", amount: service });
@@ -372,7 +372,7 @@ import {
     breakdown.push({ label: "Государственные пошлины", amount: govFees });
 
     if (values.vo) {
-      const voCost = values.location === 'jakarta' ? 10000012 : 12000000;
+      const voCost = values.location === 'jakarta' ? 15000000 : 12000000;
       total += voCost;
       breakdown.push({ label: "Виртуальный офис (1 год)", amount: voCost });
     }

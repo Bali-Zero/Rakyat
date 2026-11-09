@@ -14,8 +14,8 @@ from typing import Any
 from backend.channels.base import BaseChannel, ChannelMessage, ChannelResponse
 from backend.channels.telegram.config import TelegramChannelConfig
 from backend.channels.telegram.formatter import TelegramMessageFormatter
-from backend.services.integrations.telegram_bot_service import TelegramBotService
 from backend.security.pii_log_identifier import redact_identifier_for_log
+from backend.services.integrations.telegram_bot_service import TelegramBotService
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ class TelegramChannelAdapter(BaseChannel):
                 "message_id": 789,
                 "from": {"id": 123, "first_name": "John", "username": "john_doe"},
                 "chat": {"id": 123, "type": "private"},
-                "date": 8400001000,
+                "date": 1234567890,
                 "text": "Hello bot!"
             }
         }
@@ -141,8 +141,9 @@ class TelegramChannelAdapter(BaseChannel):
                 metadata.update(agent_context)
 
             logger.info(
-                f"📨 Telegram message received: chat_id={redact_identifier_for_log(chat_id)}, "
-                f"user={first_name} (@{username}), text={text[:50]}...",
+                "📨 Telegram message received: chat_id=%s, text_chars=%d",
+                redact_identifier_for_log(chat_id),
+                len(text or ""),
             )
 
             return ChannelMessage(

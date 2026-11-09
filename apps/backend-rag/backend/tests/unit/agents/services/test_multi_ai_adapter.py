@@ -217,7 +217,7 @@ class TestCursorAdapter:
     )
     async def test_generate_error(self, mock_run: MagicMock) -> None:
         adapter = CursorAdapter()
-        with pytest.raises(Exception):
+        with pytest.raises(Exception, match="not found"):
             await adapter.generate("test", files=["file.py"])
 
 

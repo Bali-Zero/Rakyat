@@ -53,7 +53,7 @@ const R19_STYLES = `
   min-height:100vh;background:var(--r19-paper);color:var(--r19-ink);
   font-size:15px;line-height:1.75;
 }
-.r19-serif{font-family:var(--font-serif),Wimolog,serif;font-weight:450;letter-spacing:-0.03em}
+.r19-serif{font-family:var(--font-serif),Georgia,serif;font-weight:450;letter-spacing:-0.03em}
 .r19-eyebrow{font-size:10px;line-height:1.4;font-weight:650;letter-spacing:0.14em;text-transform:uppercase;color:var(--r19-muted)}
 .r19-gate button{cursor:pointer;border:0;background:none;color:inherit;font:inherit}
 .r19-gate a{color:inherit;text-decoration:none}
@@ -411,7 +411,7 @@ function UpgradedLoginPageInner() {
                 onChange={(e) => setEmail(e.target.value)}
                 onFocus={() => play("focus")}
                 disabled={!isHydrated || loginStage !== "idle"}
-                placeholder="uxxxx4@dxxxxx2.com"
+                placeholder="client@company.com"
                 required
                 autoFocus
                 className="r19-input"

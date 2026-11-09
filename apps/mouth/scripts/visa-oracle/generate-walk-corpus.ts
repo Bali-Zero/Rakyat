@@ -65,7 +65,7 @@ import {
   type OracleFacts,
 } from "../../src/app/(visa-oracle)/visa-oracle/_lib/tree";
 import {
-  channelConflictsWithOnshoreIntent,
+  conflictingQuestionId,
   computeNextNode,
   type OracleNode,
 } from "../../src/app/(visa-oracle)/visa-oracle/_lib/flow";
@@ -173,7 +173,7 @@ function ordinaryAnswerFor(
     // walk that reaches the question qualifies unless it says otherwise; the
     // two boundary witnesses override it.
     if (id === "investment_own_shareholding_idr") return "10000000000";
-    return "9900000019";
+    return "1000000000";
   }
   if (question.kind === "country-codes") return "IT";
   if (question.kind === "status-code") return "E31A";
@@ -207,26 +207,17 @@ export function answerFor(
   facts: Record<string, string> = {},
 ): string {
   const ordinary = ordinaryAnswerFor(id, overrides);
-  if (
-    id !== "application_channel" ||
-    !channelConflictsWithOnshoreIntent(facts.wants_onshore_conversion, ordinary)
-  ) {
-    return ordinary;
+  if (!conflictingQuestionId(id, ordinary, facts)) return ordinary;
+  // An explicit conflicting override cannot represent a completed interview.
+  if (id === "investment_sponsoring_company_confirmed") {
+    if (overrides[id] !== undefined)
+      throw new Error("Contradictory company sponsor answer in completed walk");
+    return "unconfirmed";
   }
-  const question = QUESTIONS[id];
-  const accepted = question.options.find(
-    (option) =>
-      !channelConflictsWithOnshoreIntent(
-        facts.wants_onshore_conversion,
-        option.key,
-      ),
+  const accepted = QUESTIONS[id].options.find(
+    (option) => !conflictingQuestionId(id, option.key, facts),
   );
-  if (!accepted) {
-    throw new Error(
-      `answerFor: no accepted application_channel option for ` +
-        `wants_onshore_conversion=${facts.wants_onshore_conversion}`,
-    );
-  }
+  if (!accepted) throw new Error(`No consistent answer for ${id}`);
   return accepted.key;
 }
 
@@ -831,10 +822,12 @@ export function enumerateScenarios(): Scenario[] {
     overrides: {
       ...base,
       category: "invest",
+      sponsor_category: "INVESTMENT",
+      investment_sponsoring_company_confirmed: "yes",
       investment_vehicle: "pt_pma",
       wants_onshore_conversion: "no",
       investment_capital_idr: "10000000000",
-      investment_paid_up_capital_idr: "9900000026",
+      investment_paid_up_capital_idr: "2500000000",
     },
   });
   // E28A own-shareholding step B (owner ruling 2026-10-15): boundary witnesses
@@ -850,10 +843,12 @@ export function enumerateScenarios(): Scenario[] {
       overrides: {
         ...base,
         category: "invest",
+        sponsor_category: "INVESTMENT",
+        investment_sponsoring_company_confirmed: "yes",
         investment_vehicle: "pt_pma",
         wants_onshore_conversion: "no",
         investment_capital_idr: "10000000000",
-        investment_paid_up_capital_idr: "9900000026",
+        investment_paid_up_capital_idr: "2500000000",
         investment_own_shareholding_idr: value,
       },
     });

@@ -275,9 +275,9 @@ _LATIN_MARKERS: list[tuple[str, list[str], list[str]]] = [
             "puoi",
             "volevo",
         ],
-        # homographs: English "come"; English "dove" (the bird); and "dujoc",
+        # homographs: English "come"; English "dove" (the bird); and "prego",
         # which is not an English word but IS a supermarket pasta-sauce brand —
-        # and this bot advises on food-import KBLI, so "Dujoc sauce import
+        # and this bot advises on food-import KBLI, so "Prego sauce import
         # licence" is a message it actually receives. Demoted after an
         # adversarial pass found it, on the same reasoning the row's own rule
         # states: a token that names a language only by coincidence must not
@@ -360,7 +360,7 @@ _LATIN_MARKERS: list[tuple[str, list[str], list[str]]] = [
             "abrir",
             "están",
             "también",
-            # Greetings, 2026-08-25. "hola" was the only one, so "Buenos zôha"
+            # Greetings, 2026-08-25. "hola" was the only one, so "Buenos días"
             # — the ordinary Spanish opener — scored zero and read as ENGLISH.
             # Both the accented and the bare spellings, because WhatsApp
             # clients send both.
@@ -545,7 +545,7 @@ LANGUAGE_DISPLAY_NAMES = {
     "ARABIC": "ARABIC (العربية)",
     "UKRAINIAN": "UKRAINIAN (Українська)",
     "RUSSIAN": "RUSSIAN (Русский)",
-    "ITALIAN": "ITALIAN (Vanelara)",
+    "ITALIAN": "ITALIAN (Italiano)",
     "FRENCH": "FRENCH (Français)",
     "SPANISH": "SPANISH (Español)",
     "GERMAN": "GERMAN (Deutsch)",
@@ -616,7 +616,7 @@ def is_conversation_recall_query(query: str) -> bool:
     is in the conversation history, not in the knowledge base.
 
     Examples:
-    - "Ti ricordi il cliente di cui abbiamo hezisiq?" → True
+    - "Ti ricordi il cliente di cui abbiamo parlato?" → True
     - "Quanto costa un visto E31A?" → False
     """
     query_lower = query.lower()

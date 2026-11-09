@@ -68,8 +68,8 @@ def test_innocence_non_identity_questions_reach_retrieval(
 IDENTITY_ASKS = [
     # (query, language the answer must be in)
     ("Chi ti ha creato e come ti chiami?", "ITALIAN"),  # the live 2026-08-09 case
-    ("Xiw zoc?", "ITALIAN"),
-    ("Ciao, xiw zoc tu?", "ITALIAN"),
+    ("Chi sei?", "ITALIAN"),
+    ("Ciao, chi sei tu?", "ITALIAN"),
     ("Come ti chiami?", "ITALIAN"),
     ("Qual è il tuo nome?", "ITALIAN"),
     ("Chi ti ha fatto?", "ITALIAN"),

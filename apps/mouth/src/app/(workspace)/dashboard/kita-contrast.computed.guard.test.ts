@@ -194,6 +194,28 @@ describe("kita dark — muted text clears AA on both grounds", () => {
   });
 });
 
+/** Follow var() chains through the block, then the base token file, to a colour. */
+function resolveStep(
+  value: string,
+  block: Record<string, string>,
+): string | undefined {
+  const base = parseTokens(
+    readFileSync(
+      repoFile("packages", "core", "tokens", "operative.css"),
+      "utf-8",
+    ),
+  );
+  let cur: string | undefined = value;
+  for (let i = 0; i < 6 && cur; i += 1) {
+    const ref: string | undefined = /^var\(\s*(--[a-z0-9-]+)/i.exec(
+      cur.trim(),
+    )?.[1];
+    if (!ref) return cur;
+    cur = block[ref] ?? base[ref];
+  }
+  return cur;
+}
+
 describe("hero-panel copper clears AA in both themes", () => {
   // The alias resolves to a different step per theme because the panel's
   // ground flips. Both sides are checked against their OWN ground.
@@ -201,24 +223,14 @@ describe("hero-panel copper clears AA in both themes", () => {
     ["light", light],
     ["dark", dark],
   ] as const) {
-    it(`${name}: --bz-kita-ink-panel-copper on --bz-text-1`, () => {
+    it(`${name}: --bz-kita-ink-panel-copper on --bz-kita-ink-fill`, () => {
       const alias = block["--bz-kita-ink-panel-copper"];
       expect(alias, "alias missing from the kita block").toBeDefined();
-      const varName = /var\(\s*(--[a-z0-9-]+)/i.exec(alias)?.[1];
-      expect(varName, `alias is not a var() reference: ${alias}`).toBeDefined();
-
-      // Resolve the referenced step: either declared in this block, or
-      // inherited from the base token file.
-      const operativeCss = readFileSync(
-        repoFile("packages", "core", "tokens", "operative.css"),
-        "utf-8",
-      );
-      const base = parseTokens(operativeCss);
-      const resolved = block[varName!] ?? base[varName!];
-      expect(resolved, `cannot resolve ${varName}`).toBeDefined();
+      const resolved = resolveStep(alias, block);
+      expect(resolved, `cannot resolve ${alias}`).toBeDefined();
 
       expect(
-        ratioAgainst(resolved!, block["--bz-text-1"]),
+        ratioAgainst(resolved!, resolveStep("var(--bz-kita-ink-fill)", block)!),
       ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
     });
 
@@ -226,17 +238,13 @@ describe("hero-panel copper clears AA in both themes", () => {
       // The whole reason two steps exist. If a future edit collapses them
       // into one value, one of these two guilt cases stops failing.
       const other = name === "light" ? dark : light;
-      const otherAlias = other["--bz-kita-ink-panel-copper"];
-      const otherVar = /var\(\s*(--[a-z0-9-]+)/i.exec(otherAlias)?.[1];
-      const operativeCss = readFileSync(
-        repoFile("packages", "core", "tokens", "operative.css"),
-        "utf-8",
-      );
-      const base = parseTokens(operativeCss);
-      const wrongStep = other[otherVar!] ?? base[otherVar!];
-      expect(ratioAgainst(wrongStep!, block["--bz-text-1"])).toBeLessThan(
-        AA_NORMAL_TEXT,
-      );
+      const wrongStep = resolveStep(other["--bz-kita-ink-panel-copper"], other);
+      expect(
+        ratioAgainst(
+          wrongStep!,
+          resolveStep("var(--bz-kita-ink-fill)", block)!,
+        ),
+      ).toBeLessThan(AA_NORMAL_TEXT);
     });
   }
 });

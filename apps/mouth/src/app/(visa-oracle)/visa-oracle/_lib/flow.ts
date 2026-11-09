@@ -20,6 +20,11 @@ import {
 } from "./tree";
 import type { InterviewAssumption } from "./outcome-view-model";
 import { canonicalCountryCodes } from "./countries";
+import {
+  E28A_PAID_UP_CAPITAL_THRESHOLD_IDR,
+  E28A_OWN_SHAREHOLDING_THRESHOLD_IDR,
+} from "./investment-thresholds";
+import { parseWholeNumberInput } from "./whole-number-input";
 
 export type Language = "en" | "id";
 
@@ -409,13 +414,7 @@ export function restoreInterviewSnapshot(
       // wants_onshore_conversion/application_channel pair. Treat it exactly
       // like any other impossible answer — truncate at this frontier rather
       // than resume into a state the live interview could never produce.
-      if (
-        current.questionId === "application_channel" &&
-        channelConflictsWithOnshoreIntent(
-          facts.wants_onshore_conversion,
-          answer,
-        )
-      ) {
+      if (conflictingQuestionId(current.questionId, answer, facts)) {
         break;
       }
       facts = { ...facts, [current.questionId]: answer };
@@ -527,6 +526,25 @@ const ONSHORE_APPLICATION_CHANNELS = new Set([
  * already agreed — the mechanism is undetermined, not merely unlanded.
  * Any such fix is out of this PR's scope (apps/mouth only) regardless.
  */
+export function conflictingQuestionId(
+  questionId: string,
+  value: string,
+  facts: OracleFacts,
+): string | null {
+  if (
+    questionId === "application_channel" &&
+    channelConflictsWithOnshoreIntent(facts.wants_onshore_conversion, value)
+  )
+    return "wants_onshore_conversion";
+  if (
+    questionId === "investment_sponsoring_company_confirmed" &&
+    value === "yes" &&
+    facts.sponsor_category === "NONE"
+  )
+    return "sponsor_category";
+  return null;
+}
+
 export function channelConflictsWithOnshoreIntent(
   wantsOnshoreConversion: string | undefined,
   applicationChannel: string,
@@ -801,6 +819,29 @@ function investmentRouteQuestionIds(facts: OracleFacts): readonly string[] {
   return anyRouteYes ? [...routes, "investment_meets_threshold"] : routes;
 }
 
+/** Once both E28A figures qualify, ask about that company's commitment to sponsor. */
+function e28aShareholderQuestionIds(facts: OracleFacts): string[] {
+  if (facts.investment_pt_pma !== "yes") return [];
+  const hasQualifyingCapital =
+    parseWholeNumberInput(
+      facts.investment_paid_up_capital_idr ?? "",
+      E28A_PAID_UP_CAPITAL_THRESHOLD_IDR,
+      Number.MAX_SAFE_INTEGER,
+    ) !== null;
+  const hasQualifyingShares =
+    parseWholeNumberInput(
+      facts.investment_own_shareholding_idr ?? "",
+      E28A_OWN_SHAREHOLDING_THRESHOLD_IDR,
+      Number.MAX_SAFE_INTEGER,
+    ) !== null;
+  return [
+    "investment_own_shareholding_idr",
+    ...(hasQualifyingCapital && hasQualifyingShares
+      ? ["investment_sponsoring_company_confirmed"]
+      : []),
+  ];
+}
+
 /**
  * `el.e28a.investment` and its two filters (`hf.e28a.paid-capital-below-min`
  * and, from seq-31, `hf.e28a.own-shareholding-below-min` — seq-20..30 carried
@@ -818,7 +859,7 @@ function ptPmaCommitmentQuestionIds(facts: OracleFacts): readonly string[] {
       ? [
           "investment_capital_idr",
           "investment_paid_up_capital_idr",
-          "investment_own_shareholding_idr",
+          ...e28aShareholderQuestionIds(facts),
           "investment_role",
         ]
       : []),
@@ -988,9 +1029,7 @@ export function getCategoryQuestionIds(facts: OracleFacts): readonly string[] {
             "investment_paid_up_capital_idr",
             // E28A: a "no" on the commitment makes the rule false, so the own
             // shareholding is asked only after a "yes" (red team B, finding 1).
-            ...(facts.investment_pt_pma === "yes"
-              ? ["investment_own_shareholding_idr"]
-              : []),
+            ...e28aShareholderQuestionIds(facts),
             "investment_role",
           ]
         : branch === "property"
@@ -1260,6 +1299,8 @@ export function getCategoryQuestionIds(facts: OracleFacts): readonly string[] {
  * `diaspora` tiles (owner ruling 4) so the two can never drift apart. */
 function familyQuestionIds(facts: OracleFacts): readonly string[] {
   const sponsorCodes = facts.family_sponsor_nationalities?.split(",") ?? [];
+  const indonesianSpouse =
+    facts.family_relation === "SPOUSE" && sponsorCodes.includes("ID");
   const needsPermitCode =
     facts.family_sponsor_nationalities !== undefined &&
     facts.family_sponsor_nationalities !== "unsure" &&
@@ -1300,7 +1341,16 @@ function familyQuestionIds(facts: OracleFacts): readonly string[] {
           "family_stepchild_birth_certificate_confirmed",
         ]
       : []),
-    "family_sponsor_confirmed",
+    // A minor's general sponsor answer separately feeds the signed global
+    // minor safety filter. An adult Indonesian-spouse walk needs only the letter.
+    ...(!indonesianSpouse ||
+    facts.guardian_consent !== undefined ||
+    facts.birth_date === "unsure"
+      ? ["family_sponsor_confirmed"]
+      : []),
+    ...(indonesianSpouse
+      ? ["family_spouse_application_support_confirmed"]
+      : []),
     "stay_days",
   ];
 }
@@ -1436,24 +1486,17 @@ function nextAfterAnswer(
 export function flowReducer(state: FlowState, action: FlowAction): FlowState {
   switch (action.type) {
     case "ANSWER": {
-      if (
-        action.questionId === "application_channel" &&
-        channelConflictsWithOnshoreIntent(
-          state.facts.wants_onshore_conversion,
-          action.value,
-        )
-      ) {
-        // Refuse to record it: neither fact is derived from the other or
-        // silently overwritten (see `channelConflictsWithOnshoreIntent`).
-        // History/facts stay exactly where they were — the user is still
-        // on `application_channel` and can pick a different, coherent
-        // channel, or use Back to correct `wants_onshore_conversion`
-        // instead. The UI reads `blockedAnswer` to explain why.
+      const conflict = conflictingQuestionId(
+        action.questionId,
+        action.value,
+        state.facts,
+      );
+      if (conflict) {
         return {
           ...state,
           blockedAnswer: {
-            questionId: "application_channel",
-            conflictsWithQuestionId: "wants_onshore_conversion",
+            questionId: action.questionId,
+            conflictsWithQuestionId: conflict,
           },
         };
       }

@@ -17,7 +17,7 @@ from backend.services.autonomous_lab.consul_native_broker import (
 )
 from backend.tests.unit.services.autonomous_lab.consul_fixtures import make_request, reseal
 
-CANARY_MODEL = "gpt-6-tomen"
+CANARY_MODEL = "gpt-6-astra"
 
 
 class NativeCanaryRPC:
@@ -122,7 +122,7 @@ def make_native_grant(
     run_id: str = "native-run",
     *,
     revision: int = 1,
-    builder: str = "tomen",
+    builder: str = "astra",
     binding: dict[str, Any] | None = None,
 ) -> NativeGrant:
     request = make_request(now, run_id, builder=builder, grant_revision=revision)

@@ -18,12 +18,19 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.metrics import metrics_collector
 from backend.app.utils.error_handlers import handle_database_error
 from backend.app.utils.json_utils import to_jsonb
 from backend.app.utils.logging_utils import get_logger, log_error, log_success, log_warning
 from backend.core.cache import invalidate_cache
+from backend.db.repositories.conversation_repository import (
+    ConversationCommitOutcomeUnknown,
+    conversation_write_connection,
+    lock_conversation_identities,
+    lock_conversation_session,
+)
 from backend.services.common.background import spawn
 from backend.services.crm.conversation_title_generator import generate_conversation_title
 from backend.services.memory import MemoryOrchestrator, get_memory_cache
@@ -67,8 +74,24 @@ async def _generate_and_update_title(
         )
 
         if title:
-            # Update metadata.generated_title in database
-            async with db_pool.acquire() as conn:
+            async with conversation_write_connection(db_pool) as conn:
+                identity = await conn.fetchrow(
+                    "SELECT id, session_id FROM conversations WHERE id = $1",
+                    conversation_id,
+                )
+                if not identity:
+                    return
+                await lock_conversation_session(
+                    conn,
+                    identity["session_id"],
+                    row_id=identity["id"],
+                )
+                row = await conn.fetchrow(
+                    "SELECT id FROM conversations WHERE id = $1 FOR UPDATE",
+                    conversation_id,
+                )
+                if not row:
+                    return
                 await conn.execute(
                     """
                     UPDATE conversations
@@ -80,26 +103,15 @@ async def _generate_and_update_title(
                     conversation_id,
                 )
 
-            log_success(
-                logger,
-                "Generated conversation title",
-                conversation_id=conversation_id,
-                title=title[:50],
-            )
+            log_success(logger, "Generated conversation title")
         else:
             logger.info(
-                "Title generation returned None for conversation %s, using fallback",
-                conversation_id,
+                "Title generation returned None, using fallback",
             )
 
     except Exception as e:
         # Don't fail conversation save if title generation fails
-        log_warning(
-            logger,
-            "Title generation failed",
-            conversation_id=conversation_id,
-            error=str(e),
-        )
+        log_warning(logger, "Title generation failed", error_type=type(e).__name__)
 
 
 # Pydantic models
@@ -180,9 +192,21 @@ async def get_memory_orchestrator(db_pool: asyncpg.Pool | None = None) -> Memory
             await _memory_orchestrator.initialize()
             log_success(logger, "MemoryOrchestrator initialized for conversations router")
         except Exception as e:
-            log_warning(logger, f"Failed to initialize MemoryOrchestrator: {e}")
+            log_warning(logger, f"Failed to initialize MemoryOrchestrator: {type(e).__name__}")
             return None
     return _memory_orchestrator
+
+
+async def _invalidate_committed_conversation_cache() -> None:
+    """Preserve cache effects without changing an acknowledged database outcome."""
+    try:
+        await invalidate_cache("zantara:conversations:*")
+    except Exception as exc:
+        logger.warning(
+            "Conversation cache invalidation failed after commit: %s",
+            type(exc).__name__,
+            exc_info=False,
+        )
 
 
 @router.post("/save")
@@ -229,25 +253,8 @@ async def save_conversation(
         request.session_id or f"session-{datetime.now(tz=timezone.utc).strftime('%Y%m%d-%H%M%S')}"
     )
 
-    # RACE CONDITION PROTECTION: Two-phase commit pattern
-    # Phase 1: Save to cache (fast, always succeeds)
-    mem_cache = get_memory_cache()
-    scoped_cache_key = user_session_key(user_email, session_id)
-    try:
-        for msg in request.messages:
-            mem_cache.add_message(
-                scoped_cache_key,
-                msg.get("role", "unknown"),
-                msg.get("content", ""),
-            )
-        logger.info(
-            f"✅ Saved {len(request.messages)} messages to memory cache for session {session_id}",
-        )
-    except Exception as e:
-        logger.warning("⚠️ Failed to save to memory cache: %s", e)
-        # Continue - DB save is more important
-
-    # Phase 2: Save to DB with retry mechanism
+    # Resolve the database outcome before publishing memory/title effects.
+    # Confirmed body failures retain the existing explicit memory fallback.
     conversation_id = 0
     db_success = False
     max_retries = 3
@@ -255,99 +262,142 @@ async def save_conversation(
     for attempt in range(max_retries):
         try:
             if db_pool:
-                async with db_pool.acquire() as conn:
-                    async with conn.transaction():
-                        # Insert conversation atomically
-                        row = await conn.fetchrow(
-                            """
-                            INSERT INTO conversations (user_id, session_id, messages, metadata, created_at)
-                            VALUES ($1, $2, $3::text::jsonb, $4::text::jsonb, $5)
-                            RETURNING id
-                            """,
-                            user_email,
-                            session_id,
-                            # ::text::jsonb — the app pools register a jsonb
-                            # codec (encoder=json.dumps); a bare param inferred
-                            # as jsonb double-encodes to_jsonb()'s already-
-                            # serialized string into a jsonb string scalar.
-                            to_jsonb(request.messages),
-                            to_jsonb(request.metadata or {}),
-                            datetime.now(tz=timezone.utc),
-                        )
+                async with conversation_write_connection(db_pool) as conn:
+                    await lock_conversation_session(conn, session_id)
+                    await conn.fetchrow(
+                        """
+                        SELECT id FROM conversations
+                        WHERE session_id = $1 AND user_id = $2
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT 1 FOR UPDATE
+                        """,
+                        session_id,
+                        user_email,
+                    )
+                    # Insert conversation atomically
+                    row = await conn.fetchrow(
+                        """
+                        INSERT INTO conversations (user_id, session_id, messages, metadata, created_at)
+                        VALUES ($1, $2, $3::text::jsonb, $4::text::jsonb, $5)
+                        RETURNING id
+                        """,
+                        user_email,
+                        session_id,
+                        # ::text::jsonb — the app pools register a jsonb
+                        # codec (encoder=json.dumps); a bare param inferred
+                        # as jsonb double-encodes to_jsonb()'s already-
+                        # serialized string into a jsonb string scalar.
+                        to_jsonb(request.messages),
+                        to_jsonb(request.metadata or {}),
+                        datetime.now(tz=timezone.utc),
+                    )
+                conversation_id = row["id"] if row else 0
 
-                        if row:
-                            conversation_id = row["id"]
-                            db_success = True
+                # Publish success only after the repository confirmed commit.
+                if conversation_id:
+                    db_success = True
 
-                            # Mark cache as synced (if cache supports it)
-                            try:
-                                if hasattr(mem_cache, "mark_synced"):
-                                    mem_cache.mark_synced(scoped_cache_key, conversation_id)
-                            except Exception as e:
-                                logger.debug("Cache sync marker not available: %s", e)
+                    log_success(
+                        logger,
+                        "Saved conversation to DB",
+                        messages_count=len(request.messages),
+                        attempt=attempt + 1,
+                    )
 
-                            log_success(
-                                logger,
-                                "Saved conversation to DB",
-                                conversation_id=conversation_id,
-                                user_email=user_email,
-                                messages_count=len(request.messages),
-                                attempt=attempt + 1,
-                            )
-
-                            # Trigger async title generation for new conversations
-                            # (fire-and-forget, non-blocking)
-                            if conversation_id and request.messages:
-                                # Find first user message for title generation
-                                first_user_msg = next(
-                                    (
-                                        msg.get("content", "")
-                                        for msg in request.messages
-                                        if isinstance(msg, dict) and msg.get("role") == "user"
-                                    ),
-                                    None,
-                                )
-
-                                if first_user_msg:
-                                    spawn(
-                                        _generate_and_update_title(
-                                            conversation_id=conversation_id,
-                                            first_user_message=first_user_msg,
-                                            db_pool=db_pool,
-                                        ),
-                                        name=f"conv_title:{conversation_id}",
-                                    )
-                                    logger.info(
-                                        "🎯 Triggered async title generation for conversation %s",
-                                        conversation_id,
-                                    )
-
-                            break  # Success - exit retry loop
+                    break  # Success - exit retry loop
             else:
                 logger.warning("⚠️ DB Pool unavailable, skipping DB save")
                 break
 
         except Exception as e:
+            if db_success:
+                logger.warning(
+                    "Conversation committed; after-commit effect failed: %s", type(e).__name__
+                )
+                break
+            if isinstance(e, ConversationCommitOutcomeUnknown):
+                logger.error("DB save outcome unknown after commit; refusing blind retry")
+                metrics_collector.record_cache_db_consistency_error(session_id="conversation_save")
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "code": "conversation_commit_unknown",
+                        "retryable": False,
+                        "message": (
+                            "Save outcome could not be confirmed. Check history before retrying."
+                        ),
+                    },
+                ) from None
             if attempt == max_retries - 1:
                 # Final attempt failed - log error and queue for async retry
-                logger.error("❌ DB Save failed after %s attempts: %s", max_retries, e)
+                logger.error(
+                    "DB save failed after %s attempts: %s",
+                    max_retries,
+                    type(e).__name__,
+                )
                 # Note: In production, you might want to queue this for async retry
                 # For now, we continue with cache-only persistence
-                metrics_collector.record_cache_db_consistency_error(session_id=session_id)
+                metrics_collector.record_cache_db_consistency_error(session_id="conversation_save")
             else:
                 # Exponential backoff before retry
                 import asyncio
 
                 wait_time = 2**attempt
                 logger.warning(
-                    f"⚠️ DB Save attempt {attempt + 1} failed, retrying in {wait_time}s: {e}",
+                    "DB save attempt %s failed with %s; retrying in %ss",
+                    attempt + 1,
+                    type(e).__name__,
+                    wait_time,
                 )
                 await asyncio.sleep(wait_time)
 
-    # If both failed, then we have a problem
-    # But we already tried memory cache.
+    # Only a confirmed result or a known pre-commit failure reaches this point.
+    # W5 owns reconciliation of the ambiguous outcome rejected above.
+    if db_success:
+        await _invalidate_committed_conversation_cache()
 
-    await invalidate_cache("zantara:conversations:*")
+    try:
+        mem_cache = get_memory_cache()
+        scoped_cache_key = user_session_key(user_email, session_id)
+        for msg in request.messages:
+            mem_cache.add_message(
+                scoped_cache_key,
+                msg.get("role", "unknown"),
+                msg.get("content", ""),
+            )
+        if db_success and hasattr(mem_cache, "mark_synced"):
+            mem_cache.mark_synced(scoped_cache_key, conversation_id)
+        logger.info("Saved %s messages to memory cache", len(request.messages))
+    except Exception as e:
+        logger.warning("Failed to save to memory cache: %s", type(e).__name__)
+
+    if db_success:
+        first_user_msg = next(
+            (
+                msg.get("content", "")
+                for msg in request.messages
+                if isinstance(msg, dict) and msg.get("role") == "user"
+            ),
+            None,
+        )
+        if first_user_msg and settings.conversation_title_generation_enabled:
+            title_coroutine = _generate_and_update_title(
+                conversation_id=conversation_id,
+                first_user_message=first_user_msg,
+                db_pool=db_pool,
+            )
+            try:
+                try:
+                    spawn(title_coroutine, name="conversation_title")
+                except BaseException:
+                    title_coroutine.close()
+                    raise
+                logger.info("Triggered async title generation")
+            except Exception as e:
+                logger.warning(
+                    "Conversation committed; after-commit effect failed: %s", type(e).__name__
+                )
+
     return {
         "success": True,  # Always return true to keep chat alive
         "conversation_id": conversation_id,
@@ -424,11 +474,14 @@ async def get_conversation_history(
                     log_success(
                         logger,
                         "Retrieved conversation history from DB",
-                        user_email=user_email,
                         messages_count=len(messages),
                     )
         except Exception as e:
-            log_error(logger, "Failed to retrieve conversation history from DB", error=e)
+            log_error(
+                logger,
+                "Failed to retrieve conversation history from DB",
+                error_type=type(e).__name__,
+            )
             # Fallback to memory cache below
 
     # Fallback to memory cache if DB failed or returned nothing (and we have a session_id)
@@ -440,11 +493,10 @@ async def get_conversation_history(
                 log_success(
                     logger,
                     "Retrieved conversation history from Memory Cache",
-                    user_email=user_email,
                     messages_count=len(messages),
                 )
         except Exception as e:
-            logger.warning("⚠️ Memory cache retrieval failed: %s", e)
+            logger.warning("⚠️ Memory cache retrieval failed: %s", type(e).__name__)
 
     # Limit messages if needed
     total_messages = len(messages)
@@ -477,37 +529,44 @@ async def clear_conversation_history(
     user_email = current_user["email"]
 
     try:
-        async with db_pool.acquire() as conn:
+        async with conversation_write_connection(db_pool) as conn:
             if session_id:
-                deleted_count = await conn.execute(
+                identities = await conn.fetch(
                     """
-                    DELETE FROM conversations
+                    SELECT id, session_id FROM conversations
                     WHERE user_id = $1 AND session_id = $2
                     """,
                     user_email,
                     session_id,
                 )
+                where = "user_id = $1 AND session_id = $2"
+                args = (user_email, session_id)
             else:
-                deleted_count = await conn.execute(
-                    """
-                    DELETE FROM conversations
-                    WHERE user_id = $1
-                    """,
+                identities = await conn.fetch(
+                    "SELECT id, session_id FROM conversations WHERE user_id = $1",
                     user_email,
                 )
-
-            # asyncpg execute returns "DELETE N", extract number
-            deleted_count_int = int(deleted_count.split()[-1]) if deleted_count else 0
-
-            log_success(
-                logger,
-                "Cleared conversations",
-                user_email=user_email,
-                deleted_count=deleted_count_int,
+                where = "user_id = $1"
+                args = (user_email,)
+            await lock_conversation_identities(
+                conn,
+                [(row["session_id"], row["id"]) for row in identities],
             )
-
-            await invalidate_cache("zantara:conversations:*")
-            return {"success": True, "deleted_count": deleted_count_int}
+            row_ids = [row["id"] for row in identities]
+            where += f" AND id = ANY(${len(args) + 1})"
+            args = (*args, row_ids)
+            await conn.fetch(
+                f"SELECT id FROM conversations WHERE {where} ORDER BY id FOR UPDATE",
+                *args,
+            )
+            deleted_count = await conn.execute(
+                f"DELETE FROM conversations WHERE {where}",
+                *args,
+            )
+        deleted_count = int(deleted_count.split()[-1]) if deleted_count else 0
+        await _invalidate_committed_conversation_cache()
+        log_success(logger, "Cleared conversations", deleted_count=deleted_count)
+        return {"success": True, "deleted_count": deleted_count}
 
     except HTTPException:
         raise
@@ -654,13 +713,7 @@ async def list_conversations(
                     ),
                 )
 
-            log_success(
-                logger,
-                "Listed conversations",
-                user_email=user_email,
-                count=len(conversations),
-                total=total,
-            )
+            log_success(logger, "Listed conversations", count=len(conversations), total=total)
 
             return ConversationListResponse(
                 success=True,
@@ -669,8 +722,10 @@ async def list_conversations(
             )
 
     except Exception as e:
-        log_error(logger, "Failed to list conversations", error=e, exc_info=True)
-        return ConversationListResponse(success=False, error=str(e))
+        log_error(
+            logger, "Failed to list conversations", error_type=type(e).__name__, exc_info=False
+        )
+        return ConversationListResponse(success=False, error="Request could not be completed.")
 
 
 @router.get("/{conversation_id}", response_model=SingleConversationResponse)
@@ -706,13 +761,7 @@ async def get_conversation(
 
             messages = row["messages"] or []
 
-            log_success(
-                logger,
-                "Retrieved conversation",
-                conversation_id=conversation_id,
-                user_email=user_email,
-                message_count=len(messages),
-            )
+            log_success(logger, "Retrieved conversation", message_count=len(messages))
 
             return SingleConversationResponse(
                 success=True,
@@ -727,8 +776,8 @@ async def get_conversation(
     except HTTPException:
         raise
     except Exception as e:
-        log_error(logger, "Failed to get conversation", error=e, exc_info=True)
-        return SingleConversationResponse(success=False, error=str(e))
+        log_error(logger, "Failed to get conversation", error_type=type(e).__name__, exc_info=False)
+        return SingleConversationResponse(success=False, error="Request could not be completed.")
 
 
 @router.delete("/{conversation_id}")
@@ -745,10 +794,12 @@ async def delete_conversation(
     user_email = current_user["email"]
 
     try:
-        async with db_pool.acquire() as conn:
-            # Check if conversation exists and belongs to user
+        async with conversation_write_connection(db_pool) as conn:
             existing = await conn.fetchrow(
-                "SELECT id FROM conversations WHERE id = $1 AND user_id = $2",
+                """
+                SELECT id, session_id FROM conversations
+                WHERE id = $1 AND user_id = $2
+                """,
                 conversation_id,
                 user_email,
             )
@@ -758,23 +809,38 @@ async def delete_conversation(
                     status_code=404,
                     detail=f"Conversation {conversation_id} not found",
                 )
-
-            # Delete the conversation
-            await conn.execute(
+            await lock_conversation_session(
+                conn,
+                existing["session_id"],
+                row_id=existing["id"],
+            )
+            locked = await conn.fetchrow(
+                """
+                SELECT id FROM conversations
+                WHERE id = $1 AND user_id = $2 FOR UPDATE
+                """,
+                conversation_id,
+                user_email,
+            )
+            if not locked:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Conversation {conversation_id} not found",
+                )
+            deleted_result = await conn.execute(
                 "DELETE FROM conversations WHERE id = $1 AND user_id = $2",
                 conversation_id,
                 user_email,
             )
-
-            log_success(
-                logger,
-                "Deleted conversation",
-                conversation_id=conversation_id,
-                user_email=user_email,
+        deleted = deleted_result == "DELETE 1"
+        if not deleted:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Conversation {conversation_id} not found",
             )
-
-            await invalidate_cache("zantara:conversations:*")
-            return {"success": True, "deleted_id": conversation_id}
+        await _invalidate_committed_conversation_cache()
+        log_success(logger, "Deleted conversation")
+        return {"success": True, "deleted_id": conversation_id}
 
     except HTTPException:
         raise
@@ -812,7 +878,6 @@ async def get_user_memory_context(
         log_success(
             logger,
             "Retrieved user memory context",
-            user_email=user_email,
             facts_count=len(context.profile_facts),
             has_data=context.has_data,
         )
@@ -827,9 +892,11 @@ async def get_user_memory_context(
         )
 
     except Exception as e:
-        log_error(logger, "Failed to get user memory context", error=e, exc_info=True)
+        log_error(
+            logger, "Failed to get user memory context", error_type=type(e).__name__, exc_info=False
+        )
         return UserMemoryContextResponse(
             success=False,
             user_id=user_email,
-            error=str(e),
+            error="Request could not be completed.",
         )

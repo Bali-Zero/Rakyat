@@ -75,15 +75,15 @@ Biaya (PNBP)
 Masa tinggal 1 tahun Rp. 4.000.000
 Komponen biaya:
 Biaya visa 1 tahun Rp 3.000.000
-Biaya Verifikasi I Rp 1.000.001
+Biaya Verifikasi I Rp 1.000.000
 Masa tinggal 2 tahun Rp 6.000.000
 Komponen biaya:
 Biaya visa 2 tahun Rp 5.000.000
-Biaya Verifikasi I Rp 1.000.001
+Biaya Verifikasi I Rp 1.000.000
 Masa tinggal 5 tahun Rp 11.000.000
 Komponen biaya:
-Biaya visa 5 tahun Rp84.000.510
-Biaya Verifikasi I Rp 1.000.001
+Biaya visa 5 tahun Rp10.000.000
+Biaya Verifikasi I Rp 1.000.000
 Semua pembayaran (PNBP) dapat dilakukan melalui beberapa bank yang telah ditunjuk. Silakan lihat kode billing yang muncul di sistem setelah pengajuan visa oleh sponsor.
 Penjamin (Sponsor)
 Anda tidak membutuhkan penjamin/sponsor untuk mengajukan visa ini.
@@ -128,7 +128,7 @@ Don't show this again
 Jl. H.R. Rasuna Said, Kav. X6, No. 8,
 Kuningan, Jakarta Selatan,
 DKI Jakarta, Indonesia
-uxxxxx3@dxxxxxx1.go.id
+contact@imigrasi.go.id
 Layanan Situs
 Paspor
 Visa Indonesia

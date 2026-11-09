@@ -201,7 +201,7 @@ export function TaxCalendarBody({
       >
         Dates shown are the next occurrence per obligation. PPh 25, PPN and both
         SPT Tahunan returns move forward if the computed date lands on a
-        Saturday or Detali; they are not shifted for Indonesian public holidays.
+        Saturday or Sunday; they are not shifted for Indonesian public holidays.
         LKPM and PB1 dates are shown as computed, unshifted.
       </p>
     </section>

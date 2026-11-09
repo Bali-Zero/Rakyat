@@ -203,7 +203,7 @@ test.describe("Bali Zero product-family noqata page Page", () => {
     await expectNoBlockingA11y(page);
   });
 
-  test("Kita desktop shell shows the canonical Bali Zero logo", async ({
+  test("Kita desktop shell shows the homepage Bali Zero logo", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 960 });
@@ -217,7 +217,12 @@ test.describe("Bali Zero product-family noqata page Page", () => {
       .locator("img");
 
     await expect(logo).toBeVisible({ timeout: 30000 });
-    await expect(logo).toHaveAttribute("src", /balizero-logo-clean\.png/);
+    // The rail shows the round logo of the public homepage header
+    // (components/r19/home/Entry.tsx), served through next/image.
+    await expect(logo).toHaveAttribute(
+      "src",
+      /assets(%2F|\/)r19(%2F|\/)logo\.webp/,
+    );
     await expectNoBlockingA11y(page);
   });
 
@@ -258,7 +263,7 @@ test.describe("Bali Zero product-family noqata page Page", () => {
     await page.goto(`${MY_ORIGIN}/portal/messages`, {
       waitUntil: "domcontentloaded",
     });
-    const messages = page.getByRole("link", { name: "Messages" });
+    const messages = page.getByRole("link", { name: /Messages/i });
 
     await expect(messages).toBeVisible({ timeout: 30000 });
     await expect(messages).toHaveAttribute("href", "/portal/messages");

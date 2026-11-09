@@ -97,8 +97,13 @@ class TestInitCriticalServices:
         mock_ai = MagicMock()
         mock_ai_client.return_value = mock_ai
 
-        search_service, ai_client = await _init_critical_services(app)
+        mock_qdrant_response = MagicMock()
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_qdrant_get:
+            mock_qdrant_get.return_value = mock_qdrant_response
+            search_service, ai_client = await _init_critical_services(app)
 
+        mock_qdrant_get.assert_awaited_once_with("/collections")
+        mock_qdrant_response.raise_for_status.assert_called_once_with()
         assert search_service is not None
         assert ai_client is not None
 
@@ -162,8 +167,13 @@ class TestInitCriticalServices:
         mock_registry.has_critical_failures.return_value = True
         mock_registry.format_failures_message.return_value = "Critical services failed"
 
-        search_service, ai_client = await _init_critical_services(app)
+        mock_qdrant_response = MagicMock()
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_qdrant_get:
+            mock_qdrant_get.return_value = mock_qdrant_response
+            search_service, ai_client = await _init_critical_services(app)
 
+        mock_qdrant_get.assert_awaited_once_with("/collections")
+        mock_qdrant_response.raise_for_status.assert_called_once_with()
         assert ai_client is None, f"expected None on degraded init; got {ai_client!r}"
         assert hasattr(app.state, "degraded_services"), (
             "app.state.degraded_services must be set by @degraded_safe"
@@ -355,7 +365,7 @@ class TestInitializeDatabaseServices:
     @patch("backend.services.analytics.daily_checkin_notifier.init_daily_notifier")
     @patch("backend.services.analytics.team_timesheet_service.init_timesheet_service")
     @patch("backend.app.setup.service_initializer.settings")
-    @patch("backend.app.setup.service_initializer.asyncpg.create_pool", new_callable=AsyncMock)
+    @patch("backend.app.setup.service_initializer.create_database_pool", new_callable=AsyncMock)
     async def test_initialize_database_services_success(
         self,
         mock_create_pool,
@@ -411,12 +421,22 @@ class TestInitializeDatabaseServices:
         result = await initialize_database_services(app)
 
         assert result is not None
+        pool_call = mock_create_pool.await_args.kwargs
+        assert pool_call["dsn"] == mock_settings.database_url
+        policy = pool_call["policy"]
+        assert policy.min_size == 5
+        assert policy.max_size == 20
+        assert policy.command_timeout == 60
+        assert policy.max_inactive_connection_lifetime == 30.0
+        assert policy.statement_timeout_seconds == 30
+        assert policy.validate_on_connect is True
+        assert policy.validate_after_create is True
 
     @pytest.mark.asyncio
     @patch("backend.app.setup.service_initializer.asyncio.sleep")
     @patch("backend.app.setup.service_initializer.settings")
     @patch(
-        "backend.app.setup.service_initializer.asyncpg.create_pool",
+        "backend.app.setup.service_initializer.create_database_pool",
         new_callable=AsyncMock,
         side_effect=ConnectionError("Connection failed"),
     )

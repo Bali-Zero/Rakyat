@@ -6,12 +6,14 @@ import type { EditorialFeed } from "./journal/types";
 import type { JournalArticle } from "./journal/types";
 export function Journal({
   articles,
+  insights = [],
   indexHref = "/news",
   status = articles.length ? "ready" : "empty",
   fixture = false,
   featuredCount = 2,
 }: {
   articles: readonly JournalArticle[];
+  insights?: readonly JournalArticle[];
   indexHref?: string;
   status?: EditorialFeed["status"];
   fixture?: boolean;
@@ -19,6 +21,7 @@ export function Journal({
 }) {
   const [index, setIndex] = useState(0);
   const visible = status === "ready" ? articles : [];
+  const insightRow = status === "ready" ? insights : [];
   const stories = visible.slice(0, featuredCount);
   const currentIndex = index % Math.max(stories.length, 1);
   const current = stories[currentIndex];
@@ -46,7 +49,11 @@ export function Journal({
               <img
                 alt=""
                 className="brand-logo-3-img"
+                decoding="async"
+                height="120"
+                loading="lazy"
                 src="/assets/r19/brand-3.webp"
+                width="120"
               />
               <span>{"ALI"}</span>
               <span className="brand-zero">
@@ -117,6 +124,20 @@ export function Journal({
                 ) : null}
               </div>
               {stories.length > 1 ? (
+                // The stories behind "Next" stay in the page, hidden, as the
+                // earlier hero carousel kept its inactive slides: their links
+                // carry their homepage slot for the News Room live verifier.
+                <div hidden>
+                  {stories.map((story, storyIndex) =>
+                    storyIndex === currentIndex ? null : (
+                      <ArticleDestination article={story} key={story.slug}>
+                        {story.title}
+                      </ArticleDestination>
+                    ),
+                  )}
+                </div>
+              ) : null}
+              {stories.length > 1 ? (
                 <div className="carousel-controls">
                   <button
                     aria-label="Previous editorial story"
@@ -180,6 +201,24 @@ export function Journal({
             </div>
           ) : null}
         </div>
+        {insightRow.length ? (
+          <section
+            aria-labelledby="journal-insight-title"
+            className="journal-insight"
+          >
+            <span className="eyebrow" id="journal-insight-title">
+              Insight
+            </span>
+            <div className="journal-insight-grid">
+              {insightRow.map((article) => (
+                <article key={article.slug}>
+                  <StoryLink article={{ ...article, image: null }} />
+                  <StoryDate article={article} fixture={fixture} />
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
       </section>
     </div>
   );

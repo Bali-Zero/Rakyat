@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { SERIF_SECTION } from "./tokens";
 
 /**
- * One Fraunces sentence between two hairlines, and at most one action. No
+ * One Plex sentence between two hairlines, and at most one action. No
  * dashed box, no illustration: an empty desk is a fact, not a failure.
  */
 export function EmptyState({

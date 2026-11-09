@@ -7,6 +7,7 @@ import {
   normalizeCategory,
   publicSlug,
 } from "../src/lib/blog/categories";
+import { isPublishedFrontmatter } from "../src/lib/blog/publication";
 
 /**
  * AI Master Data Generator
@@ -29,6 +30,7 @@ const ARTICLES_ONLY = process.env.LLMS_GENERATE_ARTICLES_ONLY === "1";
 // The build sets ARTICLES_ONLY; a legacy FULL_ONLY=1 left in the environment
 // must not stop it before the ID export and the freshness block.
 const FULL_ONLY = process.env.LLMS_GENERATE_FULL_ONLY === "1" && !ARTICLES_ONLY;
+const LOCALE_FILE = /\.(id|it|ru|fr)\.mdx$/;
 
 async function generate(): Promise<void> {
   console.log("🚀 Generating AI Master Data files...");
@@ -51,12 +53,17 @@ async function generate(): Promise<void> {
         (file) => file.endsWith(".mdx") && !file.includes(".sync-conflict-"),
       );
 
+    const parsedFiles: {
+      file: string;
+      frontmatter: Record<string, any>;
+      content: string;
+    }[] = [];
     for (const file of files) {
       const filePath = path.join(categoryPath, file);
       const fileContents = fs.readFileSync(filePath, "utf8");
       let parsed: ReturnType<typeof matter>;
       try {
-        parsed = matter(fileContents);
+        parsed = matter(fileContents, {});
       } catch (error) {
         const message =
           error instanceof Error ? error.message.split("\n")[0] : String(error);
@@ -65,9 +72,27 @@ async function generate(): Promise<void> {
         console.warn(`Skipping ${relativePath}: ${message}`);
         continue;
       }
-      const { data: frontmatter, content } = parsed;
+      parsedFiles.push({
+        file,
+        frontmatter: parsed.data,
+        content: parsed.content,
+      });
+    }
 
-      if (frontmatter.status === "draft" || frontmatter.noIndex) continue;
+    // The site's rule (../src/lib/blog/publication): only published files
+    // count, and a translation is hidden with its unpublished English article.
+    const hiddenBases = new Set(
+      parsedFiles
+        .filter(
+          ({ file, frontmatter }) =>
+            !LOCALE_FILE.test(file) && !isPublishedFrontmatter(frontmatter),
+        )
+        .map(({ file }) => file),
+    );
+
+    for (const { file, frontmatter, content } of parsedFiles) {
+      if (!isPublishedFrontmatter(frontmatter) || frontmatter.noIndex) continue;
+      if (hiddenBases.has(file.replace(LOCALE_FILE, ".mdx"))) continue;
 
       // Category and slug both come from `../src/lib/blog/categories` — the same
       // table the site routes with. Deriving them from the folder name and the

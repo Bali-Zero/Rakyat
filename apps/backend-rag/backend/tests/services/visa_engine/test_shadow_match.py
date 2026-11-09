@@ -197,7 +197,7 @@ class TestBuildShadowFacts:
         assert f1 is not None and f2 is not None
         assert f1.assessment_id != f2.assessment_id
 
-    def test_exactly_3_known_and_53_unknown_fields(self) -> None:
+    def test_exactly_3_known_and_58_unknown_fields(self) -> None:
         # Widened 2026-08-23: `family.stepchild_marriage_certificate_confirmed`,
         # `family.stepchild_birth_certificate_confirmed` and
         # `family.sponsor_permit_basis` joined the applicant fact vocabulary
@@ -215,8 +215,8 @@ class TestBuildShadowFacts:
         # consent` joined the same way (57 total then), so 3/53 becomes
         # 3/54. Seq-28 Step A adds `work.annual_foreign_income_usd` with the
         # same rollout default (58 total then), so 3/54 becomes 3/55. E28A Step A
-        # adds `investment.own_shareholding_idr` the same way (59 total now),
-        # so 3/55 becomes 3/56.
+        # adds `investment.own_shareholding_idr` the same way. Optional sponsor
+        # confirmations bring the total to 61: 3 KNOWN and 58 UNKNOWN.
         # `build_shadow_facts` still only ever sets nationality,
         # purpose and duration KNOWN; that 3 is the invariant this test is
         # actually about, and a vocabulary extension must never move it.
@@ -225,9 +225,9 @@ class TestBuildShadowFacts:
         )
         assert facts is not None
         statuses = [getattr(facts.facts, name).status for name in type(facts.facts).model_fields]
-        assert len(statuses) == 59
+        assert len(statuses) == 61
         assert statuses.count("KNOWN") == 3
-        assert statuses.count("UNKNOWN") == 56
+        assert statuses.count("UNKNOWN") == 58
 
 
 # ---------------------------------------------------------------------------

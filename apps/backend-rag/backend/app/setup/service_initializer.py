@@ -41,8 +41,9 @@ import asyncpg
 from fastapi import FastAPI
 
 from backend.app.core.config import settings
-from backend.app.core.database import init_asyncpg_connection
+from backend.app.core.database import DatabasePoolPolicy, create_database_pool
 from backend.app.core.service_health import ServiceStatus, service_registry
+from backend.core.telegram_retirement import telegram_is_retired
 
 logger = logging.getLogger("zantara.backend")
 
@@ -485,63 +486,19 @@ async def initialize_database_services(app: FastAPI) -> asyncpg.Pool | None:
         try:
             logger.info(f"Database initialization attempt {attempt + 1}/{max_retries}")
 
-            # Prepare DSN and SSL options for asyncpg
-            dsn = settings.database_url
-            ssl_context = None
-
-            # Handle sslmode= manually for asyncpg (which doesn't support sslmode in DSN)
-            from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
-
-            parsed = urlparse(dsn)
-            params = parse_qs(parsed.query)
-            sslmode = params.pop("sslmode", [None])[0]
-            if sslmode == "disable":
-                ssl_context = False
-                logger.info("DEBUG: Detected sslmode=disable, setting ssl=False explicitly")
-            # Rebuild DSN without sslmode
-            clean_query = urlencode(params, doseq=True)
-            dsn = urlunparse(parsed._replace(query=clean_query))
-
-            # Create asyncpg pool for team timesheet service
-            async def init_db_connection(conn: asyncpg.Connection) -> None:
-                # Codec registration: the SINGLE canonical hook shared by every
-                # pool in this repo (see backend/app/core/database.py). Encoder
-                # is `functools.partial(json.dumps, default=str)`, not bare
-                # `json.dumps` — callers hand it native Python containers.
-                await init_asyncpg_connection(conn)
-                # Prevent runaway queries (30s covers RAG KG traversal ~5-10s)
-                await conn.execute("SET statement_timeout = '30s'")
-                # Validate connection
-                await conn.execute("SELECT 1")
-
-            # Configure pool kwargs
-            pool_kwargs = {
-                "dsn": dsn,
-                "min_size": getattr(settings, "db_pool_min_size", None) or 2,
-                "max_size": getattr(settings, "db_pool_max_size", None) or 10,
-                "command_timeout": getattr(settings, "db_command_timeout", None) or 30,
-                # 30s ensures stale connections are dropped before the first request hits
-                # after a Fly.io cold start (~35s). Previously 300s caused
-                # "connection was closed in the middle of operation" on POST /api/crm/clients.
-                # Combined with _database_health_check_loop (every 15s) and InterfaceError
-                # handler in exception_handlers.py → full stale connection coverage.
-                "max_inactive_connection_lifetime": 30.0,
-                "init": init_db_connection,
-                # Required for PgBouncer transaction mode — prevents prepared statement leak
-                "statement_cache_size": 0,
-            }
-
-            # Add ssl parameter if explicitly determined
-            if ssl_context is False:
-                pool_kwargs["ssl"] = False
-
-            db_pool = await asyncpg.create_pool(**pool_kwargs)
-
-            # Verify pool works
-            async with db_pool.acquire() as conn:
-                result = await conn.fetchval("SELECT 1")
-                if result != 1:
-                    raise ValueError("Pool validation failed")
+            db_pool = await create_database_pool(
+                dsn=settings.database_url,
+                policy=DatabasePoolPolicy(
+                    min_size=getattr(settings, "db_pool_min_size", None) or 2,
+                    max_size=getattr(settings, "db_pool_max_size", None) or 10,
+                    command_timeout=getattr(settings, "db_command_timeout", None) or 30,
+                    # 30s drops stale Fly connections before the first request.
+                    max_inactive_connection_lifetime=30.0,
+                    statement_timeout_seconds=30,
+                    validate_on_connect=True,
+                    validate_after_create=True,
+                ),
+            )
 
             from backend.services.analytics.attendance_monitor import AttendanceMonitor
             from backend.services.analytics.daily_checkin_notifier import init_daily_notifier
@@ -1139,7 +1096,7 @@ async def initialize_channel_router(
 
         # Register Telegram adapter (if configured)
         telegram_token = settings.telegram_bot_token
-        if telegram_token:
+        if telegram_token and not telegram_is_retired():
             telegram_config = {
                 "bot_token": telegram_token,
                 "max_message_length": 4096,
@@ -1150,7 +1107,7 @@ async def initialize_channel_router(
             channel_router.register_adapter("telegram", telegram_adapter)
             logger.info("✅ TelegramChannelAdapter registered")
         else:
-            logger.warning("⚠️ TELEGRAM_BOT_TOKEN not configured, Telegram adapter disabled")
+            logger.info("Telegram adapter disabled (integration retired)")
 
         # Register Web adapter (always enabled)
         web_config = {
@@ -2012,27 +1969,6 @@ async def initialize_services(app: FastAPI) -> None:
     logger.info(f"📊 Service Status: {service_registry.get_status()['overall']}")
 
 
-def _clean_database_dsn(dsn: str) -> tuple[str, bool | None]:
-    """
-    Clean DATABASE_URL for asyncpg compatibility.
-
-    Strips sslmode= param (asyncpg doesn't support it in DSN).
-    Returns (cleaned_dsn, ssl_context) where ssl_context is False
-    if sslmode=disable, None otherwise.
-    """
-    from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
-
-    parsed = urlparse(dsn)
-    params = parse_qs(parsed.query)
-    sslmode = params.pop("sslmode", [None])[0]
-    ssl_context: bool | None = None
-    if sslmode == "disable":
-        ssl_context = False
-    clean_query = urlencode(params, doseq=True)
-    cleaned_dsn = urlunparse(parsed._replace(query=clean_query))
-    return cleaned_dsn, ssl_context
-
-
 # Light-process pool creation retry. The api process declares readiness on
 # `app.state.db_pool` alone (`/health/ready`, light branch) and nothing else in
 # that process repairs a missing pool: `_database_health_check_loop` only runs
@@ -2105,74 +2041,18 @@ async def initialize_services_light(app: FastAPI) -> None:
 
     # 1. Database pool (CRITICAL)
     try:
-        dsn, ssl_ctx = _clean_database_dsn(settings.database_url)
-
-        async def _light_init_connection(conn):
-            """Set statement timeout + register the canonical jsonb codec.
-
-            The jsonb codec lets the application pass Python dicts/lists
-            directly to jsonb-typed parameters; asyncpg auto-serialises with
-            `JSONB_ENCODER` (`functools.partial(json.dumps, default=str)`)
-            and Postgres parses the result as a proper JSONB
-            object/array. Without this codec, code that already calls
-            json.dumps() before passing the string to the parameter ends up
-            storing it as a JSONB string scalar in production (symptom seen
-            on practices.metadata.discount_log: rows landed as
-            '"{\"discount_log\":[...]}"' instead of '{"discount_log":[...]}',
-            breaking `metadata ? 'discount_log'` and any jsonb_path_* query).
-            With the codec active the application-level json.dumps() becomes
-            WRONG, not merely redundant: asyncpg serializes a SECOND time and
-            the value lands as a JSONB scalar string. Any caller that still
-            pre-serializes is broken by this codec, not protected by it.
-
-            CORRECTED 2026-08-27 — this docstring used to say "the existing
-            `$N::jsonb` casts are harmless". They are not, and nothing had ever
-            checked. Measured with a real INSERT against a real Postgres, with
-            this codec registered: `VALUES ($1)` and `VALUES ($1::jsonb)` given
-            the same pre-serialized string BOTH store `jsonb_typeof = string`.
-            The cast does not route around the codec, so it cannot be used as
-            an escape hatch. Cost of the false claim: `check_store.py` kept its
-            `json.dumps` on the strength of it, and GARUDA VOA's first customer
-            action answered HTTP 500 on every request in production until
-            2026-08-27 (migration 286's CHECK calls `jsonb_array_length` on the
-            value, which raises SQLSTATE 22023 on a scalar).
-
-            CORRECTED AGAIN 2026-08-29 — the paragraph this used to carry here
-            said the encoder was bare `json.dumps` with no `default=str`,
-            "while `garuda_orders/journal.py` relies on `default=str`", and
-            called the still-unfixed callers "NOT one-line fixes" for that
-            reason. That gap is closed: the codec registered below is now
-            `JSONB_ENCODER` from `backend/app/core/database.py` — the SAME
-            `functools.partial(json.dumps, default=str)` object every pool in
-            this repo shares — so it is a strict superset of every caller's
-            own `default=str` serializer. `garuda_orders/journal.py`,
-            `garuda_orders/idempotency.py`, and `garuda_portal/idempotency.py`
-            no longer pre-serialize before binding to a jsonb/json parameter;
-            they hand this codec native Python containers directly.
-
-            Aligns the api pool with the existing full-init pool
-            (`init_db_connection` ~line 459), the standalone helper in
-            `backend/app/core/database.py::get_db_pool`, and the test fixture
-            in `backend/tests/fixtures/prod_shaped_pool.py` — all four call
-            `init_asyncpg_connection` (imported below), never their own
-            `set_type_codec`.
-            """
-            await conn.execute("SET statement_timeout = '30s'")
-            await init_asyncpg_connection(conn)
-
-        pool_kwargs: dict = {
-            "dsn": dsn,
-            "min_size": 2,
-            "max_size": 10,
-            "command_timeout": 60,
-            "max_inactive_connection_lifetime": 30.0,
-            "init": _light_init_connection,
-            # Required for PgBouncer transaction mode — prevents prepared statement leak
-            "statement_cache_size": 0,
-        }
-        if ssl_ctx is not None:
-            pool_kwargs["ssl"] = ssl_ctx
-        db_pool = await _create_light_db_pool_with_retry(lambda: asyncpg.create_pool(**pool_kwargs))
+        db_pool = await _create_light_db_pool_with_retry(
+            lambda: create_database_pool(
+                dsn=settings.database_url,
+                policy=DatabasePoolPolicy(
+                    min_size=2,
+                    max_size=10,
+                    command_timeout=60,
+                    max_inactive_connection_lifetime=30.0,
+                    statement_timeout_seconds=30,
+                ),
+            )
+        )
         if isinstance(db_pool, asyncpg.Pool):
             from backend.services.security.token_revocation import set_revocation_db_pool
 

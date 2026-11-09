@@ -60,308 +60,331 @@ ogImage: "/static/insights/tax/capital-gains-tax-indonesia.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "id"
+source_sha256: "3da20b7d6064b1e600db6547a8d280390b2ba1a08056011880f00664db6cff95"
 ---
 
-## Bagaimana Indonesia Mengenakan Pajak atas Keuntungan Modal
+import { HeaderWhatsAppCTA } from "@/components/blog/HeaderWhatsAppCTA";
+import { ArticleClusterCTA } from "@/components/blog/ArticleClusterCTA";
+import { KeyTakeaway } from "@/components/blog/interactive";
 
-Indonesia tidak memiliki sistem "pajak keuntungan modal" (capital gains tax) tunggal seperti di AS atau Inggris. Sebaliknya, keuntungan dari pelepasan berbagai jenis aset dikenakan pajak berdasarkan ketentuan terpisah dalam undang-undang pajak penghasilan (UU PPh), masing-masing dengan tarif dan mekanisme tersendiri.
+# Pajak Capital Gain Indonesia 2026: 2.5% Properti, 0.1% Saham, Pelepasan Aset
 
-Sebagian besar keuntungan modal di Indonesia dikenakan pajak sebagai **PPh Final** — pajak final bertarif tetap yang sederhana perhitungannya dan tidak memerlukan pelaporan lebih lanjut dalam SPT tahunan Anda. Ini adalah salah satu aspek sistem perpajakan Indonesia yang cukup ramah investor.
+<KeyTakeaway>
+  **TL;DR:** Pajak capital gain di Indonesia bervariasi berdasarkan aset: penjualan properti
+  dikenakan 2.5% PPh Final atas nilai transaksi (bukan keuntungan), saham tercatat sebesar
+  0.1% atas hasil bruto, saham tidak tercatat dengan tarif progresif hingga 35%. Sebagian besar
+  keuntungan bersifat "final" — tidak perlu dimasukkan lagi dalam SPT tahunan. Investor asing
+  yang menjual properti Indonesia membayar 2.5% terlepas dari jangka waktu kepemilikan.
+</KeyTakeaway>
 
-Berikut adalah gambaran umumnya:
+<HeaderWhatsAppCTA />
 
-| Jenis Aset                    | Tarif Pajak          | Mekanisme Pajak   | Dasar                      |
-| ----------------------------- | -------------------- | ----------------- | -------------------------- |
-| Tanah dan bangunan            | 2,5%                 | PPh Final         | Harga jual bruto atau NJOP |
-| Saham bursa (BEI)             | 0,1%                 | PPh Final         | Nilai transaksi bruto      |
-| Saham pendiri (IPO)           | 0,1% + 0,5%          | PPh Final         | Transaksi + nilai awal     |
-| Saham non-bursa (residen)     | Progresif 5-35%      | Pajak penghasilan | Keuntungan bersih          |
-| Saham non-bursa (non-residen) | 20% (atau tarif P3B) | Pajak pemotongan  | Keuntungan bersih          |
-| Aset lainnya                  | Progresif 5-35%      | Pajak penghasilan | Keuntungan bersih          |
+## Cara Indonesia Memajaki Capital Gain
 
-## Keuntungan Modal Properti: 2,5% PPh Final
+Indonesia tidak memiliki "pajak capital gain" terpadu seperti AS atau Inggris. Sebaliknya, keuntungan dari pelepasan berbagai jenis aset dikenakan pajak berdasarkan ketentuan terpisah dalam undang-undang pajak penghasilan (UU PPh), masing-masing dengan tarif dan mekanisme tersendiri.
 
-### Dasar-dasar
+Sebagian besar capital gain di Indonesia dikenakan sebagai **PPh Final** — pajak final bertarif flat yang mudah dihitung dan tidak memerlukan pelaporan lebih lanjut dalam Surat Pemberitahuan tahunan Anda. Ini adalah salah satu aspek yang lebih ramah investor dari sistem perpajakan Indonesia.
 
-Saat Anda menjual tanah atau bangunan di Indonesia, penjual membayar **2,5% PPh Final** dari nilai transaksi bruto berdasarkan PP No. 34/2016. Ini menggantikan tarif sebelumnya sebesar 5% (yang berlaku dari 2008-2016).
+Berikut ini ringkasannya:
+
+| Jenis Aset                     | Tarif Pajak          | Mekanisme Pajak      | Dasar Pengenaan              |
+| ------------------------------ | -------------------- | ------------------ | --------------------------- |
+| Tanah dan bangunan             | 2.5%                 | PPh Final          | Harga jual bruto atau NJOP    |
+| Saham tercatat (IDX)            | 0.1%                 | PPh Final          | Nilai transaksi bruto     |
+| Saham pendiri (IPO)           | 0.1% + 0.5%          | PPh Final          | Transaksi + nilai awal |
+| Saham tidak tercatat (residen)     | Progresif 5-35%    | Pajak penghasilan biasa | Keuntungan bersih                    |
+| Saham tidak tercatat (non-residen) | 20% (atau tarif perjanjian) | Pajak pemotongan    | Keuntungan bersih                    |
+| Aset lainnya                   | Progresif 5-35%    | Pajak penghasilan biasa | Keuntungan bersih                    |
+
+## Capital Gain Properti: 2.5% PPh Final
+
+### Dasar-Dasarnya
+
+Ketika Anda menjual tanah atau bangunan di Indonesia, penjual membayar **2.5% PPh Final** atas nilai transaksi bruto berdasarkan PP No. 34/2016. Ketentuan ini menggantikan tarif 5% sebelumnya (yang berlaku dari 2008-2016).
 
 Karakteristik utama:
 
-- **Pajak final** — tidak ada kewajiban lebih lanjut atas keuntungan tersebut
-- **Dari nilai bruto** — bukan dari laba (keuntungan), melainkan dari seluruh harga jual
-- **Tidak ada pengurangan** — harga beli, biaya renovasi, biaya agen tidak relevan untuk pajak ini
-- **Tidak ada manfaat masa kepemilikan** — tarif yang sama baik dimiliki 1 tahun maupun 20 tahun
+- **Pajak final** -- tidak ada kewajiban lebih lanjut atas keuntungan tersebut
+- **Atas nilai bruto** -- bukan atas laba (keuntungan), melainkan atas seluruh harga jual
+- **Tanpa pengurang** -- harga pembelian, biaya renovasi, komisi agen tidak relevan untuk pajak ini
+- **Tanpa manfaat jangka waktu kepemilikan** -- tarif sama baik dimiliki 1 tahun maupun 20 tahun
 
 ### Contoh Perhitungan
 
 **Contoh 1: Penjualan Vila di Seminyak**
 
-Anda membeli vila pada tahun 2020 seharga Rp 8.400.062.000 dan menjualnya pada tahun 2026 seharga Rp 8.400.003.000.
+Anda membeli vila pada tahun 2020 seharga IDR 5,000,000,000 dan menjualnya pada tahun 2026 seharga IDR 8,000,000,000.
 
-| Item                                 | Jumlah             |
-| ------------------------------------ | ------------------ |
-| Harga jual                           | Rp 8.400.003.000   |
-| NJOP                                 | Rp 6.000.000.020   |
-| Dasar pajak (mana yang lebih tinggi) | Rp 8.400.003.000   |
-| **PPh Final (2,5%)**                 | **Rp 200.000.010** |
-| Keuntungan aktual                    | Rp 9.900.000.027   |
-| Pajak efektif atas keuntungan        | 6,7%               |
+| Item                           | Jumlah              |
+| ------------------------------ | ------------------- |
+| Harga jual                     | IDR 8,000,000,000   |
+| NJOP                           | IDR 6,000,000,000   |
+| Dasar pajak (nilai tertinggi antara harga jual/NJOP) | IDR 8,000,000,000   |
+| **PPh Final (2.5%)**           | **IDR 200,000,000** |
+| Keuntungan aktual                    | IDR 3,000,000,000   |
+| Pajak efektif atas keuntungan          | 6.7%                |
 
 **Contoh 2: Penjualan Tanah di Ubud**
 
-Anda membeli lahan pertanian seharga Rp 800.000.000 dan menjualnya seharga Rp 2.000.000.100.
+Anda membeli tanah pertanian seharga IDR 800,000,000 dan menjualnya seharga IDR 2,000,000,000.
 
-| Item                          | Jumlah            |
-| ----------------------------- | ----------------- |
-| Harga jual                    | Rp 2.000.000.100  |
-| **PPh Final (2,5%)**          | **Rp 50.000.000** |
-| Keuntungan aktual             | Rp 9.900.000.022  |
-| Pajak efektif atas keuntungan | 4,2%              |
+| Item                  | Jumlah             |
+| --------------------- | ------------------ |
+| Harga jual            | IDR 2,000,000,000  |
+| **PPh Final (2.5%)**  | **IDR 50,000,000** |
+| Keuntungan aktual           | IDR 1,200,000,000  |
+| Pajak efektif atas keuntungan | 4.2%               |
 
 **Contoh 3: Jual Cepat (Skenario Rugi)**
 
-Anda membeli properti seharga Rp 9.900.000.027 dan terpaksa menjual seharga Rp 9.900.000.026 (rugi).
+Anda membeli properti seharga IDR 3,000,000,000 dan terpaksa menjualnya seharga IDR 2,500,000,000 (rugi).
 
-| Item                 | Jumlah            |
-| -------------------- | ----------------- |
-| Harga jual           | Rp 9.900.000.026  |
-| **PPh Final (2,5%)** | **Rp 62.500.000** |
-| Kerugian aktual      | (Rp 840.006.200)  |
+| Item                 | Jumlah             |
+| -------------------- | ------------------ |
+| Harga jual           | IDR 2,500,000,000  |
+| **PPh Final (2.5%)** | **IDR 62,500,000** |
+| Kerugian aktual          | (IDR 500,000,000)  |
 
-Bahkan saat Anda menjual dalam kondisi rugi, Anda tetap berutang 2,5% PPh Final. Tidak ada kompensasi kerugian, tidak ada carryforward, dan tidak ada pengecualian untuk penjualan yang merugi. Ini adalah sisi negatif dari sistem pajak final bertarif tetap.
+Bahkan ketika Anda menjual dengan kerugian, Anda tetap terutang PPh Final 2.5%. Tidak ada kompensasi kerugian, tidak ada carryforward, dan tidak ada pembebasan untuk penjualan yang merugi. Inilah sisi negatif dari sistem pajak final bertarif flat.
 
-### Pengecualian dari PPh Final Properti
+### Pembebasan dari PPh Final Properti
 
-Pengalihan properti tertentu dikecualikan dari PPh Final 2,5%:
+Pengalihan properti tertentu dibebaskan dari PPh Final 2.5%:
 
-| Pengecualian                       | Kondisi                                 |
-| ---------------------------------- | --------------------------------------- |
-| Pengambilalihan pemerintah         | Akuisisi wajib untuk kepentingan umum   |
-| Warisan                            | Pengalihan karena kematian              |
-| Nilai properti di bawah Rp 60 juta | Pengecualian nilai kecil                |
-| Rumah sederhana (RSS/RSH)          | Program perumahan bersubsidi pemerintah |
-| Restrukturisasi perusahaan         | Merger/spin-off tertentu yang disetujui |
+| Pembebasan                           | Syarat                                   |
+| ----------------------------------- | ------------------------------------------- |
+| Pengadaan tanah oleh pemerintah            | Pengambilalihan wajib untuk kepentingan umum  |
+| Warisan                         | Pengalihan karena kematian (tunduk pada aturan harta warisan) |
+| Nilai properti di bawah IDR 60 juta | Pembebasan nilai kecil                       |
+| Rumah sederhana (RSS/RSH)            | Program perumahan bersubsidi pemerintah      |
+| Restrukturisasi perusahaan               | Merger/pemisahan tertentu yang disetujui          |
 
 ### Proses Pembayaran PPh Final Properti
 
-1. **Hitung** pajak 2,5% dari nilai penjualan
-2. **Buat kode e-Billing** melalui DJP Online atau Coretax
-3. **Bayar** melalui transfer bank, ATM, atau online banking
-4. **Dapatkan SSP** (Surat Setoran Pajak) sebagai bukti
-5. **Serahkan** SSP ke PPAT/notaris sebelum menandatangani AJB
-6. **Laporkan** pada SPT Tahunan (meskipun pajaknya bersifat final)
+1. **Hitung** pajak 2.5% atas nilai penjualan
+2. **Buat e-Billing** melalui DJP Online atau Coretax
+3. **Bayar** melalui transfer bank, ATM, atau perbankan online
+4. **Peroleh SSP** (Surat Setoran Pajak) sebagai bukti
+5. **Serahkan** SSP kepada PPAT/notaris sebelum penandatanganan AJB
+6. **Laporkan** pada SPT Tahunan (meskipun pajaknya sendiri bersifat final)
 
 PPAT tidak akan menandatangani AJB tanpa bukti pembayaran PPh Final oleh penjual (dan pembayaran BPHTB oleh pembeli).
 
-## Keuntungan Modal Pasar Saham: 0,1% PPh Final
+## Capital Gain Pasar Saham: 0.1% PPh Final
 
-### Saham Tercatat di BEI
+### Saham Tercatat di IDX
 
-Keuntungan dari penjualan saham yang tercatat di Bursa Efek Indonesia (BEI) dikenakan pajak **0,1% PPh Final** dari nilai transaksi bruto berdasarkan PP No. 14/1997.
+Keuntungan dari penjualan saham yang tercatat di Bursa Efek Indonesia (IDX/BEI) dikenakan pajak **0.1% PPh Final** atas nilai transaksi bruto berdasarkan PP No. 14/1997.
 
-| Fitur           | Detail                          |
-| --------------- | ------------------------------- |
-| Tarif           | 0,1% dari nilai penjualan bruto |
-| Mekanisme       | Dipotong otomatis oleh broker   |
-| Tipe pajak      | PPh Final                       |
-| Pelaporan       | Tidak perlu pelaporan tambahan  |
-| Kompensasi rugi | Tidak tersedia                  |
+| Fitur     | Detail                           |
+| ----------- | -------------------------------- |
+| Tarif        | 0.1% dari nilai jual bruto         |
+| Mekanisme   | Otomatis dipotong oleh broker |
+| Jenis pajak    | PPh Final                        |
+| Pelaporan   | Tidak diperlukan pelaporan tambahan   |
+| Kompensasi kerugian | Tidak tersedia                    |
 
-**Contoh: Menjual Saham BEI**
+**Contoh: Menjual Saham IDX**
 
-Anda menjual saham senilai Rp 840.006.200 (terlepas dari harga beli):
+Anda menjual saham senilai IDR 500,000,000 (terlepas dari harga pembelian):
 
-- **PPh Final: 0,1% x Rp 840.006.200 = Rp 500.000**
+- **PPh Final: 0.1% x IDR 500,000,000 = IDR 500,000**
 
-Pajak tersebut secara otomatis dipotong oleh perusahaan sekuritas/broker Anda saat penjualan. Anda tidak perlu menghitung, melaporkan, atau membayar apa pun secara terpisah.
+Pajak otomatis dipotong oleh perusahaan sekuritas Anda pada saat penjualan. Anda tidak perlu menghitung, melaporkan, atau membayar apa pun secara terpisah.
 
 ### Saham Pendiri
 
-Pendiri perusahaan yang melakukan penawaran umum pijibal (IPO) di BEI memiliki kewajiban pajak tambahan:
+Para pendiri perusahaan yang go public di IDX memiliki kewajiban pajak tambahan:
 
-- **0,1%** PPh Final pada penjualan saham reguler (sama seperti semua investor)
-- **Tambahan 0,5%** PPh Final atas nilai saham pada saat IPO
+- **0.1%** PPh Final atas penjualan saham biasa (sama seperti semua investor)
+- **Tambahan 0.5%** PPh Final atas nilai yang dianggap dari saham pada saat IPO
 
-Tambahan 0,5% ini adalah pembayaran satu kali saat perusahaan mencatatkan sahamnya, dihitung dari nilai kepemilikan saham pendiri pada harga IPO.
+Tambahan 0.5% ini merupakan pembayaran satu kali saat perusahaan tercatat, dihitung atas nilai kepemilikan saham pendiri pada harga IPO.
 
-### Dividen vs Keuntungan Modal pada Saham
+### Dividen vs Capital Gain atas Saham
 
-Bagi investor yang memutuskan antara memegang saham untuk dividen versus menjual untuk keuntungan modal:
+Bagi investor yang memilih antara memegang saham untuk dividen versus menjual untuk capital gain:
 
-| Jenis Pendapatan                      | Tarif Pajak    | Mekanisme                                                    |
-| ------------------------------------- | -------------- | ------------------------------------------------------------ |
-| Dividen (bursa, diinvestasikan)       | 0%             | Bebas jika diinvestasikan kembali di Indonesia dalam 3 bulan |
-| Dividen (bursa, tidak diinvestasikan) | 10% PPh Final  | Dipotong oleh perusahaan                                     |
-| Keuntungan modal (saham bursa)        | 0,1% PPh Final | Dipotong oleh broker                                         |
-| Dividen (non-bursa, domestik)         | 10% PPh 23     | Dipotong oleh perusahaan                                     |
+| Jenis Penghasilan                        | Tarif Pajak       | Mekanisme                                         |
+| ---------------------------------- | -------------- | ------------------------------------------------- |
+| Dividen (tercatat, diinvestasikan kembali)     | 0%             | Bebas jika diinvestasikan kembali di Indonesia dalam 3 bulan |
+| Dividen (tercatat, tidak diinvestasikan kembali) | 10% PPh Final  | Dipotong oleh perusahaan                               |
+| Capital gain (saham tercatat)      | 0.1% PPh Final | Dipotong oleh broker                                |
+| Dividen (tidak tercatat, domestik)     | 10% PPh 23     | Dipotong oleh perusahaan                               |
 
-Tarif keuntungan modal 0,1% pada saham bursa termasuk yang terendah di dunia, membuat BEI menjadi pasar yang menarik dari perspektif efisiensi pajak.
+Tarif capital gain 0.1% atas saham tercatat termasuk yang terendah di dunia, menjadikan IDX pasar yang menarik dari sisi efisiensi pajak.
 
-## Pelepasan Saham Non-Bursa
+## Pelepasan Saham Tidak Tercatat
 
 ### Wajib Pajak Residen
 
-Saat wajib pajak residen menjual saham di perusahaan privat (tidak tercatat di BEI), keuntungan tersebut dikenakan pajak sebagai **penghasilan reguler** dengan tarif pajak progresif:
+Ketika wajib pajak dalam negeri menjual saham di perusahaan tertutup (tidak tercatat di IDX), keuntungan tersebut dikenakan pajak sebagai **penghasilan biasa** dengan tarif pajak progresif:
 
-| Lapisan Penghasilan Kena Pajak | Tarif |
-| ------------------------------ | ----- |
-| Sampai dengan Rp 60.000.000    | 5%    |
-| Rp 60.990.000 - 007.000,000    | 15%   |
-| Rp 250.000,990 - 000.009,000   | 25%   |
-| Rp 500.000,990 - 0.000.018,000 | 30%   |
-| Di atas Rp 5.000.000,000       | 35%   |
+| Lapisan Penghasilan Kena Pajak          | Tarif |
+| ------------------------------- | ---- |
+| Hingga IDR 60,000,000            | 5%   |
+| IDR 60,000,000 - 250,000,000    | 15%  |
+| IDR 250,000,000 - 500,000,000   | 25%  |
+| IDR 500,000,000 - 5,000,000,000 | 30%  |
+| Di atas IDR 5,000,000,000         | 35%  |
 
-Keuntungannya dihitung sebagai:
+Keuntungan dihitung sebagai:
 
-**Keuntungan = Harga Jual - Dasar Biaya (harga beli + biaya akuisisi)**
+**Keuntungan = Harga Jual - Dasar Biaya (harga beli + biaya perolehan)**
 
 **Contoh: Penjualan Saham PT PMA**
 
-Anda awalnya menginvestasikan Rp 9.900.000.026 untuk 49% saham PT PMA. Anda menjual saham Anda seharga Rp 8.400.062.000.
+Anda awalnya berinvestasi IDR 2,500,000,000 untuk 49% saham PT PMA. Anda menjual saham Anda seharga IDR 5,000,000,000.
 
-| Item                      | Jumlah               |
-| ------------------------- | -------------------- |
-| Harga jual                | Rp 8.400.062.000     |
-| Dasar biaya               | Rp 9.900.000.026     |
-| **Keuntungan kena pajak** | **Rp 9.900.000.026** |
+| Item             | Jumlah                |
+| ---------------- | --------------------- |
+| Harga jual       | IDR 5,000,000,000     |
+| Dasar biaya       | IDR 2,500,000,000     |
+| **Keuntungan kena pajak** | **IDR 2,500,000,000** |
 
-Keuntungan Rp 2,5 miliar ini ditambahkan ke penghasilan Anda lainnya untuk tahun tersebut dan dikenakan pajak dengan tarif progresif. Jika ini adalah satu-satunya penghasilan Anda, pajaknya kira-kira:
+Keuntungan IDR 2,500,000,000 ini ditambahkan ke penghasilan Anda lainnya untuk tahun tersebut dan dikenakan pajak dengan tarif progresif. Jika ini adalah satu-satunya penghasilan Anda, pajaknya kurang lebih:
 
-- 5% untuk Rp 60jt pertama = Rp 3.000.000
-- 15% untuk Rp 190jt berikutnya = Rp 28.500.000
-- 25% untuk Rp 250jt berikutnya = Rp 62.500.000
-- 30% untuk sisa Rp 2.000jt = Rp 600.000.002
-- **Total pajak: sekitar Rp 694.000.000** (tarif efektif: ~27,8%)
+- 5% atas IDR 60 jt pertama = IDR 3,000,000
+- 15% atas IDR 190 jt berikutnya = IDR 28,500,000
+- 25% atas IDR 250 jt berikutnya = IDR 62,500,000
+- 30% atas sisa IDR 2,000 jt = IDR 600,000,000
+- **Total pajak: kurang lebih IDR 694,000,000** (tarif efektif: ~27.8%)
 
 ### Wajib Pajak Non-Residen
 
 Non-residen yang melepas saham di perusahaan Indonesia menghadapi:
 
-- **20% pajak pemotongan** dari keuntungan bruto (atau tarif yang dikurangi berdasarkan perjanjian pajak/P3B)
-- Pembeli berkewajiban memotong dan menyetorkan ke kantor pajak
-- Banyak perjanjian pajak mengurangi tarif ini menjadi **10% atau 15%**
+- **20% pajak pemotongan** atas keuntungan bruto (atau tarif yang diturunkan berdasarkan perjanjian)
+- Pembeli wajib memotong dan menyetorkan ke kantor pajak
+- Banyak perjanjian pajak menurunkan tarif ini menjadi **10% atau 15%**
 
-**Contoh dengan Perjanjian Pajak (P3B):**
+**Contoh dengan Perjanjian Pajak:**
 
-Residen Singapura menjual saham di PT PMA Indonesia dengan keuntungan Rp 9.900.000.019:
+Seorang residen Singapura menjual saham di PT PMA Indonesia dengan keuntungan IDR 1,000,000,000:
 
-| Skenario                | Tarif | Pajak          |
-| ----------------------- | ----- | -------------- |
-| Tanpa P3B               | 20%   | Rp 200.000.010 |
-| P3B Indonesia-Singapura | 10%   | Rp 840.005.100 |
+| Skenario                   | Tarif | Pajak             |
+| -------------------------- | ---- | --------------- |
+| Tanpa perjanjian                  | 20%  | IDR 200,000,000 |
+| Perjanjian Indonesia-Singapura | 10%  | IDR 100,000,000 |
 
 Selalu periksa perjanjian pajak yang berlaku antara Indonesia dan negara domisili pajak Anda. Lihat [panduan Perjanjian Pajak Berganda](/taxes/double-taxation-treaties) kami untuk detailnya.
 
-## Situasi Keuntungan Modal Lainnya
+## Situasi Capital Gain Lainnya
 
 ### Kripto dan Aset Digital
 
-Pelepasan aset kripto dikenakan **PPh Final sebesar 0,1%** dari nilai transaksi saat diperdagangkan melalui bursa terdaftar di Indonesia (berdasarkan PMK 68/2024). Lihat [panduan Pajak Kripto](/taxes/crypto-tax-indonesia-2026) kami untuk rincian lengkapnya.
+Pelepasan mata uang kripto dikenakan **PPh Final sebesar 0.1%** atas nilai transaksi bila diperdagangkan melalui bursa Indonesia terdaftar (berdasarkan PMK 68/2024). Lihat [panduan Pajak Kripto](/taxes/crypto-tax-indonesia-2026) kami untuk uraian menyeluruh.
 
 ### Penjualan Kendaraan dan Peralatan
 
-Penjualan aset bisnis (kendaraan, mesin, peralatan) oleh perusahaan menghasilkan keuntungan atau kerugian yang merupakan bagian dari pendapatan perusahaan reguler:
+Penjualan aset usaha (kendaraan, mesin, peralatan) oleh perusahaan menghasilkan keuntungan atau kerugian yang merupakan bagian dari penghasilan badan biasa:
 
 - **Keuntungan** = Harga jual - Nilai buku (setelah penyusutan)
-- Dikenakan pajak tarif perusahaan sebesar **22%**
-- Kerugian dapat mengimbangi penghasilan lainnya
+- Dikenakan pajak dengan tarif badan sebesar **22%**
+- Kerugian dapat mengimbangi penghasilan lain
 
 ### Kekayaan Intelektual dan Goodwill
 
 Pelepasan aset tidak berwujud mengikuti prinsip yang sama:
 
-- Keuntungan = Hasil penjualan - Nilai buku yang diamortisasi
-- Tunduk pada pajak penghasilan perusahaan reguler sebesar 22%
-- Atau pajak pemotongan untuk penjual non-residen
+- Keuntungan = Hasil penjualan - Nilai buku yang telah diamortisasi
+- Tunduk pada pajak penghasilan badan biasa sebesar 22%
+- Atau pajak pemotongan bagi penjual non-residen
 
-### Reksa Dana
+### Reksa Dana (Reksa Dana)
 
-Keuntungan modal dari penebusan (redemption) reksa dana saat ini adalah:
+Capital gain dari penebusan reksa dana saat ini:
 
-- **0% pajak** untuk keuntungan yang direalisasikan dari unit reksa dana
-- Dividen yang didistribusikan oleh reksa dana mungkin dikenakan pajak secara terpisah
+- **Pajak 0%** untuk keuntungan yang direalisasikan dari unit reksa dana
+- Dividen yang dibagikan oleh reksa dana dapat dikenakan pajak secara terpisah
 
-Hal ini menjadikan reksa dana sebagai salah satu instrumen investasi yang paling efisien secara pajak di Indonesia.
+Hal ini menjadikan reksa dana salah satu sarana investasi yang paling efisien pajak di Indonesia.
 
-## Tabel Perbandingan Pajak Keuntungan Modal
+## Tabel Perbandingan Pajak Capital Gain
 
-| Aset                     | Tarif Residen   | Tarif Non-Residen | Final?   | Dasar             |
-| ------------------------ | --------------- | ----------------- | -------- | ----------------- |
-| Tanah/bangunan           | 2,5%            | 2,5%              | Ya       | Harga jual bruto  |
-| Saham bursa (BEI)        | 0,1%            | 0,1%              | Ya       | Nilai transaksi   |
-| Saham non-bursa          | 5-35% progresif | 20% (atau P3B)    | Tidak/Ya | Keuntungan bersih |
-| Kripto (bursa terdaftar) | 0,1%            | 0,1%              | Ya       | Nilai transaksi   |
-| Reksa dana               | 0%              | 0%                | N/A      | N/A               |
-| Aset bisnis              | 22% perusahaan  | 20% (atau P3B)    | Tidak    | Keuntungan bersih |
-| Saham pendiri (IPO)      | tambahan 0,5%   | tambahan 0,5%     | Ya       | Nilai IPO         |
+| Aset                        | Tarif Residen     | Tarif Non-Residen | Final? | Dasar Pengenaan              |
+| ---------------------------- | ----------------- | ----------------- | ------ | ----------------- |
+| Tanah/bangunan               | 2.5%              | 2.5%              | Ya    | Harga jual bruto  |
+| Saham tercatat (IDX)          | 0.1%              | 0.1%              | Ya    | Transaksi bruto |
+| Saham tidak tercatat              | 5-35% progresif | 20% (atau perjanjian)   | Tidak/Ya | Keuntungan bersih          |
+| Kripto (bursa terdaftar) | 0.1%              | 0.1%              | Ya    | Nilai transaksi |
+| Reksa dana                 | 0%                | 0%                | N/A    | N/A               |
+| Aset usaha              | 22% badan     | 20% (atau perjanjian)   | Tidak     | Keuntungan bersih          |
+| Saham pendiri (IPO)         | tambahan 0.5%   | tambahan 0.5%   | Ya    | Nilai IPO         |
 
 ## Strategi Perencanaan Pajak
 
-### 1. Memegang Properti Jangka Panjang
+### 1. Pegang Properti Jangka Panjang
 
-Karena PPh Final properti adalah 2,5% dari harga jual bruto berapapun keuntungannya, tarif pajak efektif atas laba aktual Anda akan menurun semakin lama Anda memegang properti tersebut. Properti yang nilainya naik dua kali lipat memiliki pajak keuntungan efektif sebesar 5%, sementara yang naik tiga kali lipat memiliki tarif efektif 3,75%.
+Karena PPh Final properti sebesar 2.5% dari harga jual bruto terlepas dari keuntungan, tarif pajak efektif atas laba aktual Anda menurun semakin lama Anda memegangnya. Properti yang nilainya berlipat ganda memiliki pajak efektif atas keuntungan sebesar 5%, sedangkan yang nilainya berlipat tiga memiliki tarif efektif 3.75%.
 
 ### 2. Gunakan Struktur Perusahaan Secara Strategis
 
-Jika Anda mengantisipasi penjualan saham PT PMA Anda (yang memiliki properti), perlakuan pajaknya berbeda dengan menjual properti secara langsung:
+Jika Anda berencana menjual saham PT PMA Anda (yang memegang properti), perlakuan pajaknya berbeda dari menjual properti secara langsung:
 
-- **Jual properti dari PT PMA**: 2,5% PPh Final dari harga jual bruto
-- **Jual saham PT PMA**: Tarif progresif atas keuntungan bersih (5-35%) untuk residen, atau tarif 20%/P3B untuk non-residen
+- **Jual properti dari PT PMA**: 2.5% PPh Final atas harga jual bruto
+- **Jual saham PT PMA**: Tarif progresif atas keuntungan bersih (5-35%) bagi residen, atau 20%/tarif perjanjian bagi non-residen
 
-Tergantung pada angkanya, salah satu jalur mungkin jauh lebih efisien secara pajak.
+Tergantung pada angkanya, salah satu jalur bisa jauh lebih efisien secara pajak.
 
-### 3. Investasikan Kembali Dividen dari Saham Bursa
+### 3. Investasikan Kembali Dividen dari Saham Tercatat
 
-Dividen dari saham bursa yang diinvestasikan kembali dalam instrumen sekuritas Indonesia dalam waktu 3 bulan dibebaskan dari PPh Final 10%. Jika Anda sedang membangun portofolio, ini menciptakan keunggulan bunga majemuk yang signifikan.
+Dividen dari saham tercatat yang diinvestasikan kembali pada efek Indonesia dalam 3 bulan dibebaskan dari PPh Final 10%. Jika Anda sedang membangun portofolio, hal ini menciptakan keuntungan compounding yang signifikan.
 
-### 4. Manfaatkan Perjanjian Pajak (P3B)
+### 4. Manfaatkan Perjanjian Pajak
 
-Non-residen harus selalu mengklaim manfaat perjanjian pajak saat melepas aset di Indonesia. Perbedaan antara 20% dan 10% pada penjualan saham dalam jumlah besar bisa mencapai puluhan atau ratusan juta rupiah.
+Non-residen harus selalu mengklaim manfaat perjanjian saat melepas aset Indonesia. Selisih antara 20% dan 10% atas penjualan saham dalam jumlah besar bisa mencapai puluhan atau ratusan juta IDR.
 
-### 5. Atur Waktu Pelepasan Aset Anda
+### 5. Atur Waktu Pelepasan Anda
 
-Untuk penjualan saham non-bursa yang dikenakan tarif progresif, waktu sangat penting. Jika Anda dapat membagi pelepasan besar menjadi dua tahun pajak, Anda dapat mengurangi tarif keseluruhan dengan tetap berada di lapisan tarif yang lebih rendah setiap tahunnya.
+Untuk penjualan saham tidak tercatat yang dikenakan pajak dengan tarif progresif, waktu sangat menentukan. Jika Anda dapat membagi pelepasan besar ke dalam dua tahun pajak, Anda dapat menurunkan tarif keseluruhan dengan tetap berada di lapisan yang lebih rendah setiap tahunnya.
 
-## Melaporkan Keuntungan Modal
+## Pelaporan Capital Gain
 
-### Keuntungan Pajak Final (Properti, Saham Bursa, Kripto)
+### Keuntungan PPh Final (Properti, Saham Tercatat, Kripto)
 
-Ini dilaporkan pada SPT Tahunan Anda di bagian "PPh Final". Karena pajaknya sudah dibayar, tidak ada pajak tambahan yang terutang. Anda cukup mengungkapkan transaksi tersebut.
+Keuntungan ini dilaporkan pada SPT Tahunan Anda di bagian "PPh Final". Karena pajak sudah dibayar, tidak ada tambahan pajak yang terutang. Anda hanya mengungkapkan transaksinya.
 
-### Keuntungan Non-Final (Saham Non-Bursa, Aset Bisnis)
+### Keuntungan Non-Final (Saham Tidak Tercatat, Aset Usaha)
 
-Ini harus dimasukkan dalam perhitungan penghasilan kena pajak Anda:
+Keuntungan ini harus dimasukkan dalam perhitungan penghasilan kena pajak Anda:
 
 1. **Hitung** keuntungan bersih (hasil penjualan dikurangi dasar biaya)
 2. **Masukkan** dalam total penghasilan kena pajak Anda untuk tahun tersebut
-3. **Terapkan** tarif progresif (atau tarif perusahaan 22%)
-4. **Bayar** pajak tambahan yang terutang melalui e-Billing
-5. **Laporkan** pada SPT Tahunan dengan dokumentasi pendukung
+3. **Terapkan** tarif progresif (atau tarif badan 22%)
+4. **Bayar** kekurangan pajak yang terutang melalui e-Billing
+5. **Laporkan** pada SPT Tahunan beserta dokumen pendukung
 
 ## Pertanyaan yang Sering Diajukan
 
+<ArticleClusterCTA slug="capital-gains-tax-indonesia" />
+
 ### Berapa pajak penjualan properti di Indonesia?
 
-Penjual membayar 2,5% PPh Final dari nilai transaksi bruto (atau NJOP, mana yang lebih tinggi). Ini adalah pajak final — tidak ada pengurangan untuk biaya pembelian, renovasi, atau masa kepemilikan. Untuk properti yang dijual seharga Rp 5 miliar, pajak penjualnya adalah Rp 125 juta.
+Penjual membayar 2.5% PPh Final atas nilai transaksi bruto (atau NJOP, mana yang lebih tinggi). Ini adalah pajak final -- tanpa pengurang untuk biaya pembelian, perbaikan, atau jangka waktu kepemilikan. Untuk properti yang dijual seharga IDR 5 miliar, pajak penjual adalah IDR 125 juta.
 
 ### Bagaimana saham dikenakan pajak saat dijual di Indonesia?
 
-Saham yang tercatat di BEI dikenakan pajak 0,1% PPh Final dari nilai transaksi bruto. Saham non-bursa (privat) dikenakan pajak dengan tarif progresif (5-35%) dari keuntungan aktual. Untuk saham pendiri perusahaan publik, berlaku tambahan pajak 0,5%.
+Saham tercatat di IDX dikenakan pajak 0.1% PPh Final atas nilai transaksi bruto. Saham tidak tercatat (tertutup) dikenakan pajak dengan tarif progresif (5-35%) atas keuntungan aktual. Untuk saham pendiri perusahaan tercatat, berlaku tambahan pajak 0.5%.
 
-### Apakah orang asing membayar pajak keuntungan modal di Indonesia?
+### Apakah orang asing membayar pajak capital gain di Indonesia?
 
-Ya. Orang asing non-residen yang melepas aset di Indonesia membayar: 2,5% untuk properti, 0,1% untuk saham bursa, dan pajak pemotongan 20% atas keuntungan dari saham non-bursa (atau tarif yang dikurangi berdasarkan perjanjian pajak yang berlaku).
+Ya. Orang asing non-residen yang melepas aset Indonesia membayar: 2.5% atas properti, 0.1% atas saham tercatat, dan 20% pajak pemotongan atas keuntungan dari saham tidak tercatat (atau tarif yang diturunkan berdasarkan perjanjian pajak yang berlaku).
 
-### Bisakah kerugian modal dikompensasikan dengan keuntungan?
+### Apakah kerugian modal dapat mengimbangi keuntungan?
 
-Untuk pajak PPh Final (properti, saham bursa), tidak — kerugian tidak dapat mengimbangi keuntungan. Untuk keuntungan non-final (saham non-bursa, aset bisnis), kerugian dalam kategori yang sama dapat mengimbangi keuntungan sebagai bagian dari perhitungan total penghasilan kena pajak Anda. Kerugian bisnis dapat dibawa ke depan (carry forward) hingga 5 tahun.
+Untuk pajak PPh Final (properti, saham tercatat), tidak -- kerugian tidak dapat mengimbangi keuntungan. Untuk keuntungan non-final (saham tidak tercatat, aset usaha), kerugian dalam kategori yang sama dapat mengimbangi keuntungan sebagai bagian dari perhitungan total penghasilan kena pajak Anda. Kerugian usaha dapat dibawa ke depan hingga 5 tahun.
 
-### Apakah ada pengecualian pajak keuntungan modal untuk tempat tinggal utama?
+### Apakah ada pembebasan pajak capital gain untuk rumah utama?
 
-Indonesia saat ini tidak menawarkan pengecualian tempat tinggal utama untuk pajak keuntungan modal. PPh Final 2,5% berlaku untuk semua penjualan properti terlepas dari apakah itu rumah utama Anda atau bukan.
+Indonesia saat ini tidak memberikan pembebasan rumah utama untuk pajak capital gain. PPh Final 2.5% berlaku untuk semua penjualan properti terlepas dari apakah itu rumah utama Anda.
 
-## Dapatkan Saran Pakar Pajak Keuntungan Modal
+## Dapatkan Saran Ahli Pajak Capital Gain
 
-Pajak keuntungan modal di Indonesia memiliki banyak aspek — tarif yang berbeda untuk aset yang berbeda, perlakuan final vs non-final, implikasi perjanjian pajak bagi non-residen, dan struktur perusahaan vs pribadi. Salah langkah bisa merugikan jutaan rupiah. Tim penasihat pajak Bali Zero membantu investor asing dan pemilik bisnis mengoptimalkan posisi pajak keuntungan modal mereka, baik saat Anda menjual properti, keluar dari PT PMA, atau merestrukturisasi investasi Anda.
+Pajak capital gain di Indonesia memiliki banyak aspek yang bergerak — tarif berbeda untuk
+aset berbeda, perlakuan final vs non-final, implikasi perjanjian bagi
+non-residen, serta struktur badan vs pribadi. Kesalahan bisa
+merugikan jutaan. Bicaralah dengan penasihat pajak BaliZero untuk mengoptimalkan posisi Anda
+sebelum bertransaksi.
 
-Hubungi Bali Zero di **info@balizero.com** atau **+62 821 3454 721** (WhatsApp) untuk perencanaan pajak keuntungan modal yang dipersonalisasi.
+<HeaderWhatsAppCTA />

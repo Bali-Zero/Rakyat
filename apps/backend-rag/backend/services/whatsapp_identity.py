@@ -86,8 +86,8 @@ def normalize_phone(raw: str | None) -> str | None:
     """Reduce a phone number to bare national digits.
 
     Strips everything non-numeric, then a leading ``62`` (Indonesia
-    country code) or ``0`` (national prefix) so ``+62 000-001``,
-    ``0821345`` and ``62000001`` all compare equal.
+    country code) or ``0`` (national prefix) so ``+62 821-345``,
+    ``0821345`` and ``62821345`` all compare equal.
     """
     if not raw:
         return None
@@ -169,14 +169,8 @@ async def resolve_sender_identity(
         OSError,
         TimeoutError,
     ):
-        logger.warning(
-            "Sender identity lookup failed for phone=%s",
-            redact_identifier_for_log(phone),
-            exc_info=True,
-        )
+        logger.warning('Sender identity lookup failed for phone=%s', redact_identifier_for_log(phone))
     except Exception:
-        logger.exception(
-            "Sender identity resolution failed for phone=%s", redact_identifier_for_log(phone)
-        )
+        logger.error('Sender identity resolution failed for phone=%s', redact_identifier_for_log(phone))
 
     return {"role": "unknown"}

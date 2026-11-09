@@ -76,13 +76,13 @@ Biaya (PNBP)
 Masa tinggal hingga 1 tahun : Rp. 6.000.000,-
 Komponen biaya:
 Visa Tinggal Terbatas: Rp500.000,00
-Biaya Verifikasi Visa Kategori I: Rp1.000.001,00
+Biaya Verifikasi Visa Kategori I: Rp1.000.000,00
 Izin Tinggal Terbatas paling lama 1 tahun: Rp3.000.000,00
 Izin Masuk Kembali paling lama 1 tahun:  Rp1.500.000,00
 Masa tinggal hingga 2 tahun : Rp. 8.500.000,-
 Komponen biaya:
 Visa Tinggal Terbatas: Rp500.000,00
-Biaya Verifikasi Visa Kategori I: Rp1.000.001,00
+Biaya Verifikasi Visa Kategori I: Rp1.000.000,00
 Izin Tinggal Terbatas paling lama 2 tahun: Rp5.000.000,00
 Izin Masuk Kembali paling lama 2 tahun: Rp2.000.000,00
 Penjamin (Sponsor)
@@ -131,7 +131,7 @@ Don't show this again
 Jl. H.R. Rasuna Said, Kav. X6, No. 8,
 Kuningan, Jakarta Selatan,
 DKI Jakarta, Indonesia
-uxxxxx3@dxxxxxx1.go.id
+contact@imigrasi.go.id
 Layanan Situs
 Paspor
 Visa Indonesia

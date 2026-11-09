@@ -34,6 +34,7 @@ from backend.app.metrics import metrics_collector
 from backend.app.utils.tracing import (
     trace_span,
 )
+from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.classification.intent_classifier import IntentClassifier
 from backend.services.misc.clarification_service import ClarificationService
 from backend.services.misc.context_window_manager import ContextWindowManager
@@ -318,8 +319,8 @@ class AgenticRAGOrchestrator:
                 elapsed = (time.perf_counter() - t0) * 1000
                 results["memory"] = f"ok ({elapsed:.0f}ms)"
             except Exception as e:
-                results["memory"] = f"failed: {e}"
-                logger.warning("⚠️ MemoryOrchestrator eager init failed: %s", e)
+                results["memory"] = f"failed: {type(e).__name__}"
+                logger.warning('⚠️ MemoryOrchestrator eager init failed: %s', type(e).__name__)
 
         async def _init_kg_langgraph() -> None:
             if self.kg_langgraph_orchestrator and hasattr(
@@ -331,8 +332,8 @@ class AgenticRAGOrchestrator:
                     elapsed = (time.perf_counter() - t0) * 1000
                     results["kg_langgraph"] = f"ok ({elapsed:.0f}ms)"
                 except Exception as e:
-                    results["kg_langgraph"] = f"failed: {e}"
-                    logger.warning("⚠️ KG LangGraph eager init failed: %s", e)
+                    results["kg_langgraph"] = f"failed: {type(e).__name__}"
+                    logger.warning('⚠️ KG LangGraph eager init failed: %s', type(e).__name__)
 
         # Run independent async initializations in parallel
         await asyncio.gather(_init_memory(), _init_kg_langgraph(), return_exceptions=True)
@@ -416,15 +417,7 @@ class AgenticRAGOrchestrator:
         tool_execution_counter = {"count": 0}
 
         # 🔍 TRACING: Parent span for entire query processing
-        with trace_span(
-            "orchestrator.process_query",
-            {
-                "user_id": user_id or "anonymous",
-                "query_length": len(query),
-                "session_id": session_id or "none",
-                "has_history": bool(conversation_history),
-            },
-        ):
+        with trace_span('orchestrator.process_query', {'user_id': redact_identifier_for_log(user_id) if user_id else 'anonymous', 'query_length': len(query), 'session_id': redact_identifier_for_log(session_id) if session_id else 'none', 'has_history': bool(conversation_history)}, safe_diagnostics=True):
             # Delegate to OrchestratorCore
             logger.debug("Delegating process_query to OrchestratorCore")
             result = await self.core.process_query_core(
@@ -464,11 +457,9 @@ class AgenticRAGOrchestrator:
                         metrics_collector=metrics_collector,
                         memory_subject=memory_subject,
                     )
-                    logger.debug(
-                        "🧠 [Sync] Dispatched memory save task for %s", effective_subject
-                    )
+                    logger.debug('🧠 [Sync] Dispatched memory save task for %s', redact_identifier_for_log(effective_subject))
                 except Exception as mem_err:
-                    logger.warning("⚠️ [Sync] Failed to dispatch memory save: %s", mem_err)
+                    logger.warning('⚠️ [Sync] Failed to dispatch memory save: %s', type(mem_err).__name__)
 
             return result
 

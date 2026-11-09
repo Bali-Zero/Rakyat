@@ -1,4 +1,4 @@
-"""Token set + TELEGRAM_OWNER_CHAT_ID unset: report the real cause, skip only the send, keep the rest of the flow."""
+"""Retirement with stale token: skip only Telegram, preserve non-Telegram work."""
 
 from __future__ import annotations
 
@@ -36,16 +36,18 @@ def test_m13_checkpoint_still_promotes_and_returns_zero(monkeypatch, tmp_path, c
         assert mod.main() == 0
     promote.assert_called_once()
     urlopen.assert_not_called()
-    assert "TELEGRAM_OWNER_CHAT_ID not set" in caplog.text
+    assert mod.telegram_is_retired() is True
+    assert "TELEGRAM_OWNER_CHAT_ID not set" not in caplog.text
 
 
-def test_m13_weekly_logs_the_missing_chat_id(caplog):
+def test_m13_weekly_retirement_skips_only_notification(caplog):
     from backend.services.sota_loop import m13_weekly as mod
 
     with patch("urllib.request.urlopen") as urlopen, caplog.at_level(logging.WARNING):
         mod._notify_telegram({}, [], False, "")
     urlopen.assert_not_called()
-    assert "TELEGRAM_OWNER_CHAT_ID not set" in caplog.text
+    assert mod.telegram_is_retired() is True
+    assert "TELEGRAM_OWNER_CHAT_ID not set" not in caplog.text
 
 
 def _load(name: str):
@@ -68,7 +70,7 @@ def _load(name: str):
         ("crm_quality_bot", "send_telegram"),
     ],
 )
-def test_scripts_name_the_missing_chat_id_and_send_nothing(monkeypatch, caplog, name, func):
+def test_retired_scripts_send_nothing_even_with_stale_token(monkeypatch, caplog, name, func):
     monkeypatch.setenv("ENTITY_LINKER_DB_URL", "postgresql://u:p@localhost:1/x")
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:1/x")
     monkeypatch.setenv("QDRANT_API_KEY", "x")
@@ -79,11 +81,12 @@ def test_scripts_name_the_missing_chat_id_and_send_nothing(monkeypatch, caplog, 
     with patch("httpx.AsyncClient") as client, caplog.at_level(logging.DEBUG):
         asyncio.run(getattr(module, func)("hello"))
     client.assert_not_called()
-    assert "TELEGRAM_OWNER_CHAT_ID not set" in caplog.text
+    assert module.telegram_is_retired() is True
+    assert "TELEGRAM_OWNER_CHAT_ID not set" not in caplog.text
     assert "TELEGRAM_BOT_TOKEN not set" not in caplog.text
 
 
-def test_email_audit_names_the_missing_chat_id(monkeypatch, caplog):
+def test_email_audit_retirement_skips_notification(monkeypatch, caplog):
     from backend.services.notifications import email_audit
 
     monkeypatch.setattr(email_audit, "_OWNER_CHAT_ID", "")
@@ -97,7 +100,8 @@ def test_email_audit_names_the_missing_chat_id(monkeypatch, caplog):
                 error="e",
             )
     urlopen.assert_not_called()
-    assert "TELEGRAM_OWNER_CHAT_ID not set" in caplog.text
+    assert email_audit.telegram_is_retired() is True
+    assert "TELEGRAM_OWNER_CHAT_ID not set" not in caplog.text
     assert "TELEGRAM_BOT_TOKEN not set" not in caplog.text
 
 

@@ -339,9 +339,9 @@ Peraturan Pemerintah menetapkan nilai minimum untuk pembelian oleh warga asing:
       id: "price",
       label: "Harga Pembelian (IDR)",
       type: "number",
-      defaultValue: 9900000027,
-      min: 840006200,
-      step: 840005100,
+      defaultValue: 3000000000,
+      min: 500000000,
+      step: 100000000,
       suffix: "IDR"
     }
   ]}
@@ -351,7 +351,7 @@ Peraturan Pemerintah menetapkan nilai minimum untuk pembelian oleh warga asing:
     // Biaya transfer
     const bphtb = price * 0.05; // Pajak transfer pembeli
     const notary = price * 0.01; // Biaya notaris (perkiraan)
-    const registration = 1000001; // Pendaftaran BPN
+    const registration = 1000000; // Pendaftaran BPN
 
     // Penjual membayar, tetapi memengaruhi negosiasi
     const pph = price * 0.025; // Pajak penghasilan penjual
@@ -368,7 +368,7 @@ Peraturan Pemerintah menetapkan nilai minimum untuk pembelian oleh warga asing:
         { label: "Total Biaya", amount: totalBuyerCosts }
       ],
       currency: "IDR",
-      note: `Penjual juga membayar PPh ${(pph / 1000001).toFixed(0)}M (2.5%)`
+      note: `Penjual juga membayar PPh ${(pph / 1000000).toFixed(0)}M (2.5%)`
     };
 
 }}

@@ -22,6 +22,16 @@ from backend.app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _confidence_label(value: Any) -> str:
+    # Format first, exactly as the old f-string did: a value that is not a
+    # number, or overflows a float, raises here at the same point, so the
+    # extraction falls back the same way it always has. Only a number in
+    # [0, 1] reaches the log; anything else the model put in that field is
+    # model output and stays out of it.
+    formatted = f"{value:.2f}"
+    return formatted if 0 <= value <= 1 else "out_of_range"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # AICRMExtractor (from ai_crm_extractor.py)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -109,26 +119,29 @@ Extract the following information and return ONLY valid JSON (no markdown, no ex
                 content = content.strip()
             extracted_data = json.loads(content)
             client_confidence = extracted_data.get("client", {}).get("confidence", 0.0)
-            logger.info(f"✅ Extracted CRM data with {client_confidence:.2f} client confidence")
+            logger.info(
+                "✅ Extracted CRM data with %s client confidence",
+                _confidence_label(client_confidence),
+            )
 
             # Threshold: low-confidence extractions should not auto-populate CRM
             if client_confidence < 0.7:
                 logger.warning(
-                    f"⚠️ Low confidence extraction ({client_confidence:.2f} < 0.70) — "
-                    f"marking as low_confidence to prevent auto-assignment"
+                    "⚠️ Low confidence extraction (%s < 0.70) — "
+                    "marking as low_confidence to prevent auto-assignment",
+                    _confidence_label(client_confidence),
                 )
                 extracted_data["_low_confidence"] = True
 
             return extracted_data
-        except json.JSONDecodeError as e:
-            logger.error("❌ Failed to parse extraction JSON: %s", e, exc_info=True)
-            logger.error("Raw response: %s", content, exc_info=True)
+        except json.JSONDecodeError:
+            logger.error("❌ Failed to parse extraction JSON (%d chars)", len(content))
             return self._get_empty_extraction()
         except (httpx.HTTPError, KeyError, ValueError) as e:
-            logger.error("❌ Extraction failed (LLM/data): %s", e, exc_info=True)
+            logger.error("❌ Extraction failed (LLM/data): %s", type(e).__name__)
             return self._get_empty_extraction()
         except Exception as e:
-            logger.error("❌ Extraction failed (unexpected): %s", e, exc_info=True)
+            logger.error("❌ Extraction failed (unexpected): %s", type(e).__name__)
             return self._get_empty_extraction()
 
     def _get_empty_extraction(self) -> dict:
@@ -266,10 +279,10 @@ class BirthplaceEnrichmentService:
             logger.error("Ollama request timed out")
             return None
         except httpx.HTTPError as e:
-            logger.error("Ollama request failed (HTTP): %s", e)
+            logger.error("Ollama request failed (HTTP): %s", type(e).__name__)
             return None
         except Exception as e:
-            logger.error("Ollama request failed (unexpected): %s", e, exc_info=True)
+            logger.error("Ollama request failed (unexpected): %s", type(e).__name__)
             return None
 
     def build_enrichment_prompt(self, birthplace: str, nationality: str | None) -> str:
@@ -302,14 +315,14 @@ Return ONLY the JSON object, no additional text."""
                 return json.loads(json_match.group())
             return None
         except json.JSONDecodeError:
-            logger.warning(f"Failed to parse Ollama response as JSON: {response[:200]}")
+            logger.warning("Failed to parse Ollama response as JSON (%d chars)", len(response))
             return None
 
     async def enrich_client(self, client: dict) -> bool:
         client_id = client["id"]
         birthplace = client["birthplace"]
         nationality = client.get("nationality")
-        logger.info("Enriching birthplace for client %s: %s", client_id, birthplace)
+        logger.info("Enriching birthplace for client %s", client_id)
 
         prompt = self.build_enrichment_prompt(birthplace, nationality)
         response = await self.call_ollama(prompt)
@@ -347,13 +360,18 @@ Return ONLY the JSON object, no additional text."""
                 )
                 logger.info("Successfully enriched client %s", client_id)
                 return True
-        except (asyncpg.PostgresError, asyncpg.InterfaceError, json.JSONDecodeError, TypeError) as e:
+        except (
+            asyncpg.PostgresError,
+            asyncpg.InterfaceError,
+            json.JSONDecodeError,
+            TypeError,
+        ) as e:
             logger.error(
-                "Failed to update client %s (DB/serialization): %s", client_id, e, exc_info=True
+                "Failed to update client %s (DB/serialization): %s", client_id, type(e).__name__
             )
             return False
         except Exception as e:
-            logger.error("Failed to update client %s (unexpected): %s", client_id, e, exc_info=True)
+            logger.error("Failed to update client %s (unexpected): %s", client_id, type(e).__name__)
             return False
 
     async def run_batch_enrichment(self) -> dict[str, Any]:
@@ -472,17 +490,18 @@ async def _generate_title_via_ollama(
         if not result:
             return None
         title = _clean_title(result, max_length)
-        logger.info('✅ Generated title for conv %s via Ollama: "%s"', conversation_id, title)
+        logger.info("Generated title for conv %s via Ollama", conversation_id)
         return title
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        logger.warning("Ollama title generation error for conv %s: %s", conversation_id, e)
+        logger.warning(
+            "Ollama title generation error for conv %s: %s", conversation_id, type(e).__name__
+        )
         return None
     except Exception as e:
         logger.warning(
             "Ollama title generation unexpected error for conv %s: %s",
             conversation_id,
-            e,
-            exc_info=True,
+            type(e).__name__,
         )
         return None
 
@@ -507,17 +526,18 @@ async def _generate_title_via_gemini(
         if not result or not result.get("text"):
             return None
         title = _clean_title(result["text"], max_length)
-        logger.info('✅ Generated title for conv %s via Gemini: "%s"', conversation_id, title)
+        logger.info("Generated title for conv %s via Gemini", conversation_id)
         return title
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        logger.warning("Gemini title generation error for conv %s: %s", conversation_id, e)
+        logger.warning(
+            "Gemini title generation error for conv %s: %s", conversation_id, type(e).__name__
+        )
         return None
     except Exception as e:
         logger.warning(
             "Gemini title generation unexpected error for conv %s: %s",
             conversation_id,
-            e,
-            exc_info=True,
+            type(e).__name__,
         )
         return None
 

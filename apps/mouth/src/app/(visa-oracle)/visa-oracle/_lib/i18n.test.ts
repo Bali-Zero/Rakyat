@@ -45,7 +45,7 @@ describe("i18n.ts — EN/ID key parity", () => {
     // Eligibility sense only: "qualification" (credentials) is deliberately excluded.
     const qualifyingKeys = (
       Object.keys(dict.en) as Array<keyof typeof dict.en>
-    ).filter((key) => /\bqualif(y|qodo|ies|ied)\b/i.test(dict.en[key]));
+    ).filter((key) => /\bqualif(y|ying|ies|ied)\b/i.test(dict.en[key]));
     expect(qualifyingKeys.length).toBeGreaterThan(0);
     expect(qualifyingKeys).toContain("q.investment_vehicle.opt.property");
     expect(qualifyingKeys).toContain("q.secondhome_basis.opt.property");

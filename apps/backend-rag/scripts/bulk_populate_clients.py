@@ -42,7 +42,7 @@ _db_env = os.getenv("DATABASE_URL", "")
 DB = (
     _db_env.replace("postgres://", "postgresql://")
     if _db_env
-    else "postgresql://backend_rag_v2:<<ROTATED_2026_05_22_see_DATABASE_URL_env>>@localhost:15432/nuzantara_rag?sslmode=disable"
+    else os.environ["DATABASE_URL"]
 )
 
 # Category map for document names → DB category
@@ -184,7 +184,7 @@ async def get_drive_access_token(conn: asyncpg.Connection) -> str:
 
 SA_PATH = os.path.expanduser("~/Desktop/nuzantara-9ae2756d7fcc.json")
 
-# OAuth credentials from rclone bukili remote (uxxxxxxxxxxxx1@gmail.com)
+# OAuth credentials from rclone gdrive remote (the owner's personal Gmail account)
 # These can access folders owned by all team members.
 # IMPORTANT: set GOOGLE_OAUTH_CLIENT_ID_RCLONE, GOOGLE_OAUTH_CLIENT_SECRET_RCLONE,
 # and GOOGLE_OAUTH_REFRESH_TOKEN as env vars.
@@ -709,7 +709,7 @@ async def process_company(
                 pt_name = f["name"].strip()
                 break
 
-    # 3. Try file names (e.g. AKTA PT Wamo.pdf)
+    # 3. Try file names (e.g. AKTA PT Nils.pdf)
     if not pt_name:
         for f in company_files:
             name_up = f["name"].upper()

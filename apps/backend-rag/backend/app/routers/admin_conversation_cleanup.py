@@ -34,6 +34,10 @@ from backend.core.retention_policy import (
     clock_delete_allowed,
     enforce_retention_floor,
 )
+from backend.db.repositories.conversation_repository import (
+    conversation_write_connection,
+    lock_conversation_identities,
+)
 
 logger = get_logger(__name__)
 
@@ -161,8 +165,8 @@ async def run_conversation_cleanup(
     deleted_count = 0
     anonymized_count = 0
 
-    async with pool.acquire() as conn:
-        if dry_run:
+    if dry_run:
+        async with pool.acquire() as conn:
             # Count only — no writes
             deleted_count = (
                 await conn.fetchval(
@@ -189,20 +193,36 @@ async def run_conversation_cleanup(
                 deleted_count,
                 anonymized_count,
             )
-        else:
+    else:
+        lock_cutoff = max(delete_cutoff, anonymize_cutoff)
+        async with conversation_write_connection(pool) as conn:
+            identities = await conn.fetch(
+                """
+                SELECT id, session_id FROM conversations
+                WHERE created_at < $1
+                """,
+                lock_cutoff,
+            )
+            await lock_conversation_identities(
+                conn,
+                [(row["session_id"], row["id"]) for row in identities],
+            )
+            row_ids = [row["id"] for row in identities]
+            await conn.fetch(
+                """
+                SELECT id FROM conversations
+                WHERE created_at < $1 AND id = ANY($2) ORDER BY id FOR UPDATE
+                """,
+                lock_cutoff,
+                row_ids,
+            )
+
             # 1. Hard-delete old conversations
             result = await conn.execute(
-                "DELETE FROM conversations WHERE created_at < $1",
+                "DELETE FROM conversations WHERE created_at < $1 AND id = ANY($2)",
                 delete_cutoff,
+                row_ids,
             )
-            # asyncpg returns "DELETE N" as a string
-            try:
-                deleted_count = int(result.split()[-1])
-            except (ValueError, IndexError, AttributeError):
-                deleted_count = 0
-
-            logger.info(f"Deleted {deleted_count} conversations older than {delete_cutoff.date()}")
-
             # 2. Anonymize remaining conversations in the anonymize window
             # (older than anonymize_cutoff but not deleted above)
             anon_result = await conn.execute(
@@ -217,20 +237,20 @@ async def run_conversation_cleanup(
                 WHERE created_at < $1
                   AND created_at >= $2
                   AND (metadata->>'anonymized') IS DISTINCT FROM 'true'
+                  AND id = ANY($4)
                 """,
                 anonymize_cutoff,
                 delete_cutoff,
                 now.isoformat(),
+                row_ids,
             )
-            try:
-                anonymized_count = int(anon_result.split()[-1])
-            except (ValueError, IndexError, AttributeError):
-                anonymized_count = 0
-
-            logger.info(
-                f"Anonymized {anonymized_count} conversations between "
-                f"{delete_cutoff.date()} and {anonymize_cutoff.date()}"
-            )
+        deleted_count = int(result.split()[-1]) if result else 0
+        anonymized_count = int(anon_result.split()[-1]) if anon_result else 0
+        logger.info(
+            "Conversation retention applied: deleted=%s anonymized=%s",
+            deleted_count,
+            anonymized_count,
+        )
 
     duration_ms = (datetime.now(timezone.utc) - start).total_seconds() * 1000
 

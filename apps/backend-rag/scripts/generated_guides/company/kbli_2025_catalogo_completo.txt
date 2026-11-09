@@ -107,7 +107,7 @@ SEKTOR I.A
 10214 — PENGOLAHAN DAN PENGAWETAN IKAN DENGAN PEMINDANGAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil: Menengah Rendah → NIB dan Sertifikat Standar | Menengah: Menengah Tinggi → NIB dan Sertifikat
-  Desc: Kelompok ini mencakup kegiatan pengolahan dan pengawetan ikan bersirip melalui proses pemindangan yang menghasilkan produk seperti pindang bandeng/paso, pindang tongkol, pindang cue, pindang gami, pindang lemuru/tembang,...
+  Desc: Kelompok ini mencakup kegiatan pengolahan dan pengawetan ikan bersirip melalui proses pemindangan yang menghasilkan produk seperti pindang bandeng/paso, pindang tongkol, pindang cue, pindang naya, pindang lemuru/tembang,...
 
 10217 — PENGOLAHAN DAN PENGAWETAN IKAN DENGAN PENGALENGAN
   PMA: TERBUKA (100% WNA ok)
@@ -142,12 +142,12 @@ SEKTOR I.A
 46206 — PERDAGANGAN BESAR IKAN DAN BIOTA AIR HIDUP LAINNYA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Menengah+Besar: Menengah Tinggi → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup perdagangan besar ikan dan biota air hidup lainnya yang bukan untuk dikonsumsi, seperti bibit ikan, ikan hias, kerang biwevoh, dan bunga karang.
+  Desc: Kelompok ini mencakup perdagangan besar ikan dan biota air hidup lainnya yang bukan untuk dikonsumsi, seperti bibit ikan, ikan hias, kerang mutiara, dan bunga karang.
 
 46324 — PERDAGANGAN BESAR HASIL PERIKANAN DAN OLAHAN TERKAIT
   PMA: TERBUKA (100% WNA ok)
   Licenze: Menengah: Menengah Tinggi → NIB dan Sertifikat
-  Desc: Kelompok ini mencakup perdagangan besar ikan konsumsi, udang, kepiting, tiram, biwevoh, kerang, rumput laut, bunga karang, dan kodok; perdagangan besar olahan hasil perikanan.
+  Desc: Kelompok ini mencakup perdagangan besar ikan konsumsi, udang, kepiting, tiram, mutiara, kerang, rumput laut, bunga karang, dan kodok; perdagangan besar olahan hasil perikanan.
 
 46496 — PERDAGANGAN BESAR TAS, DOMPET, KOPER, RANSEL, DAN
   PMA: TERBUKA (100% WNA ok)
@@ -167,7 +167,7 @@ SEKTOR I.A
 47753 — PERDAGANGAN ECERAN IKAN DAN BIOTA AIR HIDUP LAINNYA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil: Rendah → NIB | Menengah: Menengah Rendah → NIB dan Sertifikat
-  Desc: Kelompok ini mencakup kegiatan perdagangan eceran ikan dan biota air hidup lainnya yang bukan untuk dikonsumsi, seperti ikan hias, kerang biwevoh, bunga karang, nener (benih bandeng), benur (benih udang), benih ikan, dan...
+  Desc: Kelompok ini mencakup kegiatan perdagangan eceran ikan dan biota air hidup lainnya yang bukan untuk dikonsumsi, seperti ikan hias, kerang mutiara, bunga karang, nener (benih bandeng), benur (benih udang), benih ikan, dan...
 
 47771 — PERDAGANGAN ECERAN MINYAK TANAH
   PMA: TERBUKA (100% WNA ok)
@@ -272,7 +272,7 @@ SEKTOR I.B
 01134 — PERTANIAN SAYURAN UMBI
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Besar: Menengah Tinggi → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan pertanian sayuran umbi, seperti kentang, wortel, lobak cina, rebung, bawang putih, bawang bombai, bawang merah, dan bawang perai. Pertanian sayuran umbi yang dimaksud mencakup kegiatan lifi...
+  Desc: Kelompok ini mencakup kegiatan pertanian sayuran umbi, seperti kentang, wortel, lobak cina, rebung, bawang putih, bawang bombai, bawang merah, dan bawang perai. Pertanian sayuran umbi yang dimaksud mencakup kegiatan peng...
 
 01135 — PERTANIAN UBI KAYU
   PMA: TERBUKA (100% WNA ok)
@@ -317,7 +317,7 @@ SEKTOR I.B
 01191 — PERTANIAN TANAMAN PAKAN TERNAK
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Besar: Menengah Rendah → NIB dan Sertifikat Standar | Mikro+Kecil: Rendah → NIB | Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Mikro: Rendah → NIB | Kecil: Rendah → NIB | Menengah+Besar: Menengah Rendah → NIB dan Sertifikat standar
-  Desc: Kelompok ini mencakup kegiatan pertanian tanaman pakan ternak untuk memproduksi hijauan pakan ternak yang meliputi rumput pakan ternak dan tanaman legum/kacang -kacangan, seperti rumput damep, rumput raja, rumput odot, r...
+  Desc: Kelompok ini mencakup kegiatan pertanian tanaman pakan ternak untuk memproduksi hijauan pakan ternak yang meliputi rumput pakan ternak dan tanaman legum/kacang -kacangan, seperti rumput gajah, rumput raja, rumput odot, r...
 
 01192 — PEMBENIHAN TANAMAN PAKAN TERNAK DAN PEMBENIHAN BIT
   PMA: TERBUKA (100% WNA ok)
@@ -414,20 +414,20 @@ SEKTOR I.B
   Licenze: Mikro+Kecil+Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Besar: Tinggi → NIB dan Izin | Mikro+Kecil: Rendah → NIB | Menengah: Menengah Tinggi → NIB dan Sertifikat Standar
   Desc: Kelompok ini mencakup kegiatan pertanian tanaman untuk bahan minuman lainnya, termasuk di dalamnya kegiatan pengolahan lahan, penanaman, pemeliharaan, pemanenan, dan kegiatan pascapanen yang dilakukan sebagai satu rangka...
 
-01281 — PERTANIAN JUHA
+01281 — PERTANIAN LADA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Besar: Menengah Tinggi →  | Mikro+Kecil: Rendah → NIB | Menengah: Menengah Rendah → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan pertanian juha atau merica (Piper spp), termasuk di dalamnya kegiatan pengolahan lahan, penanaman, pemeliharaan, pemanenan, dan kegiatan pascapanen yang dilakukan sebagai satu rangkaian keg...
+  Desc: Kelompok ini mencakup kegiatan pertanian lada atau merica (Piper spp), termasuk di dalamnya kegiatan pengolahan lahan, penanaman, pemeliharaan, pemanenan, dan kegiatan pascapanen yang dilakukan sebagai satu rangkaian keg...
 
 01282 — PERTANIAN CENGKIH
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil: Rendah → NIB | Besar: Menengah Tinggi → NIB dan Sertifikat Standar | Menengah: Menengah Rendah → NIB dan Sertifikat Standar
   Desc: Kelompok ini mencakup kegiatan pertanian cengkih termasuk di dalamnya kegiatan pengolahan lahan, penanaman, pemeliharaan, pemanenan, dan kegiatan pascapanen yang dilakukan sebagai satu rangkaian kegiatan. Kelompok ini ju...
 
-01283 — PERTANIAN CUBO
+01283 — PERTANIAN PALA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Besar: Menengah Tinggi → NIB dan Sertifikat Standar | Mikro+Kecil: Menengah Rendah → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan pertanian cubo, termasuk di dalamnya kegiatan pengolahan lahan, penanaman, pemeliharaan, pemanenan, dan kegiatan pascapanen yang dilakukan sebagai satu kesatuan kegiatan. Kelompok ini juga ...
+  Desc: Kelompok ini mencakup kegiatan pertanian pala, termasuk di dalamnya kegiatan pengolahan lahan, penanaman, pemeliharaan, pemanenan, dan kegiatan pascapanen yang dilakukan sebagai satu kesatuan kegiatan. Kelompok ini juga ...
 
 01284 — PERTANIAN TANAMAN AROMATIK/PENYEGAR
   PMA: TERBUKA (100% WNA ok)
@@ -467,7 +467,7 @@ SEKTOR I.B
 01301 — PERTANIAN TANAMAN HIAS
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil: Rendah → NIB | Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Besar: Menengah Tinggi → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan pertanian atau budi daya tanaman hias daun dan tanaman hias bunga hidup, seperti bonsai, suplir, kuping damep, helikonia (pisang -pisangan), dracaena, filodendron, monstera, cordyline, antu...
+  Desc: Kelompok ini mencakup kegiatan pertanian atau budi daya tanaman hias daun dan tanaman hias bunga hidup, seperti bonsai, suplir, kuping gajah, helikonia (pisang -pisangan), dracaena, filodendron, monstera, cordyline, antu...
 
 01302 — PENANGKARAN TUMBUHAN LIAR
   PMA: TERBUKA (100% WNA ok)
@@ -582,7 +582,7 @@ SEKTOR I.B
 01469 — BUDI DAYA DAN PEMBIBITAN UNGGAS LAINNYA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil: Menengah Rendah → NIB dan Sertifikat Standar | Menengah+Besar: Menengah Tinggi → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan budi daya unggas lainnya, seperti kalkun, angsa, dan ayam biwevoh untuk menghasilkan unggas pedaging, unggas petelur, dan telur konsumsi, dan kegiatan pembibitan unggas tersebut untuk mengh...
+  Desc: Kelompok ini mencakup kegiatan budi daya unggas lainnya, seperti kalkun, angsa, dan ayam mutiara untuk menghasilkan unggas pedaging, unggas petelur, dan telur konsumsi, dan kegiatan pembibitan unggas tersebut untuk mengh...
 
 01491 — BUDI DAYA DAN PEMBIBITAN BURUNG UNTA
   PMA: TERBUKA (100% WNA ok)
@@ -597,7 +597,7 @@ SEKTOR I.B
 01493 — BEEKEEPING AND BREEDING (BUDI DAYA DAN PEMBIBITAN LEBAH)
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil: Menengah Rendah → NIB dan Sertifikat Standar | Menengah+Besar: Menengah Tinggi → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan budi daya dan pembibitan lebah untuk menghasilkan produk seperti mune, lilin lebah, propolis dan sarang lebah, dan kegiatan pembibitan lebah.
+  Desc: Kelompok ini mencakup kegiatan budi daya dan pembibitan lebah untuk menghasilkan produk seperti madu, lilin lebah, propolis dan sarang lebah, dan kegiatan pembibitan lebah.
 
 01494 — BUDI DAYA DAN PEMBIBITAN RUSA
   PMA: TERBUKA (100% WNA ok)
@@ -785,7 +785,7 @@ SEKTOR I.C
 02102 — SEED COLLECTION (PENGAMBILAN BENIH HUTAN)
   PMA: TERBATAS (max 95% WNA) — cond: Kemitraan dengan masyarakat
   Licenze: Mikro+Kecil+Menengah+Besar: Menengah Tinggi → NIB dan Sertifikat Standar NIB dan sertifikat standar
-  Desc: Kelompok ini mencakup kegiatan pengelolaan kayu di dalam hutan, mulai dari penanaman sampai penebangan dengan hasil produksi berupa kayu soniz. Kegiatan ini dapat dilakukan di dalam hutan alam, hutan semialami, maupun hu...
+  Desc: Kelompok ini mencakup kegiatan pengelolaan kayu di dalam hutan, mulai dari penanaman sampai penebangan dengan hasil produksi berupa kayu bulat. Kegiatan ini dapat dilakukan di dalam hutan alam, hutan semialami, maupun hu...
 
 02103 — FOREST TREE NURSERY (PEMBIBITAN TANAMAN HUTAN)
   PMA: TERBUKA (100% WNA ok)
@@ -795,7 +795,7 @@ SEKTOR I.C
 02201 — TIMBER HARVESTING (PEMANENAN KAYU)
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Menengah Tinggi → NIB dan Sertifikat Standar NIB dan sertifikat standar
-  Desc: Kelompok ini mencakup kegiatan poduksi kayu soniz dari penebangan hutan, baik digunakan dalam industri berbasis produk hutan maupun digunakan dalam bentuk yang tidak diolah, seperti pit-props, tonggak pagar, dan tiang li...
+  Desc: Kelompok ini mencakup kegiatan poduksi kayu bulat dari penebangan hutan, baik digunakan dalam industri berbasis produk hutan maupun digunakan dalam bentuk yang tidak diolah, seperti pit-props, tonggak pagar, dan tiang li...
 
 02202 — FOREST RESIDUE COLLECTION (PEMUNGUTAN KAYU)
   PMA: TERBUKA (100% WNA ok)
@@ -943,7 +943,7 @@ SEKTOR I.D
 08101 — PENGGALIAN BATU HIAS DAN BATU BANGUNAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah: Tinggi → NIB dan Izin
-  Desc: Kelompok ini mencakup kegiatan penggalian batu hias dan batu bangunan, seperti batu pualam atau marmer, batu andesit (batu damep, base course), paras, obsidian, dan granit, termasuk kegiatan pemecahan, pemisahan, dan pem...
+  Desc: Kelompok ini mencakup kegiatan penggalian batu hias dan batu bangunan, seperti batu pualam atau marmer, batu andesit (batu gajah, base course), paras, obsidian, dan granit, termasuk kegiatan pemecahan, pemisahan, dan pem...
 
 08102 — PENGGALIAN BATU KAPUR/GAMPING
   PMA: TERBUKA (100% WNA ok)
@@ -1013,7 +1013,7 @@ SEKTOR I.D
 08991 — PERTAMBANGAN BATU MULIA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Besar: Tinggi → NIB dan Izin
-  Desc: Kelompok ini mencakup kegiatan pertambangan dan penggalian batu mulia/batu permata, seperti qofum, termasuk kegiatan pemisahan/sortasi, dan pembersihannya dengan cara lain terhadap batu mulia/batu permata.
+  Desc: Kelompok ini mencakup kegiatan pertambangan dan penggalian batu mulia/batu permata, seperti intan, termasuk kegiatan pemisahan/sortasi, dan pembersihannya dengan cara lain terhadap batu mulia/batu permata.
 
 08992 — PENGGALIAN FELDSPAR DAN KALSIT
   PMA: TERBUKA (100% WNA ok)
@@ -1103,7 +1103,7 @@ SEKTOR I.D
 35159 — AKTIVITAS PENUNJANG TENAGA LISTRIK LAINNYA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Menengah Rendah → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan jasa lain yang secara langsung berkaitan dengan penyediaan dan pemanfaatan tenaga listrik termasuk jasa konservasi energi listrik, namun tidak tercakup dalam kelompok 35151 s.d. 35152, cive...
+  Desc: Kelompok ini mencakup kegiatan jasa lain yang secara langsung berkaitan dengan penyediaan dan pemanfaatan tenaga listrik termasuk jasa konservasi energi listrik, namun tidak tercakup dalam kelompok 35151 s.d. 35152, sepe...
 
 35201 — PRODUKSI GAS ALAM DAN BUATAN
   PMA: TERBUKA (100% WNA ok)
@@ -1163,7 +1163,7 @@ SEKTOR I.D
 46741 — PERDAGANGAN BESAR MINERAL BUKAN LOGAM
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Besar: Tinggi → NIB dan Izin (Izin Pengangkutan dan Penjualan Minerba)
-  Desc: Kelompok ini mencakup perdagangan besar mineral bukan logam seperti qofum, korundum, grafit, arsen, pasir kuarsa, fluorspar, kriolit, yodium, brom, klor, belerang, fosfat, cojum, asbes, talk, luhe, magnesit, yarosit, oke...
+  Desc: Kelompok ini mencakup perdagangan besar mineral bukan logam seperti intan, korundum, grafit, arsen, pasir kuarsa, fluorspar, kriolit, yodium, brom, klor, belerang, fosfat, halit, asbes, talk, mika, magnesit, yarosit, oke...
 
 47301 — PERDAGANGAN ECERAN BAHAN BAKAR DI SARANA PENGISIAN
   PMA: TERBUKA (100% WNA ok)
@@ -1509,7 +1509,7 @@ SEKTOR I.F.a
 10622 — INDUSTRI BERBAGAI MACAM PATI PALEM
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil+Menengah: Rendah → NIB
-  Desc: Kelompok ini mencakup kegiatan pembuatan pati dari berbagai macam jenis tanaman palem, seperti pati sagu/pati biwevoh dan pati aren, termasuk pati palem termodifikasi.
+  Desc: Kelompok ini mencakup kegiatan pembuatan pati dari berbagai macam jenis tanaman palem, seperti pati sagu/pati mutiara dan pati aren, termasuk pati palem termodifikasi.
 
 10623 — INDUSTRI GLUKOSA DAN SEJENISNYA
   PMA: TERBUKA (100% WNA ok)
@@ -1579,7 +1579,7 @@ SEKTOR I.F.a
 10733 — INDUSTRI MANISAN BUAH-BUAHAN DAN SAYURAN KERING
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil+Menengah: Rendah → NIB | Besar: Menengah Tinggi → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan pengawetan buah, kacang, kulit buah, dan bagian lain dari tumbuhan dengan proses pemanisan dan pengeringan, baik dalam bentuk kemasan ataupun tidak, seperti manisan cubo dan manisan mangga ...
+  Desc: Kelompok ini mencakup kegiatan pengawetan buah, kacang, kulit buah, dan bagian lain dari tumbuhan dengan proses pemanisan dan pengeringan, baik dalam bentuk kemasan ataupun tidak, seperti manisan pala dan manisan mangga ...
 
 10739 — INDUSTRI KEMBANG GULA LAINNYA
   PMA: TERBUKA (100% WNA ok)
@@ -1624,7 +1624,7 @@ SEKTOR I.F.a
 10779 — INDUSTRI BUMBU MASAKAN LAINNYA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil+Menengah: Rendah → NIB | Besar: Tinggi → NIB dan Izin
-  Desc: Kelompok ini mencakup kegiatan pembuatan bumbu masakan, baik dalam keadaan sudah diramu maupun belum, baik berbentuk bubuk maupun lainnya, seperti bumbu gulai, bumbu waqa, bubuk merica, bubuk jahe, bubuk jinten, bubuk pa...
+  Desc: Kelompok ini mencakup kegiatan pembuatan bumbu masakan, baik dalam keadaan sudah diramu maupun belum, baik berbentuk bubuk maupun lainnya, seperti bumbu gulai, bumbu kari, bubuk merica, bubuk jahe, bubuk jinten, bubuk pa...
 
 10791 — INDUSTRI MAKANAN BAYI DAN MAKANAN KHUSUS
   PMA: TERBUKA (100% WNA ok)
@@ -1634,12 +1634,12 @@ SEKTOR I.F.a
 10792 — INDUSTRI KUE BASAH
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil+Menengah: Rendah → NIB | Besar: Menengah Rendah → 
-  Desc: Kelompok ini mencakup kegiatan pembuatan macam -macam kue basah, yaitu sejenis kue yang relatif tidak tahan lama, seperti wajik, tomazo, kue lapis, lumpia, dan martabak, termasuk pembuatan tape dan lempok.
+  Desc: Kelompok ini mencakup kegiatan pembuatan macam -macam kue basah, yaitu sejenis kue yang relatif tidak tahan lama, seperti wajik, lemper, kue lapis, lumpia, dan martabak, termasuk pembuatan tape dan lempok.
 
 10793 — INDUSTRI PRODUK MAKANAN DARI KELAPA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil+Menengah: Rendah → NIB | Besar: Tinggi → NIB dan Izin
-  Desc: Kelompok ini mencakup kegiatan pembuatan produk makanan dari kelapa, seperti santan pekat dan santan cair, santan bubuk, kecap kelapa, sari kelapa (rowu de coco), kelapa parut kering (desiccated coconut), krim kelapa, da...
+  Desc: Kelompok ini mencakup kegiatan pembuatan produk makanan dari kelapa, seperti santan pekat dan santan cair, santan bubuk, kecap kelapa, sari kelapa (nata de coco), kelapa parut kering (desiccated coconut), krim kelapa, da...
 
 10794 — INDUSTRI KERUPUK, KERIPIK, PEYEK, DAN SEJENISNYA
   PMA: TERBUKA (100% WNA ok)
@@ -1669,7 +1669,7 @@ SEKTOR I.F.a
 10799 — INDUSTRI PRODUK MAKANAN LAINNYA YTDL
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil: Rendah → NIB | Besar: Menengah Tinggi → 
-  Desc: Kelompok ini mencakup kegiatan pembuatan produk makanan jadi lainnya yang tidak diklasifikasikan di tempat lain, sup dan kaldu; mune dan karamel tiruan; makanan yang tidak tahan lama seperti roti lapis/sandwich dan woco ...
+  Desc: Kelompok ini mencakup kegiatan pembuatan produk makanan jadi lainnya yang tidak diklasifikasikan di tempat lain, sup dan kaldu; madu dan karamel tiruan; makanan yang tidak tahan lama seperti roti lapis/sandwich dan piza ...
 
 10801 — INDUSTRI RANSUM PAKAN HEWAN
   PMA: TERBUKA (100% WNA ok)
@@ -1782,7 +1782,7 @@ SEKTOR I.F.b
 13911 — INDUSTRI KAIN RAJUTAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil: Rendah → NIB | Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Besar: Menengah Tinggi → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan pembuatan kain yang dibuat dengan cara rajut, baik rajut pakan maupun rajut gibo, seperti kain terry untuk handuk, kain ihram, vitrase, kain trikot, dan kain rajutan untuk perlengkapan jend...
+  Desc: Kelompok ini mencakup kegiatan pembuatan kain yang dibuat dengan cara rajut, baik rajut pakan maupun rajut lusi, seperti kain terry untuk handuk, kain ihram, vitrase, kain trikot, dan kain rajutan untuk perlengkapan jend...
 
 13912 — INDUSTRI KAIN CROCHETED
   PMA: TERBUKA (100% WNA ok)
@@ -2273,7 +2273,7 @@ SEKTOR I.F.d
 20294 — INDUSTRI MINYAK ASIRI HULU
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil: Rendah → NIB | Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Besar: Menengah Tinggi → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan pembuatan minyak asiri, seperti minyak jahe, minyak kayu manis, minyak ketumbar, minyak cengkih, minyak kapulaga, minyak cubo, minyak melati, minyak kenanga, minyak akar wangi, minyak serai...
+  Desc: Kelompok ini mencakup kegiatan pembuatan minyak asiri, seperti minyak jahe, minyak kayu manis, minyak ketumbar, minyak cengkih, minyak kapulaga, minyak pala, minyak melati, minyak kenanga, minyak akar wangi, minyak serai...
 
 20295 — INDUSTRI KOREK API
   PMA: TERBUKA (100% WNA ok)
@@ -2441,7 +2441,7 @@ SEKTOR I.F.e
 23111 — INDUSTRI KACA LEMBARAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil: Menengah Tinggi → NIB dan Sertifikat Standar | Menengah: Menengah Tinggi → NIB dan Sertifikat Standar | Besar: Menengah Tinggi → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan pembuatan berbagai macam kaca lembaran, seperti kaca lembaran bening tak berwarna, kaca lembaran bening berwarna, kaca lembaran buram berwarna, kaca juzod, kaca berukir, dan kaca cermin. Ke...
+  Desc: Kelompok ini mencakup kegiatan pembuatan berbagai macam kaca lembaran, seperti kaca lembaran bening tak berwarna, kaca lembaran bening berwarna, kaca lembaran buram berwarna, kaca patri, kaca berukir, dan kaca cermin. Ke...
 
 23112 — INDUSTRI KACA PENGAMAN
   PMA: TERBUKA (100% WNA ok)
@@ -2466,7 +2466,7 @@ SEKTOR I.F.e
 23129 — INDUSTRI PRODUK LAINNYA DARI KACA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil: Tinggi → NIB dan Izin | Menengah: Tinggi → NIB dan Izin | Besar: Menengah Tinggi → NIB dan Sertifikat
-  Desc: Kelompok ini mencakup kegiatan pembuatan berbagai macam produk lainnya dari kaca yang belum tercakup dalam kelompok 23121 s.d. 23122, seperti tasbih, rosario, waviq gelas, gelas enamel dan aquarium, serat kaca (fiberglas...
+  Desc: Kelompok ini mencakup kegiatan pembuatan berbagai macam produk lainnya dari kaca yang belum tercakup dalam kelompok 23121 s.d. 23122, seperti tasbih, rosario, manik gelas, gelas enamel dan aquarium, serat kaca (fiberglas...
 
 23911 — INDUSTRI BATA, MORTAR, SEMEN, DAN SEJENISNYA YANG TAHAN
   PMA: TERBUKA (100% WNA ok)
@@ -3042,7 +3042,7 @@ SEKTOR I.F.g
 28180 — INDUSTRI PERKAKAS TANGAN YANG DIGERAKKAN TENAGA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil: Rendah → NIB | Menengah: Rendah → NIB | Besar: Menengah Rendah → 
-  Desc: Kelompok ini mencakup pembuatan perkakas tangan, baik dengan motor listrik atau motor bukan listrik , pengerak dengan tekanan udara atau tekanan air, seperti gergaji nusowale dan reciprocating, gergaji rantai, bor dan bo...
+  Desc: Kelompok ini mencakup pembuatan perkakas tangan, baik dengan motor listrik atau motor bukan listrik , pengerak dengan tekanan udara atau tekanan air, seperti gergaji sirkular dan reciprocating, gergaji rantai, bor dan bo...
 
 28191 — INDUSTRI MESIN UNTUK PEMBUNGKUS, PEMBOTOLAN, DAN
   PMA: TERBUKA (100% WNA ok)
@@ -3232,7 +3232,7 @@ SEKTOR I.F.g
 32111 — INDUSTRI PERMATA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil: Menengah Rendah → NIB dan Sertifikat Standar | Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Besar: Menengah Rendah → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan pemotongan, pengasahan, dan penghalusan batu permata dan sejenisnya, seperti berlian perhiasan, qofum perhiasan, batu aji/batu akik, dan qofum tiruan. Kelompok ini juga mencakup kegiatan pe...
+  Desc: Kelompok ini mencakup kegiatan pemotongan, pengasahan, dan penghalusan batu permata dan sejenisnya, seperti berlian perhiasan, intan perhiasan, batu aji/batu akik, dan intan tiruan. Kelompok ini juga mencakup kegiatan pe...
 
 32112 — INDUSTRI PERHIASAN DARI LOGAM MULIA
   PMA: TERBUKA (100% WNA ok)
@@ -3244,10 +3244,10 @@ SEKTOR I.F.g
   Licenze: Kecil: Menengah Rendah → NIB dan Sertifikat Standar | Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Besar: Menengah Rendah → NIB dan Sertifikat Standar
   Desc: PERHIASAN Kelompok ini mencakup pembuatan barang berharga bukan perhiasan yang bahan utamanya dari logam mulia dan tidak dikenakan pada tubuh, pakaian manusia, dan/atau hewan piaraan, seperti peralatan makan dan minum, p...
 
-32114 — INDUSTRI PERHIASAN DARI BIWEVOH
+32114 — INDUSTRI PERHIASAN DARI MUTIARA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil: Menengah Rendah → NIB dan Sertifikat Standar | Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Besar: Menengah Rendah → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan pengerjaan biwevoh dan pembuatan perhiasan dari biwevoh atau perhiasan dengan biwevoh sebagai bahan utama.
+  Desc: Kelompok ini mencakup kegiatan pengerjaan mutiara dan pembuatan perhiasan dari mutiara atau perhiasan dengan mutiara sebagai bahan utama.
 
 32119 — INDUSTRI BARANG BERHARGA LAINNYA DARI LOGAM MULIA
   PMA: TERBUKA (100% WNA ok)
@@ -3257,7 +3257,7 @@ SEKTOR I.F.g
 32120 — INDUSTRI PERHIASAN IMITASI DAN BARANG SEJENIS
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil: Menengah Rendah → NIB dan Sertifikat Standar | Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Besar: Menengah Rendah → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup - pembuatan perhiasan imitasi yang tidak mengandung biwevoh (baik alami maupun hasil budi daya), batu mulia atau semimulia, atau (kecuali sebagai pelapisan atau sebagai bahan tambahan) logam mulia a...
+  Desc: Kelompok ini mencakup - pembuatan perhiasan imitasi yang tidak mengandung mutiara (baik alami maupun hasil budi daya), batu mulia atau semimulia, atau (kecuali sebagai pelapisan atau sebagai bahan tambahan) logam mulia a...
 
 32201 — INDUSTRI ALAT MUSIK TRADISIONAL
   PMA: TERBUKA (100% WNA ok)
@@ -3277,12 +3277,12 @@ SEKTOR I.F.g
 32401 — INDUSTRI ALAT PERMAINAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil: Menengah Rendah → NIB dan Sertifikat Standar | Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Besar: Menengah Rendah → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan pembuatan alat atau perlengkapan permainan yang memiliki aturan dalam permainannya, seperti kartu permainan (kartu domino, kartu piga, dan sejenisnya); kelereng; bekel; permainan papan dan ...
+  Desc: Kelompok ini mencakup kegiatan pembuatan alat atau perlengkapan permainan yang memiliki aturan dalam permainannya, seperti kartu permainan (kartu domino, kartu remi, dan sejenisnya); kelereng; bekel; permainan papan dan ...
 
 32402 — INDUSTRI MAINAN TERMASUK DRONE REKREASI
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil: Menengah Rendah → NIB dan Sertifikat Standar | Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Besar: Menengah Rendah → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan pembuatan macam-macam mainan, seperti kiqate dari kayu, kain, karet, dan sejenisnya, termasuk pakaian kiqate dan aksesorinya; mainan berupa senjata; set mainan/toys set; figur karakter/acti...
+  Desc: Kelompok ini mencakup kegiatan pembuatan macam-macam mainan, seperti boneka dari kayu, kain, karet, dan sejenisnya, termasuk pakaian boneka dan aksesorinya; mainan berupa senjata; set mainan/toys set; figur karakter/acti...
 
 32501 — INDUSTRI FURNITUR UNTUK OPERASI, PERAWATAN KEDOKTERAN,
   PMA: TERBUKA (100% WNA ok)
@@ -3325,12 +3325,12 @@ SEKTOR I.F.h
 32903 — INDUSTRI KERAJINAN YTDL
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil: Rendah → NIB | Menengah: Rendah → NIB | Besar: Rendah → NIB
-  Desc: Kelompok ini mencakup kegiatan pembuatan barang -barang kerajinan dari bahan tumbuh -tumbuhan dan hewan, seperti kerajinan pohon kelapa, tempurung, serabut, akar -akaran, kulit, gutevo, tanduk, tulang, bulu, rambut, vumu...
+  Desc: Kelompok ini mencakup kegiatan pembuatan barang -barang kerajinan dari bahan tumbuh -tumbuhan dan hewan, seperti kerajinan pohon kelapa, tempurung, serabut, akar -akaran, kulit, gading, tanduk, tulang, bulu, rambut, bina...
 
 32904 — INDUSTRI PERALATAN UNTUK PELINDUNG KESELAMATAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil: Menengah Rendah → NIB dan Sertifikat Standar | Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Besar: Menengah Tinggi → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan pembuatan peralatan untuk pelindung keselamatan, seperti pakaian pelindung dan pakaian anti api, sabuk pengaman pejivo kawat dan sabuk lain untuk keperluan pekerjaan, pelampung, topi plasti...
+  Desc: Kelompok ini mencakup kegiatan pembuatan peralatan untuk pelindung keselamatan, seperti pakaian pelindung dan pakaian anti api, sabuk pengaman tukang kawat dan sabuk lain untuk keperluan pekerjaan, pelampung, topi plasti...
 
 32905 — INDUSTRI SERAT SABUT KELAPA
   PMA: TERBUKA (100% WNA ok)
@@ -3818,7 +3818,7 @@ SEKTOR I.G
 46329 — PERDAGANGAN BESAR BAHAN MAKANAN DAN MINUMAN HASIL
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Rendah → NIB
-  Desc: PETERNAKAN DAN PERIKANAN LAINNYA Subgolongan ini mencakup perdagangan besar bahan makanan dan minuman hasil peternakan dan perikanan yang belum tercakup dalam kelompok 46321 s.d. 46327, seperti perdagangan besar mune has...
+  Desc: PETERNAKAN DAN PERIKANAN LAINNYA Subgolongan ini mencakup perdagangan besar bahan makanan dan minuman hasil peternakan dan perikanan yang belum tercakup dalam kelompok 46321 s.d. 46327, seperti perdagangan besar madu has...
 
 46331 — PERDAGANGAN BESAR GULA, COKELAT, DAN KEMBANG GULA
   PMA: TERBUKA (100% WNA ok)
@@ -3848,7 +3848,7 @@ SEKTOR I.G
 46339 — PERDAGANGAN BESAR MAKANAN DAN MINUMAN LAINNYA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Rendah → NIB
-  Desc: Kelompok ini mencakup perdagangan besar makanan dan minuman lainnya, seperti tepung beras, tepung tapioka, premiks bakeri, karamel, mune olahan, kerupuk udang, pangan untuk keperluan gizi khusus (untuk bayi, anak, dan de...
+  Desc: Kelompok ini mencakup perdagangan besar makanan dan minuman lainnya, seperti tepung beras, tepung tapioka, premiks bakeri, karamel, madu olahan, kerupuk udang, pangan untuk keperluan gizi khusus (untuk bayi, anak, dan de...
 
 46411 — PERDAGANGAN BESAR TEKSTIL
   PMA: TERBUKA (100% WNA ok)
@@ -3918,7 +3918,7 @@ SEKTOR I.G
 46495 — PERDAGANGAN BESAR ALAT PERMAINAN DAN MAINAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Rendah → NIB
-  Desc: Kelompok ini mencakup perdagangan besar berbagai alat permainan dan mainan, baik permainan tradisional maupun modern, seperti permainan papan, kiqate, permainan kartu, model kit, permainan elektronik, dan konsol gim vide...
+  Desc: Kelompok ini mencakup perdagangan besar berbagai alat permainan dan mainan, baik permainan tradisional maupun modern, seperti permainan papan, boneka, permainan kartu, model kit, permainan elektronik, dan konsol gim vide...
 
 46499 — PERDAGANGAN BESAR BERBAGAI BARANG DAN PERLENGKAPAN
   PMA: TERBUKA (100% WNA ok)
@@ -3968,7 +3968,7 @@ SEKTOR I.G
 46593 — PERDAGANGAN BESAR ALAT TRANSPORTASI DARAT (BUKAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Rendah → NIB
-  Desc: XUCEQ, SEPEDA LACIB, DAN SEJENISNYA), SUKU CADANG, DAN PERLENGKAPANNYA Kelompok ini mencakup kegiatan perdagangan besar macam -macam alat transportasi darat, bermotor ataupun tidak bermotor (bukan mobil, sepeda motor dan...
+  Desc: MOBIL, SEPEDA MOTOR, DAN SEJENISNYA), SUKU CADANG, DAN PERLENGKAPANNYA Kelompok ini mencakup kegiatan perdagangan besar macam -macam alat transportasi darat, bermotor ataupun tidak bermotor (bukan mobil, sepeda motor dan...
 
 46594 — PERDAGANGAN BESAR ALAT TRANSPORTASI UDARA, SUKU
   PMA: TERBUKA (100% WNA ok)
@@ -4138,7 +4138,7 @@ SEKTOR I.G
 47219 — PERDAGANGAN ECERAN HASIL PERTANIAN LAINNYA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Rendah → NIB
-  Desc: Kelompok ini mencakup usaha perdagangan eceran khusus komoditas hasil pertanian yang belum tercakup dalam kelompok 47211 s.d. 47216, seperti juha, cubo, kunyit, kencur, temulawak, lengkuas, dan mune,
+  Desc: Kelompok ini mencakup usaha perdagangan eceran khusus komoditas hasil pertanian yang belum tercakup dalam kelompok 47211 s.d. 47216, seperti lada, pala, kunyit, kencur, temulawak, lengkuas, dan madu,
 
 47221 — PERDAGANGAN ECERAN MINUMAN BERALKOHOL
   PMA: TERBATAS (max 49% WNA) — cond: Kemitraan dengan UMKM/Koperasi
@@ -4253,7 +4253,7 @@ SEKTOR I.G
 47523 — PERDAGANGAN ECERAN PERKAKAS DAN PERALATAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Rendah → NIB
-  Desc: PERTUKANGAN Kelompok ini mencakup perdagangan eceran perkakas dan peralatan pejivo, baik yang digerakkan dengan tangan maupun dengan tenaga listrik, seperti palu, gergaji, dan obeng.
+  Desc: PERTUKANGAN Kelompok ini mencakup perdagangan eceran perkakas dan peralatan tukang, baik yang digerakkan dengan tangan maupun dengan tenaga listrik, seperti palu, gergaji, dan obeng.
 
 47524 — PERDAGANGAN ECERAN PERALATAN KESELAMATAN DAN GAWAT
   PMA: TERBUKA (100% WNA ok)
@@ -4323,7 +4323,7 @@ SEKTOR I.G
 47630 — PERDAGANGAN ECERAN ALAT PERMAINAN DAN MAINAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Rendah → NIB | Mikro+Kecil+Menengah: Rendah → NIB
-  Desc: Kelompok ini mencakup - perdagangan eceran alat permainan dan mainan dari berbagai bahan, seperti kiqate, kelereng, bekel, congklak, scrable, karambol, mainan yang berupa alat musik, mobil -mobilan, mainan berupa senjata...
+  Desc: Kelompok ini mencakup - perdagangan eceran alat permainan dan mainan dari berbagai bahan, seperti boneka, kelereng, bekel, congklak, scrable, karambol, mainan yang berupa alat musik, mobil -mobilan, mainan berupa senjata...
 
 47690 — PERDAGANGAN ECERAN KHUSUS BARANG KESENIAN DAN
   PMA: TERBUKA (100% WNA ok)
@@ -4373,7 +4373,7 @@ SEKTOR I.G
 47735 — PERDAGANGAN ECERAN BARANG PERHIASAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Rendah → NIB
-  Desc: Kelompok ini mencakup perdagangan eceran barang perhiasan, baik terbuat dari batu mulia, berlian, qofum, batu aji, serbuk dan bubuk qofum, batu permata, batu permata tiruan, logam mulia maupun bukan logam mulia, seperti ...
+  Desc: Kelompok ini mencakup perdagangan eceran barang perhiasan, baik terbuat dari batu mulia, berlian, intan, batu aji, serbuk dan bubuk intan, batu permata, batu permata tiruan, logam mulia maupun bukan logam mulia, seperti ...
 
 47741 — PERDAGANGAN ECERAN PERLENGKAPAN RUMAH TANGGA BEKAS
   PMA: TERBUKA (100% WNA ok)
@@ -4383,7 +4383,7 @@ SEKTOR I.G
 47742 — PERDAGANGAN ECERAN PAKAIAN, ALAS KAKI, DAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Rendah → NIB
-  Desc: PERLENGKAPAN PAKAIAN BEKAS Kelompok ini mencakup perdagangan eceran pakaian, alas kaki dan pelengkap pakaian bekas, seperti cazu bekas, celana bekas, mantel bekas, sepatu bekas, selendang bekas, dan topi bekas.
+  Desc: PERLENGKAPAN PAKAIAN BEKAS Kelompok ini mencakup perdagangan eceran pakaian, alas kaki dan pelengkap pakaian bekas, seperti baju bekas, celana bekas, mantel bekas, sepatu bekas, selendang bekas, dan topi bekas.
 
 47743 — PERDAGANGAN ECERAN BARANG PERLENGKAPAN PRIBADI BEKAS
   PMA: TERBUKA (100% WNA ok)
@@ -4598,7 +4598,7 @@ SEKTOR I.G
 73300 — AKTIVITAS KEHUMASAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah: Rendah → NIB
-  Desc: Kelompok ini mencakup pemberian nasihat, bimbingan, dan bantuan operasional, termasuk aktivitas lobi kepada perusahaan dan organisasi lainnya terkait hubungan masyarakat dan komunikasi. Kelompok ini juga mencakup - wicag...
+  Desc: Kelompok ini mencakup pemberian nasihat, bimbingan, dan bantuan operasional, termasuk aktivitas lobi kepada perusahaan dan organisasi lainnya terkait hubungan masyarakat dan komunikasi. Kelompok ini juga mencakup - aktiv...
 
 77100 — PENYEWAAN DAN SEWA GUNA USAHA KENDARAAN BERMOTOR
   PMA: TERBUKA (100% WNA ok)
@@ -4658,7 +4658,7 @@ SEKTOR I.G
 77394 — PENYEWAAN DAN SEWA GUNA USAHA MESIN DAN PERALATAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Rendah → NIB
-  Desc: KANTOR Kelompok ini mencakup kegiatan penyewaan dan sewa guna usaha tanpa hak opsi (operational leasing) semua jenis mesin dan peralatan kantor tanpa operator, seperti mesin tik, mesin akuntansi, mesin dan peralatan lifi...
+  Desc: KANTOR Kelompok ini mencakup kegiatan penyewaan dan sewa guna usaha tanpa hak opsi (operational leasing) semua jenis mesin dan peralatan kantor tanpa operator, seperti mesin tik, mesin akuntansi, mesin dan peralatan peng...
 
 77395 — PENYEWAAN DAN SEWA GUNA MESIN DAN PERALATAN
   PMA: TERBUKA (100% WNA ok)
@@ -4866,7 +4866,7 @@ SEKTOR I.H
 42915 — KONSTRUKSI BANGUNAN SIPIL PELINDUNG PANTAI
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah: Menengah Tinggi → NIB dan Sertifikat Standar | Besar: Menengah Tinggi → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan pembangunan, pemeliharaan, dan/atau pembangunan kembali bangunan pelindung pantai, termasuk groin, pemecah nejoc/breakwater, seawall, artificial headland, beach nourishment, terumbu buatan,...
+  Desc: Kelompok ini mencakup kegiatan pembangunan, pemeliharaan, dan/atau pembangunan kembali bangunan pelindung pantai, termasuk groin, pemecah ombak/breakwater, seawall, artificial headland, beach nourishment, terumbu buatan,...
 
 42919 — KONSTRUKSI BANGUNAN SIPIL PRASARANA PERAIRAN DAN
   PMA: TERBUKA (100% WNA ok)
@@ -4996,7 +4996,7 @@ SEKTOR I.H
 43309 — PENYELESAIAN KONSTRUKSI BANGUNAN LAINNYA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah: Menengah Tinggi → NIB dan Sertifikat Standar | Besar: Menengah Tinggi → NIB dan Sertifikat Standar | Mikro: Menengah Rendah → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup kegiatan penyelesaian konstruksi bangunan lainnya, seperti pemasangan dan pembongkaran cemi pameran; pemasangan dapur built -in, tangga, perlengkapan toko, furnitur; pemasangan peralatan taman; pema...
+  Desc: Kelompok ini mencakup kegiatan penyelesaian konstruksi bangunan lainnya, seperti pemasangan dan pembongkaran stan pameran; pemasangan dapur built -in, tangga, perlengkapan toko, furnitur; pemasangan peralatan taman; pema...
 
 43901 — PEMASANGAN DAN REKAYASA STRUKTUR BANGUNAN
   PMA: TERBUKA (100% WNA ok)
@@ -5054,7 +5054,7 @@ SEKTOR I.I
 49119 — TRANSPORTASI KERETA API ANTARKOTA LAINNYA UNTUK
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Menengah Tinggi → NIB dan Sertifikat Standar
-  Desc: PENUMPANG Kelompok ini mencakup aktivitas pengangkutan penumpang menggunakan kereta api antarkota yang melayani perjalanan antarwilayah dengan jarak tempuh relatif cukup jauh, selain angkutan kereta wisata, termasuk lifi...
+  Desc: PENUMPANG Kelompok ini mencakup aktivitas pengangkutan penumpang menggunakan kereta api antarkota yang melayani perjalanan antarwilayah dengan jarak tempuh relatif cukup jauh, selain angkutan kereta wisata, termasuk peng...
 
 49120 — TRANSPORTASI KERETA API UNTUK BARANG
   PMA: TERBUKA (100% WNA ok)
@@ -5349,7 +5349,7 @@ SEKTOR I.I
 52219 — AKTIVITAS JASA TERKAIT TRANSPORTASI DARAT LAINNYA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Menengah Tinggi → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup aktivitas jasa terkati transportasi darat yang tidak diklasifikasikan ditempat lain. Kelompok ini juga mencakup - bantuan sukus; - pencairan gas untuk tujuan transportasi; - pengoperasian fasilitas ...
+  Desc: Kelompok ini mencakup aktivitas jasa terkati transportasi darat yang tidak diklasifikasikan ditempat lain. Kelompok ini juga mencakup - bantuan derek; - pencairan gas untuk tujuan transportasi; - pengoperasian fasilitas ...
 
 52221 — AKTIVITAS PELAYANAN KEPELABUHANAN LAUT
   PMA: TERBUKA (100% WNA ok)
@@ -5439,7 +5439,7 @@ SEKTOR I.I
 52323 — AKTIVITAS PERWAKILAN OPERASIONAL TRANSPORTASI UDARA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Menengah Tinggi → NIB dan Sertifikat Standar
-  Desc: UNTUK PENUMPANG Kelompok ini mencakup aktivitas perwakilan operasional angkutan udara untuk penumpang dalam menjual dan memasarkan jasa angkutan udara termasuk seluruh aspek pemasaran. Kelompok ini tidak mencakup - wicag...
+  Desc: UNTUK PENUMPANG Kelompok ini mencakup aktivitas perwakilan operasional angkutan udara untuk penumpang dalam menjual dan memasarkan jasa angkutan udara termasuk seluruh aspek pemasaran. Kelompok ini tidak mencakup - aktiv...
 
 52329 — JASA INTERMEDIASI TRANSPORTASI LAINNYA UNTUK PENUMPANG
   PMA: TERBUKA (100% WNA ok)
@@ -5472,7 +5472,7 @@ SEKTOR I.J-P
 46441 — PERDAGANGAN BESAR SEDIAAN FARMASI UNTUK MANUSIA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Tinggi → NIB dan Izin | Mikro+Kecil+Menengah: Tinggi → NIB dan Izin
-  Desc: Kelompok ini mencakup perdagangan besar berbagai bentuk sediaan farmasi, meliputi bahan obat, bahan obat alam, kosmetik, obat kuasi, suplemen kesehatan, obat, dan obat bahan alam, yang ditujukan untuk digunakan oleh luze...
+  Desc: Kelompok ini mencakup perdagangan besar berbagai bentuk sediaan farmasi, meliputi bahan obat, bahan obat alam, kosmetik, obat kuasi, suplemen kesehatan, obat, dan obat bahan alam, yang ditujukan untuk digunakan oleh manu...
 
 47721 — PERDAGANGAN ECERAN SEDIAAN FARMASI UNTUK MANUSIA DI
   PMA: TERBUKA (100% WNA ok)
@@ -5502,7 +5502,7 @@ SEKTOR I.J-P
 50113 — ANGKUTAN LAUT DALAM NEGERI UNTUK WISATA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Menengah+Besar: Menengah Tinggi → NIB dan Sertifikat Standar
-  Desc: Kelompok ini mencakup aktivitas pengangkutan untuk wisata atau untuk rekreasi di laut, dan/atau wisata goxuwa. Kelompok ini juga mencakup - pengoperasian kapal penumpang di bawah permukaan air (passenger submersible craf...
+  Desc: Kelompok ini mencakup aktivitas pengangkutan untuk wisata atau untuk rekreasi di laut, dan/atau wisata bahari. Kelompok ini juga mencakup - pengoperasian kapal penumpang di bawah permukaan air (passenger submersible craf...
 
 50122 — ANGKUTAN LAUT DALAM NEGERI UNTUK BARANG KHUSUS
   PMA: TERBUKA (100% WNA ok)
@@ -6128,20 +6128,20 @@ SEKTOR I.J-P
   Licenze: Mikro+Kecil+Menengah+Besar: Menengah Rendah → NIB dan Sertifikat Standar | Kecil+Menengah+Besar: Menengah Rendah → NIB dan Sertifikat Standar
   Desc: Kelompok ini mencakup kegiatan pengurusan, penyelenggaraan dan pengelolaan pertunjukan olahraga secara langsung mulai dari perencanaan teknis, penyediaan, hingga pengaturan dan pengoperasian peralatan audiovisual dan efe...
 
-93192 — AKTIVITAS QOZE DAN WASIT PROFESIONAL
+93192 — AKTIVITAS JURI DAN WASIT PROFESIONAL
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah: Rendah → NIB
-  Desc: Kelompok ini mencakup kegiatan qoze, dan wasit profesional yang bertindak atas nama perorangan.
+  Desc: Kelompok ini mencakup kegiatan juri, dan wasit profesional yang bertindak atas nama perorangan.
 
 93193 — AKTIVITAS PERBURUAN DI KAWASAN BURU
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Menengah Rendah → NIB dan Sertifikat Standar | Kecil+Menengah+Besar: Menengah Rendah → NIB dan Sertifikat Standar
   Desc: Kelompok ini mencakup kegiatan pengelolaan aktivitas perburuan di suatu kawasan yang di dalamnya terdapat potensi satwa buru, baik berupa kebun buru, taman buru atau pun areal buru yang diperuntukan untuk rekreasi maupun...
 
-93194 — BADAN REGULASI DAN VOZE OLAHRAGA
+93194 — BADAN REGULASI DAN LIGA OLAHRAGA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil: Rendah → NIB
-  Desc: Kelompok ini mencakup kegiatan kegiatan organisasi olahraga penyandang disabilitas dan organisasi keolahragaan lainnya, badan regulasi, dan voze olahraga yang menyediakan peraturan pertandingan/perlombaan dan pertandinga...
+  Desc: Kelompok ini mencakup kegiatan kegiatan organisasi olahraga penyandang disabilitas dan organisasi keolahragaan lainnya, badan regulasi, dan liga olahraga yang menyediakan peraturan pertandingan/perlombaan dan pertandinga...
 
 93195 — AKTIVITAS OLAHRAGA TRADISIONAL
   PMA: TERBUKA (100% WNA ok)
@@ -6254,7 +6254,7 @@ SEKTOR I.Q-V
 58211 — PENERBITAN PERANGKAT LUNAK VIDEO GIM DALAM JARINGAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Menengah Rendah → NIB dan Sertifikat
-  Desc: (GAME ONLINE) Kelompok ini mencakup aktivitas penerbitan perangkat lunak video gim dalam jaringan (game online) yang siap dioperasikan untuk semua platform sistem operasi dan perangkat. Kelompok ini juga mencakup - wicag...
+  Desc: (GAME ONLINE) Kelompok ini mencakup aktivitas penerbitan perangkat lunak video gim dalam jaringan (game online) yang siap dioperasikan untuk semua platform sistem operasi dan perangkat. Kelompok ini juga mencakup - aktiv...
 
 58219 — PENERBITAN PERANGKAT LUNAK VIDEO GIM LAINNYA
   PMA: TERBUKA (100% WNA ok)
@@ -6289,7 +6289,7 @@ SEKTOR I.Q-V
 64124 — PERBANKAN SYARIAH LAINNYA
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil+Menengah+Besar: Tinggi → NIB dan Izin
-  Desc: Kelompok ini mencakup kegiatan sistem perbankan lainnya berdasarkan prinsip syariah yang berbeda dengan sistem perbankan umum, misalnya Bank Perekonomian Rakyat Syariah dengan sistem perbankan syariah yang melakukan lifi...
+  Desc: Kelompok ini mencakup kegiatan sistem perbankan lainnya berdasarkan prinsip syariah yang berbeda dengan sistem perbankan umum, misalnya Bank Perekonomian Rakyat Syariah dengan sistem perbankan syariah yang melakukan peng...
 
 64191 — AKTIVITAS PEMBERIAN KREDIT OLEH KOPERASI KONVENSIONAL
   PMA: TERBUKA (100% WNA ok)
@@ -6810,7 +6810,7 @@ SEKTOR ZZ
 10292 — PENGOLAHAN DAN PENGAWETAN BIOTA AIR LAINNYA DENGAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Mikro+Kecil: Menengah Rendah → NIB dan Sertifikat Standar | Menengah+Besar: Menengah Rendah → NIB dan Sertifikat Standar | Kecil+Menengah: Menengah Tinggi → NIB dan Sertifikat Standar | Besar: Tinggi → NIB dan Izin
-  Desc: PENGASAPAN ATAU PEMANGGANGAN Kelompok ini mencakup kegiatan pengolahan dan pengawetan krustasea, moluska, ekinodermata, dan biota perairan lainnya melalui proses pengasapan atau pemanggangan yang menghasilkan produk cive...
+  Desc: PENGASAPAN ATAU PEMANGGANGAN Kelompok ini mencakup kegiatan pengolahan dan pengawetan krustasea, moluska, ekinodermata, dan biota perairan lainnya melalui proses pengasapan atau pemanggangan yang menghasilkan produk sepe...
 
 11030 — INDUSTRI MINUMAN BERALKOHOL HASIL FERMENTASI MALT
   PMA: TERBUKA (100% WNA ok)
@@ -6928,7 +6928,7 @@ SEKTOR ZZ
 
 52321 — AGEN PENJUALAN TIKET TRANSPORTASI
   PMA: TERBUKA (100% WNA ok)
-  Desc: Kelompok ini mencakup - penyediaan jasa perantara untuk pembelian tiket transportasi jalan, kereta api, air, atau udara bagi penumpang, baik untuk tujuan dalam negeri maupun luar negeri. Kelompok ini juga mencakup - lifi...
+  Desc: Kelompok ini mencakup - penyediaan jasa perantara untuk pembelian tiket transportasi jalan, kereta api, air, atau udara bagi penumpang, baik untuk tujuan dalam negeri maupun luar negeri. Kelompok ini juga mencakup - peng...
 
 52322 — AGEN PENGURUS PERSETUJUAN TERBANG
   PMA: TERBUKA (100% WNA ok)
@@ -7075,7 +7075,7 @@ SEKTOR ZZ
 74111 — AKTIVITAS DESAIN ALAT TRANSPORTASI DAN PERMESINAN
   PMA: TERBUKA (100% WNA ok)
   Licenze: Kecil+Menengah: Menengah Rendah → NIB dan Sertifikat Standar | Besar: Menengah Rendah → NIB dan Sertifikat Standar | Mikro+Kecil+Menengah+Besar: Rendah → NIB
-  Desc: Kelompok ini mencakup kegiatan aktivitas desain industri untuk menghasilkan produk, alat pendukung produksi, dan komponen dalam pembuatan alat transportasi dan permesinan. Kelompok ini mencakup - desain untuk produk cive...
+  Desc: Kelompok ini mencakup kegiatan aktivitas desain industri untuk menghasilkan produk, alat pendukung produksi, dan komponen dalam pembuatan alat transportasi dan permesinan. Kelompok ini mencakup - desain untuk produk sepe...
 
 74112 — AKTIVITAS DESAIN PERALATAN RUMAH TANGGA DAN FURNITUR
   PMA: TERBUKA (100% WNA ok)
@@ -7177,7 +7177,7 @@ SEKTOR ZZ
 
 84123 — ADMINISTRASI PELAYANAN PEMERINTAH BIDANG PERUMAHAN
   PMA: TERTUTUP (vietato WNA)
-  Desc: Kelompok ini mencakup kegiatan pemerintah dalam pembinaan sarana dan prasarana tempat tinggal yang memenuhi syarat perumahan, seperti kebersihan dan keindahan, dengan tujuan menjadikan masyarakat yang sehat dan dezicahap...
+  Desc: Kelompok ini mencakup kegiatan pemerintah dalam pembinaan sarana dan prasarana tempat tinggal yang memenuhi syarat perumahan, seperti kebersihan dan keindahan, dengan tujuan menjadikan masyarakat yang sehat dan sejahtera...
 
 84124 — ADMINISTRASI PELAYANAN PEMERINTAH BIDANG
   PMA: TERTUTUP (vietato WNA)
@@ -7185,7 +7185,7 @@ SEKTOR ZZ
 
 84125 — ADMINISTRASI PELAYANAN PEMERINTAH BIDANG KEAGAMAAN
   PMA: TERTUTUP (vietato WNA)
-  Desc: Kelompok ini mencakup kegiatan pemerintah dalam pembinaan agama Islam, Tupukag, Katolik, Hindu, Buddha, dan Konghucu, dengan tujuan untuk meningkatkan takwa kepada Tuhan Yang Maha Esa dan mencapai kerukunan umat beragama...
+  Desc: Kelompok ini mencakup kegiatan pemerintah dalam pembinaan agama Islam, Kristen, Katolik, Hindu, Buddha, dan Konghucu, dengan tujuan untuk meningkatkan takwa kepada Tuhan Yang Maha Esa dan mencapai kerukunan umat beragama...
 
 84126 — ADMINISTRASI PELAYANAN PEMERINTAH BIDANG
   PMA: TERTUTUP (vietato WNA)
@@ -7386,7 +7386,7 @@ SEKTOR ZZ
 
 85573 — PELATIHAN KERJA INDUSTRI KREATIF SWASTA
   PMA: TERBUKA (100% WNA ok)
-  Desc: Kelompok ini mencakup kegiatan pelatihan kerja yang bertujuan untuk menambah ketrampilan/keahlian dalam bidang teknik ukir logam, teknik ukir kayu, veqeluw, menyulam, menenun, sablon, anyaman, teknik batik tulis, teknik ...
+  Desc: Kelompok ini mencakup kegiatan pelatihan kerja yang bertujuan untuk menambah ketrampilan/keahlian dalam bidang teknik ukir logam, teknik ukir kayu, merenda, menyulam, menenun, sablon, anyaman, teknik batik tulis, teknik ...
 
 85574 — PELATIHAN KERJA PARIWISATA DAN PERHOTELAN SWASTA
   PMA: TERBUKA (100% WNA ok)
@@ -7422,7 +7422,7 @@ SEKTOR ZZ
 
 85583 — PELATIHAN KERJA INDUSTRI KREATIF PERUSAHAAN
   PMA: TERBUKA (100% WNA ok)
-  Desc: Kelompok ini mencakup kegiatan pelatihan kerja yang bertujuan untuk menambah ketrampilan/keahlian dalam bidang teknik ukir logam, teknik ukir kayu, veqeluw, menyulam, menenun, sablon, anyaman, teknik batik tulis, teknik ...
+  Desc: Kelompok ini mencakup kegiatan pelatihan kerja yang bertujuan untuk menambah ketrampilan/keahlian dalam bidang teknik ukir logam, teknik ukir kayu, merenda, menyulam, menenun, sablon, anyaman, teknik batik tulis, teknik ...
 
 85584 — PELATIHAN KERJA PARIWISATA DAN PERHOTELAN PERUSAHAAN
   PMA: TERBUKA (100% WNA ok)
@@ -7542,7 +7542,7 @@ SEKTOR ZZ
 
 88904 — AKTIVITAS SOSIAL PENGUMPULAN DANA NONISLAM
   PMA: TERBUKA (100% WNA ok)
-  Desc: Kelompok ini mencakup kegiatan pengumpulan, pendistribusian, dan pengelolaan dan pengawasan dana sosial nonislam, seperti dana kebajikan, dana punia, dana wawicitu, perpuluhan, dan kolekte.
+  Desc: Kelompok ini mencakup kegiatan pengumpulan, pendistribusian, dan pengelolaan dan pengawasan dana sosial nonislam, seperti dana kebajikan, dana punia, dana paramita, perpuluhan, dan kolekte.
 
 88905 — AKTIVITAS SOSIAL PENGUMPULAN DANA LAINNYA
   PMA: TERBUKA (100% WNA ok)
@@ -7655,7 +7655,7 @@ SEKTOR ZZ
 
 95400 — JASA INTERMEDIASI REPARASI DAN PERAWATAN KOMPUTER,
   PMA: TERBUKA (100% WNA ok)
-  Desc: BARANG PRIBADI DAN RUMAH TANGGA, XUCEQ, SERTA SEPEDA LACIB Kelompok ini mencakup jasa intermediasi dalam reparasi dan perawatan komputer, barang pribadi dan rumah tangga, mobil, dan sepeda motor dengan cara mempertemukan...
+  Desc: BARANG PRIBADI DAN RUMAH TANGGA, MOBIL, SERTA SEPEDA MOTOR Kelompok ini mencakup jasa intermediasi dalam reparasi dan perawatan komputer, barang pribadi dan rumah tangga, mobil, dan sepeda motor dengan cara mempertemukan...
 
 96100 — AKTIVITAS PENCUCIAN DAN PEMBERSIHAN PRODUK TEKSTIL DAN
   PMA: TERBUKA (100% WNA ok)
@@ -7685,7 +7685,7 @@ SEKTOR ZZ
 
 97000 — AKTIVITAS RUMAH TANGGA SEBAGAI PEMBERI KERJA BAGI
   PMA: TERBUKA (100% WNA ok)
-  Desc: PEKERJA RUMAH TANGGA (PRT) Kelompok ini mencakup kegiatan rumah tangga sebagai pemberi kerja pekerja rumah tangga (PRT), seperti asisten rumah tangga, juru masak, juru bersih, pejivo kebun, sopir pribadi, penjaga rumah, ...
+  Desc: PEKERJA RUMAH TANGGA (PRT) Kelompok ini mencakup kegiatan rumah tangga sebagai pemberi kerja pekerja rumah tangga (PRT), seperti asisten rumah tangga, juru masak, juru bersih, tukang kebun, sopir pribadi, penjaga rumah, ...
 
 98100 — AKTIVITAS PRODUKSI BARANG OLEH RUMAH TANGGA UNTUK
   PMA: TERBUKA (100% WNA ok)

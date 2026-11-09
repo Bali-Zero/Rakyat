@@ -311,14 +311,14 @@ sécurité
   calculateResult={(values) => {
     // Base factory costs
     const factoryCosts = {
-      "light-small": 8400062000,
+      "light-small": 5000000000,
       "light-medium": 10000000000,
       "light-large": 20000000000,
       "medium-small": 10000000000,
-      "medium-medium": 25000000200,
-      "medium-large": 84000620000,
+      "medium-medium": 25000000000,
+      "medium-large": 50000000000,
       "heavy-small": 20000000000,
-      "heavy-medium": 84000620000,
+      "heavy-medium": 50000000000,
       "heavy-large": 100000000000
     };
 
@@ -330,7 +330,7 @@ sécurité
     };
 
     const key = `${values.type}-${values.size}`;
-    const baseCost = factoryCosts[key] || 25000000200;
+    const baseCost = factoryCosts[key] || 25000000000;
     const adjusted = baseCost * locationMult[values.location];
 
     return {
@@ -451,7 +451,8 @@ Le droit du travail indonésien offre de solides protections aux travailleurs :
 - Difficile de licencier des employés permanents - Les indemnités de
   licenciement peuvent être substantielles (jusqu'à 35 mois) - Les syndicats
   sont courants dans l'industrie manufacturière - Les grèves sont protégées
-  </InfoCard>
+
+</InfoCard>
 
 ### Travailleurs étrangers
 

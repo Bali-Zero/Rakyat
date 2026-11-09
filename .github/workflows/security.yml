@@ -1,35 +1,331 @@
-name: CodeQL
-
-# Derived from the production-only Security Scanning workflow: ONLY the CodeQL
-# matrix job is kept. It reports the two required contexts
-# `CodeQL Analysis (python)` and `CodeQL Analysis (javascript)`.
-#
-# Both legs ALWAYS run their full analysis. The source gated each leg behind a
-# path-aware `changes` job (scripts/ci/change_map.py) with a fail-open default;
-# that classifier is backstage-only, and a required context must never silently
-# skip, so the gate is removed rather than ported. There is NO job-level `if:`:
-# a skipped matrix job emits one bare `CodeQL Analysis` check run and the two
-# suffixed required contexts never report.
+name: Security Scanning
 
 on:
   push:
-    branches: [main]
+    branches: [develop]
   pull_request:
     types: [opened, synchronize, reopened]
-    branches: [main]
+  merge_group:
+  schedule:
+    # Daily backstop, 19:17 UTC = 03:17 WITA next day. Added (#4184,
+    # 2026-08-14) as the prerequisite for removing this workflow's
+    # `push: main` trigger (Merge-OS v3 build order step 2 —
+    # research/operations/2026-08-14-merge-os-v3-research-council.md §6):
+    # that dedupe was gated on this schedule producing at least one green
+    # scheduled run first, so there was never a window with no confirmed
+    # backstop.
+    #
+    # CORRECTED 2026-08-27: the removal already happened — #4218
+    # (2026-08-16) dropped `main` from `on.push.branches` below, once the
+    # first scheduled run came back green. This paragraph used to describe
+    # that as still-pending future work; PENDING-ARMS carried a matching
+    # stale row (opened 2026-08-15, "PR OPEN AS DRAFT") for the same reason
+    # — both were still true the day they were written and neither was
+    # updated after the PR merged. A comment that outlives the state it
+    # describes reads as a standing TODO to the next session (W106: "a cure
+    # anchored to a frozen measurement of the world"), which is what
+    # produced a second Zero GO order to re-run a step already complete.
+    # The weekly Sunday entry stays regardless of any of the above — it is
+    # a second independent sample, not a stand-in for the daily one.
+    - cron: "17 19 * * *" # Daily security backstop, 03:17 WITA
+    - cron: "0 0 * * 0" # Weekly scan on Sunday
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 concurrency:
-  group: codeql-${{ github.ref }}
-  # Cancel superseded runs on PR branches; never on main, never in the merge queue.
+  # Per-PR/per-ref for every author. A shared per-workflow group keyed on
+  # github.actor was removed 2026-09-02: GitHub keeps only ONE pending run per
+  # group, so a 3rd near-simultaneous arrival was cancelled BEFORE any job
+  # started — no check-run object is created, so a required context sits at
+  # "Expected — waiting for status" with nothing red to see. Concurrency is now
+  # bounded only by the account-level ceiling, which QUEUES past it rather than
+  # dropping: lateness is visible, an absent check-run is not.
+  group: security-${{ github.ref }}
+  # Cancel superseded runs on PR branches; NEVER on main.
+  #
+  # This was a flat `false` since #770 (the bulk "add concurrency groups to 21
+  # workflows" pass), which gave main the protection it needs and gave PR
+  # branches nothing. This workflow owns 4 of the 25 required status checks —
+  # CodeQL x2, Detect Secrets, Bandit, ~20 billed minutes measured — so every
+  # re-push to a PR left a full previous round running to completion while the
+  # new one queued behind it. On a repo merging ~50 PRs/day that is the single
+  # largest source of self-inflicted queue latency.
+  #
+  # Same expression `tests.yml` has used all along (its `github.ref !=
+  # 'refs/heads/main'` form), deliberately copied rather than reinvented: on
+  # main every security scan still runs to completion, because a cancelled
+  # scan on a commit that LANDS would leave a gap in the security record.
+  #
+  # merge_group readiness (2026-07-27). Under merge_group, github.ref resolves
+  # to the queue's own temporary ref, which is != 'refs/heads/main', so the
+  # expression above evaluates TRUE for a queue entry and leaves
+  # cancel-in-progress armed on a run that owns 4 of the 25 required contexts.
+  #
+  # HONEST SCOPE, because the first draft of this comment claimed a failure
+  # this cannot actually produce and a wrong diagnosis in a debugging surface
+  # costs more than no comment (W106). It said a newer entry joining the queue
+  # behind this one would cancel it. It cannot: the concurrency GROUP above is
+  # keyed on github.ref, and a queue entry's ref carries its own PR number and
+  # SHA. Measured on this repo the same day —
+  # `gh-readonly-queue/main/pr-3302-23dcbfe78add…`, 4 distinct refs across 60
+  # merge_group runs — so two entries are never in the same group and cannot
+  # cancel each other.
+  #
+  # What this guard is actually for, which is still worth having:
+  #   1. UNIFORMITY. Twelve sibling workflows carry this exact composed form
+  #      (PR #3285). Being the one exception means every future reader has to
+  #      re-derive why, and the derivation above is not obvious.
+  #   2. It survives the group key changing. The safety here is a property of
+  #      `group:`, not of this line — coarsen the key (say to a PR number or a
+  #      ref_name) and parallel queue builds WOULD start cancelling each other,
+  #      silently, because a cancelled run reports no failure at all. This line
+  #      makes that mistake non-fatal.
+  # It is defence in depth, not a live bug fix. Do not delete it, and do not
+  # cite it as evidence that the queue was ever losing verdicts.
+  #
+  # Composed, same pattern as tests.yml: AND `github.event_name != 'merge_group'`
+  # onto the existing expression rather than replacing it, so the PR-vs-main
+  # asymmetry above is preserved byte-for-byte; only the merge_group case is
+  # forced to false.
   cancel-in-progress: ${{ (github.ref != 'refs/heads/main') && github.event_name != 'merge_group' }}
 
 jobs:
+  snyk-python:
+    name: Snyk Python Security
+    # Rakyat has no change map: this job runs on every event.
+    # MERGE-GROUP DEDUP (2026-09-05): Snyk is not a required context (verified
+    # live, `gh api repos/.../branches/main/protection` — 13 required contexts,
+    # this job's name is not among them) and reads only apps/backend-rag's
+    # requirements.txt. NOT claiming that file is byte-identical between a
+    # PR's own head and its later merge_group entry — it isn't provably so (a
+    # merge_group's tree is base tip + any earlier-queued-ahead batchmates +
+    # this PR; base drift or a batchmate touching this same file is a real,
+    # if narrow, possibility). What actually licenses skipping here: this job
+    # is advisory only (not required, never blocks a merge), and IF a
+    # different PR is what changed requirements.txt, THAT PR's own
+    # pull_request-triggered Snyk run already scanned it — the finding still
+    # surfaces, just not doubled up on every subsequent PR's merge_group
+    # entry too. `github.event_name != 'merge_group'` below removes only that
+    # redundant re-scan; pull_request/push/schedule/workflow_dispatch keep
+    # running exactly as before. IF THIS JOB IS EVER MADE REQUIRED for
+    # merge, remove the `github.event_name != 'merge_group'` term above —
+    # the whole argument here depends on advisory-only status.
+    if: ${{ !cancelled() && github.event_name != 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Blocking gate — HIGH/CRITICAL CVEs fail the job unless the finding is
+    # listed in .security/exceptions.yaml (see docs/security/CVE_TRIAGE_POLICY.md).
+    # Exceptions are enforced by the "Honour CVE exceptions" step below, which
+    # re-runs Snyk after filtering out accepted CVE ids.
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Validate CVE exceptions file
+        run: |
+          pip install pyyaml -q
+          python scripts/check_cve_exceptions.py
+
+      - name: Run Snyk (Python, JSON for exception filtering)
+        uses: snyk/actions/python@12140f4059e244892ae643824a95459a102120dd # master
+        continue-on-error: true # we make the decision in the next step
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: |
+            --severity-threshold=high
+            --file=apps/backend-rag/requirements.txt
+            --package-manager=pip
+            --project-name=nuzantara-backend
+            --json-file-output=snyk-python.json
+            --sarif-file-output=snyk.sarif
+
+      - name: Honour CVE exceptions (fail on un-accepted CVEs)
+        run: |
+          python scripts/filter_snyk_findings.py snyk-python.json
+        env:
+          CVE_EXCEPTIONS_PATH: .security/exceptions.yaml
+
+      - name: Upload Snyk results
+        uses: github/codeql-action/upload-sarif@v4.39.1
+        if: always() && hashFiles('snyk.sarif') != ''
+        continue-on-error: true
+        with:
+          sarif_file: snyk.sarif
+
+  snyk-node:
+    name: Snyk Node.js Security
+    # Rakyat has no change map: this job runs on every event.
+    # MERGE-GROUP DEDUP (2026-09-05) — same rationale as snyk-python's own
+    # comment above (not a required context; a different PR's own change to
+    # package.json/package-lock.json is caught by THAT PR's own
+    # pull_request-triggered scan, not claimed to be provably absent here).
+    if: ${{ !cancelled() && github.event_name != 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Blocking gate — see snyk-python. Exceptions honoured via
+    # .security/exceptions.yaml (docs/security/CVE_TRIAGE_POLICY.md).
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Setup Python (for exception filter)
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate CVE exceptions file
+        run: |
+          pip install pyyaml -q
+          python scripts/check_cve_exceptions.py
+
+      - name: Run Snyk (Node.js, JSON for exception filtering)
+        run: |
+          npx --yes snyk@latest test \
+            --severity-threshold=high \
+            --all-projects \
+            --json-file-output=snyk-node.json \
+            --sarif-file-output=snyk.sarif || true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      - name: Honour CVE exceptions (fail on un-accepted CVEs)
+        run: |
+          python scripts/filter_snyk_findings.py snyk-node.json
+        env:
+          CVE_EXCEPTIONS_PATH: .security/exceptions.yaml
+
+      - name: Upload Snyk results
+        uses: github/codeql-action/upload-sarif@v4.39.1
+        if: always() && hashFiles('snyk.sarif') != ''
+        continue-on-error: true
+        with:
+          sarif_file: snyk.sarif
+
+  snyk-docker:
+    name: Snyk Docker Security
+    # Rakyat has no change map: this job runs on every event.
+    # This job also validates that the production Dockerfile still BUILDS (see the job's own comment below).
+    # NOT MERGE-GROUP DEDUPED (considered and reverted, 2026-09-05): a
+    # merge_group's tree is base-branch tip + any earlier-queued-ahead
+    # batchmates + this PR, which is not provably byte-identical to what
+    # this PR's own `pull_request` run built (that run checks out
+    # `refs/pull/N/merge`, a test-merge against whatever the base was AT
+    # THAT RUN'S trigger time — a moving target, not this PR's diff alone).
+    # This job is the one place in this file where that gap is not
+    # theoretical: run 30302472020 (see the job's own comment below) IS a
+    # merge_group run that caught a broken image build the PR-head run had
+    # not. Deduping this job would silently reintroduce that exact blind
+    # spot. Flagged by an adversarial review seat (codex-gpt-5.6-sol) on an
+    # earlier draft that DID dedup this job; see the PR body/evidence pack.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # This job does TWO different things and they deserve different verdicts:
+    # it BUILDS the production image, and then it SCANS the result.
+    #
+    # A vulnerability finding stays advisory — a CVE in the base image should not
+    # block every pull request — and that is handled where it belongs, by the
+    # step-level `continue-on-error` on "Run Snyk (Docker)" below.
+    #
+    # A BUILD failure is not a finding. It means the production image cannot be
+    # produced at all, and `fly deploy` builds this very Dockerfile. So the
+    # job-level `continue-on-error: true` that used to sit here was removed
+    # (2026-07-28): measured, it let the workflow RUN report `success` while
+    # `Build Docker image` had failed — run 30302472020 (a merge_group!) and run
+    # 30301159955 both concluded green with a broken image. The job's own check
+    # went red either way, but nothing that watches "did security.yml pass" could
+    # see it, and this check cannot be made required because it needs SNYK_TOKEN
+    # (a required context that needs a secret is impassable for Dependabot).
+    #
+    # Removing it changes no gating: `Snyk Docker Security` is not a required
+    # context and the run conclusion is not one either. It only stops the run from
+    # claiming success over a broken build.
+    #
+    # The comment previously here said "Advisory-only: see snyk-python job
+    # comment" — a pointer that had outlived its target: snyk-python is now
+    # documented as a BLOCKING gate, so the reference argued the opposite of what
+    # it was cited for. Stating the reason locally instead of pointing elsewhere.
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Build Docker image
+        run: |
+          docker build -t nuzantara-rag:${{ github.sha }} \
+            -f apps/backend-rag/Dockerfile .
+
+      - name: Run Snyk (Docker)
+        uses: snyk/actions/docker@11b673cfb4b0dc0d860a1323caa199d54950dcce # master
+        continue-on-error: true # vulnerability findings stay advisory (see job comment)
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          image: nuzantara-rag:${{ github.sha }}
+          args: --severity-threshold=high
+
+      # A red check on a pull request is seen by its author. A red check on MAIN is
+      # seen by nobody: none of this workflow's eight jobs alarmed, while fly-deploy
+      # and six cron-* workflows all carry `if: failure()` Telegram steps on the same
+      # channel. That asymmetry is why the 2026-07-27 NodeSource 403s — intermittent
+      # failures at 19:57, 19:58, 20:06, 20:20 and 20:24, recovering by 20:42 — broke
+      # the production image build repeatedly without anyone being told.
+      #
+      # Restricted to non-PR triggers on purpose: on a pull request the author
+      # already has the signal, and duplicating it there would only train people
+      # to ignore the channel. That was originally written as `event_name=='push'
+      # && ref=='refs/heads/main'`, which commit 4e2d8367e (#4218, 2026-08-16)
+      # orphaned: narrowing `on.push.branches` from `[main, develop]` to
+      # `[develop]` means GitHub's own branch filter now guarantees
+      # `event_name=='push' ⟹ ref=='refs/heads/develop'` — the old conjunct
+      # against `refs/heads/main` became a standing contradiction, so this step
+      # could never fire on a push, and under `schedule` (the daily backstop
+      # #4218 named as the intended replacement) `event_name` is never `'push'`
+      # either. The alarm was armed and mute. Proven live: the 2026-08-20
+      # unbuildable image (upstream `claude-code@2.1.237` published without its
+      # `linux-x64` tarball) alarmed nobody. The condition below now names
+      # exactly the two triggers this `on:` block can actually deliver a
+      # failure() run through — a push to `develop`, or the daily `schedule`
+      # run (which always executes against the default branch, i.e. main).
+      # `secrets.*` is available on both: `schedule` only ever fires on the
+      # default branch, never a fork PR context, and this repo's other
+      # scheduled workflows (e.g. the former cron-cert-monitor.yml) read
+      # `secrets.TELEGRAM_BOT_TOKEN`/`secrets.TELEGRAM_OWNER_CHAT_ID` live under
+      # `on: schedule:` with no special-casing.
+      # The alert NAMES the ref it fired on rather than asserting one. The step
+      # used to be titled "... on main" and say so in its body — true while the
+      # only trigger was a push to main, and a lie the moment the condition
+      # above gained the `develop` push and the scheduled run. An alert that
+      # inventories mutable state mislead exactly the person reading it at
+      # 07:30 (W114/W106), and it is the same belief that produced the
+      # condition, so the two must not be able to disagree. `github.ref_name`
+      # is `develop` on the push and the default branch on the scheduled run.
+      - name: Record workflow outcome (Telegram retired)
+        if: "failure() && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/develop'))"
+        run: |
+          printf '%s\n' 'Telegram retired; workflow logs and status remain authoritative.' >> "$GITHUB_STEP_SUMMARY"
+
   codeql:
     name: CodeQL Analysis
+    # Rakyat has no change map: both matrix legs always analyse their language.
+    # Do NOT add a job-level path `if:` — a skipped matrix job never reports the
+    # required `CodeQL Analysis (python)` / `(javascript)` contexts (measured on PR #4452 of the old monorepo).
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -42,25 +338,426 @@ jobs:
       matrix:
         language: ["python", "javascript"]
 
+    # Per-leg gate (Layer 2 — see job `if:` comment above). Same fail-open
+    # polarity as every other gate in this workflow: only the exact literal
+    # 'false' skips; unset/malformed/any-other-value runs.
+    env:
+      RUN_THIS_LANGUAGE: "true"
+
+    # NOT ADDED: a merge_group carry-over that skips Initialize/Autobuild/
+    # Analyze when the PR-head SHA already carries a completed, successful
+    # check-run of the same name. Attempted and REVERTED in this same PR
+    # after two independent adversarial review seats (codex-gpt-5.6-sol,
+    # tp1-qwen3.8-max) both found the same BLOCKER: a merge_group's synthetic
+    # tree is base-branch-tip + any earlier-queued-ahead batchmates + this
+    # PR, which is NOT provably identical to what the PR's own
+    # `pull_request` run analyzed (that run checks out `refs/pull/N/merge`,
+    # a test-merge against whatever the base branch tip was AT THAT RUN'S
+    # trigger time — a moving target). Matching on PR-head SHA + exact
+    # context name proves the PR's OWN diff didn't change; it does not prove
+    # the analyzed TREE didn't change. Closing that gap correctly needs a
+    # closed-loop mechanism (e.g. the pull_request run publishing a tree
+    # hash the merge_group run can independently recompute and compare) —
+    # out of scope for this PR's budget. See the PR body / evidence pack for
+    # the two reviews and the receipt showing this job already reports well
+    # inside the 90-minute merge-queue ceiling as-is (observed worst case
+    # ~15min for the python leg, 3 real merge_group runs on 2026-09-04),
+    # so there is no live correctness gap being left open — only a
+    # latency optimization deferred until it can be done without the flaw.
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        if: env.RUN_THIS_LANGUAGE == 'true'
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           languages: ${{ matrix.language }}
           queries: security-extended,security-and-quality
           config-file: ./.github/codeql-config.yml
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        if: env.RUN_THIS_LANGUAGE == 'true'
+        uses: github/codeql-action/autobuild@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        if: env.RUN_THIS_LANGUAGE == 'true'
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           category: "/language:${{matrix.language}}"
-          # merge_group: analyse, never upload. The queue's temporary ref is
-          # deleted once the group is rebuilt or merged, and a SARIF upload at
-          # the end of a long analysis then fails with "ref ... not found".
-          upload: ${{ github.event_name == 'merge_group' && 'never' || 'always' }}
+          # Keep analysis independent of Code Scanning availability and of
+          # temporary merge-group refs. Preserve the findings below.
+          upload: never
+          upload-database: false
+          output: codeql-results
+
+      - name: Retain CodeQL SARIF
+        if: always() && env.RUN_THIS_LANGUAGE == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: codeql-sarif-${{ matrix.language }}-${{ github.run_attempt }}
+          path: codeql-results/**/*.sarif
+          if-no-files-found: error
+          retention-days: 14
+
+  bandit:
+    name: Bandit Python Security
+    # Rakyat has no change map: this job runs on every event.
+    # Bandit's scan target is fixed to apps/backend-rag/backend/ only.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Blocking gate (A1 fix 2026-06-13): this job is in the merge-blocking
+    # required-checks set, but it previously ran `bandit ... || true` and could
+    # never fail — a toothless required check. It now replicates the decision
+    # logic from semgrep.yml's "Bandit SAST (Python)" job: fail ONLY on
+    # HIGH/CRITICAL severity findings (HIGH/MEDIUM confidence); MEDIUM/LOW
+    # stay advisory in the summary. Local baseline 2026-06-13 against the same
+    # target/config: 186 findings, all MEDIUM severity, ZERO HIGH/CRITICAL —
+    # so enabling the gate does not brick main. No allowlist needed.
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install Bandit
+        run: pip install bandit[toml]
+
+      - name: Run Bandit
+        run: |
+          bandit -r apps/backend-rag/backend/ \
+            -c apps/backend-rag/pyproject.toml \
+            -f json \
+            -o bandit-report.json \
+            -ll \
+            --exit-zero
+        # --exit-zero: findings never fail THIS step (the decision step below
+        # makes the call); a genuine bandit crash (bad args/config) still fails.
+
+      - name: Check for HIGH/CRITICAL findings (blocks merge)
+        run: |
+          python3 - <<'EOF'
+          import json, sys
+          from collections import Counter
+          with open("bandit-report.json") as f:
+              data = json.load(f)
+          results = data.get("results", [])
+          def is_blocker(r):
+              return (r.get("issue_severity") in ("HIGH", "CRITICAL")
+                      and r.get("issue_confidence") in ("HIGH", "MEDIUM"))
+          blockers = [r for r in results if is_blocker(r)]
+          advisory = Counter(
+              r.get("issue_severity") for r in results if not is_blocker(r)
+          )
+          adv_str = ", ".join(f"{k}: {v}" for k, v in sorted(advisory.items())) or "none"
+          if blockers:
+              print(f"❌ {len(blockers)} HIGH/CRITICAL Bandit findings (blocking):")
+              for b in blockers:
+                  print(f"  [{b['issue_severity']}/{b['issue_confidence']}] {b['test_id']} — {b['filename']}:{b['line_number']}: {b['issue_text']}")
+              print(f"Advisory (non-blocking) findings — {adv_str}")
+              sys.exit(1)
+          print(f"✅ No HIGH/CRITICAL findings. Advisory (non-blocking) — {adv_str} (total: {len(results)})")
+          EOF
+
+      - name: Upload Bandit results
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: bandit-report
+          path: bandit-report.json
+
+  safety:
+    name: Safety Dependency Check
+    # Rakyat has no change map: this job runs on every event.
+    # Safety scans apps/backend-rag/requirements.txt only.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Blocking gate — HIGH/CRITICAL CVEs fail the job unless the finding is
+    # listed in .security/exceptions.yaml (see docs/security/CVE_TRIAGE_POLICY.md).
+    # Safety CLI exits 0 for "no vulns" and 64 for "vulns found" — we filter
+    # the JSON report against the exception list before deciding.
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install Safety
+        run: pip install safety pyyaml -q
+
+      - name: Validate CVE exceptions file
+        run: python scripts/check_cve_exceptions.py
+
+      - name: Run Safety check (save JSON report)
+        run: |
+          safety check \
+            --file apps/backend-rag/requirements.txt \
+            --save-json safety-report.json \
+            || true
+
+      - name: Honour CVE exceptions (fail on un-accepted CVEs)
+        run: |
+          python scripts/filter_safety_findings.py safety-report.json
+        env:
+          CVE_EXCEPTIONS_PATH: .security/exceptions.yaml
+
+      - name: Upload Safety results
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: safety-report
+          path: safety-report.json
+
+  detect-secrets:
+    name: Detect Secrets
+    # Never path-gated: a secret can land in ANY file, so there is no domain a
+    # leaked credential is confined to.
+    #
+    # Scan WIDTH is a different question from WHETHER the job runs
+    # (2026-08-21, token-ceremony CI-critical-path audit, lever L3 —
+    # research/operations/2026-08-21-token-ceremony-ci-system-audit.md):
+    # on pull_request/merge_group the scan is scoped to the files the diff
+    # touches, because a secret can only ENTER through a changed file. A
+    # secret sitting in an UNCHANGED file is already on main — the daily +
+    # weekly scheduled full-tree scans (and any push/workflow_dispatch run)
+    # are the net that catches those, per the audit's own risk note. The
+    # full scan measured 19m34s on run 31312661093; the diff-scoped scan is
+    # seconds. The gate semantics are unchanged: any NEW finding in a
+    # changed file still arrives unaudited and still fails the job below.
+    #
+    # MERGE-GROUP DEDUP (2026-09-05) — a NARROWER exception than the domain
+    # one above. The diff-scoped scan on `merge_group` reads the same
+    # changed-file SET this PR's own pull_request run just scanned, WITH
+    # this PR's own content in those files (not claiming that set can never
+    # overlap another batchmate's changes — two queue entries CAN both touch
+    # the same file on different lines without conflicting, so this is
+    # explicitly not a byte-identity argument). What licenses the skip: a
+    # secret is a property of one file's content at the lines this PR itself
+    # wrote, and this job is not a required context (verified live,
+    # `gh api repos/.../branches/main/protection` — 13 contexts, this job's
+    # name is not among them), so the residual risk of a same-file batchmate
+    # combination forming a new secret only when concatenated is bounded to
+    # a contrived, non-blocking edge case — not the realistic accidental-
+    # credential-leak shape this scanner exists to catch, which its own
+    # pull_request run (this PR's or the batchmate's) already covers.
+    # `github.event_name != 'merge_group'` below skips only that redundant
+    # re-scan; push/schedule/workflow_dispatch keep running the full-tree
+    # scan exactly as before, and pull_request keeps running the diff-scoped
+    # scan exactly as before. IF THIS JOB IS EVER MADE REQUIRED for merge,
+    # remove that term — the argument here depends on advisory-only status.
+    if: github.event_name != 'merge_group'
+    runs-on: ubuntu-latest
+    # Run 31312661093 measured 19m34s in the scan alone and was cancelled at
+    # the 20m job limit after every gating step had succeeded. Keep this gate
+    # blocking, but give runner variance enough headroom to report its verdict.
+    timeout-minutes: 30
+    # Re-enabled as a blocking gate now that:
+    # 1. .secrets.baseline has been triaged: 920 findings auto-marked as
+    #    false positives via scripts/detect_secrets_auto_triage.py (path
+    #    rules cover .env.example, test fixtures, docs, scraped data,
+    #    generated state files, known-benign source files).
+    # 2. The one remaining flagged finding (damar-node/gemini-settings.json
+    #    with NUZANTARA_API_KEY=REDACTED-ROTATED-KEY) is marked is_secret=false
+    #    with a `note` field asking the maintainer to verify it is indeed
+    #    stale/legacy (not used by production intel.py, which reads from
+    #    settings.intel_scraper_api_key env var).
+    # 3. The non-existent `--fail-on-unaudited` CLI flag has been replaced
+    #    with scripts/detect_secrets_check_unaudited.py, which enforces the
+    #    same invariant correctly.
+    #
+    # To re-introduce a new unaudited finding, the auto-triage script must
+    # be updated with a new rule OR the finding must be manually marked
+    # in the baseline. Either action forces a deliberate decision.
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install detect-secrets
+        run: pip install detect-secrets pytest
+
+      - name: Decide scan scope
+        # L3 (see the job header above): pull_request/merge_group scan only
+        # the diff's files; every other event keeps the full-tree scan.
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MQ_BASE: ${{ github.event.merge_group.base_sha }}
+          MQ_HEAD: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" != "pull_request" ] && [ "${EVENT_NAME}" != "merge_group" ]; then
+            echo "full-tree scan (event: ${EVENT_NAME})"
+            echo "mode=full" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            BASE="${PR_BASE}"; HEAD="${PR_HEAD}"; PRN="${PR_NUMBER}"
+          else
+            BASE="${MQ_BASE}"; HEAD="${MQ_HEAD}"; PRN=""
+          fi
+          # hotzone_changed_files.sh anchors on the merge-base (three-dot,
+          # exactly what the PR "Files changed" tab shows) and exits 3 when
+          # it cannot determine the changed set — `set -e` turns that into a
+          # RED job here, never a blind green (the script's own contract).
+          if [ -n "${PRN}" ]; then
+            bash scripts/ci/hotzone_changed_files.sh "${BASE}" "${HEAD}" "${PRN}" > /tmp/changed_all.txt
+          else
+            bash scripts/ci/hotzone_changed_files.sh "${BASE}" "${HEAD}" > /tmp/changed_all.txt
+          fi
+          # A diff can DELETE files, and detect-secrets errors on a path that
+          # does not exist in the worktree — scan only what is still there.
+          : > /tmp/changed_existing.txt
+          while IFS= read -r f; do
+            [ -f "$f" ] && printf '%s\n' "$f" >> /tmp/changed_existing.txt
+          done < /tmp/changed_all.txt
+          COUNT=$(wc -l < /tmp/changed_existing.txt | tr -d ' ')
+          echo "diff-scope: ${COUNT} scannable file(s) out of $(wc -l < /tmp/changed_all.txt | tr -d ' ') changed"
+          if [ "${COUNT}" -eq 0 ]; then
+            # Enumeration SUCCEEDED — hotzone_changed_files.sh exits 3 when
+            # it cannot determine the changed set, so a blind/lying scan set
+            # never reaches this line (that is the W84 tripwire, upstream).
+            # Zero scannable files here is therefore a TRUTHFUL statement:
+            # the diff is empty, or everything it touched was deleted — and
+            # a deletion cannot introduce a secret (Codex red-team round 1:
+            # the previous fail-on-0 blocked legitimate deletion-only PRs).
+            # Report the no-op explicitly — never the word "clean": this
+            # step scanned nothing.
+            echo "diff-scope: nothing to scan (empty or deletion-only diff; enumeration succeeded)"
+            echo "mode=noop" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "mode=diff" >> "$GITHUB_OUTPUT"
+
+      - name: Run detect-secrets scan
+        env:
+          SCAN_MODE: ${{ steps.scope.outputs.mode }}
+        run: |
+          set -euo pipefail
+          if [ "${SCAN_MODE}" = "noop" ]; then
+            # Empty or deletion-only diff — the Decide step proved the
+            # enumeration succeeded; there is nothing a scan could find.
+            echo "scan skipped: nothing to scan (see Decide scan scope)"
+          elif [ "${SCAN_MODE}" = "diff" ]; then
+            # Explicit paths keep repo-relative keys, so baseline audit
+            # decisions for known false positives in those files still
+            # match and stay filtered (verified against detect-secrets on
+            # a fixture: decisions preserved, new findings arrive unaudited,
+            # unscanned entries pruned — ephemeral in this workspace).
+            # Portable array build, no mapfile: bash 3.2-safe (fleet macs).
+            FILES=()
+            while IFS= read -r f; do
+              FILES+=("$f")
+            done < /tmp/changed_existing.txt
+            detect-secrets scan \
+              --baseline .secrets.baseline \
+              "${FILES[@]}"
+          else
+            detect-secrets scan \
+              --baseline .secrets.baseline \
+              --exclude-files 'node_modules/.*' \
+              --exclude-files '\.venv/.*' \
+              --exclude-files 'venv/.*' \
+              --exclude-files '\.git/.*'
+          fi
+
+      - name: Check for unaudited findings
+        # If any finding has no is_secret decision, fail. This reproduces the
+        # intent of the original --fail-on-unaudited without depending on a
+        # non-existent CLI flag. The auto-triage script in
+        # scripts/detect_secrets_auto_triage.py pre-marks known false positives
+        # by path pattern; any residue is a genuine new finding that needs
+        # human eyes.
+        #
+        # L3 nightly alert (2026-08-21, see the step below): capture this
+        # script's own stdout+stderr to a file so a failing full-tree run can
+        # quote it in the Telegram alert without a second execution. No
+        # pipe/tee here on purpose (W101/W97 — a pipe can mask the upstream
+        # exit code): the exit status is captured explicitly via `$?` and
+        # re-raised, so a finding still fails this step exactly as before.
+        run: |
+          set -uo pipefail
+          OUT="$(python scripts/detect_secrets_check_unaudited.py 2>&1)"
+          RC=$?
+          printf '%s\n' "$OUT"
+          printf '%s\n' "$OUT" > /tmp/unaudited-findings.txt
+          exit "$RC"
+
+  security-summary:
+    name: Security Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      [
+        snyk-python,
+        snyk-node,
+        snyk-docker,
+        codeql,
+        bandit,
+        safety,
+        detect-secrets,
+      ]
+    if: always()
+
+    steps:
+      # List each job's ACTUAL `needs.<job>.result` instead of asserting it
+      # (the "message inventories mutable state" failure mode, W114/W106).
+      - name: Create security summary
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const jobs = [
+              ["Snyk Python", "${{ needs.snyk-python.result }}"],
+              ["Snyk Node.js", "${{ needs.snyk-node.result }}"],
+              ["Snyk Docker", "${{ needs.snyk-docker.result }}"],
+              ["CodeQL", "${{ needs.codeql.result }}"],
+              ["Bandit", "${{ needs.bandit.result }}"],
+              ["Safety", "${{ needs.safety.result }}"],
+              // Label corrected 2026-09-05: this job now DOES skip on
+              // merge_group (redundant re-scan of the same PR-head diff, see
+              // its own job comment). This is JavaScript inside github-script:
+              // a "#" line here is a SyntaxError, not a comment — the Security
+              // Summary failed on exactly that on this PR's own run (2026-09-04).
+              ["Detect Secrets", "${{ needs.detect-secrets.result }}"],
+            ];
+            const icon = (r) => r === "success" ? "✅ ran" : r === "skipped" ? "⏭️ skipped (path-aware gate)" : r === "failure" ? "❌ FAILED" : `⚠️ ${r}`;
+            const scanLines = jobs.map(([name, result]) => `- **${name}**: ${icon(result)}`).join("\n            ");
+
+            const summary = `
+            ## 🔒 Security Scan Complete
+
+            ### Scans
+            ${scanLines}
+
+            ### Results
+            View detailed results in:
+            - **Security tab** for CodeQL findings
+            - **Artifacts** for Bandit and Safety reports
+            - **Snyk dashboard** for vulnerability details
+
+            ### Severity Thresholds
+            - Critical: Block merge
+            - High: Block merge
+            - Medium: Warning
+            - Low: Info only
+
+            ### Next Steps
+            1. Review all high/critical findings
+            2. Update vulnerable dependencies
+            3. Fix security issues before merge
+            `;
+
+            core.summary.addRaw(summary).write();

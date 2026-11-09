@@ -88,6 +88,8 @@ translatedBy: Gemma3:12b + Gemini 3.1 Pro
 translatedFrom: en
 twitterCard: summary_large_image
 updatedAt: "2026-01-15"
+locale: "id"
+source_sha256: "f7c7f885df1dc29b4d41a59e0c900a990216402de6c039d4fbd7af133a3bcac1"
 ---
 
 import {
@@ -99,64 +101,424 @@ import {
 
 # Rekening Bank Bisnis Indonesia 2026: Panduan Perbankan PT PMA
 
-Setiap perusahaan di Indonesia wajib memiliki rekening bank korporat. Berikut adalah panduan lengkap untuk membuka rekening bagi PT PMA Anda.
+Setiap perusahaan Indonesia membutuhkan rekening bank korporat. Berikut cara membukanya untuk PT PMA Anda.
 
 ## Pilihan Bank
 
 <ComparisonTable
-  title="Bank untuk PT PMA"
-  description="Pilihan populer bagi perusahaan dengan kepemilikan modal asing"
+  title="Banks for PT PMA"
+  description="Popular choices for foreign-owned companies"
   items={[
     {
       name: "BCA",
       subtitle: "Bank Central Asia",
       values: {
-        Tipe: "Lokal (Swasta Terbesar)",
-        Inggris: "Baik",
-        Online: "Sangat Baik",
-        "Ramah PT PMA": "Ya",
+        Type: "Local (largest private)",
+        English: "Good",
+        Online: "Excellent",
+        "PT PMA friendly": "Yes",
       },
       highlight: true,
     },
     {
       name: "Mandiri",
-      subtitle: "Bank Milik Negara (BUMN)",
+      subtitle: "State-owned",
       values: {
-        Tipe: "Lokal (Terbesar)",
-        Inggris: "Baik",
-        Online: "Baik",
-        "Ramah PT PMA": "Ya",
+        Type: "Local (largest)",
+        English: "Good",
+        Online: "Good",
+        "PT PMA friendly": "Yes",
       },
     },
     {
       name: "CIMB Niaga",
-      subtitle: "Afiliasi Asing",
+      subtitle: "Foreign-linked",
       values: {
-        Tipe: "Lokal/Malaysia",
-        Inggris: "Sangat Baik",
-        Online: "Baik",
-        "Ramah PT PMA": "Sangat Ramah",
+        Type: "Local/Malaysian",
+        English: "Very good",
+        Online: "Good",
+        "PT PMA friendly": "Very",
       },
     },
     {
       name: "HSBC",
-      subtitle: "Internasional",
+      subtitle: "International",
       values: {
-        Tipe: "Internasional",
-        Inggris: "Sangat Baik",
-        Online: "Sangat Baik",
-        "Ramah PT PMA": "Ya",
+        Type: "International",
+        English: "Excellent",
+        Online: "Excellent",
+        "PT PMA friendly": "Yes",
       },
     },
     {
       name: "Standard Chartered",
-      subtitle: "Internasional",
+      subtitle: "International",
       values: {
-        Tipe: "Internasional",
-        Inggris: "Sangat Baik",
-        Online: "Sangat Baik",
-        "Ramah PT PMA": "Ya",
+        Type: "International",
+        English: "Excellent",
+        Online: "Excellent",
+        "PT PMA friendly": "Yes",
       },
     },
   ]}
 />
+
+---
+
+## Bank Lokal vs Bank Internasional
+
+<InfoCard variant="note" title="Which to Choose?">
+**Bank Lokal (BCA, Mandiri):**
+- Lebih banyak cabang/ATM
+- Integrasi lokal yang lebih baik
+- Biaya biasanya lebih rendah
+- Baik untuk bisnis domestik
+
+**Bank Internasional (HSBC, SCB):**
+
+- Transfer internasional lebih mudah
+- Lebih baik untuk operasional global
+- Minimum/biaya lebih tinggi
+- Layanan bahasa Inggris sangat baik
+
+**Sebagian besar PT PMA menggunakan:** BCA atau CIMB Niaga untuk operasional harian, terkadang bank internasional untuk lintas batas.
+
+</InfoCard>
+
+---
+
+## Persyaratan Dokumen
+
+<Checklist
+  title="Corporate Account Documents"
+  description="What banks require"
+  persistKey="corp-bank-checklist"
+  items={[
+    {
+      id: "akta",
+      label: "Company deed (Akta)",
+      description: "Latest version with all amendments",
+      required: true,
+      category: "company",
+    },
+    {
+      id: "sk",
+      label: "MOL&HR approval (SK)",
+      description: "Ministry approval letter",
+      required: true,
+      category: "company",
+    },
+    {
+      id: "nib",
+      label: "NIB (Business ID)",
+      description: "From OSS system",
+      required: true,
+      category: "company",
+    },
+    {
+      id: "npwp",
+      label: "Company NPWP",
+      description: "Tax ID number",
+      required: true,
+      category: "company",
+    },
+    {
+      id: "director-id",
+      label: "Director ID",
+      description: "Passport for foreigners, KTP for Indonesian",
+      required: true,
+      category: "director",
+    },
+    {
+      id: "director-npwp",
+      label: "Director NPWP",
+      description: "Personal tax ID",
+      required: true,
+      category: "director",
+    },
+    {
+      id: "kitas",
+      label: "KITAS (if foreign director)",
+      description: "Valid stay permit",
+      required: true,
+      category: "director",
+    },
+    {
+      id: "shareholder-docs",
+      label: "Shareholder documentation",
+      description: "ID of all shareholders",
+      required: true,
+      category: "shareholders",
+    },
+    {
+      id: "domicile",
+      label: "Company domicile letter",
+      description: "Proof of office address",
+      required: true,
+      category: "company",
+    },
+    {
+      id: "board-resolution",
+      label: "Board resolution",
+      description: "Authorizing account opening",
+      required: true,
+      category: "governance",
+    },
+  ]}
+  categories={[
+    { id: "company", label: "Company", color: "blue" },
+    { id: "director", label: "Director", color: "green" },
+    { id: "shareholders", label: "Shareholders", color: "amber" },
+    { id: "governance", label: "Governance", color: "purple" },
+  ]}
+  showProgress={true}
+/>
+
+---
+
+## Proses Pembukaan
+
+### Langkah demi Langkah
+
+| Langkah | Proses |
+| ----------------------- | ------------------------- |
+| 1. Pilih bank | Bandingkan pilihan, lokasi |
+| 2. Pertemuan awal | Diskusikan persyaratan |
+| 3. Penyerahan dokumen | Paket lengkap |
+| 4. Uji tuntas | Bank memverifikasi dokumen |
+| 5. Persetujuan | Biasanya 1-3 minggu |
+| 6. Aktivasi rekening | Tandatangani dokumen, setoran |
+| 7. Penyiapan online banking | Token, kredensial |
+
+### Linimasa
+
+| Tahap | Durasi |
+| -------------------- | ------------- |
+| Persiapan dokumen | 1-2 minggu |
+| Peninjauan bank | 1-3 minggu |
+| Persetujuan | 1-2 minggu |
+| **Total** | **3-6 minggu** |
+
+<InfoCard variant="warning" title="Common Delays">
+**Apa yang memperlambat proses:**
+
+- Dokumen tidak lengkap
+- Direktur belum memiliki KITAS
+- Pertanyaan kepatuhan bank
+- Masalah verifikasi alamat
+- Kekurangan dokumentasi pemegang saham
+
+Persiapkan dengan matang untuk menghindari keterlambatan!
+
+</InfoCard>
+
+---
+
+## Jenis Rekening
+
+### Penawaran Standar
+
+| Jenis Rekening | Tujuan |
+| ---------------- | --------------------- |
+| Giro (Current) | Operasional sehari-hari |
+| Deposito (Fixed) | Mendapatkan bunga |
+| Rekening USD | Mata uang asing |
+| Multi-mata uang | Berbagai mata uang |
+
+### Fitur yang Perlu Diminta
+
+| Fitur | Alasan Dibutuhkan |
+| ----------------------- | --------------------- |
+| Internet banking | Pengelolaan jarak jauh |
+| Mobile banking | Kemudahan |
+| Banyak penandatangan | Kontrol |
+| Transfer internasional | Pembayaran lintas batas |
+| Pembayaran massal | Penggajian, vendor |
+| Akses API | Integrasi sistem |
+
+---
+
+## Setoran Minimum
+
+| Bank | Rekening IDR | Rekening USD |
+| ------------------ | ----------- | ------------- |
+| BCA | IDR 5-10M | USD 500-1,000 |
+| Mandiri | IDR 5-10M | USD 500 |
+| CIMB Niaga | IDR 5-10M | USD 500 |
+| HSBC | IDR 50M+ | USD 5,000+ |
+| Standard Chartered | IDR 50M+ | USD 5,000+ |
+
+Bank internasional biasanya mensyaratkan minimum yang lebih tinggi.
+
+---
+
+## Biaya dan Tarif
+
+### Biaya Bulanan Umum
+
+| Layanan | Kisaran |
+| ------------------- | -------------------- |
+| Pemeliharaan rekening | IDR 25-100K |
+| Internet banking | IDR 0-50K |
+| Biaya saldo minimum | IDR 50-150K jika di bawah minimum |
+
+### Biaya Transaksi
+
+| Transaksi | Bank Lokal | Internasional |
+| ---------------------- | ------------ | ------------- |
+| Transfer domestik | IDR 2.5-6.5K | IDR 5-15K |
+| Transfer internasional | IDR 50-150K | IDR 100-300K |
+| Buku cek | IDR 100-200K | IDR 200-300K |
+
+---
+
+## Transfer Internasional
+
+### Mengirim Dana ke Luar Negeri
+
+<InfoCard variant="note" title="Currency Controls">
+**Indonesia memiliki beberapa ketentuan:**
+
+- Transaksi di atas USD 25K memerlukan dokumen pendukung
+- Surat keterangan pajak mungkin diperlukan
+- Bank melaporkan ke bank sentral
+- Dokumentasi yang tepat sangat penting
+
+Simpan semua faktur, kontrak untuk transfer!
+
+</InfoCard>
+
+### Dokumen yang Diperlukan untuk Transfer Keluar
+
+| Untuk | Dokumen |
+| --------------- | -------------------------- |
+| Pembayaran impor | Faktur, LC, dokumen bea cukai |
+| Pembayaran jasa | Kontrak, faktur |
+| Dividen | Resolusi dewan, dokumen pajak |
+| Pembayaran kembali pinjaman | Perjanjian pinjaman |
+
+---
+
+## Menerima Dana
+
+### Remitansi Masuk
+
+| Persyaratan | Detail |
+| ---------------- | -------------------------- |
+| Faktur/kontrak | Dokumen pendukung |
+| NPWP | Nomor pajak perusahaan |
+| Pelaporan | Di atas USD 10K dilaporkan otomatis |
+
+### Tips agar Penerimaan Lancar
+
+- Beri tahu bank tentang transfer besar yang akan datang
+- Siapkan dokumen pendukung
+- Sesuaikan referensi transfer dengan faktur
+- Pastikan pengirim menggunakan detail yang benar
+
+---
+
+## Rekening Multi-Mata Uang
+
+### Kapan Berguna
+
+| Skenario | Manfaat |
+| --------------------- | --------------------------------- |
+| Bisnis ekspor | Menerima dalam mata uang asing |
+| Bisnis impor | Membayar pemasok secara langsung |
+| Klien internasional | Membuat faktur dalam mata uang mereka |
+| Lindung nilai | Menahan mata uang untuk kurs yang menguntungkan |
+
+### Mata Uang Umum
+
+- USD (paling umum)
+- EUR
+- SGD
+- AUD
+- JPY
+
+---
+
+## Perbankan Online
+
+### Fitur yang Tersedia
+
+| Fitur | Ketersediaan |
+| ------------------------ | ------------------ |
+| Cek saldo | Semua bank |
+| Transfer (domestik) | Semua bank |
+| Transfer (internasional) | Sebagian besar bank |
+| Unggah massal | Rekening korporat |
+| Unduh laporan rekening | Semua bank |
+| Pembayaran pajak | Sebagian besar bank |
+
+### Keamanan
+
+| Langkah Keamanan | Praktik Standar |
+| ----------------- | ------------------------- |
+| Token/OTP | Diwajibkan untuk transaksi |
+| Batas pengguna | Dapat dikonfigurasi |
+| Alur persetujuan | Banyak penandatangan |
+| Pembatasan IP | Beberapa bank |
+
+---
+
+## Tips agar Berhasil
+
+<InfoCard variant="tip" title="Account Opening Tips">
+**Agar proses lancar:**
+
+1. **Lengkapi dokumen terlebih dahulu** - Jangan mengajukan sebagian
+2. **Gunakan sekretaris korporat** - Mereka memahami persyaratan bank
+3. **Bangun relasi** - Relationship manager membantu
+4. **Mulai proses lebih awal** - Sebelum Anda sangat membutuhkan rekening
+5. **Pertimbangkan bank cadangan** - Dua rekening adalah hal umum
+6. **Selalu perbarui dokumen** - Perubahan akta tahunan
+
+</InfoCard>
+
+### Kesalahan Umum
+
+| Kesalahan | Akibat |
+| ---------------------- | ------------------- |
+| Dokumen tidak lengkap | Penolakan/keterlambatan |
+| Direktur tanpa KITAS | Tidak dapat membuka |
+| Nama perusahaan salah | Harus sama persis |
+| Versi akta lama | Harus yang terbaru |
+| NPWP hilang | Langsung ditolak |
+
+---
+
+## Setelah Pembukaan
+
+### Persyaratan Berkelanjutan
+
+| Persyaratan | Frekuensi |
+| ---------------------- | ---------------------- |
+| Perbarui dokumen | Saat perusahaan berubah |
+| Saldo minimum | Pertahankan untuk menghindari biaya |
+| Peninjauan tahunan | Pembaruan KYC bank |
+| Pemantauan transaksi | Kepatuhan berkelanjutan |
+
+---
+
+## Pertanyaan Umum
+
+<AskZantara
+  context="Business bank account Indonesia, PT PMA banking, corporate account, Indonesian banks"
+  placeholder="Ask about business banking..."
+  suggestedQuestions={[
+    "Can I open account before KITAS?",
+    "Which bank is best for PT PMA?",
+    "How long does it take?",
+    "Do I need physical presence?",
+  ]}
+/>
+
+---
+
+## Artikel Terkait
+
+- [Panduan Pendirian PT PMA](/business/foreign-company-incorporation-steps)
+- [Perbankan untuk WNA](/insights/lifestyle/banking-for-foreigners)
+- [Panduan Persyaratan Modal](/insights/business/capital-requirements-guide)

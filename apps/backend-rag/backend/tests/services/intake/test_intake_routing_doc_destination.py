@@ -110,7 +110,7 @@ async def test_skt_npwp_number_strong_matches_company_destination() -> None:
     )
 
     out = await rt.resolve_entity(
-        {"npwp_number": {"value": "99.000.000.1-000.004"}},
+        {"npwp_number": {"value": "99.000.000.1-000.005"}},
         "skt",
         FakePool(conn),
     )

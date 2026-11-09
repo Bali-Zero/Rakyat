@@ -4,8 +4,9 @@ import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X, Loader2 } from "lucide-react";
-import { kbliApi, KBLIDetail } from "@/lib/api/kbli.api";
+import { getNativeScopeView, kbliApi, KBLIDetail } from "@/lib/api/kbli.api";
 import { getPmaBadge, getRiskBadge } from "./KBLIInspector";
+import { scopeCoverageLabel } from "./NativeScopes";
 
 interface ComparisonModalProps {
   codes: string[];
@@ -42,6 +43,42 @@ export default function ComparisonModal({
     detail: KBLIDetail,
     col: (typeof COLUMNS)[number],
   ): React.ReactNode {
+    if (col === "Risk Level" || col === "Licenses") {
+      const scopeView = getNativeScopeView(detail);
+      if (scopeView) {
+        if (scopeView.status !== "available")
+          return (
+            <span className="text-[var(--kbli-text-primary)]">
+              {scopeCoverageLabel(scopeView)}
+            </span>
+          );
+        return (
+          <div>
+            <ul
+              aria-label={`${col} by scope`}
+              className="space-y-2 text-xs text-[var(--kbli-text-primary)]"
+            >
+              {scopeView.rows.map((row) => (
+                <li key={row.row_ordinal}>
+                  <span className="block text-[var(--kbli-text-muted)]">
+                    {row.scope_uraian} · {row.scale.join(", ")}
+                  </span>
+                  {col === "Risk Level" ? row.risk_level : row.type}
+                </li>
+              ))}
+            </ul>
+            {col === "Licenses" && detail.licensing_note && (
+              <p
+                aria-label="Licensing source note"
+                className="mt-3 text-xs text-[var(--kbli-text-muted)]"
+              >
+                {detail.licensing_note}
+              </p>
+            )}
+          </div>
+        );
+      }
+    }
     switch (col) {
       case "Code":
         return (

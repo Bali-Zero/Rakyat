@@ -126,7 +126,7 @@
       "monFriHours": "9h00 - 17h00",
       "saturday": "Samedi",
       "saturdayHours": "10h00 - 14h00",
-      "detali": "Dimanche",
+      "sunday": "Dimanche",
       "sundayClosed": "Fermé",
       "timezone": "Fuseau horaire : WITA (Bali, UTC+8)"
     },
@@ -340,8 +340,8 @@
       },
       "b": {
         "title": "Voie B — Bien immobilier",
-        "amount": "USD 1 000 001",
-        "body": "Une unité en strata achevée (rumah susun ou appartement) d'une valeur d'au moins USD 1 000 001.",
+        "amount": "USD 1 000 000",
+        "body": "Une unité en strata achevée (rumah susun ou appartement) d'une valeur d'au moins USD 1 000 000.",
         "note": "Uniquement en strata-title achevée — les achats sur plan et le leasehold ne sont pas éligibles."
       }
     },
@@ -402,7 +402,7 @@
       "q1": "Qu'est-ce que le Visa Second Home E33 pour l'Indonésie ?",
       "a1": "Le Visa Second Home E33 est un permis de séjour de longue durée pour les demandeurs financièrement établis. Le premier octroi est de 5 ans maximum et il est renouvelable, avec un plafond cumulé de 10 ans. C'est un permis de séjour pur et il n'autorise pas l'exercice d'un emploi en Indonésie.",
       "q2": "Comment se qualifier pour le Visa Second Home ?",
-      "a2": "Deux voies possibles : un dépôt de USD 130 000 à votre propre nom auprès d'une banque d'État (BUMN) indonésienne, ou une unité en strata achevée (rumah susun ou appartement) d'une valeur de USD 1 000 001. Les biens sur plan et en leasehold ne sont pas éligibles.",
+      "a2": "Deux voies possibles : un dépôt de USD 130 000 à votre propre nom auprès d'une banque d'État (BUMN) indonésienne, ou une unité en strata achevée (rumah susun ou appartement) d'une valeur de USD 1 000 000. Les biens sur plan et en leasehold ne sont pas éligibles.",
       "q3": "Puis-je travailler en Indonésie avec un Visa Second Home ?",
       "a3": "Non. L'E33 est uniquement un permis de séjour — il n'autorise pas l'exercice d'un emploi. Le travail rémunéré en Indonésie exige un permis de travail/KITAS distinct.",
       "q4": "Existe-t-il une option senior pour le Visa Second Home ?",

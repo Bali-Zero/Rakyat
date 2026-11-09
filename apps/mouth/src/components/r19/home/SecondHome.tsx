@@ -56,7 +56,7 @@ export function SecondHome() {
             <a href="/visa/second-home">Read the Second Home guide →</a>
             <span className={styles.languages}>
               <a href="/visa/second-home/it" lang="it">
-                Vanelara
+                Italiano
               </a>
               <a href="/visa/second-home/id" lang="id">
                 Bahasa Indonesia

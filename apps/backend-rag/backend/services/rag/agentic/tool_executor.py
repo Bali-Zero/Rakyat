@@ -191,7 +191,7 @@ def parse_tool_call_regex(text: str) -> ToolCall | None:
 
     Example:
         ACTION: vector_search(query="visa requirements", collection="visa_oracle")
-        ACTION: calculator(expression="1000001 * 0.25")
+        ACTION: calculator(expression="1000000 * 0.25")
 
     Note:
         This parser is fragile and deprecated. Prefer native function calling.

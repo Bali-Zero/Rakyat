@@ -62,7 +62,7 @@ _PRICE_INTENT_RE = re.compile(
 # price intent, so the turn got the price list attached. That was nearly free
 # while the price list was payload only; since B2.5-3 (#6674) made the list count
 # as EVIDENCE, the same false positive now hands a timing question a 0.3 evidence
-# score and a chunk carrying "84.000.600 IDR". The cure belongs here, at the
+# score and a chunk carrying "20.000.000 IDR". The cure belongs here, at the
 # classifier, not at the consumer.
 #
 # Deliberately NARROW: only the units that cannot denominate money. Anything the

@@ -19,16 +19,17 @@ Append-only ledger exception (spec §Q9, plan Step 5.2):
 Pre-flight note (2026-04-20, outcome c — updated CATA-1):
   accrue_from_practice() reads from the `practices` table, which is the
   real production domain table (not a stub). Column names confirmed from
-  migration 075 trigger and conftest stub DDL:
-      status TEXT, payment_status TEXT,
-      total_invoiced_idr NUMERIC(16,2), completed_at TIMESTAMPTZ, client_id.
+  migration 075 trigger. Commission inputs (owner decision 2026-11-09):
+      date = practices.completion_date,
+      base = COALESCE(practices.actual_price, practices.quoted_price), read as IDR
+      (practices.currency is ignored: its USD is only the column default).
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
 
 import asyncpg
@@ -77,16 +78,19 @@ class CommissionEngine:
             (not completed, not paid, no referral, or wrong partner_id).
 
         Idempotency:
-            key = f"accrual:{practice_id}:{completed_at.isoformat()}"
-            A second call for the same practice+completed_at is a no-op
-            (ON CONFLICT DO NOTHING via UNIQUE index on idempotency_key).
+            key = f"accrual:{practice_id}:{completion_date.isoformat()}"
+            A second call for the same practice+completion_date is a no-op: the
+            unique index partner_commissions_idempotency_key_key rejects the insert
+            and the repository's UniqueViolationError is caught here (returns None).
         """
         # Step 1: fetch practice — must be completed AND paid.
-        # NOTE: Column names confirmed from migration 075 trigger (practice_id, client_id,
-        # status, payment_status) and conftest.py stub DDL (total_invoiced_idr, completed_at).
+        # One snapshot for eligibility and amounts. Base = actual_price, else
+        # quoted_price (owner decision); the date is completion_date.
         proc = await self.conn.fetchrow(
             """
-            SELECT id, status, payment_status, total_invoiced_idr, completed_at
+            SELECT id, status, payment_status,
+                   COALESCE(actual_price, quoted_price) AS base_price,
+                   completion_date
             FROM practices WHERE id = $1
             """,
             practice_id,
@@ -125,15 +129,44 @@ class CommissionEngine:
             logger.warning("accrue_from_practice: partner %s not found", referral.partner_id)
             return None
 
-        # Step 4: compute amounts (all Decimal, no float).
-        # base_amount_idr = practices.total_invoiced_idr (exact column name per stub DDL).
-        base = Decimal(str(proc["total_invoiced_idr"]))
+        # Never fall back to now() for the date: it would make the idempotency key unstable.
+        if proc["completion_date"] is None:
+            logger.warning(
+                "accrue_from_practice: practice %s has no completion date - no commission written",
+                practice_id,
+            )
+            return None
 
+        # Step 4: compute amounts (all Decimal, no float).
+        # COALESCE(actual_price, quoted_price) is the owner's rule: a 0 actual_price does
+        # not fall back to quoted_price.
         if partner.default_commission_type == "percentage":
+            if proc["base_price"] is None or proc["base_price"] <= 0:
+                logger.warning(
+                    "accrue_from_practice: practice %s has no positive commission base "
+                    "- no commission written",
+                    practice_id,
+                )
+                return None
+            base = Decimal(str(proc["base_price"]))
             gross = base * partner.default_commission_value / Decimal("100")
         else:
-            # flat: commission_value is the fixed IDR amount regardless of base
+            # flat: commission_value is the fixed IDR amount regardless of base;
+            # base_amount_idr is NOT NULL, so an absent base is stored as 0.
+            base = (
+                Decimal(str(proc["base_price"])) if proc["base_price"] is not None else Decimal(0)
+            )
             gross = partner.default_commission_value
+
+        # The guard compares the gross as the ledger will store it: NUMERIC(16,2), rounded
+        # half away from zero like PostgreSQL. The amounts passed to the INSERT are unchanged.
+        if gross.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) <= 0:
+            logger.warning(
+                "accrue_from_practice: practice %s computes a commission that is zero at the "
+                "stored precision (2 decimals) - no commission written",
+                practice_id,
+            )
+            return None
 
         # CRIT-7: Resolve rate from system_settings (not hardcoded dict).
         # has_npwp is True only if the npwp field is set AND non-empty.
@@ -148,12 +181,12 @@ class CommissionEngine:
 
         # Step 5: resolve cooling-off days from system_settings.
         cooling_days = await self._system_setting_int("partner_accrual_cooling_off_days", 30)
-        completed_at: datetime = proc["completed_at"] or datetime.now(timezone.utc)
-        eligible = completed_at + timedelta(days=cooling_days)
+        completion_date: datetime = proc["completion_date"]
+        eligible = completion_date + timedelta(days=cooling_days)
 
-        # Idempotency key: unique per practice + completed_at timestamp.
-        # If completed_at changes (e.g. re-completion edge case), a new accrual fires.
-        key = f"accrual:{practice_id}:{completed_at.isoformat()}"
+        # Idempotency key: unique per practice + completion_date timestamp.
+        # If completion_date changes (e.g. re-completion edge case), a new accrual fires.
+        key = f"accrual:{practice_id}:{completion_date.isoformat()}"
 
         try:
             cid = await self.repo.insert_commission(

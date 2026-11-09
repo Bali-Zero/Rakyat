@@ -188,7 +188,7 @@ def _fold_national_prefix(digits: str) -> str:
     delivery gate both delegate here, so drift between 'the same phone'
     definitions is structurally impossible"): real reuse of the repo's
     existing normalizer, not a re-derived rule. ``digits`` has already had
-    every non-digit character stripped by the caller (so ``"+62 000-0004-
+    every non-digit character stripped by the caller (so ``"+62 821-3465-
     159"`` has already become ``"628213465159"``); folding the country/
     national prefix here is what makes THAT form compare equal to
     ``"08213465159"`` — digit-stripping alone is not enough, both forms
@@ -267,7 +267,7 @@ def redact_identifier_for_log(value: str | int | None) -> str:
         # emails carry no digits -> collapses to MISSING_IDENTIFIER_MARKER,
         # indistinguishable from a genuinely absent identifier) or, for an
         # email that DOES contain digits, hash only those -- two different
-        # people ("uxxxxxx1@g.com", "uxxxx2@b.com") would then collide on
+        # people ("alice123@a.com", "bob123@b.com") would then collide on
         # the same "123" digest. Hash the whole normalized string instead:
         # still non-reversible, still stable per-value, still
         # distinguishable across different emails.

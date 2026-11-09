@@ -12,6 +12,20 @@ from backend.services.research.empirical_ig_analyzer import (
 )
 
 
+@pytest.fixture(autouse=True)
+def console_seat(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RULED 2026-11-01: `claude` runs only on a Console seat — every test that
+    reaches a (faked) subprocess needs one; the guilt test below removes it."""
+    monkeypatch.setenv("ANTHROPIC_CONSOLE_KEY_1", "sk-test-seat")
+    monkeypatch.setenv("ANTHROPIC_CONSOLE_WORKSPACE_1", "wrkspc_test1")
+
+
+def _no_seat(monkeypatch: pytest.MonkeyPatch) -> None:
+    for n in (1, 2, 3):
+        monkeypatch.delenv(f"ANTHROPIC_CONSOLE_KEY_{n}", raising=False)
+        monkeypatch.delenv(f"ANTHROPIC_CONSOLE_WORKSPACE_{n}", raising=False)
+
+
 @pytest.mark.asyncio
 async def test_load_posts_excludes_last_4():
     """Spec requires posts 5-29 (last 4 too recent for mature engagement)."""
@@ -105,6 +119,38 @@ def test_classify_hooks_parses_claude_json_output():
     assert result["p2"] == "list"
 
 
+def test_classify_hooks_refuses_without_a_console_seat(monkeypatch):
+    """GUILT (RULED 2026-11-01): no seat — only a plan-OAuth token in the
+    environment — means every post stays unknown and `claude` is never run."""
+    from unittest.mock import patch
+
+    _no_seat(monkeypatch)
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "plan-oauth-is-not-a-seat")
+    analyzer = EmpiricalIGAnalyzer(ig_sensor=None)
+    posts = [{"post_id": "p1", "caption": "x"}, {"post_id": "p2", "caption": "y"}]
+    with patch("subprocess.run") as run_mock:
+        result = analyzer.classify_hooks_batch(posts)
+    assert result == {"p1": "unknown", "p2": "unknown"}
+    run_mock.assert_not_called()
+
+
+def test_classify_hooks_runs_claude_on_the_seat_env(monkeypatch):
+    """INNOCENCE: with a seat, the child gets the seat's key + header and no
+    plan OAuth, whatever the parent carries."""
+    from unittest.mock import patch
+
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "plan-oauth-must-not-reach-the-child")
+    analyzer = EmpiricalIGAnalyzer(ig_sensor=None)
+    posts = [{"post_id": "p1", "caption": "x"}]
+    fake_proc = type("P", (), {"returncode": 0, "stdout": '{"classifications":[]}', "stderr": ""})()
+    with patch("subprocess.run", return_value=fake_proc) as run_mock:
+        analyzer.classify_hooks_batch(posts)
+    env = run_mock.call_args.kwargs["env"]
+    assert env["ANTHROPIC_API_KEY"] == "sk-test-seat"
+    assert env["ANTHROPIC_CUSTOM_HEADERS"] == "anthropic-workspace-id: wrkspc_test1"
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+
+
 def test_classify_hooks_falls_back_on_rc_nonzero():
     """If claude -p exits nonzero, return 'unknown' for every post."""
     from unittest.mock import patch
@@ -153,7 +199,10 @@ def test_classify_hooks_sends_batch_prompt_to_claude():
     cmd = args[0]
     assert cmd[0] == "claude"
     assert cmd[1] == "-p"
-    prompt = cmd[2]
+    # Lean (2026-11-03): bare and toolless, pinned to the default model, the
+    # prompt the last operand after `--`.
+    assert cmd[2:8] == ["--bare", "--tools", "", "--model", "claude-sonnet-5-5", "--"]
+    prompt = cmd[-1]
     # Prompt must include the allowed hook categories + both post_ids
     for cat in ("question", "stat", "story", "contrarian", "list"):
         assert cat in prompt

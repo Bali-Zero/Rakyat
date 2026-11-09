@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ArticleListItem } from "@/lib/blog/types";
-import { selectJournalArticles } from "./adapter";
+import { selectInsightArticles, selectJournalArticles } from "./adapter";
 
 function story(slug: string, date = "2026-09-25T02:00:00Z"): ArticleListItem {
   return {
@@ -51,5 +51,80 @@ describe("R19 Journal existing-reader adapter", () => {
         7,
       ),
     ).toHaveLength(7);
+  });
+});
+
+describe("R19 Journal Insight row", () => {
+  const feed = [story("a"), story("b"), story("c"), story("d")];
+  it("shows the pinned insight slots in slot order", () => {
+    const rows = selectInsightArticles(feed, {
+      insight_1: "c",
+      insight_2: "a",
+      insight_3: "d",
+    });
+    expect(rows.map((row) => row.slug)).toEqual(["c", "a", "d"]);
+    expect(rows[0].localHref).toBe("/business/c");
+  });
+  it("never fills an empty or missing slot from the feed", () => {
+    expect(selectInsightArticles(feed, {})).toEqual([]);
+    const rows = selectInsightArticles(feed, {
+      insight_1: "gone",
+      insight_3: "b",
+    });
+    expect(rows.map((row) => row.slug)).toEqual(["b"]);
+  });
+  it("skips a story already shown in the journal and a repeated slug", () => {
+    const rows = selectInsightArticles(
+      feed,
+      { insight_1: "a", insight_2: "b", insight_3: "b" },
+      ["a"],
+    );
+    expect(rows.map((row) => row.slug)).toEqual(["b"]);
+  });
+  it("skips an unknown category", () => {
+    const invalid = {
+      ...story("malformed"),
+      category: "unknown-category",
+    } as unknown as ArticleListItem;
+    const rows = selectInsightArticles([invalid, ...feed], {
+      insight_1: "malformed",
+      insight_2: "d",
+    });
+    expect(rows.map((row) => row.slug)).toEqual(["d"]);
+  });
+  it("reads only insight keys, never hero or latest", () => {
+    expect(
+      selectInsightArticles(feed, { hero_main: "a", latest_1: "b" }),
+    ).toEqual([]);
+  });
+});
+
+describe("R19 Journal homepage positions", () => {
+  it("marks each article with the layout slot that placed it, and none for feed fill-ins", () => {
+    const rows = selectJournalArticles(
+      [story("feed"), story("main"), story("second"), story("latest")],
+      {
+        hero_main: "main",
+        hero_2: "second",
+        hero_3: "main",
+        latest_1: "latest",
+      },
+    );
+    expect(rows.map((row) => [row.slug, row.homepagePosition])).toEqual([
+      ["main", "hero_main"],
+      ["second", "hero_2"],
+      ["latest", "latest_1"],
+      ["feed", undefined],
+    ]);
+  });
+  it("marks an Insight pin with its insight slot", () => {
+    const rows = selectInsightArticles([story("a"), story("b")], {
+      insight_2: "b",
+      insight_3: "a",
+    });
+    expect(rows.map((row) => [row.slug, row.homepagePosition])).toEqual([
+      ["b", "insight_2"],
+      ["a", "insight_3"],
+    ]);
   });
 });

@@ -114,7 +114,7 @@ kerahasiaannya.
 
 ### Criminal — UU 30/2000 Pasal 17
 
-> "Barangsiapa dengan sengaja dan tanpa hak menggunakan Rahasia Dagang pihak lain ... diancam dengan pidana penjara paling lama 2 (dua) tahun dan/atau denda paling banyak Rp 990.000.031,00 (tiga ratus juta rupiah)."
+> "Barangsiapa dengan sengaja dan tanpa hak menggunakan Rahasia Dagang pihak lain ... diancam dengan pidana penjara paling lama 2 (dua) tahun dan/atau denda paling banyak Rp 300.000.000,00 (tiga ratus juta rupiah)."
 
 Criminal complaint filed at Polda regional. The civil and criminal routes are **independent and cumulative** — payment of civil damages does NOT extinguish the criminal action.
 

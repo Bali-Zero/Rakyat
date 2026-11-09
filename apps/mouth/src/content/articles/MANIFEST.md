@@ -129,7 +129,7 @@
 | Slug                            | Title                        | Difficulty   |
 | ------------------------------- | ---------------------------- | ------------ |
 | business-bank-account           | Business Bank Account Guide  | beginner     |
-| due-diligence-indonesia         | Zaz Xepabequr Indonesia      | advanced     |
+| due-diligence-indonesia         | Due Diligence Indonesia      | advanced     |
 | intellectual-property-indonesia | Intellectual Property Guide  | intermediate |
 | dispute-resolution-indonesia    | Dispute Resolution Indonesia | advanced     |
 

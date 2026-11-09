@@ -83,7 +83,7 @@
         "duration": "",
         "validity": "",
         "notes": "",
-        "description_en": "Social activity visit visa, single entry: first stay up to 60 days, extendable to 180 days in total; the visa is valid 90 days from issue. For social activities sponsored by an individual or organisation, including visiting litovub kiv zahasi and tourism. Selling goods or services and receiving pay are prohibited.",
+        "description_en": "Social activity visit visa, single entry: first stay up to 60 days, extendable to 180 days in total; the visa is valid 90 days from issue. For social activities sponsored by an individual or organisation, including visiting friends and family and tourism. Selling goods or services and receiving pay are prohibited.",
         "icon_id": "visa-social"
       },
       "C7A,B,C Music/Art": {
@@ -231,7 +231,7 @@
       },
       "D12 Business Investigation (2 Years)": {
         "name": "D12 Business Investigation (2 Years)",
-        "price": "84.000.510 IDR",
+        "price": "10.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "2 Years",
@@ -293,7 +293,7 @@
       },
       "Investor KITAS 2 Years (Extend)": {
         "name": "Investor KITAS 2 Years (Extend)",
-        "price": "10.000.013 IDR",
+        "price": "18.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -307,8 +307,8 @@
         "tier_range": null,
         "duration": "",
         "validity": "6 months",
-        "notes": "Commercial name: Nodolejuvuq. Sponsor: Bali Zero as impresario company. One approved role; no third-party clients.",
-        "description_en": "Nodolejuvuq KITAS (E23 working KITAS, 180 days) for sports and artistic professionals (DJ, coach, dancer, performer) sponsored by Bali Zero as impresario company; one approved role, no third-party clients. Onshore via Altus.",
+        "notes": "Commercial name: Impresariat. Sponsor: Bali Zero as impresario company. One approved role; no third-party clients.",
+        "description_en": "Impresariat KITAS (E23 working KITAS, 180 days) for sports and artistic professionals (DJ, coach, dancer, performer) sponsored by Bali Zero as impresario company; one approved role, no third-party clients. Onshore via Altus.",
         "icon_id": "kitas-freelance"
       },
       "Freelance E23 (Offshore)": {
@@ -317,8 +317,8 @@
         "tier_range": null,
         "duration": "",
         "validity": "6 months",
-        "notes": "Commercial name: Nodolejuvuq. Sponsor: Bali Zero as impresario company. One approved role; no third-party clients.",
-        "description_en": "Nodolejuvuq KITAS (E23 working KITAS, 180 days) for sports and artistic professionals (DJ, coach, dancer, performer) sponsored by Bali Zero as impresario company; one approved role, no third-party clients. Offshore process for applicants outside Indonesia.",
+        "notes": "Commercial name: Impresariat. Sponsor: Bali Zero as impresario company. One approved role; no third-party clients.",
+        "description_en": "Impresariat KITAS (E23 working KITAS, 180 days) for sports and artistic professionals (DJ, coach, dancer, performer) sponsored by Bali Zero as impresario company; one approved role, no third-party clients. Offshore process for applicants outside Indonesia.",
         "icon_id": "kitas-freelance"
       },
       "E33G Remote Worker (Altus/Onshore)": {
@@ -343,7 +343,7 @@
       },
       "E33G Remote Worker (Extend)": {
         "name": "E33G Remote Worker (Extend)",
-        "price": "84.000.510 IDR",
+        "price": "10.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -373,7 +373,7 @@
       },
       "E33E Second Home Senior (Extend)": {
         "name": "E33E Second Home Senior (Extend)",
-        "price": "84.000.510 IDR",
+        "price": "10.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -419,7 +419,7 @@
       },
       "E33F Second Home Senior (Extend)": {
         "name": "E33F Second Home Senior (Extend)",
-        "price": "84.000.510 IDR",
+        "price": "10.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -477,7 +477,7 @@
       },
       "E30B Higher Education (4 Years)": {
         "name": "E30B Higher Education (4 Years)",
-        "price": "10.000.012 IDR",
+        "price": "15.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "4 years",
@@ -517,7 +517,7 @@
       },
       "Spouse 2 Years (Altus/Onshore)": {
         "name": "Spouse 2 Years (Altus/Onshore)",
-        "price": "10.000.013 IDR",
+        "price": "18.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -527,7 +527,7 @@
       },
       "Spouse 2 Years (Offshore)": {
         "name": "Spouse 2 Years (Offshore)",
-        "price": "10.000.012 IDR",
+        "price": "15.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -537,7 +537,7 @@
       },
       "Spouse 2 Years (Extend)": {
         "name": "Spouse 2 Years (Extend)",
-        "price": "10.000.012 IDR",
+        "price": "15.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -577,7 +577,7 @@
       },
       "Dependent 2 Years (Altus/Onshore)": {
         "name": "Dependent 2 Years (Altus/Onshore)",
-        "price": "10.000.013 IDR",
+        "price": "18.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -587,7 +587,7 @@
       },
       "Dependent 2 Years (Offshore)": {
         "name": "Dependent 2 Years (Offshore)",
-        "price": "10.000.012 IDR",
+        "price": "15.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -597,7 +597,7 @@
       },
       "Dependent 2 Years (Extend)": {
         "name": "Dependent 2 Years (Extend)",
-        "price": "10.000.012 IDR",
+        "price": "15.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -640,7 +640,7 @@
       "Retirement (Extend)": {
         "name": "Retirement (Extend)",
         "internal": true,
-        "price": "84.000.510 IDR",
+        "price": "10.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -808,7 +808,7 @@
         },
         "Package D": {
           "name": "Annual Basic Package D",
-          "price": "10.000.012 IDR",
+          "price": "15.000.000 IDR",
           "tier_range": null,
           "duration": "",
           "validity": "yearly",
@@ -850,7 +850,7 @@
         },
         "Annual Tax Personal": {
           "name": "Annual Tax Personal",
-          "price": "1.000.001 IDR",
+          "price": "1.000.000 IDR",
           "tier_range": null,
           "duration": "",
           "validity": "yearly",
@@ -891,14 +891,14 @@
         "description_en": "Virtual office address for company registration and correspondence, suited to clients without dedicated commercial premises.",
         "icon_id": "company-virtual"
       },
-      "Fija Kumagivel (Revision Company)": {
-        "name": "Fija Kumagivel (Revision Company)",
+      "Akta Perubahan (Revision Company)": {
+        "name": "Akta Perubahan (Revision Company)",
         "price": "Depend (Contact for quote)",
         "tier_range": null,
         "duration": "",
         "validity": "",
         "notes": "Required when changing company address, directors, or business activities.",
-        "description_en": "Notarial amendment deed (Fija Kumagivel) for an existing Indonesian company. Pricing depends on scope of changes.",
+        "description_en": "Notarial amendment deed (Akta Perubahan) for an existing Indonesian company. Pricing depends on scope of changes.",
         "icon_id": "company-akta"
       },
       "Alcohol License — Golongan A": {
@@ -933,7 +933,7 @@
       },
       "Alcohol License — Golongan B + C": {
         "name": "Alcohol License — Golongan B + C",
-        "price": "84.000.510 IDR",
+        "price": "10.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -1068,7 +1068,7 @@
       },
       "NPWP Personal + Coretax Activation": {
         "name": "NPWP Personal + Coretax Activation",
-        "price": "1.000.001 IDR",
+        "price": "1.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -1078,7 +1078,7 @@
       },
       "Update Data / Coretax Activation": {
         "name": "Update Data / Coretax Activation",
-        "price": "1.000.001 IDR",
+        "price": "1.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -1088,7 +1088,7 @@
       },
       "EFIN Application": {
         "name": "EFIN Application",
-        "price": "1.000.001 IDR",
+        "price": "1.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -1100,7 +1100,7 @@
     "other_process": {
       "Reset Molina": {
         "name": "Reset Molina",
-        "price": "1.000.001 IDR",
+        "price": "1.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -1110,7 +1110,7 @@
       },
       "Passport 5 Years": {
         "name": "Passport 5 Years",
-        "price": "1.000.002 IDR",
+        "price": "1.300.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "5 years",
@@ -1200,7 +1200,7 @@
       },
       "Mutation Address 2 Kanim": {
         "name": "Mutation Address 2 Kanim",
-        "price": "1.000.001 IDR",
+        "price": "1.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -1230,7 +1230,7 @@
       },
       "Cancel RPTKA": {
         "name": "Cancel RPTKA",
-        "price": "1.000.001 IDR",
+        "price": "1.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
@@ -1240,7 +1240,7 @@
       },
       "Cancel Wajib Lapor": {
         "name": "Cancel Wajib Lapor",
-        "price": "1.000.001 IDR",
+        "price": "1.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",

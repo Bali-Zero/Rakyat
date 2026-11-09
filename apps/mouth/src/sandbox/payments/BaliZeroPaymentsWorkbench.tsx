@@ -24,11 +24,7 @@ import {
 } from "lucide-react";
 
 export type BaliZeroPaymentStatus =
-  | "draft"
-  | "issued"
-  | "partial"
-  | "paid"
-  | "overdue";
+  "draft" | "issued" | "partial" | "paid" | "overdue";
 
 export interface BaliZeroPracticeSummary {
   id: string;
@@ -569,8 +565,8 @@ export const baliZeroPaymentsFixture: BaliZeroPaymentsWorkbenchProps = {
     },
     {
       id: "practice-kitas-02",
-      title: "Investor KITAS · Zojev Focotitaj",
-      clientName: "Zojev Focotitaj",
+      title: "Investor KITAS · Sample Client",
+      clientName: "Sample Client",
       category: "Immigration",
       crmStage: "Documents approved",
       progress: 84,

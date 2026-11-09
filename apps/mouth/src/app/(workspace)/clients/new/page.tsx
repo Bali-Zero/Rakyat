@@ -659,7 +659,7 @@ export default function NewClientPage() {
                         onChange={handleChange}
                         type="tel"
                         className={inputClass}
-                        placeholder="+62 840 0022 0000"
+                        placeholder="+62 812 3456 7890"
                       />
                     </div>
                   </div>
@@ -814,7 +814,7 @@ export default function NewClientPage() {
                         onChange={handleChange}
                         type="text"
                         className={inputClass}
-                        placeholder="AB9900001"
+                        placeholder="AB1234567"
                       />
                     </div>
                   </div>

@@ -9,7 +9,7 @@ if [ -f .env ]; then
     source .env
     if [ -n "$JWT_SECRET_KEY" ]; then
         echo "Generating JWT token from .env..."
-        TOKEN=$(python3 scripts/generate_test_token.py "$JWT_SECRET_KEY" "uxx8@dxxxxxxx1.com" 24 | grep "export JWT_TOKEN" | cut -d"'" -f2)
+        TOKEN=$(python3 scripts/generate_test_token.py "$JWT_SECRET_KEY" "test@nuzantara.com" 24 | grep "export JWT_TOKEN" | cut -d"'" -f2)
         export JWT_TOKEN="$TOKEN"
         echo "Token generated successfully"
         echo ""

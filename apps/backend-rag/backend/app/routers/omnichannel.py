@@ -18,6 +18,8 @@ from backend.app.dependencies import get_current_user
 from backend.app.deps.auth import reject_portal_roles
 from backend.app.deps.crm_access import can_view_all_clients
 from backend.core.cache import invalidate_cache
+from backend.core.telegram_retirement import telegram_is_retired
+from backend.security.pii_log_identifier import redact_identifier_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +224,10 @@ async def update_thread(
         raise HTTPException(status_code=404, detail="Thread not found")
 
     logger.info(
-        f"Thread {thread_id} updated by {user.get('email')}: {body.model_dump(exclude_none=True)}"
+        "Thread %s updated by %s: fields=%s",
+        thread_id,
+        redact_identifier_for_log(user.get("email")),
+        sorted(body.model_dump(exclude_none=True)),
     )
 
     # Emit WebSocket event for real-time updates
@@ -312,31 +317,33 @@ async def assign_thread(
 
     await tm.assign_thread(thread_id, assignee)
 
-    # Notify via Telegram
-    try:
-        from backend.core.config import settings
-        from backend.services.integrations.telegram_bot_service import TelegramBotService
+    # Assignment remains active; Telegram side effects are permanently retired.
+    if not telegram_is_retired():
+        # Notify via Telegram
+        try:
+            from backend.core.config import settings
+            from backend.services.integrations.telegram_bot_service import TelegramBotService
 
-        bot = TelegramBotService()
-        owner_chat = getattr(settings, "telegram_owner_chat_id", None) or ""
+            bot = TelegramBotService()
+            owner_chat = getattr(settings, "telegram_owner_chat_id", None) or ""
 
-        thread_row = await db_pool.fetchrow(
-            "SELECT subject, last_message_preview FROM conversation_threads WHERE id = $1",
-            thread_id,
-        )
-        subject = thread_row["subject"] if thread_row else "New thread"
-        preview = thread_row["last_message_preview"] if thread_row else ""
-
-        if owner_chat:
-            await bot.send_message(
-                chat_id=owner_chat,
-                text=f"📋 Thread assigned to *{assignee}*\n_{subject}_\n`{preview[:100]}`",
-                parse_mode="Markdown",
+            thread_row = await db_pool.fetchrow(
+                "SELECT subject, last_message_preview FROM conversation_threads WHERE id = $1",
+                thread_id,
             )
-        else:
-            logger.warning("Assignment notification skipped: TELEGRAM_OWNER_CHAT_ID not set")
-    except Exception as e:
-        logger.debug("Assignment notification failed (non-fatal): %s", e)
+            subject = thread_row["subject"] if thread_row else "New thread"
+            preview = thread_row["last_message_preview"] if thread_row else ""
+
+            if owner_chat:
+                await bot.send_message(
+                    chat_id=owner_chat,
+                    text=f"📋 Thread assigned to *{assignee}*\n_{subject}_\n`{preview[:100]}`",
+                    parse_mode="Markdown",
+                )
+            else:
+                logger.warning("Assignment notification skipped: TELEGRAM_OWNER_CHAT_ID not set")
+        except Exception as e:
+            logger.debug("Assignment notification failed (non-fatal): %s", e)
 
     await invalidate_cache("zantara:omnichannel:*")
     return {"status": "assigned", "thread_id": str(thread_id), "assigned_to": assignee}
@@ -512,11 +519,11 @@ async def _send_via_channel(
 
         adapter = channel_router.adapters.get(channel)
         if not adapter:
-            logger.warning("No adapter registered for channel: %s", channel)
+            logger.warning("No adapter registered for the requested outbound channel")
             return
 
         # Extract channel_id from thread metadata
         # For now, we log a warning — full outbound routing needs channel_id
-        logger.info(f"Outbound reply via {channel}: {content[:50]}...")
+        logger.info("Outbound reply via %s: %d chars", channel, len(content or ""))
     except Exception as e:
         logger.warning("Outbound send failed: %s", e)

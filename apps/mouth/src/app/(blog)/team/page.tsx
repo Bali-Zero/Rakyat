@@ -137,9 +137,6 @@ const ACCOUNTING_TEAM: TeamMember[] = compose([
     roleOverride: "Accountant",
   },
   {
-    slug: "natalie",
-  },
-  {
     slug: "rina",
   },
 ]);
@@ -280,7 +277,7 @@ export default function TeamPage() {
             <span>Real licenses. Real files.</span>
           </h1>
           <p className={styles.standfirst}>
-            Started in Kerobokan in 2006 — two litovub, one office, a lot of
+            Started in Kerobokan in 2006 — two friends, one office, a lot of
             immigration paperwork. Today the team handles 47 KITAS and 9 PT PMAs
             every month. AI drafts; licensed Indonesians sign.
           </p>

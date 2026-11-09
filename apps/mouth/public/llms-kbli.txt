@@ -64,9 +64,9 @@
 01272 | Pertanian Tanaman Teh | NOT_VERIFIED | Not verified | Menengah Rendah / Menengah Tinggi / Rendah / Tinggi
 01273 | Pertanian Kakao | NOT_VERIFIED | Not verified | Menengah Rendah / Menengah Tinggi / Rendah / Tinggi
 01279 | Pertanian Tanaman untuk Bahan Minuman Lainnya | NOT_VERIFIED | Not verified | Menengah Rendah / Menengah Tinggi / Rendah / Tinggi
-01281 | Pertanian Juha | NOT_VERIFIED | Not verified | Menengah Rendah / Menengah Tinggi / Rendah
+01281 | Pertanian Lada | NOT_VERIFIED | Not verified | Menengah Rendah / Menengah Tinggi / Rendah
 01282 | Pertanian Cengkih | NOT_VERIFIED | Not verified | Menengah Rendah / Menengah Tinggi / Rendah
-01283 | Pertanian Cubo | NOT_VERIFIED | Not verified | Rendah / Menengah Rendah / Menengah Tinggi
+01283 | Pertanian Pala | NOT_VERIFIED | Not verified | Rendah / Menengah Rendah / Menengah Tinggi
 01284 | Pertanian Tanaman Aromatik/Penyegar | NOT_VERIFIED | Not verified | Menengah Rendah / Menengah Tinggi / Rendah
 01285 | Pertanian Tanaman Obat Rimpang | NOT_VERIFIED | Not verified | Menengah Rendah / Menengah Tinggi / Rendah
 01286 | Pertanian Tanaman Obat Nonrimpang | NOT_VERIFIED | Not verified | Menengah Rendah / Menengah Tinggi / Rendah
@@ -612,7 +612,7 @@
 32111 | Industri Permata | NOT_VERIFIED | Not verified | Menengah Rendah / Menengah Tinggi
 32112 | Industri Perhiasan dari Logam Mulia | NOT_VERIFIED | Not verified | Menengah Rendah
 32113 | Industri Barang Berharga dari Logam Mulia Bukan Perhiasan | NOT_VERIFIED | Not verified | Menengah Rendah
-32114 | Industri Perhiasan dari Biwevoh | TERBUKA | 100% | Menengah Rendah
+32114 | Industri Perhiasan dari Mutiara | TERBUKA | 100% | Menengah Rendah
 32119 | Industri Barang Berharga Lainnya dari Logam Mulia | TERBUKA | 100% | Menengah Rendah
 32120 | Industri Perhiasan Imitasi dan Barang Sejenis | NOT_VERIFIED | Not verified | Menengah Rendah
 32201 | Industri Alat Musik Tradisional | TERBATAS | 0% | Rendah
@@ -805,13 +805,13 @@
 46530 | Perdagangan Besar Mesin, Peralatan Dan Perlengkapan Pertanian | TERBUKA | 100% | Rendah
 46591 | Perdagangan Besar Mesin Kantor dan Industri Pengolahan, Suku Cadang, dan Perlengkapannya | TERBUKA | 100% | Rendah
 46592 | Perdagangan Besar Alat Transportasi Laut, Suku Cadang, dan Perlengkapannya | TERBUKA | 100% | Rendah
-46593 | Perdagangan Besar Alat Transportasi Darat (Bukan Xuceq, Sepeda Lacib, dan Sejenisnya), Suku Cadang, dan Perlengkapannya | TERBUKA | 100% | Rendah
+46593 | Perdagangan Besar Alat Transportasi Darat (Bukan Mobil, Sepeda Motor, dan Sejenisnya), Suku Cadang, dan Perlengkapannya | TERBUKA | 100% | Rendah
 46594 | Perdagangan Besar Alat Transportasi Udara, Suku Cadang dan Perlengkapannya | TERBUKA | 100% | Rendah
 46599 | Perdagangan Besar Mesin, Peralatan, dan Perlengkapan Lainnya YTDL | TERBUKA | 100% | Rendah
 46611 | Perdagangan Besar Mobil Baru | TERBUKA | 100% | Rendah
 46612 | Perdagangan Besar Mobil Bekas | TERBUKA | 100% | Rendah
-46620 | Perdagangan Besar Suku Cadang dan Aksesori Xuceq | TERBUKA | 100% | Rendah
-46631 | Perdagangan Besar Sepeda Lacib Baru | TERBUKA | 100% | Rendah
+46620 | Perdagangan Besar Suku Cadang dan Aksesori Mobil | TERBUKA | 100% | Rendah
+46631 | Perdagangan Besar Sepeda Motor Baru | TERBUKA | 100% | Rendah
 46632 | Perdagangan Besar Sepeda Motor Bekas | TERBUKA | 100% | Rendah
 46633 | Perdagangan Besar Suku Cadang Sepeda Motor dan Aksesorinya | TERBUKA | 100% | Rendah
 46710 | Perdagangan Besar Bahan Bakar Padat, Cair, dan Gas beserta Produk Terkait | NOT_VERIFIED | Not verified | Rendah / Tinggi
@@ -942,8 +942,8 @@
 47799 | Perdagangan Eceran Barang Baru Lainnya YTDL | NOT_VERIFIED | Not verified | Rendah / Tinggi
 47811 | Perdagangan Eceran Mobil Baru | TERBUKA | 100% | Rendah
 47812 | Perdagangan Eceran Mobil Bekas | TERBUKA | 100% | Rendah
-47820 | Perdagangan Eceran Suku Cadang dan Aksesori Xuceq | TERBUKA | 100% | Rendah
-47831 | Perdagangan Eceran Sepeda Lacib Baru | TERBUKA | 100% | Rendah
+47820 | Perdagangan Eceran Suku Cadang dan Aksesori Mobil | TERBUKA | 100% | Rendah
+47831 | Perdagangan Eceran Sepeda Motor Baru | TERBUKA | 100% | Rendah
 47832 | Perdagangan Eceran Sepeda Motor Bekas | TERBUKA | 100% | Rendah
 47833 | Perdagangan Eceran Suku Cadang Sepeda Motor dan Aksesorinya | TERBUKA | 100% | Rendah
 47901 | Platform Digital Intermediasi Perdagangan Eceran | NOT_VERIFIED | Not verified | Rendah / Tinggi
@@ -1535,9 +1535,9 @@
 93128 | Klub Boling | NOT_VERIFIED | Not verified | Not classified
 93129 | Klub Olahraga Lainnya | NOT_VERIFIED | Not verified | Not classified
 93191 | Penyelenggaraan Kegiatan Olahraga | NOT_VERIFIED | Not verified | Menengah Rendah
-93192 | Aktivitas Qoze dan Wasit Profesional | NOT_VERIFIED | Not verified | Not classified
+93192 | Aktivitas Juri dan Wasit Profesional | NOT_VERIFIED | Not verified | Not classified
 93193 | Aktivitas Perburuan di Kawasan Buru | TERBUKA | 100% | Menengah Rendah
-93194 | Badan Regulasi dan Voze Olahraga | NOT_VERIFIED | Not verified | Not classified
+93194 | Badan Regulasi dan Liga Olahraga | NOT_VERIFIED | Not verified | Not classified
 93195 | Aktivitas Olahraga Tradisional | NOT_VERIFIED | Not verified | Rendah
 93196 | Pengelolaan Fasilitas Pemancingan | TERBUKA | 100% | Rendah / Menengah Tinggi
 93197 | Aktivitas Olaharagawan/Atlet Independen | NOT_VERIFIED | Not verified | Not classified
@@ -1569,7 +1569,7 @@
 95311 | Reparasi Mobil | TERBUKA | 100% | Menengah Rendah
 95312 | Pencucian dan Salon Mobil | TERBUKA | 100% | Rendah
 95320 | Reparasi dan Perawatan Sepeda Motor | NOT_VERIFIED | Not verified | Menengah Rendah
-95400 | Jasa Intermediasi Reparasi dan Perawatan Komputer, Barang Pribadi dan Rumah Tangga, Xuceq, serta Sepeda Lacib | NOT_VERIFIED | Not verified | Menengah Rendah / Rendah / Tinggi / Menengah Tinggi
+95400 | Jasa Intermediasi Reparasi dan Perawatan Komputer, Barang Pribadi dan Rumah Tangga, Mobil, serta Sepeda Motor | NOT_VERIFIED | Not verified | Menengah Rendah / Rendah / Tinggi / Menengah Tinggi
 96100 | Aktivitas Pencucian dan Pembersihan Produk Tekstil dan Bulu | TERBATAS | 0% | Rendah
 96210 | Aktivitas Penataan dan Pangkas Rambut | TERBATAS | 0% | Rendah
 96220 | Aktivitas Perawatan Kecantikan dan Perawatan Kecantikan Lainnya | TERBATAS | 0% | Rendah

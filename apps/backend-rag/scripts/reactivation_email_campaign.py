@@ -32,10 +32,7 @@ import httpx
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql://backend_rag_v2:<<ROTATED_2026_05_22_see_DATABASE_URL_env>>@localhost:15432/nuzantara_rag",
-)
+DATABASE_URL = os.environ["DATABASE_URL"]
 BACKEND_URL = os.environ.get("BACKEND_URL", "https://nuzantara-rag.fly.dev")
 # No hardcoded default: the previous fallback (`REDACTED-ROTATED-KEY`) was a
 # real admin key committed to a public repo. It has been rotated + revoked.
@@ -68,7 +65,7 @@ Per evitare complicazioni, ti consigliamo di avviare il processo di rinnovo al p
 Il rinnovo richiede solitamente 4–8 settimane.
 
 📞 Contattaci subito:
-• WhatsApp: wa.me/6284000230xxx
+• WhatsApp: wa.me/6281337777xxx
 • Email: zero@balizero.com
 • Web: https://kita.balizero.com
 

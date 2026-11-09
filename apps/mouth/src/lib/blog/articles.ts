@@ -13,6 +13,14 @@ import matter from "gray-matter";
 import { unstable_cache } from "next/cache";
 import type { Article, ArticleListItem, ArticleCategory } from "./types";
 import { CATEGORY_MAP, normalizeCategory } from "./categories";
+import { isPublishedFrontmatter } from "./publication";
+
+// gray-matter caches by content string when called without options, so a file with broken YAML
+// throws on the first parse and returns empty data from the cache on the second. An options object
+// bypasses the cache, keeping the throw that callers use to skip corrupted articles.
+function parseFrontmatter(fileContents: string) {
+  return matter(fileContents, {});
+}
 
 const ARTICLES_PATH = path.join(process.cwd(), "src/content/articles");
 const ARTICLE_FOLDER_NAMES = Object.freeze([
@@ -323,11 +331,33 @@ function articleFolderPath(folder: ArticleFolderName): string {
   return path.join(/*turbopackIgnore: true*/ ARTICLES_PATH, folder);
 }
 
+// The closed grammar of a corpus file name (every real .mdx slug matches it, one ends in a
+// hyphen, so it is not PIN_SLUG). A slug outside it never becomes part of a file path.
+const ARTICLE_SLUG_FILE = /^[a-z0-9][a-z0-9-]*$/;
+
+function isArticleFileSlug(slug: string): boolean {
+  return typeof slug === "string" && ARTICLE_SLUG_FILE.test(slug);
+}
+
 function articleMdxPath(folder: ArticleFolderName, slug: string): string {
+  if (!isArticleFileSlug(slug)) {
+    throw new Error("articleMdxPath: slug outside the article file grammar");
+  }
   return path.join(
     /*turbopackIgnore: true*/ articleFolderPath(folder),
     `${slug}.mdx`,
   );
+}
+
+// The translation locales an article file can carry. The one list: a locale from a request
+// is never joined into a path unless it is in it.
+const ARTICLE_TRANSLATION_LOCALES = ["id", "it", "ru", "fr"] as const;
+type ArticleTranslationLocale = (typeof ARTICLE_TRANSLATION_LOCALES)[number];
+
+function isArticleTranslationLocale(
+  value: string,
+): value is ArticleTranslationLocale {
+  return (ARTICLE_TRANSLATION_LOCALES as readonly string[]).includes(value);
 }
 
 function articleLocaleMdxPath(
@@ -335,6 +365,14 @@ function articleLocaleMdxPath(
   slug: string,
   locale: string,
 ): string {
+  if (!isArticleTranslationLocale(locale)) {
+    throw new Error("articleLocaleMdxPath: unknown article locale");
+  }
+  if (!isArticleFileSlug(slug)) {
+    throw new Error(
+      "articleLocaleMdxPath: slug outside the article file grammar",
+    );
+  }
   return path.join(
     /*turbopackIgnore: true*/ articleFolderPath(folder),
     `${slug}.${locale}.mdx`,
@@ -469,11 +507,22 @@ async function fetchBackendArticles(options?: {
   }
 }
 
+// Which slugs may go to GET /api/news/{slug}: every one in the safe alphabet. The producers
+// (generate_news_slug incl. a leading "-" and unbounded length, staging ids, composer, and
+// caller-supplied scraper slugs) are tabulated in the 2026-11-09 slug spec. The security
+// property is the alphabet alone: no slash, backslash, dot, %, ?, #, whitespace, control or non-ASCII character, so
+// no accepted slug changes meaning on either hop. No position rule, no length cap. Declared
+// loss: a scraper slug outside the alphabet gets a 404 here (0 such rows on prod).
+const BACKEND_NEWS_SLUG = /^[A-Za-z0-9_-]+$/;
+
 async function fetchBackendArticleBySlug(
   slug: string,
 ): Promise<BackendNewsItem | null> {
+  // Only a slug the backend can have generated goes out. The backend proxy decodes the path
+  // again on its second hop, so an encoded "/", "?", "#" or ".." would change meaning there.
+  if (typeof slug !== "string" || !BACKEND_NEWS_SLUG.test(slug)) return null;
   try {
-    const url = `${BACKEND_URL}/api/news/${slug}`;
+    const url = `${BACKEND_URL}/api/news/${encodeURIComponent(slug)}`;
     const res = await fetch(url, {
       next: { revalidate: 60 },
       signal: AbortSignal.timeout(5000),
@@ -548,49 +597,142 @@ async function getAllMdxSlugs(): Promise<
   return slugs;
 }
 
+/** Parse one MDX file through parseFrontmatter, so a broken file stays broken. */
+function readMdxFile(
+  filePath: string,
+): { data: Record<string, any>; content: string } | null {
+  try {
+    const parsed = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
+    return { data: parsed.data, content: parsed.content };
+  } catch {
+    return null;
+  }
+}
+
+/** The MDX file the page for this category and slug resolves to, if any. */
+function findMdxFile(category: string, slug: string): string | null {
+  // No file can carry such a slug: no MDX, and no path is built from it.
+  if (!isArticleFileSlug(slug)) return null;
+  const normalizedCategory = normalizeCategory(category);
+  const possibleFolders = CATEGORY_FOLDERS[normalizedCategory] || [category];
+  for (const folder of possibleFolders) {
+    if (!isArticleFolderName(folder)) continue;
+    const tryPath = articleMdxPath(folder, slug);
+    if (fs.existsSync(tryPath)) return tryPath;
+  }
+  if (isArticleFolderName(category)) {
+    const directPath = articleMdxPath(category, slug);
+    if (fs.existsSync(directPath)) return directPath;
+  }
+  return null;
+}
+
+/**
+ * When the page finds its MDX file, that file decides: an unpublished or
+ * unreadable file hides the article, and no backend row or stand-in replaces it.
+ */
+export function isArticleHidden(category: string, slug: string): boolean {
+  const filePath = findMdxFile(category, slug);
+  if (!filePath) return false;
+  const parsed = readMdxFile(filePath);
+  return !parsed || !isPublishedFrontmatter(parsed.data);
+}
+
+const PIN_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/**
+ * The editors' Insight pins, read from their MDX files and nothing else: a pin
+ * counts only when exactly one article folder holds <slug>.mdx, the page for
+ * that folder's category resolves that same file, and the page's own reader
+ * returns it published and indexed. Backend rows and listings are not read, so
+ * a pin links to the page of the very file that was checked. A pin the page
+ * could not render (a non-text title, a date toISOString rejects) or whose
+ * read throws is skipped alone; the other pins stay.
+ */
+export async function getPinnedMdxArticles(
+  slugs: readonly (string | undefined)[],
+): Promise<ArticleListItem[]> {
+  const pins: ArticleListItem[] = [];
+  for (const slug of slugs) {
+    if (!slug || !PIN_SLUG.test(slug)) continue;
+    let article: Article | null;
+    let category: ArticleCategory;
+    try {
+      const folders = ARTICLE_FOLDER_NAMES.filter((folder) =>
+        fs.existsSync(articleMdxPath(folder, slug)),
+      );
+      if (folders.length !== 1) continue;
+      category = normalizeCategory(folders[0]);
+      if (findMdxFile(category, slug) !== articleMdxPath(folders[0], slug))
+        continue;
+      article = await getMdxArticleBySlug(category, slug);
+    } catch {
+      continue;
+    }
+    if (!article || article.noIndex || !isRenderablePin(article)) continue;
+    pins.push({
+      id: article.id,
+      slug,
+      title: article.title,
+      excerpt: article.excerpt,
+      coverImage: article.coverImage,
+      category,
+      author: article.author,
+      publishedAt: article.publishedAt ?? new Date(NaN),
+      readingTime: article.readingTime,
+      viewCount: article.viewCount,
+      featured: article.featured,
+      trending: article.trending,
+      aiGenerated: article.aiGenerated,
+    });
+  }
+  return pins;
+}
+
+const isValidDate = (date: unknown): boolean =>
+  date instanceof Date && !Number.isNaN(date.getTime());
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const isAbsentOrRecords = (value: unknown): boolean =>
+  value === undefined ||
+  value === null ||
+  (Array.isArray(value) && value.every(isRecord));
+
+/**
+ * What the article page dereferences without a guard (page.tsx, metadata.ts,
+ * EnhancedJsonLd.tsx, ArticleClient.tsx): a text title, the dates it formats,
+ * an author object with a name, and faq / entityMentions as lists of objects.
+ */
+function isRenderablePin(article: Article): boolean {
+  const fields = article as unknown as Record<string, unknown>;
+  const ai = fields.aiOptimization;
+  return (
+    typeof article.title === "string" &&
+    article.title.trim() !== "" &&
+    isValidDate(article.createdAt) &&
+    isValidDate(article.updatedAt) &&
+    (article.publishedAt === undefined || isValidDate(article.publishedAt)) &&
+    isRecord(fields.author) &&
+    typeof fields.author.name === "string" &&
+    isAbsentOrRecords(fields.faq) &&
+    (!isRecord(ai) || isAbsentOrRecords(ai.entityMentions))
+  );
+}
+
 async function getMdxArticleBySlug(
   category: string,
   slug: string,
 ): Promise<Article | null> {
-  const normalizedCategory = normalizeCategory(category);
-  const possibleFolders = CATEGORY_FOLDERS[normalizedCategory] || [category];
-
-  let filePath = "";
-  let actualFolderCategory = category;
-
-  for (const folder of possibleFolders) {
-    if (!isArticleFolderName(folder)) continue;
-    const tryPath = articleMdxPath(folder, slug);
-    if (fs.existsSync(tryPath)) {
-      filePath = tryPath;
-      actualFolderCategory = folder;
-      break;
-    }
-  }
-
-  if (!filePath && isArticleFolderName(category)) {
-    const directPath = articleMdxPath(category, slug);
-    if (fs.existsSync(directPath)) {
-      filePath = directPath;
-      actualFolderCategory = category;
-    }
-  }
-
+  const filePath = findMdxFile(category, slug);
   if (!filePath) return null;
 
-  let fileContents: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let frontmatter: Record<string, any>;
-  let content: string;
-  try {
-    fileContents = fs.readFileSync(filePath, "utf8");
-    const parsed = matter(fileContents);
-    frontmatter = parsed.data;
-    content = parsed.content;
-  } catch {
-    // Skip articles with corrupted frontmatter (bad YAML)
-    return null;
-  }
+  // Unreadable (bad YAML) and unpublished files do not exist for readers.
+  const parsed = readMdxFile(filePath);
+  if (!parsed || !isPublishedFrontmatter(parsed.data)) return null;
+  const frontmatter = parsed.data;
+  const content = parsed.content;
 
   const author =
     typeof frontmatter.author === "object"
@@ -682,6 +824,7 @@ export async function getArticleBySlug(
   if (mdxArticle) {
     return mdxArticle;
   }
+  if (isArticleHidden(category, slug)) return null;
 
   // Fallback to backend API (news_items) when no local MDX exists.
   const backendItem = await fetchBackendArticleBySlug(slug);
@@ -704,6 +847,13 @@ export async function getArticleByLocale(
   if (!locale || locale === "en") {
     return getArticleBySlug(category, slug);
   }
+  // A locale outside the allowlist is an unknown language: the English article, and no path
+  // is ever built from the request value (it used to reach path.join as "<slug>.<locale>.mdx").
+  if (!isArticleTranslationLocale(locale) || !isArticleFileSlug(slug)) {
+    return getArticleBySlug(category, slug);
+  }
+  // A hidden English article hides its translations too.
+  if (isArticleHidden(category, slug)) return null;
 
   // Try locale-specific MDX file
   const normalizedCategory = normalizeCategory(category);
@@ -713,18 +863,11 @@ export async function getArticleByLocale(
     if (!isArticleFolderName(folder)) continue;
     const localePath = articleLocaleMdxPath(folder, slug, locale);
     if (fs.existsSync(localePath)) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let frontmatter: Record<string, any>;
-      let content: string;
-      try {
-        const fileContents = fs.readFileSync(localePath, "utf8");
-        const parsed = matter(fileContents);
-        frontmatter = parsed.data;
-        content = parsed.content;
-      } catch {
-        // Skip locale files with corrupted frontmatter
-        continue;
-      }
+      // Skip unreadable and unpublished locale files.
+      const parsed = readMdxFile(localePath);
+      if (!parsed || !isPublishedFrontmatter(parsed.data)) continue;
+      const frontmatter = parsed.data;
+      const content = parsed.content;
 
       const author =
         typeof frontmatter.author === "object"
@@ -803,14 +946,17 @@ export async function getArticleByLocale(
  */
 export function getAvailableLocales(category: string, slug: string): string[] {
   const locales = ["en"]; // English always available
+  if (!isArticleFileSlug(slug)) return locales;
   const normalizedCategory = normalizeCategory(category);
   const possibleFolders = CATEGORY_FOLDERS[normalizedCategory] || [category];
 
-  for (const locale of ["id", "it", "ru", "fr"] as const) {
+  for (const locale of ARTICLE_TRANSLATION_LOCALES) {
     for (const folder of possibleFolders) {
       if (!isArticleFolderName(folder)) continue;
       const localePath = articleLocaleMdxPath(folder, slug, locale);
-      if (fs.existsSync(localePath)) {
+      if (!fs.existsSync(localePath)) continue;
+      const parsed = readMdxFile(localePath);
+      if (parsed && isPublishedFrontmatter(parsed.data)) {
         locales.push(locale);
         break;
       }
@@ -848,6 +994,7 @@ export const getAllArticles = unstable_cache(
     if (backendResult) {
       for (const item of backendResult.items) {
         const listItem = backendToArticleListItem(item);
+        if (isArticleHidden(listItem.category, item.slug)) continue;
         if (
           options?.featured !== undefined &&
           listItem.featured !== options.featured
@@ -983,7 +1130,7 @@ export async function getNoIndexSlugs(): Promise<Set<string>> {
       const filePath = articleMdxPath(folderCategory, slug);
       if (!fs.existsSync(filePath)) continue;
       const fileContents = fs.readFileSync(filePath, "utf8");
-      const { data: frontmatter } = matter(fileContents);
+      const { data: frontmatter } = parseFrontmatter(fileContents);
       if (frontmatter.noIndex) {
         noIndexSlugs.add(slug);
       }
@@ -1010,7 +1157,9 @@ export async function searchArticles(
   });
 
   if (backendResult && backendResult.items.length > 0) {
-    return backendResult.items.map(backendToArticleListItem);
+    return backendResult.items
+      .map(backendToArticleListItem)
+      .filter((article) => !isArticleHidden(article.category, article.slug));
   }
 
   // Fallback to in-memory MDX search

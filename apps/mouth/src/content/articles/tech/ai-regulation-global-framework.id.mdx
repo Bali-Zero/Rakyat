@@ -168,71 +168,75 @@ translatedFrom: en
 trending: false
 twitterCard: summary_large_image
 updatedAt: "2026-01-02"
+locale: "id"
+source_sha256: "f45579174b10f964b69ef7baf225e2453f8c7514dc4c721c9f2fca1084aa6494"
 ---
 
-# Regulasi AI: Bentang Regulasi Global
+import { InfoCard, AskZantara } from "@/components/insights/interactive";
 
-Tahun 2026 menjadi titik balik di mana regulasi AI mulai diterapkan secara ketat. UU AI Uni Eropa (EU AI Act) kini berlaku sepenuhnya. Perintah Eksekutif AS mulai membentuk standar industri, sementara negara-negara di Asia tengah merintis jalur regulasi mereka sendiri.
+# Regulasi AI: Lanskap Global
 
-Bagi bisnis yang beroperasi di kancah internasional, memahami peta regulasi ini adalah sebuah keharusan.
+2026 menandai tahun ketika regulasi AI menjadi serius. EU AI Act sepenuhnya dapat ditegakkan. Executive Order AS membentuk praktik industri. Dan Asia menemukan jalannya sendiri.
+
+Bagi bisnis yang beroperasi secara internasional, memahami lanskap ini bukanlah pilihan.
 
 ---
 
-## UU AI Uni Eropa (EU AI Act)
+## EU AI Act
 
-<InfoCard variant="highlight" title="Persyaratan Utama (Berlaku)">
+<InfoCard variant="highlight" title="Key Requirements (In Effect)">
 
 **Klasifikasi Berbasis Risiko:**
 
-- **Risiko Tidak Dapat Diterima**: Dilarang (seperti penilaian sosial/social scoring, manipulasi subliminal)
-- **Risiko Tinggi**: Diawasi ketat (perekrutan, penilaian kredit, layanan kesehatan)
-- **Risiko Terbatas**: Wajib transparansi (chatbot, deepfake)
-- **Risiko Minimal**: Sebagian besar tidak diatur khusus (filter spam, video gim)
+- **Tidak Dapat Diterima**: Dilarang (penilaian sosial, manipulasi subliminal)
+- **Risiko Tinggi**: Regulasi ketat (perekrutan, kredit, layanan kesehatan)
+- **Risiko Terbatas**: Transparansi diwajibkan (chatbot, deepfake)
+- **Risiko Minimal**: Sebagian besar tidak diatur (filter spam, gim)
 
 **Sanksi:**
 
-- Denda hingga €35 juta atau 7% dari pendapatan global tahunan
-- Penegakan hukum dilakukan secara bertahap hingga tahun 2027
+- Hingga €35M atau 7% pendapatan global
+- Penegakan bertahap hingga 2027
 
 </InfoCard>
 
 ---
 
-## Dampak bagi Sektor Bisnis
+## Apa Artinya bagi Bisnis
 
-| Kasus Penggunaan AI               | Tingkat Risiko | Persyaratan                                                     |
-| --------------------------------- | -------------- | --------------------------------------------------------------- |
-| Skrining rekrutmen                | Tinggi         | Penilaian dampak, pengawasan manusia, pencatatan data (logging) |
-| Chatbot layanan pelanggan         | Terbatas       | Pengungkapan penggunaan sistem AI                               |
-| Ringkasan dokumen                 | Minimal        | Tidak ada persyaratan spesifik                                  |
-| Penilaian kredit (Credit scoring) | Tinggi         | Eksplanabilitas (kejelasan algoritma), hak banding pengguna     |
-| Personalisasi pemasaran           | Terbatas       | Transparansi mengenai profil pengguna (profiling)               |
+| Kasus Penggunaan AI         | Tingkat Risiko | Persyaratan                                     |
+| --------------------------- | -------------- | ----------------------------------------------- |
+| Penyaringan perekrutan      | Tinggi         | Penilaian dampak, pengawasan manusia, pencatatan |
+| Chatbot pelanggan           | Terbatas       | Mengungkapkan sifat AI                          |
+| Ringkasan dokumen           | Minimal        | Tidak ada yang spesifik                         |
+| Penilaian kredit            | Tinggi         | Keterjelasan, hak banding                       |
+| Personalisasi pemasaran     | Terbatas       | Transparansi tentang pembuatan profil           |
 
 ---
 
 ## Pendekatan Amerika Serikat
 
-AS lebih memilih pendekatan sektoral dibandingkan satu regulasi komprehensif:
+AS mengambil pendekatan sektoral daripada pendekatan komprehensif:
 
-<InfoCard variant="info" title="Tata Kelola AI Amerika Serikat">
+<InfoCard variant="info" title="US AI Governance">
 
-**Perintah Eksekutif 14110 (Aktif):**
+**Executive Order 14110 (Aktif):**
 
-- Kewajiban pelaporan untuk model AI skala besar
-- Mandat pengujian keamanan (safety testing)
-- Standar pengadaan untuk instansi federal
+- Persyaratan pelaporan untuk model besar
+- Mandat pengujian keamanan
+- Standar pengadaan federal
 
-**Regulasi Sektoral:**
+**Spesifik Sektor:**
 
-- FDA: Perangkat medis berbasis AI
-- FTC: Perlindungan konsumen dari penipuan AI
-- SEC: Penggunaan AI dalam layanan keuangan
-- DOL: AI dalam konteks ketenagakerjaan
+- FDA: Perangkat medis AI
+- FTC: Perlindungan konsumen AI
+- SEC: AI dalam layanan keuangan
+- DOL: AI dalam ketenagakerjaan
 
-**Level Negara Bagian:**
+**Tingkat Negara Bagian:**
 
-- RUU Keamanan AI California (masih diperdebatkan)
-- Berbagai aturan spesifik di tingkat negara bagian lainnya
+- RUU Keamanan AI California (diperdebatkan)
+- Berbagai aturan spesifik negara bagian
 
 </InfoCard>
 
@@ -240,121 +244,121 @@ AS lebih memilih pendekatan sektoral dibandingkan satu regulasi komprehensif:
 
 ## Kerangka Regulasi Tiongkok
 
-Tiongkok bergerak sangat cepat dalam menetapkan aturan spesifik untuk setiap teknologi AI:
+Tiongkok bergerak lebih cepat daripada siapa pun dalam regulasi AI:
 
-| Regulasi                     | Fokus Utama                        | Status   |
-| ---------------------------- | ---------------------------------- | -------- |
-| Rekomendasi Algoritma        | Media sosial, e-commerce           | Berlaku  |
-| Sintesis Mendalam (Deepfake) | Verifikasi identitas               | Berlaku  |
-| Aturan AI Generatif          | Registrasi model, kepatuhan konten | Berlaku  |
-| Draf UU AI                   | Kerangka kerja komprehensif        | Tertunda |
+| Regulasi                     | Fokus                     | Status       |
+| ---------------------------- | ------------------------- | ------------ |
+| Rekomendasi Algoritma        | Media sosial, e-commerce  | Ditegakkan   |
+| Deep Synthesis (Deepfake)    | Verifikasi identitas      | Ditegakkan   |
+| Aturan AI Generatif          | Registrasi model, konten  | Ditegakkan   |
+| Draf Undang-Undang AI        | Kerangka komprehensif     | Menunggu     |
 
 ---
 
-## Asia Tenggara dan Indonesia
+## Asia Tenggara Termasuk Indonesia
 
-<InfoCard variant="warning" title="Status Regional">
+<InfoCard variant="warning" title="Regional Status">
 
 **Indonesia:**
 
-- Belum memiliki UU AI khusus yang komprehensif
-- UU Perlindungan Data Pribadi (UU PDP) sudah berlaku penuh
-- Surat Edaran Kominfo mengenai Etika AI sebagai panduan awal
-- Kerangka regulasi formal diprediksi hadir pada tahun 2027
+- Belum ada undang-undang AI yang komprehensif
+- Draf Pelindungan Data Pribadi (PDP) berlaku
+- Pedoman Kominfo untuk penggunaan AI
+- Kerangka diperkirakan terbit pada 2027
 
 **Singapura:**
 
-- Model AI Governance Framework (bersifat sukarela)
-- Kerangka tata kelola khusus untuk AI Generatif
-- Menjadi pionir standar regional di ASEAN
+- Kerangka Tata Kelola AI (sukarela)
+- Model Kerangka Tata Kelola AI untuk AI Generatif
+- Pendekatan regional terdepan
 
 **ASEAN:**
 
-- Pedoman Tata Kelola dan Etika AI ASEAN telah diadopsi
-- Fokus pada upaya interoperabilitas antarnegara anggota
+- Pedoman Tata Kelola AI diadopsi
+- Upaya interoperabilitas sedang berlangsung
 
 </InfoCard>
 
 ---
 
-## Peta Jalan Kepatuhan untuk Bisnis
+## Peta Jalan Kepatuhan bagi Bisnis
 
-### Tindakan Segera (Saat Ini)
+### Tindakan Segera (Sekarang)
 
-1. **Audit penggunaan AI** — Dokumentasikan semua alat dan aplikasi AI yang digunakan perusahaan.
-2. **Klasifikasi tingkat risiko** — Petakan penggunaan AI terhadap kerangka kerja Uni Eropa.
-3. **Penilaian vendor** — Pastikan penyedia layanan AI pihak ketiga memenuhi standar keamanan.
-4. **Pembaruan transparansi** — Beritahu pengguna secara jelas saat mereka berinteraksi dengan AI.
+1. **Audit penggunaan AI** — Dokumentasikan semua alat dan aplikasi AI
+2. **Klasifikasikan tingkat risiko** — Petakan terhadap kerangka EU
+3. **Nilai vendor** — Pastikan penyedia AI memenuhi standar
+4. **Perbarui pengungkapan** — Informasikan kepada pengguna tentang interaksi AI
 
 ### Jangka Menengah (2026)
 
-1. **Implementasi logging** — Simpan catatan otomatis mengenai proses pengambilan keputusan AI.
-2. **Sistem pengawasan (Human-in-the-loop)** — Bangun proses peninjauan oleh manusia.
-3. **Pelatihan staf** — Luncurkan program literasi AI untuk karyawan.
-4. **Pembaruan kontrak** — Tambahkan klausul tanggung jawab hukum terkait penggunaan AI.
+1. **Terapkan pencatatan** — Simpan catatan keputusan AI
+2. **Bangun pengawasan** — Proses peninjauan manusia
+3. **Latih staf** — Program literasi AI
+4. **Perbarui kontrak** — Klausul liabilitas AI
 
 ### Jangka Panjang (2027+)
 
-1. **Persiapan sertifikasi** — Khusus untuk aplikasi yang masuk kategori risiko tinggi.
-2. **Pemantauan kontinu** — Pelacakan rutin terhadap perubahan regulasi global.
-3. **Kolaborasi industri** — Berpartisipasi dalam pengembangan standar praktik terbaik.
+1. **Persiapan sertifikasi** — Untuk aplikasi berisiko tinggi
+2. **Pemantauan berkelanjutan** — Pelacakan perubahan regulasi
+3. **Kolaborasi industri** — Pengembangan praktik terbaik
 
 ---
 
-## Perspektif Indonesia
+## Sudut Indonesia
 
-Bagi bisnis yang beroperasi di Indonesia dengan jangkauan internasional:
+Bagi bisnis yang beroperasi di Indonesia dengan eksposur internasional:
 
-- **Memiliki pelanggan di Uni Eropa?** Anda wajib mematuhi EU AI Act.
-- **Memiliki operasional di AS?** Aturan sektoral berlaku bagi Anda.
-- **Hanya pasar lokal?** Saat ini masih fleksibel, namun segera bersiap untuk regulasi mendatang.
+- **Pelanggan EU?** EU AI Act berlaku untuk Anda
+- **Operasi AS?** Aturan sektoral berlaku
+- **Hanya lokal?** Fleksibilitas saat ini, tetapi bersiaplah
 
-**Strategi terbaik:** Bangun sistem yang memenuhi standar Uni Eropa mulai sekarang. Ini adalah standar tertinggi yang akan mempermudah portabilitas bisnis Anda ke pasar global mana pun.
-
----
-
-## Ketentuan Utama untuk Aplikasi AI Populer
-
-| Aplikasi             | Persyaratan Utama                    | Tenggat Waktu |
-| -------------------- | ------------------------------------ | ------------- |
-| Chatbot AI           | Pengungkapan (Disclosure)            | Sekarang      |
-| Konten Generative AI | Pelabelan Konten                     | Sekarang      |
-| Alat Rekrutan AI     | Penilaian dampak (Impact assessment) | Agustus 2025  |
-| Keputusan Kredit AI  | Eksplanabilitas                      | Agustus 2025  |
-| AI Generasi Umum     | Kartu Model (Model cards)            | Agustus 2025  |
+Langkah cerdas: bangun sesuai standar EU sekarang. Ini adalah standar tertinggi dan memberikan portabilitas ke pasar mana pun.
 
 ---
 
-## Tren Masa Depan
+## Ketentuan Kunci untuk Penggunaan Umum AI
 
-<InfoCard variant="info" title="Perkembangan yang Perlu Diawasi">
+| Aplikasi              | Persyaratan Kunci | Linimasa   |
+| --------------------- | ----------------- | ---------- |
+| Chatbot AI            | Pengungkapan      | Sekarang   |
+| Konten Buatan AI      | Pelabelan         | Sekarang   |
+| Alat Perekrutan AI    | Penilaian dampak  | Agu 2025   |
+| Keputusan Kredit AI   | Keterjelasan      | Agu 2025   |
+| AI Tujuan Umum        | Kartu model       | Agu 2025   |
 
-**Fokus Tahun 2026:**
+---
 
-- **AI Agen** — Regulasi untuk sistem otonom yang bisa mengambil tindakan mandiri.
-- **Tanggung Jawab Hukum AI** — Menentukan siapa yang bertanggung jawab saat AI melakukan kesalahan.
-- **Open Source** — Perbedaan aturan untuk model tertutup vs model terbuka.
-- **Tata Kelola Komputasi** — Pengaturan infrastruktur fisik untuk pelatihan model AI.
+## Tren yang Berkembang
 
-**Horizon 2027+:**
+<InfoCard variant="info" title="Watch These Developments">
 
-- Kerangka kerja interoperabilitas global (keselarasan aturan antarnegara).
-- Standar audit AI yang bersifat wajib.
-- Penilaian dampak lingkungan dari penggunaan AI skala besar.
+**Area Fokus 2026:**
+
+- **Agentic AI** — Regulasi untuk sistem otonom
+- **Liabilitas AI** — Siapa yang bertanggung jawab ketika AI gagal?
+- **Open Source** — Aturan berbeda untuk model terbuka?
+- **Tata Kelola Komputasi** — Mengatur infrastruktur pelatihan
+
+**Cakrawala 2027+:**
+
+- Kerangka interoperabilitas global
+- Standar audit AI
+- Penilaian dampak AI wajib
 
 </InfoCard>
 
 ---
 
-## Pertanyaan?
+## Ada Pertanyaan?
 
 <AskZantara
-  context="regulasi AI, UU AI Uni Eropa, kepatuhan bisnis, tata kelola AI, perlindungan data pribadi"
-  placeholder="Tanyakan tentang kepatuhan AI di perusahaan Anda..."
+  context="AI regulation, EU AI Act, compliance, AI governance, data protection"
+  placeholder="Ask about AI compliance..."
   suggestedQuestions={[
-    "Apakah EU AI Act berlaku untuk perusahaan saya di Indonesia?",
-    "Apa saja syarat kepatuhan untuk penggunaan chatbot AI?",
-    "Bagaimana cara memulai audit regulasi AI dalam bisnis?",
-    "Apa risiko hukum menggunakan AI untuk proses rekrutmen karyawan?",
+    "Does EU AI Act apply to my Indonesian business?",
+    "AI compliance requirements for chatbots?",
+    "How to prepare for AI regulation?",
+    "AI in hiring legal requirements?",
   ]}
 />

@@ -575,7 +575,7 @@ export class NewsletterService {
             margin-bottom: 12px;
           }
           h1 {
-            font-family: 'Playfair Display', Wimolog, serif;
+            font-family: 'Playfair Display', Georgia, serif;
             font-size: 26px;
             line-height: 1.3;
             margin: 0 0 16px 0;

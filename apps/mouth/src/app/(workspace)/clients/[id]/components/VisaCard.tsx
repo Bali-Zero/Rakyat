@@ -1,13 +1,7 @@
 "use client";
 
-import React, {
-  useState,
-  useRef,
-  useCallback,
-  useEffect,
-  useEffectEvent,
-} from "react";
-import { FileText, Loader2, Upload, Trash2, ExternalLink } from "lucide-react";
+import React, { useState, useRef } from "react";
+import { FileText, Loader2, Upload, Download, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { logger } from "@/lib/logger";
@@ -19,13 +13,22 @@ import {
 } from "@/lib/upload/base64UploadLimit";
 import { useOcrPolling } from "@/hooks/useOcrPolling";
 import type { ClientProfile, ClientDocument } from "@/lib/api/crm/crm.types";
+import { downloadHrefFor, extractDriveFileId } from "./utils";
+import { countVoidPermitsFor, pickCurrentVisa } from "./pickCurrentVisa";
+import { elapsedShare, humanize } from "./overview-brief";
+import { documentValidity } from "./documentValidity";
+import { resolveCardDay } from "./witaClock";
+import { RemovedSignpost } from "./RemovedSignpost";
+import { permitLine } from "./header-facts";
 import {
-  extractDriveFileId,
-  getDriveProxyUrl,
-  getVisaAlertStatus,
-} from "./utils";
-import { formatLongSpan } from "@/lib/utils/format-date";
-import { pickCurrentVisa } from "./pickCurrentVisa";
+  CardFrame,
+  expiryTone,
+  ExpiryText,
+  Fact,
+  Facts,
+  NOT_RECORDED,
+  Runway,
+} from "./cardKit";
 
 export function VisaCard({
   client,
@@ -35,6 +38,8 @@ export function VisaCard({
   formatCurrency,
   onRefresh,
   clientId,
+  onOpenRemoved,
+  day: dayProp,
 }: {
   client: ClientProfile["client"];
   documents: ClientDocument[];
@@ -43,12 +48,16 @@ export function VisaCard({
   formatCurrency: (n: number) => string;
   onRefresh: () => Promise<void>;
   clientId: number;
+  /** Opens the Documents "Removed or rejected" group. */
+  onOpenRemoved?: () => void;
+  /** The card's day (`YYYY-MM-DD`, the payload's `as_of`). */
+  day?: string;
 }) {
+  const day = resolveCardDay(dayProp);
   const [isUploading, setIsUploading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const hasTriggeredVisaOcr = useRef(false);
 
   // Poll OCR status after upload
   // NOTE: cleanupOnUnmount=false reproduces this copy's original gap — it
@@ -74,15 +83,36 @@ export function VisaCard({
       p.practice_type_name?.toLowerCase().includes("kitas"),
   );
 
-  // Get visa alert status
-  const visaAlert = getVisaAlertStatus(latestVisa?.expiry_date);
-
   // Get visa dates from document metadata or practice
   const visaStartDate = latestVisa?.issue_date || visaProcess?.start_date;
-  const visaExpiryDate = latestVisa?.expiry_date;
+  const validity = latestVisa ? documentValidity(latestVisa, day) : null;
+  const visaExpiryDate = validity?.expiry ?? null;
+  const expiryDays = validity?.daysLeft ?? null;
+  const share = elapsedShare(latestVisa?.issue_date, visaExpiryDate, day);
+  const voidPermits = countVoidPermitsFor(documents, null);
+  const permitName = latestVisa ? permitLine(documents) : null;
+  const address = client.address?.trim();
+  const ocrBusy = ocrPolling || isExtracting;
 
-  // Auto-extract visa dates via OCR when visa doc exists but no dates
-  const handleExtractVisa = async (isManual = false) => {
+  // Same download flow as the passport: through the backend proxy, never
+  // rendered on the page.
+  const handleDownload = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!latestVisaFileUrl) return;
+    const href = downloadHrefFor(latestVisaFileUrl);
+    if (!href) return;
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = `visa_${client.full_name?.replace(/\s+/g, "_") || "document"}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // OCR is only ever started by the explicit "Extract dates" action: opening a
+  // client must never send a document to OCR (the backend overwrites the
+  // client's visa fields with whatever it reads).
+  const handleExtractVisa = async () => {
     if (!latestVisa?.google_drive_file_url || isExtracting) return;
     const fileId = extractDriveFileId(latestVisa.google_drive_file_url);
     if (!fileId) return;
@@ -118,34 +148,12 @@ export function VisaCard({
         await onRefresh();
       }
     } catch (err) {
-      if (isManual) {
-        toast.error("OCR failed. Please try again.");
-      } else {
-        logger.error("Auto-extract visa OCR failed", {
-          metadata: { error: String(err) },
-        });
-      }
+      logger.error("Visa OCR failed", { metadata: { error: String(err) } });
+      toast.error("OCR failed. Please try again.");
     } finally {
       setIsExtracting(false);
     }
   };
-
-  const triggerAutoExtractVisa = useEffectEvent(() => {
-    void handleExtractVisa();
-  });
-
-  // Auto-trigger visa OCR when visa doc exists but no expiry date
-  useEffect(() => {
-    if (
-      latestVisaFileUrl &&
-      !visaExpiryDate &&
-      !isExtracting &&
-      !hasTriggeredVisaOcr.current
-    ) {
-      hasTriggeredVisaOcr.current = true;
-      triggerAutoExtractVisa();
-    }
-  }, [latestVisaFileUrl, visaExpiryDate, isExtracting]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -234,280 +242,191 @@ export function VisaCard({
   };
 
   return (
-    <div className="bz-product-panel bz-product-panel--interactive transition-all duration-300 overflow-hidden flex flex-col h-full hover:-translate-y-1">
-      {/* OCR Processing Indicator */}
-      {ocrPolling && (
-        <div className="flex items-center gap-2 px-4 py-2 bg-blue-500/10 border-b border-blue-500/20 text-blue-400 text-xs">
-          <Loader2 className="w-3 h-3 animate-spin" />
-          OCR in corso...
-        </div>
-      )}
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--bz-border)]">
-        <h3 className="text-base font-semibold text-[var(--bz-text-1)] flex items-center gap-2">
-          <FileText className="w-5 h-5" />
-          Actual Visa
-        </h3>
-      </div>
-
-      {/* Content */}
-      <div className="p-4 flex-1 flex flex-col">
-        {visaProcess && !latestVisa?.google_drive_file_url ? (
-          /* Visa in Process */
-          <div className="flex-1 flex flex-col">
-            <div className="aspect-[3/2] rounded-lg bg-blue-500/10 border-2 border-dashed border-blue-500/30 flex flex-col items-center justify-center gap-2">
-              <Loader2 className="w-10 h-10 text-blue-400 animate-spin" />
-              <p className="text-sm font-medium text-blue-400">
-                Visa on process
-              </p>
-            </div>
-
-            {/* Process Dates */}
-            {visaProcess.start_date && (
-              <div className="mt-3 space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-[var(--bz-text-2)]">Start:</span>
-                  <span className="text-[var(--bz-text-1)]">
-                    {formatDate(visaProcess.start_date)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-[var(--bz-text-2)]">Finish:</span>
-                  <span className="text-[var(--bz-text-1)]">
-                    {visaProcess.completion_date
-                      ? formatDate(visaProcess.completion_date)
-                      : "TBD"}
-                  </span>
-                </div>
-              </div>
+    <CardFrame
+      tone="forest"
+      kicker="Stay permit"
+      title="Visa"
+      art="visa"
+      testId="visa-card"
+      headerExtra={
+        ocrBusy ? (
+          <span
+            role="status"
+            className="inline-flex items-center gap-1.5 text-[12px] text-[var(--state-success)]"
+          >
+            <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+            Reading the scan…
+          </span>
+        ) : undefined
+      }
+      actions={
+        <>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/jpg,image/png,application/pdf"
+            aria-label="Upload visa document"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 border-[var(--line-control)]"
+            onClick={handleDownload}
+            disabled={!latestVisaFileUrl}
+            aria-label="Download visa"
+          >
+            <Download className="h-4 w-4" aria-hidden="true" />
+            Download
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 border-[var(--line-control)]"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+          >
+            {isUploading ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Upload className="h-4 w-4" aria-hidden="true" />
             )}
-          </div>
-        ) : latestVisa?.google_drive_file_url ? (
-          <div className="space-y-3 flex-1 flex flex-col">
-            {/* Visa Image */}
-            <a
-              href={latestVisa.google_drive_file_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block relative group"
-            >
-              <div className="aspect-[3/2] rounded-lg overflow-hidden border-2 border-dashed border-[var(--bz-border)] bg-[var(--bz-base)]">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={
-                    getDriveProxyUrl(latestVisa.google_drive_file_url) ||
-                    latestVisa.google_drive_file_url
-                  }
-                  alt="Visa"
-                  className="w-full h-full object-contain"
-                  onError={(e) => {
-                    if (latestVisa.google_drive_file_url) {
-                      (e.target as HTMLImageElement).src =
-                        latestVisa.google_drive_file_url.replace(
-                          "/view",
-                          "/preview",
-                        );
-                    }
-                  }}
-                />
-                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
-                  <ExternalLink className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-                </div>
-              </div>
-            </a>
-
-            {/* Visa Data with Start/Finish/Exp */}
-            <div className="space-y-2">
-              {/* Visa Type — permit_label (resolved server-side, leads with
-                  the precise visa index + catalogue name when found, see
-                  crm.types.ts) is primary; document_type is the fallback,
-                  never invented. permit_family_label is the family (e.g.
-                  "KITAS / ITAS — Limited Stay Permit"), shown as a caption
-                  only when it differs from the primary label. */}
-              {latestVisa.document_type && (
-                <div className="text-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[var(--bz-text-2)]">Type:</span>
-                    <span className="font-medium text-[var(--bz-text-1)]">
-                      {latestVisa.permit_label || latestVisa.document_type}
-                    </span>
-                  </div>
-                  {latestVisa.permit_family_label &&
-                    latestVisa.permit_family_label !==
-                      (latestVisa.permit_label || latestVisa.document_type) && (
-                      <div className="mt-0.5 text-right text-[10px] text-[var(--bz-text-2)]">
-                        {latestVisa.permit_family_label}
-                      </div>
-                    )}
-                </div>
-              )}
-
-              {/* Start Date */}
-              {visaStartDate && (
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-[var(--bz-text-2)]">Start:</span>
-                  <span className="text-[var(--bz-text-1)]">
-                    {formatDate(visaStartDate)}
-                  </span>
-                </div>
-              )}
-
-              {/* Expiry Date with Alert */}
-              {visaExpiryDate && (
-                <div
-                  className={`rounded-lg p-2 ${
-                    visaAlert.alertLevel === "critical"
-                      ? "bg-[color-mix(in_srgb,var(--state-warning)_20%,transparent)] text-[var(--state-warning)] border border-[var(--state-warning)] animate-pulse"
-                      : visaAlert.alertLevel === "warning"
-                        ? "bg-yellow-500 text-black border border-yellow-600"
-                        : "bg-[var(--bz-base)] border border-[var(--bz-border)]"
-                  }`}
+            {isUploading ? "Uploading…" : "Upload"}
+          </Button>
+          {latestVisa && latestVisaFileUrl ? (
+            <span className="ml-auto flex items-center gap-1">
+              {!visaExpiryDate ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="min-h-8 gap-1.5 text-[var(--tx-secondary)]"
+                  onClick={() => void handleExtractVisa()}
+                  disabled={isExtracting}
+                  aria-label="Extract dates from the visa scan"
+                  data-testid="visa-extract-dates"
                 >
-                  <div className="flex items-center justify-between">
-                    <span
-                      className={`text-[10px] uppercase tracking-wider ${
-                        visaAlert.alertLevel === "critical" ||
-                        visaAlert.alertLevel === "warning"
-                          ? "opacity-90"
-                          : "text-[var(--bz-text-2)]"
-                      }`}
-                    >
-                      Exp Visa:
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className={`text-xs font-semibold ${
-                          visaAlert.alertLevel === "critical" ||
-                          visaAlert.alertLevel === "warning"
-                            ? ""
-                            : "text-[var(--bz-text-1)]"
-                        }`}
-                      >
-                        {formatDate(visaExpiryDate)}
-                      </span>
-                      {(() => {
-                        const days = Math.ceil(
-                          (new Date(visaExpiryDate).getTime() - Date.now()) /
-                            86400000,
-                        );
-                        const label =
-                          days < 0
-                            ? `Exp ${Math.abs(days)}d ago`
-                            : days === 0
-                              ? "today"
-                              : days <= 365
-                                ? `⏰ ${days}d`
-                                : formatLongSpan(days);
-                        return (
-                          <span
-                            className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
-                              visaAlert.alertLevel === "critical" ||
-                              visaAlert.alertLevel === "warning"
-                                ? "bg-black/20 text-current"
-                                : days < 0
-                                  ? "bg-[var(--state-warning)]/20 text-[var(--state-warning)]"
-                                  : days < 30
-                                    ? "bg-[var(--state-warning)]/15 text-[var(--state-warning)]"
-                                    : days < 60
-                                      ? "bg-yellow-500/20 text-yellow-400"
-                                      : "bg-green-500/10 text-green-400"
-                            }`}
-                          >
-                            {label}
-                          </span>
-                        );
-                      })()}
-                    </div>
-                  </div>
-
-                  {/* Alert Messages */}
-                  {visaAlert.alertLevel === "critical" && (
-                    <div className="mt-1 text-[10px] font-bold">
-                      🚨 URGENT: Plan renewal or communicate departure!
-                    </div>
+                  {isExtracting ? (
+                    <Loader2
+                      className="h-4 w-4 animate-spin"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <FileText className="h-4 w-4" aria-hidden="true" />
                   )}
-                  {visaAlert.alertLevel === "warning" && (
-                    <div className="mt-1 text-[10px]">
-                      ⚠️ Start planning your visa renewal
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Action Buttons */}
-            <div className="grid grid-cols-2 gap-2 pt-2 mt-auto">
+                  {isExtracting ? "Extracting…" : "Extract dates"}
+                </Button>
+              ) : null}
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
-                onClick={() => handleExtractVisa(true)}
-                disabled={isExtracting}
-              >
-                {isExtracting ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : (
-                  <FileText className="w-4 h-4 mr-2" />
-                )}
-                {isExtracting ? "Extracting..." : "Extract"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
+                className="h-8 w-8 p-0 text-[var(--tx-secondary)]"
                 onClick={handleDelete}
                 disabled={isDeleting}
-                className="text-[var(--state-warning)] hover:opacity-80"
                 aria-label="Delete visa"
                 title="Delete visa"
               >
                 {isDeleting ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  <Loader2
+                    className="h-4 w-4 animate-spin"
+                    aria-hidden="true"
+                  />
                 ) : (
-                  <Trash2 className="w-4 h-4 mr-2" />
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
                 )}
-                {isDeleting ? "..." : "Del"}
               </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex-1 flex flex-col">
-            <div className="aspect-[3/2] rounded-lg border-2 border-dashed border-[var(--bz-border)] flex flex-col items-center justify-center gap-2 bg-[var(--bz-base)]/50">
-              <FileText className="w-10 h-10 text-[var(--bz-text-2)] opacity-50" />
-              <span className="text-sm text-[var(--bz-text-2)]">No visa</span>
-            </div>
-
-            {/* Upload Button */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/jpg,image/png,application/pdf"
-              aria-label="Upload visa document"
-              onChange={handleFileUpload}
-              className="hidden"
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full mt-3"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isUploading}
+            </span>
+          ) : null}
+        </>
+      }
+    >
+      {latestVisa ? (
+        <>
+          {permitName ? (
+            <p
+              className="mb-3.5 text-[17px] font-semibold leading-[1.3] text-[var(--tx-pure)]"
+              data-testid="visa-permit-name"
             >
-              {isUploading ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              {permitName}
+            </p>
+          ) : null}
+          <Facts>
+            <Fact label="Issued">
+              {visaStartDate ? formatDate(visaStartDate) : NOT_RECORDED}
+            </Fact>
+            <Fact label="Expires">
+              {visaExpiryDate ? (
+                <span className="flex flex-wrap items-baseline gap-x-2">
+                  <span>{formatDate(visaExpiryDate)}</span>
+                  <ExpiryText days={expiryDays} />
+                </span>
               ) : (
-                <Upload className="w-4 h-4 mr-2" />
+                NOT_RECORDED
               )}
-              {isUploading ? "Uploading..." : "Upload Visa"}
-            </Button>
-          </div>
-        )}
-
-        {/* Caption */}
-        <p className="text-xs text-[var(--bz-text-2)] text-center mt-3">
-          {latestVisa?.google_drive_file_url
-            ? `${latestVisa.permit_label || latestVisa.document_type || "Visa"} • ${visaAlert.alertLevel !== "ok" ? "⚠️ Action needed" : "Valid"}`
-            : `Upload visa (JPG, PNG, PDF - max ${BASE64_UPLOAD_MAX_LABEL})`}
+            </Fact>
+            {latestVisa.permit_sponsor ? (
+              <Fact label="Sponsor" wide>
+                {latestVisa.permit_sponsor}
+              </Fact>
+            ) : null}
+          </Facts>
+          {share !== null && visaExpiryDate ? (
+            <div className="mt-4">
+              <Runway share={share} warn={expiryTone(expiryDays) !== "ok"} />
+            </div>
+          ) : null}
+        </>
+      ) : visaProcess ? (
+        <Facts>
+          <Fact label="Status" wide>
+            <span className="text-[var(--state-info)]">
+              Visa in process · {humanize(visaProcess.status)}
+            </span>
+          </Fact>
+          {visaProcess.start_date ? (
+            <Fact label="Started">{formatDate(visaProcess.start_date)}</Fact>
+          ) : null}
+          <Fact label="Expected finish">
+            {visaProcess.completion_date
+              ? formatDate(visaProcess.completion_date)
+              : "To be confirmed"}
+          </Fact>
+        </Facts>
+      ) : (
+        <p className="text-[13px] leading-[1.5] text-[var(--tx-secondary)]">
+          {voidPermits > 0
+            ? "No valid visa or KITAS on file."
+            : "No visa or KITAS on file."}{" "}
+          Upload the permit (JPG, PNG or PDF, up to {BASE64_UPLOAD_MAX_LABEL})
+          and its dates are read from it.
         </p>
+      )}
+      <RemovedSignpost
+        count={voidPermits}
+        onOpen={onOpenRemoved}
+        className="mt-3"
+      />
+      <div
+        className={
+          address
+            ? "mt-4 border-t border-[var(--bz-border)] pt-3"
+            : "mt-4 rounded-lg border border-[var(--state-warning)] px-3 py-2.5"
+        }
+        data-testid="visa-address"
+      >
+        <p className="text-[12px] text-[var(--tx-secondary)]">
+          Registered address
+        </p>
+        {address ? (
+          <p className="mt-0.5 break-words text-[14px] leading-[1.45] text-[var(--tx-pure)]">
+            {address}
+          </p>
+        ) : (
+          <p className="mt-0.5 text-[13px] font-semibold text-[var(--state-warning)]">
+            No address on file — needed for the permit
+          </p>
+        )}
       </div>
-    </div>
+    </CardFrame>
   );
 }

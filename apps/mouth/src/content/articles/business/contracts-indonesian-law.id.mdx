@@ -85,7 +85,7 @@ description: "# Memahami Kontrak di Indonesia
   **Praktik Terbaik dalam Perjanjian Bisnis**
 
 
-  *   **Zaz Xepabequr:** Lakukan *due diligence* menyeluruh terhadap pihak yang bersangkutan
+  *   **Due Diligence:** Lakukan *due diligence* menyeluruh terhadap pihak yang bersangkutan
   sebelum menandatangani kontrak.
 
   *   **Kejelasan:** Pastikan semua ketentuan dalam kontrak ditulis dengan jelas,
@@ -186,83 +186,92 @@ translatedBy: Gemma3:12b + Gemini 3.1 Pro
 translatedFrom: en
 twitterCard: summary_large_image
 updatedAt: "2026-01-15"
+locale: "id"
+source_sha256: "462eb7b85b249b84b918dbda2c0aa3677118caac1f8056bd8f481d0cba5c6c39"
 ---
 
-# Kontrak Bisnis Menurut Hukum Indonesia 2026
+import {
+  ComparisonTable,
+  Checklist,
+  InfoCard,
+  AskZantara,
+} from "@/components/insights/interactive";
 
-Kontrak merupakan fondasi utama dalam dunia bisnis, namun setiap perjanjian harus mematuhi ketentuan hukum Indonesia agar memiliki kekuatan hukum yang mengikat. Berikut adalah poin-poin krusial yang perlu Anda pahami.
+# Kontrak Bisnis Berdasarkan Hukum Indonesia 2026
 
-## Persyaratan Sahnya Kontrak
+Kontrak sangat penting untuk bisnis, tetapi harus mematuhi hukum Indonesia agar dapat ditegakkan. Berikut hal yang perlu Anda ketahui.
 
-<InfoCard variant="note" title="Empat Syarat Sah Perjanjian">
-Berdasarkan Kitab Undang-Undang Hukum Perdata (KUHPerdata) Pasal 1320, suatu kontrak dianggap sah jika memenuhi empat unsur utama:
+## Persyaratan Kontrak
 
-1.  **Kesepakatan** – Adanya persetujuan bersama antara para pihak tanpa paksaan.
-2.  **Kecakapan** – Para pihak memiliki wewenang hukum untuk membuat perjanjian (dewasa dan sadar hukum).
-3.  **Suatu Hal Tertentu** – Adanya objek perjanjian yang jelas dan spesifik.
-4.  **Sebab yang Halal** – Tujuan kontrak tidak bertentangan dengan undang-undang, kesusilaan, maupun ketertiban umum.
+<InfoCard variant="note" title="Valid Contract Elements">
+Berdasarkan Kitab Undang-Undang Hukum Perdata Indonesia (Pasal 1320), kontrak yang sah membutuhkan:
 
-Tidak terpenuhinya unsur-unsur di atas dapat menyebabkan kontrak **batal demi hukum** atau **dapat dibatalkan**.
+1. **Kesepakatan** - Persetujuan bersama, diberikan secara bebas
+2. **Kecakapan** - Para pihak cakap secara hukum untuk membuat kontrak
+3. **Suatu hal tertentu** - Objek yang jelas
+4. **Sebab yang halal** - Tujuan yang sah
+
+Kekurangan salah satu unsur dapat membuat kontrak batal demi hukum atau dapat dibatalkan.
 
 </InfoCard>
 
 ---
 
-## Jenis-jenis Kontrak Bisnis
+## Jenis Kontrak
 
 <ComparisonTable
-  title="Kontrak Bisnis yang Umum"
-  description="Jenis perjanjian yang sering ditemui di Indonesia"
+  title="Common Business Contracts"
+  description="Types you'll encounter"
   items={[
     {
-      name: "Perjanjian Jual Beli",
-      subtitle: "Transaksi pengalihan barang",
+      name: "Sales Agreement",
+      subtitle: "Buying/selling goods",
       values: {
-        Bentuk: "Sangat disarankan tertulis",
-        Bahasa: "Bebas (Bahasa Indonesia lebih aman)",
-        "Bea Meterai": "Wajib (Rp10.000)",
-        Notarisasi: "Opsional",
+        Form: "Written recommended",
+        Language: "Any (Indonesian preferred)",
+        "Stamp Duty": "Yes",
+        Notarization: "Optional",
       },
     },
     {
-      name: "Perjanjian Jasa",
-      subtitle: "Penyediaan layanan profesional",
+      name: "Service Agreement",
+      subtitle: "Providing services",
       values: {
-        Bentuk: "Sangat disarankan tertulis",
-        Bahasa: "Bebas",
-        "Bea Meterai": "Wajib (Rp10.000)",
-        Notarisasi: "Opsional",
+        Form: "Written recommended",
+        Language: "Any",
+        "Stamp Duty": "Yes",
+        Notarization: "Optional",
       },
     },
     {
-      name: "Perjanjian Kerja",
-      subtitle: "Rekrutmen karyawan",
+      name: "Employment Contract",
+      subtitle: "Hiring employees",
       values: {
-        Bentuk: "Wajib tertulis",
-        Bahasa: "Wajib Bahasa Indonesia",
-        "Bea Meterai": "Wajib (Rp10.000)",
-        Notarisasi: "Tidak diperlukan",
+        Form: "Written required",
+        Language: "Indonesian required",
+        "Stamp Duty": "Yes",
+        Notarization: "No",
       },
       highlight: true,
     },
     {
-      name: "Perjanjian Sewa Menyewa",
-      subtitle: "Penyewaan properti atau alat",
+      name: "Lease Agreement",
+      subtitle: "Property rental",
       values: {
-        Bentuk: "Wajib tertulis",
-        Bahasa: "Bahasa Indonesia lebih disukai",
-        "Bea Meterai": "Wajib (Rp10.000)",
-        Notarisasi: "Wajib untuk jangka panjang",
+        Form: "Written required",
+        Language: "Indonesian preferred",
+        "Stamp Duty": "Yes",
+        Notarization: "For long-term",
       },
     },
     {
-      name: "Perjanjian Pemegang Saham",
-      subtitle: "Struktur kepemilikan PT PMA",
+      name: "Shareholder Agreement",
+      subtitle: "Company ownership",
       values: {
-        Bentuk: "Akta Notaris",
-        Bahasa: "Wajib Bahasa Indonesia/Bilingual",
-        "Bea Meterai": "Wajib (Rp10.000)",
-        Notarisasi: "Wajib",
+        Form: "Notarized deed",
+        Language: "Indonesian required",
+        "Stamp Duty": "Yes",
+        Notarization: "Required",
       },
     },
   ]}
@@ -270,249 +279,262 @@ Tidak terpenuhinya unsur-unsur di atas dapat menyebabkan kontrak **batal demi hu
 
 ---
 
-## Kewajiban Penggunaan Bahasa Indonesia
+## Persyaratan Bahasa
 
-<InfoCard variant="warning" title="Aturan UU No. 24 Tahun 2009">
-Sesuai **Undang-Undang No. 24 Tahun 2009**, setiap kontrak yang melibatkan pihak dari Indonesia (baik individu maupun badan hukum) **wajib disusun dalam Bahasa Indonesia**.
+<InfoCard variant="warning" title="Indonesian Language Law">
+Berdasarkan **Undang-Undang 24/2009**, kontrak yang melibatkan pihak Indonesia **sebaiknya dalam bahasa Indonesia**.
 
-**Strategi Praktis:**
+**Pendekatan praktis:**
 
-- Gunakan format dwibahasa (Bahasa Indonesia + Inggris).
-- Tetapkan bahwa versi Bahasa Indonesia yang akan berlaku (prevail) jika terjadi perbedaan interpretasi.
-- Cantumkan klausul pengakuan bahasa secara tegas dalam kontrak.
+- Kontrak dwibahasa (Indonesia + Inggris)
+- Versi bahasa Indonesia berlaku jika terjadi pertentangan
+- Cantumkan klausul yang menyatakan versi mana yang berlaku
 
-Kegagalan dalam memenuhi persyaratan bahasa ini dapat menjadi celah hukum untuk membatalkan kontrak di pengadilan.
+Mengabaikan hal ini dapat menimbulkan masalah penegakan.
 
 </InfoCard>
 
-### Panduan Pemilihan Bahasa
+### Praktik Terbaik
 
-| Situasi                                    | Rekomendasi                                                            |
-| :----------------------------------------- | :--------------------------------------------------------------------- |
-| Kedua belah pihak adalah entitas Indonesia | Wajib Bahasa Indonesia saja                                            |
-| Salah satu pihak adalah entitas asing      | Format Dwibahasa (Bilingual)                                           |
-| Kedua belah pihak adalah entitas asing     | Inggris diperbolehkan (namun Bahasa Indonesia memperkuat posisi hukum) |
-| Perjanjian Kerja (Local/Expat)             | Wajib menggunakan Bahasa Indonesia                                     |
+| Situasi                   | Rekomendasi                                         |
+| ------------------------- | --------------------------------------------------- |
+| Kedua belah pihak Indonesia | Hanya bahasa Indonesia                            |
+| Satu pihak asing          | Dwibahasa                                           |
+| Kedua belah pihak asing   | Bahasa Inggris boleh (tetapi bahasa Indonesia membantu) |
+| Kontrak kerja             | Harus mencantumkan bahasa Indonesia                 |
 
 ---
 
-## Daftar Periksa Klausul Kontrak
+## Unsur Esensial Kontrak
 
 <Checklist
-  title="Checklist Kontrak Bisnis"
-  description="Unsur-unsur esensial yang wajib ada"
+  title="Contract Checklist"
+  description="Elements to include"
   persistKey="contract-elements-checklist"
   items={[
     {
       id: "parties",
-      label: "Identitas Para Pihak",
-      description: "Nama lengkap, alamat kedudukan, dan nomor identitas hukum",
+      label: "Complete party details",
+      description: "Names, addresses, ID numbers",
       required: true,
       category: "parties",
     },
     {
       id: "background",
-      label: "Latar Belakang (Recitals)",
-      description: "Konteks, maksud, dan tujuan dibuatnya perjanjian",
+      label: "Background/recitals",
+      description: "Context and intent",
       required: false,
       category: "intro",
     },
     {
       id: "definitions",
-      label: "Definisi Istilah",
-      description: "Penjelasan istilah teknis agar tidak terjadi multitafsir",
+      label: "Definitions",
+      description: "Key terms defined",
       required: false,
       category: "intro",
     },
     {
       id: "obligations",
-      label: "Hak dan Kewajiban",
-      description: "Rincian detail apa yang harus dilakukan oleh setiap pihak",
+      label: "Rights and obligations",
+      description: "What each party must do",
       required: true,
       category: "substance",
     },
     {
       id: "payment",
-      label: "Ketentuan Pembayaran",
-      description: "Nilai kontrak, termin pembayaran, dan metode transaksi",
+      label: "Payment terms",
+      description: "Amount, timing, method",
       required: true,
       category: "substance",
     },
     {
       id: "term",
-      label: "Jangka Waktu",
-      description: "Tanggal mulai berlaku, berakhir, dan prosedur perpanjangan",
+      label: "Duration/term",
+      description: "Start, end, renewal",
       required: true,
       category: "substance",
     },
     {
       id: "termination",
-      label: "Klausul Pengakhiran",
-      description: "Syarat dan tata cara mengakhiri perjanjian secara sah",
+      label: "Termination clauses",
+      description: "How to end agreement",
       required: true,
       category: "termination",
     },
     {
       id: "dispute",
-      label: "Penyelesaian Sengketa",
-      description:
-        "Mekanisme jika terjadi perselisihan (Mediasi/Arbitrase/Pengadilan)",
+      label: "Dispute resolution",
+      description: "How disputes handled",
       required: true,
       category: "disputes",
     },
     {
       id: "governing",
-      label: "Hukum yang Mengatur",
-      description: "Yurisdiksi hukum yang berlaku untuk interpretasi kontrak",
+      label: "Governing law",
+      description: "Which law applies",
       required: true,
       category: "disputes",
     },
     {
       id: "signatures",
-      label: "Eksekusi & Bea Meterai",
-      description: "Tanda tangan basah/digital dan penempelan meterai Rp10.000",
+      label: "Signatures + stamp duty",
+      description: "All parties sign, stamps affixed",
       required: true,
       category: "execution",
     },
   ]}
   categories={[
-    { id: "parties", label: "Para Pihak", color: "blue" },
-    { id: "intro", label: "Pendahuluan", color: "green" },
-    { id: "substance", label: "Substansi", color: "amber" },
-    { id: "termination", label: "Pengakhiran", color: "red" },
-    { id: "disputes", label: "Sengketa", color: "purple" },
-    { id: "execution", label: "Pelaksanaan", color: "cyan" },
+    { id: "parties", label: "Parties", color: "blue" },
+    { id: "intro", label: "Introduction", color: "green" },
+    { id: "substance", label: "Substance", color: "amber" },
+    { id: "termination", label: "Termination", color: "red" },
+    { id: "disputes", label: "Disputes", color: "purple" },
+    { id: "execution", label: "Execution", color: "cyan" },
   ]}
   showProgress={true}
 />
 
 ---
 
-## Ketentuan Bea Meterai
+## Bea Meterai (Materai)
 
-<InfoCard variant="note" title="Pentingnya Bea Meterai">
-**Bea Meterai** adalah pajak atas dokumen yang wajib dibayarkan pada:
-- Kontrak dan perjanjian bisnis.
-- Dokumen bersifat perdata yang digunakan sebagai bukti di pengadilan.
+<InfoCard variant="note" title="Stamp Duty Required">
+**Materai (stamp duty)** diwajibkan pada:
+- Kontrak
+- Dokumen hukum
+- Dokumen yang digunakan sebagai bukti di pengadilan
 
-**Tarif Berlaku:** Flat Rp10.000 per dokumen.
+**Tarif saat ini:** IDR 10.000 per dokumen
 
-Tanpa bea meterai yang sah, dokumen tersebut tidak dapat digunakan sebagai alat bukti yang sah di pengadilan sebelum dilakukan proses pemeteraian kemudian (nazegeling).
+Tanpa bea meterai yang sesuai, dokumen mungkin tidak dapat diterima sebagai bukti.
 
 </InfoCard>
 
-### Metode Pembayaran Bea Meterai
+### Cara Mengenakan Bea Meterai
 
-| Metode                   | Catatan Penggunaan                                         |
-| :----------------------- | :--------------------------------------------------------- |
-| **Meterai Tempel**       | Fisik, ditempel di area tanda tangan dan diparaf           |
-| **E-Meterai**            | Untuk dokumen elektronik, dibeli melalui portal resmi      |
-| **Pemeteraian Kemudian** | Dilakukan di Kantor Pos jika dokumen awal belum bermeterai |
+| Metode               | Catatan                                |
+| -------------------- | -------------------------------------- |
+| Meterai fisik        | Ditempel dan ditandatangani melintasi  |
+| E-Meterai            | Bea meterai elektronik                 |
+| Pembubuhan kemudian  | Dapat dilakukan kemudian jika diperlukan |
 
 ---
 
-## Mekanisme Penyelesaian Sengketa
+## Penyelesaian Sengketa
 
-### Opsi yang Tersedia
+### Pilihan
 
-| Metode                    | Kelebihan                            | Kekurangan                                  |
-| :------------------------ | :----------------------------------- | :------------------------------------------ |
-| **Negosiasi**             | Cepat dan tanpa biaya tambahan       | Hasilnya tidak selalu dapat dieksekusi      |
-| **Mediasi**               | Dibantu pihak ketiga netral          | Keputusan tetap bergantung pada kesepakatan |
-| **Arbitrase (BANI)**      | Putusan final, mengikat, dan rahasia | Biaya lebih mahal dibanding pengadilan      |
-| **Litigasi (Pengadilan)** | Penegakan langsung oleh negara       | Proses lambat, publik, dan berjenjang       |
+| Metode                | Kelebihan                     | Kekurangan          |
+| --------------------- | ----------------------------- | ------------------- |
+| Negosiasi             | Cepat, murah                  | Tidak ada penegakan |
+| Mediasi               | Pihak ketiga yang netral      | Tetap tidak mengikat |
+| Arbitrase (BANI)      | Mengikat, arbiter ahli        | Mahal               |
+| Litigasi pengadilan   | Penegakan oleh negara         | Lambat, terbuka     |
 
 ### Klausul Arbitrase
 
-<InfoCard variant="tip" title="Rekomendasi Arbitrase">
-Untuk kontrak komersial skala menengah hingga besar, sangat disarankan menggunakan arbitrase:
-- Sertakan klausul arbitrase secara spesifik.
-- Gunakan lembaga seperti BANI (Indonesia) atau SIAC (Singapura).
-- Putusan arbitrase luar negeri dapat dieksekusi di Indonesia melalui Pengadilan Negeri Jakarta Pusat.
+<InfoCard variant="tip" title="Choose Arbitration">
+Untuk kontrak komersial yang signifikan:
+- Cantumkan klausul arbitrase
+- BANI (Indonesia) or SIAC (Singapura)
+- Lebih cepat daripada pengadilan
+- Dapat ditegakkan secara internasional
 
-Klausul harus merinci: Lembaga, lokasi kedudukan, jumlah arbiter, dan bahasa yang digunakan.
+Contoh klausul harus mencantumkan:
+
+- Institusi (BANI, SIAC)
+- Lokasi
+- Jumlah arbiter
+- Bahasa
 
 </InfoCard>
 
 ---
 
-## Hukum yang Berlaku (Choice of Law)
+## Hukum yang Berlaku
 
-### Panduan untuk Investasi Asing
+### Untuk Penanaman Modal Asing
 
-| Situasi                                | Hukum yang Berlaku                                          |
-| :------------------------------------- | :---------------------------------------------------------- |
-| Kontrak internal PT PMA                | Wajib Hukum Indonesia                                       |
-| Perjanjian Lintas Batas (Cross-border) | Dapat memilih hukum netral (misal: Hukum Inggris/Singapura) |
-| Perjanjian Tenaga Kerja                | Mutlak Hukum Indonesia                                      |
-| Transaksi Properti di Indonesia        | Mutlak Hukum Indonesia                                      |
+| Situasi                | Hukum yang Berlaku          |
+| ---------------------- | --------------------------- |
+| Kontrak PT PMA         | Umumnya hukum Indonesia     |
+| Transaksi lintas batas | Dapat memilih hukum netral  |
+| Ketenagakerjaan        | Harus hukum Indonesia       |
+| Properti               | Harus hukum Indonesia       |
 
 ---
 
 ## Persyaratan Notarisasi
 
-### Kapan Peran Notaris Diperlukan?
+### Kapan Notaris Diperlukan
 
-| Jenis Dokumen                                        | Status Notarisasi                              |
-| :--------------------------------------------------- | :--------------------------------------------- |
-| Fija Pendirian Perusahaan & Kumagivel Anggaran Dasar | **Wajib (Fija Notaril)**                       |
-| Fija Jual Beli Saham                                 | **Wajib**                                      |
-| Pengalihan Hak atas Tanah & Bangunan (oleh PPAT)     | **Wajib**                                      |
-| Surat Kuasa Membebankan Hak Tanggungan               | **Sangat Disarankan**                          |
-| Kontrak Kerjasama Bisnis Standar                     | Tidak wajib, namun disarankan untuk legalisasi |
+| Dokumen               | Notarisasi   |
+| --------------------- | ------------ |
+| Akta perusahaan       | Diwajibkan   |
+| Pengalihan saham      | Diwajibkan   |
+| Pengalihan properti   | Diwajibkan   |
+| Surat kuasa           | Dianjurkan   |
+| Komersial standar     | Tidak wajib  |
 
----
-
-## Kesalahan Umum dalam Kontrak di Indonesia
-
-| Kesalahan                               | Dampak Risiko                                    |
-| :-------------------------------------- | :----------------------------------------------- |
-| Hanya menggunakan Bahasa Inggris        | Kontrak berisiko dinyatakan batal demi hukum     |
-| Lupa menempelkan Bea Meterai            | Dokumen sulit dijadikan bukti kuat di pengadilan |
-| Definisi kewajiban yang ambigu          | Memicu sengketa interpretasi yang panjang        |
-| Penandatangan tidak memiliki wewenang   | Kontrak menjadi tidak sah secara hukum           |
-| Tidak mencantumkan mekanisme sengketa   | Ketidakpastian dalam penyelesaian konflik        |
-| Melanggar peraturan sektoral (KBLI/OSS) | Risiko pembekuan izin usaha oleh pemerintah      |
+Notaris Indonesia (PPAT/Notaris) memiliki kewenangan khusus untuk dokumen tertentu.
 
 ---
 
-## Kontrak Elektronik & Tanda Tangan Digital
+## Kesalahan Umum dalam Kontrak
 
-<InfoCard variant="note" title="Validitas Kontrak Digital">
-Berdasarkan **UU No. 11 Tahun 2008 (UU ITE)** dan perubahannya:
-- Kontrak elektronik memiliki kedudukan hukum yang sama dengan kontrak kertas.
-- Tanda tangan elektronik tersertifikasi memiliki kekuatan pembuktian tertinggi.
-- Pengecualian: Dokumen yang menurut UU harus dibuat dalam bentuk akta notaril (misal: akta tanah, akta pendirian perusahaan).
+| Kesalahan                  | Risiko                  |
+| -------------------------- | ----------------------- |
+| Tidak ada versi Indonesia  | Masalah penegakan       |
+| Bea meterai hilang         | Masalah pembuktian      |
+| Ketentuan tidak jelas      | Sengketa penafsiran     |
+| Kecakapan tidak tepat      | Kontrak batal           |
+| Tanpa klausul sengketa     | Penyelesaian tidak pasti |
+| Mengabaikan regulasi       | Masalah kepatuhan       |
 
-Penggunaan platform penandatanganan digital (seperti Privy or DocuSign) kini sudah umum di ekosistem bisnis Indonesia.
+---
+
+## Kontrak Elektronik
+
+<InfoCard variant="note" title="E-Contracts Valid">
+Berdasarkan **Undang-Undang 11/2008** (ITE Law):
+- Kontrak elektronik sah
+- Tanda tangan elektronik diakui
+- Harus memenuhi persyaratan tertentu
+- Beberapa pengecualian (tanah, warisan)
+
+Platform tanda tangan digital dapat digunakan untuk sebagian besar kontrak komersial.
 
 </InfoCard>
 
 ---
 
-## Keadaan Kahar (Force Majeure)
+## Keadaan Kahar
 
-Hukum Indonesia secara khusus mengatur _Force Majeure_ atau Keadaan Kahar sebagai kondisi di mana suatu pihak terhalang melaksanakan kewajibannya karena peristiwa di luar kendali.
+Hukum Indonesia mengakui force majeure (keadaan kahar):
 
-Pastikan klausul _Force Majeure_ Anda merinci:
+- Peristiwa di luar kendali
+- Membuat pelaksanaan tidak mungkin
+- Harus didefinisikan secara khusus dalam kontrak
 
-- Daftar peristiwa (bencana alam, pandemi, perubahan regulasi mendadak).
-- Prosedur pemberitahuan (notice requirement) dalam waktu tertentu.
-- Dampak terhadap kelangsungan kewajiban pembayaran.
-- Batas waktu tunggu sebelum kontrak dapat diakhiri secara sepihak.
+Cantumkan klausul force majeure yang jelas yang mengatur:
+
+- Peristiwa apa yang memenuhi syarat
+- Persyaratan pemberitahuan
+- Pengaruh terhadap kewajiban
+- Batasan jangka waktu
 
 ---
 
-## Pertanyaan Umum (FAQ)
+## Pertanyaan Umum
 
 <AskZantara
-  context="Kontrak Indonesia, hukum perdata Indonesia, perjanjian bisnis, penyelesaian sengketa, UU 24/2009"
-  placeholder="Tanyakan detail kontrak Anda..."
+  context="Contracts Indonesia, Indonesian law, business agreements, dispute resolution"
+  placeholder="Ask about contracts..."
   suggestedQuestions={[
-    "Apakah kontrak tanpa Bahasa Indonesia otomatis batal?",
-    "Bagaimana cara membeli e-Meterai yang resmi?",
-    "Apa keuntungan BANI dibandingkan pengadilan negeri?",
-    "Apakah tanda tangan scan (gambar) dianggap sah di Indonesia?",
+    "Do all contracts need to be in Indonesian?",
+    "What's the stamp duty amount?",
+    "Should I use arbitration or courts?",
+    "Are electronic signatures valid?",
   ]}
 />
 
@@ -520,6 +542,6 @@ Pastikan klausul _Force Majeure_ Anda merinci:
 
 ## Artikel Terkait
 
-- [Panduan Pendirian PT PMA](/business/foreign-company-incorporation-steps?lang=id)
-- [Panduan Hukum Ketenagakerjaan Indonesia](/insights/business/labor-law-guide)
-- [Gambaran Umum Izin Usaha & OSS](/insights/business/business-licenses-overview)
+- [Panduan Pendirian PT PMA](/business/foreign-company-incorporation-steps)
+- [Panduan Hukum Ketenagakerjaan](/insights/business/labor-law-guide)
+- [Gambaran Umum Izin Usaha](/insights/business/business-licenses-overview)

@@ -298,6 +298,31 @@ def calculate_zone_kbli_fit(zone_code: str | None, kbli_code: str | None) -> tup
     return 4, "poor"
 
 
+def investment_kbli_summary(decision: dict[str, Any], input_code: str) -> dict[str, Any]:
+    """Keep the resolution basis and preserve a missing cap through investment views."""
+    audit = decision.get("audit", decision)
+    return {
+        "code": decision.get("kbli_2025", input_code),
+        "title": decision.get("title", ""),
+        "state": audit.get("state", "UNKNOWN"),
+        "reason": audit.get("reason_code", ""),
+        "oss_risk": audit.get("oss_risk", ""),
+        "max_foreign_ownership": decision.get("pma_logic", {}).get("max_foreign_ownership"),
+        **{
+            k: decision[k]
+            for k in (
+                "resolution",
+                "input_code",
+                "vintage",
+                "inferred",
+                "candidates",
+                "reason_code",
+            )
+            if k in decision
+        },
+    }
+
+
 def calculate_investment_score(
     zone_data: dict[str, Any] | None,
     kbli_state: str | None,

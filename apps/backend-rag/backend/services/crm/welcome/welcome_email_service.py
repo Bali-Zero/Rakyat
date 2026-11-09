@@ -351,7 +351,7 @@ def _build_html(
     wa_num = (advisor_wa or _BZ_WHATSAPP).lstrip("+")
     cta_label = f"Chat with {advisor_name} on WhatsApp"
 
-    # BG constants — Tax Report Befoh palette: dark navy + gold accents
+    # BG constants — Tax Report Marta palette: dark navy + gold accents
     # All inline style, no separate bgcolor attr (Zoho strips bgcolor)
     BG = "background-color:#1F2937;"
     BG2 = "background-color:#252f3d;"
@@ -526,7 +526,7 @@ def _build_html(
                       <tr><td style="padding:20px 16px;{BG3}border-radius:10px;border:1px solid #252320;">
                         <div style="font-family:Arial,Helvetica,sans-serif;font-size:22px;line-height:26px;margin-bottom:10px;">&#127968;</div>
                         <div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;color:#ffffff;">Property</div>
-                        <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#a8b3c0;padding-top:5px;line-height:17px;">Hak Pakai &middot; Leasehold<br>Zaz Xepabequr &middot; Structure</div>
+                        <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#a8b3c0;padding-top:5px;line-height:17px;">Hak Pakai &middot; Leasehold<br>Due Diligence &middot; Structure</div>
                       </td></tr>
                     </table>
                   </td>

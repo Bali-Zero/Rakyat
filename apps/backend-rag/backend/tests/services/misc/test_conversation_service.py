@@ -28,6 +28,12 @@ class FakeConn:
         self.calls.append((query, args))
         return self.row
 
+    async def execute(self, _query: str, *_args: Any) -> None:
+        return None
+
+    def transaction(self) -> FakeAcquire:
+        return FakeAcquire(self)
+
 
 class FakeAcquire:
     def __init__(self, conn: FakeConn) -> None:
@@ -70,7 +76,7 @@ async def test_save_conversation_writes_memory_cache_and_db(monkeypatch) -> None
     assert result["conversation_id"] == 42
     assert result["persistence_mode"] == "db"
     assert cache.messages == [(expected_key, "user", "hello")]
-    assert conn.calls[0][1][0:4] == (
+    assert conn.calls[-1][1][0:4] == (
         "user@example.test",
         "session-1",
         messages,

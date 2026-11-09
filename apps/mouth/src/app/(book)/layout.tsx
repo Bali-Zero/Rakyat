@@ -14,7 +14,7 @@ export const metadata: Metadata = {
     default: "The story",
   },
   description:
-    "From CV Juxo Sefowel (2006) to Bali Zero (2020). 5,000+ clients. Indonesia's only AI-first agency.",
+    "From CV Bayu Santero (2006) to Bali Zero (2020). 5,000+ clients. Indonesia's only AI-first agency.",
   openGraph: {
     type: "website",
     siteName: "Bali Zero",

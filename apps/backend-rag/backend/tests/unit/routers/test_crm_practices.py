@@ -2654,11 +2654,20 @@ class TestUploadClientDocument:
                     "phone": None,
                     "phone_normalized": None,
                 },
+                {"id": 7},  # Practice belongs to this client before Drive upload.
+                {"id": 7},  # Same practice at the locked check before INSERT.
             ]
         )
         mock_db_conn.fetchval = AsyncMock(side_effect=[None, 501])
         mock_db_conn.execute = AsyncMock(return_value="UPDATE 1")
         drive_service = AsyncMock()
+        drive_service.get_file_metadata.return_value = {
+            "id": "root",
+            "name": "Root",
+            "mimeType": "application/vnd.google-apps.folder",
+            "trashed": False,
+            "parents": ["individuals"],
+        }
         drive_service.get_folder_structure.return_value = {
             "folders": [{"id": "profile", "name": "00_Profile"}],
         }
@@ -2672,6 +2681,8 @@ class TestUploadClientDocument:
         )
 
         with (
+            patch("backend.app.core.config.settings.gdrive_individuals_folder_id", "individuals"),
+            patch("backend.app.core.config.settings.gdrive_companies_folder_id", "companies"),
             patch.object(crm_practices, "invalidate_cache", new=AsyncMock()),
             patch.object(crm_enhanced_documents, "invalidate_cache", new=AsyncMock()),
             patch.object(
@@ -2686,6 +2697,10 @@ class TestUploadClientDocument:
             )
 
         assert result["document_id"] == 501
+        precheck, recheck = mock_db_conn.fetchrow.await_args_list[-2:]
+        assert precheck.args[1:] == recheck.args[1:] == (7, 42)
+        assert "client_id = $2" in precheck.args[0]
+        assert "FOR SHARE" in recheck.args[0]
         insert = next(
             c for c in mock_db_conn.fetchval.await_args_list if "INSERT INTO documents" in c.args[0]
         )

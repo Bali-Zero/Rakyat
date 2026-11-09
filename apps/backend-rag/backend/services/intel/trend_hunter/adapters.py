@@ -1,4 +1,4 @@
-"""Source adapters for Trend-Tosado.
+"""Source adapters for Trend-Hunter.
 
 Each adapter:
 - has a single responsibility (one source)
@@ -62,7 +62,7 @@ _RSS_FEEDS_ENV_VAR = "TREND_HUNTER_RSS_FEEDS"
 # python-httpx UA is rate-limited to 429 almost immediately — verified live
 # 2026-07-14: same URL, 200 with UA vs 429 without).
 DEFAULT_REDDIT_SUBREDDITS: list[str] = ["bali", "indonesia"]
-_REDDIT_USER_AGENT = "bali-zero-trend-tosado/1.0 (contact: zero@balizero.com)"
+_REDDIT_USER_AGENT = "bali-zero-trend-hunter/1.0 (contact: zero@balizero.com)"
 
 # Public no-auth Google Trends daily trending-searches RSS for Indonesia.
 # Verified live 2026-07-14 (HTTP 200, RSS 2.0). The legacy

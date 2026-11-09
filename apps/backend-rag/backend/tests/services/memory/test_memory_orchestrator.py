@@ -62,7 +62,8 @@ class TestAlertCriticalFailure:
 
         assert result is None
         assert "Could not send Telegram alert for critical failure" in caplog.text
-        assert "Telegram unreachable" in caplog.text
+        assert "Telegram unreachable" not in caplog.text
+        assert "Exception" in caplog.text
 
     @pytest.mark.asyncio
     async def test_multiple_failures_in_message(self) -> None:
@@ -157,7 +158,8 @@ class TestAlertDegradedMode:
 
         assert result is None
         assert "Could not send Telegram alert for degraded mode" in caplog.text
-        assert "Telegram down" in caplog.text
+        assert "Telegram down" not in caplog.text
+        assert "Exception" in caplog.text
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -191,8 +193,8 @@ class TestBoundedLockLRU:
 
     def test_write_lock_reuses_entry_for_same_user(self) -> None:
         orch = _make_orchestrator()
-        first = orch._get_write_lock("uxxx8@d.com")
-        second = orch._get_write_lock("uxxx8@d.com")
+        first = orch._get_write_lock("alice@x.com")
+        second = orch._get_write_lock("alice@x.com")
         assert first is second
 
     def test_write_lock_evicts_oldest_over_cap(self) -> None:
@@ -201,9 +203,9 @@ class TestBoundedLockLRU:
         for i in range(5):
             orch._get_write_lock(f"user{i}@x.com")
         assert len(orch._write_locks) == 3
-        assert "uxx14@d.com" not in orch._write_locks
-        assert "uxx15@d.com" not in orch._write_locks
-        assert "uxx17@d.com" in orch._write_locks
+        assert "user0@x.com" not in orch._write_locks
+        assert "user1@x.com" not in orch._write_locks
+        assert "user4@x.com" in orch._write_locks
 
     def test_write_lock_lru_reorder(self) -> None:
         orch = _make_orchestrator()
@@ -222,12 +224,12 @@ class TestBoundedLockLRU:
         async def _run() -> None:
             orch = _make_orchestrator()
             orch._max_lock_entries = 2
-            held = orch._get_write_lock("uxxxx9@d.com")
+            held = orch._get_write_lock("holder@x.com")
             await held.acquire()
             try:
-                orch._get_write_lock("g@d.com")
-                orch._get_write_lock("j@d.com")  # would evict "holder" (oldest) but it's locked
-                assert "uxxxx9@d.com" in orch._write_locks
+                orch._get_write_lock("a@x.com")
+                orch._get_write_lock("b@x.com")  # would evict "holder" (oldest) but it's locked
+                assert "holder@x.com" in orch._write_locks
             finally:
                 held.release()
 
@@ -235,8 +237,8 @@ class TestBoundedLockLRU:
 
     def test_read_semaphore_reuses_entry(self) -> None:
         orch = _make_orchestrator()
-        first = orch._get_read_semaphore("uxxx8@d.com")
-        second = orch._get_read_semaphore("uxxx8@d.com")
+        first = orch._get_read_semaphore("alice@x.com")
+        second = orch._get_read_semaphore("alice@x.com")
         assert first is second
 
     def test_read_semaphore_evicts_over_cap(self) -> None:

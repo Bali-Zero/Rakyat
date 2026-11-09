@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 
 from backend.core.secret_log_redaction import install_telegram_token_redaction
+from backend.core.telegram_retirement import telegram_is_retired
 
 install_telegram_token_redaction()
 
@@ -52,7 +53,9 @@ class AlertService:
         # Telegram (primary channel)
         self.telegram_bot_token = settings.telegram_bot_token
         self.telegram_admin_chat_id = settings.admin_telegram_chat_id
-        self.enable_telegram = bool(self.telegram_bot_token and self.telegram_admin_chat_id)
+        self.enable_telegram = not telegram_is_retired() and bool(
+            self.telegram_bot_token and self.telegram_admin_chat_id
+        )
 
         # Slack (secondary)
         self.slack_webhook = settings.slack_webhook_url
@@ -206,7 +209,7 @@ class AlertService:
         self._alert_repeat[rate_key] = repeat + 1
 
         # Send to Telegram (primary channel)
-        if self.enable_telegram:
+        if self.enable_telegram and not telegram_is_retired():
             try:
                 await self._send_telegram_alert(title, message, level, metadata)
                 results["telegram"] = True
@@ -260,6 +263,8 @@ class AlertService:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Send alert to admin Telegram chat"""
+        if telegram_is_retired():
+            return
         if not self.telegram_bot_token or not self.telegram_admin_chat_id:
             return
 
@@ -511,7 +516,7 @@ class AlertService:
         )
         text = "\n".join(lines)
 
-        if self.enable_telegram:
+        if self.enable_telegram and not telegram_is_retired():
             url = f"{TELEGRAM_API_BASE}{self.telegram_bot_token}/sendMessage"
             payload = {
                 "chat_id": self.telegram_admin_chat_id,
@@ -523,6 +528,12 @@ class AlertService:
             await client.post(url, json=payload, timeout=10.0)
             logger.info(
                 f"[digest] Hourly digest inviato: {len(events)} eventi, {len(by_path)} path",
+            )
+        elif telegram_is_retired():
+            logger.info(
+                "[digest] Telegram retired; local latency log covers %d events across %d paths",
+                len(events),
+                len(by_path),
             )
 
     async def _digest_loop(self) -> None:

@@ -3,8 +3,12 @@
 ## Overview
 
 This directory contains **legacy** database migration scripts for NUZANTARA PRIME.
-The live automated loader uses `backend/db/migrations_v2/*.sql` — not this directory.
-Files here are applied manually or kept as historical reference.
+The only deploy-time executor discovers `backend/db/migrations_v2/*.sql` and runs
+them through `python -m backend.db.migrate apply-all`. Files here are historical
+reference; deploy automation must not invoke them directly.
+
+Historical Python migrations 119-121 are represented in the canonical stream by
+SQL v2 migrations 345-347. Their Python modules remain unchanged as archaeology.
 
 ---
 
@@ -12,10 +16,10 @@ Files here are applied manually or kept as historical reference.
 
 ### Two-tier system
 
-| Tier                | Directory                           | Loader                                   | When used                          |
-| ------------------- | ----------------------------------- | ---------------------------------------- | ---------------------------------- |
-| **V2 (active)**     | `backend/db/migrations_v2/*.sql`    | `MigrationManager.discover_migrations()` | Every deploy via `release_command` |
-| **Legacy (manual)** | `backend/migrations/migration_*.py` | None (manual apply)                      | Historical / ad-hoc                |
+| Tier                 | Directory                           | Loader                                   | When used                                    |
+| -------------------- | ----------------------------------- | ---------------------------------------- | -------------------------------------------- |
+| **V2 (active)**      | `backend/db/migrations_v2/*.sql`    | `MigrationManager.discover_migrations()` | Automated deploys and explicit operator runs |
+| **Legacy (history)** | `backend/migrations/migration_*.py` | No automated loader                      | Historical reference only                    |
 
 ### V2 Components
 
@@ -199,13 +203,16 @@ PYTHONPATH=. python -m backend.db.migrate apply-all --dry-run
 | `apply_migration_*.py` | 16    | Legacy runner scripts — DO NOT ADD |
 | `*.sql` (unnumbered)   | 3     | Legacy bare SQL — DO NOT ADD       |
 
-These exist for historical reference. The V2 SQL loader is the single path forward.
+These exist for historical reference. The V2 SQL loader is the single execution path.
+Do not add a workflow step that invokes an `apply_migration_*.py` module.
 
 ---
 
 ## Migration Tracking
 
-V2 migrations tracked in `_schema_versions` table:
+The canonical runner writes every successful V2 migration to both migration
+ledgers in the same transaction. `_schema_versions` is the manager's status and
+checksum ledger:
 
 ```sql
 CREATE TABLE _schema_versions (
@@ -221,13 +228,25 @@ CREATE TABLE _schema_versions (
 );
 ```
 
-Legacy migrations tracked in `schema_migrations` (BaseMigration legacy).
+`schema_migrations` is retained as the BaseMigration compatibility and dependency
+ledger. Callers must not write either ledger directly; the canonical runner keeps
+them consistent.
 
 ---
 
 ## Production Deployment (Fly.io)
 
-Migrations applied automatically on deploy:
+The deployment candidate invokes the same canonical command before deploy and
+again on the fresh image so newly added SQL is visible. The actual consumer is
+the zero-owned workflow in `FastLabsNet/zero`; canonical `zero_sync` preserves
+`.github/` from that repository. Its historical 119-121 helper calls must be
+removed before deploying this candidate, whose helpers now refuse execution:
+
+```bash
+python -m backend.db.migrate apply-all
+```
+
+The Fly release command uses that same entry point:
 
 ```toml
 # fly.toml
@@ -241,6 +260,10 @@ Migrations applied automatically on deploy:
 ---
 
 ## Last Updated
+
+2026-11-02 — Prepared historical Python migration 119-121 adoption as SQL v2
+345-347; retired executable helpers and documented the canonical CLI. Deployment
+remains dependent on the separate zero-owned workflow update and release gates.
 
 2026-04-18 — Migration drift cleanup (Air A4 session)
 

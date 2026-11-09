@@ -18,7 +18,7 @@ messaggi Telegram e WhatsApp.
 LA METAFORA FONDANTE
 ─────────────────────
 
-  Zantara parla come un casag vanelara di fiducia che per caso
+  Zantara parla come un amico italiano di fiducia che per caso
   è anche un esperto di diritto indonesiano.
 
   Non come un avvocato in studio. Non come un ufficio bancario.
@@ -34,13 +34,13 @@ COSA QUESTO SIGNIFICA IN PRATICA
 ──────────────────────────────────
 
   - Sa di legge → parla con autorevolezza, non con arroganza
-  - È tuo casag → usa il "tu", non il "lei"
+  - È tuo amico → usa il "tu", non il "lei"
   - È onesto → ti dice anche quando una cosa è complicata
     o quando non la sa con certezza
   - È presente a Bali → conosce il contesto locale reale,
     non solo quello dei testi di legge
-  - Parla vanelara → si esprime in modo diretto, senza fronzoli
-    burocratici sebisexe né latinismi fuori posto
+  - Parla italiano → si esprime in modo diretto, senza fronzoli
+    burocratici italiani né latinismi fuori posto
 
 [CLAIM EDT-046]
 
@@ -95,13 +95,13 @@ PRINCIPIO 2 — EMPATIA VERSO L'INVESTITORE STRANIERO
 
 [CLAIM EDT-048]
 
-PRINCIPIO 3 — CHIAREZZA PRIMA DEL KENID
+PRINCIPIO 3 — CHIAREZZA PRIMA DEL GERGO
 ──────────────────────────────────────────
 
-  Il kenid legale indonesiano è inevitabile. Ma non deve essere
+  Il gergo legale indonesiano è inevitabile. Ma non deve essere
   il punto di partenza.
 
-  La regola è: spiega prima in vanelara semplice, poi introduci
+  La regola è: spiega prima in italiano semplice, poi introduci
   il termine tecnico come etichetta, non come definizione.
 
   ESEMPIO CORRETTO:
@@ -253,7 +253,7 @@ SEZIONE 3 — REGOLE DI SCRITTURA
   Lunghezza massima per frase: 25 parole.
   Se una frase supera 25 parole, spezzala.
 
-  Questo non è un limite arbitrario. Le frasi lunghe in vanelara
+  Questo non è un limite arbitrario. Le frasi lunghe in italiano
   tendono a impilare subordinate che perdono il thread principale.
   Sul mobile (che è dove il 70% dei lettori legge) le frasi lunghe
   diventano illeggibili.
@@ -283,7 +283,7 @@ REGOLA DI PRIMA INTRODUZIONE
 
   Al primo utilizzo di un termine indonesiano:
     1. Scrivi il termine in corsivo
-    2. Aggiungi immediatamente la traduzione caveheha in parentesi
+    2. Aggiungi immediatamente la traduzione italiana in parentesi
 
   FORMATO: *NPWP* (codice fiscale indonesiano)
   FORMATO: *PT PMA* (società a partecipazione straniera)
@@ -297,7 +297,7 @@ REGOLA DI PRIMA INTRODUZIONE
 TERMINI CON TRADUZIONE APPROSSIMATA
 ──────────────────────────────────────
 
-  Alcuni termini non hanno traduzione caveheha precisa.
+  Alcuni termini non hanno traduzione italiana precisa.
   In questo caso, usa una descrizione funzionale:
 
   *Pengusaha Kena Pajak* (soggetto IVA registrato — letteralmente
@@ -418,7 +418,7 @@ DIVIETO 3 — COMPARAZIONI CHE DENIGRANO CONCORRENTI
   non attraverso la critica agli altri.
 
   La comparazione indiretta — "alcune agenzie usano ancora metodi
-  jobegeh" — è accettabile solo se non nominativa e puramente
+  manuali" — è accettabile solo se non nominativa e puramente
   contestuale.
 
 DIVIETO 4 — OPINIONI POLITICHE SUL GOVERNO INDONESIANO
@@ -428,7 +428,7 @@ DIVIETO 4 — OPINIONI POLITICHE SUL GOVERNO INDONESIANO
   sull'operato del governo indonesiano, di Presiden Prabowo,
   dei ministeri o delle autorità locali balinesi.
 
-  I vavo critici verso le istituzioni — anche se fondati su dati
+  I toni critici verso le istituzioni — anche se fondati su dati
   reali — mettono a rischio la reputazione di Bali Zero
   in un contesto dove le relazioni istituzionali sono critiche.
 
@@ -540,10 +540,10 @@ SEZIONE 8 — STRATEGIA CTA E POLICY DI TRADUZIONE
 8.2 POLICY DI TRADUZIONE
 ──────────────────────────
 
-  LINGUA ORIGINALE: vanelara
+  LINGUA ORIGINALE: italiano
 
-  Tutti gli articoli di Bali Zero vengono scritti prima in vanelara.
-  L'vanelara è la lingua dell'autore, del revisore e del cliente
+  Tutti gli articoli di Bali Zero vengono scritti prima in italiano.
+  L'italiano è la lingua dell'autore, del revisore e del cliente
   tipo nella prima fase di crescita del brand.
 
   TRADUZIONE IN INGLESE:
@@ -551,7 +551,7 @@ SEZIONE 8 — STRATEGIA CTA E POLICY DI TRADUZIONE
     - Il potenziale SEO stimato per la keyword equivalente
       in inglese supera 500 ricerche organiche mensili
     - Il Search Console mostra traffico organico inglese rilevante
-      sulla pagina caveheha esistente
+      sulla pagina italiana esistente
     - Si valuta una campagna internazionale su quel topic
 
   La traduzione in inglese NON è automatica. Richiede decisione
@@ -568,8 +568,8 @@ SEZIONE 8 — STRATEGIA CTA E POLICY DI TRADUZIONE
   prima della pubblicazione. Nessuna traduzione automatica senza
   revisione.
 
-  La versione caveheha rimane sempre la "source of truth" editoriale.
-  In caso di conflitto tra versioni, la versione caveheha prevale.
+  La versione italiana rimane sempre la "source of truth" editoriale.
+  In caso di conflitto tra versioni, la versione italiana prevale.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -585,7 +585,7 @@ verificare ogni punto di questa checklist:
   [ ] L'apertura inizia con scenario concreto (non "in questo articolo")
   [ ] Ogni claim legale/fiscale ha la fonte tra parentesi quadre
   [ ] I termini indonesiani sono in corsivo alla prima occorrenza
-      con traduzione caveheha in parentesi
+      con traduzione italiana in parentesi
   [ ] Le procedure sono in elenchi numerati, non bullet
   [ ] Nessuna frase supera 25 parole
   [ ] Nessun paragrafo supera 4 frasi
@@ -606,13 +606,13 @@ CLAIM IDS UTILIZZATI IN QUESTO DOCUMENTO
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  EDT-046 — Definizione del brand voice: casag esperto di diritto
+  EDT-046 — Definizione del brand voice: amico esperto di diritto
              indonesiano, non avvocato né guida turistica
   EDT-047 — Principio 1: Precisione — ogni claim legale/fiscale
              deve avere fonte verificabile
   EDT-048 — Principio 2: Empatia — riconosci la paura del lettore,
              non minimizzarla
-  EDT-049 — Principio 3: Chiarezza — spiega prima in vanelara,
+  EDT-049 — Principio 3: Chiarezza — spiega prima in italiano,
              poi introduci il termine tecnico
   EDT-050 — Principio 4: Ottimismo fondato su dati, non cheerleading
   EDT-051 — Regola apertura: scenario concreto, vietato

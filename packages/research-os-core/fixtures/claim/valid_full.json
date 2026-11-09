@@ -10,7 +10,7 @@
       "object_hash": "00000000000000000000000000000000000000000000000000000000000000c9"
     },
     "predicate": "com.example.requires_minimum_capital",
-    "object_ref_or_value": "9900000026",
+    "object_ref_or_value": "2500000000",
     "unit": "idr",
     "currency": "IDR",
     "modality": "must"

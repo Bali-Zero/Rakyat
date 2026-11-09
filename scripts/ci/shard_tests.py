@@ -57,10 +57,10 @@ import sys
 from pathlib import Path
 
 # The unscoped target set. This is the SSOT for it — tests.yml's "Run unit
-# tests" step no longer carries its own copy. Rakyat: the two scripts/bot
-# suites (WA de-identification corpus and blind bench) test backstage tooling
-# that is not part of this repository, so the corpus is backend/tests/ alone.
-DEFAULT_TARGETS = ("backend/tests/",)
+# tests" step no longer carries its own copy.
+DEFAULT_TARGETS = (
+    "backend/tests/",
+)
 
 # Mirrors pytest's own `--ignore=backend/tests/e2e` in tests.yml — an explicitly
 # listed file is not reliably suppressed by --ignore, so the enumerator must not
@@ -77,7 +77,9 @@ DEFAULT_TARGETS = ("backend/tests/",)
 # catches it — and it predates sharding (the pre-split job carried the same
 # --ignore). Named here so the next reader does not mistake the guard for a
 # defence it never was.
-EXCLUDED_DIRS = ("backend/tests/e2e",)
+EXCLUDED_DIRS = (
+    "backend/tests/e2e",
+)
 
 # IMPACT_SELECTED_TESTS is published repo-root-relative; the shards run from
 # apps/backend-rag.

@@ -69,44 +69,222 @@ ogImage: "/static/insights/immigration/immigration-fines-penalties-complete.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "fr"
+source_sha256: "7218bbd2dc99768e300d2528e85d1de0f7eeb78402143a513237aaf226c39da2"
 ---
 
-## Vue d'ensemble du système d'application des lois sur l'immigration en Indonesia
+import { HeaderWhatsAppCTA } from "@/components/blog/HeaderWhatsAppCTA";
 
-L'application des lois sur l'immigration en Indonesia est principalement régie par l'Undang-Undang Nomor 6 Tahun 2011 tentang Keimigrasian (Loi sur l'immigration n° 6 de 2011) et ses règlements d'application. La Direktorat Jenderal Imigrasi (Direction générale de l'immigration), relevant du ministère de la Justice et des Droits de l'Homme, applique ces règles par un système d'amendes administratives, de détention, de déportation et d'interdictions d'entrée.
+## Vue d'ensemble du système de contrôle de l'immigration en Indonesia
 
-Comprendre ces pénalités ne consiste pas seulement à éviter une punition. Il s'agit de protéger votre capacité à vivre et travailler en Indonesia à long terme. Une seule violation grave peut entraîner une interdiction d'entrer dans le pays pendant des années, ce qui peut détruire des opérations commerciales, des arrangements familiaux et des plans de retraite.
+Le contrôle de l'immigration en Indonesia est principalement régi par l'Undang-Undang Nomor 6 Tahun 2011 tentang Keimigrasian (Loi sur l'immigration n° 6 de 2011) et ses règlements d'application. La Direktorat Jenderal Imigrasi (Directorate General of Immigration), relevant du ministère du Droit et des Droits de l'homme, applique ces règles au moyen d'un système d'amendes administratives, de détention, d'expulsion et d'interdictions d'entrée.
 
-## Barème complet des amendes et pénalités
+Comprendre ces sanctions ne consiste pas seulement à éviter une punition. Il s'agit de protéger votre capacité à vivre et travailler en Indonesia sur le long terme. Une seule violation grave peut entraîner une interdiction d'entrée dans le pays pendant plusieurs années, ce qui peut détruire les activités d'une entreprise, les arrangements familiaux et les projets de retraite.
+
+## Barème complet des amendes et sanctions
 
 ### Amendes pour dépassement de séjour
 
-| Durée du dépassement de séjour | Amende journalière | Maximum cumulatif         | Conséquences supplémentaires                               |
-| ------------------------------ | ------------------ | ------------------------- | ---------------------------------------------------------- |
-| 1-7 jours                      | 1 000 001 IDR/jour | 7 000 000 IDR             | Amende seulement, sortie autorisée après paiement          |
-| 8-30 jours                     | 1 000 001 IDR/jour | 30 000 000 IDR            | Amende + entretien obligatoire à l'immigration             |
-| 31-60 jours                    | 1 000 001 IDR/jour | 60 000 000 IDR            | Amende + détention possible + avertissement de liste noire |
-| 61+ jours                      | 1 000 001 IDR/jour | 840 006 200 IDR (plafond) | Déportation obligatoire + liste noire de 1 à 5 ans         |
+| Durée du dépassement de séjour | Amende journalière   | Maximum cumulé        | Conséquences supplémentaires                              |
+| ------------------------------ | -------------------- | --------------------- | --------------------------------------------------------- |
+| 1 à 7 jours                    | IDR 1,000,000/jour   | IDR 7,000,000         | Amende uniquement, sortie autorisée après paiement        |
+| 8 à 30 jours                   | IDR 1,000,000/jour   | IDR 30,000,000        | Amende + entretien d'immigration obligatoire              |
+| 31 à 60 jours                  | IDR 1,000,000/jour   | IDR 60,000,000        | Amende + détention possible + avertissement de blacklist  |
+| 61+ jours                      | IDR 1,000,000/jour   | IDR 500,000,000 (plafond) | Expulsion obligatoire + blacklist de 1 à 5 ans         |
 
-Le taux de 1 000 001 IDR par jour s'applique uniformément quel que soit le type de visa. Que vous dépassiez un E-VOA, un B211 ou un KITAS, le tarif journalier est le même. Le plafond cumulatif de 840 006 200 IDR signifie qu'après 500 jours de dépassement, l'amende cesse de s'accumuler, mais à ce stade, la déportation et une longue inscription sur liste noire sont garanties.
+Le tarif de IDR 1,000,000 par jour s'applique uniformément, quel que soit le type de visa. Que vous dépassiez la durée autorisée avec un E-VOA, un B211 ou un KITAS, le tarif journalier est identique. Le plafond cumulé de IDR 500,000,000 signifie qu'après 500 jours de dépassement de séjour, l'amende cesse de s'accumuler, mais à ce stade l'expulsion et une longue inscription sur la blacklist sont garanties.
 
-### Violations du permis de travail
+### Violations liées au permis de travail
 
-| Violation                                | Sanction administrative           | Sanction pénale                             | Liste noire      |
-| ---------------------------------------- | --------------------------------- | ------------------------------------------- | ---------------- |
-| Travailler sans aucun permis             | Déportation                       | Jusqu'à 5 ans de prison + 500M IDR d'amende | 1-5 ans          |
-| Travailler hors du cadre du KITAS        | Révocation du KITAS + déportation | Jusqu'à 5 ans de prison + 500M IDR d'amende | 1-3 ans          |
-| Employer un travailleur étranger illégal | Amende de l'entreprise 500M IDR   | Jusqu'à 5 ans de prison                     | N/A (entreprise) |
-| Utiliser le permis de travail d'autrui   | Déportation                       | Jusqu'à 5 ans de prison + 500M IDR d'amende | 2-5 ans          |
+| Violation                              | Sanction administrative             | Sanction pénale                         | Blacklist       |
+| -------------------------------------- | ----------------------------------- | --------------------------------------- | --------------- |
+| Travailler sans aucun permis           | Expulsion                           | Jusqu'à 5 ans de prison + amende de IDR 500M | 1 à 5 ans   |
+| Travailler hors du champ du KITAS      | Révocation du KITAS + expulsion     | Jusqu'à 5 ans de prison + amende de IDR 500M | 1 à 3 ans   |
+| Employer un travailleur étranger illégal | Amende pour l'entreprise de IDR 500M | Jusqu'à 5 ans de prison                | N/A (entreprise) |
+| Utiliser le permis de travail d'autrui | Expulsion                           | Jusqu'à 5 ans de prison + amende de IDR 500M | 2 à 5 ans   |
 
-Travailler sans permis est considéré comme l'une des violations les plus reteba en matière d'immigration. En vertu de l'article 122 de l'UU 6/2011, le travailleur étranger et l'employeur encourent une responsabilité pénale. L'immigration effectue régulièrement des descentes dans les entreprises des zones touristiques, les espaces de coworking et les restaurants de Bali, en particulier à Canggu, Seminyak et Ubud.
+Travailler sans permis est considéré comme l'une des violations de l'immigration les plus graves. En vertu de l'article 122 de UU 6/2011, le travailleur étranger comme l'employeur s'exposent à une responsabilité pénale. Les services d'immigration effectuent régulièrement des contrôles dans les entreprises situées dans les zones touristiques, les espaces de coworking et les restaurants à Bali, notamment à Canggu, Seminyak et Ubud.
 
-### Violations relatives à la déclaration
+### Violations des obligations de déclaration
 
-| Violation                                                          | Amende/Pénalité                        |
-| ------------------------------------------------------------------ | -------------------------------------- |
-| Non-déclaration de changement d'adresse (Wajib Lapor)              | Amende administrative de 5 000 000 IDR |
-| Manquement du parrain à signaler le départ du travailleur étranger | 25 000 000-50 000 000 IDR              |
-| Manquement de l'hôtel/villa à signaler un client étranger          | 5 000 000-25 000 000 IDR               |
-| Non-déclaration de perte/dommage de carte KITAS                    | 5 000 000 IDR + frais de remplacement  |
-| Renouvellement tardif du SKTT (Certificat de Résidence Temporaire) | 2 000 000-5                            |
+| Violation                                                | Amende/sanction                         |
+| -------------------------------------------------------- | --------------------------------------- |
+| Défaut de déclaration d'un changement d'adresse (Wajib Lapor) | Amende administrative de IDR 5,000,000 |
+| Défaut du sponsor de déclarer le départ d'un travailleur étranger | IDR 25,000,000-50,000,000       |
+| Défaut d'un hôtel ou d'une villa de déclarer un client étranger | IDR 5,000,000-25,000,000        |
+| Défaut de déclaration d'une carte KITAS perdue ou endommagée | IDR 5,000,000 + frais de remplacement |
+| Renouvellement tardif du SKTT (certificat de résidence temporaire) | IDR 2,000,000-5,000,000     |
+
+### Sanctions liées aux documents expirés
+
+| Document                             | Délai de grâce       | Sanction en cas d'expiration                                                   |
+| ------------------------------------ | -------------------- | ------------------------------------------------------------------------------ |
+| KITAS (permis de séjour)             | Aucun                | Les amendes pour dépassement de séjour commencent immédiatement (IDR 1M/jour) |
+| STM (permis de sortie et de retour)  | Aucun                | Impossible de revenir en Indonesia ; obligation de demander un nouveau visa depuis l'étranger |
+| Passeport (expiré pendant un séjour en Indonesia) | 30 jours pour le renouveler | Aucune amende d'immigration, mais impossibilité de prolonger/renouveler un visa avant le renouvellement du passeport |
+| SKTT (enregistrement de domicile)    | 14 jours             | Amende administrative de IDR 2,000,000-5,000,000                              |
+| Wajib Lapor (déclaration annuelle)   | 14 jours             | Amende administrative de IDR 5,000,000                                        |
+
+## Expulsion : motifs, procédure et conséquences
+
+### Ce qui entraîne une expulsion
+
+L'expulsion (deportasi) est une mesure administrative, et non une sanction pénale. Elle peut être ordonnée par le responsable de tout bureau d'immigration ou par le Director General of Immigration. Les situations suivantes entraînent une expulsion :
+
+1. **Dépassement de séjour supérieur à 60 jours** sans justification valable
+2. **Travail sans permis de travail valide** (KITAS avec autorisation RPTKA)
+3. **Condamnation pénale** en Indonesia
+4. **Participation à des activités menaçant l'ordre public** ou la sécurité nationale
+5. **Violation des conditions du visa** (par exemple, exercer des activités commerciales avec un visa touristique)
+6. **Documents ou déclarations falsifiés** dans des demandes de visa
+7. **Déclaration comme personne indésirable** par l'autorité d'immigration
+8. **Défaut de paiement des amendes cumulées de dépassement de séjour** lorsque des sanctions financières sont imposées
+
+### La procédure d'expulsion, étape par étape
+
+1. **Détention** - Vous êtes emmené dans un centre de détention de l'immigration (Rumah Detensi Imigrasi) ou retenu au bureau d'immigration. Indonesia compte 13 centres de détention sur l'ensemble de son territoire.
+2. **Examen administratif** - Les agents d'immigration examinent votre dossier et vos documents. Vous pouvez être interrogé.
+3. **Ordre d'expulsion** - Le responsable du bureau d'immigration délivre un ordre officiel d'expulsion (Surat Keputusan Deportasi).
+4. **Vérification des documents de voyage** - Les services d'immigration vérifient la validité de votre passeport et organisent votre départ.
+5. **Départ** - Vous êtes escorté jusqu'à l'aéroport et placé sur un vol. Vous devez payer votre propre billet. Si vous ne pouvez pas payer, le gouvernement couvre le coût et peut demander son remboursement.
+6. **Inscription sur la blacklist** - Votre nom est inscrit dans le système de blacklist de l'immigration pour une durée déterminée.
+7. **Tampon de sortie** - Votre passeport reçoit un tampon de sortie pour expulsion, visible pour les autorités d'immigration d'autres pays.
+
+### Coûts à votre charge en cas d'expulsion
+
+| Poste de coût                         | Montant estimé                                      |
+| ------------------------------------- | --------------------------------------------------- |
+| Amendes cumulées de dépassement de séjour | IDR 1,000,000/jour (jusqu'à IDR 500M)           |
+| Frais journaliers du centre de détention | IDR 150,000-300,000/jour                         |
+| Vol aller simple (classe économique)  | IDR 3,000,000-15,000,000 selon la destination      |
+| Représentation juridique (si engagée) | IDR 10,000,000-50,000,000                          |
+| Biens ou effets personnels perdus     | Variable                                            |
+| **Total d'un cas typique**            | **IDR 20,000,000-100,000,000+**                    |
+
+## Le système de blacklist de l'immigration
+
+### Fonctionnement de la blacklist
+
+Indonesia maintient une base de données centralisée de blacklist de l'immigration appelée Sistem Informasi Manajemen Keimigrasian (SIMKIM). Lorsque vous êtes inscrit sur la blacklist, votre numéro de passeport, votre nom, votre date de naissance et votre nationalité y sont enregistrés. Chaque point de contrôle de l'immigration (aéroport, port maritime, frontière terrestre) compare les passagers entrants avec cette base de données.
+
+### Durée de la blacklist selon la violation
+
+| Type de violation                               | Durée typique de blacklist |
+| ----------------------------------------------- | -------------------------- |
+| Dépassement mineur (moins de 30 jours), amendes payées | 6 mois à 1 an      |
+| Dépassement modéré (30 à 60 jours), amendes payées | 1 à 2 ans             |
+| Dépassement grave (60+ jours) avec expulsion    | 2 à 3 ans                 |
+| Travail sans permis                              | 1 à 5 ans                 |
+| Expulsion pour motif pénal                       | 3 à 5 ans                 |
+| Menace pour la sécurité                          | 5 ans à permanent         |
+| Infractions liées aux stupéfiants                | 5 ans à permanent         |
+| Récidiviste (deuxième expulsion)                | 5 ans à permanent         |
+
+### Pouvez-vous vérifier si vous êtes inscrit sur la blacklist ?
+
+Il n'existe aucun outil public en ligne permettant de vérifier votre statut sur la blacklist. Les méthodes disponibles sont les suivantes :
+
+1. **Demander un nouveau visa** - Si votre demande est rejetée en invoquant un « dossier d'immigration », vous êtes probablement inscrit sur la blacklist
+2. **Vous rendre dans une ambassade indonésienne** - Les agents consulaires peuvent consulter le système
+3. **Engager un avocat spécialisé en immigration en Indonesia** - Il peut soumettre une demande officielle à la Directorate General of Immigration
+4. **Contacter l'ambassade de votre pays à Jakarta** - Elle peut effectuer des démarches en votre nom par les voies diplomatiques
+
+## Comment payer les amendes d'immigration
+
+### Procédure de paiement d'une amende, étape par étape
+
+1. **Présentez-vous au bureau d'immigration le plus proche** (Kantor Imigrasi) dans votre zone. Ne tentez pas de quitter Indonesia sans payer. Vous serez arrêté à l'aéroport.
+2. **L'agent d'immigration calcule votre amende** sur la base du nombre de jours de dépassement de séjour multiplié par IDR 1,000,000.
+3. **Recevez un ordre de paiement** (Surat Perintah Bayar) indiquant le montant exact et un code de facturation.
+4. **Payez par virement bancaire** auprès de Bank BRI, Bank Mandiri ou Bank BNI en utilisant le code de facturation. Certains bureaux acceptent également le paiement via la plateforme SIMPONI (Sistem Informasi PNBP Online).
+5. **Retournez au bureau d'immigration** avec une preuve de paiement (reçu bancaire).
+6. **L'agent d'immigration appose un tampon sur votre passeport** avec une mention d'autorisation de sortie.
+7. **Vous devez quitter Indonesia dans les 7 jours** suivant le paiement de l'amende dans les cas de dépassement de séjour.
+
+### Modes de paiement acceptés
+
+- Virement bancaire (BRI, Mandiri, BNI) avec le code de facturation SIMPONI
+- Paiement en espèces à la caisse du bureau d'immigration (certains bureaux uniquement)
+- Virement par distributeur automatique avec le code de facturation
+- Virement par banque mobile avec le code de facturation
+
+Les cartes de crédit et les virements bancaires étrangers ne sont généralement pas acceptés pour le paiement des amendes.
+
+## La procédure de recours
+
+### Objection administrative (Keberatan Administratif)
+
+Si vous estimez qu'une amende ou un ordre d'expulsion est injuste, vous avez le droit de déposer une objection administrative. Celle-ci doit être déposée dans les 14 jours suivant la réception de la décision.
+
+**Procédure :**
+
+1. Soumettez une lettre d'objection écrite (Surat Keberatan) au responsable du bureau d'immigration ayant rendu la décision
+2. Joignez les documents justificatifs étayant votre objection (certificats médicaux, preuves de force majeure, etc.)
+3. Le bureau d'immigration doit répondre dans un délai de 30 jours ouvrables
+4. Si l'objection est rejetée, vous pouvez la porter devant la Directorate General of Immigration à Jakarta
+
+### Motifs valables de recours
+
+- **Urgence médicale** vous ayant physiquement empêché de partir ou de prolonger votre visa (dossiers d'admission à l'hôpital requis)
+- **Catastrophe naturelle** ayant perturbé les transports ou les services gouvernementaux
+- **Retard de traitement par l'administration** lorsque vous avez demandé une prolongation avant l'expiration, mais que l'immigration n'a pas traité votre demande à temps
+- **Erreur administrative** commise par les agents d'immigration (mauvaises dates, calculs incorrects)
+- Événements de **force majeure** tels que des annulations de vols, des fermetures d'aéroports ou des restrictions de voyage liées à une pandémie
+
+### Motifs qui ne fonctionneront PAS
+
+- « Je ne connaissais pas les règles » - L'ignorance du droit de l'immigration ne constitue jamais une défense valable
+- « Mon agent m'a dit que tout allait bien » - Vous êtes personnellement responsable, quels que soient les conseils de l'agent
+- « J'étais trop occupé » - La convenance personnelle ne constitue pas un motif de recours
+- « Le bureau était trop éloigné » - La distance jusqu'à un bureau d'immigration n'est pas considérée comme un cas de force majeure
+
+## Prévention : comment éviter toutes les sanctions d'immigration
+
+### Mettez en place un calendrier de conformité
+
+1. **90 jours avant l'expiration du visa** - Commencez la procédure de renouvellement/prolongation ou planifiez votre départ
+2. **60 jours avant** - Soumettez la demande de prolongation du KITAS, le cas échéant
+3. **30 jours avant** - Confirmez l'état de traitement ; faites remonter le dossier en cas de retard
+4. **14 jours avant** - Vérification finale ; si la prolongation n'est pas approuvée, préparez votre sortie
+5. **7 jours avant** - En l'absence de prolongation, réservez votre vol de départ
+6. **Jour d'expiration** - Vous devez disposer d'un permis de séjour valide ou être sur un vol sortant
+
+### Liste de contrôle des documents pour la conformité
+
+- Passeport valide pendant au moins 18 mois à tout moment
+- Visa/KITAS/KITAP en cours de validité, avec date d'expiration confirmée inscrite dans votre calendrier
+- STM (permis de sortie et de retour) valide si vous prévoyez de voyager et de revenir
+- SKTT (enregistrement de domicile) à jour auprès du kelurahan local
+- Wajib Lapor effectué (déclaration annuelle au bureau d'immigration)
+- Copies numériques de tous les documents stockées dans un espace de stockage cloud
+
+### Contacts d'urgence
+
+Si vous vous trouvez face à une urgence d'immigration (détention, découverte d'un dépassement de séjour, risque d'expulsion), prenez immédiatement les mesures suivantes :
+
+1. **Contactez l'ambassade ou le consulat de votre pays** - Ils peuvent fournir une assistance consulaire
+2. **Engagez un avocat spécialisé en immigration** - Pas un agent, mais un avocat agréé (advokat) spécialisé en droit de l'immigration
+3. **Ne signez pas de documents que vous ne comprenez pas** - Demandez une traduction ou attendez les conseils d'un avocat
+4. **Restez calme et coopératif** - Résister ou être agressif envers les agents d'immigration aggravera votre situation
+5. **Documentez tout** - Prenez des photos des documents, notez les noms des agents et leurs numéros d'insigne, conservez tous les reçus
+
+## Circonstances particulières
+
+### COVID-19 et prolongations liées à la pandémie
+
+Bien que les prolongations automatiques de l'ère de la pandémie aient pris fin, Indonesia a démontré sa volonté d'accorder des prolongations pour force majeure dans des circonstances extraordinaires. Si une situation similaire se présente, suivez les annonces officielles de la Directorate General of Immigration et préparez-vous à demander des prolongations d'urgence auprès du bureau d'immigration le plus proche.
+
+### Mineurs et titulaires de visas de personne à charge
+
+Les enfants titulaires d'un KITAS de personne à charge (E31E) sont soumis aux mêmes règles de dépassement de séjour que les adultes. Toutefois, les amendes concernant les mineurs sont imputées au parent ou tuteur sponsor. L'expulsion des mineurs suit des procédures spéciales impliquant une coordination avec les autorités de protection de l'enfance et l'ambassade concernée.
+
+### Décès d'un titulaire de KITAS
+
+Si un titulaire de KITAS décède en Indonesia, le sponsor (dans le cas d'un KITAS sponsorisé) ou le plus proche parent doit signaler le décès au bureau d'immigration dans un délai de 14 jours. Le KITAS est annulé et aucune amende de dépassement de séjour n'est imposée. Le défaut de déclaration peut entraîner des sanctions administratives contre le sponsor, lorsqu'il y en a un.
+
+---
+
+**Vous faites face à un problème d'immigration en Indonesia ?** Bali Zero fournit une assistance d'urgence en matière d'immigration, des conseils pour le paiement des amendes et une planification de conformité afin de maintenir votre séjour légal et sans stress.
+
+- **E-mail :** hello@balizero.com
+<HeaderWhatsAppCTA />
+- **Site web :** [balizero.com](https://balizero.com)

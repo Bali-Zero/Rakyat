@@ -462,7 +462,7 @@
   --bz-product-radius: 18px;
   --bz-product-page-gap: 28px;
   --bz-product-row-height: 60px;
-  --bz-product-heading-font: var(--font-serif), Wimolog, serif;
+  --bz-product-heading-font: var(--font-serif), Georgia, serif;
   --bz-header-height: 64px;
 }
 
@@ -510,13 +510,25 @@
   --bz-kita-wash: #eae3d8;
   --bz-kita-overlay: rgba(255, 252, 247, 0.86);
   --bz-kita-nav: #f7f4ee;
-  /* The rail is ink in both light and dark — the K1c-bis workspace sidebar
-     carries no theme swap, only the content around it does. */
-  --bz-kita-rail: #1d2c3b;
-  /* Copper TEXT on the dashboard's ink hero panel (PortalChallengeWidget
-     paints its band with --bz-text-1, which is ink #1d2c3b here). Raw
-     --bz-copper reads 2.47:1 on it; the on-dark step reads 5.30:1. */
-  --bz-kita-ink-panel-copper: var(--bz-copper-on-dark);
+  /* The rail is green in both light and dark (owner 2026-11-04): the VALUE of
+     --state-success, aliased here on purpose and not referenced, so a later
+     change to the "done" state cannot silently repaint the sidebar. The K1c-bis
+     rail carries no theme swap, only the content around it does. */
+  --bz-kita-rail: #253e33;
+  /* Dark brand surface: ink #1d2c3b two ramp steps lighter (HSL lightness
+     +6% per step, hue 210 and saturation 34% kept). Invariant across themes.
+     This is what the vault card and any other "navy block" paints; it is NOT
+     the rail, which is green. Paper on it 8.28:1. */
+  --bz-kita-surface-navy: #314b64;
+  /* The dark fill of in-page ink panels, badges and bars. Light: the navy
+     surface. Dark: the paper band --bz-text-1 resolves to there (unchanged). */
+  --bz-kita-ink-fill: var(--bz-kita-surface-navy);
+  /* Copper TEXT on the dashboard's ink hero panel (painted with
+     --bz-kita-ink-fill, the navy surface #314b64 here). The previous
+     on-dark copper step reads 3.38:1 on the lighter navy, so this lifted
+     step (5.66:1 on the navy, 4.65:1 on the 10% hover tint) replaces it for
+     the panel only. */
+  --bz-kita-ink-panel-copper: #f2c2b1;
 
   --surface-base: var(--bz-kita-canvas);
   --surface-matter: var(--bz-kita-card);
@@ -542,7 +554,7 @@
      themes the same --nav-edge property keeps AppSidebar to one code path
      instead of a light/dark branch for a border that never shows in light. */
   --nav-edge: var(--bz-kita-rail);
-  --nav-rule: #ce8571;
+  --nav-rule: #e09a84;
 
   --bz-base: var(--bz-kita-canvas);
   --bz-bg: var(--bz-kita-canvas);
@@ -601,6 +613,11 @@
      11.30:1 either way. */
   --bz-panel: #253e33;
   --bz-on-panel: #f7f4ee;
+  /* Login foregrounds on the forest ground, measured against #253e33:
+     muted 8.25:1, control line 4.80:1 (UI >= 3), lifted copper 7.23:1. */
+  --bz-on-panel-muted: #d3dcd6;
+  --bz-panel-line: #9aaba1;
+  --bz-panel-link: #f2c2b1;
 
   /* Copper = needs you. Never a button fill. */
   --bz-copper: #a44b36;
@@ -662,10 +679,12 @@
   --bz-shell-header-shadow: none;
   --bz-shadow-card: 0 10px 30px rgba(29, 44, 59, 0.045);
 
-  /* Type — Fraunces mastheads, Manrope body. The faces are declared in
-     app/portal/r19-fonts.css, imported by (workspace)/layout.tsx and
-     app/login/page.tsx. */
-  --font-serif: "Fraunces", ui-serif, Wimolog, serif;
+  /* Type — IBM Plex Sans (500) headings and numerals, Manrope body. Kita
+     only (owner decision 2026-11-03): the my/portal blocks below keep
+     Fraunces. The token keeps its historical name --font-serif so no call
+     site is renamed. The faces are declared in app/portal/r19-fonts.css,
+     imported by (workspace)/layout.tsx and app/login/page.tsx. */
+  --font-serif: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
 
   /* The base body rule pins "Inter" literally, so the sans token alone
@@ -689,8 +708,12 @@
   --bz-kita-wash: #222025;
   --bz-kita-overlay: rgba(26, 26, 31, 0.86);
   --bz-kita-nav: #121016;
-  /* Same ink as light — the rail is invariant across themes. */
-  --bz-kita-rail: #1d2c3b;
+  /* Same green as light — the rail is invariant across themes. */
+  --bz-kita-rail: #253e33;
+  /* Same navy as light (the vault and other navy blocks do not swap). */
+  --bz-kita-surface-navy: #314b64;
+  /* The in-page ink fill stays the paper band in dark, as before. */
+  --bz-kita-ink-fill: var(--bz-text-1);
   /* After dark --bz-text-1 is PAPER #f7f4ee, so the "ink" hero panel is a
      paper band: raw copper reads 5.26:1 there, the on-dark step only 2.45:1. */
   --bz-kita-ink-panel-copper: var(--bz-copper);
@@ -712,7 +735,7 @@
   /* The one deviation from light: dark's render draws a real right edge on
      the rail, a paper hairline rather than the rail's own ink. */
   --nav-edge: rgba(247, 244, 238, 0.14);
-  --nav-rule: #ce8571;
+  --nav-rule: #e09a84;
 
   --bz-base: var(--bz-kita-canvas);
   --bz-bg: var(--bz-kita-canvas);
@@ -764,6 +787,11 @@
   /* The one forest surface, unchanged after dark — see the light block. */
   --bz-panel: #253e33;
   --bz-on-panel: #f7f4ee;
+  /* Login foregrounds on the forest ground, measured against #253e33:
+     muted 8.25:1, control line 4.80:1 (UI >= 3), lifted copper 7.23:1. */
+  --bz-on-panel-muted: #d3dcd6;
+  --bz-panel-line: #9aaba1;
+  --bz-panel-link: #f2c2b1;
 
   /* Copper = needs you; the fill stays raw, the text lifts */
   --bz-copper: #a44b36;
@@ -820,8 +848,8 @@
   --bz-shell-header-shadow: none;
   --bz-shadow-card: 0 10px 30px rgba(0, 0, 0, 0.32);
 
-  /* Type */
-  --font-serif: "Fraunces", ui-serif, Wimolog, serif;
+  /* Type — same as the light block: Plex headings, Manrope body */
+  --font-serif: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
 
   & body {
@@ -913,7 +941,7 @@
   /* Type — Fraunces headlines, Manrope body. The faces are declared in
      app/portal/r19-fonts.css. --bz-product-heading-font is NOT redeclared:
      [data-product="my"] already resolves it through var(--font-serif). */
-  --font-serif: "Fraunces", ui-serif, Wimolog, serif;
+  --font-serif: "Fraunces", ui-serif, Georgia, serif;
   --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
 
   /* The base body rule pins "Inter" literally, so the sans token alone
@@ -999,7 +1027,7 @@
   --bz-shadow-card: 0 10px 30px rgba(0, 0, 0, 0.32);
 
   /* Type */
-  --font-serif: "Fraunces", ui-serif, Wimolog, serif;
+  --font-serif: "Fraunces", ui-serif, Georgia, serif;
   --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
 
   body {
@@ -1079,6 +1107,14 @@
 
 html {
   color-scheme: dark;
+}
+
+/* The browser themes the viewport scrollbar and native controls from the ROOT
+   element only. The R19 home and the Rumah Putih article pages paint light
+   paper (#F7F4EE) but used to set color-scheme: light on an inner <div>, so
+   they got dark scrollbars (web audit panel 2026-11-01). */
+html:has([data-r19-home], .rumah-putih) {
+  color-scheme: light;
 }
 
 body {

@@ -20,7 +20,7 @@ PRICE_PATTERNS = [
     r"\$[\d,]+",  # $1,200,000
     r"USD\s*[\d,]+",  # USD 1200000
     r"IDR\s*[\d,.]+",  # IDR 10,000,000
-    r"Rp\.?\s*[\d,.]+",  # Rp. 84.000.510
+    r"Rp\.?\s*[\d,.]+",  # Rp. 10.000.000
     r"[\d,]+\s*(?:juta|miliar|ribu)",  # 10 juta, 1 miliar
 ]
 

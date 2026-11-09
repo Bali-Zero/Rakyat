@@ -18,7 +18,7 @@
             "object_id": "permenkumham-synth-77-2026"
           },
           "predicate": "naga.fee_schedule.kitas_renewal",
-          "object_ref_or_value": 9900001,
+          "object_ref_or_value": 1234567,
           "value_span": {
             "start": 95,
             "end": 104
@@ -28,7 +28,7 @@
         "source_span": {
           "locator": "https://example.go.id/permenkumham-synth-77-2026#pasal-9-ayat-3",
           "quote_hash": "02a921fc5161b214b6cdcf4d36a5f8a12101c170b15ae09a8565c21123b8bc04",
-          "quoted_text": "Setiap perpanjangan Kartu Izin Tinggal Terbatas (KITAS) dikenakan biaya administrasi sebesar Rp9.900.001 (satu juta dua ratus tiga puluh empat ribu lima ratus enam puluh tujuh rupiah) per permohonan"
+          "quoted_text": "Setiap perpanjangan Kartu Izin Tinggal Terbatas (KITAS) dikenakan biaya administrasi sebesar Rp1.234.567 (satu juta dua ratus tiga puluh empat ribu lima ratus enam puluh tujuh rupiah) per permohonan"
         },
         "source_event_ref": {
           "event_id": "06850cdf-87a9-5ef9-a307-3c1859c3812e",
@@ -54,7 +54,7 @@
         "naga_session_id": "cbc7d8f9-f0f2-5c67-b2e1-25d01733fb9c"
       },
       "source": {
-        "body": "SYNTHETIC GAZETTE TEXT. Peraturan Menteri Hukum dan HAM Republik Indonesia Nomor 77 Tahun 2026 tentang Biaya Perpanjangan KITAS (fiktif, untuk pengujian). Pasal 9 ayat (3): Setiap perpanjangan Kartu Izin Tinggal Terbatas (KITAS) dikenakan biaya administrasi sebesar Rp9.900.001 (satu juta dua ratus tiga puluh empat ribu lima ratus enam puluh tujuh rupiah) per permohonan, berlaku sejak 1 Januari 2026.",
+        "body": "SYNTHETIC GAZETTE TEXT. Peraturan Menteri Hukum dan HAM Republik Indonesia Nomor 77 Tahun 2026 tentang Biaya Perpanjangan KITAS (fiktif, untuk pengujian). Pasal 9 ayat (3): Setiap perpanjangan Kartu Izin Tinggal Terbatas (KITAS) dikenakan biaya administrasi sebesar Rp1.234.567 (satu juta dua ratus tiga puluh empat ribu lima ratus enam puluh tujuh rupiah) per permohonan, berlaku sejak 1 Januari 2026.",
         "intel_events": {
           "06850cdf-87a9-5ef9-a307-3c1859c3812e": {
             "event_id": "06850cdf-87a9-5ef9-a307-3c1859c3812e",
@@ -125,7 +125,7 @@
               "object_hash": "6dd61743bf6dfaeecc35e1469f5cfc3dafafceadacabe6510b9bd6b16213b5ac"
             },
             "predicate": "naga.fee_schedule.kitas_renewal",
-            "object_ref_or_value": 9900001,
+            "object_ref_or_value": 1234567,
             "unit": "per_application",
             "currency": "IDR"
           },
@@ -285,7 +285,7 @@
             "object_id": "pp-synth-58-2026"
           },
           "predicate": "naga.eligibility_rule.min_capital",
-          "object_ref_or_value": 9800000010,
+          "object_ref_or_value": 9876543210,
           "value_span": {
             "start": 87,
             "end": 100
@@ -295,7 +295,7 @@
         "source_span": {
           "locator": "https://example.go.id/pp-synth-58-2026#pasal-4-ayat-1",
           "quote_hash": "83aa64d4796c58b3e88d506df18ecf3d96d7069f0a5db0a0f9967277e032f03d",
-          "quoted_text": "Perseroan Terbatas Penanaman Modal Asing wajib memiliki modal disetor paling sedikit Rp9.800.000.010 (sembilan miliar delapan ratus tujuh puluh enam juta lima ratus empat puluh tiga ribu dua ratus sepuluh rupiah) per bidang usaha per lokasi"
+          "quoted_text": "Perseroan Terbatas Penanaman Modal Asing wajib memiliki modal disetor paling sedikit Rp9.876.543.210 (sembilan miliar delapan ratus tujuh puluh enam juta lima ratus empat puluh tiga ribu dua ratus sepuluh rupiah) per bidang usaha per lokasi"
         },
         "source_event_ref": {
           "event_id": "ff5a0ef9-516a-5e1f-add2-ebf15cad8c82",
@@ -321,7 +321,7 @@
         "naga_session_id": "b8fe340c-3216-57e6-8aa3-100d63ead289"
       },
       "source": {
-        "body": "SYNTHETIC GAZETTE TEXT. Peraturan Pemerintah Nomor 58 Tahun 2026 tentang Modal Disetor Penanaman Modal Asing (fiktif, untuk pengujian). Pasal 4 ayat (1): Perseroan Terbatas Penanaman Modal Asing wajib memiliki modal disetor paling sedikit Rp9.800.000.010 (sembilan miliar delapan ratus tujuh puluh enam juta lima ratus empat puluh tiga ribu dua ratus sepuluh rupiah) per bidang usaha per lokasi, kecuali diatur lain dalam lampiran KBLI.",
+        "body": "SYNTHETIC GAZETTE TEXT. Peraturan Pemerintah Nomor 58 Tahun 2026 tentang Modal Disetor Penanaman Modal Asing (fiktif, untuk pengujian). Pasal 4 ayat (1): Perseroan Terbatas Penanaman Modal Asing wajib memiliki modal disetor paling sedikit Rp9.876.543.210 (sembilan miliar delapan ratus tujuh puluh enam juta lima ratus empat puluh tiga ribu dua ratus sepuluh rupiah) per bidang usaha per lokasi, kecuali diatur lain dalam lampiran KBLI.",
         "intel_events": {
           "ff5a0ef9-516a-5e1f-add2-ebf15cad8c82": {
             "event_id": "ff5a0ef9-516a-5e1f-add2-ebf15cad8c82",
@@ -392,7 +392,7 @@
               "object_hash": "21e8a7700800fd99c47dafd0109969a1b1024d99052fe7424987c17772b7258a"
             },
             "predicate": "naga.eligibility_rule.min_capital",
-            "object_ref_or_value": 9800000010,
+            "object_ref_or_value": 9876543210,
             "currency": "IDR"
           },
           "scope": {
@@ -1498,5 +1498,5 @@
     ]
   },
   "z2b_production_eligibility": "NOT PRODUCTION-ELIGIBLE. This cohort is SYNTHETIC — every instrument is spelled 'permenkumham-synth-*' and every figure is invented — so it is a TEST fixture set and NOT the cohort Z2b(a) authorises. Z2b(a) authorises at most 20 PUBLIC REGULATORY claims FULLY SOURCED from public documents (body hash of the real body, exact span, valid time, rights). Nothing here is sourced from a real instrument. THEREFORE the Z2b seed cohort is EMPTY until sourced: R2's --apply may write only whatever the legacy admission dry-run admits (expected 0), and not one row of this file. Sourcing a real cohort is DEFERRED work, named in brief.yml and in the PR body. R1 section 6's stop rule is why it was not invented instead: a figure that cannot be sourced from a public document stops the window, it does not get fabricated and labelled sourced. RULED by the imperator nuzantara-0d 2026-09-11T10:57Z (R1-ack on envelope 20260911T105202Z-2f23.md), disposition (b) of two offered.",
-  "correction_2026_09_11_codex_r1": "CORRECTED (R1 g3, adversarial round 1). (a) Every record's `source` now carries `document_versions` (version id -> the body hash that version was registered for) and `locators` (locator -> {start, end} character offsets of the quoted span in `body`), the two mappings D4 rules 3 and 4 resolve against instead of accepting a non-empty string (codex findings 3 and 4). (b) Both `correction_pair` claims now carry the `com.balizero.research-os.naga` extension with subject_key `id/permenkumham-synth-40-2026/pasal-5-ayat-2` (invented, like every identifier here) -- without it they were invisible to `read()` (Gemini N4). The edge keeps `naga.claim_family.<uuid>`: `ObjectSuccessorEdge.family_id` is a RegisteredName and `Claim.claim_family_id` a uuid, so the READER derives the registered name (codex finding 5). Every object_hash recomputed by `_recompute_hashes.py`. (c) FIGURES MADE UNMISTAKABLY INVENTED (codex MEDIUM + Gemini): Rp9.900.001, Rp9.800.000.010, the 23rd of the seventh following month, USD 4,321, 13 years -- none is, or resembles, a real Indonesian rate, threshold or deadline. This also cured a real inconsistency the round-1 rule 1 derivation caught on its first run: rptka-sponsor-fee-04 stated 1200000 while its own quoted span said USD 1,200. Body hashes, quote hashes, locator offsets and every object_hash were recomputed, never typed. (d) ROUND 2 (codex BLOCKER + B3 PARTIAL): every record statement carries `value_span`, the {start, end} offsets of its value's whole token inside the quoted span, and the two string values are now the literal Indonesian tokens they anchor to rather than English paraphrases -- rule 1 compares whole tokens, never shared digits. `document_versions` values are {document_id, content_hash}, binding the version to the document as well as the body."
+  "correction_2026_09_11_codex_r1": "CORRECTED (R1 g3, adversarial round 1). (a) Every record's `source` now carries `document_versions` (version id -> the body hash that version was registered for) and `locators` (locator -> {start, end} character offsets of the quoted span in `body`), the two mappings D4 rules 3 and 4 resolve against instead of accepting a non-empty string (codex findings 3 and 4). (b) Both `correction_pair` claims now carry the `com.balizero.research-os.naga` extension with subject_key `id/permenkumham-synth-40-2026/pasal-5-ayat-2` (invented, like every identifier here) -- without it they were invisible to `read()` (Gemini N4). The edge keeps `naga.claim_family.<uuid>`: `ObjectSuccessorEdge.family_id` is a RegisteredName and `Claim.claim_family_id` a uuid, so the READER derives the registered name (codex finding 5). Every object_hash recomputed by `_recompute_hashes.py`. (c) FIGURES MADE UNMISTAKABLY INVENTED (codex MEDIUM + Gemini): Rp1.234.567, Rp9.876.543.210, the 23rd of the seventh following month, USD 4,321, 13 years -- none is, or resembles, a real Indonesian rate, threshold or deadline. This also cured a real inconsistency the round-1 rule 1 derivation caught on its first run: rptka-sponsor-fee-04 stated 1200000 while its own quoted span said USD 1,200. Body hashes, quote hashes, locator offsets and every object_hash were recomputed, never typed. (d) ROUND 2 (codex BLOCKER + B3 PARTIAL): every record statement carries `value_span`, the {start, end} offsets of its value's whole token inside the quoted span, and the two string values are now the literal Indonesian tokens they anchor to rather than English paraphrases -- rule 1 compares whole tokens, never shared digits. `document_versions` values are {document_id, content_hash}, binding the version to the document as well as the body."
 }

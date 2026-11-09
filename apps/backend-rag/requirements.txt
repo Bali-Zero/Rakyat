@@ -1,0 +1,217 @@
+# ZANTARA RAG Backend Dependencies v5.8 - SECURITY + PERFORMANCE UPDATE
+# Last updated: 2026-03-14
+# Major upgrades: certifi 2026.2.25, langchain-core 1.2.19, fastmcp 2.1.0, litellm 1.83.7, sse-starlette 3.3.2
+# Previous: HTTPX 0.28+ MIGRATION (2025-12-29)
+
+# Core Framework
+fastapi!=0.136.3,>=0.162.0 # Upgraded for starlette 0.50+; exclude 0.136.3 (MAL-2026-4750 supply-chain malware injecting 'fastar' dep)
+starlette>=1.6.0,<1.7.0  # Security fix: CVE-2026-48818/48817 (fix 1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1); supersedes PYSEC-2026-161 / GHSA-86qp-5c8j-p5mr; keep dev lock on the suite-tested 1.x line.
+uvicorn[standard]>=0.52.3  # Upgraded for async improvements
+sentry-sdk[fastapi]>=2.73.0  # Error monitoring
+pydantic>=2.12.5  # Compatible with MCP 1.25+, google-genai 1.56+
+pydantic-settings>=2.15.0  # Compatible with pydantic 2.12+
+python-multipart>=0.0.31  # Security fix: arbitrary file write (CVE-2024-47874)
+
+# Vector Database
+qdrant-client>=1.20.0,<1.21.0  # Match Qdrant server 1.12.x; avoid client/server minor-drift warnings.
+
+# Google Cloud Integration (Core for v5.3 Hybrid) - Use compatible versions
+google-genai>=2.18.1  # Unified SDK with MCP support
+google-api-python-client>=2.198.0
+google-auth>=2.56.3
+google-auth-oauthlib>=1.1.0
+google-auth-httplib2>=0.4.1
+
+# Tigris (S3-compatible) — used by scripts/wr2_image_generator.py +
+# scripts/wr2_draft_generator.py to upload hero images to the warroom
+# bucket. No backend module imports it; pinned here so production venv
+# rebuilds (Pro `nuzantara-deploy` worktree) stay self-sufficient.
+boto3>=1.43.71
+
+# AI/ML - UPGRADED FOR HTTPX 0.28+ COMPATIBILITY
+openai>=2.53.0  # Upgraded for httpx 0.28+ (proxies parameter removed)
+anthropic>=1.2.0  # Upgraded for httpx 0.28+ compatibility
+# PyTorch - Explicitly specify compatible version to avoid RuntimeError with sentence-transformers
+# PyTorch 2.2.0+ required for transformers compatibility (register_pytree_node)
+torch>=2.14.1  # Security: RCE via torch.load fixed in 2.6.0 (CVE-2025-32434)
+sentence-transformers>=5.7.0  # Updated 2026-03-14: tested compatible, CrossEncoder API stable, sparse embeddings support
+transformers>=5.15.0  # Security: HIGH GHSA-fgcw-684q-jj6r (<5.5.0) + GHSA-29pf-2h5f-8g72 (<5.3.0), fixed 5.5.0
+huggingface-hub>=1.27.0,<2.0  # transformers>=5.15.0 requires hub>=1.5.0,<2.0; sentence-transformers itself has no upper cap (verified via wheel METADATA)
+tiktoken>=0.14.0  # For accurate token estimation (optional, has fallback)
+
+# PII Detection (UU PDP compliance)
+presidio-analyzer>=2.2.355
+presidio-anonymizer>=2.2.355
+
+# Document Processing
+openpyxl>=3.1.5  # CVE-2023-43515 fixed in 3.1.5
+email-validator>=2.3.0
+defusedxml>=0.7.1,<0.8  # Reject DTD/entity expansion in portal OOXML members across XML encodings
+pypdf>=6.21.4  # Security floor: pip-audit fixed release, 2026-10-31
+Pillow>=13.0.0  # 2026-10-20: eight image-parser CVEs fixed in 13.0.0 (pip-audit)
+EbookLib>=0.20
+beautifulsoup4>=4.15.0  # Security and stability updates
+reportlab>=5.0.0  # PDF generation (LKPM ready-pack, invoices); also in -prod.txt
+rapidfuzz>=3.14.0  # Fuzzy name matching for accounting bank-statement reconciliation (P1)
+
+# OCR and Advanced Document Processing (Gemini Vision based)
+# Uses PDFVisionService with Gemini-2.0-flash for OCR (same as passport box)
+python-magic>=0.4.27  # MIME type detection from file content
+# Note: PyMuPDF (fitz) is already included above for PDF processing
+
+# LangChain Ecosystem
+langgraph>=1.2.11
+langgraph-checkpoint-postgres>=3.1.3  # PostgreSQL checkpointing for stateful workflows
+# ^ floor is 3.1.1, not 2.0.0: CVE-2026-71433 affects 3.1.0 and pip-audit fails the
+#   build on it. The constraint belongs HERE and not only in the lock — a lock regen
+#   resolves against the manifest, so a floor left at 2.0.0 lets the vulnerable
+#   version back in on the next bump with every scanner green (W98).
+h2>=4.4.1  # transitive via httpx; CVE-2026-71554 affects 4.4.0. Named here
+#   ON PURPOSE even though nothing imports it directly: a floor that lives only
+#   in the lock is not a constraint, it is a snapshot (W98).
+langchain-core>=1.6.1  # Updated 2026-03-14: patch fixes for streaming + callbacks
+langchain-anthropic>=1.7.0  # Required for KG LangGraph orchestrator
+langchain-openai>=1.6.0  # Required for KG LangGraph orchestrator fallback
+langsmith>=0.11.0  # Observability: @traceable on RAG nodes + KG nodes
+# langchain-google-genai removed to resolve conflicts
+
+# HTTP/Network - UPGRADED TO RESOLVE CONFLICTS
+httpx>=0.28.1,<1.0.0  # Upgraded for google-genai compatibility (requires >=0.28.1)
+requests>=2.32.4  # Security: .netrc credential leak fix
+aiohttp>=3.14.5  # Security: zip bomb, directory traversal, DoS fixes
+urllib3>=2.0.0  # Required by selenium, types-requests
+sse-starlette>=3.4.8  # Updated 2026-03-14: SSE disconnect handling improvements
+
+# Web Scraping (Peraturan Spider & Putusan Spider)
+playwright>=1.62.0  # Security and browser updates
+
+# Authentication
+PyJWT[crypto]==2.15.1  # Security fix: CVE-2026-32597 crit header validation
+cryptography>=50.0.0  # GHSA-537c-gmf6-5ccf fix (vulnerable static OpenSSL in wheels)
+bcrypt>=5.0.0  # Security and performance improvements
+
+# Database
+asyncpg>=0.31.0  # Performance and security improvements
+psycopg2-binary>=2.9.9
+redis>=8.1.0  # Security updates and new features
+sqlmodel>=0.0.39  # Bug fixes and compatibility updates
+sqlalchemy>=2.0.52
+
+# Compression
+brotli-asgi>=1.4.0  # Brotli compression middleware (replaces GZip, ~20% better compression)
+
+# Utilities - UPGRADED VERSIONS
+python-dotenv>=1.0.0
+# loguru removed - using standard logging instead
+packaging>=26.3,<27  # Compatible with langchain-core if needed
+
+# Development & Quality Tools
+pre-commit>=4.6.2  # Security and performance updates
+ruff>=0.16.3
+pytest>=9.1.1  # Upgraded for better async support
+pytest-asyncio>=1.4.0  # Major upgrade for improved async testing
+pytest-cov>=7.1.0  # Upgraded for coverage improvements
+
+# Observability
+prometheus-fastapi-instrumentator>=8.1.0
+# OpenTelemetry - CONFLICT RESOLVED (Dec 2025)
+# Old versions required protobuf<5.0, new versions require protobuf>=5.0
+# Now compatible with google-cloud packages
+opentelemetry-api>=1.45.1
+opentelemetry-sdk>=1.45.1
+opentelemetry-instrumentation-fastapi>=0.65b0
+opentelemetry-exporter-otlp-proto-grpc>=1.45.1
+opentelemetry-exporter-otlp-proto-http>=1.45.1  # For Grafana Cloud (HTTP + auth)
+googleapis-common-protos>=1.75.1  # Fix pkg_resources deprecation warning
+
+# Langfuse POC (observability) - kill-switch via LANGFUSE_ENABLED env var
+# Added 2026-04-21 in feat/observability-langfuse-poc (see apps/backend-rag/README.md)
+langfuse>=4.14.4,<5.0.0  # LLM observability, OTEL-based v2+
+openinference-instrumentation-anthropic>=2.1.1  # Auto-trace Anthropic calls
+openinference-instrumentation-google-genai>=1.4.0  # Auto-trace google-genai SDK (Gemini)
+openinference-instrumentation-openai>=0.1.54  # Auto-trace OpenAI-compat (DeepSeek, Ollama)
+
+# Data Processing
+datasets>=5.0.1
+pandas>=2.3.3
+numpy>=2.2.6,<3.0.0  # Updated for compatibility with scipy/sklearn
+opencv-python-headless>=5.0.0.93  # intake OCR preprocess deskew/denoise (preprocess.py:18 promised "already in venv" but was missing; graceful-fallback to raw page when absent, Mythos M4 2026-06-14)
+psutil>=5.9.0  # Required by metrics module/tests
+
+# PDF Processing - UPGRADED
+pdfplumber>=0.11.0
+pdfminer.six>=20251107  # Match pdfplumber requirement
+
+# Word (.docx) text extraction — intake pipeline reads native text layer of
+# WhatsApp Word attachments (parsers.extract_text_from_docx / preprocess.py).
+# Already imported with a None fallback in backend/core/parsers.py; pinning it
+# here so Fly/CI install it (was Pro-only, 2026-06-20).
+python-docx>=1.1.0
+
+# Protocol Buffers - was pinned to 5.x for OTEL + Google package compat; that
+# ceiling is now stale — requirements-prod.txt has run protobuf 6.33.6 in
+# production since 2026-05-19 (uv migration pilot, PR #777) with no reported
+# issue, and current googleapis-common-protos/google-api-core releases require
+# protobuf>=6.33.5. Widen the dev lock to match prod instead of pinning below it.
+protobuf>=5.27.0,<7.0.0
+
+# XML/HTML Processing - UPGRADED
+lxml>=6.1.1  # Required by trafilatura, htmldate
+
+# Agentic RAG Dependencies
+pymupdf>=1.28.2  # For PDF rendering in Vision Service
+scikit-learn>=1.3.0  # For cosine similarity in Golden Router
+
+# Notification Services
+sendgrid>=6.11.0  # For email notifications via SendGrid API
+twilio>=9.11.0  # For WhatsApp and SMS notifications via Twilio API; >=9.4.0 fixes CVE-2024-45158/45159/45160
+tenacity>=8.2.3  # For retry logic with exponential backoff
+
+# Rate Limiting & Caching (Article Composer Best Practices 2026)
+slowapi>=0.1.10  # Rate limiting for FastAPI
+redis>=8.1.0  # Already present, used for caching
+
+# MCP (Model Context Protocol)
+mcp>=2.2.0  # Upgraded for pydantic 2.12+ compatibility
+# fastmcp removed 2026-05-03: not imported by backend-rag runtime. The MCP
+# server lives in apps/nuzantara-mcp/ with its own venv (fastmcp 3.2.4).
+# Removal closes 8 Dependabot alerts on fastmcp 2.1.0 (1 critical + 4 high
+# + 3 medium): SSRF/Path Traversal (GHSA-vv7q-7jx5-f767), OAuth Proxy
+# Confused Deputy (GHSA-rww4-4w9c-7733, GHSA-c2jp-c369-7pvx), token reuse
+# (GHSA-5h2m-4q8j-pqpj), CVE-2025-66416 (GHSA-rcfx-77hg-w2wv), command
+# injection variants, reflected XSS callback page.
+python-json-logger>=2.0.0
+orjson>=3.10.0  # 3-10× faster JSON serialization (FastAPI default response, hot path: pii_scanner, audit_logger, event_bus)
+
+# Security & HTTP
+certifi>=2026.10.19  # GHSA-6q48-6c7w-9gw2: emSign roots with compromised intermediates removed
+
+# Build trigger 1771636448
+
+# Security: setuptools fixes for CVE-2024-6345, PYSEC-2025-49, PYSEC-2022-43012
+setuptools>=84.1.0
+
+# Structured logging
+structlog>=24.1.0
+
+# visa_engine signed rule-pack loader (backend/services/visa_engine/bundle.py):
+# RFC 8785 JCS canonicalization + JSON Schema validation of the signed envelope.
+# Declared here too (not only requirements-prod.txt) because CI Backend Tests and
+# the Fly build install from THIS manifest — a prod-only declaration left the
+# imports unresolved in CI (ModuleNotFoundError: rfc8785). jsonschema is also
+# pulled transitively via mcp, but bundle.py imports Draft202012Validator/
+# FormatChecker directly, so it is declared explicitly; rfc3339-validator makes
+# jsonschema's FormatChecker() "date-time" check real instead of a silent no-op.
+rfc8785==0.1.4  # exact pin: canonicalization is a deterministic security contract
+jsonschema>=4.26.0
+rfc3339-validator>=0.1.4
+
+# Monorepo workspace package: cell-core (DNA-recording — Genome, Experience,
+# Skill, Metabolic, HGT). Editable install; path is resolved relative to the
+# working directory where `pip install -r` is invoked, which for this
+# requirements file is always `apps/backend-rag/` (CI, Fly build, local venv).
+-e ../../packages/cell-core
+
+# Security floors for transitive packages reported by pip-audit.
+langgraph-sdk>=0.4.6
+pyasn1>=0.6.5

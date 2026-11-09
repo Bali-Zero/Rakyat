@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from contextlib import asynccontextmanager
 from io import BytesIO
 from typing import Any
 
@@ -17,8 +18,90 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
 from backend.app.core.config import settings
+from backend.security.pii_log_identifier import redact_identifier_for_log
+from backend.services.crm.drive_taxonomy import standard_subfolder_paths
 
 logger = logging.getLogger(__name__)
+
+
+CANONICAL_FOLDER_LOCK_CLASS = 742003
+
+
+@asynccontextmanager
+async def canonical_folder_lock(conn: Any, parent_id: str, name: str):
+    """Serialize all application writers for a Drive parent/name pair."""
+    if conn is None:
+        raise RuntimeError("Distributed Drive folder lock unavailable")
+    digest = hashlib.sha256(f"{parent_id}\0{name}".encode()).digest()
+    key = int.from_bytes(digest[:4], byteorder="big", signed=True)
+    await conn.execute("SELECT pg_advisory_lock($1, $2)", CANONICAL_FOLDER_LOCK_CLASS, key)
+    try:
+        yield
+    finally:
+        await conn.execute("SELECT pg_advisory_unlock($1, $2)", CANONICAL_FOLDER_LOCK_CLASS, key)
+
+
+async def resolve_oauth_canonical_folder(
+    drive: Any,
+    name: str,
+    parent_id: str,
+    cached_id: str | None,
+    conn: Any,
+) -> str:
+    async with canonical_folder_lock(conn, parent_id, name):
+        return await _resolve_oauth_folder_unlocked(drive, name, parent_id, cached_id)
+
+
+async def _resolve_oauth_folder_unlocked(
+    drive: Any,
+    name: str,
+    parent_id: str,
+    cached_id: str | None,
+) -> str:
+    async def validate(file_id: str) -> None:
+        meta = await drive.get_file("SYSTEM", file_id)
+        if (
+            meta.get("id") != file_id
+            or meta.get("name") != name
+            or meta.get("mimeType") != "application/vnd.google-apps.folder"
+            or parent_id not in meta.get("parents", [])
+            or meta.get("trashed") is not False
+        ):
+            raise RuntimeError("Invalid OAuth Drive destination")
+
+    async def find() -> list[dict[str, Any]]:
+        matches: list[dict[str, Any]] = []
+        token = None
+        seen = set()
+        while True:
+            page = await drive.list_files(
+                "SYSTEM", folder_id=parent_id, page_token=token, page_size=1000
+            )
+            matches.extend(item for item in page["files"] if item.get("name") == name)
+            token = page.get("next_page_token")
+            if len(matches) > 1:
+                raise RuntimeError("Ambiguous OAuth Drive destination")
+            if not token:
+                return matches
+            if token in seen:
+                raise RuntimeError("Invalid OAuth Drive pagination")
+            seen.add(token)
+
+    if cached_id:
+        await validate(cached_id)
+    matches = await find()
+    if cached_id and (not matches or matches[0].get("id") != cached_id):
+        raise RuntimeError("Cached OAuth Drive destination does not match")
+    if not matches:
+        await drive.create_folder(user_id="SYSTEM", name=name, parent_id=parent_id)
+        matches = await find()
+        if not matches:
+            raise RuntimeError("Created OAuth Drive folder cannot be verified")
+    if matches[0].get("mimeType") != "application/vnd.google-apps.folder":
+        raise RuntimeError("OAuth Drive destination is not a physical folder")
+    folder_id = matches[0]["id"]
+    await validate(folder_id)
+    return folder_id
 
 
 class DriveArchiveIntegrityError(RuntimeError):
@@ -55,7 +138,7 @@ class ServiceAccountDriveService:
                 service_account_info = parsed
                 logger.info("✅ Loaded Google credentials from raw JSON")
         except json.JSONDecodeError as e:
-            logger.debug("SA creds not raw JSON, trying base64: %s", e)
+            logger.debug("SA creds not raw JSON, trying base64: %s", type(e).__name__)
 
         # Try base64-encoded JSON
         if not service_account_info:
@@ -66,7 +149,7 @@ class ServiceAccountDriveService:
                     service_account_info = parsed
                     logger.info("✅ Loaded Google credentials from base64-encoded JSON")
             except Exception as e:
-                logger.debug("SA creds base64 decode failed: %s", e)
+                logger.debug("SA creds base64 decode failed: %s", type(e).__name__)
 
         if not service_account_info:
             raise ValueError(
@@ -85,7 +168,10 @@ class ServiceAccountDriveService:
         # Domain-wide delegation configured in Google Admin Console for this SA
         self.delegated_user = delegated_user or "zero@balizero.com"
         self.credentials = base_credentials.with_subject(self.delegated_user)
-        logger.info("✅ Using Domain-wide delegation, impersonating: %s", self.delegated_user)
+        logger.info(
+            "✅ Using Domain-wide delegation, impersonating: %s",
+            redact_identifier_for_log(self.delegated_user),
+        )
 
         # Build API client
         self.service = build("drive", "v3", credentials=self.credentials)
@@ -107,7 +193,10 @@ class ServiceAccountDriveService:
         configured = [
             ("DRIVE_ROOT_FOLDER_ID (active)", self.root_folder_id),
             ("GOOGLE_DRIVE_ROOT_FOLDER_ID", getattr(settings, "google_drive_root_folder_id", None)),
-            ("GDRIVE_INDIVIDUALS_FOLDER_ID", getattr(settings, "gdrive_individuals_folder_id", None)),
+            (
+                "GDRIVE_INDIVIDUALS_FOLDER_ID",
+                getattr(settings, "gdrive_individuals_folder_id", None),
+            ),
             ("GDRIVE_COMPANIES_FOLDER_ID", getattr(settings, "gdrive_companies_folder_id", None)),
         ]
         for env_name, folder_id in configured:
@@ -115,26 +204,35 @@ class ServiceAccountDriveService:
                 logger.warning("⚠ Drive folder env %s not set — skipping validation", env_name)
                 continue
             try:
-                meta = self.service.files().get(
-                    fileId=folder_id,
-                    fields="id, name, trashed",
-                    supportsAllDrives=True,
-                ).execute()
+                meta = (
+                    self.service.files()
+                    .get(
+                        fileId=folder_id,
+                        fields="id, name, trashed",
+                        supportsAllDrives=True,
+                    )
+                    .execute()
+                )
                 if meta.get("trashed"):
                     logger.error(
                         "🚨 Drive folder %s (%s) is TRASHED — client folder creation will fail",
-                        env_name, folder_id,
+                        env_name,
+                        folder_id,
                     )
                 else:
                     logger.info(
-                        "✅ Drive folder %s OK: %s (%r)",
-                        env_name, folder_id, meta.get("name"),
+                        "✅ Drive folder %s OK: %s",
+                        env_name,
+                        folder_id,
                     )
             except Exception as e:
                 logger.error(
                     "🚨 Drive folder %s (%s) UNREACHABLE — clients of the matching type "
-                    "will fail to get a Drive folder. Error: %s",
-                    env_name, folder_id, e,
+                    "will fail to get a Drive folder. Error: %s (HTTP status: %s)",
+                    env_name,
+                    folder_id,
+                    type(e).__name__,
+                    getattr(getattr(e, "resp", None), "status", None),
                 )
 
     async def create_folder(
@@ -165,7 +263,7 @@ class ServiceAccountDriveService:
 
         folder = await asyncio.to_thread(request.execute)
 
-        logger.info(f"✅ Created folder: {name} (ID: {folder['id']})")
+        logger.info("✅ Created folder (ID: %s)", folder["id"])
         return folder
 
     async def get_file_metadata(self, file_id: str) -> dict[str, Any]:
@@ -176,7 +274,7 @@ class ServiceAccountDriveService:
         """
         request = self.service.files().get(
             fileId=file_id,
-            fields="id, name, mimeType, parents, size, modifiedTime, webViewLink",
+            fields="id, name, mimeType, parents, trashed, size, modifiedTime, webViewLink",
             supportsAllDrives=True,
         )
         return await asyncio.to_thread(request.execute)
@@ -297,7 +395,7 @@ class ServiceAccountDriveService:
         # Execute in thread pool to avoid blocking event loop
         file = await asyncio.to_thread(request.execute)
 
-        logger.info(f"✅ Uploaded: {file_name} ({file.get('size')} bytes)")
+        logger.info("✅ Uploaded (ID: %s, %s bytes)", file.get("id"), file.get("size"))
         return file
 
     # Advisory-lock class for per-client Drive folder creation, used as
@@ -309,24 +407,7 @@ class ServiceAccountDriveService:
     DRIVE_ARCHIVE_LOCK_CLASS = 742002
     _archive_locks: dict[str, asyncio.Lock] = {}
 
-    STANDARD_SUBFOLDERS = [
-        "00_Profile",
-        "01_Immigration",
-        "01_Immigration/Actual Visa",
-        "01_Immigration/Previous Visa",
-        "02_Company",
-        "02_Company/AKTA",
-        "02_Company/NIB",
-        "02_Company/NPWP",
-        "02_Company/Profile Perseroan",
-        "03_Tax",
-        "03_Tax/SPT company",
-        "03_Tax/SPT personal",
-        "03_Tax/LKPM reports",
-        "03_Tax/NPWP personal",
-        "04_Family",
-        "99_Misc",
-    ]
+    STANDARD_SUBFOLDERS = standard_subfolder_paths()
 
     def _parent_folder_for_client_type(self, client_type: str) -> str:
         """Resolve the configured parent folder for a client type."""
@@ -339,23 +420,84 @@ class ServiceAccountDriveService:
         return parent_folder_id or settings.google_drive_root_folder_id
 
     async def find_folder(self, name: str, parent_id: str) -> dict[str, Any] | None:
-        """Find a non-trashed folder by exact name under a parent, or None."""
+        """Return one physical folder, rejecting ambiguity and shortcuts."""
         escaped = name.replace("\\", "\\\\").replace("'", "\\'")
-        query = (
-            f"name = '{escaped}' "
-            "and mimeType = 'application/vnd.google-apps.folder' "
-            f"and '{parent_id}' in parents and trashed = false"
-        )
-        request = self.service.files().list(
-            q=query,
-            fields="files(id, name, webViewLink)",
-            supportsAllDrives=True,
-            includeItemsFromAllDrives=True,
-            pageSize=2,
-        )
-        result = await asyncio.to_thread(request.execute)
-        files = result.get("files", [])
+        query = f"name = '{escaped}' and '{parent_id}' in parents and trashed = false"
+        files = []
+        page_token = None
+        seen = set()
+        for _ in range(100):
+            params = {
+                "q": query,
+                "fields": "nextPageToken, files(id, name, mimeType, parents, trashed, webViewLink)",
+                "supportsAllDrives": True,
+                "includeItemsFromAllDrives": True,
+                "pageSize": 2,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            result = await asyncio.to_thread(self.service.files().list(**params).execute)
+            files.extend(result.get("files", []))
+            if len(files) > 1:
+                raise RuntimeError("Ambiguous Drive folder name")
+            page_token = result.get("nextPageToken")
+            if not page_token:
+                break
+            if page_token in seen:
+                raise RuntimeError("Invalid Drive folder pagination")
+            seen.add(page_token)
+        else:
+            raise RuntimeError("Drive folder pagination limit exceeded")
+        if files and files[0].get("mimeType") != "application/vnd.google-apps.folder":
+            raise RuntimeError("Drive destination is not a physical folder")
         return files[0] if files else None
+
+    async def resolve_canonical_folder(
+        self,
+        name: str,
+        root_id: str,
+        cached_id: str | None = None,
+        *,
+        conn: Any = None,
+    ) -> str:
+        """Validate and serialize the destination by parent and folder name."""
+        async with canonical_folder_lock(conn, root_id, name):
+            return await self._resolve_canonical_folder_unlocked(name, root_id, cached_id)
+
+    async def _resolve_canonical_folder_unlocked(
+        self,
+        name: str,
+        root_id: str,
+        cached_id: str | None,
+    ) -> str:
+        if cached_id:
+            meta = await self.get_file_metadata(cached_id)
+            if (
+                meta.get("id") != cached_id
+                or meta.get("name") != name
+                or meta.get("mimeType") != "application/vnd.google-apps.folder"
+                or root_id not in meta.get("parents", [])
+                or meta.get("trashed") is not False
+            ):
+                raise RuntimeError("Invalid cached Drive folder")
+        found = await self.find_folder(name, root_id)
+        if cached_id and (not found or found.get("id") != cached_id):
+            raise RuntimeError("Cached Drive folder does not match canonical destination")
+        if not found:
+            await self.create_folder(name=name, parent_id=root_id)
+            found = await self.find_folder(name, root_id)
+            if not found:
+                raise RuntimeError("Created Drive folder cannot be verified")
+        meta = await self.get_file_metadata(found["id"])
+        if (
+            meta.get("id") != found["id"]
+            or meta.get("name") != name
+            or meta.get("mimeType") != "application/vnd.google-apps.folder"
+            or root_id not in meta.get("parents", [])
+            or meta.get("trashed") is not False
+        ):
+            raise RuntimeError("Invalid canonical Drive folder")
+        return found["id"]
 
     async def find_file(self, name: str, parent_id: str) -> dict[str, Any] | None:
         """Find one non-trashed file by exact name under a known parent."""
@@ -467,6 +609,7 @@ class ServiceAccountDriveService:
         client_name: str,
         client_type: str = "individual",
         db_pool: Any | None = None,
+        conn: Any | None = None,
     ) -> dict[str, Any]:
         """Idempotent chokepoint for client Drive folder creation.
 
@@ -483,48 +626,39 @@ class ServiceAccountDriveService:
         Subfolder creation happens outside the lock and only when the root was
         newly created here.
         """
-        if db_pool is None:
-            # Without a DB there is no lock and no idempotency — direct create.
-            return await self.create_client_folder(
-                client_id=client_id,
-                client_name=client_name,
-                client_type=client_type,
-                db_pool=None,
-            )
+        if conn is None:
+            if db_pool is None:
+                raise RuntimeError("Distributed Drive folder lock unavailable")
+            async with db_pool.acquire() as acquired:
+                return await self.ensure_client_folder(
+                    client_id, client_name, client_type, db_pool=db_pool, conn=acquired
+                )
 
         root_folder_name = f"{client_id}_{client_name}"
         parent_folder_id = self._parent_folder_for_client_type(client_type)
         created = False
 
-        async with db_pool.acquire() as conn:
-            await conn.execute(
-                "SELECT pg_advisory_lock($1, $2)",
-                self.DRIVE_FOLDER_LOCK_CLASS,
+        await conn.execute(
+            "SELECT pg_advisory_lock($1, $2)",
+            self.DRIVE_FOLDER_LOCK_CLASS,
+            client_id,
+        )
+        try:
+            existing = await conn.fetchval(
+                "SELECT google_drive_folder_id FROM clients WHERE id = $1",
                 client_id,
             )
-            try:
-                existing = await conn.fetchval(
-                    "SELECT google_drive_folder_id FROM clients WHERE id = $1",
-                    client_id,
-                )
-                if existing:
-                    return {
-                        "success": True,
-                        "created": False,
-                        "root_folder_id": existing,
-                        "root_folder_url": f"https://drive.google.com/drive/folders/{existing}",
-                        "subfolders": {},
-                    }
+            if existing:
+                return {
+                    "success": True,
+                    "created": False,
+                    "root_folder_id": existing,
+                    "root_folder_url": f"https://drive.google.com/drive/folders/{existing}",
+                    "subfolders": {},
+                }
 
-                found = None
-                try:
-                    found = await self.find_folder(root_folder_name, parent_folder_id)
-                except Exception as e:
-                    logger.warning(
-                        "Drive lookup for existing folder %r failed (%s) — will create",
-                        root_folder_name,
-                        e,
-                    )
+            async with canonical_folder_lock(conn, parent_folder_id, root_folder_name):
+                found = await self.find_folder(root_folder_name, parent_folder_id)
 
                 if found:
                     root_folder_id = found["id"]
@@ -546,27 +680,31 @@ class ServiceAccountDriveService:
                     root_folder_url = root_folder.get("webViewLink", "")
                     created = True
 
-                # Persist BEFORE building subfolders so concurrent callers see
-                # the folder as soon as the lock releases.
-                await conn.execute(
-                    "UPDATE clients SET google_drive_folder_id = $1 WHERE id = $2",
-                    root_folder_id,
-                    client_id,
-                )
-            finally:
-                await conn.execute(
-                    "SELECT pg_advisory_unlock($1, $2)",
-                    self.DRIVE_FOLDER_LOCK_CLASS,
-                    client_id,
-                )
+            # Persist BEFORE building subfolders so concurrent callers see
+            # the folder as soon as the lock releases.
+            await conn.execute(
+                "UPDATE clients SET google_drive_folder_id = $1 WHERE id = $2",
+                root_folder_id,
+                client_id,
+            )
+        finally:
+            await conn.execute(
+                "SELECT pg_advisory_unlock($1, $2)",
+                self.DRIVE_FOLDER_LOCK_CLASS,
+                client_id,
+            )
 
         subfolders: dict[str, Any] = {}
         if created:
             subfolders = await self._create_standard_subfolders(
-                root_folder_id, client_id=client_id, db_pool=db_pool
+                root_folder_id,
+                client_id=client_id,
+                db_pool=db_pool,
+                client_type=client_type,
+                conn=conn,
             )
             logger.info(
-                "✅ Created client folder structure for %s: %s", client_name, root_folder_id
+                "✅ Created client folder structure for client %s: %s", client_id, root_folder_id
             )
 
         return {
@@ -584,69 +722,30 @@ class ServiceAccountDriveService:
         client_type: str = "individual",
         db_pool: Any | None = None,
     ) -> dict[str, Any]:
-        """
-        Create standardized folder structure for a new client.
-
-        Creates: {ID}_{ClientName}/ with subfolders:
-        - 00_Profile
-        - 01_Immigration
-        - 02_Company
-        - 03_Tax
-        - 04_Family
-
-        NOTE: this is the DIRECT (non-locked) path. Concurrent-safe callers
-        must use `ensure_client_folder` instead.
-        """
-        parent_folder_id = self._parent_folder_for_client_type(client_type)
-
-        # Create root folder: "[ID]_[Name]"
-        root_folder_name = f"{client_id}_{client_name}"
-        root_folder = await self.create_folder(
-            name=root_folder_name,
-            parent_id=parent_folder_id,
-        )
-
-        root_folder_id = root_folder["id"]
-
-        # Persist the root folder id IMMEDIATELY — building the 16 subfolders
-        # takes tens of seconds, and the old "persist at the end" left a window
-        # in which concurrent callers (passport upload) created a twin root.
-        if db_pool:
-            try:
-                async with db_pool.acquire() as conn:
-                    await conn.execute(
-                        "UPDATE clients SET google_drive_folder_id = $1 WHERE id = $2",
-                        root_folder_id,
-                        client_id,
-                    )
-            except Exception as e:
-                logger.error(
-                    "Failed to persist root folder id for client %s: %s", client_id, e
-                )
-
-        subfolders = await self._create_standard_subfolders(
-            root_folder_id, client_id=client_id, db_pool=db_pool
-        )
-
-        logger.info("✅ Created client folder structure for %s: %s", client_name, root_folder_id)
-
-        return {
-            "success": True,
-            "root_folder_id": root_folder_id,
-            "root_folder_url": root_folder.get("webViewLink", ""),
-            "subfolders": subfolders,
-        }
+        """Provision via the same distributed locks used by concurrent callers."""
+        if db_pool is None:
+            raise RuntimeError("Distributed Drive folder lock unavailable")
+        return await self.ensure_client_folder(client_id, client_name, client_type, db_pool)
 
     async def _create_standard_subfolders(
         self,
         root_folder_id: str,
         client_id: int,
         db_pool: Any | None = None,
+        client_type: str = "individual",
+        conn: Any | None = None,
     ) -> dict[str, Any]:
         """Create the standard subfolder tree under a client root folder."""
+        if conn is None:
+            if db_pool is None:
+                raise RuntimeError("Distributed Drive folder lock unavailable")
+            async with db_pool.acquire() as acquired:
+                return await self._create_standard_subfolders(
+                    root_folder_id, client_id, db_pool, client_type, conn=acquired
+                )
         subfolders: dict[str, Any] = {}
         folder_id_cache = {"": root_folder_id}
-        for subfolder_path in self.STANDARD_SUBFOLDERS:
+        for subfolder_path in standard_subfolder_paths(client_type):
             try:
                 parts = subfolder_path.split("/")
                 if len(parts) == 1:
@@ -655,40 +754,42 @@ class ServiceAccountDriveService:
                 else:
                     parent_path = parts[0]
                     name = parts[1]
-                    parent_id = folder_id_cache.get(parent_path, root_folder_id)
+                    parent_id = folder_id_cache[parent_path]
 
-                subfolder = await self.create_folder(
-                    name=name,
-                    parent_id=parent_id,
-                )
-                subfolders[subfolder_path] = {
-                    "id": subfolder["id"],
-                    "url": subfolder.get("webViewLink", ""),
-                }
-                if len(parts) == 1:
-                    folder_id_cache[name] = subfolder["id"]
+                folder_id = await self.resolve_canonical_folder(name, parent_id, conn=conn)
+                subfolders[subfolder_path] = {"id": folder_id, "url": ""}
+                folder_id_cache[subfolder_path] = folder_id
             except Exception as e:
-                logger.error("Failed to create subfolder %s: %s", subfolder_path, e)
+                logger.error(
+                    "Failed to create subfolder under root %s for client %s: %s (HTTP status: %s)",
+                    root_folder_id,
+                    client_id,
+                    type(e).__name__,
+                    getattr(getattr(e, "resp", None), "status", None),
+                )
                 continue
 
         # Persist subfolder IDs to DB so DrivePollService can match files to clients
         if db_pool:
             try:
-                async with db_pool.acquire() as conn:
-                    for subfolder_path, subfolder_data in subfolders.items():
-                        if "/" not in subfolder_path:  # top-level only
-                            await conn.execute(
-                                """INSERT INTO client_drive_subfolders
-                                   (client_id, subfolder_name, subfolder_id, created_at)
-                                   VALUES ($1, $2, $3, NOW())
-                                   ON CONFLICT DO NOTHING""",
-                                client_id,
-                                subfolder_path,
-                                subfolder_data["id"],
-                            )
+                for subfolder_path, subfolder_data in subfolders.items():
+                    if "/" not in subfolder_path:  # top-level only
+                        await conn.execute(
+                            """INSERT INTO client_drive_subfolders
+                               (client_id, subfolder_name, subfolder_id, created_at)
+                               VALUES ($1, $2, $3, NOW())
+                               ON CONFLICT DO NOTHING""",
+                            client_id,
+                            subfolder_path,
+                            subfolder_data["id"],
+                        )
                 logger.info("✅ Drive folder IDs persisted to DB for client %s", client_id)
             except Exception as e:
-                logger.error("Failed to persist drive folder IDs for client %s: %s", client_id, e)
+                logger.error(
+                    "Failed to persist drive folder IDs for client %s: %s",
+                    client_id,
+                    type(e).__name__,
+                )
 
         return subfolders
 

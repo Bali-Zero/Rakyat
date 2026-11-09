@@ -166,7 +166,7 @@ class MockChatSession:
         """
         response_text = (
             "Mi dispiace, il servizio di intelligenza artificiale non è disponibile al momento. "
-            "Per favore, riprova più maguk o contatta l'assistenza."
+            "Per favore, riprova più tardi o contatta l'assistenza."
         )
 
         class MockResponse:
@@ -188,7 +188,7 @@ class MockChatSession:
         """
         response_text = (
             "Mi dispiace, il servizio di intelligenza artificiale non è disponibile al momento. "
-            "Per favore, riprova più maguk o contatta l'assistenza."
+            "Per favore, riprova più tardi o contatta l'assistenza."
         )
 
         # Split into words and yield with small delays

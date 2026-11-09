@@ -967,7 +967,7 @@ async def _attempt(
     # Deterministic identity turn (B2.5-1b), second authority, same order,
     # same reasoning, checked right after the greeting: measured on real
     # delivery 2026-09-15 15:47-15:49 WITA, "ciao tu sei Zantara?" and "ti ho
-    # chiesto xiw zoc tu?" both reached the package build, found no chunk in
+    # chiesto chi sei tu?" both reached the package build, found no chunk in
     # any collection that says who Zantara is, and terminalized as the
     # ABSTAIN stub — the second one in English, to a client writing Italian.
     # An identity question is not an unbuildable package, same as a

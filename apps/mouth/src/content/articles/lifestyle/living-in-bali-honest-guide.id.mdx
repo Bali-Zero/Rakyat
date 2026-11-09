@@ -79,6 +79,7 @@ tableOfContents: true
 canonicalUrl: "https://balizero.com/lifestyle/living-in-bali-honest-guide"
 ogImage: "/static/insights/lifestyle/living-in-bali.jpg"
 twitterCard: "summary_large_image"
+source_sha256: "621781d20d7e05cd04efaa3376feb8c53a695974ad68f35885613d57555ce475"
 ---
 
 import {
@@ -95,37 +96,37 @@ import {
 
 # Tinggal di Bali: Panduan Jujur 2026
 
-Bali telah menjadi destinasi impian bagi orang-orang yang mencari kehidupan berbeda—pengembara digital, pensiunan, pengusaha, dan keluarga yang mencari petualangan. Pulau ini memberikan banyak dari janji tersebut: keindahan alam, biaya hidup yang terjangkau (dibandingkan dengan Barat), budaya yang dinamis, dan komunitas yang ramah.
+Bali telah menjadi destinasi impian bagi orang-orang yang mencari kehidupan berbeda—digital nomad, pensiunan, pengusaha, dan keluarga yang mencari petualangan. Pulau ini memenuhi banyak dari janji tersebut: keindahan alam, biaya hidup terjangkau (dibandingkan Barat), budaya yang dinamis, dan komunitas yang ramah.
 
-Namun, ini bukanlah surga tanpa komplikasi. Panduan ini memberikan gambaran jujur tentang seperti apa rasanya tinggal di Bali, sehingga Anda dapat membuat keputusan yang tepat.
+Namun, ini bukan surga tanpa kerumitan. Panduan ini memberikan gambaran jujur tentang seperti apa sebenarnya hidup di Bali, sehingga Anda dapat membuat keputusan yang tepat.
 
 <ConfidenceMeter
-  title="Keyakinan Informasi"
+  title="Information Confidence"
   items={[
     {
-      label: "Data Biaya Hidup",
+      label: "Cost of Living Data",
       confidence: 88,
-      source: "Survei ekspat + riset pasar 2024",
+      source: "Expat surveys + market research 2024",
     },
     {
-      label: "Informasi Layanan Kesehatan",
+      label: "Healthcare Information",
       confidence: 92,
-      source: "Data rumah sakit + umpan balik ekspat",
+      source: "Hospital data + expat feedback",
     },
     {
-      label: "Deskripsi Area",
+      label: "Area Descriptions",
       confidence: 90,
-      source: "Pengetahuan lokal + masukan komunitas",
+      source: "Local knowledge + community input",
     },
     {
-      label: "Informasi Visa",
+      label: "Visa Information",
       confidence: 95,
-      source: "Regulasi imigrasi",
+      source: "Immigration regulations",
     },
     {
-      label: "Wawasan Budaya",
+      label: "Cultural Insights",
       confidence: 85,
-      source: "Masukan penduduk jangka panjang",
+      source: "Long-term resident input",
     },
   ]}
 />
@@ -135,421 +136,406 @@ Namun, ini bukanlah surga tanpa komplikasi. Panduan ini memberikan gambaran juju
 ## Haruskah Anda Pindah ke Bali?
 
 <DecisionTree
-  title="Apakah Bali Tepat untuk Anda?"
-  description="Jawab dengan jujur untuk melihat apakah kehidupan Bali sesuai dengan ekspektasi Anda"
+  title="Is Bali Right for You?"
+  description="Answer honestly to see if Bali life matches your expectations"
   nodes={[
     {
       id: "start",
-      question: "Apa motivasi utama Anda pindah ke Bali?",
+      question: "What's your primary motivation for moving to Bali?",
       options: [
-        {
-          label: "Biaya hidup yang lebih rendah",
-          nextNodeId: "cost-expectations",
-        },
-        { label: "Gaya hidup dan petualangan", nextNodeId: "lifestyle-type" },
-        { label: "Fleksibilitas kerja jarak jauh", nextNodeId: "work-style" },
-        { label: "Pensiun di daerah tropis", nextNodeId: "retirement-check" },
-        { label: "Peluang bisnis", nextNodeId: "business-type" },
+        { label: "Lower cost of living", nextNodeId: "cost-expectations" },
+        { label: "Lifestyle and adventure", nextNodeId: "lifestyle-type" },
+        { label: "Remote work flexibility", nextNodeId: "work-style" },
+        { label: "Retirement in the tropics", nextNodeId: "retirement-check" },
+        { label: "Business opportunity", nextNodeId: "business-type" },
       ],
     },
     {
       id: "cost-expectations",
-      question: "Berapa anggaran bulanan yang Anda harapkan?",
+      question: "What's your expected monthly budget?",
       options: [
-        { label: "Di bawah $1.500", nextNodeId: "result-budget-tight" },
-        { label: "$1.500 - $3.000", nextNodeId: "result-budget-comfortable" },
-        { label: "$3.000 - $5.000", nextNodeId: "result-budget-good" },
-        { label: "Di atas $5.000", nextNodeId: "result-budget-luxury" },
+        { label: "Under $1,500", nextNodeId: "result-budget-tight" },
+        { label: "$1,500 - $3,000", nextNodeId: "result-budget-comfortable" },
+        { label: "$3,000 - $5,000", nextNodeId: "result-budget-good" },
+        { label: "Over $5,000", nextNodeId: "result-budget-luxury" },
       ],
     },
     {
       id: "lifestyle-type",
-      question: "Gaya hidup seperti apa yang Anda cari?",
+      question: "What kind of lifestyle are you seeking?",
       options: [
-        { label: "Pantai dan pesta", nextNodeId: "result-beach-party" },
-        { label: "Kesehatan dan spiritualitas", nextNodeId: "result-wellness" },
-        { label: "Alam dan ketenangan", nextNodeId: "result-nature" },
-        { label: "Budaya selancar", nextNodeId: "result-surf" },
-        { label: "Lingkungan ramah keluarga", nextNodeId: "family-check" },
+        { label: "Beach and party scene", nextNodeId: "result-beach-party" },
+        { label: "Wellness and spirituality", nextNodeId: "result-wellness" },
+        { label: "Nature and quiet", nextNodeId: "result-nature" },
+        { label: "Surf culture", nextNodeId: "result-surf" },
+        { label: "Family-friendly environment", nextNodeId: "family-check" },
       ],
     },
     {
       id: "work-style",
-      question: "Bagaimana situasi kerja Anda?",
+      question: "What's your work situation?",
       options: [
-        { label: "Karyawan jarak jauh penuh", nextNodeId: "timezone-check" },
-        { label: "Pekerja lepas/kontraktor", nextNodeId: "result-freelancer" },
-        {
-          label: "Menjalankan bisnis online",
-          nextNodeId: "result-entrepreneur",
-        },
-        { label: "Ingin memulai bisnis lokal", nextNodeId: "business-type" },
+        { label: "Fully remote employee", nextNodeId: "timezone-check" },
+        { label: "Freelancer/contractor", nextNodeId: "result-freelancer" },
+        { label: "Running online business", nextNodeId: "result-entrepreneur" },
+        { label: "Want to start local business", nextNodeId: "business-type" },
       ],
     },
     {
       id: "timezone-check",
-      question: "Zona waktu mana yang Anda gunakan untuk bekerja?",
+      question: "What time zones do you work with?",
       options: [
         {
-          label: "Asia/Australia (dekat dengan Bali)",
+          label: "Asia/Australia (close to Bali)",
           nextNodeId: "result-timezone-good",
         },
         {
-          label: "Eropa (selisih 5-7 jam)",
+          label: "Europe (5-7 hours behind)",
           nextNodeId: "result-timezone-europe",
         },
         {
-          label: "Pantai Barat AS (selisih 15-16 jam)",
+          label: "US West Coast (15-16 hours behind)",
           nextNodeId: "result-timezone-us",
         },
-        {
-          label: "Kerja fleksibel/asinkron",
-          nextNodeId: "result-timezone-good",
-        },
+        { label: "Flexible/async work", nextNodeId: "result-timezone-good" },
       ],
     },
     {
       id: "retirement-check",
-      question: "Apakah Anda berusia 55 tahun atau lebih?",
+      question: "Are you 55 years or older?",
       options: [
-        { label: "Ya, 55+", nextNodeId: "result-retirement-yes" },
-        { label: "Tidak, di bawah 55", nextNodeId: "result-retirement-no" },
+        { label: "Yes, 55+", nextNodeId: "result-retirement-yes" },
+        { label: "No, under 55", nextNodeId: "result-retirement-no" },
       ],
     },
     {
       id: "family-check",
-      question: "Apakah Anda memiliki anak usia sekolah?",
+      question: "Do you have school-age children?",
       options: [
-        { label: "Ya, butuh sekolah", nextNodeId: "result-family-school" },
-        { label: "Ya, homeschooling", nextNodeId: "result-family-homeschool" },
+        { label: "Yes, need schooling", nextNodeId: "result-family-school" },
+        { label: "Yes, homeschooling", nextNodeId: "result-family-homeschool" },
         {
-          label: "Tidak ada anak / anak sudah dewasa",
+          label: "No children / grown children",
           nextNodeId: "result-family-no-kids",
         },
       ],
     },
     {
       id: "business-type",
-      question: "Tipe bisnis apa?",
+      question: "What type of business?",
       options: [
-        {
-          label: "Pariwisata/perhotelan",
-          nextNodeId: "result-business-tourism",
-        },
-        { label: "F&B/restoran", nextNodeId: "result-business-fnb" },
-        {
-          label: "Layanan teknologi/digital",
-          nextNodeId: "result-business-tech",
-        },
-        { label: "Ekspor/perdagangan", nextNodeId: "result-business-export" },
+        { label: "Tourism/hospitality", nextNodeId: "result-business-tourism" },
+        { label: "F&B/restaurant", nextNodeId: "result-business-fnb" },
+        { label: "Tech/digital services", nextNodeId: "result-business-tech" },
+        { label: "Export/trading", nextNodeId: "result-business-export" },
       ],
     },
     {
       id: "result-budget-tight",
       isResult: true,
-      title: "Menantang tapi Mungkin",
-      description: "Hidup dengan biaya di bawah $1.500/bulan di Bali",
+      title: "Challenging but Possible",
+      description: "Living on under $1,500/month in Bali",
       recommendation:
-        "Anggaran ini ketat untuk gaya hidup ala Barat. Anda perlu hidup seperti warga lokal—makanan Indonesia, akomodasi dasar, jarang makan di luar. Mungkin, tapi butuh disiplin. Biaya kesehatan dan visa bisa menekan anggaran ini.",
+        "This budget is tight for a Western lifestyle. You'll need to live local—Indonesian food, basic accommodation, limited dining out. Possible but requires discipline. Healthcare and visa costs can strain this budget.",
       nextSteps: [
-        "Riset area tempat tinggal lokal",
-        "Belajar bahasa Indonesia dasar",
-        "Anggarkan biaya visa secara terpisah",
-        "Pertimbangkan biaya asuransi kesehatan",
+        "Research local living areas",
+        "Learn basic Indonesian",
+        "Budget for visa costs separately",
+        "Consider health insurance costs",
       ],
     },
     {
       id: "result-budget-comfortable",
       isResult: true,
-      title: "Hidup Nyaman",
-      description: "Kualitas hidup yang baik dengan $1.500-3.000/bulan",
+      title: "Comfortable Living",
+      description: "Good quality of life at $1,500-3,000/month",
       recommendation:
-        "Ini adalah titik ideal bagi sebagian besar ekspat. Vila/apartemen yang bagus, makan di luar secara rutin, sewa motor, perjalanan sesekali. Anda bisa menikmati gaya hidup Bali tanpa harus menghitung setiap rupiah.",
+        "This is the sweet spot for most expats. Nice villa/apartment, eating out regularly, motorbike rental, occasional travel. You can enjoy Bali's lifestyle without counting every rupiah.",
       nextSteps: [
-        "Jelajahi area kelas menengah",
-        "Anggarkan untuk asuransi kesehatan",
-        "Rencanakan strategi visa",
-        "Pertimbangkan keanggotaan coworking",
+        "Explore mid-range areas",
+        "Budget for health insurance",
+        "Plan visa strategy",
+        "Consider coworking membership",
       ],
     },
     {
       id: "result-budget-good",
       isResult: true,
-      title: "Gaya Hidup Premium",
-      description: "Kehidupan luar biasa dengan $3.000-5.000/bulan",
+      title: "Premium Lifestyle",
+      description: "Excellent living at $3,000-5,000/month",
       recommendation:
-        "Pada level ini, Anda bisa hidup sangat baik—vila bagus dengan kolam renang, sewa mobil, makanan internasional, gym, dan kunjungan spa rutin. Ada ruang untuk menabung dan bepergian.",
+        "At this level, you can live very well—nice villa with pool, car rental, international food, gym, and regular spa visits. Room for savings and travel.",
       nextSteps: [
-        "Area premium tersedia",
-        "Cakupan kesehatan penuh",
-        "Pertimbangkan opsi visa jangka panjang",
-        "Fokus pada kualitas hidup",
+        "Premium areas available",
+        "Full health coverage",
+        "Consider long-term visa options",
+        "Quality of life focus",
       ],
     },
     {
       id: "result-budget-luxury",
       isResult: true,
-      title: "Hidup Mewah",
-      description: "Gaya hidup kelas atas dengan $5.000+/bulan",
+      title: "Luxury Living",
+      description: "High-end lifestyle at $5,000+/month",
       recommendation:
-        "Bali menawarkan nilai luar biasa pada level ini. Vila di tepi pantai, sopir pribadi, makan mewah, sekolah internasional untuk anak-anak. Anda bisa hidup lebih baik daripada kebanyakan tempat dengan anggaran ini.",
+        "Bali offers exceptional value at this level. Beachfront villas, private driver, fine dining, international schools for kids. You can live better than most places at this budget.",
       nextSteps: [
-        "Sewa vila premium",
-        "Opsi sekolah swasta",
-        "Gaya hidup layanan penuh",
-        "Peluang investasi",
+        "Premium villa rentals",
+        "Private schooling options",
+        "Full-service lifestyle",
+        "Investment opportunities",
       ],
     },
     {
       id: "result-beach-party",
       isResult: true,
-      title: "Bali Selatan Adalah Zona Anda",
-      description: "Seminyak, Canggu, dan Kuta menanti",
+      title: "South Bali Is Your Zone",
+      description: "Seminyak, Canggu, and Kuta await",
       recommendation:
-        'Anda akan menyukai pantai selatan. Beach club, kehidupan malam, restoran, lingkungan sosial. Namun perlu diketahui: harganya lebih mahal, lalu lintas buruk, dan sangat ramai turis. "Bali yang asli" ada di tempat lain.',
+        "You'll love the south coast. Beach clubs, nightlife, restaurants, social scene. Just know: it's more expensive, traffic is bad, and it's very touristy. The \"real Bali\" is elsewhere.",
       nextSteps: [
-        "Fokus pada Seminyak/Canggu",
-        "Anggarkan lebih tinggi untuk gaya hidup",
-        "Terima kenyataan lalu lintas",
-        "Terhubung dengan lingkungan sosial",
+        "Focus on Seminyak/Canggu",
+        "Budget higher for lifestyle",
+        "Accept traffic reality",
+        "Connect with social scene",
       ],
     },
     {
       id: "result-wellness",
       isResult: true,
-      title: "Ubud Memanggil",
-      description: "Jantung spiritual Bali",
+      title: "Ubud Calling",
+      description: "The spiritual heart of Bali",
       recommendation:
-        "Ubud adalah tempat Anda—yoga, meditasi, makanan organik, praktik penyembuhan. Iklim lebih sejuk, terasering sawah, dunia seni. Lebih sedikit pantai tapi lebih banyak ketenangan batin. Komunitas kesehatan yang besar.",
+        "Ubud is your place—yoga, meditation, organic food, healing practices. Cooler climate, rice terraces, arts scene. Less beaches but more inner peace. Large wellness community.",
       nextSteps: [
-        "Jelajahi Ubud dan sekitarnya",
-        "Opsi pelatihan guru yoga",
-        "Imersi retret kesehatan",
-        "Temukan komunitas Anda",
+        "Explore Ubud and surroundings",
+        "Yoga teacher training options",
+        "Wellness retreat immersion",
+        "Find your tribe",
       ],
     },
     {
       id: "result-nature",
       isResult: true,
-      title: "Bali Utara atau Timur",
-      description: "Melarikan diri dari keramaian",
+      title: "North or East Bali",
+      description: "Escape the crowds",
       recommendation:
-        "Pertimbangkan Amed, Keruki, Sidemen, atau Gohodo. Lebih tenang, lebih murah, lebih tradisional. Tukar kenyamanan dengan kedamaian. Lebih sedikit fasilitas ekspat tapi pengalaman yang autentik.",
+        "Consider Amed, Lovina, Sidemen, or Munduk. Quieter, cheaper, more traditional. Trade convenience for peace. Fewer expat amenities but authentic experience.",
       nextSteps: [
-        "Kunjungi sebelum memutuskan",
-        "Terima kenyamanan yang lebih sedikit",
-        "Belajar bahasa Indonesia",
-        "Peluk ritme lambat",
+        "Visit before committing",
+        "Accept fewer conveniences",
+        "Learn Indonesian",
+        "Embrace slow pace",
       ],
     },
     {
       id: "result-surf",
       isResult: true,
-      title: "Surga Selancar",
-      description: "Nejoc kelas dunia menanti",
+      title: "Surf Paradise",
+      description: "World-class waves await",
       recommendation:
-        "Bali legendaris untuk selancar. Canggu untuk pemula/menengah, Uluwatu untuk peselancar berpengalaman, atau jelajahi pantai timur. Komunitas selancar yang kuat, biaya hidup terjangkau dibandingkan Hawaii/Australia.",
+        "Bali is legendary for surfing. Canggu for beginners/intermediates, Uluwatu for experienced surfers, or explore the east coast. Strong surf community, affordable living compared to Hawaii/Australia.",
       nextSteps: [
-        "Sesuaikan area dengan tingkat selancar",
-        "Pertimbangkan Canggu atau semenanjung Bukit",
-        "Bergabung dengan komunitas selancar",
-        "Anggarkan untuk sewa/beli papan",
+        "Match area to surf level",
+        "Consider Canggu or Bukit peninsula",
+        "Join surf community",
+        "Budget for board rental/purchase",
       ],
     },
     {
       id: "result-freelancer",
       isResult: true,
-      title: "Pekerja Lepas di Bali",
-      description: "Bergabung dengan komunitas kerja jarak jauh",
+      title: "Freelancer in Bali",
+      description: "Join the remote work community",
       recommendation:
-        "Bali memiliki infrastruktur coworking yang sangat baik dan komunitas pekerja lepas yang besar. Secara hukum, Anda butuh visa yang sesuai (bukan visa turis untuk bekerja). Pertimbangkan Visa Pengembara Digital E33G atau bangun ke arah PT PMA jika Anda punya klien di Indonesia.",
+        "Bali has excellent coworking infrastructure and a huge freelance community. Legally, you need appropriate visa (not tourist visa for work). Consider E33G Digital Nomad Visa or build toward PT PMA if you have Indonesian clients.",
       nextSteps: [
-        "Riset opsi visa",
-        "Temukan ruang coworking",
-        "Bangun koneksi komunitas",
-        "Pahami implikasi pajak",
+        "Research visa options",
+        "Find coworking spaces",
+        "Build community connections",
+        "Understand tax implications",
       ],
     },
     {
       id: "result-entrepreneur",
       isResult: true,
-      title: "Basis Pengusaha Digital",
-      description: "Jalankan bisnis online Anda dari Bali",
+      title: "Digital Entrepreneur Base",
+      description: "Run your online business from Bali",
       recommendation:
-        "Banyak pengusaha menggunakan Bali sebagai basis. Jika melayani klien internasional, ada keuntungan zona waktu dengan Asia/Australia. Pertimbangkan PT PMA untuk legitimasi, meskipun banyak yang beroperasi di area abu-abu dengan visa bisnis.",
+        "Many entrepreneurs use Bali as a base. If serving international clients, timezone advantages with Asia/Australia. Consider PT PMA for legitimacy, though many operate in gray areas on business visas.",
       nextSteps: [
-        "Strategi visa jangka panjang",
-        "Evaluasi PT PMA",
-        "Optimalisasi pajak",
-        "Bangun jaringan lokal",
+        "Long-term visa strategy",
+        "PT PMA evaluation",
+        "Tax optimization",
+        "Build local network",
       ],
     },
     {
       id: "result-timezone-good",
       isResult: true,
-      title: "Kompatibel dengan Zona Waktu",
-      description: "Jadwal kerja harusnya dapat dikelola",
+      title: "Timezone-Compatible",
+      description: "Work schedule should be manageable",
       recommendation:
-        "Bekerja dengan Asia/Australia atau secara asinkron? Sempurna. Jadwal kerja Anda selaras dengan kehidupan di Bali. Anda bisa menikmati aktivitas siang hari dan malam hari.",
+        "Working with Asia/Australia or asynchronously? Perfect. Your work schedule aligns well with Bali life. You can enjoy daytime activities and evenings.",
       nextSteps: [
-        "Pastikan internet andal",
-        "Miliki opsi cadangan",
-        "Tetapkan rutinitas",
-        "Bergabung dengan komunitas coworking",
+        "Secure reliable internet",
+        "Have backup options",
+        "Establish routines",
+        "Join coworking community",
       ],
     },
     {
       id: "result-timezone-europe",
       isResult: true,
-      title: "Jam Kerja Eropa Dapat Dikelola",
-      description: "Rapat sore/malam",
+      title: "European Hours Manageable",
+      description: "Afternoon/evening meetings",
       recommendation:
-        "Selisih 5-7 jam lebih cepat dari Eropa berarti rapat Anda ada di sore/malam hari di Bali. Anda bisa selancar/yoga di pagi hari, bekerja di sore hari. Banyak yang berhasil melakukan ini.",
+        "5-7 hours ahead of Europe means your meetings are in Bali afternoon/evening. You can surf/yoga mornings, work afternoons. Many do this successfully.",
       nextSteps: [
-        "Strukturkan hari-hari Anda",
-        "Aktivitas pagi, kerja sore",
-        "Komunikasi dengan tim",
-        "Jaga batasan",
+        "Structure your days",
+        "Morning activities, afternoon work",
+        "Communication with team",
+        "Maintain boundaries",
       ],
     },
     {
       id: "result-timezone-us",
       isResult: true,
-      title: "Jam Kerja AS Sangat Berat",
-      description: "Butuh gaya hidup 'burung hantu'",
+      title: "US Hours Are Tough",
+      description: "Night owl life required",
       recommendation:
-        "Bekerja jam kerja AS dari Bali berarti bekerja di malam hari. Beberapa orang bisa menanganinya; banyak yang mengalami kelelahan (burn out). Pertimbangkan apakah ini benar-benar cocok untuk Anda jangka panjang, atau negosiasikan pengaturan asinkron.",
+        "Working US hours from Bali means working nights. Some people handle it; many burn out. Consider if this really works for you long-term, or negotiate async arrangements.",
       nextSteps: [
-        "Evaluasi secara jujur",
-        "Periode percobaan sangat disarankan",
-        "Negosiasikan kerja asinkron",
-        "Pertimbangan kesehatan",
+        "Evaluate honestly",
+        "Trial period recommended",
+        "Negotiate async work",
+        "Health considerations",
       ],
     },
     {
       id: "result-retirement-yes",
       isResult: true,
-      title: "Visa Pensiun Tersedia",
-      description: "Usia 55+ bisa mendapatkan KITAS pensiun",
+      title: "Retirement Visa Available",
+      description: "55+ can get retirement KITAS",
       recommendation:
-        "Indonesia menawarkan visa pensiun (KITAS) untuk usia 55+. Persyaratannya meliputi bukti dana/pensiun dan asuransi kesehatan. Memungkinkan tinggal 1 tahun, dapat diperpanjang hingga 5 tahun.",
+        "Indonesia offers a retirement visa (KITAS) for 55+. Requirements include pension/income proof and health insurance. Allows 1-year stay, renewable up to 5 years.",
       nextSteps: [
-        "Riset persyaratan visa pensiun",
-        "Kumpulkan dokumentasi pendapatan",
-        "Asuransi kesehatan diperlukan",
-        "Pertimbangkan area yang cocok untuk pensiunan",
+        "Research retirement visa requirements",
+        "Gather income documentation",
+        "Health insurance required",
+        "Consider areas suited for retirees",
       ],
     },
     {
       id: "result-retirement-no",
       isResult: true,
-      title: "Belum Ada Visa Pensiun",
-      description: "Di bawah 55? Butuh opsi lain",
+      title: "No Retirement Visa Yet",
+      description: "Under 55? Other options needed",
       recommendation:
-        "Tanpa berusia 55+, Anda tidak bisa mendapatkan visa pensiun. Opsi: rotasi visa turis, KITAS investor (mahal), atau Visa Rumah Kedua (butuh simpanan $130k+ di bank). Visa kerja butuh pekerjaan.",
+        "Without being 55+, you can't get retirement visa. Options: tourist visa rotations, investor KITAS (expensive), or Second Home Visa (requires $130k+ in bank). Work visa requires employment.",
       nextSteps: [
-        "Evaluasi opsi visa",
-        "Visa Rumah Kedua jika memenuhi syarat",
-        "Bangun ke arah visa investasi",
-        "Butuh strategi jangka panjang",
+        "Evaluate visa options",
+        "Second Home Visa if qualifying",
+        "Build toward investment visa",
+        "Long-term strategy needed",
       ],
     },
     {
       id: "result-family-school",
       isResult: true,
-      title: "Sekolah Internasional Tersedia",
-      description: "Opsi bagus tapi mahal",
+      title: "International Schools Available",
+      description: "Good options but expensive",
       recommendation:
-        "Bali memiliki sekolah internasional berkualitas (Green School, Canggu Community School, Bali Island School). Biaya: $8.000-25.000/tahun per anak. Opsi sekolah negeri Indonesia terbatas untuk warga asing.",
+        "Bali has quality international schools (Green School, Canggu Community School, Bali Island School). Fees: $8,000-25,000/year per child. Limited Indonesian public school option for foreigners.",
       nextSteps: [
-        "Riset sekolah lebih awal",
-        "Anggarkan $10-25k per anak",
-        "Lokasi dekat sekolah",
-        "Daftar tunggu hal yang umum",
+        "Research schools early",
+        "Budget $10-25k per child",
+        "Location near school",
+        "Waitlists are common",
       ],
     },
     {
       id: "result-family-homeschool",
       isResult: true,
-      title: "Homeschooling di Bali",
-      description: "Komunitas homeschooling yang berkembang",
+      title: "Homeschooling in Bali",
+      description: "Growing homeschool community",
       recommendation:
-        "Komunitas homeschooling yang aktif di Bali, terutama di Ubud. Peluang belajar di luar ruangan, koperasi belajar, dan tutor tersedia. Lebih terjangkau daripada sekolah internasional tetapi butuh keterlibatan orang tua.",
+        "Active homeschool community in Bali, especially Ubud. Outdoor learning opportunities, co-ops, tutors available. More affordable than international schools but requires parent involvement.",
       nextSteps: [
-        "Terhubung dengan grup homeschool",
-        "Perencanaan kurikulum",
-        "Sumber daya belajar",
-        "Aktivitas sosialisasi",
+        "Connect with homeschool groups",
+        "Curriculum planning",
+        "Learning resources",
+        "Socialization activities",
       ],
     },
     {
       id: "result-family-no-kids",
       isResult: true,
-      title: "Keluarga Tanpa Kebutuhan Sekolah",
-      description: "Fokus pada gaya hidup dan lokasi",
+      title: "Family Without School Needs",
+      description: "Focus on lifestyle and location",
       recommendation:
-        "Tanpa batasan sekolah, Anda punya fleksibilitas penuh tentang tempat tinggal. Pertimbangkan area yang berfokus pada orang dewasa atau lokasi yang lebih tenang berdasarkan preferensi Anda.",
+        "Without schooling constraints, you have full flexibility on where to live. Consider adult-focused areas or quieter locations based on your preferences.",
       nextSteps: [
-        "Pilih area berdasarkan minat",
-        "Komunitas pasangan/dewasa",
-        "Pertimbangan layanan kesehatan",
-        "Perencanaan jangka panjang",
+        "Choose area based on interests",
+        "Couples/adult communities",
+        "Healthcare considerations",
+        "Long-term planning",
       ],
     },
     {
       id: "result-business-tourism",
       isResult: true,
-      title: "Bisnis Pariwisata",
-      description: "Kompetitif tapi peluang ada",
+      title: "Tourism Business",
+      description: "Competitive but opportunity exists",
       recommendation:
-        "Pariwisata adalah industri utama Bali. Persaingan sangat ketat. Kesuksesan butuh diferensiasi, pemasaran yang kuat, dan nilai yang nyata. Dibutuhkan PT PMA, investasi minimum IDR 10M.",
+        "Tourism is Bali's main industry. Competition is fierce. Success requires differentiation, strong marketing, and genuine value. PT PMA required, minimum IDR 10B investment.",
       nextSteps: [
-        "Riset pasar yang mendalam",
-        "Butuh posisi unik",
-        "Pendirian PT PMA",
-        "Kemitraan lokal sangat berharga",
+        "Deep market research",
+        "Unique positioning needed",
+        "PT PMA establishment",
+        "Local partnerships valuable",
       ],
     },
     {
       id: "result-business-fnb",
       isResult: true,
-      title: "Bisnis F&B/Restoran",
-      description: "Persaingan tinggi, margin tipis",
+      title: "F&B/Restaurant Business",
+      description: "High competition, thin margins",
       recommendation:
-        "Restoran memiliki tingkat kegagalan yang tinggi di Bali. Sewa mahal di area populer, pergantian staf tinggi, persaingan sengit. Harus skala besar untuk kepemilikan asing (PT PMA).",
+        "Restaurants have high failure rate in Bali. Rent is expensive in popular areas, staff turnover high, competition intense. Must be large-scale for foreign ownership (PT PMA).",
       nextSteps: [
-        "Studi kelayakan mendetail",
-        "Lokasi sangat krusial",
-        "Persyaratan skala besar",
-        "Pertimbangkan waralaba/kemitraan",
+        "Detailed feasibility study",
+        "Location is crucial",
+        "Large-scale requirement",
+        "Consider franchise/partnership",
       ],
     },
     {
       id: "result-business-tech",
       isResult: true,
-      title: "Bisnis Teknologi/Digital",
-      description: "Sektor yang berkembang dengan potensi",
+      title: "Tech/Digital Services",
+      description: "Growing sector with potential",
       recommendation:
-        "Bisnis teknologi bisa berkembang pesat dari Bali dengan melayani klien internasional. Biaya operasional lebih rendah, sumber daya manusia yang baik, gaya hidup menyenangkan. Pendirian PT PMA relatif mudah untuk teknologi.",
+        "Tech businesses can thrive from Bali serving international clients. Lower operational costs, good talent pool, nice lifestyle. PT PMA setup straightforward for tech.",
       nextSteps: [
-        "Pendirian PT PMA",
-        "Rekrutmen talenta lokal",
-        "Pengembangan klien",
-        "Jejaring komunitas",
+        "PT PMA establishment",
+        "Local talent recruitment",
+        "Client development",
+        "Community networking",
       ],
     },
     {
       id: "result-business-export",
       isResult: true,
-      title: "Bisnis Ekspor",
-      description: "Manfaatkan sumber daya Indonesia",
+      title: "Export Business",
+      description: "Leverage Indonesia's resources",
       recommendation:
-        "Indonesia memiliki produk yang bisa diekspor: furnitur, kerajinan tangan, fesyen, produk makanan. Butuh pemahaman tentang rantai pasok, kontrol kualitas, dan regulasi ekspor.",
+        "Indonesia has exportable products: furniture, handicrafts, fashion, food products. Requires understanding of supply chain, quality control, and export regulations.",
       nextSteps: [
-        "Riset produk/pasar",
-        "Hubungan pemasok",
-        "Izin ekspor",
-        "Sistem kontrol kualitas",
+        "Product/market research",
+        "Supplier relationships",
+        "Export licenses",
+        "Quality control systems",
       ],
     },
   ]}
@@ -557,84 +543,84 @@ Namun, ini bukanlah surga tanpa komplikasi. Panduan ini memberikan gambaran juju
 
 ---
 
-## Realita Biaya Hidup
+## Realitas Biaya Hidup
 
-Nodu bicara angka nyata. Ini adalah perkiraan 2026 berdasarkan pengeluaran ekspat yang sebenarnya:
+Mari bicara angka nyata. Ini adalah estimasi tahun 2026 berdasarkan pengeluaran aktual ekspatriat:
 
 <Calculator
-  title="Kalkulator Anggaran Bulanan Bali"
-  description="Perkirakan biaya hidup bulanan Anda di Bali"
+  title="Bali Monthly Budget Calculator"
+  description="Estimate your monthly living costs in Bali"
   fields={[
     {
       id: "housing-type",
-      label: "Tipe Akomodasi",
+      label: "Accommodation Type",
       type: "select",
       options: [
-        { value: "room", label: "Kamar/studio" },
-        { value: "1bed", label: "Apartemen 1 kamar" },
-        { value: "2bed", label: "Vila 2 kamar" },
-        { value: "3bed-pool", label: "Vila 3 kamar dengan kolam renang" },
-        { value: "premium", label: "Vila premium" }
+        { value: "room", label: "Room/studio" },
+        { value: "1bed", label: "1-bedroom apartment" },
+        { value: "2bed", label: "2-bedroom villa" },
+        { value: "3bed-pool", label: "3-bed villa with pool" },
+        { value: "premium", label: "Premium villa" }
       ],
       defaultValue: "2bed"
     },
     {
       id: "area",
-      label: "Lokasi",
+      label: "Location",
       type: "select",
       options: [
         { value: "canggu", label: "Canggu/Seminyak (premium)" },
         { value: "ubud", label: "Ubud" },
         { value: "sanur", label: "Sanur" },
-        { value: "other", label: "Area lainnya" }
+        { value: "other", label: "Other areas" }
       ],
       defaultValue: "canggu"
     },
     {
       id: "food-style",
-      label: "Preferensi Makanan",
+      label: "Food Preferences",
       type: "select",
       options: [
-        { value: "local", label: "Kebanyakan makanan lokal" },
-        { value: "mixed", label: "Campuran lokal dan Barat" },
-        { value: "western", label: "Kebanyakan Barat/restoran" },
-        { value: "premium", label: "Sering makan mewah" }
+        { value: "local", label: "Mostly local food" },
+        { value: "mixed", label: "Mix of local and Western" },
+        { value: "western", label: "Mostly Western/restaurants" },
+        { value: "premium", label: "Fine dining regular" }
       ],
       defaultValue: "mixed"
     },
     {
       id: "transport",
-      label: "Transportasi",
+      label: "Transportation",
       type: "select",
       options: [
-        { value: "scooter", label: "Sewa motor" },
-        { value: "car", label: "Sewa mobil" },
-        { value: "gojek", label: "Kebanyakan Gojek/Grab" },
-        { value: "driver", label: "Sopir pribadi" }
+        { value: "scooter", label: "Scooter rental" },
+        { value: "car", label: "Car rental" },
+        { value: "gojek", label: "Gojek/Grab mostly" },
+        { value: "driver", label: "Private driver" }
       ],
       defaultValue: "scooter"
     },
     {
       id: "lifestyle",
-      label: "Tambahan Gaya Hidup",
+      label: "Lifestyle Extras",
       type: "select",
       options: [
-        { value: "minimal", label: "Minimal (hidup tenang)" },
-        { value: "moderate", label: "Moderat (gym, sesekali makan di luar)" },
-        { value: "active", label: "Aktif (beach club, aktivitas)" },
-        { value: "premium", label: "Premium (gaya hidup penuh)" }
+        { value: "minimal", label: "Minimal (quiet life)" },
+        { value: "moderate", label: "Moderate (gym, occasional dining)" },
+        { value: "active", label: "Active (beach clubs, activities)" },
+        { value: "premium", label: "Premium (full lifestyle)" }
       ],
       defaultValue: "moderate"
     },
     {
       id: "health-insurance",
-      label: "Sertakan Asuransi Kesehatan?",
+      label: "Include Health Insurance?",
       type: "checkbox",
       defaultValue: true
     },
     {
       id: "coworking",
-      label: "Sertakan Coworking?",
+      label: "Include Coworking?",
       type: "checkbox",
       defaultValue: false
     }
@@ -647,52 +633,52 @@ Nodu bicara angka nyata. Ini adalah perkiraan 2026 berdasarkan pengeluaran ekspa
     const housingCosts = {
       room: { canggu: 5000000, ubud: 4000000, sanur: 4500000, other: 3000000 },
       '1bed': { canggu: 8000000, ubud: 6000000, sanur: 7000000, other: 5000000 },
-      '2bed': { canggu: 10000012, ubud: 84000510, sanur: 12000000, other: 8000000 },
-      '3bed-pool': { canggu: 25000000, ubud: 10000013, sanur: 84000600, other: 10000012 },
+      '2bed': { canggu: 15000000, ubud: 10000000, sanur: 12000000, other: 8000000 },
+      '3bed-pool': { canggu: 25000000, ubud: 18000000, sanur: 20000000, other: 15000000 },
       premium: { canggu: 45000000, ubud: 35000000, sanur: 40000000, other: 30000000 }
     };
     const housing = housingCosts[values['housing-type']][values.area];
     total += housing;
-    breakdown.push({ label: "Akomodasi", amount: housing });
+    breakdown.push({ label: "Accommodation", amount: housing });
 
     // Food
-    const foodCosts = { local: 3000000, mixed: 6000000, western: 84000510, premium: 10000013 };
+    const foodCosts = { local: 3000000, mixed: 6000000, western: 10000000, premium: 18000000 };
     const food = foodCosts[values['food-style']];
     total += food;
-    breakdown.push({ label: "Makanan & Restoran", amount: food });
+    breakdown.push({ label: "Food & Dining", amount: food });
 
     // Transport
     const transportCosts = { scooter: 1200000, car: 8000000, gojek: 2500000, driver: 12000000 };
     const transport = transportCosts[values.transport];
     total += transport;
-    breakdown.push({ label: "Transportasi", amount: transport });
+    breakdown.push({ label: "Transportation", amount: transport });
 
-    // Utilities (listrik, air, internet)
+    // Utilities (electric, water, internet)
     const utilities = 1500000;
     total += utilities;
-    breakdown.push({ label: "Utilitas & Internet", amount: utilities });
+    breakdown.push({ label: "Utilities & Internet", amount: utilities });
 
-    // Gaya hidup
-    const lifestyleCosts = { minimal: 1000001, moderate: 3000000, active: 6000000, premium: 12000000 };
+    // Lifestyle extras
+    const lifestyleCosts = { minimal: 1000000, moderate: 3000000, active: 6000000, premium: 12000000 };
     const lifestyle = lifestyleCosts[values.lifestyle];
     total += lifestyle;
-    breakdown.push({ label: "Gaya Hidup & Hiburan", amount: lifestyle });
+    breakdown.push({ label: "Lifestyle & Entertainment", amount: lifestyle });
 
-    // Asuransi kesehatan
+    // Health insurance
     if (values['health-insurance']) {
       const insurance = 2500000;
       total += insurance;
-      breakdown.push({ label: "Asuransi Kesehatan", amount: insurance });
+      breakdown.push({ label: "Health Insurance", amount: insurance });
     }
 
     // Coworking
     if (values.coworking) {
       const coworking = 2500000;
       total += coworking;
-      breakdown.push({ label: "Ruang Coworking", amount: coworking });
+      breakdown.push({ label: "Coworking Space", amount: coworking });
     }
 
-    // Konversi ke USD untuk referensi
+    // Convert to USD for reference
     const usdRate = 16000;
     const usdTotal = Math.round(total / usdRate);
 
@@ -700,18 +686,18 @@ Nodu bicara angka nyata. Ini adalah perkiraan 2026 berdasarkan pengeluaran ekspa
       total,
       breakdown,
       currency: "IDR",
-      note: `Sekitar $${usdTotal} USD dengan kurs saat ini. Tidak termasuk biaya visa dan perjalanan.`
+      note: `Approximately $${usdTotal} USD at current rates. Excludes visa costs and travel.`
     };
 
 }}
 />
 
-<InfoCard variant="tip" title="Bicara Nyata: Biaya Tersembunyi">
+<InfoCard variant="tip" title="Real Talk: Hidden Costs">
 
-  Anggaran di atas tidak termasuk: - **Biaya visa**: $500-2.000/tahun tergantung
-  jenisnya - **Tiket pesawat pulang**: Bervariasi - **Dana darurat**: Selalu
-  siapkan untuk 3-6 bulan - **Biaya kesehatan mandiri**: Asuransi tidak
-  menanggung semuanya - **Persiapan awal**: Deposit, perabotan, pembelian motor
+  Anggaran di atas tidak mencakup: - **Biaya visa**: $500-2.000/tahun, tergantung
+  jenis - **Penerbangan pulang**: Bervariasi - **Dana darurat**: Selalu siapkan tabungan
+  untuk 3-6 bulan - **Biaya kesehatan di luar pertanggungan**: Asuransi tidak menanggung semuanya -
+  **Persiapan awal**: Deposit, furnitur, pembelian skuter
 </InfoCard>
 
 ---
@@ -719,116 +705,116 @@ Nodu bicara angka nyata. Ini adalah perkiraan 2026 berdasarkan pengeluaran ekspa
 ## Tempat Tinggal: Panduan Area
 
 <ComparisonTable
-  title="Perbandingan Area di Bali"
-  description="Temukan lingkungan yang tepat untuk gaya hidup Anda"
+  title="Bali Areas Compared"
+  description="Find the right neighborhood for your lifestyle"
   items={[
     {
       name: "Canggu",
-      subtitle: "Pusat pengembara digital",
+      subtitle: "Digital nomad central",
       values: {
-        Vibe: "Hip, sibuk, sosial",
-        "Paling Cocok Untuk": "Pekerja jarak jauh, peselancar, sosialita",
-        "Tingkat Biaya": "Tinggi",
-        "Lalu Lintas": "Buruk",
-        Pantai: "Pantai selancar yang bagus",
-        "Dunia Kuliner": "Luar biasa (Barat)",
-        "Kehidupan Malam": "Ya",
-        Keluarga: "Moderat",
-        Internet: "Luar biasa",
+        Vibe: "Hip, busy, social",
+        "Best For": "Remote workers, surfers, socialites",
+        "Cost Level": "High",
+        Traffic: "Bad",
+        Beach: "Good surf beaches",
+        "Food Scene": "Excellent (Western)",
+        Nightlife: "Yes",
+        Family: "Moderate",
+        Internet: "Excellent",
       },
       highlight: true,
     },
     {
       name: "Seminyak",
-      subtitle: "Beach club & butik",
+      subtitle: "Beach clubs & boutiques",
       values: {
-        Vibe: "Mewah, trendi",
-        "Paling Cocok Untuk": "Pecinta pesta, pemerhati fesyen",
-        "Tingkat Biaya": "Sangat tinggi",
-        "Lalu Lintas": "Buruk",
-        Pantai: "Bagus (matahari terbenam)",
-        "Dunia Kuliner": "Luar biasa",
-        "Kehidupan Malam": "Terbaik di Bali",
-        Keluarga: "Rendah",
-        Internet: "Luar biasa",
+        Vibe: "Upscale, trendy",
+        "Best For": "Party people, fashionistas",
+        "Cost Level": "Very high",
+        Traffic: "Bad",
+        Beach: "Good (sunset)",
+        "Food Scene": "Excellent",
+        Nightlife: "Best in Bali",
+        Family: "Low",
+        Internet: "Excellent",
       },
     },
     {
       name: "Ubud",
-      subtitle: "Budaya & kesehatan",
+      subtitle: "Culture & wellness",
       values: {
-        Vibe: "Spiritual, seni",
-        "Paling Cocok Untuk": "Yogi, seniman, keluarga",
-        "Tingkat Biaya": "Menengah",
-        "Lalu Lintas": "Moderat",
-        Pantai: "Tidak ada (daratan)",
-        "Dunia Kuliner": "Bagus (fokus sehat)",
-        "Kehidupan Malam": "Minimal",
-        Keluarga: "Luar biasa",
-        Internet: "Bagus",
+        Vibe: "Spiritual, artsy",
+        "Best For": "Yogis, artists, families",
+        "Cost Level": "Medium",
+        Traffic: "Moderate",
+        Beach: "None (inland)",
+        "Food Scene": "Good (healthy focus)",
+        Nightlife: "Minimal",
+        Family: "Excellent",
+        Internet: "Good",
       },
     },
     {
       name: "Sanur",
-      subtitle: "Santai & mapan",
+      subtitle: "Relaxed & established",
       values: {
-        Vibe: "Tenang, dewasa",
-        "Paling Cocok Untuk": "Keluarga, pensiunan, pencari ketenangan",
-        "Tingkat Biaya": "Menengah-Tinggi",
-        "Lalu Lintas": "Rendah",
-        Pantai: "Laguna yang tenang",
-        "Dunia Kuliner": "Bagus",
-        "Kehidupan Malam": "Minimal",
-        Keluarga: "Luar biasa",
-        Internet: "Bagus",
+        Vibe: "Quiet, mature",
+        "Best For": "Families, retirees, calm seekers",
+        "Cost Level": "Medium-High",
+        Traffic: "Low",
+        Beach: "Calm lagoon",
+        "Food Scene": "Good",
+        Nightlife: "Minimal",
+        Family: "Excellent",
+        Internet: "Good",
       },
     },
     {
       name: "Uluwatu/Bukit",
-      subtitle: "Tebing & selancar serius",
+      subtitle: "Cliffs & serious surf",
       values: {
-        Vibe: "Fokus selancar, indah",
-        "Paling Cocok Untuk": "Peselancar berpengalaman, pecinta tebing",
-        "Tingkat Biaya": "Menengah-Tinggi",
-        "Lalu Lintas": "Moderat",
-        Pantai: "Luar biasa (reef break)",
-        "Dunia Kuliner": "Bagus",
-        "Kehidupan Malam": "Beach club",
-        Keluarga: "Moderat",
-        Internet: "Bagus",
+        Vibe: "Surf focused, scenic",
+        "Best For": "Experienced surfers, cliff lovers",
+        "Cost Level": "Medium-High",
+        Traffic: "Moderate",
+        Beach: "Excellent (reef breaks)",
+        "Food Scene": "Good",
+        Nightlife: "Beach clubs",
+        Family: "Moderate",
+        Internet: "Good",
       },
     },
     {
-      name: "Amed/Timur",
-      subtitle: "Tenang & tradisional",
+      name: "Amed/East",
+      subtitle: "Quiet & traditional",
       values: {
-        Vibe: "Lambat, autentik",
-        "Paling Cocok Untuk": "Penyelam, pencari kedamaian",
-        "Tingkat Biaya": "Rendah",
-        "Lalu Lintas": "Tidak ada",
-        Pantai: "Pasir hitam, menyelam",
-        "Dunia Kuliner": "Dasar",
-        "Kehidupan Malam": "Tidak ada",
-        Keluarga: "Moderat",
-        Internet: "Dasar",
+        Vibe: "Slow, authentic",
+        "Best For": "Divers, peace seekers",
+        "Cost Level": "Low",
+        Traffic: "None",
+        Beach: "Black sand, diving",
+        "Food Scene": "Basic",
+        Nightlife: "None",
+        Family: "Moderate",
+        Internet: "Basic",
       },
     },
   ]}
   categories={[
     {
       id: "general",
-      label: "Umum",
-      fields: ["Vibe", "Paling Cocok Untuk", "Tingkat Biaya"],
+      label: "General",
+      fields: ["Vibe", "Best For", "Cost Level"],
     },
     {
       id: "practical",
-      label: "Praktis",
-      fields: ["Lalu Lintas", "Pantai", "Internet"],
+      label: "Practical",
+      fields: ["Traffic", "Beach", "Internet"],
     },
     {
       id: "lifestyle",
-      label: "Gaya Hidup",
-      fields: ["Dunia Kuliner", "Kehidupan Malam", "Keluarga"],
+      label: "Lifestyle",
+      fields: ["Food Scene", "Nightlife", "Family"],
     },
   ]}
 />
@@ -837,103 +823,101 @@ Nodu bicara angka nyata. Ini adalah perkiraan 2026 berdasarkan pengeluaran ekspa
 
 ## Layanan Kesehatan di Bali
 
-<InfoCard variant="warning" title="Pemeriksaan Realita Layanan Kesehatan">
-Bali memiliki rumah sakit swasta yang bagus tetapi **terbatas untuk kondisi serius**. Untuk operasi besar, perawatan kanker, atau masalah kompleks, Anda mungkin perlu terbang ke Singapura atau kembali ke negara asal.
+<InfoCard variant="warning" title="Healthcare Reality Check">
+Bali memiliki rumah sakit swasta yang baik, tetapi **terbatas untuk kondisi serius**. Untuk operasi besar, perawatan kanker, atau masalah kompleks, Anda mungkin perlu terbang ke Singapura atau kembali ke negara asal.
 
-**Selalu siapkan:**
+**Selalu miliki:**
 
 - Asuransi kesehatan internasional
-- Cakupan evakuasi darurat
-- Uang untuk pembayaran di muka (rumah sakit membutuhkan deposit)
+- Perlindungan evakuasi darurat
+- Dana untuk pembayaran di muka (rumah sakit memerlukan deposit)
 </InfoCard>
 
-### Opsi Rumah Sakit
+### Pilihan Rumah Sakit
 
-| Rumah Sakit       | Lokasi         | Tingkat       | Catatan                              |
-| ----------------- | -------------- | ------------- | ------------------------------------ |
-| **BIMC**          | Kuta, Xafo Tat | Internasional | Paling fokus ekspat, darurat 24/7    |
-| **Siloam**        | Kuta           | Bagus         | Rumah sakit besar, harga wajar       |
-| **Kasih Ibu**     | Denpasar       | Bagus         | Rumah sakit lokal, fokus Indonesia   |
-| **Prima Medika**  | Denpasar       | Bagus         | Bagian internasional yang berkembang |
-| **Surya Husadha** | Denpasar       | Dasar-Bagus   | Layanan darurat                      |
+| Rumah Sakit       | Lokasi          | Tingkat       | Catatan                            |
+| ----------------- | --------------- | ------------- | ---------------------------------- |
+| **BIMC**          | Kuta, Nusa Dua  | Internasional | Paling berfokus pada ekspatriat, darurat 24/7 |
+| **Siloam**        | Kuta            | Baik          | Rumah sakit besar, harga wajar     |
+| **Kasih Ibu**     | Denpasar        | Baik          | Rumah sakit lokal, berfokus pada Indonesia |
+| **Prima Medika**  | Denpasar        | Baik          | Bagian internasional yang berkembang |
+| **Surya Husadha** | Denpasar        | Dasar-Baik    | Layanan darurat                    |
 
 ### Rekomendasi Asuransi Kesehatan
 
 <Checklist
-  title="Daftar Periksa Asuransi Kesehatan"
-  description="Pastikan kebijakan Anda mencakup hal-hal penting ini"
+  title="Health Insurance Checklist"
+  description="Make sure your policy covers these essentials"
   persistKey="health-insurance-bali"
   items={[
     {
       id: "inpatient",
-      label: "Cakupan rawat inap",
-      description: "Menginap di rumah sakit, operasi, kamar & konsumsi",
+      label: "Inpatient coverage",
+      description: "Hospital stays, surgery, room & board",
       required: true,
       category: "essential",
     },
     {
       id: "outpatient",
-      label: "Cakupan rawat jalan",
-      description: "Kunjungan dokter, spesialis, diagnostik",
+      label: "Outpatient coverage",
+      description: "Doctor visits, specialists, diagnostics",
       required: true,
       category: "essential",
     },
     {
       id: "emergency",
-      label: "Layanan darurat",
-      description: "Akses unit gawat darurat 24/7",
+      label: "Emergency services",
+      description: "24/7 emergency room access",
       required: true,
       category: "essential",
     },
     {
       id: "evacuation",
-      label: "Evakuasi medis",
-      description: "Ambulans udara ke Singapura/negara asal",
+      label: "Medical evacuation",
+      description: "Air ambulance to Singapore/home",
       required: true,
       category: "essential",
     },
     {
       id: "repatriation",
-      label: "Cakupan repatriasi",
-      description:
-        "Kembali ke negara asal untuk perawatan atau dalam kasus kematian",
+      label: "Repatriation coverage",
+      description: "Return home for treatment or in case of death",
       required: true,
       category: "essential",
     },
     {
       id: "dental",
-      label: "Cakupan gigi",
-      description: "Perawatan gigi dasar",
+      label: "Dental coverage",
+      description: "Basic dental care",
       required: false,
       category: "optional",
     },
     {
       id: "maternity",
-      label: "Cakupan persalinan",
-      description: "Jika merencanakan kehamilan",
+      label: "Maternity coverage",
+      description: "If planning pregnancy",
       required: false,
       category: "optional",
     },
     {
       id: "preexisting",
-      label: "Kondisi yang sudah ada sebelumnya",
-      description: "Cakupan untuk masalah kesehatan yang sudah ada",
+      label: "Pre-existing conditions",
+      description: "Coverage for existing health issues",
       required: false,
       category: "important",
     },
     {
       id: "direct-billing",
-      label: "Tagihan langsung dengan rumah sakit Bali",
-      description:
-        "Membayar rumah sakit secara langsung, bukan penggantian (reimbursement)",
+      label: "Direct billing with Bali hospitals",
+      description: "Pay hospital directly, not reimbursement",
       required: false,
       category: "important",
     },
   ]}
   categories={[
-    { id: "essential", label: "Penting", color: "red" },
-    { id: "important", label: "Utama", color: "amber" },
-    { id: "optional", label: "Opsional", color: "blue" },
+    { id: "essential", label: "Essential", color: "red" },
+    { id: "important", label: "Important", color: "amber" },
+    { id: "optional", label: "Optional", color: "blue" },
   ]}
   showProgress={true}
 />
@@ -942,195 +926,192 @@ Bali memiliki rumah sakit swasta yang bagus tetapi **terbatas untuk kondisi seri
 
 ## Integrasi Budaya
 
-<InfoCard variant="note" title="Bali Bukan Sekadar Pantai">
+<InfoCard variant="note" title="Bali Is Not Just a Beach">
 
-  Bali adalah pulau Hindu yang sangat spiritual di negara dengan mayoritas
-  Muslim. Budayanya hutu, kompleks, dan patut dipahami. Anda akan mendapatkan
-  lebih banyak pengalaman jika berinteraksi dengan hormat.
+  Bali adalah pulau Hindu yang sangat spiritual di negara dengan mayoritas Muslim.
+  Budayanya kaya, kompleks, dan layak dipahami. Anda akan mendapatkan lebih banyak dari
+  pengalaman Anda apabila terlibat dengannya secara penuh hormat.
 </InfoCard>
 
-### Hal yang Boleh dan Tidak Boleh Dilakukan Secara Budaya
+### Yang Boleh dan Tidak Boleh Dilakukan dalam Budaya Lokal
 
-**BOLEH:**
+**LAKUKAN:**
 
-- Belajar bahasa Indonesia dasar (bahkan sedikit pun sangat membantu)
-- Menghadiri upacara pura jika diundang (berpakaian dengan pantas)
+- Pelajari bahasa Indonesia dasar (bahkan sedikit sangat membantu)
+- Hadiri upacara di pura jika diundang (berpakaianlah dengan pantas)
 - Berpartisipasi dalam perayaan lokal (Galungan, Nyepi)
-- Mendukung bisnis dan seniman lokal
-- Sabar—'jam karet' itu ada
-- Tunjukkan rasa hormat pada sesajen (jangan diinjak)
+- Dukung bisnis dan perajin lokal
+- Bersabarlah—waktu ala Bali memang ada
+- Tunjukkan rasa hormat terhadap canang (jangan menginjaknya)
 
-**TIDAK BOLEH:**
+**JANGAN:**
 
-- Menyentuh kepala orang lain
-- Menunjuk dengan kaki atau jari telunjuk
-- Memasuki pura saat sedang menstruasi
+- Menyentuh kepala orang
+- Menunjuk menggunakan kaki atau jari
+- Memasuki pura saat menstruasi
 - Mengenakan pakaian terbuka di desa/pura
 - Mengharapkan efisiensi ala Barat di mana-mana
-- Mengeluh dengan keras tentang cara-cara orang Indonesia
+- Mengeluh keras tentang kebiasaan Indonesia
 
-<InfoCard variant="tip" title="Belajar Bahasa Indonesia">
-Bahkan bahasa Indonesia dasar akan mengubah pengalaman Anda:
-- **Terima kasih**
-- **Selamat pagi/siang/sore/malam**
-- **Berapa?**
-- **Tidak apa-apa**
-- **Enak**
+<InfoCard variant="tip" title="Learn Indonesian">
+Bahkan bahasa Indonesia dasar dapat mengubah pengalaman Anda:
+- **Terima kasih** = Thank you
+- **Selamat pagi/siang/sore/malam** = Good morning/afternoon/evening/night
+- **Berapa?** = How much?
+- **Tidak apa-apa** = No problem
+- **Enak** = Delicious
 
-Banyak orang Bali berbicara bahasa Inggris di area turis, tetapi mencoba bahasa Indonesia menunjukkan rasa hormat dan membuka peluang.
+Banyak orang Bali berbicara bahasa Inggris di area wisata, tetapi mencoba berbahasa Indonesia menunjukkan rasa hormat dan membuka pintu.
 
 </InfoCard>
 
 ---
 
-## Bagian-Bagian Sulit (Kenyataan Jujur)
+## Bagian Sulitnya (Kebenaran yang Jujur)
 
-### Lalu Lintas
+### Kemacetan
 
-Lalu lintas Bali benar-benar buruk, terutama di selatan. Rencanakan hidup Anda di sekitarnya:
+Kemacetan di Bali benar-benar buruk, terutama di selatan. Rencanakan hidup Anda dengan mempertimbangkannya:
 
-- Tinggal dekat dengan tempat Anda menghabiskan waktu
-- Hindari jam sibuk (7-9 pagi, 5-8 malam)
-- Gunakan motor (lebih cepat tapi lebih berisiko)
-- Terima ini sebagai bagian dari kesepakatan
+- Tinggallah dekat dengan tempat Anda menghabiskan waktu
+- Hindari jam sibuk (07.00-09.00, 17.00-20.00)
+- Gunakan motor (lebih cepat tetapi lebih berisiko)
+- Terimalah sebagai bagian dari konsekuensinya
 
 ### Birokrasi
 
-Birokrasi Indonesia bisa membuat frustrasi:
+Birokrasi Indonesia dapat membuat frustrasi:
 
-- Proses visa sangat kompleks
-- Izin bisnis butuh kesabaran
-- Segala sesuatu butuh waktu lebih lama dari yang diharapkan
-- Koneksi membantu (tetapi tidak esensial)
+- Proses visa rumit
+- Izin usaha memerlukan kesabaran
+- Banyak hal memakan waktu lebih lama dari perkiraan
+- Koneksi membantu (tetapi tidak wajib)
 
-### Rasa Terisolasi Bisa Muncul
+### Rasa Terisolasi Dapat Muncul Perlahan
 
-"Gelembung ekspat" itu nyata:
+"Bubble ekspatriat" itu nyata:
 
-- Banyak ekspat hanya bersosialisasi dengan orang asing lainnya
-- Indonesia bisa terasa "asing" bahkan setelah bertahun-tahun
-- Lingkaran sosial bisa bersifat sementara (orang datang dan pergi)
-- Berusahalah untuk membangun pertemanan yang beragam
+- Banyak ekspatriat hanya bersosialisasi dengan warga asing lainnya
+- Indonesia dapat terasa "asing" bahkan setelah bertahun-tahun
+- Lingkaran sosial bisa bersifat sementara (orang pergi)
+- Berusahalah membangun persahabatan yang beragam
 
-### Sebenarnya Sudah Tidak Semurah Itu Lagi
+### Sebenarnya Tidak Semurah Dulu
 
-Biaya-biaya di Bali telah naik secara signifikan:
+Biaya di Bali telah meningkat secara signifikan:
 
-- Sewa di area utama menyaingi beberapa kota di Barat
-- Gaya hidup ala Barat tidaklah murah
-- Biaya medis bisa melonjak secara tidak terduga
+- Sewa di area utama menyaingi beberapa kota Barat
+- Gaya hidup Barat tidak murah
+- Biaya medis dapat melonjak secara tak terduga
 - Biaya visa terus bertambah
 
 ### Tantangan Infrastruktur
 
-- Pemadaman listrik kadang terjadi (siapkan cadangan/UPS)
-- Kualitas air butuh filter
-- Jalanan banjir di musim hujan
-- Internet biasanya bagus tetapi tidak selalu
+- Listrik padam dapat terjadi (siapkan cadangan/UPS)
+- Kualitas air memerlukan filter
+- Jalanan banjir saat musim hujan
+- Internet biasanya baik, tetapi tidak selalu
 
 ---
 
-## Daftar Periksa Pindah ke Bali
+## Checklist Pindah ke Bali
 
 <Checklist
-  title="Persiapan Sebelum Pindah"
-  description="Selesaikan ini sebelum pindah ke Bali"
+  title="Pre-Move Preparation"
+  description="Complete these before relocating to Bali"
   persistKey="bali-move-checklist"
   items={[
     {
       id: "visa-strategy",
-      label: "Strategi visa sudah diputuskan",
-      description:
-        "Ketahui visa mana yang akan Anda gunakan dan persyaratannya",
+      label: "Visa strategy decided",
+      description: "Know which visa you'll use and requirements",
       required: true,
       category: "legal",
     },
     {
       id: "passport-validity",
-      label: "Paspor berlaku 18+ bulan",
-      description:
-        "Diperlukan untuk sebagian besar visa dan ketenangan pikiran",
+      label: "Passport valid 18+ months",
+      description: "Required for most visas and peace of mind",
       required: true,
       category: "legal",
     },
     {
       id: "health-insurance",
-      label: "Asuransi kesehatan internasional",
-      description: "Kebijakan aktif dengan cakupan Indonesia",
+      label: "International health insurance",
+      description: "Active policy with Indonesia coverage",
       required: true,
       category: "health",
     },
     {
       id: "vaccinations",
-      label: "Vaksinasi diperbarui",
-      description: "Hepatitis A/B, Tifus sangat disarankan",
+      label: "Vaccinations updated",
+      description: "Hepatitis A/B, Typhoid recommended",
       required: false,
       category: "health",
     },
     {
       id: "emergency-fund",
-      label: "Dana darurat (3-6 bulan)",
-      description: "Cadangan tunai untuk situasi tak terduga",
+      label: "Emergency fund (3-6 months)",
+      description: "Cash reserve for unexpected situations",
       required: true,
       category: "financial",
     },
     {
       id: "bank-notify",
-      label: "Bank diberitahu tentang rencana perjalanan",
-      description: "Mencegah pemblokiran kartu saat digunakan di luar negeri",
+      label: "Bank notified of travel",
+      description: "Prevent card blocks when using abroad",
       required: true,
       category: "financial",
     },
     {
       id: "international-card",
-      label: "Kartu debit/kredit internasional bebas biaya",
-      description: "Wise, Revolut, dll.",
+      label: "No-fee international debit/credit card",
+      description: "Wise, Revolut, Charles Schwab etc.",
       required: true,
       category: "financial",
     },
     {
       id: "drivers-license",
-      label: "Izin Mengemudi Internasional",
-      description: "Jika Anda berencana menyetir/berkendara",
+      label: "International Driving Permit",
+      description: "If you plan to drive/ride",
       required: false,
       category: "practical",
     },
     {
       id: "accommodation",
-      label: "Akomodasi bulan pertama sudah dipesan",
-      description:
-        "Jangan tanda tangani sewa jangka panjang sebelum melihat langsung",
+      label: "First month accommodation booked",
+      description: "Don't sign long-term lease before seeing",
       required: true,
       category: "practical",
     },
     {
       id: "vpn",
-      label: "Langganan VPN",
-      description: "Beberapa situs diblokir di Indonesia",
+      label: "VPN subscription",
+      description: "Some sites blocked in Indonesia",
       required: false,
       category: "tech",
     },
     {
       id: "phone",
-      label: "Ponsel tidak terkunci (unlocked)",
-      description: "Untuk kartu SIM Indonesia",
+      label: "Unlocked phone",
+      description: "For Indonesian SIM card",
       required: true,
       category: "tech",
     },
     {
       id: "important-docs",
-      label: "Dokumen penting sudah didigitalkan",
-      description: "Paspor, asuransi, kualifikasi",
+      label: "Important documents digitized",
+      description: "Passport, insurance, qualifications",
       required: true,
       category: "practical",
     },
   ]}
   categories={[
-    { id: "legal", label: "Hukum", color: "blue" },
-    { id: "health", label: "Kesehatan", color: "red" },
-    { id: "financial", label: "Keuangan", color: "green" },
-    { id: "practical", label: "Praktis", color: "amber" },
-    { id: "tech", label: "Teknologi", color: "purple" },
+    { id: "legal", label: "Legal", color: "blue" },
+    { id: "health", label: "Health", color: "red" },
+    { id: "financial", label: "Financial", color: "green" },
+    { id: "practical", label: "Practical", color: "amber" },
+    { id: "tech", label: "Tech", color: "purple" },
   ]}
   showProgress={true}
   allowExport={true}
@@ -1140,32 +1121,32 @@ Biaya-biaya di Bali telah naik secara signifikan:
 
 ## Apakah Ini Layak?
 
-Meskipun ada tantangan, ribuan ekspat membangun kehidupan yang memuaskan di Bali setiap tahun. Pulau ini menawarkan:
+Terlepas dari berbagai tantangannya, ribuan ekspatriat membangun kehidupan yang memuaskan di Bali setiap tahun. Pulau ini menawarkan:
 
-- **Keindahan alam** yang benar-benar menenangkan
-- **Komunitas** orang-orang yang berpikiran sama
+- **Keindahan alam** yang benar-benar menyegarkan
+- **Komunitas** orang-orang yang sepemikiran
 - **Stres yang lebih rendah** (setelah Anda beradaptasi)
-- **Budaya yang hutu** untuk dijelajahi
+- **Budaya yang kaya** untuk dijelajahi
 - **Iklim** yang disukai banyak orang
-- **Nilai** (jika Anda cerdas dalam mengelolanya)
+- **Nilai** (jika Anda cermat)
 
-Kuncinya adalah datang dengan **ekspektasi yang realistis**. Ini bukan pelarian dari tantangan hidup—ini adalah serangkaian tantangan yang berbeda di lingkungan yang indah.
+Kuncinya adalah datang dengan **ekspektasi yang realistis**. Ini bukan pelarian dari tantangan hidup—melainkan serangkaian tantangan berbeda dalam suasana yang indah.
 
 ---
 
 ## Punya Pertanyaan?
 
-Setiap situasi berbeda. Jika Anda memiliki pertanyaan spesifik tentang pindah ke atau tinggal di Bali:
+Setiap situasi berbeda. Jika Anda memiliki pertanyaan khusus tentang pindah ke atau tinggal di Bali:
 
 <AskZantara
-  context="Tinggal di Bali, kehidupan ekspat, biaya hidup, area, layanan kesehatan, budaya, hal praktis"
-  placeholder="Tanyakan tentang kehidupan di Bali..."
+  context="Living in Bali, expat life, cost of living, areas, healthcare, culture, practical matters"
+  placeholder="Ask about Bali life..."
   suggestedQuestions={[
-    "Mana area termurah untuk tinggal di Bali?",
-    "Apakah Bali aman untuk keluarga?",
-    "Bagaimana cara membuka rekening bank di Indonesia?",
-    "Kecepatan internet seperti apa yang bisa saya harapkan?",
-    "Bagaimana cara menemukan vila untuk disewa?",
+    "What's the cheapest area to live in Bali?",
+    "Is Bali safe for families?",
+    "How do I open a bank account in Indonesia?",
+    "What internet speeds can I expect?",
+    "How do I find a villa to rent?",
   ]}
 />
 
@@ -1174,18 +1155,17 @@ Setiap situasi berbeda. Jika Anda memiliki pertanyaan spesifik tentang pindah ke
 ## Artikel Terkait
 
 - [Biaya Hidup di Bali 2026](/insights/lifestyle/cost-of-living-bali)
-- [Layanan Kesehatan di Indonesia: Asuransi & Rumah Sakit](/living/healthcare-system-indonesia?lang=id)
-- [Area Terbaik untuk Tinggal di Bali](/living/best-areas-bali-2026?lang=id)
-- [Daftar Periksa Pindah ke Bali](/living/living-in-bali-honest-guide?lang=id)
-- [Sekolah Internasional di Bali](/visas/navigating-indonesian-schools-what-expat-families-need-to-know?lang=id)
+- [Layanan Kesehatan di Indonesia: Asuransi & Rumah Sakit](/living/healthcare-system-indonesia)
+- [Area Terbaik untuk Tinggal di Bali](/living/best-areas-bali-2026)
+- [Checklist Pindah ke Bali](/living/living-in-bali-honest-guide)
+- [Sekolah Internasional di Bali](/visas/navigating-indonesian-schools-what-expat-families-need-to-know)
 
 ---
 
-<InfoCard variant="note" title="Penafian">
+<InfoCard variant="note" title="Disclaimer">
 
-  Panduan ini mencerminkan pengalaman umum ekspat per tahun 2026. Pengalaman
-  individu sangat bervariasi. Biaya berfluktuasi, regulasi berubah, dan apa yang
-  berhasil untuk satu orang mungkin tidak berhasil untuk orang lain. Lakukan
-  riset Anda sendiri dan idealnya kunjungi sebelum memutuskan. Terakhir
-  diperbarui: Januari 2026.
+  Panduan ini mencerminkan pengalaman umum ekspatriat per tahun 2026. Pengalaman
+  setiap individu sangat bervariasi. Biaya berfluktuasi, regulasi berubah, dan hal yang berhasil
+  bagi satu orang mungkin tidak berhasil bagi orang lain. Lakukan riset Anda sendiri dan idealnya
+  kunjungi Bali sebelum mengambil keputusan. Terakhir diperbarui: Januari 2026.
 </InfoCard>

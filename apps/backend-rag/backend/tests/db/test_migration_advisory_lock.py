@@ -47,6 +47,7 @@ def _new_conn(*, lock_result: bool | None = True) -> AsyncMock:
     conn = AsyncMock()
     conn.fetchval = AsyncMock(return_value=lock_result)
     conn.execute = AsyncMock(return_value=None)
+    conn.terminate = MagicMock(return_value=None)
     # marker so test failures pinpoint which connection ran which SQL
     conn._fake_id = id(conn)
     return conn
@@ -178,19 +179,17 @@ async def test_concurrent_runner_skipped_when_lock_unavailable(
 
     result = await mgr.apply_all_pending()
 
-    assert result == {"applied": [], "skipped": [], "failed": []}
+    assert result == {"applied": [], "skipped": [], "failed": [], "refused": {"code": "lock_busy"}}
     assert sentinel["called"] is False
     # We must NOT have tried to release a lock we never acquired
     assert lock_conn.execute.await_count == 0
 
 
 @pytest.mark.asyncio
-async def test_unlock_failure_is_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A spurious error during unlock must not mask a successful run.
-
-    The session is about to be returned to the pool; advisory locks die
-    with the session, so a failed explicit release is best-effort.
-    """
+async def test_unlock_failure_terminates_the_lock_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed unlock must not return a lock-bearing session to the pool."""
     lock_conn = _new_conn(lock_result=True)
     lock_conn.execute.side_effect = RuntimeError("network blip during unlock")
     mgr = _manager_with_pool([lock_conn])
@@ -202,3 +201,4 @@ async def test_unlock_failure_is_swallowed(monkeypatch: pytest.MonkeyPatch) -> N
 
     result = await mgr.apply_all_pending()
     assert result == {"applied": [42], "skipped": [], "failed": []}
+    lock_conn.terminate.assert_called_once_with()

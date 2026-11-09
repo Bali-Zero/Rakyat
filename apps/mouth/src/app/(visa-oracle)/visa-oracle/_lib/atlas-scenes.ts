@@ -312,8 +312,8 @@ export const WORLD_LABELS: Record<
   readonly (readonly [string, number, number])[]
 > = {
   en: [
-    ["NORTH WIDODEJ", 15, 44],
-    ["SOUTH WIDODEJ", 26, 65],
+    ["NORTH AMERICA", 15, 44],
+    ["SOUTH AMERICA", 26, 65],
     ["EUROPE", 50.5, 43],
     ["AFRICA", 49.5, 61],
     ["ASIA", 72, 47],
@@ -417,7 +417,7 @@ const ID: AtlasCopyTable = {
   "branch.diaspora.name": "Benang yang menuntun pulang",
   "branch.diaspora.line": "Tempat kisah Anda menemukan ikatan lain.",
   "branch.other.name": "Jalan Anda sendiri",
-  "branch.other.line": "Nodu temukan bentuk perjalanan Anda.",
+  "branch.other.line": "Mari temukan bentuk perjalanan Anda.",
 };
 
 export const ATLAS_COPY: Record<Language, AtlasCopyTable> = { en: EN, id: ID };

@@ -348,7 +348,6 @@ def get_autonomous_scheduler() -> AutonomousScheduler:
 
 async def create_and_start_scheduler(
     db_pool,
-    conversation_cleanup_enabled: bool = False,  # DISABLED (audit 2026-03-16): 24h > auto_stop uptime. Migrated to OpenClaw cron.
 ) -> AutonomousScheduler:
     """
     Create and start the autonomous scheduler with the surviving agents.
@@ -359,7 +358,6 @@ async def create_and_start_scheduler(
 
     Args:
         db_pool: Database connection pool
-        *_enabled: Enable/disable individual tasks
 
     Returns:
         Running AutonomousScheduler instance
@@ -431,48 +429,6 @@ async def create_and_start_scheduler(
         logger.info("⏸️ Birthday Notifier registered but DISABLED (migrated to OpenClaw)")
     except Exception as e:
         logger.error("❌ Failed to register Birthday Notifier: %s", e)
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # TASK 10: CONVERSATION CLEANUP (daily)
-    # This block is dead by default (`conversation_cleanup_enabled=False`, and no
-    # caller passes True). It used to hardcode 30d/7d — the values the
-    # scheduler-necropsy of 2026-07-14 flagged as stale and nobody acted on.
-    # Since 2026-08-08 the windows are NOT a parameter of this call site: they
-    # come from backend/core/retention_policy.py, and timed deletion is refused
-    # there by default. Do not reintroduce numbers here.
-    # ═══════════════════════════════════════════════════════════════════════════
-    if conversation_cleanup_enabled and db_pool:
-        try:
-            from backend.jobs.conversation_cleanup import cleanup_conversations
-
-            async def run_conversation_cleanup() -> None:
-                try:
-                    result = await cleanup_conversations()
-                    if result["success"]:
-                        logger.info(
-                            f"🧹 Conversation cleanup: {result['deleted_count']} deleted, "
-                            f"{result['anonymized_count']} anonymized",
-                        )
-                    else:
-                        # Was mute before. Under the retention policy this branch
-                        # is now the EXPECTED one, and a task that fails without
-                        # saying so is how a disarmed organ reads as healthy.
-                        logger.warning(
-                            "🧹 Conversation cleanup did not run: %s",
-                            result.get("error", "<no error reported>"),
-                        )
-                except Exception as e:
-                    logger.error("❌ Conversation cleanup error: %s", e, exc_info=True)
-
-            scheduler.register_task(
-                name="conversation_cleanup",
-                task_func=run_conversation_cleanup,
-                interval_seconds=86400,
-                enabled=True,
-            )
-            logger.info("✅ Conversation Cleanup registered (24h interval)")
-        except Exception as e:
-            logger.error("❌ Failed to register Conversation Cleanup: %s", e)
 
     # TASK 11 DAILY OPS AUTOPILOT — RETIRED 2026-07-14 (scheduler-necropsy):
     # it POSTed to an HTTP route the MCP server (stdio-only) never exposed, the

@@ -1,0 +1,1470 @@
+"""
+Unit tests for backend/app/routers/crm_enhanced.py
+
+Tests route handler functions directly (no TestClient) with mocked dependencies.
+Covers all endpoints and helper functions:
+- GET  /clients/{id}/profile       -> get_client_profile
+- PATCH /clients/{id}/profile      -> update_client_profile
+- GET  /companies/by-client/{id}   -> get_client_companies
+- GET  /companies/{id}/documents   -> get_company_documents
+- GET  /clients/{id}/family        -> get_family_members
+- POST /clients/{id}/family        -> create_family_member
+- PATCH /clients/{id}/family/{mid} -> update_family_member
+- DELETE /clients/{id}/family/{mid}-> delete_family_member
+
+Plus helper functions:
+- _auto_ocr_passport
+- _auto_ocr_visa
+- _auto_ocr_nib
+- _auto_ocr_npwp
+- _auto_ocr_company_profile
+- _dispatch_ocr_by_folder
+"""
+
+from datetime import datetime, timezone
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def admin_user() -> dict[str, Any]:
+    return {
+        "id": "admin-uuid-1",
+        "email": "zero@balizero.com",
+        "role": "admin",
+        "full_name": "Admin User",
+    }
+
+
+@pytest.fixture
+def client_row() -> dict[str, Any]:
+    return {
+        "id": 42,
+        "uuid": "test-uuid",
+        "full_name": "Test Client",
+        "email": "client@example.com",
+        "phone": "+628123456",
+        "whatsapp": "+628123456",
+        "nationality": "Australian",
+        "passport_number": "PA123456",
+        "passport_expiry": "2028-01-01",
+        "date_of_birth": "1990-01-01",
+        "gender": "M",
+        "avatar_url": None,
+        "company_name": None,
+        "google_drive_folder_id": None,
+        "status": "active",
+        "client_type": "individual",
+        "assigned_to": "team@balizero.com",
+        "address": "Bali, Indonesia",
+        "notes": None,
+        "tags": None,
+        "custom_fields": None,
+        "first_contact_date": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "last_interaction_date": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "updated_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /clients/{id}/profile
+# ---------------------------------------------------------------------------
+
+
+class TestGetClientProfile:
+    @pytest.mark.asyncio
+    async def test_profile_success(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            mock_db_conn.fetchrow = AsyncMock(return_value=client_row)
+            mock_db_conn.fetch = AsyncMock(return_value=[])
+            result = await get_client_profile(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+
+        assert "client" in result
+        assert "family_members" in result
+        assert "stats" in result
+        assert result["stats"]["family_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_profile_carries_attention_next_to_legacy_alerts(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        """`attention`/`attention_stats` are ADDITIVE: `expiry_alerts`/`stats` stay."""
+        from datetime import date, timedelta
+
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        soon = date.today() + timedelta(days=30)
+        doc_row = {
+            "id": 11,
+            "document_type": "kitas",
+            "document_category": "immigration",
+            "status": "active",
+            "expiry_date": soon,
+            "issue_date": None,
+            "fiscal_year": 2025,
+            "fiscal_period": None,
+            "family_member_id": None,
+            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "deleted_at": None,
+            "ocr_extracted_data": None,
+        }
+
+        async def fetch(sql: str, *_args: Any) -> list[dict[str, Any]]:
+            if "FROM documents d" in sql:
+                assert "d.issue_date" in sql and "d.fiscal_year" in sql
+                assert "d.fiscal_period" in sql
+                return [doc_row]
+            return []
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            mock_db_conn.fetchrow = AsyncMock(return_value=client_row)
+            mock_db_conn.fetch = AsyncMock(side_effect=fetch)
+            result = await get_client_profile(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+
+        assert result["expiry_alerts"] == []
+        assert result["stats"]["documents_count"] == 1
+        # The Tax tab lists SPT history per fiscal year from this payload.
+        assert result["documents"][0]["fiscal_year"] == 2025
+        assert "fiscal_period" in result["documents"][0] and "issue_date" in result["documents"][0]
+        assert [(i["kind"], i["label"], i["state"]) for i in result["attention"]] == [
+            ("permit", "KITAS", "urgent")
+        ]
+        assert result["attention_stats"] == {"expired": 0, "urgent": 1, "upcoming": 0, "done": 0}
+
+    @pytest.mark.asyncio
+    async def test_profile_survives_attention_failure(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        with (
+            patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()),
+            patch(
+                "backend.app.routers.crm_enhanced.build_client_attention",
+                side_effect=RuntimeError("boom"),
+            ),
+        ):
+            mock_db_conn.fetchrow = AsyncMock(return_value=client_row)
+            mock_db_conn.fetch = AsyncMock(return_value=[])
+            result = await get_client_profile(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+
+        assert result["attention"] == []
+        assert result["attention_error"] == "attention_build_failed"
+        assert "boom" not in str(result["attention_error"])
+        assert "stats" in result and "expiry_alerts" in result
+
+    @pytest.mark.asyncio
+    async def test_profile_attention_error_is_null_on_success(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            mock_db_conn.fetchrow = AsyncMock(return_value=client_row)
+            mock_db_conn.fetch = AsyncMock(return_value=[])
+            result = await get_client_profile(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+
+        assert "attention_error" in result and result["attention_error"] is None
+
+    @pytest.mark.asyncio
+    async def test_profile_selects_practice_payment_and_client_identity_fields(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        """Pins the SELECT column lists the kita overview reads (all verified in prod)."""
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        seen: dict[str, str] = {}
+
+        async def fetch(sql: str, *_args: Any) -> list[dict[str, Any]]:
+            if "FROM practices p" in sql:
+                seen["practices"] = sql
+            return []
+
+        async def fetchrow(sql: str, *_args: Any) -> dict[str, Any]:
+            if "FROM clients" in sql and "uuid" in sql:
+                seen["client"] = sql
+            return client_row
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            mock_db_conn.fetchrow = AsyncMock(side_effect=fetchrow)
+            mock_db_conn.fetch = AsyncMock(side_effect=fetch)
+            await get_client_profile(client_id=42, pool=mock_db_pool, current_user=admin_user)
+
+        for col in (
+            "p.paid_amount",
+            "p.updated_at",
+            "p.expected_completion_date AS estimated_completion",
+        ):
+            assert col in seen["practices"], col
+        for col in ("birthplace", "npwp", "nib", "lead_source"):
+            assert col in seen["client"], col
+
+    @pytest.mark.asyncio
+    async def test_profile_client_carries_saved_tax_consultant(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        """A saved tax_consultant must come back on reload of the client detail page.
+
+        The detail page (mouth ``useClientDetail`` -> ``ClientDetailClient`` /
+        ``TaxTab``) reads ``profile.client.tax_consultant`` from THIS endpoint,
+        not from ``GET /api/crm/clients/{id}``. The PATCH saved the value, but
+        this SELECT did not project the column, so the select showed empty
+        after every reload. The fake ``fetchrow`` behaves like Postgres: it
+        returns only the columns the SQL names, so the test fails when the
+        projection drops the column, whatever the stored row holds.
+        """
+        import re
+
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        stored = {**client_row, "tax_consultant": "staff@example.test"}
+
+        async def projecting_fetchrow(sql: str, *_args: Any) -> dict[str, Any]:
+            select_list = sql.split("FROM", 1)[0]
+            named = set(re.findall(r"\b[a-z_]+\b", select_list))
+            return {k: v for k, v in stored.items() if k in named}
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            mock_db_conn.fetchrow = AsyncMock(side_effect=projecting_fetchrow)
+            mock_db_conn.fetch = AsyncMock(return_value=[])
+            result = await get_client_profile(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+
+        assert result["client"]["tax_consultant"] == "staff@example.test"
+        # Innocence side: the projection still carries the columns it had.
+        assert result["client"]["assigned_to"] == "team@balizero.com"
+
+    @pytest.mark.asyncio
+    async def test_profile_documents_query_projects_deleted_at(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        """The documents SELECT must name d.deleted_at and d.uploaded_source.
+
+        Guilt-proof for portal audit finding F-02: a document the CLIENT removed
+        from their vault is soft-deleted (deleted_at set, file kept in Drive,
+        restorable for 30 days) but is NOT archived, so it stays in this list —
+        and until 2026-09-11 the projection did not carry deleted_at, so the
+        team's CRM rendered it exactly like a live document. The assertion is on
+        the SQL text because the handler forwards every projected column
+        unchanged (``dict(d)`` per row, before the permit-label derivation
+        added 2026-09-21 only ever *adds* fields): a row-level mock would only
+        prove the mock. Drop either column from the SELECT and this test goes red.
+        """
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            mock_db_conn.fetchrow = AsyncMock(return_value=client_row)
+            mock_db_conn.fetch = AsyncMock(return_value=[])
+            await get_client_profile(client_id=42, pool=mock_db_pool, current_user=admin_user)
+
+        doc_queries = [
+            call.args[0]
+            for call in mock_db_conn.fetch.await_args_list
+            if "FROM documents d" in call.args[0]
+        ]
+        assert len(doc_queries) == 1, "expected exactly one SELECT ... FROM documents d"
+        assert "d.deleted_at" in doc_queries[0]
+        assert "d.uploaded_source" in doc_queries[0]
+
+    @pytest.mark.asyncio
+    async def test_profile_documents_return_stored_client_visible(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        """One stored-true and one stored-false row both surface their flag.
+
+        The fake fetch hands back only the ``d.<column>`` names the documents
+        SELECT projects, so dropping ``d.client_visible`` from the query turns
+        this red.
+        """
+        import re
+
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        stored = [{"id": 1, "client_visible": True}, {"id": 2, "client_visible": False}]
+
+        async def _fetch(sql: str, *_args: object) -> list[dict]:
+            if "FROM documents d" not in sql:
+                return []
+            projected = set(re.findall(r"\bd\.(\w+)", sql.split("FROM documents")[0]))
+            return [{k: v for k, v in row.items() if k in projected} for row in stored]
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            mock_db_conn.fetchrow = AsyncMock(return_value=client_row)
+            mock_db_conn.fetch = AsyncMock(side_effect=_fetch)
+            result = await get_client_profile(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+
+        assert {d["id"]: d["client_visible"] for d in result["documents"]} == {1: True, 2: False}
+
+    @pytest.mark.asyncio
+    async def test_profile_documents_carry_resolved_permit_label(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        """The generic 'visa' document_type resolves to the precise family the
+        OCR extraction already captured — the bug this PR fixes (kita.balizero.com
+        showed "Type: visa" for a document whose OCR data already said KITAP).
+        The raw OCR blob itself must NOT leak into the response.
+        """
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        generic_visa_doc = {
+            "id": 1001,
+            "document_type": "visa",
+            "document_category": "immigration",
+            "file_name": "doc.pdf",
+            "file_id": None,
+            "file_url": None,
+            "google_drive_file_url": "https://drive.google.com/file/d/TEST/view",
+            "status": "verified",
+            "expiry_date": None,
+            "notes": None,
+            "family_member_id": None,
+            "practice_id": None,
+            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "deleted_at": None,
+            "uploaded_source": "team",
+            "ocr_extracted_data": {
+                "raw_response": {
+                    "visa_type": "KITAP (ELECTRONIC PERMANENT STAY PERMIT)",
+                    "visa_number": "TEST-0000",
+                    "sponsor": "Example Sponsor",
+                }
+            },
+            "family_member_name": None,
+            "alert_color": "green",
+        }
+
+        async def fetch_side_effect(query: str, *args: Any) -> list[dict[str, Any]]:
+            if "FROM documents d" in query:
+                return [generic_visa_doc]
+            return []
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            mock_db_conn.fetchrow = AsyncMock(return_value=client_row)
+            mock_db_conn.fetch = AsyncMock(side_effect=fetch_side_effect)
+            result = await get_client_profile(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+
+        doc = result["documents"][0]
+        assert doc["document_type"] == "visa"  # stored value untouched
+        assert doc["permit_family"] == "kitap"
+        assert doc["permit_label"] == "KITAP / ITAP — Permanent Stay Permit"
+        # No index parses out of this OCR string — family label doubles as
+        # the secondary field, and there is no stay sub-index either.
+        assert doc["permit_family_label"] == "KITAP / ITAP — Permanent Stay Permit"
+        assert doc["permit_stay_index"] is None
+        assert doc["permit_number"] == "TEST-0000"
+        assert doc["permit_sponsor"] == "Example Sponsor"
+        assert "ocr_extracted_data" not in doc
+
+    @pytest.mark.asyncio
+    async def test_profile_documents_use_catalogue_for_index_primary_label(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        """The visa index leads the primary label, using the official name
+        from a single `visa_types` catalogue query — the family label moves
+        to `permit_family_label` (secondary in the UI)."""
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        indexed_visa_doc = {
+            "id": 1003,
+            "document_type": "visa",
+            "document_category": "immigration",
+            "file_name": None,
+            "file_id": None,
+            "file_url": None,
+            "google_drive_file_url": None,
+            "status": None,
+            "expiry_date": None,
+            "notes": None,
+            "family_member_id": None,
+            "practice_id": None,
+            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "deleted_at": None,
+            "uploaded_source": "team",
+            "ocr_extracted_data": {"raw_response": {"visa_type": "Visa Tinggal Terbatas (E23)"}},
+            "family_member_name": None,
+            "alert_color": "green",
+        }
+
+        async def fetch_side_effect(query: str, *args: Any) -> list[dict[str, Any]]:
+            if "FROM documents d" in query:
+                return [indexed_visa_doc]
+            if "FROM visa_types" in query:
+                return [{"code": "E23", "name": "E23 - Working KITAS"}]
+            return []
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            mock_db_conn.fetchrow = AsyncMock(return_value=client_row)
+            mock_db_conn.fetch = AsyncMock(side_effect=fetch_side_effect)
+            result = await get_client_profile(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+
+        doc = result["documents"][0]
+        assert doc["permit_code"] == "E23"
+        assert doc["permit_label"] == "E23 — Working KITAS"
+        assert doc["permit_family_label"] == "KITAS / ITAS — Limited Stay Permit"
+
+    @pytest.mark.asyncio
+    async def test_profile_catalogue_query_failure_falls_back_to_code_only_label(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        """A broken `visa_types` query must not break the profile — the
+        resolver still parses the index, just without the official name."""
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        indexed_visa_doc = {
+            "id": 1004,
+            "document_type": "visa",
+            "document_category": "immigration",
+            "file_name": None,
+            "file_id": None,
+            "file_url": None,
+            "google_drive_file_url": None,
+            "status": None,
+            "expiry_date": None,
+            "notes": None,
+            "family_member_id": None,
+            "practice_id": None,
+            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "deleted_at": None,
+            "uploaded_source": "team",
+            "ocr_extracted_data": {"raw_response": {"visa_type": "D12"}},
+            "family_member_name": None,
+            "alert_color": "green",
+        }
+
+        async def fetch_side_effect(query: str, *args: Any) -> list[dict[str, Any]]:
+            if "FROM documents d" in query:
+                return [indexed_visa_doc]
+            if "FROM visa_types" in query:
+                raise RuntimeError("connection reset")
+            return []
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            mock_db_conn.fetchrow = AsyncMock(return_value=client_row)
+            mock_db_conn.fetch = AsyncMock(side_effect=fetch_side_effect)
+            result = await get_client_profile(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+
+        doc = result["documents"][0]
+        assert doc["permit_code"] == "D12"
+        assert doc["permit_label"] == "D12"  # no catalogue name available
+
+    @pytest.mark.asyncio
+    async def test_profile_documents_keep_original_text_when_unresolved(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        """No OCR data and no family keyword in document_type: never invent a
+        label — no permit_* keys at all, frontend falls back to the raw text."""
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        unresolved_doc = {
+            "id": 1002,
+            "document_type": "visa",
+            "document_category": "immigration",
+            "file_name": None,
+            "file_id": None,
+            "file_url": None,
+            "google_drive_file_url": None,
+            "status": None,
+            "expiry_date": None,
+            "notes": None,
+            "family_member_id": None,
+            "practice_id": None,
+            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "deleted_at": None,
+            "uploaded_source": "team",
+            "ocr_extracted_data": None,
+            "family_member_name": None,
+            "alert_color": "green",
+        }
+
+        async def fetch_side_effect(query: str, *args: Any) -> list[dict[str, Any]]:
+            if "FROM documents d" in query:
+                return [unresolved_doc]
+            return []
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            mock_db_conn.fetchrow = AsyncMock(return_value=client_row)
+            mock_db_conn.fetch = AsyncMock(side_effect=fetch_side_effect)
+            result = await get_client_profile(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+
+        doc = result["documents"][0]
+        assert "permit_family" not in doc
+        assert "permit_label" not in doc
+
+    @pytest.mark.asyncio
+    async def test_profile_not_found(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from fastapi import HTTPException
+
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            mock_db_conn.fetchrow = AsyncMock(return_value=None)
+            with pytest.raises(HTTPException) as exc_info:
+                await get_client_profile(client_id=999, pool=mock_db_pool, current_user=admin_user)
+            assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_profile_access_denied(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock
+    ) -> None:
+        from fastapi import HTTPException
+
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        user = {"id": "u1", "email": "nobody@example.com", "role": "team", "full_name": "Nobody"}
+        with patch(
+            "backend.app.routers.crm_enhanced.verify_client_access",
+            new=AsyncMock(side_effect=HTTPException(403, "Forbidden")),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_client_profile(client_id=42, pool=mock_db_pool, current_user=user)
+            assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_profile_stats_counts(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict, client_row: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import get_client_profile
+
+        alerts = [
+            {
+                "alert_color": "expired",
+                "entity_type": "p",
+                "entity_id": 1,
+                "entity_name": "X",
+                "document_type": "pp",
+                "expiry_date": "2025-01-01",
+                "days_until_expiry": -100,
+            },
+            {
+                "alert_color": "red",
+                "entity_type": "v",
+                "entity_id": 2,
+                "entity_name": "Y",
+                "document_type": "v",
+                "expiry_date": "2026-06-01",
+                "days_until_expiry": 60,
+            },
+            {
+                "alert_color": "yellow",
+                "entity_type": "p",
+                "entity_id": 3,
+                "entity_name": "Z",
+                "document_type": "pp",
+                "expiry_date": "2027-01-01",
+                "days_until_expiry": 270,
+            },
+        ]
+        # Fetch order: family_members, documents, visa_types catalogue,
+        # expiry_alerts, practices, company_links, company_documents.
+        fetch_calls = [[], [], [], alerts, [], [], []]
+        idx = [0]
+
+        async def mock_fetch(*a, **k):
+            i = idx[0]
+            idx[0] += 1
+            return fetch_calls[i] if i < len(fetch_calls) else []
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            mock_db_conn.fetchrow = AsyncMock(return_value=client_row)
+            mock_db_conn.fetch = AsyncMock(side_effect=mock_fetch)
+            result = await get_client_profile(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+
+        assert result["stats"]["expired_count"] == 1
+        assert result["stats"]["red_alerts"] == 1
+        assert result["stats"]["yellow_alerts"] == 1
+
+
+# ---------------------------------------------------------------------------
+# PATCH /clients/{id}/profile
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateClientProfile:
+    @pytest.mark.asyncio
+    async def test_update_avatar(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import ClientProfileUpdate, update_client_profile
+
+        mock_db_conn.execute = AsyncMock(return_value=None)
+        with (
+            patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()),
+            patch("backend.app.routers.crm_enhanced.invalidate_cache", new=AsyncMock()),
+        ):
+            result = await update_client_profile(
+                client_id=42,
+                data=ClientProfileUpdate(avatar_url="https://x.com/a.png"),
+                pool=mock_db_pool,
+                current_user=admin_user,
+            )
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_update_multiple_fields(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import ClientProfileUpdate, update_client_profile
+
+        mock_db_conn.execute = AsyncMock(return_value=None)
+        with (
+            patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()),
+            patch("backend.app.routers.crm_enhanced.invalidate_cache", new=AsyncMock()),
+        ):
+            data = ClientProfileUpdate(
+                avatar_url="x",
+                date_of_birth="1990-01-01",
+                passport_expiry="2028-01-01",
+                company_name="Test Co",
+            )
+            result = await update_client_profile(
+                client_id=42, data=data, pool=mock_db_pool, current_user=admin_user
+            )
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_update_no_fields(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from fastapi import HTTPException
+
+        from backend.app.routers.crm_enhanced import ClientProfileUpdate, update_client_profile
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            with pytest.raises(HTTPException) as exc_info:
+                await update_client_profile(
+                    client_id=42,
+                    data=ClientProfileUpdate(),
+                    pool=mock_db_pool,
+                    current_user=admin_user,
+                )
+            assert exc_info.value.status_code == 400
+
+    def test_google_drive_folder_id_is_not_a_settable_field(self) -> None:
+        """Guilt-shaped regression (adversarial review, 2026-08-09): this
+        column is the trust anchor `assert_drive_file_belongs_to_client`
+        checks new document `file_id`s against. Accepting it from a generic
+        profile PATCH let any caller with write access to a client set it to
+        an arbitrary folder id, poisoning the anchor the new write guard
+        relies on. `extra="ignore"` is Pydantic's default, so a caller that
+        still sends the field gets silently dropped rather than erroring —
+        that is the point: the model must never expose this as an attribute
+        the router code could read."""
+        from backend.app.routers.crm_enhanced import ClientProfileUpdate
+
+        data = ClientProfileUpdate.model_validate(
+            {"avatar_url": "x", "google_drive_folder_id": "attacker-controlled-folder"}
+        )
+        assert not hasattr(data, "google_drive_folder_id")
+
+
+# ---------------------------------------------------------------------------
+# GET /companies/by-client/{id}
+# ---------------------------------------------------------------------------
+
+
+class TestGetClientCompanies:
+    @pytest.mark.asyncio
+    async def test_success(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import get_client_companies
+
+        mock_db_conn.fetch = AsyncMock(return_value=[{"link_id": 1, "company_name": "PT X"}])
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            result = await get_client_companies(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+        assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_empty(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import get_client_companies
+
+        mock_db_conn.fetch = AsyncMock(return_value=[])
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            result = await get_client_companies(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# GET /companies/{id}/documents
+# ---------------------------------------------------------------------------
+
+
+class TestGetCompanyDocuments:
+    @pytest.mark.asyncio
+    async def test_all_docs(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import get_company_documents
+
+        mock_db_conn.fetch = AsyncMock(return_value=[{"id": 1, "document_type": "akta"}])
+        result = await get_company_documents(
+            company_id=10, doc_type=None, pool=mock_db_pool, current_user=admin_user
+        )
+        assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_filtered(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import get_company_documents
+
+        mock_db_conn.fetch = AsyncMock(return_value=[])
+        result = await get_company_documents(
+            company_id=10, doc_type="nib", pool=mock_db_pool, current_user=admin_user
+        )
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# GET /clients/{id}/family
+# ---------------------------------------------------------------------------
+
+
+class TestGetFamilyMembers:
+    @pytest.mark.asyncio
+    async def test_success(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import get_family_members
+
+        mock_db_conn.fetch = AsyncMock(return_value=[{"id": 1, "full_name": "Spouse"}])
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            result = await get_family_members(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+        assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_empty(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import get_family_members
+
+        mock_db_conn.fetch = AsyncMock(return_value=[])
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            result = await get_family_members(
+                client_id=42, pool=mock_db_pool, current_user=admin_user
+            )
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# POST /clients/{id}/family
+# ---------------------------------------------------------------------------
+
+
+class TestCreateFamilyMember:
+    @pytest.mark.asyncio
+    async def test_create_basic(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import FamilyMemberCreate, create_family_member
+
+        mock_db_conn.fetchval = AsyncMock(return_value=99)
+        with (
+            patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()),
+            patch("backend.app.routers.crm_enhanced.invalidate_cache", new=AsyncMock()),
+        ):
+            result = await create_family_member(
+                client_id=42,
+                data=FamilyMemberCreate(full_name="Jane", relationship="spouse"),
+                pool=mock_db_pool,
+                current_user=admin_user,
+            )
+        assert result["id"] == 99 and result["success"]
+
+    @pytest.mark.asyncio
+    async def test_create_with_dates(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import FamilyMemberCreate, create_family_member
+
+        mock_db_conn.fetchval = AsyncMock(return_value=100)
+        with (
+            patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()),
+            patch("backend.app.routers.crm_enhanced.invalidate_cache", new=AsyncMock()),
+        ):
+            data = FamilyMemberCreate(
+                full_name="Kid",
+                relationship="child",
+                date_of_birth="2020-06-15",
+                passport_expiry="2030-01-01",
+                visa_expiry="2027-06-01",
+            )
+            result = await create_family_member(
+                client_id=42, data=data, pool=mock_db_pool, current_user=admin_user
+            )
+        assert result["success"]
+
+    @pytest.mark.asyncio
+    async def test_create_invalid_dates(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import FamilyMemberCreate, create_family_member
+
+        mock_db_conn.fetchval = AsyncMock(return_value=101)
+        with (
+            patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()),
+            patch("backend.app.routers.crm_enhanced.invalidate_cache", new=AsyncMock()),
+        ):
+            data = FamilyMemberCreate(
+                full_name="P",
+                relationship="sibling",
+                date_of_birth="bad",
+                passport_expiry="bad",
+                visa_expiry="bad",
+            )
+            result = await create_family_member(
+                client_id=42, data=data, pool=mock_db_pool, current_user=admin_user
+            )
+        assert result["success"]
+
+
+# ---------------------------------------------------------------------------
+# PATCH /clients/{id}/family/{mid}
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateFamilyMember:
+    @pytest.mark.asyncio
+    async def test_update_name(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import FamilyMemberUpdate, update_family_member
+
+        mock_db_conn.execute = AsyncMock(return_value="UPDATE 1")
+        with (
+            patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()),
+            patch("backend.app.routers.crm_enhanced.invalidate_cache", new=AsyncMock()),
+        ):
+            result = await update_family_member(
+                client_id=42,
+                member_id=1,
+                data=FamilyMemberUpdate(full_name="New"),
+                pool=mock_db_pool,
+                current_user=admin_user,
+            )
+        assert result["success"]
+
+    @pytest.mark.asyncio
+    async def test_update_not_found(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from fastapi import HTTPException
+
+        from backend.app.routers.crm_enhanced import FamilyMemberUpdate, update_family_member
+
+        mock_db_conn.execute = AsyncMock(return_value="UPDATE 0")
+        with (
+            patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()),
+            patch("backend.app.routers.crm_enhanced.invalidate_cache", new=AsyncMock()),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await update_family_member(
+                    client_id=42,
+                    member_id=999,
+                    data=FamilyMemberUpdate(full_name="X"),
+                    pool=mock_db_pool,
+                    current_user=admin_user,
+                )
+            assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_update_no_fields(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from fastapi import HTTPException
+
+        from backend.app.routers.crm_enhanced import FamilyMemberUpdate, update_family_member
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            with pytest.raises(HTTPException) as exc_info:
+                await update_family_member(
+                    client_id=42,
+                    member_id=1,
+                    data=FamilyMemberUpdate(),
+                    pool=mock_db_pool,
+                    current_user=admin_user,
+                )
+            assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_update_with_dates(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import FamilyMemberUpdate, update_family_member
+
+        mock_db_conn.execute = AsyncMock(return_value="UPDATE 1")
+        with (
+            patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()),
+            patch("backend.app.routers.crm_enhanced.invalidate_cache", new=AsyncMock()),
+        ):
+            data = FamilyMemberUpdate(
+                date_of_birth="1990-01-01", passport_expiry="2030-01-01", visa_expiry="2027-06-01"
+            )
+            result = await update_family_member(
+                client_id=42, member_id=1, data=data, pool=mock_db_pool, current_user=admin_user
+            )
+        assert result["success"]
+
+    @pytest.mark.asyncio
+    async def test_update_empty_date(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from fastapi import HTTPException
+
+        from backend.app.routers.crm_enhanced import FamilyMemberUpdate, update_family_member
+
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            with pytest.raises(HTTPException) as exc_info:
+                await update_family_member(
+                    client_id=42,
+                    member_id=1,
+                    data=FamilyMemberUpdate(date_of_birth=""),
+                    pool=mock_db_pool,
+                    current_user=admin_user,
+                )
+            assert exc_info.value.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# DELETE /clients/{id}/family/{mid}
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteFamilyMember:
+    @pytest.mark.asyncio
+    async def test_delete_success(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from backend.app.routers.crm_enhanced import delete_family_member
+
+        mock_db_conn.execute = AsyncMock(return_value="DELETE 1")
+        with (
+            patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()),
+            patch("backend.app.routers.crm_enhanced.invalidate_cache", new=AsyncMock()),
+        ):
+            result = await delete_family_member(
+                client_id=42, member_id=1, pool=mock_db_pool, current_user=admin_user
+            )
+        assert result["success"]
+
+    @pytest.mark.asyncio
+    async def test_delete_not_found(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from fastapi import HTTPException
+
+        from backend.app.routers.crm_enhanced import delete_family_member
+
+        mock_db_conn.execute = AsyncMock(return_value="DELETE 0")
+        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+            with pytest.raises(HTTPException) as exc_info:
+                await delete_family_member(
+                    client_id=42, member_id=999, pool=mock_db_pool, current_user=admin_user
+                )
+            assert exc_info.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# OCR helpers
+# ---------------------------------------------------------------------------
+
+
+class TestGeminiOcrPIIGate:
+    """PII sovereignty (SYMBIOSIS Law 2 / UU PDP Art. 56): when local Ollama OCR
+    is unavailable, the Gemini CLI + API fallbacks must be BLOCKED unless
+    OCR_ALLOW_CLOUD_VISION=true — the document image must not cross the border."""
+
+    @pytest.mark.asyncio
+    async def test_blocked_raises_before_any_cloud_tier(self) -> None:
+        """Ollama down + cloud blocked → RuntimeError raised before shutil.which
+        (CLI tier) or the genai client (API tier) are ever consulted."""
+        from backend.app.routers import crm_enhanced
+
+        which_spy = MagicMock(side_effect=AssertionError("CLI tier must not run when blocked"))
+        with (
+            # Tier 1 (Ollama) unavailable → cascade would proceed to cloud
+            patch(
+                "backend.llm.ollama_client.is_ollama_available",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "backend.services.multimodal.cloud_vision_gate.cloud_vision_allowed",
+                return_value=False,
+            ),
+            patch(
+                "backend.services.multimodal.cloud_vision_gate.note_cloud_ocr_blocked",
+            ) as note,
+            patch("shutil.which", which_spy),
+        ):
+            with pytest.raises(RuntimeError, match="PII sovereignty"):
+                await crm_enhanced._gemini_ocr(b"\xff\xd8\xff", "image/jpeg", "extract")
+        note.assert_called_once()
+        assert "crm_enhanced._gemini_ocr" in note.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_handler_degrades_to_success_false_when_blocked(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock
+    ) -> None:
+        """End-to-end at the handler: a blocked cloud fallback degrades to
+        {success: False}, NOT a 500 — and no document goes to the cloud."""
+        from backend.app.routers.crm_enhanced import _auto_ocr_passport
+
+        mock_db_conn.fetchrow = AsyncMock(return_value={"full_name": "X"})
+        with (
+            patch(
+                "backend.app.routers.crm_enhanced._download_drive_file",
+                new=AsyncMock(return_value=(b"\xff\xd8\xff", "image/jpeg")),
+            ),
+            patch(
+                "backend.llm.ollama_client.is_ollama_available",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "backend.services.multimodal.cloud_vision_gate.cloud_vision_allowed",
+                return_value=False,
+            ),
+        ):
+            result = await _auto_ocr_passport(mock_db_pool, 42, "f1")
+        assert result["success"] is False
+        assert "PII sovereignty" in result["error"]
+
+
+class TestAutoOCRPassport:
+    @pytest.mark.asyncio
+    async def test_client_not_found(self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_passport
+
+        mock_db_conn.fetchrow = AsyncMock(return_value=None)
+        result = await _auto_ocr_passport(mock_db_pool, 42, "f1")
+        assert not result["success"]
+
+    @pytest.mark.asyncio
+    async def test_parse_fail(self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_passport
+
+        mock_db_conn.fetchrow = AsyncMock(return_value={"full_name": "X"})
+        with (
+            patch(
+                "backend.app.routers.crm_enhanced._download_drive_file",
+                new=AsyncMock(return_value=(b"x", "image/jpeg")),
+            ),
+            patch(
+                "backend.app.routers.crm_enhanced._gemini_ocr", new=AsyncMock(return_value="bad")
+            ),
+            patch(
+                "backend.app.routers.crm_enhanced.extract_json_from_llm_response", return_value=None
+            ),
+        ):
+            result = await _auto_ocr_passport(mock_db_pool, 42, "f1")
+        assert not result["success"]
+
+    @pytest.mark.asyncio
+    async def test_success(self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_passport
+
+        mock_db_conn.fetchrow = AsyncMock(return_value={"full_name": "X"})
+        mock_db_conn.execute = AsyncMock()
+        ext = {
+            "passport_number": "P1",
+            "expiry_date": "2028-01-01",
+            "full_name": "X",
+            "gender": "MALE",
+            "date_of_birth": "1990-01-01",
+            "birthplace": "Y",
+            "nationality": "AU",
+            "confidence": 0.9,
+        }
+        with (
+            patch(
+                "backend.app.routers.crm_enhanced._download_drive_file",
+                new=AsyncMock(return_value=(b"x", "image/jpeg")),
+            ),
+            patch("backend.app.routers.crm_enhanced._gemini_ocr", new=AsyncMock(return_value="{}")),
+            patch(
+                "backend.app.routers.crm_enhanced.extract_json_from_llm_response", return_value=ext
+            ),
+            patch("backend.app.routers.crm_enhanced.to_jsonb", return_value="{}"),
+        ):
+            result = await _auto_ocr_passport(mock_db_pool, 42, "f1")
+        assert result["success"]
+
+    @pytest.mark.asyncio
+    async def test_date_normalization(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock
+    ) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_passport
+
+        mock_db_conn.fetchrow = AsyncMock(return_value={"full_name": "X"})
+        mock_db_conn.execute = AsyncMock()
+        ext = {
+            "passport_number": "P1",
+            "expiry_date": "01-06-2028",
+            "full_name": "X",
+            "gender": "F",
+            "date_of_birth": "15-03-1990",
+            "confidence": 0.9,
+        }
+        with (
+            patch(
+                "backend.app.routers.crm_enhanced._download_drive_file",
+                new=AsyncMock(return_value=(b"x", "image/jpeg")),
+            ),
+            patch("backend.app.routers.crm_enhanced._gemini_ocr", new=AsyncMock(return_value="{}")),
+            patch(
+                "backend.app.routers.crm_enhanced.extract_json_from_llm_response", return_value=ext
+            ),
+            patch("backend.app.routers.crm_enhanced.to_jsonb", return_value="{}"),
+        ):
+            result = await _auto_ocr_passport(mock_db_pool, 42, "f1")
+        assert result["extracted"]["expiry_date"] == "2028-06-01"
+
+    @pytest.mark.asyncio
+    async def test_exception(self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_passport
+
+        mock_db_conn.fetchrow = AsyncMock(return_value={"full_name": "X"})
+        with patch(
+            "backend.app.routers.crm_enhanced._download_drive_file",
+            new=AsyncMock(side_effect=RuntimeError("err")),
+        ):
+            result = await _auto_ocr_passport(mock_db_pool, 42, "f1")
+        assert not result["success"]
+
+
+class TestAutoOCRVisa:
+    @pytest.mark.asyncio
+    async def test_parse_fail(self, mock_db_pool: MagicMock) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_visa
+
+        with (
+            patch(
+                "backend.app.routers.crm_enhanced._download_drive_file",
+                new=AsyncMock(return_value=(b"x", "image/jpeg")),
+            ),
+            patch(
+                "backend.app.routers.crm_enhanced._gemini_ocr", new=AsyncMock(return_value="bad")
+            ),
+            patch(
+                "backend.app.routers.crm_enhanced.extract_json_from_llm_response", return_value=None
+            ),
+        ):
+            result = await _auto_ocr_visa(mock_db_pool, 42, "f1")
+        assert not result["success"]
+
+    @pytest.mark.asyncio
+    async def test_success(self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_visa
+
+        mock_db_conn.execute = AsyncMock()
+        ext = {
+            "visa_type": "KITAS",
+            "visa_number": "V1",
+            "expiry_date": "2027-12-31",
+            "issue_date": "2026-01-01",
+            "sponsor": "PT T",
+            "confidence": 0.9,
+        }
+        with (
+            patch(
+                "backend.app.routers.crm_enhanced._download_drive_file",
+                new=AsyncMock(return_value=(b"x", "image/jpeg")),
+            ),
+            patch("backend.app.routers.crm_enhanced._gemini_ocr", new=AsyncMock(return_value="{}")),
+            patch(
+                "backend.app.routers.crm_enhanced.extract_json_from_llm_response", return_value=ext
+            ),
+            patch("backend.app.routers.crm_enhanced.to_jsonb", return_value="{}"),
+        ):
+            result = await _auto_ocr_visa(mock_db_pool, 42, "f1", doc_id=5)
+        assert result["success"]
+
+    @pytest.mark.asyncio
+    async def test_exception(self, mock_db_pool: MagicMock) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_visa
+
+        with patch(
+            "backend.app.routers.crm_enhanced._download_drive_file",
+            new=AsyncMock(side_effect=RuntimeError("e")),
+        ):
+            result = await _auto_ocr_visa(mock_db_pool, 42, "f1")
+        assert not result["success"]
+
+
+class TestAutoOCRNIB:
+    @pytest.mark.asyncio
+    async def test_parse_fail(self, mock_db_pool: MagicMock) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_nib
+
+        with (
+            patch(
+                "backend.app.routers.crm_enhanced._download_drive_file",
+                new=AsyncMock(return_value=(b"x", "image/jpeg")),
+            ),
+            patch(
+                "backend.app.routers.crm_enhanced._gemini_ocr", new=AsyncMock(return_value="bad")
+            ),
+            patch(
+                "backend.app.routers.crm_enhanced.extract_json_from_llm_response", return_value=None
+            ),
+        ):
+            result = await _auto_ocr_nib(mock_db_pool, 42, "f1")
+        assert not result["success"]
+
+    @pytest.mark.asyncio
+    async def test_success(self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_nib
+
+        mock_db_conn.execute = AsyncMock()
+        mock_db_conn.fetchrow = AsyncMock(return_value={"id": 10})
+        ext = {"nib_number": "NIB1", "company_name": "PT T"}
+        with (
+            patch(
+                "backend.app.routers.crm_enhanced._download_drive_file",
+                new=AsyncMock(return_value=(b"x", "image/jpeg")),
+            ),
+            patch("backend.app.routers.crm_enhanced._gemini_ocr", new=AsyncMock(return_value="{}")),
+            patch(
+                "backend.app.routers.crm_enhanced.extract_json_from_llm_response", return_value=ext
+            ),
+            patch("backend.app.routers.crm_enhanced.to_jsonb", return_value="{}"),
+        ):
+            result = await _auto_ocr_nib(mock_db_pool, 42, "f1", doc_id=5)
+        assert result["success"]
+
+    @pytest.mark.asyncio
+    async def test_exception(self, mock_db_pool: MagicMock) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_nib
+
+        with patch(
+            "backend.app.routers.crm_enhanced._download_drive_file",
+            new=AsyncMock(side_effect=RuntimeError("e")),
+        ):
+            result = await _auto_ocr_nib(mock_db_pool, 42, "f1")
+        assert not result["success"]
+
+
+class TestAutoOCRNPWP:
+    @pytest.mark.asyncio
+    async def test_parse_fail(self, mock_db_pool: MagicMock) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_npwp
+
+        with (
+            patch(
+                "backend.app.routers.crm_enhanced._download_drive_file",
+                new=AsyncMock(return_value=(b"x", "image/jpeg")),
+            ),
+            patch(
+                "backend.app.routers.crm_enhanced._gemini_ocr", new=AsyncMock(return_value="bad")
+            ),
+            patch(
+                "backend.app.routers.crm_enhanced.extract_json_from_llm_response", return_value=None
+            ),
+        ):
+            result = await _auto_ocr_npwp(mock_db_pool, 42, "f1")
+        assert not result["success"]
+
+    @pytest.mark.asyncio
+    async def test_company_update(self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_npwp
+
+        mock_db_conn.execute = AsyncMock()
+        mock_db_conn.fetchrow = AsyncMock(return_value={"id": 10})
+        ext = {"npwp_number": "N1", "kpp_name": "KPP B"}
+        with (
+            patch(
+                "backend.app.routers.crm_enhanced._download_drive_file",
+                new=AsyncMock(return_value=(b"x", "image/jpeg")),
+            ),
+            patch("backend.app.routers.crm_enhanced._gemini_ocr", new=AsyncMock(return_value="{}")),
+            patch(
+                "backend.app.routers.crm_enhanced.extract_json_from_llm_response", return_value=ext
+            ),
+            patch("backend.app.routers.crm_enhanced.to_jsonb", return_value="{}"),
+        ):
+            result = await _auto_ocr_npwp(mock_db_pool, 42, "f1", doc_id=5)
+        assert result["success"]
+
+    @pytest.mark.asyncio
+    async def test_personal_update(self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_npwp
+
+        mock_db_conn.execute = AsyncMock()
+        mock_db_conn.fetchrow = AsyncMock(return_value=None)
+        ext = {"npwp_number": "N1"}
+        with (
+            patch(
+                "backend.app.routers.crm_enhanced._download_drive_file",
+                new=AsyncMock(return_value=(b"x", "image/jpeg")),
+            ),
+            patch("backend.app.routers.crm_enhanced._gemini_ocr", new=AsyncMock(return_value="{}")),
+            patch(
+                "backend.app.routers.crm_enhanced.extract_json_from_llm_response", return_value=ext
+            ),
+            patch("backend.app.routers.crm_enhanced.to_jsonb", return_value="{}"),
+        ):
+            result = await _auto_ocr_npwp(mock_db_pool, 42, "f1")
+        assert result["success"]
+
+
+class TestAutoOCRCompanyProfile:
+    @pytest.mark.asyncio
+    async def test_parse_fail(self, mock_db_pool: MagicMock) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_company_profile
+
+        with (
+            patch(
+                "backend.app.routers.crm_enhanced._download_drive_file",
+                new=AsyncMock(return_value=(b"x", "image/jpeg")),
+            ),
+            patch(
+                "backend.app.routers.crm_enhanced._gemini_ocr", new=AsyncMock(return_value="bad")
+            ),
+            patch(
+                "backend.app.routers.crm_enhanced.extract_json_from_llm_response", return_value=None
+            ),
+        ):
+            result = await _auto_ocr_company_profile(mock_db_pool, 42, "f1")
+        assert not result["success"]
+
+    @pytest.mark.asyncio
+    async def test_success(self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_company_profile
+
+        mock_db_conn.execute = AsyncMock()
+        mock_db_conn.fetchval = AsyncMock(side_effect=[10, "{}"])
+        ext = {
+            "company_name": "PT T",
+            "akta_no": "AK1",
+            "sk_no": "SK1",
+            "registered_address": "Jl X",
+            "shareholders": [{"name": "J"}],
+            "authorized_capital": 1000000000,
+        }
+        with (
+            patch(
+                "backend.app.routers.crm_enhanced._download_drive_file",
+                new=AsyncMock(return_value=(b"x", "image/jpeg")),
+            ),
+            patch("backend.app.routers.crm_enhanced._gemini_ocr", new=AsyncMock(return_value="{}")),
+            patch(
+                "backend.app.routers.crm_enhanced.extract_json_from_llm_response", return_value=ext
+            ),
+            patch("backend.app.routers.crm_enhanced.to_jsonb", return_value="{}"),
+        ):
+            result = await _auto_ocr_company_profile(mock_db_pool, 42, "f1", doc_id=5)
+        assert result["success"]
+
+    @pytest.mark.asyncio
+    async def test_exception(self, mock_db_pool: MagicMock) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_company_profile
+
+        with patch(
+            "backend.app.routers.crm_enhanced._download_drive_file",
+            new=AsyncMock(side_effect=RuntimeError("e")),
+        ):
+            result = await _auto_ocr_company_profile(mock_db_pool, 42, "f1")
+        assert not result["success"]
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models
+# ---------------------------------------------------------------------------
+
+
+class TestPydanticModels:
+    def test_family_create(self) -> None:
+        from backend.app.routers.crm_enhanced import FamilyMemberCreate
+
+        assert FamilyMemberCreate(full_name="T", relationship="spouse").full_name == "T"
+
+    def test_family_update(self) -> None:
+        from backend.app.routers.crm_enhanced import FamilyMemberUpdate
+
+        assert FamilyMemberUpdate(full_name="U").full_name == "U"
+
+    def test_doc_create(self) -> None:
+        from backend.app.routers.crm_enhanced import DocumentCreate
+
+        assert DocumentCreate(document_type="passport").document_type == "passport"
+
+    def test_doc_update(self) -> None:
+        from backend.app.routers.crm_enhanced import DocumentUpdate
+
+        assert DocumentUpdate(status="verified").status == "verified"
+
+    def test_profile_update(self) -> None:
+        from backend.app.routers.crm_enhanced import ClientProfileUpdate
+
+        assert ClientProfileUpdate(avatar_url="x").avatar_url == "x"
+
+
+# ---------------------------------------------------------------------------
+# _dispatch_ocr_by_folder
+# ---------------------------------------------------------------------------
+
+
+class TestDispatchOCR:
+    @pytest.mark.asyncio
+    async def test_delegates(self, mock_db_pool: MagicMock) -> None:
+        from backend.app.routers.crm_enhanced import _dispatch_ocr_by_folder
+
+        with patch(
+            "backend.services.documents.ocr_dispatcher_service.dispatch_ocr_by_folder",
+            new=AsyncMock(return_value={"success": True}),
+        ):
+            result = await _dispatch_ocr_by_folder(
+                db_pool=mock_db_pool,
+                client_id=42,
+                file_id="a",
+                folder_name="P",
+                filename="p.jpg",
+                doc_id=1,
+                document_type="passport",
+            )
+        assert result["success"]

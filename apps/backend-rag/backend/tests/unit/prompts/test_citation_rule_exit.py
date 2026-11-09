@@ -15,9 +15,9 @@ by the cycle-360 battery, not by this file.
 docs/plans/2026-09-03-relaunch-lanes/ZERO-DECISIONS.md, AS AMENDED (README §0 ruling 4 drops
 " from a client" from case (a) for v5 client-audience purity), not derived from the constant
 under test: any drift of the bullet's wording, in either place, fails here.
-In the canonical monorepo `TestFenceParity` re-derives the fence from that doc at runtime and
-asserts it matches this constant byte-for-byte; the class and the doc stay in the backstage
-(PERIMETER.txt).
+`TestFenceParity` below re-derives the fence from the doc file at runtime and asserts it
+matches this constant byte-for-byte, so the two copies can never silently drift again; it
+skips if the doc file is not present in the checkout (e.g. a sparse CI clone).
 
 Guilt: the old mandatory bullet is gone from the SSOT and from every built prompt.
 Innocence: every consumer that carries CITATION_RULES (the v1-v4 master templates, the
@@ -30,7 +30,9 @@ citations.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
@@ -79,7 +81,27 @@ CHAT_BULLET = '  - **CHAT:** Use natural attribution, e.g., "As your founder men
 OLD_LABEL = "MANDATORY LAW CITATION"
 OLD_OBLIGATION = "you MUST cite the source law"
 
-# Rakyat: the ZERO-DECISIONS.md fence reader moved to the backstage with TestFenceParity (listed in PERIMETER.txt).
+# Repo root: .../apps/backend-rag/backend/tests/unit/prompts/<this file> -> 6 parents up.
+ZERO_DECISIONS_PATH = (
+    Path(__file__).resolve().parents[6]
+    / "docs"
+    / "plans"
+    / "2026-09-03-relaunch-lanes"
+    / "ZERO-DECISIONS.md"
+)
+_FENCE_PATTERN = re.compile(r"```\n(  - \*\*LAW CITATION.*?)\n```", re.DOTALL)
+
+
+def _fence_from_zero_decisions() -> str | None:
+    """The ratified paragraph as it sits in the ZERO-DECISIONS.md fence, or None if the
+    doc is not present in this checkout (e.g. a sparse CI clone that ships apps/ only)."""
+    if not ZERO_DECISIONS_PATH.is_file():
+        return None
+    text = ZERO_DECISIONS_PATH.read_text(encoding="utf-8")
+    match = _FENCE_PATTERN.search(text)
+    if match is None:
+        return None
+    return match.group(1) + "\n"
 
 
 def _ssot_bullet() -> str:
@@ -167,5 +189,14 @@ class TestTemplateFillSafety:
         assert OLD_LABEL not in filled
 
 
-# Rakyat: `TestFenceParity` moved to the backstage — it reads docs/plans/2026-09-03-relaunch-lanes/ZERO-DECISIONS.md, a backstage plan.
-# Original at 677e29bb3511:apps/backend-rag/backend/tests/unit/prompts/test_citation_rule_exit.py; listed in PERIMETER.txt.
+class TestFenceParity:
+    """`RATIFIED_BULLET` is a hand-typed copy of ZERO-DECISIONS.md's fence; this class
+    re-derives the fence at test time so the two can never silently drift again."""
+
+    def test_ratified_bullet_matches_zero_decisions_fence(self) -> None:
+        fence = _fence_from_zero_decisions()
+        if fence is None:
+            pytest.skip(
+                f"{ZERO_DECISIONS_PATH} not present in this checkout (sparse clone?)"
+            )
+        assert RATIFIED_BULLET == fence

@@ -5,6 +5,7 @@ ConnectionPool, DeliveryManager, initialize_optimizations.
 """
 
 import asyncio
+import importlib
 import json
 import logging
 import os
@@ -475,9 +476,7 @@ class TestDeliveryManager:
             assert dm._retry_task is None
 
     @pytest.mark.asyncio
-    async def test_alert_exhausted_no_token(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_alert_exhausted_no_token(self, caplog: pytest.LogCaptureFixture) -> None:
         dm = DeliveryManager()
         mock_settings = MagicMock()
         mock_settings.telegram_bot_token = None
@@ -490,9 +489,7 @@ class TestDeliveryManager:
 
         with (
             patch.dict(sys.modules, {"backend.core.config": mock_config_module}),
-            patch.object(
-                dm, "_get_alert_client", AsyncMock()
-            ) as mock_get_client,
+            patch.object(dm, "_get_alert_client", AsyncMock()) as mock_get_client,
             caplog.at_level(logging.WARNING, logger=_OPTIMIZATIONS_LOGGER_NAME),
         ):
             await dm._alert_exhausted(
@@ -542,9 +539,7 @@ class TestDeliveryManager:
             mock_client.post.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_alert_exhausted_exception(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_alert_exhausted_exception(self, caplog: pytest.LogCaptureFixture) -> None:
         dm = DeliveryManager()
         mock_settings = MagicMock()
         mock_settings.telegram_bot_token = "fake_token"
@@ -954,3 +949,16 @@ class TestRedactedChannelIdStaysCorrelatable:
         first_digest = next(tok for tok in first_text.split() if "id:" in tok)
         second_digest = next(tok for tok in second_text.split() if "id:" in tok)
         assert first_digest == second_digest
+
+
+@pytest.fixture(autouse=True)
+def historical_transport_contract_under_mocks(monkeypatch):
+    """Exercise the retained legacy contract only with explicit mock policy.
+
+    Production stays retired; default-off acceptance lives in core retirement tests.
+    """
+    monkeypatch.setattr(
+        importlib.import_module("backend.channels.optimizations"),
+        "telegram_is_retired",
+        lambda: False,
+    )

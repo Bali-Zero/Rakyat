@@ -14,6 +14,7 @@ from typing import Any
 import asyncpg
 
 from backend.app.core.constants import MemoryConstants
+from backend.security.pii_log_identifier import redact_identifier_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ class MemoryServicePostgres:
             )
             logger.info("✅ PostgreSQL connection pool created")
         except (asyncpg.PostgresError, asyncpg.InterfaceError, ValueError, OSError) as e:
-            logger.error("❌ PostgreSQL connection failed: %s", e, exc_info=True)
+            logger.error('❌ PostgreSQL connection failed: %s', type(e).__name__)
             self.use_postgres = False
 
     async def close(self) -> None:
@@ -116,7 +117,7 @@ class MemoryServicePostgres:
         """
         # 1. Check cache (skip if force_refresh)
         if not force_refresh and user_id in self.memory_cache:
-            logger.debug("💾 Memory cache hit for %s", user_id)
+            logger.debug('💾 Memory cache hit for %s', redact_identifier_for_log(user_id))
             return self.memory_cache[user_id]
 
         # 2. Check PostgreSQL
@@ -169,7 +170,7 @@ class MemoryServicePostgres:
                     )
 
                     self.memory_cache[user_id] = memory
-                    logger.info("✅ Loaded memory from PostgreSQL for %s", user_id)
+                    logger.info('✅ Loaded memory from PostgreSQL for %s', redact_identifier_for_log(user_id))
                     return memory
 
             except (
@@ -178,7 +179,7 @@ class MemoryServicePostgres:
                 json.JSONDecodeError,
                 KeyError,
             ) as e:
-                logger.error("❌ PostgreSQL load failed for %s: %s", user_id, e, exc_info=True)
+                logger.error('❌ PostgreSQL load failed for %s: %s', redact_identifier_for_log(user_id), type(e).__name__)
 
         # 3. Create new memory
         memory = UserMemory(
@@ -189,7 +190,7 @@ class MemoryServicePostgres:
             updated_at=datetime.now(tz=timezone.utc),
         )
         self.memory_cache[user_id] = memory
-        logger.info("📝 Created new memory for %s", user_id)
+        logger.info('📝 Created new memory for %s', redact_identifier_for_log(user_id))
         return memory
 
     async def save_memory(self, memory: UserMemory) -> bool:
@@ -230,14 +231,14 @@ class MemoryServicePostgres:
                         memory.updated_at,
                     )
 
-                    logger.info(f"✅ Memory saved to PostgreSQL for {memory.user_id}")
+                    logger.info(f'✅ Memory saved to PostgreSQL for {redact_identifier_for_log(memory.user_id)}')
                     return True
 
             except (asyncpg.PostgresError, asyncpg.InterfaceError, ValueError) as e:
-                logger.error(f"❌ PostgreSQL save failed for {memory.user_id}: {e}", exc_info=True)
+                logger.error(f'❌ PostgreSQL save failed for {redact_identifier_for_log(memory.user_id)}: {type(e).__name__}')
                 return False
 
-        logger.debug(f"💾 Memory saved to cache only for {memory.user_id}")
+        logger.debug(f'💾 Memory saved to cache only for {redact_identifier_for_log(memory.user_id)}')
         return True
 
     async def add_fact(self, user_id: str, fact: str, fact_type: str = "profile_fact") -> bool:
@@ -262,7 +263,7 @@ class MemoryServicePostgres:
         # Check if already exists
         existing_lower = [f.lower() for f in memory.profile_facts]
         if fact.lower() in existing_lower:
-            logger.debug("Fact already exists for %s: %s", user_id, fact)
+            logger.debug('Fact already exists for %s', redact_identifier_for_log(user_id))
             return False
 
         # Save to PostgreSQL memory_facts table
@@ -282,22 +283,22 @@ class MemoryServicePostgres:
                         datetime.now(tz=timezone.utc),
                     )
 
-                    logger.info("✅ Added fact to PostgreSQL for %s: %s", user_id, fact)
+                    logger.info('Added fact to PostgreSQL for %s', redact_identifier_for_log(user_id))
 
             except (asyncpg.PostgresError, asyncpg.InterfaceError, ValueError) as e:
-                logger.error("❌ Failed to add fact for %s: %s", user_id, e, exc_info=True)
+                logger.error('❌ Failed to add fact for %s: %s', redact_identifier_for_log(user_id), type(e).__name__)
                 return False
 
         # Add to memory and trim
         memory.profile_facts.append(fact)
         if len(memory.profile_facts) > self.MAX_FACTS:
             memory.profile_facts = memory.profile_facts[-self.MAX_FACTS :]
-            logger.info(f"⚠️ Trimmed facts to {self.MAX_FACTS} for {user_id}")
+            logger.info(f'⚠️ Trimmed facts to {self.MAX_FACTS} for {redact_identifier_for_log(user_id)}')
 
         # Update cache
         self.memory_cache[user_id] = memory
 
-        logger.info("✅ Added fact for %s: %s", user_id, fact)
+        logger.info('Added fact for %s', redact_identifier_for_log(user_id))
         return True
 
     async def update_summary(self, user_id: str, summary: str) -> bool:
@@ -347,9 +348,7 @@ class MemoryServicePostgres:
         # Save
         success = await self.save_memory(memory)
         if success:
-            logger.debug(
-                f"✅ Incremented {counter_name} for {user_id}: {memory.counters[counter_name]}",
-            )
+            logger.debug(f'✅ Incremented {counter_name} for {redact_identifier_for_log(user_id)}: {memory.counters[counter_name]}')
         return success
 
     async def save_fact(self, user_id: str, content: str, fact_type: str = "general") -> bool:

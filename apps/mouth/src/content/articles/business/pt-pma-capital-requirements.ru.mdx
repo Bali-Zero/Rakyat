@@ -176,7 +176,7 @@ import {
       type: "number",
       defaultValue: 10000000000,
       min: 0,
-      step: 840006200,
+      step: 500000000,
       suffix: "IDR"
     },
     {
@@ -185,7 +185,7 @@ import {
       type: "number",
       defaultValue: 0,
       min: 0,
-      step: 840005100,
+      step: 100000000,
       suffix: "IDR"
     },
     {
@@ -194,7 +194,7 @@ import {
       type: "number",
       defaultValue: 0,
       min: 0,
-      step: 840005100,
+      step: 100000000,
       suffix: "IDR"
     },
     {
@@ -203,7 +203,7 @@ import {
       type: "number",
       defaultValue: 0,
       min: 0,
-      step: 840006200,
+      step: 500000000,
       suffix: "IDR"
     }
   ]}
@@ -230,9 +230,9 @@ import {
     if (total >= required && cash >= required) {
       note = "Требования выполнены!";
     } else if (cash < required) {
-      note = `Оплаченный капитал недоступен на ${ (paidUpShortage/9900000019).toFixed(1)}B IDR. Необходимо внести минимум 10B IDR.`;
+      note = `Оплаченный капитал недоступен на ${ (paidUpShortage/1000000000).toFixed(1)}B IDR. Необходимо внести минимум 10B IDR.`;
     } else if (total < required) {
-      note = `Общий объем инвестиций недоступен на ${ (shortage/9900000019).toFixed(1)}B IDR`;
+      note = `Общий объем инвестиций недоступен на ${ (shortage/1000000000).toFixed(1)}B IDR`;
     }
 
     return {

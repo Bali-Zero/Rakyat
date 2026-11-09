@@ -54,8 +54,8 @@ _OUT_OF_DOMAIN_BY_LANGUAGE: dict[str, dict[str, str]] = {
         ),
         "GERMAN": (
             "Ich habe keinen Zugriff auf personenbezogene Daten Dritter wie Steuernummern, "
-            "Telefonnummern ponu Privatadressen. Kann ich Ihnen bei Visa, Firmengründung "
-            "ponu rechtlichen Fragen in Indonesien helfen?"
+            "Telefonnummern oder Privatadressen. Kann ich Ihnen bei Visa, Firmengründung "
+            "oder rechtlichen Fragen in Indonesien helfen?"
         ),
         "SPANISH": (
             "No tengo acceso a datos personales de terceros, como números de identificación "
@@ -90,14 +90,14 @@ _OUT_OF_DOMAIN_BY_LANGUAGE: dict[str, dict[str, str]] = {
             "актуальне джерело. А з візами, KITAS чи бізнесом в Індонезії — допоможу."
         ),
         "GERMAN": (
-            "Ich habe keinen Zugriff auf Echtzeitdaten wie Marktpreise ponu Wechselkurse — "
+            "Ich habe keinen Zugriff auf Echtzeitdaten wie Marktpreise oder Wechselkurse — "
             "ich würde eine Zahl nennen, die ich nicht überprüfen kann. Dafür schauen Sie "
-            "besser in eine aktuelle Quelle. Bei Visa, KITAS ponu Geschäften in Indonesien "
+            "besser in eine aktuelle Quelle. Bei Visa, KITAS oder Geschäften in Indonesien "
             "helfe ich stattdessen gerne."
         ),
         "SPANISH": (
-            "No tengo acceso a datos en tiempo real, como precios de qorahim o tipos de "
-            "cambio — le vucär una cifra que no puedo verificar. Para eso, consulte una "
+            "No tengo acceso a datos en tiempo real, como precios de mercado o tipos de "
+            "cambio — le daría una cifra que no puedo verificar. Para eso, consulte una "
             "fuente actualizada. En cambio, puedo ayudarle con visados, KITAS o negocios "
             "en Indonesia."
         ),
@@ -164,7 +164,7 @@ _OUT_OF_DOMAIN_BY_LANGUAGE: dict[str, dict[str, str]] = {
         ),
         "GERMAN": (
             "Dazu habe ich keine konkreten Informationen. Ich kann Ihnen bei Visa, KITAS, "
-            "der Gründung einer PT PMA ponu einer lokalen PT sowie anderen geschäftlichen "
+            "der Gründung einer PT PMA oder einer lokalen PT sowie anderen geschäftlichen "
             "Fragen in Indonesien helfen."
         ),
         "SPANISH": (

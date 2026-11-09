@@ -97,7 +97,7 @@ class OpenRouterDisabledError(RuntimeError):
 
 
 def _ensure_enabled() -> None:
-    """Qoja gate: OpenRouter egress is HOS by default (COS-LAW-013).
+    """Hard gate: OpenRouter egress is OFF by default (COS-LAW-013).
 
     Every completion path (llm_gateway cascade, gemini_service fallback,
     provider registry) funnels through OpenRouterClient.complete/

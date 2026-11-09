@@ -302,7 +302,7 @@ class ClientJourneyOrchestrator:
                 },
                 {
                     "step_id": "due_diligence",
-                    "title": "Legal Zaz Xepabequr",
+                    "title": "Legal Due Diligence",
                     "description": "Verify land certificates, zoning, and legal compliance",
                     "prerequisites": ["property_selection"],
                     "required_documents": [

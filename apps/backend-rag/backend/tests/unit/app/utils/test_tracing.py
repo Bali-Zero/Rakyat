@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 backend_path = Path(__file__).parent.parent.parent.parent.parent / "backend"
 if str(backend_path) not in sys.path:
     sys.path.insert(0, str(backend_path))
@@ -70,6 +72,7 @@ class TestTracingUtilities:
         with trace_span("test_span", {"key": "value"}) as span:
             assert span == mock_span
             mock_span.set_attribute.assert_called()
+            mock_tracer.start_as_current_span.assert_called_once_with("test_span")
 
     @patch("backend.app.utils.tracing.OTEL_AVAILABLE", False)
     @patch("backend.app.utils.tracing.trace")
@@ -122,3 +125,36 @@ class TestTracingUtilities:
         result = set_span_status("ok")
         assert result is None
         mock_trace.get_current_span.assert_not_called()
+
+
+@pytest.mark.parametrize("helper", ["get_tracer", "trace_span", "attribute", "status"])
+def test_run2_tracing_helper_fault_logs_are_class_only(helper, caplog, monkeypatch):
+    import logging
+
+    from backend.app.utils import tracing
+
+    caplog.set_level(logging.DEBUG)
+    monkeypatch.setattr(tracing, "OTEL_AVAILABLE", True)
+    error = ValueError("RUN2_CANARY_EXCEPTION")
+    if helper == "get_tracer":
+        monkeypatch.setattr(tracing.trace, "get_tracer", MagicMock(side_effect=error))
+        assert tracing.get_tracer() is None
+    elif helper == "trace_span":
+        tracer = MagicMock()
+        tracer.start_as_current_span.side_effect = error
+        monkeypatch.setattr(tracing, "get_tracer", lambda: tracer)
+        with pytest.raises(RuntimeError, match="generator didn't yield"):
+            with tracing.trace_span("synthetic.failure", safe_diagnostics=True):
+                pass
+        tracer.start_as_current_span.assert_called_once_with(
+            "synthetic.failure", record_exception=False, set_status_on_exception=False
+        )
+    else:
+        monkeypatch.setattr(tracing.trace, "get_current_span", MagicMock(side_effect=error))
+        if helper == "attribute":
+            assert tracing.set_span_attribute("technical", "value") is None
+        else:
+            assert tracing.set_span_status("error", "ValueError") is None
+    assert "ValueError" in caplog.text
+    assert "RUN2_CANARY_EXCEPTION" not in caplog.text
+    assert all(record.exc_info is None or record.exc_info is False for record in caplog.records)

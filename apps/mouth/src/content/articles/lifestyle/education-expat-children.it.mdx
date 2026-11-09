@@ -73,6 +73,7 @@ tags:
 canonicalUrl: "https://balizero.com/it/lifestyle/education-expat-children"
 ogImage: "/static/insights/lifestyle/education.jpg"
 twitterCard: "summary_large_image"
+source_sha256: "1102a29e00bbd6b3880428815fda50109093da7a052fc90b16edd27edd14de4a"
 ---
 
 import {
@@ -84,90 +85,90 @@ import {
   AskZantara,
 } from "@/components/insights/interactive";
 
-# Scuole per Figli di Expat in Indonesia 2026: Guida all'Istruzione
+# Scuole per figli di expat in Indonesia 2026: guida all'istruzione
 
-Trovare la scuola giusta è una priorità assoluta per le famiglie expat. Ecco tutto ciò che devi sapere sulle opzioni educative in Indonesia.
+Trovare la scuola giusta è una priorità assoluta per le famiglie expat. Ecco tutto quello che devi sapere sulle opzioni educative in Indonesia.
 
-## Tipi di Scuole
+## Tipi di scuola
 
 <DecisionTree
-  title="Quale Tipo di Scuola?"
-  description="Trova la soluzione più adatta alla tua famiglia"
+  title="Which School Type?"
+  description="Find the right fit for your family"
   nodes={[
     {
       id: "start",
-      question: "Qual è la tua priorità?",
+      question: "What's your priority?",
       options: [
-        { label: "Continuare il curriculum del paese d'origine", next: "home" },
-        { label: "Diploma riconosciuto a livello internazionale", next: "ib" },
-        { label: "Qualità attenta al budget", next: "budget" },
-        { label: "Immersione culturale indonesiana", next: "local" },
+        { label: "Continue home country curriculum", next: "home" },
+        { label: "International recognized diploma", next: "ib" },
+        { label: "Budget-conscious quality", next: "budget" },
+        { label: "Indonesian cultural immersion", next: "local" },
       ],
     },
     {
       id: "home",
-      question: "Quale curriculum?",
+      question: "Which curriculum?",
       options: [
-        { label: "Britannico", next: "british" },
-        { label: "Americano", next: "american" },
-        { label: "Australiano", next: "australian" },
-        { label: "Altro nazionale", next: "national" },
+        { label: "British", next: "british" },
+        { label: "American", next: "american" },
+        { label: "Australian", next: "australian" },
+        { label: "Other national", next: "national" },
       ],
     },
     {
       id: "ib",
       result: {
-        title: "Scuole del Mondo IB",
+        title: "IB World Schools",
         description:
-          "Curriculum International Baccalaureate. Riconosciuto a livello globale, apprendimento basato sull'indagine. Disponibile in molte scuole internazionali a Giacarta e Bali.",
+          "International Baccalaureate curriculum. Globally recognized, inquiry-based learning. Available at many international schools in Jakarta and Bali.",
       },
     },
     {
       id: "budget",
       result: {
-        title: "Scuole National Plus",
+        title: "National Plus Schools",
         description:
-          "Scuole indonesiane con istruzione in inglese ed elementi internazionali. Costo inferiore rispetto alle scuole internazionali complete. Ottime per soggiorni a lungo termine.",
+          "Indonesian schools with English instruction and international elements. Lower cost than full international schools. Good for longer stays.",
       },
     },
     {
       id: "local",
       result: {
-        title: "Scuole Indonesiane",
+        title: "Indonesian Schools",
         description:
-          "Curriculum locale in lingua indonesiana. Ideale per l'immersione culturale e l'apprendimento della lingua. Può richiedere la conoscenza della lingua indonesiana.",
+          "Local curriculum in Indonesian. Best for cultural immersion and language learning. May require Indonesian language ability.",
       },
     },
     {
       id: "british",
       result: {
-        title: "Scuole con Curriculum Britannico",
+        title: "British Curriculum Schools",
         description:
-          "IGCSE e A-Level. Molteplici opzioni a Giacarta e Bali. Transizione facile se si torna nel Regno Unito o si frequentano università britanniche.",
+          "IGCSE and A-Levels. Multiple options in Jakarta and Bali. Easy transition if returning to UK or going to UK universities.",
       },
     },
     {
       id: "american",
       result: {
-        title: "Scuole con Curriculum Americano",
+        title: "American Curriculum Schools",
         description:
-          "Istruzione in stile USA con corsi AP. Ideale per l'università negli Stati Uniti. Diverse opzioni a Giacarta, meno in altre città.",
+          "US-style education with AP courses. Good for university in USA. Several options in Jakarta, fewer in other cities.",
       },
     },
     {
       id: "australian",
       result: {
-        title: "Scuole con Curriculum Australiano",
+        title: "Australian Curriculum Schools",
         description:
-          "Sistema australiano popolare a Bali. Ideale per le famiglie provenienti dall'Australia o che intendono trasferirsi lì.",
+          "Australian system popular in Bali. Good for families from Australia or planning to move there.",
       },
     },
     {
       id: "national",
       result: {
-        title: "Altre Scuole Nazionali",
+        title: "Other National Schools",
         description:
-          "Scuole francesi, tedesche, coreane e giapponesi disponibili a Giacarta. Opzioni limitate fuori dalla capitale.",
+          "French, German, Korean, Japanese schools available in Jakarta. Limited options outside the capital.",
       },
     },
   ]}
@@ -175,51 +176,51 @@ Trovare la scuola giusta è una priorità assoluta per le famiglie expat. Ecco t
 
 ---
 
-## Confronto dei Curricula
+## Confronto tra curricula
 
 <ComparisonTable
-  title="Curricula Popolari"
-  description="Confronta i sistemi educativi"
+  title="Popular Curricula"
+  description="Compare education systems"
   items={[
     {
       name: "IB (International Baccalaureate)",
-      subtitle: "Standard globale",
+      subtitle: "Global standard",
       values: {
-        Riconoscimento: "Mondiale",
-        Stile: "Basato sull'indagine",
-        Esami: "Diploma IB",
-        "Ideale per": "Mobilità internazionale",
+        Recognition: "Worldwide",
+        Style: "Inquiry-based",
+        Exams: "IB Diploma",
+        "Best for": "International mobility",
       },
       highlight: true,
     },
     {
-      name: "Britannico (Cambridge)",
-      subtitle: "IGCSE/A-Level",
+      name: "British (Cambridge)",
+      subtitle: "IGCSE/A-Levels",
       values: {
-        Riconoscimento: "Commonwealth + globale",
-        Stile: "Strutturato",
-        Esami: "IGCSE, A-Level",
-        "Ideale per": "Università UK/UE",
+        Recognition: "Commonwealth + global",
+        Style: "Structured",
+        Exams: "IGCSE, A-Levels",
+        "Best for": "UK/EU universities",
       },
     },
     {
-      name: "Americano",
-      subtitle: "Sistema USA",
+      name: "American",
+      subtitle: "US system",
       values: {
-        Riconoscimento: "Americhe + globale",
-        Stile: "Flessibile, ampio",
-        Esami: "SAT/AP",
-        "Ideale per": "Università USA",
+        Recognition: "Americas + global",
+        Style: "Flexible, broad",
+        Exams: "SAT/AP",
+        "Best for": "US universities",
       },
     },
     {
-      name: "Australiano",
-      subtitle: "Sistema ATAR",
+      name: "Australian",
+      subtitle: "ATAR system",
       values: {
-        Riconoscimento: "Australia + Asia",
-        Stile: "Bilanciato",
-        Esami: "HSC/ATAR",
-        "Ideale per": "Percorso australiano",
+        Recognition: "Australia + Asia",
+        Style: "Balanced",
+        Exams: "HSC/ATAR",
+        "Best for": "Australia pathway",
       },
     },
   ]}
@@ -227,38 +228,38 @@ Trovare la scuola giusta è una priorità assoluta per le famiglie expat. Ecco t
 
 ---
 
-## Costi Scolastici
+## Costi scolastici
 
-### Fasce di Rette Annuali
+### Fasce di rette annuali
 
-| Tipo di Scuola           | Costo Annuo       |
-| ------------------------ | ----------------- |
-| Internazionale (premium) | 20.000-35.000 USD |
-| Internazionale (media)   | 10.000-20.000 USD |
-| National Plus            | 3.000-10.000 USD  |
-| Indonesiana privata      | 500-3.000 USD     |
+| Tipo di scuola             | Costo annuale     |
+| -------------------------- | ----------------- |
+| Internazionale (premium)   | USD 20,000-35,000 |
+| Internazionale (fascia media) | USD 10,000-20,000 |
+| National Plus              | USD 3,000-10,000  |
+| Privata indonesiana        | USD 500-3,000     |
 
-### Calcolatore dei Costi
+### Calcolatore dei costi
 
 <Calculator
-  title="Budget Scolastico"
-  description="Stima i costi annuali dell'istruzione"
+  title="School Budget"
+  description="Estimate annual education costs"
   fields={[
     {
       id: "tier",
-      label: "Livello della Scuola",
+      label: "School Tier",
       type: "select",
       options: [
-        { value: "premium", label: "Internazionale Premium" },
-        { value: "mid", label: "Internazionale Media" },
+        { value: "premium", label: "Premium International" },
+        { value: "mid", label: "Mid-tier International" },
         { value: "national", label: "National Plus" },
-        { value: "local", label: "Indonesiana Privata" }
+        { value: "local", label: "Indonesian Private" }
       ],
       defaultValue: "mid"
     },
     {
       id: "children",
-      label: "Numero di Figli",
+      label: "Number of Children",
       type: "number",
       defaultValue: 1,
       min: 1,
@@ -266,10 +267,10 @@ Trovare la scuola giusta è una priorità assoluta per le famiglie expat. Ecco t
     },
     {
       id: "transport",
-      label: "Scuolabus Necessario?",
+      label: "School Bus Needed?",
       type: "select",
       options: [
-        { value: "yes", label: "Sì" },
+        { value: "yes", label: "Yes" },
         { value: "no", label: "No" }
       ],
       defaultValue: "no"
@@ -277,31 +278,31 @@ Trovare la scuola giusta è una priorità assoluta per le famiglie expat. Ecco t
   ]}
   calculateResult={(values) => {
     const fees = {
-      premium: 840006100,
-      mid: 990000028,
-      national: 840005100,
+      premium: 400000000,
+      mid: 240000000,
+      national: 100000000,
       local: 25000000
     };
 
     const tuition = fees[values.tier] * values.children;
-    const bus = values.transport === "yes" ? 10000012 * values.children : 0;
+    const bus = values.transport === "yes" ? 15000000 * values.children : 0;
     const uniform = 3000000 * values.children;
     const books = 5000000 * values.children;
-    const activities = 84000510 * values.children;
+    const activities = 10000000 * values.children;
 
     const total = tuition + bus + uniform + books + activities;
 
     return {
       total: total,
       breakdown: [
-        { label: "Rette scolastiche", amount: tuition },
-        { label: "Scuolabus (se applicabile)", amount: bus },
-        { label: "Uniformi", amount: uniform },
-        { label: "Libri e materiali", amount: books },
-        { label: "Attività e gite", amount: activities }
+        { label: "Tuition fees", amount: tuition },
+        { label: "School bus (if applicable)", amount: bus },
+        { label: "Uniforms", amount: uniform },
+        { label: "Books & materials", amount: books },
+        { label: "Activities & trips", amount: activities }
       ],
       currency: "IDR",
-      note: `~${Math.round(total / 16000).toLocaleString()} USD/anno`
+      note: `~USD ${Math.round(total / 16000).toLocaleString()}/year`
     };
 
 }}
@@ -309,246 +310,246 @@ Trovare la scuola giusta è una priorità assoluta per le famiglie expat. Ecco t
 
 ---
 
-## Scuole per Località
+## Scuole per località
 
-### Giacarta
+### Jakarta
 
-| Scuola                       | Curriculum          | Retta Annuale |
-| ---------------------------- | ------------------- | ------------- |
-| Jakarta Intercultural School | IB/Americano        | 25-30k USD    |
-| British School Jakarta       | Britannico          | 20-28k USD    |
-| BINUS School                 | Nazionale/Cambridge | 5-10k USD     |
-| Sekolah Pelita Harapan       | Nazionale/Cambridge | 8-15k USD     |
+| Scuola                       | Curriculum           | Retta annuale |
+| ---------------------------- | -------------------- | ------------- |
+| Jakarta Intercultural School | IB/American          | USD 25-30K    |
+| British School Jakarta       | British              | USD 20-28K    |
+| BINUS School                 | National/Cambridge   | USD 5-10K     |
+| Sekolah Pelita Harapan       | National/Cambridge   | USD 8-15K     |
 
 ### Bali
 
-| Scuola                        | Curriculum   | Retta Annuale |
+| Scuola                        | Curriculum   | Retta annuale |
 | ----------------------------- | ------------ | ------------- |
-| Canggu Community School       | IB           | 15-22k USD    |
-| Green School Bali             | Custom/Green | 15-25k USD    |
-| Bali Island School            | Australiano  | 10-18k USD    |
-| Australian Independent School | Australiano  | 8-15k USD     |
+| Canggu Community School       | IB           | USD 15-22K    |
+| Green School Bali             | Custom/Green | USD 15-25K    |
+| Bali Island School            | Australian   | USD 10-18K    |
+| Australian Independent School | Australian   | USD 8-15K     |
 
 <InfoCard variant="note" title="Green School Bali">
 
-  **Opzione unica:** La Green School offre un'istruzione innovativa focalizzata
-  sulla sostenibilità in edifici di bambù. Popolare tra le famiglie attente
-  all'ambiente, ma le liste d'attesa possono essere lunghe. Fai domanda presto!
+  **Opzione unica:** Green School offre un'istruzione innovativa, incentrata sulla sostenibilità,
+  in edifici di bambù. Popolare tra le famiglie attente all'ecologia, ma le liste
+  d'attesa possono essere lunghe. Candidati per tempo!
 </InfoCard>
 
 ---
 
-## Processo di Iscrizione
+## Procedura di ammissione
 
 <Checklist
-  title="Iscrizione Scolastica"
-  description="Requisiti tipici per l'iscrizione"
+  title="School Application"
+  description="Typical admission requirements"
   persistKey="school-admission-checklist"
   items={[
     {
       id: "research",
-      label: "Ricerca le scuole",
-      description: "Visita i siti web, tour",
+      label: "Research schools",
+      description: "Visit websites, tours",
       required: true,
       category: "research",
     },
     {
       id: "visit",
-      label: "Visite/tour della scuola",
-      description: "Vedi le strutture di persona",
+      label: "School visits/tours",
+      description: "See facilities in person",
       required: true,
       category: "research",
     },
     {
       id: "application",
-      label: "Invia la domanda",
-      description: "Modulo online o cartaceo",
+      label: "Submit application",
+      description: "Online or paper form",
       required: true,
       category: "apply",
     },
     {
       id: "records",
-      label: "Pagelle/certificati scolastici",
-      description: "Dalla scuola precedente",
+      label: "School records/transcripts",
+      description: "From previous school",
       required: true,
       category: "documents",
     },
     {
       id: "passport",
-      label: "Copie dei passaporti",
-      description: "Figlio e genitori",
+      label: "Passport copies",
+      description: "Child and parents",
       required: true,
       category: "documents",
     },
     {
       id: "photos",
-      label: "Foto tessera",
-      description: "Foto recenti",
+      label: "Passport photos",
+      description: "Recent photos",
       required: true,
       category: "documents",
     },
     {
       id: "test",
-      label: "Valutazione/colloquio",
-      description: "Varia a seconda della scuola",
+      label: "Assessment/interview",
+      description: "Varies by school",
       required: false,
       category: "assessment",
     },
     {
       id: "medical",
-      label: "Cartelle cliniche",
-      description: "Storia delle vaccinazioni",
+      label: "Medical records",
+      description: "Vaccination history",
       required: true,
       category: "documents",
     },
     {
       id: "fee",
-      label: "Paga la tassa di iscrizione",
-      description: "Solitamente non rimborsabile",
+      label: "Pay enrollment fee",
+      description: "Non-refundable typically",
       required: true,
       category: "payment",
     },
   ]}
   categories={[
-    { id: "research", label: "Ricerca", color: "blue" },
-    { id: "apply", label: "Candidatura", color: "green" },
-    { id: "documents", label: "Documenti", color: "amber" },
-    { id: "assessment", label: "Valutazione", color: "purple" },
-    { id: "payment", label: "Pagamento", color: "red" },
+    { id: "research", label: "Research", color: "blue" },
+    { id: "apply", label: "Apply", color: "green" },
+    { id: "documents", label: "Documents", color: "amber" },
+    { id: "assessment", label: "Assessment", color: "purple" },
+    { id: "payment", label: "Payment", color: "red" },
   ]}
   showProgress={true}
 />
 
 ---
 
-## Considerazioni Importanti
+## Considerazioni importanti
 
-### Requisiti per il Visto
+### Requisiti per il visto
 
-<InfoCard variant="warning" title="Stato Legale">
-I figli devono avere un visto regolare per frequentare la scuola:
+<InfoCard variant="warning" title="Legal Status">
+I bambini devono avere un regolare status di visto per frequentare la scuola:
 
-**Richiesto:**
+**Obbligatorio:**
 
-- KITAS per familiari a carico (legato al permesso di lavoro del genitore)
-- KITAS per studenti (per motivi di studio)
+- Dependent KITAS (legato al permesso di lavoro del genitore)
+- Student KITAS (per motivi di studio)
 - Second Home Visa (figli inclusi)
 
-**VOA/Visa-Free:** Generalmente non sufficienti per l'iscrizione a scuola
+**VOA/Visa-Free:** Generalmente non sufficiente per l'iscrizione scolastica
 
-Controlla i requisiti del visto prima dell'iscrizione!
+Verifica i requisiti per il visto prima dell'iscrizione!
 
 </InfoCard>
 
-### Supporto Linguistico
+### Supporto linguistico
 
-| Servizio                             | Disponibilità                                |
-| ------------------------------------ | -------------------------------------------- |
-| EAL (Inglese come lingua aggiuntiva) | La maggior parte delle scuole internazionali |
-| Lezioni di indonesiano               | Tutte le scuole                              |
-| Bahasa per principianti              | Molte offrono corsi intensivi                |
-| Programmi di lingua madre            | Limitati (alcuni per le lingue principali)   |
+| Servizio                              | Disponibilità                        |
+| ------------------------------------- | ------------------------------------ |
+| EAL (English Additional Language)     | La maggior parte delle scuole internazionali |
+| Lezioni di indonesiano                | Tutte le scuole                      |
+| Bahasa per principianti               | Molte offrono corsi intensivi        |
+| Programmi di lingua madre             | Limitati (alcuni per le lingue principali) |
 
 ---
 
-## Calendario Scolastico
+## Calendario scolastico
 
-### Anno Accademico
+### Anno accademico
 
-| Sistema                        | Inizio  | Fine     |
-| ------------------------------ | ------- | -------- |
-| Internazionale (maggior parte) | Agosto  | Giugno   |
-| Curriculum australiano         | Gennaio | Dicembre |
-| Scuole indonesiane             | Luglio  | Giugno   |
+| Sistema                 | Inizio   | Fine     |
+| ----------------------- | -------- | -------- |
+| Internazionale (la maggior parte) | Agosto   | Giugno   |
+| Curriculum australiano  | Gennaio  | Dicembre |
+| Scuole indonesiane      | Luglio   | Giugno   |
 
 ### Vacanze
 
-| Vacanza             | Durata Tipica |
-| ------------------- | ------------- |
-| Pausa estiva/lunga  | 6-8 settimane |
-| Cuwesa/Inverno      | 2-3 settimane |
-| Pausa di metà anno  | 1-2 settimane |
-| Vacanze indonesiane | Varie         |
+| Vacanza               | Durata tipica |
+| --------------------- | ------------- |
+| Pausa estiva/lunga    | 6-8 settimane |
+| Natale/Invernale      | 2-3 settimane |
+| Pausa di metà anno    | 1-2 settimane |
+| Festività indonesiane | Varie         |
 
 ---
 
-## Consigli per la Scelta
+## Consigli per la scelta
 
-<InfoCard variant="tip" title="Cosa Considerare">
+<InfoCard variant="tip" title="What to Consider">
 **Oltre gli aspetti accademici:**
 
-1. **Località** - Il tempo di percorrenza è importante
+1. **Posizione** - Il tempo di percorrenza è importante
 2. **Comunità** - Livello di coinvolgimento delle famiglie
-3. **Strutture** - Sport, arti, tecnologia
-4. **Dimensione delle classi** - Rapporto insegnanti-studenti
-5. **Doposcuola** - Attività disponibili
+3. **Strutture** - Sport, arte, tecnologia
+4. **Dimensioni delle classi** - Rapporto insegnanti-studenti
+5. **Dopscuola** - Attività disponibili
 6. **Lingue** - Indonesiano, lingua madre
-7. **Supporto** - Differenze di apprendimento, consulenza
-8. **Futuro** - Preparazione per l'università
+7. **Supporto** - Difficoltà di apprendimento, counseling
+8. **Futuro** - Preparazione universitaria
 
 Visita più scuole prima di decidere!
 
 </InfoCard>
 
-### Domande da Porre
+### Domande da porre
 
-| Argomento  | Domande                             |
-| ---------- | ----------------------------------- |
-| Didattica  | Curriculum, valutazioni, risultati  |
-| Insegnanti | Qualifiche, ricambio                |
-| Supporto   | SEN, consulenza, ESL                |
-| Comunità   | Coinvolgimento dei genitori, eventi |
-| Pratica    | Orari, trasporti, pranzo            |
-| Costi      | Tutte le tasse, piani di pagamento  |
+| Argomento         | Domande                              |
+| ----------------- | ------------------------------------ |
+| Aspetti accademici | Curriculum, verifiche, risultati    |
+| Insegnanti        | Qualifiche, turnover                 |
+| Supporto          | SEN, counseling, ESL                 |
+| Comunità          | Coinvolgimento dei genitori, eventi  |
+| Aspetti pratici   | Orari, trasporti, mensa              |
+| Costi             | Tutte le rette, piani di pagamento   |
 
 ---
 
-## Opzione Homeschooling
+## Opzione homeschooling
 
-### È Legale?
+### È legale?
 
 <InfoCard variant="note" title="Homeschooling in Indonesia">
-L'homeschooling è **legale** in Indonesia con la dovuta registrazione.
+L'homeschooling è **legale** in Indonesia con regolare registrazione.
 
 **Requisiti:**
 
 - Registrazione presso l'ufficio scolastico locale
 - Seguire un curriculum approvato
-- Valutazioni periodiche
-- Documentazione mantenuta
+- Verifiche regolari
+- Documentazione aggiornata
 
 Molte famiglie expat combinano l'homeschooling con attività locali e tutor.
 
 </InfoCard>
 
-### Approcci Popolari
+### Approcci più diffusi
 
-| Approccio             | Descrizione                       |
-| --------------------- | --------------------------------- |
-| Scuole online         | Strutturate, accreditate          |
-| Pacchetti curricolari | Autodidatta                       |
-| Ibrido                | Part-time scuola + casa           |
-| Unschooling           | Apprendimento guidato dal bambino |
+| Approccio              | Descrizione                  |
+| ---------------------- | ---------------------------- |
+| Scuole online          | Strutturate, accreditate     |
+| Pacchetti curriculari  | Autogestiti                  |
+| Ibrido                 | Scuola part-time + casa      |
+| Unschooling            | Apprendimento guidato dal bambino |
 
 ---
 
-## Domande Comuni
+## Domande frequenti
 
 <AskZantara
-  context="Scuole internazionali Indonesia, istruzione expat, rette scolastiche, curriculum Bali Giacarta"
-  placeholder="Chiedi informazioni sulle scuole..."
+  context="International schools Indonesia, expat education, school fees, curriculum Bali Jakarta"
+  placeholder="Ask about schools..."
   suggestedQuestions={[
-    "Qual è la migliore scuola a Bali per i bambini piccoli?",
-    "Mio figlio può frequentare con un visto turistico?",
-    "Come faccio a entrare nella lista d'attesa della Green School?",
-    "Esistono borse di studio per le scuole internazionali?",
+    "What's the best school in Bali for young children?",
+    "Can my child attend on a tourist visa?",
+    "How do I get on Green School's waiting list?",
+    "Are there scholarships for international schools?",
   ]}
 />
 
 ---
 
-## Articoli Correlati
+## Articoli correlati
 
-- [Visto per Familiari e Persone a Carico](/visas/indonesia-family-kitas-2026-what-spouses-and-dependents-must-know?lang=it)
-- [Costo della Vita a Bali](/it/insights/lifestyle/cost-of-living-bali)
-- [Guida all'Alloggio](/it/insights/lifestyle/accommodation-guide)
+- [Visto per familiari e familiari a carico](/visas/indonesia-family-kitas-2026-what-spouses-and-dependents-must-know)
+- [Costo della vita a Bali](/insights/lifestyle/cost-of-living-bali)
+- [Guida agli alloggi](/insights/lifestyle/accommodation-guide)

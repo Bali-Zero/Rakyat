@@ -41,7 +41,7 @@ describe("ReadinessChecklist", () => {
     );
     const heading = screen.getByRole("heading", { level: 2 });
 
-    expect(heading.style.fontFamily).toBe("var(--font-serif, Wimolog, serif)");
+    expect(heading.style.fontFamily).toBe("var(--font-serif, Georgia, serif)");
     expect(parseClampFloor(heading.style.fontSize)).toBe("1.5rem");
   });
 

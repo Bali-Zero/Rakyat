@@ -16,12 +16,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from backend.db import schema_audit
+from backend.db import migration_manager, schema_audit
 from backend.db.schema_audit import AuditReport, Finding, run_audit
 
 # ---------------------------------------------------------------------------
@@ -402,19 +403,167 @@ async def test_client_email_duplicates_finding(monkeypatch: pytest.MonkeyPatch) 
 
     [finding] = [f for f in report.findings if f.code == "client_email_duplicates"]
     assert finding.severity == "error"
-    assert finding.details["duplicates"] == [
-        {
-            "normalized_email_sha256": hashlib.sha256(synthetic_key.encode()).hexdigest(),
-            "count": 2,
-        },
-    ]
+    assert finding.details["duplicates"] == [{"count": 2}]
     for output in (json.dumps(report.to_dict()), schema_audit._format_human(report)):
         assert synthetic_key not in output
         assert "client_ids" not in output
-        assert hashlib.sha256(synthetic_key.encode()).hexdigest() in output
+        assert hashlib.sha256(synthetic_key.encode()).hexdigest() not in output
     sql_calls = [call.args[0] for call in conn.fetch.await_args_list]
     duplicate_query = next(sql for sql in sql_calls if "FROM clients" in sql)
     assert "ARRAY_AGG" not in duplicate_query.upper()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("json_output", [False, True])
+@pytest.mark.parametrize("duplicates", [False, True])
+async def test_cli_outputs_preserve_counts_without_identifiers(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    json_output: bool,
+    duplicates: bool,
+) -> None:
+    sentinel = "w4b-audit-sentinel@example.invalid"
+    conn = _build_conn(
+        legacy_table_exists=True,
+        canonical_table_exists=True,
+        legacy_numbers=[1],
+        canonical_numbers=[1],
+        extra_tables={"clients"},
+        client_email_duplicates=[{"normalized_email": sentinel, "count": 3}] if duplicates else [],
+    )
+    _patch_manager(monkeypatch, pending_list=[], conn=conn)
+    monkeypatch.setattr(schema_audit, "_required_tables_from_env", lambda: [])
+    argv = ["--database-url", "postgres://fake"] + (["--json"] if json_output else [])
+
+    code = await schema_audit._amain(argv)
+
+    captured = capsys.readouterr()
+    assert code == (1 if duplicates else 0)
+    output = captured.out + captured.err + caplog.text
+    assert sentinel not in output
+    assert hashlib.sha256(sentinel.encode()).hexdigest() not in output
+    if json_output:
+        report = json.loads(captured.out)
+        assert report["ok"] is not duplicates
+        if duplicates:
+            assert report["findings"][0]["details"] == {"duplicates": [{"count": 3}]}
+        else:
+            assert report["findings"] == []
+    else:
+        assert ("Result: FAIL" if duplicates else "Result: OK") in captured.out
+        if duplicates:
+            assert '"count": 3' in captured.out
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("json_output", [False, True])
+@pytest.mark.parametrize("failure_stage", ["connect", "check", "close"])
+async def test_cli_crashes_keep_type_but_not_exception_text(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    json_output: bool,
+    failure_stage: str,
+) -> None:
+    conn = _build_conn(
+        legacy_table_exists=True,
+        canonical_table_exists=True,
+        legacy_numbers=[1],
+        canonical_numbers=[1],
+    )
+    _patch_manager(monkeypatch, pending_list=[], conn=conn)
+    monkeypatch.setattr(schema_audit, "_required_tables_from_env", lambda: [])
+
+    async def fail(*_args: Any, **_kwargs: Any) -> None:
+        raise ValueError("W4B_SYNTHETIC_AUDIT_ERROR") from RuntimeError("W4B_SYNTHETIC_AUDIT_CAUSE")
+
+    if failure_stage == "check":
+        monkeypatch.setattr(schema_audit, "_check_client_email_uniqueness", fail)
+    else:
+        monkeypatch.setattr(schema_audit.MigrationManager, failure_stage, fail)
+    argv = ["--database-url", "postgres://fake"] + (["--json"] if json_output else [])
+
+    code = await schema_audit._amain(argv)
+
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == ""
+    output = captured.err + caplog.text
+    assert "ValueError" in output
+    assert "W4B_SYNTHETIC_AUDIT_ERROR" not in output
+    assert "W4B_SYNTHETIC_AUDIT_CAUSE" not in output
+    assert "Traceback" not in output
+    assert caplog.records
+    assert all(record.exc_info is None for record in caplog.records)
+    for record in caplog.records:
+        assert "W4B_SYNTHETIC" not in record.getMessage()
+        assert not any(isinstance(arg, BaseException) for arg in record.args)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exhausted", [False, True])
+async def test_audit_connection_retry_keeps_diagnostics_without_exception_text(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    exhausted: bool,
+) -> None:
+    pool = MagicMock()
+    pool.close = AsyncMock()
+    error = OSError("W4B_SYNTHETIC_RETRY_ERROR")
+    create_pool = AsyncMock(side_effect=error if exhausted else [error, pool])
+    sleep = AsyncMock()
+    monkeypatch.setattr(migration_manager.asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr(migration_manager.asyncio, "sleep", sleep)
+    manager = migration_manager.MigrationManager(database_url="postgres://fake")
+
+    with caplog.at_level(logging.WARNING):
+        if exhausted:
+            with pytest.raises(migration_manager.MigrationError) as failure:
+                await manager.connect()
+            assert failure.value.__cause__ is error
+            assert manager.pool is None
+        else:
+            await manager.connect()
+    await manager.close()
+
+    assert create_pool.await_count == (5 if exhausted else 2)
+    assert [call.args[0] for call in sleep.await_args_list] == (
+        [2.0, 4.0, 8.0, 16.0] if exhausted else [2.0]
+    )
+    assert pool.close.await_count == (0 if exhausted else 1)
+    assert "W4B_SYNTHETIC_RETRY_ERROR" not in caplog.text
+    assert "OSError" in caplog.text
+    assert "1/5" in caplog.text
+    assert "2s" in caplog.text
+    for record in caplog.records:
+        assert record.exc_info is None
+        assert "W4B_SYNTHETIC" not in record.getMessage()
+        assert not any(isinstance(arg, BaseException) for arg in record.args)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("json_output", [False, True])
+async def test_cli_real_connection_failure_is_private(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    json_output: bool,
+) -> None:
+    create_pool = AsyncMock(side_effect=ValueError("W4B_SYNTHETIC_CONNECT_ERROR"))
+    monkeypatch.setattr(migration_manager.asyncpg, "create_pool", create_pool)
+    argv = ["--database-url", "postgres://fake"] + (["--json"] if json_output else [])
+
+    code = await schema_audit._amain(argv)
+
+    captured = capsys.readouterr()
+    assert code == 2
+    assert create_pool.await_count == 1
+    assert captured.out == ""
+    output = captured.err + caplog.text
+    assert "MigrationError" in output
+    assert "W4B_SYNTHETIC_CONNECT_ERROR" not in output
+    assert "Traceback" not in output
 
 
 @pytest.mark.asyncio

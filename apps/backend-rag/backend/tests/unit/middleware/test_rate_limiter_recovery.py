@@ -134,7 +134,7 @@ class TestBootRecovery:
         async def fake_create_pool(**_kwargs: object) -> MagicMock:
             return MagicMock()
 
-        monkeypatch.setattr(service_initializer.asyncpg, "create_pool", fake_create_pool)
+        monkeypatch.setattr(service_initializer, "create_database_pool", fake_create_pool)
         monkeypatch.setenv("DISABLE_BACKGROUND_WORKERS", "1")
         monkeypatch.setattr("backend.middleware.rate_limiter.rate_limiter", limiter)
 

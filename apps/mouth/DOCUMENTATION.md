@@ -299,8 +299,8 @@ NUZANTARA_API_URL=https://nuzantara-rag.fly.dev
 NEXT_PUBLIC_WS_URL=wss://nuzantara-rag.fly.dev/ws
 
 # Error Tracking (Sentry)
-NEXT_PUBLIC_SENTRY_DSN=https://u13@dxxxx3.io/xxx
-SENTRY_DSN=https://u13@dxxxx3.io/xxx
+NEXT_PUBLIC_SENTRY_DSN=https://xxx@sentry.io/xxx
+SENTRY_DSN=https://xxx@sentry.io/xxx
 
 # Build Info
 NEXT_PUBLIC_BUILD_ID=local
@@ -851,7 +851,7 @@ MDX File → gray-matter (frontmatter) → next-mdx-remote/serialize → MDXCont
 /* Fonts */
 --font-sans: "Geist", system-ui, sans-serif;
 --font-mono: "Geist Mono", monospace;
---font-serif: "Wimolog", serif; /* Per headings blog */
+--font-serif: "Georgia", serif; /* Per headings blog */
 
 /* Sizes */
 --text-xs: 0.75rem; /* 12px */

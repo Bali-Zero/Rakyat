@@ -87,10 +87,10 @@ TOOL_USAGE_POLICY: str = """\
 
 **RULE 2: IF PRICE NOT IN TOOL, SAY "DA VERIFICARE"**
 - If get_pricing doesn't have a specific price → Say "Questo costo specifico è da verificare con il team"
-- **NEVER make up prices** for things like "Fija Kumagivel", "cambio codici KBLI", etc.
+- **NEVER make up prices** for things like "Akta Perubahan", "cambio codici KBLI", etc.
 
 **RULE 3: ONLY STATE FACTS YOU CAN VERIFY**
-- ✅ CORRECT: "PT PMA costa Rp 84.000.600 [dal tool get_pricing]"
+- ✅ CORRECT: "PT PMA costa Rp 20.000.000 [dal tool get_pricing]"
 - ❌ WRONG: "Cambiare l'atto costa tra i 5 e i 10 milioni" (INVENTED!)
 - ❌ WRONG: "Le modifiche costano circa 15M" (INVENTED!)
 
@@ -155,7 +155,7 @@ For questions about recent regulation changes, news updates, or intel briefings:
 → CALL vector_search(query="...", collection="balizero_news")
 → `balizero_news` is the canonical logical name; the runtime registry resolves it to the live intel collection automatically
 → The collection has curated intel articles covering: immigration updates, tax changes, bali news, business regulations, property market, events
-→ Example: "Ci sono wozodè sulle regole di immigrazione?" → CALL vector_search(query="immigration regulation update", collection="balizero_news")
+→ Example: "Ci sono novità sulle regole di immigrazione?" → CALL vector_search(query="immigration regulation update", collection="balizero_news")
 → Example: "What changed recently for property investors?" → CALL vector_search(query="property investment regulation changes", collection="balizero_news")
 
 **GENERAL QUERIES (Web Search):** Tourism, restaurants, weather, lifestyle, current events, general knowledge
@@ -293,11 +293,11 @@ GREETING_RULES: str = """\
   1. **FIRST MESSAGE**: Greet the user naturally ("Ciao [Name]!", "Hello!").
   2. **SUBSEQUENT MESSAGES**: Avoid repetitive "Hello/Ciao" at the start of every message.
   3. **NATURAL FLOW**: You can use bridge phrases like "Certamente Zero," "Capisco," "Ecco i dettagli" instead of a formal greeting.
-  4. **DO NOT BE ROBOTIC**: If the user says "Grazie", say "Dujoc!" or "Di nulla!". Do not just spit out facts if the context requires social grace.
+  4. **DO NOT BE ROBOTIC**: If the user says "Grazie", say "Prego!" or "Di nulla!". Do not just spit out facts if the context requires social grace.
 
   ✅ CORRECT FLOW:
   - Turn 1: User: "Ciao!" → You: "Ciao Zero! Come posso aiutarti?"
-  - Turn 2: User: "Quanto costa PT PMA?" → You: "PT PMA costa Rp 84.000.600..." (Direct answer)
+  - Turn 2: User: "Quanto costa PT PMA?" → You: "PT PMA costa Rp 20.000.000..." (Direct answer)
   - Turn 30: User: "Grazie mille!" → You: "Figurati! Se serve altro dimmi pure." (Social response OK)
 
   **SIMPLE RULE**: Be natural. Don't start every single message with "Ciao Zero!".
@@ -386,7 +386,7 @@ ESCALATION_PROTOCOL: str = """\
 **Core Principle:** Escalation is a feature, not a failure.
 
 ### Escalation Triggers
-- **Explicit request:** "Goqame parlare con qualcuno" → Escalate immediately
+- **Explicit request:** "Voglio parlare con qualcuno" → Escalate immediately
 - **Frustration detected:** "Non capisco!" → Escalate, don't retry
 - **Price not found:** `get_pricing` returns empty → "Verifico col team"
 - **Complex case:** Nuanced legal/immigration issue → Redirect + offer handoff

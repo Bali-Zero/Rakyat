@@ -123,16 +123,16 @@ describe("mapOracleFactsToApplicantFacts — full contract (acceptance test 1)",
 
   it("sanity: the ordered-rollout exception is empty", () => {
     expect(backendPaths.length).toBe(APPLICANT_FACT_COUNT);
-    expect(backendPaths.length).toBe(59);
+    expect(backendPaths.length).toBe(61);
     expect([...ORDERED_ROLLOUT_OPTIONAL_PATHS]).toEqual([]);
     expect(
       backendPaths.filter((factPath) => !expectedPaths.includes(factPath)),
     ).toEqual([]);
-    expect(expectedPaths.length).toBe(59);
+    expect(expectedPaths.length).toBe(61);
     expect(expectedPaths.length).toBe(FRONTEND_EMITTED_FACT_COUNT);
   });
 
-  it("emits all 59 backend fact-path keys", () => {
+  it("emits all 61 backend fact-path keys", () => {
     const result = mapFacts({});
     const actualKeys = Object.keys(result.facts).sort();
     expect(actualKeys).toEqual([...expectedPaths].sort());
@@ -1227,7 +1227,7 @@ describe("investment.investment_amount_usd — PR-D4c-2, currency-bound amount o
       category: "invest",
       investment_vehicle: "family",
       investment_currency: "idr",
-      investment_capital_idr: "8400062000",
+      investment_capital_idr: "5000000000",
     }).facts;
     expect(wire["investment.investment_capital_idr"]).toEqual({
       status: "KNOWN",
@@ -2195,7 +2195,7 @@ describe("annual foreign income fact", () => {
 
   it("maps a number above the safe maximum to UNKNOWN NOT_PROVIDED", () => {
     expect(
-      mapFacts({ remote_annual_income_usd: "9900000010000013" }).facts[
+      mapFacts({ remote_annual_income_usd: "9007199254740993" }).facts[
         "work.annual_foreign_income_usd"
       ],
     ).toEqual({ status: "UNKNOWN", reason: "NOT_PROVIDED" });
@@ -2362,5 +2362,38 @@ describe("own shareholding fact", () => {
     expect(
       mapFacts({ investment_own_shareholding_idr: "12a" }).facts[PATH],
     ).toEqual({ status: "UNKNOWN", reason: "NOT_PROVIDED" });
+  });
+});
+
+describe("E28A sponsoring company", () => {
+  const path = "investment.sponsoring_company_confirmed";
+
+  it.each([
+    ["yes", { status: "KNOWN", value: true }],
+    ["no", { status: "KNOWN", value: false }],
+    ["unconfirmed", { status: "UNKNOWN", reason: "UNVERIFIED" }],
+    [undefined, { status: "UNKNOWN", reason: "NOT_ASKED" }],
+  ] as const)(
+    "maps the company's answer %s separately from family sponsorship",
+    (answer, expected) => {
+      const wire = mapFacts({
+        family_sponsor_confirmed: "yes",
+        sponsor_category: "INVESTMENT",
+        ...(answer !== undefined
+          ? { investment_sponsoring_company_confirmed: answer }
+          : {}),
+      });
+      expect(wire.facts[path]).toEqual(expected);
+      expect(wire.disclosed_review_flags ?? []).not.toContain("NOT_CERTAIN");
+    },
+  );
+
+  it("does not accept a confirmation which contradicts an explicit no-sponsor category", () => {
+    expect(
+      mapFacts({
+        sponsor_category: "NONE",
+        investment_sponsoring_company_confirmed: "yes",
+      }).facts[path],
+    ).toEqual({ status: "UNKNOWN", reason: "CONFLICTING" });
   });
 });

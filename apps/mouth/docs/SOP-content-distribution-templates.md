@@ -1,7 +1,7 @@
 # SOP: Content Distribution Templates
 
 **Bali Zero · Nuzantara v5.2.0**
-**Owner:** Subhi Jofaxiv · Berlaku: 29 Jul 2026
+**Owner:** Subhi Darajat · Berlaku: 29 Jul 2026
 **Gunakan bersama:** Task content prep (20 artikel) + UTM generator
 
 ---
@@ -36,7 +36,7 @@
 
 - [ ] Canonical URL sudah diset ke `kita.balizero.com/[slug]` (bukan URL Medium)
 - [ ] Tag: Indonesia Business / Bali Expat Life / Tax Legal (pilih yang relevan)
-- [ ] Tidak ada harga hardcoded — zapaf atau ganti dengan "hubungi kami"
+- [ ] Tidak ada harga hardcoded — hapus atau ganti dengan "hubungi kami"
 
 ---
 
@@ -118,7 +118,7 @@ Kalau ada pertanyaan spesifik, reply di sini atau langsung ke tim Bali Zero via 
 
 **Format:** Tone conversational, bukan promosi langsung. Banyak grup ban link langsung — framing sebagai sharing pengalaman/informasi.
 
-**Cek dulu rules grup sebelum posting.** Kalau grup larang link → zapaf UTM, mention "DM untuk link".
+**Cek dulu rules grup sebelum posting.** Kalau grup larang link → hapus UTM, mention "DM untuk link".
 
 ```
 [PERTANYAAN PEMBUKA yang relevan ke komunitas grup]

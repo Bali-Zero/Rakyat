@@ -67,7 +67,7 @@ B-STUDIO", 2026-09-16)
 =====================================================================
 seq-21 added a ``HARD_FILTER``/``EXCLUDE`` firing on
 ``secondhome.bank_deposit_usd < 130000`` AND
-``secondhome.qualifying_property_value_usd < 1000001``. A visitor who chooses
+``secondhome.qualifying_property_value_usd < 1000000``. A visitor who chooses
 the "property" basis is NEVER asked about the deposit (``flow.ts``'s
 ``second_home`` branch) and ``fact-mapper.ts`` SYNTHESISES
 ``secondhome.bank_deposit_usd = known(0)`` so the SUPPORT twins resolve

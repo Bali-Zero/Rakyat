@@ -25,9 +25,15 @@ from typing import Any
 
 import asyncpg
 
+from backend.app.core.config import settings
 from backend.app.utils.logging_utils import get_logger
 from backend.services.common.background import spawn
 from backend.services.common.cache import cache_invalidating
+from backend.services.crm.drive_taxonomy import (
+    canonical_folders,
+    folder_for_category,
+    physical_root_layout,
+)
 from backend.services.pii.violation_store import hash_subject
 from backend.services.portal._document_visibility import document_visibility_clause
 from backend.services.portal._drive_fetch import fetch_drive_file
@@ -159,14 +165,7 @@ class PortalDocumentsMixin:
     @staticmethod
     def _get_drive_folder_for_category(category: str) -> str:
         """Map document category to Drive folder name for OCR dispatch."""
-        category_map = {
-            "immigration": "01_Immigration",
-            "personal": "00_Profile",
-            "pma": "02_Company",
-            "tax": "03_Tax",
-            "family": "04_Family",
-        }
-        return category_map.get((category or "").lower(), "99_Misc")
+        return folder_for_category(category)
 
     @staticmethod
     def _extract_drive_file_id(url: str | None) -> str | None:
@@ -773,7 +772,9 @@ class PortalDocumentsMixin:
                             document_type,
                             file_name,
                         )
-                        folder_hint = self._get_drive_folder_for_category(doc_category)
+                        folder_hint = drive_result.get("folder_path", "").rsplit("/", 1)[
+                            -1
+                        ] or self._get_drive_folder_for_category(doc_category)
                         spawn(
                             dispatch_ocr_by_folder(
                                 db_pool=self.pool,
@@ -851,11 +852,7 @@ class PortalDocumentsMixin:
         """
         Upload file to Google Drive with organized folder structure.
 
-        Folder structure:
-        Zantara Portal Uploads/
-        └── {client_id}_{client_name}/
-            └── {document_type}/
-                └── {timestamp}_{file_name}
+        Files are placed under the client's canonical CRM Drive folder.
 
         Returns:
             {
@@ -874,34 +871,15 @@ class PortalDocumentsMixin:
             "error": None,
         }
 
+        from backend.services.integrations.google_drive_service import GoogleDriveService
+        from backend.services.integrations.team_drive_service import TeamDriveService
+
         try:
-            from backend.app.core.config import settings
-            from backend.services.integrations.google_drive_service import GoogleDriveService
-            from backend.services.integrations.team_drive_service import TeamDriveService
-
-            # Try OAuth first, fallback to Service Account
-            drive_service = GoogleDriveService(self.pool)
-            use_service_account = False
-
-            # Check if Drive is configured
-            if not drive_service.is_configured():
-                logger.warning("OAuth not configured, trying Service Account...")
-                use_service_account = True
-            else:
-                # Check if we have a valid token
-                token = await drive_service.get_valid_token("SYSTEM")
-                if not token:
-                    logger.warning("No valid OAuth token, trying Service Account...")
-                    use_service_account = True
-
-            # Use Service Account if OAuth unavailable
-            if use_service_account:
-                team_drive = TeamDriveService(db_pool=self.pool)
-                if not team_drive.service_account_available:
-                    logger.error("Service Account also not available")
+            drive = GoogleDriveService(self.pool)
+            if not drive.is_configured() or not await drive.get_valid_token("SYSTEM"):
+                if not TeamDriveService(db_pool=self.pool).service_account_available:
                     result["error"] = "No Drive authentication available"
                     return result
-                # Use Service Account for upload
                 return await self._upload_with_service_account(
                     conn,
                     client_id,
@@ -913,101 +891,114 @@ class PortalDocumentsMixin:
                     result,
                 )
 
-            # Continue with OAuth
-            user_id = "SYSTEM"
-
-            # Get or create root folder for portal uploads
-            root_folder_id = await self._get_or_create_drive_folder(
-                drive_service,
-                user_id,
-                folder_name="Zantara Portal Uploads",
-                parent_id=settings.google_drive_root_folder_id or "root",
+            row = await conn.fetchrow(
+                "SELECT google_drive_folder_id, client_type FROM clients WHERE id = $1", client_id
             )
+            if not row:
+                raise RuntimeError("Client Drive root cannot be resolved")
+            client_type = row["client_type"] or "individual"
+            root_id = row["google_drive_folder_id"]
+            if not root_id:
+                from backend.services.integrations.service_account_drive_service import (
+                    ServiceAccountDriveService,
+                )
 
-            if not root_folder_id:
-                result["error"] = "Failed to create root folder"
-                return result
-
-            # Create/get client folder
-            safe_client_name = "".join(
-                c for c in client_name if c.isalnum() or c in (" ", "_")
-            ).rstrip()
-            client_folder_name = f"{client_id}_{safe_client_name[:30]}"  # Limit name length
-
-            client_folder_id = await self._get_or_create_drive_folder(
-                drive_service,
-                user_id,
-                folder_name=client_folder_name,
-                parent_id=root_folder_id,
-            )
-
-            if not client_folder_id:
-                result["error"] = "Failed to create client folder"
-                return result
-
-            # Create/get document type folder
-            type_folder_name = document_type.replace("_", " ").title()
-            type_folder_id = await self._get_or_create_drive_folder(
-                drive_service,
-                user_id,
-                folder_name=type_folder_name,
-                parent_id=client_folder_id,
-            )
-
-            if not type_folder_id:
-                result["error"] = "Failed to create type folder"
-                return result
-
-            # Add timestamp to filename to avoid collisions
-            timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
-            drive_file_name = f"{timestamp}_{file_name}"
-
-            # Upload file with retry logic
-            max_retries = 3
-            upload_result = None
-
-            for attempt in range(max_retries):
+                await conn.execute(
+                    "SELECT pg_advisory_lock($1, $2)",
+                    ServiceAccountDriveService.DRIVE_FOLDER_LOCK_CLASS,
+                    client_id,
+                )
                 try:
-                    upload_result = await drive_service.upload_file_to_folder(
-                        user_id=user_id,
-                        folder_id=type_folder_id,
+                    root_id = await conn.fetchval(
+                        "SELECT google_drive_folder_id FROM clients WHERE id = $1", client_id
+                    )
+                    if not root_id:
+                        parent = (
+                            getattr(
+                                settings,
+                                "gdrive_companies_folder_id"
+                                if client_type == "company"
+                                else "gdrive_individuals_folder_id",
+                                None,
+                            )
+                            or settings.google_drive_root_folder_id
+                        )
+                        if not parent:
+                            raise RuntimeError("Client Drive parent is not configured")
+                        root_id = await self._resolve_oauth_folder(
+                            drive, f"{client_id}_{client_name}", parent, conn=conn
+                        )
+                        await conn.execute(
+                            "UPDATE clients SET google_drive_folder_id = $1 WHERE id = $2",
+                            root_id,
+                            client_id,
+                        )
+                finally:
+                    await conn.execute(
+                        "SELECT pg_advisory_unlock($1, $2)",
+                        ServiceAccountDriveService.DRIVE_FOLDER_LOCK_CLASS,
+                        client_id,
+                    )
+
+            root = await drive.get_file("SYSTEM", root_id)
+            layout = physical_root_layout(
+                root,
+                root_id,
+                client_type,
+                individuals_parent=settings.gdrive_individuals_folder_id,
+                companies_parent=settings.gdrive_companies_folder_id,
+            )
+            category = self._classify_document_category(document_type, file_name)
+            folder_name = folder_for_category(category, layout)
+            cached_id = await conn.fetchval(
+                "SELECT subfolder_id FROM client_drive_subfolders WHERE client_id = $1 AND subfolder_name = $2 LIMIT 1",
+                client_id,
+                folder_name,
+            )
+            target = await self._resolve_oauth_folder(
+                drive, folder_name, root_id, cached_id, conn=conn
+            )
+            timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+            for attempt in range(3):
+                try:
+                    uploaded = await drive.upload_file_to_folder(
+                        user_id="SYSTEM",
+                        folder_id=target,
                         file_content=file_content,
-                        file_name=drive_file_name,
+                        file_name=f"{timestamp}_{file_name}",
                         mime_type=mime_type,
                     )
-                    break  # Success, exit retry loop
-                except Exception as e:
-                    if attempt < max_retries - 1:
-                        wait_time = 2**attempt  # Exponential backoff: 1s, 2s, 4s
-                        logger.warning(
-                            f"Drive upload attempt {attempt + 1} failed, retrying in {wait_time}s: {e}",
-                        )
-                        await asyncio.sleep(wait_time)
-                    else:
-                        raise  # All retries exhausted
-
-            if upload_result:
-                result["success"] = True
-                result["file_id"] = upload_result.get("id")
-                result["file_url"] = (
-                    upload_result.get("webViewLink")
-                    or f"https://drive.google.com/file/d/{upload_result.get('id')}/view"
-                )
-                result["folder_path"] = (
-                    f"Zantara Portal Uploads/{client_folder_name}/{type_folder_name}"
-                )
-
-                logger.info(
-                    f"📁 File uploaded to Drive: {drive_file_name} (ID: {upload_result.get('id')})",
-                )
-            else:
-                result["error"] = "Upload failed after all retries"
-
+                    break
+                except Exception:
+                    if attempt == 2:
+                        raise
+                    await asyncio.sleep(2**attempt)
+            result.update(
+                success=True,
+                file_id=uploaded.get("id"),
+                file_url=uploaded.get("webViewLink")
+                or f"https://drive.google.com/file/d/{uploaded.get('id')}/view",
+                folder_path=f"{client_id}_{client_name}/{folder_name}",
+            )
         except Exception as e:
-            logger.error("Failed to upload to Google Drive: %s", e, exc_info=True)
+            logger.error("Failed to upload to Google Drive: %s", type(e).__name__)
             result["error"] = str(e)
-
         return result
+
+    async def _resolve_oauth_folder(
+        self,
+        drive: Any,
+        name: str,
+        parent_id: str,
+        cached_id: str | None = None,
+        *,
+        conn: Any = None,
+    ) -> str:
+        from backend.services.integrations.service_account_drive_service import (
+            resolve_oauth_canonical_folder,
+        )
+
+        return await resolve_oauth_canonical_folder(drive, name, parent_id, cached_id, conn)
 
     async def _resolve_client_drive_folder(
         self,
@@ -1016,6 +1007,7 @@ class PortalDocumentsMixin:
         client_id: int,
         client_name: str,
         category_folder: str,
+        category: str | None = None,
     ) -> str:
         """Resolve the client's OWN Drive folder + category subfolder id.
 
@@ -1040,36 +1032,33 @@ class PortalDocumentsMixin:
                 client_name=client_name,
                 client_type=(row["client_type"] if row else None) or "individual",
                 db_pool=self.pool,
+                conn=conn,
             )
             root_folder_id = ensure_result["root_folder_id"]
         if not root_folder_id:
             raise RuntimeError(f"No Drive root folder for client {client_id}")
 
-        # The subfolder ids created by ensure_client_folder are persisted in
-        # client_drive_subfolders (that is how DrivePollService matches a
-        # dropped file back to a client) — prefer that read over a Drive list.
+        root = await sa_drive.get_file_metadata(root_folder_id)
+        layout = physical_root_layout(
+            root,
+            root_folder_id,
+            row["client_type"] if row else None,
+            individuals_parent=settings.gdrive_individuals_folder_id,
+            companies_parent=settings.gdrive_companies_folder_id,
+        )
+        if category is not None:
+            category_folder = folder_for_category(category, layout)
+        elif category_folder not in canonical_folders(layout):
+            raise ValueError("Destination does not match the physical Drive layout")
         subfolder_id = await conn.fetchval(
-            """
-            SELECT subfolder_id
-              FROM client_drive_subfolders
-             WHERE client_id = $1 AND subfolder_name = $2
-             LIMIT 1
-            """,
+            """SELECT subfolder_id FROM client_drive_subfolders
+               WHERE client_id = $1 AND subfolder_name = $2 LIMIT 1""",
             client_id,
             category_folder,
         )
-        if subfolder_id:
-            return subfolder_id
-
-        found = await sa_drive.find_folder(category_folder, root_folder_id)
-        if found:
-            return found["id"]
-
-        created = await sa_drive.create_folder(
-            name=category_folder,
-            parent_id=root_folder_id,
+        return await sa_drive.resolve_canonical_folder(
+            category_folder, root_folder_id, subfolder_id, conn=conn
         )
-        return created["id"]
 
     async def _upload_with_service_account(
         self,
@@ -1113,9 +1102,11 @@ class PortalDocumentsMixin:
             # The SAME category folder the OCR dispatch already tells the
             # pipeline this file lives in (`folder_hint`, STEP 6b) — so the
             # hint and the physical location can no longer disagree.
-            category_folder = self._get_drive_folder_for_category(
-                self._classify_document_category(document_type, file_name),
+            category = self._classify_document_category(document_type, file_name)
+            client_type = await conn.fetchval(
+                "SELECT client_type FROM clients WHERE id = $1", client_id
             )
+            category_folder = folder_for_category(category, client_type)
 
             # Upload using Service Account. ServiceAccountDriveService wraps
             # the (synchronous) googleapiclient .execute() call in
@@ -1129,8 +1120,10 @@ class PortalDocumentsMixin:
                 client_id=client_id,
                 client_name=client_name,
                 category_folder=category_folder,
+                category=category,
             )
-            folder_path = f"{client_id}_{client_name}/{category_folder}"
+            destination = await sa_drive.get_file_metadata(target_folder_id)
+            folder_path = f"{client_id}_{client_name}/{destination['name']}"
             uploaded_file = await sa_drive.upload_file_to_folder(
                 folder_id=target_folder_id,
                 file_content=file_content,

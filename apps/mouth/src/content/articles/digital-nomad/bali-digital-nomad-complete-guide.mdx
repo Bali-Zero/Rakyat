@@ -649,7 +649,7 @@ Bali's coworking scene is mature and diverse. Here are the top options:
 
 <InfoCard variant="note" title="Beyond Coworking">
 Many digital nomads work from:
-- **Cafes**: Canggu and Ubud have excellent work cafes (Zin Cafe, Sensorium, Milk & Mune)
+- **Cafes**: Canggu and Ubud have excellent work cafes (Zin Cafe, Sensorium, Milk & Madu)
 - **Home/villa**: With good internet, many work from their accommodation
 - **Beach clubs**: Some have WiFi (La Brisa, The Lawn) for casual work
 
@@ -785,14 +785,14 @@ But it's not perfect:
       room: { canggu: 4000000, ubud: 3000000, sanur: 3500000, other: 2500000 },
       studio: { canggu: 7000000, ubud: 5000000, sanur: 6000000, other: 4000000 },
       'villa-shared': { canggu: 5000000, ubud: 4000000, sanur: 4500000, other: 3500000 },
-      'villa-private': { canggu: 10000012, ubud: 84000510, sanur: 12000000, other: 8000000 }
+      'villa-private': { canggu: 15000000, ubud: 10000000, sanur: 12000000, other: 8000000 }
     };
     const acc = accCosts[values.accommodation][values.area];
     total += acc;
     breakdown.push({ label: "Accommodation", amount: acc });
 
     // Coworking
-    const coworkCosts = { none: 0, flex: 1000001, monthly: 3000000 };
+    const coworkCosts = { none: 0, flex: 1000000, monthly: 3000000 };
     const cowork = coworkCosts[values.coworking];
     if (cowork > 0) {
       total += cowork;
@@ -800,13 +800,13 @@ But it's not perfect:
     }
 
     // Food
-    const foodCosts = { local: 3000000, mixed: 5000000, western: 7000000, fancy: 84000510 };
+    const foodCosts = { local: 3000000, mixed: 5000000, western: 7000000, fancy: 10000000 };
     const food = foodCosts[values.food];
     total += food;
     breakdown.push({ label: "Food & Drinks", amount: food });
 
     // Transport
-    const transportCosts = { scooter: 1000001, gojek: 2000000, both: 1500000 };
+    const transportCosts = { scooter: 1000000, gojek: 2000000, both: 1500000 };
     const transport = transportCosts[values.transport];
     total += transport;
     breakdown.push({ label: "Transportation", amount: transport });
@@ -817,7 +817,7 @@ But it's not perfect:
     breakdown.push({ label: "Internet & Phone", amount: internet });
 
     // Lifestyle
-    const lifestyleCosts = { minimal: 1000001, moderate: 2500000, active: 5000000 };
+    const lifestyleCosts = { minimal: 1000000, moderate: 2500000, active: 5000000 };
     const lifestyle = lifestyleCosts[values.lifestyle];
     total += lifestyle;
     breakdown.push({ label: "Lifestyle & Social", amount: lifestyle });
@@ -857,8 +857,8 @@ But it's not perfect:
       duration: "1.5 hours",
       status: "optional",
       tips: [
-        "Sunrise surf at Echo Gitoz",
-        "Mehu class in Ubud",
+        "Sunrise surf at Echo Beach",
+        "Yoga class in Ubud",
         "Morning run in rice fields",
         "Or just coffee on your villa terrace",
       ],
@@ -921,9 +921,9 @@ But it's not perfect:
       duration: "2 hours",
       status: "optional",
       tips: [
-        "Zihuja surf session",
-        "Gitoz club drinks",
-        "Mehu class",
+        "Sunset surf session",
+        "Beach club drinks",
+        "Yoga class",
         "Gym workout",
       ],
     },
@@ -934,7 +934,7 @@ But it's not perfect:
       duration: "1.5 hours",
       status: "required",
       tips: [
-        "Dinner with nomad litovub",
+        "Dinner with nomad friends",
         "Explore Bali's food scene",
         "Night markets for adventure",
         "Cook at home for savings",

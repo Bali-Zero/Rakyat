@@ -19,7 +19,7 @@ claim_count: 110
 # Kepmen Visa Taxonomy 2025 — PNBP Cross-Reference (PP 45/2024)
 
 > **CRITICAL distinction**: PP 45/2024 does NOT map tariffs to Kepmen indeks codes directly.
-> PP 45/2024 sets tariffs by **duration + category** (e.g. "Visa Kunjungan Paling Lama 60 Hari per orang Rp 1.000.001").
+> PP 45/2024 sets tariffs by **duration + category** (e.g. "Visa Kunjungan Paling Lama 60 Hari per orang Rp 1.000.000").
 > This cross-reference document MAPS each Kepmen indeks → applicable PP 45/2024 tariff line based on duration + category alignment.
 
 ## Discovery (load-bearing)
@@ -29,7 +29,7 @@ claim_count: 110
 - **Kepmen M.IP-08.GR.01.01/2025**: defines WHAT each visa allows (activities, rights, obligations, prohibitions).
 - **PP 45/2024**: defines HOW MUCH it costs (PNBP tariff schedule).
 
-This means the same PP 45/2024 line "Visa Kunjungan Paling Lama 60 Hari per orang Rp 1.000.001" applies to ALL 34 C-series indeks (C1, C2, C3, C4, C5, C5A, C6, ..., C22B). The differentiation among C-series is **activity scope**, not price.
+This means the same PP 45/2024 line "Visa Kunjungan Paling Lama 60 Hari per orang Rp 1.000.000" applies to ALL 34 C-series indeks (C1, C2, C3, C4, C5, C5A, C6, ..., C22B). The differentiation among C-series is **activity scope**, not price.
 
 **The DPI compliance implication**: a quote for any C-series visa must (i) cite Kepmen for scope, (ii) cite PP 45/2024 for tariff, (iii) note that surcharge (Biaya Verifikasi Visa Kategori I/II/III) may apply per Permenkumham implementing regulation.
 
@@ -44,7 +44,7 @@ This means the same PP 45/2024 line "Visa Kunjungan Paling Lama 60 Hari per oran
 | Visa Kunjungan Paling Lama 7 Hari      | per orang | Rp 250.000       | ~$15              |
 | Visa Kunjungan Paling Lama 14 Hari     | per orang | Rp 350.000       | ~$22              |
 | Visa Kunjungan Paling Lama 30 Hari     | per orang | Rp 500.000       | ~$31              |
-| **Visa Kunjungan Paling Lama 60 Hari** | per orang | **Rp 1.000.001** | **~$62**          |
+| **Visa Kunjungan Paling Lama 60 Hari** | per orang | **Rp 1.000.000** | **~$62**          |
 | Visa Kunjungan Paling Lama 90 Hari     | per orang | Rp 1.500.000     | ~$93              |
 | Visa Kunjungan Paling Lama 180 Hari    | per orang | Rp 2.000.000     | ~$124             |
 
@@ -57,8 +57,8 @@ This means the same PP 45/2024 line "Visa Kunjungan Paling Lama 60 Hari per oran
 | Visa Kunjungan Beberapa Kali Perjalanan Paling Lama 180 Hari    | per orang | Rp 2.500.000     | ~$155             |
 | **Visa Kunjungan Beberapa Kali Perjalanan Paling Lama 1 Tahun** | per orang | **Rp 3.000.000** | **~$186**         |
 | Visa Kunjungan Beberapa Kali Perjalanan Paling Lama 2 Tahun     | per orang | Rp 5.000.000     | ~$310             |
-| Visa Kunjungan Beberapa Kali Perjalanan Paling Lama 5 Tahun     | per orang | Rp 84.000.510    | ~$620             |
-| Visa Kunjungan Beberapa Kali Perjalanan Paling Lama 10 Tahun    | per orang | Rp 10.000.012    | ~$930             |
+| Visa Kunjungan Beberapa Kali Perjalanan Paling Lama 5 Tahun     | per orang | Rp 10.000.000    | ~$620             |
+| Visa Kunjungan Beberapa Kali Perjalanan Paling Lama 10 Tahun    | per orang | Rp 15.000.000    | ~$930             |
 
 ### Visa Tinggal Terbatas (Section B Kepmen — E-series)
 
@@ -70,7 +70,7 @@ This means the same PP 45/2024 line "Visa Kunjungan Paling Lama 60 Hari per oran
 
 | ITAS Line (verbatim)                                       | Unit           | Tariff (IDR)     |
 | ---------------------------------------------------------- | -------------- | ---------------- |
-| Izin Tinggal Terbatas Masa Berlaku Paling Lama 60 Hari     | per permohonan | Rp 1.000.001     |
+| Izin Tinggal Terbatas Masa Berlaku Paling Lama 60 Hari     | per permohonan | Rp 1.000.000     |
 | Izin Tinggal Terbatas Masa Berlaku Paling Lama 90 Hari     | per permohonan | Rp 1.500.000     |
 | Izin Tinggal Terbatas Berlaku Paling Lama 6 Bulan          | per permohonan | Rp 2.000.000     |
 | **Izin Tinggal Terbatas Masa Berlaku Paling Lama 1 Tahun** | per permohonan | **Rp 3.000.000** |
@@ -81,7 +81,7 @@ This means the same PP 45/2024 line "Visa Kunjungan Paling Lama 60 Hari per oran
 
 | Verification Surcharge (verbatim)                        | Unit           | Tariff (IDR) |
 | -------------------------------------------------------- | -------------- | ------------ |
-| Biaya Verifikasi Visa untuk Tujuan Tertentu Kategori I   | per permohonan | Rp 1.000.001 |
+| Biaya Verifikasi Visa untuk Tujuan Tertentu Kategori I   | per permohonan | Rp 1.000.000 |
 | Biaya Verifikasi Visa untuk Tujuan Tertentu Kategori II  | per permohonan | Rp 2.000.000 |
 | Biaya Verifikasi Visa untuk Tujuan Tertentu Kategori III | per permohonan | Rp 8.000.000 |
 
@@ -111,40 +111,40 @@ This means the same PP 45/2024 line "Visa Kunjungan Paling Lama 60 Hari per oran
 
 | Code     | Duration (days) | PNBP Visa (IDR) | PP 45/2024 Line                    | Notes                                                                    |
 | -------- | --------------- | --------------- | ---------------------------------- | ------------------------------------------------------------------------ |
-| **C1**   | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Single-entry 60 days, extendable +60×2 (total 180 days)                  |
-| **C2**   | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Business single-entry 60 days, extendable +60×2                          |
-| **C3**   | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Medical treatment, often extended for treatment duration                 |
-| **C4**   | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Government mission single-entry                                          |
-| **C5**   | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Journalism — OQ — special verification likely (BVV Kategori II or III)   |
-| **C5A**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Social media content creator — surcharge BVV Kategori II likely (OQ-100) |
-| **C6**   | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Social/voluntary — may require BVV Kategori II                           |
-| **C7**   | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Arts/culture performance                                                 |
-| **C7A**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Music performer (commercial — BVV may apply)                             |
-| **C7B**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Music support staff                                                      |
-| **C7C**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Skills/expertise performance                                             |
-| **C8**   | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Government-invited sports                                                |
-| **C8A**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Sports support non-commercial                                            |
-| **C8B**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Sports commercial — BVV may apply                                        |
-| **C9**   | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Internal training/audit                                                  |
-| **C9A**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | QC product trial                                                         |
-| **C9B**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Product testing                                                          |
-| **C10**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Lecture/seminar attendee                                                 |
-| **C10A** | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Lecture/seminar speaker                                                  |
-| **C11**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Film crew — BVV Kategori II/III likely                                   |
-| **C11A** | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Film support/documentary                                                 |
-| **C12**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Pre-investment study                                                     |
-| **C13**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Goods procurement                                                        |
-| **C14**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Cooperation gov/private                                                  |
-| **C15**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Construction inspection                                                  |
-| **C16**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Industrial machinery install                                             |
-| **C17**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Non-immigrant short work                                                 |
-| **C18**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | University visit                                                         |
-| **C19**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Tertiary research                                                        |
-| **C20**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Healthcare staff training                                                |
-| **C21**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Religious propagation                                                    |
-| **C22**  | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Pre-employment prep                                                      |
-| **C22A** | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Sponsor placement prep                                                   |
-| **C22B** | 60              | Rp 1.000.001    | Visa Kunjungan Paling Lama 60 Hari | Family of pre-employment worker                                          |
+| **C1**   | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Single-entry 60 days, extendable +60×2 (total 180 days)                  |
+| **C2**   | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Business single-entry 60 days, extendable +60×2                          |
+| **C3**   | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Medical treatment, often extended for treatment duration                 |
+| **C4**   | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Government mission single-entry                                          |
+| **C5**   | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Journalism — OQ — special verification likely (BVV Kategori II or III)   |
+| **C5A**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Social media content creator — surcharge BVV Kategori II likely (OQ-100) |
+| **C6**   | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Social/voluntary — may require BVV Kategori II                           |
+| **C7**   | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Arts/culture performance                                                 |
+| **C7A**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Music performer (commercial — BVV may apply)                             |
+| **C7B**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Music support staff                                                      |
+| **C7C**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Skills/expertise performance                                             |
+| **C8**   | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Government-invited sports                                                |
+| **C8A**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Sports support non-commercial                                            |
+| **C8B**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Sports commercial — BVV may apply                                        |
+| **C9**   | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Internal training/audit                                                  |
+| **C9A**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | QC product trial                                                         |
+| **C9B**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Product testing                                                          |
+| **C10**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Lecture/seminar attendee                                                 |
+| **C10A** | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Lecture/seminar speaker                                                  |
+| **C11**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Film crew — BVV Kategori II/III likely                                   |
+| **C11A** | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Film support/documentary                                                 |
+| **C12**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Pre-investment study                                                     |
+| **C13**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Goods procurement                                                        |
+| **C14**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Cooperation gov/private                                                  |
+| **C15**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Construction inspection                                                  |
+| **C16**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Industrial machinery install                                             |
+| **C17**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Non-immigrant short work                                                 |
+| **C18**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | University visit                                                         |
+| **C19**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Tertiary research                                                        |
+| **C20**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Healthcare staff training                                                |
+| **C21**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Religious propagation                                                    |
+| **C22**  | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Pre-employment prep                                                      |
+| **C22A** | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Sponsor placement prep                                                   |
+| **C22B** | 60              | Rp 1.000.000    | Visa Kunjungan Paling Lama 60 Hari | Family of pre-employment worker                                          |
 
 ### Prefix F — Visa Kunjungan Saat Kedatangan 7 Hari (VOA 7d, transit) — 2 indeks
 

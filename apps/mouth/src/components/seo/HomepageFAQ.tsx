@@ -1,3 +1,4 @@
+import { serializeJsonLd } from "@/lib/seo/serialize-json-ld";
 import { HOMEPAGE_FAQS, generateFAQSchema } from "@/lib/seo/faq-data";
 
 /**
@@ -10,7 +11,7 @@ export function HomepageFAQSchema() {
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
     />
   );
 }
@@ -77,7 +78,7 @@ export function HomepageServicesSchema() {
       offers: {
         "@type": "AggregateOffer",
         lowPrice: "3000000",
-        highPrice: "84000510",
+        highPrice: "10000000",
         priceCurrency: "IDR",
       },
       url: `${baseUrl}/services/tax`,
@@ -92,7 +93,7 @@ export function HomepageServicesSchema() {
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
     />
   );
 }

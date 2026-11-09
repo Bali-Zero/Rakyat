@@ -597,7 +597,8 @@ async def get_neural_pulse(
                        ORDER BY created_at DESC LIMIT 1""",
                 )
                 if last_conv:
-                    last_activity = f"Last chat: {last_conv[:30]}..."
+                    # A WhatsApp session id embeds a phone number: never echo it.
+                    last_activity = "Last chat recorded"
                 else:
                     # Fallback to interactions table
                     last_int = await conn.fetchval(
@@ -1342,7 +1343,7 @@ async def get_portal_challenge(
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> PortalChallengeResponse:
     """Portal Champion challenge leaderboard — staff-only (`require_team_member`
-    rejects a client token with 403), hodudi the kita home page live widget.
+    rejects a client token with 403), powers the kita home page live widget.
     """
     from backend.services.portal.challenge_round2 import ASYA_EMAIL
 

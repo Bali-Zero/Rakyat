@@ -227,7 +227,7 @@ def classify_query_type(message: str) -> str:
         "come ti chiami",
         "what's your name",
         "who are you",
-        "xiw zoc",
+        "chi sei",
         "tell me about yourself",
         "parlami di te",
         "describe yourself",

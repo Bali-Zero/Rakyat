@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import {
   apiPmaPresentation,
+  getNativeScopeView,
   kbliApi,
   KBLIDetail,
   KBLISearchResult,
@@ -46,6 +47,7 @@ import KBLIInspector, {
 import ThinkingIndicator from "./components/ThinkingIndicator";
 import MatchScoreRing from "./components/MatchScoreRing";
 import RiskGauge from "./components/RiskGauge";
+import NativeScopes, { scopeCoverageLabel } from "./components/NativeScopes";
 import ComparisonModal from "./components/ComparisonModal";
 import { useTypewriter } from "./hooks/useTypewriter";
 import LegacyAlert from "./components/LegacyAlert";
@@ -676,7 +678,7 @@ const InspectorChoreographed = ({
   }
 
   const pmaBadge = getPmaBadge(data);
-  const riskLevel = getRiskLevel(data.risk_profile);
+  const scopeView = getNativeScopeView(data);
 
   // Copy/Export (2C) — the line itself is built by
   // `buildInspectorCopyLine`, which owns two rules this call site kept getting
@@ -702,7 +704,7 @@ const InspectorChoreographed = ({
     menengah: 2,
     rendah: 1,
   };
-  const sortedLicenses = [...data.licenses].sort((a, b) => {
+  const sortedLicenses = (scopeView ? [] : [...data.licenses]).sort((a, b) => {
     const aRisk =
       Object.entries(riskOrder).find(([k]) =>
         a.risk_level.toLowerCase().includes(k),
@@ -799,7 +801,13 @@ const InspectorChoreographed = ({
           transition={{ delay: 0.2 }}
           className="flex items-center justify-between"
         >
-          <RiskGauge level={riskLevel} />
+          {scopeView ? (
+            <span className="text-sm text-[var(--kbli-text-muted)]">
+              {scopeCoverageLabel(scopeView)}
+            </span>
+          ) : (
+            <RiskGauge level={getRiskLevel(data.risk_profile)} />
+          )}
           <span className="text-[11px] uppercase tracking-widest text-accent-sand">
             {data.licensing_status}
           </span>
@@ -822,7 +830,10 @@ const InspectorChoreographed = ({
         </motion.section>
 
         {/* Licenses with visual hierarchy (3C) */}
-        {sortedLicenses.length > 0 && (
+        {scopeView && (
+          <NativeScopes view={scopeView} note={data.licensing_note} />
+        )}
+        {!scopeView && sortedLicenses.length > 0 && (
           <motion.section
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

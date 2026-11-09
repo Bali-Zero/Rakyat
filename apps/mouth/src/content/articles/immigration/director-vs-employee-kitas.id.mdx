@@ -77,41 +77,41 @@ canonicalUrl: "https://balizero.com/immigration/director-vs-employee-kitas"
 ogImage: "/static/insights/immigration/director-employee.jpg"
 twitterCard: "summary_large_image"
 locale: "id"
-source_sha256: "e127acfce54d1b9055dfe84553c58da3fdc5e1f7e4ab11c52c8f1fec84e9605a"
+source_sha256: "12e8d08ef74226174b904709ba4f8f879a8d8b6657d5905dbce640462b179774"
 ---
 
-# Direktur vs Karyawan KITAS: Perbedaan Utama di Indonesia 2026
+# Director vs Employee KITAS: Perbedaan Utama di Indonesia 2026
 
-Jika Anda bekerja di Indonesia, jenis dan persyaratan KITAS Anda bergantung pada apakah Anda adalah direktur perusahaan atau seorang karyawan. Berikut perbedaannya.
+Jika Anda bekerja di Indonesia, jenis dan persyaratan KITAS Anda bergantung pada apakah Anda seorang direktur perusahaan atau karyawan. Berikut perbedaannya.
 
 ## Perbandingan Cepat
 
 <ComparisonTable
-  title="Direktur vs Karyawan KITAS"
-  description="Perbandingan bersebelahan"
+  title="Director vs Employee KITAS"
+  description="Perbandingan sisi-dengan-sisi"
   items={[
     {
-      name: "Direktur KITAS",
-      subtitle: "Mengelola PT PMA",
+      name: "Director KITAS",
+      subtitle: "Mengoperasikan PT PMA",
       values: {
         Sponsor: "Perusahaan sendiri",
-        RPTKA: "Diperlukan",
-        "DKP-TKA": "Diperlukan",
-        "Position Flexibility": "Lebih bebas",
-        Liability: "Tanggung jawab perusahaan",
+        RPTKA: "Wajib",
+        "DKP-TKA": "Wajib",
+        "Position Flexibility": "Lebih fleksibel",
+        Liability: "Liabilitas perusahaan",
         Qualification: "Fleksibel",
       },
       highlight: true,
     },
     {
-      name: "Karyawan KITAS",
+      name: "Employee KITAS",
       subtitle: "Bekerja untuk perusahaan",
       values: {
         Sponsor: "Pemberi kerja",
-        RPTKA: "Diperlukan",
-        "DKP-TKA": "Diperlukan",
+        RPTKA: "Wajib",
+        "DKP-TKA": "Wajib",
         "Position Flexibility": "Peran tetap",
-        Liability: "Pribadi saja",
+        Liability: "Hanya pribadi",
         Qualification: "Pengalaman 5+ tahun",
       },
     },
@@ -120,7 +120,7 @@ Jika Anda bekerja di Indonesia, jenis dan persyaratan KITAS Anda bergantung pada
 
 ---
 
-## Jenis Mana yang Anda Gunakan?
+## Mana yang Anda?
 
 <DecisionTree
   title="Direktur atau Karyawan?"
@@ -136,9 +136,9 @@ Jika Anda bekerja di Indonesia, jenis dan persyaratan KITAS Anda bergantung pada
     },
     {
       id: "shareholder",
-      question: "Apakah Anda tercantum sebagai Direktur dalam akta perusahaan?",
+      question: "Apakah Anda terdaftar sebagai Direktur dalam akta perusahaan?",
       options: [
-        { label: "Ya, saya Direktur", next: "director" },
+        { label: "Ya, saya seorang Direktur", next: "director" },
         { label: "Tidak, hanya pemegang saham", next: "investor" },
       ],
     },
@@ -146,19 +146,16 @@ Jika Anda bekerja di Indonesia, jenis dan persyaratan KITAS Anda bergantung pada
       id: "no-shares",
       question: "Apa peran Anda di perusahaan?",
       options: [
-        {
-          label: "Ditunjuk sebagai Direktur",
-          next: "non-shareholder-director",
-        },
-        { label: "Karyawan/Mandiri/Konsultan", next: "employee" },
+        { label: "Ditunjuk sebagai Direktur", next: "non-shareholder-director" },
+        { label: "Karyawan/Mantan/penasihat", next: "employee" },
       ],
     },
     {
       id: "director",
       result: {
-        title: "Direktur KITAS (Pemegang Saham-Direktur)",
+        title: "Director KITAS (Pemegang Sahah-Direktur)",
         description:
-          "Anda memerlukan Direktur KITAS dengan RPTKA. Anda adalah pemilik sekaligus pekerja. Perusahaan Anda yang menjadi sponsor izin Anda.",
+          "Anda memerlukan Director KITAS dengan RPTKA. Anda adalah pemilik sekaligus pekerja. Perusahaan Anda menjadi sponsor izin Anda.",
       },
     },
     {
@@ -166,13 +163,13 @@ Jika Anda bekerja di Indonesia, jenis dan persyaratan KITAS Anda bergantung pada
       result: {
         title: "Investor KITAS (C313)",
         description:
-          "Jika Anda hanya investor tanpa bekerja, Anda dapat mendapatkan Investor KITAS tanpa RPTKA. Jika ingin aktif bekerja, Anda memerlukan RPTKA.",
+          "Jika Anda hanya investor dan tidak bekerja, Anda dapat mendapatkan Investor KITAS tanpa RPTKA. Jika Anda ingin aktif bekerja, Anda memerlukan RPTKA.",
       },
     },
     {
       id: "non-shareholder-director",
       result: {
-        title: "Direktur KITAS (Non-pemilik)",
+        title: "Director KITAS (Non-pemilik)",
         description:
           "Anda adalah direktur profesional. Membutuhkan proses RPTKA + KITAS penuh. Perusahaan yang Anda pimpin menjadi sponsor Anda.",
       },
@@ -180,7 +177,7 @@ Jika Anda bekerja di Indonesia, jenis dan persyaratan KITAS Anda bergantung pada
     {
       id: "employee",
       result: {
-        title: "Karyawan KITAS",
+        title: "Employee KITAS",
         description:
           "Izin kerja standar sebagai karyawan. Pemberi kerja menangani RPTKA dan mensponsori KITAS Anda. Anda memerlukan kualifikasi yang relevan.",
       },
@@ -190,29 +187,29 @@ Jika Anda bekerja di Indonesia, jenis dan persyaratan KITAS Anda bergantung pada
 
 ---
 
-## Spesifikasi Direktur KITAS
+## Detail Director KITAS
 
-### Siapa Itu Direktur?
+### Siapa itu Direktur?
 
 Di perusahaan Indonesia:
 
-- **Direktur Utama** (President Director)
-- **Direktur** (Director)
+- **Direktur Utama** (Direktur Presiden)
+- **Direktur** (Direktur)
 
 Terdaftar dalam akta perusahaan (Akta), ditunjuk oleh pemegang saham.
 
 ### Persyaratan Direktur
 
-| Requirement       | Direktur                                                  |
-| ----------------- | --------------------------------------------------------- |
-| Pendidikan        | Fleksibel (gelar membantu tetapi tidak selalu diperlukan) |
-| Pengalaman        | Kurang ketat (aturan 5 tahun sering dihapuskan)           |
-| Pembatasan posisi | Direktur dibebaskan dari banyak pembatasan                |
-| Justifikasi RPTKA | Lebih mudah (mengelola perusahaan sendiri)                |
+| Requirement          | Director                                        |
+| -------------------- | ----------------------------------------------- |
+| Pendidikan           | Fleksibel (gelar membantu tetapi tidak selalu wajib) |
+| Pengalaman            | Kurang ketat (aturan 5 tahun sering dihapuskan)          |
+| Pembatasan posisi    | Direktur dibebaskan dari banyak pembatasan         |
+| Justifikasi RPTKA    | Lebih mudah (mengoperasikan perusahaan sendiri)                    |
 
 <InfoCard variant="tip" title="Keuntungan Direktur">
 
-Sebagai Direktur PT PMA Anda sendiri, Anda memiliki lebih banyak fleksibilitas: - Posisi secara inheren dapat dibenarkan - Persyaratan pengalaman kurang ketat - Anda mengendalikan sponsor (perusahaan Anda) - Dapat menentukan cakupan pekerjaan sendiri
+Sebagai Direktur PT PMA Anda sendiri, Anda memiliki lebih banyak fleksibilitas: - Posisi secara inheren dapat dibenarkan - Persyaratan pengalaman kurang ketat - Anda mengontrol sponsor (perusahaan Anda) - Dapat mendefinisikan cakupan pekerjaan Anda sendiri
 
 </InfoCard>
 
@@ -220,14 +217,14 @@ Sebagai Direktur PT PMA Anda sendiri, Anda memiliki lebih banyak fleksibilitas: 
 
 Selain KITAS, direktur memiliki kewajiban hukum:
 
-- Tanggung jawab hukum perusahaan
+- Liabilitas hukum perusahaan
 - Kepatuhan pajak (perusahaan dan pribadi)
 - Kepatuhan hukum ketenagakerjaan
-- Pelaporan korporat
+- Pelaporan korporasi
 
 ---
 
-## Spesifikasi Karyawan KITAS
+## Detail Employee KITAS
 
 ### Persyaratan Karyawan
 
@@ -240,7 +237,7 @@ Selain KITAS, direktur memiliki kewajiban hukum:
       values: {
         Requirement: "Gelar sarjana atau lebih tinggi",
         Field: "Relevan dengan posisi",
-        Verification: "Mungkin perlu legalisasi",
+        Verification: "Mungkin memerlukan legalisasi",
       },
     },
     {
@@ -267,12 +264,12 @@ Selain KITAS, direktur memiliki kewajiban hukum:
 
 Karyawan menghadapi kontrol posisi yang lebih ketat:
 
-- Tidak boleh di HR/Personalia
-- Tidak boleh di QC (kontrol kualitas)
+- Tidak dapat berada di HR/Personalia
+- Tidak dapat berada di QC (kontrol kualitas)
 - Peran administratif terbatas
-- Harus level manajerial/spesialis
+- Harus tingkat manajerial/spesialis
 
-<InfoCard variant="warning" title="Posisi Harus Cocok">
+<InfoCard variant="warning" title="Posisi Harus Sesuai">
 
 Sebagai karyawan, pekerjaan aktual Anda harus persis sesuai dengan posisi RPTKA yang disetujui. Direktur memiliki lebih banyak fleksibilitas dalam mendefinisikan peran mereka.
 
@@ -282,17 +279,17 @@ Sebagai karyawan, pekerjaan aktual Anda harus persis sesuai dengan posisi RPTKA 
 
 ## Perbedaan Proses
 
-### Proses Direktur KITAS
+### Proses Director KITAS
 
-1. Berdiri/join PT PMA sebagai Direktur
+1. Membentuk/bergabung PT PMA sebagai Direktur
 2. Akta perusahaan menunjukkan penunjukan Anda
 3. Perusahaan mengajukan RPTKA (untuk Anda)
 4. Lanjutkan dengan proses KITAS normal
-5. Anda mengendalikan jadwal (Anda adalah bos)
+5. Anda mengontrol jadwal (Anda adalah bos)
 
-### Proses Karyawan KITAS
+### Proses Employee KITAS
 
-1. Dapatkan tawaran kerja dari perusahaan Indonesia
+1. Dapatkan penawaran kerja dari perusahaan Indonesia
 2. Pemberi kerja mengajukan RPTKA
 3. Anda memberikan dokumen kepada pemberi kerja
 4. Pemberi kerja mengelola proses
@@ -302,18 +299,18 @@ Sebagai karyawan, pekerjaan aktual Anda harus persis sesuai dengan posisi RPTKA 
 
 ## Perbandingan Biaya
 
-| Item Biaya                  | Direktur                                   | Karyawan                          |
-| --------------------------- | ------------------------------------------ | --------------------------------- |
-| DKP-TKA                     | Ya (perusahaan membayar)                   | Ya (biasanya perusahaan membayar) |
-| Biaya KITAS                 | Ya                                         | Ya                                |
-| Biaya Agen                  | Seringkali termasuk dalam setup perusahaan | Pemberi kerja biasanya membayar   |
-| Siapa yang menanggung biaya | Perusahaan Anda                            | Pemberi kerja                     |
+| Cost Item      | Director                         | Employee                   |
+| -------------- | -------------------------------- | -------------------------- |
+| DKP-TKA        | Ya (perusahaan membayar)               | Ya (perusahaan biasanya membayar) |
+| Biaya KITAS     | Ya                              | Ya                        |
+| Biaya agen     | Sering dikemas dengan pembentukan perusahaan | Pemberi kerja biasanya membayar    |
+| Siapa menanggung biaya | Perusahaan Anda                     | Pemberi kerja                   |
 
-**Efek bersih**: Biaya total serupa, tetapi direktur pada dasarnya membayar dari perusahaan mereka sendiri, sementara karyawan memiliki biaya ditanggung pemberi kerja.
+**Efek bersih**: Biaya total serupa, tetapi direktur pada dasarnya membayar dari perusahaan mereka sendiri, sementara karyawan memiliki biaya yang ditanggung pemberi kerja.
 
 ---
 
-## Perubahan Antara Jenis
+## Mengubah Antara Jenis
 
 ### Karyawan ke Direktur
 
@@ -325,7 +322,7 @@ Jika Anda menjadi Direktur:
 
 ### Direktur ke Karyawan
 
-Jika Anda meninggalkan perusahaan untuk bekerja:
+Jika Anda meninggalkan perusahaan Anda untuk bekerja:
 
 - KITAS lama tidak valid
 - Pemberi kerja baru harus mengajukan RPTKA baru
@@ -333,7 +330,7 @@ Jika Anda meninggalkan perusahaan untuk bekerja:
 
 <InfoCard variant="note" title="KITAS Spesifik Posisi">
 
-Setiap perubahan peran signifikan memerlukan RPTKA baru. Anda tidak dapat sekadar "mengkonversi" direktur KITAS ke karyawan atau sebaliknya.
+Setiap perubahan peran signifikan memerlukan RPTKA baru. Anda tidak dapat sekadar "mengkonversi" director KITAS ke karyawan atau sebaliknya.
 
 </InfoCard>
 
@@ -351,7 +348,7 @@ Setiap perubahan peran signifikan memerlukan RPTKA baru. Anda tidak dapat sekada
 ### Kekurangan Direktur
 
 - Tanggung jawab bisnis
-- Tanggung jawab hukum
+- Liabilitas hukum
 - Harus mempertahankan perusahaan
 - Lebih mahal (biaya perusahaan)
 
@@ -374,13 +371,13 @@ Setiap perubahan peran signifikan memerlukan RPTKA baru. Anda tidak dapat sekada
 ## Pertanyaan Umum
 
 <AskZantara
-  context="Direktur KITAS, karyawan KITAS, direktur PT PMA, perbandingan izin kerja Indonesia"
-  placeholder="Tanya tentang direktur vs karyawan KITAS..."
+  context="Director KITAS, employee KITAS, PT PMA director, work permit comparison Indonesia"
+  placeholder="Tanya tentang director vs employee KITAS..."
   suggestedQuestions={[
     "Bisakah saya menjadi direktur tanpa memiliki saham?",
-    "Bagaimana jika saya direktur dan karyawan sekaligus?",
-    "Apakah pasangan saya bisa bekerja dengan visa dependen?",
-    "Mana yang lebih cepat diperoleh?",
+    "Bagaimana jika saya direktur dan karyawan pada saat yang sama?",
+    "Bisakah pasangan saya bekerja dengan visa dependen?",
+    "Mana yang lebih cepat untuk diperoleh?",
   ]}
 />
 
@@ -391,4 +388,4 @@ Setiap perubahan peran signifikan memerlukan RPTKA baru. Anda tidak dapat sekada
 - [Panduan Izin Kerja KITAS](/visas/working-kitas-e23-indonesias-revised-legal-framework-explained)
 - [Panduan Investor KITAS](/insights/immigration/investor-kitas-guide)
 - [Panduan Pendaftaran PT PMA](/insights/business/foreign-company-incorporation-steps)
-- [Persyaratan KITAS Pemegang Saham](/insights/immigration/shareholder-kitas-requirements)
+- [Persyaratan Pemegang Saham KITAS](/insights/immigration/shareholder-kitas-requirements)

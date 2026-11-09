@@ -373,7 +373,7 @@ $patch_css
 #
 # Distinct from NEWSLETTER_HTML above (the public weekly roundup): this is
 # the internal daily editorial digest. All CSS is INLINE per
-# ~/.claude/skills/bali-zero-brand/surfaces/email-template.md ("Kuxas
+# ~/.claude/skills/bali-zero-brand/surfaces/email-template.md ("Gmail
 # strips <style> blocks") — no <style> block at all, unlike the weekly
 # template. $items_html is pre-built HTML (one block per item, inline
 # styled) substituted by the publisher; $scarce_note is empty string or an

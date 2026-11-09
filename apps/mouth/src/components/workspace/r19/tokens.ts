@@ -19,18 +19,20 @@
 
 import type { CSSProperties } from "react";
 
-/** Fraunces, 450, the only face that touches a masthead or a numeral. */
+/**
+ * The kita heading face: IBM Plex Sans 500 (owner decision 2026-11-03) via the
+ * historical --font-serif token, the only face that touches a masthead or a
+ * numeral. No optical-size axis — Plex is static.
+ */
 export const SERIF: CSSProperties = {
   fontFamily: "var(--font-serif)",
-  fontWeight: 450,
-  fontVariationSettings: '"opsz" 144',
+  fontWeight: 500,
 };
 
-/** Fraunces for a section heading — one optical size down. */
+/** Section heading — same face and weight as SERIF; kept as its own name. */
 export const SERIF_SECTION: CSSProperties = {
   fontFamily: "var(--font-serif)",
-  fontWeight: 450,
-  fontVariationSettings: '"opsz" 96',
+  fontWeight: 500,
 };
 
 /** Tabular figures on every date, count, amount and reference. */
@@ -77,7 +79,7 @@ export const GUTTER = 24;
 /** Below this width the two lowest-priority columns leave the grid. */
 export const COLLAPSE_PX = 1360;
 
-/** Masthead h1: Fraunces opsz144 450 — 40/42 desktop, 32/34 under 768. */
+/** Masthead h1: IBM Plex Sans 500 — 40/42 desktop, 32/34 under 768. */
 export const MASTHEAD_H1 =
   "text-[32px] leading-[1.05] tracking-[-0.035em] text-[var(--tx-pure)] md:text-[40px]";
 
@@ -87,11 +89,13 @@ export const MASTHEAD_SUB =
 
 /** KPI numeral — 44/44, 38 under 768. The viewport peak. */
 export const NUMERAL_KPI =
-  "text-[38px] leading-none tracking-[-0.03em] md:text-[44px]";
+  "text-[38px] leading-none tracking-[-0.03em] tabular-nums md:text-[44px]";
 /** Desk count — 22/22. */
-export const NUMERAL_COUNT = "text-[22px] leading-none tracking-[-0.02em]";
+export const NUMERAL_COUNT =
+  "text-[22px] leading-none tracking-[-0.02em] tabular-nums";
 /** Ledger ordinal — 18/18. */
-export const NUMERAL_ORDINAL = "text-[18px] leading-none tracking-[-0.02em]";
+export const NUMERAL_ORDINAL =
+  "text-[18px] leading-none tracking-[-0.02em] tabular-nums";
 
 /**
  * Five tones. The first four are the four meanings; `ink` is the filled tone

@@ -229,7 +229,7 @@ async def run_sync(pool: asyncpg.Pool, *, triggered_by: str) -> SyncResult:
                 "\u26a0\ufe0f *Owner Cashout sync*: tab sconosciute rilevate.\n"
                 f"Tabs: `{', '.join(unknown_tabs)}`\n"
                 "Aggiungi entry a `TAB_TO_WEEK` in "
-                "`backend/services/hr/owner_cashout/constants.py` e jigov sync."
+                "`backend/services/hr/owner_cashout/constants.py` e rifai sync."
             )
             await send_alert(msg)
         else:

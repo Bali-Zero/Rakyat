@@ -1,6 +1,6 @@
 -- Migration 311: `open_inquiry` placeholder practice type
 --
--- Purpose (Tuw'i proposal, 2026-09-11): at kita.balizero.com/process/new the
+-- Purpose (Ari's proposal, 2026-09-11): at kita.balizero.com/process/new the
 -- team no longer has to pick a service category to open an INQUIRY. The
 -- practice is created against this placeholder type and the real service is
 -- chosen later, before the practice moves to `waiting_documents`

@@ -49,8 +49,8 @@ const TEAM_ROLES = new Set([
   "consultant",
   "reception",
   "member",
-  // roster decisions of 2026-10-20: Manager (Kagecesa, xug + setup) and
-  // Finance & Client Services Coordinator (Natalie)
+  // roster decisions of 2026-10-20: Manager (two hires + setup) and
+  // Finance & Client Services Coordinator
   "manager",
   "finance & client services coordinator",
 ]);

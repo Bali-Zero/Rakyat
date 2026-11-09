@@ -73,6 +73,7 @@ tags:
 canonicalUrl: "https://balizero.com/id/lifestyle/education-expat-children"
 ogImage: "/static/insights/lifestyle/education.jpg"
 twitterCard: "summary_large_image"
+source_sha256: "1102a29e00bbd6b3880428815fda50109093da7a052fc90b16edd27edd14de4a"
 ---
 
 import {
@@ -84,90 +85,90 @@ import {
   AskZantara,
 } from "@/components/insights/interactive";
 
-# Sekolah untuk Anak-anak Ekspatriat di Indonesia 2026: Panduan Pendidikan
+# Sekolah untuk Anak Ekspatriat Indonesia 2026: Panduan Pendidikan
 
-Menemukan sekolah yang tepat adalah prioritas utama bagi keluarga ekspatriat. Berikut adalah semua yang perlu Anda ketahui tentang pilihan pendidikan di Indonesia.
+Menemukan sekolah yang tepat adalah prioritas utama bagi keluarga ekspatriat. Berikut semua yang perlu Anda ketahui tentang pilihan pendidikan di Indonesia.
 
 ## Jenis Sekolah
 
 <DecisionTree
-  title="Jenis Sekolah Mana?"
-  description="Temukan yang paling cocok untuk keluarga Anda"
+  title="Which School Type?"
+  description="Find the right fit for your family"
   nodes={[
     {
       id: "start",
-      question: "Apa prioritas Anda?",
+      question: "What's your priority?",
       options: [
-        { label: "Melanjutkan kurikulum negara asal", next: "home" },
-        { label: "Ijazah yang diakui secara internasional", next: "ib" },
-        { label: "Kualitas yang hemat anggaran", next: "budget" },
-        { label: "Imersi budaya Indonesia", next: "local" },
+        { label: "Continue home country curriculum", next: "home" },
+        { label: "International recognized diploma", next: "ib" },
+        { label: "Budget-conscious quality", next: "budget" },
+        { label: "Indonesian cultural immersion", next: "local" },
       ],
     },
     {
       id: "home",
-      question: "Kurikulum yang mana?",
+      question: "Which curriculum?",
       options: [
-        { label: "Inggris (British)", next: "british" },
-        { label: "Amerika", next: "american" },
-        { label: "Australia", next: "australian" },
-        { label: "Nasional lainnya", next: "national" },
+        { label: "British", next: "british" },
+        { label: "American", next: "american" },
+        { label: "Australian", next: "australian" },
+        { label: "Other national", next: "national" },
       ],
     },
     {
       id: "ib",
       result: {
-        title: "Sekolah Dunia IB",
+        title: "IB World Schools",
         description:
-          "Kurikulum International Baccalaureate. Diakui secara global, pembelajaran berbasis inkuiri. Tersedia di banyak sekolah internasional di Jakarta dan Bali.",
+          "International Baccalaureate curriculum. Globally recognized, inquiry-based learning. Available at many international schools in Jakarta and Bali.",
       },
     },
     {
       id: "budget",
       result: {
-        title: "Sekolah Nasional Plus",
+        title: "National Plus Schools",
         description:
-          "Sekolah Indonesia dengan instruksi bahasa Inggris dan elemen internasional. Biaya lebih rendah daripada sekolah internasional penuh. Bagus untuk masa tinggal jangka panjang.",
+          "Indonesian schools with English instruction and international elements. Lower cost than full international schools. Good for longer stays.",
       },
     },
     {
       id: "local",
       result: {
-        title: "Sekolah Indonesia",
+        title: "Indonesian Schools",
         description:
-          "Kurikulum lokal dalam bahasa Indonesia. Terbaik untuk imersi budaya dan pembelajaran bahasa. Mungkin memerlukan kemampuan bahasa Indonesia.",
+          "Local curriculum in Indonesian. Best for cultural immersion and language learning. May require Indonesian language ability.",
       },
     },
     {
       id: "british",
       result: {
-        title: "Sekolah Kurikulum Inggris",
+        title: "British Curriculum Schools",
         description:
-          "IGCSE dan A-Level. Banyak pilihan di Jakarta dan Bali. Transisi mudah jika kembali ke Inggris atau melanjutkan ke universitas di Inggris.",
+          "IGCSE and A-Levels. Multiple options in Jakarta and Bali. Easy transition if returning to UK or going to UK universities.",
       },
     },
     {
       id: "american",
       result: {
-        title: "Sekolah Kurikulum Amerika",
+        title: "American Curriculum Schools",
         description:
-          "Pendidikan gaya AS dengan kursus AP. Bagus untuk universitas di AS. Beberapa pilihan di Jakarta, lebih sedikit di kota lain.",
+          "US-style education with AP courses. Good for university in USA. Several options in Jakarta, fewer in other cities.",
       },
     },
     {
       id: "australian",
       result: {
-        title: "Sekolah Kurikulum Australia",
+        title: "Australian Curriculum Schools",
         description:
-          "Sistem Australia yang populer di Bali. Bagus untuk keluarga dari Australia atau yang berencana pindah ke bebu.",
+          "Australian system popular in Bali. Good for families from Australia or planning to move there.",
       },
     },
     {
       id: "national",
       result: {
-        title: "Sekolah Nasional Lainnya",
+        title: "Other National Schools",
         description:
-          "Sekolah Prancis, Jerman, Korea, Jepang tersedia di Jakarta. Pilihan terbatas di luar ibu kota.",
+          "French, German, Korean, Japanese schools available in Jakarta. Limited options outside the capital.",
       },
     },
   ]}
@@ -178,48 +179,48 @@ Menemukan sekolah yang tepat adalah prioritas utama bagi keluarga ekspatriat. Be
 ## Perbandingan Kurikulum
 
 <ComparisonTable
-  title="Kurikulum Populer"
-  description="Bandingkan sistem pendidikan"
+  title="Popular Curricula"
+  description="Compare education systems"
   items={[
     {
       name: "IB (International Baccalaureate)",
-      subtitle: "Standar global",
+      subtitle: "Global standard",
       values: {
-        Pengakuan: "Seluruh Dunia",
-        Gaya: "Berbasis Inkuiri",
-        Ujian: "Diploma IB",
-        "Terbaik untuk": "Mobilitas internasional",
+        Recognition: "Worldwide",
+        Style: "Inquiry-based",
+        Exams: "IB Diploma",
+        "Best for": "International mobility",
       },
       highlight: true,
     },
     {
-      name: "Inggris (Cambridge)",
-      subtitle: "IGCSE/A-Level",
+      name: "British (Cambridge)",
+      subtitle: "IGCSE/A-Levels",
       values: {
-        Pengakuan: "Persemakmuran + global",
-        Gaya: "Terstruktur",
-        Ujian: "IGCSE, A-Level",
-        "Terbaik untuk": "Universitas di Inggris/UE",
+        Recognition: "Commonwealth + global",
+        Style: "Structured",
+        Exams: "IGCSE, A-Levels",
+        "Best for": "UK/EU universities",
       },
     },
     {
-      name: "Amerika",
-      subtitle: "Sistem AS",
+      name: "American",
+      subtitle: "US system",
       values: {
-        Pengakuan: "Amerika + global",
-        Gaya: "Fleksibel, luas",
-        Ujian: "SAT/AP",
-        "Terbaik untuk": "Universitas di AS",
+        Recognition: "Americas + global",
+        Style: "Flexible, broad",
+        Exams: "SAT/AP",
+        "Best for": "US universities",
       },
     },
     {
-      name: "Australia",
-      subtitle: "Sistem ATAR",
+      name: "Australian",
+      subtitle: "ATAR system",
       values: {
-        Pengakuan: "Australia + Asia",
-        Gaya: "Seimbang",
-        Ujian: "HSC/ATAR",
-        "Terbaik untuk": "Jalur Australia",
+        Recognition: "Australia + Asia",
+        Style: "Balanced",
+        Exams: "HSC/ATAR",
+        "Best for": "Australia pathway",
       },
     },
   ]}
@@ -229,36 +230,36 @@ Menemukan sekolah yang tepat adalah prioritas utama bagi keluarga ekspatriat. Be
 
 ## Biaya Sekolah
 
-### Rentang Biaya Tahunan
+### Kisaran Biaya Tahunan
 
-| Jenis Sekolah            | Biaya Tahunan     |
+| Jenis Sekolah              | Biaya Tahunan       |
 | ------------------------ | ----------------- |
-| Internasional (premium)  | USD 20.000-35.000 |
-| Internasional (menengah) | USD 10.000-20.000 |
-| Nasional Plus            | USD 3.000-10.000  |
-| Swasta Indonesia         | USD 500-3.000     |
+| Internasional (premium)  | USD 20,000-35,000 |
+| Internasional (menengah) | USD 10,000-20,000 |
+| National Plus            | USD 3,000-10,000  |
+| Swasta Indonesia       | USD 500-3,000     |
 
 ### Kalkulator Biaya
 
 <Calculator
-  title="Anggaran Sekolah"
-  description="Estimasi biaya pendidikan tahunan"
+  title="School Budget"
+  description="Estimate annual education costs"
   fields={[
     {
       id: "tier",
-      label: "Tingkatan Sekolah",
+      label: "School Tier",
       type: "select",
       options: [
-        { value: "premium", label: "Internasional Premium" },
-        { value: "mid", label: "Internasional Menengah" },
-        { value: "national", label: "Nasional Plus" },
-        { value: "local", label: "Swasta Indonesia" }
+        { value: "premium", label: "Premium International" },
+        { value: "mid", label: "Mid-tier International" },
+        { value: "national", label: "National Plus" },
+        { value: "local", label: "Indonesian Private" }
       ],
       defaultValue: "mid"
     },
     {
       id: "children",
-      label: "Jumlah Anak",
+      label: "Number of Children",
       type: "number",
       defaultValue: 1,
       min: 1,
@@ -266,42 +267,42 @@ Menemukan sekolah yang tepat adalah prioritas utama bagi keluarga ekspatriat. Be
     },
     {
       id: "transport",
-      label: "Butuh Bus Sekolah?",
+      label: "School Bus Needed?",
       type: "select",
       options: [
-        { value: "yes", label: "Ya" },
-        { value: "no", label: "Tidak" }
+        { value: "yes", label: "Yes" },
+        { value: "no", label: "No" }
       ],
       defaultValue: "no"
     }
   ]}
   calculateResult={(values) => {
     const fees = {
-      premium: 840006100,
-      mid: 990000028,
-      national: 840005100,
+      premium: 400000000,
+      mid: 240000000,
+      national: 100000000,
       local: 25000000
     };
 
     const tuition = fees[values.tier] * values.children;
-    const bus = values.transport === "yes" ? 10000012 * values.children : 0;
+    const bus = values.transport === "yes" ? 15000000 * values.children : 0;
     const uniform = 3000000 * values.children;
     const books = 5000000 * values.children;
-    const activities = 84000510 * values.children;
+    const activities = 10000000 * values.children;
 
     const total = tuition + bus + uniform + books + activities;
 
     return {
       total: total,
       breakdown: [
-        { label: "Biaya SPP", amount: tuition },
-        { label: "Bus sekolah (jika ada)", amount: bus },
-        { label: "Seragam", amount: uniform },
-        { label: "Buku & materi", amount: books },
-        { label: "Kegiatan & darmawisata", amount: activities }
+        { label: "Tuition fees", amount: tuition },
+        { label: "School bus (if applicable)", amount: bus },
+        { label: "Uniforms", amount: uniform },
+        { label: "Books & materials", amount: books },
+        { label: "Activities & trips", amount: activities }
       ],
       currency: "IDR",
-      note: `~USD ${Math.round(total / 16000).toLocaleString()}/tahun`
+      note: `~USD ${Math.round(total / 16000).toLocaleString()}/year`
     };
 
 }}
@@ -313,108 +314,108 @@ Menemukan sekolah yang tepat adalah prioritas utama bagi keluarga ekspatriat. Be
 
 ### Jakarta
 
-| Sekolah                      | Kurikulum          | Biaya Tahunan |
-| ---------------------------- | ------------------ | ------------- |
-| Jakarta Intercultural School | IB/Amerika         | USD 25-30rb   |
-| British School Jakarta       | Inggris            | USD 20-28rb   |
-| BINUS School                 | Nasional/Cambridge | USD 5-10rb    |
-| Sekolah Pelita Harapan       | Nasional/Cambridge | USD 8-15rb    |
+| Sekolah                       | Kurikulum         | Biaya Tahunan |
+| ---------------------------- | ------------------ | ---------- |
+| Jakarta Intercultural School | IB/American        | USD 25-30K |
+| British School Jakarta       | British            | USD 20-28K |
+| BINUS School                 | National/Cambridge | USD 5-10K  |
+| Sekolah Pelita Harapan       | National/Cambridge | USD 8-15K  |
 
 ### Bali
 
-| Sekolah                       | Kurikulum    | Biaya Tahunan |
-| ----------------------------- | ------------ | ------------- |
-| Canggu Community School       | IB           | USD 15-22rb   |
-| Green School Bali             | Custom/Green | USD 15-25rb   |
-| Bali Island School            | Australia    | USD 10-18rb   |
-| Australian Independent School | Australia    | USD 8-15rb    |
+| Sekolah                        | Kurikulum   | Biaya Tahunan |
+| ----------------------------- | ------------ | ---------- |
+| Canggu Community School       | IB           | USD 15-22K |
+| Green School Bali             | Custom/Green | USD 15-25K |
+| Bali Island School            | Australian   | USD 10-18K |
+| Australian Independent School | Australian   | USD 8-15K  |
 
 <InfoCard variant="note" title="Green School Bali">
 
-  **Opsi unik:** Green School menawarkan pendidikan inovatif yang berfokus pada
-  keberlanjutan di bangunan bambu. Populer bagi keluarga yang peduli lingkungan,
-  tetapi daftar tunggu bisa sangat panjang. Daftarlah lebih awal!
+  **Pilihan unik:** Green School menawarkan pendidikan inovatif yang berfokus pada keberlanjutan
+  di gedung bambu. Populer di kalangan keluarga yang peduli lingkungan tetapi daftar
+  tunggu bisa panjang. Daftar lebih awal!
 </InfoCard>
 
 ---
 
-## Proses Pendaftaran
+## Proses Penerimaan
 
 <Checklist
-  title="Pendaftaran Sekolah"
-  description="Persyaratan pendaftaran umum"
+  title="School Application"
+  description="Typical admission requirements"
   persistKey="school-admission-checklist"
   items={[
     {
       id: "research",
-      label: "Riset sekolah",
-      description: "Kunjungi situs web, tur sekolah",
+      label: "Research schools",
+      description: "Visit websites, tours",
       required: true,
       category: "research",
     },
     {
       id: "visit",
-      label: "Kunjungan/tur sekolah",
-      description: "Lihat fasilitas secara langsung",
+      label: "School visits/tours",
+      description: "See facilities in person",
       required: true,
       category: "research",
     },
     {
       id: "application",
-      label: "Kirim pendaftaran",
-      description: "Formulir online atau cetak",
+      label: "Submit application",
+      description: "Online or paper form",
       required: true,
       category: "apply",
     },
     {
       id: "records",
-      label: "Catatan sekolah/rapor",
-      description: "Dari sekolah sebelumnya",
+      label: "School records/transcripts",
+      description: "From previous school",
       required: true,
       category: "documents",
     },
     {
       id: "passport",
-      label: "Fotokopi paspor",
-      description: "Anak dan orang tua",
+      label: "Passport copies",
+      description: "Child and parents",
       required: true,
       category: "documents",
     },
     {
       id: "photos",
-      label: "Pas foto",
-      description: "Foto terbaru",
+      label: "Passport photos",
+      description: "Recent photos",
       required: true,
       category: "documents",
     },
     {
       id: "test",
-      label: "Penilaian/wawancara",
-      description: "Bervariasi di tiap sekolah",
+      label: "Assessment/interview",
+      description: "Varies by school",
       required: false,
       category: "assessment",
     },
     {
       id: "medical",
-      label: "Catatan medis",
-      description: "Riwayat vaksinasi",
+      label: "Medical records",
+      description: "Vaccination history",
       required: true,
       category: "documents",
     },
     {
       id: "fee",
-      label: "Bayar biaya pendaftaran",
-      description: "Biasanya tidak dapat dikembalikan",
+      label: "Pay enrollment fee",
+      description: "Non-refundable typically",
       required: true,
       category: "payment",
     },
   ]}
   categories={[
-    { id: "research", label: "Riset", color: "blue" },
-    { id: "apply", label: "Daftar", color: "green" },
-    { id: "documents", label: "Dokumen", color: "amber" },
-    { id: "assessment", label: "Penilaian", color: "purple" },
-    { id: "payment", label: "Pembayaran", color: "red" },
+    { id: "research", label: "Research", color: "blue" },
+    { id: "apply", label: "Apply", color: "green" },
+    { id: "documents", label: "Documents", color: "amber" },
+    { id: "assessment", label: "Assessment", color: "purple" },
+    { id: "payment", label: "Payment", color: "red" },
   ]}
   showProgress={true}
 />
@@ -425,14 +426,14 @@ Menemukan sekolah yang tepat adalah prioritas utama bagi keluarga ekspatriat. Be
 
 ### Persyaratan Visa
 
-<InfoCard variant="warning" title="Status Legal">
-Anak-anak harus memiliki status visa yang tepat untuk bersekolah:
+<InfoCard variant="warning" title="Legal Status">
+Anak harus memiliki status visa yang sesuai untuk bersekolah:
 
 **Diperlukan:**
 
-- KITAS Ikut Orang Tua (Dependent KITAS - terhubung dengan izin kerja orang tua)
-- KITAS Pelajar (Student KITAS - untuk tujuan studi)
-- Visa Rumah Kedua (Second Home Visa - anak-anak termasuk di dalamnya)
+- Dependent KITAS (terkait dengan izin kerja orang tua)
+- Student KITAS (untuk keperluan studi)
+- Second Home Visa (anak termasuk)
 
 **VOA/Bebas Visa:** Umumnya tidak cukup untuk pendaftaran sekolah
 
@@ -442,64 +443,64 @@ Periksa persyaratan visa sebelum mendaftar!
 
 ### Dukungan Bahasa
 
-| Layanan                       | Ketersediaan                           |
-| ----------------------------- | -------------------------------------- |
-| EAL (Bahasa Inggris Tambahan) | Sebagian besar sekolah internasional   |
-| Pelajaran Bahasa Indonesia    | Semua sekolah                          |
-| Bahasa untuk pemula           | Banyak yang menawarkan intensif        |
+| Layanan                           | Ketersediaan                       |
+| --------------------------------- | ---------------------------------- |
+| EAL (English Additional Language) | Sebagian besar sekolah internasional         |
+| Pelajaran bahasa Indonesia                | Semua sekolah                        |
+| Bahasa untuk pemula              | Banyak yang menawarkan intensif               |
 | Program bahasa ibu            | Terbatas (beberapa untuk bahasa utama) |
 
 ---
 
 ## Kalender Sekolah
 
-### Tahun Akademik
+### Tahun Ajaran
 
-| Sistem                  | Mulai   | Berakhir |
-| ----------------------- | ------- | -------- |
-| Internasional (umumnya) | Agustus | Juni     |
-| Kurikulum Australia     | Januari | Desember |
-| Sekolah Indonesia       | Juli    | Juni     |
+| Sistem                | Mulai   | Selesai      |
+| --------------------- | ------- | -------- |
+| Internasional (sebagian besar)  | Agustus  | Juni     |
+| Kurikulum Australia | Januari | Desember |
+| Sekolah Indonesia    | Juli    | Juni     |
 
-### Libur Sekolah
+### Hari Libur
 
-| Liburan                   | Durasi Umum |
-| ------------------------- | ----------- |
-| Libur panjang/Musim panas | 6-8 minggu  |
-| Natal/Musim dingin        | 2-3 minggu  |
-| Libur tengah tahun        | 1-2 minggu  |
-| Hari libur Indonesia      | Beragam     |
+| Hari Libur             | Durasi Umum |
+| ------------------- | ---------------- |
+| Libur panjang/musim panas   | 6-8 minggu        |
+| Natal/Musim Dingin    | 2-3 minggu        |
+| Libur tengah tahun      | 1-2 minggu        |
+| Hari libur Indonesia | Beragam          |
 
 ---
 
 ## Tips Memilih
 
-<InfoCard variant="tip" title="Apa yang Perlu Dipertimbangkan">
-**Di luar akademik:**
+<InfoCard variant="tip" title="What to Consider">
+**Selain akademik:**
 
-1. **Lokasi** - Waktu tempuh perjalanan sangat berpengaruh
+1. **Lokasi** - Waktu perjalanan penting
 2. **Komunitas** - Tingkat keterlibatan keluarga
 3. **Fasilitas** - Olahraga, seni, teknologi
-4. **Ukuran kelas** - Rasio guru dan murid
+4. **Ukuran kelas** - Rasio guru
 5. **Setelah sekolah** - Kegiatan yang tersedia
 6. **Bahasa** - Bahasa Indonesia, bahasa ibu
-7. **Dukungan** - Perbedaan pembelajaran, konseling
+7. **Dukungan** - Perbedaan belajar, konseling
 8. **Masa depan** - Persiapan universitas
 
 Kunjungi beberapa sekolah sebelum memutuskan!
 
 </InfoCard>
 
-### Pertanyaan yang Harus Diajukan
+### Pertanyaan untuk Ditanyakan
 
-| Topik     | Pertanyaan                             |
-| --------- | -------------------------------------- |
-| Akademik  | Kurikulum, penilaian, hasil akhir      |
-| Guru      | Kualifikasi, pergantian guru           |
-| Dukungan  | SEN, konseling, ESL                    |
-| Komunitas | Keterlibatan orang tua, acara          |
-| Praktis   | Jam sekolah, transportasi, makan siang |
-| Biaya     | Semua biaya, rencana pembayaran        |
+| Topik     | Pertanyaan                         |
+| --------- | --------------------------------- |
+| Akademik | Kurikulum, penilaian, hasil |
+| Guru  | Kualifikasi, pergantian          |
+| Dukungan   | SEN, konseling, ESL              |
+| Komunitas | Keterlibatan orang tua, acara        |
+| Praktis | Jam, transportasi, makan siang           |
+| Biaya     | Semua biaya, rencana pembayaran           |
 
 ---
 
@@ -507,15 +508,15 @@ Kunjungi beberapa sekolah sebelum memutuskan!
 
 ### Apakah Legal?
 
-<InfoCard variant="note" title="Homeschooling di Indonesia">
-Homeschooling adalah **legal** di Indonesia dengan pendaftaran yang tepat.
+<InfoCard variant="note" title="Homeschooling in Indonesia">
+Homeschooling **legal** di Indonesia dengan pendaftaran yang sesuai.
 
 **Persyaratan:**
 
-- Mendaftar ke dinas pendidikan setempat
+- Daftar ke dinas pendidikan setempat
 - Mengikuti kurikulum yang disetujui
 - Penilaian berkala
-- Dokumentasi tetap terjaga
+- Dokumentasi terjaga
 
 Banyak keluarga ekspatriat menggabungkan homeschooling dengan kegiatan lokal dan tutor.
 
@@ -523,25 +524,25 @@ Banyak keluarga ekspatriat menggabungkan homeschooling dengan kegiatan lokal dan
 
 ### Pendekatan Populer
 
-| Pendekatan      | Deskripsi                   |
-| --------------- | --------------------------- |
-| Sekolah online  | Terstruktur, terakreditasi  |
-| Paket kurikulum | Mandiri                     |
-| Hibrida         | Paruh waktu sekolah + rumah |
-| Unschooling     | Pembelajaran mandiri anak   |
+| Pendekatan            | Deskripsi             |
+| ------------------- | ----------------------- |
+| Sekolah online      | Terstruktur, terakreditasi  |
+| Paket kurikulum | Mandiri           |
+| Hibrida              | Sekolah paruh waktu + rumah |
+| Unschooling         | Pembelajaran yang dipimpin anak      |
 
 ---
 
 ## Pertanyaan Umum
 
 <AskZantara
-  context="Sekolah internasional Indonesia, pendidikan ekspatriat, biaya sekolah, kurikulum Bali Jakarta"
-  placeholder="Tanya tentang sekolah..."
+  context="International schools Indonesia, expat education, school fees, curriculum Bali Jakarta"
+  placeholder="Ask about schools..."
   suggestedQuestions={[
-    "Apa sekolah terbaik di Bali untuk anak usia dini?",
-    "Bisakah anak saya bersekolah hanya dengan visa turis?",
-    "Bagaimana cara masuk daftar tunggu Green School?",
-    "Apakah ada beasiswa untuk sekolah internasional?",
+    "What's the best school in Bali for young children?",
+    "Can my child attend on a tourist visa?",
+    "How do I get on Green School's waiting list?",
+    "Are there scholarships for international schools?",
   ]}
 />
 
@@ -549,6 +550,6 @@ Banyak keluarga ekspatriat menggabungkan homeschooling dengan kegiatan lokal dan
 
 ## Artikel Terkait
 
-- [Visa Keluarga & Tanggungan](/visas/indonesia-family-kitas-2026-what-spouses-and-dependents-must-know?lang=id)
-- [Biaya Hidup di Bali](/id/insights/lifestyle/cost-of-living-bali)
-- [Panduan Akomodasi](/id/insights/lifestyle/accommodation-guide)
+- [Visa Keluarga & Tanggungan](/visas/indonesia-family-kitas-2026-what-spouses-and-dependents-must-know)
+- [Biaya Hidup di Bali](/insights/lifestyle/cost-of-living-bali)
+- [Panduan Akomodasi](/insights/lifestyle/accommodation-guide)

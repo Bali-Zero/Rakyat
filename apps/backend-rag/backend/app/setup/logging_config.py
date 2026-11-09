@@ -199,6 +199,11 @@ def configure_logging() -> None:
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 
+    # Mask ?search=/?q= values in access lines (client PII), whatever the level above.
+    from backend.core.secret_log_redaction import install_access_log_query_redaction
+
+    install_access_log_query_redaction()
+
     # In-process ring buffer for GET /api/debug/logs (TODO #79).
     # Captures the last N records so operators can inspect them without
     # flyctl auth or external aggregators.

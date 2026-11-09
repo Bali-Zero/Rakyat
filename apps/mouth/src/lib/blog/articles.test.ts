@@ -41,7 +41,14 @@ vi.mock("fs", () => ({
 
 // Imported AFTER the vi.mock("fs") factory above so the module under test
 // picks up the mocked fs.
-const { getArticleBySlug, getAllArticles } = await import("./articles");
+const {
+  getArticleBySlug,
+  getPinnedMdxArticles,
+  getAllArticles,
+  getArticleByLocale,
+  getAvailableLocales,
+  searchArticles,
+} = await import("./articles");
 
 const SLUG = "kbli-2025-explained";
 const CATEGORY = "business";
@@ -218,5 +225,218 @@ describe("getArticleBySlug (MDX-first)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("one publication rule for local MDX", () => {
+  const mdx = (frontmatter: string, title = "Local Title") =>
+    `---\ntitle: "${title}"\ncategory: business\npublishedAt: "2026-02-20"\n${frontmatter}---\n\nBody.\n`;
+
+  function disk(files: Record<string, string>) {
+    const names = Object.keys(files);
+    const folders = new Set(names.map((name) => name.split("/")[0]));
+    existsSyncMock.mockImplementation((p: unknown) => {
+      const s = String(p);
+      if (s.endsWith("src/content/articles")) return true;
+      for (const folder of folders) {
+        if (s.endsWith(`src/content/articles/${folder}`)) return true;
+      }
+      return names.some((name) => s.endsWith(`articles/${name}`));
+    });
+    statSyncMock.mockReturnValue({ isDirectory: () => true });
+    readdirSyncMock.mockImplementation((p: unknown) => {
+      const s = String(p);
+      const folder = [...folders].find((f) => s.endsWith(`articles/${f}`));
+      if (!folder) return [];
+      return names
+        .filter((name) => name.startsWith(folder + "/"))
+        .map((name) => name.slice(folder.length + 1));
+    });
+    readFileSyncMock.mockImplementation((p: unknown) => {
+      const s = String(p);
+      const name = names.find((n) => s.endsWith(`articles/${n}`));
+      if (!name) throw new Error("ENOENT " + s);
+      return files[name];
+    });
+  }
+
+  it("a draft MDX hides the article, and no approved backend row stands in", async () => {
+    disk({ [`business/${SLUG}.mdx`]: mdx("status: draft\n") });
+    mockFetchOnce({ success: true, data: BACKEND_ITEM });
+    expect(await getArticleBySlug(CATEGORY, SLUG)).toBeNull();
+  });
+
+  it("counts only an absent status or exactly published", async () => {
+    mockFetchOnce({ success: false }, false);
+    for (const line of [
+      "status:\n",
+      "status: false\n",
+      'status: ""\n',
+      "status: Published\n",
+      "status: review\n",
+    ]) {
+      disk({ [`business/${SLUG}.mdx`]: mdx(line) });
+      expect(await getArticleBySlug(CATEGORY, SLUG)).toBeNull();
+    }
+    for (const line of ["", "status: published\n"]) {
+      disk({ [`business/${SLUG}.mdx`]: mdx(line) });
+      expect((await getArticleBySlug(CATEGORY, SLUG))?.title).toBe(
+        "Local Title",
+      );
+    }
+  });
+
+  it("keeps a broken frontmatter hidden on every read", async () => {
+    disk({
+      [`business/${SLUG}.mdx`]: "---\nstatus: draft\nbroken: [\n---\nBody\n",
+    });
+    mockFetchOnce({ success: true, data: BACKEND_ITEM });
+    expect(await getArticleBySlug(CATEGORY, SLUG)).toBeNull();
+    expect(await getArticleBySlug(CATEGORY, SLUG)).toBeNull();
+  });
+
+  it("skips a draft translation and never lists it", async () => {
+    mockFetchOnce({ success: false }, false);
+    disk({
+      [`business/${SLUG}.mdx`]: mdx("", "English Title"),
+      [`business/${SLUG}.it.mdx`]: mdx("status: draft\n", "Titolo"),
+    });
+    expect((await getArticleByLocale(CATEGORY, SLUG, "it"))?.title).toBe(
+      "English Title",
+    );
+    expect(getAvailableLocales(CATEGORY, SLUG)).toEqual(["en"]);
+    disk({
+      [`business/${SLUG}.mdx`]: mdx("", "English Title"),
+      [`business/${SLUG}.it.mdx`]: mdx("", "Titolo"),
+    });
+    expect((await getArticleByLocale(CATEGORY, SLUG, "it"))?.title).toBe(
+      "Titolo",
+    );
+    expect(getAvailableLocales(CATEGORY, SLUG)).toEqual(["en", "it"]);
+  });
+
+  it("hides every translation of a hidden article", async () => {
+    mockFetchOnce({ success: false }, false);
+    disk({
+      [`business/${SLUG}.mdx`]: mdx("status: draft\n"),
+      [`business/${SLUG}.it.mdx`]: mdx("", "Titolo"),
+    });
+    expect(await getArticleByLocale(CATEGORY, SLUG, "it")).toBeNull();
+  });
+
+  it("lists and finds only published articles", async () => {
+    disk({
+      "business/draft-a.mdx": mdx("status: draft\n"),
+      "business/live-b.mdx": mdx(""),
+    });
+    const rows = [
+      BACKEND_ITEM,
+      { ...BACKEND_ITEM, id: "news-43", slug: "draft-a" },
+    ];
+    mockFetchOnce({ success: true, data: rows, total: 2 });
+    const { articles, total } = await getAllArticles({});
+    expect(articles.map((a) => a.slug).sort()).toEqual([SLUG, "live-b"]);
+    expect(total).toBe(2);
+    const found = await searchArticles("KBLI");
+    expect(found.map((a) => a.slug)).toEqual([SLUG]);
+  });
+
+  it("reads an Insight pin from its one published, indexed MDX file and nothing else", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: BACKEND_ITEM }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    disk({ [`business_regulations/${SLUG}.mdx`]: mdx("") });
+    const [pin] = await getPinnedMdxArticles([SLUG]);
+    expect([pin.category, pin.slug, pin.title]).toEqual([
+      "business",
+      SLUG,
+      "Local Title",
+    ]);
+    for (const line of [
+      "status: draft\n",
+      "status: review\n",
+      "status: false\n",
+      "status: Published\n",
+      "noIndex: true\n",
+    ]) {
+      disk({ [`business/${SLUG}.mdx`]: mdx(line) });
+      expect(await getPinnedMdxArticles([SLUG])).toEqual([]);
+    }
+    disk({ [`business/${SLUG}.mdx`]: "---\nbroken: [\n---\nBody\n" });
+    expect(await getPinnedMdxArticles([SLUG])).toEqual([]);
+    expect(await getPinnedMdxArticles([SLUG])).toEqual([]);
+    disk({});
+    expect(await getPinnedMdxArticles([SLUG])).toEqual([]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses an Insight pin with two MDX files or an unsafe slug, and links by the file's folder", async () => {
+    disk({
+      [`business/${SLUG}.mdx`]: mdx(""),
+      [`lifestyle/${SLUG}.mdx`]: mdx(""),
+    });
+    expect(await getPinnedMdxArticles([SLUG])).toEqual([]);
+    disk({ [`business/${SLUG}.mdx`]: mdx("") });
+    expect(
+      await getPinnedMdxArticles([
+        "../business/" + SLUG,
+        SLUG.toUpperCase(),
+        "",
+        undefined,
+      ]),
+    ).toEqual([]);
+    disk({
+      [`immigration/a-pin.mdx`]: mdx('slug: "other"\n', "A"),
+      [`tax/b-pin.mdx`]: mdx("", "B"),
+    });
+    const pins = await getPinnedMdxArticles(["b-pin", "a-pin"]);
+    expect(pins.map((p) => p.category + "/" + p.slug + "|" + p.title)).toEqual([
+      "taxes/b-pin|B",
+      "visas/a-pin|A",
+    ]);
+  });
+
+  it("skips a pin the page could not render, alone, and keeps the others", async () => {
+    const raw = (lines: string) =>
+      `---\n${lines}category: business\npublishedAt: "2026-02-20"\n---\n\nBody.\n`;
+    disk({
+      [`business/good-pin.mdx`]: mdx("", "Good"),
+      [`business/object-title.mdx`]: raw("title:\n  text: Broken\n"),
+      [`business/number-excerpt.mdx`]: mdx("excerpt: 42\n", "Numeric excerpt"),
+      [`business/bad-date.mdx`]: mdx("", "Bad date").replace(
+        'publishedAt: "2026-02-20"',
+        "publishedAt: invalid",
+      ),
+      [`business/bad-update.mdx`]: mdx("updatedAt: nope\n", "Bad update"),
+      [`business/null-author.mdx`]: mdx("author: null\n", "Null author"),
+      [`business/text-faq.mdx`]: mdx('faq: "not a list"\n', "Text faq"),
+      [`business/null-mention.mdx`]: mdx(
+        "aiOptimization:\n  entityMentions:\n    - null\n",
+        "Null mention",
+      ),
+      [`business/number-title.mdx`]: raw("title: 42\n"),
+      [`business/good-faq.mdx`]: mdx(
+        "faq:\n  - question: Q\n    answer: A\n",
+        "Good faq",
+      ),
+    });
+    const pins = await getPinnedMdxArticles([
+      "object-title",
+      "number-excerpt",
+      "good-pin",
+      "bad-date",
+      "bad-update",
+      "null-author",
+      "text-faq",
+      "null-mention",
+      "number-title",
+      "good-faq",
+    ]);
+    expect(pins.map((p) => p.slug + "|" + p.title)).toEqual([
+      "good-pin|Good",
+      "good-faq|Good faq",
+    ]);
   });
 });

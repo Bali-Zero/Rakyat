@@ -91,6 +91,8 @@ translatedBy: Gemma3:12b + Gemini 3.1 Pro
 translatedFrom: en
 twitterCard: summary_large_image
 updatedAt: "2026-01-15"
+locale: "id"
+source_sha256: "1abb6ce87ebee78ccbe4a210d8d8c40972dc3c4075376746989d6fff09480164"
 ---
 
 import {
@@ -102,61 +104,469 @@ import {
   AskZantara,
 } from "@/components/insights/interactive";
 
-# Merekrut Karyawan Indonesia 2026: Panduan Lengkap
+# Mempekerjakan Karyawan Indonesia 2026: Panduan Lengkap
 
-Proses rekrutmen di Indonesia memerlukan pemahaman mendalam mengenai regulasi ketenagakerjaan dan persyaratan lokal. Berikut adalah panduan langkah demi langkah untuk bisnis Anda.
+Mempekerjakan karyawan di Indonesia memerlukan pemahaman tentang persyaratan lokal. Berikut panduan langkah demi langkah untuk Anda.
 
-## Ikhtisar Proses Perekrutan
+## Gambaran Umum Proses Perekrutan
 
 <JourneyMap
-  title="Alur Perekrutan"
-  description="Dari tahap rekrutmen hingga onboarding"
-  estimatedTotal="2-4 minggu"
+  title="Hiring Journey"
+  description="From recruitment to onboarding"
+  estimatedTotal="2-4 weeks"
   steps={[
     {
       id: "recruit",
-      title: "Rekrutmen",
-      description: "Mencari kandidat yang tepat",
-      duration: "1-4 minggu",
+      title: "Recruitment",
+      description: "Find candidates",
+      duration: "1-4 weeks",
       status: "required",
       tips: [
-        "Portal lowongan kerja (JobStreet, LinkedIn)",
-        "Agensi rekrutmen (Headhunter)",
-        "Referensi internal (Referrals)",
-        "Kemitraan dengan universitas",
+        "Job portals (JobStreet, LinkedIn)",
+        "Recruitment agencies",
+        "Referrals",
+        "University partnerships",
       ],
     },
     {
       id: "interview",
-      title: "Seleksi",
-      description: "Wawancara dan penilaian kandidat",
-      duration: "1-2 minggu",
+      title: "Selection",
+      description: "Interview and assess",
+      duration: "1-2 weeks",
       status: "required",
       tips: [
-        "Skrining dokumen awal",
-        "Wawancara teknis dan user",
-        "Penilaian kesesuaian budaya (culture fit)",
-        "Pemeriksaan referensi (background check)",
+        "Initial screening",
+        "Technical interviews",
+        "Culture fit assessment",
+        "Reference checks",
       ],
     },
     {
       id: "offer",
-      title: "Penawaran Kerja",
-      description: "Penyampaian penawaran formal",
-      duration: "2-3 hari",
+      title: "Job Offer",
+      description: "Extend formal offer",
+      duration: "2-3 days",
       status: "required",
       tips: [
-        "Surat penawaran (offer letter) tertulis",
-        "Rincian gaji dan tunjangan",
-        "Penetapan tanggal mulai kerja",
-        "Ketentuan masa percobaan (hanya untuk PKWTT)",
+        "Written offer letter",
+        "Salary and benefits detail",
+        "Start date",
+        "Probation terms (if PKWTT)",
       ],
     },
     {
       id: "contract",
-      title: "Kontrak Kerja",
-      description: "Penandatanganan perjanjian hukum",
-      duration: "1-2 hari",
+      title: "Employment Contract",
+      description: "Sign legal agreement",
+      duration: "1-2 days",
+      status: "required",
+      documents: [
+        "Employment contract (bilingual)",
+        "Job description",
+        "Company regulations",
+        "Confidentiality agreement",
+      ],
+    },
+    {
+      id: "registration",
+      title: "BPJS Registration",
+      description: "Register for mandatory benefits",
+      duration: "1-5 days",
+      status: "required",
+      tips: [
+        "BPJS Kesehatan (health)",
+        "BPJS Ketenagakerjaan (employment)",
+        "Within 30 days of start",
+      ],
+    },
+    {
+      id: "onboard",
+      title: "Onboarding",
+      description: "Welcome and orient",
+      duration: "1-5 days",
+      status: "final",
+      tips: [
+        "Company orientation",
+        "Team introduction",
+        "Systems access",
+        "Training",
+      ],
     },
   ]}
 />
+
+---
+
+## Persyaratan Pra-Kerja
+
+<Checklist
+  title="New Hire Documents"
+  description="What to collect from employees"
+  persistKey="new-hire-docs-checklist"
+  items={[
+    {
+      id: "ktp",
+      label: "KTP (ID Card)",
+      description: "Copy of national ID",
+      required: true,
+      category: "identity",
+    },
+    {
+      id: "kk",
+      label: "Kartu Keluarga",
+      description: "Family card copy",
+      required: true,
+      category: "identity",
+    },
+    {
+      id: "npwp",
+      label: "NPWP (Tax ID)",
+      description: "Personal tax number",
+      required: true,
+      category: "tax",
+    },
+    {
+      id: "bpjs-card",
+      label: "Existing BPJS card",
+      description: "If already registered",
+      required: false,
+      category: "bpjs",
+    },
+    {
+      id: "education",
+      label: "Education certificates",
+      description: "Diploma, transcript",
+      required: true,
+      category: "qualification",
+    },
+    {
+      id: "skck",
+      label: "SKCK (Police certificate)",
+      description: "Criminal background check",
+      required: false,
+      category: "background",
+    },
+    {
+      id: "photos",
+      label: "Passport photos",
+      description: "For registration purposes",
+      required: true,
+      category: "identity",
+    },
+    {
+      id: "bank",
+      label: "Bank account details",
+      description: "For salary payment",
+      required: true,
+      category: "payment",
+    },
+  ]}
+  categories={[
+    { id: "identity", label: "Identity", color: "blue" },
+    { id: "tax", label: "Tax", color: "green" },
+    { id: "bpjs", label: "BPJS", color: "amber" },
+    { id: "qualification", label: "Qualification", color: "purple" },
+    { id: "background", label: "Background", color: "red" },
+    { id: "payment", label: "Payment", color: "cyan" },
+  ]}
+  showProgress={true}
+/>
+
+---
+
+## Struktur Gaji
+
+### Komponen Gaji Umum
+
+| Komponen             | Deskripsi                  | Kena Pajak |
+| -------------------- | -------------------------- | ---------- |
+| Gaji pokok           | Kompensasi inti (min 75%)  | Ya         |
+| Tunjangan tetap      | Transportasi, makan        | Ya         |
+| Tunjangan jabatan    | Berdasarkan peran          | Ya         |
+| Bonus kinerja        | Variabel                   | Ya         |
+| THR                  | Bonus hari raya keagamaan  | Ya         |
+| Lembur               | Upah jam kerja tambahan    | Ya         |
+
+### Kalkulator Biaya
+
+<Calculator
+  title="Total Employment Cost"
+  description="Estimate employer total cost"
+  fields={[
+    {
+      id: "gross",
+      label: "Gross Monthly Salary (IDR)",
+      type: "number",
+      defaultValue: 15000000,
+      min: 0,
+      step: 1000000,
+      suffix: "IDR"
+    },
+    {
+      id: "thr",
+      label: "Include THR Provision",
+      type: "select",
+      options: [
+        { value: "yes", label: "Yes" },
+        { value: "no", label: "No" }
+      ],
+      defaultValue: "yes"
+    }
+  ]}
+  calculateResult={(values) => {
+    const gross = Number(values.gross);
+
+    // BPJS employer contributions
+    const bpjsKesehatan = gross * 0.04; // 4% health
+    const bpjsJKK = gross * 0.0024; // 0.24% min work accident
+    const bpjsJKM = gross * 0.003; // 0.3% death
+    const bpjsJHT = gross * 0.037; // 3.7% pension fund
+    const bpjsJP = gross * 0.02; // 2% pension
+
+    const totalBPJS = bpjsKesehatan + bpjsJKK + bpjsJKM + bpjsJHT + bpjsJP;
+
+    // THR provision (1 month spread over 12)
+    const thrProvision = values.thr === "yes" ? gross / 12 : 0;
+
+    const totalMonthly = gross + totalBPJS + thrProvision;
+
+    return {
+      total: Math.round(totalMonthly),
+      breakdown: [
+        { label: "Gross Salary", amount: gross },
+        { label: "BPJS Kesehatan (4%)", amount: Math.round(bpjsKesehatan) },
+        { label: "BPJS JKK (0.24%)", amount: Math.round(bpjsJKK) },
+        { label: "BPJS JKM (0.3%)", amount: Math.round(bpjsJKM) },
+        { label: "BPJS JHT (3.7%)", amount: Math.round(bpjsJHT) },
+        { label: "BPJS JP (2%)", amount: Math.round(bpjsJP) },
+        { label: "THR Provision", amount: Math.round(thrProvision) },
+        { label: "Total Monthly Cost", amount: Math.round(totalMonthly) }
+      ],
+      currency: "IDR",
+      note: `Employer BPJS: ~10.24% of salary`
+    };
+
+}}
+/>
+
+---
+
+## Pendaftaran BPJS
+
+### BPJS Kesehatan
+
+<InfoCard variant="note" title="Health Insurance">
+**Kontribusi:**
+- Total: 5% dari gaji
+- Pemberi kerja: 4%
+- Karyawan: 1%
+
+**Batas:** IDR 12 juta gaji pokok
+
+**Cakupan:**
+
+- Karyawan
+- Pasangan
+- Hingga 3 anak
+- Anggota keluarga tambahan: +1% masing-masing
+
+</InfoCard>
+
+### BPJS Ketenagakerjaan
+
+| Program                | Pemberi Kerja | Karyawan | Total   |
+| ---------------------- | ------------- | -------- | ------- |
+| JKK (Kecelakaan Kerja) | 0.24-1.74%    | 0%       | Bervariasi |
+| JKM (Kematian)         | 0.30%         | 0%       | 0.30%   |
+| JHT (Hari Tua)         | 3.70%         | 2%       | 5.70%   |
+| JP (Pensiun)           | 2%            | 1%       | 3%      |
+
+---
+
+## Hal-Hal Penting dalam Kontrak Kerja
+
+<ComparisonTable
+  title="Contract Types"
+  description="Choose the right contract"
+  items={[
+    {
+      name: "PKWTT (Permanent)",
+      values: {
+        Duration: "Indefinite",
+        Probation: "Max 3 months",
+        Termination: "Cause + severance",
+        "When to Use": "Core/ongoing roles",
+      },
+      highlight: true,
+    },
+    {
+      name: "PKWT (Fixed-term)",
+      values: {
+        Duration: "Max 5 years",
+        Probation: "Not allowed",
+        Termination: "At end date",
+        "When to Use": "Projects/temporary",
+      },
+    },
+  ]}
+/>
+
+### Daftar Periksa Kontrak
+
+- Detail karyawan dan pemberi kerja
+- Jabatan dan deskripsi pekerjaan
+- Lokasi tempat kerja
+- Jam kerja
+- Gaji dan komponennya
+- Tunjangan
+- Tanggal mulai (dan tanggal berakhir untuk PKWT)
+- Ketentuan masa percobaan (hanya PKWTT)
+- Ketentuan pemutusan hubungan kerja
+- Ditandatangani oleh kedua belah pihak
+
+---
+
+## Masa Percobaan
+
+<InfoCard variant="warning" title="Probation Rules">
+**Hanya untuk PKWTT (Permanen):**
+- Maksimal 3 bulan
+- Harus tertulis
+- Gaji penuh selama masa percobaan
+- Dapat mengakhiri dengan pemberitahuan selama masa percobaan
+- Tidak ada pesangon jika diakhiri selama masa percobaan
+
+**Untuk PKWT (Waktu Tertentu):**
+
+- Masa percobaan TIDAK diperbolehkan
+- Setiap klausul masa percobaan batal demi hukum
+
+</InfoCard>
+
+---
+
+## Pertimbangan Penggajian
+
+### Persyaratan Pembayaran
+
+| Persyaratan | Detail               |
+| ----------- | -------------------- |
+| Frekuensi   | Bulanan (paling umum)|
+| Metode      | Transfer bank        |
+| Mata Uang   | IDR                  |
+| Slip gaji   | Wajib                |
+| Potongan    | BPJS, PPh 21, pinjaman |
+
+### Pemotongan Pajak (PPh 21)
+
+Pemberi kerja wajib:
+
+1. Menghitung PPh 21 bulanan
+2. Memotong dari gaji
+3. Menyetor paling lambat tanggal 10 bulan berikutnya
+4. Melaporkan paling lambat tanggal 20 bulan berikutnya
+5. Menerbitkan bukti potong tahunan (1721-A1)
+
+---
+
+## Praktik Terbaik untuk Onboarding
+
+<Checklist
+  title="Onboarding Checklist"
+  description="Setting up new employees"
+  persistKey="onboarding-checklist"
+  items={[
+    {
+      id: "welcome",
+      label: "Welcome and orientation",
+      description: "Company overview, culture",
+      required: true,
+      category: "orientation",
+    },
+    {
+      id: "workspace",
+      label: "Workspace setup",
+      description: "Desk, equipment, access",
+      required: true,
+      category: "logistics",
+    },
+    {
+      id: "systems",
+      label: "System access",
+      description: "Email, software, tools",
+      required: true,
+      category: "logistics",
+    },
+    {
+      id: "team",
+      label: "Team introduction",
+      description: "Meet colleagues",
+      required: true,
+      category: "orientation",
+    },
+    {
+      id: "training",
+      label: "Job training",
+      description: "Role-specific training",
+      required: true,
+      category: "development",
+    },
+    {
+      id: "policies",
+      label: "Policy review",
+      description: "Company regulations",
+      required: true,
+      category: "compliance",
+    },
+    {
+      id: "buddy",
+      label: "Assign buddy/mentor",
+      description: "Support person",
+      required: false,
+      category: "development",
+    },
+  ]}
+  categories={[
+    { id: "orientation", label: "Orientation", color: "blue" },
+    { id: "logistics", label: "Logistics", color: "green" },
+    { id: "development", label: "Development", color: "amber" },
+    { id: "compliance", label: "Compliance", color: "red" },
+  ]}
+  showProgress={true}
+/>
+
+---
+
+## Kesalahan Umum
+
+| Kesalahan                              | Dampak                    |
+| -------------------------------------- | ------------------------- |
+| Tidak ada kontrak tertulis             | Otomatis menjadi PKWTT    |
+| Keterlambatan pendaftaran BPJS         | Denda dan sanksi          |
+| Menggunakan PKWT untuk peran permanen  | Kontrak menjadi PKWTT     |
+| Masa percobaan dalam PKWT              | Klausul batal demi hukum  |
+| Tidak mengumpulkan NPWP                | Masalah pelaporan pajak   |
+| Tidak melakukan pemotongan pajak       | Tanggung jawab pemberi kerja |
+
+---
+
+## Pertanyaan Umum
+
+<AskZantara
+  context="Hiring Indonesia, recruitment, employment contracts, BPJS registration, onboarding"
+  placeholder="Ask about hiring..."
+  suggestedQuestions={[
+    "How long is the BPJS registration process?",
+    "Can I hire without NPWP?",
+    "What's the minimum notice for probation termination?",
+    "How do I report new employees to BPJS?",
+  ]}
+/>
+
+---
+
+## Artikel Terkait
+
+- [Panduan Hukum Ketenagakerjaan](/insights/business/labor-law-guide)
+- [Pemutusan Hubungan Kerja & Pesangon](/insights/business/termination-severance)
+- [Panduan Pendirian PT PMA](/business/foreign-company-incorporation-steps)

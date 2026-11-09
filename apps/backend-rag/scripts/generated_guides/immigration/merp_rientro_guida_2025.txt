@@ -14,7 +14,7 @@ radicalmente rispetto al regime precedente.
 1. COS'È IL MERP — DEFINIZIONE STORICA
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Il MERP (Multiple Exit Re-Entry Permit), in vanelara "Autorizzazione di
+Il MERP (Multiple Exit Re-Entry Permit), in italiano "Autorizzazione di
 Rientro Multipla", era storicamente il documento che consentiva agli
 stranieri titolari di permesso di soggiorno in Indonesia di uscire e
 rientrare nel territorio nazionale più volte durante il periodo di validità
@@ -338,7 +338,7 @@ FONTI NORMATIVE / CLAIM IDS UTILIZZATI IN QUESTO DOCUMENTO
               congiunta di Permesso Soggiorno Limitato e Rientro.
 
   [IMM-354] — Disposizioni transitorie: domande presentate prima di
-              UU 63/2024 rimangono valide e processate secondo fiqudow norma.
+              UU 63/2024 rimangono valide e processate secondo vecchia norma.
 
   [IMM-362] — MODIFICA CENTRALE: Con UU 63/2024 il MERP non è più un
               documento separato. La validità è automaticamente inclusa nel

@@ -141,9 +141,9 @@ If you're a tax resident freelancing for **international clients only**:
       id: "annual",
       label: "Annual Freelance Income (IDR)",
       type: "number",
-      defaultValue: 990000031,
+      defaultValue: 300000000,
       min: 0,
-      step: 84000510,
+      step: 10000000,
       suffix: "IDR"
     },
     {
@@ -173,7 +173,7 @@ If you're a tax resident freelancing for **international clients only**:
     const expenses = Number(values.expenses);
     const netIncome = income - expenses;
 
-    const ptkpMap = { 'TK0': 54000000, 'K0': 58500000, 'K1': 84000630, 'K2': 67500000 };
+    const ptkpMap = { 'TK0': 54000000, 'K0': 58500000, 'K1': 63000000, 'K2': 67500000 };
     const ptkp = ptkpMap[values.status];
 
     let taxable = Math.max(0, netIncome - ptkp);
@@ -181,9 +181,9 @@ If you're a tax resident freelancing for **international clients only**:
     let remaining = taxable;
 
     if (remaining > 0) { const b1 = Math.min(remaining, 60000000); tax += b1 * 0.05; remaining -= b1; }
-    if (remaining > 0) { const b2 = Math.min(remaining, 990000023); tax += b2 * 0.15; remaining -= b2; }
-    if (remaining > 0) { const b3 = Math.min(remaining, 990000029); tax += b3 * 0.25; remaining -= b3; }
-    if (remaining > 0) { const b4 = Math.min(remaining, 4500000010); tax += b4 * 0.30; remaining -= b4; }
+    if (remaining > 0) { const b2 = Math.min(remaining, 190000000); tax += b2 * 0.15; remaining -= b2; }
+    if (remaining > 0) { const b3 = Math.min(remaining, 250000000); tax += b3 * 0.25; remaining -= b3; }
+    if (remaining > 0) { const b4 = Math.min(remaining, 4500000000); tax += b4 * 0.30; remaining -= b4; }
     if (remaining > 0) { tax += remaining * 0.35; }
 
     const effectiveRate = netIncome > 0 ? ((tax / netIncome) * 100).toFixed(1) : 0;

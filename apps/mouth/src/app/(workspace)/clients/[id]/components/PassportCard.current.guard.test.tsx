@@ -100,9 +100,13 @@ describe("PassportCard uses the current passport", () => {
       />,
     );
 
-  it("positive control: a live PDF passport renders as 'PDF Document'", () => {
+  // The card no longer renders the scan (no thumbnail on the Overview), so
+  // "which passport is current" is read off the file name it reports.
+  it("positive control: a live PDF passport is the one the card names", () => {
     renderCard([doc({ id: 50, file_name: "old.pdf" })]);
-    expect(screen.getByText("PDF Document")).toBeTruthy();
+    expect(screen.getByTestId("passport-file").textContent).toContain(
+      "old.pdf",
+    );
   });
 
   it("GUILT: a removed PDF listed first does not replace the live JPG passport", () => {
@@ -110,6 +114,9 @@ describe("PassportCard uses the current passport", () => {
       doc({ id: 50, file_name: "old.pdf", deleted_at: "2026-10-01T00:00:00Z" }),
       doc({ id: 51, file_name: "new.jpg" }),
     ]);
-    expect(screen.queryByText("PDF Document")).toBeNull();
+    expect(screen.getByTestId("passport-file").textContent).toContain(
+      "new.jpg",
+    );
+    expect(screen.queryByText(/old\.pdf/)).toBeNull();
   });
 });

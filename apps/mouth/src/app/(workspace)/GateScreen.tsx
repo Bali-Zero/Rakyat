@@ -42,7 +42,7 @@ interface GateScreenProps {
  */
 const GATE_SERIF: React.CSSProperties = {
   fontFamily: "var(--font-serif)",
-  fontWeight: 450,
+  fontWeight: 500,
 };
 const GATE_RULE = "h-[3px] w-[52px] bg-[var(--bz-copper)]";
 const GATE_EYEBROW =

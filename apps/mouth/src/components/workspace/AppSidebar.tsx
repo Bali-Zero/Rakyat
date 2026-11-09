@@ -121,7 +121,7 @@ export function AppSidebar({
     // R19 kita rail v2 (K1c-bis): the workspace rail is now permanently ink
     // (globals.css --nav-rail-bg, invariant across light/dark — "the rail
     // is ink in BOTH themes"). A copper LEFT RULE still marks the active
-    // item, now 3px per the frozen render, and a running Fraunces ordinal
+    // item, now 3px per the frozen render, and a running Plex ordinal
     // (see workspaceContent below) replaces the lucide icon entirely. The
     // portal branch immediately below is untouched: paper, an icon, 40px
     // rows.
@@ -181,8 +181,7 @@ export function AppSidebar({
             className="w-6 flex-shrink-0 text-center tabular-nums"
             style={{
               fontFamily: "var(--font-serif)",
-              fontWeight: 450,
-              fontVariationSettings: '"opsz" 144',
+              fontWeight: 500,
               fontSize: "18px",
               letterSpacing: "-0.02em",
               color: "inherit",
@@ -220,7 +219,7 @@ export function AppSidebar({
             )}
             style={{
               fontFamily: "var(--font-serif)",
-              fontWeight: 450,
+              fontWeight: 500,
               fontSize: "17px",
             }}
           >
@@ -348,12 +347,20 @@ export function AppSidebar({
               : "justify-center rounded-full focus-visible:ring-[var(--nav-rule)] focus-visible:ring-offset-[var(--nav-rail-bg)]",
           )}
         >
-          <BZLogo
-            variant="full"
-            size={isPortal ? 28 : 36}
-            className={isPortal ? undefined : "rounded-full"}
-            priority
-          />
+          {isPortal ? (
+            <BZLogo variant="full" size={28} priority />
+          ) : (
+            // The same round Bali Zero logo the public homepage header shows
+            // (components/r19/home/Entry.tsx), sized for the 48px rail header.
+            <Image
+              src="/assets/r19/logo.webp"
+              alt="Bali Zero"
+              width={40}
+              height={40}
+              className="rounded-full"
+              priority
+            />
+          )}
           {isPortal && (
             <span className="flex flex-col leading-none">
               <span className="text-[17px] font-medium tracking-[-0.01em] text-[var(--tx-pure)] [font-family:var(--font-serif)]">
@@ -400,7 +407,7 @@ export function AppSidebar({
                   ? "var(--tx-secondary)"
                   : "var(--nav-fg-muted)",
             }}
-            aria-label="Toggle Zantara AI"
+            aria-label="Zantara ⌘J, toggle Zantara AI"
           >
             <BotMessageSquare
               size={15}

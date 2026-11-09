@@ -151,6 +151,124 @@ LLM_PRICING: dict[str, dict[str, float]] = {
         "input": 0.14,
         "output": 0.28,
     },
+    # ── Anthropic Claude (Console seats, metered per token) ──
+    # Verified 2026-11-03 against https://platform.claude.com/docs/about-claude/pricing
+    # and cross-checked live against the CLI's own ``modelUsage[*].costUSD``
+    # (costBasis "list") for haiku-4-5 and fable-5-1 on a Console seat.
+    # ``cached_input`` = cache HIT; ``cache_write`` = 5-minute write (1.25x);
+    # ``cache_write_1h`` = 1-hour write (2x). Claude reports cache tokens
+    # OUTSIDE ``input_tokens``; the caller sums them into ``prompt_tokens``.
+    #
+    # Substring discipline (resolve_pricing takes the LONGEST key inside the
+    # slug): every key that is a prefix of a pricier or cheaper sibling ships
+    # WITH that sibling — ``claude-opus-5`` with ``claude-opus-5-5``,
+    # ``claude-sonnet-5`` with ``claude-sonnet-5-5``, ``claude-fable-5`` with
+    # ``claude-fable-5-1`` — or the sibling would be billed at the prefix's
+    # rate. ``claude-opus-4`` (Opus 4, $15/$75) is deliberately ABSENT: it
+    # would capture the unlisted ``claude-opus-4-*`` slugs at 3x their rate.
+    # Unlisted Claude slugs (Opus 4, Haiku 5.5 with its length-tiered price)
+    # resolve to ``unknown``; the Console client then bills the CLI's own
+    # list-price figure instead of the $1/$3 default.
+    "claude-fable-5-1": {
+        "input": 10.00,
+        "output": 50.00,
+        "cached_input": 0.25,
+        "cache_write": 12.50,
+        "cache_write_1h": 20.00,
+    },
+    "claude-fable-5": {
+        "input": 10.00,
+        "output": 50.00,
+        "cached_input": 1.00,
+        "cache_write": 12.50,
+        "cache_write_1h": 20.00,
+    },
+    "claude-opus-5-5": {
+        "input": 4.00,
+        "output": 20.00,
+        "cached_input": 0.20,
+        "cache_write": 5.00,
+        "cache_write_1h": 8.00,
+    },
+    "claude-opus-5": {
+        "input": 5.00,
+        "output": 25.00,
+        "cached_input": 0.50,
+        "cache_write": 6.25,
+        "cache_write_1h": 10.00,
+    },
+    "claude-opus-4-8": {
+        "input": 5.00,
+        "output": 25.00,
+        "cached_input": 0.50,
+        "cache_write": 6.25,
+        "cache_write_1h": 10.00,
+    },
+    "claude-opus-4-7": {
+        "input": 5.00,
+        "output": 25.00,
+        "cached_input": 0.50,
+        "cache_write": 6.25,
+        "cache_write_1h": 10.00,
+    },
+    "claude-opus-4-6": {
+        "input": 5.00,
+        "output": 25.00,
+        "cached_input": 0.50,
+        "cache_write": 6.25,
+        "cache_write_1h": 10.00,
+    },
+    "claude-opus-4-5": {
+        "input": 5.00,
+        "output": 25.00,
+        "cached_input": 0.50,
+        "cache_write": 6.25,
+        "cache_write_1h": 10.00,
+    },
+    "claude-sonnet-5-5": {
+        "input": 2.00,
+        "output": 10.00,
+        "cached_input": 0.10,
+        "cache_write": 2.50,
+        "cache_write_1h": 4.00,
+    },
+    "claude-sonnet-5": {
+        "input": 2.00,
+        "output": 10.00,
+        "cached_input": 0.20,
+        "cache_write": 2.50,
+        "cache_write_1h": 4.00,
+    },
+    "claude-sonnet-4-6": {
+        "input": 3.00,
+        "output": 15.00,
+        "cached_input": 0.30,
+        "cache_write": 3.75,
+        "cache_write_1h": 6.00,
+    },
+    "claude-sonnet-4-5": {
+        "input": 3.00,
+        "output": 15.00,
+        "cached_input": 0.30,
+        "cache_write": 3.75,
+        "cache_write_1h": 6.00,
+    },
+    # Sonnet 4 (``claude-sonnet-4-20250514``): same rate as every 4.x Sonnet,
+    # so this prefix key cannot misprice a sibling.
+    "claude-sonnet-4": {
+        "input": 3.00,
+        "output": 15.00,
+        "cached_input": 0.30,
+        "cache_write": 3.75,
+        "cache_write_1h": 6.00,
+    },
+    "claude-haiku-4-5": {
+        "input": 1.00,
+        "output": 5.00,
+        "cached_input": 0.10,
+        "cache_write": 1.25,
+        "cache_write_1h": 2.00,
+    },
     # ── Default fallback (conservative estimate) ──
     "unknown": {
         "input": 1.00,
@@ -256,6 +374,8 @@ def calculate_cost(
     model: str,
     cached_tokens: int = 0,
     thinking_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    cache_write_1h_tokens: int = 0,
 ) -> float:
     """
     Calculate the cost in USD for a given token usage.
@@ -273,6 +393,13 @@ def calculate_cost(
         thinking_tokens: Reasoning tokens (``usage_metadata.thoughts_token_count``).
             Gemini reports these SEPARATELY from ``candidates_token_count`` and
             bills them at the OUTPUT rate — omitting them under-counts the bill.
+            Claude's ``output_tokens`` ALREADY include thinking: pass 0 there.
+        cache_write_tokens: Prompt tokens WRITTEN to a 5-minute cache (Claude
+            ``cache_creation.ephemeral_5m_input_tokens``). A subset of
+            ``prompt_tokens``, billed at ``cache_write`` when the row declares
+            one, else at the input rate. Clamped after ``cached_tokens``.
+        cache_write_1h_tokens: Prompt tokens written to a 1-hour cache, billed
+            at ``cache_write_1h`` (falls back to ``cache_write``, then input).
 
     Returns:
         Cost in USD (float, 6 decimal precision)
@@ -280,14 +407,19 @@ def calculate_cost(
     pricing = resolve_pricing(model)
 
     cached = max(0, min(cached_tokens, prompt_tokens))
-    fresh_input = prompt_tokens - cached
+    written_5m = max(0, min(cache_write_tokens, prompt_tokens - cached))
+    written_1h = max(0, min(cache_write_1h_tokens, prompt_tokens - cached - written_5m))
+    fresh_input = prompt_tokens - cached - written_5m - written_1h
     cached_rate = pricing.get("cached_input", pricing["input"])
+    write_rate = pricing.get("cache_write", pricing["input"])
+    write_1h_rate = pricing.get("cache_write_1h", write_rate)
 
     input_cost = (fresh_input / 1_000_000) * pricing["input"]
     cached_cost = (cached / 1_000_000) * cached_rate
+    write_cost = (written_5m / 1_000_000) * write_rate + (written_1h / 1_000_000) * write_1h_rate
     output_cost = ((completion_tokens + max(0, thinking_tokens)) / 1_000_000) * pricing["output"]
 
-    return round(input_cost + cached_cost + output_cost, 6)
+    return round(input_cost + cached_cost + write_cost + output_cost, 6)
 
 
 def create_token_usage(
@@ -296,6 +428,8 @@ def create_token_usage(
     model: str,
     cached_tokens: int = 0,
     thinking_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    cache_write_1h_tokens: int = 0,
 ) -> TokenUsage:
     """
     Create a TokenUsage object with calculated cost.
@@ -314,6 +448,8 @@ def create_token_usage(
         cached_tokens: Prompt tokens served from context cache (subset of
             ``prompt_tokens``, billed at the cached rate)
         thinking_tokens: Reasoning tokens, billed at the OUTPUT rate
+        cache_write_tokens: 5-minute cache writes (subset of ``prompt_tokens``)
+        cache_write_1h_tokens: 1-hour cache writes (subset of ``prompt_tokens``)
 
     Returns:
         TokenUsage dataclass with all fields populated
@@ -324,6 +460,8 @@ def create_token_usage(
         model,
         cached_tokens=cached_tokens,
         thinking_tokens=thinking_tokens,
+        cache_write_tokens=cache_write_tokens,
+        cache_write_1h_tokens=cache_write_1h_tokens,
     )
 
     return TokenUsage(

@@ -82,8 +82,13 @@ class TestExternalPartnersAreNotColleagues:
         """Guilt: this is the assertion that failed before the fix."""
         assert is_human_team_member(role) is False
 
-    # Rakyat: `test_every_role_in_the_repo_roster_still_counts` moved to the backstage — it reads the staff roster team_members.json, kept out of Rakyat (PII).
-    # Original at a0f6cca8b44d:apps/backend-rag/backend/tests/unit/utils/test_service_accounts.py; listed in PERIMETER.txt.
+    def test_every_role_in_the_repo_roster_still_counts(self) -> None:
+        """Innocence over the real roster, not a hand-picked list: team roles
+        are free-text job titles, and not one of them may be caught."""
+        roster = _roster()
+        roles = sorted({normalize_role(row.get("role")) for row in roster if row.get("role")})
+        assert len(roles) >= 10, f"roster looks empty: {len(roles)} roles"
+        assert [role for role in roles if not is_human_team_member(role)] == []
 
     def test_partners_stay_out_of_the_people_shaped_exclusions(self) -> None:
         """Scope pin: only the access predicate changed. Roster, headcount and
@@ -162,8 +167,11 @@ class TestTeamRolesAreAnAllowList:
     def test_the_allow_list_and_the_refusals_are_disjoint(self) -> None:
         assert not (TEAM_ROLES & NON_TEAM_ROLES)
 
-    # Rakyat: `test_every_roster_role_is_on_the_allow_list` moved to the backstage — it reads the staff roster team_members.json, kept out of Rakyat (PII).
-    # Original at a0f6cca8b44d:apps/backend-rag/backend/tests/unit/utils/test_service_accounts.py; listed in PERIMETER.txt.
+    def test_every_roster_role_is_on_the_allow_list(self) -> None:
+        """Tripwire: a new job title in the roster must be added here too."""
+        roster = {normalize_role(m["role"]) for m in _roster()}
+        assert roster, "roster is empty"
+        assert roster <= TEAM_ROLES
 
     def test_the_partners_service_allow_list_cannot_drift_wider(self) -> None:
         """CATA-6 keeps its own list; it must never admit a role this one refuses."""

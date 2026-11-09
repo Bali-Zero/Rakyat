@@ -8,12 +8,16 @@ document upload (Base64 + Google Drive), document soft-delete.
 
 import base64
 import hashlib
+import re
 from datetime import date, datetime
-from typing import Any
+from typing import Annotated, Any
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, StrictInt
+from pydantic import BaseModel, BeforeValidator, Field, StrictInt
+from pydantic_core import PydanticCustomError
 
+from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.crm_service_write import verify_crm_write_key
 from backend.app.routers.crm_enhanced import (
@@ -30,7 +34,8 @@ from backend.db.repositories.client_repository import CORE_OWNER_IDS_SQL
 from backend.phone_lock import lock_cores, phone_core, phone_value_state
 from backend.services.common.background import spawn
 from backend.services.crm.admin_document_visibility import admin_document_not_deleted_clause
-from backend.services.crm.document_categorizer import CATEGORY_TO_FOLDER, auto_categorize_document
+from backend.services.crm.document_categorizer import auto_categorize_document
+from backend.services.crm.drive_taxonomy import folder_for_category, physical_root_layout
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 
 logger = get_logger(__name__)
@@ -633,6 +638,45 @@ async def extract_visa_data(
 # ============================================
 
 
+_PRACTICE_ID_DIGITS = r"^[+-]?[0-9]{1,10}$"
+_LegacyPracticeIdText = Annotated[
+    str,
+    Field(
+        pattern=_PRACTICE_ID_DIGITS,
+        json_schema_extra={"not": {"pattern": r"\s"}},
+        description="Legacy decimal reference with up to ten digits and an optional sign.",
+    ),
+]
+
+
+def _normalize_practice_number(value: Any) -> Any:
+    if isinstance(value, str) and re.fullmatch(_PRACTICE_ID_DIGITS, value):
+        return int(value)
+    # JSON Schema treats a number with a zero fractional part as an integer.
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+_WirePracticeRowId = Annotated[
+    StrictInt,
+    BeforeValidator(_normalize_practice_number, json_schema_input_type=int | _LegacyPracticeIdText),
+]
+
+
+def _require_hyphenated_uuid(value: Any) -> Any:
+    # The producer sends canonical UUID text. A compact all-digit UUID must not
+    # introduce a second spelling that can be confused with a decimal reference.
+    if isinstance(value, str) and not re.fullmatch(
+        r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", value
+    ):
+        raise PydanticCustomError("uuid_format", "Expected a hyphenated practice UUID")
+    return value
+
+
+_WirePracticeUuid = Annotated[UUID, BeforeValidator(_require_hyphenated_uuid)]
+
+
 class DocumentUploadBase64(BaseModel):
     file: str  # Base64
     file_name: str
@@ -643,7 +687,9 @@ class DocumentUploadBase64(BaseModel):
     document_category: str | None = None
     expiry_date: str | None = None
     family_member_id: int | None = None
-    practice_id: int | None = None
+    # Canonical numeric IDs are used by the frontend. Replicas send the
+    # canonical UUID on this same key so older integer-only servers reject it.
+    practice_id: _WirePracticeRowId | _WirePracticeUuid | None = None
     company_id: int | None = None
     # Ownership token (Codex 2026-07-19 round 12, F12 gap 3): intake delivery
     # resolves the target client BY PHONE in a separate earlier request; this
@@ -652,6 +698,52 @@ class DocumentUploadBase64(BaseModel):
     # phone. Optional — human/frontend uploads address a reviewed client id and
     # don't send it.
     expected_phone_core: str | None = None
+    # Explicit visibility of the new row on the client portal
+    # (documents.client_visible). Absent (None) = the INSERT does not name the
+    # column, so the database DEFAULT applies exactly as before; an explicit
+    # value is written in the SAME INSERT. Intake delivery sends False for a
+    # `recovery-v1` row (staff-only until the staff review).
+    client_visible: bool | None = None
+
+
+class DocumentUploadConflict(BaseModel):
+    detail: str
+    correlation_id: str
+
+
+_UPLOAD_CONFLICT = {
+    409: {
+        "model": DocumentUploadConflict,
+        "description": "Duplicate document content or unresolved client or practice ownership.",
+    }
+}
+
+
+async def _resolve_upload_practice(
+    conn: Any,
+    client_id: int,
+    reference: int | UUID | None,
+    expected_phone_core: str | None,
+    *,
+    lock: bool = False,
+) -> int | None:
+    """Resolve a practice in the authorized client's namespace."""
+    if reference is None:
+        return None
+    # Never bind an out-of-range value to the Postgres integer key. Like a
+    # well-formed UUID absent from the table, it cannot identify a practice.
+    if isinstance(reference, int) and (expected_phone_core or not -(2**31) <= reference < 2**31):
+        raise HTTPException(status_code=409, detail="practice_identity_unresolved")
+    column = "uuid" if isinstance(reference, UUID) else "id"
+    row = await conn.fetchrow(
+        f"SELECT id FROM practices WHERE {column} = $1 AND client_id = $2"
+        + (" FOR SHARE" if lock else ""),
+        str(reference) if isinstance(reference, UUID) else reference,
+        client_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=409, detail="practice_identity_unresolved")
+    return int(row["id"])
 
 
 async def _active_duplicate_document_id(
@@ -688,7 +780,7 @@ async def _active_duplicate_document_id(
     )
 
 
-@router.post("/clients/{client_id}/documents/upload")
+@router.post("/clients/{client_id}/documents/upload", responses=_UPLOAD_CONFLICT)
 async def upload_document_base64(
     client_id: int,
     data: DocumentUploadBase64 = Body(...),
@@ -727,7 +819,6 @@ async def upload_document_base64(
         else:
             cat_result = auto_categorize_document(data.file_name)
             category = cat_result["document_category"]
-        folder_name = CATEGORY_TO_FOLDER.get(category, "99_Misc")
 
         async with pool.acquire() as conn:
             client = await conn.fetchrow(
@@ -739,6 +830,10 @@ async def upload_document_base64(
 
             if not client:
                 raise HTTPException(status_code=404, detail="Client not found")
+
+            practice_id = await _resolve_upload_practice(
+                conn, client_id, data.practice_id, data.expected_phone_core
+            )
 
             def _owns_expected_core(row: Any) -> bool:
                 # Column CONSISTENCY, not membership (Codex round 13, F12g3):
@@ -823,7 +918,7 @@ async def upload_document_base64(
                     conn,
                     client_id,
                     content_hash,
-                    practice_id=data.practice_id,
+                    practice_id=practice_id,
                     family_member_id=data.family_member_id,
                 )
             if existing_doc_id is not None:
@@ -851,6 +946,7 @@ async def upload_document_base64(
                         client_name=client["full_name"],
                         client_type=client["client_type"] or "individual",
                         db_pool=pool,
+                        conn=conn,
                     )
                     root_folder_id = ensure_result["root_folder_id"]
                 except Exception as e:
@@ -860,34 +956,23 @@ async def upload_document_base64(
                         detail=f"Failed to create root folder: {e}",
                     ) from e
 
-            # Ensure Subfolder Exists (Find or Create)
             try:
-                structure = await drive_service.get_folder_structure(
-                    root_folder_id=root_folder_id,
+                root = await drive_service.get_file_metadata(root_folder_id)
+                layout = physical_root_layout(
+                    root,
+                    root_folder_id,
+                    client["client_type"],
+                    individuals_parent=settings.gdrive_individuals_folder_id,
+                    companies_parent=settings.gdrive_companies_folder_id,
+                )
+                folder_name = folder_for_category(category, layout)
+                subfolder_id = await drive_service.resolve_canonical_folder(
+                    folder_name, root_folder_id, conn=conn
                 )
             except Exception as e:
-                # If structure fetch fails, maybe root folder is missing/deleted?
-                # We'll just fail for now, or could try to recreate
                 raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to access folder structure: {e}",
+                    status_code=409, detail="Cannot verify Drive destination"
                 ) from e
-
-            subfolder = next((f for f in structure["folders"] if f["name"] == folder_name), None)
-            if not subfolder:
-                # Create subfolder
-                try:
-                    subfolder_data = await drive_service.create_folder(
-                        name=folder_name,
-                        parent_id=root_folder_id,
-                    )
-                    subfolder_id = subfolder_data["id"]
-                except Exception as e:
-                    raise HTTPException(
-                        status_code=500, detail=f"Failed to create subfolder: {e}"
-                    ) from e
-            else:
-                subfolder_id = subfolder["id"]
 
             # Handle subfolder_hint for nested subfolders (e.g. "Actual Visa" inside 01_Immigration)
             target_subfolder_id = subfolder_id
@@ -895,29 +980,14 @@ async def upload_document_base64(
 
             if data.subfolder_hint and data.subfolder_hint in ("Actual Visa", "Previous Visa"):
                 subfolder_value = data.subfolder_hint
-                # Find or create the nested subfolder inside the category folder
                 try:
-                    nested_structure = await drive_service.get_folder_structure(
-                        root_folder_id=subfolder_id,
+                    target_subfolder_id = await drive_service.resolve_canonical_folder(
+                        data.subfolder_hint, subfolder_id, conn=conn
                     )
-                    nested_folder = next(
-                        (
-                            f
-                            for f in nested_structure["folders"]
-                            if f["name"] == data.subfolder_hint
-                        ),
-                        None,
-                    )
-                    if not nested_folder:
-                        nested_data = await drive_service.create_folder(
-                            name=data.subfolder_hint,
-                            parent_id=subfolder_id,
-                        )
-                        target_subfolder_id = nested_data["id"]
-                    else:
-                        target_subfolder_id = nested_folder["id"]
                 except Exception as e:
-                    logger.warning(f"Could not resolve subfolder_hint '{data.subfolder_hint}': {e}")
+                    raise HTTPException(
+                        status_code=409, detail="Cannot verify Drive destination"
+                    ) from e
 
                 # Visa rotation: if uploading to "Actual Visa", move existing actual to "Previous Visa"
                 if data.subfolder_hint == "Actual Visa":
@@ -929,31 +999,15 @@ async def upload_document_base64(
                         client_id,
                     )
                     if existing_actual and existing_actual["file_id"]:
-                        # Find or create "Previous Visa" folder
-                        prev_folder = (
-                            next(
-                                (
-                                    f
-                                    for f in nested_structure["folders"]
-                                    if f["name"] == "Previous Visa"
-                                ),
-                                None,
+                        try:
+                            prev_folder_id = await drive_service.resolve_canonical_folder(
+                                "Previous Visa", subfolder_id, conn=conn
                             )
-                            if nested_structure
-                            else None
-                        )
-                        if not prev_folder:
-                            try:
-                                prev_data = await drive_service.create_folder(
-                                    name="Previous Visa",
-                                    parent_id=subfolder_id,
-                                )
-                                prev_folder_id = prev_data["id"]
-                            except Exception as e:
-                                logger.error("Failed to create Previous Visa folder: %s", e)
-                                prev_folder_id = None
-                        else:
-                            prev_folder_id = prev_folder["id"]
+                        except Exception as e:
+                            logger.error(
+                                "Failed to verify Previous Visa folder: %s", type(e).__name__
+                            )
+                            prev_folder_id = None
 
                         if prev_folder_id:
                             try:
@@ -1033,8 +1087,21 @@ async def upload_document_base64(
                                 "document NOT attached, re-resolve the client"
                             ),
                         )
-                doc_id = await conn.fetchval(
-                    """
+                try:
+                    current_practice_id = await _resolve_upload_practice(
+                        conn, client_id, data.practice_id, data.expected_phone_core, lock=True
+                    )
+                    if current_practice_id != practice_id:
+                        raise HTTPException(status_code=409, detail="practice_identity_unresolved")
+                except HTTPException:
+                    logger.error(
+                        "orphaned_drive_file file_id=%s client_id=%s "
+                        "reason=practice_identity_unresolved",
+                        upload_result.get("id"),
+                        client_id,
+                    )
+                    raise
+                insert_sql = """
                     INSERT INTO documents (
                         client_id, document_type, document_category,
                         file_name, file_id, file_url, google_drive_file_url,
@@ -1042,7 +1109,8 @@ async def upload_document_base64(
                         family_member_id, practice_id, uploaded_by, uploaded_source
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 'google_drive', $8, $9, $10, $11, $12, $13, $14, $15)
                     RETURNING id
-                    """,
+                    """
+                insert_args: list[Any] = [
                     client_id,
                     data.document_type,
                     category,
@@ -1055,10 +1123,26 @@ async def upload_document_base64(
                     _parse_date_or_none(data.expiry_date),
                     content_hash,
                     data.family_member_id,
-                    data.practice_id,
+                    practice_id,
                     current_user.get("email"),
                     source,
-                )
+                ]
+                if data.client_visible is not None:
+                    # Explicit visibility: the same statement plus the column,
+                    # written in the SAME INSERT (the row never exists with the
+                    # default). Absent keeps the statement above byte for byte.
+                    insert_sql = """
+                    INSERT INTO documents (
+                        client_id, document_type, document_category,
+                        file_name, file_id, file_url, google_drive_file_url,
+                        status, storage_type, notes, subfolder, expiry_date, content_hash,
+                        family_member_id, practice_id, uploaded_by, uploaded_source,
+                        client_visible
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 'google_drive', $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                    RETURNING id
+                    """
+                    insert_args.append(data.client_visible)
+                doc_id = await conn.fetchval(insert_sql, *insert_args)
 
             company_document_id = None
             if data.company_id is not None:
@@ -1132,7 +1216,7 @@ async def upload_document_base64(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/internal/clients/{client_id}/documents/upload")
+@router.post("/internal/clients/{client_id}/documents/upload", responses=_UPLOAD_CONFLICT)
 async def upload_document_base64_internal(
     client_id: int,
     data: DocumentUploadBase64 = Body(...),

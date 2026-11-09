@@ -195,6 +195,7 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
+        <meta name="color-scheme" content="light dark" />
         {/* Pre-paint theme init — prevents FOUC before React hydrates (design §5). */}
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
 

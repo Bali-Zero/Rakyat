@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 # Add backend to path
 backend_path = Path(__file__).parent.parent.parent.parent.parent
@@ -225,6 +226,7 @@ class TestSaveConversationMemory:
     @pytest.mark.asyncio
     async def test_save_memory_lock_timeout(self, orchestrator):
         """Test lock timeout handling"""
+        from backend.security.pii_log_identifier import redact_identifier_for_log
         # memory_handler keys locks by f"{user_id}::{session_id or '__nosession__'}";
         # _save_conversation_memory doesn't pass session_id, so the effective
         # key is "{user_id}::__nosession__". Pre-refactor the key was just
@@ -263,9 +265,9 @@ class TestSaveConversationMemory:
 
             # Timed out acquiring the lock: must record the timeout metric and
             # never reach get_memory_orchestrator() at all.
-            mock_metrics.record_memory_lock_timeout.assert_called_once_with(
-                user_id="ux15@dxx1.com"
-            )
+            expected_label = redact_identifier_for_log("ux15@dxx1.com")
+            mock_metrics.record_memory_lock_timeout.assert_called_once_with(user_id=expected_label)
+            assert "ux15@dxx1.com" not in repr(mock_metrics.record_memory_lock_timeout.call_args)
             mock_get.assert_not_awaited()
             assert any(
                 "lock timeout" in str(call.args[0])
@@ -298,7 +300,10 @@ class TestSaveConversationMemory:
         mock_logger.warning.assert_called_once()
         warn_args = mock_logger.warning.call_args.args
         assert "Failed to save memory" in warn_args[0]
-        assert "DB error" in str(warn_args[1])
+        assert warn_args[1] == "PostgresError"
+        assert "DB error" not in warn_args[0] % warn_args[1:]
+        assert not mock_logger.warning.call_args.kwargs.get("exc_info")
+        mock_memory.process_conversation.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_save_memory_value_error(self, orchestrator):
@@ -321,7 +326,10 @@ class TestSaveConversationMemory:
         mock_logger.warning.assert_called_once()
         warn_args = mock_logger.warning.call_args.args
         assert "Failed to save memory" in warn_args[0]
-        assert "Invalid value" in str(warn_args[1])
+        assert warn_args[1] == "ValueError"
+        assert "Invalid value" not in warn_args[0] % warn_args[1:]
+        assert not mock_logger.warning.call_args.kwargs.get("exc_info")
+        mock_memory.process_conversation.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_save_memory_runtime_error(self, orchestrator):
@@ -344,7 +352,10 @@ class TestSaveConversationMemory:
         mock_logger.warning.assert_called_once()
         warn_args = mock_logger.warning.call_args.args
         assert "Failed to save memory" in warn_args[0]
-        assert "Runtime error" in str(warn_args[1])
+        assert warn_args[1] == "RuntimeError"
+        assert "Runtime error" not in warn_args[0] % warn_args[1:]
+        assert not mock_logger.warning.call_args.kwargs.get("exc_info")
+        mock_memory.process_conversation.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_save_memory_lock_contention_metric(self, orchestrator):
@@ -816,7 +827,7 @@ class TestStreamEventComplete:
 
     def test_stream_event_validation_required_fields(self):
         """Test StreamEvent requires type and data"""
-        with pytest.raises(Exception):  # Pydantic validation error
+        with pytest.raises(ValidationError):
             StreamEvent()  # Missing required fields
 
     def test_stream_event_optional_fields(self):

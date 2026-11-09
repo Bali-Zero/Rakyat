@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -205,11 +206,34 @@ def invoke_claude_apply(
     # to the main repo from wr2_canva_desktop_apply.py history).
     claude_cwd = Path.home() / "Desktop" / "nuzantara"
 
+    # RULED 2026-11-01: the child runs on a Console seat, never on the
+    # inherited environment (its plan-OAuth session is the shut fallback).
+    # One deliberate difference from the other spawners: the config dir is
+    # NOT pinned to the sterile headless dir, because the Canva MCP connector
+    # this run needs is registered in the interactive config (.claude.json,
+    # project-scoped to the cwd above); the inherited CLAUDE_CONFIG_DIR, or the
+    # CLI's default, stays. Model access is still the seat's key + header.
+    from backend.llm.claude_oauth_client import build_seat_env, collect_seats
+
+    seats = collect_seats()
+    if not seats:
+        raise CanvaInvokeError(
+            "no Console seat configured (ANTHROPIC_CONSOLE_KEY_<n> + "
+            "ANTHROPIC_CONSOLE_WORKSPACE_<n>) — no plan-OAuth fallback, RULED 2026-11-01"
+        )
+    env = build_seat_env(seats[0])
+    inherited_config_dir = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+    if inherited_config_dir:
+        env["CLAUDE_CONFIG_DIR"] = inherited_config_dir
+    else:
+        env.pop("CLAUDE_CONFIG_DIR", None)
+
     logger.info(
-        "Invoking claude -p for Canva apply — pending=%s cwd=%s timeout=%ds",
+        "Invoking claude -p for Canva apply — pending=%s cwd=%s timeout=%ds seat=%s",
         canva_pending_path,
         claude_cwd,
         timeout_sec,
+        seats[0].label,
     )
     start = time.monotonic()
     try:
@@ -221,6 +245,7 @@ def invoke_claude_apply(
             timeout=timeout_sec,
             check=False,
             cwd=str(claude_cwd),
+            env=env,
         )
     except subprocess.TimeoutExpired as exc:
         raise CanvaInvokeError(

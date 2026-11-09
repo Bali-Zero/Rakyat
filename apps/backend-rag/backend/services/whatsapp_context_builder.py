@@ -18,6 +18,10 @@ from typing import Any
 
 import asyncpg
 
+from backend.db.repositories.conversation_repository import (
+    conversation_write_connection,
+    lock_conversation_session,
+)
 from backend.security.pii_log_identifier import redact_identifier_for_log
 
 logger = logging.getLogger(__name__)
@@ -126,7 +130,7 @@ INTEREST_KEYWORDS = {
 # Simple language detection patterns
 LANGUAGE_PATTERNS = {
     "it": [
-        r"\b(ciao|buongiorno|buonasera|grazie|dujoc|quanto|costa|vorrei|posso|sono|come|perch[eé]|anche|molto|questo|quello|goqame|bisogno|serve|aiuto|informazioni)\b",
+        r"\b(ciao|buongiorno|buonasera|grazie|prego|quanto|costa|vorrei|posso|sono|come|perch[eé]|anche|molto|questo|quello|voglio|bisogno|serve|aiuto|informazioni)\b",
     ],
     "en": [
         r"\b(hello|hi|thanks|please|how much|i want|i need|can i|what is|help|information|looking for|interested)\b",
@@ -300,7 +304,11 @@ async def build_context(
                         client_profile = meta
 
         except Exception as e:
-            logger.warning("Failed to load context for %s: %s", redact_identifier_for_log(phone), e)
+            logger.warning(
+                "Failed to load context for %s: %s",
+                redact_identifier_for_log(phone),
+                type(e).__name__,
+            )
 
     # Resolve sender identity (owner / team / CRM client / unknown) so the
     # reply pipeline can stop treating Zero, the team, and known clients as
@@ -309,9 +317,11 @@ async def build_context(
         from backend.services.whatsapp_identity import resolve_sender_identity
 
         sender_identity = await resolve_sender_identity(phone, db_pool)
-    except Exception:
-        logger.exception(
-            "Sender identity resolution crashed for %s", redact_identifier_for_log(phone)
+    except Exception as r4_exc:
+        logger.error(
+            "Sender identity resolution crashed for %s: %s",
+            redact_identifier_for_log(phone),
+            type(r4_exc).__name__,
         )
         sender_identity = {"role": "unknown"}
 
@@ -357,20 +367,32 @@ async def build_context(
     # Save updated profile back to PostgreSQL
     if db_pool:
         try:
-            async with db_pool.acquire() as conn:
-                if existing_row_id:
-                    await conn.execute(
-                        # ::text::jsonb — the app pools register a jsonb codec
-                        # (encoder=json.dumps); a param inferred as jsonb would
-                        # get this pre-serialized string dumped AGAIN, landing
-                        # as a jsonb string scalar.
-                        "UPDATE conversations SET metadata = $1::text::jsonb WHERE id = $2",
-                        json.dumps(client_profile),
+            if existing_row_id:
+                async with conversation_write_connection(db_pool) as conn:
+                    await lock_conversation_session(conn, session_id)
+                    locked = await conn.fetchrow(
+                        "SELECT id FROM conversations WHERE id = $1 FOR UPDATE",
                         existing_row_id,
                     )
-                # If no existing row, it will be created when we save the conversation later
+                    if locked:
+                        await conn.execute(
+                            # ::text::jsonb — the app pools register a jsonb codec
+                            # (encoder=json.dumps); a param inferred as jsonb would
+                            # get this pre-serialized string dumped AGAIN.
+                            """
+                            UPDATE conversations
+                            SET metadata = $1::text::jsonb WHERE id = $2
+                            """,
+                            json.dumps(client_profile),
+                            existing_row_id,
+                        )
+            # If no existing row, it will be created when we save the conversation later
         except Exception as e:
-            logger.warning("Failed to save profile for %s: %s", redact_identifier_for_log(phone), e)
+            logger.warning(
+                "Failed to save profile for %s: %s",
+                redact_identifier_for_log(phone),
+                type(e).__name__,
+            )
 
     return {
         "client_name": sender_name,

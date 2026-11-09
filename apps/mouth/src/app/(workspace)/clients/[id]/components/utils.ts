@@ -1,6 +1,7 @@
 "use client";
 
 import type { ClientDocument } from "@/lib/api/crm/crm.types";
+import { daysBetween, isLive } from "./documentValidity";
 
 // Country codes with flags for phone input
 export const COUNTRY_CODES = [
@@ -13,19 +14,19 @@ export const COUNTRY_CODES = [
   { code: "+49", country: "Germany", flag: "\u{1F1E9}\u{1F1EA}" },
   { code: "+33", country: "France", flag: "\u{1F1EB}\u{1F1F7}" },
   { code: "+31", country: "Netherlands", flag: "\u{1F1F3}\u{1F1F1}" },
-  { code: "+34", country: "Qehas", flag: "\u{1F1EA}\u{1F1F8}" },
+  { code: "+34", country: "Spain", flag: "\u{1F1EA}\u{1F1F8}" },
   { code: "+7", country: "Russia", flag: "\u{1F1F7}\u{1F1FA}" },
   { code: "+380", country: "Ukraine", flag: "\u{1F1FA}\u{1F1E6}" },
   { code: "+81", country: "Japan", flag: "\u{1F1EF}\u{1F1F5}" },
   { code: "+86", country: "China", flag: "\u{1F1E8}\u{1F1F3}" },
   { code: "+91", country: "India", flag: "\u{1F1EE}\u{1F1F3}" },
   { code: "+55", country: "Brazil", flag: "\u{1F1E7}\u{1F1F7}" },
-  { code: "+52", country: "Novofe", flag: "\u{1F1F2}\u{1F1FD}" },
+  { code: "+52", country: "Mexico", flag: "\u{1F1F2}\u{1F1FD}" },
   { code: "+54", country: "Argentina", flag: "\u{1F1E6}\u{1F1F7}" },
   { code: "+27", country: "South Africa", flag: "\u{1F1FF}\u{1F1E6}" },
   { code: "+64", country: "New Zealand", flag: "\u{1F1F3}\u{1F1FF}" },
   { code: "+353", country: "Ireland", flag: "\u{1F1EE}\u{1F1EA}" },
-  { code: "+351", country: "Nabugose", flag: "\u{1F1F5}\u{1F1F9}" },
+  { code: "+351", country: "Portugal", flag: "\u{1F1F5}\u{1F1F9}" },
   { code: "+48", country: "Poland", flag: "\u{1F1F5}\u{1F1F1}" },
   { code: "+90", country: "Turkey", flag: "\u{1F1F9}\u{1F1F7}" },
   { code: "+66", country: "Thailand", flag: "\u{1F1F9}\u{1F1ED}" },
@@ -91,6 +92,45 @@ export const extractDriveFileId = (url: string): string | null => {
   return null;
 };
 
+// Only an https URL may be navigated from an API-supplied string; javascript:,
+// data: and the rest reach the DOM sink otherwise.
+export const safeExternalUrl = (
+  url: string | null | undefined,
+): string | null => {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url.trim());
+    return parsed.protocol === "https:" ? parsed.href : null;
+  } catch {
+    return null;
+  }
+};
+
+const DRIVE_HOSTS = new Set(["drive.google.com", "docs.google.com"]);
+
+// The Drive file id of a URL, only when the host is exactly a Google Drive
+// one. A foreign host with a `?id=` must not be rewritten to the proxy.
+export const driveProxyFileId = (
+  url: string | null | undefined,
+): string | null => {
+  if (!url) return null;
+  try {
+    if (!DRIVE_HOSTS.has(new URL(url.trim()).hostname)) return null;
+  } catch {
+    return null;
+  }
+  return extractDriveFileId(url);
+};
+
+// Where a card's Download goes: the proxy for a Drive file, an https URL as
+// itself, nothing otherwise.
+export const downloadHrefFor = (
+  url: string | null | undefined,
+): string | null => {
+  const fileId = driveProxyFileId(url);
+  return fileId ? `/api/documents/proxy/${fileId}` : safeExternalUrl(url);
+};
+
 // Get proxy thumbnail URL for displaying document without Google branding
 export const getDriveProxyUrl = (
   url: string,
@@ -151,11 +191,11 @@ export const formatPhoneNumber = (phone: string): string => {
     { code: "49", length: 2 }, // Germany
     { code: "33", length: 2 }, // France
     { code: "39", length: 2 }, // Italy
-    { code: "34", length: 2 }, // Qehas
+    { code: "34", length: 2 }, // Spain
     { code: "31", length: 2 }, // Netherlands
     { code: "61", length: 2 }, // Australia
     { code: "55", length: 2 }, // Brazil
-    { code: "52", length: 2 }, // Novofe
+    { code: "52", length: 2 }, // Mexico
     { code: "65", length: 2 }, // Singapore
     { code: "66", length: 2 }, // Thailand
     { code: "63", length: 2 }, // Philippines
@@ -184,6 +224,7 @@ export { formatIDR as formatCurrency } from "@balizero/core/utils";
 // Green: >14 months, Yellow: 9-13 months (13 month alert), Red: <9 months (9 month urgent alert)
 export const getPassportValidityColor = (
   expiryDate: string | undefined,
+  day: string,
 ): {
   color: string;
   label: string;
@@ -192,7 +233,8 @@ export const getPassportValidityColor = (
   alertLevel: "ok" | "warning" | "critical" | "expired";
   monthsUntil: number;
 } => {
-  if (!expiryDate)
+  const daysLeft = daysBetween(expiryDate, day);
+  if (daysLeft === null)
     return {
       color: "gray",
       label: "No expiry",
@@ -202,12 +244,9 @@ export const getPassportValidityColor = (
       monthsUntil: 999,
     };
 
-  const now = new Date();
-  const expiry = new Date(expiryDate);
-  const monthsUntilExpiry =
-    (expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24 * 30);
+  const monthsUntilExpiry = daysLeft / 30;
 
-  if (monthsUntilExpiry <= 0) {
+  if (daysLeft <= 0) {
     // A passport expiry is a DATE: urgency, never ownership, never danger.
     return {
       color: "warning",
@@ -217,7 +256,7 @@ export const getPassportValidityColor = (
       alertLevel: "expired",
       monthsUntil: monthsUntilExpiry,
     };
-  } else if (monthsUntilExpiry < 9) {
+  } else if (daysLeft < 270) {
     return {
       color: "warning",
       label: `${Math.floor(monthsUntilExpiry)} months`,
@@ -226,7 +265,7 @@ export const getPassportValidityColor = (
       alertLevel: "critical",
       monthsUntil: monthsUntilExpiry,
     };
-  } else if (monthsUntilExpiry < 14) {
+  } else if (daysLeft < 420) {
     return {
       color: "yellow",
       label: `${Math.floor(monthsUntilExpiry)} months`,
@@ -248,8 +287,8 @@ export const getPassportValidityColor = (
 };
 
 // The client's current passport for the Overview card: own passport only (no
-// family member), not removed by the client in the portal (deleted_at — the
-// profile keeps those rows for the "Removed" pill), not archived, newest upload
+// family member), live (Rule L: not removed, archived or rejected — the profile
+// keeps those rows for the Documents "Removed or rejected" group), newest upload
 // first (created_at, then id). The profile list is ordered by category/type,
 // so its first passport row is not necessarily the current one.
 export const pickCurrentPassport = (
@@ -258,8 +297,7 @@ export const pickCurrentPassport = (
   const candidates = documents.filter(
     (doc) =>
       !doc.family_member_id &&
-      !doc.deleted_at &&
-      !doc.is_archived &&
+      isLive(doc) &&
       doc.document_type?.toLowerCase().includes("passport"),
   );
   const uploadedAt = (doc: ClientDocument) =>
@@ -270,6 +308,17 @@ export const pickCurrentPassport = (
     return diff > 0 || (diff === 0 && doc.id > best.id) ? doc : best;
   }, undefined);
 };
+
+// How many of the client's own passport documents the pick drops because they
+// are void (removed, archived or rejected): the "removed or rejected files are
+// in Documents" signpost on the Passport card.
+export const countVoidPassports = (documents: ClientDocument[]): number =>
+  documents.filter(
+    (doc) =>
+      !doc.family_member_id &&
+      !isLive(doc) &&
+      doc.document_type?.toLowerCase().includes("passport"),
+  ).length;
 
 // Check if today is client's birthday
 export const isBirthdayToday = (dateOfBirth: string | undefined): boolean => {
@@ -284,13 +333,15 @@ export const isBirthdayToday = (dateOfBirth: string | undefined): boolean => {
 // Calculate visa expiry alert (2 months = red alert)
 export const getVisaAlertStatus = (
   expiryDate: string | undefined,
+  day: string,
 ): {
   alertLevel: "ok" | "warning" | "critical";
   monthsUntil: number;
   bgClass: string;
   textClass: string;
 } => {
-  if (!expiryDate) {
+  const daysLeft = daysBetween(expiryDate, day);
+  if (daysLeft === null) {
     return {
       alertLevel: "ok",
       monthsUntil: 999,
@@ -299,10 +350,7 @@ export const getVisaAlertStatus = (
     };
   }
 
-  const now = new Date();
-  const expiry = new Date(expiryDate);
-  const monthsUntilExpiry =
-    (expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24 * 30);
+  const monthsUntilExpiry = daysLeft / 30;
 
   if (monthsUntilExpiry <= 0) {
     return {

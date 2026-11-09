@@ -89,34 +89,27 @@ translatedBy: Gemma3:12b + Gemini 3.1 Pro
 translatedFrom: en
 twitterCard: summary_large_image
 updatedAt: "2026-01-15"
-source_sha256: "8b61d2f70fe5be60c973ca032c04fe974e8e6b19cdc41dfff8b7091bdcd11f2d"
+source_sha256: "b96e99cc429f09c3f316170eb6e4c6e60449728acd14e49f5da93b59f1c87ef5"
+locale: "id"
 ---
 
-import {
-  DecisionTree,
-  ComparisonTable,
-  Checklist,
-  InfoCard,
-  AskZantara,
-} from "@/components/insights/interactive";
+# Bisnis E-commerce di Indonesia 2026: Panduan untuk Warga Asing
 
-# Bisnis E-commerce di Indonesia 2026: Panduan bagi WNA
+Pasar e-commerce Indonesia sangat besar - lebih dari 200 juta pengguna internet dan terus berkembang. Berikut adalah cara warga asing dapat berpartisipasi.
 
-Pasar e-commerce Indonesia sangat masif dengan lebih dari 200 juta pengguna internet yang terus bertumbuh. Berikut adalah panduan komprehensif bagi warga negara asing untuk berpartisipasi dalam ekosistem ini.
+## Gambaran Pasar E-commerce
 
-## Ikhtisar Pasar E-commerce
+Ekonomi digital Indonesia:
 
-Potensi ekonomi digital Indonesia:
+- **170+ juta** pengguna e-commerce
+- **$50+ miliar** ukuran pasar
+- Tumbuh **20%+ per tahun**
+- Pasar berbasis mobile
 
-- **170+ juta** pengguna e-commerce aktif
-- Nilai pasar mencapai **$50+ miliar**
-- Pertumbuhan tahunan sebesar **20%+**
-- Pasar yang mengutamakan perangkat seluler (_mobile-first_)
+<InfoCard variant="note" title="Peluang Besar">
 
-<InfoCard variant="note" title="Peluang Luar Biasa">
-
-Indonesia adalah pasar e-commerce terbesar di Asia Tenggara. Platform utama
-yang mendominasi pasar: Tokopedia, Shopee, Lazada, Blibli, dan Bukalapak.
+Indonesia adalah pasar e-commerce terbesar di Asia Tenggara. Platform utama:
+Tokopedia, Shopee, Lazada, Blibli, Bukalapak.
 
 </InfoCard>
 
@@ -126,29 +119,345 @@ yang mendominasi pasar: Tokopedia, Shopee, Lazada, Blibli, dan Bukalapak.
 
 <DecisionTree
   title="Pilih Model E-commerce Anda"
-  description="Temukan pendekatan yang paling sesuai untuk strategi bisnis Anda"
+  description="Temukan pendekatan yang tepat untuk bisnis Anda"
   nodes={[
     {
       id: "start",
       question: "Apa yang ingin Anda jual?",
       options: [
         { label: "Produk fisik", next: "physical" },
-        { label: "Produk atau layanan digital", next: "digital" },
+        { label: "Produk/jasa digital", next: "digital" },
       ],
     },
     {
       id: "physical",
-      question: "Dari mana asal pasokan produk Anda?",
+      question: "Dari mana produk disupply?",
       options: [
         { label: "Impor dari luar negeri", next: "import" },
         { label: "Produk lokal Indonesia", next: "local" },
-        { label: "Manufaktur di Indonesia", next: "manufacture" },
+        { label: "Produksi di Indonesia", next: "manufacture" },
       ],
     },
     {
       id: "digital",
-      question: "Apa jenis bisnis digital Anda?",
-      options: [{ label: "SaaS / Perangkat Lunak", next: "saas" }],
+      question: "Jenis bisnis digital apa?",
+      options: [
+        { label: "SaaS/Perangkat lunak", next: "saas" },
+        { label: "Konten digital/kursus", next: "content" },
+        { label: "Platform marketplace", next: "platform" },
+      ],
+    },
+    {
+      id: "import",
+      result: {
+        title: "Impor + E-commerce PT PMA",
+        description:
+          "Membutuhkan PT PMA dengan izin perdagangan dan impor. Memerlukan API-U/P untuk aktivitas impor. Investasi lebih tinggi namun kontrol penuh.",
+      },
+    },
+    {
+      id: "local",
+      result: {
+        title: "Perdagangan PT PMA",
+        description:
+          "PT PMA untuk aktivitas perdagangan. Dapat membeli dari pemasok lokal dan menjual secara online. Investasi minimum IDR 10Miliar.",
+      },
+    },
+    {
+      id: "manufacture",
+      result: {
+        title: "Produksi + Perdagangan PT PMA",
+        description:
+          "Memerlukan izin produksi plus perdagangan. Investasi lebih tinggi namun margin lebih baik. Dapat mengekspor produk sendiri.",
+      },
+    },
+    {
+      id: "saas",
+      result: {
+        title: "Layanan TI PT PMA",
+        description:
+          "Pendirian perusahaan perangkat lunak/TI. Investasi lebih rendah mungkin untuk kode KBLI tertentu. Dapat melayani klien Indonesia dan asing.",
+      },
+    },
+    {
+      id: "content",
+      result: {
+        title: "Konten Digital PT PMA",
+        description:
+          "Perusahaan jasa kreatif/digital. Pertimbangkan regulasi konten dan implikasi pajak digital.",
+      },
+    },
+    {
+      id: "platform",
+      result: {
+        title: "Platform E-commerce PT PMA",
+        description:
+          "Persyaratan regulasi kompleks sebagai marketplace. Pendaftaran PSE diperlukan. Investasi tinggi.",
+      },
     },
   ]}
 />
+
+---
+
+## Perbandingan Opsi Penjualan
+
+<ComparisonTable
+  title="Pendekatan E-commerce"
+  description="Cara berbeda untuk menjual di Indonesia"
+  items={[
+    {
+      name: "PT PMA Sendiri",
+      subtitle: "Perusahaan Indonesia penuh",
+      values: {
+        Investment: "Minimal IDR 10Miliar",
+        Control: "Kontrol penuh",
+        Scalability: "Tanpa batas",
+        Complexity: "Tinggi",
+      },
+      highlight: true,
+    },
+    {
+      name: "Hanya Marketplace",
+      subtitle: "Jual via Tokopedia, Shopee",
+      values: {
+        Investment: "Tidak perlu perusahaan",
+        Control: "Tergantung platform",
+        Scalability: "Terbatas",
+        Complexity: "Rendah",
+      },
+    },
+    {
+      name: "Lintas Batas Negara",
+      subtitle: "Jual dari luar negeri ke Indonesia",
+      values: {
+        Investment: "Tidak ada di Indonesia",
+        Control: "Penuh",
+        Scalability: "Batas impor",
+        Complexity: "Sedang",
+      },
+    },
+    {
+      name: "Mitra Distributor",
+      subtitle: "Mitra Indonesia yang menjual",
+      values: {
+        Investment: "Dinegosiasikan",
+        Control: "Berbagi",
+        Scalability: "Tergantung mitra",
+        Complexity: "Sedang",
+      },
+    },
+  ]}
+/>
+
+---
+
+## PT PMA untuk E-commerce
+
+### Kode KBLI untuk E-commerce
+
+| Kode KBLI | Aktivitas                   | Catatan                         |
+| --------- | -------------------------- | ----------------------------- |
+| 47911     | Ritel internet (umum)      | Paling umum untuk ritel online |
+| 47912     | Perdagangan grosir internet | E-commerce B2B                |
+| 62011     | Pengembangan perangkat lunak/aplikasi | Untuk platform                 |
+| 63122     | Aktivitas portal web       | Operasi marketplace           |
+
+### Kepemilikan Asing
+
+Sebagian besar aktivitas e-commerce mengizinkan **kepemilikan asing 100%** melalui PT PMA. Pengecualian:
+
+- Beberapa kategori ritel
+- Aktivitas dalam daftar negatif
+- Platform dengan elemen media sosial
+
+<InfoCard variant="warning" title="Periksa Batasan KBLI">
+
+Beberapa kode KBLI memiliki batasan atau persyaratan kepemilikan asing. Verifikasi aktivitas spesifik Anda sebelum mendirikan perusahaan.
+
+</InfoCard>
+
+---
+
+## Pendaftaran yang Diperlukan
+
+<Checklist
+  title="Persyaratan Bisnis E-commerce"
+  description="Pendaftaran yang diperlukan untuk penjualan online"
+  persistKey="ecommerce-checklist"
+  items={[
+    {
+      id: "nib",
+      label: "NIB (ID Usaha)",
+      description: "Melalui sistem OSS",
+      required: true,
+      category: "company",
+    },
+    {
+      id: "pse",
+      label: "Pendaftaran PSE",
+      description: "Pendaftaran Operator Sistem Elektronik",
+      required: true,
+      category: "digital",
+    },
+    {
+      id: "npwp",
+      label: "NPWP Perusahaan",
+      description: "Pendaftaran pajak",
+      required: true,
+      category: "tax",
+    },
+    {
+      id: "payment",
+      label: "Gerbang Pembayaran",
+      description: "Bekerja sama dengan penyedia berizin",
+      required: true,
+      category: "operations",
+    },
+    {
+      id: "logistics",
+      label: "Mitra Logistik",
+      description: "JNE, J&T, SiCepat, dll.",
+      required: true,
+      category: "operations",
+    },
+    {
+      id: "snk",
+      label: "SNK/Perjanjian Layanan",
+      description: "Diperlukan Bahasa Indonesia",
+      required: true,
+      category: "legal",
+    },
+    {
+      id: "import",
+      label: "Izin Impor (jika mengimpor)",
+      description: "API-U atau API-P",
+      required: false,
+      category: "trade",
+    },
+  ]}
+  categories={[
+    { id: "company", label: "Perusahaan", color: "blue" },
+    { id: "digital", label: "Digital", color: "green" },
+    { id: "tax", label: "Pajak", color: "amber" },
+    { id: "operations", label: "Operasional", color: "purple" },
+    { id: "legal", label: "Hukum", color: "red" },
+    { id: "trade", label: "Perdagangan", color: "cyan" },
+  ]}
+  showProgress={true}
+/>
+
+---
+
+## Pendaftaran PSE
+
+**PSE (Penyelenggara Sistem Elektronik)** pendaftaran wajib untuk e-commerce:
+
+### Siapa yang Memerlukan PSE?
+
+- Setiap situs web/aplikasi yang beroperasi di Indonesia
+- Platform e-commerce
+- Penyedia layanan online
+- Aplikasi yang memproses data pengguna Indonesia
+
+### Jenis PSE
+
+| Tipe        | Untuk                 | Contoh          |
+| ----------- | ------------------- | ---------------- |
+| PSE Swasta  | Perusahaan swasta    | Toko e-commerce |
+| PSE Umum    | Layanan pemerintah   | Tidak berlaku untuk bisnis |
+
+### Cara Mendaftar
+
+1. Akses sistem OSS
+2. Ajukan pendaftaran PSE
+3. Sediakan dokumen perusahaan
+4. Rincikan sistem elektronik Anda
+5. Terima sertifikat PSE
+
+---
+
+## Menjual di Marketplace
+
+Tanpa PT PMA, warga asing tetap dapat menjual melalui:
+
+### Marketplace Indonesia
+
+- **Tokopedia** - Marketplace terbesar
+- **Shopee** - Populer, berbasis mobile
+- **Lazada** - Didukung Alibaba
+- **Blibli** - Fokus kualitas
+- **Bukalapak** - Fokus UMKM
+
+### Persyaratan
+
+- Akun individu atau bisnis
+- Rekening bank Indonesia (biasanya)
+- Identifikasi yang sah
+- Kepatuhan produk dengan aturan platform
+
+<InfoCard variant="tip" title="Mulai Kecil di Marketplace">
+
+Uji produk Anda di marketplace sebelum berinvestasi di PT PMA. Gunakan data marketplace untuk memvalidasi permintaan sebelum investasi lebih besar.
+
+</InfoCard>
+
+---
+
+## Solusi Pembayaran
+
+### Metode Pembayaran Populer
+
+- **Transfer bank** - Masih umum
+- **E-wallet** - OVO, GoPay, DANA, ShopeePay
+- **QRIS** - Kode QR universal
+- **COD** - Cash on delivery (penting untuk kepercayaan)
+- **Kartu kredit** - Adopsi terbatas
+
+### Opsi Gerbang Pembayaran
+
+- Midtrans (alternatif Stripe)
+- Xendit
+- DOKU
+- Faspay
+
+---
+
+## Pertimbangan Pajak
+
+### Perpajakan E-commerce
+
+| Jenis Pajak         | Tarif          | Berlaku Untuk           |
+| ---------------- | ------------- | -------------------- |
+| PPN (VAT)        | 11%           | Penjualan barang       |
+| PPh (Pajak Penghasilan) | 22% korporasi | Laba perusahaan      |
+| Withholding      | Beragam        | Transaksi tertentu     |
+
+### Pertimbangan Lintas Batas Negara
+
+- Bea masuk untuk barang di atas USD 3
+- PPN untuk layanan digital
+- Aturan transfer pricing untuk pihak terkait
+
+---
+
+## Pertanyaan Umum
+
+<AskZantara
+  context="E-commerce Indonesia, bisnis online, perdagangan PT PMA, komersial digital"
+  placeholder="Tanya tentang bisnis e-commerce..."
+  suggestedQuestions={[
+    "Apakah saya bisa dropship ke Indonesia dari luar negeri?",
+    "Apakah saya perlu menyimpan stok di Indonesia?",
+    "Bagaimana cara pengembalian untuk e-commerce?",
+    "Bagaimana dengan penjualan di media sosial?",
+  ]}
+/>
+
+---
+
+## Artikel Terkait
+
+- [Panduan Pendaftaran PT PMA](/insights/business/foreign-company-incorporation-steps)
+- [Panduan Bisnis Ekspor-Impor](/insights/business/export-import-business-guide)
+- [Panduan Startup Teknologi](/insights/business/tech-startup-guide)

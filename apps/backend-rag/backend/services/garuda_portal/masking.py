@@ -14,7 +14,7 @@ part is longer than two characters; otherwise reveal none of it. The
 remainder is replaced by a FIXED three-asterisk mask -- never one sized to
 the actual remaining length -- because a variable-width mask leaks the
 local part's length, which narrows a guess. The domain is left untouched: a
-common domain (kuxas.com, or a corporate domain already public on a
+common domain (gmail.com, or a corporate domain already public on a
 business card) identifies a provider, not a person -- the same line every
 masking convention this module is aware of already draws (GitHub, Google's
 own account chooser).

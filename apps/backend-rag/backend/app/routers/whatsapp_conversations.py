@@ -36,7 +36,7 @@ _RATE_LIMIT_WINDOW = 3600  # 1 hour in seconds
 class SendWhatsAppRequest(BaseModel):
     """Validated request for outbound WhatsApp messages."""
 
-    phone: str = Field(..., description="Recipient phone with country code, e.g. +6284000220000")
+    phone: str = Field(..., description="Recipient phone with country code, e.g. +6281234567890")
     message: str = Field(..., min_length=1, max_length=4096, description="Message text")
 
 
@@ -91,7 +91,7 @@ async def get_whatsapp_conversations(
                 """
                 SELECT id, session_id, user_id, messages, metadata, created_at
                 FROM conversations
-                WHERE session_id LIKE 'wa_session_%' OR user_id LIKE 'whatsapp_%'
+                WHERE session_id LIKE 'wa_session_%' AND user_id LIKE 'whatsapp_%'
                 ORDER BY created_at DESC
                 LIMIT $1 OFFSET $2
                 """,
@@ -182,7 +182,7 @@ async def get_whatsapp_messages(
 
         async with db.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT id, messages, created_at FROM conversations WHERE user_id = $1 OR session_id = $2 ORDER BY created_at DESC LIMIT 1",
+                "SELECT id, messages, created_at FROM conversations WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC LIMIT 1",
                 user_id,
                 session_id,
             )

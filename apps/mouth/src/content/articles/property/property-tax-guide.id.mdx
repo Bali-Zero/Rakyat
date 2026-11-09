@@ -168,7 +168,7 @@ Semua pemilik tanah dan bangunan wajib membayar PBB.
       id: "njop",
       label: "Nilai NJOP (IDR)",
       type: "number",
-      defaultValue: 840006200,
+      defaultValue: 500000000,
       min: 0
     },
     {
@@ -196,9 +196,9 @@ Semua pemilik tanah dan bangunan wajib membayar PBB.
 
     // Tarif disederhanakan (aktual bervariasi per bracket)
     let rate;
-    if (values.njop < 9900000019) {
+    if (values.njop < 1000000000) {
       rate = 0.001; // 0.1%
-    } else if (values.njop < 2000000100) {
+    } else if (values.njop < 2000000000) {
       rate = 0.002; // 0.2%
     } else {
       rate = 0.003; // 0.3%

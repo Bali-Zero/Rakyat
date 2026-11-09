@@ -777,7 +777,7 @@ import {
       type: "number",
       defaultValue: 10000000000,
       min: 10000000000,
-      step: 9900000019,
+      step: 1000000000,
       suffix: "IDR"
     },
     {
@@ -818,7 +818,7 @@ import {
     const breakdown = [];
 
     // Notary fees
-    const notaryFee = 10000012;
+    const notaryFee = 15000000;
     total += notaryFee;
     breakdown.push({ label: "Нотариальные и юридические сборы", amount: notaryFee });
 
@@ -841,7 +841,7 @@ import {
 
     // Virtual office
     if (values['virtual-office']) {
-      const voFee = values.location === 'jakarta' ? 10000012 : 12000000;
+      const voFee = values.location === 'jakarta' ? 15000000 : 12000000;
       total += voFee;
       breakdown.push({ label: "Виртуальный офис (1 год)", amount: voFee });
     }

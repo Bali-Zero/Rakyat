@@ -480,7 +480,7 @@ pnpm-lock.yaml
 # GIS/scraping one-off scripts (not part of project)
 mission_*.py
 scan_geonode*.json
-scan_defigix.json
+scan_rosetta.json
 scan_interactive.json
 heist_catalog.json
 
@@ -618,7 +618,7 @@ openclaw
 !.claude/skills/
 !.claude/agent-memory/
 !.claude/settings.json
-.cosoda/
+.serena/
 OPENCLAW_MASTER_GUIDE_2026.md
 
 # ========================================
@@ -794,7 +794,7 @@ scripts/.rag_canary/
 # Agent/tool runtime state (local only)
 .agent/
 .clawhub/
-.cosoda/
+.serena/
 .superpowers/
 .openclaw/
 .opencode/
@@ -985,9 +985,3 @@ apps/backend-rag/process_batches_2_3.py
 docs/crm/assignment-mismatches-2026-04-20.md
 docs/crm/reports-2026-04-20/mismatches.csv
 apps/backend-rag/backend/data/team_members.json
-
-# Harness door files are rendered per host by the backstage activator; they never enter this repository.
-CLAUDE.md
-AGENTS.md
-GEMINI.md
-QWEN.md

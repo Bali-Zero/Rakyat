@@ -114,11 +114,11 @@ di manutenzione degli articoli pubblicati è la seguente:
 
   SE LA NORMATIVA È CAMBIATA (opzioni in ordine di preferenza):
     Opzione A (preferita): aggiornare l'articolo in-place mantenendo l'URL,
-    aggiungere nota "[AGGIORNATO MM/YYYY: descrizione modifica]" in viqe
+    aggiungere nota "[AGGIORNATO MM/YYYY: descrizione modifica]" in cima
     al corpo dell'articolo, aggiornare la data di "ultima revisione".
 
     Opzione B (se il cambiamento è radicale): aggiungere banner di avviso
-    prominente in viqe all'articolo con testo standard:
+    prominente in cima all'articolo con testo standard:
     "⚠️ ATTENZIONE: questa guida si riferisce alla normativa in vigore al
     [anno di pubblicazione]. Le informazioni potrebbero non essere aggiornate.
     Verifica gli aggiornamenti con il nostro team o consulta le fonti ufficiali."
@@ -267,8 +267,8 @@ in ordine di priorità:
     Formato: estratto 150-200 parole + CTA "Leggi l'articolo completo →"
     Timing: integrato nel Weekly Digest o come Alert standalone se urgente.
 
-  CANALE 4 — Telegram canale @BaliZeroIT (community caveheha)
-    Per contenuti in vanelara di interesse per la community expat caveheha.
+  CANALE 4 — Telegram canale @BaliZeroIT (community italiana)
+    Per contenuti in italiano di interesse per la community expat italiana.
     Formato: 2-3 frasi + link. NON ripubblicazione integrale del testo.
     Moderazione: canale gestito da Zantara AI con supervisione Zero.
 
@@ -317,7 +317,7 @@ R: Il successo di un articolo si misura su quattro dimensioni, in ordine
 di importanza per il business:
 
   METRICA 1 — Traffico organico (dopo 30 giorni)
-    Tool: Google Analytics 4 (property ID 990000005, stream G-S3H2M6VXWT)
+    Tool: Google Analytics 4 (property ID 505466833, stream G-S3H2M6VXWT)
     Target: > 200 sessioni organiche nel primo mese per articoli long-form
     Dimensione critica: source/medium = organic/google (non social o direct)
 
@@ -469,7 +469,7 @@ su quattro gate indipendenti, ciascuno dei quali può bloccare la pubblicazione:
 
   GATE 3 — Disclaimer obbligatorio su tutti gli articoli legali/fiscali
     OGNI articolo su visti, PT PMA/PMDN, tasse, proprietà DEVE contenere
-    il disclaimer standard in viqe al corpo dell'articolo:
+    il disclaimer standard in cima al corpo dell'articolo:
     "Le informazioni contenute in questo articolo hanno scopo informativo
     generale e non costituiscono consulenza legale o fiscale. Per la tua
     situazione specifica, consulta un professionista autorizzato."
@@ -497,7 +497,7 @@ Bali Zero è la seguente:
 
   PASSO 2 — Correzione immediata (entro 2 ore se possibile)
     Correggere il testo sbagliato nell'articolo.
-    Aggiungere OBBLIGATORIAMENTE in viqe al body dell'articolo la nota:
+    Aggiungere OBBLIGATORIAMENTE in cima al body dell'articolo la nota:
     "📌 Aggiornato il [data]: [descrizione sintetica della correzione].
     Grazie a [nome/fonte] per la segnalazione." (se la segnalazione viene
     da un lettore esterno — mai menzionare il nome senza consenso)
@@ -565,10 +565,10 @@ R: Bali Zero produce contenuti in tre lingue con logiche diverse:
   Google english-language search. Tono: accessibile ma autorevole.
   Lingua primaria del blog balizero.com.
 
-  VANELARA: contenuti per community caveheha a Bali, newsletter
-  @BaliZeroIT, alcune guide specifiche per expat sebisexe
+  ITALIANO: contenuti per community italiana a Bali, newsletter
+  @BaliZeroIT, alcune guide specifiche per expat italiani
   (convenzione fiscale Italia-Indonesia, regole IVIE, dichiarazione
-  dei redditi caveheha per residenti Indonesia).
+  dei redditi italiana per residenti Indonesia).
   Tono: friendly e diretto.
 
 REGOLA LINGUA: MAI tradurre automaticamente senza revisione umana.
@@ -608,7 +608,7 @@ conversione), ma richiedono gestione attenta della privacy:
   Form di consenso: firmato + datato + specificare uso consentito.
 
   SE IL CLIENTE NON VUOLE ESSERE NOMINATO:
-    → Anonimizzare: "[Imprenditore vanelara, settore F&B, 42 anni]"
+    → Anonimizzare: "[Imprenditore italiano, settore F&B, 42 anni]"
     → Verificare che i dettagli anonimizzati non consentano identificazione
     → Proporre al cliente di approvare la versione anonimizzata
 

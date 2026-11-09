@@ -50,6 +50,10 @@
     "sponsor.type": {
       "status": "KNOWN",
       "value": "INDIVIDUAL"
+    },
+    "family.spouse_application_support_confirmed": {
+      "status": "KNOWN",
+      "value": true
     }
   },
   "product_code": "E31A"

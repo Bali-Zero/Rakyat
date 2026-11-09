@@ -8,7 +8,7 @@
         "subdistrict": "Canggu",
         "zoning_type": "Tourism / Commercial",
         "allowed_kbli": ["56101", "55110", "68111"],
-        "avg_price_per_are": 9900000026,
+        "avg_price_per_are": 2500000000,
         "risk_score": 0.2
       },
       "geometry": {

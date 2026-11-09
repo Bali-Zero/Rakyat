@@ -1,5 +1,6 @@
 """Tests for Drive Changes Polling Service."""
 
+import importlib
 import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,6 +13,60 @@ from backend.services.crm.drive_poll_service import (
     _send_telegram_alert,
     poll_drive_changes,
 )
+
+
+@pytest.fixture(autouse=True)
+def _configured_root_parents(monkeypatch):
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(settings, "gdrive_individuals_folder_id", "individuals")
+    monkeypatch.setattr(settings, "gdrive_companies_folder_id", "companies")
+
+
+def _configure_current_ownership(conn, drive):
+    """Supply current DB owners and physical metadata for existing poll flow tests."""
+    subfolders, clients, companies = list(conn.fetch.side_effect)
+    if subfolders and not clients:
+        clients = [{"id": 42, "google_drive_folder_id": "client-root-folder"}]
+    clients = [{"deleted_at": None, "client_type": "individual", **c} for c in clients]
+
+    async def fetch(sql, *_args):
+        if "FROM client_drive_subfolders" in sql:
+            return subfolders
+        if "FROM clients" in sql:
+            return clients
+        if "FROM companies" in sql:
+            return companies
+        raise AssertionError(sql)
+
+    original_values = iter(conn.fetchval.side_effect or [])
+
+    async def fetchval(sql, *_args):
+        if "EXISTS" in sql:
+            return False
+        return next(original_values)
+
+    conn.fetch.side_effect = fetch
+    conn.fetchval.side_effect = fetchval
+    metadata = {"drive-file-1": {"size": "0"}}
+    for c in clients:
+        metadata[c["google_drive_folder_id"]] = {
+            "id": c["google_drive_folder_id"],
+            "mimeType": "application/vnd.google-apps.folder",
+            "trashed": False,
+            "parents": ["individuals"],
+        }
+    for sf in subfolders:
+        metadata[sf["subfolder_id"]] = {
+            "id": sf["subfolder_id"],
+            "name": sf["subfolder_name"],
+            "mimeType": "application/vnd.google-apps.folder",
+            "trashed": False,
+            "parents": ["client-root-folder"],
+        }
+    drive._parent_folder_for_client_type = MagicMock(return_value="individuals")
+    drive.get_file_metadata = AsyncMock(side_effect=lambda fid: metadata[fid])
+
 
 # ── DriveCircuitBreaker tests ────────────────────────────────────
 
@@ -123,9 +178,7 @@ class TestSendTelegramAlert:
             with patch(
                 "backend.services.crm.drive_poll_service.urllib.request.urlopen"
             ) as mock_urlopen:
-                with patch(
-                    "backend.services.crm.drive_poll_service.logger"
-                ) as mock_logger:
+                with patch("backend.services.crm.drive_poll_service.logger") as mock_logger:
                     _send_telegram_alert("test alert")
 
         mock_urlopen.assert_not_called()
@@ -153,14 +206,10 @@ class TestSendTelegramAlert:
                 "backend.services.crm.drive_poll_service.urllib.request.urlopen",
                 side_effect=Exception("network error"),
             ):
-                with patch(
-                    "backend.services.crm.drive_poll_service.logger"
-                ) as mock_logger:
+                with patch("backend.services.crm.drive_poll_service.logger") as mock_logger:
                     _send_telegram_alert("test")
 
-        mock_logger.exception.assert_called_once_with(
-            "Telegram alert fallito con errore inatteso"
-        )
+        mock_logger.exception.assert_called_once_with("Telegram alert fallito con errore inatteso")
 
 
 # ── _infer_document_type tests ───────────────────────────────────
@@ -370,6 +419,8 @@ class TestPollDriveChanges:
             }
         )
 
+        _configure_current_ownership(conn, drive_service)
+
         with (
             patch(
                 "backend.services.crm.drive_poll_service.asyncpg.create_pool",
@@ -467,6 +518,8 @@ class TestPollDriveChanges:
             }
         )
 
+        _configure_current_ownership(conn, drive_service)
+
         with (
             patch(
                 "backend.services.crm.drive_poll_service.asyncpg.create_pool",
@@ -561,6 +614,8 @@ class TestPollDriveChanges:
             ]
         )
 
+        _configure_current_ownership(conn, drive_service)
+
         with (
             patch(
                 "backend.services.crm.drive_poll_service.asyncpg.create_pool",
@@ -652,6 +707,8 @@ class TestPollDriveChanges:
             }
         )
 
+        _configure_current_ownership(conn, drive_service)
+
         with (
             patch(
                 "backend.services.crm.drive_poll_service.asyncpg.create_pool",
@@ -740,3 +797,109 @@ class TestInferDocumentTypeFolderMap:
 
     def test_profile_perseroan_folder(self) -> None:
         assert _infer_document_type("file.pdf", "profile perseroan") == "profile_perseroan"
+
+
+@pytest.fixture(autouse=True)
+def historical_transport_contract_under_mocks(monkeypatch):
+    """Exercise the retained legacy contract only with explicit mock policy.
+
+    Production stays retired; default-off acceptance lives in core retirement tests.
+    """
+    module = importlib.import_module("backend.services.crm.drive_poll_service")
+    monkeypatch.setattr(module, "telegram_is_retired", lambda: False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scenario", ["missing-root", "transient-root", "legacy-conflict", "same-owner"]
+)
+async def test_poll_cursor_and_legacy_owner_boundaries(scenario):
+    from googleapiclient.errors import HttpError
+    from httplib2 import Response
+
+    from backend.services.crm.drive_poll_service import _do_poll_drive_changes
+
+    conn = AsyncMock()
+    conn.fetchrow.return_value = {"value": "start-token"}
+    clients = [{"id": 42, "google_drive_folder_id": "client-root-folder"}]
+    if scenario == "legacy-conflict":
+        clients.append(
+            {
+                "id": 43,
+                "google_drive_folder_id": None,
+                "drive_folder_id": "client-root-folder",
+                "deleted_at": "archived",
+            }
+        )
+    if scenario == "same-owner":
+        clients[0]["drive_folder_id"] = "client-root-folder"
+    conn.fetch.side_effect = [
+        [{"client_id": 42, "subfolder_name": "01_Profile", "subfolder_id": "profile"}],
+        clients,
+        [],
+    ]
+    conn.fetchval.side_effect = [None, 99]
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    pool.close = AsyncMock()
+    drive = AsyncMock()
+    drive.list_changes_since.return_value = {
+        "changes": [
+            {
+                "file": {
+                    "id": "drive-file-1",
+                    "name": "scan.pdf",
+                    "mimeType": "application/pdf",
+                    "parents": ["profile"],
+                }
+            }
+        ],
+        "new_page_token": "next-token",
+    }
+    _configure_current_ownership(conn, drive)
+    original_metadata = drive.get_file_metadata.side_effect
+    error = HttpError(
+        Response({"status": "503" if scenario == "transient-root" else "404"}),
+        b'{"error":{"message":"synthetic"}}',
+    )
+
+    def metadata_or_error(fid):
+        if fid == "client-root-folder" and scenario in ("missing-root", "transient-root"):
+            raise error
+        return original_metadata(fid)
+
+    drive.get_file_metadata.side_effect = metadata_or_error
+    with (
+        patch(
+            "backend.services.crm.drive_poll_service.asyncpg.create_pool",
+            AsyncMock(return_value=pool),
+        ),
+        patch(
+            "backend.services.integrations.service_account_drive_service.ServiceAccountDriveService",
+            return_value=drive,
+        ),
+        patch("backend.services.crm.drive_poll_service._enqueue_guardian_client", AsyncMock()),
+        patch("backend.services.crm.drive_poll_service.invalidate_crm_stats", AsyncMock()),
+        patch.dict("os.environ", {"DATABASE_URL": "postgresql://test/ownership"}),
+    ):
+        if scenario == "transient-root":
+            with pytest.raises(HttpError) as caught:
+                await _do_poll_drive_changes(inline_ocr=False, acquire_advisory_lock=False)
+            assert caught.value is error
+        else:
+            result = await _do_poll_drive_changes(inline_ocr=False, acquire_advisory_lock=False)
+            assert result["processed"] == (1 if scenario == "same-owner" else 0)
+    cursor_writes = [
+        c for c in conn.execute.call_args_list if "UPDATE system_settings" in c.args[0]
+    ]
+    assert len(cursor_writes) == (0 if scenario == "transient-root" else 1)
+    document_inserts = [
+        c for c in conn.fetchval.call_args_list if "INSERT INTO documents" in c.args[0]
+    ]
+    assert len(document_inserts) == (1 if scenario == "same-owner" else 0)
+    owner_reads = [c.args[0] for c in conn.fetch.call_args_list if "FROM clients" in c.args[0]]
+    assert owner_reads and all(
+        "google_drive_folder_id, drive_folder_id" in sql for sql in owner_reads
+    )
+    pool.close.assert_awaited_once()

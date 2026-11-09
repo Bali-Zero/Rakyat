@@ -7,7 +7,7 @@ its own comment — "the check is fast (~0.2s)". True of the SCRIPT. The JOB als
 has to get the repo onto the runner, and `actions/checkout` here normally takes
 ~20s but intermittently takes ~2 MINUTES.
 
-Measured on the runs it killed — docs-sync 99000000105, 99000000104, 99000000103
+Measured on the runs it killed — docs-sync 31035447775, 31033448943, 31010616378
 (one of them on `main`) — checkout ran 1m58s-2m01s and was cut off, so the step
 that was supposed to judge the PR NEVER RAN. `root-guard` lost 1 of its last 30
 runs the same way, and that one is a REQUIRED context on main that also runs on

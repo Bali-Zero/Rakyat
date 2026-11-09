@@ -25,6 +25,7 @@ from backend.channels.base import ChannelResponse
 from backend.channels.web.adapter import WebChannelAdapter
 from backend.channels.web.config import WebChannelConfig
 from backend.channels.web.formatter import WebMessageFormatter
+from backend.security.pii_log_identifier import redact_identifier_for_log
 
 # ============================================================================
 # FIXTURES
@@ -249,7 +250,8 @@ class TestWebAdapter:
             await adapter.send_response("session_123", simple_response)
         text = "\n".join(r.getMessage() for r in caplog.records)
         assert "NO-OP" in text
-        assert "session_123" in text
+        assert redact_identifier_for_log("session_123") in text
+        assert "session_123" not in text
 
     async def test_send_status_update(
         self,
@@ -257,12 +259,13 @@ class TestWebAdapter:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         # Should not raise, and should emit an observable status log tying
-        # the status string to the channel_id it was reported against.
+        # the status string to the (redacted) channel_id it was reported against.
         with caplog.at_level(logging.DEBUG, logger="backend.channels.web.adapter"):
             await adapter.send_status_update("session_123", "processing")
         text = "\n".join(r.getMessage() for r in caplog.records)
         assert "processing" in text
-        assert "session_123" in text
+        assert redact_identifier_for_log("session_123") in text
+        assert "session_123" not in text
 
     def test_format_sse_event(self, adapter: WebChannelAdapter) -> None:
         event = {"type": "token", "data": "Hello"}

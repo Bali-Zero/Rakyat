@@ -1,7 +1,52 @@
 import type { NextConfig } from "next";
-import { withSentryConfig } from "@sentry/nextjs";
+import { withSentryConfig } from "@sentry/nextjs/config";
 import bundleAnalyzer from "@next/bundle-analyzer";
 import path from "node:path";
+
+/**
+ * Public-route security headers (web audit panel 2026-11-01).
+ *
+ * Report-Only, and deliberately WITHOUT a per-request nonce: a nonce forces
+ * dynamic rendering and would undo the homepage ISR. The policy keeps
+ * 'unsafe-inline' for scripts (the same shape as the enforced /portal policy)
+ * and earns its value from the other directives: no plugins, no foreign base
+ * URL, no framing, no form posts off-origin, and an inventory of every origin
+ * the public pages actually talk to. Violations reach Sentry's security
+ * endpoint, derived from the PUBLIC DSN (already shipped to every browser)
+ * when one is configured; otherwise they stay in the browser console.
+ */
+export function sentryCspReportUri(dsn = process.env.NEXT_PUBLIC_SENTRY_DSN) {
+  if (!dsn) return null;
+  try {
+    const url = new URL(dsn);
+    const projectId = url.pathname.replace(/^\/+/, "");
+    if (!url.username || !projectId) return null;
+    return `https://${url.host}/api/${projectId}/security/?sentry_key=${url.username}`;
+  } catch {
+    return null;
+  }
+}
+
+const PUBLIC_CSP_REPORT_URI = sentryCspReportUri();
+
+export const PUBLIC_CSP_REPORT_ONLY = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  "connect-src 'self' https://nuzantara-rag.fly.dev wss://nuzantara-rag.fly.dev https://*.fly.dev https://*.sentry.io https://*.ingest.sentry.io https://www.google-analytics.com https://*.google-analytics.com https://analytics.google.com https://www.googletagmanager.com https://stats.g.doubleclick.net",
+  "worker-src 'self' blob:",
+  "manifest-src 'self'",
+  "frame-src 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  ...(PUBLIC_CSP_REPORT_URI
+    ? [`report-uri ${PUBLIC_CSP_REPORT_URI}`, "report-to csp-endpoint"]
+    : []),
+].join("; ");
 
 const withBundleAnalyzer = bundleAnalyzer({
   enabled: process.env.ANALYZE === "true",
@@ -197,6 +242,24 @@ const nextConfig: NextConfig = {
             key: "Permissions-Policy",
             value: "camera=(), microphone=(), geolocation=(), payment=()",
           },
+          {
+            // Keeps window.opener out of reach of the pages we open while
+            // letting WhatsApp / share popups work.
+            key: "Cross-Origin-Opener-Policy",
+            value: "same-origin-allow-popups",
+          },
+          {
+            key: "Content-Security-Policy-Report-Only",
+            value: PUBLIC_CSP_REPORT_ONLY,
+          },
+          ...(PUBLIC_CSP_REPORT_URI
+            ? [
+                {
+                  key: "Reporting-Endpoints",
+                  value: `csp-endpoint="${PUBLIC_CSP_REPORT_URI}"`,
+                },
+              ]
+            : []),
         ],
       },
       {
@@ -684,6 +747,19 @@ const nextConfig: NextConfig = {
       {
         source: "/visas/e33e-child-dependent-kitas-guide",
         destination: "/visas/e31e-child-dependent-kitas-guide",
+        permanent: true,
+      },
+      // Editorial retirement (2026-11-09): the E311A guide duplicated
+      // retirement-visa-indonesia and carried the superseded facts. Must
+      // precede the /immigration/:slug* catch-all below.
+      {
+        source: "/immigration/e311a-retirement-visa-kitas-guide",
+        destination: "/visas/retirement-visa-indonesia",
+        permanent: true,
+      },
+      {
+        source: "/visas/e311a-retirement-visa-kitas-guide",
+        destination: "/visas/retirement-visa-indonesia",
         permanent: true,
       },
       {

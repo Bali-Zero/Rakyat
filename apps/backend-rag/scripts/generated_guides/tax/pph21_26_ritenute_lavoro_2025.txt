@@ -74,7 +74,7 @@ TARIF EFEKTIF RATA-RATA (TER) — sistema semplificato dal 2024:
 | Rp 500 juta - Rp 5 miliardi | 30% |
 | Di atas Rp 5 miliardi | 35% |
 
-WOZODÈ 2024 (PMK 168/2023): Il sistema TER (Tarif Efektif Rata-rata)
+NOVITÀ 2024 (PMK 168/2023): Il sistema TER (Tarif Efektif Rata-rata)
 semplifica il calcolo mensile usando tabelle TER pre-calcolate.
 A dicembre si effettua il conguaglio annuale. [TAX-044]
 
@@ -144,8 +144,8 @@ La PT PMA come PEMOTONG PAJAK (sostituto d'imposta) ha i seguenti obblighi:
 - Versare al DJP entro il 10 del mese successivo (ora il 15 con CoreTax)
 
 CODICE SETOR PAJAK:
-- PPh 21: 990000-034
-- PPh 26: 990000-035
+- PPh 21: 411121-100
+- PPh 26: 411127-100
 
 4.2 SPT Masa PPh 21/26 (dichiarazione mensile)
 
@@ -194,8 +194,8 @@ Quelli a carico del lavoratore NON sono deducibili dal reddito del lavoratore.
 
 6.1 Stipendio dipendente WNI single
 
-Gaji bruto: Rp 84.000.510/mese
-Biaya jabatan: 5% × 84.000.510 = Rp 500.000
+Gaji bruto: Rp 10.000.000/mese
+Biaya jabatan: 5% × 10.000.000 = Rp 500.000
 Penghasilan neto: Rp 9.500.000/mese = Rp 114.000.000/anno
 PTKP: Rp 54.000.000
 PKP annuo: Rp 60.000.000
@@ -208,7 +208,7 @@ Compenso mensile: Rp 30.000.000
 PPh 26: 20% × Rp 30.000.000 = Rp 6.000.000/mese
 Netto percepito: Rp 24.000.000/mese
 
-6.3 Compenso direktur WNA vanelara (P3B Indonesia-Italia)
+6.3 Compenso direktur WNA italiano (P3B Indonesia-Italia)
 
 Compenso mensile: Rp 30.000.000
 Aliquota P3B Italia: 15% (su reddito da lavoro dipendente non autonomo)

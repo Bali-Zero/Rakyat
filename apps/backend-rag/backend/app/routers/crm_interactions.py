@@ -18,6 +18,7 @@ from backend.app.utils.error_handlers import handle_database_error
 from backend.app.utils.json_utils import to_jsonb
 from backend.app.utils.logging_utils import get_logger, log_database_operation, log_success
 from backend.core.cache import cached, invalidate_cache
+from backend.security.pii_log_identifier import redact_identifier_for_log
 
 logger = get_logger(__name__)
 
@@ -44,7 +45,7 @@ class InteractionCreate(BaseModel):
     practice_id: int | None = None
     conversation_id: int | None = None
     interaction_type: str  # 'chat', 'email', 'whatsapp', 'call', 'meeting', 'note'
-    channel: str | None = None  # 'web_chat', 'kuxas', 'whatsapp', 'phone', 'in_person'
+    channel: str | None = None  # 'web_chat', 'gmail', 'whatsapp', 'phone', 'in_person'
     subject: str | None = None
     summary: str | None = None  # AI-generated or manual
     full_content: str | None = None
@@ -146,7 +147,7 @@ async def create_interaction(
 
     **Channels:**
     - web_chat: ZANTARA chat widget
-    - kuxas: Kuxas integration
+    - gmail: Gmail integration
     - whatsapp: WhatsApp Business
     - phone: Phone call
     - in_person: Face-to-face meeting
@@ -216,7 +217,7 @@ async def create_interaction(
                 logger,
                 f"Logged {interaction.interaction_type} interaction",
                 interaction_id=new_interaction["id"],
-                team_member=interaction.team_member,
+                team_member=redact_identifier_for_log(interaction.team_member),
             )
             log_database_operation(
                 logger,
@@ -615,14 +616,33 @@ async def create_interaction_from_conversation(
 
     This is called automatically when a chat session ends or at intervals
     """
-    user_email_from_token = current_user.get("email", "").lower()
+    user_email_from_token = (current_user.get("email") or "").lower()
     user_is_admin = is_crm_admin(current_user)
 
     # RBAC: Only allow if team_member matches current_user or is admin
-    if not user_is_admin and team_member.lower() != user_email_from_token:
+    if not user_is_admin and (
+        not user_email_from_token or team_member.lower() != user_email_from_token
+    ):
         raise HTTPException(status_code=403, detail="You can only create interactions for yourself")
     try:
         async with db_pool.acquire() as conn:
+            # Read the conversation first: a refused request must not create a prospect.
+            if user_is_admin:
+                conv_row = await conn.fetchrow(
+                    "SELECT messages FROM conversations WHERE id = $1",
+                    conversation_id,
+                )
+            else:
+                conv_row = await conn.fetchrow(
+                    "SELECT messages FROM conversations WHERE id = $1 AND lower(user_id) = $2",
+                    conversation_id,
+                    user_email_from_token,
+                )
+
+            if not conv_row:
+                # Same answer for "not yours" and "does not exist".
+                raise HTTPException(status_code=404, detail="Conversation not found")
+
             # Get or create client by email
             client_row = await conn.fetchrow(
                 "SELECT id FROM clients WHERE email = $1",
@@ -645,18 +665,16 @@ async def create_interaction_from_conversation(
                 )
                 if new_client_row:
                     client_row = new_client_row
-                    log_success(logger, "Auto-created prospect client", client_email=client_email)
+                    log_success(
+                        logger,
+                        "Auto-created prospect client",
+                        client_id=client_row["id"],
+                    )
 
             if not client_row:
                 raise HTTPException(status_code=500, detail="Failed to create client")
 
             client_id = client_row["id"]
-
-            # Get conversation from conversations table
-            conv_row = await conn.fetchrow(
-                "SELECT messages FROM conversations WHERE id = $1",
-                conversation_id,
-            )
 
             full_content = ""
             if conv_row and conv_row.get("messages"):
@@ -734,7 +752,7 @@ async def create_interaction_from_conversation(
         raise handle_database_error(e)
 
 
-# NOTE: Kuxas sync endpoint removed - will be replaced by MCP integration
+# NOTE: Gmail sync endpoint removed - will be replaced by MCP integration
 
 
 @router.delete("/{interaction_id}")
@@ -774,7 +792,11 @@ async def delete_interaction(
                 interaction_id,
             )
 
-            logger.info("Interaction %s deleted by %s", interaction_id, user_email)
+            logger.info(
+                "Interaction %s deleted by %s",
+                interaction_id,
+                redact_identifier_for_log(user_email),
+            )
 
             await invalidate_cache("zantara:crm_interactions_stats:*")
             return {

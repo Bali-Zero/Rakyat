@@ -1,61 +1,148 @@
 "use client";
 
-import React, { useState } from "react";
-import {
-  User,
-  Edit2,
-  FileText,
-  Phone,
-  Clock,
-  Activity,
-  Copy,
-  Check,
-  Trash2,
-  Building2,
-} from "lucide-react";
+import React from "react";
+import { ArrowUpRight, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type {
+  AttentionItem,
   ClientProfile,
   ClientDocument,
-  ExpiryAlert,
+  ClientCompanyLink,
+  FamilyMember,
+  Interaction,
 } from "@/lib/api/crm/crm.types";
-import { formatPhoneNumber, isBirthdayToday } from "./utils";
 import { PassportCard } from "./PassportCard";
 import { VisaCard } from "./VisaCard";
+import { ClientInfoCard } from "./ClientInfoCard";
+import { VaultCard } from "./VaultCard";
 import { AiSummaryCard } from "./AiSummaryCard";
 import { WaCaseIntelligencePanel } from "./WaCaseIntelligencePanel";
+import { buildLedger, type AttentionTone, type LedgerRow } from "./attention";
 import {
+  contactFact,
+  humanize,
+  isBalanceUnknown,
+  outstandingAmount,
+  pipelineAmount,
+  PRACTICE_STAGES,
+  stageIndex,
+} from "./overview-brief";
+import { familyPassport, familyPermit } from "./familyValidity";
+import { dayToInstant, resolveCardDay } from "./witaClock";
+import type { TabType } from "./types";
+import {
+  EmptyState,
   LedgerSection,
   NumberedList,
   StatePill,
 } from "@/components/workspace/r19";
-import { passportLabel } from "../../client-row-model";
+import { EYEBROW, FOCUS } from "@/components/workspace/r19/tokens";
+import { expiryWording } from "./documentValidity";
 
-/** "kitas_card" -> "Kitas Card" — formatting only, never invents a value. */
-function documentTypeLabel(documentType: string): string {
-  return documentType
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+/** Whether the Needs-attention ledger renders, so the panels the page mounts
+ *  after the Overview continue the numbering instead of repeating "01". */
+export function overviewLedgerCount(
+  documents: ClientDocument[],
+  attention: AttentionItem[] | undefined,
+  activePractices: ClientProfile["practices"],
+  attentionError: string | null | undefined,
+  day: string,
+): number {
+  const ledger = buildLedger(attention, documents, dayToInstant(day));
+  const shown = ledger.rows.length + ledger.more.length > 0 || !!attentionError;
+  // + the always-rendered Family & companies section.
+  return (shown ? 1 : 0) + (activePractices.length > 0 ? 1 : 0) + 1;
 }
 
 /**
- * Expired-vs-expiring wording mirrors the strip this ledger sits above
- * (ClientDetailClient.tsx ~682-760): only `expired`/`red` alerts are urgent
- * enough to need attention, expired sorts first, then soonest expiry.
+ * Where a practice stands on the real lifecycle: one segment per stage, done
+ * stages in ink, the current one wider and named. Off-path statuses render
+ * nothing (the status word is already in the detail line).
  */
-function urgentAlerts(alerts: ExpiryAlert[]): ExpiryAlert[] {
-  return alerts
-    .filter((a) => a.alert_color === "expired" || a.alert_color === "red")
-    .slice()
-    .sort((a, b) => {
-      if (a.alert_color !== b.alert_color) {
-        return a.alert_color === "expired" ? -1 : 1;
-      }
-      return a.days_until_expiry - b.days_until_expiry;
-    });
+function StageTrack({ status }: { status?: string }) {
+  const at = stageIndex(status);
+  if (at < 0) return null;
+  const stage = PRACTICE_STAGES[at];
+  return (
+    <span
+      className="mt-2 flex items-center gap-2"
+      role="img"
+      aria-label={`Stage ${at + 1} of ${PRACTICE_STAGES.length}: ${stage.label}`}
+      data-testid="stage-track"
+    >
+      <span className="flex items-center gap-1" aria-hidden="true">
+        {PRACTICE_STAGES.map((s, i) => (
+          <span
+            key={s.key}
+            className={`block h-1 rounded-full ${i === at ? "w-6" : "w-3.5"} ${
+              i <= at ? "bg-[var(--tx-pure)]" : "bg-[var(--bz-border)]"
+            }`}
+          />
+        ))}
+      </span>
+      <span className="text-[11px] font-medium text-[var(--tx-secondary)]">
+        {stage.label}
+      </span>
+    </span>
+  );
 }
 
-const ATTENTION_ROW_CAP = 5;
+const TAG: Record<AttentionTone, string> = {
+  strong: "border-[var(--state-warning)] font-bold text-[var(--state-warning)]",
+  warning:
+    "border-[var(--line-control)] font-semibold text-[var(--state-warning)]",
+  info: "border-[var(--line-control)] font-semibold text-[var(--state-info)]",
+  success:
+    "border-[var(--line-control)] font-semibold text-[var(--state-success)]",
+  calm: "border-[var(--bz-border)] text-[var(--tx-secondary)]",
+};
+
+/** One small state tag: the state as a WORD in an outline, never colour alone. */
+function StateTag({ row }: { row: LedgerRow }) {
+  return (
+    <span
+      className={`inline-flex h-6 shrink-0 items-center rounded-[2px] border px-2 text-[11px] ${TAG[row.tone]}`}
+      data-testid="attention-state"
+    >
+      {row.word}
+    </span>
+  );
+}
+
+function LedgerLine({
+  row,
+  onReview,
+}: {
+  row: LedgerRow;
+  onReview: (row: LedgerRow) => void;
+}) {
+  return (
+    <li
+      className="flex items-start gap-3 border-b border-[var(--bz-border)] py-2.5"
+      data-testid={
+        row.headline ? `ledger-${row.area.toLowerCase()}` : undefined
+      }
+    >
+      <span className="w-[68px] shrink-0 pt-[3px] text-[12px] text-[var(--tx-secondary)]">
+        {row.area}
+      </span>
+      <span className="min-w-0 flex-1 text-[14px] font-semibold leading-[1.45] text-[var(--tx-pure)]">
+        {row.title}
+      </span>
+      <StateTag row={row} />
+      <button
+        type="button"
+        onClick={() => onReview(row)}
+        aria-label={`Review ${row.title}`}
+        data-testid="attention-review"
+        className={`inline-flex min-h-8 shrink-0 items-center gap-1 rounded px-2 text-[12px] font-medium text-[var(--tx-secondary)] hover:text-[var(--tx-pure)] ${FOCUS}`}
+      >
+        Review
+        <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
+      </button>
+    </li>
+  );
+}
 
 export function OverviewTab({
   client,
@@ -63,7 +150,8 @@ export function OverviewTab({
   documents,
   activePractices,
   completedPractices,
-  expiryAlerts,
+  attention,
+  attentionError = null,
   needsViewerAction,
   formatDate,
   formatCurrency,
@@ -73,18 +161,26 @@ export function OverviewTab({
   isDeletingClient,
   onRefresh,
   clientId,
+  familyMembers = [],
+  companyLinks = [],
+  interactions = [],
+  viewerEmail = null,
+  onOpenTab = () => {},
+  onOpenRemoved,
+  day: dayProp,
 }: {
   client: ClientProfile["client"];
   stats: ClientProfile["stats"];
   documents: ClientDocument[];
   activePractices: ClientProfile["practices"];
   completedPractices: ClientProfile["practices"];
-  /** Real `expiry_alerts` from the profile — the only source for the
-   *  "Needs attention" ledger. Practices carry no waiting-on/next-actor
-   *  field today, so this ledger cannot include them (2026-09-19). */
-  expiryAlerts: ClientProfile["expiry_alerts"];
-  /** Same ownership predicate the masthead subtitle already uses
-   *  (ClientDetailClient.tsx `needsViewerAction`) — copper is never
+  /** The backend's computed ledger (`ClientProfile.attention`). Absent, the
+   *  ledger shows only the Visa row, built from the current permit. */
+  attention?: AttentionItem[];
+  /** `ClientProfile.attention_error`: non-null means the list could not be
+   *  built, so an empty ledger must not read as "all clear". */
+  attentionError?: string | null;
+  /** Same ownership predicate the masthead stamp uses — copper is never
    *  derived a second way. */
   needsViewerAction: boolean;
   formatDate: (d: string) => string;
@@ -93,443 +189,152 @@ export function OverviewTab({
   /** Opens the soft-delete confirmation. Only reachable when
    *  `canDeleteClient` is true — the parent owns both. */
   onDeleteClick: () => void;
-  /** `viewerCanDeleteClient(client, viewerEmail, viewerRole)` as computed by the
-   *  parent. FALSE while the viewer is still unknown, so the button never
-   *  appears on a guess (same law as the copper stamp). */
+  /** FALSE while the viewer is still unknown, so the button never appears on
+   *  a guess. */
   canDeleteClient: boolean;
   isDeletingClient: boolean;
   onRefresh: () => Promise<void>;
   clientId: number;
+  familyMembers?: FamilyMember[];
+  companyLinks?: ClientCompanyLink[];
+  /** The page's interaction timeline, newest logged contact feeds the brief. */
+  interactions?: Interaction[];
+  /** Viewer email; null while unknown, so no practice row claims "You". */
+  viewerEmail?: string | null;
+  onOpenTab?: (tab: TabType) => void;
+  /** Opens the Documents "Removed or rejected" group. */
+  onOpenRemoved?: () => void;
+  /** The card's day (`YYYY-MM-DD`, the payload's `as_of`). */
+  day?: string;
 }) {
-  const isClientBirthday = isBirthdayToday(client.date_of_birth);
-  const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [showAllAttention, setShowAllAttention] = useState(false);
+  // The card's day (the payload's `as_of`) is the only day: the instant below
+  // is its 00:00 WITA, so every derivation agrees with the server's ledger.
+  const day = resolveCardDay(dayProp);
+  const now = dayToInstant(day);
+  const ledger = buildLedger(attention, documents, now);
+  const attentionTotal = ledger.rows.length + ledger.more.length;
 
-  const attentionRows = urgentAlerts(expiryAlerts);
-  const visibleAttentionRows = showAllAttention
-    ? attentionRows
-    : attentionRows.slice(0, ATTENTION_ROW_CAP);
+  const outstanding = outstandingAmount([
+    ...activePractices,
+    ...completedPractices,
+  ]);
+  const balanceUnknown = [...activePractices, ...completedPractices].some(
+    isBalanceUnknown,
+  );
+  const pipeline = pipelineAmount(activePractices);
+  const contact = contactFact(client, interactions, now);
+  const {
+    strategic_recap: strategicRecap,
+    strategic_recap_source: recapSource,
+  } = client as { strategic_recap?: string; strategic_recap_source?: string };
+  // Every titled section is numbered from the ones actually rendered.
+  const attentionShown = attentionTotal > 0 || !!attentionError;
+  const processesShown = activePractices.length > 0;
+  const processesN = (attentionShown ? 1 : 0) + 1;
+  const householdN = (attentionShown ? 1 : 0) + (processesShown ? 1 : 0) + 1;
 
-  const copyToClipboard = (value: string, field: string) => {
-    void navigator.clipboard.writeText(value).then(() => {
-      setCopiedField(field);
-      setTimeout(() => setCopiedField(null), 2000);
-    });
+  const practiceDue = (p: ClientProfile["practices"][number]) =>
+    outstandingAmount([p]);
+
+  const ownerPill = (assignedTo?: string) => {
+    if (assignedTo && viewerEmail && assignedTo === viewerEmail)
+      return <StatePill tone="you" label="You" />;
+    if (assignedTo)
+      return <StatePill tone="ours" label={assignedTo.split("@")[0]} />;
+    return <StatePill tone="wait" label="Unassigned" />;
   };
 
+  // A card on this page: scroll it into view, then move focus to it.
+  const reviewRow = (row: LedgerRow) => {
+    if ("tab" in row.route) {
+      onOpenTab(row.route.tab);
+      return;
+    }
+    const el = document.getElementById(row.route.card);
+    if (!el) return;
+    el.scrollIntoView({ block: "start", behavior: "smooth" });
+    el.focus({ preventScroll: true });
+  };
+
+  const hasHousehold = familyMembers.length > 0 || companyLinks.length > 0;
+
   return (
-    <div className="space-y-6">
-      {/* Needs attention — real expiry_alerts only, zero rows renders nothing */}
-      {attentionRows.length > 0 && (
+    <div className="space-y-7">
+      {/* 1 — Needs attention: one row per area, the rest behind a details */}
+      {(attentionTotal > 0 || attentionError) && (
         <LedgerSection
           n={1}
           tone={needsViewerAction ? "you" : "wait"}
           title="Needs attention"
         >
-          <div className="py-3">
-            <NumberedList
-              owned={needsViewerAction}
-              items={visibleAttentionRows.map((alert) => ({
-                id: `${alert.entity_type}-${alert.entity_id}-${alert.document_type}`,
-                title: `${documentTypeLabel(alert.document_type)} ${
-                  alert.alert_color === "expired" ? "expired" : "expires soon"
-                }`,
-                detail:
-                  alert.entity_type === "family_member"
-                    ? `${passportLabel(alert.days_until_expiry)} · ${alert.entity_name}`
-                    : passportLabel(alert.days_until_expiry),
-                right: (
-                  <StatePill
-                    tone={needsViewerAction ? "you" : "wait"}
-                    label={needsViewerAction ? "You" : "Wait"}
-                  />
-                ),
-              }))}
-            />
-            {attentionRows.length > ATTENTION_ROW_CAP && !showAllAttention && (
-              <button
-                type="button"
-                onClick={() => setShowAllAttention(true)}
-                className="mt-2 min-h-6 text-xs text-[var(--tx-secondary)] underline decoration-dotted hover:text-[var(--tx-pure)]"
+          {attentionError && (
+            <p
+              role="status"
+              data-testid="attention-unavailable"
+              className="py-3 text-[13px] text-[var(--tx-secondary)]"
+            >
+              Attention list unavailable — check the Immigration, Company and
+              Tax tabs
+            </p>
+          )}
+          <ul className="py-1" data-testid="attention-rows">
+            {ledger.rows.map((row) => (
+              <LedgerLine key={row.key} row={row} onReview={reviewRow} />
+            ))}
+          </ul>
+          {ledger.more.length > 0 && (
+            <details className="group py-2" data-testid="attention-more">
+              <summary
+                className={`flex min-h-8 cursor-pointer list-none items-center gap-1.5 text-[12px] font-medium text-[var(--tx-secondary)] hover:text-[var(--tx-pure)] [&::-webkit-details-marker]:hidden ${FOCUS}`}
               >
-                Show all ({attentionRows.length})
-              </button>
-            )}
-          </div>
+                <ChevronRight
+                  aria-hidden="true"
+                  className="h-3 w-3 transition-transform group-open:rotate-90"
+                />
+                Show {ledger.more.length} more
+              </summary>
+              <ul>
+                {ledger.more.map((row) => (
+                  <LedgerLine key={row.key} row={row} onReview={reviewRow} />
+                ))}
+              </ul>
+            </details>
+          )}
         </LedgerSection>
       )}
-      {/* AI Summary (CRM-Guardian Phase 1 cross-folder L1) */}
-      <AiSummaryCard clientId={clientId} section="overview" />
-      {/* WhatsApp Case Intelligence — GPT-5.5 case cards linked to this CRM profile */}
-      <WaCaseIntelligencePanel clientId={clientId} />
-      {/* 3 Columns Layout - Team Member | Passport | Visa */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">
-        {/* COLUMN 1: Client Info */}
-        <div className="flex flex-col h-full">
-          {/* Client Info Card */}
-          <div
-            className="bz-product-panel bz-product-panel--interactive transition-all duration-300 overflow-hidden flex-1 flex flex-col h-full hover:-translate-y-1"
-            style={{
-              borderColor: isClientBirthday
-                ? "color-mix(in srgb, var(--state-warning) 40%, transparent)"
-                : undefined,
-              background: isClientBirthday
-                ? "color-mix(in srgb, var(--state-warning) 10%, var(--bz-card))"
-                : undefined,
-              boxShadow: isClientBirthday
-                ? "0 0 24px color-mix(in srgb, var(--state-warning) 15%, transparent), var(--bz-shadow-card)"
-                : undefined,
-            }}
-          >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--bz-border)]">
-              <h3 className="font-semibold text-[var(--bz-text-1)] flex items-center gap-2">
-                Client Info
-                {isClientBirthday && (
-                  <span
-                    className="text-base"
-                    title="Birthday today!"
-                    aria-label="Birthday today!"
-                  >
-                    🎂
-                  </span>
-                )}
-              </h3>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 w-7 p-0"
-                  onClick={onEditClick}
-                  aria-label="Edit client info"
-                >
-                  <Edit2 className="w-3.5 h-3.5" />
-                </Button>
-                {canDeleteClient && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 w-7 p-0 text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]"
-                    onClick={onDeleteClick}
-                    disabled={isDeletingClient}
-                    aria-label="Delete client"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
-                )}
-              </div>
-            </div>
-            <div className="p-4 space-y-4 flex-1">
-              {/* Full Name */}
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-full bg-[var(--bz-card)] flex items-center justify-center">
-                  <User className="w-4 h-4 text-[var(--tx-secondary)]" />
-                </div>
-                <div className="flex-1">
-                  <p className="text-xs text-[var(--bz-text-2)]">Full Name</p>
-                  <p className="text-base font-semibold">{client.full_name}</p>
-                </div>
-              </div>
 
-              <div className="border-t border-[var(--bz-border)]" />
-
-              {/* Contact Info */}
-              <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-                <div>
-                  <p className="text-[10px] uppercase tracking-wider text-[var(--bz-text-2)]">
-                    Email
-                  </p>
-                  <div className="flex items-center gap-1.5 group/copy">
-                    <p className="text-sm font-medium truncate">
-                      {client.email || (
-                        <span className="text-[var(--bz-text-2)] italic text-xs">
-                          Not provided
-                        </span>
-                      )}
-                    </p>
-                    {client.email && (
-                      <button
-                        onClick={() => copyToClipboard(client.email!, "email")}
-                        className="opacity-0 group-hover/copy:opacity-100 transition-opacity p-0.5 rounded hover:bg-[var(--bz-card)]"
-                        title="Copy email"
-                        aria-label="Copy email"
-                      >
-                        {copiedField === "email" ? (
-                          <Check className="w-3 h-3 text-green-400" />
-                        ) : (
-                          <Copy className="w-3 h-3 text-[var(--bz-text-2)]" />
-                        )}
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase tracking-wider text-[var(--bz-text-2)]">
-                    Phone
-                  </p>
-                  <div className="flex items-center gap-1.5 group/copy">
-                    <p className="text-sm font-medium">
-                      {client.phone ? (
-                        formatPhoneNumber(client.phone)
-                      ) : (
-                        <span className="text-[var(--bz-text-2)] italic text-xs">
-                          Not provided
-                        </span>
-                      )}
-                    </p>
-                    {client.phone && (
-                      <button
-                        onClick={() => copyToClipboard(client.phone!, "phone")}
-                        className="opacity-0 group-hover/copy:opacity-100 transition-opacity p-0.5 rounded hover:bg-[var(--bz-card)]"
-                        title="Copy phone"
-                        aria-label="Copy phone"
-                      >
-                        {copiedField === "phone" ? (
-                          <Check className="w-3 h-3 text-green-400" />
-                        ) : (
-                          <Copy className="w-3 h-3 text-[var(--bz-text-2)]" />
-                        )}
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase tracking-wider text-[var(--bz-text-2)]">
-                    Nationality
-                  </p>
-                  <p className="text-sm font-medium">
-                    {client.nationality || (
-                      <span className="text-[var(--bz-text-2)] italic text-xs">
-                        —
-                      </span>
-                    )}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase tracking-wider text-[var(--bz-text-2)]">
-                    Gender
-                  </p>
-                  <p className="text-sm font-medium">
-                    {client.gender === "M" ? (
-                      "Male"
-                    ) : client.gender === "F" ? (
-                      "Female"
-                    ) : (
-                      <span className="text-[var(--bz-text-2)] italic text-xs">
-                        —
-                      </span>
-                    )}
-                  </p>
-                </div>
-              </div>
-
-              {/* Birthplace — not shown on PassportCard (which already
-                  covers passport number/expiry and date of birth) */}
-              {client.birthplace && (
-                <>
-                  <div className="border-t border-[var(--bz-border)]" />
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wider text-[var(--bz-text-2)]">
-                        Birthplace
-                      </p>
-                      <p className="text-sm font-medium">{client.birthplace}</p>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {/* Address */}
-              <div className="border-t border-[var(--bz-border)]" />
-              <div>
-                <p className="text-[10px] uppercase tracking-wider text-[var(--bz-text-2)]">
-                  Address
-                </p>
-                <p className="text-sm font-medium">
-                  {client.address || (
-                    <span className="text-[var(--bz-text-2)] italic text-xs">
-                      Not provided
-                    </span>
-                  )}
-                </p>
-              </div>
-
-              {/* Strategic Recap — primary intelligent auto-summary (bold + distinct) */}
-              {(client as any).strategic_recap && (
-                <>
-                  <div className="border-t border-[var(--bz-border)]" />
-                  <div
-                    className="rounded-lg p-4 -mx-1"
-                    style={{
-                      background: "var(--bz-card)",
-                      border: "1px solid var(--bz-border)",
-                    }}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-[11px] uppercase tracking-[0.15em] font-semibold text-[var(--tx-secondary)] flex items-center gap-1.5">
-                        <span>◆</span>
-                        Strategic recap
-                      </p>
-                      {(client as any).strategic_recap_source && (
-                        <span className="text-[9px] uppercase tracking-wider opacity-60 font-mono">
-                          {(client as any).strategic_recap_source.replace(
-                            "_",
-                            " ",
-                          )}
-                        </span>
-                      )}
-                    </div>
-                    <p
-                      className="font-bold leading-[1.55] whitespace-pre-line text-[var(--bz-text-1)]"
-                      style={{ fontSize: "0.97rem" }}
-                    >
-                      {(client as any).strategic_recap}
-                    </p>
-                  </div>
-                </>
-              )}
-
-              {/* Notes — machine log, collapsed by default */}
-              {client.notes && (
-                <>
-                  <div className="border-t border-[var(--bz-border)]" />
-                  <details className="text-xs">
-                    <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]">
-                      Audit log ({client.notes.length} chars)
-                    </summary>
-                    <p className="text-xs text-[var(--bz-text-2)] leading-relaxed whitespace-pre-line mt-2 max-h-64 overflow-y-auto font-mono opacity-70">
-                      {client.notes}
-                    </p>
-                  </details>
-                </>
-              )}
-
-              {/* Quick Actions — WhatsApp/Email dropped: the page header already
-                  offers both for this client. Call (tel:) is kept: it's not
-                  offered anywhere else on this page. */}
-              {client.phone && (
-                <>
-                  <div className="border-t border-[var(--bz-border)]" />
-                  <div className="flex items-center gap-2">
-                    <a
-                      href={`tel:${client.phone}`}
-                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all"
-                      style={{
-                        background:
-                          "color-mix(in srgb, var(--state-info) 12%, transparent)",
-                        color: "var(--state-info)",
-                        border:
-                          "1px solid color-mix(in srgb, var(--state-info) 25%, transparent)",
-                      }}
-                      title={`Call ${client.phone}`}
-                    >
-                      <Phone className="w-3.5 h-3.5" />
-                      Call
-                    </a>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Stats Row */}
-          {(() => {
-            // Coerce with Number(): BE serializes numeric(15,2) as string.
-            const amountOf = (p: (typeof activePractices)[number]) =>
-              Number(p.actual_price ?? p.quoted_price ?? 0);
-            const pipelineValue = activePractices.reduce(
-              (sum, p) => sum + amountOf(p),
-              0,
-            );
-            const unpaidValue = [...activePractices, ...completedPractices]
-              .filter(
-                (p) =>
-                  p.payment_status === "unpaid" ||
-                  p.payment_status === "partial",
-              )
-              .reduce((sum, p) => sum + amountOf(p), 0);
-            return (
-              <div className="grid grid-cols-2 gap-3 mt-4">
-                {/* Family tile dropped — the Family tab label already shows
-                    `Family (${stats.family_count})`, same source value. */}
-                <div
-                  className="bz-product-panel bz-product-panel--interactive p-3 transition-all duration-300 hover:-translate-y-1"
-                  title="Uploaded client documents. Company documents are counted separately."
-                >
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <FileText className="w-3.5 h-3.5 text-purple-500" />
-                    <span className="text-[10px] text-[var(--bz-text-2)]">
-                      Client docs
-                    </span>
-                  </div>
-                  <p className="text-lg font-bold">{stats.documents_count}</p>
-                </div>
-                {typeof stats.company_documents_count === "number" &&
-                  (stats.company_count ?? 0) > 0 && (
-                    <div
-                      className="bz-product-panel bz-product-panel--interactive p-3 transition-all duration-300 hover:-translate-y-1"
-                      title="Active documents of every company linked to this client, primary or not."
-                    >
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <Building2 className="w-3.5 h-3.5 text-purple-500" />
-                        <span className="text-[11px] text-[var(--bz-text-2)]">
-                          Company docs
-                        </span>
-                      </div>
-                      <p className="text-lg font-bold">
-                        {stats.company_documents_count}
-                      </p>
-                    </div>
-                  )}
-                {pipelineValue > 0 && (
-                  <div className="bz-product-panel bz-product-panel--interactive p-3 transition-all duration-300 hover:-translate-y-1">
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <Activity className="w-3.5 h-3.5 text-yellow-500" />
-                      <span className="text-[10px] text-[var(--bz-text-2)]">
-                        Pipeline
-                      </span>
-                    </div>
-                    <p className="text-sm font-bold text-[var(--state-warning)] truncate">
-                      {formatCurrency(pipelineValue)}
-                    </p>
-                  </div>
-                )}
-                {unpaidValue > 0 && (
-                  <div
-                    className="bz-product-panel bz-product-panel--interactive p-3 transition-all duration-300 hover:-translate-y-1"
-                    style={{
-                      borderColor:
-                        "color-mix(in srgb, var(--state-warning) 22%, transparent)",
-                    }}
-                  >
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <Clock className="w-3.5 h-3.5 text-[var(--state-warning)]" />
-                      <span className="text-[10px] text-[var(--bz-text-2)]">
-                        Unpaid
-                      </span>
-                    </div>
-                    <p className="text-sm font-bold text-[var(--state-warning)] truncate">
-                      {formatCurrency(unpaidValue)}
-                    </p>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
+      {/* 2 — Three distinct cards: who, passport, visa */}
+      <div
+        className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3"
+        data-testid="identity-cards"
+      >
+        <div className="flex md:col-span-2 xl:col-span-1 [&>*]:w-full">
+          <ClientInfoCard
+            client={client}
+            now={now}
+            contact={contact}
+            formatDate={formatDate}
+            onEditClick={onEditClick}
+            onDeleteClick={onDeleteClick}
+            canDeleteClient={canDeleteClient}
+            isDeletingClient={isDeletingClient}
+            clientId={clientId}
+            viewerEmail={viewerEmail}
+            onLogged={onRefresh}
+          />
         </div>
-
-        {/* COLUMN 2: Passport */}
-        <div className="flex flex-col h-full">
+        <div className="flex [&>*]:w-full">
           <PassportCard
             client={client}
             documents={documents}
             formatDate={formatDate}
             onRefresh={onRefresh}
             clientId={clientId}
+            onOpenRemoved={onOpenRemoved}
+            day={day}
           />
         </div>
-
-        {/* COLUMN 3: Visa */}
-        <div className="flex flex-col h-full">
+        <div className="flex [&>*]:w-full">
           <VisaCard
             client={client}
             documents={documents}
@@ -538,9 +343,220 @@ export function OverviewTab({
             formatCurrency={formatCurrency}
             onRefresh={onRefresh}
             clientId={clientId}
+            onOpenRemoved={onOpenRemoved}
+            day={day}
           />
         </div>
       </div>
+
+      {/* 3 — The vault: my.balizero.com */}
+      <VaultCard
+        clientId={clientId}
+        clientName={client.full_name}
+        clientEmail={client.email}
+      />
+
+      {strategicRecap && (
+        <div className="border-l-2 border-[var(--line-control)] pl-4">
+          <p className={EYEBROW}>
+            Strategic recap
+            {recapSource && (
+              <span
+                className="ml-2 font-mono normal-case tracking-normal opacity-70"
+                data-testid="recap-source"
+              >
+                {recapSource.replace(/_/g, " ")}
+              </span>
+            )}
+          </p>
+          <p className="mt-1 whitespace-pre-line text-[15px] leading-[1.6] text-[var(--tx-pure)]">
+            {strategicRecap}
+          </p>
+        </div>
+      )}
+
+      {/* 4 — Open processes: what is moving, who holds it, what is owed */}
+      {activePractices.length > 0 && (
+        <LedgerSection
+          n={processesN}
+          tone="ours"
+          title="Open processes"
+          actions={
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1 text-[var(--tx-secondary)]"
+              onClick={() => onOpenTab("process")}
+            >
+              All practices
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+          }
+        >
+          {(pipeline > 0 || outstanding > 0 || balanceUnknown) && (
+            <p
+              className="flex flex-wrap gap-x-4 gap-y-1 pt-3 text-[12px]"
+              data-testid="processes-money"
+            >
+              {pipeline > 0 && (
+                <span className="text-[var(--tx-secondary)]">
+                  {formatCurrency(pipeline)} pipeline
+                </span>
+              )}
+              {outstanding > 0 && (
+                <span className="font-semibold text-[var(--state-warning)]">
+                  {formatCurrency(outstanding)} outstanding
+                </span>
+              )}
+              {balanceUnknown && (
+                <span className="text-[var(--tx-secondary)]">
+                  {outstanding > 0
+                    ? "plus a balance not recorded"
+                    : "balance not recorded"}
+                </span>
+              )}
+            </p>
+          )}
+          <div className="py-3">
+            <NumberedList
+              items={activePractices.map((p) => {
+                const due = practiceDue(p);
+                const detail = [
+                  humanize(p.status),
+                  p.estimated_completion
+                    ? `ETA ${formatDate(p.estimated_completion)}`
+                    : null,
+                  due > 0
+                    ? `${formatCurrency(due)} due`
+                    : isBalanceUnknown(p)
+                      ? "Balance not recorded"
+                      : p.payment_status === "paid"
+                        ? "Paid"
+                        : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+                return {
+                  id: `practice-${p.id}`,
+                  tone: "ours" as const,
+                  title: `${p.practice_type_name || p.title || humanize(p.practice_type_code)}${
+                    p.family_member_name ? ` · for ${p.family_member_name}` : ""
+                  }`,
+                  detail: (
+                    <>
+                      {detail}
+                      <StageTrack status={p.status} />
+                    </>
+                  ),
+                  right: ownerPill(p.assigned_to),
+                };
+              })}
+            />
+          </div>
+        </LedgerSection>
+      )}
+
+      <LedgerSection n={householdN} tone="wait" title="Family & companies">
+        {!hasHousehold ? (
+          <EmptyState className="border-t-0">
+            No family or company linked.
+          </EmptyState>
+        ) : (
+          <ul>
+            {familyMembers.map((m) => {
+              const permit = familyPermit(m, documents, day);
+              const passport = familyPassport(m, documents, day);
+              const visaDays = permit.validity?.daysLeft ?? null;
+              const passportDays = passport.validity?.daysLeft ?? null;
+              const urgent = permit.urgent || passport.urgent;
+              return (
+                <li key={`fm-${m.id}`}>
+                  <button
+                    type="button"
+                    onClick={() => onOpenTab("family")}
+                    className={`flex w-full items-start gap-3 border-b border-[var(--bz-border)] py-2.5 text-left hover:bg-[var(--bz-card)] ${FOCUS}`}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[14px] font-semibold text-[var(--tx-pure)]">
+                        {m.full_name}
+                      </span>
+                      <span className="mt-0.5 block text-[12px] text-[var(--tx-secondary)]">
+                        {humanize(m.relationship)}
+                        {m.nationality ? ` · ${m.nationality}` : ""}
+                      </span>
+                    </span>
+                    <span
+                      className={`shrink-0 text-right text-[12px] leading-[1.45] ${
+                        urgent
+                          ? "text-[var(--state-warning)]"
+                          : "text-[var(--tx-secondary)]"
+                      }`}
+                    >
+                      {m.current_visa_type ? (
+                        <span className="block">
+                          {m.current_visa_type}
+                          {visaDays !== null
+                            ? ` · ${expiryWording(visaDays)}`
+                            : ""}
+                        </span>
+                      ) : null}
+                      {passportDays !== null ? (
+                        <span className="block">
+                          Passport · {expiryWording(passportDays)}
+                        </span>
+                      ) : null}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+            {companyLinks.map((c) => (
+              <li key={`co-${c.link_id ?? c.company_id}`}>
+                <button
+                  type="button"
+                  onClick={() => onOpenTab("company")}
+                  className={`flex w-full items-start gap-3 border-b border-[var(--bz-border)] py-2.5 text-left hover:bg-[var(--bz-card)] ${FOCUS}`}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[14px] font-semibold text-[var(--tx-pure)]">
+                      {c.company_name}
+                    </span>
+                    <span className="mt-0.5 block text-[12px] text-[var(--tx-secondary)]">
+                      {[
+                        humanize(c.role),
+                        c.company_type,
+                        typeof c.ownership_percentage === "number"
+                          ? `${c.ownership_percentage}%`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  </span>
+                  {c.is_primary && <StatePill tone="wait" label="Primary" />}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {typeof stats.company_documents_count === "number" &&
+          (stats.company_count ?? 0) > 0 && (
+            <p
+              className="pt-2.5 text-[12px] text-[var(--tx-secondary)]"
+              title="Active documents of every company linked to this client, primary or not."
+              data-testid="company-docs-count"
+            >
+              {stats.company_documents_count} company{" "}
+              {stats.company_documents_count === 1 ? "document" : "documents"}{" "}
+              on file
+            </p>
+          )}
+      </LedgerSection>
+
+      {/* AI Summary (CRM-Guardian Phase 1 cross-folder L1) */}
+      <AiSummaryCard clientId={clientId} section="overview" hideWhenEmpty />
+      {/* WhatsApp Case Intelligence — case cards linked to this CRM profile */}
+      <WaCaseIntelligencePanel clientId={clientId} />
     </div>
   );
 }

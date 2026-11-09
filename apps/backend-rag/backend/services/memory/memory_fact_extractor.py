@@ -8,6 +8,7 @@ import re
 import time
 
 from backend.app.metrics import metrics_collector
+from backend.security.pii_log_identifier import redact_identifier_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ class MemoryFactExtractor:
         self.preference_patterns = [
             (r"preferisco|prefer|mi piace|I like", "preference"),
             (r"voglio|want|desidero|wish", "want"),
-            (r"non goqame|don\'t want|non mi piace|I don\'t like", "avoid"),
+            (r"non voglio|don\'t want|non mi piace|I don\'t like", "avoid"),
             (r"favorite|preferito|my favorite", "preference"),  # Added
         ]
 
@@ -99,18 +100,14 @@ class MemoryFactExtractor:
 
             # Log extraction results
             if facts:
-                logger.info(
-                    f"💎 [FactExtractor] Extracted {len(facts)} facts for {user_id} ({duration * 1000:.1f}ms)",
-                )
+                logger.info(f'💎 [FactExtractor] Extracted {len(facts)} facts for {redact_identifier_for_log(user_id)} ({duration * 1000:.1f}ms)')
                 for fact in facts[:3]:  # Log top 3
-                    logger.info(
-                        f"   - [{fact['type']}] {fact['content'][:50]}... (conf: {fact['confidence']:.2f})",
-                    )
+                    logger.info('Extracted fact type=%s confidence=%.2f', fact['type'], fact['confidence'])
 
             return facts
 
         except Exception as e:
-            logger.error("❌ [FactExtractor] Extraction failed: %s", e)
+            logger.error('❌ [FactExtractor] Extraction failed: %s', type(e).__name__)
             return []
 
     def _extract_from_text(self, text: str, source: str = "user") -> list[dict]:

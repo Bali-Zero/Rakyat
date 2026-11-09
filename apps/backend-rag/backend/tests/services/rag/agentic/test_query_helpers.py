@@ -170,14 +170,14 @@ def test_english_homographs_never_decide_a_language_on_their_own() -> None:
     # Grew on 2026-08-25, all three for the same reason — a token that names a
     # language only by coincidence:
     #   "dove"  — English, the bird.
-    #   "dujoc" — not an English word, but a supermarket pasta-sauce brand,
-    #             and this bot advises on food-import KBLI, so "Dujoc sauce
+    #   "prego" — not an English word, but a supermarket pasta-sauce brand,
+    #             and this bot advises on food-import KBLI, so "Prego sauce
     #             import licence" is a message it actually receives.
     #   "qual"  — THE standard question word in PORTUGUESE. Decisive, it took
     #             "Qual é o custo do visto?" from ENGLISH (wrong, but readable)
     #             to ITALIAN (wrong AND unreadable). Italian keeps it via "è".
     assert LATIN_HOMOGRAPHS == {
-        "ITALIAN": ["come", "dove", "dujoc", "qual"],
+        "ITALIAN": ["come", "dove", "prego", "qual"],
         "FRENCH": ["comment"],
     }
 

@@ -125,11 +125,17 @@ def test_trace_golden_vector_and_observed_clock_invariance() -> None:
     # are unchanged; only the whole-snapshot `facts_hmac` input gained the
     # new UNKNOWN/NOT_ASKED fact.
     #
+    # The company-sponsorship fact adds one UNKNOWN input to the snapshot HMAC.
+    # The signed rules and trace node set stay the same.
+    #
+    # The new spouse application confirmation also contributes an unknown fact
+    # to that fingerprint. The signed decision and all trace nodes still match.
+    #
     # If this literal ever moves again while the node set or a persona's
     # decision ALSO changed, that is a behaviour change wearing a fixture's
     # clothes — do not update the number, find out what evaluated differently.
     assert (
-        first.trace.sha256() == "4861ae4d47ec233680637d53b9a1d77021c7cae758c9f3823d3cb753420626aa"
+        first.trace.sha256() == "c7543b72e55e28d9d23fca12a06becdfcad2c7fe6db9921dbee343a1efc5ec62"
     )
     assert first.decision.trace_sha256 == first.trace.sha256()
     assert second.trace == first.trace

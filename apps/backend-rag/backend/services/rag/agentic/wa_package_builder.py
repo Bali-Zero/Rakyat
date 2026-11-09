@@ -363,7 +363,7 @@ def _append_pricing_evidence_chunk(
     same question, two languages:
 
     - EN "How much is a PT PMA company, all in" -> evidence_score 0.60, the
-      answer carries 84.000.600.
+      answer carries 20.000.000.
     - ID "Harga PT PMA berapa all in?" -> evidence_score 0.08, the answer is
       a refusal. Same refusal twelve days earlier on the same phrasing: not
       a one-off.

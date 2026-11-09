@@ -178,7 +178,7 @@ class IntelLakeService:
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10::jsonb)
                     ON CONFLICT (canonical_url) DO UPDATE
                         SET last_seen_at = NOW()
-                    RETURNING id, (zeru = 0) AS is_new_item, content_hash AS stored_hash
+                    RETURNING id, (xmax = 0) AS is_new_item, content_hash AS stored_hash
                     """,
                     canonical,
                     obs.content_hash,

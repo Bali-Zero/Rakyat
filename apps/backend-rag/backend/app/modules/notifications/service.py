@@ -63,10 +63,10 @@ class EmailProvider:
 
 
 class SMTPProvider(EmailProvider):
-    """SMTP email provider (Kuxas, etc.)."""
+    """SMTP email provider (Gmail, etc.)."""
 
     def __init__(self) -> None:
-        self.host = os.getenv("SMTP_HOST", "smtp.kuxas.com")
+        self.host = os.getenv("SMTP_HOST", "smtp.gmail.com")
         self.port = int(os.getenv("SMTP_PORT", "587"))
         self.user = os.getenv("SMTP_USER")
         # ZOHO_SMTP_PASSWORD is the app-specific SMTP password (preferred over SMTP_PASSWORD)

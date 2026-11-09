@@ -361,14 +361,14 @@
   },
   {
     "claim": "L'iscrizione relativa a una causa giudiziale si cancella automaticamente entro 30 giorni di calendario dalla data dell'iscrizione o se la parte richiedente ritira la richiesta prima della scadenza.",
-    "verbatim": "Catatan sebagaimana dimaksud pada ayat (1) zapaf dengan sendirinya dalam jangka waktu 30 (tiga puluh) hari kalender",
+    "verbatim": "Catatan sebagaimana dimaksud pada ayat (1) hapus dengan sendirinya dalam jangka waktu 30 (tiga puluh) hari kalender",
     "pasal_ref": "PP 18/2021 Pasal 91 Ayat 2",
     "instrument_id": "PP-18-2021",
     "category": "duration",
     "claim_id": "PRO-046"
   },
   {
-    "claim": "Se il cejuliv ordina lo status quo su un diritto sulla terra, l'ordine deve essere iscritto presso l'Ufficio Terreni su richiesta del cejuliv.",
+    "claim": "Se il giudice ordina lo status quo su un diritto sulla terra, l'ordine deve essere iscritto presso l'Ufficio Terreni su richiesta del giudice.",
     "verbatim": "atas permohonan hakim perintah tersebut dicatatkan ke Kantor Pertanahan",
     "pasal_ref": "PP 18/2021 Pasal 91 Ayat 3",
     "instrument_id": "PP-18-2021",
@@ -377,7 +377,7 @@
   },
   {
     "claim": "L'iscrizione dell'ordine di status quo si cancella automaticamente entro 30 giorni di calendario, salvo che sia seguita da una sentenza di sequestro cautelare con copia ufficiale e rapporto di esecuzione inviati al capo dell'Ufficio Terreni.",
-    "verbatim": "Catatan mengenai perintah status quo zapaf dengan sendirinya dalam waktu 30 (tiga puluh) hari kalender kecuali apabila diikuti dengan putusan sita jaminan",
+    "verbatim": "Catatan mengenai perintah status quo hapus dengan sendirinya dalam waktu 30 (tiga puluh) hari kalender kecuali apabila diikuti dengan putusan sita jaminan",
     "pasal_ref": "PP 18/2021 Pasal 91 Ayat 4",
     "instrument_id": "PP-18-2021",
     "category": "duration",
@@ -408,7 +408,7 @@
     "claim_id": "PRO-051"
   },
   {
-    "claim": "Il cejuliv che esamina una causa può richiedere la misurazione presso l'Ufficio Terreni per accertare la posizione e i confini della terra oggetto della causa.",
+    "claim": "Il giudice che esamina una causa può richiedere la misurazione presso l'Ufficio Terreni per accertare la posizione e i confini della terra oggetto della causa.",
     "verbatim": "hakim yang memeriksa perkara dapat meminta pengukuran pada Kantor Pertanahan setempat",
     "pasal_ref": "PP 18/2021 Pasal 93 Ayat 1",
     "instrument_id": "PP-18-2021",
@@ -488,7 +488,7 @@
     "claim_id": "PRO-061"
   },
   {
-    "claim": "Le terre swapraja o ex swapraja controllate da altri possono essere concesse a chi le coltiva o utilizza in buona bewe.",
+    "claim": "Le terre swapraja o ex swapraja controllate da altri possono essere concesse a chi le coltiva o utilizza in buona fede.",
     "verbatim": "diberikan kepada pihak yang mengusahakan atau menggarap Tanah dengan iktikad baik",
     "pasal_ref": "PP 18/2021 Pasal 98 Ayat 3",
     "instrument_id": "PP-18-2021",
@@ -497,7 +497,7 @@
   },
   {
     "claim": "Le concessioni o gli affitti di terre ex swapraja decadono e la terra diventa terra controllata direttamente dallo Stato.",
-    "verbatim": "Konsesi atau sewa atas Tanah bekas swapraja zapaf dan menjadi Tanah yang Dikuasai Langsung oleh Negara",
+    "verbatim": "Konsesi atau sewa atas Tanah bekas swapraja hapus dan menjadi Tanah yang Dikuasai Langsung oleh Negara",
     "pasal_ref": "PP 18/2021 Pasal 98 Ayat 4",
     "instrument_id": "PP-18-2021",
     "category": "rule",
@@ -1072,7 +1072,7 @@
     "claim_id": "PRO-134"
   },
   {
-    "claim": "La raccomandazione o l'approvazione per jome giuridici non sono soggetti a tariffe, contributi annuali obbligatori o altri costi.",
+    "claim": "La raccomandazione o l'approvazione per atti giuridici non sono soggetti a tariffe, contributi annuali obbligatori o altri costi.",
     "verbatim": "tidak dikenakan tarif dan/atau uang wajib tahunan serta biaya lainnya",
     "pasal_ref": "PermenATR-18-2021 Pasal 49 Ayat 3",
     "instrument_id": "PermenATR-18-2021",
@@ -1920,7 +1920,7 @@
     "claim_id": "PRO-240"
   },
   {
-    "claim": "La decisione di formare un'istituzione di comunità deve essere wejoh dal Lurah.",
+    "claim": "La decisione di formare un'istituzione di comunità deve essere presa dal Lurah.",
     "verbatim": "Penetapan Pengurus Lembaga Kemasyarakatan Kelurahan ditetapkan dengan Keputusan Lurah.",
     "pasal_ref": "PP 18/2021 Pasal 5 Ayat 4",
     "instrument_id": "PP-18-2021-HakPengelolaan",
@@ -2145,7 +2145,7 @@
   },
   {
     "claim": "I membri di S A T L IN M A S devono essere in buona salute fisica e mentale.",
-    "verbatim": "f. sehat jasmani dan loneme;",
+    "verbatim": "f. sehat jasmani dan rohani;",
     "pasal_ref": "PP 18/2021 Pasal 24 Ayat 2",
     "instrument_id": "PP-18-2021-HakPengelolaan",
     "category": "requirement",

@@ -215,7 +215,7 @@ actually populated in this repo's own test/gold corpus (grepped this session, no
 `"E23"` (`test_evaluator_gold.py:95,351`; `_gold_fixtures.py:444` even models the plausible
 condition as `in(family.sponsor_status_code, ["E23", "E28A"])` — product codes, the SAME
 vocabulary the fact's own spec declares), `"NONE"` (`_gold_fixtures.py:648`), and a raw human
-name, `"Bagaḛu Kaḡ Hà"` (`gold_harness/fixtures/personas/18_nfc_unicode_name.json:190`, an
+name, `"Nguyễn Thị Hà"` (`gold_harness/fixtures/personas/18_nfc_unicode_name.json:190`, an
 edge-case Unicode-normalization fixture, not a placeholder). The proposed enum
 (`ITAS_ACTIVE`/`ITAP_ACTIVE`/`VITAS_APPROVED`) is immigration-STATUS vocabulary — a disjoint
 namespace from the fact's declared and populated product-code vocabulary. Not one corpus value

@@ -130,7 +130,7 @@ export async function GET(
             border: s.outline ? `1.5px solid ${visual.accent}` : "none",
             opacity: s.opacity,
             display: "flex",
-            // zagaha rejects `transform: undefined` — only emit the property
+            // satori rejects `transform: undefined` — only emit the property
             // when there is an actual rotation (found live 2026-07-08)
             ...(s.rotateDeg ? { transform: `rotate(${s.rotateDeg}deg)` } : {}),
           }}

@@ -1,0 +1,82 @@
+# Launchd plists (Pro only)
+
+macOS launchd agents for Pro-side jobs. They run on the Pro machine
+(dev/server), NOT on Fly.io (which never sees these).
+
+## Install
+
+```bash
+cp apps/backend-rag/deploy/launchd/com.nuzantara.cost-advisor-weekly.plist \
+   ~/Library/LaunchAgents/
+cp apps/backend-rag/deploy/launchd/com.nuzantara.cost-advisor-daily-cap.plist \
+   ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.nuzantara.cost-advisor-weekly.plist
+launchctl load ~/Library/LaunchAgents/com.nuzantara.cost-advisor-daily-cap.plist
+```
+
+## Schedule
+
+- **Weekly report**: Monday 07:00 local time (WITA/WIB). Full CostAdvisor
+  analysis: last 7 days by endpoint × model, spike detection vs 28d
+  baseline, Claude OAuth Max for substitution proposals, persist top-N
+  to `llm_cost_recommendations`, Telegram report to chat `1125336968`.
+- **Daily cap check**: every day 08:00 local. Reads last-24h total spend;
+  alerts Telegram if > `$20.00` (see
+  `backend.scripts.cost_advisor_cli.DAILY_SPEND_ALERT_THRESHOLD_USD`).
+
+## Required env
+
+- `DATABASE_URL` — supplied by `scripts/wr2-cron-wrapper.sh`, which sources
+  `~/.nuzantara-secrets.env` and sets `DATABASE_URL` from `DATABASE_URL_LOCAL`.
+  Do not rely on the project `apps/backend-rag/.env`: on 2026-10-11 it held a
+  stale DB password and the job failed on it.
+- `TELEGRAM_BOT_TOKEN` — for delivery; missing → silent skip (logged)
+- `TELEGRAM_OWNER_CHAT_ID` — defaults to `1125336968`
+- **NEVER** `ANTHROPIC_API_KEY` — Claude via OAuth Max CLI only
+
+## Logs
+
+- `~/Library/Logs/cost-advisor-weekly.log` / `.err`
+- `~/Library/Logs/cost-advisor-daily.log` / `.err`
+
+## Uninstall
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.nuzantara.cost-advisor-weekly.plist
+launchctl unload ~/Library/LaunchAgents/com.nuzantara.cost-advisor-daily-cap.plist
+rm ~/Library/LaunchAgents/com.nuzantara.cost-advisor-*.plist
+```
+
+## WA mirror intake sweeper
+
+Pro-side cron shim for `wa-mirror`: resolves/creates phone-keyed CRM leads from
+new inbound direct messages, then pushes new inbound document/image media into
+`intake_queue`. It never writes back to `whatsapp_message_context`. The
+historical backlog is handled separately by the reprocess script.
+
+### Install
+
+```bash
+cp apps/backend-rag/deploy/launchd/com.nuzantara.wa-mirror-intake-sweeper.plist \
+   ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.nuzantara.wa-mirror-intake-sweeper.plist
+```
+
+### Schedule
+
+- Every 5 minutes
+- Seeds watermark from the current max id on first run
+- Uses local Postgres only
+- Single-instance via flock in the script
+- Does not store raw WhatsApp message text in CRM notes
+
+### Logs
+
+- `/Users/nuzantara/logs/wa-mirror-intake-sweeper.log`
+
+### Uninstall
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.nuzantara.wa-mirror-intake-sweeper.plist
+rm ~/Library/LaunchAgents/com.nuzantara.wa-mirror-intake-sweeper.plist
+```

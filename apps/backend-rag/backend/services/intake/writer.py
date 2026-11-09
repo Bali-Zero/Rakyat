@@ -90,6 +90,27 @@ DOCUMENT_CATEGORY_MAP = {
     "sk_kemenkumham": "pma",
 }
 
+# Pipeline tags whose documents are written STAFF-ONLY: ``documents.client_visible``
+# is set to false in the SAME INSERT (locally here, and on the CRM through the
+# delivery leg), so the row is born hidden from the client portal and the staff
+# toggle opens it after review. Exact tag or batch-qualified ``tag:batch`` (the
+# same exact-or-separator rule as routing's auto-attach suppression, never a
+# bare prefix). ``recovery-v1`` = the client-document-recovery producer.
+STAFF_ONLY_PIPELINE_VERSIONS: frozenset[str] = frozenset({"recovery-v1"})
+
+
+def explicit_client_visible(pipeline_version: str | None) -> bool | None:
+    """The visibility a pipeline tag demands, or ``None`` = no opinion.
+
+    ``None`` means the INSERT does not name ``client_visible`` and the column
+    default applies, exactly as before this existed — every tag outside
+    :data:`STAFF_ONLY_PIPELINE_VERSIONS` behaves that way.
+    """
+    pv = pipeline_version or ""
+    if any(pv == tag or pv.startswith(tag + ":") for tag in STAFF_ONLY_PIPELINE_VERSIONS):
+        return False
+    return None
+
 
 # --------------------------------------------------------------------------- #
 # Feature flag (P0 guardrail §6a) — DEFAULT OFF.
@@ -370,6 +391,12 @@ async def plan_commit(
     # payload["practice_id"], and rollback_commit reads it back to detach the link.
     # Without this the column is NULL and rollback can't find the practice to clean.
     payload["practice_id"] = practice_id
+    # Staff-only tag (recovery-v1): the explicit visibility rides on the payload
+    # to the INSERT below and to the CRM delivery. Absent for every other tag,
+    # so their payload is exactly what it was.
+    explicit_visible = explicit_client_visible(str(pipeline_version))
+    if explicit_visible is not None:
+        payload["client_visible"] = explicit_visible
     if human_field_overrides:
         payload["extracted_fields"] = {
             **original_fields,
@@ -502,6 +529,11 @@ async def plan_commit(
                         "ocr_status": "completed",  # P0#8: preserve FASE-3 OCR
                         "intake_idempotency_key": idem_key,
                         "intake_proposal_id": proposal_id,
+                        **(
+                            {"client_visible": explicit_visible}
+                            if explicit_visible is not None
+                            else {}
+                        ),
                     },
                     note="INSERT … ON CONFLICT (client_id, intake_idempotency_key) DO UPDATE RETURNING id (P0#2 always returns doc_id)",
                 )
@@ -731,8 +763,9 @@ async def write_client_document(
     client_id: int,
     payload: dict[str, Any],
     *,
-    proposal_id: int,
+    proposal_id: int | None,
     idempotency_key: str,
+    registration_source: str = "intake",
 ) -> int:
     """Pure-DB document writer — extracted from create_document, side-effects removed.
 
@@ -741,24 +774,52 @@ async def write_client_document(
     P0#2: UPSERT on (client_id, intake_idempotency_key) ALWAYS RETURNING the canonical
     doc_id; a re-commit of the same intake instance is a no-op that returns the same id.
 
-    NOT reachable in FASE 5B: execute_commit refuses to run the real path while the
-    flag is OFF, so this never fires against the CRM in 5B.
+    Intake commits retain their feature flag. Operator repairs may supply a null
+    proposal only with explicit hidden, OCR-skipped repair provenance.
     """
+    if proposal_id is None:
+        provenance = _as_dict(payload.get("notes"))
+        if (
+            registration_source != "drive-repair-v1"
+            or provenance.get("source") != registration_source
+            or re.fullmatch(r"[0-9a-f]{64}", str(provenance.get("evidence_sha256", ""))) is None
+            or not provenance.get("original_parent_id")
+            or not (
+                (provenance.get("move_status") == "pending" and provenance.get("planned_target_id"))
+                or (
+                    provenance.get("move_status") == "not_planned"
+                    and provenance.get("planned_target_id") is None
+                )
+            )
+            or payload.get("client_visible") is not False
+            or payload.get("ocr_status") != "skipped"
+        ):
+            raise ValueError("REPAIR_PROVENANCE_REQUIRED")
     # ocr_status column may not exist in every environment (absent in nuzantara_dev).
     has_ocr = await conn.fetchval(
         "SELECT 1 FROM information_schema.columns "
         "WHERE table_name='documents' AND column_name='ocr_status'"
     )
+    if proposal_id is None and not has_ocr:
+        raise ValueError("REPAIR_OCR_SCHEMA_REQUIRED")
+    # Explicit visibility: None = the column is not named, so the database
+    # DEFAULT applies exactly as before. A value is written in this SAME INSERT.
+    # ON CONFLICT below leaves an existing row alone: a re-commit never
+    # re-publishes a hidden row, nor hides one that staff opened.
+    client_visible = payload.get("client_visible")
+    visible_column = "" if client_visible is None else ", client_visible"
+    visible_args = [] if client_visible is None else [bool(client_visible)]
     if has_ocr:
+        visible_value = "" if client_visible is None else ", $14"
         doc_id = await conn.fetchval(
-            """
+            f"""
             INSERT INTO documents (
                 client_id, document_type, document_category,
                 file_name, file_id, file_url, google_drive_file_url,
                 notes, family_member_id, practice_id,
                 status, storage_type, ocr_status,
-                intake_idempotency_key, intake_proposal_id
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'received','google_drive',$11,$12,$13)
+                intake_idempotency_key, intake_proposal_id{visible_column}
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'received','google_drive',$11,$12,$13{visible_value})
             ON CONFLICT (client_id, intake_idempotency_key)
                 WHERE intake_idempotency_key IS NOT NULL
             DO UPDATE SET updated_at = now()
@@ -777,17 +838,19 @@ async def write_client_document(
             payload.get("ocr_status", "completed"),  # preserve FASE-3 OCR (P0#8)
             idempotency_key,
             proposal_id,
+            *visible_args,
         )
     else:
+        visible_value = "" if client_visible is None else ", $13"
         doc_id = await conn.fetchval(
-            """
+            f"""
             INSERT INTO documents (
                 client_id, document_type, document_category,
                 file_name, file_id, file_url, google_drive_file_url,
                 notes, family_member_id, practice_id,
                 status, storage_type,
-                intake_idempotency_key, intake_proposal_id
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'received','google_drive',$11,$12)
+                intake_idempotency_key, intake_proposal_id{visible_column}
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'received','google_drive',$11,$12{visible_value})
             ON CONFLICT (client_id, intake_idempotency_key)
                 WHERE intake_idempotency_key IS NOT NULL
             DO UPDATE SET updated_at = now()
@@ -805,6 +868,7 @@ async def write_client_document(
             payload.get("practice_id"),
             idempotency_key,
             proposal_id,
+            *visible_args,
         )
     if doc_id is None:  # P0#2: must always return a canonical id
         raise RuntimeError("write_client_document: UPSERT returned no doc_id")
@@ -1140,7 +1204,9 @@ async def _revert_document_enrichment(
     fetch_cols = [c for c in (*identifier_cols, "custom_fields") if c in existing_cols]
     if not fetch_cols:
         return []
-    row = await conn.fetchrow(f"SELECT {', '.join(fetch_cols)} FROM clients WHERE id = $1", client_id)
+    row = await conn.fetchrow(
+        f"SELECT {', '.join(fetch_cols)} FROM clients WHERE id = $1", client_id
+    )
     if row is None:
         return []
     current = dict(row)

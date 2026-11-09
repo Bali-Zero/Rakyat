@@ -510,3 +510,22 @@ describe("AppSidebar", () => {
     expect(asideClassName).not.toContain("nav-rail-bg");
   });
 });
+
+describe("AppSidebar workspace logo (kita visual refresh)", () => {
+  it("uses the homepage Bali Zero logo asset in the workspace rail", () => {
+    render(
+      <AppSidebar
+        user={{ name: "Test", email: "t@example.test" }}
+        onLogout={() => undefined}
+      />,
+    );
+    const link = screen.getByRole("link", {
+      name: "Bali Zero — workspace home",
+    });
+    expect(link).toHaveAttribute("href", "/dashboard");
+    const img = link.querySelector("img");
+    expect(img).not.toBeNull();
+    expect(img!.getAttribute("src") ?? "").toContain("logo.webp");
+    expect(img!.getAttribute("src") ?? "").not.toContain("balizero-logo-clean");
+  });
+});

@@ -1,4 +1,4 @@
-"""Internal types shared across Trend-Tosado adapters and orchestrator."""
+"""Internal types shared across Trend-Hunter adapters and orchestrator."""
 
 from __future__ import annotations
 

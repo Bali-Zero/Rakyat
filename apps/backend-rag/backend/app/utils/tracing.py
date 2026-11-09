@@ -35,12 +35,14 @@ def get_tracer(name: str = "nuzantara-backend") -> Any:
     try:
         return trace.get_tracer(name)
     except Exception as e:
-        logger.warning("Failed to get tracer: %s", e)
+        logger.warning('Failed to get tracer: %s', type(e).__name__)
         return None
 
 
 @contextmanager
-def trace_span(span_name: str, attributes: dict[str, Any] | None = None) -> Any:
+def trace_span(
+    span_name: str, attributes: dict[str, Any] | None = None, *, safe_diagnostics: bool = False
+) -> Any:
     """
     Context manager for creating a trace span.
 
@@ -58,7 +60,8 @@ def trace_span(span_name: str, attributes: dict[str, Any] | None = None) -> Any:
 
     span_err: Exception | None = None
     try:
-        with tracer.start_as_current_span(span_name) as span:
+        options = {"record_exception": False, "set_status_on_exception": False} if safe_diagnostics else {}
+        with tracer.start_as_current_span(span_name, **options) as span:
             if attributes and span:
                 for key, value in attributes.items():
                     span.set_attribute(key, str(value))
@@ -69,8 +72,10 @@ def trace_span(span_name: str, attributes: dict[str, Any] | None = None) -> Any:
                 raise
     except Exception as e:
         if span_err is not None:
+            if safe_diagnostics:
+                raise span_err from span_err.__cause__
             raise span_err from None
-        logger.warning("Failed to create span %s: %s", span_name, e)
+        logger.warning('Failed to create span %s: %s', span_name, type(e).__name__)
 
 
 def add_span_event(event_name: str, attributes: dict[str, Any] | None = None) -> None:
@@ -108,7 +113,7 @@ def set_span_attribute(key: str, value: Any) -> None:
         if span and span.is_recording():
             span.set_attribute(key, str(value))
     except Exception as e:
-        logger.debug("Failed to set span attribute: %s", e)
+        logger.debug('Failed to set span attribute: %s', type(e).__name__)
 
 
 def set_span_status(status: str, description: str | None = None) -> None:
@@ -132,4 +137,4 @@ def set_span_status(status: str, description: str | None = None) -> None:
             else:
                 span.set_status(Status(StatusCode.OK, description))
     except Exception as e:
-        logger.debug("Failed to set span status: %s", e)
+        logger.debug('Failed to set span status: %s', type(e).__name__)

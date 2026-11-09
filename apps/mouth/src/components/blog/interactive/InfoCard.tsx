@@ -29,13 +29,24 @@ export type InfoCardVariant =
 
 type LegacyInfoCardVariant = InfoCardVariant | "danger";
 
+/** A labelled row, as the article composer emits for the Quick Summary box. */
+export interface InfoCardLabelledItem {
+  label: string;
+  value: string;
+}
+
+/** A row of the card body: a labelled pair or a plain (inline-bold) string. */
+export type InfoCardItem = string | InfoCardLabelledItem;
+
 export interface InfoCardProps {
   /** Variant determines color and icon */
   variant?: LegacyInfoCardVariant;
   /** Custom title (optional, uses default based on variant) */
   title?: string;
   /** Content */
-  children: React.ReactNode;
+  children?: React.ReactNode;
+  /** Rows rendered as a list above the children */
+  items?: readonly InfoCardItem[];
   /** Optional icon override */
   icon?: React.ReactNode;
   /** Collapsible */
@@ -139,6 +150,93 @@ const variantStyles: Record<
 };
 
 // ============================================================================
+// Items
+// ============================================================================
+
+/** Renders **bold** spans of a plain string row; MDX props are not parsed as markdown. */
+function renderInline(text: string): React.ReactNode[] {
+  return text.split(/\*\*(.+?)\*\*/g).map((part, i) =>
+    i % 2 === 1 ? (
+      <strong key={i} className="font-semibold text-white/90">
+        {part}
+      </strong>
+    ) : (
+      <React.Fragment key={i}>{part}</React.Fragment>
+    ),
+  );
+}
+
+type NormalizedRow =
+  | { kind: "text"; text: string }
+  | { kind: "labelled"; label: string; value: string | null };
+
+/**
+ * MDX props are unchecked at runtime, so rows are coerced defensively:
+ * null/undefined and unusable objects are skipped, non-string scalars render
+ * as String(item), and a labelled row without a string value renders the
+ * label alone.
+ */
+function normalizeRow(item: unknown): NormalizedRow | null {
+  if (item === null || item === undefined) return null;
+  if (typeof item === "string") return { kind: "text", text: item };
+  if (
+    typeof item === "number" ||
+    typeof item === "boolean" ||
+    typeof item === "bigint"
+  ) {
+    return { kind: "text", text: String(item) };
+  }
+  if (typeof item !== "object") return null;
+  const { label, value } = item as { label?: unknown; value?: unknown };
+  const labelText = typeof label === "string" && label !== "" ? label : null;
+  const valueText = typeof value === "string" && value !== "" ? value : null;
+  if (labelText !== null) {
+    return { kind: "labelled", label: labelText, value: valueText };
+  }
+  return valueText !== null ? { kind: "text", text: valueText } : null;
+}
+
+function InfoCardItems({
+  items,
+  labelClassName,
+}: {
+  items: readonly unknown[];
+  labelClassName: string;
+}) {
+  const rows = items
+    .map(normalizeRow)
+    .flatMap((row, index) => (row ? [{ row, index }] : []));
+  if (rows.length === 0) return null;
+
+  return (
+    <ul className="space-y-2 list-none p-0 m-0 mb-2 last:mb-0">
+      {rows.map(({ row, index }) =>
+        row.kind === "text" ? (
+          <li key={index} className="flex gap-2">
+            <span aria-hidden="true" className={labelClassName}>
+              •
+            </span>
+            <span>{renderInline(row.text)}</span>
+          </li>
+        ) : (
+          <li key={index}>
+            <span className={cn("font-medium", labelClassName)}>
+              {row.label}
+            </span>
+            {row.value !== null && (
+              <>
+                <span className="text-white/40">{": "}</span>
+                <span>{renderInline(row.value)}</span>
+              </>
+            )}
+          </li>
+        ),
+      )}
+    </ul>
+  );
+}
+
+// ============================================================================
 // Main Component
 // ============================================================================
 
@@ -146,6 +244,7 @@ export function InfoCard({
   variant = "info",
   title,
   children,
+  items,
   icon,
   collapsible = false,
   defaultCollapsed = false,
@@ -205,6 +304,9 @@ export function InfoCard({
       {(!collapsible || !isCollapsed) && (
         <div className="px-4 pb-4">
           <div className="text-sm text-white/70 leading-relaxed">
+            {Array.isArray(items) && items.length > 0 && (
+              <InfoCardItems items={items} labelClassName={styles.titleColor} />
+            )}
             {children}
           </div>
 

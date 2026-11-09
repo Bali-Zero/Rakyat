@@ -75,6 +75,7 @@ tableOfContents: true
 canonicalUrl: "https://balizero.com/property/rental-property-investment"
 ogImage: "/static/insights/property/rental-investment.jpg"
 twitterCard: "summary_large_image"
+source_sha256: "825211df02b6d7c722f4f51047d9104f1e76806efa8125741db723d1111cf15c"
 ---
 
 import {
@@ -86,63 +87,63 @@ import {
   AskZantara,
 } from "@/components/insights/interactive";
 
-# Investimenti in Immobili a Reddito Indonesia 2026: Guida per l'Investitore
+# Investimento in Proprietà in Affitto in Indonesia 2026: Guida per Investitori
 
-Gli immobili a reddito in Indonesia possono fornire buoni rendimenti, ma è necessaria la struttura e la strategia corretta. Ecco la tua guida completa.
+Le proprietà in affitto in Indonesia possono offrire buoni rendimenti, ma servono la struttura e la strategia giuste. Ecco la guida completa.
 
 ## Opzioni di Investimento
 
 <DecisionTree
-  title="Quale Percorso di Investimento?"
-  description="Trova il tuo approccio"
+  title="Which Investment Path?"
+  description="Find your approach"
   nodes={[
     {
       id: "start",
-      question: "Qual è la dimensione del tuo investimento?",
+      question: "What's your investment size?",
       options: [
-        { label: "Sotto USD 100K", next: "small" },
+        { label: "Under USD 100K", next: "small" },
         { label: "USD 100-500K", next: "medium" },
-        { label: "Oltre USD 500K", next: "large" },
+        { label: "Over USD 500K", next: "large" },
       ],
     },
     {
       id: "small",
       result: {
-        title: "Appartamento o Villa in Leasehold",
+        title: "Apartment or Leasehold Villa",
         description:
-          "Appartamento in strata-title o accordo di villa in leasehold. Punto di ingresso più basso, strutture più semplici. Concentrati sulle aree turistiche per reddito da locazione a breve termine.",
+          "Strata-title apartment or leasehold villa arrangement. Lower entry point, simpler structures. Focus on tourist areas for short-term rental income.",
       },
     },
     {
       id: "medium",
-      question: "Affitto a breve o lungo termine?",
+      question: "Short or long-term rental?",
       options: [
-        { label: "Breve termine (Airbnb)", next: "short-term" },
-        { label: "Lungo termine (annuale)", next: "long-term" },
+        { label: "Short-term (Airbnb)", next: "short-term" },
+        { label: "Long-term (yearly)", next: "long-term" },
       ],
     },
     {
       id: "large",
       result: {
-        title: "PT PMA + Proprietà Multiple",
+        title: "PT PMA + Multiple Properties",
         description:
-          "Società di investimento straniera che detiene titoli HGB. Può costruire un portafoglio di immobili a reddito. Struttura legale adeguata per la scalabilità.",
+          "Foreign investment company holding HGB titles. Can build portfolio of rental properties. Proper legal structure for scale.",
       },
     },
     {
       id: "short-term",
       result: {
-        title: "Villa per Affitto Turistico",
+        title: "Tourist Rental Villa",
         description:
-          "Villa in zona turistica (Canggu, Seminyak, Ubud) per Airbnb/VRBO. Rendimenti più elevati ma maggiore gestione. Considera una PT PMA per una struttura corretta.",
+          "Villa in tourist area (Canggu, Seminyak, Ubud) for Airbnb/VRBO. Higher returns but more management. Consider PT PMA for proper structure.",
       },
     },
     {
       id: "long-term",
       result: {
-        title: "Mercato degli Affitti per Espatriati",
+        title: "Expatriate Rental Market",
         description:
-          "Proprietà destinate a inquilini espatriati a lungo termine. Reddito costante, meno gestione. Buono nelle aree con popolazioni di espatriati (Giacarta, Bali).",
+          "Properties targeting long-term expat tenants. Steady income, less management. Good in areas with expat populations (Jakarta, Bali).",
       },
     },
   ]}
@@ -150,55 +151,55 @@ Gli immobili a reddito in Indonesia possono fornire buoni rendimenti, ma è nece
 
 ---
 
-## Strutture Proprietarie
+## Strutture di Proprietà
 
 <ComparisonTable
-  title="Confronto Strutture"
-  description="Per l'investimento in immobili a reddito"
+  title="Structure Comparison"
+  description="For rental property investment"
   items={[
     {
       name: "Leasehold",
-      subtitle: "Locazione a lungo termine",
+      subtitle: "Long-term lease",
       values: {
-        Proprietà: "Locazione dal proprietario del terreno",
-        Durata: "Tipici 25-30 anni",
-        "Affitto consentito": "Sì (con struttura)",
-        Complessità: "Semplice",
-        "Ideale per": "Piccoli investimenti",
+        Ownership: "Lease from landowner",
+        Duration: "25-30 years typical",
+        "Rental allowed": "Yes (with structure)",
+        Complexity: "Simple",
+        "Best for": "Small investment",
       },
     },
     {
       name: "Strata Title",
-      subtitle: "Proprietà appartamento",
+      subtitle: "Apartment ownership",
       values: {
-        Proprietà: "Proprietà dell'unità",
-        Durata: "Perpetua (con condizioni)",
-        "Affitto consentito": "Solitamente sì",
-        Complessità: "Semplice",
-        "Ideale per": "Investimenti urbani",
+        Ownership: "Unit ownership",
+        Duration: "Perpetual (with conditions)",
+        "Rental allowed": "Usually yes",
+        Complexity: "Simple",
+        "Best for": "Urban investment",
       },
     },
     {
       name: "PT PMA + HGB",
-      subtitle: "Proprietà societaria",
+      subtitle: "Company ownership",
       values: {
-        Proprietà: "La società detiene il titolo",
-        Durata: "30+20+20 anni",
-        "Affitto consentito": "Sì (commerciale)",
-        Complessità: "Elevata",
-        "Ideale per": "Investitori seri",
+        Ownership: "Company holds title",
+        Duration: "30+20+20 years",
+        "Rental allowed": "Yes (commercial)",
+        Complexity: "Higher",
+        "Best for": "Serious investors",
       },
       highlight: true,
     },
     {
       name: "Nominee",
-      subtitle: "Intestazione a un indonesiano",
+      subtitle: "Indonesian holds",
       values: {
-        Proprietà: "Indiretta rischiosa",
-        Durata: "Variabile",
-        "Affitto consentito": "Poco chiaro",
-        Complessità: "Alto rischio",
-        "Ideale per": "Non raccomandato",
+        Ownership: "Risky indirect",
+        Duration: "Variable",
+        "Rental allowed": "Unclear",
+        Complexity: "High risk",
+        "Best for": "Not recommended",
       },
     },
   ]}
@@ -212,48 +213,48 @@ Gli immobili a reddito in Indonesia possono fornire buoni rendimenti, ma è nece
 
 | Tipo di Proprietà          | Rendimento Lordo | Rendimento Netto |
 | -------------------------- | ---------------- | ---------------- |
-| Villa Bali (breve termine) | 8-15%            | 5-10%            |
-| Villa Bali (lungo termine) | 5-8%             | 4-6%             |
-| Appartamento Giacarta      | 5-7%             | 4-5%             |
-| Appartamento servito       | 6-10%            | 4-7%             |
+| Villa a Bali (breve termine) | 8-15%          | 5-10%            |
+| Villa a Bali (lungo termine) | 5-8%          | 4-6%             |
+| Appartamento a Jakarta     | 5-7%            | 4-5%             |
+| Appartamento con servizi   | 6-10%           | 4-7%             |
 
-<InfoCard variant="warning" title="Aspettative Realistiche">
-**Sii realistico:**
+<InfoCard variant="warning" title="Realistic Expectations">
+**Siate realistici:**
 
-- I rendimenti lordi ignorano le spese
+- I rendimenti lordi non considerano le spese
 - I rendimenti netti contano di più
-- L'occupazione varia (60-80% tipica per il breve termine)
+- L'occupazione varia (60-80% tipico per gli affitti a breve termine)
 - I costi di manutenzione si accumulano
-- Commissioni di gestione 15-25%
-- Le tasse riducono ulteriormente i rendimenti
+- Commissioni di gestione del 15-25%
+- Le imposte riducono ulteriormente i rendimenti
 
-Punta a un rendimento netto del 5-8% per una pianificazione realistica.
+Per una pianificazione realistica, puntate a un rendimento netto del 5-8%.
 
 </InfoCard>
 
-### Calcolatore di Rendimento
+### Calcolatore del Rendimento
 
 <Calculator
-  title="Stima del Rendimento da Locazione"
-  description="Calcola i potenziali rendimenti"
+  title="Rental Return Estimate"
+  description="Calculate potential returns"
   fields={[
     {
       id: "purchase",
-      label: "Valore Proprietà (IDR)",
+      label: "Property Value (IDR)",
       type: "number",
-      defaultValue: 9900000027,
+      defaultValue: 3000000000,
       min: 0
     },
     {
       id: "monthlyRate",
-      label: "Tariffa Mensile Affitto (IDR)",
+      label: "Monthly Rental Rate (IDR)",
       type: "number",
       defaultValue: 25000000,
       min: 0
     },
     {
       id: "occupancy",
-      label: "Occupazione Prevista (%)",
+      label: "Expected Occupancy (%)",
       type: "number",
       defaultValue: 70,
       min: 0,
@@ -261,11 +262,11 @@ Punta a un rendimento netto del 5-8% per una pianificazione realistica.
     },
     {
       id: "managed",
-      label: "Gestione Immobiliare?",
+      label: "Property Management?",
       type: "select",
       options: [
-        { value: "yes", label: "Sì (20% del fatturato)" },
-        { value: "no", label: "No (gestione autonoma)" }
+        { value: "yes", label: "Yes (20% of revenue)" },
+        { value: "no", label: "No (self-manage)" }
       ],
       defaultValue: "yes"
     }
@@ -273,9 +274,9 @@ Punta a un rendimento netto del 5-8% per una pianificazione realistica.
   calculateResult={(values) => {
     const annualGross = values.monthlyRate * 12 * (values.occupancy / 100);
     const managementFee = values.managed === "yes" ? annualGross * 0.20 : 0;
-    const maintenance = annualGross * 0.10; // 10% per manutenzione
-    const utilities = values.monthlyRate * 0.1 * 12; // Stima approssimativa utenze
-    const tax = annualGross * 0.10; // 10% tassa sul reddito da locazione
+    const maintenance = annualGross * 0.10; // 10% for maintenance
+    const utilities = values.monthlyRate * 0.1 * 12; // Rough utility estimate
+    const tax = annualGross * 0.10; // 10% rental income tax
 
     const totalExpenses = managementFee + maintenance + utilities + tax;
     const netIncome = annualGross - totalExpenses;
@@ -286,17 +287,17 @@ Punta a un rendimento netto del 5-8% per una pianificazione realistica.
     return {
       total: Math.round(netIncome),
       breakdown: [
-        { label: "Affitto lordo annuo", amount: Math.round(annualGross) },
-        { label: "Gestione immobiliare", amount: -Math.round(managementFee) },
-        { label: "Manutenzione (10%)", amount: -Math.round(maintenance) },
-        { label: "Stima utenze", amount: -Math.round(utilities) },
-        { label: "Tasse locazione (10%)", amount: -Math.round(tax) },
-        { label: "REDDITO ANNUO NETTO", amount: Math.round(netIncome) },
-        { label: "Rendimento lordo", amount: `${grossYield.toFixed(1)}%` },
-        { label: "Rendimento netto", amount: `${netYield.toFixed(1)}%` }
+        { label: "Annual gross rental", amount: Math.round(annualGross) },
+        { label: "Property management", amount: -Math.round(managementFee) },
+        { label: "Maintenance (10%)", amount: -Math.round(maintenance) },
+        { label: "Utilities estimate", amount: -Math.round(utilities) },
+        { label: "Rental tax (10%)", amount: -Math.round(tax) },
+        { label: "NET ANNUAL INCOME", amount: Math.round(netIncome) },
+        { label: "Gross yield", amount: `${grossYield.toFixed(1)}%` },
+        { label: "Net yield", amount: `${netYield.toFixed(1)}%` }
       ],
       currency: "IDR",
-      note: `Rendimento netto: ${netYield.toFixed(1)}% (~USD ${Math.round(netIncome / 16000).toLocaleString()}/anno)`
+      note: `Net yield: ${netYield.toFixed(1)}% (~USD ${Math.round(netIncome / 16000).toLocaleString()}/year)`
     };
 
 }}
@@ -308,60 +309,60 @@ Punta a un rendimento netto del 5-8% per una pianificazione realistica.
 
 ### Affitti a Breve Termine (Airbnb/VRBO)
 
-| Pro                              | Contro                  |
-| -------------------------------- | ----------------------- |
-| Maggiore potenziale di ricavo    | Più gestione            |
-| Flessibilità d'uso               | Fluttuazioni stagionali |
+| Vantaggi                    | Svantaggi                |
+| --------------------------- | ------------------------ |
+| Maggiore potenziale di ricavo | Maggiore gestione       |
+| Flessibilità nell'uso della proprietà | Fluttuazione stagionale |
 | Possibilità di adeguare i prezzi | Problemi con gli ospiti |
-| Mercato turistico in crescita    | Incertezza normativa    |
+| Mercato turistico in crescita | Incertezza normativa    |
 
 ### Affitti a Lungo Termine
 
-| Pro                   | Contro                           |
-| --------------------- | -------------------------------- |
-| Reddito stabile       | Rendimenti inferiori             |
-| Meno gestione         | Minore flessibilità              |
-| Cash flow prevedibile | Possibili problemi con inquilini |
-| Minore usura          | Vacanze locative più lunghe      |
+| Vantaggi              | Svantaggi                    |
+| --------------------- | ---------------------------- |
+| Reddito stabile       | Rendimenti inferiori          |
+| Minore gestione       | Minore flessibilità           |
+| Flusso di cassa prevedibile | Possibili problemi con gli inquilini |
+| Minore usura          | Periodi di sfitto più lunghi  |
 
 ---
 
-## Gestione Immobiliare
+## Gestione della Proprietà
 
-### Fai-da-te vs Professionale
+### Gestione Diretta vs Professionale
 
 <ComparisonTable
-  title="Opzioni di Gestione"
-  description="Come gestire il tuo immobile a reddito"
+  title="Management Options"
+  description="How to manage your rental"
   items={[
     {
-      name: "Gestione Autonoma",
-      subtitle: "Gestisci tutto tu",
+      name: "Self-Manage",
+      subtitle: "You handle everything",
       values: {
-        Costo: "Gratis",
-        Tempo: "Significativo",
-        "Ideale per": "Vicinanza, singola proprietà",
-        Controllo: "Totale",
+        Cost: "Free",
+        Time: "Significant",
+        "Best for": "Nearby, single property",
+        Control: "Full",
       },
     },
     {
       name: "Property Manager",
-      subtitle: "Manager individuale",
+      subtitle: "Individual manager",
       values: {
-        Costo: "15-20% del fatturato",
-        Tempo: "Minimo",
-        "Ideale per": "Affitti a lungo termine",
-        Controllo: "Moderato",
+        Cost: "15-20% of revenue",
+        Time: "Minimal",
+        "Best for": "Long-term rentals",
+        Control: "Moderate",
       },
     },
     {
-      name: "Società di Gestione",
-      subtitle: "Servizio completo",
+      name: "Management Company",
+      subtitle: "Full service",
       values: {
-        Costo: "20-30% del fatturato",
-        Tempo: "Nessuno",
-        "Ideale per": "Breve termine, proprietario assente",
-        Controllo: "Limitato",
+        Cost: "20-30% of revenue",
+        Time: "None",
+        "Best for": "Short-term, absent owner",
+        Control: "Limited",
       },
       highlight: true,
     },
@@ -371,79 +372,79 @@ Punta a un rendimento netto del 5-8% per una pianificazione realistica.
 ### Checklist di Gestione
 
 <Checklist
-  title="Compiti di Gestione Immobiliare"
-  description="Cosa deve essere fatto"
+  title="Property Management Tasks"
+  description="What needs to be done"
   persistKey="rental-management-checklist"
   items={[
     {
       id: "listing",
-      label: "Gestione annunci",
-      description: "Foto, descrizioni, prezzi",
+      label: "Listing management",
+      description: "Photos, descriptions, pricing",
       required: true,
       category: "marketing",
     },
     {
       id: "bookings",
-      label: "Gestione prenotazioni",
-      description: "Richieste, prenotazioni",
+      label: "Booking management",
+      description: "Inquiries, reservations",
       required: true,
       category: "operations",
     },
     {
       id: "checkin",
       label: "Check-in/check-out",
-      description: "Arrivi e partenze ospiti",
+      description: "Guest arrivals, departures",
       required: true,
       category: "operations",
     },
     {
       id: "cleaning",
-      label: "Coordinamento pulizie",
-      description: "Tra un ospite e l'altro",
+      label: "Cleaning coordination",
+      description: "Between guests",
       required: true,
       category: "maintenance",
     },
     {
       id: "maintenance",
-      label: "Problemi di manutenzione",
-      description: "Riparazioni, imprevisti",
+      label: "Maintenance issues",
+      description: "Repairs, problems",
       required: true,
       category: "maintenance",
     },
     {
       id: "supplies",
-      label: "Rifornimento forniture",
-      description: "Prodotti da bagno, biancheria",
+      label: "Supplies restocking",
+      description: "Toiletries, linens",
       required: true,
       category: "maintenance",
     },
     {
       id: "payments",
-      label: "Riscossione pagamenti",
-      description: "Da ospiti/piattaforme",
+      label: "Payment collection",
+      description: "From guests/platforms",
       required: true,
       category: "finance",
     },
     {
       id: "accounting",
-      label: "Contabilità/reporting",
-      description: "Tracciamento entrate e uscite",
+      label: "Accounting/reporting",
+      description: "Track income, expenses",
       required: true,
       category: "finance",
     },
     {
       id: "taxes",
-      label: "Conformità fiscale",
-      description: "Dichiarazione redditi da locazione",
+      label: "Tax compliance",
+      description: "Rental income reporting",
       required: true,
       category: "finance",
     },
   ]}
   categories={[
     { id: "marketing", label: "Marketing", color: "blue" },
-    { id: "operations", label: "Operazioni", color: "green" },
-    { id: "maintenance", label: "Manutenzione", color: "amber" },
-    { id: "finance", label: "Finanza", color: "purple" },
+    { id: "operations", label: "Operations", color: "green" },
+    { id: "maintenance", label: "Maintenance", color: "amber" },
+    { id: "finance", label: "Finance", color: "purple" },
   ]}
   showProgress={false}
 />
@@ -454,79 +455,79 @@ Punta a un rendimento netto del 5-8% per una pianificazione realistica.
 
 ### Imposta sul Reddito da Locazione
 
-<InfoCard variant="note" title="Imposta Finale 10%">
+<InfoCard variant="note" title="10% Final Tax">
 Il reddito da locazione immobiliare è soggetto a:
 
-**Imposta Finale 10%** sul reddito lordo da locazione
+**Imposta finale del 10%** sul reddito lordo da locazione
 
-- Nessuna deduzione per le spese
-- Finale (non si cumula ad altri redditi)
-- Trattenuta dagli inquilini societari
-- Autoliquidata per inquilini individuali
+- Nessuna detrazione delle spese
+- Finale (non aggiunta agli altri redditi)
+- Trattenuta dai conduttori societari
+- Autoliquidata per i conduttori individuali
 </InfoCard>
 
 ### Tramite PT PMA
 
-| Voce              | Trattamento        |
-| ----------------- | ------------------ |
-| Reddito locazione | Reddito societario |
-| Spese             | Deducibili         |
-| Ammortamento      | Edificio: 5%/anno  |
-| Imposta utile     | 22% CIT            |
-| Dividendo         | 10% WHT            |
+| Voce                 | Trattamento              |
+| -------------------- | ------------------------ |
+| Reddito da locazione | Reddito societario       |
+| Spese                | Deducibili               |
+| Ammortamento         | Edificio: 5%/anno        |
+| Imposta sull'utile netto | 22% CIT              |
+| Dividendo            | 10% WHT                  |
 
 ---
 
-## Zaz Xepabequr
+## Due Diligence
 
-### Prima di Acquistare
+### Prima dell'Acquisto
 
-| Verifica            | Perché                  |
-| ------------------- | ----------------------- |
-| Analisi posizione   | Domanda di affitto      |
-| Affitti comparabili | Prezzi di mercato       |
-| Dati occupazione    | Aspettative realistiche |
-| Stato normativo     | Legale affittare?       |
-| Qualità costruttiva | Costi di manutenzione   |
-| Opzioni di gestione | Chi lo gestirà?         |
-| Strategia di uscita | Potrai vendere?         |
+| Verifica             | Perché                      |
+| -------------------- | --------------------------- |
+| Analisi della posizione | Domanda di locazione     |
+| Affitti comparabili  | Canoni di mercato           |
+| Dati sull'occupazione | Aspettative realistiche    |
+| Stato normativo      | È legale affittare?         |
+| Qualità dell'edificio | Costi di manutenzione      |
+| Opzioni di gestione  | Chi lo gestirà?             |
+| Strategia di uscita  | Potete venderlo?            |
 
 ### Segnali di Allarme
 
-| Segnale di Avvertimento         | Preoccupazione               |
-| ------------------------------- | ---------------------------- |
-| Rendimenti troppo alti          | Proiezioni irrealistiche     |
-| Proprietà poco chiara           | Problemi legali              |
-| Nessun storico affitti          | Mercato non provato          |
-| Affitti gestiti dal costruttore | Conflitto di interessi       |
-| Posizione remota                | Accesso, problemi di domanda |
+| Segnale di Allarme        | Preoccupazione              |
+| ------------------------- | --------------------------- |
+| Rendimenti troppo elevati | Proiezioni irrealistiche    |
+| Proprietà poco chiara     | Questioni legali            |
+| Nessuna cronologia di affitti | Mercato non comprovato |
+| Affitti gestiti dallo sviluppatore | Conflitto di interessi |
+| Posizione remota          | Problemi di accesso e domanda |
 
 ---
 
 ## Strategia di Uscita
 
-### Vendita Proprietà a Reddito
+### Vendita di una Proprietà in Affitto
 
-| Considerazione       | Megecic                    |
-| -------------------- | -------------------------- |
-| Plusvalenze          | 2,5% sul valore di vendita |
-| Ricerca acquirenti   | Condizioni di mercato      |
-| Impegni di locazione | Inquilini attuali          |
-| Vendita PT PMA       | Vendita quote societarie   |
-| Tempistica           | Cicli di mercato           |
+| Considerazione        | Fattore                 |
+| --------------------- | ----------------------- |
+| Plusvalenze           | 2,5% sul valore di vendita |
+| Trovare acquirenti    | Condizioni di mercato   |
+| Impegni di locazione  | Inquilini attuali       |
+| Vendita di PT PMA     | Vendere invece le quote |
+| Tempistica            | Cicli di mercato        |
 
 ---
 
 ## Domande Comuni
 
 <AskZantara
-  context="Investimento in immobili a reddito in Indonesia, rendimenti immobiliari, reddito da locazione, gestione immobiliare Bali"
-  placeholder="Chiedi sugli immobili a reddito..."
+  context="Rental property investment Indonesia, property returns, rental income, property management Bali"
+  placeholder="Ask about rental property..."
   suggestedQuestions={[
-    "Quali rendimenti posso aspettarmi da una villa a Bali?",
-    "Dovrei usare un property manager?",
-    "Airbnb è legale a Bali?",
-    "Come viene tassato il reddito da locazione?",
+    "What returns can I expect from a Bali villa?",
+    "Should I use a property manager?",
+    "Is Airbnb legal in Bali?",
+    "How is rental income taxed?",
   ]}
 />
 
@@ -534,6 +535,6 @@ Il reddito da locazione immobiliare è soggetto a:
 
 ## Articoli Correlati
 
-- [Guida all'Investimento Immobiliare](/insights/property/property-investment-guide)
-- [Regole Proprietà Fondiaria](/insights/property/land-ownership-rules)
-- [Acquisto Villa Bali](/insights/property/villa-purchase-bali)
+- [Guida agli Investimenti Immobiliari](/insights/property/property-investment-guide)
+- [Regole sulla Proprietà Terriera](/insights/property/land-ownership-rules)
+- [Acquisto di una Villa a Bali](/insights/property/villa-purchase-bali)
