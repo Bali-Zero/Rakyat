@@ -76,6 +76,16 @@ export default defineConfig({
     // pass failed to resolve them. Order matters: exact "@balizero/core" before
     // the subpath regex, and "@" last so it never shadows "@balizero/...".
     alias: [
+      // `server-only` is not an installed package: Next resolves it itself in a
+      // build. Vitest has no such rule, so point it at Next's own empty module
+      // (the real one throws on import, which is the point in a build).
+      {
+        find: /^server-only$/,
+        replacement: path.resolve(
+          __dirname,
+          "../../node_modules/next/dist/compiled/server-only/empty.js",
+        ),
+      },
       {
         find: "@balizero/core/analytics",
         replacement: path.resolve(
