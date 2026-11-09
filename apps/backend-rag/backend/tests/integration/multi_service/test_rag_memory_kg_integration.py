@@ -282,58 +282,6 @@ class TestRAGMemoryKGIntegration:
         assert "results" in result
 
     @pytest.mark.asyncio
-    async def test_conversation_save_triggers_kg_and_memory(
-        self,
-        mock_db_pool,
-        mock_episodic_memory,
-    ):
-        """Test that saving conversation triggers both KG extraction and Memory storage"""
-        conversation_text = "Marco Verdi ha aperto PT PMA a Bali nel 2024"
-        user_email = "marco@example.com"
-
-        # Mock ConversationService
-        with patch("backend.services.misc.conversation_service.ConversationService") as mock_conv:
-            mock_conv_instance = MagicMock()
-            mock_conv_instance.save_conversation = AsyncMock(
-                return_value={"success": True, "conversation_id": 456},
-            )
-            mock_conv.return_value = mock_conv_instance
-
-            # Mock KG extraction
-            with patch("backend.services.knowledge_graph.pipeline.KGPipeline") as mock_kg:
-                mock_kg_instance = MagicMock()
-                mock_kg_instance.process_document = AsyncMock(
-                    return_value={
-                        "entities": [{"name": "Marco Verdi", "type": "PERSON"}],
-                        "success": True,
-                    },
-                )
-                mock_kg.return_value = mock_kg_instance
-
-                # Save conversation
-                conv_service = mock_conv_instance
-                result = await conv_service.save_conversation(
-                    user_email=user_email,
-                    messages=[{"role": "user", "content": conversation_text}],
-                    session_id="test-session",
-                )
-
-                # Verify conversation saved
-                assert result["success"] is True
-
-                # Process through KG
-                kg_result = await mock_kg_instance.process_document(
-                    text=conversation_text,
-                    metadata={
-                        "source": "conversation",
-                        "conversation_id": result["conversation_id"],
-                    },
-                )
-
-                # Verify KG extraction occurred
-                assert kg_result["success"] is True
-
-    @pytest.mark.asyncio
     async def test_multi_turn_conversation_with_kg_updates(
         self,
         mock_search_service,

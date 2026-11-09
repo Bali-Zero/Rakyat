@@ -11,28 +11,21 @@ Refactored: Migrated to asyncpg with connection pooling (2025-12-07)
 """
 
 import json
-from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
-from backend.app.metrics import metrics_collector
 from backend.app.utils.error_handlers import handle_database_error
-from backend.app.utils.json_utils import to_jsonb
 from backend.app.utils.logging_utils import get_logger, log_error, log_success, log_warning
 from backend.core.cache import invalidate_cache
 from backend.db.repositories.conversation_repository import (
-    ConversationCommitOutcomeUnknown,
     conversation_write_connection,
     lock_conversation_identities,
     lock_conversation_session,
 )
-from backend.services.common.background import spawn
-from backend.services.crm.conversation_title_generator import generate_conversation_title
 from backend.services.memory import MemoryOrchestrator, get_memory_cache
 from backend.services.memory.memory_fallback import user_session_key
 
@@ -47,84 +40,7 @@ DEFAULT_CONVERSATION_MESSAGES_LIMIT = 20  # Default messages to return in histor
 SUMMARY_MAX_LENGTH = 200  # Max length for auto-generated summaries
 
 
-async def _generate_and_update_title(
-    conversation_id: int,
-    first_user_message: str,
-    db_pool: asyncpg.Pool,
-) -> None:
-    """
-    Background task to generate and store conversation title.
-
-    Runs async (fire-and-forget) to avoid blocking conversation save.
-    Stores generated title in metadata.generated_title JSONB field.
-
-    Args:
-        conversation_id: ID of conversation to update
-        first_user_message: First message content for title generation
-        db_pool: Database connection pool
-
-    Cost: ~$0.000006 per title (Claude Haiku)
-    Latency: Non-blocking (runs in background)
-    """
-    try:
-        # Generate title using LLM
-        title = await generate_conversation_title(
-            conversation_id=str(conversation_id),
-            first_user_message=first_user_message,
-        )
-
-        if title:
-            async with conversation_write_connection(db_pool) as conn:
-                identity = await conn.fetchrow(
-                    "SELECT id, session_id FROM conversations WHERE id = $1",
-                    conversation_id,
-                )
-                if not identity:
-                    return
-                await lock_conversation_session(
-                    conn,
-                    identity["session_id"],
-                    row_id=identity["id"],
-                )
-                row = await conn.fetchrow(
-                    "SELECT id FROM conversations WHERE id = $1 FOR UPDATE",
-                    conversation_id,
-                )
-                if not row:
-                    return
-                await conn.execute(
-                    """
-                    UPDATE conversations
-                    SET metadata = COALESCE(metadata, '{}'::jsonb) ||
-                                   jsonb_build_object('generated_title', $1::text)
-                    WHERE id = $2
-                    """,
-                    title,
-                    conversation_id,
-                )
-
-            log_success(logger, "Generated conversation title")
-        else:
-            logger.info(
-                "Title generation returned None, using fallback",
-            )
-
-    except Exception as e:
-        # Don't fail conversation save if title generation fails
-        log_warning(logger, "Title generation failed", error_type=type(e).__name__)
-
-
 # Pydantic models
-class SaveConversationRequest(BaseModel):
-    # NOTE: user_email is no longer accepted from request body for security reasons.
-    # The authenticated user's email is extracted from the JWT token.
-    messages: list[
-        dict
-    ]  # [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
-    session_id: str | None = None
-    metadata: dict | None = None
-
-
 class ConversationHistoryResponse(BaseModel):
     success: bool
     messages: list[dict] = []
@@ -207,204 +123,6 @@ async def _invalidate_committed_conversation_cache() -> None:
             type(exc).__name__,
             exc_info=False,
         )
-
-
-@router.post("/save")
-async def save_conversation(
-    request: SaveConversationRequest,
-    current_user: dict = Depends(get_current_user),
-    db_pool: asyncpg.Pool | None = Depends(get_database_pool),
-) -> dict[str, Any]:
-    """
-    Save conversation messages to PostgreSQL
-    + Auto-populate CRM with client/practice data
-
-    SECURITY: User identity is extracted from JWT token, not request body.
-
-    Body:
-    {
-        "messages": [{"role": "user", "content": "..."}, ...],
-        "session_id": "optional-session-id",
-        "metadata": {"key": "value"}
-    }
-
-    Returns:
-    {
-        "success": true,
-        "conversation_id": 123,
-        "messages_saved": 10,
-        "user_email": "authenticated-user@example.com",
-        "crm": {
-            "processed": true,
-            "client_id": 42,
-            "client_created": false,
-            "client_updated": true,
-            "practice_id": 15,
-            "practice_created": true,
-            "interaction_id": 88
-        }
-    }
-    """
-    # Get user email from JWT token (prevents spoofing)
-    user_email = current_user["email"]
-
-    # Generate session_id if not provided
-    session_id = (
-        request.session_id or f"session-{datetime.now(tz=timezone.utc).strftime('%Y%m%d-%H%M%S')}"
-    )
-
-    # Resolve the database outcome before publishing memory/title effects.
-    # Confirmed body failures retain the existing explicit memory fallback.
-    conversation_id = 0
-    db_success = False
-    max_retries = 3
-
-    for attempt in range(max_retries):
-        try:
-            if db_pool:
-                async with conversation_write_connection(db_pool) as conn:
-                    await lock_conversation_session(conn, session_id)
-                    await conn.fetchrow(
-                        """
-                        SELECT id FROM conversations
-                        WHERE session_id = $1 AND user_id = $2
-                        ORDER BY created_at DESC, id DESC
-                        LIMIT 1 FOR UPDATE
-                        """,
-                        session_id,
-                        user_email,
-                    )
-                    # Insert conversation atomically
-                    row = await conn.fetchrow(
-                        """
-                        INSERT INTO conversations (user_id, session_id, messages, metadata, created_at)
-                        VALUES ($1, $2, $3::text::jsonb, $4::text::jsonb, $5)
-                        RETURNING id
-                        """,
-                        user_email,
-                        session_id,
-                        # ::text::jsonb — the app pools register a jsonb
-                        # codec (encoder=json.dumps); a bare param inferred
-                        # as jsonb double-encodes to_jsonb()'s already-
-                        # serialized string into a jsonb string scalar.
-                        to_jsonb(request.messages),
-                        to_jsonb(request.metadata or {}),
-                        datetime.now(tz=timezone.utc),
-                    )
-                conversation_id = row["id"] if row else 0
-
-                # Publish success only after the repository confirmed commit.
-                if conversation_id:
-                    db_success = True
-
-                    log_success(
-                        logger,
-                        "Saved conversation to DB",
-                        messages_count=len(request.messages),
-                        attempt=attempt + 1,
-                    )
-
-                    break  # Success - exit retry loop
-            else:
-                logger.warning("⚠️ DB Pool unavailable, skipping DB save")
-                break
-
-        except Exception as e:
-            if db_success:
-                logger.warning(
-                    "Conversation committed; after-commit effect failed: %s", type(e).__name__
-                )
-                break
-            if isinstance(e, ConversationCommitOutcomeUnknown):
-                logger.error("DB save outcome unknown after commit; refusing blind retry")
-                metrics_collector.record_cache_db_consistency_error(session_id="conversation_save")
-                raise HTTPException(
-                    status_code=503,
-                    detail={
-                        "code": "conversation_commit_unknown",
-                        "retryable": False,
-                        "message": (
-                            "Save outcome could not be confirmed. Check history before retrying."
-                        ),
-                    },
-                ) from None
-            if attempt == max_retries - 1:
-                # Final attempt failed - log error and queue for async retry
-                logger.error(
-                    "DB save failed after %s attempts: %s",
-                    max_retries,
-                    type(e).__name__,
-                )
-                # Note: In production, you might want to queue this for async retry
-                # For now, we continue with cache-only persistence
-                metrics_collector.record_cache_db_consistency_error(session_id="conversation_save")
-            else:
-                # Exponential backoff before retry
-                import asyncio
-
-                wait_time = 2**attempt
-                logger.warning(
-                    "DB save attempt %s failed with %s; retrying in %ss",
-                    attempt + 1,
-                    type(e).__name__,
-                    wait_time,
-                )
-                await asyncio.sleep(wait_time)
-
-    # Only a confirmed result or a known pre-commit failure reaches this point.
-    # W5 owns reconciliation of the ambiguous outcome rejected above.
-    if db_success:
-        await _invalidate_committed_conversation_cache()
-
-    try:
-        mem_cache = get_memory_cache()
-        scoped_cache_key = user_session_key(user_email, session_id)
-        for msg in request.messages:
-            mem_cache.add_message(
-                scoped_cache_key,
-                msg.get("role", "unknown"),
-                msg.get("content", ""),
-            )
-        if db_success and hasattr(mem_cache, "mark_synced"):
-            mem_cache.mark_synced(scoped_cache_key, conversation_id)
-        logger.info("Saved %s messages to memory cache", len(request.messages))
-    except Exception as e:
-        logger.warning("Failed to save to memory cache: %s", type(e).__name__)
-
-    if db_success:
-        first_user_msg = next(
-            (
-                msg.get("content", "")
-                for msg in request.messages
-                if isinstance(msg, dict) and msg.get("role") == "user"
-            ),
-            None,
-        )
-        if first_user_msg and settings.conversation_title_generation_enabled:
-            title_coroutine = _generate_and_update_title(
-                conversation_id=conversation_id,
-                first_user_message=first_user_msg,
-                db_pool=db_pool,
-            )
-            try:
-                try:
-                    spawn(title_coroutine, name="conversation_title")
-                except BaseException:
-                    title_coroutine.close()
-                    raise
-                logger.info("Triggered async title generation")
-            except Exception as e:
-                logger.warning(
-                    "Conversation committed; after-commit effect failed: %s", type(e).__name__
-                )
-
-    return {
-        "success": True,  # Always return true to keep chat alive
-        "conversation_id": conversation_id,
-        "messages_saved": len(request.messages),
-        "user_email": user_email,
-        "persistence_mode": "db" if db_success else "memory_fallback",
-    }
 
 
 @router.get("/history")

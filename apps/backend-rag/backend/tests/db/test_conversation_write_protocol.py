@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import importlib.util
 import os
 import re
 import sys
@@ -35,7 +36,6 @@ _CANONICAL_CALLERS = (
     "app/routers/admin_conversation_cleanup.py",
     "app/routers/conversations.py",
     "app/routers/whatsapp_chat.py",
-    "services/misc/conversation_service.py",
     "services/whatsapp_context_builder.py",
 )
 _WRITE_METHODS = {
@@ -173,6 +173,67 @@ def _stage1_protocol_violations(source: str) -> list[str]:
         if not guarded or not locked:
             violations.append(f"line {node.lineno}: transaction={guarded}, preceding_lock={locked}")
     return violations
+
+
+_INSERT_INTO_CONVERSATIONS = re.compile(
+    rf"\bINSERT\s+INTO\s+{_CONVERSATIONS_RELATION}{_RELATION_TERMINATOR}", re.IGNORECASE
+)
+
+
+def _retired_writer_sites(source: str) -> list[str]:
+    """Names the two writers retired from the web router: the `/save` INSERT and the title UPDATE."""
+    tree = ast.parse(source)
+    sites = [
+        f"function {node.name}"
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name in {"save_conversation", "_generate_and_update_title"}
+    ]
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+            continue
+        if _INSERT_INTO_CONVERSATIONS.search(node.value):
+            sites.append(f"INSERT at line {node.lineno}")
+        elif "generated_title" in node.value and _contains_conversation_mutation(node.value):
+            sites.append(f"title UPDATE at line {node.lineno}")
+    return sites
+
+
+def test_retired_web_writers_cannot_return_to_the_router() -> None:
+    router = _BACKEND / "app/routers/conversations.py"
+    assert _retired_writer_sites(router.read_text()) == []
+
+
+def test_retired_conversation_service_module_is_gone() -> None:
+    assert not (_BACKEND / "services/misc/conversation_service.py").exists()
+    assert importlib.util.find_spec("backend.services.misc.conversation_service") is None
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "async def save_conversation(request):\n    pass",
+        "async def _generate_and_update_title(i, m, p):\n    pass",
+        'Q = "INSERT INTO conversations (user_id) VALUES ($1)"',
+        'Q = "INSERT INTO public.conversations(user_id) VALUES ($1)"',
+        "Q = \"UPDATE conversations SET metadata = metadata || jsonb_build_object('generated_title', $1)\"",
+    ],
+)
+def test_retired_writer_guard_detects_each_returning_form(source: str) -> None:
+    assert _retired_writer_sites(source)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'Q = "DELETE FROM conversations WHERE id = $1"',
+        "Q = \"UPDATE conversations SET messages = '[]' WHERE id = $1\"",
+        "Q = \"SELECT metadata->>'generated_title' FROM conversations\"",
+        'Q = "INSERT INTO conversations_archive (id) VALUES ($1)"',
+    ],
+)
+def test_retired_writer_guard_ignores_the_writers_that_remain(source: str) -> None:
+    assert _retired_writer_sites(source) == []
 
 
 def test_phase_one_runtime_mutations_cooperate_with_shared_protocol() -> None:
@@ -388,134 +449,3 @@ async def test_null_session_requires_stable_row_identity() -> None:
     await lock_conversation_session(conn, None, row_id=73)
     lock_call = conn.execute.await_args_list[-1]
     assert lock_call.args[2] == 73
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("consumer", ["route", "service"])
-@pytest.mark.parametrize("outcome", ["committed", "unknown", "cancelled"])
-async def test_direct_writer_publishes_memory_only_after_confirmed_outcome(
-    monkeypatch, consumer, outcome
-):
-    from contextlib import asynccontextmanager
-
-    from fastapi import HTTPException
-
-    from backend.app.routers import conversations
-    from backend.db.repositories import conversation_repository as protocol
-    from backend.services.common import cache as common_cache
-    from backend.services.misc import conversation_service
-
-    entered, allow_commit = asyncio.Event(), asyncio.Event()
-    memory, pool, conn = MagicMock(), MagicMock(), MagicMock()
-    get_memory, spawn = MagicMock(return_value=memory), MagicMock()
-    cancellation = asyncio.CancelledError("synthetic cancellation")
-    observed = []
-    original_transaction = protocol.conversation_write_transaction
-
-    @asynccontextmanager
-    async def observe_transaction(connection):
-        try:
-            async with original_transaction(connection):
-                yield
-        except ConversationCommitOutcomeUnknown as exc:
-            observed.append(exc)
-            raise
-
-    class Transaction:
-        async def __aenter__(self):
-            return None
-
-        async def __aexit__(self, exc_type, exc, tb):
-            if exc is not None:
-                return False
-            entered.set()
-            await allow_commit.wait()
-            if outcome == "unknown":
-                raise RuntimeError("synthetic commit response loss")
-            if outcome == "cancelled":
-                raise cancellation
-            return False
-
-    class Acquire:
-        async def __aenter__(self):
-            return conn
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    pool.acquire.return_value = Acquire()
-    conn.transaction.return_value = Transaction()
-    conn.fetchrow = AsyncMock(side_effect=[None, {"id": 123}])
-    conn.fetch, conn.fetchval, conn.execute = AsyncMock(), AsyncMock(), AsyncMock()
-    monkeypatch.setattr(protocol, "conversation_write_transaction", observe_transaction)
-    router_invalidate = AsyncMock(return_value=0)
-    common_invalidate = AsyncMock(return_value=0)
-    monkeypatch.setattr(conversations, "invalidate_cache", router_invalidate)
-    monkeypatch.setattr(common_cache, "_invalidate_cache", common_invalidate)
-    monkeypatch.setattr(conversations, "get_memory_cache", get_memory)
-    monkeypatch.setattr(conversation_service, "get_memory_cache", get_memory)
-    monkeypatch.setattr(conversations, "spawn", spawn)
-    messages = [{"role": "assistant", "content": "synthetic"}]
-    if consumer == "route":
-        pending = conversations.save_conversation(
-            conversations.SaveConversationRequest(
-                session_id="synthetic-session", messages=messages
-            ),
-            current_user={"email": "synthetic@example.invalid"},
-            db_pool=pool,
-        )
-    else:
-        pending = conversation_service.ConversationService(pool).save_conversation(
-            "synthetic@example.invalid", messages, session_id="synthetic-session"
-        )
-    task = asyncio.create_task(pending)
-    try:
-        await asyncio.wait_for(entered.wait(), timeout=1)
-        memory.add_message.assert_not_called()
-        memory.mark_synced.assert_not_called()
-        router_invalidate.assert_not_awaited()
-        common_invalidate.assert_not_awaited()
-        allow_commit.set()
-        if outcome == "committed":
-            assert (await task)["persistence_mode"] == "db"
-            memory.add_message.assert_called_once()
-        else:
-            expected = (
-                HTTPException
-                if consumer == "route" and outcome == "unknown"
-                else (
-                    ConversationCommitOutcomeUnknown
-                    if outcome == "unknown"
-                    else asyncio.CancelledError
-                )
-            )
-            with pytest.raises(expected) as raised:
-                await task
-            if expected is HTTPException:
-                assert raised.value.status_code == 503
-                assert raised.value.detail == {
-                    "code": "conversation_commit_unknown",
-                    "retryable": False,
-                    "message": "Save outcome could not be confirmed. Check history before retrying.",
-                }
-                assert not raised.value.headers
-            elif outcome == "unknown":
-                assert raised.value is observed[0]
-            else:
-                assert raised.value is cancellation
-            memory.add_message.assert_not_called()
-            memory.mark_synced.assert_not_called()
-            get_memory.assert_not_called()
-        assert router_invalidate.await_count == (
-            1 if consumer == "route" and outcome == "committed" else 0
-        )
-        common_invalidate.assert_not_awaited()
-        assert pool.acquire.call_count == 1
-        assert conn.transaction.call_count == 1
-        assert conn.fetchrow.await_count == 2
-        conn.fetch.assert_not_awaited()
-        conn.fetchval.assert_not_awaited()
-        spawn.assert_not_called()
-    finally:
-        allow_commit.set()
-        await asyncio.gather(task, return_exceptions=True)

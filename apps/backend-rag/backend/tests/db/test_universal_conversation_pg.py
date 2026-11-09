@@ -13,7 +13,6 @@ import subprocess
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
@@ -629,117 +628,17 @@ async def test_lost_commit_ack_is_indeterminate_and_not_retried(
 
 
 @pytest.mark.asyncio
-async def test_lost_commit_ack_plus_release_failure_keeps_one_route_write(
-    conversation_pool: asyncpg.Pool,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    from unittest.mock import AsyncMock
-
-    from backend.app.routers import conversations as conversations_router
-
-    marker = "COMPOUND_FAULT_DETAIL"
-    pool = _CompoundFaultPool(
-        conversation_pool,
-        RuntimeError("lost ack " + marker),
-        OSError("release failed " + marker),
-    )
-    invalidated: list[str] = []
-    router_invalidation = AsyncMock(return_value=0)
-    sleeps: list[int] = []
-    spawned: list[str] = []
-
-    class _MemoryProbe:
-        def __init__(self) -> None:
-            self.synced: list[tuple[str, int]] = []
-
-        def add_message(self, *_args: Any) -> None:
-            return None
-
-        def mark_synced(self, key: str, conversation_id: int) -> None:
-            self.synced.append((key, conversation_id))
-
-    memory = _MemoryProbe()
-
-    async def record_invalidation(pattern: str) -> int:
-        invalidated.append(pattern)
-        return 0
-
-    async def record_sleep(delay: int) -> None:
-        sleeps.append(delay)
-
-    def close_spawn(coro: Any, *, name: str) -> None:
-        spawned.append(name)
-        coro.close()
-
-    monkeypatch.setattr(conversations_router, "get_memory_cache", lambda: memory)
-    monkeypatch.setattr(conversations_router, "spawn", close_spawn)
-    monkeypatch.setattr(cache, "_invalidate_cache", record_invalidation)
-    monkeypatch.setattr(conversations_router, "invalidate_cache", router_invalidation)
-    monkeypatch.setattr(asyncio, "sleep", record_sleep)
-
-    with caplog.at_level("ERROR"), pytest.raises(HTTPException) as raised:
-        await conversations_router.save_conversation(
-            conversations_router.SaveConversationRequest(
-                session_id="compound-ack-release",
-                messages=[{"role": "user", "content": "committed once"}],
-            ),
-            current_user={"email": "synthetic-user@example.invalid"},
-            db_pool=pool,  # type: ignore[arg-type]
-        )
-
-    assert raised.value.status_code == 503
-    assert raised.value.detail["code"] == "conversation_commit_unknown"
-    assert raised.value.detail["retryable"] is False
-    assert pool.acquire_count == 1
-    assert sleeps == []
-    assert invalidated == []
-    router_invalidation.assert_not_awaited()
-    assert memory.synced == []
-    assert spawned == []
-    assert "ConversationCommitOutcomeUnknown" in caplog.text
-    assert "OSError" in caplog.text
-    assert marker not in caplog.text
-    async with conversation_pool.acquire() as conn:
-        assert (
-            await conn.fetchval(
-                "SELECT count(*) FROM conversations WHERE session_id = $1",
-                "compound-ack-release",
-            )
-            == 1
-        )
-
-
-@pytest.mark.asyncio
-async def test_commit_cancellation_plus_release_failure_keeps_one_route_write(
+async def test_commit_cancellation_plus_release_failure_keeps_one_append(
     conversation_pool: asyncpg.Pool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from unittest.mock import AsyncMock
-
-    from backend.app.routers import conversations as conversations_router
-
     pool = _CompoundFaultPool(
         conversation_pool,
         asyncio.CancelledError(),
         OSError("RELEASE_DETAIL"),
     )
     invalidated: list[str] = []
-    router_invalidation = AsyncMock(return_value=0)
     sleeps: list[int] = []
-    spawned: list[str] = []
-
-    class _MemoryProbe:
-        def __init__(self) -> None:
-            self.synced: list[tuple[str, int]] = []
-
-        def add_message(self, *_args: Any) -> None:
-            return None
-
-        def mark_synced(self, key: str, conversation_id: int) -> None:
-            self.synced.append((key, conversation_id))
-
-    memory = _MemoryProbe()
 
     async def record_invalidation(pattern: str) -> int:
         invalidated.append(pattern)
@@ -748,32 +647,19 @@ async def test_commit_cancellation_plus_release_failure_keeps_one_route_write(
     async def record_sleep(delay: int) -> None:
         sleeps.append(delay)
 
-    def close_spawn(coro: Any, *, name: str) -> None:
-        spawned.append(name)
-        coro.close()
-
-    monkeypatch.setattr(conversations_router, "get_memory_cache", lambda: memory)
-    monkeypatch.setattr(conversations_router, "spawn", close_spawn)
     monkeypatch.setattr(cache, "_invalidate_cache", record_invalidation)
-    monkeypatch.setattr(conversations_router, "invalidate_cache", router_invalidation)
     monkeypatch.setattr(asyncio, "sleep", record_sleep)
 
     with pytest.raises(asyncio.CancelledError):
-        await conversations_router.save_conversation(
-            conversations_router.SaveConversationRequest(
-                session_id="compound-cancel-release",
-                messages=[{"role": "user", "content": "committed once"}],
-            ),
-            current_user={"email": "synthetic-user@example.invalid"},
-            db_pool=pool,  # type: ignore[arg-type]
+        await ConversationRepository(pool).save_messages(  # type: ignore[arg-type]
+            "compound-cancel-release",
+            "synthetic-user",
+            [{"role": "user", "content": "committed once"}],
         )
 
     assert pool.acquire_count == 1
     assert sleeps == []
     assert invalidated == []
-    router_invalidation.assert_not_awaited()
-    assert memory.synced == []
-    assert spawned == []
     async with conversation_pool.acquire() as conn:
         assert (
             await conn.fetchval(
@@ -823,75 +709,6 @@ async def test_body_cancellation_plus_release_failure_remains_cancelled(
     assert pool.acquire_count == 1
     async with conversation_pool.acquire() as conn:
         assert await conn.fetchval("SELECT count(*) FROM conversations") == 0
-
-
-@pytest.mark.asyncio
-async def test_release_failure_after_commit_keeps_route_in_db_mode(
-    conversation_pool: asyncpg.Pool,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    from backend.app.routers import conversations as conversations_router
-
-    marker = "SYNTHETIC_RELEASE_DETAIL"
-    pool = _ReleaseFailsPool(conversation_pool, marker)
-
-    class _MemoryProbe:
-        def __init__(self) -> None:
-            self.synced: list[tuple[str, int]] = []
-
-        def add_message(self, *_args: Any) -> None:
-            return None
-
-        def mark_synced(self, key: str, conversation_id: int) -> None:
-            self.synced.append((key, conversation_id))
-
-    memory = _MemoryProbe()
-    spawned: list[str] = []
-
-    def close_spawn(coro: Any, *, name: str) -> None:
-        spawned.append(name)
-        coro.close()
-
-    monkeypatch.setattr(conversations_router, "get_memory_cache", lambda: memory)
-    monkeypatch.setattr(conversations_router, "spawn", close_spawn)
-    monkeypatch.setattr(
-        conversations_router.settings, "conversation_title_generation_enabled", True
-    )
-
-    with caplog.at_level("ERROR"):
-        response = await conversations_router.save_conversation(
-            conversations_router.SaveConversationRequest(
-                session_id="synthetic-release-route",
-                messages=[{"role": "user", "content": "safe"}],
-            ),
-            current_user={"email": "synthetic-user@example.invalid"},
-            db_pool=pool,  # type: ignore[arg-type]
-        )
-
-    assert response["persistence_mode"] == "db"
-    assert response["conversation_id"] > 0
-    assert pool.acquire_count == 1
-    assert memory.synced == [
-        (
-            conversations_router.user_session_key(
-                "synthetic-user@example.invalid",
-                "synthetic-release-route",
-            ),
-            response["conversation_id"],
-        )
-    ]
-    assert len(spawned) == 1
-    assert "RuntimeError" in caplog.text
-    assert marker not in caplog.text
-    async with conversation_pool.acquire() as conn:
-        assert (
-            await conn.fetchval(
-                "SELECT count(*) FROM conversations WHERE session_id = $1",
-                "synthetic-release-route",
-            )
-            == 1
-        )
 
 
 @pytest.mark.asyncio
@@ -1127,42 +944,6 @@ async def test_synthetic_backup_restore_preserves_post_change_records(
 
 
 @pytest.mark.asyncio
-async def test_title_scheduling_failure_leaves_exactly_one_committed_snapshot(conversation_pool):
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    from backend.app.routers import conversations
-
-    request = conversations.SaveConversationRequest(
-        session_id="synthetic-postcommit-physical",
-        messages=[{"role": "user", "content": "synthetic"}],
-    )
-    with (
-        patch.object(conversations, "get_memory_cache", return_value=MagicMock()),
-        patch.object(
-            conversations, "spawn", side_effect=RuntimeError("synthetic task factory failure")
-        ),
-        patch.object(conversations.settings, "conversation_title_generation_enabled", True),
-        patch.object(
-            conversations.metrics_collector, "record_cache_db_consistency_error"
-        ) as metric,
-        patch.object(cache, "_invalidate_cache", new_callable=AsyncMock),
-        patch.object(
-            conversations, "invalidate_cache", new_callable=AsyncMock
-        ) as router_invalidation,
-        patch("asyncio.sleep", new_callable=AsyncMock) as sleep,
-    ):
-        result = await conversations.save_conversation(
-            request, current_user={"email": "synthetic@example.invalid"}, db_pool=conversation_pool
-        )
-    assert result["persistence_mode"] == "db"
-    router_invalidation.assert_awaited_once_with("zantara:conversations:*")
-    async with conversation_pool.acquire() as connection:
-        assert await connection.fetchval("SELECT count(*) FROM conversations") == 1
-    metric.assert_not_called()
-    sleep.assert_not_awaited()
-
-
-@pytest.mark.asyncio
 async def test_actual_stage_one_whatsapp_and_repository_share_absent_session_lock(
     conversation_pool, monkeypatch
 ):
@@ -1203,70 +984,6 @@ async def test_actual_stage_one_whatsapp_and_repository_share_absent_session_loc
     }
     assert len(rows[0]["messages"]) == 4
     whatsapp_chat._persist_audit_messages.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("consumer", ["route", "service"])
-async def test_actual_snapshot_consumer_and_legacy_append_preserve_messages(
-    conversation_pool, monkeypatch, consumer
-):
-    from unittest.mock import MagicMock
-
-    from backend.app.routers import conversations
-    from backend.services.misc import conversation_service
-
-    monkeypatch.setattr(conversations, "get_memory_cache", MagicMock())
-    monkeypatch.setattr(conversation_service, "get_memory_cache", MagicMock())
-    messages = [{"role": "assistant", "content": "snapshot"}]
-    if consumer == "route":
-        snapshot = conversations.save_conversation(
-            conversations.SaveConversationRequest(
-                session_id="synthetic-snapshot", messages=messages
-            ),
-            current_user={"email": "synthetic-user"},
-            db_pool=conversation_pool,
-        )
-    else:
-        snapshot = conversation_service.ConversationService(conversation_pool).save_conversation(
-            "synthetic-user", messages, session_id="synthetic-snapshot"
-        )
-    result, _identifier = await asyncio.gather(
-        snapshot,
-        ConversationRepository(conversation_pool)._save_messages_locked(
-            "synthetic-snapshot", "synthetic-user", [{"role": "assistant", "content": "append"}]
-        ),
-    )
-    assert result["persistence_mode"] == "db"
-    async with conversation_pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT messages FROM conversations WHERE session_id=$1", "synthetic-snapshot"
-        )
-    assert sorted(m["content"] for row in rows for m in row["messages"]) == ["append", "snapshot"]
-
-
-@pytest.mark.asyncio
-async def test_actual_title_writer_supports_legacy_null_session(conversation_pool, monkeypatch):
-    from unittest.mock import AsyncMock
-
-    from backend.app.routers import conversations
-
-    async with conversation_pool.acquire() as conn:
-        identifier = await conn.fetchval(
-            "INSERT INTO conversations(user_id, session_id, messages, metadata) VALUES ('synthetic-user',NULL,'[]','{}') RETURNING id"
-        )
-    monkeypatch.setattr(
-        conversations, "generate_conversation_title", AsyncMock(return_value="synthetic title")
-    )
-    await conversations._generate_and_update_title(
-        identifier, "synthetic first message", conversation_pool
-    )
-    async with conversation_pool.acquire() as conn:
-        assert (
-            await conn.fetchval(
-                "SELECT metadata->>'generated_title' FROM conversations WHERE id=$1", identifier
-            )
-            == "synthetic title"
-        )
 
 
 @pytest.mark.asyncio

@@ -106,12 +106,8 @@ async def open_env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Callable[..
     async def ignore_cache(_pattern: str) -> int:
         return 0
 
-    def close_spawn(coro: Any, *, name: str = "") -> None:
-        coro.close()  # never run the LLM title task
-
     monkeypatch.setattr(cache, "_invalidate_cache", ignore_cache)
     monkeypatch.setattr(router_module, "invalidate_cache", ignore_cache)
-    monkeypatch.setattr(router_module, "spawn", close_spawn)
     monkeypatch.setattr(router_module, "get_memory_cache", lambda: MagicMock())
 
     await admin.execute(f'DROP ROLE IF EXISTS "{ROLE}"')
@@ -226,14 +222,6 @@ def user() -> dict[str, str]:
     return {"email": USER}
 
 
-def save_request(session: str, text: str = "synthetic hello") -> Any:
-    from backend.app.routers import conversations
-
-    return conversations.SaveConversationRequest(
-        session_id=session, messages=[{"role": "user", "content": text}]
-    )
-
-
 # ---------------------------------------------------------------------- sanity
 
 
@@ -254,70 +242,9 @@ async def test_instrument_role_is_limited_and_survives_pool_reuse(open_env) -> N
 
 
 # ------------------------------------------------------------------------ cases
-# Bounds are deliberately loose upper limits: the denied /save path sleeps 1s + 2s
-# between its three attempts on BOTH checkouts (measured ~3.0s), nothing else waits.
+# Bounds are deliberately loose upper limits; no denied path waits on a retry.
 
-SAVE_BOUND_MS = 6000
 FAST_BOUND_MS = 2000
-
-
-def assert_memory_fallback(out: dict[str, Any]) -> None:
-    assert out["exc"] == "-" and out["status"] == "200", out
-    assert out["mode"] == "memory_fallback"
-    assert out["body"]["success"] is True and out["body"]["conversation_id"] == 0
-    assert out["ms"] < SAVE_BOUND_MS
-
-
-@pytest.mark.asyncio
-async def test_denied_web_save_and_title(open_env) -> None:
-    from backend.app.routers import conversations
-
-    env = await open_env()
-    out = await observe(
-        "1_web_save_new",
-        lambda: conversations.save_conversation(
-            save_request("syn-web-new"), current_user=user(), db_pool=env.pool
-        ),
-        env,
-        "session_id=$1",
-        "syn-web-new",
-    )
-    assert_memory_fallback(out)  # chat stays up, no 5xx, no commit_unknown
-    assert out["rows"] == 0
-
-    existing = await env.seed("syn-web-existing")
-    out = await observe(
-        "2a_web_save_existing_row",
-        lambda: conversations.save_conversation(
-            save_request("syn-web-existing", "second"), current_user=user(), db_pool=env.pool
-        ),
-        env,
-        "session_id=$1",
-        "syn-web-existing",
-    )
-    assert_memory_fallback(out)  # /save always INSERTs, so an existing row does not help
-    assert out["rows"] == 1 and await env.message_count("id=$1", existing) == 1
-
-    async def fake_title(**_kw: Any) -> str:
-        return "synthetic title"
-
-    original = conversations.generate_conversation_title
-    conversations.generate_conversation_title = fake_title  # type: ignore[assignment]
-    try:
-        out = await observe(
-            "2b_title_update_existing_row",
-            lambda: conversations._generate_and_update_title(existing, "synthetic", env.pool),
-            env,
-            "id=$1",
-            existing,
-        )
-    finally:
-        conversations.generate_conversation_title = original  # type: ignore[assignment]
-    assert out["status"] == "return" and out["exc"] == "-" and out["ms"] < FAST_BOUND_MS
-    title = await env.admin.fetchval(
-        "SELECT metadata->>'generated_title' FROM conversations WHERE id=$1", existing
-    )
-    assert title == "synthetic title"  # the UPDATE privilege is enough
 
 
 @pytest.mark.asyncio
@@ -414,36 +341,15 @@ async def test_denied_clear_and_delete_are_503_and_remove_nothing(open_env) -> N
 
 
 @pytest.mark.asyncio
-async def test_denied_service_and_repository(open_env) -> None:
+async def test_denied_repository(open_env) -> None:
     from backend.db.repositories.conversation_repository import ConversationRepository
-    from backend.services.misc import conversation_service
 
     env = await open_env()
-    service = conversation_service.ConversationService(env.pool)
     repo = ConversationRepository(env.pool)
     msgs = [{"role": "user", "content": "synthetic"}]
 
-    out = await observe(
-        "5a_service_save_new",
-        lambda: service.save_conversation(USER, msgs, session_id="syn-svc-new"),
-        env,
-        "session_id=$1",
-        "syn-svc-new",
-    )
-    assert out["mode"] == "memory_fallback" and out["exc"] == "-" and out["rows"] == 0
-    assert out["ms"] < FAST_BOUND_MS  # the service has no retry loop
-    await env.seed("syn-svc-exist")
-    out = await observe(
-        "5b_service_save_existing_row",
-        lambda: service.save_conversation(USER, msgs, session_id="syn-svc-exist"),
-        env,
-        "session_id=$1",
-        "syn-svc-exist",
-    )
-    assert out["mode"] == "memory_fallback" and out["exc"] == "-" and out["rows"] == 1
-
-    # ConversationRepository has no save_conversation; save_messages is the writer the
-    # SSE chat stream (agentic_rag) calls, so it is the one that matters for users.
+    # save_messages is what both SSE routes in agentic_rag call (/stream, /workspace-stream),
+    # and the only conversation persistence left on the web path, so it matters for users.
     out = await observe(
         "5c_repo_save_messages_new",
         lambda: repo.save_messages("syn-repo-new", USER, msgs),
@@ -464,6 +370,34 @@ async def test_denied_service_and_repository(open_env) -> None:
     )
     assert isinstance(out["body"], int) and out["rows"] == 1
     assert await env.message_count("session_id=$1", "syn-repo-exist") == 2
+
+
+@pytest.mark.asyncio
+async def test_denied_concurrent_stream_saves_do_not_wedge_pool(open_env) -> None:
+    from backend.db.repositories.conversation_repository import ConversationRepository
+
+    env = await open_env()
+    repo = ConversationRepository(env.pool)
+    msgs = [{"role": "user", "content": "synthetic"}]
+    started = time.perf_counter()
+    results = await asyncio.gather(
+        *(
+            repo.save_messages(f"syn-conc-{i}", USER, msgs)
+            for i in range(12)  # more than the pool's max_size of 10
+        ),
+        return_exceptions=True,
+    )
+    wall = int((time.perf_counter() - started) * 1000)
+    assert results == [None] * 12, results
+    print(
+        f"CASE 7_concurrent_12_denied_stream_saves return None {wall} {await env.rows()} -",
+        flush=True,
+    )
+    assert wall < 12000  # denials overlap; they do not queue behind each other or hold connections
+    assert await env.rows() == 0
+    async with env.pool.acquire() as conn:
+        assert await conn.fetchval("SELECT 1") == 1
+        assert await conn.fetchval("SELECT current_user") == ROLE
 
 
 @pytest.mark.asyncio
@@ -507,51 +441,7 @@ async def test_denied_retention_paths(open_env, monkeypatch) -> None:
     assert out["body"] == 2 and await env.rows("user_id LIKE 'anonymized_%'") == 2  # UPDATE works
 
 
-@pytest.mark.asyncio
-async def test_denied_concurrent_saves_do_not_wedge_pool(open_env) -> None:
-    from backend.app.routers import conversations
-
-    env = await open_env()
-    started = time.perf_counter()
-    results = await asyncio.gather(
-        *(
-            conversations.save_conversation(
-                save_request(f"syn-conc-{i}"), current_user=user(), db_pool=env.pool
-            )
-            for i in range(12)  # more than the pool's max_size of 10
-        ),
-        return_exceptions=True,
-    )
-    wall = int((time.perf_counter() - started) * 1000)
-    assert all(isinstance(r, dict) for r in results), results
-    assert {r["persistence_mode"] for r in results} == {"memory_fallback"}
-    print(
-        f"CASE 7_concurrent_12_denied_saves 200 memory_fallback {wall} {await env.rows()} -",
-        flush=True,
-    )
-    assert wall < 12000  # retries overlap; they do not queue behind each other or hold connections
-    assert await env.rows() == 0
-    async with env.pool.acquire() as conn:
-        assert await conn.fetchval("SELECT 1") == 1
-        assert await conn.fetchval("SELECT current_user") == ROLE
-
-
 # ------------------------------------------------------------------------ guilt
-
-
-async def assert_saved_in_db(env: Env) -> None:
-    """The success-shaped checks the denied tests must NOT satisfy."""
-    from backend.app.routers import conversations
-
-    started = time.perf_counter()
-    result = await conversations.save_conversation(
-        save_request("syn-guilt"), current_user=user(), db_pool=env.pool
-    )
-    elapsed = (time.perf_counter() - started) * 1000
-    assert result["persistence_mode"] == "db"
-    assert result["conversation_id"] > 0
-    assert await env.rows("session_id=$1", "syn-guilt") == 1
-    assert elapsed < 1500, "a granted INSERT must not pay the retry sleeps"
 
 
 @pytest.mark.asyncio
@@ -562,16 +452,10 @@ async def test_guilt_with_insert_granted_every_insert_writer_reports_db(
 
     from backend.app.routers import whatsapp_chat
     from backend.db.repositories.conversation_repository import ConversationRepository
-    from backend.services.misc import conversation_service
 
     monkeypatch.setattr(whatsapp_chat, "_persist_audit_messages", AsyncMock())
     env = await open_env(("INSERT",))
-    await assert_saved_in_db(env)
     msgs = [{"role": "user", "content": "synthetic"}]
-    out = await conversation_service.ConversationService(env.pool).save_conversation(
-        USER, msgs, session_id="syn-guilt-svc"
-    )
-    assert out["persistence_mode"] == "db" and out["conversation_id"] > 0
     assert await ConversationRepository(env.pool).save_messages("syn-guilt-repo", USER, msgs) > 0
     await whatsapp_chat._save_conversation(
         db_pool=env.pool,
@@ -584,7 +468,7 @@ async def test_guilt_with_insert_granted_every_insert_writer_reports_db(
         sender_name="synthetic",
         phone="synthetic-phone",
     )
-    assert await env.rows("session_id IN ('syn-guilt-svc','syn-guilt-repo','wa_guilt')") == 3
+    assert await env.rows("session_id IN ('syn-guilt-repo','wa_guilt')") == 2
 
 
 @pytest.mark.asyncio
@@ -606,6 +490,13 @@ async def test_guilt_with_delete_granted_clear_and_delete_succeed(open_env) -> N
 @pytest.mark.asyncio
 async def test_guilt_control_the_db_checks_fail_under_the_denied_role(open_env) -> None:
     """The same success checks must FAIL when INSERT is missing, or they prove nothing."""
+    from backend.db.repositories.conversation_repository import ConversationRepository
+
     env = await open_env()
+    saved = await ConversationRepository(env.pool).save_messages(
+        "syn-guilt-ctl", USER, [{"role": "user", "content": "synthetic"}]
+    )
     with pytest.raises(AssertionError):
-        await assert_saved_in_db(env)
+        assert saved is not None and saved > 0
+    with pytest.raises(AssertionError):
+        assert await env.rows("session_id=$1", "syn-guilt-ctl") == 1

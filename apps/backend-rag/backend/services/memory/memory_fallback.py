@@ -54,12 +54,6 @@ class InMemoryConversationCache:
         messages = self._cache.get(conversation_id, [])
         return messages[-limit:] if limit else list(messages)
 
-    def get_conversation(
-        self, conversation_id: str, limit: int | None = None
-    ) -> list[dict[str, Any]]:
-        """Alias for get_messages used by ConversationService fallback."""
-        return self.get_messages(conversation_id, limit=limit or 0)
-
     def extract_and_save_entities(self, conversation_id: str, content: str) -> None:
         """Extract basic entities (name, city, budget) from message content."""
         content_lower = content.lower()

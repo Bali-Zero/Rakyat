@@ -768,7 +768,7 @@ async def initialize_crm_and_memory_services(
     db_pool: asyncpg.Pool | None,
 ) -> None:
     """
-    Initialize CRM and Memory services: MemoryService, ConversationService.
+    Initialize CRM and Memory services: MemoryService.
 
     Args:
         app: FastAPI application instance
@@ -783,14 +783,9 @@ async def initialize_crm_and_memory_services(
         from backend.services.memory.collective_memory_workflow import (
             create_collective_memory_workflow,
         )
-        from backend.services.misc.conversation_service import ConversationService
 
         app.state.memory_service = MemoryServicePostgres(settings.database_url)
         await app.state.memory_service.connect()
-
-        # Initialize Conversation Service
-        app.state.conversation_service = ConversationService(db_pool)
-        logger.info("✅ Conversation Service initialized")
 
         # Initialize Audit Logger and Metrics
         if db_pool:

@@ -95,7 +95,6 @@ async def pool(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[asyncpg.Pool]:
             monkeypatch.setattr(cache, "_invalidate_cache", ignore_cache)
             monkeypatch.setattr(conv_router, "invalidate_cache", ignore_cache)
             monkeypatch.setattr(crm_router, "invalidate_cache", ignore_cache)
-            monkeypatch.setattr(conv_router, "spawn", lambda coro, **kw: coro.close())
             monkeypatch.setattr(conv_router, "get_memory_cache", lambda: MagicMock())
             yield created
         finally:
@@ -188,74 +187,6 @@ async def test_agentic_history_by_session_is_bound_to_the_owner(pool) -> None:
 
 
 # --------------------------------------------------------------- /save row lock
-
-
-@pytest.mark.asyncio
-async def test_save_route_locks_only_the_callers_row(pool) -> None:
-    from backend.app.routers import conversations
-
-    alice_id = await seed(pool, ALICE, "s-route", ALICE_MSG)
-    # Hold Alice's row: a lookup that is not bound to the caller would block on it.
-    async with pool.acquire() as holder:
-        async with holder.transaction():
-            await holder.fetchrow("SELECT id FROM conversations WHERE id = $1 FOR UPDATE", alice_id)
-            request = conversations.SaveConversationRequest(session_id="s-route", messages=BOB_MSG)
-            out = await conversations.save_conversation(
-                request, current_user={"email": BOB}, db_pool=pool
-            )
-    assert out["success"] is True and out["conversation_id"] != alice_id
-    assert (
-        await pool.fetchval(
-            "SELECT user_id FROM conversations WHERE id = $1", out["conversation_id"]
-        )
-        == BOB
-    )
-    assert json.loads((await row_of(pool, alice_id))[1]) == ALICE_MSG
-
-
-@pytest.mark.asyncio
-async def test_save_route_lookup_sql_carries_the_owner() -> None:
-    from backend.app.routers import conversations
-
-    conn = MagicMock()
-    conn.fetchrow = AsyncMock(return_value={"id": 7})
-    cm = MagicMock()
-    cm.__aenter__ = AsyncMock(return_value=conn)
-    cm.__aexit__ = AsyncMock(return_value=False)
-    with (
-        patch.object(conversations, "conversation_write_connection", return_value=cm),
-        patch.object(conversations, "lock_conversation_session", new=AsyncMock()),
-        patch.object(conversations, "invalidate_cache", new=AsyncMock()),
-        patch.object(conversations, "spawn", lambda coro, **kw: coro.close()),
-        patch.object(conversations, "get_memory_cache", lambda: MagicMock()),
-    ):
-        await conversations.save_conversation(
-            conversations.SaveConversationRequest(session_id="s-x", messages=BOB_MSG),
-            current_user={"email": BOB},
-            db_pool=MagicMock(),
-        )
-    lookup_sql, *lookup_args = conn.fetchrow.await_args_list[0].args
-    assert "user_id = $2" in lookup_sql and lookup_args == ["s-x", BOB]
-
-
-@pytest.mark.asyncio
-async def test_conversation_service_lookup_sql_carries_the_owner() -> None:
-    from backend.services.misc import conversation_service as module
-
-    conn = MagicMock()
-    conn.fetchrow = AsyncMock(return_value={"id": 7})
-    cm = MagicMock()
-    cm.__aenter__ = AsyncMock(return_value=conn)
-    cm.__aexit__ = AsyncMock(return_value=False)
-    with (
-        patch.object(module, "conversation_write_connection", return_value=cm),
-        patch.object(module, "lock_conversation_session", new=AsyncMock()),
-    ):
-        await module.ConversationService(MagicMock()).save_conversation(
-            user_email=BOB, messages=BOB_MSG, session_id="s-x"
-        )
-    lookup_sql, *lookup_args = conn.fetchrow.await_args_list[0].args
-    assert "user_id = $2" in lookup_sql and lookup_args == ["s-x", BOB]
 
 
 # ------------------------------------------------------- CRM interaction import

@@ -464,14 +464,12 @@ class TestInitializeCRMAndMemoryServices:
     @pytest.mark.asyncio
     @patch("backend.services.monitoring.activity_logger.activity_logger")
     @patch("backend.services.memory.collective_memory_workflow.create_collective_memory_workflow")
-    @patch("backend.services.misc.conversation_service.ConversationService")
     @patch("backend.services.memory.MemoryServicePostgres")
     @patch("backend.app.setup.service_initializer.settings")
     async def test_initialize_crm_and_memory_services_success(
         self,
         mock_settings,
         mock_memory,
-        mock_conversation,
         mock_collective_memory,
         mock_activity,
     ):
@@ -485,9 +483,6 @@ class TestInitializeCRMAndMemoryServices:
         mock_memory_service.connect = AsyncMock()
         mock_memory.return_value = mock_memory_service
 
-        mock_conversation_service = MagicMock()
-        mock_conversation.return_value = mock_conversation_service
-
         mock_workflow = MagicMock()
         mock_collective_memory.return_value = mock_workflow
         mock_activity.initialize = AsyncMock()
@@ -498,20 +493,17 @@ class TestInitializeCRMAndMemoryServices:
         await initialize_crm_and_memory_services(app, mock_ai, mock_db_pool)
 
         assert app.state.memory_service is not None
-        assert app.state.conversation_service is not None
         assert app.state.collective_memory_workflow is not None
 
     @pytest.mark.asyncio
     @patch("backend.services.monitoring.activity_logger.activity_logger")
     @patch("backend.services.memory.collective_memory_workflow.create_collective_memory_workflow")
-    @patch("backend.services.misc.conversation_service.ConversationService")
     @patch("backend.services.memory.MemoryServicePostgres")
     @patch("backend.app.setup.service_initializer.settings")
     async def test_initialize_crm_and_memory_services_no_db_pool(
         self,
         mock_settings,
         mock_memory,
-        mock_conversation,
         mock_collective_memory,
         mock_activity,
     ):
@@ -525,7 +517,6 @@ class TestInitializeCRMAndMemoryServices:
         mock_memory_service.connect = AsyncMock()
         mock_memory.return_value = mock_memory_service
 
-        mock_conversation.return_value = MagicMock()
         mock_collective_memory.return_value = MagicMock()
         mock_activity.initialize = AsyncMock()
 
@@ -534,7 +525,6 @@ class TestInitializeCRMAndMemoryServices:
         await initialize_crm_and_memory_services(app, mock_ai, None)
 
         assert app.state.memory_service is not None
-        assert app.state.conversation_service is not None
 
 
 class TestInitializeIntelligentRouter:
