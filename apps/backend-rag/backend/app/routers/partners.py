@@ -46,6 +46,9 @@ from backend.services.crm.partners.service import (
     PartnersService,
     verify_partner_access_with_role,
 )
+from backend.services.crm.partners.sterilize import (
+    sterilize_service_type_for_partner as _sterilize_service_type_for_partner,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -240,32 +243,6 @@ def _sterilize_client_for_partner(full_name: str) -> str:
     if len(parts) == 1:
         return parts[0]
     return f"{parts[0]} {parts[-1][0]}."
-
-
-def _sterilize_service_type_for_partner(raw: str | None) -> str:
-    """Map a raw service_type to a generic category for partner visibility.
-
-    CRIT-6 / UU PDP data minimization: partner should know a referral converted,
-    not which specific visa class / investment threshold / tax service was
-    purchased. Revealing "KITAS E33G" tells a partner the client's residency
-    plan; "PT PMA Rp 10M" reveals investment scale.
-
-    Mapping is additive — add new keywords when new service types land.
-    """
-    if not raw:
-        return "Service"
-    rl = raw.lower()
-    if any(k in rl for k in ("kitas", "visa", "c1", "c2", "c7", "e33", "e23", "e28")):
-        return "Visa / KITAS service"
-    if "kitap" in rl:
-        return "KITAP service"
-    if any(k in rl for k in ("pma", "company", "pt ", "perusahaan")):
-        return "Company setup"
-    if any(k in rl for k in ("tax", "pajak", "pph", "npwp")):
-        return "Tax service"
-    if any(k in rl for k in ("property", "sertifikat")):
-        return "Property service"
-    return "Other service"
 
 
 def _partner_to_dict(p: Any) -> dict[str, Any]:

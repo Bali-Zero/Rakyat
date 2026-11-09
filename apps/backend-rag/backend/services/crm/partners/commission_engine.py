@@ -79,8 +79,9 @@ class CommissionEngine:
 
         Idempotency:
             key = f"accrual:{practice_id}:{completion_date.isoformat()}"
-            A second call for the same practice+completion_date is a no-op
-            (ON CONFLICT DO NOTHING via UNIQUE index on idempotency_key).
+            A second call for the same practice+completion_date is a no-op: the
+            unique index partner_commissions_idempotency_key_key rejects the insert
+            and the repository's UniqueViolationError is caught here (returns None).
         """
         # Step 1: fetch practice — must be completed AND paid.
         # One snapshot for eligibility and amounts. Base = actual_price, else
@@ -122,30 +123,48 @@ class CommissionEngine:
             )
             return None
 
-        # A referral exists but the practice has no base or no date: never write a zero
-        # commission, and never fall back to now() (it would make the key unstable).
-        if proc["base_price"] is None or proc["completion_date"] is None:
-            logger.warning(
-                "accrue_from_practice: practice %s has no commission base or completion date "
-                "- no commission written",
-                practice_id,
-            )
-            return None
-
         # Step 3: resolve partner for snapshot values.
         partner = await self.repo.get_partner(referral.partner_id)
         if partner is None:
             logger.warning("accrue_from_practice: partner %s not found", referral.partner_id)
             return None
 
-        # Step 4: compute amounts (all Decimal, no float).
-        base = Decimal(str(proc["base_price"]))
+        # Never fall back to now() for the date: it would make the idempotency key unstable.
+        if proc["completion_date"] is None:
+            logger.warning(
+                "accrue_from_practice: practice %s has no completion date - no commission written",
+                practice_id,
+            )
+            return None
 
+        # Step 4: compute amounts (all Decimal, no float).
+        # COALESCE(actual_price, quoted_price) is the owner's rule: a 0 actual_price does
+        # not fall back to quoted_price.
         if partner.default_commission_type == "percentage":
+            if proc["base_price"] is None or proc["base_price"] <= 0:
+                logger.warning(
+                    "accrue_from_practice: practice %s has no positive commission base "
+                    "- no commission written",
+                    practice_id,
+                )
+                return None
+            base = Decimal(str(proc["base_price"]))
             gross = base * partner.default_commission_value / Decimal("100")
         else:
-            # flat: commission_value is the fixed IDR amount regardless of base
+            # flat: commission_value is the fixed IDR amount regardless of base;
+            # base_amount_idr is NOT NULL, so an absent base is stored as 0.
+            base = (
+                Decimal(str(proc["base_price"])) if proc["base_price"] is not None else Decimal(0)
+            )
             gross = partner.default_commission_value
+
+        if gross <= 0:
+            logger.warning(
+                "accrue_from_practice: practice %s computes a non-positive commission "
+                "- no commission written",
+                practice_id,
+            )
+            return None
 
         # CRIT-7: Resolve rate from system_settings (not hardcoded dict).
         # has_npwp is True only if the npwp field is set AND non-empty.

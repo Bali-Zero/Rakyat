@@ -23,6 +23,7 @@ import httpx
 import jinja2
 
 from backend.services.crm.partners.repository import PartnersRepository
+from backend.services.crm.partners.sterilize import sterilize_service_type_for_partner
 from backend.services.pricing.pricing_service import get_pricing_service
 
 logger = logging.getLogger(__name__)
@@ -274,11 +275,7 @@ async def enqueue_commission_earned(
             c.practice_id,
         )
 
-    service_type = (
-        (proc["service_type"] if proc and proc["service_type"] else "service")
-        if proc
-        else "service"
-    )
+    service_type = sterilize_service_type_for_partner(proc["service_type"] if proc else None)
     raw_client_name = (proc["client_name"] or "") if proc else ""
     client_display = _sterilize(raw_client_name) if raw_client_name else "client"
 
@@ -454,11 +451,7 @@ async def send_commission_earned(conn: Any, commission_id: UUID) -> None:
             c.practice_id,
         )
 
-    service_type = (
-        (proc["service_type"] if proc and proc["service_type"] else "service")
-        if proc
-        else "service"
-    )
+    service_type = sterilize_service_type_for_partner(proc["service_type"] if proc else None)
     raw_client_name = (proc["client_name"] or "") if proc else ""
 
     # UU PDP: sterilize BEFORE template render, never inside template

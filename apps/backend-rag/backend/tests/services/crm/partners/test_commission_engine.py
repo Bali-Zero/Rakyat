@@ -73,7 +73,9 @@ async def test_accrue_is_idempotent_via_key(
     engine, partner_factory, practice_factory, referral_factory
 ):
     p = await partner_factory()
-    proc = await practice_factory(status="completed", payment_status="paid")
+    proc = await practice_factory(
+        actual_price=Decimal("10000000"), status="completed", payment_status="paid"
+    )
     await referral_factory(partner_id=p.id, practice_id=proc.id)
 
     await engine.accrue_from_practice(proc.id, p.id)
@@ -93,7 +95,9 @@ async def test_approve_blocked_before_cooling_off(
     engine, partner_factory, practice_factory, referral_factory, admin
 ):
     p = await partner_factory(tax_withholding_category="exempt")
-    proc = await practice_factory(status="completed", payment_status="paid")
+    proc = await practice_factory(
+        actual_price=Decimal("10000000"), status="completed", payment_status="paid"
+    )
     await referral_factory(partner_id=p.id, practice_id=proc.id)
 
     await engine.accrue_from_practice(proc.id, p.id)
@@ -113,7 +117,9 @@ async def test_approve_blocked_when_withholding_tbd(
     engine, partner_factory, practice_factory, referral_factory, admin, db_conn
 ):
     p = await partner_factory(tax_withholding_category="tbd")
-    proc = await practice_factory(status="completed", payment_status="paid")
+    proc = await practice_factory(
+        actual_price=Decimal("10000000"), status="completed", payment_status="paid"
+    )
     await referral_factory(partner_id=p.id, practice_id=proc.id)
 
     await engine.accrue_from_practice(proc.id, p.id)

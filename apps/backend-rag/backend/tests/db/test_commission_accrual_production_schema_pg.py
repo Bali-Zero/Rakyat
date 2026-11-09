@@ -32,6 +32,7 @@ pytestmark = pytest.mark.integration
 
 CONSUMER = "event_bus:practice.status_changed"
 COMPLETED_ON = datetime(2026, 10, 1, 8, 0, tzinfo=timezone.utc)
+RAW_TYPE = "KITAS E33G Synthetic"
 ABSENT = {"total_invoiced_idr", "completed_at", "service_type"}
 
 _SCHEMA_SQL = """
@@ -122,10 +123,7 @@ CREATE TABLE partners (
 CREATE TABLE partner_referrals (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     partner_id           UUID NOT NULL REFERENCES partners(id) ON DELETE RESTRICT,
-    -- NOTE: In production, partner_referrals.practice_id FK references practices(id) INTEGER.
-    -- FK omitted: PostgreSQL disallows FK constraints on permanent tables referencing temp tables.
-    -- The private practices table uses INTEGER (SERIAL) matching production. Type is enforced here.
-    practice_id          INTEGER NOT NULL,
+    practice_id          INTEGER NOT NULL REFERENCES practices(id) ON DELETE RESTRICT,
     share_percent        NUMERIC(5,2) NOT NULL DEFAULT 100.00
         CHECK (share_percent > 0 AND share_percent <= 100),
     referred_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -139,9 +137,7 @@ CREATE TABLE partner_commissions (
     id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     partner_id               UUID NOT NULL REFERENCES partners(id) ON DELETE RESTRICT,
     referral_id              UUID REFERENCES partner_referrals(id) ON DELETE RESTRICT,
-    -- practice_id is INTEGER matching production practices.id.
-    -- FK omitted: PostgreSQL disallows FK constraints on permanent tables referencing temp tables.
-    practice_id              INTEGER,
+    practice_id              INTEGER REFERENCES practices(id) ON DELETE RESTRICT,
     entry_type               TEXT NOT NULL
         CHECK (entry_type IN ('accrual','clawback','manual_adjustment')),
     related_commission_id    UUID REFERENCES partner_commissions(id) ON DELETE RESTRICT,
@@ -317,6 +313,12 @@ async def acked(pool: asyncpg.Pool, outbox_id: int) -> tuple[bool, str | None]:
     return row["consumed_at"] is not None, row["consumer_id"]
 
 
+def warned_about(caplog, practice_id: int) -> bool:
+    return any(
+        r.levelno == logging.WARNING and str(practice_id) in r.getMessage() for r in caplog.records
+    )
+
+
 async def commissions(pool: asyncpg.Pool) -> list[asyncpg.Record]:
     return await pool.fetch("SELECT * FROM partner_commissions")
 
@@ -398,11 +400,7 @@ async def test_referral_without_base_or_date_writes_nothing_warns_and_acks(
         await deliver(env, practice_id, outbox_id)
 
     assert await commissions(env.pool) == []
-    assert [
-        r
-        for r in caplog.records
-        if r.levelno == logging.WARNING and str(practice_id) in r.getMessage()
-    ]
+    assert warned_about(caplog, practice_id)
     assert await acked(env.pool, outbox_id) == (True, CONSUMER)
 
 
@@ -411,10 +409,71 @@ async def test_second_delivery_of_the_same_event_keeps_one_row(env: Env) -> None
     practice_id = await practice(env.pool, actual="10000000")
     await refer(env.pool, await partner(env.pool), practice_id)
 
-    for _ in range(2):
-        await deliver(env, practice_id, await outbox_row(env.pool, practice_id))
+    outbox_ids = [await outbox_row(env.pool, practice_id) for _ in range(2)]
+    for outbox_id in outbox_ids:
+        await deliver(env, practice_id, outbox_id)
 
     assert len(await commissions(env.pool)) == 1
+    for outbox_id in outbox_ids:
+        assert await acked(env.pool, outbox_id) == (True, CONSUMER)
+
+
+@pytest.mark.asyncio
+async def test_flat_commission_with_no_prices_is_written_with_a_zero_base(env: Env) -> None:
+    practice_id = await practice(env.pool)
+    await refer(env.pool, await partner(env.pool, kind="flat", value="500000"), practice_id)
+    outbox_id = await outbox_row(env.pool, practice_id)
+
+    await deliver(env, practice_id, outbox_id)
+
+    rows = await commissions(env.pool)
+    assert len(rows) == 1
+    assert rows[0]["base_amount_idr"] == Decimal("0")
+    assert rows[0]["gross_amount_idr"] == Decimal("500000")
+    assert await acked(env.pool, outbox_id) == (True, CONSUMER)
+
+
+@pytest.mark.asyncio
+async def test_flat_commission_without_a_completion_date_writes_nothing(env: Env, caplog) -> None:
+    practice_id = await practice(env.pool, completed_on=None)
+    await refer(env.pool, await partner(env.pool, kind="flat", value="500000"), practice_id)
+    outbox_id = await outbox_row(env.pool, practice_id)
+
+    with caplog.at_level(logging.WARNING):
+        await deliver(env, practice_id, outbox_id)
+
+    assert await commissions(env.pool) == []
+    assert warned_about(caplog, practice_id)
+    assert await acked(env.pool, outbox_id) == (True, CONSUMER)
+
+
+@pytest.mark.asyncio
+async def test_percentage_on_a_zero_actual_price_does_not_fall_back_or_write_zero(
+    env: Env, caplog
+) -> None:
+    practice_id = await practice(env.pool, actual="0", quoted="8000000")
+    await refer(env.pool, await partner(env.pool), practice_id)
+    outbox_id = await outbox_row(env.pool, practice_id)
+
+    with caplog.at_level(logging.WARNING):
+        await deliver(env, practice_id, outbox_id)
+
+    assert await commissions(env.pool) == []
+    assert warned_about(caplog, practice_id)
+    assert await acked(env.pool, outbox_id) == (True, CONSUMER)
+
+
+@pytest.mark.asyncio
+async def test_flat_commission_of_zero_writes_nothing(env: Env, caplog) -> None:
+    practice_id = await practice(env.pool, actual="10000000")
+    await refer(env.pool, await partner(env.pool, kind="flat", value="0"), practice_id)
+
+    with caplog.at_level(logging.WARNING):
+        async with env.pool.acquire() as conn:
+            assert await CommissionEngine(conn).accrue_from_practice(practice_id) is None
+
+    assert await commissions(env.pool) == []
+    assert warned_about(caplog, practice_id)
 
 
 @pytest.mark.asyncio
@@ -438,7 +497,7 @@ async def test_ineligible_practice_with_referral_writes_nothing(
 
 async def paid_commission_for(env: Env) -> tuple[UUID, UUID, int]:
     kitas = await env.pool.fetchval(
-        "INSERT INTO practice_types (code, name) VALUES ('synthetic_type', 'Synthetic Service') "
+        "INSERT INTO practice_types (code, name) VALUES ('synthetic_type', 'KITAS E33G Synthetic') "
         "RETURNING id"
     )
     client = await env.pool.fetchval(
@@ -465,33 +524,37 @@ async def paid_commission_for(env: Env) -> tuple[UUID, UUID, int]:
 
 
 @pytest.mark.asyncio
-async def test_enqueue_commission_earned_reads_the_practice_type_name(env: Env) -> None:
+async def test_enqueue_commission_earned_sends_the_category_not_the_type_name(env: Env) -> None:
     _, commission_id, _ = await paid_commission_for(env)
 
     async with env.pool.acquire() as conn:
         await partner_emails.enqueue_commission_earned(conn, commission_id)
 
-    body = await env.pool.fetchval(
-        "SELECT body_markdown FROM partner_email_outbox WHERE commission_id = $1", commission_id
+    row = await env.pool.fetchrow(
+        "SELECT subject, body_markdown FROM partner_email_outbox WHERE commission_id = $1",
+        commission_id,
     )
-    assert "Synthetic Service" in body
+    assert "Visa / KITAS service" in row["body_markdown"]
+    assert RAW_TYPE not in row["subject"] + row["body_markdown"]
 
 
 @pytest.mark.asyncio
-async def test_send_commission_earned_reads_the_practice_type_name(
+async def test_send_commission_earned_sends_the_category_not_the_type_name(
     env: Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _, commission_id, _ = await paid_commission_for(env)
     sent: list[str] = []
 
     async def fake_post(*, to: str, cc, subject: str, body: str) -> None:
-        sent.append(body)
+        sent.append(subject + body)
 
     monkeypatch.setattr(partner_emails, "_post_email", fake_post)
     async with env.pool.acquire() as conn:
         await partner_emails.send_commission_earned(conn, commission_id)
 
-    assert len(sent) == 1 and "Synthetic Service" in sent[0]
+    assert len(sent) == 1
+    assert "Visa / KITAS service" in sent[0]
+    assert RAW_TYPE not in sent[0]
 
 
 @pytest.mark.asyncio
@@ -509,4 +572,5 @@ async def test_me_referrals_query_runs_on_the_production_shape(env: Env) -> None
 
     assert len(rows) == 1
     assert rows[0]["client_display"] == "Mario R."
+    assert rows[0]["service_type"] == "Visa / KITAS service"
     assert rows[0]["process_status"] == "completed"
