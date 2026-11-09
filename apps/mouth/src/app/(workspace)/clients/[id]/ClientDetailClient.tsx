@@ -59,6 +59,7 @@ import {
 } from "../client-row-model";
 import styles from "./client-detail-desk.module.css";
 import { formatCardDate, isLive } from "./components/documentValidity";
+import { DeleteClientDialog } from "./components/DeleteClientDialog";
 import { useProfileDay, useWitaClock } from "./components/witaClock";
 import { FOCUS } from "@/components/workspace/r19/tokens";
 import { lkpmApi } from "@/lib/api/workspace/lkpm.api";
@@ -334,6 +335,7 @@ export function ClientDetailClient({
     };
   }, []);
   const [isDeletingClient, setIsDeletingClient] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   // R7a: the two controls the hidden Company/Tax tabs used to own for a
@@ -627,33 +629,27 @@ export function ClientDetailClient({
   );
 
   // Soft delete: status -> inactive + deleted_at set, so list queries drop
-  // the record (crm_clients.py:1838-1847). Nothing is destroyed, which is why
-  // one toast confirmation is the whole ceremony — the same one a process
-  // deletion gets (ProcessTab.tsx:315).
+  // the record (crm_clients.py:1838-1847). Nothing is destroyed, but the
+  // record leaves every list, so CRM-18 asks for two deliberate steps:
+  // DeleteClientDialog explains, then wants the client's name typed.
   const confirmDeleteClient = () => {
     if (isDeletingClient) return;
-    toast(
-      `Delete client "${client.full_name}"? This marks the record inactive; it is not erased.`,
-      {
-        action: {
-          label: "Delete",
-          onClick: async () => {
-            setIsDeletingClient(true);
-            try {
-              await api.crm.deleteClient(clientId, currentUserEmail);
-              toast.success("Client marked inactive");
-              router.push("/clients");
-            } catch (err) {
-              toast.error("Error", {
-                description: (err as Error).message,
-              });
-              setIsDeletingClient(false);
-            }
-          },
-        },
-        cancel: { label: "Cancel", onClick: () => toast.dismiss() },
-      },
-    );
+    setDeleteDialogOpen(true);
+  };
+  const deleteClient = async () => {
+    if (isDeletingClient) return;
+    setIsDeletingClient(true);
+    try {
+      await api.crm.deleteClient(clientId, currentUserEmail);
+      toast.success("Client marked inactive");
+      setDeleteDialogOpen(false);
+      router.push("/clients");
+    } catch (err) {
+      toast.error("Error", {
+        description: (err as Error).message,
+      });
+      setIsDeletingClient(false);
+    }
   };
   const clientMastheadSubtitle =
     activePractices.length > 0
@@ -698,6 +694,15 @@ export function ClientDetailClient({
 
   return (
     <div className="space-y-6">
+      {canDeleteClient ? (
+        <DeleteClientDialog
+          open={deleteDialogOpen}
+          clientName={client.full_name}
+          isDeleting={isDeletingClient}
+          onOpenChange={setDeleteDialogOpen}
+          onConfirm={deleteClient}
+        />
+      ) : null}
       {/* Back */}
       <Button
         variant="ghost"
