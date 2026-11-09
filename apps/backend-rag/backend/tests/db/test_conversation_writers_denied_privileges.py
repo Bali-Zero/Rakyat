@@ -348,8 +348,8 @@ async def test_denied_repository(open_env) -> None:
     repo = ConversationRepository(env.pool)
     msgs = [{"role": "user", "content": "synthetic"}]
 
-    # save_messages is the writer the SSE chat stream (agentic_rag) calls, and the only
-    # live conversation writer on the web path, so it is the one that matters for users.
+    # save_messages is what both SSE routes in agentic_rag call (/stream, /workspace-stream),
+    # and the only conversation persistence left on the web path, so it matters for users.
     out = await observe(
         "5c_repo_save_messages_new",
         lambda: repo.save_messages("syn-repo-new", USER, msgs),

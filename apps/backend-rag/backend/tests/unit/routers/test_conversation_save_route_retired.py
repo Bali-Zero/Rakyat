@@ -1,4 +1,4 @@
-"""The web `/save` route was retired: nothing calls it, and production persists through the stream."""
+"""The web `/save` route was retired: nothing calls it; `/stream` and `/workspace-stream` persist."""
 
 from backend.app.setup.app_factory import create_app
 from backend.app.setup.route_walk import iter_leaf_routes
