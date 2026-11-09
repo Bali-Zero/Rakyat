@@ -478,6 +478,40 @@ async def test_flat_commission_of_zero_writes_nothing(env: Env, caplog) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("kind", "value", "actual"),
+    [("percentage", "10", "0.01"), ("flat", "0.0001", "10000000")],
+    ids=["percentage-gross-0.001", "flat-0.0001"],
+)
+async def test_commission_that_stores_as_zero_is_not_written(
+    env: Env, caplog, kind: str, value: str, actual: str
+) -> None:
+    practice_id = await practice(env.pool, actual=actual)
+    await refer(env.pool, await partner(env.pool, kind=kind, value=value), practice_id)
+    outbox_id = await outbox_row(env.pool, practice_id)
+
+    with caplog.at_level(logging.WARNING):
+        await deliver(env, practice_id, outbox_id)
+
+    assert await commissions(env.pool) == []
+    assert warned_about(caplog, practice_id)
+    assert await acked(env.pool, outbox_id) == (True, CONSUMER)
+
+
+@pytest.mark.asyncio
+async def test_gross_that_rounds_to_one_cent_is_written_as_postgres_stores_it(env: Env) -> None:
+    practice_id = await practice(env.pool, actual="0.05")
+    await refer(env.pool, await partner(env.pool), practice_id)
+
+    async with env.pool.acquire() as conn:
+        assert await CommissionEngine(conn).accrue_from_practice(practice_id) is not None
+
+    rows = await commissions(env.pool)
+    assert len(rows) == 1
+    assert str(rows[0]["gross_amount_idr"]) == "0.01"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("status", "payment"),
     [("on_process", "paid"), ("completed", "pending")],
     ids=["not-completed", "not-paid"],

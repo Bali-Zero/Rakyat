@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
 
 import asyncpg
@@ -158,10 +158,12 @@ class CommissionEngine:
             )
             gross = partner.default_commission_value
 
-        if gross <= 0:
+        # The guard compares the gross as the ledger will store it: NUMERIC(16,2), rounded
+        # half away from zero like PostgreSQL. The amounts passed to the INSERT are unchanged.
+        if gross.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) <= 0:
             logger.warning(
-                "accrue_from_practice: practice %s computes a non-positive commission "
-                "- no commission written",
+                "accrue_from_practice: practice %s computes a commission that is zero at the "
+                "stored precision (2 decimals) - no commission written",
                 practice_id,
             )
             return None
