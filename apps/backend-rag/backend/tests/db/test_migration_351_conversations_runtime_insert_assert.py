@@ -77,7 +77,7 @@ def test_migration_351_checks_each_privilege_and_names_the_manual_statement() ->
     for priv in ("SELECT", "INSERT", "UPDATE"):
         assert f"has_table_privilege(runtime_role, object_reg, '{priv}')" in forward
         assert f"GRANT {priv} ON TABLE % TO backend_rag_v2" in forward
-    assert "has_sequence_privilege(runtime_role, sequence_reg, 'USAGE')" in forward
+    assert "has_sequence_privilege(runtime_role, sequence_reg, 'USAGE, UPDATE')" in forward
     assert "GRANT USAGE ON SEQUENCE % TO backend_rag_v2" in forward
     assert "WHEN insufficient_privilege THEN" in forward
 
@@ -114,6 +114,7 @@ class World:
         table: bool = True,
         privs: tuple[str, ...] = ("SELECT", "INSERT", "UPDATE"),
         seq_usage: bool = True,
+        seq_update: bool = False,
     ) -> None:
         c = self.conn
         if role:
@@ -133,6 +134,8 @@ class World:
             await c.execute(f'GRANT {", ".join(privs)} ON public.conversations TO "{RUNTIME_ROLE}"')
         if role and seq_usage:
             await c.execute(f'GRANT USAGE ON SEQUENCE public.conversations_id_seq TO "{RUNTIME_ROLE}"')
+        if role and seq_update:
+            await c.execute(f'GRANT UPDATE ON SEQUENCE public.conversations_id_seq TO "{RUNTIME_ROLE}"')
 
     async def has(self, priv: str) -> bool:
         return await self.conn.fetchval(
@@ -177,12 +180,14 @@ async def world() -> AsyncIterator[World]:
         pytest.skip(f"no admin Postgres: {exc}")
     scratch = f"t351_{uuid.uuid4().hex[:12]}"
     conn: asyncpg.Connection | None = None
+    built = False
     try:
         if not await admin.fetchval("SELECT rolsuper FROM pg_roles WHERE rolname = current_user"):
             pytest.skip("needs a superuser session to build a scratch database")
         if await admin.fetchval("SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)", RUNTIME_ROLE):
             pytest.skip(f"a real {RUNTIME_ROLE} exists in this cluster; roles are cluster-global")
         await admin.execute(f'CREATE DATABASE "{scratch}" TEMPLATE template0')
+        built = True
         conn = await asyncpg.connect(ADMIN_DSN, database=scratch)
         tx = conn.transaction()
         await tx.start()
@@ -196,9 +201,14 @@ async def world() -> AsyncIterator[World]:
         if conn is not None:
             await conn.close()
         await admin.execute(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)')
-        leftovers = await admin.fetchval(
-            "SELECT count(*) FROM pg_roles WHERE rolname = $1 OR rolname LIKE 't351_owner_%'",
-            RUNTIME_ROLE,
+        # Only what this fixture created: a skip leaves a pre-existing role alone.
+        leftovers = (
+            await admin.fetchval(
+                "SELECT count(*) FROM pg_roles WHERE rolname = $1 OR rolname LIKE 't351_owner_%'",
+                RUNTIME_ROLE,
+            )
+            if built
+            else 0
         )
         await admin.close()
         assert leftovers == 0, "scratch roles leaked into the cluster"
@@ -242,7 +252,7 @@ async def test_missing_sequence_usage_non_owner_raises(world: World) -> None:
     error = await world.apply(RUNTIME_ROLE)
 
     assert error is not None and error.sqlstate == "P0001"
-    assert "missing USAGE on sequence" in error.message
+    assert "missing USAGE or UPDATE on sequence" in error.message
     assert "GRANT USAGE ON SEQUENCE public.conversations_id_seq TO backend_rag_v2" in error.message
     assert await world.seq_usage() is False
 
@@ -405,3 +415,88 @@ async def test_audit_error_finding_makes_the_release_command_exit_1(
     monkeypatch.setattr(schema_audit, "run_audit", fake_run_audit)
 
     assert await schema_audit._amain(["--database-url", "postgres://fake"]) == 1
+
+
+# --------------------------------------- sequence: USAGE or UPDATE (nextval)
+
+_INSERT_SQL = "INSERT INTO public.conversations (user_id, session_id, messages) VALUES ($1, $2, '[]')"
+
+
+async def _insert_as_runtime(world: World) -> asyncpg.PostgresError | None:
+    """A real INSERT omitting id (so it calls nextval) under the runtime role."""
+    error: asyncpg.PostgresError | None = None
+    try:
+        async with world.conn.transaction():
+            await world.conn.execute(f'SET ROLE "{RUNTIME_ROLE}"')
+            await world.conn.execute(_INSERT_SQL, "synthetic-user", "synthetic-session")
+    except asyncpg.PostgresError as exc:
+        error = exc
+    finally:
+        await world.conn.execute("RESET ROLE")
+    return error
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_sequence_update_only_is_enough_for_migration_audit_and_a_real_insert(
+    world: World,
+) -> None:
+    await world.build(seq_usage=False, seq_update=True)
+    assert await world.has("INSERT") is True
+
+    assert await world.apply(RUNTIME_ROLE) is None
+    assert await _audit(world) == []
+    assert await _insert_as_runtime(world) is None
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_neither_usage_nor_update_fails_migration_audit_and_a_real_insert(
+    world: World,
+) -> None:
+    await world.build(seq_usage=False)
+
+    error = await world.apply(RUNTIME_ROLE)
+    assert error is not None and "missing USAGE or UPDATE on sequence" in error.message
+    [finding] = await _audit(world)
+    assert finding.code == "conversations_runtime_privilege_missing"
+    assert "USAGE or UPDATE on sequence" in finding.details["missing"][0]
+    insert_error = await _insert_as_runtime(world)
+    assert insert_error is not None and insert_error.sqlstate == "42501"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_required_set_is_sufficient_for_the_repository_statement_shape(
+    world: World,
+) -> None:
+    """SELECT ... FOR UPDATE, INSERT omitting id, UPDATE: the conversation_repository shape."""
+    await world.build()
+    assert await world.apply(RUNTIME_ROLE) is None
+    assert await _audit(world) == []
+    try:
+        async with world.conn.transaction():
+            await world.conn.execute(f'SET ROLE "{RUNTIME_ROLE}"')
+            await world.conn.execute(_INSERT_SQL, "synthetic-user", "synthetic-session")
+            row = await world.conn.fetchrow(
+                "SELECT id FROM public.conversations WHERE session_id = $1 FOR UPDATE",
+                "synthetic-session",
+            )
+            assert row is not None
+            await world.conn.execute(
+                "UPDATE public.conversations SET messages = '[1]' WHERE id = $1", row["id"]
+            )
+    finally:
+        await world.conn.execute("RESET ROLE")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_superuser_role_with_absent_table_still_raises_and_is_reported(world: World) -> None:
+    await world.build(table=False)
+    await world.conn.execute(f'ALTER ROLE "{RUNTIME_ROLE}" SUPERUSER')
+
+    error = await world.apply(None)
+    assert error is not None and "superuser" in error.message
+    [finding] = await _audit(world)
+    assert finding.code == "runtime_role_superuser"

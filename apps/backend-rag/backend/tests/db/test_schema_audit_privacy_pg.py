@@ -169,7 +169,7 @@ async def test_audit_consumer_privacy_on_real_postgres(
     elif json_output:
         report = json.loads(stdout)
         assert report["ok"] == (scenario == "clean")
-        assert len(report["checks_run"]) == 5
+        assert len(report["checks_run"]) == 6
         if scenario == "clean":
             assert report["findings"] == []
         else:

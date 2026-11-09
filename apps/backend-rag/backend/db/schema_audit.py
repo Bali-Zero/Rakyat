@@ -32,9 +32,10 @@ Checks implemented in this PR:
    duplicates after trim/lowercase normalization are a data-quality failure
    because PostgreSQL's legacy ``UNIQUE(email)`` constraint is case-sensitive.
 5. **Conversations runtime privileges.** ``backend_rag_v2`` must hold
-   SELECT, INSERT, UPDATE on ``public.conversations`` and USAGE on the sequence
-   behind its ``id``, and must not be a superuser (which would make the
-   privilege answers meaningless). Migration 351 asserts this once; this check
+   SELECT, INSERT, UPDATE on ``public.conversations`` and USAGE or UPDATE on the
+   sequence behind its ``id`` (``nextval()`` accepts either), and must not be a
+   superuser (which would make the privilege answers meaningless), even when the
+   table is absent. Migration 351 asserts this once; this check
    asserts it on every release, because ``release_command`` runs the audit each
    time. DELETE is neither required nor forbidden: it waits on the owner's
    decision on the semantics of ``/clear``, ``DELETE /{id}`` and admin cleanup.
@@ -757,7 +758,7 @@ SELECT
     CASE WHEN t.reg IS NOT NULL THEN has_table_privilege(r.rolname, t.reg, 'UPDATE') END AS can_update,
     s.name AS sequence_name,
     CASE WHEN to_regclass(s.name) IS NOT NULL
-         THEN has_sequence_privilege(r.rolname, to_regclass(s.name), 'USAGE') END AS can_use_sequence
+         THEN has_sequence_privilege(r.rolname, to_regclass(s.name), 'USAGE, UPDATE') END AS can_use_sequence
 FROM pg_roles r, t, s
 WHERE r.rolname = $1
 """
@@ -794,7 +795,7 @@ async def _check_conversations_runtime_privileges(pool: asyncpg.Pool) -> list[Fi
             missing.append(f"{priv} on {_CONVERSATIONS_TABLE}")
             grants.append(f"GRANT {priv} ON TABLE {_CONVERSATIONS_TABLE} TO {_CONVERSATIONS_RUNTIME_ROLE}")
     if row["sequence_name"] is not None and row["can_use_sequence"] is False:
-        missing.append(f"USAGE on sequence {row['sequence_name']}")
+        missing.append(f"USAGE or UPDATE on sequence {row['sequence_name']}")
         grants.append(
             f"GRANT USAGE ON SEQUENCE {row['sequence_name']} TO {_CONVERSATIONS_RUNTIME_ROLE}"
         )

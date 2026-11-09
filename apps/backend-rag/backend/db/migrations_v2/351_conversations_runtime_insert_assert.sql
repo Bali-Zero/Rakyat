@@ -12,7 +12,8 @@
 -- time and, on a database applied by the table owner, grants the privileges.
 --
 -- Asserted for backend_rag_v2: SELECT, INSERT, UPDATE on public.conversations
--- and USAGE on the sequence behind conversations.id.
+-- and USAGE or UPDATE on the sequence behind conversations.id (nextval() works
+-- with either; the manual statement offered is GRANT USAGE).
 --
 -- Who runs what:
 -- - In production release_command runs as session_user backend_rag_migrator with
@@ -25,13 +26,15 @@
 --
 -- A superuser role passes every has_*_privilege() call by definition, so the
 -- assertion would prove nothing; the migration raises if backend_rag_v2 is
--- superuser.
+-- superuser, even when public.conversations does not exist (that probe runs
+-- before the table guard).
 --
 -- DELETE is deliberately never granted here and is not asserted either: it
 -- waits on the owner's decision on the semantics of /clear, DELETE /{id} and
 -- admin cleanup.
 --
--- No-op when the role or the table does not exist (CI and dev databases).
+-- No-op when the role does not exist, or when the table does not exist and the
+-- role is not a superuser (CI and dev databases).
 
 DO $assert_block$
 DECLARE
@@ -90,7 +93,7 @@ BEGIN
     END IF;
 
     IF sequence_reg IS NOT NULL
-       AND NOT has_sequence_privilege(runtime_role, sequence_reg, 'USAGE') THEN
+       AND NOT has_sequence_privilege(runtime_role, sequence_reg, 'USAGE, UPDATE') THEN
         BEGIN
             EXECUTE format(
                 'GRANT USAGE ON SEQUENCE %s TO %I',
@@ -128,9 +131,9 @@ BEGIN
     END IF;
 
     IF sequence_reg IS NOT NULL
-       AND NOT has_sequence_privilege(runtime_role, sequence_reg, 'USAGE') THEN
+       AND NOT has_sequence_privilege(runtime_role, sequence_reg, 'USAGE, UPDATE') THEN
         RAISE EXCEPTION
-            'backend_rag_v2 is missing USAGE on sequence %; apply manual grant with an owner/admin role: GRANT USAGE ON SEQUENCE % TO backend_rag_v2',
+            'backend_rag_v2 is missing USAGE or UPDATE on sequence %; apply manual grant with an owner/admin role: GRANT USAGE ON SEQUENCE % TO backend_rag_v2',
             sequence_name,
             sequence_name;
     END IF;
