@@ -43,6 +43,9 @@ export function KBLISearch({
   const [isOpen, setIsOpen] = React.useState(false);
   const [activeIndex, setActiveIndex] = React.useState(-1);
   const [searchError, setSearchError] = React.useState<string | null>(null);
+  // Bumped by the Retry button: re-runs the same debounced search below for
+  // the same query, so a failed fetch never has to masquerade as "0 results".
+  const [retryNonce, setRetryNonce] = React.useState(0);
   const router = useRouter();
   const containerRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -130,7 +133,7 @@ export function KBLISearch({
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, retryNonce]);
 
   const handleSelect = (code: string) => {
     setIsOpen(false);
@@ -260,9 +263,25 @@ export function KBLISearch({
         <div className="absolute z-50 w-full mt-2 bg-[#1c1c1f]/95 backdrop-blur-2xl border border-[var(--border)] rounded-xl shadow-[0_16px_48px_rgba(0,0,0,0.5)] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
           {/* Error banner — shown above results when search fails */}
           {searchError && (
-            <div className="flex items-start gap-2 px-4 py-3 text-sm border-b border-amber-500/20 bg-amber-500/[0.08]">
+            <div
+              role="alert"
+              className="flex items-start gap-2 px-4 py-3 text-sm border-b border-amber-500/20 bg-amber-500/[0.08]"
+            >
               <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-400" />
-              <span className="text-amber-300">{searchError}</span>
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-amber-200">
+                  Couldn&apos;t load results
+                </div>
+                <div className="text-amber-300">{searchError}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRetryNonce((n) => n + 1)}
+                disabled={isLoading}
+                className="flex-shrink-0 px-3 py-1 rounded-md text-xs font-semibold text-amber-200 border border-amber-500/30 hover:bg-amber-500/[0.12] disabled:opacity-50"
+              >
+                Retry
+              </button>
             </div>
           )}
           <div
@@ -321,16 +340,20 @@ export function KBLISearch({
               </button>
             ))}
           </div>
-          <div className="p-3 bg-white/[0.02] border-t border-[var(--border)] flex justify-between items-center text-[11px] text-zinc-400 uppercase tracking-widest font-bold">
-            <span>{results.length} KBLI codes found</span>
-            <span className="flex items-center gap-1">
-              Press{" "}
-              <kbd className="bg-[var(--kbli-bg-surface)] px-1.5 py-0.5 rounded border border-[color:var(--border-strong)] text-zinc-400">
-                ENTER
-              </kbd>{" "}
-              to see all
-            </span>
-          </div>
+          {/* A failed search has no count to report: "0 KBLI codes found"
+              under the error banner would read as a real empty answer. */}
+          {!searchError && (
+            <div className="p-3 bg-white/[0.02] border-t border-[var(--border)] flex justify-between items-center text-[11px] text-zinc-400 uppercase tracking-widest font-bold">
+              <span>{results.length} KBLI codes found</span>
+              <span className="flex items-center gap-1">
+                Press{" "}
+                <kbd className="bg-[var(--kbli-bg-surface)] px-1.5 py-0.5 rounded border border-[color:var(--border-strong)] text-zinc-400">
+                  ENTER
+                </kbd>{" "}
+                to see all
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>
