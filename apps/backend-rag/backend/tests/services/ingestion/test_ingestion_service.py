@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from backend.app.models import TierLevel
 from backend.services.ingestion import ingestion_service as ingestion_module
 from backend.services.ingestion import legal_ingestion_service as legal_module
@@ -21,25 +23,27 @@ class FakeChunker:
 
 
 class FakeEmbedder:
-    def generate_embeddings(self, texts: list[str]) -> list[list[float]]:
+    # Mirrors EmbeddingsGenerator.generate_embeddings, which is async.
+    async def generate_embeddings(self, texts: list[str]) -> list[list[float]]:
         assert texts == ["chunk one", "chunk two"]
         return [[0.1], [0.2]]
 
 
 class FakeVectorDB:
-    def __init__(self) -> None:
+    def __init__(self, result: dict[str, object] | None = None) -> None:
         self.calls: list[dict[str, object]] = []
+        self.result = result if result is not None else {"success": True}
 
-    def upsert_documents(
+    # Mirrors QdrantClient.upsert_documents, which is async.
+    async def upsert_documents(
         self,
         *,
         chunks: list[str],
         embeddings: list[list[float]],
         metadatas: list[dict[str, object]],
-    ) -> None:
-        self.calls.append(
-            {"chunks": chunks, "embeddings": embeddings, "metadatas": metadatas}
-        )
+    ) -> dict[str, object]:
+        self.calls.append({"chunks": chunks, "embeddings": embeddings, "metadatas": metadatas})
+        return self.result
 
 
 class FakeClassifier:
@@ -94,6 +98,7 @@ async def test_ingest_book_runs_standard_pipeline(monkeypatch) -> None:
         "error": None,
     }
     assert service.vector_db.calls[0]["chunks"] == ["chunk one", "chunk two"]
+    assert service.vector_db.calls[0]["embeddings"] == [[0.1], [0.2]]
     assert service.vector_db.calls[0]["metadatas"][0]["status_vigensi"] == "berlaku"
     assert service.vector_db.calls[0]["metadatas"][0]["wilayah"] == "Bali"
 
@@ -132,3 +137,50 @@ def test_is_legal_document_returns_false_when_parsing_fails(monkeypatch) -> None
     monkeypatch.setattr(ingestion_module, "auto_detect_and_parse", raise_parse_error)
 
     assert service._is_legal_document("/tmp/bad.pdf") is False
+
+
+async def test_ingest_book_reports_failure_when_vector_store_rejects_upsert(monkeypatch) -> None:
+    # Review 12 Oct: QdrantClient.upsert_documents returns {"success": False}
+    # on failed batches instead of raising, so ingest_book must read the result.
+    service = build_service()
+    service.vector_db = FakeVectorDB(
+        result={
+            "success": False,
+            "error": "Some batches failed: ['HTTP 500']",
+            "documents_added": 0,
+        },
+    )
+    monkeypatch.setattr(service, "_is_legal_document", lambda _file_path: False)
+    monkeypatch.setattr(
+        ingestion_module,
+        "get_document_info",
+        lambda _file_path: {
+            "title": "Detected Title",
+            "author": "Detected Author",
+            "status": "berlaku",
+            "region": "Bali",
+        },
+    )
+    monkeypatch.setattr(
+        ingestion_module, "auto_detect_and_parse", lambda _file_path: "full parsed text"
+    )
+
+    result = await service.ingest_book("/tmp/book.pdf", language="id")
+
+    assert len(service.vector_db.calls) == 1
+    assert result["success"] is False
+    assert result["chunks_created"] == 0
+    assert "Some batches failed" in str(result["error"])
+
+
+def test_fakes_match_async_contract_of_real_dependencies() -> None:
+    # Guards against the fakes drifting back to sync: sync fakes let the missing
+    # awaits in ingest_book pass CI while the real pipeline returned
+    # success=False ("object of type 'coroutine' has no len()").
+    from backend.core.embeddings import EmbeddingsGenerator
+    from backend.core.qdrant_db import QdrantClient
+
+    assert inspect.iscoroutinefunction(EmbeddingsGenerator.generate_embeddings)
+    assert inspect.iscoroutinefunction(QdrantClient.upsert_documents)
+    assert inspect.iscoroutinefunction(FakeEmbedder.generate_embeddings)
+    assert inspect.iscoroutinefunction(FakeVectorDB.upsert_documents)
