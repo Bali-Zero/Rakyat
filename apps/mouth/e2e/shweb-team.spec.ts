@@ -119,7 +119,6 @@ test.describe("W2 — /team keeps the directory it had, plus the tool links", ()
       "Pak Heru",
       "Zainal Abidin",
       "Ruslana",
-      "Veronika",
       "Adit",
       "Ari",
       "Krisna",
@@ -232,13 +231,13 @@ test.describe("W2 — the R19 composition actually shipped", () => {
     );
   });
 
-  test("/v2 still renders the default: founders AND the four behind them", async ({
+  test("/v2 still renders the default: founders AND the three behind them", async ({
     page,
   }) => {
     await page.goto("/v2", { waitUntil: "domcontentloaded" });
 
     await expect(page.getByText("The team behind them")).toBeVisible();
-    for (const name of ["Ruslana", "Veronika", "Adit", "Angel"]) {
+    for (const name of ["Ruslana", "Adit", "Angel"]) {
       await expect(
         page.getByText(name).first(),
         `${name} missing on /v2`,
