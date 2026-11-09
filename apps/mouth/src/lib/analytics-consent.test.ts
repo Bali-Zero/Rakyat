@@ -41,6 +41,10 @@ describe("consentModeScript (COM-253)", () => {
     ["balizero.com", "/PORTAL/Documents"],
     ["balizero.com", "/portal/login"],
     ["kita.balizero.com", "/portal/magic"],
+    ["x.my.balizero.com", "/"],
+    ["localhost", "/portal"],
+    ["balizero.com", "/portal-guide"],
+    ["www.balizero.com", "/portalx"],
   ])("portal %s%s: default denied, no automatic grant", (host, path) => {
     const calls = run(host, path);
     expect(calls).toEqual([DEFAULT_DENIED]);
@@ -63,13 +67,30 @@ describe("consentModeScript (COM-253)", () => {
     ["kita.balizero.com", "/dashboard"],
     ["visa.balizero.com", "/"],
     ["nuzantara.co.id", "/"],
-    ["balizero.com", "/portal-guide"],
+    ["balizero.com", "/port"],
   ])(
     "marketing host %s%s: unchanged — default denied then grant",
     (host, path) => {
       expect(run(host, path)).toEqual([DEFAULT_DENIED, GRANT]);
     },
   );
+
+  it("fails closed when the host cannot be read", () => {
+    const win = {
+      location: {
+        get hostname(): string {
+          throw new Error("no host");
+        },
+        pathname: "/",
+      },
+      dataLayer: undefined as unknown[] | undefined,
+    };
+    new Function("window", consentModeScript)(win);
+    const calls = (win.dataLayer ?? []).map((a) =>
+      Array.from(a as ArrayLike<unknown>),
+    );
+    expect(calls).toEqual([DEFAULT_DENIED]);
+  });
 
   it("never grants ad_* storage on any host", () => {
     expect(consentModeScript).not.toMatch(/ad_[a-z_]+'\s*:\s*'granted'/);

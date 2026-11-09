@@ -4,7 +4,8 @@
  * Every category defaults to "denied". The marketing hosts keep their old
  * behaviour: an automatic `analytics_storage: granted` update right after the
  * default. The client portal never gets that automatic grant — not on
- * my.balizero.com (or any subdomain of it) and not on any /portal path.
+ * my.balizero.com (or any subdomain of it) and not on any path that starts
+ * with /portal (DAI-115: /portal, /portal/*, and /portal-anything alike).
  *
  * Fail-closed: the grant is sent only when the host is positively known to be a
  * non-portal Bali Zero host. An unknown, empty or unreadable host (preview URLs,
@@ -33,7 +34,7 @@ export const consentModeScript =
   "var h=String(l.hostname||'').toLowerCase().replace(/\\.$/,'');" +
   "var p=String(l.pathname||'').toLowerCase();" +
   "if(!h||P.indexOf(h)!==-1||/\\.my\\.balizero\\.com$/.test(h))return;" +
-  "if(p==='/portal'||p.indexOf('/portal/')===0)return;" +
+  "if(p.indexOf('/portal')===0)return;" +
   "var known=G.indexOf(h)!==-1||/^[a-z0-9-]+(\\.[a-z0-9-]+)*\\.balizero\\.com$/.test(h);" +
   "if(!known)return;" +
   "gtag('consent','update',{'analytics_storage':'granted'});" +
