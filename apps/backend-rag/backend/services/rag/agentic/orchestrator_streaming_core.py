@@ -15,10 +15,12 @@ Questo modulo coordina lo streaming usando tutti i moduli specializzati.
 import asyncio
 import logging
 import time
+import traceback
 from collections.abc import AsyncGenerator
 from typing import Any
 
 from backend.app.utils.tracing import add_span_event
+from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.rag.agentic.orchestrator_core import OrchestratorCore
 from backend.services.rag.agentic.orchestrator_streaming import OrchestratorStreamingManager
 from backend.services.rag.agentic.query_helpers import wrap_query_with_language_instruction
@@ -322,7 +324,7 @@ class OrchestratorStreamingCore:
                             f"🚀 [CRM Pre-call] Injected {len(crm_result)} bytes of CRM data into context"
                         )
                 except Exception as e:
-                    logger.warning("[CRM Pre-call] Failed: %s", e)
+                    logger.warning("[CRM Pre-call] Failed: %s", type(e).__name__)
 
         # 3. Prepare ReAct execution (common logic)
         # If CRM pre-call returned data, mark as trusted (skip evidence check)
@@ -359,13 +361,16 @@ class OrchestratorStreamingCore:
         )
 
         # 5. Execute ReAct loop streaming
-        logger.info("🧠 [Stream] Processing query with ReAct loop for user %s", user_id)
+        logger.info(
+            "🧠 [Stream] Processing query with ReAct loop for user %s",
+            redact_identifier_for_log(user_id),
+        )
 
         add_span_event(
             "react.stream.start",
             {
                 "model_tier": model_tier,
-                "user_id": user_id,
+                "user_id": redact_identifier_for_log(user_id),
             },
         )
 
@@ -512,11 +517,15 @@ class OrchestratorStreamingCore:
             except Exception as analytics_err:
                 logger.warning(
                     "Failed to log streaming query analytics (non-critical): %s",
-                    analytics_err,
+                    type(analytics_err).__name__,
                 )
 
         except Exception as e:
-            logger.error("❌ [Stream] ReAct loop failed: %s", e, exc_info=True)
+            logger.error(
+                "❌ [Stream] ReAct loop failed: %s\n%s",
+                type(e).__name__,
+                "".join(traceback.format_tb(e.__traceback__)),
+            )
             yield self.streaming_manager.create_error_event(
                 error_type="react_loop_error",
                 message=str(e),
@@ -532,7 +541,7 @@ class OrchestratorStreamingCore:
             except Exception as marker_error:
                 logger.warning(
                     "[FinalizationSpine] stream gap marker failed: %s",
-                    marker_error,
+                    type(marker_error).__name__,
                 )
 
     @staticmethod
