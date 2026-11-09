@@ -31,6 +31,13 @@ Checks implemented in this PR:
 4. **Client email uniqueness.** The CRM treats email as an identity key;
    duplicates after trim/lowercase normalization are a data-quality failure
    because PostgreSQL's legacy ``UNIQUE(email)`` constraint is case-sensitive.
+5. **Conversations runtime privileges.** ``backend_rag_v2`` must hold
+   SELECT, INSERT, UPDATE on ``public.conversations`` and USAGE on the sequence
+   behind its ``id``, and must not be a superuser (which would make the
+   privilege answers meaningless). Migration 351 asserts this once; this check
+   asserts it on every release, because ``release_command`` runs the audit each
+   time. DELETE is neither required nor forbidden: it waits on the owner's
+   decision on the semantics of ``/clear``, ``DELETE /{id}`` and admin cleanup.
 
 The audit deliberately does NOT:
 
@@ -727,6 +734,86 @@ async def _check_client_email_uniqueness(pool: asyncpg.Pool) -> list[Finding]:
     ]
 
 
+_CONVERSATIONS_RUNTIME_ROLE = "backend_rag_v2"
+_CONVERSATIONS_TABLE = "public.conversations"
+_CONVERSATIONS_REQUIRED_PRIVILEGES = ("SELECT", "INSERT", "UPDATE")
+
+# One round trip. The CASE guards keep has_*_privilege() away from a missing
+# table, and pg_get_serial_sequence() away from a table without an ``id`` column
+# (it raises there instead of returning NULL).
+_CONVERSATIONS_PRIVILEGES_SQL = """
+WITH t AS (SELECT to_regclass('public.conversations') AS reg),
+s AS (
+    SELECT CASE WHEN EXISTS (
+        SELECT 1 FROM pg_attribute a, t
+        WHERE a.attrelid = t.reg AND a.attname = 'id' AND NOT a.attisdropped
+    ) THEN pg_get_serial_sequence('public.conversations', 'id') END AS name
+)
+SELECT
+    r.rolsuper AS is_superuser,
+    t.reg IS NOT NULL AS table_exists,
+    CASE WHEN t.reg IS NOT NULL THEN has_table_privilege(r.rolname, t.reg, 'SELECT') END AS can_select,
+    CASE WHEN t.reg IS NOT NULL THEN has_table_privilege(r.rolname, t.reg, 'INSERT') END AS can_insert,
+    CASE WHEN t.reg IS NOT NULL THEN has_table_privilege(r.rolname, t.reg, 'UPDATE') END AS can_update,
+    s.name AS sequence_name,
+    CASE WHEN to_regclass(s.name) IS NOT NULL
+         THEN has_sequence_privilege(r.rolname, to_regclass(s.name), 'USAGE') END AS can_use_sequence
+FROM pg_roles r, t, s
+WHERE r.rolname = $1
+"""
+
+
+async def _check_conversations_runtime_privileges(pool: asyncpg.Pool) -> list[Finding]:
+    """Fail when the runtime role cannot persist chat (it failed silently once)."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(_CONVERSATIONS_PRIVILEGES_SQL, _CONVERSATIONS_RUNTIME_ROLE)
+
+    if row is None:
+        return []
+    if row["is_superuser"]:
+        return [
+            Finding(
+                code="runtime_role_superuser",
+                severity="error",
+                message=(
+                    f"{_CONVERSATIONS_RUNTIME_ROLE} is a superuser, so its privilege "
+                    "checks prove nothing; demote it with an admin role"
+                ),
+                details={
+                    "manual_grants": [f"ALTER ROLE {_CONVERSATIONS_RUNTIME_ROLE} NOSUPERUSER"],
+                },
+            ),
+        ]
+    if not row["table_exists"]:
+        return []
+
+    missing: list[str] = []
+    grants: list[str] = []
+    for priv in _CONVERSATIONS_REQUIRED_PRIVILEGES:
+        if not row[f"can_{priv.lower()}"]:
+            missing.append(f"{priv} on {_CONVERSATIONS_TABLE}")
+            grants.append(f"GRANT {priv} ON TABLE {_CONVERSATIONS_TABLE} TO {_CONVERSATIONS_RUNTIME_ROLE}")
+    if row["sequence_name"] is not None and row["can_use_sequence"] is False:
+        missing.append(f"USAGE on sequence {row['sequence_name']}")
+        grants.append(
+            f"GRANT USAGE ON SEQUENCE {row['sequence_name']} TO {_CONVERSATIONS_RUNTIME_ROLE}"
+        )
+
+    if not missing:
+        return []
+    return [
+        Finding(
+            code="conversations_runtime_privilege_missing",
+            severity="error",
+            message=(
+                f"{_CONVERSATIONS_RUNTIME_ROLE} is missing {', '.join(missing)}; "
+                "chat persistence fails until an owner/admin role grants it"
+            ),
+            details={"missing": missing, "manual_grants": grants},
+        ),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -759,6 +846,7 @@ async def run_audit(
         "tracking_divergence",
         "required_tables",
         "client_email_uniqueness",
+        "conversations_runtime_privileges",
     ]
     findings: list[Finding] = []
     try:
@@ -767,6 +855,7 @@ async def run_audit(
         findings.extend(await _check_tracking_divergence(manager.pool))
         findings.extend(await _check_required_tables(manager.pool, required_tables))
         findings.extend(await _check_client_email_uniqueness(manager.pool))
+        findings.extend(await _check_conversations_runtime_privileges(manager.pool))
     finally:
         await manager.close()
 

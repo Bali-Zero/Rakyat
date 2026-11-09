@@ -1,14 +1,15 @@
 -- 351_conversations_runtime_insert_assert.sql
--- Asserts that the runtime role holds what chat persistence needs on
--- public.conversations, so a lost privilege fails the deploy instead of failing
--- silently at request time.
+-- Asserts, at apply time only, that the runtime role holds what chat persistence
+-- needs on public.conversations. A migration runs once: the every-release
+-- assertion is the conversations_runtime_privileges check in
+-- backend/db/schema_audit.py, run by release_command on each deploy.
 --
 -- Why: backend_rag_v2 relied on the superuser bypass for INSERT on conversations.
 -- The W38 NOSUPERUSER demotion removed the bypass without any error, and no
 -- migration granted or asserted the privilege, so chat persistence failed quietly:
 -- measured absent on 2026-08-08 and again on 2026-11-09, until the owner granted
--- INSERT by hand that day. This migration makes a future loss, or a rebuilt
--- environment, fail loudly.
+-- INSERT by hand that day. This migration makes a rebuilt environment fail loudly at apply
+-- time and, on a database applied by the table owner, grants the privileges.
 --
 -- Asserted for backend_rag_v2: SELECT, INSERT, UPDATE on public.conversations
 -- and USAGE on the sequence behind conversations.id.

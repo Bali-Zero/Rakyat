@@ -22,6 +22,7 @@ import pytest
 import pytest_asyncio
 
 from backend.db.migration_base import split_migration_sql
+from backend.db import schema_audit
 from backend.db.migration_manager import _extract_rollback_sql
 
 MIGRATION_FILE = (
@@ -287,3 +288,120 @@ async def test_absent_table_is_a_noop(world: World) -> None:
     await world.build(table=False)
 
     assert await world.apply(RUNTIME_ROLE) is None
+
+
+# ----------------------------------------------- schema_audit (every release)
+
+
+class _Acquire:
+    def __init__(self, conn: asyncpg.Connection) -> None:
+        self.conn = conn
+
+    async def __aenter__(self) -> asyncpg.Connection:
+        return self.conn
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+
+class _Pool:
+    """Minimal pool whose acquire() yields the uncommitted scratch connection."""
+
+    def __init__(self, conn: asyncpg.Connection) -> None:
+        self.conn = conn
+
+    def acquire(self) -> _Acquire:
+        return _Acquire(self.conn)
+
+
+async def _audit(world: World) -> list[schema_audit.Finding]:
+    return await schema_audit._check_conversations_runtime_privileges(_Pool(world.conn))
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_audit_all_privileges_present_has_no_finding(world: World) -> None:
+    await world.build()
+    assert await _audit(world) == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_audit_missing_insert_is_an_error_naming_insert(world: World) -> None:
+    await world.build(privs=("SELECT", "UPDATE"))
+
+    [finding] = await _audit(world)
+
+    assert finding.severity == "error"
+    assert finding.code == "conversations_runtime_privilege_missing"
+    assert finding.details["missing"] == ["INSERT on public.conversations"]
+    assert finding.details["manual_grants"] == [
+        "GRANT INSERT ON TABLE public.conversations TO backend_rag_v2"
+    ]
+    assert "INSERT" in finding.message
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_audit_missing_sequence_usage_is_an_error(world: World) -> None:
+    await world.build(seq_usage=False)
+
+    [finding] = await _audit(world)
+
+    assert finding.code == "conversations_runtime_privilege_missing"
+    assert finding.details["manual_grants"] == [
+        "GRANT USAGE ON SEQUENCE public.conversations_id_seq TO backend_rag_v2"
+    ]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_audit_superuser_role_is_an_error(world: World) -> None:
+    await world.build()
+    await world.conn.execute(f'ALTER ROLE "{RUNTIME_ROLE}" SUPERUSER')
+
+    [finding] = await _audit(world)
+
+    assert finding.code == "runtime_role_superuser"
+    assert finding.severity == "error"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_audit_absent_role_and_absent_table_have_no_finding(world: World) -> None:
+    await world.build(role=False)
+    assert await _audit(world) == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_audit_absent_table_has_no_finding(world: World) -> None:
+    await world.build(table=False)
+    assert await _audit(world) == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_audit_delete_is_neither_required_nor_forbidden(world: World) -> None:
+    await world.build(privs=("SELECT", "INSERT", "UPDATE", "DELETE"))
+    assert await _audit(world) == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_audit_error_finding_makes_the_release_command_exit_1(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real finding from the real check, fed through the real `_amain` (run_audit
+    is the only stub: it needs a live MigrationManager)."""
+    await world.build(privs=("SELECT", "UPDATE"))
+    findings = await _audit(world)
+
+    async def fake_run_audit(**_kw: object) -> schema_audit.AuditReport:
+        return schema_audit.AuditReport(
+            checks_run=["conversations_runtime_privileges"], findings=findings
+        )
+
+    monkeypatch.setattr(schema_audit, "run_audit", fake_run_audit)
+
+    assert await schema_audit._amain(["--database-url", "postgres://fake"]) == 1
