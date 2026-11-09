@@ -157,6 +157,9 @@ describe("TaxTab tax-consultant options", () => {
     await waitFor(() => expect(select.value).toBe(legacy));
     const selected = select.options[select.selectedIndex];
     expect(selected.textContent).toBe("Former staff");
+    expect(selected.disabled).toBe(true);
+    await userEvent.selectOptions(select, legacy);
+    expect(mockUpdateClient).not.toHaveBeenCalled();
     expect(select.options).toHaveLength(CONSULTANTS.length + 2);
   });
 });

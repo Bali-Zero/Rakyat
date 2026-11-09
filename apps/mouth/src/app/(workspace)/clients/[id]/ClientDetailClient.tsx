@@ -362,12 +362,13 @@ export function ClientDetailClient({
   }, [clientId]);
   const isTaxClient = Boolean(taxConsultantValue) || lkpmReports > 0;
   // The team block names people by FIRST NAME only.
+  const offeredConsultant = taxConsultants.find(
+    (c) => c.value === taxConsultantValue,
+  );
   const taxConsultantLabel = taxConsultantValue
-    ? firstName(
-        taxConsultants.find((c) => c.value === taxConsultantValue)?.label ??
-          legacyConsultantLabel(taxConsultantValue),
-        taxConsultantValue,
-      )
+    ? offeredConsultant
+      ? firstName(offeredConsultant.label, taxConsultantValue)
+      : legacyConsultantLabel(taxConsultantValue)
     : "";
 
   const saveTaxConsultant = async (newValue: string) => {
@@ -958,7 +959,7 @@ export function ClientDetailClient({
                         !taxConsultants.some(
                           (c) => c.value === taxConsultantValue,
                         ) && (
-                          <option value={taxConsultantValue}>
+                          <option value={taxConsultantValue} disabled>
                             {taxConsultantLabel}
                           </option>
                         )}
@@ -1152,7 +1153,7 @@ export function ClientDetailClient({
                           !taxConsultants.some(
                             (c) => c.value === taxConsultantValue,
                           ) && (
-                            <option value={taxConsultantValue}>
+                            <option value={taxConsultantValue} disabled>
                               {legacyConsultantLabel(taxConsultantValue)}
                             </option>
                           )}
