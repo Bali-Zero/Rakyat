@@ -10,7 +10,7 @@ import { mintToken } from "../_server/access";
 import { KEY } from "../_server/keys";
 import { POST } from "@/app/api/tax-interview/submit/route";
 
-const SECRET = "test-secret-not-real";
+const SECRET = "test-secret-not-real"; // pragma: allowlist secret
 const ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
 const NAME = "Calon Rahasia Uji";
 const perfect = () => ({

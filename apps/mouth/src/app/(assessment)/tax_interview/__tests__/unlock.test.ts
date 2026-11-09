@@ -16,6 +16,10 @@ const raw = (body: string, ip = "9.9.9.9") =>
     body,
   });
 const req = (pin: unknown, ip?: string) => raw(JSON.stringify({ pin }), ip);
+/** True when the cookie value has a dot-separated field equal to the PIN. */
+const cookiePayloadHasPin = (value: string): boolean =>
+  value.split(".").some((part) => part === "666");
+
 const cookieValue = (res: Response) =>
   /bz_tax_iv=([^;]*)/.exec(res.headers.get("set-cookie") ?? "")?.[1];
 
@@ -49,9 +53,17 @@ describe("POST /api/tax-interview/unlock", () => {
     expect(header).toContain("Max-Age=43200");
     expect(header).toContain("Path=/");
     expect(header).not.toMatch(/Domain=/i);
-    expect(header).not.toContain("666");
+    // The cookie carries an expiry and a signature, never the PIN: assert on the
+    // decoded payload, not on a substring that a random signature could contain.
+    expect(cookiePayloadHasPin(cookieValue(res)!)).toBe(false);
     expect(access.verifyToken(cookieValue(res))).toBe(true);
     expect(res.headers.get("cache-control")).toContain("no-store");
+  });
+
+  it("guilt control: the PIN check does fire on a cookie that carries the PIN", () => {
+    expect(cookiePayloadHasPin("1700000000000.666")).toBe(true);
+    expect(cookiePayloadHasPin("666.abc")).toBe(true);
+    expect(cookiePayloadHasPin("1700000000000.abc666def")).toBe(false);
   });
 
   it("rejects tampered, expired, foreign-key and malformed cookies", async () => {

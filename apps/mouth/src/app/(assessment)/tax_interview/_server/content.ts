@@ -586,7 +586,7 @@ export const CONTENT: Content = {
       no: 8,
       storyTime: "16.50",
       minutes: 6,
-      title: "Zona grigia",
+      title: "Area abu-abu",
       messages: [
         {
           from: "lestari",
