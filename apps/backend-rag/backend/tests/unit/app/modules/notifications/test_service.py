@@ -194,11 +194,11 @@ class TestNotificationService:
         assert "leader@example.com" in call_kwargs["bcc"]
 
     @pytest.mark.asyncio
-    async def test_process_alert_team_leader_tax_is_delivered_to_nakhoda(
+    async def test_process_alert_team_leader_tax_is_delivered_to_the_tax_supervisor(
         self, service, mock_db_pool
     ):
-        """Veronika reads nakhoda@ only (Zero 2026-10-20/21): when the team leader is
-        tax@, the courtesy bcc is delivered to nakhoda@ instead, still hidden from the client."""
+        """Reorganisation 2026-11-09: when the team leader is tax@, the courtesy bcc is
+        delivered to angel.tax@ (the Tax Supervisor), still hidden from the client."""
         conn = mock_db_pool.acquire.return_value.__aenter__.return_value
         conn.fetchrow.return_value = {"email": "tax@balizero.com"}
 
@@ -216,7 +216,7 @@ class TestNotificationService:
         await service.process_alert(alert, "test@example.com")
 
         call_kwargs = service.email_provider.send_email.call_args.kwargs
-        assert call_kwargs["bcc"] == ["nakhoda@balizero.com"]
+        assert call_kwargs["bcc"] == ["angel.tax@balizero.com"]
         assert call_kwargs.get("cc") is None
 
     @pytest.mark.asyncio

@@ -1,12 +1,13 @@
 """Recipient redirects: an identity that must be DELIVERED to another mailbox.
 
-Why this exists (Zero, 2026-10-20/21): Veronika keeps ``tax@balizero.com`` as her
-login identity and the address every routing table points at (HR approver,
-attendance manager, practice view), but reads mail ONLY on
-``nakhoda@balizero.com``; ``veronika@`` and ``veronika.tax@`` are dead
-mailboxes that older notifiers still name. Rather than touching every
-notifier, the rewrite happens once where mail leaves the building: the
-``/api/notifications/send-email`` handler and the passport/visa alert bcc.
+Why this exists (reorganisation 2026-11-09): the retired Tax Manager addresses
+(``tax@``, ``veronika@``, ``veronika.tax@``) and the mailbox they were read on
+(``nakhoda@``) are no longer staffed. Every routing table still names ``tax@``,
+so system mail addressed to any of them is delivered to the Tax Supervisor
+(``angel.tax@balizero.com``), who takes over the ``tax@`` address. Rather than
+touching every notifier, the rewrite happens once where mail leaves the
+building: the ``/api/notifications/send-email`` handler and the passport/visa
+alert bcc.
 The redirected address takes the SAME seat (to stays to, cc stays cc, bcc
 stays bcc), so a credential delivery keeps exactly one recipient and a hidden
 courtesy copy stays hidden. Duplicates collapse: two identities of the same
@@ -16,9 +17,10 @@ person become one mailbox.
 from __future__ import annotations
 
 RECIPIENT_REDIRECTS: dict[str, str] = {
-    "tax@balizero.com": "nakhoda@balizero.com",
-    "veronika@balizero.com": "nakhoda@balizero.com",
-    "veronika.tax@balizero.com": "nakhoda@balizero.com",
+    "tax@balizero.com": "angel.tax@balizero.com",
+    "veronika@balizero.com": "angel.tax@balizero.com",
+    "veronika.tax@balizero.com": "angel.tax@balizero.com",
+    "nakhoda@balizero.com": "angel.tax@balizero.com",
 }
 
 
