@@ -179,6 +179,31 @@ export function KBLISearch({
   // aria-expanded is true.
   const isDropdownOpen = isOpen && (results.length > 0 || Boolean(searchError));
 
+  // On a phone the on-screen keyboard covers the bottom of the viewport, so a
+  // fixed 400px list runs under it. Cap the list at what is still visible
+  // above the keyboard (visualViewport shrinks when it opens).
+  const listRef = React.useRef<HTMLDivElement>(null);
+  const [listMaxHeight, setListMaxHeight] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    if (!isDropdownOpen) return;
+    const vv = typeof window !== "undefined" ? window.visualViewport : null;
+    if (!vv) return;
+    const fit = () => {
+      const el = listRef.current;
+      if (!el) return;
+      const room = vv.offsetTop + vv.height - el.getBoundingClientRect().top;
+      setListMaxHeight(Math.max(120, Math.min(400, Math.floor(room - 8))));
+    };
+    const frame = requestAnimationFrame(fit);
+    vv.addEventListener("resize", fit);
+    vv.addEventListener("scroll", fit);
+    return () => {
+      cancelAnimationFrame(frame);
+      vv.removeEventListener("resize", fit);
+      vv.removeEventListener("scroll", fit);
+    };
+  }, [isDropdownOpen, results.length]);
+
   return (
     <div ref={containerRef} className={cn("relative w-full", className)}>
       <div className="relative group">
@@ -220,7 +245,9 @@ export function KBLISearch({
               setQuery("");
               setResults([]);
             }}
-            className="absolute right-4 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-white/[0.08] text-zinc-500"
+            type="button"
+            aria-label="Clear search"
+            className="absolute right-1 top-1/2 -translate-y-1/2 inline-flex min-h-11 min-w-11 items-center justify-center rounded-full hover:bg-white/[0.08] text-zinc-500"
           >
             <X className="w-4 h-4" />
           </button>
@@ -246,7 +273,7 @@ export function KBLISearch({
               aria-label={`Search ${filter}`}
               aria-pressed={query === filter}
               className={cn(
-                "px-3.5 py-1.5 rounded-full text-xs font-medium backdrop-blur-md border transition-all duration-300",
+                "inline-flex min-h-11 items-center px-3.5 py-1.5 sm:min-h-0 rounded-full text-xs font-medium backdrop-blur-md border transition-all duration-300",
                 query === filter
                   ? "text-white bg-[var(--kbli-bg-surface)] border-red-500/30 shadow-[0_0_20px_rgba(220,38,38,0.08),inset_0_1px_0_rgba(255,255,255,0.06)]"
                   : "text-zinc-400 bg-[var(--kbli-bg-surface)] border-[var(--border)] hover:bg-white/[0.07] hover:text-white hover:border-accent-sand ",
@@ -278,7 +305,7 @@ export function KBLISearch({
                 type="button"
                 onClick={() => setRetryNonce((n) => n + 1)}
                 disabled={isLoading}
-                className="flex-shrink-0 px-3 py-1 rounded-md text-xs font-semibold text-amber-200 border border-amber-500/30 hover:bg-amber-500/[0.12] disabled:opacity-50"
+                className="flex-shrink-0 min-h-11 sm:min-h-0 px-3 py-1 rounded-md text-xs font-semibold text-amber-200 border border-amber-500/30 hover:bg-amber-500/[0.12] disabled:opacity-50"
               >
                 Retry
               </button>
@@ -288,7 +315,9 @@ export function KBLISearch({
             id={listboxId}
             role="listbox"
             aria-label="KBLI search results"
-            className="max-h-[400px] overflow-y-auto"
+            ref={listRef}
+            style={listMaxHeight ? { maxHeight: listMaxHeight } : undefined}
+            className="max-h-[400px] overflow-y-auto overscroll-contain"
           >
             {results.map((result, index) => (
               <button
