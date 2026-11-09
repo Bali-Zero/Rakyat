@@ -83,6 +83,17 @@ describe("/team — the public directory", () => {
     );
   });
 
+  it("announces exactly as many leaders as it renders", async () => {
+    await renderTeamPage();
+
+    const leadership = document.getElementById("leadership")!;
+    const section = leadership.closest("section")!;
+    const cards = section.querySelectorAll("h3");
+    const words = ["no", "one", "two", "three", "four", "five", "six"];
+    expect(section.textContent).toContain(`The ${words[cards.length]} people who set direction`);
+    expect(cards.length).toBeGreaterThan(0);
+  });
+
   it("sends each tool owner to the real page of the tool", async () => {
     await renderTeamPage();
 

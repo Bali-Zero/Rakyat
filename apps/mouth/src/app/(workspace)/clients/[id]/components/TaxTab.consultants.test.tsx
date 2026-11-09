@@ -156,7 +156,7 @@ describe("TaxTab tax-consultant options", () => {
     )) as HTMLSelectElement;
     await waitFor(() => expect(select.value).toBe(legacy));
     const selected = select.options[select.selectedIndex];
-    expect(selected.textContent).toBe("Legacy");
+    expect(selected.textContent).toBe("Former staff");
     expect(select.options).toHaveLength(CONSULTANTS.length + 2);
   });
 });

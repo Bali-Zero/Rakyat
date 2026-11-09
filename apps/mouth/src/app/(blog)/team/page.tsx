@@ -80,6 +80,11 @@ const LEADERSHIP: TeamMember[] = compose([
   },
 ]);
 
+// The leadership copy counts the people it lists, so it cannot drift from LEADERSHIP.
+const NUMBER_WORDS = ["no", "one", "two", "three", "four", "five", "six"];
+const LEADERSHIP_COUNT_WORD =
+  NUMBER_WORDS[LEADERSHIP.length] ?? String(LEADERSHIP.length);
+
 const SETUP_TEAM: TeamMember[] = compose([
   {
     slug: "adit",
@@ -319,10 +324,10 @@ export default function TeamPage() {
         <section aria-labelledby="leadership" className={styles.section}>
           <div className={styles.leadershipIntro}>
             <span className={styles.eyebrow}>Leadership</span>
-            <h2 id="leadership">The founders, the advisors, the manager</h2>
+            <h2 id="leadership">The founders and the advisor</h2>
             <p className={styles.sectionSubtitle}>
-              The four people who set direction and sign off on every high-risk
-              file.
+              The {LEADERSHIP_COUNT_WORD} people who set direction and sign off on
+              every high-risk file.
             </p>
           </div>
           <div className={styles.leadershipGrid}>
