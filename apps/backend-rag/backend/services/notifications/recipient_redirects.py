@@ -35,7 +35,7 @@ def redirect_address(addr: object) -> object:
     return RECIPIENT_REDIRECTS.get(_norm(addr), addr)
 
 
-def _parts(addr: object) -> list:
+def split_recipients(addr: object) -> list:
     """The addresses a recipient value names: a comma-joined string is split, anything else is one entry."""
     if isinstance(addr, str) and "," in addr:
         return [part.strip() for part in addr.split(",") if part.strip()]
@@ -55,7 +55,7 @@ def redirect_recipients(
 
     def rewrite_parts(addr: object) -> list:
         out: list = []
-        for part in _parts(addr):
+        for part in split_recipients(addr):
             target = redirect_address(part)
             key = _norm(target)
             if key and key in seen:
@@ -70,7 +70,7 @@ def redirect_recipients(
             return None
         return [target for addr in lst for target in rewrite_parts(addr)]
 
-    to_parts = _parts(to)
+    to_parts = split_recipients(to)
     new_to_parts = rewrite_parts(to)
     if new_to_parts == to_parts:
         new_to = to
