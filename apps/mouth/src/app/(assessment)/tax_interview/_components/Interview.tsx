@@ -6,7 +6,7 @@ import {
   countWords,
   emptyField,
   type ExerciseTelemetry,
-} from "@/app/(assessment)/interview_natalie/telemetry";
+} from "@/app/(assessment)/_shared/telemetry";
 import {
   MISSION_IDS,
   emptyAnswers,

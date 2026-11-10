@@ -4,7 +4,7 @@
  * ships in the public bundle. Candidate-facing text lives in `_server/content`
  * and reaches the browser only as props, after the PIN cookie check.
  */
-import type { ExerciseTelemetry } from "@/app/(assessment)/interview_natalie/telemetry";
+import type { ExerciseTelemetry } from "@/app/(assessment)/_shared/telemetry";
 
 export type Sender = "lestari" | "galih" | "nindy" | "naomi" | "hartley";
 

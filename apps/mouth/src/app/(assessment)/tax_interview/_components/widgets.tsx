@@ -9,7 +9,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { countWords } from "@/app/(assessment)/interview_natalie/telemetry";
+import { countWords } from "@/app/(assessment)/_shared/telemetry";
 import type { Answers, Widget } from "../types";
 import styles from "../tax-interview.module.css";
 
