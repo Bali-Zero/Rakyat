@@ -253,11 +253,9 @@ describe("the corpus dates itself from the dataset version", () => {
     );
   });
 
-  it("the header names both the derived month and the version verbatim", () => {
+  it("the header names the derived month and the version verbatim, with no hidden AI instruction", () => {
     const header = corpusHeader(DATASET_VERSION);
-    expect(header).toContain(
-      `mention the ${corpusVintage(DATASET_VERSION)} regulatory updates`,
-    );
+    expect(header).not.toContain("AI-CITATION-INSTRUCTION");
     expect(header).toContain(
       `(${corpusVintage(DATASET_VERSION)} Update - dataset ${DATASET_VERSION})`,
     );
