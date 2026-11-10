@@ -19,6 +19,10 @@ const DOCUMENT_VISIBILITY_ROLES: ReadonlySet<string> = new Set([
   "team leader",
   "tax lead",
   "supervisor",
+  // reorganisation 2026-11-09 titles (backend DOCUMENT_VISIBILITY_ROLES)
+  "direktur",
+  "tax supervisor",
+  "tax responsible",
 ]);
 
 export function viewerCanChangeDocumentVisibility(
