@@ -53,7 +53,11 @@ describe("VaultUploadZone — phone photos above the 4 MB platform cap", () => {
     await waitFor(() => expect(mockUpload).toHaveBeenCalledTimes(1));
     expect(mockShrink.mock.calls[0][1]).toBe(4 * 1024 * 1024);
     expect(mockUpload.mock.calls[0][0]).toBe(smaller);
-    expect(mockUpload.mock.calls[0][1]).toEqual({ practiceId: 7, purpose: "" });
+    expect(mockUpload.mock.calls[0][1]).toEqual({
+      practiceId: 7,
+      purpose: "",
+      documentType: "other",
+    });
   });
 
   it("falls back to the original when the photo cannot be shrunk (upload() then refuses it by size)", async () => {
@@ -107,6 +111,7 @@ describe("VaultUploadZone", () => {
     expect(mockUpload.mock.calls[0][1]).toEqual({
       practiceId: 42,
       purpose: "",
+      documentType: "other",
     });
   });
 
@@ -139,6 +144,7 @@ describe("VaultUploadZone", () => {
     expect(mockUpload.mock.calls[0][1]).toEqual({
       practiceId: 42,
       purpose: "Passport for KITAS renewal",
+      documentType: "other",
     });
   });
 
