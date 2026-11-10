@@ -12,7 +12,6 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type {
   DashboardSummary,
-  LKPMDeadline,
   LKPMDraftSummary,
 } from "@/lib/api/portal/portal.types";
 
@@ -53,6 +52,60 @@ function lkpmFiled(report: LKPMDraftSummary): boolean {
   );
 }
 
+/**
+ * LKPM filing deadline per quarter (month, day). Same table as
+ * lkpm_service.QUARTER_DEADLINES and the portal LKPM page; Q4 falls in
+ * January of the next year.
+ */
+const LKPM_DEADLINE: Record<number, [number, number]> = {
+  1: [4, 15],
+  2: [7, 15],
+  3: [10, 15],
+  4: [1, 15],
+};
+
+function lkpmDeadlineIso(q: number, year: number): string {
+  const [month, day] = LKPM_DEADLINE[q];
+  const y = q === 4 ? year + 1 : year;
+  return `${y}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function quarterIndex(r: { quarter: string; year: number }): number | null {
+  const q = Number(r.quarter.replace(/^Q/i, ""));
+  return q >= 1 && q <= 4 ? r.year * 4 + (q - 1) : null;
+}
+
+/**
+ * Every quarter from the client's first LKPM report up to today whose
+ * deadline has passed and that has no filed report. No lookback limit: the
+ * `/api/v1/lkpm/deadlines` calendar only returns the last 30 days, so a
+ * quarter more than a month late would silently drop out of it.
+ */
+function lkpmOverdue(history: LKPMDraftSummary[], now: Date): OverdueItem[] {
+  const indexes = history
+    .map(quarterIndex)
+    .filter((i): i is number => i !== null);
+  if (indexes.length === 0) return [];
+
+  const thisQuarter = now.getFullYear() * 4 + Math.floor(now.getMonth() / 3);
+  const items: OverdueItem[] = [];
+  for (let i = Math.min(...indexes); i <= thisQuarter; i++) {
+    const year = Math.floor(i / 4);
+    const q = (i % 4) + 1;
+    const late = daysLate(lkpmDeadlineIso(q, year), now);
+    if (late <= 0) continue;
+    const filed = history.some((r) => quarterIndex(r) === i && lkpmFiled(r));
+    if (filed) continue;
+    items.push({
+      id: `lkpm-Q${q}-${year}`,
+      label: `LKPM Q${q} ${year}`,
+      daysLate: late,
+      href: "/portal/lkpm",
+    });
+  }
+  return items;
+}
+
 const DEADLINE_HREF: Record<string, string> = {
   visa: "/portal/visa",
   passport: "/portal/visa",
@@ -60,12 +113,10 @@ const DEADLINE_HREF: Record<string, string> = {
 
 export function collectOverdue({
   summaryDeadlines,
-  lkpmDeadlines,
   lkpmHistory,
   now,
 }: {
   summaryDeadlines: DashboardSummary["upcoming_deadlines"];
-  lkpmDeadlines: LKPMDeadline[];
   lkpmHistory: LKPMDraftSummary[];
   now: Date;
 }): OverdueItem[] {
@@ -83,24 +134,8 @@ export function collectOverdue({
     });
   }
 
-  // The LKPM deadline calendar is the same for everyone. Only a client with
-  // LKPM reports on file has the obligation, so no history = no LKPM item.
-  if (lkpmHistory.length > 0) {
-    for (const d of lkpmDeadlines) {
-      const late = daysLate(d.deadline, now);
-      if (late <= 0) continue;
-      const filed = lkpmHistory.some(
-        (r) => r.quarter === d.quarter && r.year === d.year && lkpmFiled(r),
-      );
-      if (filed) continue;
-      items.push({
-        id: `lkpm-${d.quarter}-${d.year}`,
-        label: `LKPM ${d.quarter} ${d.year}`,
-        daysLate: late,
-        href: "/portal/lkpm",
-      });
-    }
-  }
+  // Only a client with LKPM reports on file has the obligation.
+  items.push(...lkpmOverdue(lkpmHistory, now));
 
   return items.sort((a, b) => b.daysLate - a.daysLate);
 }
@@ -113,23 +148,16 @@ export function stillUpcoming(
   return deadlines.filter((d) => !d.due_date || daysLate(d.due_date, now) <= 0);
 }
 
-/** The two LKPM reads the portal LKPM page already makes, for the dashboard. */
-export function usePortalLkpmStatus() {
+/** The LKPM history read the portal LKPM page already makes. */
+export function usePortalLkpmHistory() {
   return useQuery({
-    queryKey: ["portal", "dashboard", "lkpm"],
+    queryKey: ["portal", "dashboard", "lkpm-history"],
     queryFn: async () => {
-      const [history, deadlines] = await Promise.all([
-        api.get<{ success: boolean; items: LKPMDraftSummary[] }>(
-          "/api/v1/lkpm/history/me",
-        ),
-        api.get<{ success: boolean; deadlines: LKPMDeadline[] }>(
-          "/api/v1/lkpm/deadlines",
-        ),
-      ]);
-      return {
-        history: history.items ?? [],
-        deadlines: deadlines.deadlines ?? [],
-      };
+      const res = await api.get<{
+        success: boolean;
+        items: LKPMDraftSummary[];
+      }>("/api/v1/lkpm/history/me");
+      return res.items ?? [];
     },
     retry: false,
     staleTime: 5 * 60 * 1000,

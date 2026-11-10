@@ -37,14 +37,6 @@ vi.mock("@/lib/api", () => ({
 // 10 Nov 2026, 14:00 WITA
 const NOW = new Date(2026, 10, 10, 14, 0, 0);
 
-const Q3_2026 = {
-  quarter: "Q3",
-  year: 2026,
-  deadline: "2026-10-15T00:00:00+00:00",
-  days_remaining: -27,
-  is_overdue: true,
-};
-
 const Q2_FILED = {
   id: 1,
   quarter: "Q2",
@@ -56,12 +48,8 @@ const Q2_FILED = {
   updated_at: "2026-07-20T00:00:00Z",
 };
 
-function lkpmApi(history: unknown[], deadlines: unknown[]) {
-  mocks.get.mockImplementation(async (url: string) =>
-    url.includes("/history/me")
-      ? { success: true, items: history }
-      : { success: true, deadlines },
-  );
+function lkpmApi(history: unknown[]) {
+  mocks.get.mockResolvedValue({ success: true, items: history });
 }
 
 function renderPage() {
@@ -106,7 +94,7 @@ describe("dashboard summary — overdue items", () => {
   });
 
   it("1 overdue LKPM + 0 upcoming is NOT 'All caught up'", async () => {
-    lkpmApi([Q2_FILED], [Q3_2026]);
+    lkpmApi([Q2_FILED]);
     renderPage();
 
     expect(
@@ -123,7 +111,7 @@ describe("dashboard summary — overdue items", () => {
   });
 
   it("control: 0 overdue + 0 upcoming is 'All caught up'", async () => {
-    lkpmApi([Q2_FILED], []);
+    lkpmApi([Q2_FILED, { ...Q2_FILED, id: 2, quarter: "Q3" }]);
     renderPage();
 
     expect(await screen.findByText("All caught up")).toBeInTheDocument();
@@ -135,7 +123,6 @@ describe("dashboard summary — overdue items", () => {
     expect(
       collectOverdue({
         summaryDeadlines: [],
-        lkpmDeadlines: [Q3_2026],
         lkpmHistory: [filedQ3],
         now: NOW,
       }),
@@ -146,7 +133,6 @@ describe("dashboard summary — overdue items", () => {
     expect(
       collectOverdue({
         summaryDeadlines: [],
-        lkpmDeadlines: [Q3_2026],
         lkpmHistory: [],
         now: NOW,
       }),
@@ -175,11 +161,43 @@ describe("dashboard summary — overdue items", () => {
           kind: null,
         },
       ],
-      lkpmDeadlines: [],
       lkpmHistory: [],
       now: NOW,
     });
     expect(items.map((i) => i.id)).toEqual(["passport-1", "visa-1"]);
+  });
+
+  it("no lookback limit: Q3 2026 still overdue on 20 Dec, before Q4 is due", () => {
+    const items = collectOverdue({
+      summaryDeadlines: [],
+      lkpmHistory: [Q2_FILED],
+      now: new Date(2026, 11, 20, 9, 0, 0),
+    });
+    expect(items).toEqual([
+      {
+        id: "lkpm-Q3-2026",
+        label: "LKPM Q3 2026",
+        daysLate: 66,
+        href: "/portal/lkpm",
+      },
+    ]);
+  });
+
+  it("an approved-but-not-filed quarter is still overdue", () => {
+    const approvedQ3 = {
+      ...Q2_FILED,
+      id: 3,
+      quarter: "Q3",
+      status: "approved" as const,
+      oss_submitted: false,
+    };
+    expect(
+      collectOverdue({
+        summaryDeadlines: [],
+        lkpmHistory: [Q2_FILED, approvedQ3],
+        now: NOW,
+      }).map((i) => i.id),
+    ).toEqual(["lkpm-Q3-2026"]);
   });
 
   it("counts calendar days: 15 Oct → 10 Nov is 26, not 27", () => {

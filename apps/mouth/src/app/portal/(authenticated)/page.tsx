@@ -50,13 +50,16 @@ import {
   usePortalLoadTimeout,
 } from "@/components/portal/PortalLoadTimeout";
 import type { TimelineEntry } from "@/lib/api/types/timeline.types";
-import type { DashboardSummary } from "@/lib/api/portal/portal.types";
+import type {
+  DashboardSummary,
+  LKPMDraftSummary,
+} from "@/lib/api/portal/portal.types";
 import { DeadlineBadge } from "@balizero/core";
 import { usePortalDateFormat } from "@/lib/format/usePortalDateFormat";
 import {
   collectOverdue,
   stillUpcoming,
-  usePortalLkpmStatus,
+  usePortalLkpmHistory,
   type OverdueItem,
 } from "./_lib/overdue";
 
@@ -187,7 +190,7 @@ export default function PortalHomePage() {
   const summaryQuery = usePortalDashboardSummary();
   const timelineQuery = usePortalTimeline(20);
   // Not part of portalQueries: an LKPM read failure must not blank the page.
-  const { data: lkpm } = usePortalLkpmStatus();
+  const { data: lkpmHistory } = usePortalLkpmHistory();
 
   const { data: dashboard, isLoading: isLoadingDashboard } = dashboardQuery;
   const { data: summary } = summaryQuery;
@@ -327,7 +330,7 @@ export default function PortalHomePage() {
       {/* 2 · matters: one next move + the numbered index of the others */}
       <HeroCards
         summary={summary}
-        lkpm={lkpm}
+        lkpmHistory={lkpmHistory}
         onOpenMatter={(id) => router.push(`/portal/matters/${id}`)}
       />
 
@@ -651,11 +654,11 @@ function StatusCard({
 
 function HeroCards({
   summary,
-  lkpm,
+  lkpmHistory,
   onOpenMatter,
 }: {
   summary: DashboardSummary | undefined;
-  lkpm: ReturnType<typeof usePortalLkpmStatus>["data"];
+  lkpmHistory: LKPMDraftSummary[] | undefined;
   onOpenMatter: (id: number | string) => void;
 }) {
   if (!summary) return null;
@@ -663,8 +666,7 @@ function HeroCards({
   const now = new Date();
   const overdue = collectOverdue({
     summaryDeadlines: summary.upcoming_deadlines,
-    lkpmDeadlines: lkpm?.deadlines ?? [],
-    lkpmHistory: lkpm?.history ?? [],
+    lkpmHistory: lkpmHistory ?? [],
     now,
   });
   const upcoming = stillUpcoming(summary.upcoming_deadlines, now);
