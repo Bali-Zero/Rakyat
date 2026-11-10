@@ -176,3 +176,67 @@ describe("EditClientModal — avatar_url update contract", () => {
     expect(lastUpdatePayload()).toHaveProperty("avatar_url", "");
   });
 });
+
+describe("EditClientModal — service_interest is sent as a list", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getProfile.mockResolvedValue({ email: "staff@example.test" });
+    updateClient.mockResolvedValue({});
+  });
+
+  function renderModal(overrides: Partial<Client> = {}) {
+    render(
+      <EditClientModal
+        client={makeClient(overrides)}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+    return screen.getByPlaceholderText(/PT PMA, KITAS, Tax/i);
+  }
+
+  it("sends typed text as a one-item list, not a string", async () => {
+    const input = renderModal();
+    await userEvent.type(input, "voa");
+
+    await clickSave();
+
+    expect(lastUpdatePayload().service_interest).toEqual(["voa"]);
+  });
+
+  it("splits comma text into a trimmed list", async () => {
+    const input = renderModal();
+    await userEvent.type(input, " voa,  kitas ,");
+
+    await clickSave();
+
+    expect(lastUpdatePayload().service_interest).toEqual(["voa", "kitas"]);
+  });
+
+  it("omits an empty field, like tags", async () => {
+    renderModal();
+
+    await clickSave();
+
+    expect(lastUpdatePayload()).not.toHaveProperty("service_interest");
+  });
+
+  it("shows the server list as comma text and saves it back as a list", async () => {
+    const input = renderModal({ service_interest: ["voa", "kitas"] });
+    expect(input).toHaveValue("voa, kitas");
+
+    await clickSave();
+
+    expect(lastUpdatePayload().service_interest).toEqual(["voa", "kitas"]);
+  });
+
+  it("keeps a list after editing the existing value", async () => {
+    const input = renderModal({ service_interest: ["voa"] });
+    expect(input).toHaveValue("voa");
+    await userEvent.type(input, ", kitas");
+
+    await clickSave();
+
+    expect(lastUpdatePayload().service_interest).toEqual(["voa", "kitas"]);
+  });
+});

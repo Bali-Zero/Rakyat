@@ -95,7 +95,11 @@ export function EditClientModal({
     assigned_to: client.assigned_to || "",
     avatar_url: client.avatar_url || "",
     lead_source: client.lead_source || "",
-    service_interest: client.service_interest || "",
+    // The API stores service_interest as a list; edit it as comma text like
+    // tags, and split it back into a list on save.
+    service_interest: ([] as string[])
+      .concat(client.service_interest || [])
+      .join(", "),
     tags: (client.tags || []).join(", "),
   });
 
@@ -173,7 +177,7 @@ export function EditClientModal({
       const requiredFields = ["full_name", "status", "client_type"];
       const updates: Record<string, unknown> = {};
       Object.entries(formData).forEach(([key, value]) => {
-        if (key === "tags") {
+        if (key === "tags" || key === "service_interest") {
           const tagsArray = (value as string)
             .split(",")
             .map((t) => t.trim())
