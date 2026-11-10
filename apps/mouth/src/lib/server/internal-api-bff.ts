@@ -120,12 +120,16 @@ function extractProfile(payload: unknown): UserProfileLike | undefined {
   return record as UserProfileLike;
 }
 
+// Job titles of the 2026-11-09 reorganisation (direktur, senior consultant,
+// tax responsible, tax supervisor) sit next to the titles they replace, which
+// other staff still hold.
 export const EDITORIAL_APPROVER_ROLES: ReadonlySet<string> = new Set([
   "admin",
   "board",
   "board member",
   "ceo",
   "consultant",
+  "direktur",
   "executive consultant",
   "founder",
   "junior consultant",
@@ -133,10 +137,13 @@ export const EDITORIAL_APPROVER_ROLES: ReadonlySet<string> = new Set([
   "marketing & accounting",
   "marketing advisory",
   "owner",
+  "senior consultant",
   "specialist advisor",
   "supervisor",
   "tax lead",
   "tax manager",
+  "tax responsible",
+  "tax supervisor",
   "team",
   "team leader",
   "zero",

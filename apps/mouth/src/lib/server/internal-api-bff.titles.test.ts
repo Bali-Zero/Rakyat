@@ -1,0 +1,94 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { NextRequest } from "next/server";
+import { POST as approvePost } from "@/app/api/intel/staging/approve/[type]/[id]/route";
+import { EDITORIAL_APPROVER_ROLES } from "@/lib/server/internal-api-bff";
+
+// Reorganisation 2026-11-09: four job titles replace four older ones, and the
+// editorial-approve route is strictly role-keyed (the internal-domain branch
+// admits staff to the BFF but not to this route).
+const NEW_TITLES = [
+  "Direktur",
+  "Tax Supervisor",
+  "Tax Responsible",
+  "Senior Consultant",
+];
+const OLD_TITLES_STILL_HELD = [
+  "Supervisor",
+  "Tax Lead",
+  "Team Leader",
+  "Executive Consultant",
+];
+const NOT_EDITORIAL = ["HR & Accounting", "Accounting", "Reception"];
+
+describe("editorial approver roles carry the 2026-11-09 titles", () => {
+  const mockFetch = vi.fn();
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    global.fetch = mockFetch;
+    process.env = {
+      ...originalEnv,
+      NUZANTARA_API_URL: "https://nuzantara-rag.fly.dev",
+      NUZANTARA_INTERNAL_API_KEY: "internal-secret-key",
+    };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  async function approveAs(role: string) {
+    mockFetch
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ data: { email: "staff@balizero.com", role } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    const req = new Request(
+      "http://localhost/api/intel/staging/approve/visa/item-1",
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer staff-jwt" },
+        body: JSON.stringify({}),
+      },
+    ) as unknown as NextRequest;
+    return approvePost(req, {
+      params: Promise.resolve({ type: "visa", id: "item-1" }),
+    });
+  }
+
+  it.each([...NEW_TITLES, ...OLD_TITLES_STILL_HELD])(
+    "innocence: %s may approve",
+    async (role) => {
+      const res = await approveAs(role);
+      expect(res.status).toBe(200);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each(NOT_EDITORIAL)(
+    "guilt: %s is still refused and the key is never forwarded",
+    async (role) => {
+      const res = await approveAs(role);
+      expect(res.status).toBe(403);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("guilt: the set holds exactly the new titles it is meant to add", () => {
+    for (const title of NEW_TITLES) {
+      expect(EDITORIAL_APPROVER_ROLES.has(title.toLowerCase())).toBe(true);
+    }
+    for (const title of NOT_EDITORIAL) {
+      expect(EDITORIAL_APPROVER_ROLES.has(title.toLowerCase())).toBe(false);
+    }
+  });
+});
