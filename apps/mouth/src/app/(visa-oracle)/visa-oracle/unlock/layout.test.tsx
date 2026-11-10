@@ -1,18 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import VisaOracleUnlockLayout, { metadata } from "./layout";
+import VisaOracleUnlockLayout from "./layout";
 
-describe("visa-oracle/unlock layout metadata", () => {
-  it("guilt: noindex and nofollow are explicit, as the parent sets them", () => {
-    expect(metadata.robots).toEqual({ index: false, follow: false });
-  });
-
-  it("canonical is the page itself, not /visa-oracle", () => {
-    expect(metadata.alternates?.canonical).toBe(
-      "https://balizero.com/visa-oracle/unlock",
-    );
-  });
-
+// robots and canonical are asserted in ../canonical.guard.test.ts
+describe("visa-oracle/unlock layout", () => {
   it("innocence: children still render through the layout", () => {
     expect(
       VisaOracleUnlockLayout({
