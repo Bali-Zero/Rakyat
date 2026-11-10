@@ -69,9 +69,13 @@ describe("/visa-oracle/unlock canonical points at itself, not at /visa-oracle", 
 describe("the set of (visa-oracle) page routes is the set with an explicit canonical test", () => {
   const GROUP_ROOT = join(process.cwd(), "src/app/(visa-oracle)");
 
+  // Next's default pageExtensions: next.config.ts does not set the key (the
+  // test below fails if it ever does), so any page.<ext> here is a route.
+  const PAGE_EXTENSIONS = ["tsx", "ts", "jsx", "js"];
+
   function pageRoutes(dir: string, segments: string[]): string[] {
     const found: string[] = [];
-    if (existsSync(join(dir, "page.tsx"))) {
+    if (PAGE_EXTENSIONS.some((ext) => existsSync(join(dir, `page.${ext}`)))) {
       const parts = segments.filter((s) => !/^\(.+\)$/.test(s));
       found.push(`/${parts.join("/")}`);
     }
@@ -82,6 +86,14 @@ describe("the set of (visa-oracle) page routes is the set with an explicit canon
     }
     return found;
   }
+
+  it("next.config.ts leaves pageExtensions at Next's default (read-only text check of that one key)", () => {
+    // Importing the config pulls in plugins and env reads, so only the key is
+    // looked for. If it appears, set PAGE_EXTENSIONS from it before passing.
+    expect(
+      readFileSync(join(process.cwd(), "next.config.ts"), "utf8"),
+    ).not.toMatch(/\bpageExtensions\b/);
+  });
 
   it("is exactly /visa-oracle, /visa-oracle/privacy, /visa-oracle/unlock", () => {
     expect(pageRoutes(GROUP_ROOT, []).sort()).toEqual(
