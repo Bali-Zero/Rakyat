@@ -8,71 +8,36 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
-
-const read = (rel: string) =>
-  readFileSync(
-    join(process.cwd(), "src/app/(visa-oracle)/visa-oracle", rel),
-    "utf8",
-  );
-
-describe("/visa-oracle canonical points at itself, not the root", () => {
-  const layout = read("layout.tsx");
-
-  it("declares alternates.canonical https://balizero.com/visa-oracle", () => {
-    expect(layout).toMatch(
-      /canonical:\s*"https:\/\/balizero\.com\/visa-oracle"/,
-    );
-  });
-
-  it("does not point the canonical at the root domain", () => {
-    expect(layout).not.toMatch(/canonical:\s*"https:\/\/balizero\.com\/?"/);
-  });
-
-  it("keeps its title (positive control)", () => {
-    expect(layout).toMatch(/title:\s*"Visa Oracle"/);
-  });
-});
-
-describe("/visa-oracle/privacy canonical points at itself, not the root", () => {
-  const layout = read("privacy/layout.tsx");
-
-  it("declares alternates.canonical https://balizero.com/visa-oracle/privacy", () => {
-    expect(layout).toMatch(
-      /canonical:\s*"https:\/\/balizero\.com\/visa-oracle\/privacy"/,
-    );
-  });
-
-  it("does not point the canonical at the root domain", () => {
-    expect(layout).not.toMatch(/canonical:\s*"https:\/\/balizero\.com\/?"/);
-  });
-
-  it("keeps its title (positive control)", () => {
-    expect(layout).toMatch(/title:\s*"Visa Oracle Privacy Policy"/);
-  });
-});
+import { afterAll, describe, expect, it } from "vitest";
 
 // Every page route under (visa-oracle) is found on disk, so a route added
-// later is covered without touching this test. The parent layout names
-// /visa-oracle, so a child whose EFFECTIVE canonical is not its own URL would
-// silently tell crawlers it duplicates the Oracle page.
+// later is covered without touching this test. A route passes only when the
+// canonical Next would EFFECTIVELY resolve for it is its own URL; the parent
+// layout names /visa-oracle, so a child that fails this would tell crawlers
+// it duplicates the Oracle page.
 //
-// This mirrors Next's metadata resolution rather than calling it (the
-// resolver is internal and needs a built route tree):
-//   - the URL drops (group) segments and never includes _private folders;
-//     @slot and intercepting (.) folders are not handled and FAIL loudly;
-//   - metadata merges per top-level key and the NEAREST definition wins: the
-//     page's own `alternates` beats its layout's, a nearer layout beats a
-//     farther one, so only the nearest file that declares `alternates`
-//     decides the canonical (a declaration without a canonical leaves none);
-//   - a canonical that is not a string literal cannot be verified here and
-//     fails rather than passing by omission.
+// Nothing here parses metadata out of source text. Each module in a route's
+// chain is imported and its EVALUATED `metadata` export is read, so
+// concatenations, constants and URL objects are seen as Next sees them.
+// Next's own resolver is internal and needs a built route tree, so its rules
+// are mirrored (and said so):
+//   - URL from path: (group) segments dropped, _private folders skipped,
+//     @slot and intercepting (.) folders FAIL loudly (not handled);
+//   - metadata merges per top-level key and the NEAREST module whose
+//     `metadata.alternates` is defined decides, page before its layout,
+//     nearer layout before farther; an alternates object without a canonical
+//     leaves none (Next drops the inherited one);
+//   - client components cannot export metadata, so a "use client" module is
+//     not imported; a module exporting generateMetadata fails ("add an
+//     explicit test"), it is never called; an import that throws fails
+//     loudly, naming the file.
 const APP_ROOT = join(process.cwd(), "src/app");
-const GROUP_START = ["(visa-oracle)"];
+const GROUP = "(visa-oracle)";
+const BASE = "https://balizero.com";
+const SCRATCH = join(process.cwd(), ".vitest-canonical-guard");
 
-type Resolution = string | "NONE" | "UNVERIFIABLE";
+type Resolution = string | "NONE";
 
 function routeUrl(segments: string[]): string {
   const parts = segments.filter((s) => !/^\([^.][^)]*\)$/.test(s));
@@ -97,56 +62,79 @@ function pageRoutes(appRoot: string, segments: string[]): string[][] {
   return routes;
 }
 
-function declaredCanonical(source: string): Resolution | undefined {
-  if (!/\balternates\s*:/.test(source)) return undefined;
-  const block = source.match(/\balternates\s*:\s*\{([^}]*)\}/);
-  if (!block) return "UNVERIFIABLE";
-  if (!/\bcanonical\s*:/.test(block[1])) return "NONE";
-  const literal = block[1].match(/\bcanonical\s*:\s*"([^"]+)"/);
-  return literal ? literal[1] : "UNVERIFIABLE";
+function isClientModule(path: string): boolean {
+  const head = readFileSync(path, "utf8").replace(
+    /^(\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*/,
+    "",
+  );
+  return /^["']use client["']/.test(head);
 }
 
-function effectiveCanonical(appRoot: string, segments: string[]): Resolution {
-  for (let depth = segments.length; depth >= 0; depth--) {
-    const dir = join(appRoot, ...segments.slice(0, depth));
-    const files =
-      depth === segments.length ? ["page.tsx", "layout.tsx"] : ["layout.tsx"];
-    for (const file of files) {
-      const path = join(dir, file);
-      if (!existsSync(path)) continue;
-      const found = declaredCanonical(readFileSync(path, "utf8"));
-      if (found !== undefined) return found;
-    }
+async function evaluatedMetadata(
+  path: string,
+): Promise<Record<string, unknown> | undefined> {
+  if (isClientModule(path)) return undefined;
+  let mod: Record<string, unknown>;
+  try {
+    mod = (await import(/* @vite-ignore */ path)) as Record<string, unknown>;
+  } catch (error) {
+    throw new Error(`Could not import ${path} to read its metadata: ${error}`);
+  }
+  if (typeof mod.generateMetadata === "function") {
+    throw new Error(
+      `${path} exports generateMetadata (dynamic metadata): add an explicit test`,
+    );
+  }
+  const metadata = mod.metadata;
+  return metadata && typeof metadata === "object"
+    ? (metadata as Record<string, unknown>)
+    : undefined;
+}
+
+function normalise(canonical: unknown, where: string): string {
+  if (typeof canonical === "string" || canonical instanceof URL) {
+    return new URL(String(canonical), BASE).href;
+  }
+  throw new Error(`Unsupported canonical value in ${where}`);
+}
+
+async function effectiveCanonical(
+  appRoot: string,
+  segments: string[],
+): Promise<Resolution> {
+  // page first, then each layout from the route up to the group root
+  const chain = [join(appRoot, ...segments, "page.tsx")];
+  const groupDepth = segments.indexOf(GROUP) + 1 || 1;
+  for (let depth = segments.length; depth >= groupDepth; depth--) {
+    chain.push(join(appRoot, ...segments.slice(0, depth), "layout.tsx"));
+  }
+  for (const path of chain) {
+    if (!existsSync(path)) continue;
+    const metadata = await evaluatedMetadata(path);
+    const alternates = metadata?.alternates as
+      { canonical?: unknown } | undefined;
+    if (alternates === undefined || alternates === null) continue;
+    return alternates.canonical == null
+      ? "NONE"
+      : normalise(alternates.canonical, path);
   }
   return "NONE";
 }
 
-function violations(appRoot: string, start: string[]): string[] {
-  return pageRoutes(appRoot, start).flatMap((segments) => {
+async function violations(appRoot: string, start: string[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const segments of pageRoutes(appRoot, start)) {
     const url = routeUrl(segments);
-    const got = effectiveCanonical(appRoot, segments);
-    return got === `https://balizero.com${url}`
-      ? []
-      : [`${url}: effective canonical is ${got}`];
-  });
-}
-
-function tree(files: Record<string, string>): string {
-  const root = mkdtempSync(join(tmpdir(), "vo-canonical-"));
-  for (const [rel, body] of Object.entries(files)) {
-    const full = join(root, rel);
-    mkdirSync(dirname(full), { recursive: true });
-    writeFileSync(full, body);
+    const got = await effectiveCanonical(appRoot, segments);
+    if (got !== new URL(url, BASE).href) {
+      out.push(`${url}: effective canonical is ${got}`);
+    }
   }
-  return root;
+  return out;
 }
-
-const meta = (canonical?: string) =>
-  `export const metadata = { alternates: { ${canonical ? `canonical: "${canonical}"` : ""} } };`;
-const PAGE = "export default function P() { return null; }";
 
 describe("every (visa-oracle) page route resolves its own self canonical", () => {
-  const routes = pageRoutes(APP_ROOT, GROUP_START);
+  const routes = pageRoutes(APP_ROOT, [GROUP]);
 
   it("finds the routes that exist today (non-vacuity)", () => {
     expect(routes.map(routeUrl)).toEqual(
@@ -160,114 +148,149 @@ describe("every (visa-oracle) page route resolves its own self canonical", () =>
 
   it.each(routes.map((r) => [routeUrl(r), r] as const))(
     "%s: the effective canonical is its own URL",
-    (url, segments) => {
-      expect(effectiveCanonical(APP_ROOT, [...segments])).toBe(
-        `https://balizero.com${url}`,
+    async (url, segments) => {
+      expect(await effectiveCanonical(APP_ROOT, [...segments])).toBe(
+        new URL(url, BASE).href,
       );
     },
   );
+
+  it("keeps the titles of the layouts it guards (positive control)", async () => {
+    const title = async (rel: string) =>
+      (await evaluatedMetadata(join(APP_ROOT, GROUP, "visa-oracle", rel)))
+        ?.title;
+    expect(await title("layout.tsx")).toBe("Visa Oracle");
+    expect(await title("privacy/layout.tsx")).toBe(
+      "Visa Oracle Privacy Policy",
+    );
+  });
 });
 
-describe("the guard itself (temp route trees)", () => {
-  const make = (files: Record<string, string>) => {
-    const root = tree(files);
-    return { root, done: () => rmSync(root, { recursive: true, force: true }) };
-  };
+// The guard itself, on throwaway trees of REAL importable modules.
+describe("the guard resolves evaluated metadata, not source text", () => {
+  const roots: string[] = [];
+  afterAll(() => {
+    for (const root of roots) rmSync(root, { recursive: true, force: true });
+    rmSync(SCRATCH, { recursive: true, force: true });
+  });
 
-  it("(a) a route inside a (group) is mapped without the group and passes when correct", () => {
-    const { root, done } = make({
+  function tree(files: Record<string, string>): string {
+    // inside the project root: vite only transforms (tsx) modules it can serve
+    mkdirSync(SCRATCH, { recursive: true });
+    const root = mkdtempSync(join(SCRATCH, "tree-"));
+    roots.push(root);
+    for (const [rel, body] of Object.entries(files)) {
+      const full = join(root, rel);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, body);
+    }
+    return root;
+  }
+
+  const meta = (canonical?: string, extra = "") =>
+    `export const metadata = { ${extra} alternates: { ${canonical ?? ""} } };`;
+  const PAGE = "export default function P() { return null; }\n";
+
+  it("a concatenated canonical is evaluated, so its real value is judged", async () => {
+    const root = tree({
       "(g)/a/page.tsx": PAGE,
-      "(g)/a/layout.tsx": meta("https://balizero.com/a"),
+      "(g)/a/layout.tsx": meta(
+        'canonical: "https://balizero.com/a" + "/wrong"',
+      ),
     });
-    try {
-      expect(violations(root, ["(g)"])).toEqual([]);
-    } finally {
-      done();
-    }
+    expect(await violations(root, ["(g)"])).toEqual([
+      "/a: effective canonical is https://balizero.com/a/wrong",
+    ]);
   });
 
-  it("(a) the same route with a wrong canonical fails", () => {
-    const { root, done } = make({
+  it("a constant and a URL object resolve to their values", async () => {
+    const root = tree({
       "(g)/a/page.tsx": PAGE,
-      "(g)/a/layout.tsx": meta("https://balizero.com/(g)/a"),
-    });
-    try {
-      expect(violations(root, ["(g)"])).toHaveLength(1);
-    } finally {
-      done();
-    }
-  });
-
-  it("(b) a correct layout with a wrong page-level override fails", () => {
-    const { root, done } = make({
-      "(g)/a/page.tsx": `${PAGE}\n${meta("https://balizero.com/other")}`,
-      "(g)/a/layout.tsx": meta("https://balizero.com/a"),
-    });
-    try {
-      expect(violations(root, ["(g)"])).toHaveLength(1);
-    } finally {
-      done();
-    }
-  });
-
-  it("(b) a correct page-level override over a wrong layout passes", () => {
-    const { root, done } = make({
-      "(g)/a/page.tsx": `${PAGE}\n${meta("https://balizero.com/a")}`,
-      "(g)/a/layout.tsx": meta("https://balizero.com/other"),
-    });
-    try {
-      expect(violations(root, ["(g)"])).toEqual([]);
-    } finally {
-      done();
-    }
-  });
-
-  it("a nearer layout wins over a farther one, and a missing canonical is caught", () => {
-    const { root, done } = make({
-      "(g)/layout.tsx": meta("https://balizero.com/parent"),
-      "(g)/a/page.tsx": PAGE,
-      "(g)/a/layout.tsx": meta("https://balizero.com/a"),
+      "(g)/a/layout.tsx": `const SELF = "https://balizero.com/a";\n${meta("canonical: SELF")}`,
       "(g)/b/page.tsx": PAGE,
+      "(g)/b/layout.tsx": meta(
+        'canonical: new URL("/b", "https://balizero.com")',
+      ),
     });
-    try {
-      expect(violations(root, ["(g)"])).toEqual([
-        "/b: effective canonical is https://balizero.com/parent",
-      ]);
-    } finally {
-      done();
-    }
+    expect(await violations(root, ["(g)"])).toEqual([]);
   });
 
-  it("an alternates block without a canonical leaves none, and a dynamic one cannot be verified", () => {
-    const { root, done } = make({
+  it("(a) a route inside a (group) is mapped without the group: correct passes, wrong fails", async () => {
+    const good = tree({
       "(g)/a/page.tsx": PAGE,
-      "(g)/a/layout.tsx": meta(),
-      "(g)/b/page.tsx": PAGE,
-      "(g)/b/layout.tsx":
-        "export const metadata = { alternates: { canonical: someUrl } };",
+      "(g)/a/layout.tsx": meta('canonical: "https://balizero.com/a"'),
     });
-    try {
-      expect(violations(root, ["(g)"])).toEqual([
-        "/a: effective canonical is NONE",
-        "/b: effective canonical is UNVERIFIABLE",
-      ]);
-    } finally {
-      done();
-    }
+    const bad = tree({
+      "(g)/a/page.tsx": PAGE,
+      "(g)/a/layout.tsx": meta('canonical: "https://balizero.com/(g)/a"'),
+    });
+    expect(await violations(good, ["(g)"])).toEqual([]);
+    expect(await violations(bad, ["(g)"])).toHaveLength(1);
   });
 
-  it("private folders are skipped, and slots or intercepting folders fail loudly", () => {
-    const ok = make({ "(g)/_lib/page.tsx": PAGE });
-    const bad = make({ "(g)/@modal/page.tsx": PAGE });
-    const bad2 = make({ "(g)/(.)photo/page.tsx": PAGE });
-    try {
-      expect(violations(ok.root, ["(g)"])).toEqual([]);
-      expect(() => violations(bad.root, ["(g)"])).toThrow(/Unsupported/);
-      expect(() => violations(bad2.root, ["(g)"])).toThrow(/Unsupported/);
-    } finally {
-      ok.done();
-      bad.done();
-      bad2.done();
-    }
+  it("(b) a correct layout with a wrong page-level override fails; the reverse passes", async () => {
+    const bad = tree({
+      "(g)/a/page.tsx": `${PAGE}${meta('canonical: "https://balizero.com/other"')}`,
+      "(g)/a/layout.tsx": meta('canonical: "https://balizero.com/a"'),
+    });
+    const good = tree({
+      "(g)/a/page.tsx": `${PAGE}${meta('canonical: "https://balizero.com/a"')}`,
+      "(g)/a/layout.tsx": meta('canonical: "https://balizero.com/other"'),
+    });
+    expect(await violations(bad, ["(g)"])).toHaveLength(1);
+    expect(await violations(good, ["(g)"])).toEqual([]);
+  });
+
+  it("an alternates object without a canonical leaves none, even over a correct parent", async () => {
+    const root = tree({
+      "(g)/layout.tsx": meta('canonical: "https://balizero.com/a"'),
+      "(g)/a/page.tsx": PAGE,
+      "(g)/a/layout.tsx": meta(undefined, ""),
+    });
+    expect(await violations(root, ["(g)"])).toEqual([
+      "/a: effective canonical is NONE",
+    ]);
+  });
+
+  it("a route with no canonical anywhere in its chain is caught", async () => {
+    const root = tree({ "(g)/a/page.tsx": PAGE });
+    expect(await violations(root, ["(g)"])).toEqual([
+      "/a: effective canonical is NONE",
+    ]);
+  });
+
+  it("a client module is not imported, dynamic metadata and import errors fail loudly", async () => {
+    const client = tree({
+      "(g)/a/page.tsx": `"use client";\n${PAGE}`,
+      "(g)/a/layout.tsx": meta('canonical: "https://balizero.com/a"'),
+    });
+    const dynamic = tree({
+      "(g)/a/page.tsx": PAGE,
+      "(g)/a/layout.tsx":
+        "export async function generateMetadata() { return {}; }",
+    });
+    const broken = tree({
+      "(g)/a/page.tsx": PAGE,
+      "(g)/a/layout.tsx": "throw new Error('boom');",
+    });
+    expect(await violations(client, ["(g)"])).toEqual([]);
+    await expect(violations(dynamic, ["(g)"])).rejects.toThrow(
+      /generateMetadata/,
+    );
+    await expect(violations(broken, ["(g)"])).rejects.toThrow(
+      /Could not import/,
+    );
+  });
+
+  it("private folders are skipped, and slots or intercepting folders fail loudly", async () => {
+    expect(
+      await violations(tree({ "(g)/_lib/page.tsx": PAGE }), ["(g)"]),
+    ).toEqual([]);
+    await expect(
+      violations(tree({ "(g)/@modal/page.tsx": PAGE }), ["(g)"]),
+    ).rejects.toThrow(/Unsupported/);
+    await expect(
+      violations(tree({ "(g)/(.)photo/page.tsx": PAGE }), ["(g)"]),
+    ).rejects.toThrow(/Unsupported/);
   });
 });
