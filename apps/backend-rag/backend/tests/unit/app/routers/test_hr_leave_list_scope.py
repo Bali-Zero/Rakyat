@@ -106,13 +106,13 @@ class TestApproverListScope:
         assert ids.isdisjoint({2, 3, 4, 5})
 
     @pytest.mark.asyncio
-    async def test_direktur_sees_ari_asya_and_setup_not_tax(self) -> None:
+    async def test_direktur_is_an_hr_admin_and_sees_everyone_but_never_reviews_his_own(self) -> None:
+        # Owner decision 2026-11-10: the Direktur is an HR admin, so the admin view applies.
         rows = await _list(ADIT)
         by_id = {r["id"]: r for r in rows}
-        assert set(by_id) == {2, 3, 4, 5}
-        assert all(by_id[i]["can_review"] for i in (2, 3, 4))
+        assert set(by_id) == {1, 2, 3, 4, 5, 6}
+        assert all(by_id[i]["can_review"] for i in (1, 2, 3, 4, 6))
         assert by_id[5]["can_review"] is False  # his own
-        assert 1 not in by_id and 6 not in by_id
 
     @pytest.mark.asyncio
     async def test_a_plain_member_sees_only_their_own_and_reviews_nothing(self) -> None:
@@ -142,7 +142,7 @@ class TestReviewEndpointsStayScoped:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "approver,requester",
-        [(ANGEL, ADIT), (ANGEL, KRISNA), (ADIT, KADEK), (ADIT, ANGEL), (KADEK, ARI)],
+        [(ANGEL, ADIT), (ANGEL, KRISNA), (KADEK, ARI)],
     )
     async def test_forged_request_id_outside_the_reports_is_refused(
         self, approver: str, requester: str
@@ -168,12 +168,12 @@ class TestReviewEndpointsStayScoped:
 
 
 class TestApproversAreNotHrAdmins:
-    @pytest.mark.parametrize("email", [ANGEL, ADIT, ARI])
+    @pytest.mark.parametrize("email", [ANGEL, ARI])
     def test_no_hr_admin_flag(self, email: str) -> None:
         assert is_hr_admin({"email": email, "role": "member"}) is False
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("email", [ANGEL, ADIT])
+    @pytest.mark.parametrize("email", [ANGEL, KRISNA])
     async def test_financial_endpoints_refuse_an_approver(self, email: str) -> None:
         user = {"email": email, "role": "member"}
         for call in (
@@ -186,7 +186,29 @@ class TestApproversAreNotHrAdmins:
 
     @pytest.mark.asyncio
     async def test_the_list_payload_carries_no_financial_field(self) -> None:
-        rows = await _list(ADIT)
+        rows = await _list(ANGEL)
         banned = ("salary", "bank", "npwp", "payslip", "bonus", "ptkp", "bpjs")
         for r in rows:
             assert not [k for k in r if any(b in k.lower() for b in banned)], r.keys()
+
+
+class TestDirekturHrAdminEndpoints:
+    """Owner decision 2026-11-10: adit@ reaches the HR-admin endpoints; a setup address still does not."""
+
+    @pytest.mark.asyncio
+    async def test_direktur_reaches_the_employees_endpoint(self) -> None:
+        service = AsyncMock()
+        service.list_employees = AsyncMock(return_value=[])
+        with patch.object(hr_router, "_get_hr_service", return_value=service):
+            out = await list_employees(
+                current_user={"email": ADIT, "role": "member"}, db_pool=MagicMock()
+            )
+        assert out["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_a_setup_member_is_still_refused(self) -> None:
+        with pytest.raises(HTTPException) as exc:
+            await list_employees(
+                current_user={"email": KRISNA, "role": "member"}, db_pool=MagicMock()
+            )
+        assert exc.value.status_code == 403
