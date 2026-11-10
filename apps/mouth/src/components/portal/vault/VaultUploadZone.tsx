@@ -8,6 +8,7 @@ import {
   UPLOAD_FORMAT_LABEL,
 } from "@/lib/vault/uploadLimits";
 import { shrinkImage } from "@/lib/vault/shrinkImage";
+import { DOCUMENT_TYPE_OPTIONS } from "@/lib/types/required-documents";
 
 interface Props {
   practiceId?: number | string | null;
@@ -26,6 +27,9 @@ export function VaultUploadZone({
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [purpose, setPurpose] = useState("");
+  // Same values staff use for Required Documents slots, so a typed upload can
+  // fill its slot. "other" is the old behaviour and fills nothing.
+  const [documentType, setDocumentType] = useState("other");
   const { state, upload, reset, retry, canRetry } = useVaultUpload();
 
   useEffect(() => {
@@ -34,6 +38,7 @@ export function VaultUploadZone({
       const t = setTimeout(() => {
         reset();
         setPurpose("");
+        setDocumentType("other");
       }, 3000);
       return () => clearTimeout(t);
     }
@@ -42,7 +47,7 @@ export function VaultUploadZone({
   const handleFiles = (files: FileList | null) => {
     if (disabled || !files || files.length === 0) return;
     const file = files[0];
-    const options = { practiceId, purpose };
+    const options = { practiceId, purpose, documentType };
     if (
       file.size > MAX_SIZE_BYTES &&
       (file.type === "image/jpeg" || file.type === "image/png")
@@ -60,6 +65,26 @@ export function VaultUploadZone({
 
   return (
     <div className="space-y-2">
+      <div>
+        <label
+          htmlFor="vault-upload-document-type"
+          className="block text-[10px] uppercase tracking-[2px] text-[var(--bz-text-3)] mb-1"
+        >
+          What is this document?
+        </label>
+        <select
+          id="vault-upload-document-type"
+          value={documentType}
+          onChange={(e) => setDocumentType(e.target.value)}
+          className="w-full rounded-lg border border-[var(--bz-border)] bg-[var(--bz-card)] px-3 py-2 text-sm text-[var(--bz-text-1)] focus:border-[var(--bz-focus-ring)] focus:outline-none"
+        >
+          {DOCUMENT_TYPE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
       <div>
         <label
           htmlFor="vault-upload-purpose"
