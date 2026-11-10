@@ -34,7 +34,7 @@ describe("editorial approver roles carry the 2026-11-09 titles", () => {
     process.env = {
       ...originalEnv,
       NUZANTARA_API_URL: "https://nuzantara-rag.fly.dev",
-      NUZANTARA_INTERNAL_API_KEY: "internal-secret-key",
+      NUZANTARA_INTERNAL_API_KEY: "internal-secret-key", // pragma: allowlist secret
     };
   });
 
