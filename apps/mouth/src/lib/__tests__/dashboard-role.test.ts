@@ -53,6 +53,13 @@ describe("normalizeDashboardRole", () => {
     );
   });
 
+  it.each(["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"])(
+    "guilt control: the inherited key %s still resolves to 'team'",
+    (raw) => {
+      expect(normalizeDashboardRole(raw, false)).toBe("team");
+    },
+  );
+
   it("exports VALID_ROLES containing all 5 roles", () => {
     expect(VALID_ROLES).toContain("zero");
     expect(VALID_ROLES).toContain("team");
