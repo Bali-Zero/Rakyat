@@ -8,8 +8,7 @@ chosen from the practice type code (1 invoice = 1 practice = 1 code).
 Rules:
   * Codes not listed here keep today's behaviour: CIMB / PT BAYU BALI NOL.
   * An entity with any required field empty is never used: the invoice falls
-    back to CIMB and a warning is logged (fail-safe until the real details
-    are filled in).
+    back to CIMB and a warning is logged (fail-safe).
   * Invoices whose ``invoices`` row was created before
     ``ENTITY_ROUTING_EFFECTIVE_FROM`` (WITA calendar date) stay on CIMB even
     when regenerated, so a re-sent invoice never changes its bank account.
@@ -83,33 +82,32 @@ CIMB_BAYU_BALI_NOL = InvoiceEntity(
     bank_swift="BNIAIDJA",
 )
 
-# Letterhead name: Asya, 2026-11-10. NPWP + bank details are filled by Subhi
-# in a separate commit after a phone check with Asya. Until then the entity
-# is incomplete and every invoice routed here falls back to CIMB.
+# Letterhead name: Asya, 2026-11-10. NPWP + bank details from the finance
+# document and NPWP card dated 2026-11-10.
 MANDIRI_BALI_NOL_IMPRESARIAT = InvoiceEntity(
     key="mandiri_bali_nol_impresariat",
     company_name="PT. Bali Nol Impresariat",
-    tax_id=None,
+    tax_id="0537 9883 1390 6000",
     address="Jl Raya Anyar No 26, Kerobokan, Kuta Utara, Kab. Badung, Bali",
-    bank_account_name=None,
-    bank_account_number=None,
-    bank_name="MANDIRI",
-    bank_branch=None,
-    bank_swift=None,
+    bank_account_name="Bali Nol Impresariat",
+    bank_account_number="1750002424074",
+    bank_name="Bank Mandiri",
+    bank_branch="Jl. Gatot Subroto Barat - Kota Denpasar, Badung, Bali 80361",
+    bank_swift="BMRIIDJAXXX",
 )
 
 # Letterhead name per Asya's document (the NPWP card reads "BAYU SANTERO");
-# address = NPWP address. NPWP + bank details: same fill-in rule as Mandiri.
+# address = NPWP address. Details: same source as Mandiri.
 BNI_BAYU_SANTERO = InvoiceEntity(
     key="bni_bayu_santero",
     company_name="CV. Bayu Santero",
-    tax_id=None,
+    tax_id="0021 5256 6290 6000",
     address="Jl Raya Anyar No 26, Kerobokan, Kuta Utara, Kab. Badung, Bali",
-    bank_account_name=None,
-    bank_account_number=None,
-    bank_name="BNI",
-    bank_branch=None,
-    bank_swift=None,
+    bank_account_name="CV. Bayu Santero",
+    bank_account_number="0301613030",
+    bank_name="BNI (Bank Negara Indonesia)",
+    bank_branch="Jl. Raya Semer no 26, Kerobokan, Badung, Bali 80361",
+    bank_swift="BNINIDJARNN",
 )
 
 DEFAULT_ENTITY_KEY = CIMB_BAYU_BALI_NOL.key
@@ -134,6 +132,13 @@ MANDIRI_CODES: frozenset[str] = frozenset(
         "visa_c22_internship_180d",
         "visa_d12_business_1yr",
         "visa_d12_business_2yr",
+        # Multiple Entry Visa: Index D (finance, 2026-11-10)
+        "visa_d1_tourism_1yr",
+        "visa_d1_tourism_2yr",
+        "visa_d1_tourism_5yr",
+        "visa_d2_business_1yr",
+        "visa_d2_business_2yr",
+        "visa_d2_business_5yr",
         # VOA (new)
         "visa_voa",
         "visa_b1_voa",

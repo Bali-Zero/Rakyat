@@ -103,8 +103,10 @@ def test_code_sets_are_disjoint():
     [("visa_c1_tourism", MANDIRI_BALI_NOL_IMPRESARIAT), ("voa_extension", BNI_BAYU_SANTERO)],
 )
 def test_incomplete_entity_falls_back_to_cimb_with_warning(monkeypatch, code, entity):
-    # The shipped constants have no NPWP / account yet.
-    assert entity.missing_fields()
+    # Synthetic incomplete copy: no NPWP and no account number.
+    incomplete = dataclasses.replace(entity, tax_id=None, bank_account_number="")
+    assert incomplete.missing_fields() == ["tax_id", "bank_account_number"]
+    monkeypatch.setitem(entities.ENTITIES, entity.key, incomplete)
     fake_logger = MagicMock()
     monkeypatch.setattr(entities, "logger", fake_logger)
 
@@ -258,3 +260,71 @@ def test_pdf_default_issuer_is_unchanged_cimb():
     assert f"NPWP: {CIMB_BAYU_BALI_NOL.tax_id}" in text
     assert CIMB_BAYU_BALI_NOL.bank_account_number in text
     assert "CIMB NIAGA" in text
+
+
+# ── Real issuer details (finance document + NPWP cards, 2026-11-10) ────────
+
+
+def test_mandiri_details_exact():
+    e = MANDIRI_BALI_NOL_IMPRESARIAT
+    assert e.company_name == "PT. Bali Nol Impresariat"
+    assert e.address == "Jl Raya Anyar No 26, Kerobokan, Kuta Utara, Kab. Badung, Bali"
+    assert e.tax_id == "0537 9883 1390 6000"
+    assert e.bank_name == "Bank Mandiri"
+    assert e.bank_account_name == "Bali Nol Impresariat"
+    assert e.bank_account_number == "1750002424074"
+    assert e.bank_branch == "Jl. Gatot Subroto Barat - Kota Denpasar, Badung, Bali 80361"
+    assert e.bank_swift == "BMRIIDJAXXX"
+    assert e.is_complete
+
+
+def test_bni_details_exact():
+    e = BNI_BAYU_SANTERO
+    assert e.company_name == "CV. Bayu Santero"
+    assert e.address == "Jl Raya Anyar No 26, Kerobokan, Kuta Utara, Kab. Badung, Bali"
+    assert e.tax_id == "0021 5256 6290 6000"
+    assert e.bank_name == "BNI (Bank Negara Indonesia)"
+    assert e.bank_account_name == "CV. Bayu Santero"
+    assert e.bank_account_number == "0301613030"
+    assert e.bank_branch == "Jl. Raya Semer no 26, Kerobokan, Badung, Bali 80361"
+    assert e.bank_swift == "BNINIDJARNN"
+    assert e.is_complete
+
+
+def test_cimb_details_unchanged():
+    e = CIMB_BAYU_BALI_NOL
+    assert e.company_name == "PT BAYU BALI NOL"
+    assert e.tax_id == "1000000001239938"
+    assert e.bank_account_number == "800198149700"
+    assert e.bank_name == "CIMB NIAGA"
+    assert e.bank_swift == "BNIAIDJA"
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "visa_d1_tourism_1yr",
+        "visa_d1_tourism_2yr",
+        "visa_d1_tourism_5yr",
+        "visa_d2_business_1yr",
+        "visa_d2_business_2yr",
+        "visa_d2_business_5yr",
+    ],
+)
+def test_index_d_multiple_entry_routes_to_real_mandiri(code):
+    assert resolve_invoice_entity(code, now=AFTER_GO_LIVE) == MANDIRI_BALI_NOL_IMPRESARIAT
+
+
+@pytest.mark.parametrize(
+    ("code", "present", "absent"),
+    [
+        ("visa_c1_tourism", "1750002424074", "800198149700"),
+        ("voa_extension", "0301613030", "800198149700"),
+        ("kitas_working_onshore", "800198149700", "1750002424074"),
+    ],
+)
+def test_pdf_with_real_routing_shows_expected_account(code, present, absent):
+    entity = resolve_invoice_entity(code, now=AFTER_GO_LIVE)
+    text = _pdf_text(_render(entity))
+    assert present in text
+    assert absent not in text
