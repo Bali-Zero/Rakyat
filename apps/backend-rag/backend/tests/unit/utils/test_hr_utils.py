@@ -29,13 +29,18 @@ class TestIsHrAdmin:
     def test_not_admin(self) -> None:
         assert not is_hr_admin({"email": "team@balizero.com", "role": "member"})
 
-    def test_department_heads_and_the_retired_login_are_not_hr_admins(self) -> None:
-        # Reorganisation 2026-11-09: salary visibility stays with the global admins.
+    def test_the_direktur_is_an_hr_admin(self) -> None:
+        # Owner decision 2026-11-10 (before it, this address was refused).
+        assert is_hr_admin({"email": "adit@balizero.com", "role": "member"})
+        assert is_hr_admin({"email": "ADIT@BALIZERO.COM", "role": "member"})
+
+    def test_other_department_heads_setup_and_the_retired_login_are_not_hr_admins(self) -> None:
         for email in (
             "tax@balizero.com",
             "angel.tax@balizero.com",
             "ari.firda@balizero.com",
-            "adit@balizero.com",
+            "krisna@balizero.com",
+            "kadek.tax@balizero.com",
         ):
             assert not is_hr_admin({"email": email, "role": "member"}), email
         assert not is_hr_admin({"email": "natalie@balizero.com", "role": "member"})
