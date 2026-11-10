@@ -27,6 +27,32 @@ describe("normalizeDashboardRole", () => {
     expect(normalizeDashboardRole(undefined, false)).toBe("team");
   });
 
+  // Reorganisation 2026-11-09: a new job title must open the same widget as
+  // the title it replaces. Guilt: a new title that maps differently fails.
+  it.each([
+    ["Supervisor", "Direktur"],
+    ["Tax Lead", "Tax Supervisor"],
+    ["Team Leader", "Tax Responsible"],
+    ["Executive Consultant", "Senior Consultant"],
+    ["Accounting", "HR & Accounting"],
+  ])("%s and its replacement %s resolve to the same widget", (oldTitle, newTitle) => {
+    expect(normalizeDashboardRole(newTitle, false)).toBe(
+      normalizeDashboardRole(oldTitle, false),
+    );
+  });
+
+  it("keeps the accounting widget for the HR & Accounting title, any case", () => {
+    expect(normalizeDashboardRole("HR & Accounting", false)).toBe("accounting");
+    expect(normalizeDashboardRole("hr & accounting", false)).toBe("accounting");
+  });
+
+  it("guilt control: a near-miss title does not borrow the accounting widget", () => {
+    expect(normalizeDashboardRole("HR", false)).toBe("team");
+    expect(normalizeDashboardRole("Finance & Client Services Coordinator", false)).toBe(
+      "team",
+    );
+  });
+
   it("exports VALID_ROLES containing all 5 roles", () => {
     expect(VALID_ROLES).toContain("zero");
     expect(VALID_ROLES).toContain("team");
