@@ -744,9 +744,9 @@ export default async function KBLICodePage({
                   className="px-5 py-3.5 border-b border-[var(--border)]"
                   style={{ background: "var(--kbli-bg-surface)" }}
                 >
-                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--kbli-accent)]">
+                  <h2 className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--kbli-accent)]">
                     Complementary Codes
-                  </span>
+                  </h2>
                 </div>
                 <div className="px-5 py-4 kbli-prose">
                   <MarkdownClient withKbliLinks>
@@ -804,9 +804,9 @@ export default async function KBLICodePage({
                         border: "1px solid var(--kbli-border)",
                       }}
                     >
-                      <h3 className="mb-3 text-xs font-bold uppercase tracking-[0.15em] text-[var(--foreground-muted)]">
+                      <h2 className="mb-3 text-xs font-bold uppercase tracking-[0.15em] text-[var(--foreground-muted)]">
                         What You Need
-                      </h3>
+                      </h2>
                       <div className="text-sm leading-relaxed text-[var(--foreground-secondary)] whitespace-pre-line">
                         {intel.whatYouNeed}
                       </div>
@@ -849,9 +849,9 @@ export default async function KBLICodePage({
                         border: "1px solid var(--kbli-border)",
                       }}
                     >
-                      <h3 className="mb-3 text-xs font-bold uppercase tracking-[0.15em] text-[var(--foreground-muted)]">
+                      <h2 className="mb-3 text-xs font-bold uppercase tracking-[0.15em] text-[var(--foreground-muted)]">
                         Who This Is For
-                      </h3>
+                      </h2>
                       <p className="text-sm leading-relaxed text-[var(--foreground-secondary)]">
                         {intel.whoThisIsFor}
                       </p>
@@ -868,9 +868,9 @@ export default async function KBLICodePage({
                         className="px-5 py-3.5 border-b border-[var(--border)]"
                         style={{ background: "var(--kbli-bg-surface)" }}
                       >
-                        <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--kbli-accent)]">
+                        <h2 className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--kbli-accent)]">
                           You&apos;ll Also Need
-                        </span>
+                        </h2>
                       </div>
                       <div className="px-5 py-4">
                         <KBLIYoullAlsoNeed text={intel.youllAlsoNeed} />
