@@ -151,6 +151,7 @@ class InvoiceGenerator:
         notes: str | None = None,
         discount_amount: float = 0.0,
         discount_reason: str | None = None,
+        *,
         entity: InvoiceEntity | None = None,
     ) -> bytes:
         """Generate invoice PDF as bytes.
