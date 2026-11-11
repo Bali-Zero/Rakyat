@@ -23,6 +23,11 @@ from backend.app.core.config import settings
 from backend.app.utils.logging_utils import get_logger
 from backend.core.cache import invalidate_crm_stats
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
+from backend.services.invoicing.entities import (
+    CIMB_BAYU_BALI_NOL,
+    InvoiceEntity,
+    resolve_invoice_entity,
+)
 from backend.services.invoicing.invoice_generator import InvoiceGenerator
 from backend.services.notifications.email_audit import (
     format_send_error,
@@ -118,6 +123,10 @@ class InvoiceAutomationService:
                     discount_amount_float = quoted_price_float
                 final_amount_float = quoted_price_float - discount_amount_float
 
+                issuer = await self._resolve_issuer(
+                    practice_id, practice_data.get("practice_type_code")
+                )
+
                 pdf_bytes = self.invoice_generator.generate(
                     practice_id=practice_id,
                     client_name=client_data["full_name"],
@@ -130,6 +139,7 @@ class InvoiceAutomationService:
                     notes="Thank you for choosing Bali Zero. Payment is due within 2 days.",
                     discount_amount=discount_amount_float,
                     discount_reason=discount_reason_value,
+                    entity=issuer,
                 )
 
                 filename = f"Invoice_{invoice_number}.pdf"
@@ -417,6 +427,33 @@ class InvoiceAutomationService:
                 practice_id,
             )
             return dict(row) if row else None
+
+    async def _resolve_issuer(
+        self, practice_id: int, practice_type_code: str | None
+    ) -> InvoiceEntity:
+        """Issuer entity for this practice's invoice (DAI-124).
+
+        A regenerated invoice keeps the date of its existing ``invoices`` row,
+        so invoices first created before the routing go-live stay on CIMB.
+        If that lookup fails, CIMB is used (today's behaviour).
+        """
+        try:
+            async with self.db_pool.acquire() as conn:
+                created_at = await conn.fetchval(
+                    "SELECT created_at FROM invoices WHERE practice_id = $1",
+                    practice_id,
+                )
+        except Exception as exc:
+            logger.warning(
+                "Invoice created_at lookup failed for practice %s (%s); issuing as %s",
+                practice_id,
+                type(exc).__name__,
+                CIMB_BAYU_BALI_NOL.key,
+            )
+            return CIMB_BAYU_BALI_NOL
+        if not isinstance(created_at, datetime):
+            created_at = None  # no invoice row yet: a new invoice, dated now
+        return resolve_invoice_entity(practice_type_code, created_at)
 
     async def _fetch_client_data(self, client_id: int) -> dict | None:
         """Fetch client data from database."""
