@@ -1,8 +1,11 @@
 """Staff HR card import: the LAUNCHER, the only thing an operator runs.
 
-    python backend/scripts/import_staff_cards.py            # dry-run, counts only
-    python backend/scripts/import_staff_cards.py --apply    # one transaction, all or nothing
-    python backend/scripts/import_staff_cards.py --apply --skip-not-found
+    python -I backend/scripts/import_staff_cards.py            # dry-run, counts only
+    python -I backend/scripts/import_staff_cards.py --apply    # one transaction, all or nothing
+    python -I backend/scripts/import_staff_cards.py --apply --skip-not-found
+
+It refuses to run without `-I` (isolated mode): the interpreter's own startup (PYTHONWARNINGS,
+PYTHONSTARTUP, user site) runs before any line of this file and cannot be policed from inside.
 
 The card document is read from STDIN. This file imports the standard library only and
 does the real work in a child process (`_import_staff_cards_worker.py`) whose stdout and
@@ -19,6 +22,7 @@ if __name__ == "__main__":  # nothing of ours or a library's may speak: set befo
 
 import os
 import re
+import select
 import selectors
 import signal
 import subprocess
@@ -39,9 +43,11 @@ OUTCOME_KEYS = (
     "would_update",
     "would_insert",
     "blocked:not_found",
+    "unclassified",
     "rejected:bad_shape",
     "rejected:unknown_key",
     "rejected:email_missing",
+    "rejected:email_noncanonical",
     "rejected:invalid_ptkp",
     "rejected:invalid_profile",
     "rejected:invalid_fields",
@@ -81,10 +87,12 @@ LAUNCHER_CODES = (
     "close_failed",
     "worker_exit_nonzero",
     "output_closed",
+    "input_too_large",
     "internal_error",
 )
 
 MAX_COUNT = 1_000_000
+MAX_INPUT_BYTES = 8 * 1024 * 1024
 MAX_RESULT_BYTES = 64 * 1024
 DEFAULT_TIMEOUT_S = 15 * 60
 TEST_TIMEOUT_ENV = "IMPORT_STAFF_CARDS_TEST_TIMEOUT_S"
@@ -96,8 +104,20 @@ _HELP = (
     b"  --apply           write in one transaction, all or nothing (default is a dry-run)\n"
     b"  --skip-not-found  with --apply: skip emails that resolve to no staff member\n"
 )
-_WORKER_MODULE = "backend.scripts._import_staff_cards_worker"
-_BACKEND_RAG = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_NOT_ISOLATED = b"import_staff_cards: run with python -I\n"
+# The worker's code origin is THIS file's own tree and nothing else: the root and the worker
+# file are derived from the resolved path of this launcher and passed as argv elements to a
+# FIXED bootstrap (never interpolated into code); the child runs isolated (-I), so neither
+# PYTHON* variables, cwd nor user site can put another `backend` in front of it.
+_BACKEND_RAG = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+_WORKER_FILE = os.path.join(_BACKEND_RAG, "backend", "scripts", "_import_staff_cards_worker.py")
+_BOOTSTRAP = (
+    "import runpy, sys\n"
+    "root, worker = sys.argv[1], sys.argv[2]\n"
+    "sys.path.insert(0, root)\n"
+    "sys.argv = [worker] + sys.argv[3:]\n"
+    "runpy.run_path(worker, run_name='__main__')\n"
+)
 
 # ─── the result grammar: one record per line, compact, closed literals, bounded integers ───
 
@@ -128,6 +148,7 @@ class State:
         self.failed: str | None = None
         self.closed: bool | None = None
         self.protocol_error = False
+        self.void = False  # contradictory records: the decision cannot be trusted either way
         self.nothing_ran = False  # the worker was never started: nothing can have been written
         self.spawn_failed = False
         self.timed_out = False
@@ -140,6 +161,7 @@ class State:
         """Take one result line if, and only if, it matches the closed grammar."""
         if self.closed is not None:  # nothing may follow the last phase
             self.protocol_error = True
+            self.void = True
             return
         match = _DECIDED.fullmatch(line)
         if match is not None:
@@ -150,15 +172,24 @@ class State:
                     self.protocol_error = True
                     return
                 outcomes[key] = value
-            if self.decided is not None:
+            committed = match.group(1) == b"true"
+            if self.decided is not None:  # a second answer: neither is believed
                 self.protocol_error = True
+                self.void = True
                 return
-            self.decided = (match.group(1) == b"true", outcomes)
+            if committed and any(
+                k.startswith(("rejected:", "blocked:")) or k == "unclassified" for k in outcomes
+            ):  # a batch commits only when every card is applied: this contradicts itself
+                self.protocol_error = True
+                self.void = True
+                return
+            self.decided = (committed, outcomes)
             return
         match = _FAILED.fullmatch(line)
         if match is not None:
             if self.failed is not None:
                 self.protocol_error = True
+                self.void = True
                 return
             self.failed = match.group(1).decode("ascii")
             return
@@ -191,8 +222,9 @@ class State:
 def build_report(apply: bool, st: State) -> tuple[list[str], list[str], int]:
     lines = [f"mode: {'apply' if apply else 'dry-run'}"]
     base = BASE_KEYS_APPLY if apply else BASE_KEYS_DRY
-    if st.decided is not None:
-        committed, outcomes = st.decided
+    decided = None if st.void else st.decided
+    if decided is not None:
+        committed, outcomes = decided
         committed = committed and apply  # a dry-run never writes, whatever a worker claims
         for key in OUTCOME_KEYS:
             if key in base or outcomes.get(key, 0):
@@ -213,19 +245,19 @@ def build_report(apply: bool, st: State) -> tuple[list[str], list[str], int]:
         (st.protocol_error, "protocol_error"),
     )
     codes += [code for present, code in flags if present]
-    if st.decided is None and st.failed is None and not codes:
+    if decided is None and st.failed is None and not codes:
         killed = st.returncode is not None and st.returncode < 0
         codes.append("worker_killed" if killed else "no_result")
-    if st.decided is not None and st.closed is None:
+    if decided is not None and st.closed is None:
         codes.append("worker_died_after_decision")
-    elif st.closed is False:
+    elif decided is not None and st.closed is False:
         codes.append("close_failed")
     elif st.closed is True and st.returncode != 0 and st.failed is None:
         codes.append("worker_exit_nonzero")
 
-    clean = st.decided is not None and not codes and st.closed is True and st.returncode == 0
+    clean = decided is not None and not codes and st.closed is True and st.returncode == 0
     if clean and apply:
-        committed, outcomes = st.decided  # type: ignore[misc]
+        committed, outcomes = decided  # type: ignore[misc]
         clean = committed and not any(k.startswith(("rejected:", "blocked:")) for k in outcomes)
     return lines, codes, 0 if clean else 1
 
@@ -272,15 +304,32 @@ def parse_args(argv: list[str]) -> tuple[bool, bool] | int:
     return apply, skip
 
 
-def _read_stdin() -> bytes | None:
+def _read_stdin(deadline: float, st: "State") -> bytes | None:
+    """Raw bytes, capped, under the wall-clock deadline and the stop flag. None on failure,
+    with the reason recorded in `st`."""
     chunks: list[bytes] = []
+    size = 0
     try:
         while True:
+            if _STOP["flag"]:
+                st.interrupted = True
+                return None
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                st.timed_out = True
+                return None
+            if not select.select([0], [], [], min(0.1, remaining))[0]:
+                continue
             chunk = os.read(0, 1 << 20)
             if not chunk:
                 return b"".join(chunks)
+            size += len(chunk)
+            if size > MAX_INPUT_BYTES:
+                st.failed = "input_too_large"
+                return None
             chunks.append(chunk)
     except BaseException:
+        st.failed = "bad_input"
         return None
 
 
@@ -293,23 +342,18 @@ def _on_signal(signum: int, frame: object) -> None:
 
 
 def _reap(proc: subprocess.Popen[bytes]) -> None:
-    """Terminate, then kill; never leaves the child behind."""
+    """Kill, THEN wait (bounded); never leaves the child behind, never waits unboundedly."""
     try:
         if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=5)
-    except BaseException:
-        try:
             proc.kill()
-        except BaseException:
-            pass
+            proc.wait(timeout=5)
+    except BaseException:
+        pass
 
 
-def _supervise(proc: subprocess.Popen[bytes], payload: bytes, result_fd: int, st: State) -> None:
+def _supervise(
+    proc: subprocess.Popen[bytes], payload: bytes, result_fd: int, st: State, deadline: float
+) -> None:
     os.set_blocking(result_fd, False)
     stdin_fd = proc.stdin.fileno() if proc.stdin else -1
     sel = selectors.DefaultSelector()
@@ -321,7 +365,6 @@ def _supervise(proc: subprocess.Popen[bytes], payload: bytes, result_fd: int, st
     elif proc.stdin:
         proc.stdin.close()
     result_open = True
-    deadline = time.monotonic() + _timeout_seconds()
     while True:
         if _STOP["flag"]:
             st.interrupted = True
@@ -401,17 +444,17 @@ def run_launcher(argv: list[str]) -> int:
         return parsed
     apply, skip = parsed
     st = State()
-    payload = _read_stdin()
+    deadline = time.monotonic() + _timeout_seconds()  # one wall-clock limit: input and worker
+    _STOP["flag"] = False
+    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):  # before the first read
+        signal.signal(signum, _on_signal)
+    payload = _read_stdin(deadline, st)
     if payload is None:
         st.nothing_ran = True
-        st.failed = "bad_input"
         return _emit(apply, st)
-    signal.signal(signal.SIGINT, _on_signal)
-    signal.signal(signal.SIGTERM, _on_signal)
     read_end, write_end = os.pipe()
-    env = dict(os.environ)
-    env["PYTHONPATH"] = os.pathsep.join(p for p in (env.get("PYTHONPATH"), _BACKEND_RAG) if p)
-    cmd = [sys.executable, "-m", _WORKER_MODULE, f"--result-fd={write_end}"]
+    cmd = [sys.executable, "-I", "-c", _BOOTSTRAP, _BACKEND_RAG, _WORKER_FILE]
+    cmd += [f"--result-fd={write_end}"]
     cmd += (["--apply"] if apply else []) + (["--skip-not-found"] if skip else [])
     try:
         proc = subprocess.Popen(
@@ -420,7 +463,8 @@ def run_launcher(argv: list[str]) -> int:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             pass_fds=(write_end,),
-            env=env,
+            close_fds=True,
+            start_new_session=True,  # setsid: no controlling terminal, so no /dev/tty
             bufsize=0,
         )
     except BaseException:
@@ -432,25 +476,25 @@ def run_launcher(argv: list[str]) -> int:
     _CHILD = proc
     os.close(write_end)
     try:
-        _supervise(proc, payload, read_end, st)
+        _supervise(proc, payload, read_end, st, deadline)
     finally:
         _reap(proc)
         os.close(read_end)
     # from here on a signal must not cost the operator the truth about a decided batch
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(signum, signal.SIG_IGN)
     return _emit(apply, st)
 
 
 def main(argv: list[str]) -> None:
+    if sys.flags.isolated != 1:  # the interpreter's startup ran before us: we only refuse
+        _write_all(2, _NOT_ISOLATED)
+        os._exit(2)
     try:
         code = run_launcher(argv)
     except BaseException:  # SystemExit included: after argument parsing it is a failure
-        try:
-            if _CHILD is not None:
-                _CHILD.kill()
-        except BaseException:
-            pass
+        if _CHILD is not None:
+            _reap(_CHILD)  # kill, then a bounded wait
         _write_all(2, b"import_staff_cards: failed (internal_error)\n")
         os._exit(1)
     os._exit(code)

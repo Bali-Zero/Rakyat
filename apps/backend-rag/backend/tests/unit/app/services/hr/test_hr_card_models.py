@@ -98,9 +98,24 @@ def test_unknown_keys_and_odd_flags_are_rejected():
     _bad(ptkp_status="ZZ/9")
 
 
-def test_validation_messages_never_carry_the_value():
+def test_the_custom_validator_messages_carry_no_input():
+    for kw in (
+        {"profile": {"nik": "SECRETVALUE-123"}},
+        {"npwp": "SECRETVALUE-123"},
+        {"bank_account": "SECRETVALUE-123"},
+        {"profile": {"docs": {"SECRETVALUE!": "f"}}},
+        {"bank_name": "\x00SECRETVALUE"},
+    ):
+        err = _bad(**kw)
+        errors = err.errors(include_input=False, include_context=False)
+        assert "SECRETVALUE" not in str([e["msg"] for e in errors])
+        assert all("SECRETVALUE" not in str(e["loc"][:1]) for e in errors)  # top level only:
+        # a deeper `loc` can hold a caller-supplied dict key, so only loc[0] is ever read
+
+
+def test_pydantic_renders_the_input_in_str_of_a_validation_error_so_nobody_may_render_it():
     err = _bad(profile={"nik": "SECRETVALUE-123"})
-    assert "SECRETVALUE" not in str(err.errors(include_input=False))
+    assert "SECRETVALUE" in str(err)  # documents why the import worker never renders one
 
 
 def test_the_read_model_never_raises_on_stored_content():

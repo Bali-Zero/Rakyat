@@ -24,6 +24,7 @@ import asyncpg
 import pytest
 
 from backend.db.migration_base import split_migration_sql
+from backend.tests.fixtures.import_root import build_root
 from backend.tests.fixtures.prod_shaped_pool import init_prod_shaped_connection
 
 pytestmark = pytest.mark.integration
@@ -90,7 +91,13 @@ async def pool() -> AsyncIterator[asyncpg.Pool]:
                     "('tm-c','Fake C','fake.c@balizero.com','client','ops'),"
                     "('tm-t1','Fake Twin','fake.twin@balizero.com','staff','ops'),"
                     "('tm-t2','Fake Twin Upper','Fake.Twin@balizero.com','client','ops'),"
-                    "('tm-i','Fake Gone','fake.gone@balizero.com','staff','ops')"
+                    "('tm-i','Fake Gone','fake.gone@balizero.com','staff','ops'),"
+                    "('tm-p1','Pad One','fake.pad@balizero.com','staff','ops'),"
+                    "('tm-p2','Pad Two',' fake.pad@balizero.com ','staff','ops'),"
+                    "('tm-p3','Pad Three','Fake.Pad@balizero.com','staff','ops'),"
+                    "('tm-s1','Solo Padded',' fake.solo@balizero.com ','staff','ops'),"
+                    "('tm-q1','Pair One','fake.q@balizero.com','staff','ops'),"
+                    "('tm-q2','Pair Two',' fake.q@balizero.com ','staff','ops')"
                 )
                 await conn.execute(
                     "INSERT INTO hr_employees (team_member_id, hire_date, base_salary_idr, npwp) "
@@ -577,47 +584,6 @@ async def test_two_concurrent_batches_over_the_same_members_in_opposite_order(
 
 # ─── the whole tool through the real launcher: a subprocess, a real database ───
 
-LAUNCHER = Path(__file__).resolve().parents[2] / "scripts" / "import_staff_cards.py"
-BACKEND_RAG = LAUNCHER.parents[2]
-
-_RENAME_HOOK = """
-import sys
-if any("_import_staff_cards_worker" in a for a in sys.orig_argv):
-    import importlib.abc, importlib.machinery, os
-
-    class _Hook(importlib.abc.MetaPathFinder):
-        def find_spec(self, name, path, target=None):
-            if name != "backend.app.services.hr.hr_service":
-                return None
-            spec = importlib.machinery.PathFinder.find_spec(name, path)
-            real = spec.loader.exec_module
-
-            def exec_module(module):
-                real(module)
-                import asyncpg
-
-                cls = module.HRService
-                original = cls.lock_staff_member
-
-                async def renamed_first(self, conn, member_id, email):
-                    other = await asyncpg.connect(os.environ["HRIMPORT_RENAME_DSN"])
-                    try:
-                        await other.execute(
-                            "UPDATE team_members SET email = $2 WHERE id = $1",
-                            member_id, "fake.renamed@balizero.com",
-                        )
-                    finally:
-                        await other.close()
-                    return await original(self, conn, member_id, email)
-
-                cls.lock_staff_member = renamed_first
-
-            spec.loader.exec_module = exec_module
-            return spec
-
-    sys.meta_path.insert(0, _Hook())
-"""
-
 
 def _scoped_dsn() -> str:
     dsn = _dsn()
@@ -625,27 +591,29 @@ def _scoped_dsn() -> str:
 
 
 async def _launch(
-    document: Any, *args: str, tmp: Path | None = None, rename: bool = False
+    tmp: Path, document: Any, *args: str, rename: bool = False
 ) -> subprocess.CompletedProcess[bytes]:
+    """The real launcher, from a test-owned root (a fake driver only in the rename case)."""
+    launcher_file = build_root(tmp, fake_asyncpg=rename)
+    cwd = tmp / "cwd"
+    cwd.mkdir(exist_ok=True)
     env = {
         "PATH": "/usr/bin:/bin",
         "DATABASE_URL": _scoped_dsn(),
         "JWT_SECRET_KEY": "j" * 40,  # settings need a 32+ char value to import
         "API_KEYS": "k" * 12,
-        "PYTHONPATH": str(BACKEND_RAG),
     }
     if rename:
-        assert tmp is not None
-        (tmp / "sitecustomize.py").write_text(_RENAME_HOOK)
-        env["PYTHONPATH"] = f"{tmp}:{BACKEND_RAG}"
+        env["HRIMPORT_REAL_ASYNCPG"] = str(Path(asyncpg.__file__).parent)
+        env["HRIMPORT_FAKE_MODE"] = "rename"
         env["HRIMPORT_RENAME_DSN"] = _scoped_dsn()
 
     def go() -> subprocess.CompletedProcess[bytes]:
         return subprocess.run(
-            [sys.executable, str(LAUNCHER), *args],
+            [sys.executable, "-I", str(launcher_file), *args],
             input=json.dumps(document).encode(),
             capture_output=True,
-            cwd=BACKEND_RAG,
+            cwd=cwd,
             env=env,
             timeout=180,
         )
@@ -660,7 +628,9 @@ def _assert_quiet(run: subprocess.CompletedProcess[bytes]) -> None:
 
 
 @pytest.mark.asyncio
-async def test_launcher_dry_run_then_apply_writes_the_card_and_says_so(pool: asyncpg.Pool) -> None:
+async def test_launcher_dry_run_then_apply_writes_the_card_and_says_so(
+    pool: asyncpg.Pool, tmp_path: Path
+) -> None:
     document = {
         "cards": [
             {
@@ -670,7 +640,7 @@ async def test_launcher_dry_run_then_apply_writes_the_card_and_says_so(pool: asy
             }
         ]
     }
-    dry = await _launch(document)
+    dry = await _launch(tmp_path, document)
     assert (
         dry.returncode == 0 and b"would_insert: 1" in dry.stdout and b"committed: no" in dry.stdout
     )
@@ -679,7 +649,7 @@ async def test_launcher_dry_run_then_apply_writes_the_card_and_says_so(pool: asy
             await conn.fetchval("SELECT count(*) FROM hr_employees WHERE team_member_id = 'tm-b'")
             == 0
         )
-    run = await _launch(document, "--apply")
+    run = await _launch(tmp_path, document, "--apply")
     assert run.returncode == 0 and run.stderr == b""
     assert run.stdout.splitlines() == [
         b"mode: apply", b"resolved: 1", b"not_found: 0", b"applied: 1", b"committed: yes",
@@ -690,7 +660,7 @@ async def test_launcher_dry_run_then_apply_writes_the_card_and_says_so(pool: asy
 
 @pytest.mark.asyncio
 async def test_launcher_a_rejected_batch_writes_nothing_and_says_committed_no(
-    pool: asyncpg.Pool,
+    pool: asyncpg.Pool, tmp_path: Path
 ) -> None:
     document = {
         "cards": [
@@ -698,7 +668,7 @@ async def test_launcher_a_rejected_batch_writes_nothing_and_says_committed_no(
             {"email": "fake.b@balizero.com", "fields": {"hire_date": "2025-02-01", "npwp": "1"}},
         ]
     }
-    run = await _launch(document, "--apply")
+    run = await _launch(tmp_path, document, "--apply")
     assert run.returncode == 1 and run.stderr == b""
     assert b"rejected:invalid_fields: 1" in run.stdout and b"committed: no" in run.stdout
     _assert_quiet(run)
@@ -712,12 +682,12 @@ async def test_launcher_a_rejected_batch_writes_nothing_and_says_committed_no(
 
 @pytest.mark.asyncio
 async def test_launcher_an_ambiguous_email_is_rejected_and_nothing_is_written(
-    pool: asyncpg.Pool,
+    pool: asyncpg.Pool, tmp_path: Path
 ) -> None:
     async with pool.acquire() as conn:
         await conn.execute("UPDATE team_members SET role = 'staff' WHERE id = 'tm-t2'")
     card = {"email": "fake.twin@balizero.com", "fields": {"bank_name": "ShouldNotLand"}}
-    run = await _launch({"cards": [card]}, "--apply")
+    run = await _launch(tmp_path, {"cards": [card]}, "--apply")
     assert run.returncode == 1 and b"rejected:ambiguous_email: 1" in run.stdout
     assert b"committed: no" in run.stdout and b"resolved: 0" in run.stdout
     _assert_quiet(run)
@@ -733,9 +703,110 @@ async def test_launcher_a_member_renamed_between_resolve_and_merge_is_rejected(
     pool: asyncpg.Pool, tmp_path: Path
 ) -> None:
     card = {"email": "fake.a@balizero.com", "fields": {"bank_name": "ShouldNotLand"}}
-    run = await _launch({"cards": [card]}, "--apply", tmp=tmp_path, rename=True)
+    run = await _launch(tmp_path, {"cards": [card]}, "--apply", rename=True)
     assert run.returncode == 1 and b"rejected:member_changed: 1" in run.stdout
     assert b"committed: no" in run.stdout and b"applied: 0" in run.stdout
     _assert_quiet(run)
     async with pool.acquire() as conn:
         assert await conn.fetchval("SELECT bank_name FROM hr_employees WHERE id = 1") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("address", ["fake.pad@balizero.com", "Fake.Pad@balizero.com"])
+async def test_a_padded_twin_and_a_case_twin_make_either_canonical_address_ambiguous(
+    pool: asyncpg.Pool, address: str
+) -> None:
+    """Rows 'x@y', ' x@y ' and 'X@y' all exist. The card for either canonical address is
+    rejected as ambiguous (it must never resolve to one of them) and nothing is written."""
+    from backend.scripts import _import_staff_cards_worker as imp
+
+    card = {"email": address, "fields": {"hire_date": "2025-02-01", "bank_name": "ShouldNotLand"}}
+    async with pool.acquire() as conn:
+        counts, ok = await imp.run(conn, {"cards": [card]}, apply=True)
+        assert ok is False and counts["rejected:ambiguous_email"] == 1
+        assert counts["resolved"] == 0 and counts["applied"] == 0 and counts["committed:no"] == 1
+        assert (
+            await conn.fetchval("SELECT count(*) FROM hr_employees WHERE bank_name IS NOT NULL")
+            == 0
+        )
+        assert (
+            await conn.fetchval(
+                "SELECT count(*) FROM hr_employees WHERE team_member_id IN ('tm-p1','tm-p2','tm-p3')"
+            )
+            == 0
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_card_naming_the_padded_address_is_refused_not_resolved_to_its_trimmed_twin(
+    pool: asyncpg.Pool,
+) -> None:
+    from backend.scripts import _import_staff_cards_worker as imp
+
+    card = {"email": " fake.pad@balizero.com ", "fields": {"hire_date": "2025-02-01"}}
+    async with pool.acquire() as conn:
+        counts, ok = await imp.run(conn, {"cards": [card]}, apply=True)
+        assert ok is False and counts["rejected:email_noncanonical"] == 1
+        assert counts["resolved"] == 0 and counts["applied"] == 0
+        assert (
+            await conn.fetchval(
+                "SELECT count(*) FROM hr_employees WHERE team_member_id LIKE 'tm-p%'"
+            )
+            == 0
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_lone_padded_row_is_not_found_for_the_canonical_card_and_not_written(
+    pool: asyncpg.Pool,
+) -> None:
+    from backend.scripts import _import_staff_cards_worker as imp
+
+    card = {"email": "fake.solo@balizero.com", "fields": {"hire_date": "2025-02-01"}}
+    async with pool.acquire() as conn:
+        counts, ok = await imp.run(conn, {"cards": [card]}, apply=True, skip_not_found=True)
+        assert counts["not_found"] == 1 and counts["resolved"] == 0 and ok is True
+        assert (
+            await conn.fetchval("SELECT count(*) FROM hr_employees WHERE team_member_id = 'tm-s1'")
+            == 0
+        )
+
+
+@pytest.mark.asyncio
+async def test_launcher_a_padded_twin_is_ambiguous_through_the_whole_tool(
+    pool: asyncpg.Pool, tmp_path: Path
+) -> None:
+    card = {"email": "fake.pad@balizero.com", "fields": {"hire_date": "2025-02-01"}}
+    run = await _launch(tmp_path, {"cards": [card]}, "--apply")
+    assert run.returncode == 1 and b"rejected:ambiguous_email: 1" in run.stdout
+    assert b"committed: no" in run.stdout
+
+
+@pytest.mark.asyncio
+async def test_a_padded_twin_alone_makes_the_canonical_address_ambiguous_and_nothing_is_written(
+    pool: asyncpg.Pool,
+) -> None:
+    """Rows 'x@y' and ' x@y ' only (no case twin): the old trim-then-lower lookup saw one row
+    and wrote to it. The normalised ambiguity check sees two people behind the address."""
+    from backend.scripts import _import_staff_cards_worker as imp
+
+    card = {"email": "fake.q@balizero.com", "fields": {"hire_date": "2025-02-01"}}
+    async with pool.acquire() as conn:
+        counts, ok = await imp.run(conn, {"cards": [card]}, apply=True)
+        assert ok is False and counts["rejected:ambiguous_email"] == 1 and counts["applied"] == 0
+        assert (
+            await conn.fetchval(
+                "SELECT count(*) FROM hr_employees WHERE team_member_id LIKE 'tm-q%'"
+            )
+            == 0
+        )
+    padded = {"email": " fake.q@balizero.com ", "fields": {"hire_date": "2025-02-01"}}
+    async with pool.acquire() as conn:
+        counts, ok = await imp.run(conn, {"cards": [padded]}, apply=True)
+        assert counts["rejected:email_noncanonical"] == 1 and counts["applied"] == 0
+        assert (
+            await conn.fetchval(
+                "SELECT count(*) FROM hr_employees WHERE team_member_id LIKE 'tm-q%'"
+            )
+            == 0
+        )

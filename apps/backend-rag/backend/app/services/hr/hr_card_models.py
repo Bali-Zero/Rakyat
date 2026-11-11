@@ -2,7 +2,10 @@
 
 Contract: `STAFF_CARD.md` next to this module. The write models validate what the
 import script feeds them; the read model and builder below cannot raise on stored
-content (reads never validate). Error messages never include a value.
+content (reads never validate). The CUSTOM validators here raise messages that never
+include the input. Pydantic's own `str(ValidationError)` DOES render the input, so no caller
+may render a `ValidationError`: the import worker reads `errors(include_input=False)` and only `loc[0]` (a deeper `loc`
+can hold a caller-supplied dict key) and maps it to a closed reason code.
 """
 
 from __future__ import annotations

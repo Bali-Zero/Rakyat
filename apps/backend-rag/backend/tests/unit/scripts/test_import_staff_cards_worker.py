@@ -57,8 +57,12 @@ def _conn() -> AsyncMock:
     conn = AsyncMock()
 
     async def fetch(sql, email):
-        assert "<> 'client'" in sql and "LOWER($1)" in sql
-        return [{"id": i, "email": e} for i, e in ROWS if e.lower() == email.lower()]
+        assert "<> 'client'" in sql and "[[:space:]]" in sql and "lower(" in sql
+
+        def norm(text):
+            return "".join(text.split()).lower()
+
+        return [{"id": i, "email": e} for i, e in ROWS if norm(e) == norm(email)]
 
     async def fetchval(sql, member_id):
         return 1 if member_id in HAS_ROW else None
@@ -201,9 +205,108 @@ async def test_a_single_case_variant_of_the_stored_email_is_not_an_exact_match()
     card = {"email": "fake.case@balizero.com", "fields": {}, "profile": {}}
     counts, _ = await imp.run(_conn(), {"cards": [card]}, apply=False)
     assert counts["not_found"] == 1 and counts["resolved"] == 0
-    card["email"] = " Fake.Case@balizero.com "  # trimmed, then exact
+    card["email"] = "Fake.Case@balizero.com"  # exactly as stored
     counts, _ = await imp.run(_conn(), {"cards": [card]}, apply=False)
     assert counts["resolved"] == 1
+
+
+@pytest.mark.parametrize(
+    "email",
+    [
+        " fake.one@balizero.com", "fake.one@balizero.com ", "\tfake.one@balizero.com",
+        "fake.one@balizero.com\n", "fake. one@balizero.com", "fake.one@@balizero.com",
+        "fake.one", "@balizero.com", "fake.one@", "fake.one@balizero.com\u200b",
+        "fake.one@balizero.com\x00", "fake.one@balizero\u00a0.com", "a@b c",
+        "fake.one@balizero.com\u202e", "x" * 320 + "@a.b", "a@b\ufeff",
+    ],
+)  # fmt: skip
+def test_a_non_canonical_email_is_rejected_before_any_lookup(email):
+    card, reason = imp.validate_card({"email": email, "fields": {}, "profile": {}})
+    assert card is None and reason == "email_noncanonical"
+
+
+def test_a_canonical_email_is_used_byte_for_byte():
+    card, reason = imp.validate_card({"email": "Fake.One+tag@Balizero.com"})
+    assert reason is None and card["email"] == "Fake.One+tag@Balizero.com"
+
+
+@pytest.mark.asyncio
+async def test_a_non_canonical_card_never_reaches_the_database():
+    conn = _conn()
+    doc = {"cards": [{"email": " fake.one@balizero.com "}]}
+    counts, ok = await imp.run(conn, doc, apply=True)
+    assert counts["rejected:email_noncanonical"] == 1 and ok is False
+    conn.fetch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_lock_recheck_receives_the_card_email_unchanged():
+    seen = []
+
+    async def spy(self, conn, member_id, email):
+        seen.append(email)
+        return True
+
+    with (
+        patch.object(imp.HRService, "lock_staff_member", new=spy),
+        patch.object(imp.HRService, "merge_card_on", new=AsyncMock(return_value=1)),
+    ):
+        await imp.run(_conn(), {"cards": [{"email": "fake.one@balizero.com"}]}, apply=True)
+    assert seen == ["fake.one@balizero.com"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_lookup_still_accounts_for_every_card():
+    conn = _conn()
+    real_fetch = conn.fetch.side_effect
+    calls = {"n": 0}
+
+    async def fetch(sql, email):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise ValueError("boom")
+        return await real_fetch(sql, email)
+
+    conn.fetch = AsyncMock(side_effect=fetch)
+    doc = {
+        "cards": [
+            {"email": "fake.one@balizero.com"},
+            {"email": "fake.two@balizero.com", "fields": {"hire_date": "2025-03-01"}},
+            {"email": "fake.ghost@balizero.com"},
+        ]
+    }
+    rep = _Rep()
+    with pytest.raises(ValueError):
+        await imp.run(conn, doc, apply=True, on_decided=rep.decided)
+    ((_, committed, counts),) = rep.events
+    assert committed is False
+    final = counts.get("not_found", 0) + counts.get("applied", 0)
+    final += sum(n for k, n in counts.items() if k.startswith("rejected:"))
+    assert final + counts["unclassified"] == len(doc["cards"]) and counts["unclassified"] == 3
+    conn2 = _conn()
+    calls["n"] = 0
+    conn2.fetch = AsyncMock(side_effect=fetch)
+    rep = _Rep()
+    with pytest.raises(ValueError):
+        await imp.run(conn2, doc, apply=False, on_decided=rep.decided)
+    assert rep.events == []  # a dry-run has no transaction: no decision is claimed on error
+
+
+def test_validate_card_reads_pydantic_errors_without_the_input(monkeypatch):
+    """str(ValidationError) renders the input; the worker reads errors(include_input=False)."""
+    calls = []
+    original = imp.ValidationError.errors
+
+    def spy(self, *args, **kwargs):
+        calls.append(kwargs)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(imp.ValidationError, "errors", spy)
+    card = {"email": "fake.one@balizero.com", "profile": {"nik": SENTINEL}}
+    assert imp.validate_card(card) == (None, "invalid_profile")
+    assert calls and all(kw.get("include_input") is False for kw in calls)
+    src = open(imp.__file__).read()
+    assert "str(exc)" not in src and "repr(exc)" not in src and "exc.errors()" not in src
 
 
 @pytest.mark.parametrize("key", ["fields", "profile"])
@@ -354,9 +457,10 @@ def test_every_outcome_and_code_the_worker_can_produce_is_in_the_launcher_closed
         "bad_shape", "unknown_key", "email_missing", "invalid_ptkp", "invalid_profile",
         "invalid_fields", "ambiguous_email", "member_changed", "not_applied", "bad_document",
     }  # fmt: skip
+    reasons |= {"email_noncanonical"}
     produced = {f"rejected:{r}" for r in reasons} | {f"rejected:{c.value}" for c in HRCardCode}
     produced |= {"resolved", "not_found", "applied", "would_update", "would_insert"}
-    produced |= {"blocked:not_found"}
+    produced |= {"blocked:not_found", "unclassified"}
     assert produced == set(launcher.OUTCOME_KEYS)
     assert {c.value for c in HRCardCode} <= set(launcher.WORKER_CODES)
 

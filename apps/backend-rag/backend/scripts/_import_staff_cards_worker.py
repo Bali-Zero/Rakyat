@@ -19,8 +19,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import stat
 import sys
+import unicodedata
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
@@ -45,8 +47,20 @@ try:
 except BaseException:  # reported as the code import_failed; nothing is printed either way
     IMPORTS_OK = False
 
+_FINAL_KEYS = frozenset({"not_found", "applied", "would_update", "would_insert"})
 LOCK_TIMEOUT_MS = 5000  # transaction-local: a blocked lock rejects the card, never hangs the batch
 _OUTER_KEYS = frozenset({"email", "fields", "profile", "is_active"})
+_CANONICAL_EMAIL = re.compile(r"[^\s@]+@[^\s@]+")
+# The ambiguity form: case-folded AND stripped of every whitespace character, on both sides.
+_NORMALISED = "lower(regexp_replace({}, '[[:space:]]', '', 'g'))"
+
+
+def _email_is_canonical(email: str) -> bool:
+    """A plain single-token address, byte for byte what would be stored: no leading or
+    trailing space, no whitespace at all, no control / format / unassigned character."""
+    if len(email) > 320 or _CANONICAL_EMAIL.fullmatch(email) is None:
+        return False
+    return not any(unicodedata.category(ch).startswith(("C", "Z")) for ch in email)
 
 
 def validate_card(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
@@ -58,6 +72,8 @@ def validate_card(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
     email = raw.get("email")
     if not isinstance(email, str) or not email.strip():
         return None, "email_missing"
+    if not _email_is_canonical(email):  # the identity is never normalised, only refused
+        return None, "email_noncanonical"
     # Absent is fine; present means an object. An explicit null, [], false, 0 or ""
     # is rejected as it came, never normalised to {} (no silent drop).
     fields = raw.get("fields", {})
@@ -72,14 +88,16 @@ def validate_card(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
     try:
         patch = StaffCardPatch.model_validate(body)
     except ValidationError as exc:
-        locs = {str(e["loc"][0]) if e["loc"] else "" for e in exc.errors()}
+        # include_input=False and loc[0] only: pydantic renders the input, a deep loc holds keys
+        errors = exc.errors(include_input=False, include_context=False, include_url=False)
+        locs = {str(e["loc"][0]) if e["loc"] else "" for e in errors}
         if "ptkp_status" in locs:
             return None, "invalid_ptkp"
         if "profile" in locs:
             return None, "invalid_profile"
         return None, "invalid_fields"
     return {
-        "email": email.strip(),
+        "email": email,  # byte for byte: this is the exact-match key and the lock re-check
         "fields": patch.model_dump(exclude={"profile"}, exclude_none=True),  # real date objects
         "profile": patch.profile.model_dump(mode="json", exclude_none=True, exclude_unset=True),
     }, None
@@ -144,6 +162,9 @@ async def run(
             on_decided(False, counts)
         return counts, clean if apply else True  # a dry-run only informs
     except BaseException:
+        final = sum(n for k, n in counts.items() if k.startswith("rejected:") or k in _FINAL_KEYS)
+        if len(cards) > final:  # every card is accounted for, even on an unexpected failure
+            counts["unclassified"] = len(cards) - final
         if batch is not None:
             await batch.rollback()
             if on_decided is not None:
@@ -160,10 +181,11 @@ async def _classify_card(
         counts[f"rejected:{reason}"] += 1
         return None
     candidates = await conn.fetch(
-        "SELECT id, email FROM team_members WHERE LOWER(email) = LOWER($1) "
-        "AND COALESCE(role, '') <> 'client'",
+        f"SELECT id, email FROM team_members WHERE {_NORMALISED.format('email')} "
+        f"= {_NORMALISED.format('$1')} AND COALESCE(role, '') <> 'client'",
         card["email"],
     )
+    # a padded or case twin among the staff rows is a second person behind this address
     if len(candidates) > 1:  # never pick one of several people behind one address
         counts["rejected:ambiguous_email"] += 1
         return None

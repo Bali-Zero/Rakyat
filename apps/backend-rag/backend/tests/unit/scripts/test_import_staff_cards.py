@@ -11,6 +11,7 @@ outcome and exit code must match the truthfulness table of the spec, row for row
 from __future__ import annotations
 
 import ast
+import errno
 import json
 import os
 import re
@@ -20,12 +21,14 @@ import sys
 import time
 from pathlib import Path
 
+import asyncpg as _asyncpg
 import pytest
 
 from backend.scripts import import_staff_cards as launcher
+from backend.tests.fixtures.import_root import build_root
 
-LAUNCHER = Path(launcher.__file__).resolve()
-BACKEND_RAG = LAUNCHER.parents[2]
+LAUNCHER = Path(launcher.__file__).resolve()  # for static checks only
+REAL_ASYNCPG = str(Path(_asyncpg.__file__).parent)
 SENT = "ZQXSENTINEL7"
 FIXED_BAD_ARGS = "import_staff_cards: invalid arguments (run with --help)"
 LINE = re.compile(r"mode: (apply|dry-run)|[a-z_]+(:[a-z_]+)?: [0-9]+|committed: (yes|no|unknown)")
@@ -35,34 +38,41 @@ ONE = json.dumps({"cards": [{"email": "fake.one@balizero.com"}]}).encode()
 EMPTY = json.dumps({"cards": []}).encode()
 
 
-def _env(tmp_path: Path, extra: dict[str, str] | None = None, pythonpath: bool = False) -> dict:
+def _env(tmp_path: Path, extra: dict[str, str] | None = None) -> dict:
     env = {
         "PATH": "/usr/bin:/bin",
         "DATABASE_URL": "postgresql://nobody@127.0.0.1:1/none",  # any real DB access fails
         "JWT_SECRET_KEY": "j" * 40,  # settings need a 32+ char value to import; unused here
         "API_KEYS": "k" * 12,
         "HRIMPORT_FAKE_SENTINEL": SENT,
+        "HRIMPORT_REAL_ASYNCPG": REAL_ASYNCPG,
         "STUB_SENTINEL": SENT,
         "IMPORT_STAFF_CARDS_TEST_TIMEOUT_S": "60",
     }
-    if pythonpath:
-        env["PYTHONPATH"] = str(tmp_path)
     return {**env, **(extra or {})}
 
 
-def _popen(tmp_path, *, args=(), extra=None, py_flags=(), stdout=subprocess.PIPE, pythonpath=False):
+def _cwd(tmp_path: Path) -> Path:
+    cwd = tmp_path / "cwd"  # a directory that is NOT the launcher's root
+    cwd.mkdir(exist_ok=True)
+    return cwd
+
+
+def _popen(
+    launcher_file, tmp_path, *, args=(), extra=None, py_flags=("-I",), stdout=subprocess.PIPE
+):
     return subprocess.Popen(
-        [sys.executable, *py_flags, str(LAUNCHER), *args],
+        [sys.executable, *py_flags, str(launcher_file), *args],
         stdin=subprocess.PIPE,
         stdout=stdout,
         stderr=subprocess.PIPE,
-        cwd=tmp_path,
-        env=_env(tmp_path, extra, pythonpath),
+        cwd=_cwd(tmp_path),
+        env=_env(tmp_path, extra),
     )
 
 
-def _run(tmp_path, stdin=b"", **kw) -> subprocess.CompletedProcess:
-    proc = _popen(tmp_path, **kw)
+def _run(launcher_file, tmp_path, stdin=b"", **kw) -> subprocess.CompletedProcess:
+    proc = _popen(launcher_file, tmp_path, **kw)
     out, err = proc.communicate(stdin, timeout=120)
     return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
 
@@ -79,128 +89,17 @@ def _check(run, *, committed: str, codes: list[str], rc: int, lines: tuple[str, 
         assert line in out_lines
 
 
-# ─── family 1: the real worker, a fake driver that misbehaves ───
-
-_FAKE_DRIVER = """
-import os, sys
-if any("_import_staff_cards_worker" in a for a in sys.orig_argv):
-    import importlib.abc, importlib.machinery, logging, signal, time, warnings
-    mode = os.environ.get("HRIMPORT_FAKE_MODE", "ok")
-    S = os.environ["HRIMPORT_FAKE_SENTINEL"]
-    marker = os.environ.get("HRIMPORT_FAKE_MARKER")
-
-    def touch():
-        if marker:
-            open(marker, "w").close()
-
-    def noise():
-        print(S)
-        sys.stderr.write(S + "\\n")
-        os.write(1, S.encode())
-        os.write(2, S.encode())
-        warnings.warn(S)
-        logging.getLogger().warning(S)
-        logging.log(60, S)
-        logging.getLogger("backend.app").error(S)
-
-    if mode == "import_noise":
-        class Hook(importlib.abc.MetaPathFinder):
-            def find_spec(self, name, path, target=None):
-                if name != "backend.core.pg_json_codec":
-                    return None
-                spec = importlib.machinery.PathFinder.find_spec(name, path)
-                real = spec.loader.exec_module
-
-                def exec_module(module):
-                    noise()
-                    real(module)
-
-                spec.loader.exec_module = exec_module
-                return spec
-
-        sys.meta_path.insert(0, Hook())
-
-    import asyncpg
-
-    class Tx:
-        async def start(self):
-            pass
-
-        async def commit(self):
-            if mode == "commit":
-                raise RuntimeError(S)
-
-        async def rollback(self):
-            pass
-
-    class Conn:
-        async def set_type_codec(self, *a, **k):
-            if mode == "codec":
-                raise RuntimeError(S)
-            if mode == "noise":
-                noise()
-
-        async def execute(self, *a):
-            pass
-
-        async def fetch(self, *a):
-            if mode == "txn":
-                raise ValueError(S)
-            return []
-
-        async def fetchval(self, *a):
-            return None
-
-        def transaction(self):
-            return Tx()
-
-        async def close(self):
-            if mode in ("close", "noise", "warn"):
-                if mode == "close":
-                    raise OSError(S)
-                noise()
-            elif mode == "exit_close0":
-                raise SystemExit(0)
-            elif mode == "exit_closes":
-                raise SystemExit(S)
-            elif mode == "exit_close7":
-                raise SystemExit(7)
-            elif mode == "kill_close":
-                os.kill(os.getpid(), signal.SIGKILL)
-            elif mode == "hang_close":
-                touch()
-                time.sleep(3600)
-
-    async def connect(*a, **k):
-        if mode in ("warn", "noise"):
-            noise()
-        if mode == "connect":
-            raise asyncpg.InvalidPasswordError(S)
-        if mode == "exit_connect0":
-            raise SystemExit(0)
-        if mode == "exit_connects":
-            raise SystemExit(S)
-        if mode == "exit_connect7":
-            raise SystemExit(7)
-        if mode == "kill_connect":
-            os.kill(os.getpid(), signal.SIGKILL)
-        if mode == "hang_connect":
-            touch()
-            time.sleep(3600)
-        return Conn()
-
-    asyncpg.connect = connect
-"""
+# ─── family 1: the real worker, a fake `asyncpg` in a test-owned root that misbehaves ───
 
 
 def _fake(tmp_path, mode, stdin, args=("--apply", "--skip-not-found"), extra=None):
-    (tmp_path / "sitecustomize.py").write_text(_FAKE_DRIVER)
+    launcher_file = build_root(tmp_path, fake_asyncpg=True)
     return _run(
+        launcher_file,
         tmp_path,
         stdin,
         args=args,
         extra={"HRIMPORT_FAKE_MODE": mode, **(extra or {})},
-        pythonpath=True,
     )
 
 
@@ -288,13 +187,12 @@ def test_family1_a_hung_worker_is_ended_at_the_deadline_and_reported(
 def test_family1_sigint_to_the_launcher_before_and_after_the_decision(
     tmp_path, mode, committed, codes
 ):
-    (tmp_path / "sitecustomize.py").write_text(_FAKE_DRIVER)
     marker = tmp_path / "in-flight"
     proc = _popen(
+        build_root(tmp_path, fake_asyncpg=True),
         tmp_path,
         args=APPLY_SKIP,
         extra={"HRIMPORT_FAKE_MODE": mode, "HRIMPORT_FAKE_MARKER": str(marker)},
-        pythonpath=True,
     )
     assert proc.stdin is not None
     proc.stdin.write(GHOST)
@@ -314,10 +212,143 @@ def test_family1_sigint_to_the_launcher_before_and_after_the_decision(
     _check(run, committed=committed, codes=codes, rc=1, lines=C_YES if committed == "yes" else ())
 
 
-def test_family1_the_launcher_finds_its_worker_from_any_cwd(tmp_path):
-    """No fake driver, cwd elsewhere: the real worker starts and answers bad_input."""
-    run = _run(tmp_path, b"{ not json " + SENT.encode(), args=("--apply",))
-    _check(run, committed="no", codes=["bad_input"], rc=1)
+def test_family1_the_worker_comes_from_the_launchers_own_tree_not_from_cwd_or_pythonpath(
+    tmp_path,
+):
+    """An unrelated `backend` package on PYTHONPATH and in cwd would write a marker if imported."""
+    decoy = tmp_path / "decoy"
+    (decoy / "backend").mkdir(parents=True)
+    marker = tmp_path / "decoy-was-imported"
+    (decoy / "backend" / "__init__.py").write_text(f"open({str(marker)!r}, 'w').close()\n")
+    (decoy / "sitecustomize.py").write_text(f"open({str(marker)!r}, 'w').close()\n")
+    launcher_file = build_root(tmp_path)
+    proc = subprocess.run(
+        [sys.executable, "-I", str(launcher_file), "--apply"],
+        input=b"{ not json " + SENT.encode(),
+        capture_output=True,
+        cwd=decoy,
+        env=_env(tmp_path, {"PYTHONPATH": str(decoy), "PYTHONWARNINGS": SENT, "PYTHONSTARTUP": ""}),
+        timeout=120,
+    )
+    _check(proc, committed="no", codes=["bad_input"], rc=1)  # the REAL worker answered
+    assert not marker.exists()
+
+
+def test_a_launcher_without_dash_i_refuses_with_one_fixed_line(tmp_path):
+    launcher_file = build_root(tmp_path)
+    for args in ((), ("--apply",), ("--help",)):
+        run = _run(launcher_file, tmp_path, EMPTY, args=args, py_flags=())
+        assert run.returncode == 2 and run.stdout == b""
+        assert run.stderr == b"import_staff_cards: run with python -I\n"
+
+
+def test_pythonwarnings_with_and_without_dash_i(tmp_path):
+    launcher_file = build_root(tmp_path, worker_source=_STUB)
+    extra = {"PYTHONWARNINGS": SENT, "STUB_MODE": "good"}
+    # without -I the interpreter's own startup runs before our code: it may speak (it can say
+    # the sentinel). All we can and do assert is that OUR code then refuses, running nothing.
+    run = _run(launcher_file, tmp_path, EMPTY, args=("--apply",), extra=extra, py_flags=())
+    assert run.returncode == 2 and run.stdout == b""
+    assert run.stderr.endswith(b"import_staff_cards: run with python -I\n")
+    # with -I the variable is ignored: normal behaviour, sentinel absent
+    run = _run(launcher_file, tmp_path, EMPTY, args=("--apply",), extra=extra)
+    _check(run, committed="yes", codes=[], rc=0, lines=A2)
+
+
+def test_the_worker_is_started_isolated_with_a_fixed_bootstrap_in_its_own_session(tmp_path):
+    report = tmp_path / "report.json"
+    launcher_file = build_root(tmp_path, worker_source=_STUB)
+    run = _run(
+        launcher_file,
+        tmp_path,
+        EMPTY,
+        args=("--apply", "--skip-not-found"),
+        extra={"STUB_MODE": "report", "STUB_REPORT": str(report)},
+    )
+    _check(run, committed="yes", codes=[], rc=0, lines=A2)
+    info = json.loads(report.read_text())
+    root = str(launcher_file.resolve().parents[2])
+    worker = str(launcher_file.resolve().with_name("_import_staff_cards_worker.py"))
+    argv = info["orig_argv"]
+    assert argv[1:4] == ["-I", "-c", launcher._BOOTSTRAP]
+    assert argv[4:6] == [root, worker]
+    assert argv[6].startswith("--result-fd=") and argv[7:] == ["--apply", "--skip-not-found"]
+    assert info["isolated"] == 1 and info["sid_is_own_pid"] and info["path0"] == root
+    assert info["open_fds"] == [0, 1, 2, int(argv[6].split("=")[1])]  # only the result fd
+
+
+@pytest.mark.skipif(not hasattr(os, "forkpty"), reason="no pty on this platform")
+def test_the_worker_has_no_controlling_terminal_so_dev_tty_cannot_be_opened(tmp_path):
+    import pty
+    import select as _select
+
+    report = tmp_path / "tty-report"
+    launcher_file = build_root(tmp_path, fake_asyncpg=True)
+    env = _env(
+        tmp_path,
+        {"HRIMPORT_FAKE_MODE": "tty", "HRIMPORT_TTY_REPORT": str(report)},
+    )
+    pid, master = pty.fork()
+    if pid == 0:  # child: the launcher, with the pty as its controlling terminal
+        try:
+            os.chdir(_cwd(tmp_path))
+            os.execve(sys.executable, [sys.executable, "-I", str(launcher_file), "--apply"], env)
+        finally:
+            os._exit(127)
+    os.write(master, EMPTY + b"\n\x04")
+    seen = b""
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        if _select.select([master], [], [], 0.2)[0]:
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            seen += chunk
+    _, status = os.waitpid(pid, 0)
+    os.close(master)
+    assert report.read_text() == str(errno.ENXIO)  # os.open("/dev/tty") failed in the worker
+    assert (tmp_path / "tty-report.w").read_text() == str(errno.ENXIO)  # and open(..., "w")
+    assert SENT.encode() not in seen
+    assert b"Traceback" not in seen and b"committed: yes" in seen
+    assert os.WEXITSTATUS(status) == 0
+
+
+def test_a_stdin_that_never_ends_is_cut_at_the_deadline_and_nothing_ran(tmp_path):
+    launcher_file = build_root(tmp_path, worker_source=_STUB)
+    proc = _popen(
+        launcher_file, tmp_path, args=("--apply",),
+        extra={"IMPORT_STAFF_CARDS_TEST_TIMEOUT_S": "1.5", "STUB_MODE": "good"},
+    )  # fmt: skip
+    held, proc.stdin = proc.stdin, None  # keep the pipe open: the launcher must give up
+    out, err = proc.communicate(timeout=60)
+    held.close()
+    run = subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
+    _check(run, committed="no", codes=["timeout"], rc=1)
+
+
+def test_a_signal_while_reading_stdin_is_handled_and_nothing_ran(tmp_path):
+    launcher_file = build_root(tmp_path, worker_source=_STUB)
+    proc = _popen(launcher_file, tmp_path, args=("--apply",), extra={"STUB_MODE": "good"})
+    held, proc.stdin = proc.stdin, None
+    time.sleep(1.5)  # past interpreter start-up: the handlers are installed before the read
+    proc.send_signal(signal.SIGINT)
+    out, err = proc.communicate(timeout=60)
+    held.close()
+    run = subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
+    _check(run, committed="no", codes=["interrupted"], rc=1)
+
+
+def test_an_input_over_the_cap_is_refused_before_anything_runs(tmp_path):
+    launcher_file = build_root(tmp_path, worker_source=_STUB)
+    big = b" " * (launcher.MAX_INPUT_BYTES + 1)
+    run = _run(launcher_file, tmp_path, big, args=("--apply",), extra={"STUB_MODE": "good"})
+    _check(run, committed="no", codes=["input_too_large"], rc=1)
+    ok = b" " * launcher.MAX_INPUT_BYTES
+    run = _run(launcher_file, tmp_path, ok, args=("--apply",), extra={"STUB_MODE": "good"})
+    _check(run, committed="yes", codes=[], rc=0, lines=A2)
 
 
 # ─── family 2: a stub worker of the SAME module name writes what it likes on the pipe ───
@@ -344,6 +375,15 @@ sys.stderr.write(S + "\\n")
 sys.stdout.flush()
 sys.stderr.flush()
 kill = lambda: os.kill(os.getpid(), signal.SIGKILL)
+
+
+def _isopen(f):
+    try:
+        os.fstat(f)
+        return True
+    except OSError:
+        return False
+
 if mode == "good":
     w(D + C)
 elif mode == "rejected":
@@ -406,6 +446,25 @@ elif mode == "echo":
     a = 1 if "--apply" in sys.argv else 0
     k = 1 if "--skip-not-found" in sys.argv else 0
     w('{"phase":"decided","committed":false,"outcomes":{"resolved":%d,"not_found":%d,"applied":%d}}\\n' % (k, a, n) + C)
+elif mode == "d_true_with_rejected":
+    w('{"phase":"decided","committed":true,"outcomes":{"applied":1,"rejected:db_error":1}}\\n' + C)
+elif mode == "d_then_failed_twice":
+    w(D + '{"phase":"failed","code":"unexpected"}\\n{"phase":"failed","code":"unexpected"}\\n' + C)
+elif mode == "report":
+    import json
+    if hasattr(os, "listdir"):
+        fds = sorted(int(x) for x in os.listdir("/dev/fd") if x.isdigit())
+    json.dump(
+        {
+            "orig_argv": sys.orig_argv,
+            "isolated": sys.flags.isolated,
+            "sid_is_own_pid": os.getsid(0) == os.getpid(),
+            "path0": sys.path[0],
+            "open_fds": [f for f in fds if f != -1 and _isopen(f)],
+        },
+        open(os.environ["STUB_REPORT"], "w"),
+    )
+    w(D + C)
 elif mode == "slow_reader":
     time.sleep(1.0)
     n = len(sys.stdin.buffer.read())
@@ -414,12 +473,9 @@ elif mode == "slow_reader":
 
 
 def _stub(tmp_path, mode, stdin=EMPTY, args=("--apply",), **kw):
-    pkg = tmp_path / "backend" / "scripts"
-    pkg.mkdir(parents=True, exist_ok=True)
-    (tmp_path / "backend" / "__init__.py").write_text("")
-    (pkg / "_import_staff_cards_worker.py").write_text(_STUB)
+    launcher_file = build_root(tmp_path, worker_source=_STUB)
     extra = {"STUB_MODE": mode, **kw.pop("extra", {})}
-    return _run(tmp_path, stdin, args=args, extra=extra, **kw)
+    return _run(launcher_file, tmp_path, stdin, args=args, extra=extra, **kw)
 
 
 A2 = ("applied: 2",)
@@ -428,7 +484,9 @@ A2 = ("applied: 2",)
 @pytest.mark.parametrize(
     ("mode", "args", "committed", "codes", "rc", "lines"),
     [
-        # the truthfulness table, row by row (apply)
+        # What a WELL-FORMED record stream from the pinned worker file is reported as. This
+        # is a protocol test, not a property of a worker: a worker that is not the pinned one
+        # is prevented by the launcher's code-origin pinning (-I, own tree), never detected.
         ("good", ("--apply",), "yes", [], 0, A2),
         ("rejected", ("--apply",), "no", [], 1, ("rejected:invalid_fields: 1",)),
         ("close_false", ("--apply",), "yes", ["close_failed"], 1, A2),
@@ -447,7 +505,9 @@ A2 = ("applied: 2",)
         ("failed_only", (), "no", ["unexpected"], 1, ()),
     ],
 )
-def test_family2_the_truthfulness_table(tmp_path, mode, args, committed, codes, rc, lines):
+def test_protocol_well_formed_records_from_the_pinned_worker_are_reported_as_told(
+    tmp_path, mode, args, committed, codes, rc, lines
+):
     _check(_stub(tmp_path, mode, args=args), committed=committed, codes=codes, rc=rc, lines=lines)
 
 
@@ -467,9 +527,11 @@ def test_family2_the_truthfulness_table(tmp_path, mode, args, committed, codes, 
         ("sentinel_string", "unknown", ["protocol_error"]),
         ("sentinel_in_phase", "unknown", ["protocol_error"]),
         ("sentinel_in_key", "unknown", ["protocol_error"]),
-        ("dup_decided", "yes", ["protocol_error"]),  # the first valid decision stands
+        ("dup_decided", "unknown", ["protocol_error"]),  # two answers: neither is believed
         ("d_garbage", "yes", ["protocol_error", "worker_died_after_decision"]),
-        ("after_closed", "yes", ["protocol_error"]),
+        ("after_closed", "unknown", ["protocol_error"]),  # a record after `closed`
+        ("d_true_with_rejected", "unknown", ["protocol_error"]),  # contradicts itself
+        ("d_then_failed_twice", "unknown", ["protocol_error"]),
     ],
 )
 def test_family2_anything_outside_the_closed_grammar_is_discarded_and_counted(
@@ -521,7 +583,7 @@ def test_family2_a_large_input_does_not_deadlock_a_worker_that_reads_late(tmp_pa
 def test_family2_the_launcher_runs_isolated_and_with_warnings_ignored(tmp_path):
     run = _stub(tmp_path, "good", py_flags=("-I", "-W", "ignore"))
     _check(run, committed="yes", codes=[], rc=0, lines=A2)
-    run = _stub(tmp_path, "good", py_flags=("-W", "error"))
+    run = _stub(tmp_path, "good", py_flags=("-I", "-W", "error"))
     _check(run, committed="yes", codes=[], rc=0, lines=A2)
 
 
@@ -540,21 +602,18 @@ def test_family2_a_closed_stdout_is_a_fixed_line_and_the_report_moves_to_stderr(
 
 @pytest.mark.parametrize("exc", ["SystemExit(0)", f"SystemExit({SENT!r})", "KeyboardInterrupt()"])
 def test_an_exception_or_exit_anywhere_after_the_arguments_is_one_fixed_line(tmp_path, exc):
+    launcher_file = build_root(tmp_path, worker_source=_STUB)
     code = (
         "import importlib.util, sys\n"
-        f"spec = importlib.util.spec_from_file_location('imp_launcher', {str(LAUNCHER)!r})\n"
+        f"spec = importlib.util.spec_from_file_location('imp_launcher', {str(launcher_file)!r})\n"
         "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
         f"def boom(*a, **k): raise {exc}\n"
         "m._supervise = boom\n"
         "m.main(['--apply'])\n"
     )
-    pkg = tmp_path / "backend" / "scripts"
-    pkg.mkdir(parents=True, exist_ok=True)
-    (tmp_path / "backend" / "__init__.py").write_text("")
-    (pkg / "_import_staff_cards_worker.py").write_text(_STUB)
     run = subprocess.run(
         [sys.executable, "-I", "-c", code],
-        input=EMPTY, capture_output=True, cwd=tmp_path, timeout=60,
+        input=EMPTY, capture_output=True, cwd=_cwd(tmp_path), timeout=60,
         env=_env(tmp_path, {"STUB_MODE": "d_hang"}),
     )  # fmt: skip
     assert run.stdout == b""
@@ -577,20 +636,33 @@ def test_an_exception_or_exit_anywhere_after_the_arguments_is_one_fixed_line(tmp
     ],
 )
 def test_every_parse_error_is_the_one_fixed_line_and_exit_2(tmp_path, argv):
-    run = _run(tmp_path, EMPTY, args=argv)
+    run = _run(build_root(tmp_path, worker_source=_STUB), tmp_path, EMPTY, args=argv)
     assert run.returncode == 2 and run.stdout == b""
     assert run.stderr.decode() == FIXED_BAD_ARGS + "\n"
 
 
 def test_help_is_static_text(tmp_path):
-    run = _run(tmp_path, b"", args=("--help",))
+    launcher_file = build_root(tmp_path, worker_source=_STUB)
+    run = _run(launcher_file, tmp_path, b"", args=("--help",))
     out = run.stdout.decode()
     assert run.returncode == 0 and run.stderr == b""
     assert "--apply" in out and "--skip-not-found" in out and SENT not in out
-    assert _run(tmp_path, b"", args=("--help", SENT)).stdout.decode().count(SENT) == 0
+    assert (
+        _run(launcher_file, tmp_path, b"", args=("--help", SENT)).stdout.decode().count(SENT) == 0
+    )
 
 
 # ─── in-process unit checks of the launcher's own parts ───
+
+
+def test_the_launcher_refuses_without_the_isolated_flag_in_main(monkeypatch, capfd):
+    monkeypatch.setattr(launcher.sys, "flags", type("F", (), {"isolated": 0})())
+    with pytest.raises(SystemExit):  # os._exit is replaced so the test process survives
+        monkeypatch.setattr(
+            launcher.os, "_exit", lambda code: (_ for _ in ()).throw(SystemExit(code))
+        )
+        launcher.main([])
+    assert capfd.readouterr().err == "import_staff_cards: run with python -I\n"
 
 
 def test_the_launcher_imports_the_standard_library_only():
@@ -623,7 +695,7 @@ def test_the_test_timeout_knob_can_only_shorten_the_deadline(monkeypatch, value,
 
 
 def test_a_spawn_failure_is_committed_no_and_one_fixed_line(monkeypatch, capfd):
-    saved = signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGTERM)
+    saved = [signal.getsignal(n) for n in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)]
 
     def boom(*a, **k):
         raise OSError(SENT)
@@ -632,8 +704,8 @@ def test_a_spawn_failure_is_committed_no_and_one_fixed_line(monkeypatch, capfd):
     try:
         code = launcher.run_launcher(["--apply"])
     finally:
-        signal.signal(signal.SIGINT, saved[0])
-        signal.signal(signal.SIGTERM, saved[1])
+        for n, handler in zip((signal.SIGINT, signal.SIGTERM, signal.SIGHUP), saved, strict=True):
+            signal.signal(n, handler)
     captured = capfd.readouterr()
     assert code == 1 and SENT not in captured.out + captured.err
     assert captured.out.splitlines() == ["mode: apply", "committed: no"]
@@ -663,6 +735,11 @@ TABLE = [
     (True, _state(decided=D_YES, timed_out=True, returncode=-15), "yes", ["timeout", "worker_died_after_decision"], 1),
     (True, _state(decided=D_YES, interrupted=True, returncode=-15), "yes", ["interrupted", "worker_died_after_decision"], 1),
     (True, _state(decided=D_YES, protocol_error=True, returncode=-15), "yes", ["protocol_error", "worker_died_after_decision"], 1),
+    (True, _state(decided=D_YES, void=True, protocol_error=True, returncode=-9), "unknown", ["protocol_error"], 1),
+    (True, _state(decided=D_NO, void=True, protocol_error=True, closed=True, returncode=0), "unknown", ["protocol_error"], 1),
+    (True, _state(nothing_ran=True, failed="input_too_large"), "no", ["input_too_large"], 1),
+    (True, _state(nothing_ran=True, timed_out=True), "no", ["timeout"], 1),
+    (True, _state(nothing_ran=True, interrupted=True), "no", ["interrupted"], 1),
     (True, _state(returncode=-9), "unknown", ["worker_killed"], 1),
     (True, _state(returncode=0), "unknown", ["no_result"], 1),
     (True, _state(returncode=1), "unknown", ["no_result"], 1),
