@@ -36,6 +36,7 @@ from backend.services.crm.practice_state_machine import (
 )
 from backend.services.invoicing import InvoiceAutomationService
 from backend.services.portal._mixins.documents import PortalDocumentsMixin
+from backend.services.portal.required_slots import mark_required_slot_uploaded
 
 logger = get_logger(__name__)
 
@@ -2679,20 +2680,11 @@ async def upload_client_document(
 
         async with db_pool.acquire() as conn:
             # Update required document record
-            await conn.execute(
-                """
-                UPDATE practice_required_documents
-                SET uploaded_by_client = TRUE,
-                    uploaded_file_id = $1,
-                    uploaded_at = NOW(),
-                    client_notes = COALESCE($2, client_notes),
-                    status = 'uploaded',
-                    updated_at = NOW()
-                WHERE id = $3
-                """,
-                doc_id,
-                request.notes,
-                request.required_doc_id,
+            await mark_required_slot_uploaded(
+                conn,
+                slot_id=request.required_doc_id,
+                document_id=doc_id,
+                notes=request.notes,
             )
 
             logger.info(
