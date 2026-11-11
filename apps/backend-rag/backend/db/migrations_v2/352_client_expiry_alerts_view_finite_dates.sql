@@ -14,6 +14,11 @@
 -- a kept row would surface as a false 'expired' alert with a year-1 date.
 -- Column list, names, types and order are unchanged (CREATE OR REPLACE VIEW).
 -- The source definition is apply_migration_033.py plus the isfinite() guards.
+--
+-- The guard is in two places on purpose. A caller's filter on days_until_expiry
+-- is pushed down into the same scan filter as the WHERE guard, and Postgres
+-- does not promise which of the two it evaluates first, so the subtraction is
+-- wrapped in CASE WHEN isfinite(...), the construct that does order evaluation.
 -- Data rows are not touched: a human supplies the real date.
 
 CREATE OR REPLACE VIEW client_expiry_alerts_view AS
@@ -25,7 +30,7 @@ SELECT
     c.full_name as client_name,
     'passport' as document_type,
     c.passport_expiry as expiry_date,
-    c.passport_expiry - CURRENT_DATE as days_until_expiry,
+    CASE WHEN isfinite(c.passport_expiry) THEN c.passport_expiry - CURRENT_DATE END as days_until_expiry,
     CASE
         WHEN c.passport_expiry <= CURRENT_DATE THEN 'expired'
         WHEN c.passport_expiry <= CURRENT_DATE + INTERVAL '8 months' THEN 'red'
@@ -48,7 +53,7 @@ SELECT
     c.full_name as client_name,
     'passport' as document_type,
     fm.passport_expiry as expiry_date,
-    fm.passport_expiry - CURRENT_DATE as days_until_expiry,
+    CASE WHEN isfinite(fm.passport_expiry) THEN fm.passport_expiry - CURRENT_DATE END as days_until_expiry,
     CASE
         WHEN fm.passport_expiry <= CURRENT_DATE THEN 'expired'
         WHEN fm.passport_expiry <= CURRENT_DATE + INTERVAL '8 months' THEN 'red'
@@ -71,7 +76,7 @@ SELECT
     c.full_name as client_name,
     'visa' as document_type,
     fm.visa_expiry as expiry_date,
-    fm.visa_expiry - CURRENT_DATE as days_until_expiry,
+    CASE WHEN isfinite(fm.visa_expiry) THEN fm.visa_expiry - CURRENT_DATE END as days_until_expiry,
     CASE
         WHEN fm.visa_expiry <= CURRENT_DATE THEN 'expired'
         WHEN fm.visa_expiry <= CURRENT_DATE + INTERVAL '8 months' THEN 'red'
@@ -94,7 +99,7 @@ SELECT
     c.full_name as client_name,
     d.document_type,
     d.expiry_date,
-    d.expiry_date - CURRENT_DATE as days_until_expiry,
+    CASE WHEN isfinite(d.expiry_date) THEN d.expiry_date - CURRENT_DATE END as days_until_expiry,
     CASE
         WHEN d.expiry_date <= CURRENT_DATE THEN 'expired'
         WHEN d.expiry_date <= CURRENT_DATE + INTERVAL '8 months' THEN 'red'

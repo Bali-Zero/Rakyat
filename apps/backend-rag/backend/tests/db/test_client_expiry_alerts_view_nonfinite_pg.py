@@ -8,6 +8,7 @@ control: it must raise on a -infinity row; migration 352 must not.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -88,3 +89,28 @@ async def test_old_definition_fails_and_new_one_survives(conn):
         ("family_member", "passport"),
         ("family_member", "visa"),
     ]
+
+
+GUARDED = re.compile(r"CASE WHEN isfinite\(([a-z_.]+)\) THEN \1 - CURRENT_DATE END")
+WINDOW = "SELECT count(*) FROM client_expiry_alerts_view WHERE days_until_expiry BETWEEN 0 AND 90"
+
+
+@pytest.mark.asyncio
+async def test_filter_on_days_until_expiry_does_not_depend_on_qual_order(conn):
+    forward, _ = split_migration_sql(MIGRATION.read_text())
+    where_only, guards = GUARDED.subn(r"\1 - CURRENT_DATE", forward)
+    assert guards == 4
+
+    # A caller's filter on days_until_expiry is pushed down next to the WHERE
+    # guard. Pricing isfinite() high makes the planner run the subtraction first,
+    # the order a WHERE-only guard silently depends on.
+    await conn.execute("ALTER FUNCTION pg_catalog.isfinite(date) COST 100000")
+    try:
+        await conn.execute(where_only)  # control: the guard in WHERE alone
+        with pytest.raises(asyncpg.DataError):
+            await conn.fetchval(WINDOW)
+
+        await conn.execute(forward)
+        assert await conn.fetchval(WINDOW) == 4
+    finally:
+        await conn.execute("ALTER FUNCTION pg_catalog.isfinite(date) COST 1")
