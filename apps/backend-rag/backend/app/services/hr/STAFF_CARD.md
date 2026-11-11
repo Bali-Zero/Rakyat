@@ -1,25 +1,22 @@
-# Staff HR card: read contract
+# Staff HR card: contract
 
 Storage: `hr_employees` scalar columns plus `hr_employees.profile` (jsonb object,
-Migration 354). Code: `hr_card_models.py`, `hr_service.py`, `routers/hr.py`. Every clause has a
-named test; the index is at the end.
+Migration 354). Code: `hr_card_models.py`, `hr_service.py`, `routers/hr.py`, and the import tool
+`backend/scripts/import_staff_cards.py` (launcher) with `backend/scripts/_import_staff_cards_worker.py`
+(worker). Every clause has a named test; the index is at the end.
 
 ## Scope
 
-In: the column `hr_employees.profile` and ONE read route, `GET /api/hr/me/card`, through which a
-staff member reads their own card.
+In: ONE read route, `GET /api/hr/me/card`, through which a staff member reads their own card, and
+the import tool through which HR fills cards (JSON on stdin). The read side is clauses C1-C4 and
+C9; the write side is C5-C8 and C10.
 
-**Nothing in this change writes `profile`.** The column is added with the default `{}` and stays
-`{}` for every row until a separate change that writes it lands. The route therefore returns the
-existing scalar columns of the row and empty profile fields until then.
-
-Not in this change, on purpose:
-- **Any write path for card data**: the import script and HTTP writes alike. No PATCH, no POST,
-  no admin card route. The legacy `POST /employees` is untouched (its response no longer carries
-  `profile`).
-- **Admin card routes** of any kind.
-- **Deletion** of profile data.
+Explicitly out, on purpose:
+- **HTTP writes of card data.** No PATCH, no POST, no admin card route. The legacy
+  `POST /employees` is untouched (its response no longer carries `profile`).
 - **Any new route with a path or query parameter.**
+- **Deleting profile data.** Nothing here removes a profile key or a docs slot; a merge only
+  adds or overwrites. Removal is a separate decision with its own spec.
 - **Case-insensitive or normalised identity matching** on the read path (see C1).
 
 ## Clauses
@@ -43,11 +40,12 @@ case-sensitively; the primary key is unique absolutely). 404 also when there is 
 
 **C2 What the no-value guarantee covers.** The route has no caller-supplied input at all (no
 path, query or body parameter), so card code has no caller value to echo. Card code
-(`hr_card_models.py`, the card read function of `hr_service.py` and the route handler) adds no
-personal value to any log record, exception text or response error: it raises `HRCardError(code)`
-with a code from the closed enum `HRCardCode`, and the route maps it to a fixed text. The member's
-own card is returned in full except HR free-text `notes`, which are not even selected (`notes`
-never leaves).
+(`hr_card_models.py`, the card functions of `hr_service.py`, the route handler and the import
+worker) adds no personal value to any exception text or response error it creates: it raises
+`HRCardError(code)` with a code from the closed enum `HRCardCode`, and the route maps it to a fixed
+text. What the import tool as a whole may show an operator is a stronger, separate guarantee with
+its own limits (C10). The member's own card is returned in full except HR free-text `notes`, which
+are not even selected (`notes` never leaves).
 
 Known pre-existing, not changed here (this PR neither introduces nor fixes them):
 - Request-level logging by shared middleware (`middleware/activity_logging.py:189`,
@@ -59,22 +57,167 @@ Known pre-existing, not changed here (this PR neither introduces nor fixes them)
   row in SQL (C1).
 
 **C3 Reads never validate.** The stored data goes through the READ model (plain optional types)
-and coercion helpers that return None, never raise and never quote the value. Whatever shape a
-value in the row has, the route answers a 200 card; a value of the wrong type is shown as null.
+and coercion helpers that return None, never raise and never quote the value. A stored value the
+write validators would reject yields a 200 card; a value of the wrong type is shown as null.
 
-**C4 jsonb through the production codec.** DB-backed tests register the same connection codec as
-production (`tests/fixtures/prod_shaped_pool.py`), so the stored profile is read the way the
-running service reads it.
+**C4 jsonb through the production codec exactly once.** Python dicts are bound to jsonb
+parameters; never a pre-serialised string. The import worker registers the codec on its
+connection (`init_asyncpg_connection`); DB-backed tests use the same registration
+(`tests/fixtures/prod_shaped_pool.py`), so the stored profile is written and read the way the
+running service does.
 
-**C5 Legacy routes.** `GET /employees/{id}` drops `notes` for a non-admin self-read; no legacy
+**C5 Merge semantics** (`HRService.merge_card_on`). Omitted scalar columns and omitted profile
+keys are preserved. `profile`, `profile.docs`, `profile.contract` are objects: a stored non-object
+is treated as `{}` before merging; an incoming non-object is rejected (`profile_not_object`)
+before any write. `docs` and `contract` merge key by key. `RETURNING jsonb_typeof(profile)` is
+checked; anything but an object rolls the write back. A missing row is inserted (needs
+`hire_date`); if a concurrent writer inserts first, the insert conflicts and falls through to the
+update.
+
+**C6 Write validators (import only).** `nik` 16 digits after removing spaces, dots, dashes;
+`npwp` 15 or 16 digits likewise; BPJS Kesehatan 13 digits; BPJS Ketenagakerjaan / KPJ 11
+alphanumerics (separators removed); bank account 6-20 digits after removing spaces and dashes.
+Validation runs on the normalised form; the trimmed value is stored as given. `profile`, `docs`,
+`contract` must be objects when present: an explicit `null`, `[]`, `false`, `0` or `""` is rejected
+as it came, never normalised to `{}`. Unknown keys inside `profile`, `contract` and the card
+fields are rejected (`extra=forbid`); unknown keys on the outer import card and a `profile` nested
+inside `fields` are rejected by the import itself (C7). `is_active` is a strict boolean.
+Validation messages never include a value.
+
+**C7 Import is all-or-nothing with full accounting.** Dry-run by default; `--apply` is one
+transaction that commits only when every card is applied (`not_found` tolerated with
+`--skip-not-found`); otherwise the whole batch rolls back. Every card ends in exactly one of
+`applied`, `not_found`, `rejected:<code>`. A merge that returns no row is `rejected:not_applied`
+and the batch rolls back. An unknown key on the OUTER card, or a `profile` inside `fields`, is
+`rejected:unknown_key`, never dropped. A JSON document of the wrong shape is
+`rejected:bad_document`. A dry-run writes nothing and reports what it can know (`would_update`,
+`would_insert`, `rejected:<code>`, `not_found`, and `blocked:not_found` when `--apply` would stop on
+it). The worker reports the moment the transaction is decided: right after COMMIT or ROLLBACK
+returned, and before the connection is closed (C10). A COMMIT or ROLLBACK that raises is never
+reported as decided.
+
+**C8 Import identity, locking and order.** A card is resolved by EXACT email on staff rows
+(`role <> 'client'`). If the lower-cased email matches more than one staff row the card is
+`rejected:ambiguous_email`; the import never picks one. A single row whose stored email differs
+from the card's only by case is `not_found`. In `--apply`, before each merge the resolved
+`team_members` row is locked `FOR SHARE` with the exact email and staff condition re-checked in
+the same statement: a member renamed or turned into a client since the resolve is
+`rejected:member_changed` and nothing is written. Cards are written in sorted resolved-member-id
+order (document order for the same member), so two batches take member locks in the same order.
+The transaction sets a local `lock_timeout` (5 s); a lock timeout or deadlock is
+`rejected:lock_timeout` and the batch rolls back. This does not make concurrent batches
+serialisable in general; it bounds the wait and makes the order deterministic.
+
+**C9 Legacy routes.** `GET /employees/{id}` drops `notes` for a non-admin self-read; no legacy
 employee read or write response carries `profile`.
 
+**C10 The process boundary: what the operator's terminal can ever show.** The previous design
+promised that no personal value reaches stdout or stderr and tried to keep that promise inside
+one Python process (argparse echo, driver tracebacks at connect and close, library warnings,
+output at import time, `SystemExit` passing a guard, a failing excepthook). In-process guards do
+not close that class, so the guarantee is a PROCESS BOUNDARY, in two files:
+
+- `import_staff_cards.py` is the LAUNCHER and the only thing an operator runs. It imports the
+  standard library only (nothing that can emit output on import), parses its own arguments with a
+  fixed-text parser (`--apply`, `--skip-not-found`, `--help`; any other argument is the one line
+  `import_staff_cards: invalid arguments (run with --help)`, exit 2, never an echo), reads stdin as
+  raw bytes without decoding, and starts the WORKER as a child
+  (`python -m backend.scripts._import_staff_cards_worker`) with its stdout and stderr redirected to
+  `os.devnull`, the bytes on its stdin and ONE extra inherited pipe on which the child writes its
+  result. The child's cwd and environment are the launcher's, except that the launcher's own
+  `apps/backend-rag` directory is appended to `PYTHONPATH` so the worker is found from any cwd.
+- `_import_staff_cards_worker.py` is the WORKER (refuses to run without a result pipe). It does
+  C5-C8 and writes up to three compact JSON lines on the pipe: `decided` (committed yes/no and the
+  outcome counts), `failed` (a code) and `closed` (close ok yes/no). `decided` is written and
+  flushed the moment the transaction is decided, before the connection is closed. Its exit code is
+  advisory only.
+
+The launcher reads the pipe with a 64 KiB cap and a wall-clock limit of 15 minutes (on expiry it
+terminates, then kills, the child), and prints ONLY what it rebuilds from a STRICTLY validated
+result. Each line must match a closed grammar: no whitespace, phases `decided` / `failed` /
+`closed` each at most once and nothing after `closed`, outcome keys from a compiled-in set of
+literals, counts as non-negative integers up to 1,000,000, failure codes from a compiled-in set.
+Anything else is discarded and counted as `protocol_error`. The launcher never prints a byte that
+came from the child. Everything it prints is one of its own literals or an integer.
+
+*The guarantee, exactly:* the launcher writes only launcher-owned literals and integers; the
+worker's streams are discarded; therefore no value from input, database, driver or library can
+reach the operator's terminal through this tool. Operator visibility is by fixed code only. Any
+diagnosis beyond the code means re-running against a staging database, by design: there is no
+option that routes child output to the operator, and none will be added.
+
+*What it does NOT cover:*
+- the shell history and process list of the command line that invoked the tool (the card
+  document travels on stdin so no value is in argv, but whatever the operator types is theirs);
+- the operator's own input file and the shell's handling of it;
+- the database server's own logs. Every card statement binds its values as parameters (the SQL
+  text carries `$n`, never a value; the only interpolated item is the integer lock timeout), so
+  the statement text in a server log holds no personal value. But a server set to log
+  statements (`log_statement`, `log_min_duration_statement`) writes the bound parameters in the
+  DETAIL line unless `log_parameter_max_length` is limited (its default logs them in full), and
+  a constraint violation in any statement logs "Failing row contains ..." with the row. By
+  default parameters are not logged on error (`log_parameter_max_length_on_error = 0`). Check on
+  the target server with `SHOW log_statement; SHOW log_min_duration_statement; SHOW
+  log_parameter_max_length;` before an `--apply` against production;
+- anything that reads the database afterwards (this is a write tool; the data is meant to be
+  there).
+
+*Launcher failure lines* (stderr, `import_staff_cards: failed (<code>)`, a closed set). Launcher:
+`spawn_failed`, `timeout`, `interrupted`, `worker_killed`, `no_result`, `protocol_error`,
+`worker_died_after_decision`, `close_failed`, `worker_exit_nonzero`, `output_closed`,
+`internal_error`. Carried from the worker: `import_failed`, `bad_input`, `connect_failed`,
+`unexpected`, `db_error`, `lock_timeout`, `hire_date_required`, `invalid_input`,
+`profile_not_object`. Outcome keys on stdout: `resolved`, `not_found`, `applied`, `would_update`,
+`would_insert`, `blocked:not_found`, and `rejected:` plus one of `bad_shape`, `unknown_key`,
+`email_missing`, `invalid_ptkp`, `invalid_profile`, `invalid_fields`, `ambiguous_email`,
+`member_changed`, `not_applied`, `bad_document`, `hire_date_required`, `invalid_input`,
+`profile_not_object`, `db_error`, `lock_timeout`. stdout is always `mode: apply|dry-run`, the
+counts, then `committed: yes|no|unknown`.
+
+*Truthfulness: what the launcher says, whatever happens to the child.* `decided` is the only
+thing that lets it say yes or no:
+
+| # | What the launcher received | `committed:` | Failure line(s) | Exit |
+|---|---|---|---|---|
+| 1 | `decided`, `closed` ok, child exit 0, committed, no rejected card | yes | none | 0 |
+| 2 | `decided` with a rejected card (rolled back), `closed` ok, exit 0 | no | none | 1 |
+| 3 | `decided`, `closed` with close_ok false | as decided | `close_failed` | 1 |
+| 4 | `decided`, then no `closed` (child crash, signal, plain exit) | as decided | `worker_died_after_decision` | 1 |
+| 5 | `decided`, then timeout / interrupt / protocol error | as decided | `timeout` / `interrupted` / `protocol_error`, then `worker_died_after_decision` | 1 |
+| 6 | `decided`, `closed` ok, child exit non-zero, no `failed` record | as decided | `worker_exit_nonzero` | 1 |
+| 7 | `decided` (rolled back after an error) then `failed` | no | the carried code | 1 |
+| 8 | worker found nothing begun (bad input, connect failure, codec failure): `decided` no with no counts, then `failed` | no | the carried code | 1 |
+| 9 | no `decided`, `failed` only (e.g. COMMIT raised) | `unknown` (`--apply`) | the carried code | 1 |
+| 10 | no `decided`, no `failed`, child killed by a signal | `unknown` | `worker_killed` | 1 |
+| 11 | no `decided`, no `failed`, child gone or silent | `unknown` | `no_result` | 1 |
+| 12 | no `decided`, timeout / interrupt / protocol error | `unknown` | `timeout` / `interrupted` / `protocol_error` | 1 |
+| 13 | worker never started (spawn failure), or stdin unreadable | no | `spawn_failed` / `bad_input` | 1 |
+| 14 | the launcher's stdout is closed | as in the row that applies, written to stderr | the row's lines, then `output_closed` | 1 |
+| 15 | any exception or `SystemExit` anywhere in the launcher after argument parsing | not reported | `internal_error` (written with `os.write`, then `os._exit(1)`) | 1 |
+
+`unknown` means the commit may or may not have happened and the launcher does not claim either.
+For a DRY-RUN `committed:` is always `no` (nothing is ever written) and the exit code is 0 when
+`decided` and `closed` ok arrived and the child exited 0, rejected cards notwithstanding. A SIGINT
+or SIGTERM sets a flag that the supervising loop reads (no exception is raised at a random point),
+and signals are ignored while the final report is written, so an interrupt cannot cost the operator
+the truth about a decided batch. The test-only environment variable
+`IMPORT_STAFF_CARDS_TEST_TIMEOUT_S` can only SHORTEN the wall-clock limit (a value of 0.2 s up to
+below 900 s is honoured; anything else, including 0, negatives, `nan`, `inf` and larger values, leaves
+the default). It changes nothing else.
+
 ## Clause-to-test index
+
+Paths are under `backend/tests/` unless given.
 
 | Clause | Tests |
 |---|---|
 | C1 | `unit/app/routers/test_hr_staff_card.py` (keyed by id, client 403, 404, one GET without parameters); `unit/app/services/hr/test_hr_card_service.py::test_get_card_for_member_is_keyed_by_primary_key_*`; `tests/migrations/test_migration_354_hr_employees_profile.py`: `::test_me_card_returns_the_authenticated_rows_card_never_the_case_twins`, `::test_get_card_for_member_is_primary_key_only_and_staff_only`, `::test_get_card_for_member_requires_an_active_member`, and through the real middleware with signed tokens `::test_real_auth_path_active_staff_gets_own_card`, `::test_real_auth_path_a_deactivated_member_with_a_valid_token_gets_404`, `::test_real_auth_path_a_staff_claim_on_a_client_row_gets_no_card`, `::test_a_client_claim_is_refused_and_a_forged_id_matches_no_row` |
-| C2 | `test_a_database_failure_is_a_fixed_500_*`, `test_a_read_failure_is_a_code_*`, `test_member_gets_own_card_in_full_without_notes`, `test_the_surface_added_is_one_get_*` |
+| C2 | `test_a_database_failure_is_a_fixed_500_*`, `test_a_read_failure_is_a_code_*`, `test_member_gets_own_card_in_full_without_notes`, `test_the_surface_added_is_one_get_*`, `test_merge_card_on_replaces_a_driver_error_*`, `tests/migrations/test_hr_card_write_path.py``::test_a_card_write_failure_carries_no_driver_text`, `test_a_card_error_is_accounted_by_its_code_only` |
 | C3 | `test_a_non_object_stored_profile_still_reads`, `test_odd_stored_strings_*`, `test_the_read_model_never_raises_*`, `test_a_stored_string_profile_and_odd_contract_still_read` |
-| C4 | every DB-backed test in `tests/migrations/test_migration_354_hr_employees_profile.py` (its pool registers the production codec), and `test_migration_adds_the_column_and_rolls_back` for the column itself |
-| C5 | `test_member_self_read_of_the_employee_row_has_no_notes`, `test_admin_read_of_the_employee_row_still_has_notes`, `test_the_legacy_employee_shape_never_carries_the_profile` |
+| C4 | every DB-backed test in `tests/migrations/test_migration_354_hr_employees_profile.py` (its pool registers the production codec); `tests/migrations/test_hr_card_write_path.py``::test_two_merges_keep_profile_an_object_under_the_production_codec`; `unit/scripts/test_import_staff_cards_worker.py``::test_work_registers_the_production_codec_on_its_connection` |
+| C5 | `tests/migrations/test_hr_card_write_path.py``::test_nested_merge_survives_*`, `::test_a_non_object_profile_is_normalised_*`, `::test_merge_keeps_omitted_columns_*`, `::test_a_non_object_incoming_part_*`, `::test_a_profile_that_would_not_be_an_object_*`, `::test_a_concurrent_insert_falls_through_to_the_update_on_two_connections` |
+| C6 | `unit/app/services/hr/test_hr_card_models.py`; `unit/scripts/test_import_staff_cards_worker.py``::test_a_present_non_object_*`, `::test_a_non_object_docs_or_contract_*`, `::test_identifier_shapes_are_enforced_by_the_import` |
+| C7 | `unit/scripts/test_import_staff_cards_worker.py``::test_apply_*`, `::test_dry_run_*`, `::test_every_card_is_accounted_for_exactly_once`, `::test_an_unknown_key_on_the_outer_card_*`, `::test_unknown_outer_key_counts_and_blocks_the_batch`, `::test_a_profile_nested_inside_fields_*`, `::test_a_merge_that_returns_no_row_*`, `::test_decided_is_reported_*`, `::test_a_commit_that_raises_is_never_reported_as_decided`, `::test_an_error_inside_the_transaction_is_decided_false_*`; `tests/migrations/test_hr_card_write_path.py``::test_import_apply_is_atomic_*`, `::test_import_apply_creates_a_card_with_a_hire_date`, `::test_import_second_merge_returning_none_*`, and through the real launcher `::test_launcher_dry_run_then_apply_writes_the_card_and_says_so`, `::test_launcher_a_rejected_batch_writes_nothing_and_says_committed_no` |
+| C8 | `unit/scripts/test_import_staff_cards_worker.py``::test_an_email_matching_two_staff_rows_is_ambiguous_*`, `::test_a_single_case_variant_*`, `::test_cards_are_written_in_resolved_member_id_order_*`, `::test_a_member_that_no_longer_matches_*`, `::test_apply_sets_a_transaction_local_lock_timeout_*`; `tests/migrations/test_hr_card_write_path.py``::test_the_import_rejects_a_case_twin_email_as_ambiguous_*`, `::test_a_member_renamed_between_resolve_and_merge_*`, `::test_a_member_turned_client_between_resolve_and_merge_*`, `::test_a_blocked_row_lock_is_rejected_as_lock_timeout_*`, `::test_real_apply_locks_members_in_sorted_id_order`, `::test_two_concurrent_batches_over_the_same_members_in_opposite_order`, and through the real launcher `::test_launcher_an_ambiguous_email_is_rejected_and_nothing_is_written`, `::test_launcher_a_member_renamed_between_resolve_and_merge_is_rejected` |
+| C9 | `test_member_self_read_of_the_employee_row_has_no_notes`, `test_the_legacy_employee_shape_never_carries_the_profile` |
+| C10 | `unit/scripts/test_import_staff_cards.py` (real launcher in a subprocess): `::test_family1_*` (real worker, fake driver: warnings, import-time output, `logging.log(60, ...)`, exceptions at connect / codec / transaction / commit / close, `SystemExit(0)`, `SystemExit(<sentinel>)`, `SystemExit(7)`, SIGKILL before and after the decision, hang, SIGINT before and after the decision, bad and wrong-shape stdin), `::test_family2_*` (stub worker: garbage, oversized, unknown key, code outside the set, negative, huge, sentinel in a string field, duplicate and trailing records, truthfulness table, raw bytes and flags, large input, `python -I -W ignore`, closed stdout), `::test_an_exception_or_exit_anywhere_after_the_arguments_is_one_fixed_line`, `::test_every_parse_error_is_the_one_fixed_line_and_exit_2`, `::test_help_is_static_text`, `::test_the_launcher_imports_the_standard_library_only`, `::test_the_test_timeout_knob_can_only_shorten_the_deadline`, `::test_the_truthfulness_table_row_by_row`, `::test_exit_zero_needs_*`, `::test_a_result_is_taken_only_when_it_matches_the_closed_grammar`, `::test_a_spawn_failure_*`; `unit/scripts/test_import_staff_cards_worker.py``::test_the_records_the_worker_writes_are_exactly_what_the_launcher_accepts`, `::test_every_outcome_and_code_the_worker_can_produce_is_in_the_launcher_closed_sets`, `::test_work_*`, `::test_the_worker_refuses_to_run_without_a_result_pipe` |
