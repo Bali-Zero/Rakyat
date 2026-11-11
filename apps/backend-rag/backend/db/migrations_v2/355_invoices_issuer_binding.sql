@@ -1,7 +1,7 @@
--- Migration 353: persist invoice issuer binding.
+-- Migration 355: persist invoice issuer binding.
 -- Existing NULL bindings are legacy invoices issued by the default entity.
 -- No historical routing or automatic backfill is performed.
--- depends: 352
+-- depends: 353
 
 DO $migration$
 BEGIN
@@ -12,7 +12,7 @@ BEGIN
           AND table_name = 'invoices'
     ) THEN
         RAISE NOTICE
-            'Migration 353: invoices table not present; skipping (CI/fresh schema).';
+            'Migration 355: invoices table not present; skipping (CI/fresh schema).';
         RETURN;
     END IF;
 
