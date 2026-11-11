@@ -42,6 +42,7 @@ so they can land in `migrations_v2/` without breaking either:
 | `CREATE TABLE IF NOT EXISTS notification_prefs ...` | `135_legacy_notification_prefs.sql` |
 | `clients` ADD COLUMN drive_* / deleted_at + timestamp defaults | `136_clients_drive_columns_and_defaults.sql` |
 | `team_members` ADD COLUMN name + nullable + defaults | `137_team_members_legacy_columns_and_defaults.sql` |
+| `practices` ALTER COLUMN practice_type_id DROP NOT NULL | `353_practices_practice_type_id_nullable.sql` (2026-11-11; prod measured `is_nullable = YES` 2026-10-05 and re-measured 2026-11-11 — the bootstrap claim was true, this file is its tracked counterpart) |
 
 The bootstrap script also imports the `class table=True` SQLModel
 classes and calls `SQLModel.metadata.create_all()`; that mechanism

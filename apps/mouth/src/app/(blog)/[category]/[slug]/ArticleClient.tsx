@@ -389,10 +389,11 @@ export function ArticleClient({
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
                     components={{
+                      // Body `#` → <h2>: the title above is the page's only <h1>.
                       h1: ({ children }) => (
-                        <h1 className="font-serif text-4xl md:text-5xl font-bold text-white mt-12 mb-6 first:mt-0">
+                        <h2 className="font-serif text-4xl md:text-5xl font-bold text-white mt-12 mb-6 first:mt-0">
                           {children}
-                        </h1>
+                        </h2>
                       ),
                       h2: ({ children }) => {
                         const id =

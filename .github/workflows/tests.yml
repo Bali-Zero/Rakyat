@@ -2137,6 +2137,7 @@ jobs:
       - packages-core-tests
       - e2e-tests
       - repo-scanners
+      - visa-oracle-fullstack-smoke
     if: always()
     timeout-minutes: 10
 
@@ -2155,6 +2156,7 @@ jobs:
           PACKAGES_CORE_RESULT: ${{ needs.packages-core-tests.result }}
           E2E_RESULT: ${{ needs.e2e-tests.result }}
           REPO_SCANNERS_RESULT: ${{ needs.repo-scanners.result }}
+          VISA_SMOKE_RESULT: ${{ needs.visa-oracle-fullstack-smoke.result }}
         with:
           # FAIL-OPEN FIXED (Day-1 CI honesty, 2026-07-20): this job used to
           # print a static "Passed" summary WITHOUT ever reading needs.*.result
@@ -2175,6 +2177,7 @@ jobs:
               "Shared core package": process.env.PACKAGES_CORE_RESULT,
               "E2E page-load smoke": process.env.E2E_RESULT,
               "Repo-wide scanners": process.env.REPO_SCANNERS_RESULT,
+              "Visa Oracle fullstack smoke": process.env.VISA_SMOKE_RESULT,
             };
 
             const icon = (r) => {

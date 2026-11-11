@@ -93,8 +93,10 @@ const mdxComponents = {
   // `!important` (headings/paragraphs/blockquote/code/pre/table); these
   // inline values are the correct source and the fallback for any consumer
   // outside that wrapper.
+  // A body `# heading` renders as <h2>: the article template already owns the
+  // page's single <h1> (the title), and many article files repeat it in the body.
   h1: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
-    <h1
+    <h2
       className="font-serif font-medium tracking-tight mt-12 mb-6 first:mt-0 text-4xl md:text-5xl"
       style={{ color: "var(--r19-ink)" }}
       {...props}
