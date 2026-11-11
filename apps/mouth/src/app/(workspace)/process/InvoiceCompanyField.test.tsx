@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/error-handler";
@@ -34,7 +34,9 @@ function Harness({
   autofill,
   initial = EMPTY_INVOICE_COMPANY,
   onValue,
+  setterRef,
 }: {
+  setterRef?: { current: ((v: InvoiceCompanyValue) => void) | null };
   clientId?: number;
   code?: string;
   autofill?: boolean;
@@ -42,6 +44,7 @@ function Harness({
   onValue: (v: InvoiceCompanyValue) => void;
 }) {
   const [value, setValue] = useState(initial);
+  if (setterRef) setterRef.current = setValue;
   onValue(value);
   return (
     <InvoiceCompanyField
@@ -240,6 +243,65 @@ describe("InvoiceCompanyField", () => {
     ).toEqual({
       invoice_company_name: "PT Synthetic Ketik",
     });
+  });
+
+  it("an NPWP typed before a slow suggestion resolves is never overwritten by it", async () => {
+    let resolveSecond: (v: unknown) => void = () => {};
+    mockSuggest.mockRejectedValueOnce(new Error("down"));
+    mockSuggest.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveSecond = resolve)),
+    );
+    const seen = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(<Harness onValue={seen} />);
+    const npwp = await screen.findByLabelText("Company NPWP");
+    rerender(<Harness code="pt_pma_setup" onValue={seen} />);
+    await waitFor(() => expect(mockSuggest).toHaveBeenCalledTimes(2));
+    await user.type(npwp, "01.234");
+    resolveSecond({
+      autofill: true,
+      suggested_company_id: 11,
+      companies: [choice(11, "PT Synthetic Satu")],
+    });
+    await screen.findByRole("combobox");
+    const last = seen.mock.calls[
+      seen.mock.calls.length - 1
+    ][0] as InvoiceCompanyValue;
+    expect(last).toEqual({ companyId: null, name: "", npwp: "01.234" });
+    expect(screen.getByLabelText("Company NPWP")).toHaveValue("01.234");
+  });
+
+  it("a company picked by the parent (409 chooser) is not replaced by a later suggestion", async () => {
+    mockSuggest.mockResolvedValueOnce({
+      autofill: true,
+      suggested_company_id: 11,
+      companies: [
+        choice(11, "PT Synthetic Satu"),
+        choice(5, "PT Synthetic Lima"),
+      ],
+    });
+    mockSuggest.mockResolvedValueOnce({
+      autofill: true,
+      suggested_company_id: 11,
+      companies: [
+        choice(11, "PT Synthetic Satu"),
+        choice(5, "PT Synthetic Lima"),
+      ],
+    });
+    const seen = vi.fn();
+    const setterRef = {
+      current: null as ((v: InvoiceCompanyValue) => void) | null,
+    };
+    const { rerender } = render(
+      <Harness onValue={seen} setterRef={setterRef} />,
+    );
+    await waitFor(() => expect(screen.getByRole("combobox")).toHaveValue("11"));
+    act(() => setterRef.current!({ companyId: 5, name: "", npwp: "" }));
+    rerender(
+      <Harness code="pt_pma_setup" onValue={seen} setterRef={setterRef} />,
+    );
+    await waitFor(() => expect(mockSuggest).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("combobox")).toHaveValue("5");
   });
 
   it("a prefill never survives a change of client", async () => {

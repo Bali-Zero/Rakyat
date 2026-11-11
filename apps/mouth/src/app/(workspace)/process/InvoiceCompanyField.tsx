@@ -100,22 +100,33 @@ export function InvoiceCompanyField({
   const [typing, setTyping] = useState(false);
   const touched = useRef(false);
   const autoFilled = useRef(false);
+  const prefillId = useRef<number | null>(null);
   const lastClient = useRef<number | undefined>(clientId);
   const lastCode = useRef<string | undefined>(practiceTypeCode);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  // True only while the field still holds exactly what this component prefilled.
+  const holdsOwnPrefill = () =>
+    autoFilled.current &&
+    valueRef.current.companyId !== null &&
+    valueRef.current.companyId === prefillId.current &&
+    !valueRef.current.name &&
+    !valueRef.current.npwp;
 
   useEffect(() => {
     if (lastClient.current !== clientId) {
       lastClient.current = clientId;
       touched.current = false;
       autoFilled.current = false;
+      prefillId.current = null;
       setTyping(false);
       onChangeRef.current(EMPTY_INVOICE_COMPANY);
     }
     if (lastCode.current !== practiceTypeCode) {
       lastCode.current = practiceTypeCode;
-      if (autoFilled.current && !touched.current) {
+      if (holdsOwnPrefill() && !touched.current) {
         // The service changed: what was prefilled for the old one is stale until
         // the new suggestion says otherwise (it may be slow or fail).
         autoFilled.current = false;
@@ -137,15 +148,23 @@ export function InvoiceCompanyField({
         setCompanies(s.companies);
         setLoaded(true);
         if (!autofill || touched.current) return;
+        const current = valueRef.current;
+        const isEmpty =
+          current.companyId === null && !current.name && !current.npwp;
+        // A suggestion only ever fills an empty field or replaces its own earlier
+        // prefill; whatever the user chose, typed or picked is never overwritten.
+        if (!isEmpty && !holdsOwnPrefill()) return;
         if (s.suggested_company_id !== null) {
           autoFilled.current = true;
+          prefillId.current = s.suggested_company_id;
           onChangeRef.current({
             companyId: s.suggested_company_id,
             name: "",
             npwp: "",
           });
-        } else if (autoFilled.current) {
+        } else if (holdsOwnPrefill()) {
           autoFilled.current = false;
+          prefillId.current = null;
           onChangeRef.current(EMPTY_INVOICE_COMPANY);
         }
       })
@@ -264,13 +283,14 @@ export function InvoiceCompanyField({
             value={value.npwp}
             disabled={disabled}
             maxLength={30}
-            onChange={(e) =>
+            onChange={(e) => {
+              touched.current = true;
               onChange({
                 companyId: null,
                 name: value.name,
                 npwp: e.target.value,
-              })
-            }
+              });
+            }}
             className={fieldClass}
             placeholder="NPWP (optional)"
           />
