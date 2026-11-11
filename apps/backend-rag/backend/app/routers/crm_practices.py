@@ -12,7 +12,7 @@ from typing import Any
 
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Path, Query, Request
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
@@ -35,6 +35,7 @@ from backend.services.crm.practice_state_machine import (
     validate_transition,
 )
 from backend.services.invoicing import InvoiceAutomationService
+from backend.services.invoicing import invoice_company as invoice_company_service
 from backend.services.portal._mixins.documents import PortalDocumentsMixin
 from backend.services.portal.required_slots import mark_required_slot_uploaded
 
@@ -75,6 +76,24 @@ PRACTICE_CLEARABLE_FIELDS = {
     "client_summary",
 }
 REVENUE_GROWTH_CACHE_NAMESPACE = "crm_practices_revenue_growth"
+
+
+async def _resolve_invoice_company_http(
+    conn: asyncpg.Connection,
+    client_id: int,
+    *,
+    company_id: int | None,
+    name: str | None,
+    npwp: str | None,
+    actor: str,
+) -> int:
+    try:
+        async with conn.transaction():
+            return await invoice_company_service.resolve_invoice_company(
+                conn, client_id, company_id=company_id, name=name, npwp=npwp, actor=actor
+            )
+    except invoice_company_service.InvoiceCompanyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 def _practice_ownership_flags(
@@ -322,6 +341,15 @@ class PracticeCreate(BaseModel):
     family_member_id: int | None = (
         None  # If practice is for a specific family member (dependent KITAS etc.)
     )
+    invoice_company_id: int | None = None
+    invoice_company_name: str | None = None
+    invoice_company_npwp: str | None = None
+
+    @model_validator(mode="after")
+    def _invoice_company_id_or_name(self) -> "PracticeCreate":
+        if self.invoice_company_id is not None and self.invoice_company_name:
+            raise ValueError("send invoice_company_id or invoice_company_name, not both")
+        return self
 
     @field_validator("status")
     @classmethod
@@ -366,6 +394,10 @@ class PracticeCreate(BaseModel):
 
 class PracticeUpdate(BaseModel):
     status: str | None = None
+    # null clears (bill the individual); id picks; name types a new/existing company.
+    invoice_company_id: int | None = None
+    invoice_company_name: str | None = None
+    invoice_company_npwp: str | None = None
     # Pick (or change) the service after creation — resolved to
     # practice_type_id in update_practice. Required before leaving inquiry.
     practice_type_code: str | None = None
@@ -440,6 +472,7 @@ class PracticeResponse(BaseModel):
     expiry_date: date | None
     created_at: datetime
     family_member_id: int | None = None
+    invoice_company_id: int | None = None
 
 
 # ================================================
@@ -642,6 +675,20 @@ async def create_practice(
                     raise HTTPException(status_code=500, detail="Failed to create practice")
 
                 new_practice = dict(practice_row)
+                if practice.invoice_company_id is not None or practice.invoice_company_name:
+                    new_practice["invoice_company_id"] = await _resolve_invoice_company_http(
+                        conn,
+                        practice.client_id,
+                        company_id=practice.invoice_company_id,
+                        name=practice.invoice_company_name,
+                        npwp=practice.invoice_company_npwp,
+                        actor=created_by,
+                    )
+                    await conn.execute(
+                        "UPDATE practices SET invoice_company_id = $1 WHERE id = $2",
+                        new_practice["invoice_company_id"],
+                        new_practice["id"],
+                    )
                 # Convert UUID to string for Pydantic validation
                 if new_practice.get("uuid"):
                     new_practice["uuid"] = str(new_practice["uuid"])
@@ -1093,6 +1140,57 @@ async def get_practice_types_catalog(
         raise handle_database_error(e)
 
 
+@router.get("/invoice-company/suggestion")
+async def invoice_company_suggestion(
+    request: Request,
+    client_id: int = Query(..., gt=0),
+    practice_type_code: str | None = Query(None),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Companies the client is linked to and what the form should prefill for this service."""
+    try:
+        async with db_pool.acquire() as conn:
+            filter_email = get_practices_user_filter(current_user)
+            if filter_email:
+                visible = await conn.fetchval(
+                    "SELECT 1 FROM clients WHERE id = $1 AND (assigned_to = $2"
+                    " OR EXISTS (SELECT 1 FROM practices WHERE client_id = $1"
+                    " AND (created_by = $2 OR LOWER(assigned_to) = $2)))",
+                    client_id,
+                    filter_email,
+                )
+                if not visible:
+                    raise HTTPException(status_code=404, detail="Client not found")
+            category = (
+                await conn.fetchval(
+                    "SELECT category FROM practice_types WHERE code = $1", practice_type_code
+                )
+                if practice_type_code
+                else None
+            )
+            links = await invoice_company_service.fetch_client_company_links(conn, client_id)
+        result = invoice_company_service.suggest(links, category)
+        return {
+            "autofill": result.autofill,
+            "suggested_company_id": result.suggested_company_id,
+            "companies": [
+                {
+                    "id": c["company_id"],
+                    "company_name": c["company_name"],
+                    "npwp_company": c["npwp_company"],
+                    "role": c["role"],
+                    "is_director": c["is_director"],
+                }
+                for c in result.companies
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_database_error(e)
+
+
 @router.get("/{practice_id}")
 async def get_practice(
     request: Request,
@@ -1121,10 +1219,12 @@ async def get_practice(
                         pt.name as practice_type_name,
                         pt.code as practice_type_code,
                         pt.category as practice_category,
-                        pt.required_documents as required_documents
+                        pt.required_documents as required_documents,
+                        ic.company_name as invoice_company_name
                     FROM practices p
                     JOIN clients c ON p.client_id = c.id
                     JOIN practice_types pt ON p.practice_type_id = pt.id
+                    LEFT JOIN companies ic ON ic.id = p.invoice_company_id
                     WHERE p.id = $1
             """
             if practices_filter:
@@ -1313,6 +1413,13 @@ async def update_practice(
             # practice_type_code → practice_type_id (the column the row stores).
             # Resolved up-front so an unknown/inactive code fails before any SQL.
             update_set = updates.dict(exclude_unset=True)
+            invoice_company_touched = any(
+                key in update_set
+                for key in ("invoice_company_id", "invoice_company_name", "invoice_company_npwp")
+            )
+            invoice_company_id_in = update_set.pop("invoice_company_id", None)
+            invoice_company_name_in = update_set.pop("invoice_company_name", None)
+            invoice_company_npwp_in = update_set.pop("invoice_company_npwp", None)
             new_practice_type_code = update_set.pop("practice_type_code", None)
             if "practice_type_code" in updates.model_fields_set and not new_practice_type_code:
                 raise HTTPException(status_code=400, detail="practice_type_code cannot be null")
@@ -1355,6 +1462,29 @@ async def update_practice(
                     and new_type_row["base_price"] is not None
                 ):
                     update_set["quoted_price"] = new_type_row["base_price"]
+
+            if invoice_company_touched:
+                if invoice_company_id_in is not None and invoice_company_name_in:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="send invoice_company_id or invoice_company_name, not both",
+                    )
+                if invoice_company_id_in is None and not invoice_company_name_in:
+                    resolved_company_id = None
+                else:
+                    if practice_client_id is None:
+                        raise HTTPException(status_code=404, detail="Practice not found")
+                    resolved_company_id = await _resolve_invoice_company_http(
+                        conn,
+                        practice_client_id,
+                        company_id=invoice_company_id_in,
+                        name=invoice_company_name_in,
+                        npwp=invoice_company_npwp_in,
+                        actor=user_email.lower(),
+                    )
+                update_fields.append(f"invoice_company_id = ${param_index}")
+                params.append(resolved_company_id)
+                param_index += 1
 
             # Map of allowed fields to database columns
             field_mapping = {
@@ -1464,10 +1594,12 @@ async def update_practice(
                     pt.name as practice_type_name,
                     pt.code as practice_type_code,
                     pt.category as practice_category,
-                    pt.required_documents as required_documents
+                    pt.required_documents as required_documents,
+                    ic.company_name as invoice_company_name
                 FROM updated
                 LEFT JOIN clients c ON updated.client_id = c.id
                 LEFT JOIN practice_types pt ON updated.practice_type_id = pt.id
+                LEFT JOIN companies ic ON ic.id = updated.invoice_company_id
             """
             params.append(practice_id)
 

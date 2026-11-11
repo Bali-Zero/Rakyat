@@ -239,6 +239,9 @@ class InvoiceGenerator:
         discount_reason: str | None = None,
         *,
         entity: InvoiceEntity | None = None,
+        bill_to_company: str | None = None,
+        bill_to_npwp: str | None = None,
+        bill_to_address: str | None = None,
     ) -> bytes:
         """Generate invoice PDF as bytes.
 
@@ -348,16 +351,33 @@ class InvoiceGenerator:
         elements += [panel, Spacer(1, g1)]
 
         # ── BILL TO + META TABLE (same height) ──────────────────────────────
-        name_size = 10.5 if len(client_name) > 40 else 13
+        # With a billing company the block names it, then NPWP, address and the
+        # individual as Attn; otherwise it is the individual's block, unchanged.
+        bill_name = bill_to_company or client_name
+        name_size = 10.5 if len(bill_name) > 40 else 13
         client_style = ParagraphStyle(
             "client_fit", parent=self.styles["client"], fontSize=name_size, leading=name_size * 1.25
         )
         bill: list = [
             p("BILL TO", "label"),
             Spacer(1, 4),
-            Paragraph(_esc(client_name.upper()), client_style),
+            Paragraph(_esc(bill_name.upper()), client_style),
         ]
-        contact_lines = [line for line in (client_email, client_phone, client_address) if line]
+        if bill_to_company:
+            contact_lines = [
+                line
+                for line in (
+                    f"NPWP: {bill_to_npwp}" if bill_to_npwp else None,
+                    bill_to_address,
+                    f"Attn: {client_name}",
+                    client_email,
+                )
+                if line
+            ]
+        else:
+            contact_lines = [
+                line for line in (client_email, client_phone, client_address) if line
+            ]
         if contact_lines:
             bill.append(Spacer(1, 3))
         bill.extend(p(_esc(line), "clientd") for line in contact_lines)
