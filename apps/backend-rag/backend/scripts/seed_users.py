@@ -122,7 +122,7 @@ async def seed_users() -> bool:
                 await conn.execute(
                     """
                     UPDATE team_members
-                    SET full_name = $1, role = $2, department = $3, notes = $4, active = true, updated_at = NOW()
+                    SET full_name = $1, role = $2, department = $3, notes = $4, updated_at = NOW()
                     WHERE email = $5
                 """,
                     name,
@@ -136,7 +136,7 @@ async def seed_users() -> bool:
                 await conn.execute(
                     """
                     UPDATE team_members
-                    SET full_name = $1, pin_hash = $2, role = $3, department = $4, notes = $5, active = true, updated_at = NOW()
+                    SET full_name = $1, pin_hash = $2, role = $3, department = $4, notes = $5, updated_at = NOW()
                     WHERE email = $6
                 """,
                     name,
