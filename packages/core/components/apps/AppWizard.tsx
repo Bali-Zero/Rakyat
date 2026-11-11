@@ -92,6 +92,7 @@ export const AppWizard: FC<AppWizardProps> = ({
   const [jiggle, setJiggle] = useState(false);
   const haptic = useHaptic();
   const bodyRef = useRef<HTMLDivElement | null>(null);
+  const jiggleTimerRef = useRef<number | null>(null);
 
   // Restore from localStorage on mount.
   useEffect(() => {
@@ -137,6 +138,14 @@ export const AppWizard: FC<AppWizardProps> = ({
     return () => window.removeEventListener("beforeunload", handler);
   }, [idx, steps.length, onAbandon]);
 
+  useEffect(() => {
+    return () => {
+      if (jiggleTimerRef.current !== null) {
+        window.clearTimeout(jiggleTimerRef.current);
+      }
+    };
+  }, []);
+
   const step = steps[idx];
   if (!step) return null;
 
@@ -163,7 +172,13 @@ export const AppWizard: FC<AppWizardProps> = ({
     if (err) {
       setError(err);
       setJiggle(true);
-      window.setTimeout(() => setJiggle(false), 320);
+      if (jiggleTimerRef.current !== null) {
+        window.clearTimeout(jiggleTimerRef.current);
+      }
+      jiggleTimerRef.current = window.setTimeout(() => {
+        jiggleTimerRef.current = null;
+        setJiggle(false);
+      }, 320);
       return;
     }
     if (idx === steps.length - 1) {

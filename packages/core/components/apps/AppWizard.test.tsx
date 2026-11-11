@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { act, render, fireEvent } from "@testing-library/react";
 import { AppWizard } from "./AppWizard";
 import type { WizardStep } from "./AppWizard";
 
@@ -42,6 +42,7 @@ describe("AppWizard", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     localStorage.clear();
@@ -82,11 +83,64 @@ describe("AppWizard", () => {
   });
 
   it("blocks Next with validation error and jiggles", () => {
-    const { getByText, getByRole } = render(
+    vi.useFakeTimers();
+    const { container, getByText, getByRole } = render(
       <AppWizard steps={makeSteps()} onComplete={vi.fn()} />,
     );
     fireEvent.click(getByText(/^Next$/));
     expect(getByRole("alert").textContent).toContain("pick A");
+    expect(
+      container.querySelector('div[style*="animation: bz-wizard-jiggle"]'),
+    ).toBeTruthy();
+
+    act(() => {
+      vi.advanceTimersByTime(320);
+    });
+
+    expect(
+      container.querySelector('div[style*="animation: bz-wizard-jiggle"]'),
+    ).toBeNull();
+  });
+
+  it("clears a pending jiggle timer when unmounted", () => {
+    vi.useFakeTimers();
+    const { getByText, unmount } = render(
+      <AppWizard steps={makeSteps()} onComplete={vi.fn()} />,
+    );
+    fireEvent.click(getByText(/^Next$/));
+    expect(vi.getTimerCount()).toBe(1);
+
+    unmount();
+
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps one jiggle timer after consecutive validation failures", () => {
+    vi.useFakeTimers();
+    const { container, getByText } = render(
+      <AppWizard steps={makeSteps()} onComplete={vi.fn()} />,
+    );
+    fireEvent.click(getByText(/^Next$/));
+    act(() => {
+      vi.advanceTimersByTime(160);
+    });
+    fireEvent.click(getByText(/^Next$/));
+
+    expect(vi.getTimerCount()).toBe(1);
+
+    act(() => {
+      vi.advanceTimersByTime(319);
+    });
+    expect(
+      container.querySelector('div[style*="animation: bz-wizard-jiggle"]'),
+    ).toBeTruthy();
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(
+      container.querySelector('div[style*="animation: bz-wizard-jiggle"]'),
+    ).toBeNull();
   });
 
   it("calls onComplete on final Next after all validations pass", () => {
