@@ -3,6 +3,7 @@
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
+import { api } from "@/lib/api";
 
 // Create a client for React Query with enterprise configuration
 function createQueryClient() {
@@ -50,6 +51,15 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
   // have a suspense boundary between this and the code that may
   // suspend because React will throw away the client on every render.
   const queryClient = getQueryClient();
+
+  // The browser keeps one query client for the whole page life and portal
+  // query keys carry no account identity, so a login, logout or expired
+  // session must drop every cached read: the next account never sees the
+  // previous account's data.
+  React.useEffect(
+    () => api.onSessionReset?.(() => queryClient.clear()),
+    [queryClient],
+  );
 
   return (
     <QueryClientProvider client={queryClient}>

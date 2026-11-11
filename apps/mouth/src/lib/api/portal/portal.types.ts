@@ -307,6 +307,8 @@ export interface LKPMValidationAlert {
 
 export interface LKPMDraftSummary {
   id: number;
+  company_id?: number | null;
+  company_name?: string;
   quarter: string;
   year: number;
   status:

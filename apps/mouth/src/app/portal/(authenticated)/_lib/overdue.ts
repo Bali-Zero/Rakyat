@@ -76,32 +76,48 @@ function quarterIndex(r: { quarter: string; year: number }): number | null {
 }
 
 /**
- * Every quarter from the client's first LKPM report up to today whose
- * deadline has passed and that has no filed report. No lookback limit: the
+ * Every quarter, per company, from that company's first LKPM report up to
+ * today whose deadline has passed and that has no filed report FOR THAT
+ * COMPANY. The history carries the reports of every company the client is
+ * linked to, so "filed" must never be answered across companies: one filed
+ * company cannot hide another's late quarter. No lookback limit: the
  * `/api/v1/lkpm/deadlines` calendar only returns the last 30 days, so a
  * quarter more than a month late would silently drop out of it.
  */
 function lkpmOverdue(history: LKPMDraftSummary[], now: Date): OverdueItem[] {
-  const indexes = history
-    .map(quarterIndex)
-    .filter((i): i is number => i !== null);
-  if (indexes.length === 0) return [];
+  const byCompany = new Map<string, LKPMDraftSummary[]>();
+  for (const report of history) {
+    const key = String(report.company_id ?? "none");
+    byCompany.set(key, [...(byCompany.get(key) ?? []), report]);
+  }
+  const multiCompany = byCompany.size > 1;
 
   const thisQuarter = now.getFullYear() * 4 + Math.floor(now.getMonth() / 3);
   const items: OverdueItem[] = [];
-  for (let i = Math.min(...indexes); i <= thisQuarter; i++) {
-    const year = Math.floor(i / 4);
-    const q = (i % 4) + 1;
-    const late = daysLate(lkpmDeadlineIso(q, year), now);
-    if (late <= 0) continue;
-    const filed = history.some((r) => quarterIndex(r) === i && lkpmFiled(r));
-    if (filed) continue;
-    items.push({
-      id: `lkpm-Q${q}-${year}`,
-      label: `LKPM Q${q} ${year}`,
-      daysLate: late,
-      href: "/portal/lkpm",
-    });
+  for (const [companyKey, reports] of byCompany) {
+    const indexes = reports
+      .map(quarterIndex)
+      .filter((i): i is number => i !== null);
+    if (indexes.length === 0) continue;
+
+    const name = reports.find((r) => r.company_name)?.company_name;
+    for (let i = Math.min(...indexes); i <= thisQuarter; i++) {
+      const year = Math.floor(i / 4);
+      const q = (i % 4) + 1;
+      const late = daysLate(lkpmDeadlineIso(q, year), now);
+      if (late <= 0) continue;
+      const filed = reports.some((r) => quarterIndex(r) === i && lkpmFiled(r));
+      if (filed) continue;
+      items.push({
+        id: `lkpm-${companyKey}-Q${q}-${year}`,
+        label:
+          multiCompany && name
+            ? `LKPM Q${q} ${year} · ${name}`
+            : `LKPM Q${q} ${year}`,
+        daysLate: late,
+        href: "/portal/lkpm",
+      });
+    }
   }
   return items;
 }
@@ -148,16 +164,36 @@ export function stillUpcoming(
   return deadlines.filter((d) => !d.due_date || daysLate(d.due_date, now) <= 0);
 }
 
-/** The LKPM history read the portal LKPM page already makes. */
+/**
+ * The LKPM history read the portal LKPM page already makes.
+ *
+ * The cache key carries the signed-in identity and the superuser impersonation
+ * target, like `usePortalUnreadMessages`: the browser keeps one query client
+ * for the life of the page and refetch-on-mount is off, so a key without an
+ * identity would hand the previous account's history to the next one. The
+ * client is also cleared at every session boundary (see QueryProvider).
+ *
+ * A reply that is not a well-formed history is an error, never "no reports":
+ * an empty list means "nothing overdue" downstream.
+ */
 export function usePortalLkpmHistory() {
   return useQuery({
-    queryKey: ["portal", "dashboard", "lkpm-history"],
+    queryKey: [
+      "portal",
+      "dashboard",
+      "lkpm-history",
+      api.getUserProfile()?.id ?? "cookie-session",
+      api.getPortalImpersonation(),
+    ],
     queryFn: async () => {
       const res = await api.get<{
         success: boolean;
         items: LKPMDraftSummary[];
       }>("/api/v1/lkpm/history/me");
-      return res.items ?? [];
+      if (!res?.success || !Array.isArray(res.items)) {
+        throw new Error("LKPM history unavailable");
+      }
+      return res.items;
     },
     retry: false,
     staleTime: 5 * 60 * 1000,

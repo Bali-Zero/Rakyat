@@ -189,8 +189,9 @@ export default function PortalHomePage() {
   const dashboardQuery = usePortalDashboard();
   const summaryQuery = usePortalDashboardSummary();
   const timelineQuery = usePortalTimeline(20);
-  // Not part of portalQueries: an LKPM read failure must not blank the page.
-  const { data: lkpmHistory } = usePortalLkpmHistory();
+  // Not part of portalQueries: an LKPM read failure must not blank the page,
+  // but it must never read as "nothing overdue" either (HeroCards).
+  const lkpmQuery = usePortalLkpmHistory();
 
   const { data: dashboard, isLoading: isLoadingDashboard } = dashboardQuery;
   const { data: summary } = summaryQuery;
@@ -330,7 +331,17 @@ export default function PortalHomePage() {
       {/* 2 · matters: one next move + the numbered index of the others */}
       <HeroCards
         summary={summary}
-        lkpmHistory={lkpmHistory}
+        lkpm={{
+          status: lkpmQuery.isError
+            ? "error"
+            : lkpmQuery.isSuccess
+              ? "ready"
+              : "loading",
+          history: lkpmQuery.data,
+          retry: () => {
+            void lkpmQuery.refetch();
+          },
+        }}
         onOpenMatter={(id) => router.push(`/portal/matters/${id}`)}
       />
 
@@ -652,13 +663,19 @@ function StatusCard({
 // V2 Matter-First Hero Cards — next move + numbered index
 // ============================================================================
 
+interface LkpmReadState {
+  status: "loading" | "ready" | "error";
+  history: LKPMDraftSummary[] | undefined;
+  retry: () => void;
+}
+
 function HeroCards({
   summary,
-  lkpmHistory,
+  lkpm,
   onOpenMatter,
 }: {
   summary: DashboardSummary | undefined;
-  lkpmHistory: LKPMDraftSummary[] | undefined;
+  lkpm: LkpmReadState;
   onOpenMatter: (id: number | string) => void;
 }) {
   if (!summary) return null;
@@ -666,17 +683,36 @@ function HeroCards({
   const now = new Date();
   const overdue = collectOverdue({
     summaryDeadlines: summary.upcoming_deadlines,
-    lkpmHistory: lkpmHistory ?? [],
+    lkpmHistory: lkpm.status === "ready" ? (lkpm.history ?? []) : [],
     now,
   });
   const upcoming = stillUpcoming(summary.upcoming_deadlines, now);
 
-  // "All caught up" only when nothing is late AND nothing is coming up.
+  // "All caught up" only when nothing is late AND nothing is coming up AND the
+  // filing history was actually read: unknown is not the same as clear.
   const empty =
+    lkpm.status === "ready" &&
     overdue.length === 0 &&
     summary.open_actions.length === 0 &&
     upcoming.length === 0 &&
     (summary.unread_messages ?? 0) === 0;
+
+  const nothingElse =
+    overdue.length === 0 &&
+    summary.open_actions.length === 0 &&
+    upcoming.length === 0 &&
+    (summary.unread_messages ?? 0) === 0;
+
+  if (nothingElse && lkpm.status !== "ready") {
+    return (
+      <section
+        className={cn(CARD, "px-6 py-8 text-center")}
+        aria-label="Your matters"
+      >
+        <LkpmUnknownNotice status={lkpm.status} retry={lkpm.retry} />
+      </section>
+    );
+  }
 
   if (empty) {
     return (
@@ -702,6 +738,9 @@ function HeroCards({
 
   return (
     <section className="space-y-5" aria-label="Your matters">
+      {lkpm.status === "error" && (
+        <LkpmUnknownNotice status="error" retry={lkpm.retry} />
+      )}
       {overdue.length > 0 && <OverdueBand items={overdue} />}
 
       {lead && (
@@ -849,6 +888,41 @@ function HeroCards({
         </button>
       )}
     </section>
+  );
+}
+
+/** The filing history is not known yet or could not be read: say so. */
+function LkpmUnknownNotice({
+  status,
+  retry,
+}: {
+  status: "loading" | "error";
+  retry: () => void;
+}) {
+  if (status === "loading") {
+    return (
+      <p className="text-sm text-[var(--tx-secondary)]" role="status">
+        Checking your filings…
+      </p>
+    );
+  }
+  return (
+    <div role="alert" className="text-sm text-[var(--tx-secondary)]">
+      <p className="text-[var(--tx-primary)]">
+        We could not check your LKPM filings, so we cannot confirm whether
+        anything is overdue.
+      </p>
+      <button
+        type="button"
+        onClick={retry}
+        className={cn(
+          "mt-2 font-semibold text-[var(--bz-copper-text)] underline",
+          FOCUS,
+        )}
+      >
+        Retry
+      </button>
+    </div>
   );
 }
 
