@@ -102,6 +102,11 @@ scripts/ci/perimeter_check.py
 scripts/ci/test_perimeter_check.py
 .github/workflows/perimeter-check.yml
 
+# Workspace dependency guard (perimeter-check.yml): apps/mouth declares every workspace package it imports, because
+# Vercel cancels a monorepo project's build when its package.json graph says a commit did not affect it.
+scripts/ci/check_mouth_workspace_deps.py
+scripts/ci/test_check_mouth_workspace_deps.py
+
 # Moved to backstage: tests that read paths outside this repository. They stay at the source commit;
 # whole files first, then single test functions removed from the copies here.
 apps/backend-rag/backend/tests/integration/test_intel_lake_e2e_probe_smoke.py
