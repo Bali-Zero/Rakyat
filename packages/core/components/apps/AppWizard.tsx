@@ -92,9 +92,7 @@ export const AppWizard: FC<AppWizardProps> = ({
   const [jiggle, setJiggle] = useState(false);
   const haptic = useHaptic();
   const bodyRef = useRef<HTMLDivElement | null>(null);
-  const jiggleTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(
-    null,
-  );
+  const jiggleTimerRef = useRef<number | null>(null);
 
   // Restore from localStorage on mount.
   useEffect(() => {
