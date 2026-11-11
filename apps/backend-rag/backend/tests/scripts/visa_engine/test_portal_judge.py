@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -26,7 +27,7 @@ SEQ25_SOURCE = (
 LINE_KEYS = {
     "source_record_id", "reader", "judged_at", "http_status", "key_phrase_found",
     "checked_sentence", "page_states", "pack_assumes", "semantic_change", "notes",
-    "receipt_fetched_at", "text_sha256",
+    "receipt_fetched_at", "text_sha256", "raw_answers",
 }  # fmt: skip
 RID = "570f2bc4-5120-561f-90ba-58fcd9507514"
 TEXT = "E31B Visa Keluarga\nAnda dapat memilih untuk tinggal\n selama 1 tahun atau 2 tahun.\n"
@@ -148,6 +149,26 @@ class TestInnocence:
         assert line["judged_at"].endswith("Z")
         assert "selama 1 tahun" in seen[0] and "OLD PAGE" not in seen[0] and "k-e31b" in seen[0]
 
+    def test_prose_then_json_retries_once_and_uses_the_clean_answer(self, tmp_path: Path) -> None:
+        first = f"Comparing the pack...\n{_answer()}"
+        second = _answer()
+        prompts: list[str] = []
+
+        def judge(prompt: str) -> str:
+            prompts.append(prompt)
+            return [first, second][len(prompts) - 1]
+
+        code, lines = _run(tmp_path, judge)
+        assert code == 0 and lines[0]["semantic_change"] == "none"
+        assert len(prompts) == 2 and lines[0]["raw_answers"] == [first, second]
+        assert prompts[0] in prompts[1] and pj.OUTPUT_CONTRACT in prompts[1]
+
+    def test_clean_json_needs_no_retry(self, tmp_path: Path) -> None:
+        answer = _answer()
+        calls: list[str] = []
+        code, lines = _run(tmp_path, lambda prompt: calls.append(prompt) or answer)
+        assert code == 0 and len(calls) == 1 and lines[0]["raw_answers"] == [answer]
+
     def test_the_fold_accepts_seq25_judgements_regenerated_by_the_fake_judge(self, tmp_path: Path) -> None:
         ledger = tmp_path / "seq25"
         shutil.copytree(SEQ25_LEDGER, ledger)
@@ -173,6 +194,29 @@ class TestInnocence:
 
 
 class TestGuilt:
+    def test_prose_on_both_attempts_halts_after_two_calls(self, tmp_path: Path) -> None:
+        answers = [f"First prose\n{_answer()}", f"Second prose\n{_answer()}"]
+        calls: list[str] = []
+        code, lines = _run(tmp_path, lambda prompt: calls.append(prompt) or answers[len(calls) - 1])
+        assert code == 1 and len(calls) == 2
+        assert lines[0]["semantic_change"] == "unsure" and lines[0]["notes"] == "invalid_json"
+        assert lines[0]["raw_answers"] == answers
+
+    def test_empty_first_answer_retries(self, tmp_path: Path) -> None:
+        calls: list[str] = []
+        code, lines = _run(tmp_path, lambda prompt: calls.append(prompt) or ("" if len(calls) == 1 else _answer()))
+        assert code == 0 and len(calls) == 2 and lines[0]["raw_answers"] == ["", _answer()]
+
+    def test_invalid_verdict_does_not_retry(self, tmp_path: Path) -> None:
+        calls: list[str] = []
+        code, lines = _run(tmp_path, lambda prompt: calls.append(prompt) or _answer(verdict="maybe"))
+        assert code == 1 and len(calls) == 1 and lines[0]["notes"] == "judge_output_invalid"
+
+    def test_output_contract_is_prompted_and_parser_remains_strict(self) -> None:
+        record = _pack()["payload"]["source_records"][0]
+        assert pj.OUTPUT_CONTRACT in pj.build_prompt(record, TEXT, {})
+        assert pj._parse_json('Comparing the pack...\n{"verdict": "none"}') is None
+
     def test_a_sentence_not_in_the_text_is_forced_unsure_and_halts(self, tmp_path: Path) -> None:
         code, lines = _run(tmp_path, lambda _p: _answer(checked_sentence="Visa seumur hidup tersedia."))
         assert code == 1
@@ -203,11 +247,31 @@ class TestGuilt:
         assert code == 1 and lines[0]["semantic_change"] == "unsure"
 
     def test_the_judge_argv_carries_no_prompt_and_pins_the_model(self) -> None:
-        argv = pj.judge_argv("sonnet")
+        argv = pj.judge_argv(pj.JUDGE_MODEL)
         # Lean (2026-11-03): no hooks / CLAUDE.md, no tool schemas — a judge
         # reads its prompt (stdin) and answers.
-        assert argv[1:] == ["-p", "--bare", "--tools", "", "--model", "sonnet"]
+        assert argv[1:] == ["-p", "--bare", "--tools", "", "--model", "claude-sonnet-5-5"]
         assert argv[0].endswith("claude")
+
+    @pytest.mark.parametrize("model_arg", ["sonnet", None])
+    def test_main_resolves_the_legacy_alias_and_default_model(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model_arg: str | None
+    ) -> None:
+        pack, ledger = _ledger(tmp_path)
+        monkeypatch.setenv("ANTHROPIC_CONSOLE_KEY_1", "sk-one")
+        monkeypatch.setenv("ANTHROPIC_CONSOLE_WORKSPACE_1", "wrkspc_test1")
+        seen: list[list[str]] = []
+
+        def fake_run(argv, **kwargs):  # noqa: ANN001
+            seen.append(list(argv))
+            return subprocess.CompletedProcess(argv, 0, _answer(), "")
+
+        monkeypatch.setattr(pj.subprocess, "run", fake_run)
+        argv = ["--pack", str(pack), "--ledger-dir", str(ledger), "--reader", "judge-a", "--ids", RID[:8]]
+        if model_arg is not None:
+            argv.extend(["--model", model_arg])
+        assert pj.main(argv, judge_fn=None) == 0
+        assert seen[0][seen[0].index("--model") + 1] == pj.JUDGE_MODEL
 
     def test_the_claude_judge_refuses_without_a_console_seat(
         self, monkeypatch: pytest.MonkeyPatch
