@@ -727,3 +727,48 @@ async def test_real_apply_locks_members_in_sorted_id_order(pool: asyncpg.Pool) -
             counts, ok = await imp.run(conn, doc, apply=True)
     assert ok is True and counts["applied"] == 3
     assert seen == ["tm-a", "tm-b", "tm-t1"]
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_batches_over_the_same_members_in_opposite_order(
+    pool: asyncpg.Pool,
+) -> None:
+    """Both batches list the same two members, in opposite document order. Locks are taken in
+    sorted member-id order, so they serialise instead of deadlocking: both complete (or one is
+    rejected:lock_timeout and rolled back whole) and no deadlock error escapes."""
+    from backend.scripts import import_staff_cards as imp
+
+    a, t1 = "fake.a@balizero.com", "fake.twin@balizero.com"
+
+    def batch(first: str, second: str, tag: str) -> dict[str, Any]:
+        return {
+            "cards": [
+                {"email": first, "fields": {"bank_name": f"{tag}1"}, "profile": {"unit": tag}},
+                {"email": second, "fields": {"bank_name": f"{tag}2"}, "profile": {"unit": tag}},
+            ]
+        }
+
+    async def one(document: dict[str, Any]) -> Any:
+        async with pool.acquire() as conn:
+            return await imp.run(conn, document, apply=True)
+
+    results = await asyncio.wait_for(
+        asyncio.gather(one(batch(a, t1, "X")), one(batch(t1, a, "Y"))), 30
+    )
+    for counts, ok in results:
+        assert not [k for k in counts if "deadlock" in k or k == "rejected:db_error"]
+        assert ok or counts["rejected:lock_timeout"] >= 1
+        assert (counts["committed:yes"], counts["committed:no"]) in ((1, 0), (0, 1))
+    async with pool.acquire() as conn:
+        rows = {
+            r["team_member_id"]: r["bank_name"]
+            for r in await conn.fetch(
+                "SELECT team_member_id, bank_name FROM hr_employees WHERE team_member_id IN ('tm-a','tm-t1')"
+            )
+        }
+    committed = [tag for (counts, ok), tag in zip(results, ("X", "Y"), strict=True) if ok]
+    assert committed, "at least one batch must have committed"
+    # Whole batches only: a member never carries one batch's value while the other member
+    # carries the other batch's (X wrote a1/t2, Y wrote t1/a2; the later committer wins both).
+    expected = {"X": ("X1", "X2"), "Y": ("Y2", "Y1")}  # (tm-a, tm-t1)
+    assert (rows["tm-a"], rows["tm-t1"]) in [expected[t] for t in committed]

@@ -36,13 +36,22 @@ rows whose emails differ only by case cannot cross (`team_members.email` is uniq
 case-sensitively; the primary key is unique absolutely). 404 also when there is no
 `hr_employees` row.
 
-**C2 Why the no-value guarantee holds here, and where it does not.** The route has no
-caller-supplied input at all (no path, query or body parameter), so there is no value of the
-caller's to echo in a 422 or a request path. The card code raises `HRCardError(code)` with a code
-from the closed enum `HRCardCode`, never a driver or pydantic message; the route maps it to a
-fixed text. The import prints counts and reason codes only. This spec does NOT claim a
-framework-level guarantee (422 bodies or access logs on other routes are not card code).
-The member's own card is returned in full except HR free-text `notes`, which are not even selected.
+**C2 What the no-value guarantee covers.** The route has no caller-supplied input at all (no
+path, query or body parameter), so card code has no caller value to echo. Card code
+(`hr_card_models.py`, the card functions of `hr_service.py`, the route handler and the import
+script) adds no personal value to any log record, exception text or response error: it raises
+`HRCardError(code)` with a code from the closed enum `HRCardCode`, the route maps it to a fixed text,
+and the import prints counts and fixed codes only (C7). The member's own card is returned in full
+except HR free-text `notes`, which are not even selected.
+
+Known pre-existing, not changed here (this PR neither introduces nor fixes them):
+- Request-level logging by shared middleware (`middleware/activity_logging.py:189`,
+  `services/monitoring/activity_logger.py:125` and `:350`) records unexpected query strings and the
+  user-agent on every route, this one included. A guarantee about card code is not a guarantee about
+  that layer.
+- The older HR routes authorise from the token's claims (`routers/hr.py:156`,
+  `hr_service.py:115`, `utils/hr_utils.py:42`); only the new `/me/card` route re-checks the stored
+  row in SQL (C1).
 
 **C3 Reads never validate.** The stored data goes through the READ model (plain optional types)
 and coercion helpers that return None, never raise and never quote the value. A stored value the
@@ -65,16 +74,41 @@ checked; anything but an object rolls the write back. A missing row is inserted 
 alphanumerics (separators removed); bank account 6-20 digits after removing spaces and dashes.
 Validation runs on the normalised form; the trimmed value is stored as given. `profile`, `docs`,
 `contract` must be objects when present: an explicit `null`, `[]`, `false`, `0` or `""` is rejected
-as it came, never normalised to `{}`. Unknown keys are rejected; `is_active` is a strict boolean.
+as it came, never normalised to `{}`. Unknown keys inside `profile`, `contract` and the card fields are rejected (`extra=forbid`);
+unknown keys on the outer import card and a `profile` nested inside `fields` are rejected by the
+import itself (C7). `is_active` is a strict boolean.
 
-**C7 Import is all-or-nothing with full accounting.** Dry-run by default; `--apply` is one
-transaction that commits only when every card is applied (`not_found` tolerated with
-`--skip-not-found`). Every card ends in exactly one of `applied`, `not_found`, `rejected:<code>`.
-A merge that returns no row is `rejected:not_applied` and the batch rolls back. An unknown key on
-the OUTER card object is `rejected:unknown_key`, never dropped. Every argument error (unknown flag,
-malformed value for a known flag, stray positional, abbreviation) is one FIXED line on stderr and
-exit 2 before any database access: argparse's own message, which quotes the argument, is
-replaced; `--help` contains no argv. Output is counts and codes only.
+**C7 Import is all-or-nothing with full accounting, and says nothing it was given.**
+Dry-run by default; `--apply` is one transaction that commits only when every card is applied
+(`not_found` tolerated with `--skip-not-found`). Every card ends in exactly one of `applied`,
+`not_found`, `rejected:<code>`. A merge that returns no row is `rejected:not_applied` and the batch
+rolls back. An unknown key on the OUTER card, or a `profile` inside `fields`, is
+`rejected:unknown_key`, never dropped.
+
+One outermost guard (`_guarded_main`) wraps everything the process does after argument parsing:
+stdin read, JSON parse, connect, codec registration, transaction, close and the event loop itself.
+At entry it installs fixed-text `sys.excepthook`, `sys.unraisablehook` and an asyncio loop exception
+handler, and calls `logging.disable(CRITICAL)`. Nothing prints an exception's `str`, `repr` or a
+traceback. Exit paths, each one fixed line on stderr unless noted:
+
+| Path | Line | Exit |
+|---|---|---|
+| bad argument (unknown flag, malformed value, stray positional, abbreviation) | `import_staff_cards: invalid arguments (run with --help)` | 2 |
+| `--help` | the help text (no argv) | 0 |
+| import-time failure | `import_staff_cards: failed (import_failed)` | 1 |
+| stdin unreadable / not JSON | `import_staff_cards: failed (bad_input)` | 1 |
+| connect failure | `import_staff_cards: failed (connect_failed)` | 1 |
+| failure inside the batch (an `HRCardError`) | `import_staff_cards: failed (<HRCardCode value>)` | 1 |
+| any other failure inside the batch | `import_staff_cards: failed (unexpected)` | 1 |
+| close failure | `import_staff_cards: failed (close_failed)` after the batch outcome | 1 |
+| outermost guard (anything else) | `import_staff_cards: failed (unexpected)` | 1 |
+| batch outcome (stdout) | counts and reason codes (`committed:yes` / `committed:no`) | 0 clean, 1 otherwise |
+
+A close failure AFTER a successful commit prints the counts with `committed:yes` (the data IS
+committed) and then the `close_failed` line, and exits 1; after a rollback it prints `committed:no`
+and the same line. A JSON document of the wrong shape is `rejected:bad_document` in the counts.
+Unknown argument handling is argparse with a fixed-text `error()` (exit 2, before any stdin read or
+database access).
 
 **C8 Import identity, locking and order.** A card is resolved by EXACT email on staff rows
 (`role <> 'client'`). If the lower-cased email matches more than one staff row the card is
@@ -101,6 +135,6 @@ employee read or write response carries `profile`.
 | C4 | `test_two_merges_keep_profile_an_object_under_the_production_codec`, `test_amain_registers_the_production_codec_*` |
 | C5 | `test_nested_merge_survives_*`, `test_a_non_object_profile_is_normalised_*`, `test_merge_keeps_omitted_columns_*`, `test_a_non_object_incoming_part_*`, `test_a_profile_that_would_not_be_an_object_*`, `test_a_concurrent_insert_falls_through_to_the_update_on_two_connections` |
 | C6 | `unit/app/services/hr/test_hr_card_models.py`, `test_a_present_non_object_*`, `test_a_non_object_docs_or_contract_*` (import) |
-| C7 | `test_apply_*`, `test_import_apply_is_atomic_*`, `test_import_second_merge_returning_none_*`, `test_every_card_is_accounted_for_exactly_once`, `test_unknown_flag_exits_2_*`, `test_the_real_entry_point_fails_every_parse_error_with_a_fixed_text` (subprocess), `test_help_output_contains_no_argv`, `test_an_unknown_key_on_the_outer_card_is_rejected_not_dropped`, `test_unknown_outer_key_counts_and_blocks_the_batch` |
-| C8 | `test_an_email_matching_two_staff_rows_is_ambiguous_*`, `test_a_single_case_variant_*`, `test_the_import_rejects_a_case_twin_email_as_ambiguous_*`, `test_a_member_renamed_between_resolve_and_merge_*` and `test_a_member_turned_client_between_resolve_and_merge_*` (two connections), `test_a_blocked_row_lock_is_rejected_as_lock_timeout_*` (two connections), `test_real_apply_locks_members_in_sorted_id_order`, `test_cards_are_written_in_resolved_member_id_order_*`, `test_a_member_that_no_longer_matches_*`, `test_apply_sets_a_transaction_local_lock_timeout_*` |
+| C7 | `test_apply_*`, `test_import_apply_is_atomic_*`, `test_import_second_merge_returning_none_*`, `test_every_card_is_accounted_for_exactly_once`, `test_unknown_flag_exits_2_*`, `test_the_real_entry_point_fails_every_parse_error_with_a_fixed_text` (subprocess), `test_help_output_contains_no_argv`, `test_an_unknown_key_on_the_outer_card_is_rejected_not_dropped`, `test_unknown_outer_key_counts_and_blocks_the_batch`, `test_a_profile_nested_inside_fields_is_rejected_not_dropped`, `test_no_value_reaches_a_stream_on_any_failure_path` (fake driver, subprocess: connect, codec, transaction, close after rollback and after commit, bad JSON, wrong shape), `test_a_close_failure_after_a_commit_still_reports_the_committed_outcome`, `test_a_close_failure_after_a_rollback_reports_the_rollback` |
+| C8 | `test_an_email_matching_two_staff_rows_is_ambiguous_*`, `test_a_single_case_variant_*`, `test_the_import_rejects_a_case_twin_email_as_ambiguous_*`, `test_a_member_renamed_between_resolve_and_merge_*` and `test_a_member_turned_client_between_resolve_and_merge_*` (two connections), `test_a_blocked_row_lock_is_rejected_as_lock_timeout_*` (two connections), `test_real_apply_locks_members_in_sorted_id_order`, `test_two_concurrent_batches_over_the_same_members_in_opposite_order`, `test_cards_are_written_in_resolved_member_id_order_*`, `test_a_member_that_no_longer_matches_*`, `test_apply_sets_a_transaction_local_lock_timeout_*` |
 | C9 | `test_member_self_read_of_the_employee_row_has_no_notes`, `test_the_legacy_employee_shape_never_carries_the_profile` |
