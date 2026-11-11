@@ -810,6 +810,90 @@ async def test_an_unassigned_order_inherits_the_clients_owner(pool):
         )
 
 
+async def test_a_brand_new_customer_is_routed_to_a_team_member(pool):
+    """The shape the real provider produces: assigned_to None everywhere.
+
+    Before the cure this practice was visible to CRM admins only
+    (created_by='garuda@balizero.com', assigned_to NULL). The adapter must
+    route it via the department strategy and the assignee must pass the
+    CRM's own non-admin predicate — plus the client-visible timeline
+    milestone the canonical writer leaves.
+    """
+    member = "routed-member@example.invalid"
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM team_members WHERE email = $1", member)
+        await conn.execute(
+            "INSERT INTO team_members (full_name, email, role, department, active) "
+            "VALUES ('ROUTED MEMBER', $1, 'Executive Consultant', 'setup', true)",
+            member,
+        )
+    try:
+        practice_id = await PostgresCrmWriter(pool).create_client_and_practice(
+            _snapshot(customer_email="brand-new@example.invalid", assigned_to=None),
+            source_idempotency_key=f"evt_{uuid.uuid4().hex}",
+            practice_type_code=PRACTICE_TYPE,
+        )
+        async with pool.acquire() as conn:
+            assert (
+                await conn.fetchval(
+                    "SELECT assigned_to FROM practices WHERE id = $1", practice_id
+                )
+                == member
+            ), "brand-new customer's practice must be routed, not orphaned"
+            assert (
+                await conn.fetchval(
+                    "SELECT count(*) FROM practices "
+                    "WHERE id = $1 AND (created_by = $2 OR assigned_to = $2)",
+                    practice_id,
+                    member,
+                )
+                == 1
+            ), "the routed member must pass the non-admin RBAC predicate"
+            assert (
+                await conn.fetchval(
+                    "SELECT count(*) FROM practices "
+                    "WHERE id = $1 AND (created_by = $2 OR assigned_to = $2)",
+                    practice_id,
+                    "unrelated@example.invalid",
+                )
+                == 0
+            ), "guilt: an unrelated member must NOT see the practice"
+            assert (
+                await conn.fetchval(
+                    "SELECT count(*) FROM timeline_events "
+                    "WHERE practice_id = $1 AND client_visible = true",
+                    practice_id,
+                )
+                >= 1
+            ), "the client-visible timeline milestone must exist"
+    finally:
+        async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM team_members WHERE email = $1", member)
+
+
+async def test_the_provider_recomputes_submit_by_from_the_engine_calendar(pool):
+    """submit_by_date = the engine's own last_open_day_before(entry_date).
+
+    Never the published D-7 deadline: the two dates are different by
+    construction and the snapshot must carry the internal commitment.
+    """
+    from backend.services.garuda_flow import operating_calendar
+
+    practice_id, _ = await _seed_full_case(pool)
+    snap = await PostgresOrderSnapshotProvider(pool).get(practice_id)
+    assert snap is not None
+    expected = operating_calendar.last_open_day_before(date(2026, 9, 20))
+    assert snap.submit_by_date == expected and expected is not None
+    async with pool.acquire() as conn:
+        published = await conn.fetchval(
+            "SELECT published_filing_deadline FROM garuda_voa_check_results "
+            "WHERE entry_date = DATE '2026-09-20' LIMIT 1"
+        )
+    assert snap.submit_by_date != published, (
+        "submit_by_date must not silently be the published deadline"
+    )
+
+
 def test_the_race_refusal_raises_INSIDE_the_transaction():
     """Structural, and structural ON PURPOSE — say so rather than imply more.
 

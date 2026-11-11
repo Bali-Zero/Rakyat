@@ -46,6 +46,8 @@ from typing import Any
 
 import asyncpg
 
+from backend.services.garuda_flow import operating_calendar
+from backend.services.garuda_flow.intake import CaseType
 from backend.services.garuda_ops.ports import OrderSnapshot
 
 logger = logging.getLogger("garuda.ops.adapters_pg")
@@ -197,14 +199,20 @@ class PostgresOrderSnapshotProvider:
             entry_date=row["entry_date"],
             price_idr=row["price_idr"],
             # `garuda_voa_check_results` (migration 286) does NOT carry
-            # submit_by_date — only the legacy `garuda_voa_checks` table does,
-            # and this flow writes the former. It is left None rather than
-            # re-derived from `published_filing_deadline`: the two are
-            # different dates (the published D-7 checkpoint versus the internal
-            # operating-calendar commitment computed by `intake.build_verdict`),
-            # and asserting an equivalence nobody has verified is how a
-            # plausible invention becomes a fact downstream.
-            submit_by_date=None,
+            # submit_by_date — only the legacy `garuda_voa_checks` table does.
+            # It is recomputed here from the ENGINE's own function
+            # (`operating_calendar.last_open_day_before`, the exact call
+            # `intake.build_verdict` makes for issuance), never re-derived
+            # from `published_filing_deadline`: the two are different dates
+            # (published D-7 checkpoint vs internal operating-calendar
+            # commitment) and asserting their equivalence is how a plausible
+            # invention becomes a fact downstream. Issuance-only, mirroring
+            # build_verdict; extension snapshots keep None.
+            submit_by_date=(
+                operating_calendar.last_open_day_before(row["entry_date"])
+                if row["case_type"] == CaseType.ISSUANCE.value
+                else None
+            ),
             assigned_to=None,
         )
 
@@ -331,6 +339,24 @@ class PostgresCrmWriter:
             assigned_to = snapshot.assigned_to or await conn.fetchval(
                 "SELECT assigned_to FROM clients WHERE id = $1", client_id
             )
+            if not assigned_to:
+                # Brand-new customer: the two fallbacks above both yield
+                # NULL, and a practice with assigned_to NULL +
+                # created_by='garuda@balizero.com' is visible to CRM admins
+                # only — the team member who must work the order cannot
+                # see it (PENDING-ARMS 2026-08-26, PR #5020 conditions).
+                # Route it through the SAME department + least-workload
+                # strategy as crm/assignment.assign_lead, and record the
+                # owner on the client so the next order inherits it.
+                assigned_to = await self._pick_assignee(
+                    conn, practice_type_code=practice_type_code
+                )
+                if assigned_to:
+                    await conn.execute(
+                        "UPDATE clients SET assigned_to = $1 WHERE id = $2",
+                        assigned_to,
+                        client_id,
+                    )
 
             practice_id = await conn.fetchval(
                 """
@@ -356,6 +382,32 @@ class PostgresCrmWriter:
                 source_idempotency_key,
             )
             if practice_id is not None:
+                # The canonical writer (crm_practices.py) leaves a
+                # client-visible timeline milestone; without it the
+                # customer's portal timeline is empty for GARUDA orders
+                # (dashboard reads timeline_events). Same tolerance as
+                # the canonical writer: a missing table (42P01) during
+                # rollout is ignored, anything else is logged.
+                try:
+                    await conn.execute(
+                        """
+                        INSERT INTO timeline_events (
+                            client_id, practice_id, event_type, title, description,
+                            event_date, client_visible, color, created_by
+                        )
+                        VALUES ($1, $2, 'milestone', $3, $4, NOW(), true, 'info', $5)
+                        """,
+                        client_id,
+                        int(practice_id),
+                        "New case started",
+                        f"{practice_type_code} started",
+                        CREATED_BY_GARUDA,
+                    )
+                except asyncpg.UndefinedTableError:
+                    logger.warning(
+                        "timeline_events table missing; milestone skipped for practice %s",
+                        int(practice_id),
+                    )
                 return int(practice_id)
 
             # Lost the race — the database, not this code, decided who won.
@@ -384,6 +436,61 @@ class PostgresCrmWriter:
         return int(existing)
 
     # -- internals ---------------------------------------------------------
+
+    async def _pick_assignee(
+        self, conn: asyncpg.Connection, *, practice_type_code: str
+    ) -> str | None:
+        """Least-loaded assignable team member, assign_lead's strategy.
+
+        Mirrors `services/crm/assignment.py::assign_lead` (department
+        match via PRACTICE_DEPARTMENT_MAP, then any assignable member),
+        imported lazily so this module stays light at import time.
+        Returns None only when no active assignable member exists —
+        the practice then keeps assigned_to NULL and stays admin-visible,
+        which is the pre-cure state, never a fabricated owner.
+        """
+        from backend.services.crm.assignment import (
+            ASSIGNABLE_ROLES,
+            PRACTICE_DEPARTMENT_MAP,
+        )
+
+        roles = list(ASSIGNABLE_ROLES)
+        placeholders = ", ".join(f"${i + 1}" for i in range(len(roles)))
+        department = PRACTICE_DEPARTMENT_MAP.get(practice_type_code)
+        if department:
+            email = await conn.fetchval(
+                f"""
+                SELECT tm.email
+                FROM team_members tm
+                LEFT JOIN practices p ON p.assigned_to = tm.email
+                    AND p.status IN ('inquiry', 'waiting_documents', 'sending_invoice', 'on_process')
+                WHERE tm.active = true
+                  AND tm.role IN ({placeholders})
+                  AND LOWER(tm.department) = LOWER(${len(roles) + 1})
+                GROUP BY tm.email
+                ORDER BY COUNT(p.id) ASC, tm.email
+                LIMIT 1
+                """,
+                *roles,
+                department,
+            )
+            if email:
+                return str(email)
+        email = await conn.fetchval(
+            f"""
+            SELECT tm.email
+            FROM team_members tm
+            LEFT JOIN practices p ON p.assigned_to = tm.email
+                AND p.status IN ('inquiry', 'waiting_documents', 'sending_invoice', 'on_process')
+            WHERE tm.active = true
+              AND tm.role IN ({placeholders})
+            GROUP BY tm.email
+            ORDER BY COUNT(p.id) ASC, tm.email
+            LIMIT 1
+            """,
+            *roles,
+        )
+        return str(email) if email else None
 
     @staticmethod
     def _title_for(snapshot: OrderSnapshot) -> str:
