@@ -8,27 +8,36 @@ import {
   Gift,
   Calendar,
   Lock,
+  Receipt,
   Settings,
   LayoutDashboard,
   Users,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { isHRAdmin } from "@/lib/hr/admin";
+import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
 import { isOwner } from "@/lib/auth/owner";
 import { SubNav, type SubNavItem } from "@balizero/core";
 
 type NavItem = SubNavItem & {
   adminOnly: boolean;
+  accountingOnly?: boolean;
   ownerOnly?: boolean;
 };
 
 const allNavItems: NavItem[] = [
-  { href: "/hr", label: "Dashboard", icon: LayoutDashboard, adminOnly: false },
+  { href: "/hr", label: "My HR", icon: LayoutDashboard, adminOnly: false },
   { href: "/hr/employees", label: "Employees", icon: Users, adminOnly: true },
   { href: "/hr/bonuses", label: "Bonuses", icon: Gift, adminOnly: false },
   { href: "/hr/payroll", label: "Payroll", icon: Banknote, adminOnly: false },
   { href: "/hr/leave", label: "Leave", icon: Calendar, adminOnly: false },
   { href: "/hr/settings", label: "Settings", icon: Settings, adminOnly: true },
+  {
+    href: "/accounting",
+    label: "Accounting",
+    icon: Receipt,
+    adminOnly: false,
+    accountingOnly: true,
+  },
   {
     href: "/hr/owner-cashout",
     label: "Owner Cashout",
@@ -40,28 +49,23 @@ const allNavItems: NavItem[] = [
 
 export default function HRLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const [isAdmin, setIsAdmin] = useState(false);
+  const { capabilities } = useHrCapabilities();
   const [isOwnerUser, setIsOwnerUser] = useState(false);
-  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     api
       .getProfile()
-      .then((user) => {
-        setIsAdmin(isHRAdmin(user));
-        setIsOwnerUser(isOwner(user?.email));
-      })
-      .catch(() => {})
-      .finally(() => setLoaded(true));
+      .then((user) => setIsOwnerUser(isOwner(user?.email)))
+      .catch(() => {});
   }, []);
 
-  const navItems = loaded
-    ? allNavItems.filter((item) => {
-        if (item.adminOnly && !isAdmin) return false;
-        if (item.ownerOnly && !isOwnerUser) return false;
-        return true;
-      })
-    : allNavItems.filter((item) => !item.adminOnly && !item.ownerOnly);
+  // Until the server answers, every member sees the member view and nothing more.
+  const navItems = allNavItems.filter((item) => {
+    if (item.adminOnly && !capabilities.hr_admin) return false;
+    if (item.accountingOnly && !capabilities.accounting_admin) return false;
+    if (item.ownerOnly && !isOwnerUser) return false;
+    return true;
+  });
 
   const subNav = { items: navItems, pathname, rootHref: "/hr", linkAs: Link };
 

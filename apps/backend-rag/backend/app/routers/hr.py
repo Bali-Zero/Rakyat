@@ -23,6 +23,7 @@ from backend.app.services.hr.hr_leave_notifier import (
 )
 from backend.app.services.hr.hr_leave_routing import reports_of, resolve_approver
 from backend.app.services.hr.hr_service import HRService
+from backend.app.utils.crm_utils import is_crm_admin
 from backend.app.utils.hr_utils import is_hr_admin
 from backend.core.cache import invalidate_cache
 
@@ -155,6 +156,28 @@ async def _get_my_employee_id(
     if not emp:
         raise HTTPException(status_code=404, detail="No HR employee record found for your account")
     return emp["id"]
+
+
+# ─── CAPABILITIES ───────────────────────────────────────────────────────
+
+
+@router.get("/me/capabilities")
+async def get_my_capabilities(
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, bool]:
+    """What the caller may see in the HR & accounting space.
+
+    The single answer the frontend reads instead of mirroring the allowlists or
+    probing admin routes: the same predicates that guard the routes produce it.
+    """
+    service = _get_hr_service(db_pool)
+    employee = await service.get_employee_by_email(current_user["email"])
+    return {
+        "hr_admin": is_hr_admin(current_user),
+        "accounting_admin": is_crm_admin(current_user),
+        "has_employee_record": employee is not None,
+    }
 
 
 # ─── EMPLOYEES (admin only) ─────────────────────────────────────────────
