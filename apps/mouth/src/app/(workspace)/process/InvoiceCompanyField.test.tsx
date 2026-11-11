@@ -171,6 +171,48 @@ describe("InvoiceCompanyField", () => {
     ).toEqual({});
   });
 
+  it("a cleared prefill is not filled again when the service changes", async () => {
+    mockSuggest.mockResolvedValue({
+      autofill: true,
+      suggested_company_id: 11,
+      companies: [choice(11, "PT Synthetic Satu")],
+    });
+    const seen = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(<Harness onValue={seen} />);
+    await waitFor(() => expect(screen.getByRole("combobox")).toHaveValue("11"));
+    await user.click(
+      screen.getByRole("button", { name: "Clear invoice company" }),
+    );
+    rerender(<Harness code="pt_pma_setup" onValue={seen} />);
+    await waitFor(() => expect(mockSuggest).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("combobox")).toHaveValue("");
+  });
+
+  it("a prefill never survives a change of client", async () => {
+    mockSuggest.mockResolvedValueOnce({
+      autofill: true,
+      suggested_company_id: 11,
+      companies: [choice(11, "PT Synthetic Satu")],
+    });
+    mockSuggest.mockResolvedValueOnce({
+      autofill: true,
+      suggested_company_id: null,
+      companies: [],
+    });
+    const seen = vi.fn();
+    const { rerender } = render(<Harness onValue={seen} />);
+    await waitFor(() =>
+      expect(seen).toHaveBeenLastCalledWith(
+        expect.objectContaining({ companyId: 11 }),
+      ),
+    );
+    rerender(<Harness clientId={8} onValue={seen} />);
+    await waitFor(() =>
+      expect(seen).toHaveBeenLastCalledWith(EMPTY_INVOICE_COMPANY),
+    );
+  });
+
   it("never overwrites a saved company when autofill is off", async () => {
     mockSuggest.mockResolvedValue({
       autofill: true,
@@ -223,6 +265,14 @@ describe("invoice company helpers", () => {
       ambiguityFromError(new ApiError("x", 409, { detail: "other" }), "a"),
     ).toBeNull();
     expect(ambiguityFromError(new ApiError("x", 500, body), "a")).toBeNull();
+    expect(
+      ambiguityFromError(
+        new ApiError("x", 409, {
+          detail: { code: "other", candidates: body.detail.candidates },
+        }),
+        "a",
+      ),
+    ).toBeNull();
     expect(ambiguityFromError(new Error("x"), "a")).toBeNull();
   });
 });

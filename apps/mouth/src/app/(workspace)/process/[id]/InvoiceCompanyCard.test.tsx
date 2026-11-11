@@ -98,6 +98,27 @@ describe("InvoiceCompanyCard", () => {
     );
   });
 
+  it("a saved company is never replaced by the suggestion", async () => {
+    mockSuggest.mockResolvedValue({
+      autofill: true,
+      suggested_company_id: 2,
+      companies: [choice(1, "PT Synthetic A"), choice(2, "PT Synthetic B")],
+    });
+    render(
+      <InvoiceCompanyCard
+        practice={practice({
+          invoice_company_id: 1,
+          invoice_company_name: "PT Synthetic A",
+        })}
+        onSaved={vi.fn()}
+      />,
+    );
+    const select = await screen.findByRole("combobox");
+    await waitFor(() => expect(mockSuggest).toHaveBeenCalled());
+    expect(select).toHaveValue("1");
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  });
+
   it("shows no Save button until something changed", async () => {
     render(
       <InvoiceCompanyCard
