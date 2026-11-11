@@ -72,8 +72,15 @@ async def semantic_search(query: SearchQuery, request: Request) -> SearchRespons
             request.url.path,
         )
 
+        # Shape only, never the text: search queries carry client names, passport and
+        # company numbers. `collection` is free-form input, so only its presence is logged.
         logger.info(
-            f"Received query: '{query.query}', collection={query.collection}, level={query.level}, limit={query.limit}",
+            "Received query: query_len=%d, collection_set=%s, level=%d, limit=%d, tier_filters=%d",
+            len(query.query),
+            query.collection is not None,
+            query.level,
+            query.limit,
+            len(query.tier_filter or []),
         )
 
         # Validate level
@@ -140,8 +147,11 @@ async def semantic_search(query: SearchQuery, request: Request) -> SearchRespons
         execution_time = (time.time() - start_time) * 1000
 
         logger.info(
-            f"Search completed: '{query.query}' (level {query.level}) -> "
-            f"{len(search_results)} results in {execution_time:.2f}ms",
+            "Search completed: query_len=%d (level %d) -> %d results in %.2fms",
+            len(query.query),
+            query.level,
+            len(search_results),
+            execution_time,
         )
 
         return SearchResponse(
