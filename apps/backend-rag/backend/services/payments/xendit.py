@@ -99,6 +99,8 @@ class XenditPaymentProvider:
     default; live only when both `secret_key` and `live_enabled` agree — see
     module docstring)."""
 
+    name = "xendit"
+
     def __init__(
         self,
         *,

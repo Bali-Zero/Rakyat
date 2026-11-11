@@ -25,6 +25,7 @@ fails closed with 503 until that happens.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from collections.abc import Awaitable, Callable
 
@@ -50,7 +51,11 @@ from backend.services.garuda_orders.idempotency import (
 from backend.services.garuda_orders.models import Applicant
 from backend.services.garuda_orders.repository import GarudaOrderRepository
 from backend.services.garuda_portal.practice import PracticeRepository
-from backend.services.payments.port import WebhookSignatureInvalid, WebhookUnparseable
+from backend.services.payments.port import (
+    WebhookIgnorable,
+    WebhookSignatureInvalid,
+    WebhookUnparseable,
+)
 
 _FLAG_ENV_VAR = "GARUDA_PUBLIC_ENABLED"
 
@@ -558,6 +563,26 @@ async def receive_payment_webhook(
         raise HTTPException(
             status_code=503, detail={"code": "SERVICE_UNAVAILABLE", "retryable": True}
         )
+    # Per-order provider dispatch (spec §3.3): the order_id in the
+    # body is UNVERIFIED at this point and is used for routing only —
+    # the chosen adapter still has to verify the signature before
+    # anything is acted on. Unknown orders fall back to the selected
+    # provider, where a foreign signature fails honestly.
+    provider_name = getattr(provider, "name", "xendit")
+    providers = getattr(request.app.state, "garuda_payment_providers", None)
+    if providers:
+        try:
+            _routing_body = json.loads(raw_body)
+            routing_order_id = _routing_body.get("order_id") or _routing_body.get(
+                "external_id"
+            )
+        except (ValueError, UnicodeDecodeError, AttributeError):
+            routing_order_id = None
+        if isinstance(routing_order_id, str) and routing_order_id:
+            order_provider = await repository.provider_name_for_order(routing_order_id)
+            if order_provider and order_provider in providers:
+                provider = providers[order_provider]
+                provider_name = order_provider
 
     try:
         provider.verify_signature(raw_body=raw_body, headers=dict(request.headers))
@@ -568,7 +593,28 @@ async def receive_payment_webhook(
 
     try:
         event = provider.parse_event(raw_body=raw_body, headers=dict(request.headers))
+    except WebhookIgnorable:
+        # Verified, understood, nothing to do (e.g. Midtrans
+        # `pending`): 2xx so the provider does not retry it.
+        return
     except WebhookUnparseable as exc:
+        if "partial_refund" in str(exc) or "partial_chargeback" in str(exc):
+            try:
+                _partial_body = json.loads(raw_body)
+                _tx = _partial_body.get("transaction_id")
+                _oid = _partial_body.get("order_id")
+            except (ValueError, UnicodeDecodeError, AttributeError):
+                _tx = _oid = None
+            if isinstance(_tx, str) and _tx:
+                await repository.record_quarantined_webhook(
+                    provider_name=provider_name,
+                    provider_event_id=f"{_tx}:partial_refund",
+                    canonical_payload_sha256=hashlib.sha256(raw_body).digest(),
+                    order_id=_oid if isinstance(_oid, str) else None,
+                    reason="unexpected_state",
+                    transition_id="OP-05",
+                )
+                return
         raise HTTPException(
             status_code=422, detail={"code": "INVALID_REQUEST", "retryable": False}
         ) from exc
@@ -580,12 +626,53 @@ async def receive_payment_webhook(
         NormalizedRefundEvent,
     )
 
+    # Adapters whose notification signature does not cover the
+    # status fields (Midtrans) re-read the authoritative state
+    # before OP-02 (paid) or the refund handler may act on a body.
+    _verify = None
     if isinstance(event, NormalizedPaidEvent):
-        await repository.handle_paid_event(event, canonical_payload_sha256=digest)
-    elif isinstance(event, NormalizedFailureEvent):
-        await repository.handle_failure_event(event, canonical_payload_sha256=digest)
+        _verify = getattr(provider, "verify_paid_event", None)
     elif isinstance(event, NormalizedRefundEvent):
-        await repository.handle_refund_event(event, canonical_payload_sha256=digest)
+        _verify = getattr(provider, "verify_refund_event", None)
+    elif isinstance(event, NormalizedFailureEvent):
+        _verify = getattr(provider, "verify_failure_event", None)
+    if _verify is not None:
+        from backend.services.payments.midtrans import WebhookTransientError
+
+        try:
+            event = await _verify(event)
+        except WebhookTransientError as exc:
+            # Nothing persisted: the provider retries and the Paid
+            # identity must still be fresh when it does.
+            raise HTTPException(
+                status_code=503, detail={"code": "SERVICE_UNAVAILABLE", "retryable": True}
+            ) from exc
+        except WebhookUnparseable as exc:
+            # Authentic but refused: on the record in the inbox
+            # (quarantine alarm reads it), 204 so the provider
+            # does not retry a decision we have already taken.
+            await repository.record_quarantined_webhook(
+                provider_name=provider_name,
+                provider_event_id=event.provider_event_id,
+                canonical_payload_sha256=digest,
+                order_id=event.provider_session_id,
+                reason=(
+                    "amount_mismatch" if "amount" in str(exc) else "unexpected_state"
+                ),
+            )
+            return
+    if isinstance(event, NormalizedPaidEvent):
+        await repository.handle_paid_event(
+            event, canonical_payload_sha256=digest, provider_name=provider_name
+        )
+    elif isinstance(event, NormalizedFailureEvent):
+        await repository.handle_failure_event(
+            event, canonical_payload_sha256=digest, provider_name=provider_name
+        )
+    elif isinstance(event, NormalizedRefundEvent):
+        await repository.handle_refund_event(
+            event, canonical_payload_sha256=digest, provider_name=provider_name
+        )
 
 
 @router.post(
