@@ -817,4 +817,72 @@ describe("ClientDetailClient", () => {
 
     expect(await screen.findByTestId("AddCompanyModal")).toBeInTheDocument();
   });
+  // Client 12404 / doc 21013 (2026-11-11): Documents keeps passports out by
+  // design (they live on Overview › Passport); the tab now says so.
+  describe("Documents passport signpost", () => {
+    const withDocs = (documents: ClientProfile["documents"]) => {
+      const profile = makeProfile();
+      mockUseClientDetail.mockReturnValue({
+        data: { ...profile, documents },
+        isLoading: false,
+        error: null,
+      });
+    };
+
+    it("shows no passport line when the client has no passport", async () => {
+      withDocs([
+        { id: 1, client_id: 7, document_type: "KTP", status: "verified" },
+      ]);
+      const user = userEvent.setup();
+      const { ClientDetailClient } = await import("./ClientDetailClient");
+      render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+      await user.click(screen.getByRole("button", { name: /^Documents/ }));
+
+      expect(screen.getByTestId("DocumentsTab")).toBeInTheDocument();
+      expect(screen.queryByTestId("passport-signpost")).not.toBeInTheDocument();
+    });
+
+    it("points one passport to Overview › Passport and scrolls there", async () => {
+      withDocs([
+        { id: 2, client_id: 7, document_type: "passport", status: "verified" },
+      ]);
+      const user = userEvent.setup();
+      const { ClientDetailClient } = await import("./ClientDetailClient");
+      render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+      const documentsTab = screen.getByRole("button", { name: /^Documents/ });
+      // Label and filter unchanged: the passport is not a Documents row.
+      expect(documentsTab).toHaveTextContent("Documents (0)");
+      await user.click(documentsTab);
+
+      expect(screen.getByTestId("passport-signpost")).toHaveTextContent(
+        "1 passport document shown in Overview › Passport",
+      );
+
+      // OverviewTab is stubbed here; stand in for the real Passport card.
+      const card = document.createElement("section");
+      card.id = "passport-card";
+      card.tabIndex = -1;
+      document.body.appendChild(card);
+      const scroll = vi.fn();
+      card.scrollIntoView = scroll;
+
+      await user.click(
+        screen.getByRole("button", { name: "Overview › Passport" }),
+      );
+
+      expect(screen.getByRole("button", { name: "Overview" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      expect(mockRouterReplace).toHaveBeenCalledWith(
+        "/clients/7?tab=overview",
+        { scroll: false },
+      );
+      await waitFor(() => expect(scroll).toHaveBeenCalled());
+      expect(document.activeElement).toBe(card);
+      card.remove();
+    });
+  });
 });

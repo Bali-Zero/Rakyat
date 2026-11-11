@@ -62,6 +62,7 @@ import { formatCardDate, isLive } from "./components/documentValidity";
 import { DeleteClientDialog } from "./components/DeleteClientDialog";
 import { useProfileDay, useWitaClock } from "./components/witaClock";
 import { FOCUS } from "@/components/workspace/r19/tokens";
+import { cn } from "@/lib/utils";
 import { lkpmApi } from "@/lib/api/workspace/lkpm.api";
 
 // Local component imports
@@ -450,6 +451,27 @@ export function ClientDetailClient({
     }
   }, [searchParams]);
 
+  // Set by the Documents passport line; once Overview renders, the Passport
+  // card is scrolled to and focused. The rAF runs after handleTabChange's
+  // own scroll restore, which was queued first.
+  const pendingCardRef = useRef<string | null>(null);
+  useEffect(() => {
+    const card = pendingCardRef.current;
+    if (!card || activeTab !== "overview") return;
+    pendingCardRef.current = null;
+    requestAnimationFrame(() => {
+      const el = document.getElementById(card);
+      if (!el) return;
+      el.scrollIntoView({ block: "start", behavior: "smooth" });
+      el.focus({ preventScroll: true });
+    });
+  }, [activeTab]);
+
+  const openPassportCard = () => {
+    pendingCardRef.current = "passport-card";
+    handleTabChange("overview");
+  };
+
   const openRemovedDocuments = () => {
     setDocumentsGroup("removed");
     handleTabChange("documents");
@@ -543,6 +565,11 @@ export function ClientDetailClient({
   // rejected" group; the domain tabs list live documents only.
   const voidDocuments = documents.filter((d) => !isLive(d));
   const documentRows = [...generalDocuments, ...voidDocuments];
+  // Live passports the filter above keeps out of Documents: the tab says
+  // where they are instead, so staff do not read them as missing.
+  const hiddenPassportCount = documents.filter(
+    (d) => isPassportDoc(d) && isLive(d),
+  ).length;
 
   // Group documents by category
   const documentsByCategory = generalDocuments.reduce(
@@ -1180,6 +1207,25 @@ export function ClientDetailClient({
             </>
           )}
 
+          {activeTab === "documents" && hiddenPassportCount > 0 && (
+            <p
+              className="mb-3 text-[12.5px] text-[var(--tx-secondary)]"
+              data-testid="passport-signpost"
+            >
+              {hiddenPassportCount} passport{" "}
+              {hiddenPassportCount === 1 ? "document" : "documents"} shown in{" "}
+              <button
+                type="button"
+                onClick={openPassportCard}
+                className={cn(
+                  "underline underline-offset-4 hover:text-[var(--tx-pure)]",
+                  FOCUS,
+                )}
+              >
+                Overview › Passport
+              </button>
+            </p>
+          )}
           {activeTab === "documents" && (
             <DocumentsTab
               clientId={clientId}
