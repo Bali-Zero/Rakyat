@@ -9,11 +9,15 @@ Orchestrates the complete invoice workflow:
 5. Update practice with invoice details
 """
 
+import asyncio
 import base64
 import json
 import os
+import re
+import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 import asyncpg
 import httpx
@@ -24,7 +28,8 @@ from backend.app.utils.logging_utils import get_logger
 from backend.core.cache import invalidate_crm_stats
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 from backend.services.invoicing.entities import (
-    CIMB_BAYU_BALI_NOL,
+    DEFAULT_ENTITY_KEY,
+    ENTITIES,
     InvoiceEntity,
     resolve_invoice_entity,
 )
@@ -54,6 +59,92 @@ _EMAIL_API_URL = os.getenv(
     "https://nuzantara-rag.fly.dev/api/notifications/send-email",
 )
 _EMAIL_API_KEY = os.getenv("NUZANTARA_API_KEY", "")
+
+_RESOLUTION_REASONS = frozenset(
+    {
+        "lookup_failed",
+        "issuer_schema_missing",
+        "practice_missing",
+        "invalid_lookup_result",
+        "invalid_routing_timestamp",
+        "invalid_practice_type_code",
+        "unknown_stored_issuer",
+        "incomplete_stored_issuer",
+        "invalid_stored_binding",
+        "default_entity_invalid",
+        "ambiguous_legacy_metadata",
+        "orphaned_issuer_metadata",
+    }
+)
+_PERSISTENCE_REASONS = frozenset({"issuer_conflict", "invalid_persisted_binding", "write_failed"})
+
+
+class InvoiceIssuerResolutionError(RuntimeError):
+    def __init__(self, reason: str) -> None:
+        if reason not in _RESOLUTION_REASONS:
+            raise ValueError("invalid issuer resolution reason")
+        self.reason = reason
+        super().__init__(reason)
+
+
+class InvoiceIssuerPersistenceError(RuntimeError):
+    def __init__(self, reason: str, sqlstate: str | None = None) -> None:
+        if reason not in _PERSISTENCE_REASONS:
+            raise ValueError("invalid issuer persistence reason")
+        self.reason = reason
+        self.sqlstate = (
+            sqlstate
+            if isinstance(sqlstate, str) and re.fullmatch(r"[0-9A-Z]{5}", sqlstate)
+            else None
+        )
+        super().__init__(reason)
+
+
+@dataclass(frozen=True)
+class InvoiceIssuerDecision:
+    entity: InvoiceEntity
+    routed_at: datetime
+    lookup_at: datetime
+    source: Literal["new", "stored", "legacy_row", "legacy_documents"]
+
+
+_INVOICE_UPSERT_SQL = """
+INSERT INTO invoices AS existing (
+    practice_id, client_id, invoice_number, invoice_source, amount_idr,
+    discount_amount_idr, drive_file_id, drive_web_link, email_sent_to_client,
+    accounting_notified, generated_at, issuer_entity_key, issuer_routed_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+ON CONFLICT (practice_id) DO UPDATE SET
+    invoice_number = EXCLUDED.invoice_number, invoice_source = EXCLUDED.invoice_source,
+    amount_idr = EXCLUDED.amount_idr, discount_amount_idr = EXCLUDED.discount_amount_idr,
+    drive_file_id = EXCLUDED.drive_file_id, drive_web_link = EXCLUDED.drive_web_link,
+    email_sent_to_client = EXCLUDED.email_sent_to_client,
+    accounting_notified = EXCLUDED.accounting_notified, generated_at = EXCLUDED.generated_at,
+    issuer_entity_key = COALESCE(existing.issuer_entity_key, EXCLUDED.issuer_entity_key),
+    issuer_routed_at = CASE WHEN existing.issuer_entity_key IS NULL THEN EXCLUDED.issuer_routed_at ELSE existing.issuer_routed_at END,
+    updated_at = NOW()
+WHERE (existing.issuer_entity_key IS NULL AND existing.issuer_routed_at IS NULL AND EXCLUDED.issuer_entity_key = $14)
+   OR (existing.issuer_entity_key = EXCLUDED.issuer_entity_key AND existing.issuer_routed_at IS NOT NULL)
+RETURNING issuer_entity_key, issuer_routed_at
+"""
+
+_INVOICE_UPSERT_PRE158_SQL = """
+INSERT INTO invoices AS existing (practice_id, client_id, invoice_number, invoice_source, amount_idr,
+    drive_file_id, drive_web_link, email_sent_to_client, accounting_notified, generated_at,
+    issuer_entity_key, issuer_routed_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+ON CONFLICT (practice_id) DO UPDATE SET
+    invoice_number = EXCLUDED.invoice_number, invoice_source = EXCLUDED.invoice_source,
+    amount_idr = EXCLUDED.amount_idr, drive_file_id = EXCLUDED.drive_file_id,
+    drive_web_link = EXCLUDED.drive_web_link, email_sent_to_client = EXCLUDED.email_sent_to_client,
+    accounting_notified = EXCLUDED.accounting_notified, generated_at = EXCLUDED.generated_at,
+    issuer_entity_key = COALESCE(existing.issuer_entity_key, EXCLUDED.issuer_entity_key),
+    issuer_routed_at = CASE WHEN existing.issuer_entity_key IS NULL THEN EXCLUDED.issuer_routed_at ELSE existing.issuer_routed_at END,
+    updated_at = NOW()
+WHERE (existing.issuer_entity_key IS NULL AND existing.issuer_routed_at IS NULL AND EXCLUDED.issuer_entity_key = $13)
+   OR (existing.issuer_entity_key = EXCLUDED.issuer_entity_key AND existing.issuer_routed_at IS NOT NULL)
+RETURNING issuer_entity_key, issuer_routed_at
+"""
 
 
 class InvoiceAutomationService:
@@ -88,6 +179,9 @@ class InvoiceAutomationService:
             dict with results of all operations
         """
         logger.info("Invoice automation triggered for practice %s by %s", practice_id, triggered_by)
+        invoice_attempt_id = uuid.uuid4().hex
+        email_sent = accounting_notified = drive_uploaded = email_attempted = False
+        issuer_decision: InvoiceIssuerDecision | None = None
 
         try:
             # Step 1: Fetch practice and client data
@@ -100,6 +194,22 @@ class InvoiceAutomationService:
             if not client_data:
                 logger.error(f"Client {practice_data['client_id']} not found")
                 return {"success": False, "error": "Client not found"}
+
+            issuer_decision = await self._resolve_issuer(
+                practice_id, practice_data.get("practice_type_code")
+            )
+            logger.info(
+                "invoice_issuer_selected",
+                extra={
+                    "context": {
+                        "event": "invoice_issuer_selected",
+                        "invoice_attempt_id": invoice_attempt_id,
+                        "issuer_entity_key": issuer_decision.entity.key,
+                        "issuer_routed_at": issuer_decision.routed_at.isoformat(),
+                        "source": issuer_decision.source,
+                    }
+                },
+            )
 
             # Step 2: Generate invoice PDF locally
             logger.info("Generating invoice PDF for practice %s", practice_id)
@@ -123,10 +233,6 @@ class InvoiceAutomationService:
                     discount_amount_float = quoted_price_float
                 final_amount_float = quoted_price_float - discount_amount_float
 
-                issuer = await self._resolve_issuer(
-                    practice_id, practice_data.get("practice_type_code")
-                )
-
                 pdf_bytes = self.invoice_generator.generate(
                     practice_id=practice_id,
                     client_name=client_data["full_name"],
@@ -139,7 +245,7 @@ class InvoiceAutomationService:
                     notes="Thank you for choosing Bali Zero. Payment is due within 2 days.",
                     discount_amount=discount_amount_float,
                     discount_reason=discount_reason_value,
-                    entity=issuer,
+                    entity=issuer_decision.entity,
                 )
 
                 filename = f"Invoice_{invoice_number}.pdf"
@@ -158,7 +264,8 @@ class InvoiceAutomationService:
             # previously AR aging started silently with email_sent=False
             # only visible during Asya's manual ledger review.
             email_sent = False
-            if client_data.get("email"):
+            email_attempted = bool(client_data.get("email"))
+            if email_attempted:
                 audit_row_id = await log_email_attempt(
                     self.db_pool,
                     email_type="invoice_client",
@@ -221,6 +328,7 @@ class InvoiceAutomationService:
                     filename=filename,
                 )
                 asya_notified = True
+                accounting_notified = True
                 logger.info("Accounting notification sent to %s", ACCOUNTING_EMAIL)
             except httpx.HTTPStatusError as notify_error:
                 logger.warning(
@@ -245,6 +353,7 @@ class InvoiceAutomationService:
                 )
                 drive_file_id = upload_result.get("id")
                 drive_web_link = upload_result.get("webViewLink")
+                drive_uploaded = True
                 logger.info("Invoice backup uploaded to Drive: %s", drive_file_id)
             except GoogleHttpError as drive_error:
                 logger.warning(
@@ -272,6 +381,8 @@ class InvoiceAutomationService:
                 practice_id=practice_id,
                 invoice_info=invoice_info,
                 triggered_by=triggered_by,
+                issuer_decision=issuer_decision,
+                invoice_attempt_id=invoice_attempt_id,
             )
 
             logger.info("Invoice automation completed successfully for practice %s", practice_id)
@@ -285,6 +396,47 @@ class InvoiceAutomationService:
                 "accounting_notified": asya_notified,
             }
 
+        except InvoiceIssuerResolutionError as error:
+            logger.error(
+                "invoice_issuer_resolution_failed",
+                extra={
+                    "context": {
+                        "event": "invoice_issuer_resolution_failed",
+                        "invoice_attempt_id": invoice_attempt_id,
+                        "reason": error.reason,
+                        "exception_type": type(error).__name__,
+                    }
+                },
+            )
+            return {
+                "success": False,
+                "error": f"Invoice issuer resolution failed: {error.reason}",
+                "error_code": "invoice_issuer_resolution_failed",
+            }
+        except InvoiceIssuerPersistenceError as error:
+            decision = issuer_decision
+            context = {
+                "event": "invoice_issuer_persistence_failed",
+                "invoice_attempt_id": invoice_attempt_id,
+                "issuer_entity_key": decision.entity.key if decision else None,
+                "issuer_routed_at": decision.routed_at.isoformat() if decision else None,
+                "source": decision.source if decision else None,
+                "reason": error.reason,
+                "exception_type": type(error).__name__,
+                "sqlstate": error.sqlstate,
+                "email_attempted": email_attempted,
+                "email_sent": email_sent,
+                "accounting_notified": accounting_notified,
+                "drive_uploaded": drive_uploaded,
+                "delivery_may_have_occurred": True,
+            }
+            logger.critical("invoice_issuer_persistence_failed", extra={"context": context})
+            return {
+                "success": False,
+                "error": f"Invoice issuer persistence failed: {error.reason}",
+                "error_code": "invoice_issuer_persistence_failed",
+                "delivery_may_have_occurred": True,
+            }
         except (asyncpg.PostgresError, asyncpg.InterfaceError, OSError) as error:
             logger.warning(
                 f"Invoice automation failed for practice {practice_id} "
@@ -430,30 +582,102 @@ class InvoiceAutomationService:
 
     async def _resolve_issuer(
         self, practice_id: int, practice_type_code: str | None
-    ) -> InvoiceEntity:
-        """Issuer entity for this practice's invoice (DAI-124).
-
-        A regenerated invoice keeps the date of its existing ``invoices`` row,
-        so invoices first created before the routing go-live stay on CIMB.
-        If that lookup fails, CIMB is used (today's behaviour).
-        """
+    ) -> InvoiceIssuerDecision:
         try:
             async with self.db_pool.acquire() as conn:
-                created_at = await conn.fetchval(
-                    "SELECT created_at FROM invoices WHERE practice_id = $1",
+                row = await conn.fetchrow(
+                    """SELECT NOW() AS db_now, p.id IS NOT NULL AS practice_exists,
+                    i.practice_id IS NOT NULL AS invoice_row_exists, i.issuer_entity_key,
+                    i.issuer_routed_at, p.documents AS practice_documents
+                    FROM (SELECT $1::integer AS practice_id) AS requested
+                    LEFT JOIN public.practices AS p ON p.id = requested.practice_id
+                    LEFT JOIN public.invoices AS i ON i.practice_id = requested.practice_id""",
                     practice_id,
                 )
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            logger.warning(
-                "Invoice created_at lookup failed for practice %s (%s); issuing as %s",
-                practice_id,
-                type(exc).__name__,
-                CIMB_BAYU_BALI_NOL.key,
-            )
-            return CIMB_BAYU_BALI_NOL
-        if not isinstance(created_at, datetime):
-            created_at = None  # no invoice row yet: a new invoice, dated now
-        return resolve_invoice_entity(practice_type_code, created_at)
+            state = getattr(exc, "sqlstate", None)
+            raise InvoiceIssuerResolutionError(
+                "issuer_schema_missing" if state == "42703" else "lookup_failed"
+            ) from None
+        if row is None:
+            raise InvoiceIssuerResolutionError("invalid_lookup_result")
+        data = dict(row)
+        if data.get("practice_exists") is not True:
+            raise InvoiceIssuerResolutionError("practice_missing")
+        lookup_at = data.get("db_now")
+        if (
+            not isinstance(lookup_at, datetime)
+            or lookup_at.tzinfo is None
+            or lookup_at.utcoffset() is None
+        ):
+            raise InvoiceIssuerResolutionError("invalid_routing_timestamp")
+        row_exists = data.get("invoice_row_exists")
+        if not isinstance(row_exists, bool):
+            raise InvoiceIssuerResolutionError("invalid_lookup_result")
+        key, routed_at = data.get("issuer_entity_key"), data.get("issuer_routed_at")
+        if row_exists:
+            if key is None and routed_at is None:
+                entity = ENTITIES.get(DEFAULT_ENTITY_KEY)
+                if entity is None or entity.missing_fields():
+                    raise InvoiceIssuerResolutionError("default_entity_invalid")
+                return InvoiceIssuerDecision(entity, lookup_at, lookup_at, "legacy_row")
+            if not isinstance(key, str) or not key.strip() or routed_at is None:
+                raise InvoiceIssuerResolutionError("invalid_stored_binding")
+            if (
+                not isinstance(routed_at, datetime)
+                or routed_at.tzinfo is None
+                or routed_at.utcoffset() is None
+            ):
+                raise InvoiceIssuerResolutionError("invalid_stored_binding")
+            entity = ENTITIES.get(key)
+            if entity is None:
+                raise InvoiceIssuerResolutionError("unknown_stored_issuer")
+            if entity.missing_fields():
+                raise InvoiceIssuerResolutionError("incomplete_stored_issuer")
+            return InvoiceIssuerDecision(entity, routed_at, lookup_at, "stored")
+        marker = self._legacy_invoice_marker(data.get("practice_documents"))
+        if marker == "orphaned":
+            raise InvoiceIssuerResolutionError("orphaned_issuer_metadata")
+        if marker == "legacy":
+            entity = ENTITIES.get(DEFAULT_ENTITY_KEY)
+            if entity is None or entity.missing_fields():
+                raise InvoiceIssuerResolutionError("default_entity_invalid")
+            return InvoiceIssuerDecision(entity, lookup_at, lookup_at, "legacy_documents")
+        try:
+            entity = resolve_invoice_entity(practice_type_code, lookup_at)
+        except TypeError:
+            raise InvoiceIssuerResolutionError("invalid_practice_type_code") from None
+        except (ValueError, KeyError):
+            raise InvoiceIssuerResolutionError("default_entity_invalid") from None
+        return InvoiceIssuerDecision(entity, lookup_at, lookup_at, "new")
+
+    @staticmethod
+    def _legacy_invoice_marker(documents: Any) -> Literal["none", "legacy", "orphaned"]:
+        value = documents
+        try:
+            for _ in range(2):
+                if isinstance(value, str):
+                    value = json.loads(value)
+                else:
+                    break
+        except (TypeError, json.JSONDecodeError):
+            raise InvoiceIssuerResolutionError("ambiguous_legacy_metadata") from None
+        if value is None:
+            return "none"
+        if not isinstance(value, dict):
+            raise InvoiceIssuerResolutionError("ambiguous_legacy_metadata")
+        if not value or "invoice" not in value:
+            return "none"
+        invoice = value["invoice"]
+        if invoice is None:
+            return "legacy"
+        if not isinstance(invoice, dict):
+            raise InvoiceIssuerResolutionError("ambiguous_legacy_metadata")
+        if "issuer_entity_key" in invoice or "issuer_routed_at" in invoice:
+            return "orphaned"
+        return "legacy"
 
     async def _fetch_client_data(self, client_id: int) -> dict | None:
         """Fetch client data from database."""
@@ -473,6 +697,9 @@ class InvoiceAutomationService:
         practice_id: int,
         invoice_info: dict,
         triggered_by: str,
+        *,
+        issuer_decision: InvoiceIssuerDecision,
+        invoice_attempt_id: str,
     ) -> None:
         """Update practice with invoice information (dual-write: JSONB + invoices table)."""
         async with self.db_pool.acquire() as conn:
@@ -492,6 +719,66 @@ class InvoiceAutomationService:
                     )
                 else:
                     raise
+
+            if not practice_row:
+                raise InvoiceIssuerPersistenceError("write_failed")
+            generated_at = None
+            if invoice_info.get("invoice_generated_at"):
+                try:
+                    generated_at = datetime.fromisoformat(invoice_info["invoice_generated_at"])
+                except (TypeError, ValueError):
+                    pass
+            quoted = float(practice_row["quoted_price"] or 0)
+            try:
+                discount = float(practice_row.get("discount_amount") or 0)
+            except (AttributeError, KeyError, TypeError):
+                discount = 0.0
+            discount = max(0.0, min(discount, quoted))
+            # amount_idr stores the post-discount total; discount_amount_idr mirrors the discount.
+            args = (
+                practice_id,
+                practice_row["client_id"],
+                invoice_info.get("invoice_number") or None,
+                invoice_info.get("source", "local_pdf"),
+                quoted - discount,
+                discount,
+                invoice_info.get("invoice_drive_id") or None,
+                invoice_info.get("invoice_drive_link") or None,
+                bool(invoice_info.get("email_sent", False)),
+                bool(invoice_info.get("accounting_notified", False)),
+                generated_at,
+                issuer_decision.entity.key,
+                issuer_decision.routed_at,
+                DEFAULT_ENTITY_KEY,
+            )
+            try:
+                persisted = await conn.fetchrow(_INVOICE_UPSERT_SQL, *args)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if getattr(exc, "sqlstate", None) != "42703":
+                    raise InvoiceIssuerPersistenceError(
+                        "write_failed", getattr(exc, "sqlstate", None)
+                    ) from None
+                # Fallback for databases without migration 158 (discount_amount_idr).
+                pre158_args = (*args[:5], *args[6:])
+                try:
+                    persisted = await conn.fetchrow(_INVOICE_UPSERT_PRE158_SQL, *pre158_args)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as fallback_exc:
+                    raise InvoiceIssuerPersistenceError(
+                        "write_failed", getattr(fallback_exc, "sqlstate", None)
+                    ) from None
+            if persisted is None or persisted["issuer_entity_key"] != issuer_decision.entity.key:
+                raise InvoiceIssuerPersistenceError("issuer_conflict")
+            persisted_at = persisted["issuer_routed_at"]
+            if (
+                not isinstance(persisted_at, datetime)
+                or persisted_at.tzinfo is None
+                or persisted_at.utcoffset() is None
+            ):
+                raise InvoiceIssuerPersistenceError("invalid_persisted_binding")
 
             # ── 2. JSONB write (backward compat — kept until Sprint 3 cleanup) ─
             existing_docs = await conn.fetchval(
@@ -515,6 +802,8 @@ class InvoiceAutomationService:
                     documents = existing_docs
 
             documents["invoice"] = invoice_info
+            documents["invoice"]["issuer_entity_key"] = persisted["issuer_entity_key"]
+            documents["invoice"]["issuer_routed_at"] = persisted_at.isoformat()
 
             # payment_status is NOT reset here: FE ciclo is unpaid→partial→paid
             # (no 'pending' state). Keep whatever value was set before.
@@ -533,103 +822,6 @@ class InvoiceAutomationService:
                 practice_id,
             )
             await invalidate_crm_stats()  # F32
-
-            # ── 3. invoices table write (primary going forward) ───────────────
-            if practice_row:
-                generated_at_raw = invoice_info.get("invoice_generated_at")
-                generated_at = None
-                if generated_at_raw:
-                    try:
-                        generated_at = datetime.fromisoformat(generated_at_raw)
-                    except ValueError:
-                        pass  # invalid ISO date format — generated_at stays None
-
-                # amount_idr stores the FINAL total (post-discount) so the
-                # AR reports add up to what the client actually owes; the
-                # discount itself is mirrored in discount_amount_idr per
-                # owner Q4=a (2026-05-06). On legacy databases that still
-                # lack discount_amount_idr (no migration 158), fall back to
-                # the pre-158 INSERT shape.
-                quoted_for_invoice = float(practice_row["quoted_price"] or 0)
-                discount_for_invoice = 0.0
-                try:
-                    raw_disc = practice_row["discount_amount"]
-                    if raw_disc is not None:
-                        discount_for_invoice = float(raw_disc)
-                except (KeyError, TypeError):
-                    discount_for_invoice = 0.0
-                if discount_for_invoice < 0:
-                    discount_for_invoice = 0.0
-                if discount_for_invoice > quoted_for_invoice:
-                    discount_for_invoice = quoted_for_invoice
-                amount_for_invoice = quoted_for_invoice - discount_for_invoice
-
-                try:
-                    await conn.execute(
-                        """
-                        INSERT INTO invoices (
-                            practice_id, client_id, invoice_number, invoice_source,
-                            amount_idr, discount_amount_idr,
-                            drive_file_id, drive_web_link,
-                            email_sent_to_client, accounting_notified, generated_at
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                        ON CONFLICT (practice_id) DO UPDATE SET
-                            invoice_number       = EXCLUDED.invoice_number,
-                            invoice_source       = EXCLUDED.invoice_source,
-                            amount_idr           = EXCLUDED.amount_idr,
-                            discount_amount_idr  = EXCLUDED.discount_amount_idr,
-                            drive_file_id        = EXCLUDED.drive_file_id,
-                            drive_web_link       = EXCLUDED.drive_web_link,
-                            email_sent_to_client = EXCLUDED.email_sent_to_client,
-                            accounting_notified  = EXCLUDED.accounting_notified,
-                            generated_at         = EXCLUDED.generated_at,
-                            updated_at           = NOW()
-                        """,
-                        practice_id,
-                        practice_row["client_id"],
-                        invoice_info.get("invoice_number") or None,
-                        invoice_info.get("source", "local_pdf"),
-                        amount_for_invoice,
-                        discount_for_invoice,
-                        invoice_info.get("invoice_drive_id") or None,
-                        invoice_info.get("invoice_drive_link") or None,
-                        bool(invoice_info.get("email_sent", False)),
-                        bool(invoice_info.get("accounting_notified", False)),
-                        generated_at,
-                    )
-                except Exception as insert_exc:
-                    if getattr(insert_exc, "sqlstate", None) == "42703":
-                        await conn.execute(
-                            """
-                            INSERT INTO invoices (
-                                practice_id, client_id, invoice_number, invoice_source,
-                                amount_idr, drive_file_id, drive_web_link,
-                                email_sent_to_client, accounting_notified, generated_at
-                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                            ON CONFLICT (practice_id) DO UPDATE SET
-                                invoice_number       = EXCLUDED.invoice_number,
-                                invoice_source       = EXCLUDED.invoice_source,
-                                amount_idr           = EXCLUDED.amount_idr,
-                                drive_file_id        = EXCLUDED.drive_file_id,
-                                drive_web_link       = EXCLUDED.drive_web_link,
-                                email_sent_to_client = EXCLUDED.email_sent_to_client,
-                                accounting_notified  = EXCLUDED.accounting_notified,
-                                generated_at         = EXCLUDED.generated_at,
-                                updated_at           = NOW()
-                            """,
-                            practice_id,
-                            practice_row["client_id"],
-                            invoice_info.get("invoice_number") or None,
-                            invoice_info.get("source", "local_pdf"),
-                            amount_for_invoice,
-                            invoice_info.get("invoice_drive_id") or None,
-                            invoice_info.get("invoice_drive_link") or None,
-                            bool(invoice_info.get("email_sent", False)),
-                            bool(invoice_info.get("accounting_notified", False)),
-                            generated_at,
-                        )
-                    else:
-                        raise
 
             # ── 4. Activity log ───────────────────────────────────────────────
             await conn.execute(
