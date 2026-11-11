@@ -219,7 +219,7 @@ class TestTriggerFlowParity:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("code", "key"),
-        [("visa_c1_tourism", B_KEY), ("tax_monthly_basic_0_50", D_KEY)],
+        [("kitas_working_onshore", B_KEY), ("tax_monthly_basic_0_50", D_KEY)],
         ids=["visa_practice", "tax_practice"],
     )
     async def test_flow_sends_client_and_accounting_and_persists_routed_entity(

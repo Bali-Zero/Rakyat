@@ -33,20 +33,7 @@ from backend.services.invoicing.entities import (
 FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "invoicing"
 ENTITY_KEYS = frozenset(ENTITIES)
 _COUNTER_NAME = "zantara_invoice_issuer_unmapped_total"
-_KNOWN_UNMAPPED_FROM_SPEC = [
-    "accessories",
-    "extension_visa",
-    "kitas_application",
-    "open_inquiry",
-    "other_acc_boarding_pass",
-    "other_cancel_wajib_lapor",
-    "other_create_molina_express",
-    "other_custom",
-    "property_purchase",
-    "pt_pma_setup",
-    "visa",
-    "visa_bridging",
-]
+_KNOWN_UNMAPPED_FROM_SPEC = ["other_acc_boarding_pass"]
 
 
 def _load_json_no_duplicate_keys(path: Path) -> dict[str, Any]:
@@ -147,12 +134,12 @@ class _NullOffset(tzinfo):
 def test_mapping_matches_independent_golden() -> None:
     golden = _load_json_no_duplicate_keys(FIXTURES / "invoice_code_entity_golden.json")
     assert golden == PRACTICE_TYPE_ENTITY_KEYS
-    assert len(golden) == 110
-    assert len(PRACTICE_TYPE_ENTITY_KEYS) == 110
+    assert len(golden) == 121
+    assert len(PRACTICE_TYPE_ENTITY_KEYS) == 121
     counts = Counter(golden.values())
-    assert counts["cimb_bayu_bali_nol"] == 43
-    assert counts["permata_bali_nol_konsultan"] == 28
-    assert counts["mandiri_bali_nol_impresariat"] == 37
+    assert counts["cimb_bayu_bali_nol"] == 45
+    assert counts["permata_bali_nol_konsultan"] == 27
+    assert counts["mandiri_bali_nol_impresariat"] == 47
     assert counts["bni_bayu_santero"] == 2
     assert all(code == code.strip().lower() for code in golden), "golden keys must be normalized"
     assert set(golden.values()) <= ENTITY_KEYS, "golden values must be recognized entity keys"
@@ -196,16 +183,16 @@ def test_literal_utc_cutover(
     at_cutover = datetime(2026, 11, 11, 16, 0, 0, tzinfo=timezone.utc)
     on_date_end = datetime(2026, 11, 12, 15, 59, 59, tzinfo=timezone.utc)
     assert (
-        resolve_invoice_entity("visa_c1_tourism", before)
+        resolve_invoice_entity("kitas_working_onshore", before)
         is synthetic_registry["cimb_bayu_bali_nol"]
     )
     assert (
-        resolve_invoice_entity("visa_c1_tourism", at_cutover)
+        resolve_invoice_entity("kitas_working_onshore", at_cutover)
         is synthetic_registry["mandiri_bali_nol_impresariat"]
     )
     # The effective date itself is inclusive (WITA calendar day 2026-11-12).
     assert (
-        resolve_invoice_entity("visa_c1_tourism", on_date_end)
+        resolve_invoice_entity("kitas_working_onshore", on_date_end)
         is synthetic_registry["mandiri_bali_nol_impresariat"]
     )
 
@@ -217,11 +204,11 @@ def test_effective_date_is_configurable_data(
     before = datetime(2029, 12, 31, 15, 59, 59, tzinfo=timezone.utc)
     after = datetime(2029, 12, 31, 16, 0, 0, tzinfo=timezone.utc)
     assert (
-        resolve_invoice_entity("visa_c1_tourism", before)
+        resolve_invoice_entity("kitas_working_onshore", before)
         is synthetic_registry["cimb_bayu_bali_nol"]
     )
     assert (
-        resolve_invoice_entity("visa_c1_tourism", after)
+        resolve_invoice_entity("kitas_working_onshore", after)
         is synthetic_registry["mandiri_bali_nol_impresariat"]
     )
 
@@ -274,7 +261,13 @@ def _unmapped_cases() -> list[tuple[str, Any, str, str, str | None]]:
     cases.append(("empty", "", "__empty__", "empty", None))
     cases.append(("whitespace", "   ", "__empty__", "empty", None))
     cases.append(
-        ("normalized_known", "  VISA_BRIDGING ", "visa_bridging", "known_unmapped", "visa_bridging")
+        (
+            "normalized_known",
+            "  OTHER_ACC_BOARDING_PASS ",
+            "other_acc_boarding_pass",
+            "known_unmapped",
+            "other_acc_boarding_pass",
+        )
     )
     return cases
 
@@ -318,10 +311,12 @@ def test_unmapped_observable_before_effective_date(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setattr(entities, "ENTITY_ROUTING_EFFECTIVE_FROM", date(2026, 11, 12))
-    labels = {"practice_type_code": "visa", "code_kind": "known_unmapped"}
+    labels = {"practice_type_code": "other_acc_boarding_pass", "code_kind": "known_unmapped"}
     before = _counter_value(labels)
     with caplog.at_level(logging.WARNING, logger="backend.services.invoicing.entities"):
-        resolved = resolve_invoice_entity("visa", datetime(2026, 11, 1, tzinfo=timezone.utc))
+        resolved = resolve_invoice_entity(
+            "other_acc_boarding_pass", datetime(2026, 11, 1, tzinfo=timezone.utc)
+        )
     assert resolved is synthetic_registry["cimb_bayu_bali_nol"]
     assert _counter_value(labels) - before == 1
     assert len(caplog.records) == 1
@@ -336,7 +331,9 @@ def test_mapped_a_does_not_warn(
     labels_none = {"practice_type_code": "__none__", "code_kind": "none"}
     before = _counter_value(labels_none)
     with caplog.at_level(logging.WARNING, logger="backend.services.invoicing.entities"):
-        resolved = resolve_invoice_entity(" KITAS ", datetime(2026, 11, 20, tzinfo=timezone.utc))
+        resolved = resolve_invoice_entity(
+            " VISA_B1_VOA ", datetime(2026, 11, 20, tzinfo=timezone.utc)
+        )
     assert resolved is synthetic_registry["cimb_bayu_bali_nol"]
     assert _counter_value(labels_none) - before == 0
     assert [r for r in caplog.records if r.name == "backend.services.invoicing.entities"] == []
@@ -356,7 +353,7 @@ def test_incomplete_new_entity_falls_back_loudly(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(entities, "ENTITIES", registry)
     monkeypatch.setattr(entities, "ENTITY_ROUTING_EFFECTIVE_FROM", date(2026, 11, 12))
     instant = datetime(2026, 11, 20, tzinfo=timezone.utc)
-    resolved = resolve_invoice_entity("visa_c1_tourism", instant)
+    resolved = resolve_invoice_entity("kitas_working_onshore", instant)
     assert resolved is registry["cimb_bayu_bali_nol"]
 
 
@@ -372,7 +369,7 @@ def test_incomplete_new_entity_logs_fallback_context(
     monkeypatch.setattr(entities, "ENTITY_ROUTING_EFFECTIVE_FROM", date(2026, 11, 12))
     with caplog.at_level(logging.ERROR, logger="backend.services.invoicing.entities"):
         resolved = resolve_invoice_entity(
-            "visa_c1_tourism", datetime(2026, 11, 20, tzinfo=timezone.utc)
+            "kitas_working_onshore", datetime(2026, 11, 20, tzinfo=timezone.utc)
         )
     assert resolved is registry["cimb_bayu_bali_nol"]
     errors = [r for r in caplog.records if r.name == "backend.services.invoicing.entities"]
@@ -394,7 +391,7 @@ def test_missing_mapped_entity_falls_back_loudly(
     monkeypatch.setattr(entities, "ENTITY_ROUTING_EFFECTIVE_FROM", date(2026, 11, 12))
     with caplog.at_level(logging.ERROR, logger="backend.services.invoicing.entities"):
         resolved = resolve_invoice_entity(
-            "visa_c1_tourism", datetime(2026, 11, 20, tzinfo=timezone.utc)
+            "kitas_working_onshore", datetime(2026, 11, 20, tzinfo=timezone.utc)
         )
     assert resolved is registry["cimb_bayu_bali_nol"]
     errors = [r for r in caplog.records if r.name == "backend.services.invoicing.entities"]
@@ -411,7 +408,7 @@ def test_invalid_default_entity_fails_closed(monkeypatch: pytest.MonkeyPatch) ->
     with pytest.raises(ValueError):
         resolve_invoice_entity("kitas", datetime(2026, 11, 20, tzinfo=timezone.utc))
     with pytest.raises(ValueError):
-        resolve_invoice_entity("visa_c1_tourism", datetime(2026, 11, 20, tzinfo=timezone.utc))
+        resolve_invoice_entity("kitas_working_onshore", datetime(2026, 11, 20, tzinfo=timezone.utc))
 
 
 # ============================================================
@@ -459,3 +456,39 @@ def test_registry_with_a_mismatched_key_is_rejected(monkeypatch):
     monkeypatch.setattr(entities, "ENTITIES", {entities.DEFAULT_ENTITY_KEY: mismatched})
     with pytest.raises(ValueError, match="registry key does not match"):
         resolve_invoice_entity("kitas", datetime(2026, 11, 12, 1, 0, tzinfo=timezone.utc))
+
+
+_REVIEWED_SAMPLES = {
+    # Hand-written from the accounting review sheet, independent of the fixture.
+    "visa_b1_voa": "cimb_bayu_bali_nol",
+    "visa_c1_tourism": "cimb_bayu_bali_nol",
+    "visa_d1_tourism_1yr": "cimb_bayu_bali_nol",
+    "visa_d2_business_5yr": "cimb_bayu_bali_nol",
+    "visa_d12_business_2yr": "cimb_bayu_bali_nol",
+    "ext_c1_tourism": "cimb_bayu_bali_nol",
+    "other_cancel_rptka": "cimb_bayu_bali_nol",
+    "other_sktt": "cimb_bayu_bali_nol",
+    "accessories": "cimb_bayu_bali_nol",
+    "visa": "cimb_bayu_bali_nol",
+    "kitas": "mandiri_bali_nol_impresariat",
+    "kitas_working_onshore": "mandiri_bali_nol_impresariat",
+    "kitas_spouse_2yr_extend": "mandiri_bali_nol_impresariat",
+    "kitap_investor_merp": "mandiri_bali_nol_impresariat",
+    "company_pt_pma": "mandiri_bali_nol_impresariat",
+    "company_virtual_office": "mandiri_bali_nol_impresariat",
+    "tax_close_pma_company": "mandiri_bali_nol_impresariat",
+    "other_custom": "mandiri_bali_nol_impresariat",
+    "other_born_report": "mandiri_bali_nol_impresariat",
+    "other_lapor_lahir_up": "mandiri_bali_nol_impresariat",
+    "pt_pma_setup": "mandiri_bali_nol_impresariat",
+    "tax_lkpm_yearly": "permata_bali_nol_konsultan",
+    "tax_annual_pkg_d": "permata_bali_nol_konsultan",
+    "tax_monthly_bundled_200_plus": "permata_bali_nol_konsultan",
+    "ext_b1_voa": "bni_bayu_santero",
+    "extension_visa": "bni_bayu_santero",
+}
+
+
+@pytest.mark.parametrize(("code", "key"), sorted(_REVIEWED_SAMPLES.items()))
+def test_reviewed_mapping_samples(code: str, key: str) -> None:
+    assert PRACTICE_TYPE_ENTITY_KEYS[code] == key

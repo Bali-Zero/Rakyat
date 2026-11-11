@@ -86,7 +86,7 @@ def test_all_golden_codes_route_to_golden_entity_key(
 ) -> None:
     monkeypatch.setattr(entities, "ENTITY_ROUTING_EFFECTIVE_FROM", EFFECTIVE)
     golden = _golden()
-    assert len(golden) == 110
+    assert len(golden) == 121
     for code, expected_key in golden.items():
         resolved = resolve_invoice_entity(code, instant)
         assert resolved.key == expected_key, code
@@ -108,8 +108,13 @@ def test_all_tax_codes_route_to_permata(
     synthetic_registry: dict[str, InvoiceEntity], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(entities, "ENTITY_ROUTING_EFFECTIVE_FROM", EFFECTIVE)
-    tax_codes = sorted(code for code in _golden() if code.startswith("tax"))
-    assert len(tax_codes) == 28
+    # The reviewer moved tax_close_pma_company to the Impresariat issuer.
+    tax_codes = sorted(
+        code for code in _golden() if code.startswith("tax") and code != "tax_close_pma_company"
+    )
+    assert len(tax_codes) == 27
     for code in tax_codes:
         resolved = resolve_invoice_entity(code, FIRST_WITA_INSTANT)
         assert resolved is synthetic_registry["permata_bali_nol_konsultan"], code
+    closing = resolve_invoice_entity("tax_close_pma_company", FIRST_WITA_INSTANT)
+    assert closing is synthetic_registry["mandiri_bali_nol_impresariat"]

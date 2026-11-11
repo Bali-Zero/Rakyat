@@ -221,8 +221,8 @@ class TestGeneratorEntityWiring:
     @pytest.mark.parametrize(
         ("code", "key"),
         [
-            ("kitas", A_KEY),
-            ("visa_c1_tourism", B_KEY),
+            ("kitas", B_KEY),
+            ("visa_c1_tourism", A_KEY),
             ("tax_monthly_basic_0_50", D_KEY),
             ("ext_b1_voa", C_KEY),
         ],
@@ -333,7 +333,7 @@ class TestRetiredCodes:
             ("urgent_1_day", A_KEY),
             ("urgent_2_days", A_KEY),
             ("urgent_3_days", A_KEY),
-            ("other_driving_license", B_KEY),
+            ("other_driving_license", A_KEY),
             ("other_create_molina_express", A_KEY),
         ],
     )
@@ -352,14 +352,14 @@ class TestRetiredCodes:
         assert generator_entity(service) is synth[key]
 
     @pytest.mark.asyncio
-    async def test_create_molina_express_warns_once(self, env, caplog):
+    async def test_unmapped_code_warns_once(self, env, caplog):
         service, _, _ = env
         conn = service.db_pool._conn
         with caplog.at_level(logging.WARNING, logger="backend.services.invoicing.entities"):
             result = await run_flow(
                 service,
                 conn,
-                practice=practice_data(practice_type_code="other_create_molina_express"),
+                practice=practice_data(practice_type_code="other_acc_boarding_pass"),
                 lookup=[lookup_row(db_now=POST_CUTOVER)],
                 persisted=binding_row(A_KEY, POST_CUTOVER),
             )

@@ -1,6 +1,7 @@
 -- Migration 353: persist invoice issuer binding.
 -- Existing NULL bindings are legacy invoices issued by the default entity.
 -- No historical routing or automatic backfill is performed.
+-- depends: 352
 
 DO $migration$
 BEGIN

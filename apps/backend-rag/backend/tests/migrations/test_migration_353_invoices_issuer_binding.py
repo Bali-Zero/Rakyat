@@ -330,3 +330,7 @@ async def test_inconsistent_legacy_row_is_not_adopted(db: asyncpg.Connection, sq
     )
     row = await db.fetchrow(sql, *_variant_args(sql, DEFAULT_ENTITY_KEY, ROUTED_AT))
     assert row is None, "key NULL with routed_at set must fail the adoption guard"
+
+
+def test_migration_declares_its_dependency_on_352() -> None:
+    assert "-- depends: 352" in _forward().splitlines()
