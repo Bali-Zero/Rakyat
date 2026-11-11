@@ -22,6 +22,7 @@ const PAGES = {
   ownerCashout: join(__dirname, "..", "owner-cashout", "page.tsx"),
   hrSettings: join(__dirname, "..", "settings", "page.tsx"),
   layout: join(__dirname, "..", "layout.tsx"),
+  myCard: join(__dirname, "..", "card", "page.tsx"),
   leaveRequest: join(__dirname, "..", "leave", "request", "page.tsx"),
 };
 

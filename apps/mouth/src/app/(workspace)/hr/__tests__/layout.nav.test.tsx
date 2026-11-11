@@ -12,7 +12,7 @@ vi.mock("@/lib/api/hr/hr", () => ({ getCapabilities: getCapabilitiesMock }));
 
 import HRLayout from "../layout";
 
-const MEMBER_LINKS = ["My HR", "Bonuses", "Payroll", "Leave"];
+const MEMBER_LINKS = ["My HR", "My card", "Bonuses", "Payroll", "Leave"];
 
 function hrefs(): string[] {
   return screen
@@ -36,7 +36,13 @@ describe("HR layout navigation", () => {
     });
     render(<HRLayout>x</HRLayout>);
     await waitFor(() => expect(getCapabilitiesMock).toHaveBeenCalled());
-    expect(hrefs()).toEqual(["/hr", "/hr/bonuses", "/hr/payroll", "/hr/leave"]);
+    expect(hrefs()).toEqual([
+      "/hr",
+      "/hr/card",
+      "/hr/bonuses",
+      "/hr/payroll",
+      "/hr/leave",
+    ]);
     for (const label of MEMBER_LINKS) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     }

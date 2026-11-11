@@ -7,6 +7,7 @@ import {
   Banknote,
   Gift,
   Calendar,
+  IdCard,
   Lock,
   Receipt,
   Settings,
@@ -26,6 +27,7 @@ type NavItem = SubNavItem & {
 
 const allNavItems: NavItem[] = [
   { href: "/hr", label: "My HR", icon: LayoutDashboard, adminOnly: false },
+  { href: "/hr/card", label: "My card", icon: IdCard, adminOnly: false },
   { href: "/hr/employees", label: "Employees", icon: Users, adminOnly: true },
   { href: "/hr/bonuses", label: "Bonuses", icon: Gift, adminOnly: false },
   { href: "/hr/payroll", label: "Payroll", icon: Banknote, adminOnly: false },
