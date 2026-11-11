@@ -237,7 +237,11 @@ class InvoiceAutomationService:
                     client_email=client_data.get("email"),
                     client_phone=client_data.get("phone"),
                     client_address=client_data.get("address"),
-                    practice_type=practice_data.get("practice_type_code", "SERVICE"),
+                    practice_type=(
+                        practice_data.get("practice_type_name")
+                        or practice_data.get("practice_type_code")
+                        or "SERVICE"
+                    ),
                     practice_description=practice_data.get("notes", "Professional Services"),
                     quoted_price=float(practice_data.get("quoted_price", 0)),
                     notes="Thank you for choosing Bali Zero. Payment is due within 2 days.",

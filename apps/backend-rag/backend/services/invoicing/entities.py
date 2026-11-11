@@ -98,7 +98,7 @@ CIMB_BAYU_BALI_NOL = InvoiceEntity(
 # document and NPWP card dated 2026-11-10.
 MANDIRI_BALI_NOL_IMPRESARIAT = InvoiceEntity(
     key="mandiri_bali_nol_impresariat",
-    company_name="PT. Bali Nol Impresariat",
+    company_name="PT BALI NOL IMPRESARIAT",
     tax_id="0537 9883 1390 6000",
     address=ISSUER_ADDRESS,
     bank_account_name="Bali Nol Impresariat",
@@ -112,7 +112,7 @@ MANDIRI_BALI_NOL_IMPRESARIAT = InvoiceEntity(
 # address = NPWP address. Details: same source as Mandiri.
 BNI_BAYU_SANTERO = InvoiceEntity(
     key="bni_bayu_santero",
-    company_name="CV. Bayu Santero",
+    company_name="CV BAYU SANTERO",
     tax_id="0021 5256 6290 6000",
     address=ISSUER_ADDRESS,
     bank_account_name="CV. Bayu Santero",
@@ -127,7 +127,7 @@ BNI_BAYU_SANTERO = InvoiceEntity(
 # printed on those invoices and are optional.
 PERMATA_BALI_NOL_KONSULTAN = InvoiceEntity(
     key="permata_bali_nol_konsultan",
-    company_name="PT Bali Nol Konsultan",
+    company_name="PT BALI NOL KONSULTAN",
     tax_id="0509 8157 3490 6000",
     address=ISSUER_ADDRESS,
     bank_account_name="Bali Nol Konsultan",
