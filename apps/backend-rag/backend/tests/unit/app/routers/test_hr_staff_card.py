@@ -76,7 +76,15 @@ def test_member_gets_own_card_in_full_without_notes(make_client):
     assert body["employee_id"] == 7 and body["full_name"] == "Fake Member"
     assert body["npwp"] == "00.000.000.0-000.000" and body["base_salary_idr"] == 1
     assert body["nik"] == "0000000000000042" and body["docs"] == {"ktp": "file-1"}
-    assert "notes" not in body and "team_member_id" not in body
+    assert "notes" not in body
+    # C11: the card names the identity the server matched, the session's own id.
+    assert body["team_member_id"] == MEMBER["id"]
+
+
+def test_the_card_carries_the_matched_primary_key_not_the_email(make_client):
+    res = make_client(MEMBER, _service()).get("/api/hr/me/card")
+    assert res.json()["team_member_id"] == "tm-fake-7"
+    assert "@" not in res.json()["team_member_id"]
 
 
 def test_the_card_is_keyed_by_the_session_member_id_never_by_email(make_client):

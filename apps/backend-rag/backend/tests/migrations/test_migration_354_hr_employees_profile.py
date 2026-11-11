@@ -164,6 +164,8 @@ async def test_me_card_returns_the_authenticated_rows_card_never_the_case_twins(
         body["unit"] == "mine" and body["base_salary_idr"] == 1 and body["full_name"] == "Fake Twin"
     )
     assert "notes" not in body and "theirs" not in res.text and "n1" not in res.text
+    # C11: the card names the primary key the SQL matched, equal to the session's id.
+    assert body["team_member_id"] == staff["id"] == "tm-t1"
 
     # The twin session (a client row) is refused outright, and a session whose email is
     # the OTHER case still gets only its own row's card, never the lower-case one.
@@ -261,6 +263,8 @@ async def test_real_auth_path_active_staff_gets_own_card(real_auth_client) -> No
         res = await client.get("/api/hr/me/card", headers=headers)
     assert res.status_code == 200, res.text
     assert res.json()["unit"] == "mine" and "theirs" not in res.text
+    # C11 through the real middleware: the card names the key of the signed token's `sub`.
+    assert res.json()["team_member_id"] == "tm-t1"
 
 
 @pytest.mark.asyncio

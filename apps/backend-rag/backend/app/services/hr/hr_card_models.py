@@ -158,6 +158,9 @@ class StaffCard(BaseModel):
     """The member's own card: every value in full except the HR free-text `notes`."""
 
     employee_id: int
+    # The team_members PRIMARY KEY the SQL matched (STAFF_CARD.md C11): the identity this
+    # card belongs to, so a client can refuse a card that is not its signed-in member's.
+    team_member_id: str
     full_name: str | None = None
     role: str | None = None
     department: str | None = None
@@ -248,6 +251,7 @@ def member_card(card: dict[str, Any]) -> StaffCard:
     """Explicit allow-list of what a card exposes; every value coerced, never raising."""
     values: dict[str, Any] = {
         "employee_id": _int_or_none(card.get("id")) or 0,
+        "team_member_id": str(card["team_member_id"]) if card.get("team_member_id") else "",
         "full_name": _str_or_none(card.get("full_name")),
         "role": _str_or_none(card.get("role")),
         "department": _str_or_none(card.get("department")),

@@ -54,6 +54,8 @@ export interface HrContract {
 }
 export interface HrStaffCard {
   employee_id: number;
+  /** The team_members key the server matched; must equal the signed-in user's id. */
+  team_member_id: string;
   full_name: string | null;
   role: string | null;
   department: string | null;
