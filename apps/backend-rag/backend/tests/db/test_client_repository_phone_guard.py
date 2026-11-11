@@ -8,6 +8,7 @@ raise DuplicatePhoneError instead of double-inserting.
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -15,6 +16,8 @@ import pytest
 from backend.db.repositories.client_repository import (
     ClientRepository,
     DuplicatePhoneError,
+    _parse_date,
+    _parse_document_date,
 )
 
 
@@ -102,3 +105,21 @@ async def test_create_skips_recheck_when_duplicates_allowed():
 
     assert record["id"] == 901
     assert "INSERT INTO clients" in conn.fetchrow.await_args_list[0].args[0]
+
+
+@pytest.mark.parametrize("invalid", ["0001-01-01", "9999-12-31"])
+def test_client_repository_drops_out_of_range_document_date(invalid):
+    assert _parse_document_date(invalid) is None
+
+
+def test_client_repository_keeps_normal_document_date():
+    assert _parse_document_date("2030-01-01").isoformat() == "2030-01-01"
+
+
+def test_client_repository_does_not_range_check_date_of_birth():
+    assert _parse_date("1890-05-01").isoformat() == "1890-05-01"
+
+
+def test_client_repository_document_date_accepts_a_datetime():
+    assert _parse_document_date(datetime(2030, 1, 1, 12, 0)) == datetime(2030, 1, 1, 12, 0)
+    assert _parse_document_date(datetime(1, 1, 1)) is None

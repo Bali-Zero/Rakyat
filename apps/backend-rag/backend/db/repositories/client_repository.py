@@ -7,6 +7,7 @@ import asyncpg
 from backend.db.base_repository import BaseRepository
 from backend.phone_lock import lock_phone_cores, phone_core
 from backend.services.common.cache import cache_invalidating
+from backend.services.crm.documents import is_client_document_date
 from backend.utils.query_builder import QueryBuilder
 
 # Duplicate-phone owner search — the ONE query both the router pre-check and
@@ -98,6 +99,7 @@ class DuplicatePhoneError(Exception):
         self.existing_full_name = existing_full_name
         self.existing_assigned_to = existing_assigned_to
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -150,6 +152,15 @@ def _parse_date(value: str | date | None) -> date | None:
             extra={"error_type": type(exc).__name__, "raw": str(value)[:32]},
         )
         return None
+
+
+def _parse_document_date(value: str | date | None) -> date | None:
+    """Like ``_parse_date``, but drops a date outside the supported document range."""
+    parsed = _parse_date(value)
+    if not is_client_document_date(parsed):
+        logger.debug("client_repository.parse_date_out_of_range")
+        return None
+    return parsed
 
 
 class ClientRepository(BaseRepository):
@@ -263,9 +274,7 @@ class ClientRepository(BaseRepository):
                 # 10, F12): creating a client with a phone adds an owner of
                 # that core — take the cooperative lock inside this TX so the
                 # insert cannot race an intake-delivery resolution window.
-                await lock_phone_cores(
-                    conn, client_data.get("phone"), client_data.get("whatsapp")
-                )
+                await lock_phone_cores(conn, client_data.get("phone"), client_data.get("whatsapp"))
                 if enforce_unique_phone_core:
                     # Round 12, F16: the router's dedup pre-check runs BEFORE
                     # this transaction — two concurrent creates can both pass
@@ -305,7 +314,7 @@ class ClientRepository(BaseRepository):
                     inferred_lead_source,
                     client_data.get("service_interest", []),
                     client_data.get("tax_id"),
-                    _parse_date(client_data.get("passport_expiry")),
+                    _parse_document_date(client_data.get("passport_expiry")),
                     _parse_date(client_data.get("date_of_birth")),
                     client_data.get("company_name"),
                     client_data.get("referrer_url"),

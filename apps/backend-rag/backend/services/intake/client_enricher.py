@@ -30,6 +30,8 @@ from typing import Any
 
 import asyncpg
 
+from backend.services.crm.documents import is_client_document_date
+
 logger = logging.getLogger("zantara.intake.client_enricher")
 
 # Columns the GATE-11 verified-promotion check applies to (identity_backfill
@@ -59,15 +61,8 @@ def _normalize_for_promotion(value: Any) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", str(value)).upper()
 
 
-# A document date outside this window is an OCR/placeholder artefact, never a real
-# expiry or birth date. date.min / date.max matter most: asyncpg encodes them as
-# -infinity / infinity, which made client_expiry_alerts_view fail on read.
-_PLAUSIBLE_MIN = date(1900, 1, 1)
-_PLAUSIBLE_MAX = date(2100, 12, 31)
-
-
 def _plausible(d: date) -> date | None:
-    if _PLAUSIBLE_MIN <= d <= _PLAUSIBLE_MAX:
+    if is_client_document_date(d):
         return d
     logger.warning("client_enricher: date out of plausible range — skipping field")
     return None

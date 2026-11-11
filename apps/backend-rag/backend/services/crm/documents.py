@@ -11,12 +11,36 @@ crm_enhanced_documents.py, which writes to `documents`.
 """
 
 import re
+from datetime import date, datetime
 from typing import Any
 
 from backend.app.utils.logging_utils import get_logger
 from backend.services.crm.drive_taxonomy import CATEGORY_TO_FOLDER  # noqa: F401
 
 logger = get_logger(__name__)
+
+# PostgreSQL represents its DATE infinities as Python's date.min/date.max in
+# asyncpg.  These are placeholders, not usable client-document dates.
+CLIENT_DOCUMENT_DATE_MIN = date(1900, 1, 1)
+CLIENT_DOCUMENT_DATE_MAX = date(2100, 12, 31)
+
+
+def is_client_document_date(value: date | None) -> bool:
+    """Whether a nullable client document date is safe to store or use."""
+    if value is None:
+        return True
+    if isinstance(value, datetime):
+        # datetime is a date subclass but does not compare with one.
+        value = value.date()
+    return CLIENT_DOCUMENT_DATE_MIN <= value <= CLIENT_DOCUMENT_DATE_MAX
+
+
+def validate_client_document_date(value: date | None) -> date | None:
+    """Return a nullable document date or reject PostgreSQL-infinity sentinels."""
+    if not is_client_document_date(value):
+        raise ValueError("client document date must be between 1900-01-01 and 2100-12-31")
+    return value
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Document Auto-Categorization (from document_categorizer.py)

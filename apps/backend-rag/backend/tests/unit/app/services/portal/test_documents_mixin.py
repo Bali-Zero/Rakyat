@@ -139,8 +139,14 @@ async def test_get_documents_shapes_client_visible_rows() -> None:
     assert mock_conn.fetch.call_args.args[1:] == (1, "passport")
 
 
+@pytest.mark.parametrize(
+    ("detected_expiry", "expected_expiry"),
+    [("2027-05-10", "2027-05-10"), ("0001-01-01", None), ("9999-12-31", None)],
+)
 @pytest.mark.asyncio
-async def test_upload_document_success_stores_processed_document() -> None:
+async def test_upload_document_stores_only_supported_expiry_dates(
+    detected_expiry: str, expected_expiry: str | None
+) -> None:
     service, mock_conn = _make_service_with_fetchrow(row=None)
     created_at = datetime(2026, 5, 10, 10, 0, tzinfo=timezone.utc)
     extracted_text = "Extracted passport text. " * 20
@@ -176,7 +182,7 @@ async def test_upload_document_success_stores_processed_document() -> None:
         ),
         patch(
             "backend.services.portal._mixins.documents.ExpiryDetector.detect_expiry",
-            return_value={"expiry_date": "2027-05-10", "confidence": 0.8},
+            return_value={"expiry_date": detected_expiry, "confidence": 0.8},
         ),
         patch(
             "backend.services.documents.ocr_dispatcher_service.dispatch_ocr_by_folder",
@@ -198,7 +204,7 @@ async def test_upload_document_success_stores_processed_document() -> None:
     assert result["id"] == 88
     assert result["type"] == "passport"
     assert result["name"] == "passport.pdf"
-    assert result["expiry_date"] == "2027-05-10"
+    assert result["expiry_date"] == expected_expiry
     assert "processing" not in result
     assert "extracted_text_preview" not in result
     assert service._metrics["uploads_total"] == 1
@@ -211,6 +217,7 @@ async def test_upload_document_success_stores_processed_document() -> None:
         None,
         "google_drive",
     )
+    assert mock_conn.fetchrow.call_args_list[2].args[10] == expected_expiry
 
 
 @pytest.mark.asyncio

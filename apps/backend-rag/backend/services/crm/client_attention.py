@@ -43,6 +43,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from backend.services.compliance.lkpm_service import QUARTER_DEADLINES
+from backend.services.crm.documents import is_client_document_date
 from backend.services.crm.permit_label import (
     FAMILY_EVISA,
     FAMILY_ITK,
@@ -98,12 +99,13 @@ def _as_date(value: Any) -> date | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value.date()
+        value = value.date()
     if isinstance(value, date):
-        return value
+        return value if is_client_document_date(value) else None
     if isinstance(value, str):
         try:
-            return date.fromisoformat(value[:10])
+            parsed = date.fromisoformat(value[:10])
+            return parsed if is_client_document_date(parsed) else None
         except ValueError:
             return None
     return None

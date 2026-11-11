@@ -97,6 +97,28 @@ def test_parse_date_or_none_invalid():
     assert _parse_date_or_none("2026/06/15") is None
 
 
+@pytest.mark.parametrize("invalid", ["0001-01-01", "9999-12-31"])
+def test_document_request_models_reject_dates_outside_supported_range(invalid):
+    from pydantic import ValidationError
+
+    from backend.app.routers.crm_enhanced import DocumentCreate, DocumentUpdate
+
+    with pytest.raises(ValidationError, match="1900-01-01"):
+        DocumentCreate(document_type="passport", expiry_date=invalid)
+    with pytest.raises(ValidationError, match="1900-01-01"):
+        DocumentUpdate(expiry_date=invalid)
+
+
+def test_document_request_models_accept_normal_expiry_date():
+    from backend.app.routers.crm_enhanced import DocumentCreate, DocumentUpdate
+
+    assert (
+        DocumentCreate(document_type="passport", expiry_date="2030-01-01").expiry_date
+        == "2030-01-01"
+    )
+    assert DocumentUpdate(expiry_date="2030-01-01").expiry_date == "2030-01-01"
+
+
 # ============================================================
 # get_client_documents
 # ============================================================

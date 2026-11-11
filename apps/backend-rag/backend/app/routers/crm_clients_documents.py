@@ -25,6 +25,7 @@ from backend.app.utils.error_handlers import handle_database_error
 from backend.app.utils.json_utils import to_jsonb
 from backend.app.utils.logging_utils import get_logger
 from backend.core.cache import invalidate_cache
+from backend.services.crm.documents import validate_client_document_date
 from backend.services.crm.gender import normalize_gender_lenient
 
 logger = get_logger(__name__)
@@ -433,6 +434,7 @@ Use null for unclear fields. Return ONLY JSON."""
             if extracted.get("expiry_date"):
                 try:
                     expiry_date = datetime.strptime(extracted["expiry_date"], "%Y-%m-%d").date()
+                    validate_client_document_date(expiry_date)
                     update_parts.append(f"passport_expiry = ${param_idx}")
                     params.append(expiry_date)
                     param_idx += 1

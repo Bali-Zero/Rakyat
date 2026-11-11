@@ -29,6 +29,8 @@ from typing import Any
 
 import httpx
 
+from backend.services.crm.documents import is_client_document_date
+
 logger = logging.getLogger("zantara.intake.validate")
 
 # --- Format rules (authoritative, from existing CRM code). ---
@@ -218,6 +220,9 @@ def _check_expiry(
     parsed = _parse_date(value)
     if parsed is None:
         failures.append(f"{field_name} unparseable as date ('{value}')")
+        return
+    if not is_client_document_date(parsed):
+        failures.append(f"{field_name} outside supported range (1900-01-01 to 2100-12-31)")
         return
     today = _dt.date.today()
     if parsed < today - _dt.timedelta(days=_EXPIRY_PAST_GRACE_DAYS):
