@@ -117,6 +117,11 @@ async def _find_by_name(conn: asyncpg.Connection, normalized: str) -> list[async
     return [row for row in rows if normalize_company_name(row["company_name"]) == normalized]
 
 
+def link_lock_key(client_id: int, company_id: int) -> str:
+    """Advisory-lock key every writer of one client/company link takes (resolver and link route)."""
+    return f"invoice-company:link:{client_id}:{company_id}"
+
+
 def _ambiguous(rows: list[asyncpg.Record]) -> InvoiceCompanyError:
     return InvoiceCompanyError(
         409,
@@ -187,6 +192,15 @@ async def resolve_invoice_company(
             if len(matches) > 1:
                 raise _ambiguous(matches)
             found = matches[0]["id"] if matches else None
+            if found is not None and npwp_typed:
+                # Same name, no NPWP on file: the typed NPWP completes that record.
+                await conn.execute(
+                    "UPDATE companies SET npwp_company = $1, updated_by = $2, updated_at = now()"
+                    " WHERE id = $3 AND (npwp_company IS NULL OR btrim(npwp_company) = '')",
+                    npwp_typed,
+                    actor,
+                    found,
+                )
         if found is None:
             found = await conn.fetchval(
                 "INSERT INTO companies (company_name, company_type, npwp_company, created_by, updated_by)"
@@ -197,7 +211,7 @@ async def resolve_invoice_company(
                 actor,
             )
         resolved = found
-    await _lock(conn, f"invoice-company:link:{client_id}:{resolved}")
+    await _lock(conn, link_lock_key(client_id, resolved))
     await conn.execute(
         "INSERT INTO client_company_links (client_id, company_id, role, status)"
         " SELECT $1::int, $2::int, $3::text, 'active'"

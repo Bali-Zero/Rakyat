@@ -8,6 +8,7 @@ fail-closed on a default column value that hand-built rows hid). Synthetic data 
 
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 from collections.abc import AsyncIterator
@@ -59,7 +60,8 @@ CREATE TABLE companies (
 CREATE TABLE client_company_links (
     id SERIAL PRIMARY KEY, client_id INTEGER NOT NULL, company_id INTEGER NOT NULL,
     role VARCHAR NOT NULL DEFAULT 'shareholder', is_primary BOOLEAN DEFAULT false,
-    status VARCHAR DEFAULT 'active', end_date DATE,
+    status VARCHAR DEFAULT 'active', end_date DATE, ownership_percentage NUMERIC,
+    shares_count INTEGER, start_date DATE,
     created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now(),
     UNIQUE (client_id, company_id)
 );
@@ -472,6 +474,15 @@ async def test_typed_npwp_that_exists_nowhere_reuses_a_same_name_company_without
         invoice_company_npwp="01.234.567.8-901.000",
     )
     assert created.invoice_company_id == bare
+    assert (
+        await pool.fetchval("SELECT npwp_company FROM companies WHERE id=$1", bare)
+        == "01.234.567.8-901.000"
+    )
+    assert "NPWP: 01.234.567.8-901.000" in await pdf_text(pool, created.id)
+    again = await create(
+        pool, person, invoice_company_name="Other Name", invoice_company_npwp="012345678901000"
+    )
+    assert again.invoice_company_id == bare
 
 
 @pytest.mark.asyncio
@@ -504,3 +515,45 @@ async def test_link_is_written_once_even_without_the_unique_constraint(pool: asy
         )
         == 1
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("writer", ["link_route", "practice_form"])
+async def test_every_link_writer_waits_for_the_link_lock(pool: asyncpg.Pool, writer: str) -> None:
+    from backend.app.modules.crm import company_router
+    from backend.app.modules.crm.company_schemas import ClientCompanyLinkCreate
+    from backend.services.invoicing.invoice_company import link_lock_key
+
+    person = await client(pool)
+    co = await company(pool, "PT Synthetic Kunci")
+
+    async def write() -> object:
+        if writer == "practice_form":
+            return await create(pool, person, invoice_company_id=co)
+        return await company_router.link_client_to_company(
+            request=None,
+            company_id=co,
+            client_id=person,
+            data=ClientCompanyLinkCreate(role="Director"),
+            db=pool,
+            current_user=USER,
+        )
+
+    async def links() -> int:
+        return await pool.fetchval(
+            "SELECT count(*) FROM client_company_links WHERE client_id=$1 AND company_id=$2",
+            person,
+            co,
+        )
+
+    async with pool.acquire() as holder:
+        async with holder.transaction():
+            await holder.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1))", link_lock_key(person, co)
+            )
+            task = asyncio.create_task(write())
+            await asyncio.sleep(0.5)
+            assert not task.done()
+            assert await links() == 0
+    await task
+    assert await links() == 1

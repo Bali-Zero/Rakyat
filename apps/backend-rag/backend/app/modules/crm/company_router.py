@@ -21,6 +21,7 @@ from backend.app.modules.crm.company_schemas import (
 from backend.app.routers.documents_proxy import assert_drive_file_belongs_to_company
 from backend.app.utils.crm_utils import is_crm_admin, verify_client_access
 from backend.services.common.background import spawn
+from backend.services.invoicing.invoice_company import link_lock_key
 
 logger = logging.getLogger(__name__)
 
@@ -484,31 +485,38 @@ async def link_client_to_company(
             write=True,
         )
 
-        # Check if link already exists
-        existing = await conn.fetchrow(
-            "SELECT 1 FROM client_company_links WHERE client_id = $1 AND company_id = $2",
-            client_id,
-            company_id,
-        )
-        if existing:
-            raise HTTPException(status_code=400, detail="Client is already linked to this company")
+        # One transaction with the same advisory lock the practice form's resolver takes,
+        # so the check and the insert cannot interleave with it.
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1))", link_lock_key(client_id, company_id)
+            )
+            existing = await conn.fetchrow(
+                "SELECT 1 FROM client_company_links WHERE client_id = $1 AND company_id = $2",
+                client_id,
+                company_id,
+            )
+            if existing:
+                raise HTTPException(
+                    status_code=400, detail="Client is already linked to this company"
+                )
 
-        row = await conn.fetchrow(
-            """
-            INSERT INTO client_company_links (
-                client_id, company_id, role, is_primary,
-                ownership_percentage, shares_count, start_date
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING id
-            """,
-            client_id,
-            company_id,
-            data.role,
-            data.is_primary,
-            data.ownership_percentage,
-            data.shares_count,
-            data.start_date,
-        )
+            row = await conn.fetchrow(
+                """
+                INSERT INTO client_company_links (
+                    client_id, company_id, role, is_primary,
+                    ownership_percentage, shares_count, start_date
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING id
+                """,
+                client_id,
+                company_id,
+                data.role,
+                data.is_primary,
+                data.ownership_percentage,
+                data.shares_count,
+                data.start_date,
+            )
 
         return {
             "link_id": row["id"],

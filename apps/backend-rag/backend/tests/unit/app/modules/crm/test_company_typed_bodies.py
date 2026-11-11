@@ -42,6 +42,10 @@ class FakeConn:
         self.fetchval = AsyncMock(return_value=1)
         self.execute = AsyncMock()
 
+    @asynccontextmanager
+    async def transaction(self):
+        yield
+
 
 class FakePool:
     def __init__(self, conn: FakeConn) -> None:
