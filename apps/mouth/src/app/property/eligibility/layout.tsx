@@ -71,7 +71,7 @@ export default function PropertyLayout({
         >
           {children}
         </div>
-        <Footer />
+        <Footer funnel="property" />
       </div>
     </R19Presentation>
   );

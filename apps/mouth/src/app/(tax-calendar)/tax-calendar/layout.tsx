@@ -39,7 +39,7 @@ export default function TaxCalendarLayout({
         >
           {children}
         </div>
-        <Footer />
+        <Footer funnel="tax" linkOrigin="https://balizero.com" />
       </div>
     </R19Presentation>
   );

@@ -38,17 +38,32 @@ const COMPANY = [
   { label: "Team", href: "/team" },
 ];
 
-export function Footer() {
+type FooterFunnel = "home" | "visa" | "kbli" | "tax" | "property";
+
+// `funnel` pins the analytics attribution when the browser pathname does not
+// show it (tax.balizero.com serves /tax-calendar through a proxy rewrite, so
+// usePathname() there is "/"). `linkOrigin` makes the footer links absolute for
+// the same reason: on that host a root-relative /about is rewritten to
+// /tax-calendar/about, which does not exist.
+export function Footer({
+  funnel,
+  linkOrigin = "",
+}: {
+  funnel?: FooterFunnel;
+  linkOrigin?: string;
+} = {}) {
   const pathname = usePathname();
-  const footerFunnel = pathname.startsWith("/visa")
-    ? "visa"
-    : pathname.startsWith("/kbli")
-      ? "kbli"
-      : pathname.startsWith("/tax")
-        ? "tax"
-        : pathname.startsWith("/property")
-          ? "property"
-          : "home";
+  const footerFunnel: FooterFunnel =
+    funnel ??
+    (pathname.startsWith("/visa")
+      ? "visa"
+      : pathname.startsWith("/kbli")
+        ? "kbli"
+        : pathname.startsWith("/tax")
+          ? "tax"
+          : pathname.startsWith("/property")
+            ? "property"
+            : "home");
 
   const FOOTER_EVENT = {
     home: "home_whatsapp_cta",
@@ -88,13 +103,13 @@ export function Footer() {
           </div>
 
           {/* Services */}
-          <FooterCol title="Services" items={SERVICES} />
+          <FooterCol title="Services" items={SERVICES} origin={linkOrigin} />
 
           {/* News */}
-          <FooterCol title="News" items={NEWS} />
+          <FooterCol title="News" items={NEWS} origin={linkOrigin} />
 
           {/* Company */}
-          <FooterCol title="Company" items={COMPANY} />
+          <FooterCol title="Company" items={COMPANY} origin={linkOrigin} />
 
           {/* Contact — the one that matters */}
           <div>
@@ -155,21 +170,21 @@ export function Footer() {
           <div className="flex items-center gap-x-5 gap-y-2 flex-wrap justify-end">
             {/* P4: py-3 -my-3 expands hit area to ~44px without changing visual spacing */}
             <a
-              href="/privacy"
+              href={`${linkOrigin}/privacy`}
               className="text-[11px] py-3 -my-3"
               style={{ color: "var(--text-tertiary)" }}
             >
               Privacy Policy
             </a>
             <a
-              href="/terms"
+              href={`${linkOrigin}/terms`}
               className="text-[11px] py-3 -my-3"
               style={{ color: "var(--text-tertiary)" }}
             >
               Terms of Service
             </a>
             <a
-              href="/cookies"
+              href={`${linkOrigin}/cookies`}
               className="text-[11px] py-3 -my-3"
               style={{ color: "var(--text-tertiary)" }}
             >
@@ -185,9 +200,11 @@ export function Footer() {
 function FooterCol({
   title,
   items,
+  origin,
 }: {
   title: string;
   items: { label: string; href: string }[];
+  origin: string;
 }) {
   return (
     <div>
@@ -201,7 +218,7 @@ function FooterCol({
         {items.map((it) => (
           <li key={it.label}>
             <a
-              href={it.href}
+              href={`${origin}${it.href}`}
               className="inline-flex min-h-11 items-center text-[13px] transition-colors"
               style={{ color: "var(--text-secondary)" }}
             >
