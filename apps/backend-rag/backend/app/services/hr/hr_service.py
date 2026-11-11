@@ -38,6 +38,12 @@ def business_today() -> date:
     return (datetime.now(timezone.utc) + timedelta(hours=8)).date()
 
 
+_LOCK_ERRORS = (
+    asyncpg.exceptions.LockNotAvailableError,
+    asyncpg.exceptions.DeadlockDetectedError,
+)
+
+
 class HRCardCode(str, Enum):
     """The closed set of card failure codes (STAFF_CARD.md)."""
 
@@ -45,6 +51,7 @@ class HRCardCode(str, Enum):
     INVALID_INPUT = "invalid_input"
     PROFILE_NOT_OBJECT = "profile_not_object"
     DB_ERROR = "db_error"
+    LOCK_TIMEOUT = "lock_timeout"
 
 
 class HRCardError(Exception):
@@ -163,7 +170,7 @@ class HRService:
                tm.full_name, tm.role, tm.department
         FROM hr_employees e
         JOIN team_members tm ON tm.id = e.team_member_id
-        WHERE tm.id = $1 AND COALESCE(tm.role, '') <> 'client'
+        WHERE tm.id = $1 AND COALESCE(tm.role, '') <> 'client' AND tm.active = true
     """
 
     # $11 is a Python dict bound to jsonb: the pool codec encodes it exactly once.
@@ -242,6 +249,24 @@ class HRService:
             raise HRCardError(HRCardCode.INVALID_INPUT)
         return fields, profile_patch
 
+    async def lock_staff_member(self, conn: Any, team_member_id: str, email: str) -> bool:
+        """Lock the team_members row FOR SHARE, re-checking exact email and staff in the same
+        statement. False when the row no longer matches; a lock timeout or deadlock is
+        HRCardError(LOCK_TIMEOUT). Runs in a savepoint so a failed lock aborts nothing else."""
+        try:
+            async with conn.transaction():
+                found = await conn.fetchval(
+                    "SELECT id FROM team_members WHERE id = $1 AND email = $2 "
+                    "AND COALESCE(role, '') <> 'client' FOR SHARE",
+                    team_member_id,
+                    email,
+                )
+        except _LOCK_ERRORS:
+            raise HRCardError(HRCardCode.LOCK_TIMEOUT) from None
+        except Exception:
+            raise HRCardError(HRCardCode.DB_ERROR) from None
+        return found is not None
+
     async def merge_card_on(
         self,
         conn: Any,
@@ -282,6 +307,8 @@ class HRService:
                     raise HRCardError(HRCardCode.PROFILE_NOT_OBJECT)
         except HRCardError:
             raise
+        except _LOCK_ERRORS:
+            raise HRCardError(HRCardCode.LOCK_TIMEOUT) from None
         except Exception:
             raise HRCardError(HRCardCode.DB_ERROR) from None
         if row is None:

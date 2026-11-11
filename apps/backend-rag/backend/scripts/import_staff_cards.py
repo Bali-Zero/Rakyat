@@ -47,9 +47,26 @@ logging.getLogger().setLevel(logging.WARNING)
 logging.getLogger("backend.app.services.hr.hr_service").setLevel(logging.WARNING)
 
 
+LOCK_TIMEOUT_MS = 5000  # transaction-local: a blocked lock rejects the card, never hangs the batch
+_OUTER_KEYS = frozenset({"email", "fields", "profile", "is_active"})
+_BAD_ARGS = "import_staff_cards: invalid arguments (run with --help)"
+
+
+class _FixedTextParser(argparse.ArgumentParser):
+    """Every parse error is one fixed line and exit 2: argparse would otherwise quote the
+    offending argument verbatim ("unrecognized arguments: --npwp=...") on stderr."""
+
+    def error(self, message: str) -> Any:  # noqa: ARG002 - the message quotes argv; dropped
+        sys.stderr.write(_BAD_ARGS + "\n")
+        raise SystemExit(2)
+
+    def exit(self, status: int = 0, message: str | None = None) -> Any:  # noqa: ARG002
+        raise SystemExit(status)
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    """Strict flags: anything unknown exits 2 before any DB access."""
-    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    """Strict flags: anything unknown exits 2 with a fixed text before any DB access."""
+    parser = _FixedTextParser(prog="import_staff_cards.py", description=__doc__, allow_abbrev=False)
     parser.add_argument("--apply", action="store_true", help="write (default is dry-run)")
     parser.add_argument(
         "--skip-not-found",
@@ -63,6 +80,8 @@ def validate_card(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
     """Return ({email, fields, profile}, None) or (None, reason_code)."""
     if not isinstance(raw, dict):
         return None, "bad_shape"
+    if not set(raw) <= _OUTER_KEYS:  # an unknown outer key is rejected, never dropped
+        return None, "unknown_key"
     email = raw.get("email")
     if not isinstance(email, str) or not email.strip():
         return None, "email_missing"
@@ -111,8 +130,18 @@ async def run(
     if batch is not None:
         await batch.start()
     try:
-        for raw in cards:
-            await _process_card(conn, service, raw, apply, counts)
+        if batch is not None:
+            await conn.execute(f"SET LOCAL lock_timeout = {int(LOCK_TIMEOUT_MS)}")
+        pending: list[tuple[str, int, dict[str, Any]]] = []
+        for index, raw in enumerate(cards):
+            resolved = await _classify_card(conn, raw, apply, counts)
+            if resolved is not None:
+                pending.append((resolved[0], index, resolved[1]))
+        if apply:
+            # Deterministic lock order: two batches can never take the same members in
+            # opposite order (document order breaks ties for the same member).
+            for member_id, _, card in sorted(pending, key=lambda item: (item[0], item[1])):
+                await _apply_card(conn, service, member_id, card, counts)
         clean = not any(k.startswith("rejected:") for k in counts) and (
             skip_not_found or not counts["not_found"]
         )
@@ -132,13 +161,14 @@ async def run(
         raise
 
 
-async def _process_card(
-    conn: Any, service: HRService, raw: Any, apply: bool, counts: Counter[str]
-) -> None:
+async def _classify_card(
+    conn: Any, raw: Any, apply: bool, counts: Counter[str]
+) -> tuple[str, dict[str, Any]] | None:
+    """Validate and resolve one card. Returns (member_id, card) when it is to be written."""
     card, reason = validate_card(raw)
     if card is None:
         counts[f"rejected:{reason}"] += 1
-        return
+        return None
     candidates = await conn.fetch(
         "SELECT id, email FROM team_members WHERE LOWER(email) = LOWER($1) "
         "AND COALESCE(role, '') <> 'client'",
@@ -146,23 +176,34 @@ async def _process_card(
     )
     if len(candidates) > 1:  # never pick one of several people behind one address
         counts["rejected:ambiguous_email"] += 1
-        return
+        return None
     member = candidates[0] if candidates and candidates[0]["email"] == card["email"] else None
     if member is None:
         counts["not_found"] += 1
-        return
+        return None
     counts["resolved"] += 1
     has_row = await conn.fetchval(
         "SELECT 1 FROM hr_employees WHERE team_member_id = $1", member["id"]
     )
     if not has_row and card["fields"].get("hire_date") is None:
         counts["rejected:hire_date_required"] += 1
-        return
+        return None
     if not apply:
         counts["would_update" if has_row else "would_insert"] += 1
-        return
+        return None
+    return member["id"], card
+
+
+async def _apply_card(
+    conn: Any, service: HRService, member_id: str, card: dict[str, Any], counts: Counter[str]
+) -> None:
     try:
-        row_id = await service.merge_card_on(conn, member["id"], card["fields"], card["profile"])
+        # Lock the resolved row and re-check exact email + staff in the same statement: a
+        # member renamed or turned into a client since the resolve is rejected, not written.
+        if not await service.lock_staff_member(conn, member_id, card["email"]):
+            counts["rejected:member_changed"] += 1
+            return
+        row_id = await service.merge_card_on(conn, member_id, card["fields"], card["profile"])
     except HRCardError as exc:
         counts[f"rejected:{exc.code.value}"] += 1
         return

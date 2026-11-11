@@ -1,13 +1,27 @@
 """import_staff_cards: dry-run counts, strict flags, and no payload value ever printed."""
 
 import json
+import subprocess
+import sys
 from datetime import date
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from backend.app.services.hr.hr_service import HRCardCode
 from backend.scripts import import_staff_cards as imp
+
+SCRIPT = Path(imp.__file__).resolve()
+BACKEND_RAG = SCRIPT.parents[2]
+
+
+@pytest.fixture(autouse=True)
+def _lock_succeeds():
+    """The row lock is a database statement; the DB-backed tests exercise the real one."""
+    with patch.object(imp.HRService, "lock_staff_member", new=AsyncMock(return_value=True)) as lock:
+        yield lock
+
 
 # Synthetic data only.
 DOC = {
@@ -259,3 +273,107 @@ def test_identifier_shapes_are_enforced_by_the_import():
     assert reason == "invalid_profile"
     _, reason = imp.validate_card({"email": "fake.one@balizero.com", "fields": {"npwp": "1"}})
     assert reason == "invalid_fields"
+
+
+SENTINEL = "ZQXSENTINEL7"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--apply", f"--npwp={SENTINEL}"],  # unknown flag with a value
+        [f"--apply={SENTINEL}"],  # malformed value for a known flag
+        [SENTINEL],  # stray positional
+        [f"--skip-not-foun={SENTINEL}"],  # abbreviation attempt
+    ],
+)
+def test_the_real_entry_point_fails_every_parse_error_with_a_fixed_text(argv):
+    unreachable = {
+        "DATABASE_URL": "postgresql://nobody@127.0.0.1:1/none",  # any DB access would fail loudly
+        "PATH": "/usr/bin:/bin",
+        "JWT_SECRET_KEY": "test_jwt_secret_key_for_testing_only_min_32_chars_long",
+        "API_KEYS": "test_api_key_1",
+    }
+    run = subprocess.run(
+        [sys.executable, str(SCRIPT), *argv],
+        input="",
+        capture_output=True,
+        text=True,
+        cwd=BACKEND_RAG,
+        env={**unreachable, "PYTHONPATH": str(BACKEND_RAG)},
+        timeout=120,
+    )
+    assert run.returncode == 2
+    assert SENTINEL not in run.stdout and SENTINEL not in run.stderr
+    # (import-time warnings may precede it; the parser contributes exactly this one line)
+    assert run.stderr.strip().splitlines()[-1] == (
+        "import_staff_cards: invalid arguments (run with --help)"
+    )
+    assert "rejected" not in run.stdout and "failed" not in run.stdout  # nothing ran
+
+
+def test_help_output_contains_no_argv(capsys):
+    with pytest.raises(SystemExit) as exc:
+        imp.parse_args(["--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "--apply" in out and "--skip-not-found" in out and SENTINEL not in out
+
+
+def test_an_unknown_key_on_the_outer_card_is_rejected_not_dropped():
+    card = {"email": "fake.one@balizero.com", "fields": {}, "profile": {}, "extra": SENTINEL}
+    assert imp.validate_card(card) == (None, "unknown_key")
+    assert imp.validate_card({"email": "fake.one@balizero.com", "is_active": True})[1] is None
+
+
+@pytest.mark.asyncio
+async def test_unknown_outer_key_counts_and_blocks_the_batch():
+    doc = {"cards": [{"email": "fake.one@balizero.com", "notes": "x"}]}
+    counts, ok = await imp.run(_conn(), doc, apply=True)
+    assert counts["rejected:unknown_key"] == 1 and ok is False and counts["committed:no"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cards_are_written_in_resolved_member_id_order_not_document_order():
+    doc = {
+        "cards": [
+            {"email": "fake.two@balizero.com", "fields": {"hire_date": "2025-03-01"}},  # tm-2
+            {"email": "fake.one@balizero.com", "fields": {"bank_name": "B1"}},  # tm-1
+            {"email": "fake.one@balizero.com", "fields": {"bank_name": "B2"}},  # tm-1 again
+        ]
+    }
+    merge = AsyncMock(return_value=1)
+    with patch.object(imp.HRService, "merge_card_on", new=merge):
+        counts, ok = await imp.run(_conn(), doc, apply=True)
+    assert ok is True and counts["applied"] == 3
+    order = [(c.args[1], c.args[2]) for c in merge.await_args_list]
+    assert order == [
+        ("tm-1", {"bank_name": "B1"}),
+        ("tm-1", {"bank_name": "B2"}),  # same member: document order
+        ("tm-2", {"hire_date": date(2025, 3, 1)}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_member_that_no_longer_matches_is_rejected_and_not_merged(_lock_succeeds):
+    _lock_succeeds.return_value = False
+    merge = AsyncMock()
+    conn = _conn()
+    with patch.object(imp.HRService, "merge_card_on", new=merge):
+        counts, ok = await imp.run(conn, {"cards": DOC["cards"][:1]}, apply=True)
+    assert ok is False and counts["rejected:member_changed"] == 1
+    merge.assert_not_awaited()
+    conn.tx.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_apply_sets_a_transaction_local_lock_timeout_and_a_lock_timeout_is_a_code():
+    conn = _conn()
+    boom = AsyncMock(side_effect=imp.HRCardError(HRCardCode.LOCK_TIMEOUT))
+    with patch.object(imp.HRService, "merge_card_on", new=boom):
+        counts, ok = await imp.run(conn, {"cards": DOC["cards"][:1]}, apply=True)
+    assert ok is False and counts["rejected:lock_timeout"] == 1
+    assert "SET LOCAL lock_timeout" in conn.execute.await_args_list[0].args[0]
+    dry = _conn()
+    await imp.run(dry, {"cards": DOC["cards"][:1]}, apply=False)
+    dry.execute.assert_not_awaited()
