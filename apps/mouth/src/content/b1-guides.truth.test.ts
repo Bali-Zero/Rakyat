@@ -113,3 +113,83 @@ describe("B1 guide translation provenance", () => {
     });
   }
 });
+
+// The same wrong rule ("60 days, extendable to 120") also stood in two other
+// immigration article families. Both run through the same four patterns; the
+// comparison article additionally pins its metadata, its money and its
+// translation provenance. Money: the only amounts it may state are Bali Zero's
+// catalogue prices for the B1 VOA and its extension.
+const otherSlugs = [
+  "kitas-cancellation-company-closure",
+  "visa-free-vs-evoa-indonesia-comparison",
+];
+const comparison = "visa-free-vs-evoa-indonesia-comparison";
+const otherFiles = otherSlugs.flatMap((slug) =>
+  locales.map((locale) => `${slug}${locale}.mdx`),
+);
+const comparisonFiles = locales.map((locale) => `${comparison}${locale}.mdx`);
+const sepAmounts = (text: string) =>
+  [...text.matchAll(/\d{1,3}(?:[ .,  ]\d{3})+/g)].map((m) =>
+    Number(m[0].replace(/[^0-9]/g, "")),
+  );
+
+describe("B1 claim guard on the KITAS-closure and comparison articles", () => {
+  it.each(otherFiles)("%s carries none of the four wrong patterns", (file) => {
+    const raw = fs.readFileSync(path.join(root, file), "utf8");
+    for (const rule of rules) expect(normalize(raw)).not.toMatch(rule);
+  });
+  it.each([
+    "**Tourist visa (E-VOA):** - Available immediately after exit - 60 days stay (extendable to 120 days)",
+    "**Visa turistik (E-VOA):** - Masa tinggal 60 hari (dapat diperpanjang hingga 120 hari)",
+    "E-VOA: 60 jours (prolongeable jusqu’à 120 jours)",
+  ])("rejects the multi-line KITAS shape: %s", (sample) => {
+    expect(rules.some((rule) => rule.test(normalize(sample)))).toBe(true);
+  });
+  it.each(comparisonFiles)("%s metadata, FAQ and money are correct", (file) => {
+    const raw = fs.readFileSync(path.join(root, file), "utf8");
+    const { data } = matter(raw);
+    expect(data.updatedAt).toBe("2026-11-11");
+    for (const key of ["description", "excerpt", "seoDescription"]) {
+      expect(data[key], `${file}: ${key}`).toMatch(/30/);
+      expect(data[key], `${file}: ${key}`).not.toMatch(/120/);
+    }
+    expect(data.aiOptimization.answerSnippet).toMatch(/30/);
+    expect(data.aiOptimization.answerSnippet).toMatch(/60/);
+    expect(data.faq.length).toBeGreaterThanOrEqual(3);
+    expect(JSON.stringify(data.faq)).not.toMatch(/120/);
+    expect(raw).not.toMatch(/\bUSD\b|500\s*K\b/i);
+    for (const amount of sepAmounts(raw)) {
+      expect([750000, 850000], `${file}: amount ${amount}`).toContain(amount);
+    }
+    expect(sepAmounts(raw)).toContain(750000);
+    expect(sepAmounts(raw)).toContain(850000);
+  });
+  for (const slug of otherSlugs) {
+    it(`${slug} translations carry the hash of the current English body`, async () => {
+      const { createHash } = await import("node:crypto");
+      const bodyOf = (raw: string) =>
+        raw.replace(/^---\s*\n([\s\S]*?)\n---\s*\n/, "");
+      const english = fs.readFileSync(path.join(root, `${slug}.mdx`), "utf8");
+      const digest = createHash("sha256")
+        .update(bodyOf(english), "utf8")
+        .digest("hex");
+      for (const locale of locales.filter(Boolean)) {
+        const raw = fs.readFileSync(
+          path.join(root, `${slug}${locale}.mdx`),
+          "utf8",
+        );
+        const data = matter(raw).data;
+        expect(data.locale).toBe(locale.slice(1));
+        expect(data.source_sha256, `${slug}${locale}`).toBe(digest);
+        // EN/ID/IT stay aligned; the FR and RU comparison translations are
+        // shorter (first five sections only), as before this correction.
+        const aligned = !(
+          slug === comparison && [".fr", ".ru"].includes(locale)
+        );
+        const headings = (text: string) => bodyOf(text).match(/^## /gm)?.length;
+        if (aligned) expect(headings(raw)).toBe(headings(english));
+        else expect(headings(raw)).toBeLessThan(headings(english) ?? 0);
+      }
+    });
+  }
+});
