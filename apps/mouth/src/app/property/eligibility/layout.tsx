@@ -4,6 +4,7 @@ import { SessionInit } from "@/components/funnel/SessionInit";
 import { HeaderWhatsAppCTA } from "@/components/funnel/HeaderWhatsAppCTA";
 import { MobileNav } from "@/app/v2/_components/MobileNav";
 import { getFunnelNavItems } from "@/components/funnel/funnel-nav";
+import { Footer } from "@/app/v2/_components/Footer";
 import { R19Presentation } from "@/components/r19/R19Presentation";
 
 // C1 (gate-7596-report.md v2, REWORK-BUILD): the previous description
@@ -70,6 +71,7 @@ export default function PropertyLayout({
         >
           {children}
         </div>
+        <Footer funnel="property" />
       </div>
     </R19Presentation>
   );

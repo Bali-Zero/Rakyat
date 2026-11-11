@@ -20552,6 +20552,8 @@ export interface components {
       email?: string | null;
       /** Full Name */
       full_name: string;
+      /** Gender */
+      gender?: string | null;
       /** Lead Source */
       lead_source?: string | null;
       /** Nationality */
