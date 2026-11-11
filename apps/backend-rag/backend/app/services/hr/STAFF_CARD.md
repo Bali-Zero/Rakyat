@@ -82,12 +82,17 @@ Validation runs on the normalised form; the trimmed value is stored as given. `p
 as it came, never normalised to `{}`. Unknown keys inside `profile`, `contract` and the card
 fields are rejected (`extra=forbid`); unknown keys on the outer import card and a `profile` nested
 inside `fields` are rejected by the import itself (C7). `is_active` is a strict boolean.
-Validation messages never include a value.
+The CUSTOM validator messages never include the input. Pydantic's own `str(ValidationError)`
+DOES render the input, and a deep error `loc` can hold a caller-supplied dict key, so no code
+renders a `ValidationError`: the import worker reads `errors(include_input=False)` and only the
+top-level `loc[0]`, and maps it to a closed reason code.
 
 **C7 Import is all-or-nothing with full accounting.** Dry-run by default; `--apply` is one
 transaction that commits only when every card is applied (`not_found` tolerated with
 `--skip-not-found`); otherwise the whole batch rolls back. Every card ends in exactly one of
-`applied`, `not_found`, `rejected:<code>`. A merge that returns no row is `rejected:not_applied`
+`applied`, `not_found`, `rejected:<code>`; if an unexpected failure interrupts the batch, every
+card without a final answer is counted under `unclassified` (and the batch is rolled back), so
+the totals always equal the number of cards. A merge that returns no row is `rejected:not_applied`
 and the batch rolls back. An unknown key on the OUTER card, or a `profile` inside `fields`, is
 `rejected:unknown_key`, never dropped. A JSON document of the wrong shape is
 `rejected:bad_document`. A dry-run writes nothing and reports what it can know (`would_update`,
@@ -96,10 +101,16 @@ it). The worker reports the moment the transaction is decided: right after COMMI
 returned, and before the connection is closed (C10). A COMMIT or ROLLBACK that raises is never
 reported as decided.
 
-**C8 Import identity, locking and order.** A card is resolved by EXACT email on staff rows
-(`role <> 'client'`). If the lower-cased email matches more than one staff row the card is
+**C8 Import identity, locking and order.** The card's email is NEVER normalised: it is used
+byte for byte for the exact match and for the lock re-check. A card whose email has leading or
+trailing whitespace, any whitespace, any control / format / separator character, or is not a plain
+single-token `local@domain` address (or is over 320 characters) is
+`rejected:email_noncanonical` before any lookup. A card is resolved by EXACT email on staff rows
+(`role <> 'client'`). The ambiguity check compares a normalised form that is case-folded AND has
+every whitespace character removed (`lower(regexp_replace(email, '[[:space:]]', '', 'g'))`, both
+sides): if it matches more than one staff row (a case twin, a padded twin) the card is
 `rejected:ambiguous_email`; the import never picks one. A single row whose stored email differs
-from the card's only by case is `not_found`. In `--apply`, before each merge the resolved
+from the card's by case or padding is `not_found`. In `--apply`, before each merge the resolved
 `team_members` row is locked `FOR SHARE` with the exact email and staff condition re-checked in
 the same statement: a member renamed or turned into a client since the resolve is
 `rejected:member_changed` and nothing is written. Cards are written in sorted resolved-member-id
@@ -117,27 +128,45 @@ one Python process (argparse echo, driver tracebacks at connect and close, libra
 output at import time, `SystemExit` passing a guard, a failing excepthook). In-process guards do
 not close that class, so the guarantee is a PROCESS BOUNDARY, in two files:
 
-- `import_staff_cards.py` is the LAUNCHER and the only thing an operator runs. It imports the
-  standard library only (nothing that can emit output on import), parses its own arguments with a
+- `import_staff_cards.py` is the LAUNCHER and the only thing an operator runs, as
+  `python -I backend/scripts/import_staff_cards.py [--apply] [--skip-not-found]`. It REFUSES to run
+  unless `sys.flags.isolated == 1` (one line, `import_staff_cards: run with python -I`, exit 2),
+  because the interpreter's own startup (`PYTHONWARNINGS`, `PYTHONSTARTUP`, user site) runs before
+  any line of the file and cannot be policed from inside; under `-I` those and the cwd are ignored.
+  It imports the standard library only (nothing that can emit output on import), parses its own arguments with a
   fixed-text parser (`--apply`, `--skip-not-found`, `--help`; any other argument is the one line
   `import_staff_cards: invalid arguments (run with --help)`, exit 2, never an echo), reads stdin as
-  raw bytes without decoding, and starts the WORKER as a child
-  (`python -m backend.scripts._import_staff_cards_worker`) with its stdout and stderr redirected to
+  raw bytes without decoding, and starts the WORKER as a child with its stdout and stderr redirected to
   `os.devnull`, the bytes on its stdin and ONE extra inherited pipe on which the child writes its
-  result. The child's cwd and environment are the launcher's, except that the launcher's own
-  `apps/backend-rag` directory is appended to `PYTHONPATH` so the worker is found from any cwd.
+  result. The exact command line is
+  `<sys.executable> -I -c <fixed bootstrap literal> <ROOT> <ROOT>/backend/scripts/_import_staff_cards_worker.py --result-fd=<N> [--apply] [--skip-not-found]`,
+  where ROOT is the `apps/backend-rag` directory computed from the launcher's own RESOLVED path and
+  passed as an argv element (never interpolated into code); the bootstrap inserts ROOT at
+  `sys.path[0]` and runs the pinned worker file with `runpy.run_path`. The child is isolated
+  (`-I`: no `PYTHON*` variable, no cwd, no user site; the venv's site-packages stay visible, so
+  `-S` is not used), `close_fds=True` with only the result fd passed, and its own session
+  (`start_new_session`, i.e. `setsid`): it has no controlling terminal, so a library cannot open
+  `/dev/tty`. **The worker's code origin is the launcher's own tree and nothing else**: an
+  unrelated `backend` package on `PYTHONPATH` or in the cwd, or a `sitecustomize`, cannot replace
+  it.
 - `_import_staff_cards_worker.py` is the WORKER (refuses to run without a result pipe). It does
   C5-C8 and writes up to three compact JSON lines on the pipe: `decided` (committed yes/no and the
   outcome counts), `failed` (a code) and `closed` (close ok yes/no). `decided` is written and
   flushed the moment the transaction is decided, before the connection is closed. Its exit code is
   advisory only.
 
-The launcher reads the pipe with a 64 KiB cap and a wall-clock limit of 15 minutes (on expiry it
-terminates, then kills, the child), and prints ONLY what it rebuilds from a STRICTLY validated
+The launcher installs its SIGINT / SIGTERM / SIGHUP handlers (they only set a flag) before it reads
+stdin, reads at most 8 MiB (more is `input_too_large`, nothing ran) and applies ONE wall-clock limit
+of 15 minutes to the stdin read and to the worker together. It reads the pipe with a 64 KiB cap; on
+expiry, interrupt or any exceptional path it KILLS the child and then waits for it (bounded), and
+prints ONLY what it rebuilds from a STRICTLY validated
 result. Each line must match a closed grammar: no whitespace, phases `decided` / `failed` /
 `closed` each at most once and nothing after `closed`, outcome keys from a compiled-in set of
 literals, counts as non-negative integers up to 1,000,000, failure codes from a compiled-in set.
-Anything else is discarded and counted as `protocol_error`. The launcher never prints a byte that
+Anything else is discarded and counted as `protocol_error`. A second `decided`, a second `failed`,
+any record after `closed`, or a `decided` that claims `committed` together with a rejected, blocked
+or unclassified card contradicts itself: the launcher then believes NEITHER answer, reports
+`committed: unknown` (for `--apply`) with `protocol_error`, and exits 1. The launcher never prints a byte that
 came from the child. Everything it prints is one of its own literals or an integer.
 
 *The guarantee, exactly:* the launcher writes only launcher-owned literals and integers; the
@@ -147,6 +176,14 @@ diagnosis beyond the code means re-running against a staging database, by design
 option that routes child output to the operator, and none will be added.
 
 *What it does NOT cover:*
+- the interpreter's own startup. A system-wide `sitecustomize` or `.pth` inside the interpreter's
+  own site-packages, or a modified interpreter, runs before the launcher and in the worker too:
+  the interpreter is a TRUSTED PREREQUISITE (`-I` removes the environment and the user site, not
+  the installation);
+- the launcher being killed. A SIGKILL cannot be handled and a SIGHUP / SIGTERM handler only sets a
+  flag; the worker, being in its own session, may be orphaned and finish a commit nobody reports.
+  The final report writes are not supervised either. The window between COMMIT returning and the
+  `decided` record being written yields `unknown`, never a wrong answer;
 - the shell history and process list of the command line that invoked the tool (the card
   document travels on stdin so no value is in argv, but whatever the operator types is theirs);
 - the operator's own input file and the shell's handling of it;
@@ -165,17 +202,20 @@ option that routes child output to the operator, and none will be added.
 *Launcher failure lines* (stderr, `import_staff_cards: failed (<code>)`, a closed set). Launcher:
 `spawn_failed`, `timeout`, `interrupted`, `worker_killed`, `no_result`, `protocol_error`,
 `worker_died_after_decision`, `close_failed`, `worker_exit_nonzero`, `output_closed`,
-`internal_error`. Carried from the worker: `import_failed`, `bad_input`, `connect_failed`,
+`input_too_large`, `internal_error`. Carried from the worker: `import_failed`, `bad_input`, `connect_failed`,
 `unexpected`, `db_error`, `lock_timeout`, `hire_date_required`, `invalid_input`,
 `profile_not_object`. Outcome keys on stdout: `resolved`, `not_found`, `applied`, `would_update`,
-`would_insert`, `blocked:not_found`, and `rejected:` plus one of `bad_shape`, `unknown_key`,
-`email_missing`, `invalid_ptkp`, `invalid_profile`, `invalid_fields`, `ambiguous_email`,
+`would_insert`, `blocked:not_found`, `unclassified`, and `rejected:` plus one of `bad_shape`,
+`unknown_key`, `email_missing`, `email_noncanonical`, `invalid_ptkp`, `invalid_profile`, `invalid_fields`, `ambiguous_email`,
 `member_changed`, `not_applied`, `bad_document`, `hire_date_required`, `invalid_input`,
 `profile_not_object`, `db_error`, `lock_timeout`. stdout is always `mode: apply|dry-run`, the
 counts, then `committed: yes|no|unknown`.
 
-*Truthfulness: what the launcher says, whatever happens to the child.* `decided` is the only
-thing that lets it say yes or no:
+*Truthfulness.* The launcher's report is truthful GIVEN that the worker process is the pinned
+worker file of the launcher's own tree, run by a trusted interpreter. A replaced worker is
+PREVENTED by the code-origin pinning above, not detected: the launcher trusts a well-formed
+record from its pinned worker (the stub-worker tests are protocol tests and say only that). Given
+that, whatever happens to the child, `decided` is the only thing that lets it say yes or no:
 
 | # | What the launcher received | `committed:` | Failure line(s) | Exit |
 |---|---|---|---|---|
@@ -191,9 +231,11 @@ thing that lets it say yes or no:
 | 10 | no `decided`, no `failed`, child killed by a signal | `unknown` | `worker_killed` | 1 |
 | 11 | no `decided`, no `failed`, child gone or silent | `unknown` | `no_result` | 1 |
 | 12 | no `decided`, timeout / interrupt / protocol error | `unknown` | `timeout` / `interrupted` / `protocol_error` | 1 |
-| 13 | worker never started (spawn failure), or stdin unreadable | no | `spawn_failed` / `bad_input` | 1 |
+| 13 | worker never started: spawn failure, stdin unreadable, over the cap, a timeout or an interrupt while reading stdin | no | `spawn_failed` / `bad_input` / `input_too_large` / `timeout` / `interrupted` | 1 |
+| 13b | a second `decided` or `failed`, a record after `closed`, or a self-contradicting `decided` | `unknown` (`--apply`) | `protocol_error` | 1 |
 | 14 | the launcher's stdout is closed | as in the row that applies, written to stderr | the row's lines, then `output_closed` | 1 |
-| 15 | any exception or `SystemExit` anywhere in the launcher after argument parsing | not reported | `internal_error` (written with `os.write`, then `os._exit(1)`) | 1 |
+| 15 | the launcher is not isolated (no `-I`) | not reported | `import_staff_cards: run with python -I`, nothing ran | 2 |
+| 16 | any exception or `SystemExit` anywhere in the launcher after argument parsing | not reported | `internal_error` (written with `os.write`, then `os._exit(1)`) | 1 |
 
 `unknown` means the commit may or may not have happened and the launcher does not claim either.
 For a DRY-RUN `committed:` is always `no` (nothing is ever written) and the exit code is 0 when
@@ -216,8 +258,8 @@ Paths are under `backend/tests/` unless given.
 | C3 | `test_a_non_object_stored_profile_still_reads`, `test_odd_stored_strings_*`, `test_the_read_model_never_raises_*`, `test_a_stored_string_profile_and_odd_contract_still_read` |
 | C4 | every DB-backed test in `tests/migrations/test_migration_354_hr_employees_profile.py` (its pool registers the production codec); `tests/migrations/test_hr_card_write_path.py``::test_two_merges_keep_profile_an_object_under_the_production_codec`; `unit/scripts/test_import_staff_cards_worker.py``::test_work_registers_the_production_codec_on_its_connection` |
 | C5 | `tests/migrations/test_hr_card_write_path.py``::test_nested_merge_survives_*`, `::test_a_non_object_profile_is_normalised_*`, `::test_merge_keeps_omitted_columns_*`, `::test_a_non_object_incoming_part_*`, `::test_a_profile_that_would_not_be_an_object_*`, `::test_a_concurrent_insert_falls_through_to_the_update_on_two_connections` |
-| C6 | `unit/app/services/hr/test_hr_card_models.py`; `unit/scripts/test_import_staff_cards_worker.py``::test_a_present_non_object_*`, `::test_a_non_object_docs_or_contract_*`, `::test_identifier_shapes_are_enforced_by_the_import` |
-| C7 | `unit/scripts/test_import_staff_cards_worker.py``::test_apply_*`, `::test_dry_run_*`, `::test_every_card_is_accounted_for_exactly_once`, `::test_an_unknown_key_on_the_outer_card_*`, `::test_unknown_outer_key_counts_and_blocks_the_batch`, `::test_a_profile_nested_inside_fields_*`, `::test_a_merge_that_returns_no_row_*`, `::test_decided_is_reported_*`, `::test_a_commit_that_raises_is_never_reported_as_decided`, `::test_an_error_inside_the_transaction_is_decided_false_*`; `tests/migrations/test_hr_card_write_path.py``::test_import_apply_is_atomic_*`, `::test_import_apply_creates_a_card_with_a_hire_date`, `::test_import_second_merge_returning_none_*`, and through the real launcher `::test_launcher_dry_run_then_apply_writes_the_card_and_says_so`, `::test_launcher_a_rejected_batch_writes_nothing_and_says_committed_no` |
-| C8 | `unit/scripts/test_import_staff_cards_worker.py``::test_an_email_matching_two_staff_rows_is_ambiguous_*`, `::test_a_single_case_variant_*`, `::test_cards_are_written_in_resolved_member_id_order_*`, `::test_a_member_that_no_longer_matches_*`, `::test_apply_sets_a_transaction_local_lock_timeout_*`; `tests/migrations/test_hr_card_write_path.py``::test_the_import_rejects_a_case_twin_email_as_ambiguous_*`, `::test_a_member_renamed_between_resolve_and_merge_*`, `::test_a_member_turned_client_between_resolve_and_merge_*`, `::test_a_blocked_row_lock_is_rejected_as_lock_timeout_*`, `::test_real_apply_locks_members_in_sorted_id_order`, `::test_two_concurrent_batches_over_the_same_members_in_opposite_order`, and through the real launcher `::test_launcher_an_ambiguous_email_is_rejected_and_nothing_is_written`, `::test_launcher_a_member_renamed_between_resolve_and_merge_is_rejected` |
+| C6 | `unit/app/services/hr/test_hr_card_models.py` (`::test_the_custom_validator_messages_carry_no_input`, `::test_pydantic_renders_the_input_in_str_of_a_validation_error_*`); `unit/scripts/test_import_staff_cards_worker.py``::test_a_present_non_object_*`, `::test_a_non_object_docs_or_contract_*`, `::test_identifier_shapes_are_enforced_by_the_import` |
+| C7 | `unit/scripts/test_import_staff_cards_worker.py``::test_apply_*`, `::test_dry_run_*`, `::test_every_card_is_accounted_for_exactly_once`, `::test_an_unknown_key_on_the_outer_card_*`, `::test_unknown_outer_key_counts_and_blocks_the_batch`, `::test_a_profile_nested_inside_fields_*`, `::test_a_merge_that_returns_no_row_*`, `::test_a_failing_lookup_still_accounts_for_every_card`, `::test_decided_is_reported_*`, `::test_a_commit_that_raises_is_never_reported_as_decided`, `::test_an_error_inside_the_transaction_is_decided_false_*`; `tests/migrations/test_hr_card_write_path.py``::test_import_apply_is_atomic_*`, `::test_import_apply_creates_a_card_with_a_hire_date`, `::test_import_second_merge_returning_none_*`, and through the real launcher `::test_launcher_dry_run_then_apply_writes_the_card_and_says_so`, `::test_launcher_a_rejected_batch_writes_nothing_and_says_committed_no` |
+| C8 | `unit/scripts/test_import_staff_cards_worker.py``::test_an_email_matching_two_staff_rows_is_ambiguous_*`, `::test_a_single_case_variant_*`, `::test_cards_are_written_in_resolved_member_id_order_*`, `::test_a_non_canonical_email_is_rejected_before_any_lookup`, `::test_a_canonical_email_is_used_byte_for_byte`, `::test_a_non_canonical_card_never_reaches_the_database`, `::test_the_lock_recheck_receives_the_card_email_unchanged`, `::test_a_member_that_no_longer_matches_*`, `::test_apply_sets_a_transaction_local_lock_timeout_*`; `tests/migrations/test_hr_card_write_path.py``::test_the_import_rejects_a_case_twin_email_as_ambiguous_*`, `::test_a_padded_twin_and_a_case_twin_make_either_canonical_address_ambiguous`, `::test_a_padded_twin_alone_makes_the_canonical_address_ambiguous_*`, `::test_a_card_naming_the_padded_address_is_refused_*`, `::test_a_lone_padded_row_is_not_found_*`, `::test_launcher_a_padded_twin_is_ambiguous_through_the_whole_tool`, `::test_a_member_renamed_between_resolve_and_merge_*`, `::test_a_member_turned_client_between_resolve_and_merge_*`, `::test_a_blocked_row_lock_is_rejected_as_lock_timeout_*`, `::test_real_apply_locks_members_in_sorted_id_order`, `::test_two_concurrent_batches_over_the_same_members_in_opposite_order`, and through the real launcher `::test_launcher_an_ambiguous_email_is_rejected_and_nothing_is_written`, `::test_launcher_a_member_renamed_between_resolve_and_merge_is_rejected` |
 | C9 | `test_member_self_read_of_the_employee_row_has_no_notes`, `test_the_legacy_employee_shape_never_carries_the_profile` |
-| C10 | `unit/scripts/test_import_staff_cards.py` (real launcher in a subprocess): `::test_family1_*` (real worker, fake driver: warnings, import-time output, `logging.log(60, ...)`, exceptions at connect / codec / transaction / commit / close, `SystemExit(0)`, `SystemExit(<sentinel>)`, `SystemExit(7)`, SIGKILL before and after the decision, hang, SIGINT before and after the decision, bad and wrong-shape stdin), `::test_family2_*` (stub worker: garbage, oversized, unknown key, code outside the set, negative, huge, sentinel in a string field, duplicate and trailing records, truthfulness table, raw bytes and flags, large input, `python -I -W ignore`, closed stdout), `::test_an_exception_or_exit_anywhere_after_the_arguments_is_one_fixed_line`, `::test_every_parse_error_is_the_one_fixed_line_and_exit_2`, `::test_help_is_static_text`, `::test_the_launcher_imports_the_standard_library_only`, `::test_the_test_timeout_knob_can_only_shorten_the_deadline`, `::test_the_truthfulness_table_row_by_row`, `::test_exit_zero_needs_*`, `::test_a_result_is_taken_only_when_it_matches_the_closed_grammar`, `::test_a_spawn_failure_*`; `unit/scripts/test_import_staff_cards_worker.py``::test_the_records_the_worker_writes_are_exactly_what_the_launcher_accepts`, `::test_every_outcome_and_code_the_worker_can_produce_is_in_the_launcher_closed_sets`, `::test_work_*`, `::test_the_worker_refuses_to_run_without_a_result_pipe` |
+| C10 | `unit/scripts/test_import_staff_cards.py` (real launcher in a subprocess): `::test_family1_*` (real worker, fake driver: warnings, import-time output, `logging.log(60, ...)`, exceptions at connect / codec / transaction / commit / close, `SystemExit(0)`, `SystemExit(<sentinel>)`, `SystemExit(7)`, SIGKILL before and after the decision, hang, SIGINT before and after the decision, bad and wrong-shape stdin), `::test_protocol_*` and `::test_family2_*` (stub worker: garbage, oversized, unknown key, code outside the set, negative, huge, sentinel in a string field, duplicate / contradictory / trailing records, raw bytes and flags, large input, `python -I -W ignore`, closed stdout), `::test_the_worker_comes_from_the_launchers_own_tree_*`, `::test_a_launcher_without_dash_i_refuses_*`, `::test_pythonwarnings_with_and_without_dash_i`, `::test_the_worker_is_started_isolated_*` (exact command line, own session, only the result fd), `::test_the_worker_has_no_controlling_terminal_*` (pty), `::test_a_stdin_that_never_ends_*`, `::test_a_signal_while_reading_stdin_*`, `::test_an_input_over_the_cap_*`, `::test_an_exception_or_exit_anywhere_after_the_arguments_is_one_fixed_line`, `::test_every_parse_error_is_the_one_fixed_line_and_exit_2`, `::test_help_is_static_text`, `::test_the_launcher_imports_the_standard_library_only`, `::test_the_test_timeout_knob_can_only_shorten_the_deadline`, `::test_the_truthfulness_table_row_by_row`, `::test_exit_zero_needs_*`, `::test_a_result_is_taken_only_when_it_matches_the_closed_grammar`, `::test_a_spawn_failure_*`, `::test_the_launcher_refuses_without_the_isolated_flag_in_main`; the shared test root is `tests/fixtures/import_root.py`; `unit/scripts/test_import_staff_cards_worker.py``::test_the_records_the_worker_writes_are_exactly_what_the_launcher_accepts`, `::test_every_outcome_and_code_the_worker_can_produce_is_in_the_launcher_closed_sets`, `::test_work_*`, `::test_the_worker_refuses_to_run_without_a_result_pipe`, `::test_validate_card_reads_pydantic_errors_without_the_input` |
