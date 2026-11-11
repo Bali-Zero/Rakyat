@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from backend.app.dependencies import get_current_user
 from backend.app.models import ChunkMetadata, SearchQuery, SearchResponse, SearchResult, TierLevel
 from backend.app.modules.knowledge.service import KnowledgeService
+from backend.services.search.log_safety import install_query_log_redaction, query_log_scope
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/search", tags=["knowledge"])
@@ -46,9 +47,19 @@ def get_search_service(request: Request) -> Any:
     return _knowledge_service_fallback
 
 
+install_query_log_redaction()
+
+
 @router.post("", response_model=SearchResponse)
 @router.post("/", response_model=SearchResponse, include_in_schema=False)
 async def semantic_search(query: SearchQuery, request: Request) -> SearchResponse:
+    # Backstop: whatever a client library under the search path logs, the query text is
+    # replaced in it (see services/search/log_safety.py).
+    with query_log_scope(query.query, query.collection):
+        return await _semantic_search(query, request)
+
+
+async def _semantic_search(query: SearchQuery, request: Request) -> SearchResponse:
     """
     Semantic search with tier-based access control.
 

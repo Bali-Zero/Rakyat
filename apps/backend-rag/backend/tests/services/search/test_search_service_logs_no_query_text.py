@@ -26,7 +26,7 @@ QUERY = f"{CANARY} kueri tentang visa dan pajak untuk perusahaan sintetis"
 
 class _Gemini:
     async def generate_response(self, prompt: str) -> str:
-        if "english" in prompt.lower() and "indonesian" in prompt.lower():
+        if "EXACT JSON format" in prompt:  # the single-translation prompt; the other wants an array
             return f'{{"english": "visa {CANARY}", "indonesian": "visa {CANARY}"}}'
         return f'["{CANARY} alt satu", "{CANARY} alt dua"]'
 
@@ -127,6 +127,11 @@ async def test_search_success_logs_no_canary(
     with caplog.at_level(logging.DEBUG):
         out = await svc.search(QUERY + (" m" if expansion else " s"), user_level=3, limit=3)
     assert out.get("results"), "search returned nothing: the path under test did not run"
+    if expansion:
+        assert any(
+            r.name.endswith("search_service") and "Multi-query expansion" in r.getMessage()
+            for r in caplog.records
+        ), "multi-query expansion did not run in SearchService: the guard would be vacuous"
     text = _everything(caplog)
     assert "query_len=" in text, "no query-shape line was logged: vacuous"
     assert CANARY not in text
