@@ -271,10 +271,212 @@ def test_the_worker_is_started_isolated_with_a_fixed_bootstrap_in_its_own_sessio
     worker = str(launcher_file.resolve().with_name("_import_staff_cards_worker.py"))
     argv = info["orig_argv"]
     assert argv[1:4] == ["-I", "-c", launcher._BOOTSTRAP]
-    assert argv[4:6] == [root, worker]
-    assert argv[6].startswith("--result-fd=") and argv[7:] == ["--apply", "--skip-not-found"]
+    assert argv[4:7] == [root, worker, ""]  # no PYTHONPATH: the dependency element is empty
+    assert argv[7].startswith("--result-fd=") and argv[8:] == ["--apply", "--skip-not-found"]
     assert info["isolated"] == 1 and info["sid_is_own_pid"] and info["path0"] == root
-    assert info["open_fds"] == [0, 1, 2, int(argv[6].split("=")[1])]  # only the result fd
+    assert info["open_fds"] == [0, 1, 2, int(argv[7].split("=")[1])]  # only the result fd
+
+
+# ─── dependencies: the operator's PYTHONPATH, appended after the root (STAFF_CARD.md C10) ───
+
+
+@pytest.fixture(scope="module")
+def bare_python(tmp_path_factory):
+    """An interpreter whose own site-packages holds NO third-party package, like the production
+    image's: every dependency of the worker is reachable only through PYTHONPATH."""
+    import venv
+
+    home = tmp_path_factory.mktemp("bare")
+    venv.EnvBuilder(with_pip=False, clear=True).create(home)
+    exe = str(home / "bin" / "python")
+    probe = subprocess.run([exe, "-I", "-c", "import asyncpg"], capture_output=True)
+    assert probe.returncode != 0, "the bare interpreter must not see asyncpg by itself"
+    return exe
+
+
+def _layout(tmp_path: Path, *, fake: bool = True, before: tuple[Path, ...] = ()) -> str:
+    """PYTHONPATH like production's: the image's dependency directory, here preceded by a
+    directory holding the fake driver (it runs the real asyncpg behind it)."""
+    parts = [str(d) for d in before]
+    if fake:
+        from backend.tests.fixtures.import_root import FAKE_ASYNCPG
+
+        fake_dir = tmp_path / "deps-fake"
+        (fake_dir / "asyncpg").mkdir(parents=True, exist_ok=True)
+        (fake_dir / "asyncpg" / "__init__.py").write_text(FAKE_ASYNCPG)
+        parts.append(str(fake_dir))
+    parts.append(str(Path(REAL_ASYNCPG).parent))  # the real third-party packages
+    return os.pathsep.join(parts)
+
+
+def _run_with(exe, launcher_file, tmp_path, stdin, pythonpath, args=(), cwd=None, extra=None):
+    env = _env(tmp_path, {"HRIMPORT_FAKE_MODE": "ok", **(extra or {})})
+    if pythonpath is not None:
+        env["PYTHONPATH"] = pythonpath
+    return subprocess.run(
+        [exe, "-I", str(launcher_file), *args],
+        input=stdin,
+        capture_output=True,
+        cwd=cwd or _cwd(tmp_path),
+        env=env,
+        timeout=120,
+    )
+
+
+def test_production_layout_the_worker_finds_its_dependencies_through_pythonpath(
+    tmp_path, bare_python
+):
+    """The fake driver sits ONLY in a PYTHONPATH directory, outside the root: the real launcher
+    and the real worker finish a dry-run and an apply through it."""
+    launcher_file = build_root(tmp_path)
+    assert not (launcher_file.parents[2] / "asyncpg").exists()  # nothing fake inside the root
+    path = _layout(tmp_path)
+    dry = _run_with(bare_python, launcher_file, tmp_path, GHOST, path)
+    _check(dry, committed="no", codes=[], rc=0, lines=("resolved: 0", "not_found: 1"))
+    applied = _run_with(bare_python, launcher_file, tmp_path, GHOST, path, args=APPLY_SKIP)
+    _check(applied, committed="yes", codes=[], rc=0, lines=C_YES)
+
+
+def test_without_pythonpath_the_bare_interpreter_cannot_import_the_worker(tmp_path, bare_python):
+    run = _run_with(bare_python, build_root(tmp_path), tmp_path, GHOST, None)
+    _check(run, committed="no", codes=["import_failed"], rc=1)
+
+
+def test_a_backend_package_in_pythonpath_or_cwd_is_never_used(tmp_path, bare_python):
+    decoy = tmp_path / "decoy"
+    (decoy / "backend").mkdir(parents=True)
+    marker = tmp_path / "decoy-was-imported"
+    (decoy / "backend" / "__init__.py").write_text(f"open({str(marker)!r}, 'w').close()\n")
+    launcher_file = build_root(tmp_path)
+    # the decoy comes FIRST in PYTHONPATH and is also the cwd
+    run = _run_with(
+        bare_python, launcher_file, tmp_path, GHOST, _layout(tmp_path, before=(decoy,)), cwd=decoy
+    )
+    _check(run, committed="no", codes=[], rc=0, lines=("not_found: 1",))  # the REAL worker ran
+    assert not marker.exists()
+
+
+def test_sitecustomize_and_usercustomize_in_pythonpath_are_not_executed(tmp_path, bare_python):
+    hook = tmp_path / "hook"
+    hook.mkdir()
+    marker = tmp_path / "hook-ran"
+    for name in ("sitecustomize.py", "usercustomize.py"):
+        (hook / name).write_text(f"open({str(marker)!r}, 'a').write({name!r})\n")
+    run = _run_with(
+        bare_python,
+        build_root(tmp_path),
+        tmp_path,
+        GHOST,
+        _layout(tmp_path, before=(hook,)),
+        args=APPLY_SKIP,
+    )
+    _check(run, committed="yes", codes=[], rc=0, lines=C_YES)
+    assert not marker.exists()
+
+
+def test_the_dependency_filter_keeps_only_existing_absolute_distinct_dirs_outside_the_root(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "root"
+    root.mkdir()
+    good, other = tmp_path / "good", tmp_path / "other"
+    good.mkdir()
+    other.mkdir()
+    (tmp_path / "afile").write_text("x")
+    (tmp_path / "link").symlink_to(good)
+    (tmp_path / "root-link").symlink_to(root)
+    sep = os.pathsep
+    raw = sep.join(
+        [
+            "",  # empty
+            "relative/dir",  # relative
+            ".",  # relative
+            str(tmp_path / f"missing-{SENT}"),  # does not exist
+            str(tmp_path / "afile"),  # a file
+            str(root),  # the root itself
+            str(tmp_path / "root-link"),  # the root through a symlink
+            str(good),
+            str(good) + "/",  # duplicate, trailing slash
+            str(tmp_path / "link"),  # duplicate through a symlink
+            str(other),
+            "\0bad",  # an entry the OS refuses
+        ]
+    )
+    kept = launcher._dependency_dirs(raw, str(root))
+    assert kept.split(sep) == [os.path.realpath(good), os.path.realpath(other)]
+    assert launcher._dependency_dirs("", str(root)) == ""
+
+    many = sep.join(str(d) for d in _make_dirs(tmp_path, 40))
+    assert (
+        len(launcher._dependency_dirs(many, str(root)).split(sep)) == launcher.MAX_DEPENDENCY_DIRS
+    )
+    monkeypatch.setattr(launcher, "MAX_DEPENDENCY_CHARS", len(os.path.realpath(good)) * 3)
+    capped = launcher._dependency_dirs(many, str(root))
+    assert 0 < len(capped) <= launcher.MAX_DEPENDENCY_CHARS
+
+
+def _make_dirs(tmp_path: Path, n: int) -> list[Path]:
+    dirs = [tmp_path / f"many{i:02d}" for i in range(n)]
+    for d in dirs:
+        d.mkdir()
+    return dirs
+
+
+def test_pythonpath_unset_or_empty_passes_an_empty_element_and_a_plain_path(tmp_path):
+    for value in (None, ""):
+        report = tmp_path / f"report-{value!r}.json"
+        launcher_file = build_root(tmp_path, worker_source=_STUB)
+        extra = {"STUB_MODE": "report", "STUB_REPORT": str(report)}
+        if value is not None:
+            extra["PYTHONPATH"] = value
+        run = _run(launcher_file, tmp_path, EMPTY, args=("--apply",), extra=extra)
+        _check(run, committed="yes", codes=[], rc=0, lines=A2)
+        info = json.loads(report.read_text())
+        assert info["orig_argv"][6] == "" and info["path0"] == str(
+            launcher_file.resolve().parents[2]
+        )
+        assert not any(str(tmp_path) in p for p in info["path"][1:])  # nothing appended
+
+
+def test_pythonpath_dirs_are_appended_at_the_end_after_the_root_and_the_rest(tmp_path):
+    report = tmp_path / "report.json"
+    launcher_file = build_root(tmp_path, worker_source=_STUB)
+    root = str(launcher_file.resolve().parents[2])
+    d1, d2 = tmp_path / "d1", tmp_path / "d2"
+    d1.mkdir()
+    d2.mkdir()
+    raw = os.pathsep.join([str(d1), "rel", str(d2), root, str(d1)])
+    run = _run(
+        launcher_file,
+        tmp_path,
+        EMPTY,
+        args=("--apply",),
+        extra={"STUB_MODE": "report", "STUB_REPORT": str(report), "PYTHONPATH": raw},
+    )
+    _check(run, committed="yes", codes=[], rc=0, lines=A2)
+    info = json.loads(report.read_text())
+    dirs = [os.path.realpath(d1), os.path.realpath(d2)]
+    assert info["orig_argv"][6] == os.pathsep.join(dirs)
+    assert info["path"][0] == root and info["path"][-2:] == dirs and info["isolated"] == 1
+
+
+def test_a_nonexistent_pythonpath_entry_naming_a_sentinel_never_reaches_a_stream(tmp_path):
+    report = tmp_path / "report.json"
+    launcher_file = build_root(tmp_path, worker_source=_STUB)
+    run = _run(
+        launcher_file,
+        tmp_path,
+        EMPTY,
+        args=("--apply",),
+        extra={
+            "STUB_MODE": "report",
+            "STUB_REPORT": str(report),
+            "PYTHONPATH": str(tmp_path / f"missing-{SENT}"),
+        },
+    )
+    _check(run, committed="yes", codes=[], rc=0, lines=A2)  # _check asserts SENT is absent
+    assert SENT not in run.stdout.decode() + run.stderr.decode()
+    assert json.loads(report.read_text())["orig_argv"][6] == ""
 
 
 @pytest.mark.skipif(not hasattr(os, "forkpty"), reason="no pty on this platform")
@@ -460,6 +662,7 @@ elif mode == "report":
             "isolated": sys.flags.isolated,
             "sid_is_own_pid": os.getsid(0) == os.getpid(),
             "path0": sys.path[0],
+            "path": sys.path,
             "open_fds": [f for f in fds if f != -1 and _isopen(f)],
         },
         open(os.environ["STUB_REPORT"], "w"),
