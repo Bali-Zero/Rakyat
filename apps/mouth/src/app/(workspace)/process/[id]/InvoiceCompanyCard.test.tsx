@@ -119,6 +119,28 @@ describe("InvoiceCompanyCard", () => {
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });
 
+  it("while a save is in flight Save and the field are disabled, so saves never overlap", async () => {
+    const user = userEvent.setup();
+    let resolveSave: (p: Practice) => void = () => {};
+    mockUpdate.mockReturnValue(
+      new Promise<Practice>((resolve) => {
+        resolveSave = resolve;
+      }),
+    );
+    render(<InvoiceCompanyCard practice={practice()} onSaved={vi.fn()} />);
+    const select = await screen.findByRole("combobox");
+    await user.selectOptions(select, "2");
+    const save = screen.getByRole("button", { name: "Save" });
+    await user.click(save);
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
+    expect(save).toBeDisabled();
+    expect(select).toBeDisabled();
+    await user.click(save);
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+    resolveSave(practice({ invoice_company_id: 2 }));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
+  });
+
   it("shows no Save button until something changed", async () => {
     render(
       <InvoiceCompanyCard
