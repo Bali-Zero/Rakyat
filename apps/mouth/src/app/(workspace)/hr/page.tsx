@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Gift, Banknote, Calendar, Users } from "lucide-react";
 import * as hrApi from "@/lib/api/hr/hr";
+import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
 import type { AdminDashboard, PersonalDashboard } from "@/types/hr";
 import { Money } from "@balizero/core";
 
@@ -150,26 +151,30 @@ export default function HRDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const { capabilities, loaded } = useHrCapabilities();
+
   useEffect(() => {
+    if (!loaded) return;
     async function load() {
       try {
-        const data = await hrApi.getDashboard();
-        setAdminData(data);
-      } catch {
-        try {
-          const data = await hrApi.getMyDashboard();
-          setPersonalData(data);
-        } catch (err) {
-          setError(
-            err instanceof Error ? err.message : "Failed to load dashboard",
-          );
-        }
+        // Everyone with an employee record gets their own card; an HR admin
+        // gets the team overview above it.
+        const [admin, personal] = await Promise.all([
+          capabilities.hr_admin ? hrApi.getDashboard() : null,
+          capabilities.has_employee_record ? hrApi.getMyDashboard() : null,
+        ]);
+        setAdminData(admin);
+        setPersonalData(personal);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to load dashboard",
+        );
       } finally {
         setLoading(false);
       }
     }
     load();
-  }, []);
+  }, [loaded, capabilities.hr_admin, capabilities.has_employee_record]);
 
   if (loading) {
     return (
@@ -202,7 +207,21 @@ export default function HRDashboardPage() {
     );
   }
 
-  if (adminData) return <AdminDashboardView data={adminData} />;
-  if (personalData) return <PersonalDashboardView data={personalData} />;
-  return null;
+  if (!adminData && !personalData) {
+    return (
+      <div
+        className="border rounded-xl p-6 text-[var(--bz-text-2)]"
+        style={PANEL}
+      >
+        No HR record is linked to your account yet. Ask HR to create it.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-10">
+      {adminData && <AdminDashboardView data={adminData} />}
+      {personalData && <PersonalDashboardView data={personalData} />}
+    </div>
+  );
 }

@@ -14,9 +14,8 @@ import {
   Calendar,
 } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@/lib/api";
 import * as hrApi from "@/lib/api/hr/hr";
-import { isHRAdmin } from "@/lib/hr/admin";
+import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
 import type {
   LeaveRequest,
   LeaveBalance,
@@ -754,20 +753,17 @@ export default function LeavePage() {
   const [balances, setBalances] = useState<LeaveBalance[]>([]);
   const [teamSummary, setTeamSummary] = useState<TeamLeaveSummaryRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const isAdmin = useHrCapabilities().capabilities.hr_admin;
   const [adminTab, setAdminTab] = useState<"team" | "mine">("team");
   const [rejectingId, setRejectingId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState("");
 
   useEffect(() => {
     Promise.all([
-      api.getProfile().catch(() => null),
       hrApi.listLeaveRequests().catch(() => ({ requests: [] })),
       hrApi.getLeaveBalance().catch(() => ({ balances: [] })),
       hrApi.getTeamLeaveSummary().catch(() => ({ summary: [] })),
-    ]).then(([profile, reqData, balData, teamData]) => {
-      const admin = isHRAdmin(profile);
-      setIsAdmin(admin);
+    ]).then(([reqData, balData, teamData]) => {
       setRequests((reqData.requests as LeaveRequest[]) ?? []);
       setBalances((balData.balances as LeaveBalance[]) ?? []);
       setTeamSummary((teamData.summary as TeamLeaveSummaryRow[]) ?? []);

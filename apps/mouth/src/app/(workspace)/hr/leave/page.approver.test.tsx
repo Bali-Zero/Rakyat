@@ -6,6 +6,12 @@ const listLeaveRequests = vi.fn();
 
 vi.mock("@/lib/api", () => ({ api: { getProfile: () => getProfile() } }));
 vi.mock("@/lib/api/hr/hr", () => ({
+  getCapabilities: () =>
+    Promise.resolve({
+      hr_admin: false,
+      accounting_admin: false,
+      has_employee_record: true,
+    }),
   listLeaveRequests: () => listLeaveRequests(),
   getLeaveBalance: () => Promise.resolve({ balances: [] }),
   getTeamLeaveSummary: () => Promise.reject(new Error("403")),
