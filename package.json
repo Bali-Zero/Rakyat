@@ -54,7 +54,7 @@
     "workspace:reset": "npm run workspace:clean && npm install"
   },
   "devDependencies": {
-    "@playwright/test": "1.64.1",
+    "@playwright/test": "1.65.0",
     "@vitest/coverage-istanbul": "5.1.0",
     "@types/node": "^26.6.6",
     "esbuild": "^0.28.2",
