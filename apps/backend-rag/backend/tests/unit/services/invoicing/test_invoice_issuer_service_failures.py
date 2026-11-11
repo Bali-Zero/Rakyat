@@ -15,7 +15,10 @@ import pytest
 
 from backend.services.invoicing import entities
 from backend.services.invoicing.entities import InvoiceEntity
-from backend.services.invoicing.invoice_service import InvoiceAutomationService
+from backend.services.invoicing.invoice_service import (
+    InvoiceAutomationService,
+    InvoiceIssuerResolutionError,
+)
 
 A_KEY = "cimb_bayu_bali_nol"
 B_KEY = "mandiri_bali_nol_impresariat"
@@ -189,6 +192,44 @@ class TestMetadataBlocks:
         ]
         assert len(errors) == 1
         assert errors[0].context["reason"] == reason  # type: ignore[attr-defined]
+
+
+class TestEmptyDocumentsArrayIsNoDocuments:
+    """practices.documents defaults to '[]': a new practice must still get an invoice."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "documents",
+        [[], "[]", json.dumps([]), None, {}, "{}"],
+        ids=["list", "str", "json", "none", "dict", "dictstr"],
+    )
+    async def test_empty_documents_resolve_as_a_new_practice(self, env, documents):
+        service, _, _ = env
+        conn = service.db_pool._conn
+        conn.fetchrow = AsyncMock(return_value=lookup_row(practice_documents=documents))
+        decision = await service._resolve_issuer(1, "kitas")
+        assert decision.source == "new"
+
+    @pytest.mark.parametrize(
+        ("documents", "marker"),
+        [
+            ([], "none"),
+            ("[]", "none"),
+            (None, "none"),
+            ({}, "none"),
+            ({"other": 1}, "none"),
+            ({"invoice": None}, "legacy"),
+            ({"invoice": {"invoice_number": "X"}}, "legacy"),
+        ],
+    )
+    def test_marker_values(self, documents, marker):
+        assert InvoiceAutomationService._legacy_invoice_marker(documents) == marker
+
+    @pytest.mark.parametrize("documents", [[1], ["x"], [{}], "[1]", 5, "5", True])
+    def test_non_empty_array_or_scalar_stays_ambiguous(self, documents):
+        with pytest.raises(InvoiceIssuerResolutionError) as exc:
+            InvoiceAutomationService._legacy_invoice_marker(documents)
+        assert exc.value.reason == "ambiguous_legacy_metadata"
 
 
 # ============================================================
