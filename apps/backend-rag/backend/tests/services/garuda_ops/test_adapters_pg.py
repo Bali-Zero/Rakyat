@@ -814,6 +814,26 @@ async def test_a_brand_new_customer_is_routed_to_a_team_member(pool):
     """
     member = "routed-member@example.invalid"
     async with pool.acquire() as conn:
+        # timeline_events is a prod table (canonical writer inserts into
+        # it) that the garuda test DB schema does not carry; create the
+        # prod shape here so the milestone assertion tests the adapter,
+        # not the fixture's completeness.
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS timeline_events (
+                id SERIAL PRIMARY KEY,
+                client_id INTEGER NOT NULL,
+                practice_id INTEGER,
+                event_type VARCHAR(100) NOT NULL,
+                title VARCHAR(255) NOT NULL,
+                description TEXT,
+                event_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                client_visible BOOLEAN NOT NULL DEFAULT TRUE,
+                color VARCHAR(50) DEFAULT 'info',
+                created_by VARCHAR(255)
+            )
+            """
+        )
         await conn.execute("DELETE FROM team_members WHERE email = $1", member)
         await conn.execute(
             # id + pin_hash are NOT NULL with no default in the CI
