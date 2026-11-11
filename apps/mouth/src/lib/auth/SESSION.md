@@ -205,6 +205,34 @@ from the stored profile), `settings/profile/page.tsx` (`profile` state),
 `process/new/page.tsx`, `ChatHeader.tsx`, `useCellStatus.ts`. They are
 consumers, not copies, only once they re-read on `subscribeSessionChange`.
 
+**S8, safeStorage's per-key fallback is part of the one copy.** `safeStorage`
+(`src/lib/utils/storage.ts`) is the single storage layer and must answer "where
+does the CURRENT value of this key live" without a second reader guessing. A
+localStorage that passed the initial probe can still reject a later write
+(quota). Rule: track per key where the current value lives.
+
+- `setItem`: try localStorage. On success, drop the key from the fallback. On
+  failure, store the value in the memory fallback, mark the key fallback-held,
+  and try `localStorage.removeItem(key)` so no OLDER value stays in shared
+  storage (an older value of `auth_token` is another person's credential). If
+  even the removal fails, reads still prefer the fallback for that key.
+- `getItem`: a fallback-held key returns the fallback value; any other key
+  reads localStorage, and the fallback only when localStorage is unusable.
+- `removeItem` and `clear` remove from both places and drop the marks.
+- Across tabs: a `storage` event for a fallback-held key settles it. A non-null
+  `newValue` is a newer shared value (the shared value wins); `null` is a
+  removal such as a logout (removal wins); a null key is `storage.clear()`. In
+  every case the fallback copy and the mark are dropped.
+  Listener ordering, chosen and stated: the settling listener is registered when
+  `storage.ts` is evaluated, DOM listeners on one target run in registration
+  order, and `session-signal.ts` imports `storage.ts` (a deliberate side-effect
+  import) so ES dependency order evaluates `storage.ts` first. Every module that
+  registers a session-key `storage` listener at load time depends on
+  `session-signal.ts`; listeners added later at runtime come after by
+  construction. So a session listener that reads storage during the event already
+  sees the settled value; `getItem` carries no per-event flag. The same S7
+  residual applies: before the event reaches this tab, the tab's own view stands.
+
 ## Where each rule is proved
 
 - S2/S3 signals and epoch: `session-signal.test.ts`.
@@ -212,7 +240,9 @@ consumers, not copies, only once they re-read on `subscribeSessionChange`.
   `src/lib/api/auth/auth.api.session.test.ts`; the credential capture:
   `src/lib/api/client-credential.test.ts`.
 - S6 enforcer and login order: `session-credential.test.ts`.
-- S8 one copy, stale-view convergence: `src/lib/api/client-one-copy.test.ts`.
+- S8 one copy, stale-view convergence: `src/lib/api/client-one-copy.test.ts`;
+  the quota fallback: `src/lib/utils/__tests__/storage-quota.test.ts`,
+  `storage-ssr.test.ts`.
 - S1/S4 and the races through a bound page and the real transport, including
   the delayed cross-tab `storage` events: `session-identity.test.tsx`,
   `session-credential-race.test.tsx`.

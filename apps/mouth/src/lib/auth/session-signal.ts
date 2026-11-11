@@ -10,6 +10,11 @@
  * Nothing in this module reads or logs a token value.
  */
 
+// Side-effect import, deliberate: it makes storage.ts evaluate (and register
+// its `storage` listener) before this module registers its own, so a fallback
+// copy is settled before any session listener reads. See storage.ts.
+import "@/lib/utils/storage";
+
 export const AUTH_TOKEN_STORAGE_KEY = "auth_token";
 export const USER_PROFILE_STORAGE_KEY = "user_profile";
 export const SESSION_CHANGED_EVENT = "bz:session-changed";

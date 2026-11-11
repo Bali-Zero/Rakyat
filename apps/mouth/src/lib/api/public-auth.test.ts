@@ -1,10 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PublicAuthClient } from "./public-auth";
 
 describe("PublicAuthClient", () => {
   beforeEach(() => {
+    // Order-independent: no spy or call history may leak between tests.
     vi.restoreAllMocks();
+    vi.clearAllMocks();
     localStorage.clear();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
   it.each([
