@@ -287,7 +287,7 @@ class TestResolutionFailures:
     @pytest.mark.asyncio
     async def test_incomplete_stored_issuer_fails(self, env, monkeypatch, caplog):
         registry = synthetic_entities()
-        registry[B_KEY] = InvoiceEntity(**{**registry[B_KEY].__dict__, "bank_swift": ""})
+        registry[B_KEY] = InvoiceEntity(**{**registry[B_KEY].__dict__, "bank_name": ""})
         monkeypatch.setattr(entities, "ENTITIES", registry)
         monkeypatch.setattr("backend.services.invoicing.invoice_service.ENTITIES", registry)
         service, invalidate, _ = env

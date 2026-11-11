@@ -43,7 +43,6 @@ _KNOWN_UNMAPPED_FROM_SPEC = [
     "other_custom",
     "property_purchase",
     "pt_pma_setup",
-    "tax_consulting",
     "visa",
     "visa_bridging",
 ]
@@ -95,7 +94,18 @@ def _synthetic_entities() -> dict[str, InvoiceEntity]:
         bank_branch="Synthetic Branch Three",
         bank_swift="SYNTHIDJC",
     )
-    return {e.key: e for e in (a, b, c)}
+    d = InvoiceEntity(
+        key="permata_bali_nol_konsultan",
+        company_name="Synthetic Issuer Four",
+        tax_id="33.333.333.3-333.333",
+        address="Synthetic Street Four 4, Synthetic City",
+        bank_account_name="Synthetic Holder Four",
+        bank_account_number="0000000004",
+        bank_name="Synthetic Bank Four",
+        bank_branch=None,
+        bank_swift=None,
+    )
+    return {e.key: e for e in (a, b, c, d)}
 
 
 @pytest.fixture
@@ -136,12 +146,13 @@ class _NullOffset(tzinfo):
 def test_mapping_matches_independent_golden() -> None:
     golden = _load_json_no_duplicate_keys(FIXTURES / "invoice_code_entity_golden.json")
     assert golden == PRACTICE_TYPE_ENTITY_KEYS
-    assert len(golden) == 118
-    assert len(PRACTICE_TYPE_ENTITY_KEYS) == 118
+    assert len(golden) == 110
+    assert len(PRACTICE_TYPE_ENTITY_KEYS) == 110
     counts = Counter(golden.values())
-    assert counts["cimb_bayu_bali_nol"] == 72
-    assert counts["mandiri_bali_nol_impresariat"] == 43
-    assert counts["bni_bayu_santero"] == 3
+    assert counts["cimb_bayu_bali_nol"] == 43
+    assert counts["permata_bali_nol_konsultan"] == 28
+    assert counts["mandiri_bali_nol_impresariat"] == 37
+    assert counts["bni_bayu_santero"] == 2
     assert all(code == code.strip().lower() for code in golden), "golden keys must be normalized"
     assert set(golden.values()) <= ENTITY_KEYS, "golden values must be recognized entity keys"
 
@@ -169,7 +180,11 @@ def test_known_unmapped_inventory_matches_spec() -> None:
 
 def test_effective_date_matches_approved_fixture() -> None:
     fixture = json.loads((FIXTURES / "invoice_routing_effective_date.json").read_text("utf-8"))
-    assert date.fromisoformat(fixture["effective_from"]) == ENTITY_ROUTING_EFFECTIVE_FROM
+    raw = fixture["effective_from"]
+    if raw is None:
+        assert ENTITY_ROUTING_EFFECTIVE_FROM is None
+    else:
+        assert date.fromisoformat(raw) == ENTITY_ROUTING_EFFECTIVE_FROM
 
 
 def test_literal_utc_cutover(
@@ -334,7 +349,7 @@ def test_mapped_a_does_not_warn(
 def test_incomplete_new_entity_falls_back_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
     registry = _synthetic_entities()
     incomplete_b = InvoiceEntity(
-        **{**registry["mandiri_bali_nol_impresariat"].__dict__, "bank_swift": " "}
+        **{**registry["mandiri_bali_nol_impresariat"].__dict__, "bank_name": " "}
     )
     registry["mandiri_bali_nol_impresariat"] = incomplete_b
     monkeypatch.setattr(entities, "ENTITIES", registry)
@@ -349,7 +364,7 @@ def test_incomplete_new_entity_logs_fallback_context(
 ) -> None:
     registry = _synthetic_entities()
     incomplete_b = InvoiceEntity(
-        **{**registry["mandiri_bali_nol_impresariat"].__dict__, "bank_branch": ""}
+        **{**registry["mandiri_bali_nol_impresariat"].__dict__, "tax_id": ""}
     )
     registry["mandiri_bali_nol_impresariat"] = incomplete_b
     monkeypatch.setattr(entities, "ENTITIES", registry)
@@ -366,7 +381,7 @@ def test_incomplete_new_entity_logs_fallback_context(
     assert context["reason"] == "mapped_entity_incomplete"
     assert context["configured_entity_key"] == "mandiri_bali_nol_impresariat"
     assert context["fallback_entity_key"] == "cimb_bayu_bali_nol"
-    assert context["missing_fields"] == ["bank_branch"]
+    assert context["missing_fields"] == ["tax_id"]
 
 
 def test_missing_mapped_entity_falls_back_loudly(

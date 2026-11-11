@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -25,6 +25,7 @@ from backend.services.invoicing.invoice_service import (
 A_KEY = "cimb_bayu_bali_nol"
 B_KEY = "mandiri_bali_nol_impresariat"
 C_KEY = "bni_bayu_santero"
+D_KEY = "permata_bali_nol_konsultan"
 
 AWARE = datetime(2027, 1, 2, 0, 0, 0, tzinfo=timezone.utc)
 PRE_CUTOVER = datetime(2026, 11, 10, tzinfo=timezone.utc)
@@ -52,7 +53,19 @@ def synthetic_entities() -> dict[str, InvoiceEntity]:
         company_name="Synthetic Issuer Three",
         **{**base, "tax_id": "22.222.222.2-222.222", "bank_account_number": "0000000003"},
     )
-    return {A_KEY: a, B_KEY: b, C_KEY: c}
+    d = InvoiceEntity(
+        key=D_KEY,
+        company_name="Synthetic Issuer Four",
+        **{
+            **base,
+            "tax_id": "33.333.333.3-333.333",
+            "address": "Synthetic Street Four",
+            "bank_account_number": "0000000004",
+            "bank_branch": None,
+            "bank_swift": None,
+        },
+    )
+    return {A_KEY: a, B_KEY: b, C_KEY: c, D_KEY: d}
 
 
 @pytest.fixture
@@ -207,9 +220,15 @@ class TestGeneratorEntityWiring:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("code", "key"),
-        [("kitas", A_KEY), ("visa_c1_tourism", B_KEY), ("voa_extension", C_KEY)],
+        [
+            ("kitas", A_KEY),
+            ("visa_c1_tourism", B_KEY),
+            ("tax_monthly_basic_0_50", D_KEY),
+            ("ext_b1_voa", C_KEY),
+        ],
     )
-    async def test_new_invoice_routes_code_to_entity(self, env, synth, code, key):
+    async def test_new_invoice_routes_code_to_entity(self, env, synth, monkeypatch, code, key):
+        monkeypatch.setattr(entities, "ENTITY_ROUTING_EFFECTIVE_FROM", date(2027, 1, 1))
         service, _, _ = env
         conn = service.db_pool._conn
         result = await run_flow(
@@ -318,7 +337,8 @@ class TestRetiredCodes:
             ("other_create_molina_express", A_KEY),
         ],
     )
-    async def test_retired_codes_route_as_stated(self, env, synth, code, key):
+    async def test_retired_codes_route_as_stated(self, env, synth, monkeypatch, code, key):
+        monkeypatch.setattr(entities, "ENTITY_ROUTING_EFFECTIVE_FROM", date(2027, 1, 1))
         service, _, _ = env
         conn = service.db_pool._conn
         result = await run_flow(
