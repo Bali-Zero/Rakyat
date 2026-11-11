@@ -8,6 +8,7 @@ This eliminates duplicate RAG pipelines and cache collisions.
 
 import logging
 import time
+import traceback
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -165,7 +166,13 @@ async def semantic_search(query: SearchQuery, request: Request) -> SearchRespons
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Search error: %s", e, exc_info=True)
+        # The exception text can echo the query (backend errors quote their input), so the
+        # log carries the type and the frames only; the traceback is what debugging needs.
+        logger.error(
+            "Search error: %s\n%s",
+            type(e).__name__,
+            "".join(traceback.format_tb(e.__traceback__)),
+        )
         raise HTTPException(status_code=500, detail=f"Search failed: {e!s}") from e
 
 
