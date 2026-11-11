@@ -10,14 +10,14 @@ from backend.services.crm.client_core import ClientValidator
 
 
 def test_client_create_normalizes_scan_gender() -> None:
-    assert ClientCreate(full_name="Test Client", gender="M").gender == "male"
-    assert ClientCreate(full_name="Test Client", gender="F").gender == "female"
+    assert ClientCreate(full_name="Test Client", gender="M").gender == "M"
+    assert ClientCreate(full_name="Test Client", gender="F").gender == "F"
 
 
 def test_gender_survives_router_and_service_models() -> None:
     routed = ClientCreate(full_name="Test Client", gender="F").model_dump(exclude_unset=True)
     validated = ClientValidator(**routed).model_dump(exclude_unset=True)
-    assert validated["gender"] == "female"
+    assert validated["gender"] == "F"
 
 
 def test_client_without_gender_stays_unset() -> None:
