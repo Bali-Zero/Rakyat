@@ -27,7 +27,9 @@ logger = get_logger(__name__)
 WITA = timezone(timedelta(hours=8))
 
 # First WITA calendar day on which new invoices are routed by practice type.
-ENTITY_ROUTING_EFFECTIVE_FROM = date(2026, 11, 12)
+# None = routing is disabled: every invoice is issued by the default entity. The
+# owner sets the date explicitly once the mapping has been reviewed by accounting.
+ENTITY_ROUTING_EFFECTIVE_FROM: date | None = None
 
 
 @dataclass(frozen=True)
@@ -299,7 +301,8 @@ def resolve_invoice_entity(
     """
     default = ENTITIES[DEFAULT_ENTITY_KEY]
 
-    if _issue_date_wita(invoice_created_at, now) < ENTITY_ROUTING_EFFECTIVE_FROM:
+    effective_from = ENTITY_ROUTING_EFFECTIVE_FROM
+    if effective_from is None or _issue_date_wita(invoice_created_at, now) < effective_from:
         return default
 
     key = entity_key_for_code(practice_type_code)
