@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.routers import hr as hr_router
-from backend.app.services.hr.hr_service import HRService
+from backend.app.services.hr.hr_service import HRCardError, HRService
 
 ADMIN = {"email": "adit@balizero.com", "role": "member"}
 MEMBER = {"email": "fake.member@balizero.com", "role": "member"}
@@ -168,7 +168,7 @@ async def test_merge_card_coalesces_columns_and_merges_profile():
     params = conn.fetchrow.await_args.args[1:]
     assert "npwp = COALESCE($3, npwp)" in sql
     assert "is_active = COALESCE($10, is_active)" in sql
-    assert "profile = profile || $11::jsonb" in sql
+    assert "jsonb_typeof(profile) = 'object'" in sql and "|| $11::jsonb" in sql
     assert "base_salary_idr" not in sql and "notes" not in sql
     assert params[0] == "tm-fake-7" and params[2] == "N-1"
     assert params[1] is None and params[3] is None  # omitted columns are NULL -> kept by COALESCE
@@ -190,8 +190,9 @@ async def test_merge_card_inserts_for_a_member_without_a_row():
 async def test_merge_card_without_row_and_without_hire_date_is_refused():
     pool, conn = _pool()
     conn.fetchrow = AsyncMock(return_value=None)
-    with pytest.raises(ValueError):
+    with pytest.raises(HRCardError) as exc:
         await HRService(pool).merge_card("tm-fake-9", {}, {})
+    assert exc.value.code == "hire_date_required"
 
 
 @pytest.mark.asyncio
@@ -229,3 +230,78 @@ def test_admin_read_of_the_employee_row_still_has_notes(make_client):
     res = make_client(ADMIN, _employee_service()).get("/api/hr/employees/7")
     assert res.status_code == 200
     assert res.json()["notes"] == "fake hr note"
+
+
+# ─── strict input, no echo, no driver message ───
+
+
+def test_lone_surrogate_is_422_and_the_value_never_comes_back_or_gets_logged(make_client, caplog):
+    service = _service()
+    with caplog.at_level("DEBUG"):
+        res = make_client(ADMIN, service).patch(
+            "/api/hr/employees/7/card",
+            content='{"bank_name": "ZQXLEAK\\ud800", "profile": {"legal_name": "ZQXLEAK\\ud800"}}',
+            headers={"content-type": "application/json"},
+        )
+    assert res.status_code == 422
+    body = res.text
+    assert "input" not in res.json()["detail"][0]
+    assert "ZQXLEAK" not in body
+    assert all("ZQXLEAK" not in r.getMessage() for r in caplog.records)
+    service.merge_card.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"npwp": "12ab"},
+        {"bank_account": "1234;DROP"},
+        {"profile": {"nik": "x" * 40}},
+        {"bank_name": "line\nbreak"},
+        {"bank_account_holder": "nul\x00byte"},
+        {"profile": {"address": "a" * 501}},
+        {"profile": {"docs": ["x"]}},
+        {"profile": {"docs": "x"}},
+        {"profile": {"docs": {"bad slot!": "f"}}},
+        {"profile": {"contract": ["x"]}},
+        {"profile": {"contract": {"number": "ok", "extra": "no"}}},
+    ],
+)
+def test_malformed_card_input_is_422_without_echo(make_client, payload):
+    res = make_client(ADMIN, _service()).patch("/api/hr/employees/7/card", json=payload)
+    assert res.status_code == 422
+    assert all(set(e) <= {"type", "loc", "msg"} for e in res.json()["detail"])
+
+
+def test_a_database_error_becomes_a_generic_500_that_names_only_the_class(make_client):
+    service = _service()
+    service.merge_card = AsyncMock(side_effect=HRCardError("db_DataError"))
+    res = make_client(ADMIN, service).patch("/api/hr/employees/7/card", json={"bank_name": "ok"})
+    assert res.status_code == 500
+    assert res.json()["detail"] == "card write failed (db_DataError)"
+
+
+@pytest.mark.asyncio
+async def test_merge_card_replaces_a_driver_error_by_a_code_without_its_message():
+    pool, conn = _pool()
+    conn.fetchrow = AsyncMock(side_effect=ValueError("driver quotes SECRET-VALUE here"))
+    with pytest.raises(HRCardError) as exc:
+        await HRService(pool).merge_card("tm-fake-7", {"bank_name": "x"}, {})
+    assert exc.value.code == "db_ValueError"
+    assert "SECRET" not in str(exc.value) and exc.value.__suppress_context__
+
+
+@pytest.mark.asyncio
+async def test_merge_card_accepts_an_iso_hire_date_string_as_a_date():
+    pool, conn = _pool()
+    conn.fetchrow = AsyncMock(return_value={"id": 7})
+    await HRService(pool).merge_card("tm-fake-7", {"hire_date": "2025-03-01"}, {})
+    assert conn.fetchrow.await_args.args[2] == date(2025, 3, 1)
+
+
+def test_the_card_response_cannot_fail_on_odd_stored_json(make_client):
+    odd = {**FAKE_ROW, "profile": {"docs": ["x"], "contract": "c", "birth_date": 5, "nik": 7}}
+    res = make_client(ADMIN, _service(card=odd)).get("/api/hr/employees/7/card")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["docs"] == {} and body["contract"] is None and body["nik"] is None

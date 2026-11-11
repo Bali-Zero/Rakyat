@@ -563,6 +563,39 @@ def main() -> int:
             conn.execute(text(stmt))
     print("[bootstrap] team_members prod-only columns + defaults ensured")
 
+    # hr_employees: created in prod by the legacy python migration_068 (not by a
+    # migrations_v2 file, so the v2 runner never builds it). Migration 352 adds
+    # `profile` to it with a plain ALTER that must fail loudly when the table is
+    # missing, so a CI database needs the table here. DDL mirrors migration_068.
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS hr_employees (
+                    id              SERIAL PRIMARY KEY,
+                    team_member_id  VARCHAR(36) NOT NULL UNIQUE REFERENCES team_members(id) ON DELETE RESTRICT,
+                    hire_date       DATE NOT NULL,
+                    base_salary_idr BIGINT NOT NULL CHECK (base_salary_idr >= 0),
+                    bank_name       VARCHAR(100),
+                    bank_account    VARCHAR(100),
+                    bank_account_holder VARCHAR(255),
+                    npwp            VARCHAR(32),
+                    ptkp_status     VARCHAR(10) NOT NULL DEFAULT 'TK/0',
+                    bpjs_kesehatan_number   VARCHAR(32),
+                    bpjs_ketenagakerjaan_number VARCHAR(32),
+                    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+                    notes           TEXT,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT ck_hr_employees_ptkp CHECK (
+                        ptkp_status IN ('TK/0','TK/1','TK/2','TK/3','K/0','K/1','K/2','K/3')
+                    )
+                )
+                """
+            )
+        )
+    print("[bootstrap] hr_employees legacy table ensured (for migration 352)")
+
     # practice_types prod-only divergence.
     #
     # The SQLModel `PracticeType` in `backend/app/modules/crm/models.py` declares

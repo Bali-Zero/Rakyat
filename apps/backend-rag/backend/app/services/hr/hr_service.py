@@ -38,6 +38,15 @@ def business_today() -> date:
     return (datetime.now(timezone.utc) + timedelta(hours=8)).date()
 
 
+class HRCardError(Exception):
+    """A card write failed. Carries a short code only: a driver message can quote
+    the personal value that was being written, so it is never propagated."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
 class HRService:
     """HR/Payroll business logic service."""
 
@@ -185,6 +194,8 @@ class HRService:
     ) -> int | None:
         """merge_card on a caller-owned connection (lets a script batch many in one transaction)."""
         patch_json = json.dumps(profile_patch, default=str)
+        if isinstance(fields.get("hire_date"), str):  # DATE parameters take date objects only
+            fields = {**fields, "hire_date": date.fromisoformat(fields["hire_date"])}
         args = (
             team_member_id,
             fields.get("hire_date"),
@@ -198,55 +209,71 @@ class HRService:
             fields.get("is_active"),
             patch_json,
         )
-        async with conn.transaction():
+        try:
+            async with conn.transaction():
+                row = await self._merge_statements(conn, fields, args)
+        except HRCardError:
+            raise
+        except Exception as exc:
+            raise HRCardError(f"db_{type(exc).__name__}") from None
+        logger.info(f"HR card merged: team_member_id={team_member_id}")
+        return row["id"] if row else None
+
+    async def _merge_statements(
+        self, conn: Any, fields: dict[str, Any], args: tuple[Any, ...]
+    ) -> Any:
+        """UPDATE the row, or INSERT it for a member without one (in the caller's transaction)."""
+        row = await conn.fetchrow(
+            """
+            UPDATE hr_employees SET
+                hire_date = COALESCE($2, hire_date),
+                npwp = COALESCE($3, npwp),
+                ptkp_status = COALESCE($4, ptkp_status),
+                bpjs_kesehatan_number = COALESCE($5, bpjs_kesehatan_number),
+                bpjs_ketenagakerjaan_number = COALESCE($6, bpjs_ketenagakerjaan_number),
+                bank_name = COALESCE($7, bank_name),
+                bank_account = COALESCE($8, bank_account),
+                bank_account_holder = COALESCE($9, bank_account_holder),
+                is_active = COALESCE($10, is_active),
+                profile = (CASE WHEN jsonb_typeof(profile) = 'object' THEN profile ELSE '{}'::jsonb END)
+                    || $11::jsonb
+                    || CASE WHEN $11::jsonb ? 'docs' THEN jsonb_build_object(
+                        'docs',
+                        (CASE WHEN jsonb_typeof(profile->'docs') = 'object' THEN profile->'docs'
+                              ELSE '{}'::jsonb END) || ($11::jsonb->'docs'))
+                        ELSE '{}'::jsonb END
+                    || CASE WHEN $11::jsonb ? 'contract' THEN jsonb_build_object(
+                        'contract',
+                        (CASE WHEN jsonb_typeof(profile->'contract') = 'object' THEN profile->'contract'
+                              ELSE '{}'::jsonb END) || ($11::jsonb->'contract'))
+                        ELSE '{}'::jsonb END,
+                updated_at = NOW()
+            WHERE team_member_id = $1
+            RETURNING id
+            """,
+            *args,
+        )
+        if row is None:
+            if fields.get("hire_date") is None:
+                raise HRCardError("hire_date_required")
             row = await conn.fetchrow(
                 """
-                UPDATE hr_employees SET
-                    hire_date = COALESCE($2, hire_date),
-                    npwp = COALESCE($3, npwp),
-                    ptkp_status = COALESCE($4, ptkp_status),
-                    bpjs_kesehatan_number = COALESCE($5, bpjs_kesehatan_number),
-                    bpjs_ketenagakerjaan_number = COALESCE($6, bpjs_ketenagakerjaan_number),
-                    bank_name = COALESCE($7, bank_name),
-                    bank_account = COALESCE($8, bank_account),
-                    bank_account_holder = COALESCE($9, bank_account_holder),
-                    is_active = COALESCE($10, is_active),
-                    profile = profile || $11::jsonb
-                        || CASE WHEN $11::jsonb ? 'docs' THEN jsonb_build_object(
-                            'docs', COALESCE(profile->'docs', '{}'::jsonb) || ($11::jsonb->'docs'))
-                            ELSE '{}'::jsonb END
-                        || CASE WHEN $11::jsonb ? 'contract' THEN jsonb_build_object(
-                            'contract', COALESCE(profile->'contract', '{}'::jsonb) || ($11::jsonb->'contract'))
-                            ELSE '{}'::jsonb END,
-                    updated_at = NOW()
-                WHERE team_member_id = $1
+                INSERT INTO hr_employees (
+                    team_member_id, hire_date, base_salary_idr, npwp, ptkp_status,
+                    bpjs_kesehatan_number, bpjs_ketenagakerjaan_number,
+                    bank_name, bank_account, bank_account_holder, is_active, profile
+                )
+                SELECT tm.id, $2, 0, $3, COALESCE($4, 'TK/0'), $5, $6, $7, $8, $9,
+                       COALESCE($10, TRUE), $11::jsonb
+                FROM team_members tm
+                WHERE tm.id = $1
+                  AND NOT EXISTS (SELECT 1 FROM hr_employees x WHERE x.team_member_id = $1)
+                ON CONFLICT (team_member_id) DO NOTHING
                 RETURNING id
                 """,
                 *args,
             )
-            if row is None:
-                if fields.get("hire_date") is None:
-                    msg = "hire_date is required to create the HR record"
-                    raise ValueError(msg)
-                row = await conn.fetchrow(
-                    """
-                    INSERT INTO hr_employees (
-                        team_member_id, hire_date, base_salary_idr, npwp, ptkp_status,
-                        bpjs_kesehatan_number, bpjs_ketenagakerjaan_number,
-                        bank_name, bank_account, bank_account_holder, is_active, profile
-                    )
-                    SELECT tm.id, $2, 0, $3, COALESCE($4, 'TK/0'), $5, $6, $7, $8, $9,
-                           COALESCE($10, TRUE), $11::jsonb
-                    FROM team_members tm
-                    WHERE tm.id = $1
-                      AND NOT EXISTS (SELECT 1 FROM hr_employees x WHERE x.team_member_id = $1)
-                    ON CONFLICT (team_member_id) DO NOTHING
-                    RETURNING id
-                    """,
-                    *args,
-                )
-        logger.info(f"HR card merged: team_member_id={team_member_id}")
-        return row["id"] if row else None
+        return row
 
     # ─── BONUS RATES ─────────────────────────────────────────────────
 

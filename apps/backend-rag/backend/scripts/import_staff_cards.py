@@ -32,8 +32,8 @@ if not os.getenv("DATABASE_URL"):
 from pydantic import ValidationError
 
 from backend.app.modules.identity.service import IdentityService
-from backend.app.routers.hr import StaffCardPatch
-from backend.app.services.hr.hr_service import HRService
+from backend.app.services.hr.hr_card_models import StaffCardPatch
+from backend.app.services.hr.hr_service import HRCardError, HRService
 
 # The service logs ids on every merge; this script prints counts only.
 logging.getLogger().setLevel(logging.WARNING)
@@ -44,6 +44,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     """Strict flags: anything unknown exits 2 before any DB access."""
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--apply", action="store_true", help="write (default is dry-run)")
+    parser.add_argument(
+        "--skip-not-found",
+        action="store_true",
+        help="with --apply: skip emails that resolve to no staff member instead of stopping",
+    )
     return parser.parse_args(argv)
 
 
@@ -72,14 +77,16 @@ def validate_card(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
         return None, "invalid_fields"
     return {
         "email": email.strip(),
-        "fields": patch.model_dump(mode="json", exclude={"profile"}, exclude_none=True),
+        "fields": patch.model_dump(exclude={"profile"}, exclude_none=True),  # real date objects
         "profile": patch.profile.model_dump(mode="json", exclude_none=True)
         if patch.profile
         else {},
     }, None
 
 
-async def run(conn: Any, document: Any, apply: bool) -> tuple[Counter[str], bool]:
+async def run(
+    conn: Any, document: Any, apply: bool, skip_not_found: bool = False
+) -> tuple[Counter[str], bool]:
     """Classify every card (and write when apply). Returns (counts, ok)."""
     counts: Counter[str] = Counter()
     cards = document.get("cards") if isinstance(document, dict) else None
@@ -115,9 +122,12 @@ async def run(conn: Any, document: Any, apply: bool) -> tuple[Counter[str], bool
         work.append((member["id"], card["fields"], card["profile"]))
 
     rejected = sum(n for k, n in counts.items() if k.startswith("rejected:"))
+    blocked_by_missing = bool(counts["not_found"]) and not skip_not_found
+    if blocked_by_missing:
+        counts["blocked:not_found"] = counts["not_found"]
     if not apply:
         return counts, True
-    if rejected:
+    if rejected or blocked_by_missing:
         return counts, False
     service = HRService(None)  # type: ignore[arg-type]  # merge_card_on uses the given connection
     async with conn.transaction():
@@ -130,7 +140,7 @@ def format_counts(counts: Counter[str], apply: bool) -> str:
     lines = [f"mode: {'apply' if apply else 'dry-run'}"]
     for key in ("resolved", "not_found", "would_update", "would_insert"):
         lines.append(f"{key}: {counts.get(key, 0)}")
-    for key in sorted(k for k in counts if k.startswith("rejected:")):
+    for key in sorted(k for k in counts if k.startswith(("rejected:", "blocked:"))):
         lines.append(f"{key}: {counts[key]}")
     return "\n".join(lines)
 
@@ -144,7 +154,10 @@ async def amain(argv: list[str], stdin_text: str) -> int:
         return 1
     conn = await IdentityService().get_db_connection()
     try:
-        counts, ok = await run(conn, document, args.apply)
+        counts, ok = await run(conn, document, args.apply, args.skip_not_found)
+    except HRCardError as exc:
+        print(f"failed: {exc.code} (transaction rolled back)")  # noqa: T201
+        return 1
     except Exception as exc:  # never echo the message: it may carry payload values
         print(f"failed: {type(exc).__name__} (transaction rolled back)")  # noqa: T201
         return 1
