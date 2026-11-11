@@ -157,6 +157,25 @@ one) cannot be judged and keeps the profile. Consequence, stated plainly: a
 profile written with no valid token survives until the next token signal,
 storage event, focus or visibility change.
 
+**S7. Cross-tab freshness: an accepted residual (owner decision, 2026-11-12).**
+Every "fresh synchronous read" above (S3, S4 2(b), S6) reads THIS TAB'S view
+of storage. That view is not guaranteed to be current with other tabs: the HTML
+standard gives no cross-process synchronization for localStorage, and Chromium
+serves reads from a per-renderer cache that another process's write reaches
+only later, together with the `storage` event. So in the interval between
+another tab's sign-out or sign-in and the delivery of its `storage` event here,
+this tab can still accept a response and show the data of the identity whose
+bearer it sent, i.e. the person who was signed in in this tab when it sent the
+request, and `getProfile()` can still write that person's profile. When the
+event is delivered, S4 rule 3 clears the page and S6 removes the profile; the
+state converges. What the client guarantees: it never shows data for an
+identity this tab did not send a bearer for (S4 2(a), 2(c)), and every
+divergence is bounded by the browser's own propagation delay. What it does not
+guarantee: strict cross-tab consistency inside that delay; no client-side
+mechanism can. The owner accepted this residual on 2026-11-12. The larger
+shared-device risk, a session left open on an office computer or phone, is not
+addressed here and belongs to a kita-wide follow-up (lock on inactivity).
+
 ## Where each rule is proved
 
 - S2/S3 signals and epoch: `session-signal.test.ts`.
