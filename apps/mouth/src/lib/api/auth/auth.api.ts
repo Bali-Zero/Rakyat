@@ -3,11 +3,34 @@ import { UserProfile } from "@/types";
 import type { BackendLoginResponse, LoginResponse } from "./auth.types";
 import { logger } from "@/lib/logger";
 import { getSessionEpoch } from "@/lib/auth/session-signal";
+import {
+  readStoredProfileFor,
+  readStoredToken,
+  readStoredValidSub,
+} from "@/lib/auth/session-credential";
 
 type AuthApiClient = Pick<
   IApiClient,
-  "request" | "setToken" | "setUserProfile" | "setCsrfToken" | "clearToken"
+  | "request"
+  | "requestWithCredential"
+  | "setToken"
+  | "setUserProfile"
+  | "setCsrfToken"
+  | "clearToken"
 >;
+
+/**
+ * getProfile() answered a session this tab no longer holds (the credential it
+ * sent is not the one in storage any more) and no profile of the current
+ * session is stored to give back instead. Callers treat it like any failed
+ * profile read. See src/lib/auth/SESSION.md S3.
+ */
+export class StaleSessionError extends Error {
+  constructor() {
+    super("The session changed while the profile was loading");
+    this.name = "StaleSessionError";
+  }
+}
 
 /**
  * Authentication API methods
@@ -163,19 +186,48 @@ export class AuthApi {
    * not act on their behalf before they get a chance to ask hasSession().
    */
   async getProfile(options?: ApiRequestOptions): Promise<UserProfile> {
-    // A profile answers the session that ASKED for it. If the session changed
-    // while the request was in flight (logout, login, token expiry/removal,
-    // another tab), the response belongs to a session this tab no longer has:
-    // hand it back to the caller but never write it (SESSION.md S3).
+    // A profile answers the credential that was SENT, not the one in storage
+    // when the answer lands (SESSION.md S3). The epoch alone cannot prove
+    // that: another tab's `storage` events are queued and may be handled after
+    // this continuation.
     const issuedEpoch = getSessionEpoch();
-    const profile = await this.client.request<UserProfile>(
-      "/api/auth/profile",
-      options ?? {},
-    );
-    if (getSessionEpoch() === issuedEpoch) {
-      this.client.setUserProfile(profile);
+    if (typeof this.client.requestWithCredential !== "function") {
+      // Test doubles only: both real clients implement it.
+      const profile = await this.client.request<UserProfile>(
+        "/api/auth/profile",
+        options ?? {},
+      );
+      if (getSessionEpoch() === issuedEpoch)
+        this.client.setUserProfile(profile);
+      return profile;
     }
-    return profile;
+    const { data: profile, sentToken } =
+      await this.client.requestWithCredential<UserProfile>(
+        "/api/auth/profile",
+        options ?? {},
+      );
+    // Cookie-only request: nothing to compare against and nothing to write
+    // (the endpoint is bearer-only, so this is in practice a 401 above).
+    if (sentToken === null) return profile;
+
+    // FRESH read of storage, not an event or the epoch.
+    if (readStoredToken() === sentToken) {
+      // Same credential still in force; the epoch is the extra same-tab guard
+      // for the write.
+      if (getSessionEpoch() === issuedEpoch)
+        this.client.setUserProfile(profile);
+      return profile;
+    }
+
+    // The credential that fetched this profile left the tab. Never write it.
+    // Give back the stored profile only if it belongs to the session now in
+    // force; otherwise there is nothing truthful to return.
+    const currentSub = readStoredValidSub();
+    const current = currentSub
+      ? readStoredProfileFor<UserProfile>(currentSub)
+      : null;
+    if (current) return current;
+    throw new StaleSessionError();
   }
 
   /**

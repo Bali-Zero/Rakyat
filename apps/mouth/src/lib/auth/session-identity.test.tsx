@@ -1,11 +1,4 @@
-import {
-  act,
-  render,
-  renderHook,
-  screen,
-  waitFor,
-} from "@testing-library/react";
-import { useEffect, useState } from "react";
+import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/logger", () => ({
@@ -13,15 +6,13 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { ApiClientBase } from "@/lib/api/client";
-import { AuthApi } from "@/lib/api/auth/auth.api";
-import { getValidToken } from "@/lib/utils/token";
 import {
-  acceptForIdentity,
+  acceptResponse,
   readSessionIdentity,
   subscribeSessionChange,
   useSessionIdentity,
 } from "./session-identity";
-import { getSessionEpoch } from "./session-signal";
+import { getSessionEpoch, notifySessionChanged } from "./session-signal";
 import { makeJwt, tokenFor } from "./session-test-utils";
 
 beforeEach(() => {
@@ -103,19 +94,51 @@ describe("subscribeSessionChange", () => {
   });
 });
 
-describe("acceptForIdentity", () => {
-  const a = { sub: "1", epoch: 5 };
-  it("needs both identities, equal sub AND epoch", () => {
-    expect(acceptForIdentity(a, a)).toBe(true);
-    expect(acceptForIdentity(a, null)).toBe(false);
-    expect(acceptForIdentity(null, a)).toBe(false);
-    expect(acceptForIdentity(a, { sub: "1", epoch: 6 })).toBe(false);
-    expect(acceptForIdentity(a, { sub: "2", epoch: 5 })).toBe(false);
+describe("acceptResponse", () => {
+  const sentA = { sentSub: "A" };
+
+  function signIn(sub: string) {
+    localStorage.setItem("auth_token", tokenFor(sub));
+  }
+
+  it("accepts a bearer-sent response whose sub is the stored sub and the displayed identity", () => {
+    signIn("A");
+    expect(acceptResponse(sentA, readSessionIdentity())).toBe(true);
   });
-  it("requires a named owner to be the sub", () => {
-    expect(acceptForIdentity(a, a, "1")).toBe(true);
-    expect(acceptForIdentity(a, a, 1)).toBe(true);
-    expect(acceptForIdentity(a, a, "2")).toBe(false);
+
+  it("(a) refuses a response that was sent without a bearer", () => {
+    signIn("A");
+    expect(acceptResponse({ sentSub: null }, readSessionIdentity())).toBe(
+      false,
+    );
+  });
+
+  it("(b) refuses when storage now holds another sub or no valid token, without any event", () => {
+    signIn("A");
+    const displayed = readSessionIdentity();
+    signIn("B");
+    expect(acceptResponse(sentA, displayed)).toBe(false);
+    localStorage.removeItem("auth_token");
+    expect(acceptResponse(sentA, displayed)).toBe(false);
+    localStorage.setItem("auth_token", tokenFor("A", -10));
+    expect(acceptResponse(sentA, displayed)).toBe(false);
+  });
+
+  it("(c) refuses a response naming another owner, accepts the same owner as string or number", () => {
+    signIn("1");
+    const displayed = readSessionIdentity();
+    expect(acceptResponse({ sentSub: "1" }, displayed, "1")).toBe(true);
+    expect(acceptResponse({ sentSub: "1" }, displayed, 1)).toBe(true);
+    expect(acceptResponse({ sentSub: "1" }, displayed, "2")).toBe(false);
+  });
+
+  it("(d) refuses when the displayed identity is missing, another sub, or an older epoch", () => {
+    signIn("A");
+    const displayed = readSessionIdentity()!;
+    expect(acceptResponse(sentA, null)).toBe(false);
+    expect(acceptResponse(sentA, { ...displayed, sub: "B" })).toBe(false);
+    notifySessionChanged();
+    expect(acceptResponse(sentA, displayed)).toBe(false);
   });
 });
 
@@ -141,143 +164,5 @@ describe("useSessionIdentity", () => {
       vi.advanceTimersByTime(200_000);
     });
     expect(result.current).toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// A page bound to the identity, following SESSION.md S4. `load` stands for the
-// page's own-data request; the response names its owner (team_member_id).
-// ---------------------------------------------------------------------------
-interface Card {
-  team_member_id: string;
-  value: string;
-}
-
-function BoundCard({ load }: { load: () => Promise<Card> }) {
-  const identity = useSessionIdentity();
-  const [card, setCard] = useState<Card | null>(null);
-
-  useEffect(() => {
-    setCard(null); // identity changed or disappeared: clear at once
-    if (!identity) return; // nobody signed in: issue nothing
-    let live = true;
-    load().then((res) => {
-      if (!live) return;
-      if (
-        acceptForIdentity(identity, readSessionIdentity(), res.team_member_id)
-      ) {
-        setCard(res);
-      }
-    });
-    return () => {
-      live = false;
-    };
-  }, [identity, load]);
-
-  return <div data-testid="card">{card ? card.value : "nothing"}</div>;
-}
-
-function deferred<T>() {
-  let resolve!: (v: T) => void;
-  const promise = new Promise<T>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
-
-describe("a page bound to the identity", () => {
-  it("race 1: A's card shown, token A expires, a response owned by B arrives -> nothing shown", async () => {
-    localStorage.setItem("auth_token", tokenFor("A", 3600));
-    const first = deferred<Card>();
-    const second = deferred<Card>();
-    const load = vi
-      .fn<() => Promise<Card>>()
-      .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise);
-    render(<BoundCard load={load} />);
-    await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
-    await act(async () =>
-      first.resolve({ team_member_id: "A", value: "A-pay" }),
-    );
-    expect(screen.getByTestId("card").textContent).toBe("A-pay");
-
-    // A expires and is removed alone; the cookie meanwhile belongs to B.
-    localStorage.setItem("auth_token", tokenFor("A", -10));
-    act(() => {
-      getValidToken("auth_token", localStorage);
-    });
-    expect(screen.getByTestId("card").textContent).toBe("nothing");
-    expect(load).toHaveBeenCalledTimes(1); // no refetch through the cookie
-    await act(async () =>
-      second.resolve({ team_member_id: "B", value: "B-pay" }),
-    );
-    expect(screen.getByTestId("card").textContent).toBe("nothing");
-  });
-
-  it("race 1b: a late response for A after the removal is dropped", async () => {
-    localStorage.setItem("auth_token", tokenFor("A", 3600));
-    const late = deferred<Card>();
-    const load = vi.fn<() => Promise<Card>>().mockReturnValue(late.promise);
-    render(<BoundCard load={load} />);
-    await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
-
-    localStorage.setItem("auth_token", tokenFor("A", -10));
-    act(() => {
-      getValidToken("auth_token", localStorage);
-    });
-    await act(async () =>
-      late.resolve({ team_member_id: "A", value: "A-pay" }),
-    );
-    expect(screen.getByTestId("card").textContent).toBe("nothing");
-  });
-
-  it("a response whose owner is not the signed-in sub is refused even with a live identity", async () => {
-    localStorage.setItem("auth_token", tokenFor("A", 3600));
-    const load = vi
-      .fn<() => Promise<Card>>()
-      .mockResolvedValue({ team_member_id: "B", value: "B-pay" });
-    render(<BoundCard load={load} />);
-    await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
-    await act(async () => {});
-    expect(screen.getByTestId("card").textContent).toBe("nothing");
-  });
-
-  it("race 2: logout pending + stale getProfile response -> nothing shown, no refetch", async () => {
-    const client = new ApiClientBase("https://api.test");
-    const auth = new AuthApi(client);
-    client.setToken(tokenFor("A", 3600));
-    const profileGate = deferred<Response>();
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/api/auth/profile")) return profileGate.promise;
-      return new Response(null, { status: 204 });
-    });
-    const load = vi
-      .fn<() => Promise<Card>>()
-      .mockResolvedValue({ team_member_id: "A", value: "A-pay" });
-    render(<BoundCard load={load} />);
-    await waitFor(() =>
-      expect(screen.getByTestId("card").textContent).toBe("A-pay"),
-    );
-    expect(load).toHaveBeenCalledTimes(1);
-
-    const profileCall = auth.getProfile(); // like the HR layout on mount
-    await act(async () => {
-      await auth.logout();
-    });
-    expect(screen.getByTestId("card").textContent).toBe("nothing");
-
-    await act(async () => {
-      profileGate.resolve(
-        new Response(JSON.stringify({ id: "A", email: "a@example.test" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
-      await profileCall;
-    });
-    expect(localStorage.getItem("user_profile")).toBeNull();
-    expect(screen.getByTestId("card").textContent).toBe("nothing");
-    expect(load).toHaveBeenCalledTimes(1); // the cookie is not an identity
   });
 });

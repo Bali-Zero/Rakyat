@@ -34,6 +34,8 @@ for that purpose: the page shows no personal value, even though the cookie
 would still authenticate a request. The cookie and `user_profile` are not
 identity sources for this purpose. "Valid" = present, decodable as a JWT with
 a non-empty string `sub`, and not expired by `isTokenExpired` (30 s skew). The
+identity of a RESPONSE is the `sub` of the bearer that request carried (S3),
+never the identity at the time the response is handled. The
 `sub` is the `team_members` primary key as a string, the same value as
 `user_profile.id` (backend `routers/auth.py` login, magic link, refresh). The
 client does not verify the signature (the backend does) and never logs or
@@ -49,33 +51,68 @@ signals once. Other tabs learn through the `storage` event on `auth_token` /
 is blocked the in-tab memory fallback has no cross-tab signal; same-tab
 signalling still works.
 
-**S3. Epoch.** An in-memory per-tab counter (`getSessionEpoch()`) is bumped on
-every signal above and on every session-key `storage` event from another tab.
-`AuthApi.getProfile()` reads the epoch before issuing the request and writes
-`user_profile` only if the epoch is unchanged when the response arrives: a
-response issued before a logout, login, token change or expiry is handed back
-to its caller but never written. `login` and `verifyMagicLink` are NOT guarded
-on purpose: they establish a new session and the last completed login wins;
-guarding them would drop a legitimate login whenever `request()` itself clears
-an expired token on the way out.
+**S3. Credential sent, then epoch.** The epoch is not proof of which credential
+left the tab, and the spec's first version treated it as proof. It is wrong
+because another tab's change reaches this tab only as a `storage` event, and
+those events are queued: their order relative to a fetch continuation is
+implementation-defined. Sequence that broke it: identity read A at epoch E;
+another tab sets B; `request()` reads and sends bearer B; the other tab
+restores A; the response is handled BEFORE the queued events, so the identity
+still reads A/E. So the proof is the credential actually sent:
+`ApiClientBase.requestWithCredential(endpoint, options?, timeout?)` (same code
+path as `request()`, which still returns only data) returns
+`{data, sentToken, sentSub}`: the exact bearer placed in the Authorization
+header at send time, `null` if the request went out cookie-only, and its
+decoded `sub`. The token is returned there and nowhere else; never log or
+render it. The in-memory per-tab epoch (`getSessionEpoch()`) is kept: it is
+bumped on every signal above and on every session-key `storage` event, and is
+an extra same-tab guard, no longer the proof.
+
+`AuthApi.getProfile()` uses that path and writes `user_profile` only if the
+token was sent (`sentToken` non-null), AND a fresh synchronous read of storage
+shows the same token (`readStoredToken() === sentToken`), AND the epoch is
+unchanged. If the token in storage is no longer the one sent, nothing is
+written, and the call returns the stored profile only when that profile's `id`
+is the `sub` of the currently valid stored token; otherwise it throws the
+exported `StaleSessionError`. A cookie-only response is returned as before and
+never written. If the token is unchanged but the epoch moved (a same-tab
+write in between), the response is returned unwritten: it belongs to the
+credential still in force. Every caller of `getProfile()` was read (44 call
+sites): each sits in a try/catch or has a `.catch`, so a throw reads as a
+failed profile read: no crash, no redirect loop (workspace layout re-throws to
+its login redirect, which is correct when the session ended mid-flight; the
+analytics layout asks `hasSession()`; chat shows a default name; HR layout and
+the owner gate fail closed). `login` and `verifyMagicLink` are NOT guarded on
+purpose: they establish a new session and the last completed login wins.
+Test doubles of the client that lack `requestWithCredential` fall back to the
+epoch guard only; both real clients implement it.
 
 **S4. Helper for pages.** `session-identity.ts` exports
-`readSessionIdentity(): {sub, epoch} | null` (pure read: removes nothing,
-dispatches nothing, never throws), `subscribeSessionChange(cb)` (signal +
-`storage` + `focus` + `visibilitychange`, returns the unsubscribe),
+`readSessionIdentity(): {sub, epoch} | null` (pure read of storage: removes
+nothing, dispatches nothing, never throws), `subscribeSessionChange(cb)`
+(signal + `storage` + `focus` + `visibilitychange`, returns the unsubscribe),
 `useSessionIdentity()` (null on the server and first render, then live; it also
-re-reads when the token reaches its expiry, so a page learns about an expiry
-nobody removed), and two helpers `isSameIdentity` / `acceptForIdentity`. A page
-binds data to identity by:
-1. issuing a request only when an identity exists;
-2. accepting the response only if a FRESH `readSessionIdentity()` at response
-   time equals the identity at issue time (sub AND epoch) AND, when the
-   response names its owner (e.g. `team_member_id`), the owner equals `sub`
-   (`acceptForIdentity`);
+re-reads when the token reaches its expiry), `isSameIdentity`, and
+`acceptResponse(response, displayed, owner?)`. Fresh reads live in
+`session-credential.ts`. A page binds data to identity by:
+1. issuing a request only when an identity exists, through
+   `requestWithCredential`, never through the cookie alone;
+2. accepting a response carrying personal data only if (a) it was sent with a
+   bearer (`sentSub` non-null: a cookie-only response is never accepted, the
+   server may have used someone else's cookie), (b) a FRESH synchronous read of
+   the stored token NOW gives a valid token whose sub equals `sentSub` (storage
+   read directly, not the epoch, not events), (c) when the response names its
+   owner (e.g. `team_member_id`) the owner equals `sentSub`, and (d) the
+   identity the page displays (`useSessionIdentity`) equals `sentSub` and its
+   epoch is still the tab's epoch: all four are `acceptResponse`;
 3. clearing its data the moment the identity changes or disappears.
-Because the epoch moves on every profile write too, a same-user profile
-refresh makes a bound page refetch once; that is the price of a rule with no
-exceptions.
+The epoch moves on every token and profile write, and the displayed identity
+carries it, so a profile write makes a bound page reload. Condition: a bound
+page's load path must NOT call `getProfile()` or anything that calls
+`setUserProfile`, otherwise each load writes the profile, moves the epoch and
+triggers the next load, a loop. A page that needs the profile reads
+`user_profile` or gets it from its parent; it does not refetch it in the load
+effect.
 
 **S5. Out of scope, stated honestly.** (a) The cookie's domain-wide scope is
 not changed here; with S1 a page bound to the bearer identity never shows data
@@ -93,5 +130,8 @@ unchanged.
 
 - S2/S3 signals and epoch: `session-signal.test.ts`.
 - S3 getProfile guard, real `AuthApi` + `ApiClientBase`:
-  `src/lib/api/auth/auth.api.session.test.ts`.
-- S1/S4 and the two races through a bound page: `session-identity.test.tsx`.
+  `src/lib/api/auth/auth.api.session.test.ts`; the credential capture:
+  `src/lib/api/client-credential.test.ts`.
+- S1/S4 and the races through a bound page and the real transport, including
+  the delayed cross-tab `storage` events: `session-identity.test.tsx`,
+  `session-credential-race.test.tsx`.

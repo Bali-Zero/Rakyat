@@ -35,6 +35,16 @@ export function decodeJwtPayload(token: string): Record<string, unknown> | null 
 }
 
 /**
+ * The `sub` claim of a JWT as a non-empty string, or null (undecodable, no
+ * `sub`, non-string `sub`). No signature check; never throws.
+ */
+export function getTokenSubject(token: string | null | undefined): string | null {
+  if (!token) return null;
+  const sub = decodeJwtPayload(token)?.sub;
+  return typeof sub === "string" && sub.length > 0 ? sub : null;
+}
+
+/**
  * Check if a JWT token is expired.
  *
  * @param token - JWT token string

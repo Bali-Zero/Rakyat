@@ -40,6 +40,19 @@ export interface ApiRequestOptions extends Omit<RequestInit, "headers"> {
  * Interface for API client implementations.
  * Domain APIs depend on this interface, not concrete implementations.
  */
+/**
+ * A response together with the credential the request ACTUALLY carried
+ * (src/lib/auth/SESSION.md S3/S4). `sentToken` is the exact bearer placed in
+ * the Authorization header at send time, or null when the request went out
+ * with no bearer (cookie-only). `sentSub` is that token's decoded `sub`.
+ * The token never leaves this object: do not log, render or store it.
+ */
+export interface CredentialedResponse<T> {
+  data: T;
+  sentSub: string | null;
+  sentToken: string | null;
+}
+
 export interface IApiClient {
   /**
    * Make an HTTP request to the backend API.
@@ -53,6 +66,15 @@ export interface IApiClient {
     options?: ApiRequestOptions,
     timeoutMs?: number,
   ): Promise<T>;
+
+  /**
+   * Same code path as request(), also reporting which bearer was sent.
+   */
+  requestWithCredential?<T>(
+    endpoint: string,
+    options?: ApiRequestOptions,
+    timeoutMs?: number,
+  ): Promise<CredentialedResponse<T>>;
 
   /**
    * Get admin-specific headers for protected endpoints.

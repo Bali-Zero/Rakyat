@@ -2,10 +2,11 @@ import { UserProfile } from "@/types";
 import type {
   IApiClient,
   ApiRequestOptions,
+  CredentialedResponse,
   SessionState,
 } from "./types/api-client.types";
 import { safeStorage } from "@/lib/utils/storage";
-import { isTokenExpired } from "@/lib/utils/token";
+import { getTokenSubject, isTokenExpired } from "@/lib/utils/token";
 import {
   AUTH_TOKEN_STORAGE_KEY,
   USER_PROFILE_STORAGE_KEY,
@@ -361,6 +362,45 @@ export class ApiClientBase implements IApiClient {
     options: ApiRequestOptions = {},
     timeoutMs: number = 30000,
   ): Promise<T> {
+    return this.performRequest<T>(endpoint, options, timeoutMs, {
+      token: null,
+    });
+  }
+
+  /**
+   * request() plus the credential the request actually carried: the exact
+   * bearer placed in the Authorization header at send time (null = went out
+   * cookie-only). Same code path as request(); a page that shows personal
+   * data uses this to bind the response to the credential that fetched it
+   * (src/lib/auth/SESSION.md S3/S4). The token is returned here and nowhere
+   * else: never log or render it.
+   */
+  async requestWithCredential<T>(
+    endpoint: string,
+    options: ApiRequestOptions = {},
+    timeoutMs: number = 30000,
+  ): Promise<CredentialedResponse<T>> {
+    const sent: { token: string | null } = { token: null };
+    const data = await this.performRequest<T>(
+      endpoint,
+      options,
+      timeoutMs,
+      sent,
+    );
+    return {
+      data,
+      sentToken: sent.token,
+      sentSub: getTokenSubject(sent.token),
+    };
+  }
+
+  /** Shared body of request()/requestWithCredential(); `sent` records the bearer attached. */
+  protected async performRequest<T>(
+    endpoint: string,
+    options: ApiRequestOptions,
+    timeoutMs: number,
+    sent: { token: string | null },
+  ): Promise<T> {
     // Superuser impersonation: append ?as_client=<id> to portal/lkpm paths
     // when the context has a target set. Idempotent — if the query already
     // carries as_client we leave it alone, honoring explicit callers (e.g.
@@ -404,6 +444,7 @@ export class ApiClientBase implements IApiClient {
     const currentToken = this.getToken();
     if (currentToken) {
       headers["Authorization"] = `Bearer ${currentToken}`;
+      sent.token = currentToken;
     }
 
     const controller = new AbortController();

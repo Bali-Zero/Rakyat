@@ -72,7 +72,9 @@ describe("AuthApi.getProfile against the session (real AuthApi + ApiClient)", ()
     expect(localStorage.getItem("auth_token")).toBeNull();
 
     resolveProfile(json(PROFILE_A)); // A's answer arrives after the logout
-    await profileCall;
+    // Nothing is stored to give back, so the call may reject (StaleSessionError)
+    // on the fixed tree; either way it must write nothing.
+    await profileCall.catch(() => undefined);
 
     expect(localStorage.getItem("user_profile")).toBeNull();
     expect(client.getUserProfile()).toBeNull();

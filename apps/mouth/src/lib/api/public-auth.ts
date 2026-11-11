@@ -1,7 +1,11 @@
 import { AuthApi, PORTAL_SUPERUSER_PROBE_ENDPOINT } from "./auth/auth.api";
-import type { ApiRequestOptions } from "./types/api-client.types";
+import type {
+  ApiRequestOptions,
+  CredentialedResponse,
+} from "./types/api-client.types";
 import type { UserProfile } from "@/types";
 import { safeStorage } from "@/lib/utils/storage";
+import { getTokenSubject } from "@/lib/utils/token";
 import {
   AUTH_TOKEN_STORAGE_KEY,
   USER_PROFILE_STORAGE_KEY,
@@ -44,6 +48,30 @@ export class PublicAuthClient {
     options: ApiRequestOptions = {},
     timeoutMs = 30_000,
   ): Promise<T> {
+    return this.perform<T>(endpoint, options, timeoutMs, { token: null });
+  }
+
+  /** request() plus the bearer actually sent (SESSION.md S3/S4); never log the token. */
+  async requestWithCredential<T>(
+    endpoint: string,
+    options: ApiRequestOptions = {},
+    timeoutMs = 30_000,
+  ): Promise<CredentialedResponse<T>> {
+    const sent: { token: string | null } = { token: null };
+    const data = await this.perform<T>(endpoint, options, timeoutMs, sent);
+    return {
+      data,
+      sentToken: sent.token,
+      sentSub: getTokenSubject(sent.token),
+    };
+  }
+
+  private async perform<T>(
+    endpoint: string,
+    options: ApiRequestOptions,
+    timeoutMs: number,
+    sent: { token: string | null },
+  ): Promise<T> {
     if (!isPublicAuthEndpoint(endpoint)) {
       throw new Error("Public auth client rejected a non-auth endpoint");
     }
@@ -61,6 +89,7 @@ export class PublicAuthClient {
     }
     if (this.token) {
       headers.Authorization = `Bearer ${this.token}`;
+      sent.token = this.token;
     }
 
     try {

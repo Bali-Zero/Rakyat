@@ -2,10 +2,13 @@
 
 import { useEffect, useState } from "react";
 
-import { safeStorage } from "@/lib/utils/storage";
-import { decodeJwtPayload, isTokenExpired } from "@/lib/utils/token";
+import { decodeJwtPayload } from "@/lib/utils/token";
 import {
-  AUTH_TOKEN_STORAGE_KEY,
+  TOKEN_CLOCK_SKEW_SECONDS,
+  readStoredValidSub,
+  readStoredValidToken,
+} from "./session-credential";
+import {
   SESSION_CHANGED_EVENT,
   getSessionEpoch,
   isSessionStorageEvent,
@@ -24,31 +27,16 @@ export interface SessionIdentity {
   epoch: number;
 }
 
-const CLOCK_SKEW_SECONDS = 30;
 // setTimeout cannot take a delay above 2^31-1 ms.
 const MAX_TIMER_MS = 2_147_483_647;
-
-function readValidToken(): string | null {
-  try {
-    const token = safeStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
-    if (!token || isTokenExpired(token, CLOCK_SKEW_SECONDS)) return null;
-    return token;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Pure read: never removes a token and never dispatches (safe in render).
  * Null for an absent, expired, malformed or `sub`-less token. Never throws.
  */
 export function readSessionIdentity(): SessionIdentity | null {
-  const token = readValidToken();
-  if (!token) return null;
-  const payload = decodeJwtPayload(token);
-  const sub = payload?.sub;
-  if (typeof sub !== "string" || sub.length === 0) return null;
-  return { sub, epoch: getSessionEpoch() };
+  const sub = readStoredValidSub();
+  return sub ? { sub, epoch: getSessionEpoch() } : null;
 }
 
 export function isSameIdentity(
@@ -59,19 +47,34 @@ export function isSameIdentity(
 }
 
 /**
- * The binding rule for a response (S4): accept it only if the identity at
- * response time (a FRESH `readSessionIdentity()`, not a React state value)
- * equals the one at issue time, and, when the response names its owner (e.g.
- * `team_member_id`), the owner is that identity's `sub`.
+ * The binding rule for a response carrying personal data (SESSION.md S4).
+ * `response` is what `requestWithCredential()` returned. Accepted only if ALL
+ * hold:
+ *  (a) the request was sent WITH a bearer (`sentSub` non-null): a cookie-only
+ *      response is never accepted, the server may have used someone else's
+ *      cookie;
+ *  (b) a FRESH synchronous read of storage NOW gives a valid token whose sub
+ *      equals `sentSub` (no reliance on events or on the epoch);
+ *  (c) when the response names its owner (e.g. `team_member_id`), the owner is
+ *      `sentSub`;
+ *  (d) the identity the page is displaying (`displayed`, from
+ *      `useSessionIdentity`) is `sentSub`, and its epoch is still this tab's
+ *      epoch (an extra same-tab guard, not the proof).
  */
-export function acceptForIdentity(
-  issued: SessionIdentity | null,
-  current: SessionIdentity | null,
+export function acceptResponse(
+  response: { sentSub: string | null },
+  displayed: SessionIdentity | null,
   owner?: string | number | null,
 ): boolean {
-  if (!issued || !current || !isSameIdentity(issued, current)) return false;
-  if (owner === undefined || owner === null) return true;
-  return String(owner) === current.sub;
+  const sentSub = response.sentSub;
+  if (!sentSub) return false;
+  const nowSub = readStoredValidSub();
+  if (nowSub !== sentSub) return false;
+  if (owner !== undefined && owner !== null && String(owner) !== sentSub) {
+    return false;
+  }
+  if (!displayed || displayed.sub !== sentSub) return false;
+  return displayed.epoch === getSessionEpoch();
 }
 
 /**
@@ -102,10 +105,10 @@ export function subscribeSessionChange(cb: () => void): () => void {
 
 /** Milliseconds until the stored token counts as expired, or null if unknown. */
 function msUntilExpiry(): number | null {
-  const token = readValidToken();
+  const token = readStoredValidToken();
   const exp = token ? decodeJwtPayload(token)?.exp : undefined;
   if (typeof exp !== "number") return null;
-  return Math.max(0, (exp - CLOCK_SKEW_SECONDS) * 1000 - Date.now()) + 50;
+  return Math.max(0, (exp - TOKEN_CLOCK_SKEW_SECONDS) * 1000 - Date.now()) + 50;
 }
 
 /**
