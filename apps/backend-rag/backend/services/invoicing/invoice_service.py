@@ -667,7 +667,10 @@ class InvoiceAutomationService:
                     break
         except (TypeError, json.JSONDecodeError):
             raise InvoiceIssuerResolutionError("ambiguous_legacy_metadata") from None
-        if value is None:
+        # practices.documents defaults to '[]' (an empty JSON array) for every new practice:
+        # an empty array is "no documents yet", same as NULL. Anything else that is not an
+        # object stays ambiguous and fails closed.
+        if value is None or (isinstance(value, list) and not value):
             return "none"
         if not isinstance(value, dict):
             raise InvoiceIssuerResolutionError("ambiguous_legacy_metadata")
