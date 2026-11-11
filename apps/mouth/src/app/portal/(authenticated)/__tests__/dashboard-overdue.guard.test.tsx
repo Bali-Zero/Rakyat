@@ -354,6 +354,16 @@ describe("LKPM history unreadable is never an all-clear", () => {
     },
   );
 
+  it.each([["false"], [1], [{}], [null]])(
+    "a non-boolean success flag (%j) is an error, never a clean slate",
+    async (success) => {
+      mocks.get.mockResolvedValue({ success, items: [] });
+      renderPage();
+      expect(await screen.findByRole("alert")).toBeInTheDocument();
+      expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
+    },
+  );
+
   it("a reply without items is an error, not an empty history", async () => {
     mocks.get.mockResolvedValue({ success: true });
     renderPage();

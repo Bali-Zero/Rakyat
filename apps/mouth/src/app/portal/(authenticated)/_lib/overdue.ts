@@ -196,7 +196,7 @@ export function usePortalLkpmHistory() {
         success: boolean;
         items: LKPMDraftSummary[];
       }>("/api/v1/lkpm/history/me");
-      if (!res?.success || !Array.isArray(res.items)) {
+      if (res?.success !== true || !Array.isArray(res.items)) {
         throw new Error("LKPM history unavailable");
       }
       // A row that cannot be placed in a company and quarter would be skipped silently
