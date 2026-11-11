@@ -82,6 +82,10 @@ def mock_db_pool():
     """Mock asyncpg connection pool."""
     pool = MagicMock()
     conn = AsyncMock()
+    transaction_cm = MagicMock()
+    transaction_cm.__aenter__ = AsyncMock(return_value=None)
+    transaction_cm.__aexit__ = AsyncMock(return_value=False)
+    conn.transaction = MagicMock(return_value=transaction_cm)
     acquire_cm = MagicMock()
     acquire_cm.__aenter__ = AsyncMock(return_value=conn)
     acquire_cm.__aexit__ = AsyncMock(return_value=False)

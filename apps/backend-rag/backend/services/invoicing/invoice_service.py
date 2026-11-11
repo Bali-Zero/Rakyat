@@ -34,6 +34,7 @@ from backend.services.invoicing.entities import (
     InvoiceEntity,
     resolve_invoice_entity,
 )
+from backend.services.invoicing.invoice_company import fetch_bill_to
 from backend.services.invoicing.invoice_generator import InvoiceGenerator
 from backend.services.notifications.email_audit import (
     format_send_error,
@@ -193,6 +194,8 @@ class InvoiceAutomationService:
                 logger.error(f"Client {practice_data['client_id']} not found")
                 return {"success": False, "error": "Client not found"}
 
+            bill_to = await self._fetch_bill_to(practice_data.get("invoice_company_id"))
+
             issuer_decision = await self._resolve_issuer(
                 practice_id, practice_data.get("practice_type_code")
             )
@@ -247,6 +250,7 @@ class InvoiceAutomationService:
                     discount_amount=discount_amount_float,
                     discount_reason=discount_reason_value,
                     entity=issuer_decision.entity,
+                    **bill_to,
                 )
 
                 filename = f"Invoice_{invoice_number}.pdf"
@@ -687,6 +691,12 @@ class InvoiceAutomationService:
         if "issuer_entity_key" in invoice or "issuer_routed_at" in invoice:
             return "orphaned"
         return "legacy"
+
+    async def _fetch_bill_to(self, company_id: int | None) -> dict[str, str | None]:
+        if company_id is None:
+            return {}
+        async with self.db_pool.acquire() as conn:
+            return await fetch_bill_to(conn, company_id) or {}
 
     async def _fetch_client_data(self, client_id: int) -> dict | None:
         """Fetch client data from database."""
