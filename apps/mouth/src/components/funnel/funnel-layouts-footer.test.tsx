@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/app/v2/_components/Footer", () => ({
   Footer: () => <footer data-guard="site-footer" />,
 }));
+vi.mock("next/navigation", () => ({ usePathname: () => "/visa/clock" }));
 vi.mock("@balizero/core", () => ({
   NavShell: () => null,
   BZLogo: () => null,
