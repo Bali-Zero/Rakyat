@@ -289,6 +289,8 @@ class TestSendAccountingNotification:
                 invoice_number="INV-2026-001",
                 pdf_bytes=b"fake pdf",
                 filename="Invoice_INV-2026-001.pdf",
+                entity=ENTITIES[DEFAULT_ENTITY_KEY],
+                amount=5_000_000.0,
             )
             assert result is True
             call_kwargs = mock_client.post.call_args

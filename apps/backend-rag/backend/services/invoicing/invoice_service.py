@@ -27,6 +27,7 @@ from backend.app.core.config import settings
 from backend.app.utils.logging_utils import get_logger
 from backend.core.cache import invalidate_crm_stats
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
+from backend.services.invoicing.accounting import ACCOUNTING_EMAIL
 from backend.services.invoicing.entities import (
     DEFAULT_ENTITY_KEY,
     ENTITIES,
@@ -45,13 +46,10 @@ from backend.services.notifications.email_http import get_email_client
 
 logger = get_logger(__name__)
 
-# Accounting email for invoice notifications
-ACCOUNTING_EMAIL = "asya@balizero.com"
-
 # CC on all invoice emails: accounting (Antonello 2026-06-17 — dropped
 # zero@ so the owner inbox no longer receives every single invoice;
 # accounting owns invoices, the assigned lead is appended separately).
-INVOICE_CC_EMAILS = ["asya@balizero.com"]
+INVOICE_CC_EMAILS = [ACCOUNTING_EMAIL]
 
 # Internal email API (sender is always zantara@balizero.com)
 _EMAIL_API_URL = os.getenv(
@@ -326,6 +324,8 @@ class InvoiceAutomationService:
                     invoice_number=invoice_number,
                     pdf_bytes=pdf_bytes,
                     filename=filename,
+                    entity=issuer_decision.entity,
+                    amount=final_amount_float,
                 )
                 asya_notified = True
                 accounting_notified = True
@@ -474,7 +474,7 @@ class InvoiceAutomationService:
             f"<p>Payment can be made via bank transfer to the details provided on the invoice.</p>"
             f"<p>We look forward to serving you!</p>"
             f"<p>Best regards,<br>Zantara — Bali Zero Team</p>"
-            f"<hr><small>For support: asya@balizero.com | WhatsApp: {settings.CLIENT_CONTACT_WHATSAPP}</small>"
+            f"<hr><small>For support: {ACCOUNTING_EMAIL} | WhatsApp: {settings.CLIENT_CONTACT_WHATSAPP}</small>"
         )
 
         cc_emails = list(INVOICE_CC_EMAILS)
@@ -517,10 +517,11 @@ class InvoiceAutomationService:
         invoice_number: str,
         pdf_bytes: bytes,
         filename: str,
+        entity: InvoiceEntity,
+        amount: float,
     ) -> bool:
         """Send notification email to accounting (Asya) via internal email API."""
         subject = f"[TEAM] New Invoice {invoice_number} - {client_data['full_name']}"
-        amount = float(practice_data.get("quoted_price", 0))
         body_html = team_email_html(
             title=f"New Invoice {invoice_number}",
             intro=f"Hi Asya — a new invoice has been generated and sent to {client_data['full_name']}. PDF attached.",
@@ -528,6 +529,8 @@ class InvoiceAutomationService:
                 ("Client", client_data["full_name"]),
                 ("Email", client_data.get("email") or "—"),
                 ("Practice", f"#{practice_data['id']}"),
+                ("Issuing Company", entity.company_name),
+                ("Bank Name", entity.bank_name),
                 ("Amount", f"IDR {amount:,.0f}"),
             ],
             body_html=(
