@@ -25,6 +25,7 @@ import httpx
 from backend.app.core.config import settings
 from backend.app.utils.logging_utils import get_logger
 from backend.services.crm.automation import ProcessAutomationService
+from backend.services.invoicing.accounting import ACCOUNTING_EMAIL
 from backend.services.notifications.email_branding import logo_header_html, team_email_html
 
 logger = get_logger(__name__)
@@ -192,7 +193,7 @@ class PracticeStatusListener:
           1. Client: payment receipt + "we're starting soon"
           2. Team member (assigned_to): payment in, start working
         """
-        assigned_to = data.get("assigned_to") or "asya@balizero.com"
+        assigned_to = data.get("assigned_to") or data.get("created_by") or ACCOUNTING_EMAIL
         try:
             await self._send_payment_emails(practice_id, triggered_by=assigned_to)
         except (httpx.HTTPError, asyncpg.PostgresError, ValueError) as exc:
@@ -222,7 +223,7 @@ class PracticeStatusListener:
         practice_type = practice_data.get("practice_type_name", "Immigration Service")
         client_name = client_data["full_name"]
         client_email = client_data.get("email")
-        team_member_email = practice_data.get("assigned_to")
+        team_member_email = practice_data.get("assigned_to") or practice_data.get("created_by")
 
         # ── Email 1: Client — payment received ──────────────────────────
         if client_email:
@@ -244,7 +245,7 @@ Warmly,
 Zantara — Bali Zero Team
 
 ---
-📧 asya@balizero.com | 🌐 www.balizero.com | 📱 WhatsApp: {settings.CLIENT_CONTACT_WHATSAPP}
+📧 {ACCOUNTING_EMAIL} | 🌐 www.balizero.com | 📱 WhatsApp: {settings.CLIENT_CONTACT_WHATSAPP}
 """
             try:
                 await self._send_via_internal_api(
@@ -274,8 +275,8 @@ Zantara — Bali Zero Team
                 title=f"💰 Payment In — {client_name}",
                 intro=(
                     "Asya has verified the payment for this practice. You're clear to start! "
-                    "Any billing questions → <a href='mailto:asya@balizero.com' "
-                    "style='color:#1F2937;'>asya@balizero.com</a>"
+                    f"Any billing questions → <a href='mailto:{ACCOUNTING_EMAIL}' "
+                    f"style='color:#1F2937;'>{ACCOUNTING_EMAIL}</a>"
                 ),
                 meta_rows=[
                     ("Client", client_name),
@@ -301,7 +302,7 @@ Zantara — Bali Zero Team
                     to_email=team_member_email,
                     subject=subject,
                     body=body,
-                    cc="asya@balizero.com",
+                    cc=ACCOUNTING_EMAIL,
                     prebuilt_html=True,
                 )
                 logger.info("M4: team notification sent to %s (CC: asya)", team_member_email)

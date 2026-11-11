@@ -14,11 +14,9 @@ import asyncpg
 import httpx
 
 from backend.app.utils.logging_utils import get_logger
+from backend.services.invoicing.accounting import ACCOUNTING_EMAIL
 
 logger = get_logger(__name__)
-
-# Accounting contact
-ACCOUNTING_EMAIL: str = "asya@balizero.com"
 
 # How many days before an invoice is considered overdue
 OVERDUE_DAYS: int = 7

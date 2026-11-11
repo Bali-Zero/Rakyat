@@ -17,9 +17,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from backend.services.invoicing.entities import DEFAULT_ENTITY_KEY, ENTITIES
 from backend.services.invoicing.invoice_service import (
     ACCOUNTING_EMAIL,
     InvoiceAutomationService,
+    InvoiceIssuerDecision,
+    InvoiceIssuerPersistenceError,
 )
 
 # ============================================================
@@ -96,6 +99,30 @@ def _client_data(**overrides):
     }
     data.update(overrides)
     return data
+
+
+def _issuer_decision() -> InvoiceIssuerDecision:
+    routed_at = datetime.now(tz=timezone.utc)
+    return InvoiceIssuerDecision(ENTITIES[DEFAULT_ENTITY_KEY], routed_at, routed_at, "new")
+
+
+def _issuer_lookup_row():
+    now = datetime.now(tz=timezone.utc)
+    return {
+        "db_now": now,
+        "practice_exists": True,
+        "invoice_row_exists": False,
+        "issuer_entity_key": None,
+        "issuer_routed_at": None,
+        "practice_documents": None,
+    }
+
+
+def _persisted_issuer_row():
+    return {
+        "issuer_entity_key": DEFAULT_ENTITY_KEY,
+        "issuer_routed_at": datetime.now(tz=timezone.utc),
+    }
 
 
 # ============================================================
@@ -262,6 +289,8 @@ class TestSendAccountingNotification:
                 invoice_number="INV-2026-001",
                 pdf_bytes=b"fake pdf",
                 filename="Invoice_INV-2026-001.pdf",
+                entity=ENTITIES[DEFAULT_ENTITY_KEY],
+                amount=5_000_000.0,
             )
             assert result is True
             call_kwargs = mock_client.post.call_args
@@ -279,7 +308,9 @@ class TestUpdatePracticeWithInvoice:
     @pytest.mark.asyncio
     async def test_updates_documents_and_invoices(self, service, mock_db_pool):
         conn = mock_db_pool._mock_conn
-        conn.fetchrow = AsyncMock(return_value={"client_id": 100, "quoted_price": 5_000_000})
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"client_id": 100, "quoted_price": 5_000_000}, _persisted_issuer_row()]
+        )
         conn.fetchval = AsyncMock(return_value=None)  # no existing documents
         conn.execute = AsyncMock()
 
@@ -297,14 +328,18 @@ class TestUpdatePracticeWithInvoice:
             practice_id=1,
             invoice_info=invoice_info,
             triggered_by="zero@balizero.com",
+            issuer_decision=_issuer_decision(),
+            invoice_attempt_id="test-attempt",
         )
-        # Should call execute 3 times: UPDATE practices, INSERT invoices, INSERT activity_log
-        assert conn.execute.call_count == 3
+        # The guarded invoice upsert is fetchrow/RETURNING; documents remain before the activity log.
+        assert conn.execute.call_count == 2
 
     @pytest.mark.asyncio
     async def test_handles_existing_documents_str(self, service, mock_db_pool):
         conn = mock_db_pool._mock_conn
-        conn.fetchrow = AsyncMock(return_value={"client_id": 100, "quoted_price": 5_000_000})
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"client_id": 100, "quoted_price": 5_000_000}, _persisted_issuer_row()]
+        )
         existing_docs = json.dumps({"passport": {"file_id": "abc"}})
         conn.fetchval = AsyncMock(return_value=existing_docs)
         conn.execute = AsyncMock()
@@ -313,6 +348,8 @@ class TestUpdatePracticeWithInvoice:
             practice_id=1,
             invoice_info={"invoice_number": "INV-001", "source": "local_pdf"},
             triggered_by="admin@balizero.com",
+            issuer_decision=_issuer_decision(),
+            invoice_attempt_id="test-attempt",
         )
         # Verify the documents update includes the old data.
         # Service now passes dicts directly (asyncpg jsonb codec serialises);
@@ -327,7 +364,9 @@ class TestUpdatePracticeWithInvoice:
     @pytest.mark.asyncio
     async def test_handles_existing_documents_dict(self, service, mock_db_pool):
         conn = mock_db_pool._mock_conn
-        conn.fetchrow = AsyncMock(return_value={"client_id": 100, "quoted_price": 5_000_000})
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"client_id": 100, "quoted_price": 5_000_000}, _persisted_issuer_row()]
+        )
         conn.fetchval = AsyncMock(return_value={"passport": {"file_id": "abc"}})
         conn.execute = AsyncMock()
 
@@ -335,6 +374,8 @@ class TestUpdatePracticeWithInvoice:
             practice_id=1,
             invoice_info={"invoice_number": "INV-002", "source": "local_pdf"},
             triggered_by="admin@balizero.com",
+            issuer_decision=_issuer_decision(),
+            invoice_attempt_id="test-attempt",
         )
         update_call = conn.execute.call_args_list[0]
         docs_json = update_call[0][1]
@@ -344,7 +385,9 @@ class TestUpdatePracticeWithInvoice:
     @pytest.mark.asyncio
     async def test_handles_double_encoded_json(self, service, mock_db_pool):
         conn = mock_db_pool._mock_conn
-        conn.fetchrow = AsyncMock(return_value={"client_id": 100, "quoted_price": 3_000_000})
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"client_id": 100, "quoted_price": 3_000_000}, _persisted_issuer_row()]
+        )
         # Double-encoded JSON string
         inner = json.dumps({"old_key": "val"})
         conn.fetchval = AsyncMock(return_value=json.dumps(inner))
@@ -354,6 +397,8 @@ class TestUpdatePracticeWithInvoice:
             practice_id=1,
             invoice_info={"invoice_number": "INV-003", "source": "local_pdf"},
             triggered_by="admin@balizero.com",
+            issuer_decision=_issuer_decision(),
+            invoice_attempt_id="test-attempt",
         )
         update_call = conn.execute.call_args_list[0]
         docs_json = update_call[0][1]
@@ -364,7 +409,9 @@ class TestUpdatePracticeWithInvoice:
     @pytest.mark.asyncio
     async def test_handles_invalid_json_documents(self, service, mock_db_pool):
         conn = mock_db_pool._mock_conn
-        conn.fetchrow = AsyncMock(return_value={"client_id": 100, "quoted_price": 3_000_000})
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"client_id": 100, "quoted_price": 3_000_000}, _persisted_issuer_row()]
+        )
         conn.fetchval = AsyncMock(return_value="not-valid-json{{{")
         conn.execute = AsyncMock()
 
@@ -372,11 +419,16 @@ class TestUpdatePracticeWithInvoice:
             practice_id=1,
             invoice_info={"invoice_number": "INV-004", "source": "local_pdf"},
             triggered_by="admin@balizero.com",
+            issuer_decision=_issuer_decision(),
+            invoice_attempt_id="test-attempt",
         )
         update_call = conn.execute.call_args_list[0]
         docs_json = update_call[0][1]
         parsed = docs_json if isinstance(docs_json, dict) else json.loads(docs_json)
-        assert parsed == {"invoice": {"invoice_number": "INV-004", "source": "local_pdf"}}
+        assert parsed["invoice"]["invoice_number"] == "INV-004"
+        assert parsed["invoice"]["source"] == "local_pdf"
+        assert parsed["invoice"]["issuer_entity_key"] == DEFAULT_ENTITY_KEY
+        assert parsed["invoice"]["issuer_routed_at"]
 
     @pytest.mark.asyncio
     async def test_no_practice_row_skips_invoices_insert(self, service, mock_db_pool):
@@ -385,18 +437,22 @@ class TestUpdatePracticeWithInvoice:
         conn.fetchval = AsyncMock(return_value=None)
         conn.execute = AsyncMock()
 
-        await service._update_practice_with_invoice(
-            practice_id=999,
-            invoice_info={"invoice_number": "INV-005", "source": "local_pdf"},
-            triggered_by="admin@balizero.com",
-        )
-        # Should call execute 2 times: UPDATE practices + INSERT activity_log (skip invoices insert)
-        assert conn.execute.call_count == 2
+        with pytest.raises(InvoiceIssuerPersistenceError, match="write_failed"):
+            await service._update_practice_with_invoice(
+                practice_id=999,
+                invoice_info={"invoice_number": "INV-005", "source": "local_pdf"},
+                triggered_by="admin@balizero.com",
+                issuer_decision=_issuer_decision(),
+                invoice_attempt_id="test-attempt",
+            )
+        assert conn.execute.call_count == 0
 
     @pytest.mark.asyncio
     async def test_invalid_generated_at_does_not_crash(self, service, mock_db_pool):
         conn = mock_db_pool._mock_conn
-        conn.fetchrow = AsyncMock(return_value={"client_id": 100, "quoted_price": 1000})
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"client_id": 100, "quoted_price": 1000}, _persisted_issuer_row()]
+        )
         conn.fetchval = AsyncMock(return_value=None)
         conn.execute = AsyncMock()
 
@@ -408,9 +464,11 @@ class TestUpdatePracticeWithInvoice:
                 "source": "local_pdf",
             },
             triggered_by="admin@balizero.com",
+            issuer_decision=_issuer_decision(),
+            invoice_attempt_id="test-attempt",
         )
-        insert_call = conn.execute.call_args_list[1]
-        assert insert_call[0][-1] is None  # generated_at falls back to None
+        upsert_call = conn.fetchrow.call_args_list[1]
+        assert upsert_call[0][11] is None  # generated_at falls back to None
 
 
 # ============================================================
@@ -427,10 +485,12 @@ class TestTriggerOnSendingInvoice:
             side_effect=[
                 _practice_data(),  # fetch practice
                 _client_data(),  # fetch client
+                _issuer_lookup_row(),  # issuer routing lookup
                 {
                     "client_id": 100,
                     "quoted_price": 5_000_000,
                 },  # update practice: fetchrow in _update
+                _persisted_issuer_row(),  # guarded invoices upsert RETURNING
             ]
         )
         conn.fetchval = AsyncMock(return_value=None)
@@ -477,7 +537,9 @@ class TestTriggerOnSendingInvoice:
     @pytest.mark.asyncio
     async def test_pdf_generation_failure(self, service, mock_db_pool):
         conn = mock_db_pool._mock_conn
-        conn.fetchrow = AsyncMock(side_effect=[_practice_data(), _client_data()])
+        conn.fetchrow = AsyncMock(
+            side_effect=[_practice_data(), _client_data(), _issuer_lookup_row()]
+        )
         service.invoice_generator.generate.side_effect = Exception("ReportLab error")
 
         result = await service.trigger_on_sending_invoice(1, "admin@balizero.com")
@@ -492,7 +554,9 @@ class TestTriggerOnSendingInvoice:
             side_effect=[
                 _practice_data(),
                 client_no_email,
+                _issuer_lookup_row(),
                 {"client_id": 100, "quoted_price": 5_000_000},
+                _persisted_issuer_row(),
             ]
         )
         conn.fetchval = AsyncMock(return_value=None)
@@ -522,7 +586,9 @@ class TestTriggerOnSendingInvoice:
             side_effect=[
                 _practice_data(),
                 _client_data(),
+                _issuer_lookup_row(),
                 {"client_id": 100, "quoted_price": 5_000_000},
+                _persisted_issuer_row(),
             ]
         )
         conn.fetchval = AsyncMock(return_value=None)
@@ -552,7 +618,9 @@ class TestTriggerOnSendingInvoice:
             side_effect=[
                 _practice_data(),
                 _client_data(),
+                _issuer_lookup_row(),
                 {"client_id": 100, "quoted_price": 5_000_000},
+                _persisted_issuer_row(),
             ]
         )
         conn.fetchval = AsyncMock(return_value=None)

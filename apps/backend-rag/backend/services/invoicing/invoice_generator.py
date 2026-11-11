@@ -25,6 +25,7 @@ except ImportError:
     cm = 28.346456692913385  # type: ignore[assignment]  # 1cm in points (reportlab value)
 
 from backend.app.utils.logging_utils import get_logger
+from backend.services.invoicing.accounting import ACCOUNTING_EMAIL
 from backend.services.invoicing.entities import CIMB_BAYU_BALI_NOL, InvoiceEntity
 
 logger = get_logger(__name__)
@@ -37,7 +38,7 @@ class InvoiceGenerator:
     # Letterhead + bank details live in entities.py (DAI-124). The default
     # issuer is CIMB / PT BAYU BALI NOL, exactly as before routing existed.
     DEFAULT_ENTITY = CIMB_BAYU_BALI_NOL
-    COMPANY_EMAIL = "asya@balizero.com"
+    COMPANY_EMAIL = ACCOUNTING_EMAIL
     COMPANY_PHONE = "+62 881038467246"
 
     # ── Logo ─────────────────────────────────────────────────────────────────
@@ -151,6 +152,7 @@ class InvoiceGenerator:
         notes: str | None = None,
         discount_amount: float = 0.0,
         discount_reason: str | None = None,
+        *,
         entity: InvoiceEntity | None = None,
     ) -> bytes:
         """Generate invoice PDF as bytes.
@@ -424,9 +426,11 @@ class InvoiceGenerator:
             ["Account Name:", issuer.bank_account_name or ""],
             ["Account Number:", issuer.bank_account_number or ""],
             ["Bank Name:", issuer.bank_name or ""],
-            ["Bank Branch:", issuer.bank_branch or ""],
-            ["Swift Code:", issuer.bank_swift or ""],
         ]
+        if issuer.bank_branch and issuer.bank_branch.strip():
+            pay_data.append(["Bank Branch:", issuer.bank_branch])
+        if issuer.bank_swift and issuer.bank_swift.strip():
+            pay_data.append(["Swift Code:", issuer.bank_swift])
         pay_table = Table(pay_data, colWidths=[3.5 * cm, page_width - 3.5 * cm])
         pay_table.setStyle(
             TableStyle(
