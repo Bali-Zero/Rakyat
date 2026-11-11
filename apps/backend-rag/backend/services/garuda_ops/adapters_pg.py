@@ -336,8 +336,14 @@ class PostgresCrmWriter:
             # figure (SM-G04: written once at OP-00, never recomputed or
             # decomposed) and it was collected in full, so quoted, actual and
             # paid are the same number here. That is a copy, not arithmetic.
+            # FOR UPDATE: two deliveries for one client must not both
+            # read owner NULL and race their routing writes — the loser
+            # would overwrite the winner's clients.assigned_to even
+            # though its practice INSERT loses the conflict. Locking
+            # the client row serializes the read-pick-write per client.
             assigned_to = snapshot.assigned_to or await conn.fetchval(
-                "SELECT assigned_to FROM clients WHERE id = $1", client_id
+                "SELECT assigned_to FROM clients WHERE id = $1 FOR UPDATE",
+                client_id,
             )
             if not assigned_to:
                 # Brand-new customer: the two fallbacks above both yield
@@ -346,17 +352,14 @@ class PostgresCrmWriter:
                 # only — the team member who must work the order cannot
                 # see it (PENDING-ARMS 2026-08-26, PR #5020 conditions).
                 # Route it through the SAME department + least-workload
-                # strategy as crm/assignment.assign_lead, and record the
-                # owner on the client so the next order inherits it.
+                # strategy as crm/assignment.assign_lead. The owner is
+                # recorded on the client ONLY if the practice INSERT below
+                # wins (see the win branch): a duplicate delivery that
+                # loses the conflict must not move the client to a
+                # different member than the one its practice carries.
                 assigned_to = await self._pick_assignee(
                     conn, practice_type_code=practice_type_code
                 )
-                if assigned_to:
-                    await conn.execute(
-                        "UPDATE clients SET assigned_to = $1 WHERE id = $2",
-                        assigned_to,
-                        client_id,
-                    )
 
             practice_id = await conn.fetchval(
                 """
@@ -382,6 +385,17 @@ class PostgresCrmWriter:
                 source_idempotency_key,
             )
             if practice_id is not None:
+                if assigned_to:
+                    # Win branch only (see _pick_assignee call site): the
+                    # routed owner becomes the client's owner so the next
+                    # order inherits it, conditional on still being
+                    # unassigned under the FOR UPDATE lock held above.
+                    await conn.execute(
+                        "UPDATE clients SET assigned_to = $1 "
+                        "WHERE id = $2 AND assigned_to IS NULL",
+                        assigned_to,
+                        client_id,
+                    )
                 # The canonical writer (crm_practices.py) leaves a
                 # client-visible timeline milestone; without it the
                 # customer's portal timeline is empty for GARUDA orders
@@ -389,20 +403,26 @@ class PostgresCrmWriter:
                 # the canonical writer: a missing table (42P01) during
                 # rollout is ignored, anything else is logged.
                 try:
-                    await conn.execute(
-                        """
-                        INSERT INTO timeline_events (
-                            client_id, practice_id, event_type, title, description,
-                            event_date, client_visible, color, created_by
+                    # Nested transaction = SAVEPOINT, like the canonical
+                    # writer: without it a missing timeline_events table
+                    # aborts the OUTER transaction in Postgres, the
+                    # practice insert rolls back at COMMIT, and this
+                    # method would return an id that does not exist.
+                    async with conn.transaction():
+                        await conn.execute(
+                            """
+                            INSERT INTO timeline_events (
+                                client_id, practice_id, event_type, title, description,
+                                event_date, client_visible, color, created_by
+                            )
+                            VALUES ($1, $2, 'milestone', $3, $4, NOW(), true, 'info', $5)
+                            """,
+                            client_id,
+                            int(practice_id),
+                            "New case started",
+                            f"{practice_type_code} started",
+                            CREATED_BY_GARUDA,
                         )
-                        VALUES ($1, $2, 'milestone', $3, $4, NOW(), true, 'info', $5)
-                        """,
-                        client_id,
-                        int(practice_id),
-                        "New case started",
-                        f"{practice_type_code} started",
-                        CREATED_BY_GARUDA,
-                    )
                 except asyncpg.UndefinedTableError:
                     logger.warning(
                         "timeline_events table missing; milestone skipped for practice %s",
@@ -443,13 +463,15 @@ class PostgresCrmWriter:
         """Least-loaded assignable team member, assign_lead's strategy.
 
         Mirrors `services/crm/assignment.py::assign_lead` (department
-        match via PRACTICE_DEPARTMENT_MAP, then any assignable member),
-        imported lazily so this module stays light at import time.
+        match via PRACTICE_DEPARTMENT_MAP, then any assignable member).
+        Constants come from the LIGHT routing module: importing them
+        from `services.crm.assignment` would execute `services/crm/
+        __init__.py` (LangGraph + app config) inside this adapter.
         Returns None only when no active assignable member exists —
         the practice then keeps assigned_to NULL and stays admin-visible,
         which is the pre-cure state, never a fabricated owner.
         """
-        from backend.services.crm.assignment import (
+        from backend.services.crm_assignment_routing import (
             ASSIGNABLE_ROLES,
             PRACTICE_DEPARTMENT_MAP,
         )

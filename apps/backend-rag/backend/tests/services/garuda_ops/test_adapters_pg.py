@@ -828,31 +828,66 @@ async def test_a_brand_new_customer_is_routed_to_a_team_member(pool):
             member,
         )
     try:
-        practice_id = await PostgresCrmWriter(pool).create_client_and_practice(
-            _snapshot(customer_email="brand-new@example.invalid", assigned_to=None),
-            source_idempotency_key=f"evt_{uuid.uuid4().hex}",
-            practice_type_code=PRACTICE_TYPE,
+        writer = PostgresCrmWriter(pool)
+        key = f"evt_{uuid.uuid4().hex}"
+        snap = _snapshot(customer_email="brand-new@example.invalid", assigned_to=None)
+        practice_id = await writer.create_client_and_practice(
+            snap, source_idempotency_key=key, practice_type_code=PRACTICE_TYPE
         )
+        # Duplicate delivery, same idempotency key: same practice, and
+        # the milestone must still exist EXACTLY once.
+        again = await writer.create_client_and_practice(
+            snap, source_idempotency_key=key, practice_type_code=PRACTICE_TYPE
+        )
+        assert again == practice_id
         async with pool.acquire() as conn:
+            assignee = await conn.fetchval(
+                "SELECT assigned_to FROM practices WHERE id = $1", practice_id
+            )
+            assert assignee, "brand-new customer's practice must be routed, not orphaned"
             assert (
                 await conn.fetchval(
-                    "SELECT assigned_to FROM practices WHERE id = $1", practice_id
-                )
-                == member
-            ), "brand-new customer's practice must be routed, not orphaned"
-            assert (
-                await conn.fetchval(
-                    "SELECT count(*) FROM practices "
-                    "WHERE id = $1 AND (created_by = $2 OR assigned_to = $2)",
-                    practice_id,
-                    member,
+                    "SELECT count(*) FROM team_members "
+                    "WHERE email = $1 AND active = true",
+                    assignee,
                 )
                 == 1
-            ), "the routed member must pass the non-admin RBAC predicate"
+            ), "the assignee must be a real active team member"
             assert (
                 await conn.fetchval(
-                    "SELECT count(*) FROM practices "
-                    "WHERE id = $1 AND (created_by = $2 OR assigned_to = $2)",
+                    "SELECT assigned_to FROM clients WHERE email = $1",
+                    "brand-new@example.invalid",
+                )
+                == assignee
+            ), "the client must inherit the routed owner (duplicate delivery must not move it)"
+            # The CRM detail predicate, verbatim from crm_practices.py
+            # (client lead OR practice creator OR practice assignee):
+            assert (
+                await conn.fetchval(
+                    "SELECT count(*) FROM practices p "
+                    "JOIN clients c ON p.client_id = c.id "
+                    "WHERE p.id = $1 AND (c.assigned_to = $2 OR p.created_by = $2 "
+                    "OR LOWER(p.assigned_to) = $2)",
+                    practice_id,
+                    assignee,
+                )
+                == 1
+            ), "the routed member must pass the detail RBAC predicate"
+            # The stats/list RBAC filter, verbatim: assigned_to = user.
+            assert (
+                await conn.fetchval(
+                    "SELECT count(*) FROM practices WHERE id = $1 AND assigned_to = $2",
+                    practice_id,
+                    assignee,
+                )
+                == 1
+            ), "the routed member must pass the list RBAC filter"
+            assert (
+                await conn.fetchval(
+                    "SELECT count(*) FROM practices p "
+                    "JOIN clients c ON p.client_id = c.id "
+                    "WHERE p.id = $1 AND (c.assigned_to = $2 OR p.created_by = $2 "
+                    "OR LOWER(p.assigned_to) = $2)",
                     practice_id,
                     "unrelated@example.invalid",
                 )
@@ -864,8 +899,8 @@ async def test_a_brand_new_customer_is_routed_to_a_team_member(pool):
                     "WHERE practice_id = $1 AND client_visible = true",
                     practice_id,
                 )
-                >= 1
-            ), "the client-visible timeline milestone must exist"
+                == 1
+            ), "exactly one client-visible milestone, even after a duplicate delivery"
     finally:
         async with pool.acquire() as conn:
             await conn.execute("DELETE FROM team_members WHERE email = $1", member)
