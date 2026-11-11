@@ -1,7 +1,6 @@
 """Round-2 R3: bank_branch and bank_swift are optional rows on the invoice PDF.
 
-The other three bank rows (Account Name / Account Number / Bank Name) always
-print; the address line prints when set.
+The pay-to cell (bank name, holder) and the account number always print; the address line prints when set.
 """
 
 from __future__ import annotations
@@ -55,32 +54,31 @@ def _render(generator: InvoiceGenerator, entity: InvoiceEntity) -> str:
 
 
 def _assert_core_bank_rows(text: str, entity: InvoiceEntity) -> None:
-    assert f"Account Name:\n{entity.bank_account_name}" in text
-    assert f"Account Number:\n{entity.bank_account_number}" in text
-    assert f"Bank Name:\n{entity.bank_name}" in text
+    assert f"PAY TO\n{entity.bank_name}\n{entity.bank_account_name}" in text
+    assert f"ACCOUNT NUMBER\n{entity.bank_account_number}" in text
 
 
 def test_pdf_omits_branch_and_swift_rows_when_unset(generator: InvoiceGenerator) -> None:
     entity = _entity(bank_branch=None, bank_swift=None)
     text = _render(generator, entity)
-    assert "Bank Branch:" not in text
-    assert "Swift Code:" not in text
+    assert "BANK BRANCH" not in text
+    assert "SWIFT CODE" not in text
     _assert_core_bank_rows(text, entity)
 
 
 def test_pdf_treats_blank_branch_and_swift_as_unset(generator: InvoiceGenerator) -> None:
     entity = _entity(bank_branch="   ", bank_swift=" ")
     text = _render(generator, entity)
-    assert "Bank Branch:" not in text
-    assert "Swift Code:" not in text
+    assert "BANK BRANCH" not in text
+    assert "SWIFT CODE" not in text
     _assert_core_bank_rows(text, entity)
 
 
 def test_pdf_renders_branch_and_swift_rows_when_set(generator: InvoiceGenerator) -> None:
     entity = _entity(bank_branch="Synthetic Branch Four", bank_swift="SYNTHIDJD")
     text = _render(generator, entity)
-    assert f"Bank Branch:\n{entity.bank_branch}" in text
-    assert f"Swift Code:\n{entity.bank_swift}" in text
+    assert f"BANK BRANCH\n{entity.bank_branch}" in text
+    assert f"SWIFT CODE\n{entity.bank_swift}" in text
     _assert_core_bank_rows(text, entity)
 
 

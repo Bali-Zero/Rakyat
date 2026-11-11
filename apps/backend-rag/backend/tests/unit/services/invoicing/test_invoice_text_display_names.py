@@ -59,14 +59,14 @@ def test_bank_account_holders_are_the_four_capital_legal_names():
 
 
 @pytest.mark.parametrize("key", sorted(EXPECTED_NAMES))
-def test_pdf_prints_uppercase_issuer_name_on_letterhead_and_footer(key):
+def test_pdf_prints_uppercase_issuer_name_on_issuer_panel_and_footer(key):
     text = render(ENTITIES[key], practice_type=DISPLAY_NAME)
     name = EXPECTED_NAMES[key]
     lines = [line.strip() for line in text.splitlines()]
-    assert name in lines, "letterhead line"
-    assert f"{name} | Bali, Indonesia" in text, "footer line"
-    holder = f"Account Name:\n{EXPECTED_NAMES[key]}"
-    assert holder in text, "the bank holder prints in capitals, same as the legal name"
+    assert name in lines, "issuer panel line"
+    assert any(line.startswith(f"{name}  ·  ") for line in lines), "footer line"
+    holder = EXPECTED_NAMES[key]
+    assert f"PAY TO\n{ENTITIES[key].bank_name}\n{holder}" in text, "holder in capitals"
     assert not re.search(r"\b(PT|CV)\.", text), "no dot after PT/CV anywhere on the page"
 
 
