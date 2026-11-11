@@ -35,8 +35,16 @@ like data. Likewise a practice whose originating eligibility check has gone
 yields `None` with an error log naming the missing id, never a half-built
 snapshot with invented fields.
 
-NOT WIRED. Nothing constructs these classes yet. Building the adapter and
-arming the path are separate acts.
+WIRED (corrected 2026-11-11 — the NOT WIRED claim below was stale):
+`garuda_orders/outbox_handlers.build_handlers` constructs both adapters
+inside `CrmHandoffService`, `PracticeReleaseHandler` routes the
+`practice_release` outbox job into it, and `_run_garuda_outbox_scheduler`
+(main_api.py) drains the queue in prod under
+`GARUDA_OUTBOX_CONSUMER_ENABLED` — dispatched jobs measured in prod
+2026-11-11. What has never happened is a paid order reaching the
+release transition (prod: 3 orders, none paid), so this path has not
+yet produced a CRM row. Upstream blockers are owner acts (Xendit
+sandbox provisioning, GARUDA_CHECK retention-policy signature).
 """
 
 from __future__ import annotations
