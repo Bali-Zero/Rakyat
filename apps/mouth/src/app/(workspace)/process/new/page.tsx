@@ -107,6 +107,13 @@ export default function NewPracticePage() {
   const [invoiceAmbiguity, setInvoiceAmbiguity] =
     useState<InvoiceCompanyAmbiguity | null>(null);
 
+  // The company belongs to the client it was prefilled or typed for: any change
+  // of client (including Change, which unmounts the field) starts it empty.
+  useEffect(() => {
+    setInvoiceCompany(EMPTY_INVOICE_COMPANY);
+    setInvoiceAmbiguity(null);
+  }, [formData.client_id]);
+
   // Family members of the selected client (for dependent-KITAS etc.)
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
 

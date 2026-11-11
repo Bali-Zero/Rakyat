@@ -101,6 +101,7 @@ export function InvoiceCompanyField({
   const touched = useRef(false);
   const autoFilled = useRef(false);
   const lastClient = useRef<number | undefined>(clientId);
+  const lastCode = useRef<string | undefined>(practiceTypeCode);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
@@ -111,6 +112,15 @@ export function InvoiceCompanyField({
       autoFilled.current = false;
       setTyping(false);
       onChangeRef.current(EMPTY_INVOICE_COMPANY);
+    }
+    if (lastCode.current !== practiceTypeCode) {
+      lastCode.current = practiceTypeCode;
+      if (autoFilled.current && !touched.current) {
+        // The service changed: what was prefilled for the old one is stale until
+        // the new suggestion says otherwise (it may be slow or fail).
+        autoFilled.current = false;
+        onChangeRef.current(EMPTY_INVOICE_COMPANY);
+      }
     }
     if (!clientId) {
       setCompanies([]);

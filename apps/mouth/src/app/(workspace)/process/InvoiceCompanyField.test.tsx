@@ -189,6 +189,32 @@ describe("InvoiceCompanyField", () => {
     expect(screen.getByRole("combobox")).toHaveValue("");
   });
 
+  it.each([
+    ["pending", () => new Promise(() => {})],
+    ["rejected", () => Promise.reject(new Error("down"))],
+  ])(
+    "a tax prefill is dropped at once when the service changes (%s suggestion)",
+    async (_label, next) => {
+      mockSuggest.mockResolvedValueOnce({
+        autofill: true,
+        suggested_company_id: 11,
+        companies: [choice(11, "PT Synthetic Satu")],
+      });
+      mockSuggest.mockImplementationOnce(next);
+      const seen = vi.fn();
+      const { rerender } = render(<Harness onValue={seen} />);
+      await waitFor(() =>
+        expect(seen).toHaveBeenLastCalledWith(
+          expect.objectContaining({ companyId: 11 }),
+        ),
+      );
+      rerender(<Harness code="kitas_working_onshore" onValue={seen} />);
+      await waitFor(() =>
+        expect(seen).toHaveBeenLastCalledWith(EMPTY_INVOICE_COMPANY),
+      );
+    },
+  );
+
   it("a prefill never survives a change of client", async () => {
     mockSuggest.mockResolvedValueOnce({
       autofill: true,

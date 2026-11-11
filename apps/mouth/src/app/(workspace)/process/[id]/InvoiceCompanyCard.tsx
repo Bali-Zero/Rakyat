@@ -92,7 +92,10 @@ export function InvoiceCompanyCard({ practice, onSaved }: Props) {
         clientId={practice.client_id}
         practiceTypeCode={practice.practice_type_code}
         value={value}
-        onChange={setValue}
+        onChange={(next) => {
+          setAmbiguity(null);
+          setValue(next);
+        }}
         savedName={practice.invoice_company_name}
         autofill={!hasCompany}
         ambiguity={ambiguity}

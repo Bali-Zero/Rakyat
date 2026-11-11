@@ -186,4 +186,29 @@ describe("InvoiceCompanyCard", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(toastError).toHaveBeenCalled());
   });
+
+  it("editing after a 409 withdraws the stale candidates", async () => {
+    const user = userEvent.setup();
+    mockSuggest.mockResolvedValue({
+      autofill: true,
+      suggested_company_id: null,
+      companies: [],
+    });
+    mockUpdate.mockRejectedValueOnce(
+      new ApiError("conflict", 409, {
+        detail: {
+          code: "invoice_company_ambiguous",
+          candidates: [{ id: 8, company_name: "PT Synthetic Kembar" }],
+        },
+      }),
+    );
+    render(<InvoiceCompanyCard practice={practice()} onSaved={vi.fn()} />);
+    const name = await screen.findByLabelText("Company name");
+    await user.type(name, "Synthetic Kembar");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByTestId("invoice-company-ambiguity");
+    await user.type(name, " Dua");
+    expect(screen.queryByTestId("invoice-company-ambiguity")).toBeNull();
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+  });
 });

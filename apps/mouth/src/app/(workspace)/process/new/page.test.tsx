@@ -14,6 +14,7 @@ const {
   mockGetClientPractices,
   mockCreatePractice,
   mockSuggest,
+  mockGetClients,
   mockRefetchClientProfile,
   stableSearchParams,
 } = vi.hoisted(() => ({
@@ -24,6 +25,7 @@ const {
   mockGetClientPractices: vi.fn(),
   mockCreatePractice: vi.fn(),
   mockSuggest: vi.fn(),
+  mockGetClients: vi.fn(),
   mockRefetchClientProfile: vi.fn(),
   stableSearchParams: {
     get: vi.fn((key: string) => (key === "client_id" ? "7" : null)),
@@ -48,7 +50,7 @@ vi.mock("@/lib/api", () => ({
       getClientPractices: mockGetClientPractices,
       createPractice: mockCreatePractice,
       getInvoiceCompanySuggestion: mockSuggest,
-      getClients: vi.fn(),
+      getClients: mockGetClients,
     },
   },
 }));
@@ -277,4 +279,59 @@ describe("NewPracticePage", () => {
       "invoice_company_name",
     );
   });
+
+  it.each([["no suggestion"], ["a failed suggestion"]])(
+    "the first client's company is not sent after Change to another client (%s)",
+    async (label) => {
+      const user = userEvent.setup();
+      mockSuggest.mockImplementation(async (clientId: number) => {
+        if (clientId === 7) {
+          return {
+            autofill: true,
+            suggested_company_id: 21,
+            companies: [
+              {
+                id: 21,
+                company_name: "PT Synthetic Satu",
+                npwp_company: null,
+                role: "director",
+                is_director: true,
+              },
+            ],
+          };
+        }
+        if (label === "a failed suggestion") throw new Error("down");
+        return { autofill: true, suggested_company_id: null, companies: [] };
+      });
+      mockGetClients.mockResolvedValue([
+        {
+          id: 8,
+          full_name: "Synthetic Other Client",
+          email: "other@example.test",
+        },
+      ]);
+      await renderPage();
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", { name: "Invoice to company" }),
+        ).toHaveValue("21"),
+      );
+      const selects = await screen.findAllByRole("combobox");
+      await user.selectOptions(selects[0], "visa");
+      await user.selectOptions(selects[1], "SYNTHETIC_VISA");
+      await user.click(screen.getByRole("button", { name: "Change" }));
+      await user.type(screen.getByLabelText("Search client"), "Other");
+      await user.click(await screen.findByText("Synthetic Other Client"));
+      await waitFor(() =>
+        expect(mockSuggest).toHaveBeenCalledWith(8, "SYNTHETIC_VISA"),
+      );
+      await user.click(screen.getByRole("button", { name: "Create Process" }));
+      await waitFor(() => expect(mockCreatePractice).toHaveBeenCalled());
+      const body = mockCreatePractice.mock.calls[0][0];
+      expect(body.client_id).toBe(8);
+      expect(
+        Object.keys(body).filter((k) => k.startsWith("invoice_company")),
+      ).toEqual([]);
+    },
+  );
 });
