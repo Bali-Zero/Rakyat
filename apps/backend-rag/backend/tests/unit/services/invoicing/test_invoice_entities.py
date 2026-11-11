@@ -8,7 +8,7 @@ TEST-ACCOUNT). No client data: only practice type codes.
 
 import dataclasses
 import io
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -19,7 +19,6 @@ from backend.services.invoicing.entities import (
     BNI_CODES,
     CIMB_BAYU_BALI_NOL,
     CIMB_CODES,
-    ENTITY_ROUTING_EFFECTIVE_FROM,
     MANDIRI_BALI_NOL_IMPRESARIAT,
     MANDIRI_CODES,
     WITA,
@@ -38,6 +37,12 @@ def _complete(entity, tag):
         bank_branch=f"TEST-BRANCH-{tag}",
         bank_swift=f"TEST-SWIFT-{tag}",
     )
+
+
+@pytest.fixture(autouse=True)
+def _routing_active(monkeypatch):
+    """These tests exercise routing logic, so they run with the switch on."""
+    monkeypatch.setattr(entities, "ENTITY_ROUTING_EFFECTIVE_FROM", date(2026, 11, 12))
 
 
 @pytest.fixture
@@ -141,7 +146,7 @@ def test_go_live_boundary_is_wita_midnight(filled_entities):
     mandiri, _ = filled_entities
     midnight_wita = datetime(2026, 11, 12, 0, 0, tzinfo=WITA)
     just_before = midnight_wita - timedelta(seconds=1)
-    assert ENTITY_ROUTING_EFFECTIVE_FROM == midnight_wita.date()
+    assert entities.ENTITY_ROUTING_EFFECTIVE_FROM == midnight_wita.date()
     assert (
         resolve_invoice_entity("visa_c1_tourism", midnight_wita.astimezone(timezone.utc)) == mandiri
     )
