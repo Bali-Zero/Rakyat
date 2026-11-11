@@ -31,8 +31,9 @@ logger = get_logger(__name__)
 
 WITA = timezone(timedelta(hours=8), name="WITA")
 
-# Activation switch, set with the owner at merge time. None = routing is dark.
-ENTITY_ROUTING_EFFECTIVE_FROM: date | None = None
+# Activation switch: the first WITA calendar day on which new invoices are routed by
+# practice type (owner order 2026-11-11). None = routing is dark.
+ENTITY_ROUTING_EFFECTIVE_FROM: date | None = date(2026, 11, 11)
 
 
 @dataclass(frozen=True)
