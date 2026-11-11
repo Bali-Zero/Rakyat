@@ -21,6 +21,8 @@ PR #128 corrected the two guide families. The same claim still stood in:
   Rule: 30 days on entry, one extension of up to 30 days, 60 days at most.
 - 7692 onwards `prohibited_activities`: paid employment, business meetings, study, journalism.
 - C1 record (7700-7739): 60 days, two 60-day extensions (180 total), used only to say C1 is a different visa.
+  7733 `covered_purposes`: tourism and family. 7742-7745 `prohibited_activities`: paid employment,
+  business meetings, journalism. So the article names C1 without saying it fits a given trip.
 
 ## What changed
 
@@ -39,9 +41,22 @@ PR #128 corrected the two guide families. The same claim still stood in:
   The government fee is not in the rule pack, so readers are sent to the official portal.
   Removed: IDR 500,000, USD 32, per-extension fees, IDR 1.5 million total, visa-run flight costs,
   overstay fine amounts, agent fees, KITAS/B211A price ranges.
+- Worked examples (EN, ID, IT; FR and RU never had these sections): the traveller who chooses
+  visa-free and then wants to stay longer is now Malaysian, a nationality the article's own table
+  lists for both routes (he was Australian, which the same table excludes from visa-free); the
+  decision-matrix row for the Australian gives ineligibility as the reason; the C1 line in the
+  property-investor scenario states what C1 covers and leaves the fit to what he does on the trip.
+- Disclaimer (EN, ID, IT): it now says that the B1 stay and extension rules were rechecked on
+  9 November 2026 and that the other sections, visa-free rules and nationality lists included,
+  reflect the February 2026 text.
 - Guard: `b1-guides.truth.test.ts` now runs the four wrong-claim patterns on both families
-  (ten files), pins the comparison article's metadata, FAQ and amounts (only 750000 / 850000
-  allowed), and checks translation hashes and heading alignment. No existing assertion changed.
+  (ten files) and checks translation hashes and heading alignment. In the comparison article the
+  visa is named by the heading or the table column, not on the line, so three old shapes pass the
+  four patterns (initial stay of 60, extension count of two, second window 91-120): a line rule
+  reads those five files line by line, with the old lines of each language as rejected fixtures
+  and the corrected lines as spared ones. Metadata and FAQ are pinned; `updatedAt` is a floor
+  (2026-11-11 or later); money is read only where a currency marker stands next to a figure and
+  may be 0, 750000 or 850000. No assertion that existed before this PR changed.
 - Claims ratchet: unchanged, passes; no baseline entry added or removed.
 
 ## Not reviewed (outside the B1 rule)

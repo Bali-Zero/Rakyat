@@ -118,7 +118,7 @@ describe("B1 guide translation provenance", () => {
 // immigration article families. Both run through the same four patterns; the
 // comparison article additionally pins its metadata, its money and its
 // translation provenance. Money: the only amounts it may state are Bali Zero's
-// catalogue prices for the B1 VOA and its extension.
+// catalogue prices for the B1 VOA and its extension, and zero for visa-free.
 const otherSlugs = [
   "kitas-cancellation-company-closure",
   "visa-free-vs-evoa-indonesia-comparison",
@@ -128,10 +128,54 @@ const otherFiles = otherSlugs.flatMap((slug) =>
   locales.map((locale) => `${slug}${locale}.mdx`),
 );
 const comparisonFiles = locales.map((locale) => `${comparison}${locale}.mdx`);
-const sepAmounts = (text: string) =>
-  [...text.matchAll(/\d{1,3}(?:[ .,  ]\d{3})+/g)].map((m) =>
-    Number(m[0].replace(/[^0-9]/g, "")),
-  );
+// Money is read where it is written as money, a figure next to a currency
+// marker, so a pixel size or a year in an unrelated field is not an amount.
+const gap = "[ \\u00a0\\u202f]*";
+const figure = "(\\d{1,3}(?:[ .,\\u00a0\\u202f]\\d{3})+|\\d+)";
+const scale = "(K\\b|M\\b|million|juta|milion[ei]|млн)?";
+const moneyBefore = new RegExp(
+  `\\b(?:IDR|Rp\\.?)${gap}${figure}${gap}${scale}`,
+  "giu",
+);
+const moneyAfter = new RegExp(
+  `${figure}${gap}${scale}${gap}(?:IDR\\b|Rp\\b|rupiah|rupie|roupies|рупи)`,
+  "giu",
+);
+const money = (text: string) =>
+  [...text.matchAll(moneyBefore), ...text.matchAll(moneyAfter)].map((m) => ({
+    value: Number(m[1].replace(/[^0-9]/g, "")),
+    unit: m[2],
+  }));
+// In the comparison article the visa is named by the section heading or the
+// table column, so three old shapes carry no "E-VOA" or "B1" on their line and
+// pass the four patterns: an initial stay of 60, an extension count of two, a
+// second extension window (days 91-120). Here the entity is the file, read
+// line by line. "Initial 30" after the 60 is the corrected rule and is spared.
+// A negated sentence ("cannot be extended twice") would trip: say it as the
+// article does, "there is no second extension".
+const initialWord = "(?:\\binitial|\\binizial|\\bawal|начальн)";
+const initialSixty = new RegExp(
+  [
+    `\\b60\\b[^.!?|,;:0-9]{0,22}${initialWord}(?![^.!?|]{0,25}\\b30\\b)`,
+    `${initialWord}[^.!?|,;]{0,25}:\\s*60\\b`,
+    `${initialWord}[a-zа-яё]*\\s+60\\b`,
+  ].join("|"),
+  "iu",
+);
+const initialLabel = new RegExp(initialWord, "iu");
+const twiceWord =
+  /\btwice\b|\b(?:2|two) extensions\b|\bdua kali\b|\bdue (?:volte|proroghe)\b|\bdeux (?:fois|prolongations)\b|дважды|два продления/iu;
+const extensionWord =
+  /exten[ds]|perpanjang|prorog|estensi|estendi|prolong|продл/iu;
+const secondWindow = /\b91\s*[-–]\s*120\b/;
+const restatesOldRule = (rawLine: string) => {
+  const line = normalize(rawLine).trim();
+  if (secondWindow.test(line)) return true;
+  if (twiceWord.test(line) && extensionWord.test(line)) return true;
+  if (!line.startsWith("|")) return initialSixty.test(line);
+  const [, label = "", ...cells] = line.split("|");
+  return initialLabel.test(label) && cells.some((c) => /^\s*60\b/.test(c));
+};
 
 describe("B1 claim guard on the KITAS-closure and comparison articles", () => {
   it.each(otherFiles)("%s carries none of the four wrong patterns", (file) => {
@@ -148,7 +192,9 @@ describe("B1 claim guard on the KITAS-closure and comparison articles", () => {
   it.each(comparisonFiles)("%s metadata, FAQ and money are correct", (file) => {
     const raw = fs.readFileSync(path.join(root, file), "utf8");
     const { data } = matter(raw);
-    expect(data.updatedAt).toBe("2026-11-11");
+    // A floor, not a pin: a later editorial update must not break this.
+    const updated = new Date(data.updatedAt).toISOString().slice(0, 10);
+    expect(updated >= "2026-11-11", `${file}: updatedAt ${updated}`).toBe(true);
     for (const key of ["description", "excerpt", "seoDescription"]) {
       expect(data[key], `${file}: ${key}`).toMatch(/30/);
       expect(data[key], `${file}: ${key}`).not.toMatch(/120/);
@@ -157,12 +203,70 @@ describe("B1 claim guard on the KITAS-closure and comparison articles", () => {
     expect(data.aiOptimization.answerSnippet).toMatch(/60/);
     expect(data.faq.length).toBeGreaterThanOrEqual(3);
     expect(JSON.stringify(data.faq)).not.toMatch(/120/);
-    expect(raw).not.toMatch(/\bUSD\b|500\s*K\b/i);
-    for (const amount of sepAmounts(raw)) {
-      expect([750000, 850000], `${file}: amount ${amount}`).toContain(amount);
+    expect(raw).not.toMatch(/\bUSD\b|\$\s?\d|500\s*K\b/i);
+    const amounts = money(raw);
+    for (const { value, unit } of amounts) {
+      expect(unit, `${file}: ${value} ${unit}`).toBeUndefined();
+      expect([0, 750000, 850000], `${file}: amount ${value}`).toContain(value);
     }
-    expect(sepAmounts(raw)).toContain(750000);
-    expect(sepAmounts(raw)).toContain(850000);
+    expect(amounts.map((amount) => amount.value)).toContain(750000);
+    expect(amounts.map((amount) => amount.value)).toContain(850000);
+  });
+  it("reads money only where it is written as money", () => {
+    expect(money("cover image 1,000 pixels wide, checked in 2026")).toEqual([]);
+    expect(money("IDR 500,000 (~USD 32)")[0].value).toBe(500000);
+    expect(money("Rp 750.000, IDR 850 000").map((m) => m.value)).toEqual([
+      750000, 850000,
+    ]);
+    expect(money("IDR 500K")[0]).toEqual({ value: 500, unit: "K" });
+    expect(money("IDR 1 million")[0]).toEqual({ value: 1, unit: "million" });
+    expect(money("500.000 rupiah")[0].value).toBe(500000);
+  });
+  it.each([
+    "| **Initial Duration** | 30 days | 60 days |",
+    "| **Duration (initial)** | 30 days | 60 days |",
+    "- **60 days** initial stay",
+    "- **Extendable twice:** +30 days each (total: 120 days)",
+    "| **Extension possible?** | ❌ No | ✅ Yes (twice, +30 days each) |",
+    "| German, 120-day Bali base | E-VOA + 2 extensions | Maximum tourist stay |",
+    "**Second Extension (days 91-120):**",
+    "It costs IDR 500,000, grants 60 days initially, and can be extended.",
+    "| **Durasi Awal** | 30 hari | 60 hari |",
+    "- Masa tinggal awal **60 hari**",
+    "- **Dapat diperpanjang dua kali:** +30 hari setiap kali (total: 120 hari)",
+    "| **Dapat diperpanjang?** | ❌ Tidak | ✅ Ya (dua kali, +30 hari setiap kali) |",
+    "| **Durata (iniziale)** | 30 giorni | 60 giorni |",
+    "- **60 giorni** di soggiorno iniziale",
+    "- **Estendibile due volte:** +30 giorni ciascuna (totale: 120 giorni)",
+    "| **Estensione possibile?** | ❌ No | ✅ Sì (due volte, +30 giorni ciascuna) |",
+    "| **Durée initiale** | 30 jours | 60 jours |",
+    "- **60 jours** de séjour initial",
+    "- **Prolongeable deux fois :** +30 jours chacun (total : 120 jours)",
+    "| **Первоначальная длительность** | 30 дней | 60 дней |",
+    "- **60 дней** первоначального пребывания",
+    "| **Возможно ли продление?** | ❌ Нет | ✅ Да (дважды, по +30 дней каждое) |",
+    "| **Максимальное пребывание** | 30 дней | 120 дней (два продления по 30 дней) |",
+  ])("rejects the old comparison line: %s", (sample) => {
+    expect(restatesOldRule(sample)).toBe(true);
+  });
+  it.each([
+    "| **Initial Duration** | 30 days | 30 days |",
+    "| **Initial stay** | 30 days | 30 days (60 with the one extension) |",
+    "- **30 days** initial stay",
+    "**There is no second extension.** After day 60 you must leave.",
+    "   - A separate single-entry visa, initially up to 60 days, extendable under its own rules up to 180 days in total",
+    "   - Visa terpisah sekali masuk, awalnya hingga 60 hari, dapat diperpanjang menurut aturannya sendiri hingga total 180 hari",
+    "- **Duration:** 30 days on entry, plus the one extension of up to 30 days (60 days maximum)",
+    "The 60 days maximum is the initial 30 days plus the one extension.",
+    "A 60-day maximum (initial 30 days, one extension of 30).",
+    "Periksa paspor Anda dua kali sebelum berangkat.",
+    "Check your booking twice before you pay.",
+  ])("spares the corrected comparison line: %s", (sample) => {
+    expect(restatesOldRule(sample)).toBe(false);
+  });
+  it.each(comparisonFiles)("%s restates the old rule on no line", (file) => {
+    const raw = fs.readFileSync(path.join(root, file), "utf8");
+    expect(raw.split("\n").filter(restatesOldRule)).toEqual([]);
   });
   for (const slug of otherSlugs) {
     it(`${slug} translations carry the hash of the current English body`, async () => {
