@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import asyncpg
@@ -220,9 +220,52 @@ class GarudaOrderRepository:
         self._providers: dict[str, PaymentProvider] = providers or {provider_name: provider}
 
     def provider_for(self, name: str | None) -> PaymentProvider:
-        if name and name in self._providers:
-            return self._providers[name]
+        if name:
+            if name in self._providers:
+                return self._providers[name]
+            # An order that NAMES a provider we cannot serve must
+            # fail closed: asking the selected (wrong) vendor would
+            # manufacture a false unpaid/refund answer (gate finding).
+            raise PaymentProviderUnavailable(
+                f"order names provider {name!r}, which is not wired in this process"
+            )
         return self._provider
+
+    async def record_quarantined_webhook(
+        self,
+        *,
+        provider_name: str,
+        provider_event_id: str,
+        canonical_payload_sha256: bytes,
+        order_id: str | None,
+        reason: str,
+        transition_id: str = "OP-02",
+    ) -> None:
+        """Write an authentic-but-refused webhook into the inbox as
+        quarantined, so the existing quarantine alarm can see it.
+
+        The handler-level quarantine UPDATEs assume an inbox row
+        already exists; a route-level refusal (authoritative-status
+        disagreement, partial refund) happens BEFORE any handler
+        runs, so without this insert the refusal would exist only
+        as a 422 in a log — invisible to `count_quarantined`.
+        """
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO garuda_payment_inbox
+                    (provider, provider_event_id, canonical_payload_sha256,
+                     transition_id, outcome, quarantine_reason, order_id, processed_at)
+                VALUES ($1, $2, $3, $6, 'quarantined', $4, $5, statement_timestamp())
+                ON CONFLICT (provider, provider_event_id) DO NOTHING
+                """,
+                provider_name,
+                provider_event_id,
+                canonical_payload_sha256,
+                reason,
+                order_id,
+                transition_id,
+            )
 
     async def provider_name_for_order(self, order_id: str) -> str | None:
         async with self._pool.acquire() as conn:
@@ -394,7 +437,7 @@ class GarudaOrderRepository:
                     """,
                     order_id,
                     checkout.provider_session_id,
-                    datetime.now(UTC) + timedelta(minutes=_CHECKOUT_TTL_MINUTES),
+                    checkout.expires_at,
                     self._provider_name,
                 )
                 if updated is not None:

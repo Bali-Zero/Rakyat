@@ -1427,6 +1427,11 @@ async def initialize_garuda_services(app: FastAPI, db_pool) -> None:
             "never falling back silently.",
             garuda_payment_provider_name,
         )
+    if garuda_payment_provider_name == "midtrans" and not garuda_midtrans_server_key:
+        logger.error(
+            "⛔ GARUDA VOA order lane NOT wired: GARUDA_PAYMENT_PROVIDER=midtrans "
+            "but GARUDA_MIDTRANS_SERVER_KEY is empty — set it or neither."
+        )
     _selected_keys_ready = (
         garuda_payment_provider_name == "xendit"
         and garuda_xendit_secret_key

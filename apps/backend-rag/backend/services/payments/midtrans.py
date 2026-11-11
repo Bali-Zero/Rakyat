@@ -93,7 +93,7 @@ _STATUSES_WITH_NO_ACCEPTED_CHARGE = frozenset({"expire", "cancel", "deny", "fail
 _STATUS_CODE_PAIRS = {
     "200": {"settlement", "capture", "refund", "partial_refund", "chargeback", "partial_chargeback"},
     "201": {"pending"},
-    "202": {"deny"},
+    "202": {"deny", "cancel", "failure"},
     "407": {"expire"},
 }
 
@@ -161,10 +161,6 @@ class MidtransPaymentProvider:
         self._fee_config = fee_config  # operator visibility only
         self._public_base_url = public_base_url.rstrip("/")
         self._client = client
-        # order_id -> checkout expiry, for the Snap-404 rule. Process
-        # local by design: OP-04 runs in the process that created the
-        # checkout; an unknown order answers conservatively (False).
-        self._expiry_by_order: dict[str, datetime] = {}
 
     @property
     def mode(self) -> str:
@@ -194,7 +190,17 @@ class MidtransPaymentProvider:
                 "transaction_details": {"order_id": order_id, "gross_amount": price_idr},
                 "enabled_payments": ENABLED_PAYMENTS,
                 "callbacks": {"finish": finish_url},
-                "expiry": {"unit": "minutes", "duration": _CHECKOUT_TTL_MINUTES},
+                "expiry": {
+                    # start_time pins Midtrans' expiry clock to OUR
+                    # creation instant; without it the countdown can
+                    # start when the buyer picks a method, and the
+                    # two clocks diverge (gate finding).
+                    "start_time": (expires_at - timedelta(minutes=_CHECKOUT_TTL_MINUTES))
+                    .astimezone()
+                    .strftime("%Y-%m-%d %H:%M:%S %z"),
+                    "unit": "minutes",
+                    "duration": _CHECKOUT_TTL_MINUTES,
+                },
             },
         )
         response.raise_for_status()
@@ -202,7 +208,6 @@ class MidtransPaymentProvider:
         redirect_url = body.get("redirect_url")
         if not isinstance(redirect_url, str) or not redirect_url:
             raise WebhookUnparseable("Midtrans Snap response missing redirect_url")
-        self._expiry_by_order[order_id] = expires_at
         return CheckoutSession(
             provider_session_id=order_id,
             checkout_url=redirect_url,
@@ -272,7 +277,11 @@ class MidtransPaymentProvider:
                     f"capture without fraud_status=accept: {body.get('fraud_status')!r}"
                 )
             return NormalizedPaidEvent(
-                provider_event_id=event_id,
+                # capture and settlement are two hops of ONE charge:
+                # the event identity is the charge, so the second hop
+                # dedupes in the inbox instead of reading as OP-08
+                # duplicate-charge (normal card status cycle).
+                provider_event_id=f"{transaction_id}:paid",
                 provider_charge_id=transaction_id,
                 provider_session_id=order_id,
                 amount_idr=self._amount_idr(body),
@@ -349,12 +358,12 @@ class MidtransPaymentProvider:
         charge_id = body.get("transaction_id")
         if http_status == 404:
             # Snap 404 = the buyer has not chosen a method yet; the
-            # page may still be payable. Unpaid ONLY after our own
-            # recorded expiry has passed.
-            expires_at = self._expiry_by_order.get(provider_session_id)
-            confirmed = expires_at is not None and datetime.now(UTC) > expires_at
+            # page may still be payable. NEVER confirmed-unpaid from
+            # here: an in-process expiry record would flip the answer
+            # across a restart (gate finding). OP-04 then opens a
+            # late case instead of expiring — the safe direction.
             return ChargeConfirmation(
-                confirmed_unpaid=confirmed,
+                confirmed_unpaid=False,
                 provider_charge_id=None,
                 provider_status="not_found",
             )

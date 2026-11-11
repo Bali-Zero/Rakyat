@@ -8,6 +8,8 @@ wrong adapter (signature or status checks against a stranger).
 
 from __future__ import annotations
 
+import pytest
+
 from backend.services.garuda_orders.repository import GarudaOrderRepository
 
 
@@ -44,7 +46,17 @@ def test_registry_defaults_to_selected_provider_alone():
         environment="TEST",
     )
     assert repo.provider_for("xendit") is only
-    assert repo.provider_for("midtrans") is only  # fallback: the one adapter that exists
+    assert repo.provider_for(None) is only
+
+
+def test_explicit_provider_not_wired_fails_closed():
+    # An order naming a provider this process cannot serve must
+    # never be answered by the WRONG vendor (gate finding).
+    from backend.services.garuda_orders.errors import PaymentProviderUnavailable
+
+    repo = _repo("midtrans", {"midtrans": _FakeProvider("midtrans")})
+    with pytest.raises(PaymentProviderUnavailable, match="not wired"):
+        repo.provider_for("xendit")
 
 
 def test_providers_carry_stable_names_for_inbox_rows():

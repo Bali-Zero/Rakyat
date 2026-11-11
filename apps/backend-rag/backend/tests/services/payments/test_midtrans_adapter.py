@@ -289,3 +289,25 @@ async def test_qris_refund_uses_api_and_returns_refund_key():
     refund_id = await provider.refund(provider_charge_id="txn_test_1", idempotency_key="idem-r2")
     assert refund_id == "idem-r2"
     assert any("/refund" in url for url in calls)
+
+
+def test_capture_and_settlement_share_one_charge_event_id():
+    # Normal card cycle: capture then settlement for ONE charge must
+    # dedupe in the inbox, not read as a duplicate charge (OP-08).
+    provider = _provider()
+    capture = provider.parse_event(
+        raw_body=json.dumps(_sign(_body(transaction_status="capture", fraud_status="accept"))).encode(),
+        headers={},
+    )
+    settlement = provider.parse_event(
+        raw_body=json.dumps(_sign(_body(transaction_status="settlement"))).encode(), headers={}
+    )
+    assert isinstance(capture, NormalizedPaidEvent)
+    assert capture.provider_event_id == settlement.provider_event_id
+
+
+def test_cancel_parses_to_failure():
+    provider = _provider()
+    body = _sign(_body(status_code="202", transaction_status="cancel"))
+    event = provider.parse_event(raw_body=json.dumps(body).encode(), headers={})
+    assert isinstance(event, NormalizedFailureEvent)

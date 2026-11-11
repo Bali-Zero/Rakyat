@@ -595,6 +595,23 @@ async def receive_payment_webhook(
         # `pending`): 2xx so the provider does not retry it.
         return
     except WebhookUnparseable as exc:
+        if "partial_refund" in str(exc) or "partial_chargeback" in str(exc):
+            try:
+                _partial_body = json.loads(raw_body)
+                _tx = _partial_body.get("transaction_id")
+                _oid = _partial_body.get("order_id")
+            except (ValueError, UnicodeDecodeError, AttributeError):
+                _tx = _oid = None
+            if isinstance(_tx, str) and _tx:
+                await repository.record_quarantined_webhook(
+                    provider_name=provider_name,
+                    provider_event_id=f"{_tx}:partial_refund",
+                    canonical_payload_sha256=hashlib.sha256(raw_body).digest(),
+                    order_id=_oid if isinstance(_oid, str) else None,
+                    reason="unexpected_state",
+                    transition_id="OP-05",
+                )
+                return
         raise HTTPException(
             status_code=422, detail={"code": "INVALID_REQUEST", "retryable": False}
         ) from exc
@@ -615,10 +632,19 @@ async def receive_payment_webhook(
             try:
                 event = await verify_paid(event)
             except WebhookUnparseable as exc:
-                raise HTTPException(
-                    status_code=422,
-                    detail={"code": "INVALID_REQUEST", "retryable": False},
-                ) from exc
+                # Authentic but refused: on the record in the inbox
+                # (quarantine alarm reads it), 204 so the provider
+                # does not retry a decision we have already taken.
+                await repository.record_quarantined_webhook(
+                    provider_name=provider_name,
+                    provider_event_id=event.provider_event_id,
+                    canonical_payload_sha256=digest,
+                    order_id=event.provider_session_id,
+                    reason=(
+                        "amount_mismatch" if "amount" in str(exc) else "unexpected_state"
+                    ),
+                )
+                return
         await repository.handle_paid_event(
             event, canonical_payload_sha256=digest, provider_name=provider_name
         )
