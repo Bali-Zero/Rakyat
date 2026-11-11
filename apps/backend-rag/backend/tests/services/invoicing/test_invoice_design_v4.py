@@ -126,6 +126,34 @@ def test_unset_bank_fields_leave_no_empty_row_in_the_pay_to_grid(generator):
     assert tall - flat > 30, "the second grid row exists only when branch or SWIFT is set"
 
 
+def _spans(pdf: bytes) -> list[tuple[str, float, float]]:
+    found: list[tuple[str, float, float]] = []
+
+    def visit(text, cm, tm, _font_dict, _font_size):
+        if text.strip():
+            found.append((text.strip(), cm[4] + tm[4], cm[5]))
+
+    PdfReader(io.BytesIO(pdf)).pages[0].extract_text(visitor_text=visit)
+    return found
+
+
+def test_holder_and_bank_sit_in_the_pay_to_cell_and_the_number_in_its_own_cell(generator):
+    entity = dataclasses.replace(ENTITIES["cimb_bayu_bali_nol"], bank_account_number="0123456789")
+    spans = _spans(make_pdf(generator, entity))
+    holder = min((x, y) for t, x, y in spans if t == entity.bank_account_name and y < 400)
+    bank = next(x for t, x, _ in spans if t == entity.bank_name)
+    number = next(x for t, x, _ in spans if t == "0123456789")
+    assert holder[0] < 100 and bank < 100, "pay-to cell is the left column"
+    assert number > 250, "the account number has its own cell to the right"
+
+
+def test_title_letter_spacing_does_not_leak_into_the_footer(generator):
+    reader, _ = read(make_pdf(generator, ENTITIES["cimb_bayu_bali_nol"]))
+    content = reader.pages[0].get_contents().get_data().decode("latin-1")
+    spacings = re.findall(r"([\d.]+) Tc", content)
+    assert spacings and spacings[-1] == "0", spacings
+
+
 def test_description_falls_back_to_practice_type_when_blank(generator):
     _, text = read(make_pdf(generator, ENTITIES["cimb_bayu_bali_nol"], practice_description=None))
     assert "synthetic_code" in text

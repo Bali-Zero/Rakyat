@@ -291,6 +291,7 @@ class InvoiceGenerator:
             title.setCharSpace(0.7)
             title.setFont("M800", 34)
             title.textOut("INVOICE")
+            title.setCharSpace(0)
             canv.drawText(title)
             canv.setFillColor(ant)
             canv.rect(M, logo_y - 14, CW, 0.8, stroke=0, fill=1)
