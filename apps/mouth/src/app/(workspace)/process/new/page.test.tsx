@@ -334,4 +334,48 @@ describe("NewPracticePage", () => {
       ).toEqual([]);
     },
   );
+
+  it("a 409 that arrives after the client was changed never shows the old client's chooser", async () => {
+    const user = userEvent.setup();
+    let rejectCreate: (e: unknown) => void = () => {};
+    mockCreatePractice.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectCreate = reject;
+      }),
+    );
+    mockGetClients.mockResolvedValue([
+      {
+        id: 8,
+        full_name: "Synthetic Other Client",
+        email: "other@example.test",
+      },
+    ]);
+    await renderPage();
+    const selects = await screen.findAllByRole("combobox");
+    await user.selectOptions(selects[0], "visa");
+    await user.selectOptions(selects[1], "SYNTHETIC_VISA");
+    await user.type(
+      await screen.findByLabelText("Company name"),
+      "Synthetic Kembar",
+    );
+    await user.click(screen.getByRole("button", { name: "Create Process" }));
+    await waitFor(() => expect(mockCreatePractice).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Change" }));
+    await user.type(screen.getByLabelText("Search client"), "Other");
+    await user.click(await screen.findByText("Synthetic Other Client"));
+    rejectCreate(
+      new ApiError("conflict", 409, {
+        detail: {
+          code: "invoice_company_ambiguous",
+          candidates: [{ id: 8, company_name: "PT Synthetic Kembar" }],
+        },
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Create Process" }),
+      ).toBeEnabled(),
+    );
+    expect(screen.queryByTestId("invoice-company-ambiguity")).toBeNull();
+  });
 });

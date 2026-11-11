@@ -215,6 +215,33 @@ describe("InvoiceCompanyField", () => {
     },
   );
 
+  it("a name typed after a failed suggestion stays visible when a later suggestion succeeds", async () => {
+    mockSuggest.mockRejectedValueOnce(new Error("down"));
+    mockSuggest.mockResolvedValueOnce({
+      autofill: true,
+      suggested_company_id: null,
+      companies: [choice(11, "PT Synthetic Satu")],
+    });
+    const seen = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(<Harness onValue={seen} />);
+    await user.type(
+      await screen.findByLabelText("Company name"),
+      "PT Synthetic Ketik",
+    );
+    rerender(<Harness code="pt_pma_setup" onValue={seen} />);
+    await waitFor(() => expect(mockSuggest).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("combobox")).toHaveValue("__new__");
+    expect(screen.getByLabelText("Company name")).toHaveValue(
+      "PT Synthetic Ketik",
+    );
+    expect(
+      invoiceCompanyParams(seen.mock.calls[seen.mock.calls.length - 1][0]),
+    ).toEqual({
+      invoice_company_name: "PT Synthetic Ketik",
+    });
+  });
+
   it("a prefill never survives a change of client", async () => {
     mockSuggest.mockResolvedValueOnce({
       autofill: true,

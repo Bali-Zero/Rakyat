@@ -177,10 +177,20 @@ export function InvoiceCompanyField({
     });
   }
 
+  // A name or NPWP in the value always keeps the typed inputs on screen, so what
+  // is sent is what is shown (e.g. typed after a failed suggestion).
+  const hasTyped =
+    value.companyId === null && Boolean(value.name || value.npwp);
   const showTypedInputs =
-    typing || (loaded && options.length === 0 && value.companyId === null);
+    typing ||
+    hasTyped ||
+    (loaded && options.length === 0 && value.companyId === null);
   const selectValue =
-    value.companyId !== null ? String(value.companyId) : typing ? NEW : "";
+    value.companyId !== null
+      ? String(value.companyId)
+      : typing || hasTyped
+        ? NEW
+        : "";
 
   const pick = (raw: string) => {
     touched.current = true;

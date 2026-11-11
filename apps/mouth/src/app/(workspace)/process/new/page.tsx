@@ -101,11 +101,14 @@ export default function NewPracticePage() {
     family_member_id: "" as string, // "" = for main client; otherwise the family member id as string
   });
 
+  const clientIdRef = useRef<number | undefined>(preselectedClientId);
   const [invoiceCompany, setInvoiceCompany] = useState<InvoiceCompanyValue>(
     EMPTY_INVOICE_COMPANY,
   );
   const [invoiceAmbiguity, setInvoiceAmbiguity] =
     useState<InvoiceCompanyAmbiguity | null>(null);
+
+  clientIdRef.current = formData.client_id;
 
   // The company belongs to the client it was prefilled or typed for: any change
   // of client (including Change, which unmounts the field) starts it empty.
@@ -541,7 +544,10 @@ export default function NewPracticePage() {
     } catch (error) {
       const ambiguous = ambiguityFromError(error, invoiceCompany.name.trim());
       if (ambiguous) {
-        setInvoiceAmbiguity(ambiguous);
+        // A 409 for a client that has since been replaced must not surface.
+        if (clientIdRef.current === result.data.client_id) {
+          setInvoiceAmbiguity(ambiguous);
+        }
         return;
       }
       const apiDuration = performance.now() - apiStart;
