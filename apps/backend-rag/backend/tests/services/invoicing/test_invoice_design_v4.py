@@ -147,6 +147,13 @@ def test_holder_and_bank_sit_in_the_pay_to_cell_and_the_number_in_its_own_cell(g
     assert number > 250, "the account number has its own cell to the right"
 
 
+def test_contact_line_keeps_the_v4_gap_under_the_client_name(generator):
+    spans = _spans(make_pdf(generator, ENTITIES["cimb_bayu_bali_nol"]))
+    name_y = next(y for t, _, y in spans if t == "SYNTHETIC CLIENT")
+    email_y = next(y for t, _, y in spans if t == "client@example.test")
+    assert name_y - email_y == pytest.approx(16.0, abs=0.5), "name to contact line, as in v4"
+
+
 def test_title_letter_spacing_does_not_leak_into_the_footer(generator):
     reader, _ = read(make_pdf(generator, ENTITIES["cimb_bayu_bali_nol"]))
     content = reader.pages[0].get_contents().get_data().decode("latin-1")

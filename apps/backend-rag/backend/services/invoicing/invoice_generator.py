@@ -12,6 +12,7 @@ import io
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 try:
     from reportlab.lib import colors
@@ -274,7 +275,7 @@ class InvoiceGenerator:
         while pdfmetrics.stringWidth(footer_text, "M500", font_size) > CW and font_size > 5:
             font_size -= 0.2
 
-        def draw_page(canv, _doc) -> None:
+        def draw_page(canv: Any, _doc: Any) -> None:
             canv.saveState()
             if has_logo:
                 canv.drawImage(
@@ -356,9 +357,10 @@ class InvoiceGenerator:
             Spacer(1, 4),
             Paragraph(_esc(client_name.upper()), client_style),
         ]
-        for line in (client_email, client_phone, client_address):
-            if line:
-                bill.append(p(_esc(line), "clientd"))
+        contact_lines = [line for line in (client_email, client_phone, client_address) if line]
+        if contact_lines:
+            bill.append(Spacer(1, 3))
+        bill.extend(p(_esc(line), "clientd") for line in contact_lines)
         bill_w = CW - 228 - 24
         bill_table = Table([[bill]], colWidths=[bill_w])
         bill_height = bill_table.wrap(bill_w, 1000)[1]
