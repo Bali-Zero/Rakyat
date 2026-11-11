@@ -1,14 +1,19 @@
-"""Provider-agnostic payment port — owner decision 1 (Xendit, tier (a) only).
+"""Provider-agnostic payment port — owner decision 1, re-ruled 2026-11-11.
 
 `garuda_orders/repository.py` depends on this Protocol, never on a concrete
-provider. Tier (a) is the ONLY shape this port needs to express: a small
-ticket (<= ~Rp 3jt), card in checkout, the provider fee ABSORBED into the
-one all-inclusive `price_idr` — the fee is never a second line, never
-returned to the caller, and never persisted as a separate figure (SM-G04 /
-`test_the_price_is_one_field_and_never_a_computation`). Tiers (b)/(c) from
-DECISIONS.md (VA, deposit+wire) are explicitly out of scope for this port
-and MUST NOT be added here — see `products/garuda-voa/DECISIONS.md`
-owner decision 1.
+provider. The port expresses one shape: a small ticket (<= ~Rp 3jt), the
+provider fee ABSORBED into the one all-inclusive `price_idr` — the fee is
+never a second line, never returned to the caller, and never persisted as
+a separate figure (SM-G04 /
+`test_the_price_is_one_field_and_never_a_computation`).
+
+Owner decision 1 (2026-08-25) scoped this to tier (a) card-only and put
+VA (tier (c)) out of scope. Zero's 2026-11-11 re-ruling supersedes that
+scope: VA and QRIS are now first-class methods alongside cards (served
+by the Midtrans adapter; Xendit remains wired for cards). Tier (b)
+(deposit+wire) stays out of scope. See
+`research/payments/2026-11-11-midtrans-adapter-spec.md` and
+`products/garuda-voa/DECISIONS.md`.
 """
 
 from __future__ import annotations
@@ -75,6 +80,18 @@ class WebhookSignatureInvalid(Exception):
     """Raised by `verify_signature` — maps to OP-F02 (reject before inbox)."""
 
 
+class WebhookIgnorable(Exception):
+    """A verified notification that asks for no transition.
+
+    Distinct from `WebhookUnparseable`: the signature verified and the
+    body is fully understood — there is simply nothing to do (e.g.
+    Midtrans `pending`, emitted when a checkout page is created).
+    The route answers 200 for it, because providers retry non-2xx
+    responses and a retry storm on every checkout's first
+    notification would be a defect we designed, not one we found.
+    """
+
+
 class WebhookUnparseable(Exception):
     """Raised by `parse_event` for a signed body this adapter cannot read.
 
@@ -126,7 +143,9 @@ class PaymentProvider(Protocol):
         self, *, raw_body: bytes, headers: dict[str, str]
     ) -> NormalizedPaidEvent | NormalizedFailureEvent | NormalizedRefundEvent:
         """Only called after `verify_signature` succeeds. Raises
-        `WebhookUnparseable` for a signed body this adapter cannot map."""
+        `WebhookUnparseable` for a signed body this adapter cannot map,
+        and `WebhookIgnorable` for a verified body that asks for no
+        transition (the route answers 200 for those)."""
         ...
 
     async def confirm_no_successful_charge(self, *, provider_session_id: str) -> ChargeConfirmation:
@@ -158,6 +177,7 @@ __all__ = [
     "NormalizedRefundEvent",
     "PaymentProvider",
     "RefundFailed",
+    "WebhookIgnorable",
     "WebhookSignatureInvalid",
     "WebhookUnparseable",
 ]

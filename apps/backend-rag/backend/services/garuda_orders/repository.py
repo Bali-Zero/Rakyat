@@ -93,6 +93,7 @@ async def _quarantine(
     provider_event_id: str,
     reason: str,
     order_id: str | None = None,
+    provider_name: str = "xendit",
 ) -> None:
     """Refuse an authentic provider callback, ON THE RECORD and with the cause.
 
@@ -127,11 +128,12 @@ async def _quarantine(
                quarantine_reason = $2,
                order_id = $3,
                processed_at = statement_timestamp()
-         WHERE provider = 'xendit' AND provider_event_id = $1
+         WHERE provider = $4 AND provider_event_id = $1
         """,
         provider_event_id,
         reason,
         order_id,
+        provider_name,
     )
 
 
@@ -202,11 +204,31 @@ class GarudaOrderRepository:
         eligibility_lookup: EligibilityCheckLookup,
         provider: PaymentProvider,
         environment: str,
+        provider_name: str = "xendit",
+        providers: dict[str, PaymentProvider] | None = None,
     ) -> None:
         self._pool = pool
         self._lookup = eligibility_lookup
         self._provider = provider
         self._environment = environment
+        # Per-order provider identity (spec §3.3): checkout creation
+        # uses the SELECTED provider; status/refund/inbox writes for
+        # an existing order use THAT ORDER's provider, so flipping
+        # the selector never strands in-flight orders on the wrong
+        # adapter. Registry defaults to the selected provider alone.
+        self._provider_name = provider_name
+        self._providers: dict[str, PaymentProvider] = providers or {provider_name: provider}
+
+    def provider_for(self, name: str | None) -> PaymentProvider:
+        if name and name in self._providers:
+            return self._providers[name]
+        return self._provider
+
+    async def provider_name_for_order(self, order_id: str) -> str | None:
+        async with self._pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT provider FROM garuda_orders WHERE order_id = $1", order_id
+            )
 
     # ---- OP-00 + OP-01: createOrderFromCheck ---------------------------
 
@@ -365,13 +387,15 @@ class GarudaOrderRepository:
                     UPDATE garuda_orders
                        SET state = 'awaiting_payment',
                            provider_session_id = $2,
-                           checkout_expires_at = $3
+                           checkout_expires_at = $3,
+                           provider = $4
                      WHERE order_id = $1 AND state = 'created'
                      RETURNING order_id
                     """,
                     order_id,
                     checkout.provider_session_id,
                     datetime.now(UTC) + timedelta(minutes=_CHECKOUT_TTL_MINUTES),
+                    self._provider_name,
                 )
                 if updated is not None:
                     event_id = await journal.append_event(
@@ -488,21 +512,27 @@ class GarudaOrderRepository:
     # ---- OP-02..OP-09, OP-F04, OP-F05, OP-08: webhook reconciliation ----
 
     async def handle_paid_event(
-        self, event: NormalizedPaidEvent, *, canonical_payload_sha256: bytes
+        self,
+        event: NormalizedPaidEvent,
+        *,
+        canonical_payload_sha256: bytes,
+        provider_name: str | None = None,
     ) -> str:
         """Returns the outcome tag for logging/metrics: committed transition id."""
+        pname = provider_name or self._provider_name
 
         async with self._pool.acquire() as conn, conn.transaction():
             inbox_row = await conn.fetchrow(
                 """
                 INSERT INTO garuda_payment_inbox
                     (provider, provider_event_id, canonical_payload_sha256, transition_id)
-                VALUES ('xendit', $1, $2, 'OP-02')
+                VALUES ($3, $1, $2, 'OP-02')
                 ON CONFLICT (provider, provider_event_id) DO NOTHING
                 RETURNING id
                 """,
                 event.provider_event_id,
                 canonical_payload_sha256,
+                pname,
             )
             if inbox_row is None:
                 return "OP-09"  # duplicate delivery — already processed or in flight
@@ -515,6 +545,7 @@ class GarudaOrderRepository:
                 await _quarantine(
                     conn,
                     provider_event_id=event.provider_event_id,
+                    provider_name=pname,
                     reason="unmatched_session",
                 )
                 return "OP-F03"  # cannot reconcile to exactly one order
@@ -533,6 +564,7 @@ class GarudaOrderRepository:
                 await _quarantine(
                     conn,
                     provider_event_id=event.provider_event_id,
+                    provider_name=pname,
                     reason="amount_mismatch",
                     order_id=order_id,
                 )
@@ -691,6 +723,7 @@ class GarudaOrderRepository:
                 await _quarantine(
                     conn,
                     provider_event_id=event.provider_event_id,
+                    provider_name=pname,
                     reason="session_not_bound",
                     order_id=order_id,
                 )
@@ -700,27 +733,34 @@ class GarudaOrderRepository:
                 """
                 UPDATE garuda_payment_inbox
                    SET order_id = $2, transition_id = $3, outcome = 'committed', processed_at = statement_timestamp()
-                 WHERE provider = 'xendit' AND provider_event_id = $1
+                 WHERE provider = $4 AND provider_event_id = $1
                 """,
                 event.provider_event_id,
                 order_id,
                 transition_id,
+                pname,
             )
             return transition_id
 
     async def handle_failure_event(
-        self, event: NormalizedFailureEvent, *, canonical_payload_sha256: bytes
+        self,
+        event: NormalizedFailureEvent,
+        *,
+        canonical_payload_sha256: bytes,
+        provider_name: str | None = None,
     ) -> str:
+        pname = provider_name or self._provider_name
         async with self._pool.acquire() as conn, conn.transaction():
             inbox_row = await conn.fetchrow(
                 """
                 INSERT INTO garuda_payment_inbox (provider, provider_event_id, canonical_payload_sha256, transition_id)
-                VALUES ('xendit', $1, $2, 'OP-03')
+                VALUES ($3, $1, $2, 'OP-03')
                 ON CONFLICT (provider, provider_event_id) DO NOTHING
                 RETURNING id
                 """,
                 event.provider_event_id,
                 canonical_payload_sha256,
+                pname,
             )
             if inbox_row is None:
                 return "OP-09"
@@ -738,6 +778,7 @@ class GarudaOrderRepository:
                 await _quarantine(
                     conn,
                     provider_event_id=event.provider_event_id,
+                    provider_name=pname,
                     reason="unmatched_session" if order is None else "unexpected_state",
                     order_id=None if order is None else order["order_id"],
                 )
@@ -775,25 +816,32 @@ class GarudaOrderRepository:
                     job_type="staff_page_payment_failure",
                 )
             await conn.execute(
-                "UPDATE garuda_payment_inbox SET order_id = $2, outcome = 'committed', processed_at = statement_timestamp() WHERE provider = 'xendit' AND provider_event_id = $1",
+                "UPDATE garuda_payment_inbox SET order_id = $2, outcome = 'committed', processed_at = statement_timestamp() WHERE provider = $3 AND provider_event_id = $1",
                 event.provider_event_id,
                 order_id,
+                pname,
             )
             return "OP-03"
 
     async def handle_refund_event(
-        self, event: NormalizedRefundEvent, *, canonical_payload_sha256: bytes
+        self,
+        event: NormalizedRefundEvent,
+        *,
+        canonical_payload_sha256: bytes,
+        provider_name: str | None = None,
     ) -> str:
+        pname = provider_name or self._provider_name
         async with self._pool.acquire() as conn, conn.transaction():
             inbox_row = await conn.fetchrow(
                 """
                 INSERT INTO garuda_payment_inbox (provider, provider_event_id, canonical_payload_sha256)
-                VALUES ('xendit', $1, $2)
+                VALUES ($3, $1, $2)
                 ON CONFLICT (provider, provider_event_id) DO NOTHING
                 RETURNING id
                 """,
                 event.provider_event_id,
                 canonical_payload_sha256,
+                pname,
             )
             if inbox_row is None:
                 return "OP-09"
@@ -809,6 +857,7 @@ class GarudaOrderRepository:
                 await _quarantine(
                     conn,
                     provider_event_id=event.provider_event_id,
+                    provider_name=pname,
                     reason="unmatched_session" if order is None else "unexpected_state",
                     order_id=None if order is None else order["order_id"],
                 )
@@ -844,10 +893,11 @@ class GarudaOrderRepository:
                     job_type="staff_page_refund_out_of_order",
                 )
             await conn.execute(
-                "UPDATE garuda_payment_inbox SET order_id = $2, transition_id = $3, outcome = 'committed', processed_at = statement_timestamp() WHERE provider = 'xendit' AND provider_event_id = $1",
+                "UPDATE garuda_payment_inbox SET order_id = $2, transition_id = $3, outcome = 'committed', processed_at = statement_timestamp() WHERE provider = $4 AND provider_event_id = $1",
                 event.provider_event_id,
                 order_id,
                 transition_id,
+                pname,
             )
             return transition_id
 
@@ -859,9 +909,9 @@ class GarudaOrderRepository:
         order_id: str,
         provider_session_id: str,
     ) -> ExpiryOutcome:
-        confirmation = await self._provider.confirm_no_successful_charge(
-            provider_session_id=provider_session_id
-        )
+        confirmation = await self.provider_for(
+            await self.provider_name_for_order(order_id)
+        ).confirm_no_successful_charge(provider_session_id=provider_session_id)
         if not confirmation.confirmed_unpaid:
             late_case_opened = await self._open_late_case_from_reconciliation(
                 order_id=order_id,
@@ -1015,7 +1065,7 @@ class GarudaOrderRepository:
             # matters more than connection-hold time.
             async with conn.transaction():
                 row = await conn.fetchrow(
-                    "SELECT order_id, state, late_case_open, price_idr, late_case_charge_id "
+                    "SELECT order_id, state, late_case_open, price_idr, late_case_charge_id, provider "
                     "FROM garuda_orders WHERE order_id = $1 FOR UPDATE",
                     order_id,
                 )
@@ -1055,7 +1105,7 @@ class GarudaOrderRepository:
 
                 if resolution == "refunded_in_full":
                     try:
-                        await self._provider.refund(
+                        await self.provider_for(row.get("provider")).refund(
                             provider_charge_id=row["late_case_charge_id"],
                             idempotency_key=idempotency_key_sha256.hex(),
                         )

@@ -398,6 +398,29 @@ async def _run_garuda_outbox_scheduler(app: FastAPI) -> None:
     interval = _garuda_outbox_poll_seconds()
     pool = app.state.db_pool
     logger.info("✅ GARUDA outbox scheduler started (poll=%ss)", interval)
+    # Provider-switch gate (spec §3.3): in-flight orders on another
+    # provider keep routing per-order, but the operator must SEE
+    # them — draining before a key retirement is a human act.
+    try:
+        _selected = getattr(app.state, "garuda_payment_provider", None)
+        _selected_name = getattr(_selected, "name", "xendit")
+        _inflight_other = await pool.fetchval(
+            "SELECT count(*) FROM garuda_orders "
+            "WHERE state = 'awaiting_payment' AND provider <> $1",
+            _selected_name,
+        )
+        if _inflight_other:
+            logger.warning(
+                "⚠️ GARUDA payment provider switch: %s awaiting_payment order(s) "
+                "belong to another provider; they keep routing per-order, "
+                "drain them before retiring the old provider's keys.",
+                _inflight_other,
+            )
+    except Exception as _probe_exc:
+        logger.warning(
+            "GARUDA provider-switch in-flight probe failed (non-critical): %s",
+            _probe_exc,
+        )
     async with httpx.AsyncClient(timeout=30.0) as client:
         # Same injected client as the email sender (Golden Rule #10) — a
         # Telegram POST is just another HTTPS call, no reason for a second

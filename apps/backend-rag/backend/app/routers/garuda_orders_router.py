@@ -25,6 +25,7 @@ fails closed with 503 until that happens.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from collections.abc import Awaitable, Callable
 
@@ -50,7 +51,11 @@ from backend.services.garuda_orders.idempotency import (
 from backend.services.garuda_orders.models import Applicant
 from backend.services.garuda_orders.repository import GarudaOrderRepository
 from backend.services.garuda_portal.practice import PracticeRepository
-from backend.services.payments.port import WebhookSignatureInvalid, WebhookUnparseable
+from backend.services.payments.port import (
+    WebhookIgnorable,
+    WebhookSignatureInvalid,
+    WebhookUnparseable,
+)
 
 _FLAG_ENV_VAR = "GARUDA_PUBLIC_ENABLED"
 
@@ -558,6 +563,23 @@ async def receive_payment_webhook(
         raise HTTPException(
             status_code=503, detail={"code": "SERVICE_UNAVAILABLE", "retryable": True}
         )
+    # Per-order provider dispatch (spec §3.3): the order_id in the
+    # body is UNVERIFIED at this point and is used for routing only —
+    # the chosen adapter still has to verify the signature before
+    # anything is acted on. Unknown orders fall back to the selected
+    # provider, where a foreign signature fails honestly.
+    provider_name = getattr(provider, "name", "xendit")
+    providers = getattr(request.app.state, "garuda_payment_providers", None)
+    if providers:
+        try:
+            routing_order_id = json.loads(raw_body).get("order_id")
+        except (ValueError, UnicodeDecodeError, AttributeError):
+            routing_order_id = None
+        if isinstance(routing_order_id, str) and routing_order_id:
+            order_provider = await repository.provider_name_for_order(routing_order_id)
+            if order_provider and order_provider in providers:
+                provider = providers[order_provider]
+                provider_name = order_provider
 
     try:
         provider.verify_signature(raw_body=raw_body, headers=dict(request.headers))
@@ -568,6 +590,10 @@ async def receive_payment_webhook(
 
     try:
         event = provider.parse_event(raw_body=raw_body, headers=dict(request.headers))
+    except WebhookIgnorable:
+        # Verified, understood, nothing to do (e.g. Midtrans
+        # `pending`): 2xx so the provider does not retry it.
+        return
     except WebhookUnparseable as exc:
         raise HTTPException(
             status_code=422, detail={"code": "INVALID_REQUEST", "retryable": False}
@@ -581,11 +607,29 @@ async def receive_payment_webhook(
     )
 
     if isinstance(event, NormalizedPaidEvent):
-        await repository.handle_paid_event(event, canonical_payload_sha256=digest)
+        # Adapters whose notification signature does not cover the
+        # status fields (Midtrans) re-read the authoritative state
+        # before OP-02 may act on the body.
+        verify_paid = getattr(provider, "verify_paid_event", None)
+        if verify_paid is not None:
+            try:
+                event = await verify_paid(event)
+            except WebhookUnparseable as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "INVALID_REQUEST", "retryable": False},
+                ) from exc
+        await repository.handle_paid_event(
+            event, canonical_payload_sha256=digest, provider_name=provider_name
+        )
     elif isinstance(event, NormalizedFailureEvent):
-        await repository.handle_failure_event(event, canonical_payload_sha256=digest)
+        await repository.handle_failure_event(
+            event, canonical_payload_sha256=digest, provider_name=provider_name
+        )
     elif isinstance(event, NormalizedRefundEvent):
-        await repository.handle_refund_event(event, canonical_payload_sha256=digest)
+        await repository.handle_refund_event(
+            event, canonical_payload_sha256=digest, provider_name=provider_name
+        )
 
 
 @router.post(

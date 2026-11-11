@@ -1394,6 +1394,12 @@ async def initialize_garuda_services(app: FastAPI, db_pool) -> None:
     # truth).
     garuda_xendit_secret_key = os.environ.get("GARUDA_XENDIT_SECRET_KEY", "").strip()
     garuda_xendit_callback_token = os.environ.get("GARUDA_XENDIT_CALLBACK_TOKEN", "").strip()
+    # Provider selection (spec §3.2, 2026-11-11): one ACTIVE provider
+    # per deploy; unknown values wire NOTHING, never a silent fallback.
+    garuda_payment_provider_name = (
+        os.environ.get("GARUDA_PAYMENT_PROVIDER", "").strip().lower() or "xendit"
+    )
+    garuda_midtrans_server_key = os.environ.get("GARUDA_MIDTRANS_SERVER_KEY", "").strip()
     # Fail-closed: only the literal "true" (case-insensitive, trimmed) arms
     # live mode. Anything else -- unset, "1", "yes", a typo -- stays sandbox.
     garuda_payments_live = os.environ.get("GARUDA_PAYMENTS_LIVE", "").strip().lower() == "true"
@@ -1413,7 +1419,22 @@ async def initialize_garuda_services(app: FastAPI, db_pool) -> None:
             "GARUDA_XENDIT_CALLBACK_TOKEN is empty. Arming the key alone would open "
             "checkout while rejecting every payment callback — set both or neither."
         )
-    if db_pool is not None and garuda_xendit_secret_key and garuda_xendit_callback_token:
+    _provider_selector_valid = garuda_payment_provider_name in ("xendit", "midtrans")
+    if not _provider_selector_valid:
+        logger.error(
+            "⛔ GARUDA VOA order lane NOT wired: GARUDA_PAYMENT_PROVIDER=%r is not "
+            "a known provider (expected 'xendit' or 'midtrans') — wiring nothing, "
+            "never falling back silently.",
+            garuda_payment_provider_name,
+        )
+    _selected_keys_ready = (
+        garuda_payment_provider_name == "xendit"
+        and garuda_xendit_secret_key
+        and garuda_xendit_callback_token
+    ) or (
+        garuda_payment_provider_name == "midtrans" and garuda_midtrans_server_key
+    )
+    if db_pool is not None and _provider_selector_valid and _selected_keys_ready:
         try:
             import httpx as _garuda_httpx
 
@@ -1424,35 +1445,62 @@ async def initialize_garuda_services(app: FastAPI, db_pool) -> None:
             from backend.services.payments.xendit import XenditFeeConfig, XenditPaymentProvider
 
             garuda_payment_http_client = _garuda_httpx.AsyncClient(timeout=30.0)
-            garuda_payment_provider = XenditPaymentProvider(
-                secret_key=garuda_xendit_secret_key,
-                callback_verification_token=garuda_xendit_callback_token,
-                public_base_url=os.environ.get(
-                    "GARUDA_PUBLIC_BASE_URL", "https://balizero.com"
-                ).strip(),
-                fee_config=XenditFeeConfig(
-                    percentage_bps=int(os.environ.get("GARUDA_XENDIT_FEE_BPS", "0") or "0"),
-                    fixed_idr=int(os.environ.get("GARUDA_XENDIT_FEE_FIXED_IDR", "0") or "0"),
-                ),
-                client=garuda_payment_http_client,
-                live_enabled=garuda_payments_live,
-            )
+            _public_base_url = os.environ.get(
+                "GARUDA_PUBLIC_BASE_URL", "https://balizero.com"
+            ).strip()
+            # Both adapters are constructed when their key sets exist:
+            # checkout uses the SELECTED one, but status/refund/webhook
+            # handling for an existing order always uses THAT ORDER's
+            # provider (repository registry, spec §3.3).
+            garuda_payment_providers = {}
+            if garuda_xendit_secret_key and garuda_xendit_callback_token:
+                garuda_payment_providers["xendit"] = XenditPaymentProvider(
+                    secret_key=garuda_xendit_secret_key,
+                    callback_verification_token=garuda_xendit_callback_token,
+                    public_base_url=_public_base_url,
+                    fee_config=XenditFeeConfig(
+                        percentage_bps=int(os.environ.get("GARUDA_XENDIT_FEE_BPS", "0") or "0"),
+                        fixed_idr=int(os.environ.get("GARUDA_XENDIT_FEE_FIXED_IDR", "0") or "0"),
+                    ),
+                    client=garuda_payment_http_client,
+                    live_enabled=garuda_payments_live,
+                )
+            if garuda_midtrans_server_key:
+                from backend.services.payments.midtrans import (
+                    MidtransFeeConfig,
+                    MidtransPaymentProvider,
+                )
+
+                garuda_payment_providers["midtrans"] = MidtransPaymentProvider(
+                    server_key=garuda_midtrans_server_key,
+                    fee_config=MidtransFeeConfig(),
+                    public_base_url=_public_base_url,
+                    client=garuda_payment_http_client,
+                    live_enabled=garuda_payments_live,
+                )
+            garuda_payment_provider = garuda_payment_providers[garuda_payment_provider_name]
             garuda_eligibility_lookup = PostgresEligibilityCheckLookup(db_pool)
             garuda_environment_for_orders = (
                 os.environ.get("GARUDA_ENVIRONMENT", "PRODUCTION").strip() or "PRODUCTION"
             )
             app.state.garuda_payment_http_client = garuda_payment_http_client
             app.state.garuda_payment_provider = garuda_payment_provider
+            app.state.garuda_payment_providers = garuda_payment_providers
             app.state.garuda_order_repository = GarudaOrderRepository(
                 db_pool,
                 eligibility_lookup=garuda_eligibility_lookup,
                 provider=garuda_payment_provider,
                 environment=garuda_environment_for_orders,
+                provider_name=garuda_payment_provider_name,
+                providers=garuda_payment_providers,
             )
             logger.info(
-                "✅ GARUDA VOA order repository + Xendit payment provider wired (mode=%s)",
+                "✅ GARUDA VOA order repository + %s payment provider wired (mode=%s)",
+                garuda_payment_provider_name,
                 garuda_payment_provider.mode,
             )
+            # Switch-gate in-flight probe lives in the async
+            # outbox scheduler (this helper must stay await-free).
         except ValueError as e:
             # A deliberate refusal, not an incidental failure: most often a
             # payment mode mismatch (production key without the live flag, or
