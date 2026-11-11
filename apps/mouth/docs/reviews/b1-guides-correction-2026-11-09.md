@@ -41,12 +41,12 @@ safe application advice, language variants, article identity and cover assets.
 Remove unsupported approval guarantees, remote-work loopholes, automatic border-run
 outcomes, no-office promises and speculative visa/pricing comparisons.
 
-No new commercial price is selected. Existing catalogue/tests quote issuance at
-IDR750,000, while the available VOA product guidance quotes IDR790,000; both quote
-IDR850,000 for the extension. The current PricingTool response was not available.
-Commercial amounts are omitted pending reconciliation, rather than guessed or
-changed in the catalogue. The price regression test permits omission while
-retaining catalogue parity when prices are quoted and rejecting known stale bundles.
+The e-VOA guide quotes the catalogue prices: IDR 750,000 for the B1 VOA and
+IDR 850,000 for the +30-day extension, government fee included. Migration 303
+(`303_practice_types_voa_price_750.sql`) records the owner returning the VOA price to
+750,000 on 2026-08-31; the earlier 790,000 figure is stale. The price test
+`evoa-extension-price.test.ts` is unchanged from main and keeps the owner's 2026-10-12
+ruling (guide states the catalogue prices, no stale bundle).
 
 ## Release conditions
 
