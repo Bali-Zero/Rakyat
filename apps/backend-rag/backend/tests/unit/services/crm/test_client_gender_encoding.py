@@ -171,3 +171,97 @@ async def test_auto_ocr_passport_stores_M_or_F_and_skips_a_misread(
     assert ("gender = $" in sql) == (stored is not None)
     if stored:
         assert stored in params
+
+
+async def _update(updates: dict[str, Any], stored_gender: str | None) -> AsyncMock:
+    from backend.services.crm.client_core import EnhancedCRMService
+
+    pool, conn = _pool()
+    old = {"id": 1, "full_name": "Old Name", "gender": stored_gender, "status": "active"}
+    conn.fetchrow = AsyncMock(side_effect=[old, {**old, **updates}])
+    with (
+        patch("backend.services.crm.client_core.CRMQueryOptimizer"),
+        patch("backend.services.crm.client_core.invalidate_client_cache"),
+    ):
+        svc = EnhancedCRMService(pool)
+        svc.ALLOWED_CLIENT_COLUMNS = frozenset({"full_name", "gender"})
+        svc.auditor = MagicMock(log_client_updated=AsyncMock())
+        await svc.update_client(1, updates)
+    return conn
+
+
+@pytest.mark.asyncio
+async def test_editing_a_name_never_fails_on_a_stray_stored_gender() -> None:
+    conn = await _update({"full_name": "New Name"}, stored_gender="L")
+    query, *params = conn.fetchrow.await_args.args
+    assert "full_name = $1" in query and "gender" not in query
+    assert params == ["New Name", 1]
+
+
+@pytest.mark.asyncio
+async def test_updating_gender_stores_the_canonical_letter() -> None:
+    conn = await _update({"gender": "female"}, stored_gender=None)
+    query, *params = conn.fetchrow.await_args.args
+    assert "gender = $1" in query and params[0] == "F"
+
+
+@pytest.mark.asyncio
+async def test_updating_gender_to_junk_is_rejected() -> None:
+    from backend.app.core.exceptions import DatabaseError
+
+    with pytest.raises(DatabaseError):
+        await _update({"gender": "zz"}, stored_gender="M")
+
+
+@pytest.mark.asyncio
+async def test_passport_preview_returns_canonical_or_nothing() -> None:
+    pool, _ = _pool()
+    request = ccd.PassportPreviewRequest(image_base64="aGk=", mime_type="image/jpeg")
+    reply = MagicMock(status_code=200)
+    reply.json.return_value = {"response": "{}"}
+    http = AsyncMock()
+    http.post = AsyncMock(return_value=reply)
+    http.__aenter__ = AsyncMock(return_value=http)
+    http.__aexit__ = AsyncMock(return_value=False)
+    seen = []
+    for read in ("Female", "X", "male female"):
+        extracted = {"passport_number": "X0000000", "gender": read, "full_name": "Test Client"}
+        with (
+            patch("httpx.AsyncClient", return_value=http),
+            patch.object(ccd, "extract_json_from_llm_response", return_value=extracted),
+        ):
+            out = await ccd.extract_passport_enhanced(
+                request=request,
+                current_user={"id": "u", "role": "admin", "email": "t@x"},
+                db_pool=pool,
+            )
+        seen.append(out.gender)
+    assert seen == ["F", None, None]
+
+
+@pytest.mark.asyncio
+async def test_auto_ocr_passport_returns_canonical_or_nothing() -> None:
+    import backend.app.routers.crm_enhanced as enhanced
+
+    results = []
+    for read in ("MALE", "L"):
+        pool, conn = _pool()
+        conn.fetchrow = AsyncMock(return_value={"full_name": "Test Client"})
+        with (
+            patch.object(
+                enhanced, "_download_drive_file", new=AsyncMock(return_value=(b"x", "image/jpeg"))
+            ),
+            patch.object(enhanced, "_gemini_ocr", new=AsyncMock(return_value="{}")),
+            patch.object(
+                enhanced,
+                "extract_json_from_llm_response",
+                return_value={
+                    "passport_number": "X0000000",
+                    "gender": read,
+                    "full_name": "Test Client",
+                },
+            ),
+        ):
+            out = await enhanced._auto_ocr_passport(pool, 7, "file-1")
+        results.append(out["extracted"]["gender"])
+    assert results == ["M", None]

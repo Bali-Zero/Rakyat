@@ -345,12 +345,8 @@ async def _auto_ocr_passport(db_pool: Any, client_id: int, file_id: str) -> dict
                     extracted[date_field] = f"{parts[2]}-{parts[1]}-{parts[0]}"
 
         # Normalize gender (MALE/FEMALE → M/F)
-        if extracted.get("gender"):
-            g = extracted["gender"].upper()
-            if g in ["MALE", "M"]:
-                extracted["gender"] = "M"
-            elif g in ["FEMALE", "F"]:
-                extracted["gender"] = "F"
+        if "gender" in extracted:
+            extracted["gender"] = normalize_gender_lenient(extracted.get("gender"))
 
         # Name match verification
         name_match_ratio = None

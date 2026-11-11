@@ -344,11 +344,7 @@ Use null for unclear fields. Return ONLY JSON."""
         extracted["nationality"] = normalize_nationality(extracted.get("nationality"))
         extracted["date_of_birth"] = normalize_date(extracted.get("date_of_birth"))
         extracted["expiry_date"] = normalize_date(extracted.get("expiry_date"))
-        gender_raw = extracted.get("gender", "")
-        if gender_raw and len(gender_raw) > 0:
-            extracted["gender"] = gender_raw[0].upper()
-        else:
-            extracted["gender"] = None
+        extracted["gender"] = normalize_gender_lenient(extracted.get("gender"))
 
         # Build warnings
         warnings: list[str] = []
