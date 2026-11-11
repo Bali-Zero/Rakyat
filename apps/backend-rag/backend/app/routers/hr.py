@@ -14,7 +14,7 @@ from typing import Any
 
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.services.hr.hr_leave_notifier import (
@@ -24,7 +24,7 @@ from backend.app.services.hr.hr_leave_notifier import (
 from backend.app.services.hr.hr_leave_routing import reports_of, resolve_approver
 from backend.app.services.hr.hr_service import HRService
 from backend.app.utils.crm_utils import is_crm_admin
-from backend.app.utils.hr_utils import is_hr_admin
+from backend.app.utils.hr_utils import PTKP, is_hr_admin
 from backend.core.cache import invalidate_cache
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,91 @@ class EmployeeCreate(BaseModel):
     ptkp_status: str = "TK/0"
     bpjs_kesehatan_number: str | None = None
     bpjs_ketenagakerjaan_number: str | None = None
+    notes: str | None = None
+
+
+class StaffContract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    number: str | None = None
+    file_id: str | None = None
+
+
+class StaffProfilePatch(BaseModel):
+    """The documented keys of hr_employees.profile; any other key is a 422."""
+
+    model_config = ConfigDict(extra="forbid")
+    legal_name: str | None = None
+    nik: str | None = None
+    birth_place: str | None = None
+    birth_date: date | None = None
+    gender: str | None = None
+    address: str | None = None
+    religion: str | None = None
+    marital_status: str | None = None
+    employer_entity: str | None = None
+    unit: str | None = None
+    contract: StaffContract | None = None
+    docs: dict[str, str] | None = None
+    end_date: date | None = None
+
+
+class StaffCardPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    hire_date: date | None = None
+    npwp: str | None = None
+    ptkp_status: str | None = None
+    bpjs_kesehatan_number: str | None = None
+    bpjs_ketenagakerjaan_number: str | None = None
+    bank_name: str | None = None
+    bank_account: str | None = None
+    bank_account_holder: str | None = None
+    is_active: bool | None = None
+    profile: StaffProfilePatch | None = None
+
+    @field_validator("ptkp_status")
+    @classmethod
+    def validate_ptkp(cls, value: str | None) -> str | None:
+        if value is not None and value not in PTKP:
+            msg = f"ptkp_status must be one of {sorted(PTKP)}"
+            raise ValueError(msg)
+        return value
+
+
+class StaffCard(BaseModel):
+    """The owner's own card: every value in full except the HR free-text `notes`."""
+
+    employee_id: int
+    full_name: str | None = None
+    role: str | None = None
+    department: str | None = None
+    hire_date: date | None = None
+    is_active: bool
+    ptkp_status: str | None = None
+    base_salary_idr: int | None = None
+    npwp: str | None = None
+    bpjs_kesehatan_number: str | None = None
+    bpjs_ketenagakerjaan_number: str | None = None
+    bank_name: str | None = None
+    bank_account: str | None = None
+    bank_account_holder: str | None = None
+    legal_name: str | None = None
+    nik: str | None = None
+    birth_place: str | None = None
+    birth_date: date | None = None
+    gender: str | None = None
+    address: str | None = None
+    religion: str | None = None
+    marital_status: str | None = None
+    employer_entity: str | None = None
+    unit: str | None = None
+    contract: StaffContract | None = None
+    docs: dict[str, str] = Field(default_factory=dict)
+    end_date: date | None = None
+
+
+class StaffCardAdmin(StaffCard):
+    """HR-admin view: the member card plus the HR free-text `notes`."""
+
     notes: str | None = None
 
 
@@ -158,6 +243,48 @@ async def _get_my_employee_id(
     return emp["id"]
 
 
+def _card_values(card: dict[str, Any]) -> dict[str, Any]:
+    """Explicit allow-list of what a card exposes (never a passthrough of the row)."""
+    profile = card.get("profile") or {}
+    return {
+        "employee_id": card["id"],
+        "full_name": card.get("full_name"),
+        "role": card.get("role"),
+        "department": card.get("department"),
+        "hire_date": card.get("hire_date"),
+        "is_active": card["is_active"],
+        "ptkp_status": card.get("ptkp_status"),
+        "base_salary_idr": card.get("base_salary_idr"),
+        "npwp": card.get("npwp"),
+        "bpjs_kesehatan_number": card.get("bpjs_kesehatan_number"),
+        "bpjs_ketenagakerjaan_number": card.get("bpjs_ketenagakerjaan_number"),
+        "bank_name": card.get("bank_name"),
+        "bank_account": card.get("bank_account"),
+        "bank_account_holder": card.get("bank_account_holder"),
+        "legal_name": profile.get("legal_name"),
+        "nik": profile.get("nik"),
+        "birth_place": profile.get("birth_place"),
+        "birth_date": profile.get("birth_date"),
+        "gender": profile.get("gender"),
+        "address": profile.get("address"),
+        "religion": profile.get("religion"),
+        "marital_status": profile.get("marital_status"),
+        "employer_entity": profile.get("employer_entity"),
+        "unit": profile.get("unit"),
+        "contract": profile.get("contract"),
+        "docs": profile.get("docs") or {},
+        "end_date": profile.get("end_date"),
+    }
+
+
+def _member_card(card: dict[str, Any]) -> StaffCard:
+    return StaffCard(**_card_values(card))
+
+
+def _admin_card(card: dict[str, Any]) -> StaffCardAdmin:
+    return StaffCardAdmin(**_card_values(card), notes=card.get("notes"))
+
+
 # ─── CAPABILITIES ───────────────────────────────────────────────────────
 
 
@@ -178,6 +305,61 @@ async def get_my_capabilities(
         "accounting_admin": is_crm_admin(current_user),
         "has_employee_record": employee is not None,
     }
+
+
+# ─── STAFF CARD ─────────────────────────────────────────────────────────
+
+
+@router.get("/me/card", response_model=StaffCard)
+async def get_my_card(
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> StaffCard:
+    """The caller's own HR card (own row only, without HR notes)."""
+    card = await _get_hr_service(db_pool).get_card_by_email(current_user["email"])
+    if not card:
+        raise HTTPException(status_code=404, detail="No HR employee record found for your account")
+    return _member_card(card)
+
+
+@router.get("/employees/{employee_id}/card", response_model=StaffCardAdmin)
+async def get_employee_card(
+    employee_id: int,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> StaffCardAdmin:
+    """Full HR card of one employee (HR admins only)."""
+    _require_hr_admin(current_user)
+    card = await _get_hr_service(db_pool).get_card_by_id(employee_id)
+    if not card:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    return _admin_card(card)
+
+
+@router.patch("/employees/{employee_id}/card", response_model=StaffCardAdmin)
+async def patch_employee_card(
+    employee_id: int,
+    data: StaffCardPatch,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> StaffCardAdmin:
+    """Merge the given fields into an employee's HR card without clobbering the rest."""
+    _require_hr_admin(current_user)
+    service = _get_hr_service(db_pool)
+    card = await service.get_card_by_id(employee_id)
+    if not card:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    fields = data.model_dump(exclude={"profile"}, exclude_none=True)
+    profile_patch = data.profile.model_dump(mode="json", exclude_none=True) if data.profile else {}
+    try:
+        await service.merge_card(card["team_member_id"], fields, profile_patch)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await invalidate_cache("zantara:hr_employees:*")
+    updated = await service.get_card_by_id(employee_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    return _admin_card(updated)
 
 
 # ─── EMPLOYEES (admin only) ─────────────────────────────────────────────

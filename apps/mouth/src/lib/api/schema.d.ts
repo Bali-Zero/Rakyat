@@ -9208,6 +9208,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/hr/employees/{employee_id}/card": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Employee Card
+     * @description Full HR card of one employee (HR admins only).
+     */
+    get: operations["get_employee_card_api_hr_employees__employee_id__card_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Patch Employee Card
+     * @description Merge the given fields into an employee's HR card without clobbering the rest.
+     */
+    patch: operations["patch_employee_card_api_hr_employees__employee_id__card_patch"];
+    trace?: never;
+  };
   "/api/hr/leave/balance": {
     parameters: {
       query?: never;
@@ -9379,6 +9403,26 @@ export interface paths {
      *     probing admin routes: the same predicates that guard the routes produce it.
      */
     get: operations["get_my_capabilities_api_hr_me_capabilities_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/hr/me/card": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get My Card
+     * @description The caller's own HR card (own row only, without HR notes).
+     */
+    get: operations["get_my_card_api_hr_me_card_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -27364,6 +27408,192 @@ export interface components {
       | "EDUCATION"
       | "INVESTMENT"
       | "GOVERNMENT";
+    /**
+     * StaffCard
+     * @description The owner's own card: every value in full except the HR free-text `notes`.
+     */
+    StaffCard: {
+      /** Address */
+      address?: string | null;
+      /** Bank Account */
+      bank_account?: string | null;
+      /** Bank Account Holder */
+      bank_account_holder?: string | null;
+      /** Bank Name */
+      bank_name?: string | null;
+      /** Base Salary Idr */
+      base_salary_idr?: number | null;
+      /** Birth Date */
+      birth_date?: string | null;
+      /** Birth Place */
+      birth_place?: string | null;
+      /** Bpjs Kesehatan Number */
+      bpjs_kesehatan_number?: string | null;
+      /** Bpjs Ketenagakerjaan Number */
+      bpjs_ketenagakerjaan_number?: string | null;
+      contract?: components["schemas"]["StaffContract"] | null;
+      /** Department */
+      department?: string | null;
+      /** Docs */
+      docs?: {
+        [key: string]: string;
+      };
+      /** Employee Id */
+      employee_id: number;
+      /** Employer Entity */
+      employer_entity?: string | null;
+      /** End Date */
+      end_date?: string | null;
+      /** Full Name */
+      full_name?: string | null;
+      /** Gender */
+      gender?: string | null;
+      /** Hire Date */
+      hire_date?: string | null;
+      /** Is Active */
+      is_active: boolean;
+      /** Legal Name */
+      legal_name?: string | null;
+      /** Marital Status */
+      marital_status?: string | null;
+      /** Nik */
+      nik?: string | null;
+      /** Npwp */
+      npwp?: string | null;
+      /** Ptkp Status */
+      ptkp_status?: string | null;
+      /** Religion */
+      religion?: string | null;
+      /** Role */
+      role?: string | null;
+      /** Unit */
+      unit?: string | null;
+    };
+    /**
+     * StaffCardAdmin
+     * @description HR-admin view: the member card plus the HR free-text `notes`.
+     */
+    StaffCardAdmin: {
+      /** Address */
+      address?: string | null;
+      /** Bank Account */
+      bank_account?: string | null;
+      /** Bank Account Holder */
+      bank_account_holder?: string | null;
+      /** Bank Name */
+      bank_name?: string | null;
+      /** Base Salary Idr */
+      base_salary_idr?: number | null;
+      /** Birth Date */
+      birth_date?: string | null;
+      /** Birth Place */
+      birth_place?: string | null;
+      /** Bpjs Kesehatan Number */
+      bpjs_kesehatan_number?: string | null;
+      /** Bpjs Ketenagakerjaan Number */
+      bpjs_ketenagakerjaan_number?: string | null;
+      contract?: components["schemas"]["StaffContract"] | null;
+      /** Department */
+      department?: string | null;
+      /** Docs */
+      docs?: {
+        [key: string]: string;
+      };
+      /** Employee Id */
+      employee_id: number;
+      /** Employer Entity */
+      employer_entity?: string | null;
+      /** End Date */
+      end_date?: string | null;
+      /** Full Name */
+      full_name?: string | null;
+      /** Gender */
+      gender?: string | null;
+      /** Hire Date */
+      hire_date?: string | null;
+      /** Is Active */
+      is_active: boolean;
+      /** Legal Name */
+      legal_name?: string | null;
+      /** Marital Status */
+      marital_status?: string | null;
+      /** Nik */
+      nik?: string | null;
+      /** Notes */
+      notes?: string | null;
+      /** Npwp */
+      npwp?: string | null;
+      /** Ptkp Status */
+      ptkp_status?: string | null;
+      /** Religion */
+      religion?: string | null;
+      /** Role */
+      role?: string | null;
+      /** Unit */
+      unit?: string | null;
+    };
+    /** StaffCardPatch */
+    StaffCardPatch: {
+      /** Bank Account */
+      bank_account?: string | null;
+      /** Bank Account Holder */
+      bank_account_holder?: string | null;
+      /** Bank Name */
+      bank_name?: string | null;
+      /** Bpjs Kesehatan Number */
+      bpjs_kesehatan_number?: string | null;
+      /** Bpjs Ketenagakerjaan Number */
+      bpjs_ketenagakerjaan_number?: string | null;
+      /** Hire Date */
+      hire_date?: string | null;
+      /** Is Active */
+      is_active?: boolean | null;
+      /** Npwp */
+      npwp?: string | null;
+      profile?: components["schemas"]["StaffProfilePatch"] | null;
+      /** Ptkp Status */
+      ptkp_status?: string | null;
+    };
+    /** StaffContract */
+    StaffContract: {
+      /** File Id */
+      file_id?: string | null;
+      /** Number */
+      number?: string | null;
+    };
+    /**
+     * StaffProfilePatch
+     * @description The documented keys of hr_employees.profile; any other key is a 422.
+     */
+    StaffProfilePatch: {
+      /** Address */
+      address?: string | null;
+      /** Birth Date */
+      birth_date?: string | null;
+      /** Birth Place */
+      birth_place?: string | null;
+      contract?: components["schemas"]["StaffContract"] | null;
+      /** Docs */
+      docs?: {
+        [key: string]: string;
+      } | null;
+      /** Employer Entity */
+      employer_entity?: string | null;
+      /** End Date */
+      end_date?: string | null;
+      /** Gender */
+      gender?: string | null;
+      /** Legal Name */
+      legal_name?: string | null;
+      /** Marital Status */
+      marital_status?: string | null;
+      /** Nik */
+      nik?: string | null;
+      /** Religion */
+      religion?: string | null;
+      /** Unit */
+      unit?: string | null;
+    };
     /** StartPayload */
     StartPayload: {
       /**
@@ -43156,6 +43386,72 @@ export interface operations {
       };
     };
   };
+  get_employee_card_api_hr_employees__employee_id__card_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        employee_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["StaffCardAdmin"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  patch_employee_card_api_hr_employees__employee_id__card_patch: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        employee_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["StaffCardPatch"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["StaffCardAdmin"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   get_leave_balance_api_hr_leave_balance_get: {
     parameters: {
       query?: {
@@ -43402,6 +43698,26 @@ export interface operations {
           "application/json": {
             [key: string]: boolean;
           };
+        };
+      };
+    };
+  };
+  get_my_card_api_hr_me_card_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["StaffCard"];
         };
       };
     };
