@@ -292,17 +292,10 @@ async def test_the_provider_refuses_to_invent_fields_when_the_check_is_gone(pool
     assert await PostgresOrderSnapshotProvider(pool).get(practice_id) is None
 
 
-async def test_submit_by_date_is_none_and_not_the_published_deadline(pool):
-    """The seeded check carries published_filing_deadline = 2026-10-13.
-
-    Silently reusing it as the operating-calendar commitment would be a
-    plausible invention: they are different dates. Pin that we do not.
-    """
-
-    practice_id, _ = await _seed_full_case(pool)
-    snap = await PostgresOrderSnapshotProvider(pool).get(practice_id)
-    assert snap is not None
-    assert snap.submit_by_date is None
+# (The old test_submit_by_date_is_none_and_not_the_published_deadline was
+# retired 2026-11-11: submit_by is now recomputed from the engine
+# calendar — see test_the_provider_recomputes_submit_by_from_the_engine_calendar,
+# which keeps the not-the-published-deadline pin.)
 
 
 # --------------------------------------------------------------------------
@@ -808,6 +801,149 @@ async def test_an_unassigned_order_inherits_the_clients_owner(pool):
             await conn.fetchval("SELECT assigned_to FROM practices WHERE id = $1", practice_id)
             == "sahira@balizero.com"
         )
+
+
+async def test_a_brand_new_customer_is_routed_to_a_team_member(pool):
+    """The shape the real provider produces: assigned_to None everywhere.
+
+    Before the cure this practice was visible to CRM admins only
+    (created_by='garuda@balizero.com', assigned_to NULL). The adapter must
+    route it via the department strategy and the assignee must pass the
+    CRM's own non-admin predicate — plus the client-visible timeline
+    milestone the canonical writer leaves.
+    """
+    member = "routed-member@example.invalid"
+    async with pool.acquire() as conn:
+        # timeline_events is a prod table (canonical writer inserts into
+        # it) that the garuda test DB schema does not carry; create the
+        # prod shape here so the milestone assertion tests the adapter,
+        # not the fixture's completeness.
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS timeline_events (
+                id SERIAL PRIMARY KEY,
+                client_id INTEGER NOT NULL,
+                practice_id INTEGER,
+                event_type VARCHAR(100) NOT NULL,
+                title VARCHAR(255) NOT NULL,
+                description TEXT,
+                event_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                client_visible BOOLEAN NOT NULL DEFAULT TRUE,
+                color VARCHAR(50) DEFAULT 'info',
+                created_by VARCHAR(255)
+            )
+            """
+        )
+        await conn.execute("DELETE FROM team_members WHERE email = $1", member)
+        await conn.execute(
+            # id + pin_hash are NOT NULL with no default in the CI
+            # create_all shape (identity/models.py) — prod defaults
+            # them, CI does not, so the seed supplies both.
+            "INSERT INTO team_members (id, full_name, email, pin_hash, role, department, active) "
+            "VALUES ('tm-routed-test-1111', 'ROUTED MEMBER', $1, 'x', "
+            "'Executive Consultant', 'setup', true)",
+            member,
+        )
+    try:
+        writer = PostgresCrmWriter(pool)
+        key = f"evt_{uuid.uuid4().hex}"
+        snap = _snapshot(customer_email="brand-new@example.invalid", assigned_to=None)
+        practice_id = await writer.create_client_and_practice(
+            snap, source_idempotency_key=key, practice_type_code=PRACTICE_TYPE
+        )
+        # Duplicate delivery, same idempotency key: same practice, and
+        # the milestone must still exist EXACTLY once.
+        again = await writer.create_client_and_practice(
+            snap, source_idempotency_key=key, practice_type_code=PRACTICE_TYPE
+        )
+        assert again == practice_id
+        async with pool.acquire() as conn:
+            assignee = await conn.fetchval(
+                "SELECT assigned_to FROM practices WHERE id = $1", practice_id
+            )
+            assert assignee, "brand-new customer's practice must be routed, not orphaned"
+            assert (
+                await conn.fetchval(
+                    "SELECT count(*) FROM team_members "
+                    "WHERE email = $1 AND active = true",
+                    assignee,
+                )
+                == 1
+            ), "the assignee must be a real active team member"
+            assert (
+                await conn.fetchval(
+                    "SELECT assigned_to FROM clients WHERE email = $1",
+                    "brand-new@example.invalid",
+                )
+                == assignee
+            ), "the client must inherit the routed owner (duplicate delivery must not move it)"
+            # The CRM detail predicate, verbatim from crm_practices.py
+            # (client lead OR practice creator OR practice assignee):
+            assert (
+                await conn.fetchval(
+                    "SELECT count(*) FROM practices p "
+                    "JOIN clients c ON p.client_id = c.id "
+                    "WHERE p.id = $1 AND (c.assigned_to = $2 OR p.created_by = $2 "
+                    "OR LOWER(p.assigned_to) = $2)",
+                    practice_id,
+                    assignee,
+                )
+                == 1
+            ), "the routed member must pass the detail RBAC predicate"
+            # The stats/list RBAC filter, verbatim: assigned_to = user.
+            assert (
+                await conn.fetchval(
+                    "SELECT count(*) FROM practices WHERE id = $1 AND assigned_to = $2",
+                    practice_id,
+                    assignee,
+                )
+                == 1
+            ), "the routed member must pass the list RBAC filter"
+            assert (
+                await conn.fetchval(
+                    "SELECT count(*) FROM practices p "
+                    "JOIN clients c ON p.client_id = c.id "
+                    "WHERE p.id = $1 AND (c.assigned_to = $2 OR p.created_by = $2 "
+                    "OR LOWER(p.assigned_to) = $2)",
+                    practice_id,
+                    "unrelated@example.invalid",
+                )
+                == 0
+            ), "guilt: an unrelated member must NOT see the practice"
+            assert (
+                await conn.fetchval(
+                    "SELECT count(*) FROM timeline_events "
+                    "WHERE practice_id = $1 AND client_visible = true",
+                    practice_id,
+                )
+                == 1
+            ), "exactly one client-visible milestone, even after a duplicate delivery"
+    finally:
+        async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM team_members WHERE email = $1", member)
+
+
+async def test_the_provider_recomputes_submit_by_from_the_engine_calendar(pool):
+    """submit_by_date = the engine's own last_open_day_before(entry_date).
+
+    Never the published D-7 deadline: the two dates are different by
+    construction and the snapshot must carry the internal commitment.
+    """
+    from backend.services.garuda_flow import operating_calendar
+
+    practice_id, _ = await _seed_full_case(pool)
+    snap = await PostgresOrderSnapshotProvider(pool).get(practice_id)
+    assert snap is not None
+    expected = operating_calendar.last_open_day_before(date(2026, 9, 20))
+    assert snap.submit_by_date == expected and expected is not None
+    async with pool.acquire() as conn:
+        published = await conn.fetchval(
+            "SELECT published_filing_deadline FROM garuda_voa_check_results "
+            "WHERE entry_date = DATE '2026-09-20' LIMIT 1"
+        )
+    assert snap.submit_by_date != published, (
+        "submit_by_date must not silently be the published deadline"
+    )
 
 
 def test_the_race_refusal_raises_INSIDE_the_transaction():
