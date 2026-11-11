@@ -18,6 +18,7 @@ import asyncpg
 
 from backend.phone_lock import lock_phone_cores
 from backend.services.common.background import spawn
+from backend.services.crm.gender import normalize_gender
 
 logger = logging.getLogger(__name__)
 
@@ -231,12 +232,12 @@ class CRMQueryOptimizer:
 
         import json as _json
 
-        # Build multi-row VALUES clause: ($1,$2,...,$10), ($11,$12,...,$20), ...
+        # Build multi-row VALUES clause: ($1,$2,...,$11), ($12,$13,...,$22), ...
         value_rows = []
         all_params: list[Any] = []
         for i, c in enumerate(clients):
-            base = i * 10
-            placeholders = ", ".join(f"${base + j}" for j in range(1, 11))
+            base = i * 11
+            placeholders = ", ".join(f"${base + j}" for j in range(1, 12))
             value_rows.append(f"({placeholders}, NOW(), NOW())")
             all_params.extend(
                 [
@@ -250,6 +251,7 @@ class CRMQueryOptimizer:
                     c.get("client_type", "individual"),
                     c.get("assigned_to"),
                     _json.dumps(c.get("custom_fields", {})),
+                    normalize_gender(c.get("gender")),
                 ]
             )
 
@@ -257,7 +259,7 @@ class CRMQueryOptimizer:
             INSERT INTO clients (
                 full_name, email, phone, whatsapp, nationality,
                 passport_number, status, client_type, assigned_to,
-                custom_fields, created_at, updated_at
+                custom_fields, gender, created_at, updated_at
             ) VALUES {", ".join(value_rows)}
             RETURNING id
         """

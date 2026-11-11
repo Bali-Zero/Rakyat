@@ -51,6 +51,7 @@ from backend.db.repositories.client_repository import (
 from backend.phone_lock import lock_phone_cores, phone_core
 from backend.services.common.background import spawn
 from backend.services.crm.client_service import ClientService
+from backend.services.crm.gender import normalize_gender
 
 logger = get_logger(__name__)
 
@@ -328,12 +329,8 @@ class ClientCreate(BaseModel):
     @field_validator("gender", mode="before")
     @classmethod
     def normalize_gender(cls, v: str | None) -> str | None:
-        """Normalize gender values: M→male, F→female, O→other (same as ClientUpdate)."""
-        if not v:
-            return None
-        normalized = v.strip().lower()
-        mapping = {"m": "male", "f": "female", "o": "other"}
-        return mapping.get(normalized, normalized)
+        """male→M, female→F; anything but M/F is a 422 (see services/crm/gender.py)."""
+        return normalize_gender(v)
 
 
 TAX_CONSULTANT_VALUES: set[str] = {
@@ -426,12 +423,8 @@ class ClientUpdate(BaseModel):
     @field_validator("gender", mode="before")
     @classmethod
     def normalize_gender(cls, v: str | None) -> str | None:
-        """Normalize gender values: M→male, F→female, O→other."""
-        if not v:
-            return None
-        normalized = v.strip().lower()
-        mapping = {"m": "male", "f": "female", "o": "other"}
-        return mapping.get(normalized, normalized)
+        """male→M, female→F; anything but M/F is a 422 (see services/crm/gender.py)."""
+        return normalize_gender(v)
 
     @field_validator("full_name")
     @classmethod

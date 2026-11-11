@@ -44,6 +44,7 @@ from backend.services.crm.cache_query import (
     invalidate_client_cache,
     query_cache,
 )
+from backend.services.crm.gender import normalize_gender
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,11 @@ class ClientValidator(BaseModel):
     date_of_birth: str | None = None
     company_name: str | None = None
     gender: str | None = None
+
+    @field_validator("gender", mode="before")
+    @classmethod
+    def _normalize_gender(cls, v: Any) -> str | None:
+        return normalize_gender(v)
 
     @field_validator("full_name")
     @classmethod
@@ -698,8 +704,8 @@ class EnhancedCRMService:
                     INSERT INTO clients (
                         full_name, email, phone, whatsapp, nationality,
                         passport_number, status, client_type, assigned_to,
-                        custom_fields, created_at, updated_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+                        custom_fields, gender, created_at, updated_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
                     RETURNING *
                 """
 
@@ -715,6 +721,7 @@ class EnhancedCRMService:
                     client_data.get("client_type", "individual"),
                     client_data.get("assigned_to"),
                     client_data.get("custom_fields", {}),
+                    validated.gender,
                 )
 
                 result = dict(row)
