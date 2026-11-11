@@ -29,51 +29,140 @@ const PERSONAL = {
   leave_balances: [],
 };
 
-describe("HR dashboard", () => {
+// Text that only one view renders.
+const TEAM = "Active Employees";
+const OWN = "annual leave remaining";
+const NO_RECORD = /No HR record/;
+const LOAD_ERROR = /Failed to load the HR dashboard/;
+const ACCESS_ERROR = /Could not load your HR access/;
+const TEAM_NOTICE = /Could not load the team overview/;
+const OWN_NOTICE = /Could not load your own HR card/;
+const ALL = [
+  TEAM,
+  OWN,
+  NO_RECORD,
+  LOAD_ERROR,
+  ACCESS_ERROR,
+  TEAM_NOTICE,
+  OWN_NOTICE,
+];
+
+type Outcome = "ok" | "fail";
+interface Case {
+  name: string;
+  admin: boolean;
+  record: boolean;
+  adminCall?: Outcome;
+  ownCall?: Outcome;
+  shows: (string | RegExp)[];
+}
+
+const CASES: Case[] = [
+  {
+    name: "member with a record sees their own card",
+    admin: false,
+    record: true,
+    ownCall: "ok",
+    shows: [OWN],
+  },
+  {
+    name: "member whose card fails gets an error, not 'no record'",
+    admin: false,
+    record: true,
+    ownCall: "fail",
+    shows: [LOAD_ERROR],
+  },
+  {
+    name: "member without a record is told so",
+    admin: false,
+    record: false,
+    shows: [NO_RECORD],
+  },
+  {
+    name: "admin with a record sees the team overview and their own card",
+    admin: true,
+    record: true,
+    adminCall: "ok",
+    ownCall: "ok",
+    shows: [TEAM, OWN],
+  },
+  {
+    name: "admin keeps the overview when their own card fails",
+    admin: true,
+    record: true,
+    adminCall: "ok",
+    ownCall: "fail",
+    shows: [TEAM, OWN_NOTICE],
+  },
+  {
+    name: "admin keeps their own card when the overview fails",
+    admin: true,
+    record: true,
+    adminCall: "fail",
+    ownCall: "ok",
+    shows: [OWN, TEAM_NOTICE],
+  },
+  {
+    name: "admin without a record whose overview fails gets an error",
+    admin: true,
+    record: false,
+    adminCall: "fail",
+    shows: [LOAD_ERROR],
+  },
+  {
+    name: "admin without a record sees the overview only",
+    admin: true,
+    record: false,
+    adminCall: "ok",
+    shows: [TEAM],
+  },
+];
+
+function arm(mock: ReturnType<typeof vi.fn>, outcome: Outcome, data: unknown) {
+  if (outcome === "ok") mock.mockResolvedValue(data);
+  else mock.mockRejectedValue(new Error("boom"));
+}
+
+describe("HR dashboard states", () => {
   beforeEach(() => {
     caps.mockReset();
     getDashboard.mockReset();
     getMyDashboard.mockReset();
   });
 
-  it("shows a member their own card and never calls the admin route", async () => {
+  it.each(CASES)("$name", async (c) => {
     caps.mockResolvedValue({
-      hr_admin: false,
+      hr_admin: c.admin,
       accounting_admin: false,
-      has_employee_record: true,
+      has_employee_record: c.record,
     });
-    getMyDashboard.mockResolvedValue(PERSONAL);
-    render(<HRDashboardPage />);
-    await waitFor(() => expect(getMyDashboard).toHaveBeenCalled());
-    await waitFor(() =>
-      expect(screen.queryByText("Active Employees")).not.toBeInTheDocument(),
-    );
-    expect(getDashboard).not.toHaveBeenCalled();
-  });
+    if (c.adminCall) arm(getDashboard, c.adminCall, ADMIN);
+    if (c.ownCall) arm(getMyDashboard, c.ownCall, PERSONAL);
 
-  it("keeps the team overview when the admin's own card fails", async () => {
-    caps.mockResolvedValue({
-      hr_admin: true,
-      accounting_admin: true,
-      has_employee_record: true,
-    });
-    getDashboard.mockResolvedValue(ADMIN);
-    getMyDashboard.mockRejectedValue(new Error("boom"));
     render(<HRDashboardPage />);
     await waitFor(() =>
-      expect(screen.getByText("Active Employees")).toBeInTheDocument(),
+      expect(screen.getByText(c.shows[0])).toBeInTheDocument(),
     );
+    for (const text of ALL) {
+      if (c.shows.includes(text)) {
+        expect(screen.getByText(text)).toBeInTheDocument();
+      } else {
+        expect(screen.queryByText(text)).not.toBeInTheDocument();
+      }
+    }
+    // A card the caller may not see is never requested.
+    expect(getDashboard).toHaveBeenCalledTimes(c.adminCall ? 1 : 0);
+    expect(getMyDashboard).toHaveBeenCalledTimes(c.ownCall ? 1 : 0);
   });
 
-  it("says access could not be loaded, not that the record is missing", async () => {
+  it("a failed capabilities read is an access error and requests nothing", async () => {
     caps.mockRejectedValue(new Error("503"));
     render(<HRDashboardPage />);
     await waitFor(() =>
-      expect(
-        screen.getByText(/Could not load your HR access/),
-      ).toBeInTheDocument(),
+      expect(screen.getByText(ACCESS_ERROR)).toBeInTheDocument(),
     );
-    expect(screen.queryByText(/No HR record/)).not.toBeInTheDocument();
+    expect(screen.queryByText(NO_RECORD)).not.toBeInTheDocument();
+    expect(getDashboard).not.toHaveBeenCalled();
     expect(getMyDashboard).not.toHaveBeenCalled();
   });
 });
