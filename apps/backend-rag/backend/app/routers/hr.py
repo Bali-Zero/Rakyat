@@ -17,12 +17,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 
 from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.services.hr.hr_card_models import StaffCard, member_card
 from backend.app.services.hr.hr_leave_notifier import (
     notify_leave_request_pending,
     notify_leave_request_reviewed,
 )
 from backend.app.services.hr.hr_leave_routing import reports_of, resolve_approver
-from backend.app.services.hr.hr_service import HRService
+from backend.app.services.hr.hr_service import HRCardError, HRService
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.app.utils.hr_utils import is_hr_admin
 from backend.core.cache import invalidate_cache
@@ -180,6 +181,32 @@ async def get_my_capabilities(
     }
 
 
+# ─── STAFF CARD (own card only; contract: services/hr/STAFF_CARD.md) ───
+
+
+@router.get("/me/card", response_model=StaffCard)
+async def get_my_card(
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> StaffCard:
+    """The caller's own HR card, without the HR free-text notes.
+
+    No parameter at all: the row is chosen by the authenticated team_members id
+    (the session was validated against that row by id AND exact email), never by
+    anything the caller sends and never by an email lookup.
+    """
+    if (current_user.get("role") or "") == "client":
+        raise HTTPException(status_code=403, detail="Staff access required")
+    member_id = _get_user_id(current_user)
+    try:
+        card = await _get_hr_service(db_pool).get_card_for_member(member_id)
+    except HRCardError:  # a code, never a driver message
+        raise HTTPException(status_code=500, detail="Card operation failed") from None
+    if not card:
+        raise HTTPException(status_code=404, detail="No HR employee record found for your account")
+    return member_card(card)
+
+
 # ─── EMPLOYEES (admin only) ─────────────────────────────────────────────
 
 
@@ -213,6 +240,8 @@ async def get_employee(
     emp = await service.get_employee(employee_id)
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
+    if not is_hr_admin(current_user):
+        emp = {k: v for k, v in emp.items() if k != "notes"}  # HR free text is admin-only
     return emp
 
 
