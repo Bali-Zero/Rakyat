@@ -79,7 +79,7 @@ def _practice_data(**overrides):
     data = {
         "id": 1,
         "client_id": 100,
-        "practice_type_code": "KITAS",
+        "practice_type_code": "VISA_B1_VOA",
         "notes": "KITAS processing",
         "quoted_price": 5_000_000,
         "client_drive_folder_id": "folder-123",

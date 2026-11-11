@@ -1,6 +1,7 @@
-"""Round-2 R2: routing is dark by default.
+"""Round-2 R2: the dark switch (``ENTITY_ROUTING_EFFECTIVE_FROM = None``) still works.
 
-With the production ``ENTITY_ROUTING_EFFECTIVE_FROM`` untouched (``None``),
+Production is activated (see test_invoice_routing_live_activation.py); these tests
+pin the OFF state, so they set the switch to ``None`` explicitly. With it ``None``,
 every practice type code — mapped in the golden table or not — resolves to the
 default entity at any instant, while unmapped codes stay loud (warning +
 counter). Strict router types are enforced regardless of the switch.
@@ -51,12 +52,13 @@ NON_DEFAULT_ISSUER_CODES = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def _switch_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(entities, "ENTITY_ROUTING_EFFECTIVE_FROM", None)
+
+
 def _golden() -> dict[str, str]:
     return json.loads((FIXTURES / "invoice_code_entity_golden.json").read_text("utf-8"))
-
-
-def test_production_constant_is_dark() -> None:
-    assert entities.ENTITY_ROUTING_EFFECTIVE_FROM is None
 
 
 @pytest.mark.parametrize("instant", INSTANTS, ids=[str(i.date()) for i in INSTANTS])
