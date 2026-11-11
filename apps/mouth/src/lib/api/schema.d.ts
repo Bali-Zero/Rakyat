@@ -9364,6 +9364,29 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/hr/me/capabilities": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get My Capabilities
+     * @description What the caller may see in the HR & accounting space.
+     *
+     *     The single answer the frontend reads instead of mirroring the allowlists or
+     *     probing admin routes: the same predicates that guard the routes produce it.
+     */
+    get: operations["get_my_capabilities_api_hr_me_capabilities_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/hr/my-dashboard": {
     parameters: {
       query?: never;
@@ -43357,6 +43380,28 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_my_capabilities_api_hr_me_capabilities_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: boolean;
+          };
         };
       };
     };

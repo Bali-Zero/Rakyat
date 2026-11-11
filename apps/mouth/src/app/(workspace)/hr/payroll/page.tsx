@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import * as hrApi from "@/lib/api/hr/hr";
+import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
 import type { PayrollPeriod, Payslip } from "@/types/hr";
 import { Money } from "@balizero/core";
 
@@ -32,29 +33,30 @@ const statusColors: Record<string, string> = {
 export default function PayrollPage() {
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [payslips, setPayslips] = useState<Payslip[]>([]);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const { capabilities, loaded } = useHrCapabilities();
+  const isAdmin = capabilities.hr_admin;
   const [loading, setLoading] = useState(true);
   const [calculating, setCalculating] = useState(false);
 
   useEffect(() => {
+    if (!loaded) return;
     async function load() {
       try {
-        const data = await hrApi.listPayrollPeriods();
-        setPeriods(data.periods || []);
-        setIsAdmin(true);
-      } catch {
-        try {
+        if (isAdmin) {
+          const data = await hrApi.listPayrollPeriods();
+          setPeriods(data.periods || []);
+        } else {
           const data = await hrApi.listPayslips();
           setPayslips(data.payslips || []);
-        } catch {
-          /* empty */
         }
+      } catch {
+        /* the empty state covers it */
       } finally {
         setLoading(false);
       }
     }
     load();
-  }, []);
+  }, [loaded, isAdmin]);
 
   const handleCalculate = async () => {
     const now = new Date();

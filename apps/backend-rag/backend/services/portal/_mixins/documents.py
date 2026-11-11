@@ -45,6 +45,7 @@ from backend.services.portal.document_processing import (
 )
 from backend.services.portal.gate_notice_adapter import GateNoticeClient
 from backend.services.portal.gate_upload_adapter import GateUploadClient
+from backend.services.portal.required_slots import fill_matching_pending_slot
 from backend.services.portal.upload_validation import DuplicateDocumentError
 
 logger = get_logger(__name__)
@@ -725,6 +726,19 @@ class PortalDocumentsMixin:
                         )
                     else:
                         raise
+
+            # STEP 5b: a typed upload for a practice fills its one matching
+            # pending Required Documents slot (practice ownership checked above).
+            if practice_id:
+                try:
+                    await fill_matching_pending_slot(
+                        conn,
+                        practice_id=practice_id,
+                        document_type=document_type,
+                        document_id=doc["id"],
+                    )
+                except Exception as e:
+                    logger.warning("Could not fill required-document slot: %s", e)
 
             # =========================================================================
             # STEP 6: CREATE TIMELINE EVENT

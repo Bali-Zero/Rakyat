@@ -49,6 +49,7 @@ import {
   PILL_SQUARE,
   LedgerSection,
   EmptyState,
+  Notice,
   EYEBROW,
   FIELD,
 } from "@/components/workspace/r19";
@@ -404,6 +405,19 @@ export function ClientDetailClient({
   useEffect(() => {
     scrollActiveTabIntoView(tabsRef.current);
   }, [activeTab, isLoading]);
+  // Set by the Documents tab's passport hint: once Overview has rendered,
+  // bring its Passport card into view. Runs after handleTabChange's own
+  // scroll restore (that rAF is queued first), so it is not undone.
+  const [scrollToPassport, setScrollToPassport] = useState(false);
+  useEffect(() => {
+    if (!scrollToPassport || activeTab !== "overview") return;
+    setScrollToPassport(false);
+    requestAnimationFrame(() => {
+      document
+        .getElementById("passport-card")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, [scrollToPassport, activeTab]);
   const statusMenuRef = useRef<HTMLDivElement>(null);
   useClickOutside(
     statusMenuRef,
@@ -543,6 +557,9 @@ export function ClientDetailClient({
   // rejected" group; the domain tabs list live documents only.
   const voidDocuments = documents.filter((d) => !isLive(d));
   const documentRows = [...generalDocuments, ...voidDocuments];
+  // Live passports are left out of the Documents tab (they show in Overview ›
+  // Passport); counted here so the tab can say where they went.
+  const passportDocs = documents.filter((d) => isPassportDoc(d) && isLive(d));
 
   // Group documents by category
   const documentsByCategory = generalDocuments.reduce(
@@ -1180,6 +1197,30 @@ export function ClientDetailClient({
             </>
           )}
 
+          {activeTab === "documents" && passportDocs.length > 0 && (
+            <Notice
+              tone="wait"
+              role="status"
+              className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1"
+            >
+              <span>
+                {passportDocs.length === 1
+                  ? "1 passport document is shown in Overview › Passport"
+                  : `${passportDocs.length} passport documents are shown in Overview › Passport`}
+              </span>
+              <Button
+                variant="link"
+                size="sm"
+                className="h-auto p-0"
+                onClick={() => {
+                  setScrollToPassport(true);
+                  handleTabChange("overview");
+                }}
+              >
+                Open Passport
+              </Button>
+            </Notice>
+          )}
           {activeTab === "documents" && (
             <DocumentsTab
               clientId={clientId}

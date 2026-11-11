@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Gift, Banknote, Calendar, Users } from "lucide-react";
 import * as hrApi from "@/lib/api/hr/hr";
+import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
 import type { AdminDashboard, PersonalDashboard } from "@/types/hr";
 import { Money } from "@balizero/core";
 
@@ -142,36 +143,84 @@ function PersonalDashboardView({ data }: { data: PersonalDashboard }) {
   );
 }
 
-export default function HRDashboardPage() {
-  const [adminData, setAdminData] = useState<AdminDashboard | null>(null);
-  const [personalData, setPersonalData] = useState<PersonalDashboard | null>(
-    null,
+/**
+ * Dashboard states. Each card is skipped (not the caller's to see), loaded, or
+ * failed; a skipped card is never an error and a failed one is never "absent".
+ *
+ *   capabilities read failed            -> access error, nothing else
+ *   a card loaded                       -> that card; a failed sibling gets a notice
+ *   no card loaded, at least one failed -> load error
+ *   both skipped (no admin, no record)  -> "no HR record"
+ */
+type Card<T> =
+  { status: "skipped" } | { status: "loaded"; data: T } | { status: "failed" };
+
+async function loadCard<T>(
+  wanted: boolean,
+  fetcher: () => Promise<T>,
+): Promise<Card<T>> {
+  if (!wanted) return { status: "skipped" };
+  try {
+    return { status: "loaded", data: await fetcher() };
+  } catch {
+    return { status: "failed" };
+  }
+}
+
+function Notice({
+  tone,
+  children,
+}: {
+  tone: "danger" | "muted";
+  children: React.ReactNode;
+}) {
+  return tone === "danger" ? (
+    <div
+      role="alert"
+      className="bg-[var(--state-danger)]/10 border border-[var(--state-danger)]/30 rounded-xl p-6 text-[var(--state-danger)]"
+    >
+      {children}
+    </div>
+  ) : (
+    <div
+      className="border rounded-xl p-6 text-[var(--bz-text-2)]"
+      style={PANEL}
+    >
+      {children}
+    </div>
   );
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+}
+
+export default function HRDashboardPage() {
+  const { capabilities, loaded, failed } = useHrCapabilities();
+  const [cards, setCards] = useState<{
+    admin: Card<AdminDashboard>;
+    personal: Card<PersonalDashboard>;
+  } | null>(null);
 
   useEffect(() => {
-    async function load() {
-      try {
-        const data = await hrApi.getDashboard();
-        setAdminData(data);
-      } catch {
-        try {
-          const data = await hrApi.getMyDashboard();
-          setPersonalData(data);
-        } catch (err) {
-          setError(
-            err instanceof Error ? err.message : "Failed to load dashboard",
-          );
-        }
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
-  }, []);
+    if (!loaded || failed) return;
+    let mounted = true;
+    Promise.all([
+      loadCard(capabilities.hr_admin, hrApi.getDashboard),
+      loadCard(capabilities.has_employee_record, hrApi.getMyDashboard),
+    ]).then(([admin, personal]) => {
+      if (mounted) setCards({ admin, personal });
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [loaded, failed, capabilities.hr_admin, capabilities.has_employee_record]);
 
-  if (loading) {
+  if (failed) {
+    return (
+      <Notice tone="danger">
+        Could not load your HR access. Reload the page to retry.
+      </Notice>
+    );
+  }
+
+  if (!cards) {
     return (
       <div className="space-y-6">
         <h1 className="text-2xl font-bold text-[var(--bz-text-1)]">
@@ -193,16 +242,34 @@ export default function HRDashboardPage() {
     );
   }
 
-  if (error) {
+  const { admin, personal } = cards;
+  if (admin.status === "skipped" && personal.status === "skipped") {
     return (
-      <div className="bg-[var(--state-danger)]/10 border border-[var(--state-danger)]/30 rounded-xl p-6 text-[var(--state-danger)]">
-        <h2 className="font-semibold mb-2">Error</h2>
-        <p>{error}</p>
-      </div>
+      <Notice tone="muted">
+        No HR record is linked to your account yet. Ask HR to create it.
+      </Notice>
+    );
+  }
+  if (admin.status !== "loaded" && personal.status !== "loaded") {
+    return (
+      <Notice tone="danger">
+        Failed to load the HR dashboard. Reload the page to retry.
+      </Notice>
     );
   }
 
-  if (adminData) return <AdminDashboardView data={adminData} />;
-  if (personalData) return <PersonalDashboardView data={personalData} />;
-  return null;
+  return (
+    <div className="space-y-10">
+      {admin.status === "loaded" && <AdminDashboardView data={admin.data} />}
+      {admin.status === "failed" && (
+        <Notice tone="danger">Could not load the team overview.</Notice>
+      )}
+      {personal.status === "loaded" && (
+        <PersonalDashboardView data={personal.data} />
+      )}
+      {personal.status === "failed" && (
+        <Notice tone="danger">Could not load your own HR card.</Notice>
+      )}
+    </div>
+  );
 }

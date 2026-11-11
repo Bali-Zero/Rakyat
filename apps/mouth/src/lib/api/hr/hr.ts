@@ -38,6 +38,15 @@ function qs(
     : "";
 }
 
+// Capabilities — the server's own answer; no allowlist lives in the browser.
+export interface HrCapabilities {
+  hr_admin: boolean;
+  accounting_admin: boolean;
+  has_employee_record: boolean;
+}
+export const getCapabilities = () =>
+  api.get<HrCapabilities>(`${BASE}/me/capabilities`);
+
 // Dashboard
 export const getDashboard = () => api.get<AdminDashboard>(`${BASE}/dashboard`);
 export const getMyDashboard = () =>
