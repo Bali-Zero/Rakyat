@@ -1,3 +1,8 @@
+import {
+  AUTH_TOKEN_STORAGE_KEY,
+  notifySessionChanged,
+} from "@/lib/auth/session-signal";
+
 /**
  * JWT Token Utilities
  *
@@ -12,21 +17,62 @@
  *
  * @returns Parsed payload or null if decoding fails
  */
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
+export function decodeJwtPayload(
+  token: string,
+): Record<string, unknown> | null {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return null;
 
     // Base64url decode the payload (second segment)
-    const payload = parts[1]
-      .replace(/-/g, "+")
-      .replace(/_/g, "/");
+    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
 
     const decoded = atob(payload);
     return JSON.parse(decoded);
   } catch {
     return null;
   }
+}
+
+/**
+ * The one clock-skew grace, in seconds, used wherever the client decides
+ * whether a stored token is still valid (isTokenExpired's default, the session
+ * identity, getProfile's freshness check). Do not introduce a second number.
+ */
+export const TOKEN_CLOCK_SKEW_SECONDS = 30;
+
+/**
+ * The bearer token in a FINAL headers object, exactly as it will be passed to
+ * fetch. Header names are case-insensitive, so every key spelling counts; more
+ * than one Authorization entry (fetch would join them) gives null. The VALUE
+ * must be exactly `Bearer <token68>`: the scheme spelled `Bearer`, one space,
+ * token68 characters only, nothing trimmed. That is the one shape every
+ * reader takes as a bearer (the backend's `startswith("Bearer ")`, the Next
+ * route handlers); any other value may fall back to the cookie there, so it
+ * gives null here (fail closed). Never throws, never logs.
+ */
+export function bearerTokenFromHeaders(
+  headers: Record<string, string> | undefined,
+): string | null {
+  if (!headers) return null;
+  const values = Object.keys(headers)
+    .filter((k) => k.toLowerCase() === "authorization")
+    .map((k) => headers[k]);
+  if (values.length !== 1 || typeof values[0] !== "string") return null;
+  const match = /^Bearer ([A-Za-z0-9\-._~+/]+=*)$/.exec(values[0]);
+  return match ? match[1] : null;
+}
+
+/**
+ * The `sub` claim of a JWT as a non-empty string, or null (undecodable, no
+ * `sub`, non-string `sub`). No signature check; never throws.
+ */
+export function getTokenSubject(
+  token: string | null | undefined,
+): string | null {
+  if (!token) return null;
+  const sub = decodeJwtPayload(token)?.sub;
+  return typeof sub === "string" && sub.length > 0 ? sub : null;
 }
 
 /**
@@ -40,7 +86,7 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
  */
 export function isTokenExpired(
   token: string,
-  clockSkewSeconds: number = 30,
+  clockSkewSeconds: number = TOKEN_CLOCK_SKEW_SECONDS,
 ): boolean {
   if (!token) return true;
 
@@ -80,6 +126,9 @@ export function getValidToken(
 
   if (isTokenExpired(token)) {
     storage.removeItem(key);
+    // The bearer token left this tab without the profile and without any
+    // other signal: tell the pages bound to it (SESSION.md S2).
+    if (key === AUTH_TOKEN_STORAGE_KEY) notifySessionChanged();
     return null;
   }
 
