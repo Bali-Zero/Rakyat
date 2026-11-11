@@ -186,8 +186,8 @@ def test_353_practices_practice_type_id_nullable() -> None:
     Prod was measured (information_schema, read-only) on 2026-10-05 and
     re-measured 2026-11-11: practices.practice_type_id is_nullable = YES.
     The file must exist, carry the rollback marker, relax (never promote)
-    in the forward block, and its rollback must decline loudly when NULL
-    rows prove the pre-migration state was already nullable.
+    in the forward block, and its rollback must refuse unconditionally
+    (RAISE EXCEPTION) — an adoption migration has no prior state to restore.
     """
     path = MIG_DIR / "353_practices_practice_type_id_nullable.sql"
     assert path.exists(), f"missing migration file: {path}"
