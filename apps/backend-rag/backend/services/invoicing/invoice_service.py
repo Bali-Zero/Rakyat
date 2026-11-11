@@ -244,7 +244,6 @@ class InvoiceAutomationService:
                     ),
                     practice_description=practice_data.get("notes", "Professional Services"),
                     quoted_price=float(practice_data.get("quoted_price", 0)),
-                    notes="Thank you for choosing Bali Zero. Payment is due within 2 days.",
                     discount_amount=discount_amount_float,
                     discount_reason=discount_reason_value,
                     entity=issuer_decision.entity,

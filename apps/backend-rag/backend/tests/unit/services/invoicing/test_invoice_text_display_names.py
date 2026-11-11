@@ -168,3 +168,11 @@ async def test_service_hands_the_display_name_to_the_generator(monkeypatch, over
     await _run(service, conn, _practice(**overrides))
     kwargs = service.invoice_generator.generate.call_args.kwargs
     assert kwargs["practice_type"] == expected
+
+
+@pytest.mark.asyncio
+async def test_service_passes_no_closing_note_that_repeats_the_due_sentence(monkeypatch):
+    service, conn = _service(monkeypatch)
+    monkeypatch.setattr(entities, "ENTITY_ROUTING_EFFECTIVE_FROM", None)
+    await _run(service, conn, _practice())
+    assert not service.invoice_generator.generate.call_args.kwargs.get("notes")
