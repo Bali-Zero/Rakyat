@@ -180,6 +180,25 @@ def test_drop_uses_if_exists_in_rollback(files: dict[str, str]) -> None:
         assert not bad, f"{name}: rollback block has DROP without IF EXISTS"
 
 
+def test_353_practices_practice_type_id_nullable() -> None:
+    """Migration 353 promotes the bootstrap's last uncorroborated DROP NOT NULL.
+
+    Prod was measured (information_schema, read-only) on 2026-10-05 and
+    re-measured 2026-11-11: practices.practice_type_id is_nullable = YES.
+    The file must exist, carry the rollback marker, relax (never promote)
+    in the forward block, and its rollback must decline loudly when NULL
+    rows prove the pre-migration state was already nullable.
+    """
+    path = MIG_DIR / "353_practices_practice_type_id_nullable.sql"
+    assert path.exists(), f"missing migration file: {path}"
+    sql = path.read_text(encoding="utf-8")
+    assert _ROLLBACK_MARKER.search(sql), "353: missing '-- === ROLLBACK ===' marker"
+    forward, rollback = _split(sql)
+    assert "DROP NOT NULL" in forward and "practice_type_id" in forward
+    assert "SET NOT NULL" not in forward
+    assert "RAISE WARNING" in rollback and "SET NOT NULL" in rollback
+
+
 def test_files_match_directory_listing() -> None:
     """No surprise files in the 129–137 range — every numbered file in
     that range is in our list, and our list has no missing entries.
