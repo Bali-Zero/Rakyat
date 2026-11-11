@@ -2,10 +2,19 @@ import { UserProfile } from "@/types";
 import type {
   IApiClient,
   ApiRequestOptions,
+  CredentialedResponse,
   SessionState,
 } from "./types/api-client.types";
 import { safeStorage } from "@/lib/utils/storage";
-import { isTokenExpired } from "@/lib/utils/token";
+import {
+  bearerTokenFromHeaders,
+  getTokenSubject,
+  isTokenExpired,
+} from "@/lib/utils/token";
+import {
+  AUTH_TOKEN_STORAGE_KEY,
+  notifySessionChanged,
+} from "@/lib/auth/session-signal";
 import { logger } from "@/lib/logger";
 import { ApiError } from "./error-handler";
 
@@ -109,7 +118,7 @@ export class ApiClientBase implements IApiClient {
     // asks right after.
     this.sessionProbe = null;
     if (typeof window !== "undefined") {
-      const success = safeStorage.setItem("auth_token", token);
+      const success = safeStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
       if (!success) {
         logger.warn(
           "localStorage blocked - using memory fallback. Auth via httpOnly cookies will work.",
@@ -119,6 +128,8 @@ export class ApiClientBase implements IApiClient {
           },
         );
       }
+      // The bearer changed: tell the pages bound to it (SESSION.md S2).
+      notifySessionChanged();
     }
   }
 
@@ -157,13 +168,16 @@ export class ApiClientBase implements IApiClient {
     // previous operator's impersonation target on every portal request.
     this.portalImpersonationClientId = null;
     if (typeof window !== "undefined") {
-      safeStorage.removeItem("auth_token");
+      safeStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
       safeStorage.removeItem("user_profile");
       try {
         localStorage.removeItem(PORTAL_IMPERSONATION_STORAGE_KEY);
       } catch {
         // ignore — impersonation storage is optional, same as the read path
       }
+      // The bearer left this tab (logout, 401, or the expiry clear in
+      // getToken): one signal after all the removals (SESSION.md S2).
+      notifySessionChanged();
     }
   }
 
@@ -353,6 +367,45 @@ export class ApiClientBase implements IApiClient {
     options: ApiRequestOptions = {},
     timeoutMs: number = 30000,
   ): Promise<T> {
+    return this.performRequest<T>(endpoint, options, timeoutMs, {
+      token: null,
+    });
+  }
+
+  /**
+   * request() plus the bearer the request actually carried: the one in the
+   * FINAL headers handed to fetch (null = it went out without a Bearer, e.g.
+   * cookie-only). Same code path as request(). A page that shows personal
+   * data uses this to bind the response to the credential that fetched it
+   * (src/lib/auth/SESSION.md S3/S4). The token is returned here and nowhere
+   * else: never log or render it.
+   */
+  async requestWithCredential<T>(
+    endpoint: string,
+    options: ApiRequestOptions = {},
+    timeoutMs: number = 30000,
+  ): Promise<CredentialedResponse<T>> {
+    const sent: { token: string | null } = { token: null };
+    const data = await this.performRequest<T>(
+      endpoint,
+      options,
+      timeoutMs,
+      sent,
+    );
+    return {
+      data,
+      sentToken: sent.token,
+      sentSub: getTokenSubject(sent.token),
+    };
+  }
+
+  /** Shared body of request()/requestWithCredential(); `sent` records the bearer attached. */
+  protected async performRequest<T>(
+    endpoint: string,
+    options: ApiRequestOptions,
+    timeoutMs: number,
+    sent: { token: string | null },
+  ): Promise<T> {
     // Superuser impersonation: append ?as_client=<id> to portal/lkpm paths
     // when the context has a target set. Idempotent — if the query already
     // carries as_client we leave it alone, honoring explicit callers (e.g.
@@ -397,6 +450,9 @@ export class ApiClientBase implements IApiClient {
     if (currentToken) {
       headers["Authorization"] = `Bearer ${currentToken}`;
     }
+    // The credential is whatever the FINAL headers carry (managed token or a
+    // caller-supplied Authorization), not what this class meant to attach.
+    sent.token = bearerTokenFromHeaders(headers);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);

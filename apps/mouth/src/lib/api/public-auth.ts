@@ -1,7 +1,15 @@
 import { AuthApi, PORTAL_SUPERUSER_PROBE_ENDPOINT } from "./auth/auth.api";
-import type { ApiRequestOptions } from "./types/api-client.types";
+import type {
+  ApiRequestOptions,
+  CredentialedResponse,
+} from "./types/api-client.types";
 import type { UserProfile } from "@/types";
 import { safeStorage } from "@/lib/utils/storage";
+import { bearerTokenFromHeaders, getTokenSubject } from "@/lib/utils/token";
+import {
+  AUTH_TOKEN_STORAGE_KEY,
+  notifySessionChanged,
+} from "@/lib/auth/session-signal";
 
 const PUBLIC_AUTH_ENDPOINTS = new Set([
   "/api/auth/login",
@@ -39,6 +47,30 @@ export class PublicAuthClient {
     options: ApiRequestOptions = {},
     timeoutMs = 30_000,
   ): Promise<T> {
+    return this.perform<T>(endpoint, options, timeoutMs, { token: null });
+  }
+
+  /** request() plus the bearer actually sent (SESSION.md S3/S4); never log the token. */
+  async requestWithCredential<T>(
+    endpoint: string,
+    options: ApiRequestOptions = {},
+    timeoutMs = 30_000,
+  ): Promise<CredentialedResponse<T>> {
+    const sent: { token: string | null } = { token: null };
+    const data = await this.perform<T>(endpoint, options, timeoutMs, sent);
+    return {
+      data,
+      sentToken: sent.token,
+      sentSub: getTokenSubject(sent.token),
+    };
+  }
+
+  private async perform<T>(
+    endpoint: string,
+    options: ApiRequestOptions,
+    timeoutMs: number,
+    sent: { token: string | null },
+  ): Promise<T> {
     if (!isPublicAuthEndpoint(endpoint)) {
       throw new Error("Public auth client rejected a non-auth endpoint");
     }
@@ -57,6 +89,8 @@ export class PublicAuthClient {
     if (this.token) {
       headers.Authorization = `Bearer ${this.token}`;
     }
+    // Final headers, as passed to fetch (see ApiClientBase.performRequest).
+    sent.token = bearerTokenFromHeaders(headers);
 
     try {
       const response = await fetch(endpoint, {
@@ -88,7 +122,8 @@ export class PublicAuthClient {
 
   setToken(token: string): void {
     this.token = token;
-    safeStorage.setItem("auth_token", token);
+    safeStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+    notifySessionChanged();
   }
 
   setUserProfile(profile: UserProfile): void {
@@ -102,8 +137,9 @@ export class PublicAuthClient {
   clearToken(): void {
     this.token = null;
     this.csrfToken = null;
-    safeStorage.removeItem("auth_token");
+    safeStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
     safeStorage.removeItem("user_profile");
+    notifySessionChanged();
   }
 }
 
