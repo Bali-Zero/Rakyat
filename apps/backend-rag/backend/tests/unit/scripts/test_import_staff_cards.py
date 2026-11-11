@@ -291,8 +291,8 @@ def test_the_real_entry_point_fails_every_parse_error_with_a_fixed_text(argv):
     unreachable = {
         "DATABASE_URL": "postgresql://nobody@127.0.0.1:1/none",  # any DB access would fail loudly
         "PATH": "/usr/bin:/bin",
-        "JWT_SECRET_KEY": "test_jwt_secret_key_for_testing_only_min_32_chars_long",
-        "API_KEYS": "test_api_key_1",
+        "JWT_SECRET_KEY": "j" * 40,  # settings need a 32+ char value to import; unused here
+        "API_KEYS": "k" * 12,
     }
     run = subprocess.run(
         [sys.executable, str(SCRIPT), *argv],
