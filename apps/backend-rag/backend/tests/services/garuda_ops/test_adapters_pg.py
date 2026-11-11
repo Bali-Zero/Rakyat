@@ -816,8 +816,12 @@ async def test_a_brand_new_customer_is_routed_to_a_team_member(pool):
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM team_members WHERE email = $1", member)
         await conn.execute(
-            "INSERT INTO team_members (full_name, email, role, department, active) "
-            "VALUES ('ROUTED MEMBER', $1, 'Executive Consultant', 'setup', true)",
+            # id + pin_hash are NOT NULL with no default in the CI
+            # create_all shape (identity/models.py) — prod defaults
+            # them, CI does not, so the seed supplies both.
+            "INSERT INTO team_members (id, full_name, email, pin_hash, role, department, active) "
+            "VALUES ('tm-routed-test-1111', 'ROUTED MEMBER', $1, 'x', "
+            "'Executive Consultant', 'setup', true)",
             member,
         )
     try:
