@@ -184,33 +184,50 @@ async def _update(updates: dict[str, Any], stored_gender: str | None) -> AsyncMo
         patch("backend.services.crm.client_core.invalidate_client_cache"),
     ):
         svc = EnhancedCRMService(pool)
-        svc.ALLOWED_CLIENT_COLUMNS = frozenset({"full_name", "gender"})
         svc.auditor = MagicMock(log_client_updated=AsyncMock())
         await svc.update_client(1, updates)
     return conn
 
 
 @pytest.mark.asyncio
-async def test_editing_a_name_never_fails_on_a_stray_stored_gender() -> None:
-    conn = await _update({"full_name": "New Name"}, stored_gender="L")
+@pytest.mark.parametrize("stored", ["L", "male", "x" * 19, None, "M"])
+async def test_editing_a_name_never_fails_on_the_stored_gender(stored: str | None) -> None:
+    conn = await _update({"full_name": "New Name"}, stored_gender=stored)
     query, *params = conn.fetchrow.await_args.args
     assert "full_name = $1" in query and "gender" not in query
     assert params == ["New Name", 1]
 
 
 @pytest.mark.asyncio
-async def test_updating_gender_stores_the_canonical_letter() -> None:
-    conn = await _update({"gender": "female"}, stored_gender=None)
-    query, *params = conn.fetchrow.await_args.args
-    assert "gender = $1" in query and params[0] == "F"
+@pytest.mark.parametrize(
+    ("sex", "stored"),
+    [("M", "M"), (" Female ", "F"), ("X", None), ("male female", None), ("", None)],
+)
+async def test_batch_passport_script_writes_only_m_or_f(sex: str, stored: str | None) -> None:
+    """The script needs OAuth env at import, so gender_letter and update_client are loaded alone."""
+    import ast
+    import logging
+    from pathlib import Path
 
-
-@pytest.mark.asyncio
-async def test_updating_gender_to_junk_is_rejected() -> None:
-    from backend.app.core.exceptions import DatabaseError
-
-    with pytest.raises(DatabaseError):
-        await _update({"gender": "zz"}, stored_gender="M")
+    path = Path(__file__).resolve().parents[5] / "scripts" / "batch_passport_ocr.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    wanted = {"gender_letter", "update_client"}
+    fns = [
+        n
+        for n in tree.body
+        if isinstance(n, ast.AsyncFunctionDef | ast.FunctionDef) and n.name in wanted
+    ]
+    ns: dict[str, Any] = {
+        "asyncpg": MagicMock(),
+        "normalize_date": lambda value: None,
+        "logger": logging.getLogger("t"),
+    }
+    exec(compile(ast.Module(fns, []), str(path), "exec"), ns)  # noqa: S102
+    conn = AsyncMock()
+    conn.fetchval = AsyncMock(return_value=None)
+    await ns["update_client"](conn, 5, {"sex": sex}, dry_run=False)
+    writes = [c.args for c in conn.execute.await_args_list if "SET gender" in c.args[0]]
+    assert [w[1] for w in writes] == ([stored] if stored else [])
 
 
 @pytest.mark.asyncio

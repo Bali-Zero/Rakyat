@@ -775,15 +775,12 @@ class EnhancedCRMService:
 
                 old_dict = dict(old_data)
 
-            if "full_name" in updates or "gender" in updates:
+            if "full_name" in updates:
                 merged = {**old_dict, **updates}
                 if "gender" not in updates:
-                    # A stored value outside M/F (legacy rows) must not block an edit that
-                    # does not touch gender.
+                    # A stored value outside M/F (legacy rows) must not block a name edit.
                     merged.pop("gender", None)
                 ClientValidator(**merged)
-            if updates.get("gender"):
-                updates = {**updates, "gender": normalize_gender(updates["gender"])}
 
             fields = []
             values = []
