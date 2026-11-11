@@ -109,6 +109,46 @@ import { formatDate, formatLongSpan } from "@/lib/utils/format-date";
 import { usePortalDateFormat } from "@/lib/format/usePortalDateFormat";
 
 // ============================================================================
+// IDENTITY MASKING
+// ============================================================================
+
+// The passport number and date of birth used to render in full on every
+// visit, readable by anyone looking at the screen. They now load masked and
+// the client reveals each one on purpose; nothing is remembered between loads.
+const MASK = "•••••";
+
+const maskPassportNumber = (value: string): string =>
+  value.length > 3 ? `${MASK}${value.slice(-3)}` : MASK;
+
+const maskDateOfBirth = (value: string): string => {
+  const year = /^(\d{4})/.exec(value)?.[1];
+  return year ? `•• ••• ${year}` : "•• ••• ••••";
+};
+
+function RevealToggle({
+  label,
+  revealed,
+  onToggle,
+}: {
+  label: string;
+  revealed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={revealed}
+      aria-label={`${revealed ? "Hide" : "Show"} ${label.toLowerCase()}`}
+      className="text-xs font-medium underline-offset-2 hover:underline"
+      style={{ color: "var(--bz-text-2)" }}
+    >
+      {revealed ? "Hide" : "Show"}
+    </button>
+  );
+}
+
+// ============================================================================
 // DAY THEME PRIMITIVES (GARUDA Day Edition, WS3)
 // ============================================================================
 
@@ -188,6 +228,8 @@ export default function ProfilePage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [showPassportNumber, setShowPassportNumber] = useState(false);
+  const [showDateOfBirth, setShowDateOfBirth] = useState(false);
   const [editData, setEditData] = useState({
     phone: "",
     whatsapp: "",
@@ -477,12 +519,19 @@ export default function ProfilePage() {
                 />
               </div>
               <div className="flex-1 min-w-0">
-                <p
-                  className="text-xs mb-0.5"
-                  style={{ color: "var(--bz-text-2)" }}
-                >
-                  Date of Birth
-                </p>
+                <div className="flex items-center gap-2">
+                  <p
+                    className="text-xs mb-0.5"
+                    style={{ color: "var(--bz-text-2)" }}
+                  >
+                    Date of Birth
+                  </p>
+                  <RevealToggle
+                    label="Date of Birth"
+                    revealed={showDateOfBirth}
+                    onToggle={() => setShowDateOfBirth((v) => !v)}
+                  />
+                </div>
                 <p
                   className={cn(
                     "text-sm font-medium break-words",
@@ -492,7 +541,9 @@ export default function ProfilePage() {
                     isBirthday ? { color: "var(--state-warning)" } : undefined
                   }
                 >
-                  {formatDate(profile.dateOfBirth)}
+                  {showDateOfBirth
+                    ? formatDate(profile.dateOfBirth)
+                    : maskDateOfBirth(profile.dateOfBirth)}
                   {isBirthday && " 🎂 (Today!)"}
                 </p>
               </div>
@@ -504,7 +555,18 @@ export default function ProfilePage() {
             <ProfileField
               icon={CreditCard}
               label="Passport Number"
-              value={profile.passportNumber}
+              value={
+                showPassportNumber
+                  ? profile.passportNumber
+                  : maskPassportNumber(profile.passportNumber)
+              }
+              action={
+                <RevealToggle
+                  label="Passport Number"
+                  revealed={showPassportNumber}
+                  onToggle={() => setShowPassportNumber((v) => !v)}
+                />
+              }
             />
           )}
 
@@ -736,11 +798,13 @@ function ProfileField({
   label,
   value,
   muted,
+  action,
 }: {
   icon: React.ElementType;
   label: string;
   value: string;
   muted?: boolean;
+  action?: React.ReactNode;
 }) {
   return (
     <div
@@ -765,6 +829,7 @@ function ProfileField({
             className="w-2.5 h-2.5 opacity-0 group-hover:opacity-30 transition-opacity"
             style={{ color: "var(--bz-text-3)" }}
           />
+          {action}
         </div>
         <p
           className={cn(
