@@ -1,3 +1,8 @@
+import {
+  AUTH_TOKEN_STORAGE_KEY,
+  notifySessionChanged,
+} from "@/lib/auth/session-signal";
+
 /**
  * JWT Token Utilities
  *
@@ -12,7 +17,7 @@
  *
  * @returns Parsed payload or null if decoding fails
  */
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
+export function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return null;
@@ -80,6 +85,9 @@ export function getValidToken(
 
   if (isTokenExpired(token)) {
     storage.removeItem(key);
+    // The bearer token left this tab without the profile and without any
+    // other signal: tell the pages bound to it (SESSION.md S2).
+    if (key === AUTH_TOKEN_STORAGE_KEY) notifySessionChanged();
     return null;
   }
 

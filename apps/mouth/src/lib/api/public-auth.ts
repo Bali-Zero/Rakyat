@@ -2,6 +2,11 @@ import { AuthApi, PORTAL_SUPERUSER_PROBE_ENDPOINT } from "./auth/auth.api";
 import type { ApiRequestOptions } from "./types/api-client.types";
 import type { UserProfile } from "@/types";
 import { safeStorage } from "@/lib/utils/storage";
+import {
+  AUTH_TOKEN_STORAGE_KEY,
+  USER_PROFILE_STORAGE_KEY,
+  notifySessionChanged,
+} from "@/lib/auth/session-signal";
 
 const PUBLIC_AUTH_ENDPOINTS = new Set([
   "/api/auth/login",
@@ -88,11 +93,13 @@ export class PublicAuthClient {
 
   setToken(token: string): void {
     this.token = token;
-    safeStorage.setItem("auth_token", token);
+    safeStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+    notifySessionChanged();
   }
 
   setUserProfile(profile: UserProfile): void {
-    safeStorage.setItem("user_profile", JSON.stringify(profile));
+    safeStorage.setItem(USER_PROFILE_STORAGE_KEY, JSON.stringify(profile));
+    notifySessionChanged();
   }
 
   setCsrfToken(token: string): void {
@@ -102,8 +109,9 @@ export class PublicAuthClient {
   clearToken(): void {
     this.token = null;
     this.csrfToken = null;
-    safeStorage.removeItem("auth_token");
-    safeStorage.removeItem("user_profile");
+    safeStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    safeStorage.removeItem(USER_PROFILE_STORAGE_KEY);
+    notifySessionChanged();
   }
 }
 

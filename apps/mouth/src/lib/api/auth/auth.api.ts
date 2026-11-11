@@ -2,6 +2,7 @@ import type { IApiClient, ApiRequestOptions } from "../types/api-client.types";
 import { UserProfile } from "@/types";
 import type { BackendLoginResponse, LoginResponse } from "./auth.types";
 import { logger } from "@/lib/logger";
+import { getSessionEpoch } from "@/lib/auth/session-signal";
 
 type AuthApiClient = Pick<
   IApiClient,
@@ -162,11 +163,18 @@ export class AuthApi {
    * not act on their behalf before they get a chance to ask hasSession().
    */
   async getProfile(options?: ApiRequestOptions): Promise<UserProfile> {
+    // A profile answers the session that ASKED for it. If the session changed
+    // while the request was in flight (logout, login, token expiry/removal,
+    // another tab), the response belongs to a session this tab no longer has:
+    // hand it back to the caller but never write it (SESSION.md S3).
+    const issuedEpoch = getSessionEpoch();
     const profile = await this.client.request<UserProfile>(
       "/api/auth/profile",
       options ?? {},
     );
-    this.client.setUserProfile(profile);
+    if (getSessionEpoch() === issuedEpoch) {
+      this.client.setUserProfile(profile);
+    }
     return profile;
   }
 

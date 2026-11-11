@@ -6,6 +6,11 @@ import type {
 } from "./types/api-client.types";
 import { safeStorage } from "@/lib/utils/storage";
 import { isTokenExpired } from "@/lib/utils/token";
+import {
+  AUTH_TOKEN_STORAGE_KEY,
+  USER_PROFILE_STORAGE_KEY,
+  notifySessionChanged,
+} from "@/lib/auth/session-signal";
 import { logger } from "@/lib/logger";
 import { ApiError } from "./error-handler";
 
@@ -109,7 +114,7 @@ export class ApiClientBase implements IApiClient {
     // asks right after.
     this.sessionProbe = null;
     if (typeof window !== "undefined") {
-      const success = safeStorage.setItem("auth_token", token);
+      const success = safeStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
       if (!success) {
         logger.warn(
           "localStorage blocked - using memory fallback. Auth via httpOnly cookies will work.",
@@ -119,6 +124,7 @@ export class ApiClientBase implements IApiClient {
           },
         );
       }
+      notifySessionChanged();
     }
   }
 
@@ -126,7 +132,7 @@ export class ApiClientBase implements IApiClient {
     this.userProfile = profile;
     if (typeof window !== "undefined") {
       const success = safeStorage.setItem(
-        "user_profile",
+        USER_PROFILE_STORAGE_KEY,
         JSON.stringify(profile),
       );
       if (!success) {
@@ -138,6 +144,7 @@ export class ApiClientBase implements IApiClient {
           },
         );
       }
+      notifySessionChanged();
     }
   }
 
@@ -157,13 +164,14 @@ export class ApiClientBase implements IApiClient {
     // previous operator's impersonation target on every portal request.
     this.portalImpersonationClientId = null;
     if (typeof window !== "undefined") {
-      safeStorage.removeItem("auth_token");
-      safeStorage.removeItem("user_profile");
+      safeStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+      safeStorage.removeItem(USER_PROFILE_STORAGE_KEY);
       try {
         localStorage.removeItem(PORTAL_IMPERSONATION_STORAGE_KEY);
       } catch {
         // ignore — impersonation storage is optional, same as the read path
       }
+      notifySessionChanged();
     }
   }
 
