@@ -52,4 +52,27 @@ describe("mergePracticeUpdate", () => {
   it("starts from the response when there is no current practice", () => {
     expect(mergePracticeUpdate(null, base)).toBe(base);
   });
+
+  it("an unrelated save never restores an older service, the picker's own save does", () => {
+    const tax = {
+      ...base,
+      practice_type_id: 9,
+      practice_type_code: "tax",
+      practice_type_name: "Tax",
+    };
+    const olderNotes = {
+      ...base,
+      notes: "older",
+      practice_type_id: 1,
+      practice_type_code: "open_inquiry",
+      practice_type_name: "Open inquiry",
+    };
+    const kept = mergePracticeUpdate(tax, olderNotes);
+    expect(kept.notes).toBe("older");
+    expect(kept.practice_type_code).toBe("tax");
+    expect(kept.practice_type_id).toBe(9);
+    expect(kept.practice_type_name).toBe("Tax");
+    const picked = mergePracticeUpdate(base, tax, { service: true });
+    expect(picked.practice_type_code).toBe("tax");
+  });
 });

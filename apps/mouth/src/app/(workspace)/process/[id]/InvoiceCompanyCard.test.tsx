@@ -357,4 +357,52 @@ describe("InvoiceCompanyCard", () => {
     expect(screen.getByRole("combobox")).toHaveValue("1");
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });
+
+  it("a chooser is withdrawn when the service changes, and a late 409 for the old service is ignored", async () => {
+    const user = userEvent.setup();
+    mockSuggest.mockResolvedValue({
+      autofill: true,
+      suggested_company_id: null,
+      companies: [],
+    });
+    const ambiguous = new ApiError("conflict", 409, {
+      detail: {
+        code: "invoice_company_ambiguous",
+        candidates: [{ id: 8, company_name: "PT Synthetic Kembar" }],
+      },
+    });
+    mockUpdate.mockRejectedValueOnce(ambiguous);
+    let rejectLate: (e: unknown) => void = () => {};
+    mockUpdate.mockReturnValueOnce(
+      new Promise((_r, reject) => (rejectLate = reject)),
+    );
+    const onSaved = vi.fn();
+    const { rerender } = render(
+      <InvoiceCompanyCard practice={practice()} onSaved={onSaved} />,
+    );
+    const name = await screen.findByLabelText("Company name");
+    await user.type(name, "Synthetic Kembar");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByTestId("invoice-company-ambiguity");
+    rerender(
+      <InvoiceCompanyCard
+        practice={practice({ practice_type_code: "kitas_working_onshore" })}
+        onSaved={onSaved}
+      />,
+    );
+    expect(screen.queryByTestId("invoice-company-ambiguity")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(2));
+    rerender(
+      <InvoiceCompanyCard
+        practice={practice({ practice_type_code: "tax" })}
+        onSaved={onSaved}
+      />,
+    );
+    rejectLate(ambiguous);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Save" })).toBeEnabled(),
+    );
+    expect(screen.queryByTestId("invoice-company-ambiguity")).toBeNull();
+  });
 });

@@ -276,9 +276,12 @@ export default function CaseDetailPage() {
     });
   };
 
-  const applyPracticeUpdate = (updatedPractice: Practice) => {
+  const applyPracticeUpdate = (
+    updatedPractice: Practice,
+    options?: { service?: boolean },
+  ) => {
     setPractice((currentPractice) =>
-      mergePracticeUpdate(currentPractice, updatedPractice),
+      mergePracticeUpdate(currentPractice, updatedPractice, options),
     );
   };
 
@@ -984,7 +987,10 @@ export default function CaseDetailPage() {
 
       {/* Open inquiry: service still to be chosen (required before Documents) */}
       {caseId && practice.practice_type_code === OPEN_INQUIRY_TYPE_CODE && (
-        <SelectServiceCard practiceId={caseId} onSaved={applyPracticeUpdate} />
+        <SelectServiceCard
+          practiceId={caseId}
+          onSaved={(saved) => applyPracticeUpdate(saved, { service: true })}
+        />
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -542,4 +542,44 @@ describe("NewPracticePage", () => {
       Object.keys(body).filter((k) => k.startsWith("invoice_company")),
     ).toEqual([]);
   });
+
+  it("a preselected client that loads late never replaces a client picked by hand", async () => {
+    const user = userEvent.setup();
+    let resolvePreselected: (v: unknown) => void = () => {};
+    mockGetClient.mockReturnValueOnce(
+      new Promise((r) => (resolvePreselected = r)),
+    );
+    mockGetClients.mockResolvedValue([
+      {
+        id: 8,
+        full_name: "Synthetic Other Client",
+        email: "other@example.test",
+      },
+    ]);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { default: NewPracticePage } = await import("./page");
+    render(
+      <QueryClientProvider client={queryClient}>
+        <NewPracticePage />
+      </QueryClientProvider>,
+    );
+    await user.type(await screen.findByLabelText("Search client"), "Other");
+    await user.click(await screen.findByText("Synthetic Other Client"));
+    resolvePreselected({
+      id: 7,
+      uuid: "synthetic-client-7",
+      full_name: "Synthetic Process Client",
+      email: "synthetic.process@example.test",
+      status: "active",
+      client_type: "individual",
+      created_at: "2026-07-27T00:00:00Z",
+      updated_at: "2026-07-27T00:00:00Z",
+    });
+    await waitFor(() => expect(mockGetClient).toHaveBeenCalled());
+    await Promise.resolve();
+    expect(screen.getByText("Synthetic Other Client")).toBeInTheDocument();
+    expect(screen.queryByText("Synthetic Process Client")).toBeNull();
+  });
 });

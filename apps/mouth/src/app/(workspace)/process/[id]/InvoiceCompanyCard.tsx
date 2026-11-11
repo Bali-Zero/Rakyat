@@ -41,6 +41,14 @@ export function InvoiceCompanyCard({ practice, onSaved }: Props) {
   const [isSaving, setIsSaving] = useState(false);
   const hasCompany = Boolean(practice.invoice_company_id);
   const baseline = useRef(practice.invoice_company_id ?? null);
+  // What a 409 was computed for: a chooser or a late 409 for another client or
+  // service is obsolete and must neither show nor be actionable.
+  const contextKey = `${practice.client_id}|${practice.practice_type_code ?? ""}`;
+  const contextRef = useRef(contextKey);
+  contextRef.current = contextKey;
+  useEffect(() => {
+    setAmbiguity(null);
+  }, [contextKey]);
 
   // Another save may change the company under this card: follow it while the
   // card is clean, never erase a draft.
@@ -69,6 +77,7 @@ export function InvoiceCompanyCard({ practice, onSaved }: Props) {
     const next = override ?? value;
     if (invoiceCompanyIncomplete(next)) return;
     const params = invoiceCompanyParams(next);
+    const startedFor = contextRef.current;
     setIsSaving(true);
     setAmbiguity(null);
     try {
@@ -93,8 +102,9 @@ export function InvoiceCompanyCard({ practice, onSaved }: Props) {
       );
     } catch (err) {
       const ambiguous = ambiguityFromError(err, next.name.trim());
-      if (ambiguous) setAmbiguity(ambiguous);
-      else
+      if (ambiguous) {
+        if (contextRef.current === startedFor) setAmbiguity(ambiguous);
+      } else
         toast.error("Failed to save invoice company", {
           description: (err as Error).message,
         });

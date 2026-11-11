@@ -108,6 +108,7 @@ export default function NewPracticePage() {
   const [invoiceAmbiguity, setInvoiceAmbiguity] =
     useState<InvoiceCompanyAmbiguity | null>(null);
   const [invoiceLabel, setInvoiceLabel] = useState<string | null>(null);
+  const userPickedClient = useRef(false);
 
   useEffect(() => {
     // A chooser built for an older client/service/company must not stay actionable.
@@ -228,13 +229,19 @@ export default function NewPracticePage() {
   useEffect(() => {
     const preselectedId = searchParams?.get("client_id");
     if (preselectedId) {
+      let cancelled = false;
       api.crm
         .getClient(Number(preselectedId))
         .then((client) => {
+          // A client the user picked by hand while this loaded wins.
+          if (cancelled || userPickedClient.current) return;
           setSelectedClient(client);
           setFormData((prev) => ({ ...prev, client_id: client.id }));
         })
         .catch((err) => logger.error("Failed to load preselected client", err));
+      return () => {
+        cancelled = true;
+      };
     }
   }, [searchParams]);
 
@@ -647,6 +654,7 @@ export default function NewPracticePage() {
                   size="sm"
                   disabled={isLoading}
                   onClick={() => {
+                    userPickedClient.current = true;
                     setSelectedClient(null);
                     setFormData((prev) => ({ ...prev, client_id: undefined }));
                     setClientSearch("");
@@ -681,6 +689,7 @@ export default function NewPracticePage() {
                           key={client.id}
                           type="button"
                           onClick={() => {
+                            userPickedClient.current = true;
                             setSelectedClient(client);
                             setFormData((prev) => ({
                               ...prev,
