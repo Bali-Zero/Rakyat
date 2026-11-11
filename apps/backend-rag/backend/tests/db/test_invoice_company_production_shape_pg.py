@@ -557,3 +557,27 @@ async def test_every_link_writer_waits_for_the_link_lock(pool: asyncpg.Pool, wri
             assert await links() == 0
     await task
     assert await links() == 1
+
+
+@pytest.mark.asyncio
+async def test_practice_reads_do_not_depend_on_the_company_table_or_the_new_column(
+    pool: asyncpg.Pool,
+) -> None:
+    """The deploy window (code live, migration not yet applied) and bare CI schemas."""
+    person = await client(pool)
+    created = await create(pool, person)
+    await pool.execute("ALTER TABLE practices DROP COLUMN invoice_company_id")
+    await pool.execute("DROP TABLE client_company_links")
+    await pool.execute("DROP TABLE companies")
+    shown = await crm_practices.get_practice(
+        request=None, practice_id=created.id, db_pool=pool, current_user=USER
+    )
+    assert shown["invoice_company_name"] is None
+    patched = await crm_practices.update_practice(
+        request=None,
+        practice_id=created.id,
+        updates=PracticeUpdate(priority="high"),
+        db_pool=pool,
+        current_user=USER,
+    )
+    assert patched["priority"] == "high"

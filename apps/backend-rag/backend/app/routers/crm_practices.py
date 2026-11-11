@@ -78,6 +78,20 @@ PRACTICE_CLEARABLE_FIELDS = {
 REVENUE_GROWTH_CACHE_NAMESPACE = "crm_practices_revenue_growth"
 
 
+async def _attach_invoice_company_name(conn: asyncpg.Connection, practice: dict) -> None:
+    """Add ``invoice_company_name`` without joining ``companies`` into the practice reads.
+
+    The id comes from ``practices.*``; a database without the column (or without a
+    company) simply has no name to show, so these reads never depend on migration 356.
+    """
+    company_id = practice.get("invoice_company_id")
+    practice["invoice_company_name"] = (
+        await conn.fetchval("SELECT company_name FROM companies WHERE id = $1", company_id)
+        if company_id is not None
+        else None
+    )
+
+
 async def _resolve_invoice_company_http(
     conn: asyncpg.Connection,
     client_id: int,
@@ -1227,12 +1241,10 @@ async def get_practice(
                         pt.name as practice_type_name,
                         pt.code as practice_type_code,
                         pt.category as practice_category,
-                        pt.required_documents as required_documents,
-                        ic.company_name as invoice_company_name
+                        pt.required_documents as required_documents
                     FROM practices p
                     JOIN clients c ON p.client_id = c.id
                     JOIN practice_types pt ON p.practice_type_id = pt.id
-                    LEFT JOIN companies ic ON ic.id = p.invoice_company_id
                     WHERE p.id = $1
             """
             if practices_filter:
@@ -1252,6 +1264,7 @@ async def get_practice(
                 raise HTTPException(status_code=404, detail="Practice not found")
 
             practice = dict(row)
+            await _attach_invoice_company_name(conn, practice)
             if practices_filter:
                 user_email = str(current_user.get("email") or "").lower()
                 created_by_match = str(practice.get("created_by") or "").lower() == user_email
@@ -1611,12 +1624,10 @@ async def update_practice(
                     pt.name as practice_type_name,
                     pt.code as practice_type_code,
                     pt.category as practice_category,
-                    pt.required_documents as required_documents,
-                    ic.company_name as invoice_company_name
+                    pt.required_documents as required_documents
                 FROM updated
                 LEFT JOIN clients c ON updated.client_id = c.id
                 LEFT JOIN practice_types pt ON updated.practice_type_id = pt.id
-                LEFT JOIN companies ic ON ic.id = updated.invoice_company_id
             """
             params.append(practice_id)
 
@@ -1640,6 +1651,7 @@ async def update_practice(
                     raise HTTPException(status_code=404, detail="Practice not found")
 
                 updated_practice = dict(row)
+                await _attach_invoice_company_name(conn, updated_practice)
                 response_practice = dict(updated_practice)
                 can_view_client_details = user_is_admin or created_by_match or client_lead_match
                 if not can_view_client_details:
