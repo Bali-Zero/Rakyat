@@ -138,7 +138,7 @@ unchanged.
 **S6. Profile invariant (self-healing).** `user_profile` belongs to the sub of
 the currently valid stored token, or is absent. `enforceProfileInvariant()`
 (`session-credential.ts`) removes a profile that breaks it and signals the
-removal (kind `enforced`, which also drops the `ApiClientBase` in-memory copy).
+removal (kind `enforced`).
 It runs on every session signal, every `storage` event on the session keys,
 `focus`, and `visibilitychange` to visible. It is installed once per page load
 by `installProfileInvariantEnforcer()`, called at module load from
@@ -178,6 +178,33 @@ mechanism can. The owner accepted this residual on 2026-11-12. The larger
 shared-device risk, a session left open on an office computer or phone, is not
 addressed here and belongs to a kita-wide follow-up (lock on inactivity).
 
+**S8. One copy.** `user_profile` in storage (`safeStorage`, which already
+provides the in-memory fallback when localStorage is blocked) is the ONLY copy
+of the profile on the client. No class keeps its own cached profile. Every read
+goes to storage at the moment of reading; absent or unparseable means no
+profile. Rounds 1 to 3 of review each found the same defect from a different
+side: more than one copy of the identity (storage, an in-memory field, a React
+state) that signals reached unevenly. `ApiClientBase` therefore has no
+`userProfile` field: `getUserProfile()` parses `user_profile` now, and
+`isAdmin()`, `isBoard()`, `getAdminHeaders()` and the `hadSession` check in the
+401 handler read through it; `setUserProfile` writes storage only and
+`clearToken` removes storage only; the constructor loads nothing. Nothing about
+a profile is logged by the read. `PublicAuthClient` never held one. What this
+fixes: a profile removed by another tab, or by the S6 enforcer, is gone for
+`isAdmin()` the instant storage says so, with no event needed. What it does not
+fix: a stale renderer cache for storage itself (S7), and consumers that copy
+the result into React state (follow-ups below). Follow-ups, none changed here:
+components that read `api.isAdmin()` or `getUserProfile()` once and keep the
+answer in state without re-reading on the session signals, so they can keep
+showing admin UI after the profile disappears until they re-mount:
+`garuda-voa/page.tsx` and `garuda-voa/[practiceId]/page.tsx` (`setIsAdmin`),
+`process/[id]/page.tsx` (`setIsAdmin`), `(workspace)/layout.tsx` (`user` state
+from the stored profile), `settings/profile/page.tsx` (`profile` state),
+`useChatPage`, and one-shot gates `admin/page.tsx`, `admin/system/page.tsx`,
+`admin/team-activity/page.tsx`, `admin/cell/page.tsx`,
+`process/new/page.tsx`, `ChatHeader.tsx`, `useCellStatus.ts`. They are
+consumers, not copies, only once they re-read on `subscribeSessionChange`.
+
 ## Where each rule is proved
 
 - S2/S3 signals and epoch: `session-signal.test.ts`.
@@ -185,6 +212,7 @@ addressed here and belongs to a kita-wide follow-up (lock on inactivity).
   `src/lib/api/auth/auth.api.session.test.ts`; the credential capture:
   `src/lib/api/client-credential.test.ts`.
 - S6 enforcer and login order: `session-credential.test.ts`.
+- S8 one copy, stale-view convergence: `src/lib/api/client-one-copy.test.ts`.
 - S1/S4 and the races through a bound page and the real transport, including
   the delayed cross-tab `storage` events: `session-identity.test.tsx`,
   `session-credential-race.test.tsx`.

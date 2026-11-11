@@ -18,13 +18,24 @@ function ok(body: unknown): Response {
 function sentAuthorization(
   spy: ReturnType<typeof vi.spyOn>,
 ): string | undefined {
-  const init = spy.mock.calls[0][1] as { headers: Record<string, string> };
+  const init = spy.mock.calls[spy.mock.calls.length - 1][1] as {
+    headers: Record<string, string>;
+  };
   return init.headers["Authorization"];
 }
 
 describe("requestWithCredential", () => {
-  beforeEach(() => localStorage.clear());
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    // Order-independent: no spy, call history or stored token from a
+    // previous test may leak in (run with --sequence.shuffle to check).
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
 
   it("reports the exact bearer placed in the Authorization header, and its sub", async () => {
     const token = tokenFor("42");
@@ -95,8 +106,17 @@ describe("requestWithCredential", () => {
 });
 
 describe("sentToken comes from the FINAL headers passed to fetch", () => {
-  beforeEach(() => localStorage.clear());
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    // Order-independent: no spy, call history or stored token from a
+    // previous test may leak in (run with --sequence.shuffle to check).
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
 
   async function sendWith(headers?: Record<string, string>, stored?: string) {
     if (stored) localStorage.setItem("auth_token", stored);

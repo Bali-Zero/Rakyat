@@ -243,7 +243,9 @@ describe("ApiClientBase", () => {
       expect(retrievedProfile).toEqual(newProfile);
     });
 
-    it("should handle corrupted profile in localStorage gracefully during sync", () => {
+    // SESSION.md S8: storage is the only copy, so an unparseable stored
+    // profile is "no profile", not a kept memory copy.
+    it("should treat a corrupted profile in localStorage as no profile", () => {
       const profile: UserProfile = {
         id: "123",
         email: "test@example.com",
@@ -255,8 +257,7 @@ describe("ApiClientBase", () => {
       // Corrupt localStorage externally
       localStorageMock.setItem("user_profile", "not-valid-json");
 
-      // Should keep existing profile on parse error
-      expect(client.getUserProfile()).toEqual(profile);
+      expect(client.getUserProfile()).toBeNull();
     });
 
     it("should detect and update when localStorage profile differs from memory", () => {

@@ -28,9 +28,21 @@ describe("ApiClientBase", () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    // Reset safeStorage to return null by default
-    vi.mocked(safeStorage.getItem).mockReturnValue(null);
-    vi.mocked(safeStorage.setItem).mockReturnValue(true);
+    // safeStorage behaves like a store: SESSION.md S8 makes it the only copy
+    // of the profile, so a set must be readable back.
+    const store = new Map<string, string>();
+    vi.mocked(safeStorage.getItem).mockImplementation(
+      (k: string) => store.get(k) ?? null,
+    );
+    vi.mocked(safeStorage.setItem).mockImplementation(
+      (k: string, v: string) => {
+        store.set(k, v);
+        return true;
+      },
+    );
+    vi.mocked(safeStorage.removeItem).mockImplementation((k: string) => {
+      store.delete(k);
+    });
 
     global.fetch = vi.fn();
 
@@ -149,7 +161,6 @@ describe("ApiClientBase", () => {
         name: "User",
         role: "admin",
       };
-      vi.mocked(safeStorage.setItem).mockReturnValue(true);
 
       client.setUserProfile(profile);
 
@@ -199,10 +210,6 @@ describe("ApiClientBase", () => {
       const profile = client.getUserProfile();
 
       expect(profile).toEqual(newProfile);
-      expect(logger.debug).toHaveBeenCalledWith(
-        expect.stringContaining("User profile synced"),
-        expect.any(Object),
-      );
     });
 
     it("should handle profile parse errors gracefully", () => {
@@ -218,11 +225,8 @@ describe("ApiClientBase", () => {
 
       const profile = client.getUserProfile();
 
-      expect(profile).toEqual(validProfile); // Should keep existing profile
-      expect(logger.warn).toHaveBeenCalledWith(
-        expect.stringContaining("Failed to parse"),
-        expect.any(Object),
-      );
+      // S8: storage is the only copy; unparseable = no profile, nothing logged.
+      expect(profile).toBeNull();
     });
   });
 

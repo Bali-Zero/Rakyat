@@ -13,7 +13,6 @@ import {
 } from "@/lib/utils/token";
 import {
   AUTH_TOKEN_STORAGE_KEY,
-  SESSION_CHANGED_EVENT,
   USER_PROFILE_STORAGE_KEY,
   notifySessionChanged,
 } from "@/lib/auth/session-signal";
@@ -76,7 +75,6 @@ export class ApiClientBase implements IApiClient {
   protected baseUrl: string;
   protected token: string | null = null;
   protected csrfToken: string | null = null; // CSRF token for cookie-based auth
-  protected userProfile: UserProfile | null = null;
   // Memoized cookie-only session probe (see hasSession()/probeSession()
   // below). N components asking "am I logged in?" at once collapse into one
   // fetch. Invalidated by setToken()/clearToken() so a login/logout never
@@ -91,24 +89,6 @@ export class ApiClientBase implements IApiClient {
     this.baseUrl = baseUrl;
     if (typeof window !== "undefined") {
       this.token = safeStorage.getItem("auth_token");
-      const storedProfile = safeStorage.getItem("user_profile");
-      if (storedProfile) {
-        try {
-          this.userProfile = JSON.parse(storedProfile);
-        } catch {
-          this.userProfile = null;
-        }
-      }
-      // The profile invariant enforcer removes a foreign profile from storage;
-      // drop the in-memory copy with it so isAdmin()/getAdminHeaders() never
-      // read a profile storage no longer holds.
-      window.addEventListener(SESSION_CHANGED_EVENT, (event) => {
-        if (
-          (event as CustomEvent<{ kind?: string }>).detail?.kind === "enforced"
-        ) {
-          this.userProfile = null;
-        }
-      });
       // Seed impersonation from localStorage so the very first portal fetch
       // on page reload already carries as_client.
       try {
@@ -150,7 +130,6 @@ export class ApiClientBase implements IApiClient {
   }
 
   setUserProfile(profile: UserProfile) {
-    this.userProfile = profile;
     if (typeof window !== "undefined") {
       const success = safeStorage.setItem(
         USER_PROFILE_STORAGE_KEY,
@@ -172,7 +151,6 @@ export class ApiClientBase implements IApiClient {
   clearToken() {
     this.token = null;
     this.csrfToken = null;
-    this.userProfile = null;
     // Same reasoning as setToken(): logout (or the 401 handler below, which
     // calls this) must not leave a pre-logout "authenticated" verdict
     // sitting in cache for the login page's own gate to read.
@@ -239,35 +217,24 @@ export class ApiClientBase implements IApiClient {
     return this.portalImpersonationClientId;
   }
 
+  /**
+   * The profile, read from storage at the moment of reading (SESSION.md S8,
+   * "One copy"): storage (safeStorage, which carries the in-memory fallback
+   * when localStorage is blocked) is the ONLY copy. Absent or unparseable is
+   * no profile. Nothing is cached and no email is logged here.
+   */
   getUserProfile(): UserProfile | null {
-    // Always read from storage to ensure we have the latest profile
-    // This is critical for cases where login happens after ApiClient instantiation
-    if (typeof window !== "undefined") {
-      const storedProfile = safeStorage.getItem("user_profile");
-      if (storedProfile) {
-        try {
-          const parsed = JSON.parse(storedProfile);
-          if (JSON.stringify(parsed) !== JSON.stringify(this.userProfile)) {
-            logger.debug("User profile synced from localStorage", {
-              component: "ApiClient",
-              action: "profile_sync",
-              metadata: {
-                previousEmail: this.userProfile?.email || "none",
-                newEmail: parsed?.email || "none",
-              },
-            });
-            this.userProfile = parsed;
-          }
-        } catch (e) {
-          // Keep existing profile if parsing fails
-          logger.warn("Failed to parse user profile from localStorage", {
-            component: "ApiClient",
-            action: "profile_parse_error",
-          });
-        }
-      }
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = safeStorage.getItem(USER_PROFILE_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object"
+        ? (parsed as UserProfile)
+        : null;
+    } catch {
+      return null;
     }
-    return this.userProfile;
   }
 
   /**
@@ -344,7 +311,7 @@ export class ApiClientBase implements IApiClient {
   }
 
   isAdmin(): boolean {
-    const role = this.userProfile?.role?.toLowerCase();
+    const role = this.getUserProfile()?.role?.toLowerCase();
     return (
       role === "admin" ||
       role === "founder" ||
@@ -357,7 +324,7 @@ export class ApiClientBase implements IApiClient {
    * Check if user is on the Board (can see all folders and manage permissions)
    */
   isBoard(): boolean {
-    const role = this.userProfile?.role?.toLowerCase();
+    const role = this.getUserProfile()?.role?.toLowerCase();
     return (
       role === "board" ||
       role === "admin" ||
@@ -367,10 +334,11 @@ export class ApiClientBase implements IApiClient {
   }
 
   getAdminHeaders(): Record<string, string> {
-    if (!this.userProfile || !this.isAdmin()) {
+    const profile = this.getUserProfile();
+    if (!profile || !this.isAdmin()) {
       throw new Error("Admin access required");
     }
-    return { "X-User-Email": this.userProfile.email };
+    return { "X-User-Email": profile.email };
   }
 
   /**
@@ -523,7 +491,7 @@ export class ApiClientBase implements IApiClient {
         // session can exist with no local token — hence the profile check.
         // Read this BEFORE clearToken(), which erases the evidence.
         const hadSession =
-          this.getToken() !== null || this.userProfile !== null;
+          this.getToken() !== null || this.getUserProfile() !== null;
 
         // Clear token and redirect to login
         this.clearToken();
