@@ -105,19 +105,52 @@ _HELP = (
     b"  --skip-not-found  with --apply: skip emails that resolve to no staff member\n"
 )
 _NOT_ISOLATED = b"import_staff_cards: run with python -I\n"
-# The worker's code origin is THIS file's own tree and nothing else: the root and the worker
-# file are derived from the resolved path of this launcher and passed as argv elements to a
-# FIXED bootstrap (never interpolated into code); the child runs isolated (-I), so neither
-# PYTHON* variables, cwd nor user site can put another `backend` in front of it.
+# The worker's APPLICATION code origin is THIS file's own tree and nothing else: the root and
+# the worker file are derived from the resolved path of this launcher and passed as argv
+# elements to a FIXED bootstrap (never interpolated into code); the child runs isolated (-I),
+# so neither PYTHON* variables, cwd nor user site can put another `backend` in front of it.
+# Its third-party dependencies come from the interpreter's own site-packages and then from the
+# directories the operator named in PYTHONPATH (the production image keeps them there): the
+# launcher filters that variable (`_dependency_dirs`) and hands the result over as ONE argv
+# element, which the bootstrap APPENDS to the END of sys.path, after the root and after the
+# interpreter's own entries. Under -I nothing in those directories is imported at startup.
 _BACKEND_RAG = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 _WORKER_FILE = os.path.join(_BACKEND_RAG, "backend", "scripts", "_import_staff_cards_worker.py")
+MAX_DEPENDENCY_DIRS = 32
+MAX_DEPENDENCY_CHARS = 8192
 _BOOTSTRAP = (
-    "import runpy, sys\n"
-    "root, worker = sys.argv[1], sys.argv[2]\n"
+    "import os, runpy, sys\n"
+    "root, worker, deps = sys.argv[1], sys.argv[2], sys.argv[3]\n"
     "sys.path.insert(0, root)\n"
-    "sys.argv = [worker] + sys.argv[3:]\n"
+    "sys.path.extend(d for d in deps.split(os.pathsep) if d)\n"
+    "sys.argv = [worker] + sys.argv[4:]\n"
     "runpy.run_path(worker, run_name='__main__')\n"
 )
+
+
+def _dependency_dirs(raw: str, root: str) -> str:
+    """The operator's PYTHONPATH reduced to absolute, existing, resolved, distinct directories
+    other than the root, joined with os.pathsep. Bounded; never raises, never reports."""
+    kept: list[str] = []
+    total = 0
+    try:
+        root_real = os.path.realpath(root)
+        for entry in raw.split(os.pathsep):
+            if len(kept) >= MAX_DEPENDENCY_DIRS:
+                break
+            if not entry or not os.path.isabs(entry) or not os.path.isdir(entry):
+                continue
+            real = os.path.realpath(entry)
+            if real == root_real or real in kept or os.pathsep in real:
+                continue
+            if total + len(real) + 1 > MAX_DEPENDENCY_CHARS:
+                break
+            kept.append(real)
+            total += len(real) + 1
+    except BaseException:
+        return ""
+    return os.pathsep.join(kept)
+
 
 # ─── the result grammar: one record per line, compact, closed literals, bounded integers ───
 
@@ -453,7 +486,8 @@ def run_launcher(argv: list[str]) -> int:
         st.nothing_ran = True
         return _emit(apply, st)
     read_end, write_end = os.pipe()
-    cmd = [sys.executable, "-I", "-c", _BOOTSTRAP, _BACKEND_RAG, _WORKER_FILE]
+    deps = _dependency_dirs(os.environ.get("PYTHONPATH", ""), _BACKEND_RAG)
+    cmd = [sys.executable, "-I", "-c", _BOOTSTRAP, _BACKEND_RAG, _WORKER_FILE, deps]
     cmd += [f"--result-fd={write_end}"]
     cmd += (["--apply"] if apply else []) + (["--skip-not-found"] if skip else [])
     try:
