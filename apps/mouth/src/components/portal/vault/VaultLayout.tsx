@@ -9,6 +9,8 @@ import { VaultPracticePicker } from "./VaultPracticePicker";
 import { useVaultFiles } from "@/hooks/useVaultFiles";
 import { useVaultDocumentActions } from "@/hooks/useVaultDocumentActions";
 import { usePortalMatters } from "@/hooks/usePortal";
+import { useQueryClient } from "@tanstack/react-query";
+import { usePortalLoadTimeout } from "@/components/portal/PortalLoadTimeout";
 import {
   activeMatters,
   resolveUploadPractice,
@@ -37,11 +39,32 @@ export function VaultLayout() {
     [matters.data],
   );
   const uploadPracticeId = resolveUploadPractice(active, uploadChoice);
-  const uploadBlockedReason = matters.isLoading
-    ? "Loading your practices…"
-    : uploadNeedsPractice(active, uploadPracticeId)
-      ? "Choose a practice above before uploading."
-      : undefined;
+
+  // The cases list used to show "Loading…" for as long as the request hung,
+  // with no way out. After 3s it now admits the failure and offers Retry.
+  // Upload stays blocked meanwhile: without the list we can't tell whether
+  // the client must pick a case first.
+  const queryClient = useQueryClient();
+  const mattersTimeout = usePortalLoadTimeout(matters.isLoading);
+  const mattersStuck = matters.isLoading && mattersTimeout.timedOut;
+  const retryStuckMatters = () => {
+    mattersTimeout.retry();
+    // A plain refetch() joins the request that hung; reset starts a new one.
+    void queryClient.resetQueries({
+      queryKey: ["portal", "matters"],
+      exact: true,
+    });
+  };
+  const noActiveCases =
+    !matters.isLoading && !matters.isError && active.length === 0;
+
+  const uploadBlockedReason = mattersStuck
+    ? "We couldn't load your cases yet. Press Retry above."
+    : matters.isLoading
+      ? "Loading your cases…"
+      : uploadNeedsPractice(active, uploadPracticeId)
+        ? "Choose a practice above before uploading."
+        : undefined;
 
   const files = data ?? [];
   const filtered = useMemo(() => {
@@ -78,14 +101,32 @@ export function VaultLayout() {
             <VaultSearchBar value={q} onChange={setQ} />
           </div>
         </div>
-        {matters.isLoading && (
+        {matters.isLoading && !mattersStuck && (
           <p role="status" className="text-xs text-[var(--bz-text-2)]">
-            Loading your practices…
+            Loading your cases…
+          </p>
+        )}
+        {mattersStuck && (
+          <div role="alert" className="text-xs text-[var(--bz-text-2)]">
+            We couldn&apos;t load your cases. Check your connection and try
+            again.{" "}
+            <button
+              type="button"
+              onClick={retryStuckMatters}
+              className="font-medium text-[var(--bz-copper-text)] underline underline-offset-2"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+        {noActiveCases && (
+          <p className="text-xs text-[var(--bz-text-2)]">
+            You have no active cases yet.
           </p>
         )}
         {matters.isError && !matters.isLoading && (
           <div role="alert" className="text-xs text-[var(--bz-text-2)]">
-            We couldn&apos;t load your practices, so this file will be uploaded
+            We couldn&apos;t load your cases, so this file will be uploaded
             without one.{" "}
             <button
               type="button"

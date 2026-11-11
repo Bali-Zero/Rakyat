@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { act, render, screen, fireEvent } from "@testing-library/react";
 import type { VaultFile } from "@/lib/schemas/vault";
 
 // Mock useVaultFiles
@@ -44,6 +44,12 @@ let mockMatters: {
 };
 vi.mock("@/hooks/usePortal", () => ({
   usePortalMatters: () => mockMatters,
+}));
+
+const mockResetQueries = vi.fn();
+vi.mock("@tanstack/react-query", async (orig) => ({
+  ...(await orig<typeof import("@tanstack/react-query")>()),
+  useQueryClient: () => ({ resetQueries: mockResetQueries }),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -195,9 +201,61 @@ describe("VaultLayout", () => {
       mockMatters = { ...mockMatters, isLoading: false, isError: true };
       render(<VaultLayout />);
       expect(
-        screen.getByText(/couldn.t load your practices/i),
+        screen.getByText(/couldn.t load your cases, so/i),
       ).toBeInTheDocument();
       expect(screen.getByLabelText("Choose file to upload")).not.toBeDisabled();
+    });
+
+    // Guard (portal audit 10 Nov, DAI-123): a hung cases request used to
+    // leave "Loading…" on screen forever with no way out.
+    it("stuck load: after 3s the loader becomes an error with Retry", () => {
+      vi.useFakeTimers();
+      try {
+        setMatters([]);
+        mockMatters = { ...mockMatters, data: undefined, isLoading: true };
+        render(<VaultLayout />);
+        expect(
+          screen.getAllByText(/Loading your cases/i).length,
+        ).toBeGreaterThan(0);
+
+        act(() => {
+          vi.advanceTimersByTime(3000);
+        });
+
+        expect(screen.queryAllByText(/Loading your cases/i)).toHaveLength(0);
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          /couldn.t load your cases\. Check/i,
+        );
+        expect(screen.getByLabelText("Choose file to upload")).toBeDisabled();
+
+        mockResetQueries.mockReset();
+        fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+        expect(mockResetQueries).toHaveBeenCalledWith({
+          queryKey: ["portal", "matters"],
+          exact: true,
+        });
+        // Retry opens a fresh window: the loader is back, not the error.
+        expect(
+          screen.getAllByText(/Loading your cases/i).length,
+        ).toBeGreaterThan(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("loaded with no active cases: says so instead of staying silent", () => {
+      setMatters([{ id: 1, title: "KITAS", status: "completed" }]);
+      render(<VaultLayout />);
+      expect(
+        screen.getByText("You have no active cases yet."),
+      ).toBeInTheDocument();
+      expect(screen.queryAllByText(/Loading your cases/i)).toHaveLength(0);
+    });
+
+    it("loaded with an active case: no empty-state line", () => {
+      setMatters([{ id: 5, title: "PT PMA", status: "on_process" }]);
+      render(<VaultLayout />);
+      expect(screen.queryByText(/no active cases/i)).toBeNull();
     });
   });
 });
