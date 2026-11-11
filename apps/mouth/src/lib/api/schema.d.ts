@@ -9228,6 +9228,8 @@ export interface paths {
     /**
      * Patch Employee Card
      * @description Merge the given fields into an employee's HR card without clobbering the rest.
+     *
+     *     One transaction: write, read back, build the response, then commit.
      */
     patch: operations["patch_employee_card_api_hr_employees__employee_id__card_patch"];
     trace?: never;
@@ -27411,6 +27413,9 @@ export interface components {
     /**
      * StaffCard
      * @description The owner's own card: every value in full except the HR free-text `notes`.
+     *
+     *     A READ model: plain types only, so FastAPI's response validation can never reject
+     *     what is stored. Write validators live on the *Patch models above.
      */
     StaffCard: {
       /** Address */
@@ -27431,7 +27436,7 @@ export interface components {
       bpjs_kesehatan_number?: string | null;
       /** Bpjs Ketenagakerjaan Number */
       bpjs_ketenagakerjaan_number?: string | null;
-      contract?: components["schemas"]["StaffContract"] | null;
+      contract?: components["schemas"]["StaffContractRead"] | null;
       /** Department */
       department?: string | null;
       /** Docs */
@@ -27492,7 +27497,7 @@ export interface components {
       bpjs_kesehatan_number?: string | null;
       /** Bpjs Ketenagakerjaan Number */
       bpjs_ketenagakerjaan_number?: string | null;
-      contract?: components["schemas"]["StaffContract"] | null;
+      contract?: components["schemas"]["StaffContractRead"] | null;
       /** Department */
       department?: string | null;
       /** Docs */
@@ -27556,6 +27561,16 @@ export interface components {
     };
     /** StaffContract */
     StaffContract: {
+      /** File Id */
+      file_id?: string | null;
+      /** Number */
+      number?: string | null;
+    };
+    /**
+     * StaffContractRead
+     * @description READ shape of the contract: plain types, no validators (S2).
+     */
+    StaffContractRead: {
       /** File Id */
       file_id?: string | null;
       /** Number */

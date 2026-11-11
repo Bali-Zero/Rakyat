@@ -7,9 +7,10 @@ Pattern: asyncpg pool, same as CRM services.
 from __future__ import annotations
 
 import calendar
-import json
 import logging
+from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
+from enum import Enum
 from typing import Any
 
 import asyncpg
@@ -38,12 +39,22 @@ def business_today() -> date:
     return (datetime.now(timezone.utc) + timedelta(hours=8)).date()
 
 
-class HRCardError(Exception):
-    """A card write failed. Carries a short code only: a driver message can quote
-    the personal value that was being written, so it is never propagated."""
+class HRCardCode(str, Enum):
+    """The closed set of card failure codes (STAFF_CARD.md S1b)."""
 
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
+    HIRE_DATE_REQUIRED = "hire_date_required"
+    INVALID_INPUT = "invalid_input"
+    NOT_APPLIED = "not_applied"
+    PROFILE_NOT_OBJECT = "profile_not_object"
+    DB_ERROR = "db_error"
+
+
+class HRCardError(Exception):
+    """A card operation failed. Carries a code from HRCardCode only: a driver or
+    pydantic message can quote the personal value being handled, so none propagates."""
+
+    def __init__(self, code: HRCardCode) -> None:
+        super().__init__(code.value)
         self.code = code
 
 
@@ -65,7 +76,14 @@ class HRService:
                 WHERE e.is_active = TRUE
                 ORDER BY tm.full_name
             """)
-            return [dict(r) for r in rows]
+            return [self._legacy_row(r) for r in rows]
+
+    @staticmethod
+    def _legacy_row(row: Any) -> dict[str, Any]:
+        """Legacy employee shape: the card `profile` is served only by the card routes."""
+        data = dict(row)
+        data.pop("profile", None)
+        return data
 
     async def get_employee(self, employee_id: int) -> dict[str, Any] | None:
         """Get employee by HR employee ID."""
@@ -79,7 +97,7 @@ class HRService:
             """,
                 employee_id,
             )
-            return dict(row) if row else None
+            return self._legacy_row(row) if row else None
 
     async def get_employee_by_email(self, email: str) -> dict[str, Any] | None:
         """Get employee by team member email."""
@@ -93,10 +111,18 @@ class HRService:
             """,
                 email,
             )
-            return dict(row) if row else None
+            return self._legacy_row(row) if row else None
 
     async def upsert_employee(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Create or update HR employee record."""
+        """Create or update HR employee record (a failure is an HRCardError: no driver text)."""
+        try:
+            return await self._upsert_employee(data)
+        except HRCardError:
+            raise
+        except Exception:
+            raise HRCardError(HRCardCode.DB_ERROR) from None
+
+    async def _upsert_employee(self, data: dict[str, Any]) -> dict[str, Any]:
         async with self.db_pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
@@ -134,9 +160,9 @@ class HRService:
                 data.get("notes"),
             )
             logger.info(f"HR employee upserted: team_member_id={data['team_member_id']}")
-            return dict(row)
+            return self._legacy_row(row)
 
-    # ─── STAFF CARD ──────────────────────────────────────────────────
+    # ─── STAFF CARD (contract: STAFF_CARD.md) ───────────────────────
 
     # Explicit column list (no `e.*`); the router decides who sees `notes`.
     _CARD_SELECT = """
@@ -149,26 +175,74 @@ class HRService:
         JOIN team_members tm ON tm.id = e.team_member_id
     """
 
+    # $11 is a Python dict bound to jsonb: the pool codec encodes it exactly once (S3).
+    _CARD_UPDATE_SQL = """
+        UPDATE hr_employees SET
+            hire_date = COALESCE($2, hire_date),
+            npwp = COALESCE($3, npwp),
+            ptkp_status = COALESCE($4, ptkp_status),
+            bpjs_kesehatan_number = COALESCE($5, bpjs_kesehatan_number),
+            bpjs_ketenagakerjaan_number = COALESCE($6, bpjs_ketenagakerjaan_number),
+            bank_name = COALESCE($7, bank_name),
+            bank_account = COALESCE($8, bank_account),
+            bank_account_holder = COALESCE($9, bank_account_holder),
+            is_active = COALESCE($10, is_active),
+            profile = (CASE WHEN jsonb_typeof(profile) = 'object' THEN profile ELSE '{}'::jsonb END)
+                || $11::jsonb
+                || CASE WHEN $11::jsonb ? 'docs' THEN jsonb_build_object(
+                    'docs',
+                    (CASE WHEN jsonb_typeof(profile->'docs') = 'object' THEN profile->'docs'
+                          ELSE '{}'::jsonb END) || ($11::jsonb->'docs'))
+                    ELSE '{}'::jsonb END
+                || CASE WHEN $11::jsonb ? 'contract' THEN jsonb_build_object(
+                    'contract',
+                    (CASE WHEN jsonb_typeof(profile->'contract') = 'object' THEN profile->'contract'
+                          ELSE '{}'::jsonb END) || ($11::jsonb->'contract'))
+                    ELSE '{}'::jsonb END,
+            updated_at = NOW()
+        WHERE team_member_id = $1
+        RETURNING id, jsonb_typeof(profile) AS profile_type
+    """
+
+    _CARD_INSERT_SQL = """
+        INSERT INTO hr_employees (
+            team_member_id, hire_date, base_salary_idr, npwp, ptkp_status,
+            bpjs_kesehatan_number, bpjs_ketenagakerjaan_number,
+            bank_name, bank_account, bank_account_holder, is_active, profile
+        )
+        SELECT tm.id, $2, 0, $3, COALESCE($4, 'TK/0'), $5, $6, $7, $8, $9,
+               COALESCE($10, TRUE), $11::jsonb
+        FROM team_members tm
+        WHERE tm.id = $1
+          AND NOT EXISTS (SELECT 1 FROM hr_employees x WHERE x.team_member_id = $1)
+        ON CONFLICT (team_member_id) DO NOTHING
+        RETURNING id, jsonb_typeof(profile) AS profile_type
+    """
+
     @staticmethod
-    def _card_row(row: Any) -> dict[str, Any]:
-        card = dict(row)
-        profile = card.get("profile")
-        if isinstance(profile, str):  # jsonb arrives as text without a codec
-            profile = json.loads(profile)
-        card["profile"] = profile if isinstance(profile, dict) else {}
-        return card
+    async def _fetch_card_on(conn: Any, where: str, arg: Any) -> dict[str, Any] | None:
+        row = await conn.fetchrow(HRService._CARD_SELECT + where, arg)
+        return dict(row) if row else None
 
     async def get_card_by_email(self, email: str) -> dict[str, Any] | None:
-        """The caller's own HR card, or None when they have no hr_employees row."""
-        async with self.db_pool.acquire() as conn:
-            row = await conn.fetchrow(self._CARD_SELECT + " WHERE tm.email = $1", email)
-            return self._card_row(row) if row else None
+        """The caller's own HR card, or None when they have no hr_employees row.
+
+        Case-insensitive on both sides (same as the login lookup); it matches the
+        caller's own email only, so it widens nothing.
+        """
+        try:
+            async with self.db_pool.acquire() as conn:
+                return await self._fetch_card_on(conn, " WHERE LOWER(tm.email) = LOWER($1)", email)
+        except Exception:
+            raise HRCardError(HRCardCode.DB_ERROR) from None
 
     async def get_card_by_id(self, employee_id: int) -> dict[str, Any] | None:
         """HR card by hr_employees.id (admin use)."""
-        async with self.db_pool.acquire() as conn:
-            row = await conn.fetchrow(self._CARD_SELECT + " WHERE e.id = $1", employee_id)
-            return self._card_row(row) if row else None
+        try:
+            async with self.db_pool.acquire() as conn:
+                return await self._fetch_card_on(conn, " WHERE e.id = $1", employee_id)
+        except Exception:
+            raise HRCardError(HRCardCode.DB_ERROR) from None
 
     async def merge_card(
         self,
@@ -176,14 +250,69 @@ class HRService:
         fields: dict[str, Any],
         profile_patch: dict[str, Any],
     ) -> int | None:
-        """Non-clobbering card write; returns the hr_employees id (None: no such member).
+        """Non-clobbering card write; returns the hr_employees id (None: no row written)."""
+        try:
+            async with self.db_pool.acquire() as conn:
+                return await self.merge_card_on(conn, team_member_id, fields, profile_patch)
+        except HRCardError:
+            raise
+        except Exception:
+            raise HRCardError(HRCardCode.DB_ERROR) from None
 
-        Omitted columns keep their value (COALESCE); `profile` is merged with `||`
-        and its `docs` / `contract` sub-objects are merged one level deeper. A member
-        without a row gets one (hire_date required, base_salary_idr 0).
+    async def patch_card(
+        self,
+        employee_id: int,
+        fields: dict[str, Any],
+        profile_patch: dict[str, Any],
+        view: Callable[[dict[str, Any]], Any],
+    ) -> Any | None:
+        """One transaction: lock, write, read back, build the response, THEN commit (S5).
+
+        Returns view(card), or None when the employee does not exist. Any failure,
+        including one raised by `view`, rolls everything back.
         """
-        async with self.db_pool.acquire() as conn:
-            return await self.merge_card_on(conn, team_member_id, fields, profile_patch)
+        try:
+            async with self.db_pool.acquire() as conn:
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        "SELECT team_member_id FROM hr_employees WHERE id = $1 FOR UPDATE",
+                        employee_id,
+                    )
+                    if row is None:
+                        return None
+                    if (
+                        await self.merge_card_on(conn, row["team_member_id"], fields, profile_patch)
+                        is None
+                    ):
+                        raise HRCardError(HRCardCode.NOT_APPLIED)
+                    card = await self._fetch_card_on(conn, " WHERE e.id = $1", employee_id)
+                    if card is None:
+                        raise HRCardError(HRCardCode.NOT_APPLIED)
+                    return view(card)
+        except HRCardError:
+            raise
+        except Exception:
+            raise HRCardError(HRCardCode.DB_ERROR) from None
+
+    @staticmethod
+    def _checked_patch(
+        fields: dict[str, Any], profile_patch: Any
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Input checks that never put a value in an error (S4: incoming non-object rejected)."""
+        if not isinstance(fields, dict) or not isinstance(profile_patch, dict):
+            raise HRCardError(HRCardCode.PROFILE_NOT_OBJECT)
+        for key in ("docs", "contract"):
+            if key in profile_patch and not isinstance(profile_patch[key], dict):
+                raise HRCardError(HRCardCode.PROFILE_NOT_OBJECT)
+        hire = fields.get("hire_date")
+        if isinstance(hire, str):  # DATE parameters take date objects only
+            try:
+                fields = {**fields, "hire_date": date.fromisoformat(hire)}
+            except ValueError:
+                raise HRCardError(HRCardCode.INVALID_INPUT) from None
+        elif hire is not None and not isinstance(hire, date):
+            raise HRCardError(HRCardCode.INVALID_INPUT)
+        return fields, profile_patch
 
     async def merge_card_on(
         self,
@@ -192,10 +321,13 @@ class HRService:
         fields: dict[str, Any],
         profile_patch: dict[str, Any],
     ) -> int | None:
-        """merge_card on a caller-owned connection (lets a script batch many in one transaction)."""
-        patch_json = json.dumps(profile_patch, default=str)
-        if isinstance(fields.get("hire_date"), str):  # DATE parameters take date objects only
-            fields = {**fields, "hire_date": date.fromisoformat(fields["hire_date"])}
+        """merge_card on a caller-owned connection (a script can batch many in one transaction).
+
+        Returns the row id, or None when no row was written (no such member). A
+        concurrent insert falls through to the update (S6); a stored profile that is
+        not an object after the merge fails and rolls this write back (S4).
+        """
+        fields, profile_patch = self._checked_patch(fields, profile_patch)
         args = (
             team_member_id,
             fields.get("hire_date"),
@@ -207,73 +339,27 @@ class HRService:
             fields.get("bank_account"),
             fields.get("bank_account_holder"),
             fields.get("is_active"),
-            patch_json,
+            profile_patch,  # a dict: the pool codec encodes it once
         )
         try:
             async with conn.transaction():
-                row = await self._merge_statements(conn, fields, args)
+                row = await conn.fetchrow(self._CARD_UPDATE_SQL, *args)
+                if row is None:
+                    if fields.get("hire_date") is None:
+                        raise HRCardError(HRCardCode.HIRE_DATE_REQUIRED)
+                    row = await conn.fetchrow(self._CARD_INSERT_SQL, *args)
+                    if row is None:  # a concurrent writer inserted the row: update it
+                        row = await conn.fetchrow(self._CARD_UPDATE_SQL, *args)
+                if row is not None and row["profile_type"] != "object":
+                    raise HRCardError(HRCardCode.PROFILE_NOT_OBJECT)
         except HRCardError:
             raise
-        except Exception as exc:
-            raise HRCardError(f"db_{type(exc).__name__}") from None
-        logger.info(f"HR card merged: team_member_id={team_member_id}")
-        return row["id"] if row else None
-
-    async def _merge_statements(
-        self, conn: Any, fields: dict[str, Any], args: tuple[Any, ...]
-    ) -> Any:
-        """UPDATE the row, or INSERT it for a member without one (in the caller's transaction)."""
-        row = await conn.fetchrow(
-            """
-            UPDATE hr_employees SET
-                hire_date = COALESCE($2, hire_date),
-                npwp = COALESCE($3, npwp),
-                ptkp_status = COALESCE($4, ptkp_status),
-                bpjs_kesehatan_number = COALESCE($5, bpjs_kesehatan_number),
-                bpjs_ketenagakerjaan_number = COALESCE($6, bpjs_ketenagakerjaan_number),
-                bank_name = COALESCE($7, bank_name),
-                bank_account = COALESCE($8, bank_account),
-                bank_account_holder = COALESCE($9, bank_account_holder),
-                is_active = COALESCE($10, is_active),
-                profile = (CASE WHEN jsonb_typeof(profile) = 'object' THEN profile ELSE '{}'::jsonb END)
-                    || $11::jsonb
-                    || CASE WHEN $11::jsonb ? 'docs' THEN jsonb_build_object(
-                        'docs',
-                        (CASE WHEN jsonb_typeof(profile->'docs') = 'object' THEN profile->'docs'
-                              ELSE '{}'::jsonb END) || ($11::jsonb->'docs'))
-                        ELSE '{}'::jsonb END
-                    || CASE WHEN $11::jsonb ? 'contract' THEN jsonb_build_object(
-                        'contract',
-                        (CASE WHEN jsonb_typeof(profile->'contract') = 'object' THEN profile->'contract'
-                              ELSE '{}'::jsonb END) || ($11::jsonb->'contract'))
-                        ELSE '{}'::jsonb END,
-                updated_at = NOW()
-            WHERE team_member_id = $1
-            RETURNING id
-            """,
-            *args,
-        )
+        except Exception:
+            raise HRCardError(HRCardCode.DB_ERROR) from None
         if row is None:
-            if fields.get("hire_date") is None:
-                raise HRCardError("hire_date_required")
-            row = await conn.fetchrow(
-                """
-                INSERT INTO hr_employees (
-                    team_member_id, hire_date, base_salary_idr, npwp, ptkp_status,
-                    bpjs_kesehatan_number, bpjs_ketenagakerjaan_number,
-                    bank_name, bank_account, bank_account_holder, is_active, profile
-                )
-                SELECT tm.id, $2, 0, $3, COALESCE($4, 'TK/0'), $5, $6, $7, $8, $9,
-                       COALESCE($10, TRUE), $11::jsonb
-                FROM team_members tm
-                WHERE tm.id = $1
-                  AND NOT EXISTS (SELECT 1 FROM hr_employees x WHERE x.team_member_id = $1)
-                ON CONFLICT (team_member_id) DO NOTHING
-                RETURNING id
-                """,
-                *args,
-            )
-        return row
+            return None
+        logger.info(f"HR card merged: team_member_id={team_member_id}")
+        return row["id"]
 
     # ─── BONUS RATES ─────────────────────────────────────────────────
 
@@ -360,8 +446,7 @@ class HRService:
                 params.append(month)
                 idx += 1
                 query += (
-                    " AND EXTRACT(YEAR FROM"
-                    f" (bl.awarded_at AT TIME ZONE 'Asia/Makassar')) = ${idx}"
+                    f" AND EXTRACT(YEAR FROM (bl.awarded_at AT TIME ZONE 'Asia/Makassar')) = ${idx}"
                 )
                 params.append(year)
                 idx += 1

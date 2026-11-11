@@ -1,7 +1,11 @@
 """One-off fill of the staff HR cards from a JSON document on STDIN.
 
     python backend/scripts/import_staff_cards.py            # dry-run, counts only
-    python backend/scripts/import_staff_cards.py --apply    # one transaction
+    python backend/scripts/import_staff_cards.py --apply    # one transaction, all or nothing
+
+Every card ends in exactly one of: applied, rejected:<code>, not_found (STAFF_CARD.md S6).
+`--apply` commits only when every card is applied (not_found tolerated with
+--skip-not-found); otherwise the whole batch rolls back and `committed: no` is printed.
 
 STDIN shape: {"cards": [{"email": "...", "fields": {...}, "profile": {...},
 "is_active": true|false|null}]}. The payload never travels in argv or a file
@@ -34,6 +38,7 @@ from pydantic import ValidationError
 from backend.app.modules.identity.service import IdentityService
 from backend.app.services.hr.hr_card_models import StaffCardPatch
 from backend.app.services.hr.hr_service import HRCardError, HRService
+from backend.core.pg_json_codec import init_asyncpg_connection
 
 # The service logs ids on every merge; this script prints counts only.
 logging.getLogger().setLevel(logging.WARNING)
@@ -87,60 +92,90 @@ def validate_card(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
 async def run(
     conn: Any, document: Any, apply: bool, skip_not_found: bool = False
 ) -> tuple[Counter[str], bool]:
-    """Classify every card (and write when apply). Returns (counts, ok)."""
+    """Classify every card (and write when apply). Returns (counts, ok).
+
+    Dry-run writes nothing and reports what it can know: rejected:<code>, not_found,
+    would_update / would_insert. Apply writes in one transaction and records, per
+    card, applied / rejected:<code> / not_found; it commits only if all are fine.
+    """
     counts: Counter[str] = Counter()
     cards = document.get("cards") if isinstance(document, dict) else None
     if not isinstance(cards, list):
         counts["rejected:bad_document"] += 1
         return counts, False
 
-    work: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
-    for raw in cards:
-        card, reason = validate_card(raw)
-        if card is None:
-            counts[f"rejected:{reason}"] += 1
-            continue
-        member = await conn.fetchrow(
-            "SELECT id FROM team_members WHERE LOWER(email) = LOWER($1) "
-            "AND COALESCE(role, '') <> 'client'",
-            card["email"],
-        )
-        if member is None:
-            counts["not_found"] += 1
-            continue
-        counts["resolved"] += 1
-        has_row = await conn.fetchval(
-            "SELECT 1 FROM hr_employees WHERE team_member_id = $1", member["id"]
-        )
-        if has_row:
-            counts["would_update"] += 1
-        elif card["fields"].get("hire_date") is None:
-            counts["rejected:hire_date_required"] += 1
-            continue
-        else:
-            counts["would_insert"] += 1
-        work.append((member["id"], card["fields"], card["profile"]))
-
-    rejected = sum(n for k, n in counts.items() if k.startswith("rejected:"))
-    blocked_by_missing = bool(counts["not_found"]) and not skip_not_found
-    if blocked_by_missing:
-        counts["blocked:not_found"] = counts["not_found"]
-    if not apply:
-        return counts, True
-    if rejected or blocked_by_missing:
-        return counts, False
     service = HRService(None)  # type: ignore[arg-type]  # merge_card_on uses the given connection
-    async with conn.transaction():
-        for member_id, fields, profile in work:
-            await service.merge_card_on(conn, member_id, fields, profile)
-    return counts, True
+    batch = conn.transaction() if apply else None
+    if batch is not None:
+        await batch.start()
+    try:
+        for raw in cards:
+            await _process_card(conn, service, raw, apply, counts)
+        clean = not any(k.startswith("rejected:") for k in counts) and (
+            skip_not_found or not counts["not_found"]
+        )
+        if not skip_not_found and counts["not_found"]:
+            counts["blocked:not_found"] = counts["not_found"]
+        if batch is not None:
+            open_batch, batch = batch, None
+            if clean:
+                await open_batch.commit()
+            else:
+                await open_batch.rollback()
+            counts["committed:yes" if clean else "committed:no"] = 1
+        return counts, clean if apply else True  # a dry-run only informs
+    except BaseException:
+        if batch is not None:
+            await batch.rollback()
+        raise
+
+
+async def _process_card(
+    conn: Any, service: HRService, raw: Any, apply: bool, counts: Counter[str]
+) -> None:
+    card, reason = validate_card(raw)
+    if card is None:
+        counts[f"rejected:{reason}"] += 1
+        return
+    member = await conn.fetchrow(
+        "SELECT id FROM team_members WHERE LOWER(email) = LOWER($1) "
+        "AND COALESCE(role, '') <> 'client'",
+        card["email"],
+    )
+    if member is None:
+        counts["not_found"] += 1
+        return
+    counts["resolved"] += 1
+    has_row = await conn.fetchval(
+        "SELECT 1 FROM hr_employees WHERE team_member_id = $1", member["id"]
+    )
+    if not has_row and card["fields"].get("hire_date") is None:
+        counts["rejected:hire_date_required"] += 1
+        return
+    if not apply:
+        counts["would_update" if has_row else "would_insert"] += 1
+        return
+    try:
+        row_id = await service.merge_card_on(conn, member["id"], card["fields"], card["profile"])
+    except HRCardError as exc:
+        counts[f"rejected:{exc.code.value}"] += 1
+        return
+    if row_id is None:
+        counts["rejected:not_applied"] += 1
+        return
+    counts["applied"] += 1
 
 
 def format_counts(counts: Counter[str], apply: bool) -> str:
     lines = [f"mode: {'apply' if apply else 'dry-run'}"]
-    for key in ("resolved", "not_found", "would_update", "would_insert"):
+    keys = (
+        ("resolved", "not_found", "applied")
+        if apply
+        else ("resolved", "not_found", "would_update", "would_insert")
+    )
+    for key in keys:
         lines.append(f"{key}: {counts.get(key, 0)}")
-    for key in sorted(k for k in counts if k.startswith(("rejected:", "blocked:"))):
+    for key in sorted(k for k in counts if k.startswith(("rejected:", "blocked:", "committed:"))):
         lines.append(f"{key}: {counts[key]}")
     return "\n".join(lines)
 
@@ -154,9 +189,10 @@ async def amain(argv: list[str], stdin_text: str) -> int:
         return 1
     conn = await IdentityService().get_db_connection()
     try:
+        await init_asyncpg_connection(conn)  # the production jsonb codec (S3)
         counts, ok = await run(conn, document, args.apply, args.skip_not_found)
     except HRCardError as exc:
-        print(f"failed: {exc.code} (transaction rolled back)")  # noqa: T201
+        print(f"failed: {exc.code.value} (transaction rolled back)")  # noqa: T201
         return 1
     except Exception as exc:  # never echo the message: it may carry payload values
         print(f"failed: {type(exc).__name__} (transaction rolled back)")  # noqa: T201

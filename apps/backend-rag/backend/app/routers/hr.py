@@ -15,6 +15,7 @@ from typing import Any
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, model_validator
 
@@ -25,13 +26,14 @@ from backend.app.services.hr.hr_card_models import (
     StaffCardPatch,
     admin_card,
     member_card,
+    safe_errors,
 )
 from backend.app.services.hr.hr_leave_notifier import (
     notify_leave_request_pending,
     notify_leave_request_reviewed,
 )
 from backend.app.services.hr.hr_leave_routing import reports_of, resolve_approver
-from backend.app.services.hr.hr_service import HRCardError, HRService
+from backend.app.services.hr.hr_service import HRCardCode, HRCardError, HRService
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.app.utils.hr_utils import is_hr_admin
 from backend.core.cache import invalidate_cache
@@ -192,13 +194,31 @@ async def get_my_capabilities(
 # ─── STAFF CARD ─────────────────────────────────────────────────────────
 
 
+# Fixed client-facing text per failure code (S1c): never a driver or pydantic message.
+_CARD_ERRORS: dict[HRCardCode, tuple[int, str]] = {
+    HRCardCode.HIRE_DATE_REQUIRED: (422, "hire_date is required to create the card"),
+    HRCardCode.INVALID_INPUT: (422, "Invalid card input"),
+    HRCardCode.PROFILE_NOT_OBJECT: (422, "Invalid card input"),
+    HRCardCode.NOT_APPLIED: (409, "Card write was not applied"),
+    HRCardCode.DB_ERROR: (500, "Card operation failed"),
+}
+
+
+def _card_http_error(exc: HRCardError) -> HTTPException:
+    status, detail = _CARD_ERRORS.get(exc.code, (500, "Card operation failed"))
+    return HTTPException(status_code=status, detail=detail)
+
+
 @router.get("/me/card", response_model=StaffCard)
 async def get_my_card(
     current_user: dict[str, Any] = Depends(get_current_user),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> StaffCard:
     """The caller's own HR card (own row only, without HR notes)."""
-    card = await _get_hr_service(db_pool).get_card_by_email(current_user["email"])
+    try:
+        card = await _get_hr_service(db_pool).get_card_by_email(current_user["email"])
+    except HRCardError as exc:
+        raise _card_http_error(exc) from None
     if not card:
         raise HTTPException(status_code=404, detail="No HR employee record found for your account")
     return member_card(card)
@@ -212,31 +232,41 @@ async def get_employee_card(
 ) -> StaffCardAdmin:
     """Full HR card of one employee (HR admins only)."""
     _require_hr_admin(current_user)
-    card = await _get_hr_service(db_pool).get_card_by_id(employee_id)
+    try:
+        card = await _get_hr_service(db_pool).get_card_by_id(employee_id)
+    except HRCardError as exc:
+        raise _card_http_error(exc) from None
     if not card:
         raise HTTPException(status_code=404, detail="Employee not found")
     return admin_card(card)
 
 
-class _NoEchoRoute(APIRoute):
-    """Validation failures keep only {type, loc, msg}: the submitted value is a
-    personal datum and must not come back in the 422 body (or reach a log)."""
+def _make_no_echo_route(model: type[BaseModel]) -> type[APIRoute]:
+    class _NoEchoRoute(APIRoute):
+        """A 422 keeps only {type, safe loc, fixed msg}: no submitted value, no
+        caller-controlled key name, ever (STAFF_CARD.md S1a)."""
 
-    def get_route_handler(self) -> Any:
-        original = super().get_route_handler()
+        def get_route_handler(self) -> Any:
+            original = super().get_route_handler()
 
-        async def handler(request: Any) -> Any:
-            try:
-                return await original(request)
-            except RequestValidationError as exc:
-                raise RequestValidationError(
-                    [{"type": e["type"], "loc": e["loc"], "msg": e["msg"]} for e in exc.errors()]
-                ) from None
+            async def handler(request: Any) -> Any:
+                try:
+                    return await original(request)
+                except RequestValidationError as exc:
+                    return JSONResponse(
+                        status_code=422,
+                        content={
+                            "detail": safe_errors(exc.errors(), model, frozenset({"employee_id"}))
+                        },
+                    )
 
-        return handler
+            return handler
+
+    return _NoEchoRoute
 
 
-_card_write_router = APIRouter(route_class=_NoEchoRoute)
+_card_write_router = APIRouter(route_class=_make_no_echo_route(StaffCardPatch))
+_employee_write_router = APIRouter(route_class=_make_no_echo_route(EmployeeCreate))
 
 
 @_card_write_router.patch("/employees/{employee_id}/card", response_model=StaffCardAdmin)
@@ -246,28 +276,44 @@ async def patch_employee_card(
     current_user: dict[str, Any] = Depends(get_current_user),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> StaffCardAdmin:
-    """Merge the given fields into an employee's HR card without clobbering the rest."""
+    """Merge the given fields into an employee's HR card without clobbering the rest.
+
+    One transaction: write, read back, build the response, then commit.
+    """
     _require_hr_admin(current_user)
-    service = _get_hr_service(db_pool)
-    card = await service.get_card_by_id(employee_id)
-    if not card:
-        raise HTTPException(status_code=404, detail="Employee not found")
     fields = data.model_dump(exclude={"profile"}, exclude_none=True)
     profile_patch = data.profile.model_dump(mode="json", exclude_none=True) if data.profile else {}
     try:
-        await service.merge_card(card["team_member_id"], fields, profile_patch)
+        result = await _get_hr_service(db_pool).patch_card(
+            employee_id, fields, profile_patch, admin_card
+        )
     except HRCardError as exc:  # carries a code, never a driver message
-        if exc.code == "hire_date_required":
-            raise HTTPException(status_code=422, detail=exc.code) from None
-        raise HTTPException(status_code=500, detail=f"card write failed ({exc.code})") from None
-    await invalidate_cache("zantara:hr_employees:*")
-    updated = await service.get_card_by_id(employee_id)
-    if not updated:
+        raise _card_http_error(exc) from None
+    if result is None:
         raise HTTPException(status_code=404, detail="Employee not found")
-    return admin_card(updated)
+    await invalidate_cache("zantara:hr_employees:*")
+    return result
+
+
+@_employee_write_router.post("/employees")
+async def upsert_employee(
+    data: EmployeeCreate,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """Create or update an HR employee record."""
+    _require_hr_admin(current_user)
+    service = _get_hr_service(db_pool)
+    try:
+        result = await service.upsert_employee(data.model_dump())
+    except HRCardError as exc:
+        raise _card_http_error(exc) from None
+    await invalidate_cache("zantara:hr_employees:*")
+    return {"success": True, "employee": result}
 
 
 router.include_router(_card_write_router)
+router.include_router(_employee_write_router)
 
 
 # ─── EMPLOYEES (admin only) ─────────────────────────────────────────────
@@ -306,20 +352,6 @@ async def get_employee(
     if not is_hr_admin(current_user):
         emp = {k: v for k, v in emp.items() if k != "notes"}  # HR free text is admin-only
     return emp
-
-
-@router.post("/employees")
-async def upsert_employee(
-    data: EmployeeCreate,
-    current_user: dict[str, Any] = Depends(get_current_user),
-    db_pool: asyncpg.Pool = Depends(get_database_pool),
-) -> dict[str, Any]:
-    """Create or update an HR employee record."""
-    _require_hr_admin(current_user)
-    service = _get_hr_service(db_pool)
-    result = await service.upsert_employee(data.model_dump())
-    await invalidate_cache("zantara:hr_employees:*")
-    return {"success": True, "employee": result}
 
 
 # ─── BONUS RATES (admin only) ───────────────────────────────────────────

@@ -1,16 +1,15 @@
-"""Staff HR card: strict write models, the read models, and the response builders.
+"""Staff HR card: strict WRITE models, tolerant READ models, response builders.
 
-Every string is validated here so bad input becomes a 422 that carries no value:
-no lone surrogate or other non-encodable text, no control or format characters,
-bounded length, and a plain character class for identifiers. The error messages
-below never include the offending value.
+Contract: `STAFF_CARD.md` next to this module (S1 no-echo, S2 reads never validate,
+S7 real data is accepted). Write models validate input only; the read models and
+builders below cannot raise on stored content. Error messages never include a value.
 """
 
 from __future__ import annotations
 
 import re
 import unicodedata
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
@@ -21,13 +20,18 @@ _ID_RE = re.compile(r"[0-9 .\-]+")
 _SLOT_RE = re.compile(r"[A-Za-z0-9_.\-]{1,64}")
 
 
-def _text_checker(max_len: int) -> Any:
+def _text_checker(max_len: int, multiline: bool = False) -> Any:
     def check(value: str) -> str:
         try:
             value.encode("utf-8")
         except UnicodeEncodeError:
             raise ValueError("text is not valid unicode") from None
-        if any(unicodedata.category(ch).startswith("C") for ch in value):
+        if multiline:  # line breaks are real data in an address; nothing else is allowed
+            value = value.replace("\r\n", "\n")
+        if any(
+            unicodedata.category(ch).startswith("C") and not (multiline and ch == "\n")
+            for ch in value
+        ):
             raise ValueError("control or non-printable characters are not allowed")
         value = value.strip()
         if not value:
@@ -57,8 +61,8 @@ def _slot_check(value: str) -> str:
     return value
 
 
-def Text(max_len: int) -> Any:
-    return Annotated[str, AfterValidator(_text_checker(max_len))]
+def Text(max_len: int, multiline: bool = False) -> Any:
+    return Annotated[str, AfterValidator(_text_checker(max_len, multiline))]
 
 
 def Ident(max_len: int) -> Any:
@@ -84,7 +88,7 @@ class StaffProfilePatch(BaseModel):
     birth_place: Text(100) | None = None
     birth_date: date | None = None
     gender: Text(20) | None = None
-    address: Text(500) | None = None
+    address: Text(500, multiline=True) | None = None
     religion: Text(50) | None = None
     marital_status: Text(50) | None = None
     employer_entity: Text(255) | None = None
@@ -116,8 +120,19 @@ class StaffCardPatch(BaseModel):
         return value
 
 
+class StaffContractRead(BaseModel):
+    """READ shape of the contract: plain types, no validators (S2)."""
+
+    number: str | None = None
+    file_id: str | None = None
+
+
 class StaffCard(BaseModel):
-    """The owner's own card: every value in full except the HR free-text `notes`."""
+    """The owner's own card: every value in full except the HR free-text `notes`.
+
+    A READ model: plain types only, so FastAPI's response validation can never reject
+    what is stored. Write validators live on the *Patch models above.
+    """
 
     employee_id: int
     full_name: str | None = None
@@ -143,7 +158,7 @@ class StaffCard(BaseModel):
     marital_status: str | None = None
     employer_entity: str | None = None
     unit: str | None = None
-    contract: StaffContract | None = None
+    contract: StaffContractRead | None = None
     docs: dict[str, str] = Field(default_factory=dict)
     end_date: date | None = None
 
@@ -174,14 +189,20 @@ def _str_or_none(value: Any) -> str | None:
 
 
 def _date_or_none(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return None
     if isinstance(value, date):
         return value
     if isinstance(value, str):
         try:
             return date.fromisoformat(value)
-        except ValueError:
+        except (ValueError, TypeError):
             return None
     return None
+
+
+def _int_or_none(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _profile_view(profile: Any) -> dict[str, Any]:
@@ -209,22 +230,22 @@ def _profile_view(profile: Any) -> dict[str, Any]:
 
 
 def _card_values(card: dict[str, Any]) -> dict[str, Any]:
-    """Explicit allow-list of what a card exposes (never a passthrough of the row)."""
+    """Explicit allow-list of what a card exposes; every value coerced, never raising."""
     values: dict[str, Any] = {
-        "employee_id": card["id"],
-        "full_name": card.get("full_name"),
-        "role": card.get("role"),
-        "department": card.get("department"),
-        "hire_date": card.get("hire_date"),
-        "is_active": card["is_active"],
-        "ptkp_status": card.get("ptkp_status"),
-        "base_salary_idr": card.get("base_salary_idr"),
-        "npwp": card.get("npwp"),
-        "bpjs_kesehatan_number": card.get("bpjs_kesehatan_number"),
-        "bpjs_ketenagakerjaan_number": card.get("bpjs_ketenagakerjaan_number"),
-        "bank_name": card.get("bank_name"),
-        "bank_account": card.get("bank_account"),
-        "bank_account_holder": card.get("bank_account_holder"),
+        "employee_id": _int_or_none(card.get("id")) or 0,
+        "full_name": _str_or_none(card.get("full_name")),
+        "role": _str_or_none(card.get("role")),
+        "department": _str_or_none(card.get("department")),
+        "hire_date": _date_or_none(card.get("hire_date")),
+        "is_active": card.get("is_active") is True,
+        "ptkp_status": _str_or_none(card.get("ptkp_status")),
+        "base_salary_idr": _int_or_none(card.get("base_salary_idr")),
+        "npwp": _str_or_none(card.get("npwp")),
+        "bpjs_kesehatan_number": _str_or_none(card.get("bpjs_kesehatan_number")),
+        "bpjs_ketenagakerjaan_number": _str_or_none(card.get("bpjs_ketenagakerjaan_number")),
+        "bank_name": _str_or_none(card.get("bank_name")),
+        "bank_account": _str_or_none(card.get("bank_account")),
+        "bank_account_holder": _str_or_none(card.get("bank_account_holder")),
     }
     values.update(_profile_view(card.get("profile")))
     return values
@@ -235,4 +256,60 @@ def member_card(card: dict[str, Any]) -> StaffCard:
 
 
 def admin_card(card: dict[str, Any]) -> StaffCardAdmin:
-    return StaffCardAdmin(**_card_values(card), notes=card.get("notes"))
+    return StaffCardAdmin(**_card_values(card), notes=_str_or_none(card.get("notes")))
+
+
+# ─── 422 bodies that carry no caller-supplied value (S1a) ───
+
+_NON_BODY = {"query", "path", "header", "cookie"}
+_SAFE_MESSAGE = "Invalid value."
+
+
+def _nested_model(annotation: Any) -> type[BaseModel] | None:
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    for arg in getattr(annotation, "__args__", ()):
+        found = _nested_model(arg)
+        if found:
+            return found
+    return None
+
+
+def safe_loc(loc: Any, model: type[BaseModel] | None, declared_params: frozenset[str]) -> list[Any]:
+    """Keep list indexes and DECLARED field names; any other segment becomes "<key>".
+
+    Extra keys and `profile.docs` slot names are caller-controlled, so a segment
+    survives only when the model at that depth declares it.
+    """
+    out: list[Any] = []
+    cur = model
+    for i, seg in enumerate(loc):
+        if isinstance(seg, int) and not isinstance(seg, bool):
+            out.append(seg)
+        elif i == 0 and seg == "body":
+            out.append(seg)
+        elif i == 0 and seg in _NON_BODY:
+            out.append(seg)
+            cur = None
+        elif cur is not None and isinstance(seg, str) and seg in cur.model_fields:
+            out.append(seg)
+            cur = _nested_model(cur.model_fields[seg].annotation)
+        elif cur is None and out and out[0] in _NON_BODY and seg in declared_params:
+            out.append(seg)
+        else:
+            out.append("<key>")
+            cur = None
+    return out
+
+
+def safe_errors(
+    errors: list[Any], model: type[BaseModel] | None, declared_params: frozenset[str]
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": e["type"] if isinstance(e.get("type"), str) else "value_error",
+            "loc": safe_loc(e.get("loc", ()), model, declared_params),
+            "msg": _SAFE_MESSAGE,
+        }
+        for e in errors
+    ]

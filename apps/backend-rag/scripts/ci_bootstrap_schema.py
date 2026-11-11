@@ -25,6 +25,7 @@ no reason to add startup cost when the intended path is via migrations.
 
 Exit 0 on success, 1 otherwise.
 """
+
 from __future__ import annotations
 
 import os
@@ -45,7 +46,7 @@ def main() -> int:
 
     # sqlalchemy's sync engine wants plain postgresql:// (not postgresql+asyncpg).
     if db_url.startswith("postgresql+asyncpg://"):
-        db_url = "postgresql://" + db_url[len("postgresql+asyncpg://"):]
+        db_url = "postgresql://" + db_url[len("postgresql+asyncpg://") :]
 
     # Import every module that registers a SQLModel table=True class.
     # The act of importing each module is what binds the table metadata into
@@ -91,8 +92,9 @@ def main() -> int:
     # objects so SQLAlchemy's FK resolver (which reads from
     # SQLModel.metadata, not the live DB) can find them during create_all().
     with engine.begin() as conn:
-        conn.execute(text(
-            """
+        conn.execute(
+            text(
+                """
             CREATE TABLE IF NOT EXISTS user_profiles (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 email VARCHAR(255) UNIQUE NOT NULL,
@@ -106,9 +108,11 @@ def main() -> int:
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
             """,
-        ))
-        conn.execute(text(
-            """
+            )
+        )
+        conn.execute(
+            text(
+                """
             CREATE TABLE IF NOT EXISTS conversations (
                 id SERIAL PRIMARY KEY,
                 user_id VARCHAR(255) NOT NULL,
@@ -120,15 +124,17 @@ def main() -> int:
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             )
             """,
-        ))
+            )
+        )
         # lkpm_reports: created by old-style migration_063 (backend/migrations/
         # *.py), which the modern runner (db/migrations_v2/*.sql) does not
         # discover. Without this stub every test touching the table fails
         # with UndefinedColumnError for any column beyond id/client_id.
         # Full schema mirrored from migration_063_lkpm_reports.py so that
         # tests inserting realized_equipment_* / cumulative_* / etc. work.
-        conn.execute(text(
-            """
+        conn.execute(
+            text(
+                """
             CREATE TABLE IF NOT EXISTS lkpm_reports (
                 id SERIAL PRIMARY KEY,
                 client_id INTEGER NOT NULL,
@@ -188,7 +194,8 @@ def main() -> int:
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """,
-        ))
+            )
+        )
         # lkpm_reports prod divergence.
         #
         # 1. company_id — added by backend/migrations/migration_100a_lkpm_company_id.py
@@ -232,15 +239,17 @@ def main() -> int:
         # so migrations still apply cleanly on a fresh CI DB — but the
         # compliance_alerts router tests (autotune gate) expect the table
         # to exist for INSERT/UPDATE. Mirroring the legacy schema verbatim.
-        conn.execute(text(
-            """
+        conn.execute(
+            text(
+                """
             CREATE TABLE IF NOT EXISTS system_settings (
                 key VARCHAR(100) PRIMARY KEY,
                 value TEXT NOT NULL,
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
             """,
-        ))
+            )
+        )
         # notification_log: created by backend/migrations/migration_111_notification_log.py
         # notification_prefs: created by backend/migrations/migration_110_notification_prefs.py
         # Both are old-style Python migrations; the modern runner only discovers
@@ -250,8 +259,9 @@ def main() -> int:
         # dispatch — without the tables, test_alert_dispatcher.py fails with
         # UndefinedTableError. Schemas mirrored from the Python migrations
         # verbatim.
-        conn.execute(text(
-            """
+        conn.execute(
+            text(
+                """
             CREATE TABLE IF NOT EXISTS notification_log (
                 id      BIGSERIAL PRIMARY KEY,
                 user_id UUID NOT NULL,
@@ -260,15 +270,19 @@ def main() -> int:
                 sent_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
             )
             """,
-        ))
-        conn.execute(text(
-            """
+            )
+        )
+        conn.execute(
+            text(
+                """
             CREATE INDEX IF NOT EXISTS idx_notification_log_lookup
                 ON notification_log (user_id, channel, ref, sent_at DESC)
             """,
-        ))
-        conn.execute(text(
-            """
+            )
+        )
+        conn.execute(
+            text(
+                """
             CREATE TABLE IF NOT EXISTS notification_prefs (
                 user_id       UUID PRIMARY KEY,
                 email_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -277,15 +291,17 @@ def main() -> int:
                 updated_at    TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             )
             """,
-        ))
+            )
+        )
         # war_room_drafts: created by backend/migrations/migration_112_war_room_tables.py.
         # Migration 127 (db/migrations_v2/127_war_room_canva_url.sql) ALTERs
         # this table; without it CI fails with "relation war_room_drafts does
         # not exist". The full set of war_room_* tables (posts, metrics, leads,
         # rejections, missed_runs, costs) is created by migration 112 in prod;
         # CI only needs `war_room_drafts` to satisfy the v2 ALTERs that follow.
-        conn.execute(text(
-            """
+        conn.execute(
+            text(
+                """
             CREATE TABLE IF NOT EXISTS war_room_drafts (
                 id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 topic                 TEXT NOT NULL,
@@ -303,11 +319,13 @@ def main() -> int:
                 approved_at           TIMESTAMP WITH TIME ZONE
             )
             """,
-        ))
+            )
+        )
         # bridge_outbox: created by legacy Python migration 107.
         # Required by db/migrations_v2/192_bridge_outbox_jsonb_double_encoding_repair.sql
-        conn.execute(text(
-            """
+        conn.execute(
+            text(
+                """
             CREATE TABLE IF NOT EXISTS bridge_outbox (
                 id         BIGSERIAL PRIMARY KEY,
                 type       VARCHAR(100) NOT NULL,
@@ -315,12 +333,17 @@ def main() -> int:
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
             )
             """,
-        ))
+            )
+        )
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_outbox_id ON bridge_outbox (id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_outbox_type ON bridge_outbox (type)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_outbox_created_at ON bridge_outbox (created_at)"))
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS idx_outbox_created_at ON bridge_outbox (created_at)")
+        )
 
-    print("[bootstrap] legacy tables ensured in DB (user_profiles, conversations, lkpm_reports, system_settings, notification_log, notification_prefs, war_room_drafts, bridge_outbox)")
+    print(
+        "[bootstrap] legacy tables ensured in DB (user_profiles, conversations, lkpm_reports, system_settings, notification_log, notification_prefs, war_room_drafts, bridge_outbox)"
+    )
 
     # Register stub Tables so SQLAlchemy's FK resolver finds the targets.
     # Must live in the SAME MetaData the SQLModel classes use, otherwise
@@ -479,8 +502,9 @@ def main() -> int:
     # (the canonical hand-bootstrap shape used by the integration fixtures).
     # FK on clients(id) — must run AFTER create_all() materialised `clients`.
     with engine.begin() as conn:
-        conn.execute(text(
-            """
+        conn.execute(
+            text(
+                """
             CREATE TABLE IF NOT EXISTS documents (
                 id            SERIAL PRIMARY KEY,
                 client_id     INTEGER REFERENCES clients(id) ON DELETE CASCADE,
@@ -492,7 +516,8 @@ def main() -> int:
                 created_at    TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             )
             """,
-        ))
+            )
+        )
         # The minimal historical CREATE above is enough for migration 217, but
         # not for the real intake writer or the document routers. Those columns
         # came from old one-off Python/SQL migrations that the v2 runner cannot
@@ -564,7 +589,7 @@ def main() -> int:
     print("[bootstrap] team_members prod-only columns + defaults ensured")
 
     # hr_employees: created in prod by the legacy python migration_068 (not by a
-    # migrations_v2 file, so the v2 runner never builds it). Migration 352 adds
+    # migrations_v2 file, so the v2 runner never builds it). Migration 353 adds
     # `profile` to it with a plain ALTER that must fail loudly when the table is
     # missing, so a CI database needs the table here. DDL mirrors migration_068.
     with engine.begin() as conn:
@@ -594,7 +619,7 @@ def main() -> int:
                 """
             )
         )
-    print("[bootstrap] hr_employees legacy table ensured (for migration 352)")
+    print("[bootstrap] hr_employees legacy table ensured (for migration 353)")
 
     # practice_types prod-only divergence.
     #
@@ -628,7 +653,9 @@ def main() -> int:
             "ALTER TABLE practice_types ALTER COLUMN created_at SET DEFAULT NOW()",
         ):
             conn.execute(text(stmt))
-    print("[bootstrap] practice_types prod-only columns ensured (typical_duration_days + is_active + updated_at + active default + created_at default)")
+    print(
+        "[bootstrap] practice_types prod-only columns ensured (typical_duration_days + is_active + updated_at + active default + created_at default)"
+    )
 
     # companies prod-only divergence.
     #
@@ -647,7 +674,9 @@ def main() -> int:
             "ALTER TABLE companies ALTER COLUMN updated_at SET DEFAULT NOW()",
         ):
             conn.execute(text(stmt))
-    print("[bootstrap] companies prod-only columns ensured (setup_progress + created_at + updated_at defaults)")
+    print(
+        "[bootstrap] companies prod-only columns ensured (setup_progress + created_at + updated_at defaults)"
+    )
 
     # practices prod-only divergence.
     #
@@ -669,7 +698,9 @@ def main() -> int:
             "ALTER TABLE practices ALTER COLUMN practice_type_id DROP NOT NULL",
         ):
             conn.execute(text(stmt))
-    print("[bootstrap] practices prod-only columns ensured (practice_type_code + title + inquiry/created/updated defaults + practice_type_id nullable)")
+    print(
+        "[bootstrap] practices prod-only columns ensured (practice_type_code + title + inquiry/created/updated defaults + practice_type_id nullable)"
+    )
 
     # client_company_links prod-only divergence.
     #
@@ -685,7 +716,9 @@ def main() -> int:
             "ALTER TABLE client_company_links ALTER COLUMN updated_at SET DEFAULT NOW()",
         ):
             conn.execute(text(stmt))
-    print("[bootstrap] client_company_links prod-only columns ensured (created_at + updated_at defaults)")
+    print(
+        "[bootstrap] client_company_links prod-only columns ensured (created_at + updated_at defaults)"
+    )
 
     return 0
 

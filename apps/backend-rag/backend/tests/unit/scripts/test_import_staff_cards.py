@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from backend.app.services.hr.hr_service import HRCardCode
 from backend.scripts import import_staff_cards as imp
 
 # Synthetic data only.
@@ -41,9 +42,9 @@ def _conn() -> AsyncMock:
     conn.fetchrow = AsyncMock(side_effect=fetchrow)
     conn.fetchval = AsyncMock(side_effect=fetchval)
     tx = MagicMock()
-    tx.__aenter__ = AsyncMock(return_value=None)
-    tx.__aexit__ = AsyncMock(return_value=False)
+    tx.start, tx.commit, tx.rollback = AsyncMock(), AsyncMock(), AsyncMock()
     conn.transaction = MagicMock(return_value=tx)
+    conn.tx = tx
     return conn
 
 
@@ -67,10 +68,12 @@ async def test_dry_run_counts_and_no_write():
 @pytest.mark.asyncio
 async def test_apply_with_a_rejected_card_writes_nothing():
     conn = _conn()
-    with patch.object(imp.HRService, "merge_card_on", new=AsyncMock()) as merge:
-        _, ok = await imp.run(conn, DOC, apply=True)
+    with patch.object(imp.HRService, "merge_card_on", new=AsyncMock()):
+        counts, ok = await imp.run(conn, DOC, apply=True)
     assert ok is False
-    merge.assert_not_awaited()
+    conn.tx.commit.assert_not_awaited()
+    conn.tx.rollback.assert_awaited_once()
+    assert counts["committed:no"] == 1
 
 
 @pytest.mark.asyncio
@@ -82,6 +85,8 @@ async def test_apply_clean_document_merges_in_one_transaction():
     assert ok is True and counts["resolved"] == 2
     assert merge.await_count == 2
     conn.transaction.assert_called_once()
+    conn.tx.commit.assert_awaited_once()
+    assert counts["applied"] == 2 and counts["committed:yes"] == 1
     first = merge.await_args_list[0].args  # (conn, team_member_id, fields, profile)
     assert first[1:] == ("tm-1", {"npwp": "10.01"}, {"unit": "u1"})
 
@@ -126,12 +131,12 @@ def test_validate_card_keeps_hire_date_a_real_date():
 async def test_apply_stops_on_a_not_found_email_unless_skip_is_given():
     doc = {"cards": [DOC["cards"][0], DOC["cards"][2]]}  # one resolved, one ghost
     conn = _conn()
-    with patch.object(imp.HRService, "merge_card_on", new=AsyncMock()) as merge:
+    with patch.object(imp.HRService, "merge_card_on", new=AsyncMock()):
         counts, ok = await imp.run(conn, doc, apply=True)
         assert ok is False and counts["not_found"] == 1 and counts["blocked:not_found"] == 1
-        merge.assert_not_awaited()
+        assert counts["committed:no"] == 1
         counts, ok = await imp.run(_conn(), doc, apply=True, skip_not_found=True)
-        assert ok is True and merge.await_count == 1
+        assert ok is True and counts["applied"] == 1 and counts["not_found"] == 1
 
 
 @pytest.mark.asyncio
@@ -145,3 +150,51 @@ def test_skip_not_found_is_strict_no_abbreviation():
     with pytest.raises(SystemExit) as exc:
         imp.parse_args(["--skip"])
     assert exc.value.code == 2
+
+
+@pytest.mark.asyncio
+async def test_a_merge_that_returns_no_row_is_rejected_not_applied_and_rolls_back():
+    doc = {"cards": DOC["cards"][:2]}
+    conn = _conn()
+    with patch.object(imp.HRService, "merge_card_on", new=AsyncMock(side_effect=["r1", None])):
+        counts, ok = await imp.run(conn, doc, apply=True)
+    assert ok is False
+    assert counts["rejected:not_applied"] == 1 and counts["applied"] == 1
+    conn.tx.commit.assert_not_awaited()
+    conn.tx.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_card_error_is_accounted_by_its_code_only():
+    doc = {"cards": DOC["cards"][:1]}
+    conn = _conn()
+    boom = AsyncMock(side_effect=imp.HRCardError(HRCardCode.DB_ERROR))
+    with patch.object(imp.HRService, "merge_card_on", new=boom):
+        counts, ok = await imp.run(conn, doc, apply=True)
+    assert ok is False and counts["rejected:db_error"] == 1
+    assert "fake" not in imp.format_counts(counts, True)
+
+
+@pytest.mark.asyncio
+async def test_every_card_is_accounted_for_exactly_once():
+    conn = _conn()
+    with patch.object(imp.HRService, "merge_card_on", new=AsyncMock(return_value=1)):
+        counts, _ = await imp.run(conn, DOC, apply=True, skip_not_found=True)
+    accounted = (
+        counts["applied"]
+        + counts["not_found"]
+        + sum(n for k, n in counts.items() if k.startswith("rejected:"))
+    )
+    assert accounted == len(DOC["cards"])
+
+
+@pytest.mark.asyncio
+async def test_amain_registers_the_production_codec_on_its_connection():
+    conn = _conn()
+    conn.close = AsyncMock()
+    with (
+        patch.object(imp.IdentityService, "get_db_connection", new=AsyncMock(return_value=conn)),
+        patch.object(imp, "init_asyncpg_connection", new=AsyncMock()) as init,
+    ):
+        await imp.amain([], json.dumps(DOC))
+    init.assert_awaited_once_with(conn)
