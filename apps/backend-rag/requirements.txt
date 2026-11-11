@@ -71,7 +71,7 @@ h2>=4.4.1  # transitive via httpx; CVE-2026-71554 affects 4.4.0. Named here
 #   in the lock is not a constraint, it is a snapshot (W98).
 langchain-core>=1.6.1  # Updated 2026-03-14: patch fixes for streaming + callbacks
 langchain-anthropic>=1.7.0  # Required for KG LangGraph orchestrator
-langchain-openai>=1.6.0  # Required for KG LangGraph orchestrator fallback
+langchain-openai>=1.7.4  # Required for KG LangGraph orchestrator fallback
 langsmith>=0.11.0  # Observability: @traceable on RAG nodes + KG nodes
 # langchain-google-genai removed to resolve conflicts
 
@@ -83,7 +83,7 @@ urllib3>=2.0.0  # Required by selenium, types-requests
 sse-starlette>=3.4.8  # Updated 2026-03-14: SSE disconnect handling improvements
 
 # Web Scraping (Peraturan Spider & Putusan Spider)
-playwright>=1.62.0  # Security and browser updates
+playwright>=1.64.1  # Security and browser updates
 
 # Authentication
 PyJWT[crypto]==2.15.1  # Security fix: CVE-2026-32597 crit header validation
@@ -118,8 +118,8 @@ prometheus-fastapi-instrumentator>=8.1.0
 # Old versions required protobuf<5.0, new versions require protobuf>=5.0
 # Now compatible with google-cloud packages
 opentelemetry-api>=1.45.1
-opentelemetry-sdk>=1.45.1
-opentelemetry-instrumentation-fastapi>=0.65b0
+opentelemetry-sdk>=1.45.2
+opentelemetry-instrumentation-fastapi>=0.66b2
 opentelemetry-exporter-otlp-proto-grpc>=1.45.1
 opentelemetry-exporter-otlp-proto-http>=1.45.1  # For Grafana Cloud (HTTP + auth)
 googleapis-common-protos>=1.75.1  # Fix pkg_resources deprecation warning
