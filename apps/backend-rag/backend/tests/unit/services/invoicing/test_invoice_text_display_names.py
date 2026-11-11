@@ -54,6 +54,10 @@ def test_registry_has_exactly_the_four_expected_issuers():
     assert {k: e.company_name for k, e in ENTITIES.items()} == EXPECTED_NAMES
 
 
+def test_bank_account_holders_are_the_four_capital_legal_names():
+    assert {k: e.bank_account_name for k, e in ENTITIES.items()} == EXPECTED_NAMES
+
+
 @pytest.mark.parametrize("key", sorted(EXPECTED_NAMES))
 def test_pdf_prints_uppercase_issuer_name_on_letterhead_and_footer(key):
     text = render(ENTITIES[key], practice_type=DISPLAY_NAME)
@@ -61,9 +65,9 @@ def test_pdf_prints_uppercase_issuer_name_on_letterhead_and_footer(key):
     lines = [line.strip() for line in text.splitlines()]
     assert name in lines, "letterhead line"
     assert f"{name} | Bali, Indonesia" in text, "footer line"
-    holder = f"Account Name:\n{ENTITIES[key].bank_account_name}"
-    assert holder in text, "the bank holder stays as the bank records it"
-    assert not re.search(r"\b(PT|CV)\.", text.replace(holder, "")), "no dot after PT/CV"
+    holder = f"Account Name:\n{EXPECTED_NAMES[key]}"
+    assert holder in text, "the bank holder prints in capitals, same as the legal name"
+    assert not re.search(r"\b(PT|CV)\.", text), "no dot after PT/CV anywhere on the page"
 
 
 @pytest.mark.parametrize("key", sorted(EXPECTED_NAMES))
