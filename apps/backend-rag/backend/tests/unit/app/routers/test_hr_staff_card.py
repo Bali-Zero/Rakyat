@@ -204,3 +204,28 @@ async def test_card_queries_use_an_explicit_column_list():
     assert card is not None and card["profile"]["legal_name"] == "Fake Legal Name"
     conn.fetchrow = AsyncMock(return_value=None)
     assert await HRService(pool).get_card_by_email("nobody@balizero.com") is None
+
+
+# ─── the pre-existing employee read: HR notes are admin-only ───
+
+
+def _employee_service() -> AsyncMock:
+    service = AsyncMock()
+    service.get_employee_by_email = AsyncMock(return_value={"id": 7})
+    service.get_employee = AsyncMock(
+        return_value={"id": 7, "full_name": "Fake Member", "notes": "fake hr note"}
+    )
+    return service
+
+
+def test_member_self_read_of_the_employee_row_has_no_notes(make_client):
+    res = make_client(MEMBER, _employee_service()).get("/api/hr/employees/7")
+    assert res.status_code == 200
+    assert "notes" not in res.json()
+    assert res.json()["full_name"] == "Fake Member"
+
+
+def test_admin_read_of_the_employee_row_still_has_notes(make_client):
+    res = make_client(ADMIN, _employee_service()).get("/api/hr/employees/7")
+    assert res.status_code == 200
+    assert res.json()["notes"] == "fake hr note"

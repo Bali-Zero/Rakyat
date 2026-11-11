@@ -395,6 +395,8 @@ async def get_employee(
     emp = await service.get_employee(employee_id)
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
+    if not is_hr_admin(current_user):
+        emp = {k: v for k, v in emp.items() if k != "notes"}  # HR free text is admin-only
     return emp
 
 
