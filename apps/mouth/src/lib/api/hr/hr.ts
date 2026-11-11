@@ -47,6 +47,42 @@ export interface HrCapabilities {
 export const getCapabilities = () =>
   api.get<HrCapabilities>(`${BASE}/me/capabilities`);
 
+// Own staff card — the member's own values in full, without the HR notes.
+export interface HrContract {
+  number?: string | null;
+  file_id?: string | null;
+}
+export interface HrStaffCard {
+  employee_id: number;
+  full_name: string | null;
+  role: string | null;
+  department: string | null;
+  hire_date: string | null;
+  is_active: boolean;
+  ptkp_status: string | null;
+  base_salary_idr: number | null;
+  npwp: string | null;
+  bpjs_kesehatan_number: string | null;
+  bpjs_ketenagakerjaan_number: string | null;
+  bank_name: string | null;
+  bank_account: string | null;
+  bank_account_holder: string | null;
+  legal_name: string | null;
+  nik: string | null;
+  birth_place: string | null;
+  birth_date: string | null;
+  gender: string | null;
+  address: string | null;
+  religion: string | null;
+  marital_status: string | null;
+  employer_entity: string | null;
+  unit: string | null;
+  contract: HrContract | null;
+  docs: Record<string, string>;
+  end_date: string | null;
+}
+export const getMyCard = () => api.get<HrStaffCard>(`${BASE}/me/card`);
+
 // Dashboard
 export const getDashboard = () => api.get<AdminDashboard>(`${BASE}/dashboard`);
 export const getMyDashboard = () =>

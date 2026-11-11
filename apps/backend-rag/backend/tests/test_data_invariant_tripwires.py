@@ -1069,6 +1069,18 @@ def test_seeder_does_not_read_a_pin_from_the_committed_roster() -> None:
     )
 
 
+def test_seeder_never_reactivates_an_existing_member() -> None:
+    """A reseed must not flip a former employee back to active: `active = true`
+    belongs to the INSERT of a new row only, never to an UPDATE."""
+    path = _repo_root() / "apps/backend-rag/backend/scripts/seed_users.py"
+    src = path.read_text(encoding="utf-8")
+    updates = [part.split('"""')[0] for part in src.split("UPDATE team_members")[1:]]
+    assert len(updates) == 2, "seed_users.py UPDATE statements changed; re-check this tripwire"
+    for update in updates:
+        assert "active" not in update, "a seed UPDATE touches `active` again"
+    assert "active, created_at" in src, "the INSERT of a new member must still set active"
+
+
 def test_the_voa_prices_are_the_ones_the_owner_ruled():
     """e-VOA 750.000 IDR, extension 850.000 IDR — ruled by the owner on
     2026-08-31, reversing his own 2026-07-24 directive that had moved issuance

@@ -9,6 +9,7 @@ from __future__ import annotations
 import calendar
 import logging
 from datetime import date, datetime, timedelta, timezone
+from enum import Enum
 from typing import Any
 
 import asyncpg
@@ -37,6 +38,21 @@ def business_today() -> date:
     return (datetime.now(timezone.utc) + timedelta(hours=8)).date()
 
 
+class HRCardCode(str, Enum):
+    """The closed set of card failure codes (STAFF_CARD.md)."""
+
+    DB_ERROR = "db_error"
+
+
+class HRCardError(Exception):
+    """A card operation failed. Carries a code from HRCardCode only: a driver or
+    pydantic message can quote the personal value being handled, so none propagates."""
+
+    def __init__(self, code: HRCardCode) -> None:
+        super().__init__(code.value)
+        self.code = code
+
+
 class HRService:
     """HR/Payroll business logic service."""
 
@@ -55,7 +71,14 @@ class HRService:
                 WHERE e.is_active = TRUE
                 ORDER BY tm.full_name
             """)
-            return [dict(r) for r in rows]
+            return [self._legacy_row(r) for r in rows]
+
+    @staticmethod
+    def _legacy_row(row: Any) -> dict[str, Any]:
+        """Legacy employee shape: the card `profile` is served only by the card route."""
+        data = dict(row)
+        data.pop("profile", None)
+        return data
 
     async def get_employee(self, employee_id: int) -> dict[str, Any] | None:
         """Get employee by HR employee ID."""
@@ -69,7 +92,7 @@ class HRService:
             """,
                 employee_id,
             )
-            return dict(row) if row else None
+            return self._legacy_row(row) if row else None
 
     async def get_employee_by_email(self, email: str) -> dict[str, Any] | None:
         """Get employee by team member email."""
@@ -83,7 +106,7 @@ class HRService:
             """,
                 email,
             )
-            return dict(row) if row else None
+            return self._legacy_row(row) if row else None
 
     async def upsert_employee(self, data: dict[str, Any]) -> dict[str, Any]:
         """Create or update HR employee record."""
@@ -124,7 +147,33 @@ class HRService:
                 data.get("notes"),
             )
             logger.info(f"HR employee upserted: team_member_id={data['team_member_id']}")
-            return dict(row)
+            return self._legacy_row(row)
+
+    # ─── STAFF CARD (contract: STAFF_CARD.md) ───────────────────────
+
+    # Explicit column list (no `e.*`, and no `notes`: HR free text is never on the card).
+    _CARD_SELECT = """
+        SELECT e.id, e.team_member_id, e.hire_date, e.is_active, e.ptkp_status,
+               e.npwp, e.bpjs_kesehatan_number, e.bpjs_ketenagakerjaan_number,
+               e.bank_name, e.bank_account, e.bank_account_holder, e.profile,
+               e.base_salary_idr,
+               tm.full_name, tm.role, tm.department
+        FROM hr_employees e
+        JOIN team_members tm ON tm.id = e.team_member_id
+        WHERE tm.id = $1 AND COALESCE(tm.role, '') <> 'client' AND tm.active = true
+    """
+
+    async def get_card_for_member(self, team_member_id: str) -> dict[str, Any] | None:
+        """The staff member's HR card, keyed by the team_members PRIMARY KEY (never an email).
+
+        None when there is no hr_employees row (or the key is not a staff row).
+        """
+        try:
+            async with self.db_pool.acquire() as conn:
+                row = await conn.fetchrow(self._CARD_SELECT, team_member_id)
+        except Exception:
+            raise HRCardError(HRCardCode.DB_ERROR) from None
+        return dict(row) if row else None
 
     # ─── BONUS RATES ─────────────────────────────────────────────────
 
@@ -211,8 +260,7 @@ class HRService:
                 params.append(month)
                 idx += 1
                 query += (
-                    " AND EXTRACT(YEAR FROM"
-                    f" (bl.awarded_at AT TIME ZONE 'Asia/Makassar')) = ${idx}"
+                    f" AND EXTRACT(YEAR FROM (bl.awarded_at AT TIME ZONE 'Asia/Makassar')) = ${idx}"
                 )
                 params.append(year)
                 idx += 1
