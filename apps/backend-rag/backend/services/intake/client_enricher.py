@@ -59,6 +59,20 @@ def _normalize_for_promotion(value: Any) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", str(value)).upper()
 
 
+# A document date outside this window is an OCR/placeholder artefact, never a real
+# expiry or birth date. date.min / date.max matter most: asyncpg encodes them as
+# -infinity / infinity, which made client_expiry_alerts_view fail on read.
+_PLAUSIBLE_MIN = date(1900, 1, 1)
+_PLAUSIBLE_MAX = date(2100, 12, 31)
+
+
+def _plausible(d: date) -> date | None:
+    if _PLAUSIBLE_MIN <= d <= _PLAUSIBLE_MAX:
+        return d
+    logger.warning("client_enricher: date out of plausible range — skipping field")
+    return None
+
+
 def _to_date(value: Any) -> date | None:
     """Coerce an extracted date string to a ``date``.
 
@@ -69,13 +83,13 @@ def _to_date(value: Any) -> date | None:
     if value is None:
         return None
     if isinstance(value, date):
-        return value
+        return _plausible(value)
     s = str(value).strip()
     if not s:
         return None
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%Y/%m/%d"):
         try:
-            return datetime.strptime(s, fmt).date()
+            return _plausible(datetime.strptime(s, fmt).date())
         except ValueError:
             continue
     logger.warning("client_enricher: unparseable date %r — skipping field", s)
