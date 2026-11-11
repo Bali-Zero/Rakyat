@@ -243,6 +243,32 @@ describe("NewPracticePage", () => {
     ).toEqual([]);
   });
 
+  it("with no client chosen there is no suggestion request and Create cannot send anything", async () => {
+    const user = userEvent.setup();
+    const original = stableSearchParams.get.getMockImplementation();
+    stableSearchParams.get.mockImplementation(() => null);
+    try {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const { default: NewPracticePage } = await import("./page");
+      render(
+        <QueryClientProvider client={queryClient}>
+          <NewPracticePage />
+        </QueryClientProvider>,
+      );
+      const create = await screen.findByRole("button", {
+        name: "Create Process",
+      });
+      expect(create).toBeDisabled();
+      await user.click(create);
+      expect(mockSuggest).not.toHaveBeenCalled();
+      expect(mockCreatePractice).not.toHaveBeenCalled();
+    } finally {
+      if (original) stableSearchParams.get.mockImplementation(original);
+    }
+  });
+
   it("a 409 on a typed name shows the chooser and the pick is sent on the next Create", async () => {
     const user = userEvent.setup();
     mockCreatePractice.mockRejectedValueOnce(

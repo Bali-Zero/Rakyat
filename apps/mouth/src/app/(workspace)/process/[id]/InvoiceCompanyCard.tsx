@@ -39,6 +39,9 @@ export function InvoiceCompanyCard({ practice, onSaved }: Props) {
     null,
   );
   const [isSaving, setIsSaving] = useState(false);
+  // Only the field's own Clear / "No company" choice (the shared EMPTY value) is an
+  // intent to remove the company; an empty "Another company" draft is not.
+  const [clearIntent, setClearIntent] = useState(false);
   const hasCompany = Boolean(practice.invoice_company_id);
   const baseline = useRef(practice.invoice_company_id ?? null);
   // What a 409 was computed for: a chooser or a late 409 for another client or
@@ -63,6 +66,7 @@ export function InvoiceCompanyCard({ practice, onSaved }: Props) {
     if (wasClean) {
       setValue(savedValue(practice));
       setLabel(null);
+      setClearIntent(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [practice.invoice_company_id]);
@@ -71,6 +75,11 @@ export function InvoiceCompanyCard({ practice, onSaved }: Props) {
   const incomplete = invoiceCompanyIncomplete(value);
   const dirty = hasCompany
     ? value.companyId !== practice.invoice_company_id
+      ? value.companyId !== null ||
+        clearIntent ||
+        Object.keys(typed).length > 0 ||
+        incomplete
+      : false
     : Object.keys(typed).length > 0 || incomplete;
 
   const save = async (override?: InvoiceCompanyValue) => {
@@ -92,6 +101,7 @@ export function InvoiceCompanyCard({ practice, onSaved }: Props) {
       });
       setValue(savedValue(updated));
       setLabel(null);
+      setClearIntent(false);
       toast.success(
         updated.invoice_company_name
           ? "Invoice company set"
@@ -135,6 +145,7 @@ export function InvoiceCompanyCard({ practice, onSaved }: Props) {
         onChange={(next) => {
           setAmbiguity(null);
           setLabel(null);
+          setClearIntent(next === EMPTY_INVOICE_COMPANY);
           setValue(next);
         }}
         savedName={label ?? practice.invoice_company_name}

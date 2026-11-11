@@ -98,6 +98,41 @@ describe("InvoiceCompanyCard", () => {
     );
   });
 
+  it('an empty "Another company" draft is not a change and never sends a Clear', async () => {
+    const user = userEvent.setup();
+    render(
+      <InvoiceCompanyCard
+        practice={practice({
+          invoice_company_id: 1,
+          invoice_company_name: "PT Synthetic A",
+        })}
+        onSaved={vi.fn()}
+      />,
+    );
+    await user.selectOptions(await screen.findByRole("combobox"), "__new__");
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("choosing No company is an explicit clear and sends null", async () => {
+    const user = userEvent.setup();
+    mockUpdate.mockResolvedValue(practice());
+    render(
+      <InvoiceCompanyCard
+        practice={practice({
+          invoice_company_id: 1,
+          invoice_company_name: "PT Synthetic A",
+        })}
+        onSaved={vi.fn()}
+      />,
+    );
+    await user.selectOptions(await screen.findByRole("combobox"), "");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenCalledWith(5, { invoice_company_id: null }),
+    );
+  });
+
   it("a saved company is never replaced by the suggestion", async () => {
     mockSuggest.mockResolvedValue({
       autofill: true,
@@ -207,6 +242,11 @@ describe("InvoiceCompanyCard", () => {
     await user.selectOptions(await screen.findByRole("combobox"), "1");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(toastError).toHaveBeenCalled());
+    expect(screen.getByRole("combobox")).toHaveValue("1");
+    mockUpdate.mockResolvedValueOnce(practice({ invoice_company_id: 1 }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(2));
+    expect(mockUpdate).toHaveBeenLastCalledWith(5, { invoice_company_id: 1 });
   });
 
   it("editing after a 409 withdraws the stale candidates", async () => {

@@ -326,6 +326,61 @@ describe("InvoiceCompanyField", () => {
     expect(screen.queryByText("PT Synthetic Lama")).toBeNull();
   });
 
+  it("a suggestion for the previous client that resolves late restores nothing", async () => {
+    let resolveOld: (v: unknown) => void = () => {};
+    mockSuggest.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveOld = resolve)),
+    );
+    mockSuggest.mockResolvedValueOnce({
+      autofill: true,
+      suggested_company_id: null,
+      companies: [],
+    });
+    const seen = vi.fn();
+    const { rerender } = render(<Harness onValue={seen} />);
+    await waitFor(() => expect(mockSuggest).toHaveBeenCalledTimes(1));
+    rerender(<Harness clientId={8} onValue={seen} />);
+    await waitFor(() => expect(mockSuggest).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      resolveOld({
+        autofill: true,
+        suggested_company_id: 11,
+        companies: [choice(11, "PT Synthetic Lama")],
+      });
+    });
+    expect(seen).not.toHaveBeenCalledWith(
+      expect.objectContaining({ companyId: 11 }),
+    );
+    expect(screen.queryByText("PT Synthetic Lama")).toBeNull();
+  });
+
+  it("a suggestion for the previous service that resolves late restores nothing", async () => {
+    let resolveOld: (v: unknown) => void = () => {};
+    mockSuggest.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveOld = resolve)),
+    );
+    mockSuggest.mockResolvedValueOnce({
+      autofill: false,
+      suggested_company_id: null,
+      companies: [],
+    });
+    const seen = vi.fn();
+    const { rerender } = render(<Harness onValue={seen} />);
+    await waitFor(() => expect(mockSuggest).toHaveBeenCalledTimes(1));
+    rerender(<Harness code="kitas_working_onshore" onValue={seen} />);
+    await waitFor(() => expect(mockSuggest).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      resolveOld({
+        autofill: true,
+        suggested_company_id: 11,
+        companies: [choice(11, "PT Synthetic Lama")],
+      });
+    });
+    expect(seen).not.toHaveBeenCalledWith(
+      expect.objectContaining({ companyId: 11 }),
+    );
+  });
+
   it("a prefill that was saved is not cleared by a later service change", async () => {
     mockSuggest.mockResolvedValue({
       autofill: true,
@@ -474,6 +529,23 @@ describe("invoice company helpers", () => {
     expect(
       invoiceCompanyParams({ companyId: null, name: "  ", npwp: "x" }),
     ).toEqual({});
+    expect(
+      invoiceCompanyParams({
+        companyId: null,
+        name: "PT Synthetic Baru",
+        npwp: "",
+      }),
+    ).toEqual({ invoice_company_name: "PT Synthetic Baru" });
+    expect(
+      invoiceCompanyParams({
+        companyId: null,
+        name: " PT Synthetic Baru ",
+        npwp: "01.234.567.8-901.000",
+      }),
+    ).toEqual({
+      invoice_company_name: "PT Synthetic Baru",
+      invoice_company_npwp: "01.234.567.8-901.000",
+    });
   });
 
   it("recognises the 409 candidates and nothing else", () => {
