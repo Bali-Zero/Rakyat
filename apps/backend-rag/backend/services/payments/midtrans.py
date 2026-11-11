@@ -376,6 +376,31 @@ class MidtransPaymentProvider:
             raise WebhookUnparseable("authoritative status is a PARTIAL refund — staff case")
         return event
 
+    async def verify_failure_event(
+        self, event: NormalizedFailureEvent
+    ) -> NormalizedFailureEvent:
+        """Failure events are verified like Paid ones (gate round 5):
+        their inbox identity derives from the UNSIGNED
+        transaction_id, so an unverified failure could poison
+        another order's dedupe key. The Status API must name the
+        same transaction and a failure-class status."""
+        http_status, body = await self._fetch_status(event.provider_session_id)
+        if http_status >= 500 or http_status == 429:
+            raise WebhookTransientError(f"Status API HTTP {http_status}")
+        tx_status = body.get("transaction_status")
+        if http_status != 200 or tx_status not in _STATUSES_WITH_NO_ACCEPTED_CHARGE:
+            raise WebhookUnparseable(
+                f"webhook claimed failure but Status API says {tx_status!r} "
+                f"(HTTP {http_status}) for order {event.provider_session_id}"
+            )
+        # The failure event identity is "{tx}:{status}:{code}"; the
+        # authoritative transaction must be its first segment.
+        if not event.provider_event_id.startswith(f"{body.get('transaction_id')}:"):
+            raise WebhookUnparseable(
+                "Status API transaction_id disagrees with failure body"
+            )
+        return event
+
     async def verify_paid_event(self, event: NormalizedPaidEvent) -> NormalizedPaidEvent:
         """Re-read the authoritative state before OP-02 acts on a Paid body.
 

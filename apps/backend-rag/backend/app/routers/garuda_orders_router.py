@@ -634,6 +634,8 @@ async def receive_payment_webhook(
         _verify = getattr(provider, "verify_paid_event", None)
     elif isinstance(event, NormalizedRefundEvent):
         _verify = getattr(provider, "verify_refund_event", None)
+    elif isinstance(event, NormalizedFailureEvent):
+        _verify = getattr(provider, "verify_failure_event", None)
     if _verify is not None:
         from backend.services.payments.midtrans import WebhookTransientError
 

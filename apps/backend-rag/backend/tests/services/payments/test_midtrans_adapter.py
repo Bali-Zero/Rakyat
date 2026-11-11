@@ -375,3 +375,36 @@ async def test_status_429_is_transient_not_refusal():
     assert isinstance(event, NormalizedPaidEvent)
     with pytest.raises(WebhookTransientError):
         await provider.verify_paid_event(event)
+
+
+@pytest.mark.asyncio
+async def test_verify_failure_event_rejects_forged_transaction_id():
+    # Signed failure body for order A carrying order B's (unsigned)
+    # transaction_id: without authoritative verification it would
+    # poison B's failure dedupe key.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"transaction_status": "expire", "transaction_id": "txn_real_A", "gross_amount": "790000.00"},
+        )
+
+    provider = _provider(handler)
+    forged = _sign(_body(status_code="407", transaction_status="expire", transaction_id="tx_victim_B"))
+    event = provider.parse_event(raw_body=json.dumps(forged).encode(), headers={})
+    assert isinstance(event, NormalizedFailureEvent)
+    with pytest.raises(WebhookUnparseable, match="disagrees"):
+        await provider.verify_failure_event(event)
+
+
+@pytest.mark.asyncio
+async def test_verify_failure_event_accepts_authoritative_failure():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"transaction_status": "expire", "transaction_id": "txn_test_1", "gross_amount": "790000.00"},
+        )
+
+    provider = _provider(handler)
+    body = _sign(_body(status_code="407", transaction_status="expire"))
+    event = provider.parse_event(raw_body=json.dumps(body).encode(), headers={})
+    assert await provider.verify_failure_event(event) is event
