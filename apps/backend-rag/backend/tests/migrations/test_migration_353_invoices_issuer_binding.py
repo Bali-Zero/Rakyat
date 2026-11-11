@@ -1,4 +1,4 @@
-"""Migration 352 DDL contracts and real guarded-upsert semantics (both variants).
+"""Migration 353 DDL contracts and real guarded-upsert semantics (both variants).
 
 Runs against ``TEST_DATABASE_URL`` like test_migration_312_*.py: it
 drops-then-rebuilds ONLY the synthetic ``public.invoices`` table it creates.
@@ -25,7 +25,7 @@ from backend.services.invoicing.invoice_service import (
 pytestmark = pytest.mark.integration
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "db" / "migrations_v2"
-MIGRATION = "352_invoices_issuer_binding.sql"
+MIGRATION = "353_invoices_issuer_binding.sql"
 
 SYNTHETIC_INVOICES_DDL = """
 CREATE TABLE public.invoices (
@@ -71,7 +71,7 @@ def _service_args(key: str, routed_at: datetime | None, practice_id: int = 7001)
     return (
         practice_id,
         500,
-        "INV-352-1",
+        "INV-353-1",
         "local_pdf",
         1_000_000.0,
         25_000.0,
@@ -103,13 +103,13 @@ def _variant_args(sql: str, key: str, routed_at: datetime | None, practice_id: i
 async def db() -> AsyncIterator[asyncpg.Connection]:
     conn = await asyncpg.connect(_dsn())
     try:
-        await conn.execute("SELECT pg_advisory_lock(hashtext('migration-352-test'))")
+        await conn.execute("SELECT pg_advisory_lock(hashtext('migration-353-test'))")
         await conn.execute("DROP TABLE IF EXISTS public.invoices")
         await conn.execute(SYNTHETIC_INVOICES_DDL)
         yield conn
     finally:
         await conn.execute("DROP TABLE IF EXISTS public.invoices")
-        await conn.execute("SELECT pg_advisory_unlock(hashtext('migration-352-test'))")
+        await conn.execute("SELECT pg_advisory_unlock(hashtext('migration-353-test'))")
         await conn.close()
 
 
@@ -265,12 +265,12 @@ async def test_second_upsert_same_key_preserves_binding_and_created_at(
     await db.fetchrow(sql, *_variant_args(sql, B_KEY, ROUTED_AT))
     first = await _row(db)
     args = list(_variant_args(sql, B_KEY, ROUTED_AT))
-    args[2] = "INV-352-2"
+    args[2] = "INV-353-2"
     row = await db.fetchrow(sql, *args)
     assert row["issuer_entity_key"] == B_KEY
     assert row["issuer_routed_at"] == ROUTED_AT
     second = await _row(db)
-    assert second["invoice_number"] == "INV-352-2", "ordinary columns still update"
+    assert second["invoice_number"] == "INV-353-2", "ordinary columns still update"
     assert second["created_at"] == first["created_at"], "created_at must never be rewritten"
     assert second["issuer_routed_at"] == ROUTED_AT
 
