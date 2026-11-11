@@ -39,7 +39,9 @@ import {
 } from "@/lib/api/hr/hr";
 import {
   acceptResponse,
+  isSameIdentity,
   useSessionIdentity,
+  type SessionIdentity,
 } from "@/lib/auth/session-identity";
 
 const INK = "text-[var(--tx-pure,var(--bz-text-1))]";
@@ -825,31 +827,43 @@ function Neutral({ children }: { children: React.ReactNode }) {
 
 export default function MyHrPage() {
   const identity = useSessionIdentity();
-  const [load, setLoad] = useState<Load>({ kind: "loading" });
+  // Every result is stored with the identity it was fetched for, and shown only
+  // while that is still the identity of this render: on a switch, the render
+  // that sees the new identity shows nothing, before any effect runs.
+  const [slot, setSlot] = useState<{
+    owner: SessionIdentity | null;
+    load: Load;
+  }>({ owner: null, load: { kind: "loading" } });
   const [open, setOpen] = useState<Panel>("pay");
+  const load: Load =
+    identity && isSameIdentity(slot.owner, identity)
+      ? slot.load
+      : { kind: "loading" };
   const me = load.kind === "ready" ? load.me : null;
 
   useEffect(() => {
-    // Whoever was shown before is gone the moment the identity moves (or is absent).
-    setLoad({ kind: "loading" });
+    setSlot({ owner: null, load: { kind: "loading" } });
     if (!identity) return;
     let live = true;
     getMyHrOverview()
       .then((res) => {
         if (!live) return;
-        setLoad(
-          acceptResponse(res, identity, res.data.team_member_id)
+        setSlot({
+          owner: identity,
+          load: acceptResponse(res, identity, res.data.team_member_id)
             ? { kind: "ready", me: res.data }
             : { kind: "changed" },
-        );
+        });
       })
       .catch((err: unknown) => {
         if (!live) return;
-        setLoad(
-          err instanceof ApiError && err.statusCode === 404
-            ? { kind: "no-record" }
-            : { kind: "error" },
-        );
+        setSlot({
+          owner: identity,
+          load:
+            err instanceof ApiError && err.statusCode === 404
+              ? { kind: "no-record" }
+              : { kind: "error" },
+        });
       });
     return () => {
       live = false;

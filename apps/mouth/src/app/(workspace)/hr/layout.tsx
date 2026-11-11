@@ -39,7 +39,7 @@ const allNavItems: NavItem[] = [
     href: "/accounting",
     label: "Accounting",
     icon: Receipt,
-    adminOnly: true,
+    adminOnly: false,
     accountingOnly: true,
   },
   {
