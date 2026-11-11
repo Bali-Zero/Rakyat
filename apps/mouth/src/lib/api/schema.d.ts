@@ -6237,6 +6237,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/crm/practices/invoice-company/suggestion": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Invoice Company Suggestion
+     * @description Companies the client is linked to and what the form should prefill for this service.
+     */
+    get: operations["invoice_company_suggestion_api_crm_practices_invoice_company_suggestion_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/crm/practices/renewals/upcoming": {
     parameters: {
       query?: never;
@@ -25598,6 +25618,12 @@ export interface components {
       family_member_id?: number | null;
       /** Internal Notes */
       internal_notes?: string | null;
+      /** Invoice Company Id */
+      invoice_company_id?: number | null;
+      /** Invoice Company Name */
+      invoice_company_name?: string | null;
+      /** Invoice Company Npwp */
+      invoice_company_npwp?: string | null;
       /** Notes */
       notes?: string | null;
       /** Practice Type Code */
@@ -25642,6 +25668,8 @@ export interface components {
       family_member_id?: number | null;
       /** Id */
       id: number;
+      /** Invoice Company Id */
+      invoice_company_id?: number | null;
       /** Payment Status */
       payment_status: string;
       /** Practice Type Id */
@@ -25683,6 +25711,12 @@ export interface components {
       expiry_date?: string | null;
       /** Internal Notes */
       internal_notes?: string | null;
+      /** Invoice Company Id */
+      invoice_company_id?: number | null;
+      /** Invoice Company Name */
+      invoice_company_name?: string | null;
+      /** Invoice Company Npwp */
+      invoice_company_npwp?: string | null;
       /** Missing Documents */
       missing_documents?: string[] | null;
       /** Notes */
@@ -39334,6 +39368,40 @@ export interface operations {
         };
         content: {
           "application/json": unknown[];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  invoice_company_suggestion_api_crm_practices_invoice_company_suggestion_get: {
+    parameters: {
+      query: {
+        client_id: number;
+        practice_type_code?: string | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
         };
       };
       /** @description Validation Error */
