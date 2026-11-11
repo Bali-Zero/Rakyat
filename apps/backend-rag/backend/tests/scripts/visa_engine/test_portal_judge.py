@@ -27,7 +27,7 @@ SEQ25_SOURCE = (
 LINE_KEYS = {
     "source_record_id", "reader", "judged_at", "http_status", "key_phrase_found",
     "checked_sentence", "page_states", "pack_assumes", "semantic_change", "notes",
-    "receipt_fetched_at", "text_sha256", "raw_answers",
+    "receipt_fetched_at", "text_sha256", "raw_answers", "silent_on",
 }  # fmt: skip
 RID = "570f2bc4-5120-561f-90ba-58fcd9507514"
 TEXT = "E31B Visa Keluarga\nAnda dapat memilih untuk tinggal\n selama 1 tahun atau 2 tahun.\n"
@@ -146,8 +146,18 @@ class TestInnocence:
         assert line["semantic_change"] == "none" and line["http_status"] == 200 and line["key_phrase_found"] is True
         assert line["checked_sentence"] == "Anda dapat memilih untuk tinggal\n selama 1 tahun atau 2 tahun."
         assert line["pack_assumes"]["products"][0]["product_code"] == "E31B"
+        assert line["silent_on"] == []
         assert line["judged_at"].endswith("Z")
         assert "selama 1 tahun" in seen[0] and "OLD PAGE" not in seen[0] and "k-e31b" in seen[0]
+
+    def test_a_silent_on_list_is_persisted_in_the_judgement_row(self, tmp_path: Path) -> None:
+        code, lines = _run(
+            tmp_path,
+            lambda _p: _answer(silent_on=["extension duration", "extension count"]),
+        )
+
+        assert code == 0
+        assert lines[0]["silent_on"] == ["extension duration", "extension count"]
 
     def test_prose_then_json_retries_once_and_uses_the_clean_answer(self, tmp_path: Path) -> None:
         first = f"Comparing the pack...\n{_answer()}"
@@ -214,8 +224,21 @@ class TestGuilt:
 
     def test_output_contract_is_prompted_and_parser_remains_strict(self) -> None:
         record = _pack()["payload"]["source_records"][0]
-        assert pj.OUTPUT_CONTRACT in pj.build_prompt(record, TEXT, {})
+        prompt = pj.build_prompt(record, TEXT, {})
+        assert pj.OUTPUT_CONTRACT in prompt
+        assert "Details the page does not mention are not disagreements." in prompt
         assert pj._parse_json('Comparing the pack...\n{"verdict": "none"}') is None
+
+    def test_a_non_list_silent_on_is_judge_output_invalid(self, tmp_path: Path) -> None:
+        calls: list[str] = []
+        code, lines = _run(
+            tmp_path,
+            lambda prompt: calls.append(prompt) or _answer(silent_on="extension duration"),
+        )
+
+        assert code == 1 and len(calls) == 1
+        assert lines[0]["semantic_change"] == "unsure"
+        assert lines[0]["notes"] == "judge_output_invalid"
 
     def test_a_sentence_not_in_the_text_is_forced_unsure_and_halts(self, tmp_path: Path) -> None:
         code, lines = _run(tmp_path, lambda _p: _answer(checked_sentence="Visa seumur hidup tersedia."))
