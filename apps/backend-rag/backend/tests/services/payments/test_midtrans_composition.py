@@ -65,3 +65,57 @@ def test_providers_carry_stable_names_for_inbox_rows():
 
     assert MidtransPaymentProvider.name == "midtrans"
     assert XenditPaymentProvider.name == "xendit"
+
+
+class _FakeConn:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def execute(self, sql, *args):
+        self.calls.append((sql, args))
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeAcquire:
+    def __init__(self, conn) -> None:
+        self._conn = conn
+
+    def __call__(self):
+        return self._conn
+
+
+class _FakePool:
+    def __init__(self, conn) -> None:
+        self.acquire = _FakeAcquire(conn)
+
+
+@pytest.mark.asyncio
+async def test_quarantine_identity_never_collides_with_paid_identity():
+    # A refused body carrying someone else's unsigned transaction_id
+    # must land under q:<digest>, never under <tx>:paid.
+    import hashlib
+
+    conn = _FakeConn()
+    repo = GarudaOrderRepository(
+        _FakePool(conn),
+        eligibility_lookup=None,
+        provider=_FakeProvider("midtrans"),
+        environment="TEST",
+        provider_name="midtrans",
+    )
+    digest = hashlib.sha256(b"refused-body").digest()
+    await repo.record_quarantined_webhook(
+        provider_name="midtrans",
+        provider_event_id="tx_victim:paid",
+        canonical_payload_sha256=digest,
+        order_id="ord_attacker",
+        reason="unexpected_state",
+    )
+    sql, args = conn.calls[0]
+    assert args[1] == f"q:{digest.hex()}"
+    assert args[1] != "tx_victim:paid"

@@ -249,6 +249,14 @@ class GarudaOrderRepository:
         disagreement, partial refund) happens BEFORE any handler
         runs, so without this insert the refusal would exist only
         as a 422 in a log — invisible to `count_quarantined`.
+
+        IDENTITY: the stored provider_event_id is `q:<sha256 of the
+        refused body>`, NEVER the event's own identity. The refused
+        body can carry an UNSIGNED transaction_id belonging to a
+        different order; storing its derived Paid identity would
+        poison that order's dedupe key and swallow its authentic
+        callback as a duplicate (gate round 4). Quarantine rows
+        live in their own namespace by construction.
         """
         async with self._pool.acquire() as conn:
             await conn.execute(
@@ -260,7 +268,7 @@ class GarudaOrderRepository:
                 ON CONFLICT (provider, provider_event_id) DO NOTHING
                 """,
                 provider_name,
-                provider_event_id,
+                f"q:{canonical_payload_sha256.hex()}",
                 canonical_payload_sha256,
                 reason,
                 order_id,
