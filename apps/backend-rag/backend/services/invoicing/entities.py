@@ -16,17 +16,17 @@ Rules:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from datetime import date, datetime, timedelta, timezone
 
-from backend.app.utils.logging_utils import get_logger
+from backend.app.metrics import invoice_issuer_unmapped_total
+from backend.app.utils.logging_utils import get_logger, sanitize_for_log
 
 logger = get_logger(__name__)
 
-WITA = timezone(timedelta(hours=8))
+WITA = timezone(timedelta(hours=8), name="WITA")
 
-# First WITA calendar day on which new invoices are routed by practice type.
+# DRAFT awaiting owner decision.
 ENTITY_ROUTING_EFFECTIVE_FROM = date(2026, 11, 12)
 
 
@@ -46,6 +46,7 @@ class InvoiceEntity:
 
     # Fields that must be non-empty before the entity can issue an invoice.
     REQUIRED_FIELDS = (
+        "key",
         "company_name",
         "tax_id",
         "bank_account_name",
@@ -119,202 +120,270 @@ ENTITIES: dict[str, InvoiceEntity] = {
 
 # ── Practice type code → entity ─────────────────────────────────────────────
 
-MANDIRI_CODES: frozenset[str] = frozenset(
+PRACTICE_TYPE_ENTITY_KEYS: dict[str, str] = {
+    **dict.fromkeys(
+        (
+            "kitas",
+            "extension_kitas",
+            "kitas_born",
+            "kitas_working_onshore",
+            "kitas_working_offshore",
+            "kitas_working_extend",
+            "kitas_freelance_onshore",
+            "kitas_freelance_offshore",
+            "kitas_remote_worker_onshore",
+            "kitas_remote_worker_offshore",
+            "kitas_remote_worker_extend",
+            "kitas_retirement_onshore",
+            "kitas_retirement_offshore",
+            "kitas_retirement_extend",
+            "kitas_investor_2yr_onshore",
+            "kitas_investor_2yr_offshore",
+            "kitas_investor_2yr_extend",
+            "kitas_spouse_1yr_onshore",
+            "kitas_spouse_1yr_offshore",
+            "kitas_spouse_1yr_extend",
+            "kitas_spouse_2yr_onshore",
+            "kitas_spouse_2yr_offshore",
+            "kitas_spouse_2yr_extend",
+            "kitas_dependent_1yr_onshore",
+            "kitas_dependent_1yr_offshore",
+            "kitas_dependent_1yr_extend",
+            "kitas_dependent_2yr_onshore",
+            "kitas_dependent_2yr_offshore",
+            "kitas_dependent_2yr_extend",
+            "kitap_application",
+            "kitap_investor_merp",
+            "kitap_retirement_merp",
+            "kitap_dependent_merp",
+            "merp_1yr",
+            "merp_2yr",
+            "new_pt",
+            "revision_pt",
+            "company_pt_pma",
+            "company_revision",
+            "company_revision_akta",
+            "company_dissolving",
+            "company_virtual_office",
+            "urgent_1_day",
+            "urgent_2_days",
+            "urgent_3_days",
+            "tax",
+            "tax_annual_company",
+            "tax_annual_company_zero",
+            "tax_annual_personal",
+            "tax_annual_personal_addl",
+            "tax_annual_pkg_a",
+            "tax_annual_pkg_b",
+            "tax_annual_pkg_c",
+            "tax_annual_pkg_d",
+            "tax_annual_reporting",
+            "tax_bpjs_employee",
+            "tax_bpjs_insurance",
+            "tax_close_pma_company",
+            "tax_efin_application",
+            "tax_lkpm_yearly",
+            "tax_monthly_basic_0_50",
+            "tax_monthly_basic_50_100",
+            "tax_monthly_basic_100_200",
+            "tax_monthly_basic_200_plus",
+            "tax_monthly_bundled_0_50",
+            "tax_monthly_bundled_50_100",
+            "tax_monthly_bundled_100_200",
+            "tax_monthly_bundled_200_plus",
+            "tax_npwp_personal_coretax",
+            "tax_npwpd_registration",
+            "tax_registration",
+            "tax_update_data_coretax",
+        ),
+        CIMB_BAYU_BALI_NOL.key,
+    ),
+    **dict.fromkeys(
+        (
+            "visa_c1_tourism",
+            "visa_c2_business",
+            "visa_c7_music_art",
+            "visa_c8_journalism",
+            "visa_c10_speaker",
+            "visa_c18_work_trial",
+            "visa_c22_internship_60d",
+            "visa_c22_internship_180d",
+            "visa_d12_business_1yr",
+            "visa_d12_business_2yr",
+            "visa_d1_tourism_1yr",
+            "visa_d1_tourism_2yr",
+            "visa_d1_tourism_5yr",
+            "visa_d2_business_1yr",
+            "visa_d2_business_2yr",
+            "visa_d2_business_5yr",
+            "visa_voa",
+            "visa_b1_voa",
+            "other_epo",
+            "other_erp",
+            "other_reset_molina",
+            "other_born_report",
+            "other_lapor_lahir_under",
+            "other_lapor_lahir_up",
+            "other_create_user_rptka",
+            "other_cancel_rptka",
+            "other_cancel_rptka_imta_wl",
+            "other_imta_rptka_only_12mo",
+            "other_imta_rptka_only_6mo_or_less",
+            "other_mutation_address",
+            "other_mutation_address_2_kanim",
+            "other_mutation_passport",
+            "other_acc_mutation",
+            "other_acc_mutation_passport",
+            "other_passport_5yr",
+            "other_passport_10yr",
+            "other_epassport_5yr",
+            "other_epassport_10yr",
+            "other_skck",
+            "other_sktt",
+            "other_domicilie",
+            "other_domicilie_sktt",
+            "other_driving_license",
+        ),
+        MANDIRI_BALI_NOL_IMPRESARIAT.key,
+    ),
+    **dict.fromkeys(
+        ("voa_extension", "ext_b1_voa", "ext_c1_tourism"),
+        BNI_BAYU_SANTERO.key,
+    ),
+}
+
+KNOWN_UNMAPPED_CODES = frozenset(
     {
-        # Visa Index C & D
-        "visa_c1_tourism",
-        "visa_c2_business",
-        "visa_c7_music_art",
-        "visa_c8_journalism",
-        "visa_c10_speaker",
-        "visa_c18_work_trial",
-        "visa_c22_internship_60d",
-        "visa_c22_internship_180d",
-        "visa_d12_business_1yr",
-        "visa_d12_business_2yr",
-        # Multiple Entry Visa: Index D (finance, 2026-11-10)
+        "accessories",
+        "extension_visa",
+        "kitas_application",
+        "open_inquiry",
+        "other_acc_boarding_pass",
+        "other_cancel_wajib_lapor",
+        "other_create_molina_express",
+        "other_custom",
+        "property_purchase",
+        "pt_pma_setup",
+        "tax_consulting",
+        "visa",
+        "visa_bridging",
+    }
+)
+
+ROUTING_REVIEW_GROUPS = {
+    "d1_d2": (
         "visa_d1_tourism_1yr",
         "visa_d1_tourism_2yr",
         "visa_d1_tourism_5yr",
         "visa_d2_business_1yr",
         "visa_d2_business_2yr",
         "visa_d2_business_5yr",
-        # VOA (new)
-        "visa_voa",
-        "visa_b1_voa",
-        # Other services
-        "other_epo",
-        "other_erp",
-        "other_reset_molina",
-        "other_born_report",
-        "other_lapor_lahir_under",
-        "other_lapor_lahir_up",
-        "other_create_user_rptka",
-        "other_cancel_rptka",
-        "other_cancel_rptka_imta_wl",
-        "other_imta_rptka_only_12mo",
-        "other_imta_rptka_only_6mo_or_less",
-        "other_mutation_address",
-        "other_mutation_address_2_kanim",
-        "other_mutation_passport",
-        "other_acc_mutation",
-        "other_acc_mutation_passport",
-        # Passport and civil documents
-        "other_passport_5yr",
-        "other_passport_10yr",
-        "other_epassport_5yr",
-        "other_epassport_10yr",
-        "other_skck",
-        "other_sktt",
-        "other_domicilie",
-        "other_domicilie_sktt",
-        "other_driving_license",
-    }
-)
-
-# Extend VOA, Extend C1. No dedicated D12 extension code exists in the repo.
-BNI_CODES: frozenset[str] = frozenset(
-    {
-        "voa_extension",
-        "ext_b1_voa",
-        "ext_c1_tourism",
-    }
-)
-
-# Explicit so the CIMB set does not depend on the default.
-CIMB_CODES: frozenset[str] = frozenset(
-    {
-        # KITAS / KITAP and extensions
-        "kitas",
-        "extension_kitas",
-        "kitas_born",
-        "kitas_working_onshore",
-        "kitas_working_offshore",
-        "kitas_working_extend",
-        "kitas_freelance_onshore",
-        "kitas_freelance_offshore",
-        "kitas_remote_worker_onshore",
-        "kitas_remote_worker_offshore",
-        "kitas_remote_worker_extend",
-        "kitas_retirement_onshore",
-        "kitas_retirement_offshore",
-        "kitas_retirement_extend",
-        "kitas_investor_2yr_onshore",
-        "kitas_investor_2yr_offshore",
-        "kitas_investor_2yr_extend",
-        "kitas_spouse_1yr_onshore",
-        "kitas_spouse_1yr_offshore",
-        "kitas_spouse_1yr_extend",
-        "kitas_spouse_2yr_onshore",
-        "kitas_spouse_2yr_offshore",
-        "kitas_spouse_2yr_extend",
-        "kitas_dependent_1yr_onshore",
-        "kitas_dependent_1yr_offshore",
-        "kitas_dependent_1yr_extend",
-        "kitas_dependent_2yr_onshore",
-        "kitas_dependent_2yr_offshore",
-        "kitas_dependent_2yr_extend",
-        "kitap_application",
-        "kitap_investor_merp",
-        "kitap_retirement_merp",
-        "kitap_dependent_merp",
-        "merp_1yr",
-        "merp_2yr",
-        # Company
-        "new_pt",
-        "revision_pt",
-        "company_pt_pma",
-        "company_revision",
-        "company_revision_akta",
-        "company_dissolving",
-        "company_virtual_office",
-        # Urgent surcharges
+    ),
+    "retired": (
         "urgent_1_day",
         "urgent_2_days",
         "urgent_3_days",
-        # Tax: unchanged for now
-        "tax",
-        "tax_annual_company",
-        "tax_annual_company_zero",
-        "tax_annual_personal",
-        "tax_annual_personal_addl",
-        "tax_annual_pkg_a",
-        "tax_annual_pkg_b",
-        "tax_annual_pkg_c",
-        "tax_annual_pkg_d",
-        "tax_annual_reporting",
-        "tax_bpjs_employee",
-        "tax_bpjs_insurance",
-        "tax_close_pma_company",
-        "tax_efin_application",
-        "tax_lkpm_yearly",
-        "tax_monthly_basic_0_50",
-        "tax_monthly_basic_50_100",
-        "tax_monthly_basic_100_200",
-        "tax_monthly_basic_200_plus",
-        "tax_monthly_bundled_0_50",
-        "tax_monthly_bundled_50_100",
-        "tax_monthly_bundled_100_200",
-        "tax_monthly_bundled_200_plus",
-        "tax_npwp_personal_coretax",
-        "tax_npwpd_registration",
-        "tax_registration",
-        "tax_update_data_coretax",
-    }
-)
-
-ENTITY_CODES: Mapping[str, frozenset[str]] = {
-    MANDIRI_BALI_NOL_IMPRESARIAT.key: MANDIRI_CODES,
-    BNI_BAYU_SANTERO.key: BNI_CODES,
-    CIMB_BAYU_BALI_NOL.key: CIMB_CODES,
+        "other_driving_license",
+        "other_create_molina_express",
+    ),
 }
 
 
-def _issue_date_wita(invoice_created_at: datetime | None, now: datetime | None) -> date:
-    moment = invoice_created_at or now or datetime.now(tz=timezone.utc)
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=timezone.utc)
-    return moment.astimezone(WITA).date()
+def _normalize_code(practice_type_code: str | None) -> str | None:
+    if practice_type_code is None:
+        return None
+    if not isinstance(practice_type_code, str):
+        raise TypeError("practice_type_code must be str or None")
+    return practice_type_code.strip().lower()
+
+
+def _assert_registry_keys() -> None:
+    for registry_key, entity in ENTITIES.items():
+        if registry_key != entity.key:
+            raise ValueError("Invoice entity registry key does not match entity key")
+
+
+def _default_entity() -> InvoiceEntity:
+    _assert_registry_keys()
+    default = ENTITIES.get(DEFAULT_ENTITY_KEY)
+    if default is None or default.missing_fields():
+        raise ValueError("Default invoice entity is incomplete")
+    return default
+
+
+def _unmapped_labels(code: str | None) -> tuple[str, str, str]:
+    if code is None:
+        return "__none__", "none", "__none__"
+    if not code:
+        return "__empty__", "empty", "__empty__"
+    if code in KNOWN_UNMAPPED_CODES:
+        return code, "known_unmapped", code
+    return "__other__", "unknown", code
 
 
 def entity_key_for_code(practice_type_code: str | None) -> str:
-    """Entity key the code is mapped to; unknown or empty codes map to CIMB."""
-    code = (practice_type_code or "").strip().lower()
-    for key, codes in ENTITY_CODES.items():
-        if code in codes:
-            return key
+    """Return a mapped issuer key or the observable default fallback."""
+    code = _normalize_code(practice_type_code)
+    if code is not None and code in PRACTICE_TYPE_ENTITY_KEYS:
+        return PRACTICE_TYPE_ENTITY_KEYS[code]
+
+    metric_code, code_kind, log_code = _unmapped_labels(code)
+    safe_code = sanitize_for_log(log_code, max_len=128)
+    context = {
+        "event": "invoice_issuer_unmapped",
+        "practice_type_code": safe_code,
+        "code_kind": code_kind,
+        "fallback_entity_key": DEFAULT_ENTITY_KEY,
+        "counter": "zantara_invoice_issuer_unmapped_total",
+        "counter_increment": 1,
+    }
+    logger.warning(
+        "invoice_issuer_unmapped practice_type_code=%s fallback_entity_key=%s",
+        safe_code,
+        DEFAULT_ENTITY_KEY,
+        extra={"context": context},
+    )
+    invoice_issuer_unmapped_total.labels(metric_code, code_kind).inc()
     return DEFAULT_ENTITY_KEY
 
 
 def resolve_invoice_entity(
     practice_type_code: str | None,
-    invoice_created_at: datetime | None = None,
-    *,
-    now: datetime | None = None,
+    routed_at: datetime,
 ) -> InvoiceEntity:
-    """Pick the issuing entity for one invoice.
-
-    ``invoice_created_at`` is ``invoices.created_at`` of the existing row for
-    the practice (regenerate); ``None`` means a new invoice, dated ``now``.
-    """
-    default = ENTITIES[DEFAULT_ENTITY_KEY]
-
-    if _issue_date_wita(invoice_created_at, now) < ENTITY_ROUTING_EFFECTIVE_FROM:
-        return default
+    """Resolve a complete issuer from an aware database routing instant."""
+    _normalize_code(practice_type_code)
+    if not isinstance(routed_at, datetime):
+        raise TypeError("routed_at must be a datetime")
+    if routed_at.tzinfo is None or routed_at.utcoffset() is None:
+        raise ValueError("routed_at must be timezone-aware")
 
     key = entity_key_for_code(practice_type_code)
-    entity = ENTITIES.get(key, default)
-    if entity.key == default.key:
+    default = _default_entity()
+    if routed_at.astimezone(WITA).date() < ENTITY_ROUTING_EFFECTIVE_FROM:
+        return default
+
+    entity = ENTITIES.get(key)
+    if entity is not None and not entity.missing_fields():
         return entity
 
-    missing = entity.missing_fields()
-    if missing:
-        logger.warning(
-            "Invoice entity %s incomplete (missing: %s) for practice type %s; falling back to %s",
-            entity.key,
-            ", ".join(missing),
-            practice_type_code,
-            default.key,
-        )
-        return default
-    return entity
+    reason = "mapped_entity_missing" if entity is None else "mapped_entity_incomplete"
+    missing_fields = [] if entity is None else entity.missing_fields()
+    normalized_code = _normalize_code(practice_type_code)
+    logger.error(
+        "invoice_issuer_fallback_default practice_type_code=%s configured_entity_key=%s fallback_entity_key=%s",
+        sanitize_for_log(normalized_code, max_len=128),
+        key,
+        default.key,
+        extra={
+            "context": {
+                "event": "invoice_issuer_fallback_default",
+                "reason": reason,
+                "practice_type_code": sanitize_for_log(normalized_code, max_len=128),
+                "configured_entity_key": key,
+                "missing_fields": missing_fields,
+                "fallback_entity_key": default.key,
+            }
+        },
+    )
+    return default

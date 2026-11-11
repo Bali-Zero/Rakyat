@@ -77,6 +77,11 @@ public_endpoint_access_by_ip = safe_register_counter(
 # Cache Metrics
 cache_hits = safe_register_counter("zantara_cache_hits_total", "Total cache hits")
 cache_misses = safe_register_counter("zantara_cache_misses_total", "Total cache misses")
+invoice_issuer_unmapped_total = safe_register_counter(
+    "zantara_invoice_issuer_unmapped_total",
+    "Invoice issuer routing fallbacks for unmapped practice type codes",
+    ["practice_type_code", "code_kind"],
+)
 cache_set_operations = safe_register_counter(
     "zantara_cache_set_operations_total",
     "Total cache set operations",
