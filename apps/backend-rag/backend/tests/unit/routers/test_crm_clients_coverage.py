@@ -175,9 +175,9 @@ def test_client_update_normalize_gender():
     from backend.app.routers.crm_clients import ClientUpdate
 
     u = ClientUpdate(gender="M")
-    assert u.gender == "male"
+    assert u.gender == "M"
     u2 = ClientUpdate(gender="F")
-    assert u2.gender == "female"
+    assert u2.gender == "F"
 
 
 def test_client_update_tax_consultant_valid():

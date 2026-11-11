@@ -30,6 +30,7 @@ from backend.app.utils.json_utils import from_jsonb, to_jsonb
 from backend.core.cache import invalidate_cache
 from backend.services.crm.admin_document_visibility import admin_document_not_team_deleted_clause
 from backend.services.crm.client_attention import build_client_attention, today_wita
+from backend.services.crm.gender import normalize_gender_lenient
 from backend.services.crm.permit_label import resolve_permit_label
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 
@@ -344,12 +345,8 @@ async def _auto_ocr_passport(db_pool: Any, client_id: int, file_id: str) -> dict
                     extracted[date_field] = f"{parts[2]}-{parts[1]}-{parts[0]}"
 
         # Normalize gender (MALE/FEMALE → M/F)
-        if extracted.get("gender"):
-            g = extracted["gender"].upper()
-            if g in ["MALE", "M"]:
-                extracted["gender"] = "M"
-            elif g in ["FEMALE", "F"]:
-                extracted["gender"] = "F"
+        if "gender" in extracted:
+            extracted["gender"] = normalize_gender_lenient(extracted.get("gender"))
 
         # Name match verification
         name_match_ratio = None
@@ -394,9 +391,10 @@ async def _auto_ocr_passport(db_pool: Any, client_id: int, file_id: str) -> dict
                         "Skipping invalid passport expiry_date format for client %s", client_id
                     )
 
-            if extracted.get("gender"):
+            ocr_gender = normalize_gender_lenient(extracted.get("gender"))
+            if ocr_gender:
                 update_parts.append(f"gender = ${param_idx}")
-                params.append(extracted["gender"][0].upper())
+                params.append(ocr_gender)
                 param_idx += 1
 
             if extracted.get("date_of_birth"):

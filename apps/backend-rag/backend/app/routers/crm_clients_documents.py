@@ -25,6 +25,7 @@ from backend.app.utils.error_handlers import handle_database_error
 from backend.app.utils.json_utils import to_jsonb
 from backend.app.utils.logging_utils import get_logger
 from backend.core.cache import invalidate_cache
+from backend.services.crm.gender import normalize_gender_lenient
 
 logger = get_logger(__name__)
 
@@ -343,11 +344,7 @@ Use null for unclear fields. Return ONLY JSON."""
         extracted["nationality"] = normalize_nationality(extracted.get("nationality"))
         extracted["date_of_birth"] = normalize_date(extracted.get("date_of_birth"))
         extracted["expiry_date"] = normalize_date(extracted.get("expiry_date"))
-        gender_raw = extracted.get("gender", "")
-        if gender_raw and len(gender_raw) > 0:
-            extracted["gender"] = gender_raw[0].upper()
-        else:
-            extracted["gender"] = None
+        extracted["gender"] = normalize_gender_lenient(extracted.get("gender"))
 
         # Build warnings
         warnings: list[str] = []
@@ -442,9 +439,10 @@ Use null for unclear fields. Return ONLY JSON."""
                 except ValueError:
                     logger.warning("Passport OCR: invalid expiry_date format in persist mode")
 
-            if extracted.get("gender"):
+            ocr_gender = normalize_gender_lenient(extracted.get("gender"))
+            if ocr_gender:
                 update_parts.append(f"gender = ${param_idx}")
-                params.append(extracted["gender"])  # Already normalized to M or F
+                params.append(ocr_gender)
                 param_idx += 1
 
             if extracted.get("date_of_birth"):

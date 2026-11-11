@@ -238,6 +238,13 @@ def normalize_date(date_str: str) -> str | None:
     return None
 
 
+def gender_letter(sex: object) -> str | None:
+    """M / F, or None for anything else. Same rule as backend/services/crm/gender.py; this
+    script runs standalone, so the rule is repeated here rather than imported."""
+    key = sex.strip().lower() if isinstance(sex, str) else ""
+    return {"m": "M", "male": "M", "f": "F", "female": "F"}.get(key)
+
+
 async def update_client(conn: asyncpg.Connection, client_id: int, data: dict, dry_run: bool) -> int:
     """Update client fields from OCR data. Only fills empty fields. Returns count of fields updated."""
     updated = 0
@@ -245,7 +252,7 @@ async def update_client(conn: asyncpg.Connection, client_id: int, data: dict, dr
     fields_map = [
         ("passport_number", data.get("passport_number"), False),
         ("nationality", data.get("nationality"), False),
-        ("gender", data.get("sex", "")[:1].upper() if data.get("sex") else None, False),
+        ("gender", gender_letter(data.get("sex")), False),
         ("birthplace", data.get("place_of_birth"), False),
         ("date_of_birth", normalize_date(data.get("date_of_birth", "")), True),
         ("passport_expiry", normalize_date(data.get("date_of_expiry", "")), True),
