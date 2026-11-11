@@ -1,10 +1,11 @@
 import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type {
   Client,
   ClientCompanyLink,
+  ClientDocument,
   ClientProfile,
 } from "@/lib/api/crm/crm.types";
 
@@ -116,7 +117,13 @@ vi.mock("sonner", () => ({
 vi.mock("./components/OverviewTab", async (importOriginal) => ({
   // Real pure helper (section count); only the heavy component is stubbed.
   ...(await importOriginal<typeof import("./components/OverviewTab")>()),
-  OverviewTab: () => <div data-testid="OverviewTab" />,
+  // Carries the real Passport card's region id so the Documents-tab hint
+  // has something to scroll to.
+  OverviewTab: () => (
+    <div data-testid="OverviewTab">
+      <section id="passport-card" aria-label="Passport" />
+    </div>
+  ),
 }));
 vi.mock("./components/DocumentsTab", () => ({
   DocumentsTab: () => <div data-testid="DocumentsTab" />,
@@ -232,6 +239,19 @@ const companyLessProfile = (overrides: Partial<Client> = {}): ClientProfile => {
  * back into a "use client" test would not fail anything, but it would reintroduce
  * the habit this change exists to break.
  */
+const makeDoc = (
+  id: number,
+  document_type: string,
+  overrides: Partial<ClientDocument> = {},
+): ClientDocument => ({
+  id,
+  client_id: 7,
+  document_type,
+  document_category: "personal" as ClientDocument["document_category"],
+  status: "verified",
+  ...overrides,
+});
+
 const CONSULTANTS = [
   { value: "consultant.one@example.test", label: "Consultant One" },
   { value: "consultant.two@example.test", label: "Consultant Two" },
@@ -721,10 +741,11 @@ describe("ClientDetailClient", () => {
     const { ClientDetailClient } = await import("./ClientDetailClient");
     render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
 
-    const selects = Array.from(
-      document.querySelectorAll("select"),
-    ).filter((el) =>
-      Array.from(el.options).some((o) => o.value === "consultant.one@example.test"),
+    const selects = Array.from(document.querySelectorAll("select")).filter(
+      (el) =>
+        Array.from(el.options).some(
+          (o) => o.value === "consultant.one@example.test",
+        ),
     ) as HTMLSelectElement[];
     expect(selects.length).toBeGreaterThanOrEqual(1);
     for (const select of selects) {
@@ -816,5 +837,70 @@ describe("ClientDetailClient", () => {
     await user.click(screen.getByRole("button", { name: "Add company" }));
 
     expect(await screen.findByTestId("AddCompanyModal")).toBeInTheDocument();
+  });
+
+  // Trigger: staff opened Documents, saw no passport and assumed it was lost —
+  // the tab hides live passports (they live in Overview › Passport) silently.
+  describe("Documents tab passport hint", () => {
+    it("shows no hint when the client has no passport document", async () => {
+      const user = userEvent.setup();
+      mockUseClientDetail.mockReturnValue({
+        data: { ...makeProfile(), documents: [makeDoc(1, "ktp")] },
+        isLoading: false,
+        error: null,
+      });
+      const { ClientDetailClient } = await import("./ClientDetailClient");
+      render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+      await user.click(screen.getByRole("button", { name: "Documents (1)" }));
+
+      expect(await screen.findByTestId("DocumentsTab")).toBeInTheDocument();
+      expect(screen.queryByText(/passport document/i)).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Open Passport" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("names the hidden passport and links to Overview › Passport", async () => {
+      const user = userEvent.setup();
+      const scrollIntoView = vi.fn();
+      const originalScrollIntoView = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = scrollIntoView;
+      onTestFinished(() => {
+        Element.prototype.scrollIntoView = originalScrollIntoView;
+      });
+      mockUseClientDetail.mockReturnValue({
+        data: {
+          ...makeProfile(),
+          documents: [makeDoc(1, "ktp"), makeDoc(2, "Passport")],
+        },
+        isLoading: false,
+        error: null,
+      });
+      const { ClientDetailClient } = await import("./ClientDetailClient");
+      render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+      // The tab count still leaves the passport out.
+      await user.click(screen.getByRole("button", { name: "Documents (1)" }));
+
+      expect(
+        screen.getByText("1 passport document is shown in Overview › Passport"),
+      ).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Open Passport" }));
+
+      expect(screen.getByRole("button", { name: "Overview" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      expect(mockRouterReplace).toHaveBeenLastCalledWith(
+        "/clients/7?tab=overview",
+        { scroll: false },
+      );
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+      expect(scrollIntoView.mock.contexts[0]).toBe(
+        screen.getByRole("region", { name: "Passport" }),
+      );
+    });
   });
 });
