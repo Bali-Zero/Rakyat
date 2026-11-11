@@ -11,7 +11,7 @@ crm_enhanced_documents.py, which writes to `documents`.
 """
 
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from backend.app.utils.logging_utils import get_logger
@@ -27,7 +27,12 @@ CLIENT_DOCUMENT_DATE_MAX = date(2100, 12, 31)
 
 def is_client_document_date(value: date | None) -> bool:
     """Whether a nullable client document date is safe to store or use."""
-    return value is None or CLIENT_DOCUMENT_DATE_MIN <= value <= CLIENT_DOCUMENT_DATE_MAX
+    if value is None:
+        return True
+    if isinstance(value, datetime):
+        # datetime is a date subclass but does not compare with one.
+        value = value.date()
+    return CLIENT_DOCUMENT_DATE_MIN <= value <= CLIENT_DOCUMENT_DATE_MAX
 
 
 def validate_client_document_date(value: date | None) -> date | None:

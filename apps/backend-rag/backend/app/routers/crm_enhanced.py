@@ -546,6 +546,7 @@ async def _auto_ocr_visa(
                     ).date()
                     validate_client_document_date(expiry_date_parsed)
                 except ValueError:
+                    expiry_date_parsed = None
                     logger.info(
                         "crm_enhanced.visa_expiry_unparseable",
                         extra={"raw_expiry_len": len(str(extracted.get("expiry_date")))},
@@ -1734,7 +1735,8 @@ async def update_family_member(
             elif isinstance(value, str):
                 try:
                     value = datetime.strptime(value, "%Y-%m-%d").date()
-                    validate_client_document_date(value)
+                    if field != "date_of_birth":
+                        validate_client_document_date(value)
                 except ValueError:
                     value = None
 

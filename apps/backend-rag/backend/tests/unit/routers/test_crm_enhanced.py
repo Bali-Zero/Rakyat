@@ -21,7 +21,7 @@ Plus helper functions:
 - _dispatch_ocr_by_folder
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1273,6 +1273,42 @@ class TestAutoOCRVisa:
         ):
             result = await _auto_ocr_visa(mock_db_pool, 42, "f1", doc_id=5)
         assert result["success"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("expiry", ["0001-01-01", "9999-12-31"])
+    async def test_out_of_range_expiry_never_reaches_clients_visa_expiry(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, expiry: str
+    ) -> None:
+        from backend.app.routers.crm_enhanced import _auto_ocr_visa
+
+        mock_db_conn.execute = AsyncMock()
+        ext = {
+            "visa_type": "KITAS",
+            "visa_number": "V1",
+            "expiry_date": expiry,
+            "issue_date": "2026-01-01",
+            "sponsor": "PT T",
+            "confidence": 0.9,
+        }
+        with (
+            patch(
+                "backend.app.routers.crm_enhanced._download_drive_file",
+                new=AsyncMock(return_value=(b"x", "image/jpeg")),
+            ),
+            patch("backend.app.routers.crm_enhanced._gemini_ocr", new=AsyncMock(return_value="{}")),
+            patch(
+                "backend.app.routers.crm_enhanced.extract_json_from_llm_response", return_value=ext
+            ),
+            patch("backend.app.routers.crm_enhanced.to_jsonb", return_value="{}"),
+        ):
+            await _auto_ocr_visa(mock_db_pool, 42, "f1", doc_id=5)
+
+        written = [call.args for call in mock_db_conn.execute.await_args_list]
+        assert written, "the OCR sync must still run its UPDATE"
+        assert not any("visa_expiry_date" in str(args[0]) for args in written)
+        assert not any(
+            isinstance(arg, date) and arg.year in (1, 9999) for args in written for arg in args[1:]
+        )
 
     @pytest.mark.asyncio
     async def test_exception(self, mock_db_pool: MagicMock) -> None:
