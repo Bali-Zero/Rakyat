@@ -16,6 +16,7 @@ import { ApiError } from "@/lib/api/error-handler";
 import { logger } from "@/lib/logger";
 import { fetchPortalSuperuser } from "@/lib/portal/superuser";
 import { partnerPortalNavigation, portalNavigation } from "@/types/navigation";
+import { noteSessionIdentity } from "@/lib/api/session-reset";
 import { AdminImpersonationProvider } from "@/contexts/AdminImpersonationContext";
 
 // Lazy: bottom nav is mobile-only and below-fold on desktop.
@@ -56,6 +57,13 @@ export default function PortalLayout({
     avatar: undefined as string | undefined,
     role: "client",
   });
+
+  // Cookie-only (SSO) sessions set no token, so the portal's own answer to
+  // "who is signed in" is the identity boundary: a different one drops every
+  // cached read.
+  useEffect(() => {
+    if (user.email) noteSessionIdentity(user.email);
+  }, [user.email]);
 
   // The root pre-paint script owns the user's light/dark choice. This layout
   // only declares the product persona and supplies a light fallback for local

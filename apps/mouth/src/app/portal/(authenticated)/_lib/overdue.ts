@@ -70,6 +70,14 @@ function lkpmDeadlineIso(q: number, year: number): string {
   return `${y}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+function isReadableReport(r: LKPMDraftSummary): boolean {
+  return (
+    typeof r?.quarter === "string" &&
+    /^Q[1-4]$/i.test(r.quarter) &&
+    Number.isInteger(r.year)
+  );
+}
+
 function quarterIndex(r: { quarter: string; year: number }): number | null {
   const q = Number(r.quarter.replace(/^Q/i, ""));
   return q >= 1 && q <= 4 ? r.year * 4 + (q - 1) : null;
@@ -192,6 +200,11 @@ export function usePortalLkpmHistory() {
       }>("/api/v1/lkpm/history/me");
       if (!res?.success || !Array.isArray(res.items)) {
         throw new Error("LKPM history unavailable");
+      }
+      // A row that cannot be placed in a quarter would be skipped silently
+      // and could turn into "nothing overdue": unreadable, not empty.
+      if (!res.items.every(isReadableReport)) {
+        throw new Error("LKPM history unreadable");
       }
       return res.items;
     },

@@ -336,6 +336,16 @@ describe("LKPM history unreadable is never an all-clear", () => {
     expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
   });
 
+  it("a history with an unreadable row is an error, not a clean slate", async () => {
+    mocks.get.mockResolvedValue({
+      success: true,
+      items: [{ ...Q2_FILED, id: 9, quarter: "Q9" }],
+    });
+    renderPage();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
+  });
+
   it("a reply without items is an error, not an empty history", async () => {
     mocks.get.mockResolvedValue({ success: true });
     renderPage();

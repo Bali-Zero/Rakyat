@@ -1,3 +1,4 @@
+import { onSessionReset, notifySessionReset } from "./session-reset";
 import { UserProfile } from "@/types";
 import type {
   IApiClient,
@@ -70,10 +71,6 @@ export class ApiClientBase implements IApiClient {
   // ?as_client=<id>. Seeded from localStorage and kept in sync by the
   // AdminImpersonationContext (contexts/AdminImpersonationContext.tsx).
   protected portalImpersonationClientId: number | null = null;
-  // Listeners told whenever the session identity changes (login, logout, 401
-  // teardown). Whoever caches per-account data client-side drops it here.
-  private sessionResetListeners = new Set<() => void>();
-
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
     if (typeof window !== "undefined") {
@@ -107,25 +104,12 @@ export class ApiClientBase implements IApiClient {
 
   /** Subscribe to session boundaries; returns the unsubscribe function. */
   onSessionReset(listener: () => void): () => void {
-    this.sessionResetListeners.add(listener);
-    return () => {
-      this.sessionResetListeners.delete(listener);
-    };
-  }
-
-  private notifySessionReset() {
-    for (const listener of this.sessionResetListeners) {
-      try {
-        listener();
-      } catch {
-        // one failing listener must not keep the others from clearing
-      }
-    }
+    return onSessionReset(listener);
   }
 
   setToken(token: string) {
     this.token = token;
-    this.notifySessionReset();
+    notifySessionReset();
     // A fresh token invalidates any cached probe verdict — a stale
     // "anonymous" from before login must never be replayed to a gate that
     // asks right after.
@@ -164,7 +148,7 @@ export class ApiClientBase implements IApiClient {
   }
 
   clearToken() {
-    this.notifySessionReset();
+    notifySessionReset();
     this.token = null;
     this.csrfToken = null;
     this.userProfile = null;
