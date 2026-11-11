@@ -14,6 +14,8 @@ export const NO_CAPABILITIES: HrCapabilities = {
 export interface HrCapabilitiesState {
   capabilities: HrCapabilities;
   loaded: boolean;
+  /** The read failed: the member view is shown, but nothing is known. */
+  failed: boolean;
 }
 
 /**
@@ -24,16 +26,22 @@ export function useHrCapabilities(): HrCapabilitiesState {
   const [state, setState] = useState<HrCapabilitiesState>({
     capabilities: NO_CAPABILITIES,
     loaded: false,
+    failed: false,
   });
 
   useEffect(() => {
     let mounted = true;
     getCapabilities()
       .then((capabilities) => {
-        if (mounted) setState({ capabilities, loaded: true });
+        if (mounted) setState({ capabilities, loaded: true, failed: false });
       })
       .catch(() => {
-        if (mounted) setState({ capabilities: NO_CAPABILITIES, loaded: true });
+        if (mounted)
+          setState({
+            capabilities: NO_CAPABILITIES,
+            loaded: true,
+            failed: true,
+          });
       });
     return () => {
       mounted = false;

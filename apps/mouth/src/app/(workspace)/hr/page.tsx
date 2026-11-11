@@ -151,30 +151,31 @@ export default function HRDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const { capabilities, loaded } = useHrCapabilities();
+  const { capabilities, loaded, failed } = useHrCapabilities();
 
   useEffect(() => {
     if (!loaded) return;
+    if (failed) {
+      setError("Could not load your HR access. Reload the page to retry.");
+      setLoading(false);
+      return;
+    }
     async function load() {
-      try {
-        // Everyone with an employee record gets their own card; an HR admin
-        // gets the team overview above it.
-        const [admin, personal] = await Promise.all([
-          capabilities.hr_admin ? hrApi.getDashboard() : null,
-          capabilities.has_employee_record ? hrApi.getMyDashboard() : null,
-        ]);
-        setAdminData(admin);
-        setPersonalData(personal);
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to load dashboard",
-        );
-      } finally {
-        setLoading(false);
+      // Everyone with an employee record gets their own card; an HR admin gets
+      // the team overview above it. One failing never hides the other.
+      const [admin, personal] = await Promise.allSettled([
+        capabilities.hr_admin ? hrApi.getDashboard() : null,
+        capabilities.has_employee_record ? hrApi.getMyDashboard() : null,
+      ]);
+      if (admin.status === "fulfilled") setAdminData(admin.value);
+      if (personal.status === "fulfilled") setPersonalData(personal.value);
+      if (admin.status === "rejected" && personal.status === "rejected") {
+        setError("Failed to load dashboard");
       }
+      setLoading(false);
     }
     load();
-  }, [loaded, capabilities.hr_admin, capabilities.has_employee_record]);
+  }, [loaded, failed, capabilities.hr_admin, capabilities.has_employee_record]);
 
   if (loading) {
     return (

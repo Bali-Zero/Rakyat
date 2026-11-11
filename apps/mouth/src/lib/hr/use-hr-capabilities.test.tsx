@@ -20,8 +20,13 @@ describe("useHrCapabilities", () => {
     getCapabilitiesMock.mockReturnValue(new Promise(() => {}));
     const { result } = renderHook(() => useHrCapabilities());
     expect(result.current).toEqual({
-      capabilities: NO_CAPABILITIES,
+      capabilities: {
+        hr_admin: false,
+        accounting_admin: false,
+        has_employee_record: false,
+      },
       loaded: false,
+      failed: false,
     });
   });
 
@@ -42,5 +47,6 @@ describe("useHrCapabilities", () => {
     const { result } = renderHook(() => useHrCapabilities());
     await waitFor(() => expect(result.current.loaded).toBe(true));
     expect(result.current.capabilities).toEqual(NO_CAPABILITIES);
+    expect(result.current.failed).toBe(true);
   });
 });
