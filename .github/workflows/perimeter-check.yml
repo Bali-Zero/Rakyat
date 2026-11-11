@@ -33,3 +33,10 @@ jobs:
 
       - name: Vercel ignored-build-step corpus (guilt and innocence)
         run: bash scripts/tests/test_vercel_should_build.sh
+
+      # Vercel skips a monorepo project a commit "didn't affect", judged from package.json: without
+      # @balizero/core declared there, a packages/core-only merge never got a production build.
+      - name: apps/mouth declares the workspace packages it imports
+        run: |
+          python3 scripts/ci/check_mouth_workspace_deps.py
+          python3 -m pytest -q scripts/ci/test_check_mouth_workspace_deps.py
