@@ -582,4 +582,44 @@ describe("NewPracticePage", () => {
     expect(screen.getByText("Synthetic Other Client")).toBeInTheDocument();
     expect(screen.queryByText("Synthetic Process Client")).toBeNull();
   });
+
+  it("with a slow preselected client the visible client search is locked while creating", async () => {
+    const user = userEvent.setup();
+    let resolveCreate: (v: unknown) => void = () => {};
+    mockGetClient.mockReturnValueOnce(new Promise(() => {}));
+    mockCreatePractice.mockReturnValueOnce(
+      new Promise((r) => (resolveCreate = r)),
+    );
+    mockGetClients.mockResolvedValue([
+      {
+        id: 8,
+        full_name: "Synthetic Other Client",
+        email: "other@example.test",
+      },
+    ]);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { default: NewPracticePage } = await import("./page");
+    render(
+      <QueryClientProvider client={queryClient}>
+        <NewPracticePage />
+      </QueryClientProvider>,
+    );
+    const search = await screen.findByLabelText("Search client");
+    const selects = await screen.findAllByRole("combobox");
+    await user.selectOptions(selects[0], "visa");
+    await user.selectOptions(selects[1], "SYNTHETIC_VISA");
+    await user.type(search, "Other");
+    const result = await screen.findByText("Synthetic Other Client");
+    await user.click(screen.getByRole("button", { name: "Create Process" }));
+    await waitFor(() => expect(mockCreatePractice).toHaveBeenCalledTimes(1));
+    expect(search).toBeDisabled();
+    // The outside click closes the list; if it were still open it must be locked.
+    const stillOpen = screen.queryByText("Synthetic Other Client");
+    if (stillOpen) expect(stillOpen.closest("button")).toBeDisabled();
+    expect(result).toBeDefined();
+    resolveCreate({ id: 71 });
+    await waitFor(() => expect(mockPush).toHaveBeenCalled());
+  });
 });

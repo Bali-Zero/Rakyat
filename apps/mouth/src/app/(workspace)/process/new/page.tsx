@@ -670,6 +670,7 @@ export default function NewPracticePage() {
                   type="text"
                   value={clientSearch}
                   aria-label="Search client"
+                  disabled={isLoading}
                   onChange={(e) => {
                     setClientSearch(e.target.value);
                     setShowClientDropdown(true);
@@ -688,7 +689,9 @@ export default function NewPracticePage() {
                         <button
                           key={client.id}
                           type="button"
+                          disabled={isLoading}
                           onClick={() => {
+                            if (isLoading) return;
                             userPickedClient.current = true;
                             setSelectedClient(client);
                             setFormData((prev) => ({
