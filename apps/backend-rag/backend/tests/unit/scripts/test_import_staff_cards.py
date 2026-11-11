@@ -377,3 +377,122 @@ async def test_apply_sets_a_transaction_local_lock_timeout_and_a_lock_timeout_is
     dry = _conn()
     await imp.run(dry, {"cards": DOC["cards"][:1]}, apply=False)
     dry.execute.assert_not_awaited()
+
+
+# ─── the real entry point with a fake driver: no value reaches a stream, whatever fails ───
+
+_FAKE_DRIVER = """
+import os
+mode = os.environ.get("HRIMPORT_FAKE_MODE")
+if mode:
+    import asyncpg
+    sentinel = os.environ["HRIMPORT_FAKE_SENTINEL"]
+
+    class Tx:
+        async def start(self): pass
+        async def commit(self): pass
+        async def rollback(self): pass
+
+    class Conn:
+        async def set_type_codec(self, *a, **k):
+            if mode == "codec":
+                raise RuntimeError(sentinel)
+        async def execute(self, *a): pass
+        async def fetch(self, *a):
+            if mode == "txn":
+                raise ValueError(sentinel)
+            return []
+        async def fetchval(self, *a): return None
+        def transaction(self): return Tx()
+        async def close(self):
+            if mode in ("close_rollback", "close_commit"):
+                raise OSError(sentinel)
+
+    async def connect(*a, **k):
+        if mode == "connect":
+            raise asyncpg.InvalidPasswordError(sentinel)
+        return Conn()
+
+    asyncpg.connect = connect
+"""
+
+_GHOST = {"cards": [{"email": "fake.ghost@balizero.com"}]}  # resolves to nobody
+
+
+def _entry_point(tmp_path, mode, stdin, args=("--apply",)):
+    (tmp_path / "sitecustomize.py").write_text(_FAKE_DRIVER)
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "DATABASE_URL": "postgresql://nobody@127.0.0.1:1/none",
+        "JWT_SECRET_KEY": "j" * 40,
+        "API_KEYS": "k" * 12,
+        "PYTHONPATH": f"{tmp_path}:{BACKEND_RAG}",
+        "HRIMPORT_FAKE_MODE": mode,
+        "HRIMPORT_FAKE_SENTINEL": SENTINEL,
+    }
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        input=stdin,
+        capture_output=True,
+        text=True,
+        cwd=BACKEND_RAG,
+        env=env,
+        timeout=120,
+    )
+
+
+def _assert_quiet(run, fixed):
+    assert run.returncode != 0
+    assert SENTINEL not in run.stdout and SENTINEL not in run.stderr
+    assert "Traceback" not in run.stdout and "Traceback" not in run.stderr
+    assert fixed in run.stderr + run.stdout
+
+
+@pytest.mark.parametrize(
+    ("mode", "stdin", "args", "fixed"),
+    [
+        ("connect", json.dumps(_GHOST), ("--apply",), "failed (connect_failed)"),
+        ("codec", json.dumps(_GHOST), ("--apply",), "failed (unexpected)"),
+        (
+            "txn",
+            json.dumps({"cards": [{"email": "fake.one@balizero.com"}]}),
+            ("--apply",),
+            "failed (unexpected)",
+        ),
+        ("close_rollback", json.dumps(_GHOST), ("--apply",), "failed (close_failed)"),
+        (
+            "close_commit",
+            json.dumps(_GHOST),
+            ("--apply", "--skip-not-found"),
+            "failed (close_failed)",
+        ),
+        ("ok", '{"cards": [ ' + SENTINEL, ("--apply",), "failed (bad_input)"),
+        ("ok", json.dumps([SENTINEL]), ("--apply",), "rejected:bad_document: 1"),
+        ("ok", json.dumps(SENTINEL), ("--apply",), "rejected:bad_document: 1"),
+    ],
+)
+def test_no_value_reaches_a_stream_on_any_failure_path(tmp_path, mode, stdin, args, fixed):
+    _assert_quiet(_entry_point(tmp_path, mode, stdin, args), fixed)
+
+
+def test_a_close_failure_after_a_commit_still_reports_the_committed_outcome(tmp_path):
+    run = _entry_point(
+        tmp_path, "close_commit", json.dumps(_GHOST), ("--apply", "--skip-not-found")
+    )
+    assert "committed:yes: 1" in run.stdout  # the data IS committed: say so
+    assert "failed (close_failed)" in run.stderr and run.returncode == 1
+
+
+def test_a_close_failure_after_a_rollback_reports_the_rollback(tmp_path):
+    run = _entry_point(tmp_path, "close_rollback", json.dumps(_GHOST))
+    assert "committed:no: 1" in run.stdout and "failed (close_failed)" in run.stderr
+
+
+def test_a_clean_run_through_the_fake_driver_exits_zero(tmp_path):
+    run = _entry_point(tmp_path, "ok", json.dumps({"cards": []}), ("--apply",))
+    assert run.returncode == 0 and "committed:yes: 1" in run.stdout and "failed" not in run.stderr
+
+
+def test_a_profile_nested_inside_fields_is_rejected_not_dropped():
+    card = {"email": "fake.one@balizero.com", "fields": {"profile": {"unit": SENTINEL}}}
+    assert imp.validate_card(card) == (None, "unknown_key")

@@ -35,12 +35,18 @@ sys.path.append(str(BACKEND_DIR / "backend"))
 if not os.getenv("DATABASE_URL"):
     os.environ["DATABASE_URL"] = "postgresql://localhost:5432/nuzantara_dev"
 
-from pydantic import ValidationError
+try:
+    from pydantic import ValidationError
 
-from backend.app.modules.identity.service import IdentityService
-from backend.app.services.hr.hr_card_models import StaffCardPatch
-from backend.app.services.hr.hr_service import HRCardError, HRService
-from backend.core.pg_json_codec import init_asyncpg_connection
+    from backend.app.modules.identity.service import IdentityService
+    from backend.app.services.hr.hr_card_models import StaffCardPatch
+    from backend.app.services.hr.hr_service import HRCardError, HRService
+    from backend.core.pg_json_codec import init_asyncpg_connection
+except BaseException:  # an import-time error text can quote configuration: say nothing of it
+    if __name__ != "__main__":
+        raise
+    sys.stderr.write("import_staff_cards: failed (import_failed)\n")
+    raise SystemExit(1) from None
 
 # The service logs ids on every merge; this script prints counts only.
 logging.getLogger().setLevel(logging.WARNING)
@@ -91,6 +97,8 @@ def validate_card(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
     profile = raw.get("profile", {})
     if not isinstance(fields, dict) or not isinstance(profile, dict):
         return None, "bad_shape"
+    if "profile" in fields:  # a profile nested inside `fields` is a mistake, never overwritten
+        return None, "unknown_key"
     body = {**fields, "profile": profile}
     if raw.get("is_active") is not None:
         body["is_active"] = raw["is_active"]
@@ -227,28 +235,88 @@ def format_counts(counts: Counter[str], apply: bool) -> str:
     return "\n".join(lines)
 
 
+def _fail(code: str) -> int:
+    """The ONLY way this script reports a failure: one fixed line, a code from a closed set
+    (import_failed, bad_input, connect_failed, close_failed, unexpected, or an HRCardCode
+    value), never an exception's text, repr or traceback."""
+    sys.stderr.write(f"import_staff_cards: failed ({code})\n")
+    return 1
+
+
 async def amain(argv: list[str], stdin_text: str) -> int:
-    args = parse_args(argv)  # SystemExit(2) on an unknown flag, before anything else
+    args = parse_args(argv)  # SystemExit(2) on a bad argument, with its fixed text
     try:
         document = json.loads(stdin_text)
-    except ValueError:
-        print("rejected:bad_json")  # noqa: T201
-        return 1
-    conn = await IdentityService().get_db_connection()
+    except Exception:
+        return _fail("bad_input")
     try:
-        await init_asyncpg_connection(conn)  # the production jsonb codec (S3)
+        conn = await IdentityService().get_db_connection()
+    except Exception:
+        return _fail("connect_failed")
+    code: str | None = None
+    counts: Counter[str] = Counter()
+    ok = False
+    try:
+        await init_asyncpg_connection(conn)  # the production jsonb codec
         counts, ok = await run(conn, document, args.apply, args.skip_not_found)
     except HRCardError as exc:
-        print(f"failed: {exc.code.value} (transaction rolled back)")  # noqa: T201
-        return 1
-    except Exception as exc:  # never echo the message: it may carry payload values
-        print(f"failed: {type(exc).__name__} (transaction rolled back)")  # noqa: T201
-        return 1
-    finally:
+        code = exc.code.value
+    except Exception:  # never echo the message: it may carry payload values
+        code = "unexpected"
+    close_failed = False
+    try:
         await conn.close()
+    except Exception:
+        close_failed = True
+    if code is not None:
+        _fail(code)
+        if close_failed:
+            _fail("close_failed")
+        return 1
+    # The batch outcome is printed truthfully (a committed batch IS committed) before any
+    # close failure is reported.
     print(format_counts(counts, args.apply))  # noqa: T201
+    if close_failed:
+        return _fail("close_failed")
     return 0 if ok else 1
 
 
+def _fixed_excepthook(*_: Any) -> None:
+    sys.stderr.write("import_staff_cards: failed (unexpected)\n")
+
+
+def _fixed_unraisablehook(*_: Any) -> None:
+    sys.stderr.write("import_staff_cards: ignored an internal error\n")
+
+
+def _fixed_loop_handler(*_: Any) -> None:
+    sys.stderr.write("import_staff_cards: ignored an asynchronous error\n")
+
+
+def _guarded_main(argv: list[str]) -> int:
+    """The process entry point: nothing below it can put an exception's text on a stream."""
+    sys.excepthook = _fixed_excepthook
+    sys.unraisablehook = _fixed_unraisablehook
+    logging.disable(logging.CRITICAL)  # no log record, whatever a library would have said
+    try:
+        parse_args(argv)  # fail on arguments before reading stdin (fixed text, exit 2)
+        stdin_text = sys.stdin.read()
+    except SystemExit:
+        raise
+    except BaseException:
+        return _fail("bad_input")
+    try:
+        loop = asyncio.new_event_loop()
+        loop.set_exception_handler(_fixed_loop_handler)
+        try:
+            return loop.run_until_complete(amain(argv, stdin_text))
+        finally:
+            loop.close()
+    except SystemExit:
+        raise
+    except BaseException:
+        return _fail("unexpected")
+
+
 if __name__ == "__main__":
-    sys.exit(asyncio.run(amain(sys.argv[1:], sys.stdin.read())))
+    sys.exit(_guarded_main(sys.argv[1:]))
