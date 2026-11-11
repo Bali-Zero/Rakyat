@@ -1170,7 +1170,11 @@ export default function CaseDetailPage() {
           {caseId && (
             <InvoiceCompanyCard
               practice={practice}
-              onSaved={applyPracticeUpdate}
+              onSaved={(patch) =>
+                setPractice((current) =>
+                  current ? { ...current, ...patch } : current,
+                )
+              }
             />
           )}
 

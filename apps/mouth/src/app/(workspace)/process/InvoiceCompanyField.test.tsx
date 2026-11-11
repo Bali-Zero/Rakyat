@@ -7,6 +7,7 @@ import {
   EMPTY_INVOICE_COMPANY,
   InvoiceCompanyField,
   ambiguityFromError,
+  invoiceCompanyIncomplete,
   invoiceCompanyParams,
   type InvoiceCompanyValue,
 } from "./InvoiceCompanyField";
@@ -35,7 +36,9 @@ function Harness({
   initial = EMPTY_INVOICE_COMPANY,
   onValue,
   setterRef,
+  disabled,
 }: {
+  disabled?: boolean;
   setterRef?: { current: ((v: InvoiceCompanyValue) => void) | null };
   clientId?: number;
   code?: string;
@@ -53,6 +56,7 @@ function Harness({
       value={value}
       onChange={setValue}
       autofill={autofill}
+      disabled={disabled}
     />
   );
 }
@@ -302,6 +306,113 @@ describe("InvoiceCompanyField", () => {
     );
     await waitFor(() => expect(mockSuggest).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("combobox")).toHaveValue("5");
+  });
+
+  it("the previous client's companies are not selectable after the client changes", async () => {
+    mockSuggest.mockResolvedValueOnce({
+      autofill: true,
+      suggested_company_id: null,
+      companies: [
+        choice(1, "PT Synthetic Lama"),
+        choice(2, "PT Synthetic Lama Dua"),
+      ],
+    });
+    mockSuggest.mockImplementationOnce(() => new Promise(() => {}));
+    const { rerender } = render(<Harness onValue={vi.fn()} />);
+    await screen.findByRole("combobox");
+    rerender(<Harness clientId={8} onValue={vi.fn()} />);
+    await waitFor(() => expect(mockSuggest).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(screen.queryByText("PT Synthetic Lama")).toBeNull();
+  });
+
+  it("a prefill that was saved is not cleared by a later service change", async () => {
+    mockSuggest.mockResolvedValue({
+      autofill: true,
+      suggested_company_id: 11,
+      companies: [choice(11, "PT Synthetic Satu")],
+    });
+    const seen = vi.fn();
+    const { rerender } = render(<Harness onValue={seen} />);
+    await waitFor(() => expect(screen.getByRole("combobox")).toHaveValue("11"));
+    rerender(<Harness autofill={false} onValue={seen} />);
+    rerender(
+      <Harness autofill={false} code="kitas_working_onshore" onValue={seen} />,
+    );
+    await waitFor(() => expect(mockSuggest).toHaveBeenCalledTimes(3));
+    expect(screen.getByRole("combobox")).toHaveValue("11");
+  });
+
+  it("typed inputs disappear when the parent sets a company", async () => {
+    mockSuggest.mockResolvedValue({
+      autofill: true,
+      suggested_company_id: null,
+      companies: [choice(5, "PT Synthetic Lima")],
+    });
+    const setterRef = {
+      current: null as ((v: InvoiceCompanyValue) => void) | null,
+    };
+    const user = userEvent.setup();
+    render(<Harness onValue={vi.fn()} setterRef={setterRef} />);
+    await user.selectOptions(await screen.findByRole("combobox"), "__new__");
+    expect(screen.getByLabelText("Company name")).toBeInTheDocument();
+    act(() => setterRef.current!({ companyId: 5, name: "", npwp: "" }));
+    expect(screen.queryByLabelText("Company name")).toBeNull();
+    expect(screen.getByRole("combobox")).toHaveValue("5");
+  });
+
+  it("a suggestion that arrives while the field is disabled does not write", async () => {
+    let resolveIt: (v: unknown) => void = () => {};
+    mockSuggest.mockImplementationOnce(
+      () => new Promise((r) => (resolveIt = r)),
+    );
+    const seen = vi.fn();
+    render(<Harness disabled onValue={seen} />);
+    await waitFor(() => expect(mockSuggest).toHaveBeenCalled());
+    resolveIt({
+      autofill: true,
+      suggested_company_id: 11,
+      companies: [choice(11, "PT Synthetic Satu")],
+    });
+    await screen.findByRole("combobox");
+    expect(screen.getByRole("combobox")).toHaveValue("");
+    expect(
+      invoiceCompanyParams(seen.mock.calls[seen.mock.calls.length - 1][0]),
+    ).toEqual({});
+  });
+
+  it("the 409 candidates cannot be picked while the field is busy", () => {
+    const pick = vi.fn();
+    render(
+      <InvoiceCompanyField
+        clientId={7}
+        practiceTypeCode="tax"
+        value={EMPTY_INVOICE_COMPANY}
+        onChange={vi.fn()}
+        disabled
+        ambiguity={{
+          typed: "Kembar",
+          candidates: [{ id: 8, company_name: "PT Synthetic Kembar" }],
+        }}
+        onPickCandidate={pick}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "PT Synthetic Kembar" }),
+    ).toBeDisabled();
+  });
+
+  it("an NPWP without a name is an incomplete draft", () => {
+    expect(
+      invoiceCompanyIncomplete({ companyId: null, name: " ", npwp: "01.2" }),
+    ).toBe(true);
+    expect(
+      invoiceCompanyIncomplete({ companyId: null, name: "PT X", npwp: "01.2" }),
+    ).toBe(false);
+    expect(invoiceCompanyIncomplete({ companyId: 3, name: "", npwp: "" })).toBe(
+      false,
+    );
+    expect(invoiceCompanyIncomplete(EMPTY_INVOICE_COMPANY)).toBe(false);
   });
 
   it("a prefill never survives a change of client", async () => {

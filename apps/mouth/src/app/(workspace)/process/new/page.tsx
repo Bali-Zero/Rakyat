@@ -37,6 +37,7 @@ import {
   EMPTY_INVOICE_COMPANY,
   InvoiceCompanyField,
   ambiguityFromError,
+  invoiceCompanyIncomplete,
   invoiceCompanyParams,
   type InvoiceCompanyAmbiguity,
   type InvoiceCompanyValue,
@@ -101,20 +102,26 @@ export default function NewPracticePage() {
     family_member_id: "" as string, // "" = for main client; otherwise the family member id as string
   });
 
-  const clientIdRef = useRef<number | undefined>(preselectedClientId);
+  // Bumped on every change a submission depends on (client, service, company):
+  // a response or a preflight that started under an older revision is obsolete.
+  const formRevision = useRef(0);
   const [invoiceCompany, setInvoiceCompany] = useState<InvoiceCompanyValue>(
     EMPTY_INVOICE_COMPANY,
   );
   const [invoiceAmbiguity, setInvoiceAmbiguity] =
     useState<InvoiceCompanyAmbiguity | null>(null);
+  const [invoiceLabel, setInvoiceLabel] = useState<string | null>(null);
 
-  clientIdRef.current = formData.client_id;
+  useEffect(() => {
+    formRevision.current += 1;
+  }, [formData.client_id, selectedServiceCode, invoiceCompany]);
 
   // The company belongs to the client it was prefilled or typed for: any change
   // of client (including Change, which unmounts the field) starts it empty.
   useEffect(() => {
     setInvoiceCompany(EMPTY_INVOICE_COMPANY);
     setInvoiceAmbiguity(null);
+    setInvoiceLabel(null);
   }, [formData.client_id]);
 
   // Family members of the selected client (for dependent-KITAS etc.)
@@ -376,6 +383,15 @@ export default function NewPracticePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFieldErrors({});
+    setInvoiceAmbiguity(null);
+    const startRevision = formRevision.current;
+    if (invoiceCompanyIncomplete(invoiceCompany)) {
+      toast.error(
+        "Invoice company",
+        "Enter the company name, or clear the NPWP, before creating the process.",
+      );
+      return;
+    }
 
     // Service is optional at Inquiry (Ari, 2026-09-11): with no selection the
     // backend opens the process against the `open_inquiry` placeholder and
@@ -492,7 +508,13 @@ export default function NewPracticePage() {
         ...invoiceCompanyParams(invoiceCompany),
       } as CreatePracticeParams;
 
-      setInvoiceAmbiguity(null);
+      if (formRevision.current !== startRevision) {
+        toast.error(
+          "Form changed",
+          "The client, service or invoice company changed while creating. Review and press Create again.",
+        );
+        return;
+      }
       const createdPractice = await api.crm.createPractice(backendData);
 
       if (formData.referrer_id != null && createdPractice?.id) {
@@ -545,7 +567,7 @@ export default function NewPracticePage() {
       const ambiguous = ambiguityFromError(error, invoiceCompany.name.trim());
       if (ambiguous) {
         // A 409 for a client that has since been replaced must not surface.
-        if (clientIdRef.current === result.data.client_id) {
+        if (formRevision.current === startRevision) {
           setInvoiceAmbiguity(ambiguous);
         }
         return;
@@ -636,6 +658,7 @@ export default function NewPracticePage() {
                   type="button"
                   variant="ghost"
                   size="sm"
+                  disabled={isLoading}
                   onClick={() => {
                     setSelectedClient(null);
                     setFormData((prev) => ({ ...prev, client_id: undefined }));
@@ -877,11 +900,14 @@ export default function NewPracticePage() {
                 value={invoiceCompany}
                 onChange={(next) => {
                   setInvoiceAmbiguity(null);
+                  setInvoiceLabel(null);
                   setInvoiceCompany(next);
                 }}
+                savedName={invoiceLabel}
                 ambiguity={invoiceAmbiguity}
-                onPickCandidate={(id) => {
+                onPickCandidate={(id, name) => {
                   setInvoiceAmbiguity(null);
+                  setInvoiceLabel(name);
                   setInvoiceCompany({ companyId: id, name: "", npwp: "" });
                 }}
                 disabled={isLoading}

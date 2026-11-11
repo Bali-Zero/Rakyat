@@ -211,4 +211,150 @@ describe("InvoiceCompanyCard", () => {
     expect(screen.queryByTestId("invoice-company-ambiguity")).toBeNull();
     expect(mockUpdate).toHaveBeenCalledTimes(1);
   });
+
+  it("an NPWP without a name cannot be saved and never becomes a Clear", async () => {
+    const user = userEvent.setup();
+    render(
+      <InvoiceCompanyCard
+        practice={practice({
+          invoice_company_id: 1,
+          invoice_company_name: "PT Synthetic A",
+        })}
+        onSaved={vi.fn()}
+      />,
+    );
+    await user.selectOptions(await screen.findByRole("combobox"), "__new__");
+    await user.type(screen.getByLabelText("Company NPWP"), "01.234");
+    expect(screen.getByRole("alert")).toHaveTextContent("company name");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("onSaved carries only the invoice fields", async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    mockUpdate.mockResolvedValue(
+      practice({
+        priority: "urgent",
+        invoice_company_id: 2,
+        invoice_company_name: "PT Synthetic B",
+      }),
+    );
+    render(<InvoiceCompanyCard practice={practice()} onSaved={onSaved} />);
+    await user.selectOptions(await screen.findByRole("combobox"), "2");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(onSaved).toHaveBeenCalledWith({
+      invoice_company_id: 2,
+      invoice_company_name: "PT Synthetic B",
+    });
+  });
+
+  it("a failed direct candidate save keeps the pick, and Save retries it", async () => {
+    const user = userEvent.setup();
+    mockSuggest.mockResolvedValue({
+      autofill: true,
+      suggested_company_id: null,
+      companies: [],
+    });
+    mockUpdate.mockRejectedValueOnce(
+      new ApiError("conflict", 409, {
+        detail: {
+          code: "invoice_company_ambiguous",
+          candidates: [{ id: 8, company_name: "PT Synthetic Kembar" }],
+        },
+      }),
+    );
+    mockUpdate.mockRejectedValueOnce(new Error("boom"));
+    mockUpdate.mockResolvedValueOnce(
+      practice({
+        invoice_company_id: 8,
+        invoice_company_name: "PT Synthetic Kembar",
+      }),
+    );
+    render(<InvoiceCompanyCard practice={practice()} onSaved={vi.fn()} />);
+    await user.type(
+      await screen.findByLabelText("Company name"),
+      "Synthetic Kembar",
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(
+      await screen.findByRole("button", { name: "PT Synthetic Kembar" }),
+    );
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    expect(await screen.findByRole("combobox")).toHaveValue("8");
+    expect(
+      screen.getByRole("option", { name: "PT Synthetic Kembar" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(3));
+    expect(mockUpdate).toHaveBeenLastCalledWith(5, { invoice_company_id: 8 });
+  });
+
+  it("follows a company saved elsewhere while clean, but never erases a draft", async () => {
+    mockSuggest.mockResolvedValue({
+      autofill: true,
+      suggested_company_id: null,
+      companies: [choice(1, "PT Synthetic A"), choice(2, "PT Synthetic B")],
+    });
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <InvoiceCompanyCard practice={practice()} onSaved={vi.fn()} />,
+    );
+    await screen.findByRole("combobox");
+    rerender(
+      <InvoiceCompanyCard
+        practice={practice({
+          invoice_company_id: 2,
+          invoice_company_name: "PT Synthetic B",
+        })}
+        onSaved={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(screen.getByRole("combobox")).toHaveValue("2"));
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    await user.selectOptions(screen.getByRole("combobox"), "1");
+    rerender(
+      <InvoiceCompanyCard
+        practice={practice({ invoice_company_id: null })}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("combobox")).toHaveValue("1");
+  });
+
+  it("a saved prefill is not cleared by a later change of service", async () => {
+    mockSuggest.mockResolvedValue({
+      autofill: true,
+      suggested_company_id: 1,
+      companies: [choice(1, "PT Synthetic A")],
+    });
+    const user = userEvent.setup();
+    mockUpdate.mockResolvedValue(
+      practice({
+        invoice_company_id: 1,
+        invoice_company_name: "PT Synthetic A",
+      }),
+    );
+    const onSaved = vi.fn();
+    const { rerender } = render(
+      <InvoiceCompanyCard practice={practice()} onSaved={onSaved} />,
+    );
+    await waitFor(() => expect(screen.getByRole("combobox")).toHaveValue("1"));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    rerender(
+      <InvoiceCompanyCard
+        practice={practice({
+          invoice_company_id: 1,
+          invoice_company_name: "PT Synthetic A",
+          practice_type_code: "kitas_working_onshore",
+        })}
+        onSaved={onSaved}
+      />,
+    );
+    await waitFor(() => expect(mockSuggest).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("combobox")).toHaveValue("1");
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  });
 });

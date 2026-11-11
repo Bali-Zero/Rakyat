@@ -15,6 +15,7 @@ const {
   mockCreatePractice,
   mockSuggest,
   mockGetClients,
+  mockToastError,
   mockRefetchClientProfile,
   stableSearchParams,
 } = vi.hoisted(() => ({
@@ -26,6 +27,7 @@ const {
   mockCreatePractice: vi.fn(),
   mockSuggest: vi.fn(),
   mockGetClients: vi.fn(),
+  mockToastError: vi.fn(),
   mockRefetchClientProfile: vi.fn(),
   stableSearchParams: {
     get: vi.fn((key: string) => (key === "client_id" ? "7" : null)),
@@ -69,7 +71,7 @@ vi.mock("@/hooks/useTeamMembers", () => ({
 vi.mock("@/components/ui/toast", () => ({
   useToast: () => ({
     success: vi.fn(),
-    error: vi.fn(),
+    error: mockToastError,
   }),
 }));
 
@@ -335,7 +337,7 @@ describe("NewPracticePage", () => {
     },
   );
 
-  it("a 409 that arrives after the client was changed never shows the old client's chooser", async () => {
+  it("Change is disabled while creating, and a 409 for an older form revision never shows its chooser", async () => {
     const user = userEvent.setup();
     let rejectCreate: (e: unknown) => void = () => {};
     mockCreatePractice.mockReturnValueOnce(
@@ -343,13 +345,6 @@ describe("NewPracticePage", () => {
         rejectCreate = reject;
       }),
     );
-    mockGetClients.mockResolvedValue([
-      {
-        id: 8,
-        full_name: "Synthetic Other Client",
-        email: "other@example.test",
-      },
-    ]);
     await renderPage();
     const selects = await screen.findAllByRole("combobox");
     await user.selectOptions(selects[0], "visa");
@@ -360,9 +355,8 @@ describe("NewPracticePage", () => {
     );
     await user.click(screen.getByRole("button", { name: "Create Process" }));
     await waitFor(() => expect(mockCreatePractice).toHaveBeenCalledTimes(1));
-    await user.click(screen.getByRole("button", { name: "Change" }));
-    await user.type(screen.getByLabelText("Search client"), "Other");
-    await user.click(await screen.findByText("Synthetic Other Client"));
+    expect(screen.getByRole("button", { name: "Change" })).toBeDisabled();
+    await user.selectOptions(screen.getAllByRole("combobox")[0], "");
     rejectCreate(
       new ApiError("conflict", 409, {
         detail: {
@@ -372,10 +366,124 @@ describe("NewPracticePage", () => {
       }),
     );
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Create Process" }),
-      ).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Change" })).toBeEnabled(),
     );
     expect(screen.queryByTestId("invoice-company-ambiguity")).toBeNull();
+  });
+
+  it("an NPWP without a company name blocks Create instead of being dropped", async () => {
+    const user = userEvent.setup();
+    await renderPage();
+    const selects = await screen.findAllByRole("combobox");
+    await user.selectOptions(selects[0], "visa");
+    await user.selectOptions(selects[1], "SYNTHETIC_VISA");
+    await user.type(await screen.findByLabelText("Company NPWP"), "01.234");
+    await user.click(screen.getByRole("button", { name: "Create Process" }));
+    expect(mockCreatePractice).not.toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith(
+      "Invoice company",
+      expect.stringContaining("company name"),
+    );
+  });
+
+  it("a suggestion that resolves during submission neither fills the field nor changes the payload", async () => {
+    const user = userEvent.setup();
+    let resolveSuggest: (v: unknown) => void = () => {};
+    let pending = false;
+    mockSuggest.mockImplementation((_id: number, code?: string) => {
+      if (!code)
+        return Promise.resolve({
+          autofill: true,
+          suggested_company_id: null,
+          companies: [],
+        });
+      pending = true;
+      return new Promise((r) => (resolveSuggest = r));
+    });
+    let resolveCreate: (v: unknown) => void = () => {};
+    mockCreatePractice.mockReturnValueOnce(
+      new Promise((r) => (resolveCreate = r)),
+    );
+    await renderPage();
+    const selects = await screen.findAllByRole("combobox");
+    await user.selectOptions(selects[0], "visa");
+    await user.selectOptions(selects[1], "SYNTHETIC_VISA");
+    await waitFor(() => expect(pending).toBe(true));
+    await user.click(screen.getByRole("button", { name: "Create Process" }));
+    await waitFor(() => expect(mockCreatePractice).toHaveBeenCalledTimes(1));
+    resolveSuggest({
+      autofill: true,
+      suggested_company_id: 21,
+      companies: [
+        {
+          id: 21,
+          company_name: "PT Synthetic Satu",
+          npwp_company: null,
+          role: "director",
+          is_director: true,
+        },
+      ],
+    });
+    resolveCreate({ id: 71 });
+    await waitFor(() => expect(mockPush).toHaveBeenCalled());
+    const body = mockCreatePractice.mock.calls[0][0];
+    expect(
+      Object.keys(body).filter((k) => k.startsWith("invoice_company")),
+    ).toEqual([]);
+  });
+
+  it("a candidate picked from the 409 chooser keeps its name in the selector", async () => {
+    const user = userEvent.setup();
+    mockCreatePractice.mockRejectedValueOnce(
+      new ApiError("conflict", 409, {
+        detail: {
+          code: "invoice_company_ambiguous",
+          candidates: [{ id: 8, company_name: "PT Synthetic Kembar" }],
+        },
+      }),
+    );
+    await renderPage();
+    const selects = await screen.findAllByRole("combobox");
+    await user.selectOptions(selects[0], "visa");
+    await user.selectOptions(selects[1], "SYNTHETIC_VISA");
+    await user.type(
+      await screen.findByLabelText("Company name"),
+      "Synthetic Kembar",
+    );
+    await user.click(screen.getByRole("button", { name: "Create Process" }));
+    await user.click(
+      await screen.findByRole("button", { name: "PT Synthetic Kembar" }),
+    );
+    const select = await screen.findByRole("combobox", {
+      name: "Invoice to company",
+    });
+    expect(select).toHaveValue("8");
+    expect(
+      screen.getByRole("option", { name: "PT Synthetic Kembar" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Company name")).toBeNull();
+  });
+
+  it("a service change during the preflight stops the submission before the POST", async () => {
+    const user = userEvent.setup();
+    let resolvePractices: (v: unknown) => void = () => {};
+    mockGetClientPractices.mockReturnValueOnce(
+      new Promise((r) => (resolvePractices = r)),
+    );
+    await renderPage();
+    const selects = await screen.findAllByRole("combobox");
+    await user.selectOptions(selects[0], "visa");
+    await user.selectOptions(selects[1], "SYNTHETIC_VISA");
+    await user.click(screen.getByRole("button", { name: "Create Process" }));
+    await waitFor(() => expect(mockGetClientPractices).toHaveBeenCalled());
+    await user.selectOptions(screen.getAllByRole("combobox")[0], "");
+    resolvePractices([]);
+    await waitFor(() =>
+      expect(mockToastError).toHaveBeenCalledWith(
+        "Form changed",
+        expect.any(String),
+      ),
+    );
+    expect(mockCreatePractice).not.toHaveBeenCalled();
   });
 });

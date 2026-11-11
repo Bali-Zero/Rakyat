@@ -48,6 +48,13 @@ export function invoiceCompanyParams(
   };
 }
 
+/** A typed NPWP without a company name is a draft that cannot be sent. */
+export function invoiceCompanyIncomplete(value: InvoiceCompanyValue): boolean {
+  return (
+    value.companyId === null && !value.name.trim() && Boolean(value.npwp.trim())
+  );
+}
+
 /** The 409 the backend sends when a typed name matches several companies. */
 export function ambiguityFromError(
   err: unknown,
@@ -77,7 +84,7 @@ interface Props {
   /** False on a practice that already has a company: never overwrite it. */
   autofill?: boolean;
   ambiguity?: InvoiceCompanyAmbiguity | null;
-  onPickCandidate?: (id: number) => void;
+  onPickCandidate?: (id: number, name: string) => void;
   disabled?: boolean;
 }
 
@@ -107,6 +114,8 @@ export function InvoiceCompanyField({
   onChangeRef.current = onChange;
   const valueRef = useRef(value);
   valueRef.current = value;
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
   // True only while the field still holds exactly what this component prefilled.
   const holdsOwnPrefill = () =>
     autoFilled.current &&
@@ -122,11 +131,18 @@ export function InvoiceCompanyField({
       autoFilled.current = false;
       prefillId.current = null;
       setTyping(false);
+      setCompanies([]);
+      setLoaded(false);
       onChangeRef.current(EMPTY_INVOICE_COMPANY);
+    }
+    if (!autofill) {
+      // A saved or non-autofill draft is the user's: retire any prefill ownership.
+      autoFilled.current = false;
+      prefillId.current = null;
     }
     if (lastCode.current !== practiceTypeCode) {
       lastCode.current = practiceTypeCode;
-      if (holdsOwnPrefill() && !touched.current) {
+      if (autofill && holdsOwnPrefill() && !touched.current) {
         // The service changed: what was prefilled for the old one is stale until
         // the new suggestion says otherwise (it may be slow or fail).
         autoFilled.current = false;
@@ -147,7 +163,7 @@ export function InvoiceCompanyField({
         if (cancelled) return;
         setCompanies(s.companies);
         setLoaded(true);
-        if (!autofill || touched.current) return;
+        if (!autofill || touched.current || disabledRef.current) return;
         const current = valueRef.current;
         const isEmpty =
           current.companyId === null && !current.name && !current.npwp;
@@ -198,18 +214,15 @@ export function InvoiceCompanyField({
 
   // A name or NPWP in the value always keeps the typed inputs on screen, so what
   // is sent is what is shown (e.g. typed after a failed suggestion).
-  const hasTyped =
-    value.companyId === null && Boolean(value.name || value.npwp);
+  const noCompany = value.companyId === null;
+  const hasTyped = noCompany && Boolean(value.name || value.npwp);
   const showTypedInputs =
-    typing ||
-    hasTyped ||
-    (loaded && options.length === 0 && value.companyId === null);
-  const selectValue =
-    value.companyId !== null
-      ? String(value.companyId)
-      : typing || hasTyped
-        ? NEW
-        : "";
+    noCompany && (typing || hasTyped || (loaded && options.length === 0));
+  const selectValue = !noCompany
+    ? String(value.companyId)
+    : typing || hasTyped
+      ? NEW
+      : "";
 
   const pick = (raw: string) => {
     touched.current = true;
@@ -311,7 +324,8 @@ export function InvoiceCompanyField({
               <button
                 key={c.id}
                 type="button"
-                onClick={() => onPickCandidate?.(c.id)}
+                disabled={disabled}
+                onClick={() => onPickCandidate?.(c.id, c.company_name)}
                 className="text-left px-3 py-1.5 rounded border border-[var(--border)] hover:bg-[var(--background-elevated)]"
               >
                 {c.company_name}

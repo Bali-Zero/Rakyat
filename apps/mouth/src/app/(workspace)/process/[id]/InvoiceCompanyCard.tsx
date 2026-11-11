@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import {
   EMPTY_INVOICE_COMPANY,
   InvoiceCompanyField,
   ambiguityFromError,
+  invoiceCompanyIncomplete,
   invoiceCompanyParams,
   type InvoiceCompanyAmbiguity,
   type InvoiceCompanyValue,
@@ -17,7 +18,10 @@ import {
 
 interface Props {
   practice: Practice;
-  onSaved: (practice: Practice) => void;
+  /** Only the invoice fields this card owns, so a delayed response cannot restore older ones. */
+  onSaved: (
+    patch: Pick<Practice, "invoice_company_id" | "invoice_company_name">,
+  ) => void;
 }
 
 function savedValue(practice: Practice): InvoiceCompanyValue {
@@ -30,19 +34,40 @@ export function InvoiceCompanyCard({ practice, onSaved }: Props) {
   const [value, setValue] = useState<InvoiceCompanyValue>(() =>
     savedValue(practice),
   );
+  const [label, setLabel] = useState<string | null>(null);
   const [ambiguity, setAmbiguity] = useState<InvoiceCompanyAmbiguity | null>(
     null,
   );
   const [isSaving, setIsSaving] = useState(false);
   const hasCompany = Boolean(practice.invoice_company_id);
+  const baseline = useRef(practice.invoice_company_id ?? null);
+
+  // Another save may change the company under this card: follow it while the
+  // card is clean, never erase a draft.
+  useEffect(() => {
+    const next = practice.invoice_company_id ?? null;
+    if (baseline.current === next) return;
+    const wasClean =
+      (value.companyId ?? null) === baseline.current &&
+      !value.name &&
+      !value.npwp;
+    baseline.current = next;
+    if (wasClean) {
+      setValue(savedValue(practice));
+      setLabel(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [practice.invoice_company_id]);
 
   const typed = invoiceCompanyParams(value);
+  const incomplete = invoiceCompanyIncomplete(value);
   const dirty = hasCompany
     ? value.companyId !== practice.invoice_company_id
-    : Object.keys(typed).length > 0;
+    : Object.keys(typed).length > 0 || incomplete;
 
   const save = async (override?: InvoiceCompanyValue) => {
     const next = override ?? value;
+    if (invoiceCompanyIncomplete(next)) return;
     const params = invoiceCompanyParams(next);
     setIsSaving(true);
     setAmbiguity(null);
@@ -51,8 +76,13 @@ export function InvoiceCompanyCard({ practice, onSaved }: Props) {
         practice.id,
         Object.keys(params).length > 0 ? params : { invoice_company_id: null },
       );
-      onSaved(updated);
+      baseline.current = updated.invoice_company_id ?? null;
+      onSaved({
+        invoice_company_id: updated.invoice_company_id ?? null,
+        invoice_company_name: updated.invoice_company_name ?? null,
+      });
       setValue(savedValue(updated));
+      setLabel(null);
       toast.success(
         updated.invoice_company_name
           ? "Invoice company set"
@@ -94,17 +124,29 @@ export function InvoiceCompanyCard({ practice, onSaved }: Props) {
         value={value}
         onChange={(next) => {
           setAmbiguity(null);
+          setLabel(null);
           setValue(next);
         }}
-        savedName={practice.invoice_company_name}
+        savedName={label ?? practice.invoice_company_name}
         autofill={!hasCompany}
         ambiguity={ambiguity}
-        onPickCandidate={(id) => save({ companyId: id, name: "", npwp: "" })}
+        onPickCandidate={(id, name) => {
+          // The pick becomes the draft first, so a failed save is retried as the pick.
+          const picked = { companyId: id, name: "", npwp: "" };
+          setValue(picked);
+          setLabel(name);
+          void save(picked);
+        }}
         disabled={isSaving}
       />
+      {incomplete && (
+        <p role="alert" className="mt-2 text-xs text-[var(--state-danger)]">
+          Enter the company name too, or clear the NPWP.
+        </p>
+      )}
       {dirty && (
         <div className="mt-3 flex justify-end">
-          <Button onClick={() => save()} disabled={isSaving}>
+          <Button onClick={() => save()} disabled={isSaving || incomplete}>
             {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
             Save
           </Button>
