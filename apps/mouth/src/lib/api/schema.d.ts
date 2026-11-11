@@ -9387,6 +9387,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/hr/me/card": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get My Card
+     * @description The caller's own HR card, without the HR free-text notes.
+     *
+     *     No parameter at all: the row is chosen by the authenticated team_members id
+     *     (the session was validated against that row by id AND exact email), never by
+     *     anything the caller sends and never by an email lookup.
+     */
+    get: operations["get_my_card_api_hr_me_card_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/hr/my-dashboard": {
     parameters: {
       query?: never;
@@ -27366,6 +27390,74 @@ export interface components {
       | "EDUCATION"
       | "INVESTMENT"
       | "GOVERNMENT";
+    /**
+     * StaffCard
+     * @description The member's own card: every value in full except the HR free-text `notes`.
+     */
+    StaffCard: {
+      /** Address */
+      address?: string | null;
+      /** Bank Account */
+      bank_account?: string | null;
+      /** Bank Account Holder */
+      bank_account_holder?: string | null;
+      /** Bank Name */
+      bank_name?: string | null;
+      /** Base Salary Idr */
+      base_salary_idr?: number | null;
+      /** Birth Date */
+      birth_date?: string | null;
+      /** Birth Place */
+      birth_place?: string | null;
+      /** Bpjs Kesehatan Number */
+      bpjs_kesehatan_number?: string | null;
+      /** Bpjs Ketenagakerjaan Number */
+      bpjs_ketenagakerjaan_number?: string | null;
+      contract?: components["schemas"]["StaffContractRead"] | null;
+      /** Department */
+      department?: string | null;
+      /** Docs */
+      docs?: {
+        [key: string]: string;
+      };
+      /** Employee Id */
+      employee_id: number;
+      /** Employer Entity */
+      employer_entity?: string | null;
+      /** End Date */
+      end_date?: string | null;
+      /** Full Name */
+      full_name?: string | null;
+      /** Gender */
+      gender?: string | null;
+      /** Hire Date */
+      hire_date?: string | null;
+      /** Is Active */
+      is_active: boolean;
+      /** Legal Name */
+      legal_name?: string | null;
+      /** Marital Status */
+      marital_status?: string | null;
+      /** Nik */
+      nik?: string | null;
+      /** Npwp */
+      npwp?: string | null;
+      /** Ptkp Status */
+      ptkp_status?: string | null;
+      /** Religion */
+      religion?: string | null;
+      /** Role */
+      role?: string | null;
+      /** Unit */
+      unit?: string | null;
+    };
+    /** StaffContractRead */
+    StaffContractRead: {
+      /** File Id */
+      file_id?: string | null;
+      /** Number */
+      number?: string | null;
+    };
     /** StartPayload */
     StartPayload: {
       /**
@@ -43404,6 +43496,26 @@ export interface operations {
           "application/json": {
             [key: string]: boolean;
           };
+        };
+      };
+    };
+  };
+  get_my_card_api_hr_me_card_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["StaffCard"];
         };
       };
     };
