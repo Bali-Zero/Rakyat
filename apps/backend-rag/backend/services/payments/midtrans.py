@@ -282,6 +282,14 @@ class MidtransPaymentProvider:
             raise WebhookUnparseable(
                 f"status_code {status_code!r} incoherent with transaction_status {tx_status!r}"
             )
+        if str(body.get("currency", "IDR")) != "IDR":
+            # `currency` is NOT covered by the signature either. A
+            # non-IDR body must die HERE, in parse: downstream it
+            # would be quarantined under the Paid identity and the
+            # authentic IDR callback would then read as a duplicate.
+            raise WebhookUnparseable(
+                f"non-IDR notification currency: {body.get('currency')!r}"
+            )
         event_id = f"{transaction_id}:{tx_status}:{status_code}"
 
         if tx_status == "pending":
@@ -349,7 +357,7 @@ class MidtransPaymentProvider:
         the status flipped to `refund` would otherwise record a
         refund that never happened. The Status API must agree."""
         http_status, body = await self._fetch_status(event.provider_session_id)
-        if http_status >= 500:
+        if http_status >= 500 or http_status == 429:
             raise WebhookTransientError(f"Status API HTTP {http_status}")
         tx_status = body.get("transaction_status")
         if http_status != 200 or tx_status not in (
@@ -377,7 +385,7 @@ class MidtransPaymentProvider:
         `WebhookUnparseable`: loud, quarantined, never a practice.
         """
         http_status, body = await self._fetch_status(event.provider_session_id)
-        if http_status >= 500:
+        if http_status >= 500 or http_status == 429:
             # Transient: the provider must RETRY, so the route
             # answers 503 and nothing is written to the inbox — a
             # quarantined Paid identity would swallow the retry as
@@ -403,6 +411,8 @@ class MidtransPaymentProvider:
             raise WebhookUnparseable("Status API transaction_id disagrees with webhook body")
         if self._amount_idr(body) != event.amount_idr:
             raise WebhookUnparseable("Status API amount disagrees with webhook body")
+        if str(body.get("currency", "IDR")) != event.currency:
+            raise WebhookUnparseable("Status API currency disagrees with webhook body")
         return event
 
     async def confirm_no_successful_charge(self, *, provider_session_id: str) -> ChargeConfirmation:

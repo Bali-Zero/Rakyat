@@ -353,3 +353,25 @@ async def test_transient_status_error_is_retryable_not_refusal():
     assert isinstance(event, NormalizedPaidEvent)
     with pytest.raises(WebhookTransientError):
         await provider.verify_paid_event(event)
+
+
+def test_non_idr_currency_dies_in_parse_before_any_identity():
+    provider = _provider()
+    body = _sign(_body(currency="USD"))
+    provider.verify_signature(raw_body=json.dumps(body).encode(), headers={})
+    with pytest.raises(WebhookUnparseable, match="non-IDR"):
+        provider.parse_event(raw_body=json.dumps(body).encode(), headers={})
+
+
+@pytest.mark.asyncio
+async def test_status_429_is_transient_not_refusal():
+    from backend.services.payments.midtrans import WebhookTransientError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={})
+
+    provider = _provider(handler)
+    event = provider.parse_event(raw_body=json.dumps(_sign(_body())).encode(), headers={})
+    assert isinstance(event, NormalizedPaidEvent)
+    with pytest.raises(WebhookTransientError):
+        await provider.verify_paid_event(event)
