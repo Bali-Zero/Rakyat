@@ -185,3 +185,12 @@ def test_empty_states_are_empty_lists_and_zero_totals(make_client):
     assert body["payslips"] == [] and body["bonuses"] == [] and body["attendance"] == []
     assert body["leave"] == {"balances": [], "requests": []}
     assert body["bonus_totals"] == {"month_total_idr": 0, "month_count": 0, "year_total_idr": 0}
+
+
+def test_a_database_error_in_the_overview_read_is_a_fixed_500_without_driver_text(make_client):
+    service = _service()
+    service.get_my_overview_rows = AsyncMock(side_effect=RuntimeError("ZQXLEAK secret value 42"))
+    res = make_client(MEMBER, service).get("/api/hr/me/overview")
+    assert res.status_code == 500
+    assert res.json() == {"detail": "Overview read failed"}
+    assert "ZQXLEAK" not in res.text

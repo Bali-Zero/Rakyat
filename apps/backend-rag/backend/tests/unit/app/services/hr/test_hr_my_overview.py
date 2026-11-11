@@ -6,7 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from backend.app.services.hr import hr_service as hr_service_module
-from backend.app.services.hr.hr_overview_logic import WITA, aggregate_attendance, bonus_totals
+from backend.app.services.hr.hr_overview_logic import (
+    WITA,
+    aggregate_attendance,
+    bonus_totals,
+    unambiguous_email,
+)
 from backend.app.services.hr.hr_service import BUSINESS_TZ, HRService
 
 UTC = timezone.utc
@@ -172,6 +177,7 @@ async def test_bonus_and_attendance_sql_are_parameterised_wita_and_keyed_by_memb
         return []
 
     conn.fetch = fetch
+    conn.fetchrow = AsyncMock(return_value={"email": "own@example.test", "same_email_members": 1})
     service = HRService(pool)
     service.get_payslips = AsyncMock(return_value=[])
     service.get_leave_balance = AsyncMock(return_value=[])
@@ -184,7 +190,10 @@ async def test_bonus_and_attendance_sql_are_parameterised_wita_and_keyed_by_memb
     assert "user_id = $1" in clock[0] and "daily_work_hours" in clock[0]
     # January: the window reaches back over Nov + Dec of the previous year, ends before February.
     assert clock[1] == ("tm-fake-7", date(2025, 11, 1), date(2026, 2, 1))
-    assert "tm.id = $1" in late[0] and late[1] == ("tm-fake-7", date(2025, 11, 1), date(2026, 2, 1))
+    assert "tm.id = $1" in conn.fetchrow.await_args.args[0]
+    assert conn.fetchrow.await_args.args[1] == "tm-fake-7"
+    assert "attendance_late_incidents" in late[0] and "LOWER(email) = LOWER($1)" in late[0]
+    assert late[1] == ("own@example.test", date(2025, 11, 1), date(2026, 2, 1))
     assert [m["month"] for m in rows["attendance"]] == ["2026-01", "2025-12", "2025-11"]
     for sql, _ in seen:
         assert "tm-fake-7" not in sql
@@ -208,6 +217,7 @@ async def test_each_attendance_source_degrades_on_its_own():
         ]
 
     conn.fetch = fetch
+    conn.fetchrow = AsyncMock(return_value={"email": "own@example.test", "same_email_members": 1})
     out = await HRService(pool)._my_attendance("tm-fake-7", date(2026, 11, 12))
     assert out[0]["days_present"] == 1 and out[0]["late_incidents"] is None
 
@@ -228,7 +238,96 @@ def test_window_end_is_exclusive_first_of_next_month_in_december():
         return []
 
     conn.fetch = fetch
+    conn.fetchrow = AsyncMock(return_value=None)
     import asyncio
 
     asyncio.run(HRService(pool)._my_attendance("tm", date(2026, 12, 5)))
     assert start_end["a"] == (date(2026, 10, 1), date(2027, 1, 1))
+
+
+# ─── row isolation of late incidents (the table is keyed by email only) ──────
+
+
+class _FakeDb:
+    """In-memory team_members + attendance_late_incidents behind the real service SQL.
+
+    The fake interprets the two statements by what they do (read a member's email and the
+    case-insensitive share count; read incidents WHERE LOWER(email) = LOWER($1)), so the rows
+    that come back are decided by the parameters the service actually passes.
+    """
+
+    def __init__(self, members: dict[str, str], incidents: list[tuple[str, date]]):
+        self.members, self.incidents = members, incidents
+
+    async def fetchrow(self, sql, *args):
+        assert "FROM team_members tm" in sql and "WHERE tm.id = $1" in sql
+        email = self.members.get(args[0])
+        if email is None:
+            return None
+        same = sum(1 for e in self.members.values() if e.lower() == email.lower())
+        return {"email": email, "same_email_members": same}
+
+    async def fetch(self, sql, *args):
+        if "attendance_late_incidents" in sql:
+            assert "LOWER(email) = LOWER($1)" in sql
+            email, start, end = args
+            return [
+                {"late_date": d}
+                for e, d in self.incidents
+                if e.lower() == email.lower() and start <= d < end
+            ]
+        return []  # no clock-in rows: only the late count is under test
+
+
+def _service_over(db: _FakeDb) -> HRService:
+    acq = MagicMock()
+    acq.__aenter__ = AsyncMock(return_value=db)
+    acq.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=acq)
+    return HRService(pool)
+
+
+@pytest.mark.asyncio
+async def test_members_whose_emails_differ_only_by_case_get_null_never_each_others_incidents():
+    db = _FakeDb(
+        {"tm-a": "made.contoh@example.test", "tm-b": "Made.Contoh@example.test"},
+        [("made.contoh@example.test", date(2026, 11, 4))],
+    )
+    for member in ("tm-a", "tm-b"):
+        out = await _service_over(db)._my_attendance(member, date(2026, 11, 12))
+        assert [m["late_incidents"] for m in out] == [None, None, None]
+
+
+@pytest.mark.asyncio
+async def test_a_unique_email_counts_only_that_members_rows_even_with_a_case_variant_row():
+    db = _FakeDb(
+        {"tm-a": "made.contoh@example.test", "tm-b": "ketut.contoh@example.test"},
+        [
+            ("Made.Contoh@example.test", date(2026, 11, 4)),  # same member, stored with other case
+            ("made.contoh@example.test", date(2026, 11, 5)),
+            ("ketut.contoh@example.test", date(2026, 11, 6)),  # someone else
+            ("made.contoh@example.test", date(2026, 8, 1)),  # outside the window
+        ],
+    )
+    a = await _service_over(db)._my_attendance("tm-a", date(2026, 11, 12))
+    b = await _service_over(db)._my_attendance("tm-b", date(2026, 11, 12))
+    assert [m["late_incidents"] for m in a] == [2, 0, 0]
+    assert [m["late_incidents"] for m in b] == [1, 0, 0]
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_member_or_blank_email_is_null_not_zero():
+    db = _FakeDb({"tm-a": "  "}, [])
+    for member in ("tm-a", "tm-missing"):
+        out = await _service_over(db)._my_attendance(member, date(2026, 11, 12))
+        assert all(m["late_incidents"] is None for m in out)
+
+
+def test_unambiguous_email_decision():
+    assert (
+        unambiguous_email({"email": "a@example.test", "same_email_members": 1}) == "a@example.test"
+    )
+    assert unambiguous_email({"email": "a@example.test", "same_email_members": 2}) is None
+    assert unambiguous_email({"email": None, "same_email_members": 1}) is None
+    assert unambiguous_email(None) is None

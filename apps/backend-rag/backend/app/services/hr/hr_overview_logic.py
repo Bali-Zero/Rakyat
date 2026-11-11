@@ -46,6 +46,21 @@ def bonus_totals(bonuses: list[dict[str, Any]], now: datetime) -> dict[str, int]
     }
 
 
+def unambiguous_email(owner: dict[str, Any] | None) -> str | None:
+    """The member's email, only if no other team_members row shares it ignoring case.
+
+    `attendance_late_incidents` is keyed by email alone, so an email that two members
+    share (differing only by case) cannot be attributed to either: None, and the caller
+    reports `late_incidents = null` rather than another member's lateness.
+    """
+    if not owner:
+        return None
+    email = owner.get("email")
+    if not isinstance(email, str) or not email.strip():
+        return None
+    return email if owner.get("same_email_members") == 1 else None
+
+
 def _bali_wall_time(value: Any) -> datetime | None:
     if not isinstance(value, datetime):
         return None

@@ -56,6 +56,7 @@ export const ACCEPTED_PRERENDERED_WORKSPACE_ROUTES = [
   "hr/employees",
   "hr/leave",
   "hr/leave/request",
+  "hr/me", // client shell only: the page reads its data after sign-in, none is in the payload (0 name/amount markers, measured)
   "hr/owner-cashout",
   "hr/payroll",
   "hr/settings",

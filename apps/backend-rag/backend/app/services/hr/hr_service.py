@@ -14,7 +14,7 @@ from typing import Any
 
 import asyncpg
 
-from backend.app.services.hr.hr_overview_logic import aggregate_attendance
+from backend.app.services.hr.hr_overview_logic import aggregate_attendance, unambiguous_email
 from backend.app.utils.hr_utils import (
     calculate_bpjs,
     calculate_pph21_monthly,
@@ -1101,13 +1101,22 @@ class HRService:
         WHERE user_id = $1 AND work_date >= $2 AND work_date < $3
     """
 
-    # attendance_late_incidents is keyed by email; the email is the member's own
-    # (looked up from the same primary key), never one the caller supplied.
+    # attendance_late_incidents has NO member id column (092): it is keyed by email only, and
+    # team_members.email is unique case-SENSITIVELY, so two members could differ only by case.
+    # The member's own email is read by primary key together with how many team_members rows
+    # share it case-insensitively; the incident read happens only when that is exactly one.
+    _MY_EMAIL_SQL = """
+        SELECT tm.email,
+               (SELECT COUNT(*) FROM team_members o
+                 WHERE LOWER(o.email) = LOWER(tm.email)) AS same_email_members
+        FROM team_members tm
+        WHERE tm.id = $1
+    """
+
     _MY_LATE_SQL = """
-        SELECT i.late_date
-        FROM attendance_late_incidents i
-        JOIN team_members tm ON LOWER(tm.email) = LOWER(i.email)
-        WHERE tm.id = $1 AND i.late_date >= $2 AND i.late_date < $3
+        SELECT late_date
+        FROM attendance_late_incidents
+        WHERE LOWER(email) = LOWER($1) AND late_date >= $2 AND late_date < $3
     """
 
     async def get_my_overview_rows(self, employee_id: int, team_member_id: str) -> dict[str, Any]:
@@ -1160,9 +1169,14 @@ class HRService:
         late_rows: list[dict[str, Any]] | None
         try:
             async with self.db_pool.acquire() as conn:
-                late_rows = [
-                    dict(r) for r in await conn.fetch(self._MY_LATE_SQL, team_member_id, start, end)
-                ]
+                owner = await conn.fetchrow(self._MY_EMAIL_SQL, team_member_id)
+                email = unambiguous_email(dict(owner) if owner else None)
+                # Ambiguous or unknown email: never attribute someone else's incidents.
+                late_rows = (
+                    None
+                    if email is None
+                    else [dict(r) for r in await conn.fetch(self._MY_LATE_SQL, email, start, end)]
+                )
         except Exception as exc:
             logger.warning("my overview: late-incident table unreadable (%s)", type(exc).__name__)
             late_rows = None

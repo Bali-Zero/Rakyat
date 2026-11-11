@@ -231,7 +231,11 @@ async def get_my_overview(
         raise HTTPException(status_code=500, detail="Card operation failed") from None
     if not card:
         raise HTTPException(status_code=404, detail="No HR employee record found for your account")
-    rows = await service.get_my_overview_rows(card["id"], member_id)
+    try:
+        rows = await service.get_my_overview_rows(card["id"], member_id)
+    except Exception as exc:  # a fixed message: a driver error can quote a value
+        logger.error("hr overview read failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Overview read failed") from None
     return MyHrOverview(
         team_member_id=str(member_id),
         card=member_card(card),
