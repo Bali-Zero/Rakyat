@@ -704,6 +704,31 @@ class InvoiceAutomationService:
         issuer_decision: InvoiceIssuerDecision,
         invoice_attempt_id: str,
     ) -> None:
+        """Persist the invoice; any database failure is a loud persistence error."""
+        try:
+            await self._persist_invoice(
+                practice_id,
+                invoice_info,
+                triggered_by,
+                issuer_decision=issuer_decision,
+                invoice_attempt_id=invoice_attempt_id,
+            )
+        except (asyncio.CancelledError, InvoiceIssuerPersistenceError):
+            raise
+        except Exception as exc:
+            raise InvoiceIssuerPersistenceError(
+                "write_failed", getattr(exc, "sqlstate", None)
+            ) from None
+
+    async def _persist_invoice(
+        self,
+        practice_id: int,
+        invoice_info: dict,
+        triggered_by: str,
+        *,
+        issuer_decision: InvoiceIssuerDecision,
+        invoice_attempt_id: str,
+    ) -> None:
         """Update practice with invoice information (dual-write: JSONB + invoices table)."""
         async with self.db_pool.acquire() as conn:
             # ── 1. Fetch practice for amount + client_id + discount ───────────

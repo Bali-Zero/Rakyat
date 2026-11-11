@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import asyncpg
@@ -264,11 +264,14 @@ async def test_second_upsert_same_key_preserves_binding_and_created_at(
     await db.execute(_forward())
     await db.fetchrow(sql, *_variant_args(sql, B_KEY, ROUTED_AT))
     first = await _row(db)
-    args = list(_variant_args(sql, B_KEY, ROUTED_AT))
+    later = ROUTED_AT + timedelta(hours=1)
+    args = list(_variant_args(sql, B_KEY, later))
     args[2] = "INV-353-2"
     row = await db.fetchrow(sql, *args)
     assert row["issuer_entity_key"] == B_KEY
-    assert row["issuer_routed_at"] == ROUTED_AT
+    assert row["issuer_routed_at"] == ROUTED_AT, (
+        "a later routing instant must not replace the first"
+    )
     second = await _row(db)
     assert second["invoice_number"] == "INV-353-2", "ordinary columns still update"
     assert second["created_at"] == first["created_at"], "created_at must never be rewritten"

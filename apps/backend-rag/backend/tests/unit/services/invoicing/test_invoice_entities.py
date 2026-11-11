@@ -7,6 +7,7 @@ production mapping/date objects are only ever the actual value under test.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import logging
@@ -449,3 +450,12 @@ def test_real_entity_fingerprints_and_completeness() -> None:
         if _fingerprint(entity) != expected[key]:
             failures.append(f"{key}: fingerprint mismatch")
     assert failures == [], failures
+
+
+def test_registry_with_a_mismatched_key_is_rejected(monkeypatch):
+    default = entities.ENTITIES[entities.DEFAULT_ENTITY_KEY]
+    assert not default.missing_fields()
+    mismatched = dataclasses.replace(default, key="some_other_key")
+    monkeypatch.setattr(entities, "ENTITIES", {entities.DEFAULT_ENTITY_KEY: mismatched})
+    with pytest.raises(ValueError, match="registry key does not match"):
+        resolve_invoice_entity("kitas", datetime(2026, 11, 12, 1, 0, tzinfo=timezone.utc))

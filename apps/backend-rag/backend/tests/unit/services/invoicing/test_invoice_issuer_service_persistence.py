@@ -329,3 +329,84 @@ class TestPersistenceFailures:
         assert context["source"] == "new"
         assert service.invoice_generator.generate.call_count == 1, "no retry of the delivery"
         assert email_client.post.await_count == 2, "client + accounting email only"
+
+
+class TestPersistenceFailuresBeforeAndAfterTheUpsert:
+    """Any database failure while persisting after delivery is loud and critical."""
+
+    @staticmethod
+    def _criticals(caplog):
+        return [
+            r
+            for r in caplog.records
+            if r.name == "backend.services.invoicing.invoice_service"
+            and r.levelno == logging.CRITICAL
+        ]
+
+    @pytest.mark.asyncio
+    async def test_failure_of_the_pre_upsert_practice_select_is_critical(self, env, caplog):
+        service, _, _ = env
+        conn = service.db_pool._conn
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                practice_data(),
+                client_data(),
+                lookup_row(),
+                _SqlStateError("57P01"),
+            ]
+        )
+        conn.fetchval = AsyncMock(return_value=None)
+        conn.execute = AsyncMock()
+        with caplog.at_level(logging.CRITICAL):
+            result = await service.trigger_on_sending_invoice(1, "agent@example.test")
+        assert result["success"] is False
+        assert result["error_code"] == "invoice_issuer_persistence_failed"
+        assert result["delivery_may_have_occurred"] is True
+        criticals = self._criticals(caplog)
+        assert len(criticals) == 1
+        assert criticals[0].context["reason"] == "write_failed"  # type: ignore[attr-defined]
+        assert criticals[0].context["sqlstate"] == "57P01"  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_failure_to_acquire_a_connection_for_persistence_is_critical(self, env, caplog):
+        service, _, _ = env
+        conn = service.db_pool._conn
+        conn.fetchrow = AsyncMock(side_effect=[practice_data(), client_data(), lookup_row()])
+        conn.fetchval = AsyncMock(return_value=None)
+        conn.execute = AsyncMock()
+        real_acquire = service.db_pool.acquire
+        calls = {"n": 0}
+
+        def acquire():
+            calls["n"] += 1
+            if calls["n"] >= 4:
+                raise OSError("pool closed")
+            return real_acquire()
+
+        service.db_pool.acquire = acquire
+        with caplog.at_level(logging.CRITICAL):
+            result = await service.trigger_on_sending_invoice(1, "agent@example.test")
+        assert result["success"] is False
+        assert result["error_code"] == "invoice_issuer_persistence_failed"
+        assert len(self._criticals(caplog)) == 1
+
+    @pytest.mark.asyncio
+    async def test_failure_of_the_documents_update_after_the_upsert_is_critical(self, env, caplog):
+        service, _, _ = env
+        conn = service.db_pool._conn
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                practice_data(),
+                client_data(),
+                lookup_row(),
+                practice_row(),
+                binding_row(A_KEY, POST_CUTOVER),
+            ]
+        )
+        conn.fetchval = AsyncMock(return_value=None)
+        conn.execute = AsyncMock(side_effect=_SqlStateError("40001"))
+        with caplog.at_level(logging.CRITICAL):
+            result = await service.trigger_on_sending_invoice(1, "agent@example.test")
+        assert result["success"] is False
+        assert result["error_code"] == "invoice_issuer_persistence_failed"
+        assert len(self._criticals(caplog)) == 1
