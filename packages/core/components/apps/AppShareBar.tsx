@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FC } from "react";
+import { useEffect, useRef, useState, type FC } from "react";
 
 export interface AppShareBarProps {
   url: string;
@@ -11,6 +11,20 @@ export interface AppShareBarProps {
 /** Minimal share bar: copy URL + 2 canonical channels. No third-party SDKs. */
 export const AppShareBar: FC<AppShareBarProps> = ({ url, title, onShare }) => {
   const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (copiedTimerRef.current !== null) {
+        window.clearTimeout(copiedTimerRef.current);
+        copiedTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(url);
@@ -22,7 +36,15 @@ export const AppShareBar: FC<AppShareBarProps> = ({ url, title, onShare }) => {
       ) {
         navigator.vibrate(4);
       }
-      setTimeout(() => setCopied(false), 1500);
+      if (copiedTimerRef.current !== null) {
+        window.clearTimeout(copiedTimerRef.current);
+      }
+      // Unmounted while the clipboard write was pending: schedule nothing.
+      if (!mountedRef.current) return;
+      copiedTimerRef.current = window.setTimeout(() => {
+        copiedTimerRef.current = null;
+        setCopied(false);
+      }, 1500);
     } catch {
       /* user denied clipboard */
     }
