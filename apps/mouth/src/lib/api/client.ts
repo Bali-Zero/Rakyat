@@ -1,4 +1,3 @@
-import { onSessionReset, notifySessionReset } from "./session-reset";
 import { UserProfile } from "@/types";
 import type {
   IApiClient,
@@ -71,6 +70,7 @@ export class ApiClientBase implements IApiClient {
   // ?as_client=<id>. Seeded from localStorage and kept in sync by the
   // AdminImpersonationContext (contexts/AdminImpersonationContext.tsx).
   protected portalImpersonationClientId: number | null = null;
+
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
     if (typeof window !== "undefined") {
@@ -102,14 +102,8 @@ export class ApiClientBase implements IApiClient {
     // If needed, can be re-added when generated client is available
   }
 
-  /** Subscribe to session boundaries; returns the unsubscribe function. */
-  onSessionReset(listener: () => void): () => void {
-    return onSessionReset(listener);
-  }
-
   setToken(token: string) {
     this.token = token;
-    notifySessionReset();
     // A fresh token invalidates any cached probe verdict — a stale
     // "anonymous" from before login must never be replayed to a gate that
     // asks right after.
@@ -148,7 +142,6 @@ export class ApiClientBase implements IApiClient {
   }
 
   clearToken() {
-    notifySessionReset();
     this.token = null;
     this.csrfToken = null;
     this.userProfile = null;

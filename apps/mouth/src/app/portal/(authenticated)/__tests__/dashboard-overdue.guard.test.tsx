@@ -15,7 +15,6 @@ import {
   daysLate,
   usePortalLkpmHistory,
 } from "../_lib/overdue";
-import { ApiClientBase } from "@/lib/api/client";
 
 const mocks = vi.hoisted(() => ({
   getDashboard: vi.fn(),
@@ -48,6 +47,8 @@ const NOW = new Date(2026, 10, 10, 14, 0, 0);
 
 const Q2_FILED = {
   id: 1,
+  company_id: 101,
+  company_name: "Synthetic Co A",
   quarter: "Q2",
   year: 2026,
   status: "submitted" as const,
@@ -187,7 +188,7 @@ describe("dashboard summary — overdue items", () => {
     });
     expect(items).toEqual([
       {
-        id: "lkpm-none-Q3-2026",
+        id: "lkpm-101-Q3-2026",
         label: "LKPM Q3 2026",
         daysLate: 66,
         href: "/portal/lkpm",
@@ -209,7 +210,7 @@ describe("dashboard summary — overdue items", () => {
         lkpmHistory: [Q2_FILED, approvedQ3],
         now: NOW,
       }).map((i) => i.id),
-    ).toEqual(["lkpm-none-Q3-2026"]);
+    ).toEqual(["lkpm-101-Q3-2026"]);
   });
 
   it("counts calendar days: 15 Oct → 10 Nov is 26, not 27", () => {
@@ -336,15 +337,22 @@ describe("LKPM history unreadable is never an all-clear", () => {
     expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
   });
 
-  it("a history with an unreadable row is an error, not a clean slate", async () => {
-    mocks.get.mockResolvedValue({
-      success: true,
-      items: [{ ...Q2_FILED, id: 9, quarter: "Q9" }],
-    });
-    renderPage();
-    expect(await screen.findByRole("alert")).toBeInTheDocument();
-    expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
-  });
+  it.each([
+    ["bad quarter", { quarter: "Q9" }],
+    ["missing year", { year: undefined }],
+    ["missing company", { company_id: undefined }],
+  ])(
+    "a history row with a %s is an error, not a clean slate",
+    async (_n, patch) => {
+      mocks.get.mockResolvedValue({
+        success: true,
+        items: [{ ...Q2_FILED, id: 9, ...patch }],
+      });
+      renderPage();
+      expect(await screen.findByRole("alert")).toBeInTheDocument();
+      expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
+    },
+  );
 
   it("a reply without items is an error, not an empty history", async () => {
     mocks.get.mockResolvedValue({ success: true });
@@ -452,38 +460,5 @@ describe("two accounts in one browser session", () => {
     await vi.waitFor(() =>
       expect(screen.getByTestId("probe").textContent).toContain('"id":21'),
     );
-  });
-});
-
-describe("session boundary clears the whole query cache", () => {
-  it.each(["clearToken", "setToken"] as const)(
-    "%s drops every cached read (logout, 401 teardown, next login)",
-    (boundary) => {
-      const apiReal = new ApiClientBase("http://localhost");
-      let seen: QueryClient | undefined;
-      const unsub = apiReal.onSessionReset(() => seen?.clear());
-      const qc = new QueryClient();
-      seen = qc;
-      qc.setQueryData(["portal", "dashboard"], { marker: "account-a" });
-      qc.setQueryData(["portal", "timeline", 20], { entries: [] });
-
-      if (boundary === "clearToken") apiReal.clearToken();
-      else apiReal.setToken("t.t.t");
-
-      expect(qc.getQueryData(["portal", "dashboard"])).toBeUndefined();
-      expect(qc.getQueryData(["portal", "timeline", 20])).toBeUndefined();
-      unsub();
-    },
-  );
-
-  it("a throwing listener does not stop the others", () => {
-    const apiReal = new ApiClientBase("http://localhost");
-    const second = vi.fn();
-    apiReal.onSessionReset(() => {
-      throw new Error("x");
-    });
-    apiReal.onSessionReset(second);
-    apiReal.clearToken();
-    expect(second).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,4 +1,3 @@
-import { notifySessionReset } from "./session-reset";
 import { AuthApi, PORTAL_SUPERUSER_PROBE_ENDPOINT } from "./auth/auth.api";
 import type { ApiRequestOptions } from "./types/api-client.types";
 import type { UserProfile } from "@/types";
@@ -89,7 +88,6 @@ export class PublicAuthClient {
 
   setToken(token: string): void {
     this.token = token;
-    notifySessionReset();
     safeStorage.setItem("auth_token", token);
   }
 
@@ -102,7 +100,6 @@ export class PublicAuthClient {
   }
 
   clearToken(): void {
-    notifySessionReset();
     this.token = null;
     this.csrfToken = null;
     safeStorage.removeItem("auth_token");
@@ -117,6 +114,6 @@ export class PublicAuthClient {
  * barrel eagerly constructs every workspace domain client and would expose
  * internal API routes in the public login bundle.
  */
-export const publicAuthClient = new PublicAuthClient();
+const publicAuthClient = new PublicAuthClient();
 
 export const publicAuth = new AuthApi(publicAuthClient);

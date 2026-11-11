@@ -74,7 +74,8 @@ function isReadableReport(r: LKPMDraftSummary): boolean {
   return (
     typeof r?.quarter === "string" &&
     /^Q[1-4]$/i.test(r.quarter) &&
-    Number.isInteger(r.year)
+    Number.isInteger(r.year) &&
+    Number.isInteger(r.company_id)
   );
 }
 
@@ -176,10 +177,7 @@ export function stillUpcoming(
  * The LKPM history read the portal LKPM page already makes.
  *
  * The cache key carries the signed-in identity and the superuser impersonation
- * target, like `usePortalUnreadMessages`: the browser keeps one query client
- * for the life of the page and refetch-on-mount is off, so a key without an
- * identity would hand the previous account's history to the next one. The
- * client is also cleared at every session boundary (see QueryProvider).
+ * target, like `usePortalUnreadMessages`.
  *
  * A reply that is not a well-formed history is an error, never "no reports":
  * an empty list means "nothing overdue" downstream.
@@ -201,7 +199,7 @@ export function usePortalLkpmHistory() {
       if (!res?.success || !Array.isArray(res.items)) {
         throw new Error("LKPM history unavailable");
       }
-      // A row that cannot be placed in a quarter would be skipped silently
+      // A row that cannot be placed in a company and quarter would be skipped silently
       // and could turn into "nothing overdue": unreadable, not empty.
       if (!res.items.every(isReadableReport)) {
         throw new Error("LKPM history unreadable");

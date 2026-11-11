@@ -6,7 +6,6 @@ import { render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import PortalLayout from "./layout";
 import { ApiError } from "@/lib/api/error-handler";
-import { onSessionReset, notifySessionReset } from "@/lib/api/session-reset";
 
 // Hoisted mocks (must be defined before vi.mock)
 const {
@@ -221,43 +220,6 @@ describe("PortalLayout", () => {
     expect(screen.getByText("Loading...")).toBeInTheDocument();
     expect(screen.queryByText("Test Content")).not.toBeInTheDocument();
     expect(mockPush).not.toHaveBeenCalled();
-  });
-
-  it("a cookie-only session for a different account resets the cached reads", async () => {
-    mockGetToken.mockReturnValue(null);
-    notifySessionReset();
-    const reset = vi.fn();
-    const off = onSessionReset(reset);
-
-    mockGetProfile.mockResolvedValue({
-      fullName: "Account A",
-      email: "account-a@example.test",
-    });
-    const first = render(
-      <PortalLayout>
-        <div>Content A</div>
-      </PortalLayout>,
-    );
-    expect(
-      await screen.findByText("Content A", {}, { timeout: 4000 }),
-    ).toBeInTheDocument();
-    expect(reset).not.toHaveBeenCalled();
-    first.unmount();
-
-    mockGetProfile.mockResolvedValue({
-      fullName: "Account B",
-      email: "account-b@example.test",
-    });
-    render(
-      <PortalLayout>
-        <div>Content B</div>
-      </PortalLayout>,
-    );
-    expect(
-      await screen.findByText("Content B", {}, { timeout: 4000 }),
-    ).toBeInTheDocument();
-    expect(reset).toHaveBeenCalledTimes(1);
-    off();
   });
 
   it("renders a cookie-only superuser instead of redirecting to login", async () => {
