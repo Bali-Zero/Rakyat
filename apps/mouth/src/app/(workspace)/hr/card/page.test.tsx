@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -57,6 +57,25 @@ const EMPTY = {
   unit: null,
 };
 
+function signIn(who: string | null) {
+  if (who) {
+    localStorage.setItem(
+      "user_profile",
+      JSON.stringify({ id: who, email: `${who}@example.test` }),
+    );
+  } else {
+    localStorage.removeItem("user_profile");
+  }
+}
+
+/** The app's real cross-tab signal: another tab changed the stored session. */
+function switchSession(who: string | null) {
+  act(() => {
+    signIn(who);
+    window.dispatchEvent(new StorageEvent("storage", { key: "user_profile" }));
+  });
+}
+
 async function openTile(name: RegExp) {
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name }));
@@ -64,7 +83,10 @@ async function openTile(name: RegExp) {
 }
 
 describe("My card page", () => {
-  beforeEach(() => getMyCard.mockReset());
+  beforeEach(() => {
+    getMyCard.mockReset();
+    signIn("a");
+  });
 
   it("renders the header and the five tiles", async () => {
     getMyCard.mockResolvedValue(FULL);
@@ -116,8 +138,11 @@ describe("My card page", () => {
       expect(heading).toHaveFocus();
       expect(screen.getByText(value)).toBeInTheDocument();
       expect(
-        screen.getByText(/Only you and HR can see this/),
+        screen.getByText(
+          "You can see this, and so can the people authorised to manage HR at Bali Zero.",
+        ),
       ).toBeInTheDocument();
+      expect(screen.queryByText(/Only you/)).not.toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: /Back to my card/ }));
       expect(screen.getByRole("button", { name })).toHaveFocus();
     }
@@ -166,7 +191,7 @@ describe("My card page", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("counts a full card as all on file, an open-ended contract included", async () => {
+  it("counts a full card as all on file, a missing end date excluded", async () => {
     getMyCard.mockResolvedValue(FULL);
     render(<MyCardPage />);
     const c = await screen.findByRole("button", { name: /My contract/ });
@@ -209,7 +234,7 @@ describe("My card page", () => {
   });
 
   it("shows a friendly empty state on 404", async () => {
-    getMyCard.mockRejectedValueOnce(
+    getMyCard.mockRejectedValue(
       Object.assign(new Error("Not found"), { statusCode: 404 }),
     );
     render(<MyCardPage />);
@@ -239,21 +264,129 @@ describe("My card page", () => {
     expect(getMyCard).toHaveBeenCalledTimes(2);
   });
 
-  it("writes no value to the console and none to the document title", async () => {
+  it("says an absent end date is not on file, never that it is open-ended", async () => {
+    getMyCard.mockResolvedValue(FULL);
+    render(<MyCardPage />);
+    await openTile(/My contract/);
+    expect(screen.getByText("No end date on file")).toBeInTheDocument();
+    expect(screen.queryByText(/open-ended/)).not.toBeInTheDocument();
+  });
+
+  it("keys document rows by slot id so colliding labels both render", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    getMyCard.mockResolvedValue({
+      ...FULL,
+      docs: { record_x: FILE, "record-x": FILE },
+    });
+    render(<MyCardPage />);
+    await openTile(/My documents/);
+    expect(screen.getAllByText("Record x")).toHaveLength(2);
+    expect(err).not.toHaveBeenCalled();
+    err.mockRestore();
+  });
+
+  it("blocks Sentry Replay over every value and link", async () => {
+    getMyCard.mockResolvedValue(FULL);
+    const { container } = render(<MyCardPage />);
+    await screen.findByRole("heading", { name: "Legal Test Person" });
+    const root = container.firstElementChild as HTMLElement;
+    expect(root).toHaveAttribute("data-sentry-block");
+    expect(root).toHaveClass("sentry-block");
+    await openTile(/My documents/);
+    const inside = (el: Element) => el.closest("[data-sentry-block]") !== null;
+    for (const a of screen.getAllByRole("link")) expect(inside(a)).toBe(true);
+    for (const el of container.querySelectorAll("h1,h2,p,span,a,button")) {
+      expect(inside(el)).toBe(true);
+    }
+    expect(container.children).toHaveLength(1);
+  });
+
+  it("drops the old identity's card on a session switch and fetches for the new one", async () => {
+    getMyCard.mockResolvedValueOnce(FULL);
+    render(<MyCardPage />);
+    await screen.findByRole("heading", { name: "Legal Test Person" });
+    await openTile(/Who I am/);
+    expect(screen.getByText("NIK-TEST-1")).toBeInTheDocument();
+    getMyCard.mockResolvedValueOnce({
+      ...FULL,
+      legal_name: "Second Person",
+      nik: "NIK-B",
+    });
+    switchSession("b");
+    expect(screen.queryByText("NIK-TEST-1")).not.toBeInTheDocument();
+    expect(screen.queryByText("Legal Test Person")).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Second Person" }),
+    ).toBeInTheDocument();
+    expect(getMyCard).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("NIK-TEST-1")).not.toBeInTheDocument();
+  });
+
+  it("ignores a slow response that arrives after the session switched", async () => {
+    let resolveA: (v: unknown) => void = () => undefined;
+    getMyCard.mockImplementationOnce(() => new Promise((r) => (resolveA = r)));
+    getMyCard.mockResolvedValueOnce({ ...FULL, legal_name: "Second Person" });
+    render(<MyCardPage />);
+    switchSession("b");
+    expect(
+      await screen.findByRole("heading", { name: "Second Person" }),
+    ).toBeInTheDocument();
+    await act(async () => {
+      resolveA(FULL);
+    });
+    expect(screen.queryByText("Legal Test Person")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Second Person" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no card values once signed out in another tab", async () => {
+    getMyCard.mockResolvedValue(FULL);
+    render(<MyCardPage />);
+    await screen.findByRole("heading", { name: "Legal Test Person" });
+    switchSession(null);
+    expect(screen.queryByText("Legal Test Person")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Who I am/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("refetches on visibilitychange when the identity differs from the loaded card", async () => {
+    getMyCard.mockResolvedValueOnce(FULL);
+    render(<MyCardPage />);
+    await screen.findByRole("heading", { name: "Legal Test Person" });
+    getMyCard.mockResolvedValueOnce({ ...FULL, legal_name: "Second Person" });
+    act(() => {
+      signIn("b"); // changed without any storage event
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(
+      await screen.findByRole("heading", { name: "Second Person" }),
+    ).toBeInTheDocument();
+  });
+
+  it("writes no card value to console.* or document.title on any detail view", async () => {
     const spies = (["log", "info", "warn", "error", "debug"] as const).map(
       (m) => vi.spyOn(console, m).mockImplementation(() => undefined),
     );
     const title = document.title;
     getMyCard.mockResolvedValue(FULL);
     render(<MyCardPage />);
-    for (const n of [/Who I am/, /Where my salary goes/]) {
+    for (const n of [
+      /Who I am/,
+      /My contract/,
+      /Tax and social security/,
+      /Where my salary goes/,
+      /My documents/,
+    ]) {
       const user = await openTile(n);
+      expect(document.title).toBe(title);
       await user.click(screen.getByRole("button", { name: /Back to my card/ }));
     }
     for (const s of spies) expect(s).not.toHaveBeenCalled();
-    expect(document.title).toBe(title);
-    for (const v of ["NIK-TEST-1", "ACC-TEST-1", "Legal Test Person"]) {
+    for (const v of ["NIK-TEST-1", "ACC-TEST-1", "Legal Test Person", FILE]) {
       expect(document.title).not.toContain(v);
     }
+    for (const s of spies) s.mockRestore();
   });
 });

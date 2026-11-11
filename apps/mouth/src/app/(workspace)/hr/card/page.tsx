@@ -11,6 +11,10 @@ import {
 } from "lucide-react";
 import { getMyCard, type HrStaffCard } from "@/lib/api/hr/hr";
 import { DESK_PILL, DESK_RULE, DESK_SERIF } from "@balizero/core";
+import {
+  readSessionIdentity,
+  useSessionIdentity,
+} from "./use-session-identity";
 
 /**
  * "My card" — a staff member's own HR record, in full.
@@ -25,6 +29,8 @@ const HAIR = "border-[var(--bz-border)]";
 const LABEL =
   "text-[10px] font-[750] uppercase tracking-[0.08em] text-[var(--tx-secondary,var(--bz-text-2))]";
 const QUIET = "text-[var(--bz-text-3)]";
+const VISIBILITY =
+  "You can see this, and so can the people authorised to manage HR at Bali Zero.";
 const NOT_ON_FILE = "Not on file yet";
 const NOT_ON_FILE_HR = "Not on file yet — HR will add it";
 
@@ -86,6 +92,8 @@ function humanise(slot: string): string {
 type TileId = "who" | "contract" | "tax" | "bank" | "docs";
 
 interface Fact {
+  /** Stable React key; labels can collide after humanising a slot id. */
+  key?: string;
   label: string;
   value: string | null;
   href?: string | null;
@@ -125,13 +133,20 @@ function buildTiles(card: HrStaffCard): TileDef[] {
         ? (docs.contract ?? card.contract?.file_id)
         : docs[slot];
     const href = driveUrl(id);
-    return { label, value: href ? "Open" : null, href, linkLabel: "Open" };
+    return {
+      key: slot,
+      label,
+      value: href ? "Open" : null,
+      href,
+      linkLabel: "Open",
+    };
   });
   const known = new Set(KNOWN_SLOTS.map(([s]) => s));
   for (const slot of Object.keys(docs)) {
     if (known.has(slot)) continue;
     const href = driveUrl(docs[slot]);
     slotFacts.push({
+      key: slot,
       label: humanise(slot),
       value: href ? "Open" : null,
       href,
@@ -146,7 +161,7 @@ function buildTiles(card: HrStaffCard): TileDef[] {
       summary: "Your legal name, ID number and personal details.",
       icon: UserRound,
       intro:
-        "These are the personal details HR keeps on file for you, as they appear on your identity papers. Only you and HR can see this.",
+        "These are the personal details HR keeps on file for you, as they appear on your identity papers.",
       facts: [
         { label: "Legal name", value: text(card.legal_name) },
         { label: "NIK (ID number)", value: text(card.nik) },
@@ -163,8 +178,7 @@ function buildTiles(card: HrStaffCard): TileDef[] {
       title: "My contract",
       summary: "Who employs you, since when, and your contract.",
       icon: FileText,
-      intro:
-        "The terms under which you work with us. Only you and HR can see this.",
+      intro: "The terms under which you work with us.",
       facts: [
         { label: "Employer", value: text(card.employer_entity) },
         { label: "Unit", value: text(card.unit) },
@@ -173,7 +187,7 @@ function buildTiles(card: HrStaffCard): TileDef[] {
           label: "End date",
           value: formatDay(card.end_date),
           informational: true,
-          emptyText: "No end date — your employment is open-ended",
+          emptyText: "No end date on file",
         },
         { label: "Contract number", value: text(card.contract?.number) },
         {
@@ -190,7 +204,7 @@ function buildTiles(card: HrStaffCard): TileDef[] {
       summary: "Your tax number and your BPJS insurance numbers.",
       icon: ShieldCheck,
       intro:
-        "The numbers HR uses to withhold your income tax and to keep you covered by BPJS health and employment insurance. Only you and HR can see this.",
+        "The numbers HR uses to withhold your income tax and to keep you covered by BPJS health and employment insurance.",
       facts: [
         { label: "NPWP (tax number)", value: text(card.npwp) },
         {
@@ -214,7 +228,7 @@ function buildTiles(card: HrStaffCard): TileDef[] {
       summary: "The bank account your salary is paid into.",
       icon: Banknote,
       intro:
-        "Your salary is transferred to this account. If anything here is wrong, tell HR before the next payday. Only you and HR can see this.",
+        "Your salary is transferred to this account. If anything here is wrong, tell HR before the next payday.",
       facts: [
         { label: "Bank", value: text(card.bank_name) },
         { label: "Account number", value: text(card.bank_account) },
@@ -227,7 +241,7 @@ function buildTiles(card: HrStaffCard): TileDef[] {
       summary: "The papers HR holds for you, ready to open.",
       icon: FolderOpen,
       intro:
-        "Copies of your papers kept by HR. Each opens in Google Drive in a new tab. Only you and HR can see this.",
+        "Copies of your papers kept by HR. Each opens in Google Drive in a new tab.",
       facts: slotFacts,
     },
   ];
@@ -280,11 +294,13 @@ function FactRow({ fact }: { fact: Fact }) {
       className={`grid grid-cols-1 gap-x-8 gap-y-1 border-b ${HAIR} py-4 md:grid-cols-[240px_1fr]`}
     >
       <div>
-        <div className={LABEL}>{fact.label}</div>
+        <div className={`${LABEL} break-words [overflow-wrap:anywhere]`}>
+          {fact.label}
+        </div>
       </div>
       <div className="text-[15px]">
         {fact.value == null ? (
-          <span className={QUIET}>{empty}</span>
+          <span className={`${QUIET} break-words`}>{empty}</span>
         ) : fact.href ? (
           <a
             href={fact.href}
@@ -296,7 +312,7 @@ function FactRow({ fact }: { fact: Fact }) {
           </a>
         ) : (
           <span
-            className={`${INK} ${fact.multiline ? "whitespace-pre-line" : ""} break-words`}
+            className={`${INK} ${fact.multiline ? "whitespace-pre-line" : ""} break-words [overflow-wrap:anywhere]`}
           >
             {fact.value}
           </span>
@@ -337,12 +353,13 @@ function Detail({ tile, onBack }: { tile: TileDef; onBack: () => void }) {
         {tile.title}
       </h2>
       <p className={`mt-1 max-w-[62ch] text-[14px] ${QUIET}`}>{tile.intro}</p>
+      <p className={`mt-1 max-w-[62ch] text-[14px] ${QUIET}`}>{VISIBILITY}</p>
       <p className={`mt-2 text-[12px] ${QUIET}`}>
         {have} of {total} on file
       </p>
       <div className={`mt-6 border-t ${HAIR}`}>
         {tile.facts.map((f) => (
-          <FactRow key={f.label} fact={f} />
+          <FactRow key={f.key ?? f.label} fact={f} />
         ))}
       </div>
     </section>
@@ -422,7 +439,7 @@ type State =
   | { status: "absent" }
   | { status: "failed" };
 
-export default function MyCardPage() {
+function MyCardInner({ identity }: { identity: string }) {
   const [state, setState] = useState<State>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [open, setOpen] = useState<TileId | null>(null);
@@ -432,20 +449,24 @@ export default function MyCardPage() {
   const returnTo = useRef<TileId | null>(null);
 
   useEffect(() => {
-    let mounted = true;
+    // Each request belongs to the identity it was issued for: the effect is
+    // torn down (and the whole component remounted by `key`) when it changes,
+    // and a response is also dropped if the stored session moved on meanwhile.
+    let current = true;
+    const stillMine = () => current && readSessionIdentity() === identity;
     getMyCard()
       .then((card) => {
-        if (mounted) setState({ status: "loaded", card });
+        if (stillMine()) setState({ status: "loaded", card });
       })
       .catch((e: unknown) => {
-        if (!mounted) return;
+        if (!stillMine()) return;
         const code = (e as { statusCode?: number } | null)?.statusCode;
         setState({ status: code === 404 ? "absent" : "failed" });
       });
     return () => {
-      mounted = false;
+      current = false;
     };
-  }, [attempt]);
+  }, [attempt, identity]);
 
   const retry = useCallback(() => {
     setState({ status: "loading" });
@@ -508,6 +529,26 @@ export default function MyCardPage() {
     <div>
       <Header card={state.card} />
       <Tiles tiles={tiles} onOpen={setOpen} refs={tileRefs} />
+    </div>
+  );
+}
+
+/**
+ * The card is bound to the signed-in identity: a different identity remounts
+ * the card (clearing every value at once), no identity renders nothing.
+ *
+ * The wrapper carries Sentry Replay's block marker. The replay integration in
+ * sentry.client.config.ts sets no `block`/`blockSelector`, so the SDK defaults
+ * apply (`.sentry-block`, `[data-sentry-block]`; @sentry/replay 11.10.0
+ * getPrivacyOptions): the subtree is recorded as a placeholder, which keeps
+ * Drive file ids in `href` attributes out of replays (maskAllText covers
+ * text only).
+ */
+export default function MyCardPage() {
+  const identity = useSessionIdentity();
+  return (
+    <div className="sentry-block" data-sentry-block="">
+      {identity ? <MyCardInner key={identity} identity={identity} /> : null}
     </div>
   );
 }
