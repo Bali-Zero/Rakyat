@@ -437,6 +437,7 @@ type State =
   | { status: "loading" }
   | { status: "loaded"; card: HrStaffCard }
   | { status: "absent" }
+  | { status: "mismatch" }
   | { status: "failed" };
 
 function MyCardInner({ identity }: { identity: string }) {
@@ -456,7 +457,16 @@ function MyCardInner({ identity }: { identity: string }) {
     const stillMine = () => current && readSessionIdentity() === identity;
     getMyCard()
       .then((card) => {
-        if (stillMine()) setState({ status: "loaded", card });
+        if (!current) return;
+        // C11: a card is accepted only when it names the identity the server
+        // authenticated for this request AND that is the identity signed in now.
+        // A mismatch keeps no card value.
+        const now = readSessionIdentity();
+        if (now !== identity || card?.team_member_id !== now) {
+          setState({ status: "mismatch" });
+          return;
+        }
+        setState({ status: "loaded", card });
       })
       .catch((e: unknown) => {
         if (!stillMine()) return;
@@ -496,6 +506,16 @@ function MyCardInner({ identity }: { identity: string }) {
     );
   }
 
+  if (state.status === "mismatch") {
+    return (
+      <div className={`border ${HAIR} bg-[var(--bz-card)] p-6`}>
+        <p className={`text-[14px] ${QUIET}`}>
+          Your session changed. Reload the page.
+        </p>
+      </div>
+    );
+  }
+
   if (state.status === "failed") {
     return (
       <div
@@ -509,6 +529,9 @@ function MyCardInner({ identity }: { identity: string }) {
       </div>
     );
   }
+
+  // Re-checked at every render, not only when the response arrived (C11).
+  if (state.card.team_member_id !== identity) return null;
 
   const tiles = buildTiles(state.card);
   const current = tiles.find((t) => t.id === open) ?? null;

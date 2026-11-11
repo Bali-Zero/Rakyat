@@ -6,11 +6,14 @@ const getMyCard = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api/hr/hr", () => ({ getMyCard }));
 
 import MyCardPage from "./page";
+import { AuthApi } from "@/lib/api/auth/auth.api";
+import { ApiClientBase } from "@/lib/api/client";
 
 const FILE = "1AbCdEfGhIjKlMnOpQrStUv";
 
 const FULL = {
   employee_id: 7,
+  team_member_id: "a",
   full_name: "Test Person",
   role: "Consultant",
   department: "Operations",
@@ -311,6 +314,7 @@ describe("My card page", () => {
       ...FULL,
       legal_name: "Second Person",
       nik: "NIK-B",
+      team_member_id: "b",
     });
     switchSession("b");
     expect(screen.queryByText("NIK-TEST-1")).not.toBeInTheDocument();
@@ -325,7 +329,11 @@ describe("My card page", () => {
   it("ignores a slow response that arrives after the session switched", async () => {
     let resolveA: (v: unknown) => void = () => undefined;
     getMyCard.mockImplementationOnce(() => new Promise((r) => (resolveA = r)));
-    getMyCard.mockResolvedValueOnce({ ...FULL, legal_name: "Second Person" });
+    getMyCard.mockResolvedValueOnce({
+      ...FULL,
+      legal_name: "Second Person",
+      team_member_id: "b",
+    });
     render(<MyCardPage />);
     switchSession("b");
     expect(
@@ -355,7 +363,11 @@ describe("My card page", () => {
     getMyCard.mockResolvedValueOnce(FULL);
     render(<MyCardPage />);
     await screen.findByRole("heading", { name: "Legal Test Person" });
-    getMyCard.mockResolvedValueOnce({ ...FULL, legal_name: "Second Person" });
+    getMyCard.mockResolvedValueOnce({
+      ...FULL,
+      legal_name: "Second Person",
+      team_member_id: "b",
+    });
     act(() => {
       signIn("b"); // changed without any storage event
       document.dispatchEvent(new Event("visibilitychange"));
@@ -388,5 +400,70 @@ describe("My card page", () => {
       expect(document.title).not.toContain(v);
     }
     for (const s of spies) s.mockRestore();
+  });
+
+  it("clears the card the moment a same-tab logout starts, before the network answers", async () => {
+    getMyCard.mockResolvedValue(FULL);
+    render(<MyCardPage />);
+    await screen.findByRole("heading", { name: "Legal Test Person" });
+    // The app's REAL logout: AuthApi.logout -> ApiClientBase.clearToken, with the
+    // server call left pending (the workspace layout waits on it before navigating).
+    const client = new ApiClientBase("https://api.test");
+    vi.spyOn(client, "request").mockImplementation(
+      () => new Promise<never>(() => undefined),
+    );
+    void new AuthApi(client).logout();
+    await waitFor(() =>
+      expect(screen.queryByText("Legal Test Person")).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("button", { name: /Who I am/ }),
+    ).not.toBeInTheDocument();
+    expect(localStorage.getItem("user_profile")).toBeNull();
+  });
+
+  it("does not show a card that names another team member, even with the profile unchanged", async () => {
+    getMyCard.mockResolvedValue({ ...FULL, team_member_id: "someone-else" });
+    render(<MyCardPage />);
+    expect(
+      await screen.findByText("Your session changed. Reload the page."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Legal Test Person")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Who I am/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("token-only removal then a response for another member: nothing shown", async () => {
+    localStorage.setItem("auth_token", "tok");
+    let resolve: (v: unknown) => void = () => undefined;
+    getMyCard.mockImplementationOnce(() => new Promise((r) => (resolve = r)));
+    render(<MyCardPage />);
+    localStorage.removeItem("auth_token"); // profile A stays; the cookie now says B
+    await act(async () => {
+      resolve({ ...FULL, team_member_id: "b", legal_name: "Other Person" });
+    });
+    expect(screen.queryByText("Other Person")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Who I am/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the card when the response names the signed-in member", async () => {
+    getMyCard.mockResolvedValue({ ...FULL, team_member_id: "a" });
+    render(<MyCardPage />);
+    expect(
+      await screen.findByRole("heading", { name: "Legal Test Person" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows nothing and asks nothing when the signed-in identity is unreadable", async () => {
+    localStorage.setItem("user_profile", "{not json");
+    getMyCard.mockResolvedValue(FULL);
+    const { container } = render(<MyCardPage />);
+    await act(async () => undefined);
+    expect(getMyCard).not.toHaveBeenCalled();
+    expect(screen.queryByText("Legal Test Person")).not.toBeInTheDocument();
+    expect(container.textContent).toBe("");
   });
 });

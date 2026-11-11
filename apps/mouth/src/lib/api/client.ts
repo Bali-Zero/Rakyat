@@ -5,6 +5,7 @@ import type {
   SessionState,
 } from "./types/api-client.types";
 import { safeStorage } from "@/lib/utils/storage";
+import { notifySessionChanged } from "@/lib/auth/session-signal";
 import { isTokenExpired } from "@/lib/utils/token";
 import { logger } from "@/lib/logger";
 import { ApiError } from "./error-handler";
@@ -139,6 +140,7 @@ export class ApiClientBase implements IApiClient {
         );
       }
     }
+    notifySessionChanged();
   }
 
   clearToken() {
@@ -165,6 +167,7 @@ export class ApiClientBase implements IApiClient {
         // ignore — impersonation storage is optional, same as the read path
       }
     }
+    notifySessionChanged();
   }
 
   getToken(): string | null {

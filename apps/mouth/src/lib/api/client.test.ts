@@ -193,6 +193,30 @@ describe("ApiClientBase", () => {
     });
   });
 
+  describe("same-tab session signal", () => {
+    it("fires bz:session-changed after setUserProfile and after clearToken", () => {
+      const seen: string[] = [];
+      const on = () =>
+        seen.push(localStorage.getItem("user_profile") ?? "gone");
+      window.addEventListener("bz:session-changed", on);
+      try {
+        client.setUserProfile({
+          id: "123",
+          email: "t@example.com",
+          name: "T",
+          role: "user",
+        });
+        client.clearToken();
+      } finally {
+        window.removeEventListener("bz:session-changed", on);
+      }
+      // Fired once per change, and AFTER the write/removal took effect.
+      expect(seen).toHaveLength(2);
+      expect(seen[0]).toContain("123");
+      expect(seen[1]).toBe("gone");
+    });
+  });
+
   describe("User Profile Management", () => {
     it("should set and get user profile", () => {
       const profile: UserProfile = {

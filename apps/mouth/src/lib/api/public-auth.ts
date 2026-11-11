@@ -1,6 +1,7 @@
 import { AuthApi, PORTAL_SUPERUSER_PROBE_ENDPOINT } from "./auth/auth.api";
 import type { ApiRequestOptions } from "./types/api-client.types";
 import type { UserProfile } from "@/types";
+import { notifySessionChanged } from "@/lib/auth/session-signal";
 import { safeStorage } from "@/lib/utils/storage";
 
 const PUBLIC_AUTH_ENDPOINTS = new Set([
@@ -93,6 +94,7 @@ export class PublicAuthClient {
 
   setUserProfile(profile: UserProfile): void {
     safeStorage.setItem("user_profile", JSON.stringify(profile));
+    notifySessionChanged();
   }
 
   setCsrfToken(token: string): void {
@@ -104,6 +106,7 @@ export class PublicAuthClient {
     this.csrfToken = null;
     safeStorage.removeItem("auth_token");
     safeStorage.removeItem("user_profile");
+    notifySessionChanged();
   }
 }
 
