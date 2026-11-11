@@ -191,9 +191,10 @@ async def get_my_card(
 ) -> StaffCard:
     """The caller's own HR card, without the HR free-text notes.
 
-    No parameter at all: the row is chosen by the authenticated team_members id
-    (the session was validated against that row by id AND exact email), never by
-    anything the caller sends and never by an email lookup.
+    No parameter at all: the row is chosen by the signed token's team_members id, never by
+    anything the caller sends and never by an email lookup. The session comes from signed
+    claims and is not re-read from the database, so the SQL itself enforces the primary
+    key, the STORED role (not the claim) and `active` (STAFF_CARD.md C1).
     """
     if (current_user.get("role") or "") == "client":
         raise HTTPException(status_code=403, detail="Staff access required")

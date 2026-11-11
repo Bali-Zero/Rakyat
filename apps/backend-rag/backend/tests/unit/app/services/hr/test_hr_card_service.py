@@ -30,6 +30,7 @@ async def test_get_card_for_member_is_keyed_by_primary_key_with_explicit_columns
     assert arg == "tm-1" and "WHERE tm.id = $1" in sql
     assert "e.*" not in sql and "notes" not in sql and "LOWER" not in sql and "email" not in sql
     assert "COALESCE(tm.role, '') <> 'client'" in sql
+    assert "tm.active = true" in sql
     conn.fetchrow = AsyncMock(return_value=None)
     assert await HRService(pool).get_card_for_member("tm-2") is None
 

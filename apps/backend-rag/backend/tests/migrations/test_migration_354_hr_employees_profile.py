@@ -31,7 +31,8 @@ MIGRATION = (
 
 _HR_DDL = """
 CREATE TABLE team_members (
-    id VARCHAR(36) PRIMARY KEY, full_name TEXT, email TEXT UNIQUE, role TEXT, department TEXT);
+    id VARCHAR(36) PRIMARY KEY, full_name TEXT, email TEXT UNIQUE, role TEXT, department TEXT,
+    active BOOLEAN NOT NULL DEFAULT TRUE);
 CREATE TABLE hr_employees (
     id SERIAL PRIMARY KEY,
     team_member_id VARCHAR(36) NOT NULL UNIQUE REFERENCES team_members(id) ON DELETE RESTRICT,
@@ -78,7 +79,7 @@ async def pool() -> AsyncIterator[asyncpg.Pool]:
             server_settings={"search_path": SCHEMA},  # survives the pool's RESET on release
             statement_cache_size=0,
             min_size=1,
-            max_size=3,
+            max_size=4,
         )
         try:
             async with p.acquire() as conn:
@@ -90,11 +91,16 @@ async def pool() -> AsyncIterator[asyncpg.Pool]:
                     "('tm-b','Fake B','fake.b@balizero.com','staff','ops'),"
                     "('tm-c','Fake C','fake.c@balizero.com','client','ops'),"
                     "('tm-t1','Fake Twin','fake.twin@balizero.com','staff','ops'),"
-                    "('tm-t2','Fake Twin Upper','Fake.Twin@balizero.com','client','ops')"
+                    "('tm-t2','Fake Twin Upper','Fake.Twin@balizero.com','client','ops'),"
+                    "('tm-i','Fake Gone','fake.gone@balizero.com','staff','ops')"
                 )
                 await conn.execute(
                     "INSERT INTO hr_employees (team_member_id, hire_date, base_salary_idr, npwp) "
                     "VALUES ('tm-a', '2025-01-01', 5, '10.01')"
+                )
+                await conn.execute(
+                    "INSERT INTO hr_employees (team_member_id, hire_date, base_salary_idr, profile) "
+                    "VALUES ('tm-i', '2025-01-01', 3, '{\"unit\": \"gone\"}')"
                 )
                 await conn.execute(
                     "INSERT INTO hr_employees (team_member_id, hire_date, base_salary_idr, notes, profile) "
@@ -404,7 +410,7 @@ async def test_import_second_merge_returning_none_rolls_the_batch_back(
     assert counts["not_found"] == 1 and counts["committed:no"] == 1
     async with pool.acquire() as conn:
         assert await conn.fetchval("SELECT bank_name FROM hr_employees WHERE id = 1") is None
-        assert await conn.fetchval("SELECT count(*) FROM hr_employees") == 3  # tm-a, t1, t2
+        assert await conn.fetchval("SELECT count(*) FROM hr_employees") == 4  # tm-a, t1, t2, i
     assert await _profile(pool, "tm-a") == {}
     assert "fake" not in imp.format_counts(counts, True)
 
@@ -526,3 +532,198 @@ async def test_a_card_write_failure_carries_no_driver_text(pool: asyncpg.Pool) -
         await _merge(pool, "tm-a", {"npwp": "Z" * 80 + "ZQXLEAK"}, {})
     assert "ZQXLEAK" not in str(exc.value) and "ZQXLEAK" not in repr(exc.value.__cause__)
     assert exc.value.__suppress_context__
+
+
+# ─── the REAL authentication path: signed token -> HybridAuthMiddleware -> deps.auth ───
+
+
+@pytest.fixture
+def real_auth_client(pool: asyncpg.Pool):
+    """The hr router behind the production middleware and dependency, nothing overridden
+    except the database pool. The revocation store answers 'not revoked' (as the middleware
+    unit tests do); tokens are signed with the app's own function."""
+    from datetime import timedelta
+    from unittest.mock import AsyncMock, MagicMock
+
+    import httpx
+    from fastapi import FastAPI
+    from middleware.hybrid_auth import HybridAuthMiddleware
+
+    from backend.app.dependencies import get_database_pool
+    from backend.app.routers import hr as hr_router
+    from backend.app.routers.auth import create_access_token
+
+    redis = MagicMock()
+    redis.exists = AsyncMock(return_value=0)
+    redis.get = AsyncMock(return_value=None)
+    manager = MagicMock()
+    manager.get_async_client.return_value = redis
+    app = FastAPI()
+    app.include_router(hr_router.router)
+    app.add_middleware(HybridAuthMiddleware)
+    app.dependency_overrides[get_database_pool] = lambda: pool
+
+    def get(sub: str, email: str, role: str):
+        token = create_access_token(
+            {"sub": sub, "email": email, "role": role}, expires_delta=timedelta(minutes=5)
+        )
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+        return client, {"Authorization": f"Bearer {token}"}
+
+    with patch("backend.core.redis_manager.RedisManager.get_instance", return_value=manager):
+        yield get
+
+
+@pytest.mark.asyncio
+async def test_real_auth_path_active_staff_gets_own_card(real_auth_client) -> None:
+    client, headers = real_auth_client("tm-t1", "fake.twin@balizero.com", "member")
+    async with client:
+        res = await client.get("/api/hr/me/card", headers=headers)
+    assert res.status_code == 200, res.text
+    assert res.json()["unit"] == "mine" and "theirs" not in res.text
+
+
+@pytest.mark.asyncio
+async def test_real_auth_path_a_deactivated_member_with_a_valid_token_gets_404(
+    pool: asyncpg.Pool, real_auth_client
+) -> None:
+    client, headers = real_auth_client("tm-i", "fake.gone@balizero.com", "member")
+    async with client:
+        assert (await client.get("/api/hr/me/card", headers=headers)).status_code == 200
+        async with pool.acquire() as conn:
+            await conn.execute("UPDATE team_members SET active = false WHERE id = 'tm-i'")
+        res = await client.get("/api/hr/me/card", headers=headers)  # the token is still valid
+    assert res.status_code == 404 and "gone" not in res.text
+
+
+@pytest.mark.asyncio
+async def test_real_auth_path_a_staff_claim_on_a_client_row_gets_no_card(
+    real_auth_client,
+) -> None:
+    client, headers = real_auth_client("tm-t2", "Fake.Twin@balizero.com", "member")
+    async with client:
+        res = await client.get("/api/hr/me/card", headers=headers)
+    assert res.status_code in (403, 404) and "theirs" not in res.text
+
+
+@pytest.mark.asyncio
+async def test_a_client_claim_is_refused_and_a_forged_id_matches_no_row(real_auth_client) -> None:
+    client, headers = real_auth_client("tm-t1", "fake.twin@balizero.com", "client")
+    async with client:
+        assert (await client.get("/api/hr/me/card", headers=headers)).status_code == 403
+    client, headers = real_auth_client("fake.twin@balizero.com", "fake.twin@balizero.com", "member")
+    async with client:  # an email in the id slot is no primary key
+        assert (await client.get("/api/hr/me/card", headers=headers)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_card_for_member_requires_an_active_member(pool: asyncpg.Pool) -> None:
+    from backend.app.services.hr.hr_service import HRService
+
+    service = HRService(pool)
+    assert await service.get_card_for_member("tm-i") is not None
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE team_members SET active = false WHERE id = 'tm-i'")
+    assert await service.get_card_for_member("tm-i") is None
+
+
+# ─── import: the member changes between resolve and merge; lock timeout; lock order ───
+
+
+@pytest.mark.asyncio
+async def test_a_member_renamed_between_resolve_and_merge_is_rejected_and_nothing_is_written(
+    pool: asyncpg.Pool,
+) -> None:
+    from backend.app.services.hr.hr_service import HRService
+    from backend.scripts import import_staff_cards as imp
+
+    original = HRService.lock_staff_member
+
+    async def renamed_first(self: Any, conn: Any, member_id: str, email: str) -> bool:
+        async with pool.acquire() as other:  # a second connection commits the change
+            await other.execute(
+                "UPDATE team_members SET email = 'fake.renamed@balizero.com' WHERE id = $1",
+                member_id,
+            )
+        return await original(self, conn, member_id, email)
+
+    card = {"email": "fake.a@balizero.com", "fields": {"bank_name": "ShouldNotLand"}}
+    with patch.object(HRService, "lock_staff_member", renamed_first):
+        async with pool.acquire() as conn:
+            counts, ok = await imp.run(conn, {"cards": [card]}, apply=True)
+    assert ok is False and counts["rejected:member_changed"] == 1 and counts["applied"] == 0
+    assert counts["committed:no"] == 1
+    async with pool.acquire() as conn:
+        assert await conn.fetchval("SELECT bank_name FROM hr_employees WHERE id = 1") is None
+
+
+@pytest.mark.asyncio
+async def test_a_member_turned_client_between_resolve_and_merge_is_rejected(
+    pool: asyncpg.Pool,
+) -> None:
+    from backend.app.services.hr.hr_service import HRService
+    from backend.scripts import import_staff_cards as imp
+
+    original = HRService.lock_staff_member
+
+    async def demoted_first(self: Any, conn: Any, member_id: str, email: str) -> bool:
+        async with pool.acquire() as other:
+            await other.execute("UPDATE team_members SET role = 'client' WHERE id = $1", member_id)
+        return await original(self, conn, member_id, email)
+
+    card = {"email": "fake.a@balizero.com", "fields": {"bank_name": "ShouldNotLand"}}
+    with patch.object(HRService, "lock_staff_member", demoted_first):
+        async with pool.acquire() as conn:
+            counts, ok = await imp.run(conn, {"cards": [card]}, apply=True)
+    assert ok is False and counts["rejected:member_changed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_row_lock_is_rejected_as_lock_timeout_and_rolls_back(
+    pool: asyncpg.Pool,
+) -> None:
+    from backend.scripts import import_staff_cards as imp
+
+    card = {"email": "fake.a@balizero.com", "fields": {"bank_name": "ShouldNotLand"}}
+    async with pool.acquire() as holder:
+        holder_tx = holder.transaction()
+        await holder_tx.start()
+        try:  # another writer holds the member row (an uncommitted change to it)
+            await holder.execute("UPDATE team_members SET department = 'x' WHERE id = 'tm-a'")
+            with patch.object(imp, "LOCK_TIMEOUT_MS", 300):
+                async with pool.acquire() as conn:
+                    counts, ok = await asyncio.wait_for(
+                        imp.run(conn, {"cards": [card]}, apply=True), 20
+                    )
+        finally:
+            await holder_tx.rollback()
+    assert ok is False and counts["rejected:lock_timeout"] == 1 and counts["committed:no"] == 1
+    async with pool.acquire() as conn:
+        assert await conn.fetchval("SELECT bank_name FROM hr_employees WHERE id = 1") is None
+        assert await conn.fetchval("SHOW lock_timeout") != "300ms"  # SET LOCAL did not leak
+
+
+@pytest.mark.asyncio
+async def test_real_apply_locks_members_in_sorted_id_order(pool: asyncpg.Pool) -> None:
+    from backend.app.services.hr.hr_service import HRService
+    from backend.scripts import import_staff_cards as imp
+
+    seen: list[str] = []
+    original = HRService.lock_staff_member
+
+    async def spy(self: Any, conn: Any, member_id: str, email: str) -> bool:
+        seen.append(member_id)
+        return await original(self, conn, member_id, email)
+
+    doc = {
+        "cards": [
+            {"email": "fake.twin@balizero.com", "fields": {"bank_name": "T"}},  # tm-t1
+            {"email": "fake.b@balizero.com", "fields": {"hire_date": "2025-02-01"}},  # tm-b
+            {"email": "fake.a@balizero.com", "fields": {"bank_name": "A"}},  # tm-a
+        ]
+    }
+    with patch.object(HRService, "lock_staff_member", spy):
+        async with pool.acquire() as conn:
+            counts, ok = await imp.run(conn, doc, apply=True)
+    assert ok is True and counts["applied"] == 3
+    assert seen == ["tm-a", "tm-b", "tm-t1"]
