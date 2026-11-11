@@ -117,6 +117,22 @@ async def _find_by_name(conn: asyncpg.Connection, normalized: str) -> list[async
     return [row for row in rows if normalize_company_name(row["company_name"]) == normalized]
 
 
+def _ambiguous(rows: list[asyncpg.Record]) -> InvoiceCompanyError:
+    return InvoiceCompanyError(
+        409,
+        {
+            "code": "invoice_company_ambiguous",
+            "message": "Several companies match",
+            "candidates": [{"id": r["id"], "company_name": r["company_name"]} for r in rows],
+        },
+    )
+
+
+async def _lock(conn: asyncpg.Connection, *keys: str) -> None:
+    for key in sorted(set(keys)):
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", key)
+
+
 async def resolve_invoice_company(
     conn: asyncpg.Connection,
     client_id: int,
@@ -128,8 +144,12 @@ async def resolve_invoice_company(
 ) -> int:
     """Return the company id to store, creating the company and the link as needed.
 
-    Runs in the caller's transaction. Raises ``InvoiceCompanyError`` (404 unknown id,
-    422 empty name, 409 several name matches with the candidates listed).
+    Runs in the caller's transaction, after the caller has authorised a write on the
+    client. Raises ``InvoiceCompanyError``: 404 unknown id, 422 empty name, 409 when
+    several companies match (by NPWP or by name) with the candidates listed.
+
+    An NPWP identifies a company: a typed NPWP that exists wins over the typed name;
+    a typed NPWP that exists nowhere never reuses a company that has another NPWP.
     """
     if company_id is not None:
         if not await conn.fetchval("SELECT 1 FROM companies WHERE id = $1", company_id):
@@ -140,34 +160,32 @@ async def resolve_invoice_company(
         normalized = normalize_company_name(typed)
         if not normalized:
             raise InvoiceCompanyError(422, "invoice_company_name is empty")
-        await conn.execute(
-            "SELECT pg_advisory_xact_lock(hashtext($1))", f"invoice-company:{normalized}"
-        )
         npwp_typed = (npwp or "").strip() or None
         npwp_digits = normalize_npwp(npwp)
+        await _lock(
+            conn,
+            f"invoice-company:name:{normalized}",
+            *([f"invoice-company:npwp:{npwp_digits}"] if npwp_digits else []),
+            *([f"invoice-company:npwp-raw:{npwp_typed}"] if npwp_typed else []),
+        )
         found: int | None = None
         if npwp_typed:
-            found = await conn.fetchval(
-                "SELECT id FROM companies WHERE npwp_company = $1"
+            by_npwp = await conn.fetch(
+                "SELECT id, company_name FROM companies WHERE npwp_company = $1"
                 " OR ($2::text IS NOT NULL"
-                " AND regexp_replace(npwp_company, '[^0-9]', '', 'g') = $2)"
-                " ORDER BY id LIMIT 1",
+                " AND regexp_replace(npwp_company, '[^0-9]', '', 'g') = $2) ORDER BY id",
                 npwp_typed,
                 npwp_digits,
             )
+            if len(by_npwp) > 1:
+                raise _ambiguous(by_npwp)
+            found = by_npwp[0]["id"] if by_npwp else None
         if found is None:
             matches = await _find_by_name(conn, normalized)
+            if npwp_typed:
+                matches = [m for m in matches if not (m["npwp_company"] or "").strip()]
             if len(matches) > 1:
-                raise InvoiceCompanyError(
-                    409,
-                    {
-                        "code": "invoice_company_ambiguous",
-                        "message": "Several companies match this name",
-                        "candidates": [
-                            {"id": m["id"], "company_name": m["company_name"]} for m in matches
-                        ],
-                    },
-                )
+                raise _ambiguous(matches)
             found = matches[0]["id"] if matches else None
         if found is None:
             found = await conn.fetchval(
@@ -179,9 +197,11 @@ async def resolve_invoice_company(
                 actor,
             )
         resolved = found
+    await _lock(conn, f"invoice-company:link:{client_id}:{resolved}")
     await conn.execute(
         "INSERT INTO client_company_links (client_id, company_id, role, status)"
-        " VALUES ($1, $2, $3, 'active') ON CONFLICT (client_id, company_id) DO NOTHING",
+        " SELECT $1::int, $2::int, $3::text, 'active'"
+        " WHERE NOT EXISTS (SELECT 1 FROM client_company_links WHERE client_id = $1 AND company_id = $2)",
         client_id,
         resolved,
         NEW_LINK_ROLE,

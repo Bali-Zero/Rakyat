@@ -19,7 +19,7 @@ from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.crm_access import get_practices_user_filter
 from backend.app.routers.crm_enhanced_documents import DocumentUploadBase64, upload_document_base64
 from backend.app.services.internal_email import send_internal_email
-from backend.app.utils.crm_utils import is_crm_admin
+from backend.app.utils.crm_utils import is_crm_admin, verify_client_access
 from backend.app.utils.error_handlers import handle_database_error
 from backend.app.utils.json_utils import to_jsonb
 from backend.app.utils.logging_utils import get_logger, log_database_operation, log_success
@@ -85,12 +85,20 @@ async def _resolve_invoice_company_http(
     company_id: int | None,
     name: str | None,
     npwp: str | None,
-    actor: str,
+    current_user: dict,
 ) -> int:
+    # Creating a company and linking it mutates the client, so it takes the same
+    # write permission as the client link route (admin, or the client's owner).
+    await verify_client_access(client_id, current_user, conn, allow_assigned=True, write=True)
     try:
         async with conn.transaction():
             return await invoice_company_service.resolve_invoice_company(
-                conn, client_id, company_id=company_id, name=name, npwp=npwp, actor=actor
+                conn,
+                client_id,
+                company_id=company_id,
+                name=name,
+                npwp=npwp,
+                actor=(current_user.get("email") or "system").lower(),
             )
     except invoice_company_service.InvoiceCompanyError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -682,7 +690,7 @@ async def create_practice(
                         company_id=practice.invoice_company_id,
                         name=practice.invoice_company_name,
                         npwp=practice.invoice_company_npwp,
-                        actor=created_by,
+                        current_user=current_user,
                     )
                     await conn.execute(
                         "UPDATE practices SET invoice_company_id = $1 WHERE id = $2",
@@ -1463,27 +1471,36 @@ async def update_practice(
                 ):
                     update_set["quoted_price"] = new_type_row["base_price"]
 
+            invoice_company_pos: int | None = None
             if invoice_company_touched:
+                clear_requested = (
+                    "invoice_company_id" in updates.model_fields_set
+                    and invoice_company_id_in is None
+                    and not invoice_company_name_in
+                    and not invoice_company_npwp_in
+                )
                 if invoice_company_id_in is not None and invoice_company_name_in:
                     raise HTTPException(
                         status_code=422,
                         detail="send invoice_company_id or invoice_company_name, not both",
                     )
-                if invoice_company_id_in is None and not invoice_company_name_in:
-                    resolved_company_id = None
-                else:
-                    if practice_client_id is None:
-                        raise HTTPException(status_code=404, detail="Practice not found")
-                    resolved_company_id = await _resolve_invoice_company_http(
-                        conn,
-                        practice_client_id,
-                        company_id=invoice_company_id_in,
-                        name=invoice_company_name_in,
-                        npwp=invoice_company_npwp_in,
-                        actor=user_email.lower(),
+                if (
+                    not clear_requested
+                    and invoice_company_id_in is None
+                    and not invoice_company_name_in
+                ):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            "invoice_company_name or invoice_company_id is required"
+                            " (send invoice_company_id: null alone to clear)"
+                        ),
                     )
+                if practice_client_id is None:
+                    raise HTTPException(status_code=404, detail="Practice not found")
                 update_fields.append(f"invoice_company_id = ${param_index}")
-                params.append(resolved_company_id)
+                params.append(None)
+                invoice_company_pos = len(params) - 1
                 param_index += 1
 
             # Map of allowed fields to database columns
@@ -1604,6 +1621,19 @@ async def update_practice(
             params.append(practice_id)
 
             async with conn.transaction():
+                if invoice_company_pos is not None and (
+                    invoice_company_id_in is not None or invoice_company_name_in
+                ):
+                    # Resolved inside the same transaction as the UPDATE: a later
+                    # failure rolls the company and the link back with it.
+                    params[invoice_company_pos] = await _resolve_invoice_company_http(
+                        conn,
+                        practice_client_id,
+                        company_id=invoice_company_id_in,
+                        name=invoice_company_name_in,
+                        npwp=invoice_company_npwp_in,
+                        current_user=current_user,
+                    )
                 row = await conn.fetchrow(query, *params)  # nosemgrep
 
                 if not row:

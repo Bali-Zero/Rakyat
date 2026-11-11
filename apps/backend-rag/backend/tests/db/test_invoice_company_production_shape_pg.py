@@ -11,7 +11,9 @@ from __future__ import annotations
 import io
 import os
 from collections.abc import AsyncIterator
+from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import asyncpg
@@ -23,8 +25,11 @@ from pypdf import PdfReader
 from backend.app.routers import crm_practices
 from backend.app.routers.crm_practices import PracticeCreate, PracticeUpdate
 from backend.db.migration_base import split_migration_sql
-from backend.services.invoicing.invoice_generator import InvoiceGenerator
-from backend.services.invoicing.invoice_service import InvoiceAutomationService
+from backend.services.invoicing.entities import DEFAULT_ENTITY_KEY, ENTITIES
+from backend.services.invoicing.invoice_service import (
+    InvoiceAutomationService,
+    InvoiceIssuerDecision,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -41,7 +46,8 @@ CREATE TABLE practice_types (
 CREATE TABLE clients (
     id SERIAL PRIMARY KEY, full_name VARCHAR NOT NULL, email VARCHAR, phone VARCHAR,
     address TEXT, assigned_to VARCHAR, last_interaction_date TIMESTAMPTZ,
-    google_drive_folder_id VARCHAR, nationality VARCHAR
+    google_drive_folder_id VARCHAR, nationality VARCHAR,
+    created_by VARCHAR, deleted_at TIMESTAMPTZ
 );
 CREATE TABLE companies (
     id SERIAL PRIMARY KEY, uuid VARCHAR DEFAULT (gen_random_uuid())::text UNIQUE,
@@ -126,11 +132,14 @@ async def pool(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[asyncpg.Pool]:
         await admin.close()
 
 
-async def client(pool: asyncpg.Pool, name: str = "Synthetic Person") -> int:
+async def client(
+    pool: asyncpg.Pool, name: str = "Synthetic Person", assigned_to: str | None = None
+) -> int:
     return await pool.fetchval(
-        "INSERT INTO clients (full_name, email, address) VALUES ($1, 'synthetic.person@example.invalid',"
-        " 'Synthetic Home Street 1') RETURNING id",
+        "INSERT INTO clients (full_name, email, address, assigned_to)"
+        " VALUES ($1, 'synthetic.person@example.invalid', 'Synthetic Home Street 1', $2) RETURNING id",
         name,
+        assigned_to,
     )
 
 
@@ -154,34 +163,55 @@ async def link(pool: asyncpg.Pool, client_id: int, company_id: int, role: str = 
     )
 
 
-async def create(pool: asyncpg.Pool, client_id: int, code: str = "tax_annual_company", **extra):
+async def create(
+    pool: asyncpg.Pool, client_id: int, code: str = "tax_annual_company", user: dict = USER, **extra
+):
     body = PracticeCreate(client_id=client_id, practice_type_code=code, status="inquiry", **extra)
     return await crm_practices.create_practice(
         request=None,
         practice=body,
         background_tasks=BackgroundTasks(),
         db_pool=pool,
-        current_user=USER,
+        current_user=user,
     )
 
 
 async def pdf_text(pool: asyncpg.Pool, practice_id: int) -> str:
-    service = InvoiceAutomationService.__new__(InvoiceAutomationService)
-    service.db_pool = pool
-    practice = await service._fetch_practice_data(practice_id)
-    person = await service._fetch_client_data(practice["client_id"])
-    bill_to = await service._fetch_bill_to(practice.get("invoice_company_id"))
-    pdf = InvoiceGenerator().generate(
-        practice_id=practice_id,
-        client_name=person["full_name"],
-        client_email=person["email"],
-        client_phone=person["phone"],
-        client_address=person["address"],
-        practice_type="Synthetic service",
-        practice_description="Synthetic",
-        quoted_price=1000000.0,
-        **bill_to,
+    """Run the real ``trigger_on_sending_invoice``; only delivery and persistence are doubled."""
+    now = datetime.now(tz=timezone.utc)
+    drive = MagicMock()
+    drive.upload_file_to_folder = AsyncMock(return_value={"id": "drive-id", "webViewLink": "x"})
+    with (
+        patch(
+            "backend.services.invoicing.invoice_service.ServiceAccountDriveService",
+            return_value=drive,
+        ),
+        patch(
+            "backend.services.invoicing.invoice_service.log_email_attempt",
+            AsyncMock(return_value=1),
+        ),
+        patch("backend.services.invoicing.invoice_service.record_email_result", AsyncMock()),
+    ):
+        service = InvoiceAutomationService(pool)
+    service._resolve_issuer = AsyncMock(
+        return_value=InvoiceIssuerDecision(
+            entity=ENTITIES[DEFAULT_ENTITY_KEY], routed_at=now, lookup_at=now, source="new"
+        )
     )
+    sent = AsyncMock(return_value=True)
+    service._send_invoice_email_to_client = sent
+    service._send_accounting_notification = AsyncMock()
+    service._update_practice_with_invoice = AsyncMock()
+    with (
+        patch(
+            "backend.services.invoicing.invoice_service.log_email_attempt",
+            AsyncMock(return_value=1),
+        ),
+        patch("backend.services.invoicing.invoice_service.record_email_result", AsyncMock()),
+    ):
+        result = await service.trigger_on_sending_invoice(practice_id, USER["email"])
+    assert result["success"] is True, result
+    pdf = sent.await_args.kwargs["pdf_bytes"]
     return "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(pdf)).pages)
 
 
@@ -344,3 +374,133 @@ async def test_suggestion_endpoint_follows_the_autofill_rule(pool: asyncpg.Pool)
     two = await suggest("tax_annual_company")
     assert two["suggested_company_id"] == second
     assert len(two["companies"]) == 2
+
+
+STAFF = {"email": "synthetic.owner@example.invalid", "role": "staff"}
+OTHER = {"email": "synthetic.other@example.invalid", "role": "staff"}
+
+
+async def counts(pool: asyncpg.Pool) -> tuple[int, int, int]:
+    return (
+        await pool.fetchval("SELECT count(*) FROM companies"),
+        await pool.fetchval("SELECT count(*) FROM client_company_links"),
+        await pool.fetchval("SELECT count(*) FROM practices"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_company_and_link_writes_need_write_access_to_the_client(pool: asyncpg.Pool) -> None:
+    person = await client(pool, assigned_to=STAFF["email"])
+    with pytest.raises(HTTPException) as caught:
+        await create(pool, person, user=OTHER, invoice_company_name="PT Synthetic Terlarang")
+    assert caught.value.status_code == 403
+    assert await counts(pool) == (0, 0, 0)
+    allowed = await create(pool, person, user=STAFF, invoice_company_name="PT Synthetic Diizinkan")
+    assert allowed.invoice_company_id is not None
+    plain = await create(pool, person, user=OTHER)
+    assert plain.invoice_company_id is None
+
+
+@pytest.mark.asyncio
+async def test_npwp_only_patch_is_rejected_and_never_clears_the_company(pool: asyncpg.Pool) -> None:
+    person = await client(pool)
+    co = await company(pool, "PT Synthetic Tetap")
+    created = await create(pool, person, invoice_company_id=co)
+    for fields in ({"invoice_company_npwp": "012345678901000"}, {"invoice_company_name": "  "}):
+        with pytest.raises(HTTPException) as caught:
+            await crm_practices.update_practice(
+                request=None,
+                practice_id=created.id,
+                updates=PracticeUpdate(**fields),
+                db_pool=pool,
+                current_user=USER,
+            )
+        assert caught.value.status_code == 422
+    assert (
+        await pool.fetchval("SELECT invoice_company_id FROM practices WHERE id=$1", created.id)
+        == co
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_failing_patch_rolls_back_the_company_and_the_link(pool: asyncpg.Pool) -> None:
+    person = await client(pool)
+    created = await create(pool, person)
+    before = await counts(pool)
+    await pool.execute("DROP TABLE activity_log")
+    with pytest.raises(HTTPException):
+        await crm_practices.update_practice(
+            request=None,
+            practice_id=created.id,
+            updates=PracticeUpdate(invoice_company_name="PT Synthetic Batal", priority="high"),
+            db_pool=pool,
+            current_user=USER,
+        )
+    assert await counts(pool) == before
+    assert (
+        await pool.fetchval("SELECT invoice_company_id FROM practices WHERE id=$1", created.id)
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_typed_npwp_that_exists_nowhere_never_reuses_a_company_with_another_npwp(
+    pool: asyncpg.Pool,
+) -> None:
+    person = await client(pool)
+    other = await company(pool, "PT Synthetic Sama", "99.999.999.9-999.000")
+    created = await create(
+        pool,
+        person,
+        invoice_company_name="PT Synthetic Sama",
+        invoice_company_npwp="01.234.567.8-901.000",
+    )
+    assert created.invoice_company_id != other
+    assert await pool.fetchval("SELECT count(*) FROM companies") == 2
+
+
+@pytest.mark.asyncio
+async def test_typed_npwp_that_exists_nowhere_reuses_a_same_name_company_without_npwp(
+    pool: asyncpg.Pool,
+) -> None:
+    person = await client(pool)
+    bare = await company(pool, "PT Synthetic Polos")
+    created = await create(
+        pool,
+        person,
+        invoice_company_name="pt synthetic polos",
+        invoice_company_npwp="01.234.567.8-901.000",
+    )
+    assert created.invoice_company_id == bare
+
+
+@pytest.mark.asyncio
+async def test_one_npwp_on_two_companies_is_a_409_not_a_first_pick(pool: asyncpg.Pool) -> None:
+    person = await client(pool)
+    a = await company(pool, "PT Synthetic Dua A", "01.234.567.8-901.000")
+    b = await company(pool, "PT Synthetic Dua B", "012345678901000")
+    with pytest.raises(HTTPException) as caught:
+        await create(
+            pool, person, invoice_company_name="Anything", invoice_company_npwp="0123 4567 8901 000"
+        )
+    assert caught.value.status_code == 409
+    assert {c["id"] for c in caught.value.detail["candidates"]} == {a, b}
+    assert await pool.fetchval("SELECT count(*) FROM practices") == 0
+
+
+@pytest.mark.asyncio
+async def test_link_is_written_once_even_without_the_unique_constraint(pool: asyncpg.Pool) -> None:
+    await pool.execute(
+        "ALTER TABLE client_company_links DROP CONSTRAINT client_company_links_client_id_company_id_key"
+    )
+    person = await client(pool)
+    first = await create(pool, person, invoice_company_name="PT Synthetic Sekali")
+    await create(pool, person, invoice_company_name="PT Synthetic Sekali")
+    assert (
+        await pool.fetchval(
+            "SELECT count(*) FROM client_company_links WHERE client_id=$1 AND company_id=$2",
+            person,
+            first.invoice_company_id,
+        )
+        == 1
+    )
