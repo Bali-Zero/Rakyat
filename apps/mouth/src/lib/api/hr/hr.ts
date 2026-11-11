@@ -4,6 +4,7 @@
  */
 
 import { api } from "@/lib/api";
+import type { CredentialedResponse } from "@/lib/api/types/api-client.types";
 import type {
   AdminDashboard,
   Bonus,
@@ -82,6 +83,79 @@ export interface HrStaffCard {
   end_date: string | null;
 }
 export const getMyCard = () => api.get<HrStaffCard>(`${BASE}/me/card`);
+
+// My HR overview — the member's own picture in one read (Pay, Time, Me). The page
+// binds it to the bearer (src/lib/auth/SESSION.md S4), so it reads through
+// requestWithCredential and compares `team_member_id` with the sub that was sent.
+export interface HrOverviewPayslip {
+  id: number;
+  payroll_year: number;
+  payroll_month: number;
+  net_salary_idr: number;
+  base_salary_idr: number;
+  bonus_total_idr: number;
+  allowance_total_idr: number;
+  deduction_total_idr: number;
+  thr_idr: number;
+}
+export interface HrOverviewBonus {
+  id: number;
+  practice_type_code: string;
+  awarded_at: string;
+  status: string;
+  amount_idr: number;
+}
+export interface HrOverviewLeaveBalance {
+  id: number;
+  leave_type_id: number;
+  code: string;
+  leave_type_name: string;
+  is_paid: boolean;
+  balance_year: number;
+  allocated_days: number;
+  carried_over: number;
+  used_days: number;
+  pending_days: number;
+}
+export interface HrOverviewLeaveRequest {
+  id: number;
+  leave_type_name: string;
+  start_date: string;
+  end_date: string;
+  total_days: number;
+  status: string;
+  requested_at: string | null;
+}
+export interface HrOverviewAttendance {
+  /** "YYYY-MM", Bali calendar month. */
+  month: string;
+  days_present: number;
+  hours: number | null;
+  /** "HH:MM", Bali time. */
+  avg_clock_in: string | null;
+  /** null = the late-incident record could not be read. */
+  late_incidents: number | null;
+}
+export interface MyHrOverview {
+  /** The owner of this answer: equal to the bearer's sub. */
+  team_member_id: string;
+  card: HrStaffCard;
+  payslips: HrOverviewPayslip[];
+  bonuses: HrOverviewBonus[];
+  bonus_totals: {
+    month_total_idr: number;
+    month_count: number;
+    year_total_idr: number;
+  };
+  leave: {
+    balances: HrOverviewLeaveBalance[];
+    requests: HrOverviewLeaveRequest[];
+  };
+  attendance: HrOverviewAttendance[];
+}
+export const getMyHrOverview = (): Promise<
+  CredentialedResponse<MyHrOverview>
+> => api.requestWithCredential<MyHrOverview>(`${BASE}/me/overview`);
 
 // Dashboard
 export const getDashboard = () => api.get<AdminDashboard>(`${BASE}/dashboard`);

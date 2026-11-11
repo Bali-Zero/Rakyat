@@ -14,6 +14,7 @@ from typing import Any
 
 import asyncpg
 
+from backend.app.services.hr.hr_overview_logic import aggregate_attendance, unambiguous_email
 from backend.app.utils.hr_utils import (
     calculate_bpjs,
     calculate_pph21_monthly,
@@ -1081,6 +1082,105 @@ class HRService:
             query += " ORDER BY lr.requested_at DESC"
             rows = await conn.fetch(query, *params)
             return [dict(r) for r in rows]
+
+    # ─── MY OVERVIEW (GET /api/hr/me/overview) ───────────────────────
+
+    _MY_BONUSES_SQL = """
+        SELECT id, practice_type_code, awarded_at, status, amount_idr
+        FROM hr_bonus_ledger
+        WHERE employee_id = $1
+          AND EXTRACT(YEAR FROM (awarded_at AT TIME ZONE 'Asia/Makassar')) = $2
+        ORDER BY awarded_at DESC
+    """
+
+    # team_timesheet.user_id is str(team_members.id) = the token's `sub`
+    # (team_activity._resolve_actor_identity), so the attendance read is keyed by it.
+    _MY_CLOCKINS_SQL = """
+        SELECT work_date, clock_in_bali, hours_worked
+        FROM daily_work_hours
+        WHERE user_id = $1 AND work_date >= $2 AND work_date < $3
+    """
+
+    # attendance_late_incidents has NO member id column (092): it is keyed by email only, and
+    # team_members.email is unique case-SENSITIVELY, so two members could differ only by case.
+    # The member's own email is read by primary key together with how many team_members rows
+    # share it case-insensitively; the incident read happens only when that is exactly one.
+    _MY_EMAIL_SQL = """
+        SELECT tm.email,
+               (SELECT COUNT(*) FROM team_members o
+                 WHERE LOWER(o.email) = LOWER(tm.email)) AS same_email_members
+        FROM team_members tm
+        WHERE tm.id = $1
+    """
+
+    _MY_LATE_SQL = """
+        SELECT late_date
+        FROM attendance_late_incidents
+        WHERE LOWER(email) = LOWER($1) AND late_date >= $2 AND late_date < $3
+    """
+
+    async def get_my_overview_rows(self, employee_id: int, team_member_id: str) -> dict[str, Any]:
+        """The raw rows behind the "My HR" page, for ONE employee / team member.
+
+        The caller passes the employee row resolved from the token's `sub`; nothing here
+        reads another member. Payslips, leave balances and leave requests reuse the very
+        methods the existing own-data routes call, so the visibility rule is one rule.
+        """
+        today = business_today()
+        payslips = (await self.get_payslips(employee_id))[:12]
+        balances = await self.get_leave_balance(employee_id, today.year)
+        requests = (await self.list_leave_requests(employee_id))[:20]
+        async with self.db_pool.acquire() as conn:
+            bonuses = [
+                dict(r) for r in await conn.fetch(self._MY_BONUSES_SQL, employee_id, today.year)
+            ]
+        return {
+            "payslips": payslips,
+            "bonuses": bonuses,
+            "balances": balances,
+            "requests": requests,
+            "attendance": await self._my_attendance(team_member_id, today),
+        }
+
+    async def _my_attendance(self, team_member_id: str, today: date) -> list[dict[str, Any]]:
+        """Last three Bali calendar months (current first), aggregated from the clock-in view.
+
+        Each source degrades on its own: an unreadable clock-in view gives no months
+        (the page shows its empty state), an unreadable incident table gives
+        `late_incidents = None`. Neither takes the payslips down with it.
+        """
+        months: list[tuple[int, int]] = []
+        y, m = today.year, today.month
+        for _ in range(3):
+            months.append((y, m))
+            y, m = (y - 1, 12) if m == 1 else (y, m - 1)
+        start = date(months[-1][0], months[-1][1], 1)
+        end = date(today.year + (today.month == 12), today.month % 12 + 1, 1)
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                clock_rows = [
+                    dict(r)
+                    for r in await conn.fetch(self._MY_CLOCKINS_SQL, team_member_id, start, end)
+                ]
+        except Exception as exc:
+            logger.warning("my overview: clock-in view unreadable (%s)", type(exc).__name__)
+            return []
+        late_rows: list[dict[str, Any]] | None
+        try:
+            async with self.db_pool.acquire() as conn:
+                owner = await conn.fetchrow(self._MY_EMAIL_SQL, team_member_id)
+                email = unambiguous_email(dict(owner) if owner else None)
+                # Ambiguous or unknown email: never attribute someone else's incidents.
+                late_rows = (
+                    None
+                    if email is None
+                    else [dict(r) for r in await conn.fetch(self._MY_LATE_SQL, email, start, end)]
+                )
+        except Exception as exc:
+            logger.warning("my overview: late-incident table unreadable (%s)", type(exc).__name__)
+            late_rows = None
+        return aggregate_attendance(months, clock_rows, late_rows)
 
     # ─── DASHBOARD ───────────────────────────────────────────────────
 

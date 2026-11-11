@@ -9412,6 +9412,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/hr/me/overview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get My Overview
+     * @description The caller's own HR picture in one read: card, payslips, bonuses, leave, attendance.
+     *
+     *     Same identity rule as `/me/card`: no parameter at all, the member is the signed token's
+     *     team_members id and nothing the caller sends. `team_member_id` in the answer is that id,
+     *     so the page can check the owner against the bearer it sent.
+     */
+    get: operations["get_my_overview_api_hr_me_overview_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/hr/my-dashboard": {
     parameters: {
       query?: never;
@@ -19794,6 +19818,25 @@ export interface components {
        */
       store_name: string;
     };
+    /**
+     * AttendanceMonth
+     * @description One Bali-time calendar month of the member's own clock-ins.
+     *
+     *     `hours` and `avg_clock_in` are null when no clocked day carries them;
+     *     `late_incidents` is null when the late-incident record could not be read.
+     */
+    AttendanceMonth: {
+      /** Avg Clock In */
+      avg_clock_in?: string | null;
+      /** Days Present */
+      days_present: number;
+      /** Hours */
+      hours?: number | null;
+      /** Late Incidents */
+      late_incidents?: number | null;
+      /** Month */
+      month: string;
+    };
     /** AvailabilityAssessmentDTO */
     AvailabilityAssessmentDTO: {
       /**
@@ -20022,6 +20065,22 @@ export interface components {
        */
       slide_index: number;
     };
+    /** BonusEntry */
+    BonusEntry: {
+      /** Amount Idr */
+      amount_idr: number;
+      /**
+       * Awarded At
+       * Format: date-time
+       */
+      awarded_at: string;
+      /** Id */
+      id: number;
+      /** Practice Type Code */
+      practice_type_code: string;
+      /** Status */
+      status: string;
+    };
     /** BonusRateCreate */
     BonusRateCreate: {
       /** Amount Idr */
@@ -20039,6 +20098,27 @@ export interface components {
       notes?: string | null;
       /** Practice Type Code */
       practice_type_code: string;
+    };
+    /**
+     * BonusTotals
+     * @description Server-side totals; rejected, reversed and cancelled bonuses are never counted.
+     */
+    BonusTotals: {
+      /**
+       * Month Count
+       * @default 0
+       */
+      month_count: number;
+      /**
+       * Month Total Idr
+       * @default 0
+       */
+      month_total_idr: number;
+      /**
+       * Year Total Idr
+       * @default 0
+       */
+      year_total_idr: number;
     };
     /**
      * BookIngestionRequest
@@ -23750,6 +23830,36 @@ export interface components {
       /** Whatsapp Url */
       whatsapp_url: string;
     };
+    /** LeaveBalanceRow */
+    LeaveBalanceRow: {
+      /** Allocated Days */
+      allocated_days: number;
+      /** Balance Year */
+      balance_year: number;
+      /** Carried Over */
+      carried_over: number;
+      /** Code */
+      code: string;
+      /** Id */
+      id: number;
+      /** Is Paid */
+      is_paid: boolean;
+      /** Leave Type Id */
+      leave_type_id: number;
+      /** Leave Type Name */
+      leave_type_name: string;
+      /** Pending Days */
+      pending_days: number;
+      /** Used Days */
+      used_days: number;
+    };
+    /** LeaveBlock */
+    LeaveBlock: {
+      /** Balances */
+      balances?: components["schemas"]["LeaveBalanceRow"][];
+      /** Requests */
+      requests?: components["schemas"]["LeaveRequestRow"][];
+    };
     /** LeaveRequestCreate */
     LeaveRequestCreate: {
       /**
@@ -23766,6 +23876,29 @@ export interface components {
        * Format: date
        */
       start_date: string;
+      /** Total Days */
+      total_days: number;
+    };
+    /** LeaveRequestRow */
+    LeaveRequestRow: {
+      /**
+       * End Date
+       * Format: date
+       */
+      end_date: string;
+      /** Id */
+      id: number;
+      /** Leave Type Name */
+      leave_type_name: string;
+      /** Requested At */
+      requested_at?: string | null;
+      /**
+       * Start Date
+       * Format: date
+       */
+      start_date: string;
+      /** Status */
+      status: string;
       /** Total Days */
       total_days: number;
     };
@@ -24240,6 +24373,20 @@ export interface components {
       new_parent_id: string;
       /** Old Parent Id */
       old_parent_id?: string | null;
+    };
+    /** MyHrOverview */
+    MyHrOverview: {
+      /** Attendance */
+      attendance?: components["schemas"]["AttendanceMonth"][];
+      bonus_totals?: components["schemas"]["BonusTotals"];
+      /** Bonuses */
+      bonuses?: components["schemas"]["BonusEntry"][];
+      card: components["schemas"]["StaffCard"];
+      leave?: components["schemas"]["LeaveBlock"];
+      /** Payslips */
+      payslips?: components["schemas"]["PayslipSummary"][];
+      /** Team Member Id */
+      team_member_id: string;
     };
     /** NativeScopeRow */
     NativeScopeRow: {
@@ -25071,6 +25218,27 @@ export interface components {
       month: number;
       /** Year */
       year: number;
+    };
+    /** PayslipSummary */
+    PayslipSummary: {
+      /** Allowance Total Idr */
+      allowance_total_idr: number;
+      /** Base Salary Idr */
+      base_salary_idr: number;
+      /** Bonus Total Idr */
+      bonus_total_idr: number;
+      /** Deduction Total Idr */
+      deduction_total_idr: number;
+      /** Id */
+      id: number;
+      /** Net Salary Idr */
+      net_salary_idr: number;
+      /** Payroll Month */
+      payroll_month: number;
+      /** Payroll Year */
+      payroll_year: number;
+      /** Thr Idr */
+      thr_idr: number;
     };
     /**
      * PermissionItem
@@ -43517,6 +43685,26 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["StaffCard"];
+        };
+      };
+    };
+  };
+  get_my_overview_api_hr_me_overview_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MyHrOverview"];
         };
       };
     };

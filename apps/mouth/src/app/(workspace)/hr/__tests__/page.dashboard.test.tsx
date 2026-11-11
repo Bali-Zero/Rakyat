@@ -7,6 +7,8 @@ const { caps, getDashboard, getMyDashboard } = vi.hoisted(() => ({
   getMyDashboard: vi.fn(),
 }));
 
+const { replace } = vi.hoisted(() => ({ replace: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace }) }));
 vi.mock("@/lib/api/hr/hr", () => ({
   getCapabilities: caps,
   getDashboard,
@@ -58,20 +60,6 @@ interface Case {
 }
 
 const CASES: Case[] = [
-  {
-    name: "member with a record sees their own card",
-    admin: false,
-    record: true,
-    ownCall: "ok",
-    shows: [OWN],
-  },
-  {
-    name: "member whose card fails gets an error, not 'no record'",
-    admin: false,
-    record: true,
-    ownCall: "fail",
-    shows: [LOAD_ERROR],
-  },
   {
     name: "member without a record is told so",
     admin: false,
@@ -128,6 +116,7 @@ describe("HR dashboard states", () => {
     caps.mockReset();
     getDashboard.mockReset();
     getMyDashboard.mockReset();
+    replace.mockReset();
   });
 
   it.each(CASES)("$name", async (c) => {
@@ -153,6 +142,32 @@ describe("HR dashboard states", () => {
     // A card the caller may not see is never requested.
     expect(getDashboard).toHaveBeenCalledTimes(c.adminCall ? 1 : 0);
     expect(getMyDashboard).toHaveBeenCalledTimes(c.ownCall ? 1 : 0);
+  });
+
+  it("a member with a record is sent to /hr/me and nothing is requested here", async () => {
+    caps.mockResolvedValue({
+      hr_admin: false,
+      accounting_admin: false,
+      has_employee_record: true,
+    });
+    const { container } = render(<HRDashboardPage />);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/hr/me"));
+    expect(container).toBeEmptyDOMElement();
+    expect(getDashboard).not.toHaveBeenCalled();
+    expect(getMyDashboard).not.toHaveBeenCalled();
+  });
+
+  it("an HR admin stays on the dashboard and is not redirected", async () => {
+    caps.mockResolvedValue({
+      hr_admin: true,
+      accounting_admin: false,
+      has_employee_record: true,
+    });
+    getDashboard.mockResolvedValue(ADMIN);
+    getMyDashboard.mockResolvedValue(PERSONAL);
+    render(<HRDashboardPage />);
+    await waitFor(() => expect(screen.getByText(TEAM)).toBeInTheDocument());
+    expect(replace).not.toHaveBeenCalled();
   });
 
   it("a failed capabilities read is an access error and requests nothing", async () => {

@@ -9,7 +9,7 @@ RBAC:
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
 
 import asyncpg
@@ -23,6 +23,8 @@ from backend.app.services.hr.hr_leave_notifier import (
     notify_leave_request_reviewed,
 )
 from backend.app.services.hr.hr_leave_routing import reports_of, resolve_approver
+from backend.app.services.hr.hr_overview_logic import bonus_totals
+from backend.app.services.hr.hr_overview_models import MyHrOverview
 from backend.app.services.hr.hr_service import HRCardError, HRService
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.app.utils.hr_utils import is_hr_admin
@@ -206,6 +208,43 @@ async def get_my_card(
     if not card:
         raise HTTPException(status_code=404, detail="No HR employee record found for your account")
     return member_card(card)
+
+
+@router.get("/me/overview", response_model=MyHrOverview)
+async def get_my_overview(
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> MyHrOverview:
+    """The caller's own HR picture in one read: card, payslips, bonuses, leave, attendance.
+
+    Same identity rule as `/me/card`: no parameter at all, the member is the signed token's
+    team_members id and nothing the caller sends. `team_member_id` in the answer is that id,
+    so the page can check the owner against the bearer it sent.
+    """
+    if (current_user.get("role") or "") == "client":
+        raise HTTPException(status_code=403, detail="Staff access required")
+    member_id = _get_user_id(current_user)
+    service = _get_hr_service(db_pool)
+    try:
+        card = await service.get_card_for_member(member_id)
+    except HRCardError:  # a code, never a driver message
+        raise HTTPException(status_code=500, detail="Card operation failed") from None
+    if not card:
+        raise HTTPException(status_code=404, detail="No HR employee record found for your account")
+    try:
+        rows = await service.get_my_overview_rows(card["id"], member_id)
+    except Exception as exc:  # a fixed message: a driver error can quote a value
+        logger.error("hr overview read failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Overview read failed") from None
+    return MyHrOverview(
+        team_member_id=str(member_id),
+        card=member_card(card),
+        payslips=rows["payslips"],
+        bonuses=rows["bonuses"],
+        bonus_totals=bonus_totals(rows["bonuses"], datetime.now(timezone.utc)),
+        leave={"balances": rows["balances"], "requests": rows["requests"]},
+        attendance=rows["attendance"],
+    )
 
 
 # ─── EMPLOYEES (admin only) ─────────────────────────────────────────────
