@@ -46,6 +46,7 @@ import {
 } from "@/components/process/kanban-colors";
 import { RequiredDocumentsCard } from "./RequiredDocumentsCard";
 import { SelectServiceCard } from "./SelectServiceCard";
+import { InvoiceCompanyCard } from "./InvoiceCompanyCard";
 import { useTeamMemberOptions } from "@/hooks/useTeamMembers";
 import { useInvalidateClient } from "@/hooks/useClientDetail";
 import { initialsOf } from "@/lib/team-initials";
@@ -1165,6 +1166,13 @@ export default function CaseDetailPage() {
                 })()}
             </div>
           </div>
+
+          {caseId && (
+            <InvoiceCompanyCard
+              practice={practice}
+              onSaved={applyPracticeUpdate}
+            />
+          )}
 
           {/* Process Details */}
           <div

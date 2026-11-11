@@ -33,6 +33,14 @@ import { toError } from "@/lib/types/common";
 import { useTeamMemberOptions } from "@/hooks/useTeamMembers";
 import { useInvalidateClient } from "@/hooks/useClientDetail";
 import { ReferrerDropdown } from "@/components/partners/ReferrerDropdown";
+import {
+  EMPTY_INVOICE_COMPANY,
+  InvoiceCompanyField,
+  ambiguityFromError,
+  invoiceCompanyParams,
+  type InvoiceCompanyAmbiguity,
+  type InvoiceCompanyValue,
+} from "../InvoiceCompanyField";
 
 interface ServiceItem {
   code: string;
@@ -92,6 +100,12 @@ export default function NewPracticePage() {
     referrer_id: null as string | null,
     family_member_id: "" as string, // "" = for main client; otherwise the family member id as string
   });
+
+  const [invoiceCompany, setInvoiceCompany] = useState<InvoiceCompanyValue>(
+    EMPTY_INVOICE_COMPANY,
+  );
+  const [invoiceAmbiguity, setInvoiceAmbiguity] =
+    useState<InvoiceCompanyAmbiguity | null>(null);
 
   // Family members of the selected client (for dependent-KITAS etc.)
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
@@ -465,8 +479,10 @@ export default function NewPracticePage() {
         ...(result.data.family_member_id
           ? { family_member_id: result.data.family_member_id }
           : {}),
+        ...invoiceCompanyParams(invoiceCompany),
       } as CreatePracticeParams;
 
+      setInvoiceAmbiguity(null);
       const createdPractice = await api.crm.createPractice(backendData);
 
       if (formData.referrer_id != null && createdPractice?.id) {
@@ -516,6 +532,11 @@ export default function NewPracticePage() {
         router.push(newId ? `/process/${newId}` : "/process");
       }
     } catch (error) {
+      const ambiguous = ambiguityFromError(error, invoiceCompany.name.trim());
+      if (ambiguous) {
+        setInvoiceAmbiguity(ambiguous);
+        return;
+      }
       const apiDuration = performance.now() - apiStart;
       casesMetrics.trackApiCall(
         "/api/crm/practices/create",
@@ -826,6 +847,32 @@ export default function NewPracticePage() {
                 Pick a dependent when this process is for a spouse or child
                 (e.g. dependent KITAS). Leave as main client otherwise.
               </p>
+            </div>
+          )}
+
+          {formData.client_id && (
+            <div className="space-y-2">
+              <label className={labelClass}>
+                Invoice to company{" "}
+                <span className="text-[var(--foreground-muted)] font-normal">
+                  (optional)
+                </span>
+              </label>
+              <InvoiceCompanyField
+                clientId={formData.client_id}
+                practiceTypeCode={selectedServiceCode || undefined}
+                value={invoiceCompany}
+                onChange={(next) => {
+                  setInvoiceAmbiguity(null);
+                  setInvoiceCompany(next);
+                }}
+                ambiguity={invoiceAmbiguity}
+                onPickCandidate={(id) => {
+                  setInvoiceAmbiguity(null);
+                  setInvoiceCompany({ companyId: id, name: "", npwp: "" });
+                }}
+                disabled={isLoading}
+              />
             </div>
           )}
 
