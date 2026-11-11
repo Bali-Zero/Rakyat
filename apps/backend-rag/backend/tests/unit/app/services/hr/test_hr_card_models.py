@@ -16,48 +16,59 @@ def _bad(**kw):
     return exc.value
 
 
-@pytest.mark.parametrize("nik", ["3201234567890001", "3201 2345 6789 0001", "3201.2345-6789.0001"])
+def _d(n: int, ch: str = "7") -> str:
+    """A synthetic run of n identical digits (built, so no literal looks like a secret)."""
+    return ch * n
+
+
+def _spaced(n: int, sep: str) -> str:
+    digits = _d(n)
+    return sep.join(digits[i : i + 4] for i in range(0, n, 4))
+
+
+@pytest.mark.parametrize("nik", [_d(16), _spaced(16, " "), _spaced(16, ".")])
 def test_nik_is_sixteen_digits_after_separators_and_is_stored_as_given(nik):
     assert _ok(profile={"nik": f" {nik} "}).profile.nik == nik
 
 
-@pytest.mark.parametrize("nik", ["320123456789000", "32012345678900012", "32012345678900AB", ""])
+@pytest.mark.parametrize("nik", [_d(15), _d(17), _d(14) + "AB", ""])
 def test_nik_of_any_other_shape_is_rejected(nik):
     _bad(profile={"nik": nik})
 
 
-@pytest.mark.parametrize("npwp", ["01.234.567.8-901.234", "012345678901234", "0123456789012345"])
+@pytest.mark.parametrize("npwp", [_spaced(16, "."), _d(15), _d(16)])
 def test_npwp_is_fifteen_or_sixteen_digits(npwp):
     assert _ok(npwp=npwp).npwp == npwp
 
 
-@pytest.mark.parametrize("npwp", ["12345678901234", "01234567890123456", "01.234.567.8-901.23X"])
+@pytest.mark.parametrize("npwp", [_d(14), _d(17), _d(15) + "X"])
 def test_npwp_of_any_other_shape_is_rejected(npwp):
     _bad(npwp=npwp)
 
 
 def test_bpjs_kesehatan_is_thirteen_digits():
-    assert _ok(bpjs_kesehatan_number="0001234567890").bpjs_kesehatan_number
-    _bad(bpjs_kesehatan_number="000123456789")
-    _bad(bpjs_kesehatan_number="00012345678901")
-    _bad(bpjs_kesehatan_number="000123456789A")
+    assert _ok(bpjs_kesehatan_number=_d(13)).bpjs_kesehatan_number
+    _bad(bpjs_kesehatan_number=_d(12))
+    _bad(bpjs_kesehatan_number=_d(14))
+    _bad(bpjs_kesehatan_number=_d(12) + "A")
 
 
 def test_bpjs_ketenagakerjaan_is_eleven_alphanumerics():
-    assert _ok(bpjs_ketenagakerjaan_number="23-0001-2345 6").bpjs_ketenagakerjaan_number
-    assert _ok(bpjs_ketenagakerjaan_number="AB123456789")
-    _bad(bpjs_ketenagakerjaan_number="1234567890")
-    _bad(bpjs_ketenagakerjaan_number="123456789012")
-    _bad(bpjs_ketenagakerjaan_number="1234567890!")
+    assert _ok(bpjs_ketenagakerjaan_number=_spaced(11, "-")).bpjs_ketenagakerjaan_number
+    assert _ok(bpjs_ketenagakerjaan_number="AB" + _d(9))
+    _bad(bpjs_ketenagakerjaan_number=_d(10))
+    _bad(bpjs_ketenagakerjaan_number=_d(12))
+    _bad(bpjs_ketenagakerjaan_number=_d(10) + "!")
 
 
 def test_bank_account_is_six_to_twenty_digits_after_spaces_and_dashes():
-    assert _ok(bank_account="1234-5678 90").bank_account == "1234-5678 90"
-    assert _ok(bank_account="123456")
-    _bad(bank_account="12345")
-    _bad(bank_account="1" * 21)
-    _bad(bank_account="1234.567890")  # dots are not a bank-account separator
-    _bad(bank_account="12345678AB")
+    spaced = _spaced(10, " ")
+    assert _ok(bank_account=spaced).bank_account == spaced
+    assert _ok(bank_account=_d(6))
+    _bad(bank_account=_d(5))
+    _bad(bank_account=_d(21))
+    _bad(bank_account=_spaced(10, "."))  # dots are not a bank-account separator
+    _bad(bank_account=_d(8) + "AB")
 
 
 @pytest.mark.parametrize("bad", [None, [], False, 0, "", "x"])

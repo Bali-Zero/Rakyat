@@ -564,7 +564,7 @@ def main() -> int:
     print("[bootstrap] team_members prod-only columns + defaults ensured")
 
     # hr_employees: created in prod by the legacy python migration_068 (not by a
-    # migrations_v2 file, so the v2 runner never builds it). Migration 353 adds
+    # migrations_v2 file, so the v2 runner never builds it). Migration 354 adds
     # `profile` to it with a plain ALTER that must fail loudly when the table is
     # missing, so a CI database needs the table here. DDL mirrors migration_068.
     with engine.begin() as conn:
@@ -594,7 +594,7 @@ def main() -> int:
                 """
             )
         )
-    print("[bootstrap] hr_employees legacy table ensured (for migration 353)")
+    print("[bootstrap] hr_employees legacy table ensured (for Migration 354)")
 
     # practice_types prod-only divergence.
     #

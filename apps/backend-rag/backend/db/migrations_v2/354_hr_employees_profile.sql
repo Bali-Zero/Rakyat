@@ -1,5 +1,5 @@
 -- ============================================================
--- 353_hr_employees_profile.sql
+-- 354_hr_employees_profile.sql
 -- The staff HR card lives in hr_employees: one jsonb column for the
 -- identity / employer / contract / document facts that have no column of
 -- their own. The scalar HR fields already stored here (npwp, ptkp_status,
@@ -7,7 +7,7 @@
 --
 -- Date: 2026-11-11
 -- hr_employees is created by the legacy python migration_068, not by a v2 file:
--- a database without it must FAIL here (never record 353 as applied with the
+-- a database without it must FAIL here (never record 354 as applied with the
 -- column missing). CI builds the table in scripts/ci_bootstrap_schema.py.
 --
 -- Must be kept in sync with:

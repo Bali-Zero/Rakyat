@@ -1,8 +1,8 @@
-"""Migration 353, the card read and the merge, against a real Postgres.
+"""Migration 354, the card read and the merge, against a real Postgres.
 
 Collected under backend/tests/ and run by the `Backend Shard N` jobs against their
 postgres service, like the other tests in this directory (no skip, no xfail). The
-test works in its own schema (`hrcard353`) so it never touches shared tables.
+test works in its own schema (`hrcard354`) so it never touches shared tables.
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ from backend.tests.fixtures.prod_shaped_pool import init_prod_shaped_connection
 
 pytestmark = pytest.mark.integration
 
-SCHEMA = "hrcard353"
+SCHEMA = "hrcard354"
 MIGRATION = (
-    Path(__file__).resolve().parents[2] / "db" / "migrations_v2" / "353_hr_employees_profile.sql"
+    Path(__file__).resolve().parents[2] / "db" / "migrations_v2" / "354_hr_employees_profile.sql"
 )
 
 _HR_DDL = """
@@ -57,7 +57,7 @@ def _forward() -> str:
 
 def _rollback() -> str:
     rollback = split_migration_sql(MIGRATION.read_text(encoding="utf-8"))[1]
-    assert rollback, "353 must carry a rollback section"
+    assert rollback, "354 must carry a rollback section"
     return rollback
 
 
@@ -70,7 +70,7 @@ async def _init(conn: asyncpg.Connection) -> None:
 async def pool() -> AsyncIterator[asyncpg.Pool]:
     admin = await asyncpg.connect(_dsn())
     try:
-        await admin.execute("SELECT pg_advisory_lock(hashtext('r2-migration-353-hr-card-test'))")
+        await admin.execute("SELECT pg_advisory_lock(hashtext('r2-migration-354-hr-card-test'))")
         await admin.execute(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; CREATE SCHEMA {SCHEMA};")
         p = await asyncpg.create_pool(
             _dsn(),
@@ -106,7 +106,7 @@ async def pool() -> AsyncIterator[asyncpg.Pool]:
             await p.close()
     finally:
         await admin.execute(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE")
-        await admin.execute("SELECT pg_advisory_unlock(hashtext('r2-migration-353-hr-card-test'))")
+        await admin.execute("SELECT pg_advisory_unlock(hashtext('r2-migration-354-hr-card-test'))")
         await admin.close()
 
 

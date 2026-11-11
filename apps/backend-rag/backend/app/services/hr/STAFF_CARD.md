@@ -1,7 +1,7 @@
 # Staff HR card: contract
 
 Storage: `hr_employees` scalar columns plus `hr_employees.profile` (jsonb object,
-migration 353). Code: `hr_card_models.py`, `hr_service.py`, `routers/hr.py`,
+Migration 354). Code: `hr_card_models.py`, `hr_service.py`, `routers/hr.py`,
 `backend/scripts/import_staff_cards.py`. Every clause has a named test; the index is at the end.
 
 ## Scope
@@ -77,7 +77,7 @@ employee read or write response carries `profile`.
 
 | Clause | Tests |
 |---|---|
-| C1 | `unit/app/routers/test_hr_staff_card.py` (keyed by id, client 403, 404, one GET without parameters); `unit/app/services/hr/test_hr_card_service.py::test_get_card_for_member_is_primary_key_*`; `tests/migrations/test_migration_353_hr_employees_profile.py::test_me_card_returns_the_authenticated_rows_card_never_the_case_twins`, `::test_get_card_for_member_is_primary_key_only_and_staff_only` |
+| C1 | `unit/app/routers/test_hr_staff_card.py` (keyed by id, client 403, 404, one GET without parameters); `unit/app/services/hr/test_hr_card_service.py::test_get_card_for_member_is_primary_key_*`; `tests/migrations/test_migration_354_hr_employees_profile.py::test_me_card_returns_the_authenticated_rows_card_never_the_case_twins`, `::test_get_card_for_member_is_primary_key_only_and_staff_only` |
 | C2 | `test_a_database_failure_is_a_fixed_500_*`, `test_a_read_failure_is_a_code_*`, `test_merge_card_on_replaces_a_driver_error_*`, `test_a_card_write_failure_carries_no_driver_text`, `test_output_carries_counts_only`, `test_the_surface_added_is_one_get_*` |
 | C3 | `test_a_non_object_stored_profile_still_reads`, `test_odd_stored_strings_*`, `test_the_read_model_never_raises_*`, `test_a_stored_string_profile_and_odd_contract_still_read` |
 | C4 | `test_two_merges_keep_profile_an_object_under_the_production_codec`, `test_amain_registers_the_production_codec_*` |
