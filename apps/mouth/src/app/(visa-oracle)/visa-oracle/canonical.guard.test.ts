@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -41,5 +41,64 @@ describe("/visa-oracle/privacy canonical points at itself, not the root", () => 
 
   it("keeps its title (positive control)", () => {
     expect(layout).toMatch(/title:\s*"Visa Oracle Privacy Policy"/);
+  });
+});
+
+describe("/visa-oracle/unlock canonical points at itself, not at /visa-oracle", () => {
+  it("evaluates to its own canonical and keeps noindex/nofollow", async () => {
+    const { metadata } = await import("./unlock/layout");
+    expect(metadata.alternates?.canonical).toBe(
+      "https://balizero.com/visa-oracle/unlock",
+    );
+    expect(metadata.robots).toEqual({ index: false, follow: false });
+  });
+
+  it("the page is a client component, so the layout's metadata is the effective one", () => {
+    // A client component cannot export metadata. If this page ever becomes a
+    // server component it may declare its own metadata that wins over the
+    // layout's: this test must then be revisited.
+    expect(read("unlock/page.tsx")).toMatch(
+      /^\s*(\/\/[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*["']use client["']/,
+    );
+  });
+});
+
+// A route-set test, not a generic resolver: re-implementing Next's metadata
+// resolution here could not be proved faithful, so every route gets its own
+// explicit canonical test above and a new route fails THIS test until it does.
+describe("the set of (visa-oracle) page routes is the set with an explicit canonical test", () => {
+  const GROUP_ROOT = join(process.cwd(), "src/app/(visa-oracle)");
+
+  // Next's default pageExtensions: next.config.ts does not set the key (the
+  // test below fails if it ever does), so any page.<ext> here is a route.
+  const PAGE_EXTENSIONS = ["tsx", "ts", "jsx", "js"];
+
+  function pageRoutes(dir: string, segments: string[]): string[] {
+    const found: string[] = [];
+    if (PAGE_EXTENSIONS.some((ext) => existsSync(join(dir, `page.${ext}`)))) {
+      const parts = segments.filter((s) => !/^\(.+\)$/.test(s));
+      found.push(`/${parts.join("/")}`);
+    }
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (!statSync(full).isDirectory() || entry.startsWith("_")) continue;
+      found.push(...pageRoutes(full, [...segments, entry]));
+    }
+    return found;
+  }
+
+  it("next.config.ts leaves pageExtensions at Next's default (read-only text check of that one key)", () => {
+    // Importing the config pulls in plugins and env reads, so only the key is
+    // looked for. If it appears, set PAGE_EXTENSIONS from it before passing.
+    expect(
+      readFileSync(join(process.cwd(), "next.config.ts"), "utf8"),
+    ).not.toMatch(/\bpageExtensions\b/);
+  });
+
+  it("is exactly /visa-oracle, /visa-oracle/privacy, /visa-oracle/unlock", () => {
+    expect(pageRoutes(GROUP_ROOT, []).sort()).toEqual(
+      ["/visa-oracle", "/visa-oracle/privacy", "/visa-oracle/unlock"],
+      // a new route needs its own explicit canonical test in this file
+    );
   });
 });
