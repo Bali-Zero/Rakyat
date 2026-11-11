@@ -195,8 +195,12 @@ def test_353_practices_practice_type_id_nullable() -> None:
     assert _ROLLBACK_MARKER.search(sql), "353: missing '-- === ROLLBACK ===' marker"
     forward, rollback = _split(sql)
     assert "DROP NOT NULL" in forward and "practice_type_id" in forward
+    # Adoption migration: neither direction may invent a NOT NULL —
+    # the rollback refuses (RAISE EXCEPTION keeps both ledgers intact)
+    # instead of restoring a constraint the forward never removed.
     assert "SET NOT NULL" not in forward
-    assert "RAISE WARNING" in rollback and "SET NOT NULL" in rollback
+    assert "SET NOT NULL" not in rollback
+    assert "RAISE EXCEPTION" in rollback
 
 
 def test_files_match_directory_listing() -> None:

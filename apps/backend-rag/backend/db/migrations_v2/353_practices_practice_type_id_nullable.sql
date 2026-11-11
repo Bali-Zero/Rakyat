@@ -25,9 +25,8 @@
 -- through a placeholder practice_types row precisely because a NULL type
 -- would hide them.
 --
--- The SQLModel CRM module (backend/app/modules/crm/models.py) still
--- declares the column nullable=False — a known, intentional divergence
--- from prod, same class as team_members.full_name (migration 137).
+-- The SQLModel CRM module (backend/app/modules/crm/models.py) already
+-- mirrors prod (nullable, measured for #7938 on 2026-10-06).
 --
 -- Idempotent. On prod (already nullable) and on bootstrap-built CI (the
 -- bootstrap script issues the same statement before the v2 runner applies
@@ -38,24 +37,16 @@
 ALTER TABLE practices ALTER COLUMN practice_type_id DROP NOT NULL;
 
 -- === ROLLBACK ===
--- Contract (council round 1 on #7938, findings F2/F3): on prod and on
--- bootstrap-built CI the column was ALREADY nullable before this
--- migration ran, so there is strictly nothing to restore — the only
--- environment where the forward changes state is a fresh SQLModel
--- create_all DB, where the column starts NOT NULL. The rollback below
--- restores that state when it can, and SAYS SO when it declines:
---   * NULL rows present  → pre-migration state was nullable; SET NOT NULL
---     would both fail and be wrong, so it is declined with a WARNING that
---     lands in the server log — never silent.
---   * no NULL rows       → SET NOT NULL, restoring the create_all shape.
--- The LOCK serializes against an INSERT landing a NULL row between the
--- check and the ALTER.
+-- This is an ADOPTION migration: the forward records a measured prod
+-- fact and changes no constraint anywhere it runs (prod and CI are
+-- already nullable; the SQLModel create_all shape is nullable too).
+-- There is therefore no prior state to restore, and a rollback that
+-- SET NOT NULL would INVENT a constraint the forward never removed —
+-- with zero NULL rows it would even succeed silently.
+-- The only honest rollback is a REFUSAL: raising keeps both ledgers
+-- intact (migration_manager deletes them only after the rollback SQL
+-- succeeds), so a refused rollback can never masquerade as a removal.
 DO $$
 BEGIN
-  LOCK TABLE public.practices IN ACCESS EXCLUSIVE MODE;
-  IF EXISTS (SELECT 1 FROM public.practices WHERE practice_type_id IS NULL) THEN
-    RAISE WARNING 'rollback 353 declined: practices.practice_type_id holds NULL rows; the pre-migration state on prod/CI was nullable, so there is nothing to restore';
-  ELSE
-    ALTER TABLE public.practices ALTER COLUMN practice_type_id SET NOT NULL;
-  END IF;
+  RAISE EXCEPTION 'rollback 353 refused: adoption migration — forward was a measured no-op (practices.practice_type_id already nullable on prod, CI and create_all); nothing to restore';
 END $$;
