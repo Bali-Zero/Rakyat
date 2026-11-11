@@ -1,0 +1,17 @@
+Montserrat
+Copyright 2011 The Montserrat Project Authors (https://github.com/JulietaUla/Montserrat)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+The licence text and FAQ are at https://openfontlicense.org (the same URL the
+font files carry in their name table, ID 14).
+
+Files here:
+- Montserrat-{500,600,700,800}.ttf: static instances of the Montserrat variable
+  font that apps/mouth already ships (packages/core/fonts/files).
+- MontserratTab-{500,600,700,800}.ttf: the same instances with the tabular-figures
+  (tnum) feature on by default and renamed MontserratTab, so that invoice amounts
+  align in columns. They are modified versions under the OFL and carry its
+  copyright line unchanged.
+
+The fonts are embedded (subset) in each generated invoice PDF by ReportLab and
+are never served on their own.
