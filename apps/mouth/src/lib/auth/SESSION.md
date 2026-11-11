@@ -102,6 +102,7 @@ nothing, dispatches nothing, never throws), `subscribeSessionChange(cb)`
 re-reads when the token reaches its expiry), `isSameIdentity`, and
 `acceptResponse(response, displayed, owner?)`. Fresh reads live in
 `session-credential.ts`. A page binds data to identity by:
+
 1. issuing a request only when an identity exists, through
    `requestWithCredential`, never through the cookie alone;
 2. accepting a response carrying personal data only if (a) it was sent with a
@@ -113,6 +114,7 @@ re-reads when the token reaches its expiry), `isSameIdentity`, and
    identity the page displays (`useSessionIdentity`) equals `sentSub` and its
    epoch is still the tab's epoch: all four are `acceptResponse`;
 3. clearing its data the moment the identity changes or disappears.
+
 The epoch moves on every token and profile write, and the displayed identity
 carries it, so a profile write makes a bound page reload. Condition: a bound
 page's load path must NOT call `getProfile()` or anything that calls
