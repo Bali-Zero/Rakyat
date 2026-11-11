@@ -11,9 +11,9 @@
 -- column missing). CI builds the table in scripts/ci_bootstrap_schema.py.
 --
 -- Must be kept in sync with:
---   - backend/app/services/hr/STAFF_CARD.md (the contract, C1-C9)
---   - backend/app/services/hr/hr_service.py (get_card_for_member, merge_card_on)
---   - backend/app/services/hr/hr_card_models.py (StaffProfilePatch allow-list)
+--   - backend/app/services/hr/STAFF_CARD.md (the contract)
+--   - backend/app/services/hr/hr_service.py (get_card_for_member)
+--   - backend/app/services/hr/hr_card_models.py (read models)
 -- ============================================================
 
 SET lock_timeout = '5s';
@@ -24,7 +24,7 @@ ALTER TABLE hr_employees
     ADD COLUMN IF NOT EXISTS profile jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 COMMENT ON COLUMN hr_employees.profile IS
-    'Staff HR card extras (jsonb object). Flat top-level keys. Identity: legal_name, nik, birth_place, birth_date, gender, address, religion, marital_status. Others: employer_entity, unit, contract {number, file_id}, docs {slot: file_id}, end_date. Written only through HRService.merge_card_on (jsonb || merge, never overwritten wholesale).';
+    'Staff HR card extras (jsonb object). Flat top-level keys. Identity: legal_name, nik, birth_place, birth_date, gender, address, religion, marital_status. Others: employer_entity, unit, contract {number, file_id}, docs {slot: file_id}, end_date. Merged key by key, never overwritten wholesale.';
 
 -- === ROLLBACK ===
 -- Drops the card data held in the column; applying this is a deliberate decision.
