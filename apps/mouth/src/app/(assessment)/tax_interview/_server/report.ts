@@ -5,7 +5,7 @@ import {
   type ExerciseTelemetry,
   type FieldTelemetry,
   type Flag,
-} from "@/app/(assessment)/interview_natalie/telemetry";
+} from "@/app/(assessment)/_shared/telemetry";
 import { MISSION_IDS, type Answers } from "../types";
 import { CONTENT } from "./content";
 import { KEY } from "./keys";

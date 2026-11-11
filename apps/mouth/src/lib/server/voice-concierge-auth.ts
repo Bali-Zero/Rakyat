@@ -14,6 +14,7 @@ const INTERNAL_ROLES = new Set([
   "ceo",
   "finance",
   "founder",
+  "hr & accounting",
   "marketing",
   "member",
   "operations",
@@ -27,6 +28,7 @@ const INTERNAL_ROLES = new Set([
 const INTERNAL_JOB_TITLE_ROLES = new Set([
   "consultant",
   "executive consultant",
+  "senior consultant",
 ]);
 
 interface VoiceConciergeAuthOptions {

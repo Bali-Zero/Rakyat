@@ -24,5 +24,15 @@ export function normalizeDashboardRole(
   if (isAdmin) return "zero";
   const lower = raw?.toLowerCase() ?? "";
   const found = VALID_ROLES.find((r) => r === lower);
-  return found ?? "team";
+  return found ?? TITLE_ALIASES.get(lower) ?? "team";
 }
+
+/**
+ * Job titles that resolve to a widget although they are not a widget name.
+ * "HR & Accounting" (reorganisation 2026-11-09) replaces the "Accounting"
+ * title and must keep the accounting widget. A Map, not an object literal:
+ * a plain index would also answer for inherited keys ("constructor", ...).
+ */
+const TITLE_ALIASES: ReadonlyMap<string, DashboardRole> = new Map<string, DashboardRole>([
+  ["hr & accounting", "accounting"],
+]);

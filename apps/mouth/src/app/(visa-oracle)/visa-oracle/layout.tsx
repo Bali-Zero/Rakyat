@@ -19,6 +19,7 @@ export const metadata: Metadata = {
   title: "Visa Oracle",
   description:
     "Bilingual decision support for Indonesian visa pathways, backed by deterministic evaluation and dated sources.",
+  alternates: { canonical: "https://balizero.com/visa-oracle" },
   robots: { index: false, follow: false },
 };
 

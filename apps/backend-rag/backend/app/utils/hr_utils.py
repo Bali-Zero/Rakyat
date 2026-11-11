@@ -23,10 +23,11 @@ from backend.app.core.config import settings
 # HR-specific additions on top of the global admin allowlist
 # (`settings.admin_emails_set`). Admins carry over automatically — Ruslana is
 # the HR-specialist case who is admin for HR only. HIGH-7 (audit 2026-04-18).
-# Reorganisation 2026-11-09: tax@ no longer holds an HR role; no tax or setup
-# address sees HR data (salary visibility stays with the global admins).
+# Reorganisation 2026-11-09: tax@ no longer holds an HR role. Owner decision
+# 2026-11-10: the Direktur is an HR admin (full HR access, including the pay
+# fields of employee records). No tax or setup address is.
 HR_EXTRA_ADMIN_EMAILS: frozenset[str] = frozenset(
-    {"ruslana@balizero.com"},
+    {"ruslana@balizero.com", "adit@balizero.com"},
 )
 
 

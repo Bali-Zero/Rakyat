@@ -14,10 +14,11 @@
 import { GLOBAL_ADMIN_EMAILS } from "@/lib/auth/owner";
 
 // HR-specific additions on top of GLOBAL_ADMIN_EMAILS — mirrors backend
-// HR_EXTRA_ADMIN_EMAILS (Ruslana is HR-admin only, not a global admin; the
-// retired tax@ login was removed in the 2026-11-09 reorganisation).
+// HR_EXTRA_ADMIN_EMAILS (Ruslana and the Direktur are HR-admin only, not global
+// admins; the retired tax@ login was removed in the 2026-11-09 reorganisation).
 const HR_EXTRA_ADMIN_EMAILS: ReadonlySet<string> = new Set([
   "ruslana@balizero.com",
+  "adit@balizero.com",
 ]);
 
 const HR_ADMIN_EMAILS: ReadonlySet<string> = new Set([
