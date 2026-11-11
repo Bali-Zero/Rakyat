@@ -9,8 +9,9 @@ Rules:
   * ``PRACTICE_TYPE_ENTITY_KEYS`` is the only routing table. A code that is
     not in it keeps today's behaviour (the default entity) but is loud: a
     warning and ``zantara_invoice_issuer_unmapped_total`` name the code.
-  * ``ENTITY_ROUTING_EFFECTIVE_FROM`` (WITA calendar date, draft value awaiting
-    the owner) is compared with the database instant the issuer is chosen at.
+  * ``ENTITY_ROUTING_EFFECTIVE_FROM`` is the activation switch: ``None`` keeps
+    routing dark (every new invoice is issued by the default entity); a WITA
+    calendar date is compared with the database instant the issuer is chosen at.
   * A mapped entity with a required field empty is never used for a NEW
     invoice: the default entity is used and an error is logged.
   * This module only chooses an issuer for a NEW invoice. An invoice that
@@ -30,8 +31,8 @@ logger = get_logger(__name__)
 
 WITA = timezone(timedelta(hours=8), name="WITA")
 
-# DRAFT awaiting owner decision.
-ENTITY_ROUTING_EFFECTIVE_FROM = date(2026, 11, 12)
+# Activation switch, set with the owner at merge time. None = routing is dark.
+ENTITY_ROUTING_EFFECTIVE_FROM: date | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,8 @@ class InvoiceEntity:
     bank_swift: str | None
 
     # Fields that must be non-empty before the entity can issue an invoice.
+    # bank_branch, bank_swift and address are optional: an empty one is omitted
+    # from the PDF.
     REQUIRED_FIELDS = (
         "key",
         "company_name",
@@ -56,8 +59,6 @@ class InvoiceEntity:
         "bank_account_name",
         "bank_account_number",
         "bank_name",
-        "bank_branch",
-        "bank_swift",
     )
 
     def missing_fields(self) -> list[str]:
@@ -74,12 +75,17 @@ class InvoiceEntity:
 
 # ── Entities ────────────────────────────────────────────────────────────────
 
+# OWNER RULING 2026-11-11: all four issuers print this one address. The house
+# number is 2. Earlier sources said 26 (the first version of this module, the
+# historical invoices): that number is superseded, do not "correct" it back.
+ISSUER_ADDRESS = "Jalan Raya Anyar No. 2, Kerobokan, Kuta Utara, Kab. Badung, Bali"
+
 # Today's issuer, moved unchanged from InvoiceGenerator's class constants.
 CIMB_BAYU_BALI_NOL = InvoiceEntity(
     key="cimb_bayu_bali_nol",
     company_name="PT BAYU BALI NOL",
     tax_id="1000000001239938",
-    address=None,
+    address=ISSUER_ADDRESS,
     bank_account_name="PT BAYU BALI NOL",
     bank_account_number="800198149700",
     bank_name="CIMB NIAGA",
@@ -93,7 +99,7 @@ MANDIRI_BALI_NOL_IMPRESARIAT = InvoiceEntity(
     key="mandiri_bali_nol_impresariat",
     company_name="PT. Bali Nol Impresariat",
     tax_id="0537 9883 1390 6000",
-    address="Jl Raya Anyar No 26, Kerobokan, Kuta Utara, Kab. Badung, Bali",
+    address=ISSUER_ADDRESS,
     bank_account_name="Bali Nol Impresariat",
     bank_account_number="1750002424074",
     bank_name="Bank Mandiri",
@@ -107,7 +113,7 @@ BNI_BAYU_SANTERO = InvoiceEntity(
     key="bni_bayu_santero",
     company_name="CV. Bayu Santero",
     tax_id="0021 5256 6290 6000",
-    address="Jl Raya Anyar No 26, Kerobokan, Kuta Utara, Kab. Badung, Bali",
+    address=ISSUER_ADDRESS,
     bank_account_name="CV. Bayu Santero",
     bank_account_number="0301613030",
     bank_name="BNI (Bank Negara Indonesia)",
@@ -115,11 +121,32 @@ BNI_BAYU_SANTERO = InvoiceEntity(
     bank_swift="BNINIDJARNN",
 )
 
+# Tax family issuer (owner 2026-11-11). NPWP from the company tax card in Drive;
+# bank block as printed on the historical invoices. Branch and SWIFT are not
+# printed on those invoices and are optional.
+PERMATA_BALI_NOL_KONSULTAN = InvoiceEntity(
+    key="permata_bali_nol_konsultan",
+    company_name="PT Bali Nol Konsultan",
+    tax_id="0509 8157 3490 6000",
+    address=ISSUER_ADDRESS,
+    bank_account_name="Bali Nol Konsultan",
+    bank_account_number="0123-7845-699",
+    bank_name="Bank Permata",
+    bank_branch=None,
+    bank_swift=None,
+)
+
 DEFAULT_ENTITY_KEY = CIMB_BAYU_BALI_NOL.key
 
 # Looked up at call time so tests can swap in synthetic complete entities.
 ENTITIES: dict[str, InvoiceEntity] = {
-    e.key: e for e in (CIMB_BAYU_BALI_NOL, MANDIRI_BALI_NOL_IMPRESARIAT, BNI_BAYU_SANTERO)
+    e.key: e
+    for e in (
+        CIMB_BAYU_BALI_NOL,
+        PERMATA_BALI_NOL_KONSULTAN,
+        MANDIRI_BALI_NOL_IMPRESARIAT,
+        BNI_BAYU_SANTERO,
+    )
 }
 
 # ── Practice type code → entity ─────────────────────────────────────────────
@@ -158,8 +185,6 @@ PRACTICE_TYPE_ENTITY_KEYS: dict[str, str] = {
     "kitap_investor_merp": CIMB_BAYU_BALI_NOL.key,
     "kitap_retirement_merp": CIMB_BAYU_BALI_NOL.key,
     "kitap_dependent_merp": CIMB_BAYU_BALI_NOL.key,
-    "merp_1yr": CIMB_BAYU_BALI_NOL.key,
-    "merp_2yr": CIMB_BAYU_BALI_NOL.key,
     "new_pt": CIMB_BAYU_BALI_NOL.key,
     "revision_pt": CIMB_BAYU_BALI_NOL.key,
     "company_pt_pma": CIMB_BAYU_BALI_NOL.key,
@@ -170,33 +195,34 @@ PRACTICE_TYPE_ENTITY_KEYS: dict[str, str] = {
     "urgent_1_day": CIMB_BAYU_BALI_NOL.key,
     "urgent_2_days": CIMB_BAYU_BALI_NOL.key,
     "urgent_3_days": CIMB_BAYU_BALI_NOL.key,
-    "tax": CIMB_BAYU_BALI_NOL.key,
-    "tax_annual_company": CIMB_BAYU_BALI_NOL.key,
-    "tax_annual_company_zero": CIMB_BAYU_BALI_NOL.key,
-    "tax_annual_personal": CIMB_BAYU_BALI_NOL.key,
-    "tax_annual_personal_addl": CIMB_BAYU_BALI_NOL.key,
-    "tax_annual_pkg_a": CIMB_BAYU_BALI_NOL.key,
-    "tax_annual_pkg_b": CIMB_BAYU_BALI_NOL.key,
-    "tax_annual_pkg_c": CIMB_BAYU_BALI_NOL.key,
-    "tax_annual_pkg_d": CIMB_BAYU_BALI_NOL.key,
-    "tax_annual_reporting": CIMB_BAYU_BALI_NOL.key,
-    "tax_bpjs_employee": CIMB_BAYU_BALI_NOL.key,
-    "tax_bpjs_insurance": CIMB_BAYU_BALI_NOL.key,
-    "tax_close_pma_company": CIMB_BAYU_BALI_NOL.key,
-    "tax_efin_application": CIMB_BAYU_BALI_NOL.key,
-    "tax_lkpm_yearly": CIMB_BAYU_BALI_NOL.key,
-    "tax_monthly_basic_0_50": CIMB_BAYU_BALI_NOL.key,
-    "tax_monthly_basic_50_100": CIMB_BAYU_BALI_NOL.key,
-    "tax_monthly_basic_100_200": CIMB_BAYU_BALI_NOL.key,
-    "tax_monthly_basic_200_plus": CIMB_BAYU_BALI_NOL.key,
-    "tax_monthly_bundled_0_50": CIMB_BAYU_BALI_NOL.key,
-    "tax_monthly_bundled_50_100": CIMB_BAYU_BALI_NOL.key,
-    "tax_monthly_bundled_100_200": CIMB_BAYU_BALI_NOL.key,
-    "tax_monthly_bundled_200_plus": CIMB_BAYU_BALI_NOL.key,
-    "tax_npwp_personal_coretax": CIMB_BAYU_BALI_NOL.key,
-    "tax_npwpd_registration": CIMB_BAYU_BALI_NOL.key,
-    "tax_registration": CIMB_BAYU_BALI_NOL.key,
-    "tax_update_data_coretax": CIMB_BAYU_BALI_NOL.key,
+    "tax": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_consulting": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_annual_company": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_annual_company_zero": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_annual_personal": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_annual_personal_addl": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_annual_pkg_a": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_annual_pkg_b": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_annual_pkg_c": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_annual_pkg_d": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_annual_reporting": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_bpjs_employee": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_bpjs_insurance": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_close_pma_company": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_efin_application": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_lkpm_yearly": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_monthly_basic_0_50": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_monthly_basic_50_100": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_monthly_basic_100_200": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_monthly_basic_200_plus": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_monthly_bundled_0_50": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_monthly_bundled_50_100": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_monthly_bundled_100_200": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_monthly_bundled_200_plus": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_npwp_personal_coretax": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_npwpd_registration": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_registration": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_update_data_coretax": PERMATA_BALI_NOL_KONSULTAN.key,
     "visa_c1_tourism": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "visa_c2_business": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "visa_c7_music_art": MANDIRI_BALI_NOL_IMPRESARIAT.key,
@@ -213,7 +239,6 @@ PRACTICE_TYPE_ENTITY_KEYS: dict[str, str] = {
     "visa_d2_business_1yr": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "visa_d2_business_2yr": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "visa_d2_business_5yr": MANDIRI_BALI_NOL_IMPRESARIAT.key,
-    "visa_voa": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "visa_b1_voa": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "other_epo": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "other_erp": MANDIRI_BALI_NOL_IMPRESARIAT.key,
@@ -223,24 +248,18 @@ PRACTICE_TYPE_ENTITY_KEYS: dict[str, str] = {
     "other_lapor_lahir_up": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "other_create_user_rptka": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "other_cancel_rptka": MANDIRI_BALI_NOL_IMPRESARIAT.key,
-    "other_cancel_rptka_imta_wl": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "other_imta_rptka_only_12mo": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "other_imta_rptka_only_6mo_or_less": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "other_mutation_address": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "other_mutation_address_2_kanim": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "other_mutation_passport": MANDIRI_BALI_NOL_IMPRESARIAT.key,
-    "other_acc_mutation": MANDIRI_BALI_NOL_IMPRESARIAT.key,
-    "other_acc_mutation_passport": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "other_passport_5yr": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "other_passport_10yr": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "other_epassport_5yr": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "other_epassport_10yr": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "other_skck": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "other_sktt": MANDIRI_BALI_NOL_IMPRESARIAT.key,
-    "other_domicilie": MANDIRI_BALI_NOL_IMPRESARIAT.key,
-    "other_domicilie_sktt": MANDIRI_BALI_NOL_IMPRESARIAT.key,
     "other_driving_license": MANDIRI_BALI_NOL_IMPRESARIAT.key,
-    "voa_extension": BNI_BAYU_SANTERO.key,
     "ext_b1_voa": BNI_BAYU_SANTERO.key,
     "ext_c1_tourism": BNI_BAYU_SANTERO.key,
 }
@@ -257,7 +276,6 @@ KNOWN_UNMAPPED_CODES = frozenset(
         "other_custom",
         "property_purchase",
         "pt_pma_setup",
-        "tax_consulting",
         "visa",
         "visa_bridging",
     }
@@ -353,7 +371,8 @@ def resolve_invoice_entity(
 
     key = entity_key_for_code(practice_type_code)
     default = _default_entity()
-    if routed_at.astimezone(WITA).date() < ENTITY_ROUTING_EFFECTIVE_FROM:
+    effective_from = ENTITY_ROUTING_EFFECTIVE_FROM
+    if effective_from is None or routed_at.astimezone(WITA).date() < effective_from:
         return default
 
     entity = ENTITIES.get(key)
