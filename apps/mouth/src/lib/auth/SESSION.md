@@ -68,8 +68,11 @@ data and throws the same errors) returns `{data, sentToken, sentSub}`: the
 exact bearer in the FINAL headers object passed to `fetch`
 (`bearerTokenFromHeaders`), whatever produced it, the managed token or a
 caller-supplied `Authorization`; `null` if the request went out without a
-Bearer; and its decoded `sub`. A non-Bearer scheme, a malformed value, or two
-spellings of the header (fetch would join them) give `null`/`null`. The token
+Bearer; and its decoded `sub`. Only a value of exactly `Bearer <token68>`
+counts (scheme spelled `Bearer`, one space, nothing trimmed): that is the shape
+every reader, the backend and the Next route handlers, takes as a bearer, and
+any other value may make them fall back to the cookie. Any other value, or two
+spellings of the header (fetch would join them), gives `null`/`null`. The token
 is returned there and nowhere else; never log or render it. The member is
 optional on `IApiClient` (test doubles may lack it; a page that needs the
 binding uses a client that has it).

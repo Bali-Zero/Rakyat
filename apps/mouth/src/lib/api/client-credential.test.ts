@@ -158,6 +158,35 @@ describe("sentToken comes from the FINAL headers passed to fetch", () => {
     }
   });
 
+  it("any value a reader might not take as a bearer is null/null (no trim, exact scheme)", async () => {
+    const t = tokenFor("1");
+    for (const value of [
+      ` Bearer ${t}`,
+      `Bearer ${t} `,
+      ` Bearer ${t}`,
+      `Bearer ${t} `,
+      `\tBearer ${t}`,
+      `bearer ${t}`,
+      `BEARER ${t}`,
+      `Bearer  ${t}`,
+      `Bearer\t${t}`,
+      `Bearer ${t}`,
+    ]) {
+      const r = await sendWith({ Authorization: value });
+      expect([r.sentToken, r.sentSub]).toEqual([null, null]);
+    }
+  });
+
+  it("the public auth client: a padded caller header with a stored token is null/null", async () => {
+    localStorage.setItem("auth_token", tokenFor("A"));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(ok({}));
+    const r = await new PublicAuthClient().requestWithCredential(
+      "/api/auth/portal-superuser",
+      { headers: { Authorization: ` Bearer ${tokenFor("A")}` } },
+    );
+    expect([r.sentToken, r.sentSub]).toEqual([null, null]);
+  });
+
   it("two Authorization spellings (fetch would join them) is null/null", async () => {
     const r = await sendWith({ authorization: "Bearer zzz" }, tokenFor("1"));
     expect([r.sentToken, r.sentSub]).toEqual([null, null]);

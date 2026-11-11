@@ -44,8 +44,12 @@ export const TOKEN_CLOCK_SKEW_SECONDS = 30;
 /**
  * The bearer token in a FINAL headers object, exactly as it will be passed to
  * fetch. Header names are case-insensitive, so every key spelling counts; more
- * than one Authorization entry (fetch would join them), a non-Bearer scheme or
- * a malformed value gives null. Never throws, never logs.
+ * than one Authorization entry (fetch would join them) gives null. The VALUE
+ * must be exactly `Bearer <token68>`: the scheme spelled `Bearer`, one space,
+ * token68 characters only, nothing trimmed. That is the one shape every
+ * reader takes as a bearer (the backend's `startswith("Bearer ")`, the Next
+ * route handlers); any other value may fall back to the cookie there, so it
+ * gives null here (fail closed). Never throws, never logs.
  */
 export function bearerTokenFromHeaders(
   headers: Record<string, string> | undefined,
@@ -55,7 +59,7 @@ export function bearerTokenFromHeaders(
     .filter((k) => k.toLowerCase() === "authorization")
     .map((k) => headers[k]);
   if (values.length !== 1 || typeof values[0] !== "string") return null;
-  const match = /^Bearer ([^\s,]+)$/i.exec(values[0].trim());
+  const match = /^Bearer ([A-Za-z0-9\-._~+/]+=*)$/.exec(values[0]);
   return match ? match[1] : null;
 }
 
