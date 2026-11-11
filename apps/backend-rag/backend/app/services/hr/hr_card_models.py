@@ -1,15 +1,147 @@
-"""Staff HR card: tolerant READ models.
+"""Staff HR card: strict WRITE validators (import only) and tolerant READ models.
 
-Contract: `STAFF_CARD.md` next to this module. The read model and builder below
-cannot raise on stored content (reads never validate).
+Contract: `STAFF_CARD.md` next to this module. The write models validate what the
+import script feeds them; the read model and builder below cannot raise on stored
+content (reads never validate). Error messages never include a value.
 """
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from datetime import date, datetime
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    field_validator,
+)
+
+from backend.app.utils.hr_utils import PTKP
+
+_SLOT_RE = re.compile(r"[A-Za-z0-9_.\-]{1,64}")
+_SEPARATORS = re.compile(r"[ .\-]")
+
+
+def _text_checker(max_len: int, multiline: bool = False) -> Any:
+    def check(value: str) -> str:
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValueError("text is not valid unicode") from None
+        if multiline:  # line breaks are real data in an address; nothing else is allowed
+            value = value.replace("\r\n", "\n")
+        if any(
+            unicodedata.category(ch).startswith("C") and not (multiline and ch == "\n")
+            for ch in value
+        ):
+            raise ValueError("control or non-printable characters are not allowed")
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be empty")
+        if len(value) > max_len:
+            raise ValueError(f"value is longer than {max_len} characters")
+        return value
+
+    return check
+
+
+def _id_checker(max_len: int, shape: re.Pattern[str], strip: re.Pattern[str]) -> Any:
+    """Validate on the normalised form (separators removed); store the trimmed value as given."""
+    text = _text_checker(max_len)
+
+    def check(value: str) -> str:
+        value = text(value)
+        if not shape.fullmatch(strip.sub("", value)):
+            raise ValueError("value does not have the shape of this identifier")
+        return value
+
+    return check
+
+
+_NO_BANK_DOTS = re.compile(r"[ \-]")
+
+_NIK = _id_checker(32, re.compile(r"[0-9]{16}"), _SEPARATORS)
+_NPWP = _id_checker(32, re.compile(r"[0-9]{15,16}"), _SEPARATORS)
+_BPJS_KES = _id_checker(32, re.compile(r"[0-9]{13}"), _SEPARATORS)
+_BPJS_KET = _id_checker(32, re.compile(r"[A-Za-z0-9]{11}"), _SEPARATORS)
+_BANK_ACCOUNT = _id_checker(100, re.compile(r"[0-9]{6,20}"), _NO_BANK_DOTS)
+
+
+def _slot_check(value: str) -> str:
+    if not _SLOT_RE.fullmatch(value):
+        raise ValueError("invalid document slot name")
+    return value
+
+
+def Text(max_len: int, multiline: bool = False) -> Any:
+    return Annotated[str, AfterValidator(_text_checker(max_len, multiline))]
+
+
+_Nik = Annotated[str, AfterValidator(_NIK)]
+_Npwp = Annotated[str, AfterValidator(_NPWP)]
+_BpjsKes = Annotated[str, AfterValidator(_BPJS_KES)]
+_BpjsKet = Annotated[str, AfterValidator(_BPJS_KET)]
+_BankAccount = Annotated[str, AfterValidator(_BANK_ACCOUNT)]
+_Slot = Annotated[str, AfterValidator(_slot_check)]
+_FileId = Annotated[str, AfterValidator(_text_checker(200))]
+
+
+class StaffContract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    number: Text(100) | None = None
+    file_id: _FileId | None = None
+
+
+class StaffProfilePatch(BaseModel):
+    """The documented keys of hr_employees.profile; any other key is rejected.
+
+    `contract` and `docs` may be absent but never an explicit null (no silent drop).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    legal_name: Text(255) | None = None
+    nik: _Nik | None = None
+    birth_place: Text(100) | None = None
+    birth_date: date | None = None
+    gender: Text(20) | None = None
+    address: Text(500, multiline=True) | None = None
+    religion: Text(50) | None = None
+    marital_status: Text(50) | None = None
+    employer_entity: Text(255) | None = None
+    unit: Text(100) | None = None
+    contract: StaffContract = Field(default_factory=StaffContract)
+    docs: dict[_Slot, _FileId] = Field(default_factory=dict)
+    end_date: date | None = None
+
+
+class StaffCardPatch(BaseModel):
+    """What one import card may set. `profile` may be absent, never an explicit null."""
+
+    model_config = ConfigDict(extra="forbid")
+    hire_date: date | None = None
+    npwp: _Npwp | None = None
+    ptkp_status: str | None = None
+    bpjs_kesehatan_number: _BpjsKes | None = None
+    bpjs_ketenagakerjaan_number: _BpjsKet | None = None
+    bank_name: Text(100) | None = None
+    bank_account: _BankAccount | None = None
+    bank_account_holder: Text(255) | None = None
+    is_active: StrictBool | None = None
+    profile: StaffProfilePatch = Field(default_factory=StaffProfilePatch)
+
+    @field_validator("ptkp_status")
+    @classmethod
+    def validate_ptkp(cls, value: str | None) -> str | None:
+        if value is not None and value not in PTKP:
+            msg = "ptkp_status is not an allowed PTKP code"
+            raise ValueError(msg)
+        return value
+
 
 # ─── read side: plain types, no validators; tolerant of whatever an older writer left ───
 

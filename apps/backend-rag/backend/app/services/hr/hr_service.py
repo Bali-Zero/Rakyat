@@ -38,10 +38,20 @@ def business_today() -> date:
     return (datetime.now(timezone.utc) + timedelta(hours=8)).date()
 
 
+_LOCK_ERRORS = (
+    asyncpg.exceptions.LockNotAvailableError,
+    asyncpg.exceptions.DeadlockDetectedError,
+)
+
+
 class HRCardCode(str, Enum):
     """The closed set of card failure codes (STAFF_CARD.md)."""
 
+    HIRE_DATE_REQUIRED = "hire_date_required"
+    INVALID_INPUT = "invalid_input"
+    PROFILE_NOT_OBJECT = "profile_not_object"
     DB_ERROR = "db_error"
+    LOCK_TIMEOUT = "lock_timeout"
 
 
 class HRCardError(Exception):
@@ -163,6 +173,50 @@ class HRService:
         WHERE tm.id = $1 AND COALESCE(tm.role, '') <> 'client' AND tm.active = true
     """
 
+    # $11 is a Python dict bound to jsonb: the pool codec encodes it exactly once.
+    _CARD_UPDATE_SQL = """
+        UPDATE hr_employees SET
+            hire_date = COALESCE($2, hire_date),
+            npwp = COALESCE($3, npwp),
+            ptkp_status = COALESCE($4, ptkp_status),
+            bpjs_kesehatan_number = COALESCE($5, bpjs_kesehatan_number),
+            bpjs_ketenagakerjaan_number = COALESCE($6, bpjs_ketenagakerjaan_number),
+            bank_name = COALESCE($7, bank_name),
+            bank_account = COALESCE($8, bank_account),
+            bank_account_holder = COALESCE($9, bank_account_holder),
+            is_active = COALESCE($10, is_active),
+            profile = (CASE WHEN jsonb_typeof(profile) = 'object' THEN profile ELSE '{}'::jsonb END)
+                || $11::jsonb
+                || CASE WHEN $11::jsonb ? 'docs' THEN jsonb_build_object(
+                    'docs',
+                    (CASE WHEN jsonb_typeof(profile->'docs') = 'object' THEN profile->'docs'
+                          ELSE '{}'::jsonb END) || ($11::jsonb->'docs'))
+                    ELSE '{}'::jsonb END
+                || CASE WHEN $11::jsonb ? 'contract' THEN jsonb_build_object(
+                    'contract',
+                    (CASE WHEN jsonb_typeof(profile->'contract') = 'object' THEN profile->'contract'
+                          ELSE '{}'::jsonb END) || ($11::jsonb->'contract'))
+                    ELSE '{}'::jsonb END,
+            updated_at = NOW()
+        WHERE team_member_id = $1
+        RETURNING id, jsonb_typeof(profile) AS profile_type
+    """
+
+    _CARD_INSERT_SQL = """
+        INSERT INTO hr_employees (
+            team_member_id, hire_date, base_salary_idr, npwp, ptkp_status,
+            bpjs_kesehatan_number, bpjs_ketenagakerjaan_number,
+            bank_name, bank_account, bank_account_holder, is_active, profile
+        )
+        SELECT tm.id, $2, 0, $3, COALESCE($4, 'TK/0'), $5, $6, $7, $8, $9,
+               COALESCE($10, TRUE), $11::jsonb
+        FROM team_members tm
+        WHERE tm.id = $1
+          AND NOT EXISTS (SELECT 1 FROM hr_employees x WHERE x.team_member_id = $1)
+        ON CONFLICT (team_member_id) DO NOTHING
+        RETURNING id, jsonb_typeof(profile) AS profile_type
+    """
+
     async def get_card_for_member(self, team_member_id: str) -> dict[str, Any] | None:
         """The staff member's HR card, keyed by the team_members PRIMARY KEY (never an email).
 
@@ -174,6 +228,93 @@ class HRService:
         except Exception:
             raise HRCardError(HRCardCode.DB_ERROR) from None
         return dict(row) if row else None
+
+    @staticmethod
+    def _checked_patch(
+        fields: dict[str, Any], profile_patch: Any
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Input checks that never put a value in an error: a non-object is rejected as is."""
+        if not isinstance(fields, dict) or not isinstance(profile_patch, dict):
+            raise HRCardError(HRCardCode.PROFILE_NOT_OBJECT)
+        for key in ("docs", "contract"):
+            if key in profile_patch and not isinstance(profile_patch[key], dict):
+                raise HRCardError(HRCardCode.PROFILE_NOT_OBJECT)
+        hire = fields.get("hire_date")
+        if isinstance(hire, str):  # DATE parameters take date objects only
+            try:
+                fields = {**fields, "hire_date": date.fromisoformat(hire)}
+            except ValueError:
+                raise HRCardError(HRCardCode.INVALID_INPUT) from None
+        elif hire is not None and not isinstance(hire, date):
+            raise HRCardError(HRCardCode.INVALID_INPUT)
+        return fields, profile_patch
+
+    async def lock_staff_member(self, conn: Any, team_member_id: str, email: str) -> bool:
+        """Lock the team_members row FOR SHARE, re-checking exact email and staff in the same
+        statement. False when the row no longer matches; a lock timeout or deadlock is
+        HRCardError(LOCK_TIMEOUT). Runs in a savepoint so a failed lock aborts nothing else."""
+        try:
+            async with conn.transaction():
+                found = await conn.fetchval(
+                    "SELECT id FROM team_members WHERE id = $1 AND email = $2 "
+                    "AND COALESCE(role, '') <> 'client' FOR SHARE",
+                    team_member_id,
+                    email,
+                )
+        except _LOCK_ERRORS:
+            raise HRCardError(HRCardCode.LOCK_TIMEOUT) from None
+        except Exception:
+            raise HRCardError(HRCardCode.DB_ERROR) from None
+        return found is not None
+
+    async def merge_card_on(
+        self,
+        conn: Any,
+        team_member_id: str,
+        fields: dict[str, Any],
+        profile_patch: dict[str, Any],
+    ) -> int | None:
+        """Non-clobbering card write on a caller-owned connection (the import batches many).
+
+        Returns the row id, or None when no row was written (no such member). A
+        concurrent insert falls through to the update; a stored profile that is not
+        an object after the merge fails and rolls this write back.
+        """
+        fields, profile_patch = self._checked_patch(fields, profile_patch)
+        args = (
+            team_member_id,
+            fields.get("hire_date"),
+            fields.get("npwp"),
+            fields.get("ptkp_status"),
+            fields.get("bpjs_kesehatan_number"),
+            fields.get("bpjs_ketenagakerjaan_number"),
+            fields.get("bank_name"),
+            fields.get("bank_account"),
+            fields.get("bank_account_holder"),
+            fields.get("is_active"),
+            profile_patch,  # a dict: the pool codec encodes it once
+        )
+        try:
+            async with conn.transaction():
+                row = await conn.fetchrow(self._CARD_UPDATE_SQL, *args)
+                if row is None:
+                    if fields.get("hire_date") is None:
+                        raise HRCardError(HRCardCode.HIRE_DATE_REQUIRED)
+                    row = await conn.fetchrow(self._CARD_INSERT_SQL, *args)
+                    if row is None:  # a concurrent writer inserted the row: update it
+                        row = await conn.fetchrow(self._CARD_UPDATE_SQL, *args)
+                if row is not None and row["profile_type"] != "object":
+                    raise HRCardError(HRCardCode.PROFILE_NOT_OBJECT)
+        except HRCardError:
+            raise
+        except _LOCK_ERRORS:
+            raise HRCardError(HRCardCode.LOCK_TIMEOUT) from None
+        except Exception:
+            raise HRCardError(HRCardCode.DB_ERROR) from None
+        if row is None:
+            return None
+        logger.info(f"HR card merged: team_member_id={team_member_id}")
+        return row["id"]
 
     # ─── BONUS RATES ─────────────────────────────────────────────────
 
