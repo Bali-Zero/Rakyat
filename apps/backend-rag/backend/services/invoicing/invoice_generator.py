@@ -375,9 +375,7 @@ class InvoiceGenerator:
                 if line
             ]
         else:
-            contact_lines = [
-                line for line in (client_email, client_phone, client_address) if line
-            ]
+            contact_lines = [line for line in (client_email, client_phone, client_address) if line]
         if contact_lines:
             bill.append(Spacer(1, 3))
         bill.extend(p(_esc(line), "clientd") for line in contact_lines)

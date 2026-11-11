@@ -128,27 +128,37 @@ def render(**kwargs: object) -> str:
     return "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(pdf)).pages)
 
 
+def shows(text: str, needle: str) -> bool:
+    """The v4 design prints names in capitals: compare case-insensitively."""
+    return needle.upper() in text.upper()
+
+
 def test_bill_to_block_with_company_has_name_npwp_address_attn_and_no_personal_address() -> None:
     text = render(
         bill_to_company="PT Synthetic <A&B>",
         bill_to_npwp="01.234.567.8-901.000",
         bill_to_address="Synthetic Office Road 9",
     )
-    assert "PT Synthetic <A&B>" in text
-    assert "NPWP: 01.234.567.8-901.000" in text
-    assert "Synthetic Office Road 9" in text
-    assert "Attn: Synthetic Person" in text
-    assert "synthetic.person@example.invalid" in text
-    assert "Synthetic Home Street 1" not in text and "+620000" not in text
+    assert shows(text, "PT Synthetic <A&B>")
+    assert shows(text, "NPWP: 01.234.567.8-901.000")
+    assert shows(text, "Synthetic Office Road 9")
+    assert shows(text, "Attn: Synthetic Person")
+    assert shows(text, "synthetic.person@example.invalid")
+    assert not shows(text, "Synthetic Home Street 1")
+    assert "+620000" not in text
 
 
 def test_bill_to_block_without_company_is_the_individual_block() -> None:
     text = render()
-    assert "Synthetic Home Street 1" in text and "+620000" in text and "Attn:" not in text
-    assert "NPWP: 01" not in text
+    assert shows(text, "Synthetic Home Street 1")
+    assert "+620000" in text
+    assert not shows(text, "Attn:")
+    assert not shows(text, "NPWP: 01")
 
 
 def test_company_without_npwp_or_address_prints_neither() -> None:
     text = render(bill_to_company="PT Synthetic Polos")
-    assert "PT Synthetic Polos" in text and "Attn: Synthetic Person" in text
-    assert "NPWP: None" not in text and "None" not in text
+    assert shows(text, "PT Synthetic Polos")
+    assert shows(text, "Attn: Synthetic Person")
+    assert not shows(text, "NPWP: None")
+    assert "None" not in text

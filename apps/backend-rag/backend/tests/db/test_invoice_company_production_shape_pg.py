@@ -217,6 +217,11 @@ async def pdf_text(pool: asyncpg.Pool, practice_id: int) -> str:
     return "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(pdf)).pages)
 
 
+def shows(text: str, needle: str) -> bool:
+    """The v4 design prints names in capitals: compare case-insensitively."""
+    return needle.upper() in text.upper()
+
+
 @pytest.mark.asyncio
 async def test_production_defaults_practice_bills_the_chosen_company(pool: asyncpg.Pool) -> None:
     person = await client(pool)
@@ -227,11 +232,11 @@ async def test_production_defaults_practice_bills_the_chosen_company(pool: async
         "SELECT 1 FROM client_company_links WHERE client_id=$1 AND company_id=$2", person, co
     )
     text = await pdf_text(pool, created.id)
-    assert "PT Synthetic Maju" in text
-    assert "NPWP: 01.234.567.8-901.000" in text
-    assert "Synthetic Office Road 9" in text
-    assert "Attn: Synthetic Person" in text
-    assert "Synthetic Home Street 1" not in text
+    assert shows(text, "PT Synthetic Maju")
+    assert shows(text, "NPWP: 01.234.567.8-901.000")
+    assert shows(text, "Synthetic Office Road 9")
+    assert shows(text, "Attn: Synthetic Person")
+    assert not shows(text, "Synthetic Home Street 1")
 
 
 @pytest.mark.asyncio
@@ -240,9 +245,9 @@ async def test_practice_without_company_still_bills_the_individual(pool: asyncpg
     created = await create(pool, person)
     assert created.invoice_company_id is None
     text = await pdf_text(pool, created.id)
-    assert "Synthetic Person" in text
-    assert "Synthetic Home Street 1" in text
-    assert "Attn:" not in text
+    assert shows(text, "Synthetic Person")
+    assert shows(text, "Synthetic Home Street 1")
+    assert not shows(text, "Attn:")
 
 
 @pytest.mark.asyncio
@@ -343,7 +348,7 @@ async def test_deleting_the_company_falls_back_to_the_individual(pool: asyncpg.P
         await pool.fetchval("SELECT invoice_company_id FROM practices WHERE id=$1", created.id)
         is None
     )
-    assert "Synthetic Home Street 1" in await pdf_text(pool, created.id)
+    assert shows(await pdf_text(pool, created.id), "Synthetic Home Street 1")
 
 
 @pytest.mark.asyncio
@@ -478,7 +483,7 @@ async def test_typed_npwp_that_exists_nowhere_reuses_a_same_name_company_without
         await pool.fetchval("SELECT npwp_company FROM companies WHERE id=$1", bare)
         == "01.234.567.8-901.000"
     )
-    assert "NPWP: 01.234.567.8-901.000" in await pdf_text(pool, created.id)
+    assert shows(await pdf_text(pool, created.id), "NPWP: 01.234.567.8-901.000")
     again = await create(
         pool, person, invoice_company_name="Other Name", invoice_company_npwp="012345678901000"
     )
