@@ -292,17 +292,10 @@ async def test_the_provider_refuses_to_invent_fields_when_the_check_is_gone(pool
     assert await PostgresOrderSnapshotProvider(pool).get(practice_id) is None
 
 
-async def test_submit_by_date_is_none_and_not_the_published_deadline(pool):
-    """The seeded check carries published_filing_deadline = 2026-10-13.
-
-    Silently reusing it as the operating-calendar commitment would be a
-    plausible invention: they are different dates. Pin that we do not.
-    """
-
-    practice_id, _ = await _seed_full_case(pool)
-    snap = await PostgresOrderSnapshotProvider(pool).get(practice_id)
-    assert snap is not None
-    assert snap.submit_by_date is None
+# (The old test_submit_by_date_is_none_and_not_the_published_deadline was
+# retired 2026-11-11: submit_by is now recomputed from the engine
+# calendar — see test_the_provider_recomputes_submit_by_from_the_engine_calendar,
+# which keeps the not-the-published-deadline pin.)
 
 
 # --------------------------------------------------------------------------
