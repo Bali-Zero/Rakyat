@@ -660,7 +660,7 @@ class QueryRouter:
         Returns:
             Collection name from 9 available collections
         """
-        logger.info("🔍 [QueryRouter] Query: %s", query)
+        logger.info("🔍 [QueryRouter] Query: query_len=%d", len(query))
 
         # Check priority overrides first
         override = self._check_priority_overrides(query)
