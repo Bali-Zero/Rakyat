@@ -102,9 +102,6 @@ export default function NewPracticePage() {
     family_member_id: "" as string, // "" = for main client; otherwise the family member id as string
   });
 
-  // Bumped on every change a submission depends on (client, service, company):
-  // a response or a preflight that started under an older revision is obsolete.
-  const formRevision = useRef(0);
   const [invoiceCompany, setInvoiceCompany] = useState<InvoiceCompanyValue>(
     EMPTY_INVOICE_COMPANY,
   );
@@ -113,7 +110,8 @@ export default function NewPracticePage() {
   const [invoiceLabel, setInvoiceLabel] = useState<string | null>(null);
 
   useEffect(() => {
-    formRevision.current += 1;
+    // A chooser built for an older client/service/company must not stay actionable.
+    setInvoiceAmbiguity(null);
   }, [formData.client_id, selectedServiceCode, invoiceCompany]);
 
   // The company belongs to the client it was prefilled or typed for: any change
@@ -384,7 +382,6 @@ export default function NewPracticePage() {
     e.preventDefault();
     setFieldErrors({});
     setInvoiceAmbiguity(null);
-    const startRevision = formRevision.current;
     if (invoiceCompanyIncomplete(invoiceCompany)) {
       toast.error(
         "Invoice company",
@@ -508,13 +505,6 @@ export default function NewPracticePage() {
         ...invoiceCompanyParams(invoiceCompany),
       } as CreatePracticeParams;
 
-      if (formRevision.current !== startRevision) {
-        toast.error(
-          "Form changed",
-          "The client, service or invoice company changed while creating. Review and press Create again.",
-        );
-        return;
-      }
       const createdPractice = await api.crm.createPractice(backendData);
 
       if (formData.referrer_id != null && createdPractice?.id) {
@@ -566,10 +556,7 @@ export default function NewPracticePage() {
     } catch (error) {
       const ambiguous = ambiguityFromError(error, invoiceCompany.name.trim());
       if (ambiguous) {
-        // A 409 for a client that has since been replaced must not surface.
-        if (formRevision.current === startRevision) {
-          setInvoiceAmbiguity(ambiguous);
-        }
+        setInvoiceAmbiguity(ambiguous);
         return;
       }
       const apiDuration = performance.now() - apiStart;
@@ -764,6 +751,7 @@ export default function NewPracticePage() {
                   <select
                     value={selectedCategory}
                     onChange={(e) => handleCategoryChange(e.target.value)}
+                    disabled={isLoading}
                     className={`${inputClass} appearance-none cursor-pointer pr-10`}
                   >
                     <option value="">-- Select category --</option>
@@ -779,7 +767,7 @@ export default function NewPracticePage() {
                   <select
                     value={selectedServiceCode}
                     onChange={(e) => handleServiceChange(e.target.value)}
-                    disabled={!selectedCategory}
+                    disabled={!selectedCategory || isLoading}
                     className={`${inputClass} appearance-none cursor-pointer pr-10 pl-4 ${!selectedCategory ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     <option value="">

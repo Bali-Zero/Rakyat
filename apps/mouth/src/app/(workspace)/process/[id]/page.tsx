@@ -47,6 +47,7 @@ import {
 import { RequiredDocumentsCard } from "./RequiredDocumentsCard";
 import { SelectServiceCard } from "./SelectServiceCard";
 import { InvoiceCompanyCard } from "./InvoiceCompanyCard";
+import { mergePracticeUpdate } from "./mergePracticeUpdate";
 import { useTeamMemberOptions } from "@/hooks/useTeamMembers";
 import { useInvalidateClient } from "@/hooks/useClientDetail";
 import { initialsOf } from "@/lib/team-initials";
@@ -277,9 +278,7 @@ export default function CaseDetailPage() {
 
   const applyPracticeUpdate = (updatedPractice: Practice) => {
     setPractice((currentPractice) =>
-      currentPractice
-        ? { ...currentPractice, ...updatedPractice }
-        : updatedPractice,
+      mergePracticeUpdate(currentPractice, updatedPractice),
     );
   };
 

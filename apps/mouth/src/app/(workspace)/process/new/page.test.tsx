@@ -337,40 +337,6 @@ describe("NewPracticePage", () => {
     },
   );
 
-  it("Change is disabled while creating, and a 409 for an older form revision never shows its chooser", async () => {
-    const user = userEvent.setup();
-    let rejectCreate: (e: unknown) => void = () => {};
-    mockCreatePractice.mockReturnValueOnce(
-      new Promise((_resolve, reject) => {
-        rejectCreate = reject;
-      }),
-    );
-    await renderPage();
-    const selects = await screen.findAllByRole("combobox");
-    await user.selectOptions(selects[0], "visa");
-    await user.selectOptions(selects[1], "SYNTHETIC_VISA");
-    await user.type(
-      await screen.findByLabelText("Company name"),
-      "Synthetic Kembar",
-    );
-    await user.click(screen.getByRole("button", { name: "Create Process" }));
-    await waitFor(() => expect(mockCreatePractice).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole("button", { name: "Change" })).toBeDisabled();
-    await user.selectOptions(screen.getAllByRole("combobox")[0], "");
-    rejectCreate(
-      new ApiError("conflict", 409, {
-        detail: {
-          code: "invoice_company_ambiguous",
-          candidates: [{ id: 8, company_name: "PT Synthetic Kembar" }],
-        },
-      }),
-    );
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Change" })).toBeEnabled(),
-    );
-    expect(screen.queryByTestId("invoice-company-ambiguity")).toBeNull();
-  });
-
   it("an NPWP without a company name blocks Create instead of being dropped", async () => {
     const user = userEvent.setup();
     await renderPage();
@@ -464,7 +430,7 @@ describe("NewPracticePage", () => {
     expect(screen.queryByLabelText("Company name")).toBeNull();
   });
 
-  it("a service change during the preflight stops the submission before the POST", async () => {
+  it("client, category and service are locked from the click, preflight included", async () => {
     const user = userEvent.setup();
     let resolvePractices: (v: unknown) => void = () => {};
     mockGetClientPractices.mockReturnValueOnce(
@@ -476,14 +442,104 @@ describe("NewPracticePage", () => {
     await user.selectOptions(selects[1], "SYNTHETIC_VISA");
     await user.click(screen.getByRole("button", { name: "Create Process" }));
     await waitFor(() => expect(mockGetClientPractices).toHaveBeenCalled());
-    await user.selectOptions(screen.getAllByRole("combobox")[0], "");
+    const during = screen.getAllByRole("combobox");
+    expect(during[0]).toBeDisabled();
+    expect(during[1]).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Change" })).toBeDisabled();
     resolvePractices([]);
-    await waitFor(() =>
-      expect(mockToastError).toHaveBeenCalledWith(
-        "Form changed",
-        expect.any(String),
-      ),
+    await waitFor(() => expect(mockCreatePractice).toHaveBeenCalledTimes(1));
+  });
+
+  it("category and service cannot change while the POST is in flight", async () => {
+    const user = userEvent.setup();
+    let resolveCreate: (v: unknown) => void = () => {};
+    mockCreatePractice.mockReturnValueOnce(
+      new Promise((r) => (resolveCreate = r)),
     );
-    expect(mockCreatePractice).not.toHaveBeenCalled();
+    await renderPage();
+    const selects = await screen.findAllByRole("combobox");
+    await user.selectOptions(selects[0], "visa");
+    await user.selectOptions(selects[1], "SYNTHETIC_VISA");
+    await user.click(screen.getByRole("button", { name: "Create Process" }));
+    await waitFor(() => expect(mockCreatePractice).toHaveBeenCalledTimes(1));
+    const during = screen.getAllByRole("combobox");
+    expect(during[0]).toBeDisabled();
+    expect(during[1]).toBeDisabled();
+    resolveCreate({ id: 71 });
+    await waitFor(() => expect(mockPush).toHaveBeenCalled());
+  });
+
+  it("a chooser already on screen is withdrawn when the service changes", async () => {
+    const user = userEvent.setup();
+    mockCreatePractice.mockRejectedValueOnce(
+      new ApiError("conflict", 409, {
+        detail: {
+          code: "invoice_company_ambiguous",
+          candidates: [{ id: 8, company_name: "PT Synthetic Kembar" }],
+        },
+      }),
+    );
+    await renderPage();
+    const selects = await screen.findAllByRole("combobox");
+    await user.selectOptions(selects[0], "visa");
+    await user.selectOptions(selects[1], "SYNTHETIC_VISA");
+    await user.type(
+      await screen.findByLabelText("Company name"),
+      "Synthetic Kembar",
+    );
+    await user.click(screen.getByRole("button", { name: "Create Process" }));
+    await screen.findByTestId("invoice-company-ambiguity");
+    await user.selectOptions(screen.getAllByRole("combobox")[0], "");
+    expect(screen.queryByTestId("invoice-company-ambiguity")).toBeNull();
+  });
+
+  it("a suggestion resolving during the preflight does not fill the field, and exactly one POST follows", async () => {
+    const user = userEvent.setup();
+    let resolveSuggest: (v: unknown) => void = () => {};
+    let suggestAsked = false;
+    mockSuggest.mockImplementation((_id: number, code?: string) => {
+      if (!code)
+        return Promise.resolve({
+          autofill: true,
+          suggested_company_id: null,
+          companies: [],
+        });
+      suggestAsked = true;
+      return new Promise((r) => (resolveSuggest = r));
+    });
+    let resolvePractices: (v: unknown) => void = () => {};
+    mockGetClientPractices.mockReturnValueOnce(
+      new Promise((r) => (resolvePractices = r)),
+    );
+    await renderPage();
+    const selects = await screen.findAllByRole("combobox");
+    await user.selectOptions(selects[0], "visa");
+    await user.selectOptions(selects[1], "SYNTHETIC_VISA");
+    await waitFor(() => expect(suggestAsked).toBe(true));
+    await user.click(screen.getByRole("button", { name: "Create Process" }));
+    await waitFor(() => expect(mockGetClientPractices).toHaveBeenCalled());
+    resolveSuggest({
+      autofill: true,
+      suggested_company_id: 21,
+      companies: [
+        {
+          id: 21,
+          company_name: "PT Synthetic Satu",
+          npwp_company: null,
+          role: "director",
+          is_director: true,
+        },
+      ],
+    });
+    await screen.findByRole("combobox", { name: "Invoice to company" });
+    expect(
+      screen.getByRole("combobox", { name: "Invoice to company" }),
+    ).toHaveValue("");
+    resolvePractices([]);
+    await waitFor(() => expect(mockCreatePractice).toHaveBeenCalledTimes(1));
+    const body = mockCreatePractice.mock.calls[0][0];
+    expect(
+      Object.keys(body).filter((k) => k.startsWith("invoice_company")),
+    ).toEqual([]);
   });
 });
