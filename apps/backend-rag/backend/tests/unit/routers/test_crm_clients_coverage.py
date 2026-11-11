@@ -12,6 +12,29 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+
+@pytest.mark.parametrize("invalid", ["0001-01-01", "9999-12-31"])
+def test_legacy_client_models_reject_out_of_range_passport_expiry(invalid):
+    from pydantic import ValidationError
+
+    from backend.app.routers.crm_clients import ClientCreate, ClientUpdate
+
+    with pytest.raises(ValidationError, match="1900-01-01"):
+        ClientCreate(full_name="Synthetic Client", passport_expiry=invalid)
+    with pytest.raises(ValidationError, match="1900-01-01"):
+        ClientUpdate(passport_expiry=invalid)
+
+
+def test_legacy_client_models_accept_normal_passport_expiry():
+    from backend.app.routers.crm_clients import ClientCreate, ClientUpdate
+
+    assert (
+        ClientCreate(full_name="Synthetic Client", passport_expiry="2030-01-01").passport_expiry
+        == "2030-01-01"
+    )
+    assert ClientUpdate(passport_expiry="2030-01-01").passport_expiry == "2030-01-01"
+
+
 # ============================================================
 # FIXTURES
 # ============================================================

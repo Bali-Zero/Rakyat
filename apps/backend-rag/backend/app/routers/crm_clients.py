@@ -51,9 +51,22 @@ from backend.db.repositories.client_repository import (
 from backend.phone_lock import lock_phone_cores, phone_core
 from backend.services.common.background import spawn
 from backend.services.crm.client_service import ClientService
+from backend.services.crm.documents import validate_client_document_date
 from backend.services.crm.gender import normalize_gender
 
 logger = get_logger(__name__)
+
+
+def _validate_passport_expiry_string(value: str | None) -> str | None:
+    """Reject asyncpg's DATE infinity sentinels while preserving legacy parsing."""
+    if not value:
+        return value
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        return value
+    validate_client_document_date(parsed)
+    return value
 
 
 def _normalize_phone_digits(raw: str | None) -> str | None:
@@ -295,6 +308,11 @@ class ClientCreate(BaseModel):
             return None
         return v
 
+    @field_validator("passport_expiry")
+    @classmethod
+    def validate_passport_expiry(cls, value: str | None) -> str | None:
+        return _validate_passport_expiry_string(value)
+
     @field_validator("full_name")
     @classmethod
     def validate_full_name(cls, v: str) -> str:
@@ -419,6 +437,11 @@ class ClientUpdate(BaseModel):
         if isinstance(v, str) and not v.strip():
             return None
         return v
+
+    @field_validator("passport_expiry")
+    @classmethod
+    def validate_passport_expiry(cls, value: str | None) -> str | None:
+        return _validate_passport_expiry_string(value)
 
     @field_validator("gender", mode="before")
     @classmethod

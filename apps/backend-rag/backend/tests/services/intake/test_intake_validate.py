@@ -32,6 +32,20 @@ def _fake_kbli(codes):
     return _fetch
 
 
+@pytest.mark.parametrize("invalid", ["0001-01-01", "9999-12-31"])
+async def test_expiry_outside_supported_document_range_fails(invalid):
+    out = await vr.validate_fields("passport", _fields(expiry=invalid), kbli_fetch_fn=_fake_kbli([]))
+
+    assert out["valid"] is False
+    assert any("outside supported range" in failure for failure in out["rule_failures"])
+
+
+async def test_expiry_inside_supported_document_range_passes():
+    out = await vr.validate_fields("passport", _fields(expiry="2030-01-01"), kbli_fetch_fn=_fake_kbli([]))
+
+    assert out["valid"] is True
+
+
 @pytest.fixture(autouse=True)
 def _reset_kbli_cache():
     """Each test starts with a clean KBLI cache (it is process-global)."""

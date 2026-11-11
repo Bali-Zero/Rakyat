@@ -35,6 +35,7 @@ from backend.phone_lock import lock_cores, phone_core, phone_value_state
 from backend.services.common.background import spawn
 from backend.services.crm.admin_document_visibility import admin_document_not_deleted_clause
 from backend.services.crm.document_categorizer import auto_categorize_document
+from backend.services.crm.documents import validate_client_document_date
 from backend.services.crm.drive_taxonomy import folder_for_category, physical_root_layout
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 
@@ -57,7 +58,7 @@ def _parse_date_or_none(date_str: str | None) -> date | None:
     if not date_str:
         return None
     try:
-        return datetime.strptime(date_str, "%Y-%m-%d").date()
+        return validate_client_document_date(datetime.strptime(date_str, "%Y-%m-%d").date())
     except ValueError:
         logger.debug(
             "crm_enhanced_documents.parse_date_invalid",
@@ -157,6 +158,7 @@ async def create_document(
         if data.expiry_date:
             try:
                 expiry_date = datetime.strptime(data.expiry_date, "%Y-%m-%d").date()
+                validate_client_document_date(expiry_date)
             except ValueError:
                 expiry_date = None
 
@@ -301,6 +303,7 @@ async def create_documents_bulk(
                     if doc.expiry_date:
                         try:
                             expiry_date = datetime.strptime(doc.expiry_date, "%Y-%m-%d").date()
+                            validate_client_document_date(expiry_date)
                         except ValueError:
                             logger.warning(
                                 f"Invalid expiry_date format for {doc.file_name}: {doc.expiry_date}",
@@ -412,6 +415,7 @@ async def update_document(
             elif isinstance(value, str):
                 try:
                     value = datetime.strptime(value, "%Y-%m-%d").date()
+                    validate_client_document_date(value)
                 except ValueError:
                     value = None
 

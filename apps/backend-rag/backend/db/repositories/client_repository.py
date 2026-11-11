@@ -7,6 +7,7 @@ import asyncpg
 from backend.db.base_repository import BaseRepository
 from backend.phone_lock import lock_phone_cores, phone_core
 from backend.services.common.cache import cache_invalidating
+from backend.services.crm.documents import validate_client_document_date
 from backend.utils.query_builder import QueryBuilder
 
 # Duplicate-phone owner search — the ONE query both the router pre-check and
@@ -138,9 +139,13 @@ def _parse_date(value: str | date | None) -> date | None:
     if value is None:
         return None
     if isinstance(value, date):
-        return value
+        try:
+            return validate_client_document_date(value)
+        except ValueError:
+            logger.debug("client_repository.parse_date_out_of_range")
+            return None
     try:
-        return datetime.strptime(value, "%Y-%m-%d").date()
+        return validate_client_document_date(datetime.strptime(value, "%Y-%m-%d").date())
     except (ValueError, TypeError) as exc:
         # UU PDP audit: malformed date from upstream client payload. Returning
         # None is safe (column accepts NULL) but the original value must be

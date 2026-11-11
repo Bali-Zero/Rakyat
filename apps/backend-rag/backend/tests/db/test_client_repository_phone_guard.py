@@ -15,6 +15,7 @@ import pytest
 from backend.db.repositories.client_repository import (
     ClientRepository,
     DuplicatePhoneError,
+    _parse_date,
 )
 
 
@@ -102,3 +103,12 @@ async def test_create_skips_recheck_when_duplicates_allowed():
 
     assert record["id"] == 901
     assert "INSERT INTO clients" in conn.fetchrow.await_args_list[0].args[0]
+
+
+@pytest.mark.parametrize("invalid", ["0001-01-01", "9999-12-31"])
+def test_client_repository_drops_out_of_range_document_date(invalid):
+    assert _parse_date(invalid) is None
+
+
+def test_client_repository_keeps_normal_document_date():
+    assert _parse_date("2030-01-01").isoformat() == "2030-01-01"

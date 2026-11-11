@@ -78,6 +78,56 @@ def client_row() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("invalid", ["0001-01-01", "9999-12-31"])
+def test_client_document_date_models_reject_outside_supported_range(invalid: str) -> None:
+    """Every CRM route that writes a tracked document date rejects infinities.
+
+    asyncpg maps the two dates below to PostgreSQL -/+infinity.  Keeping the
+    assertion at the request-model boundary makes FastAPI return its normal
+    422 before any UPDATE/INSERT is attempted.
+    """
+    from pydantic import ValidationError
+
+    from backend.app.routers.crm_enhanced import (
+        ClientProfileUpdate,
+        FamilyMemberCreate,
+        FamilyMemberUpdate,
+    )
+
+    for model, field in (
+        (ClientProfileUpdate, "passport_expiry"),
+        (FamilyMemberCreate, "passport_expiry"),
+        (FamilyMemberCreate, "visa_expiry"),
+        (FamilyMemberUpdate, "passport_expiry"),
+        (FamilyMemberUpdate, "visa_expiry"),
+    ):
+        payload = {field: invalid}
+        if model is FamilyMemberCreate:
+            payload.update(full_name="Synthetic Member", relationship="child")
+        with pytest.raises(ValidationError, match="1900-01-01"):
+            model(**payload)
+
+
+def test_client_document_date_models_accept_normal_date() -> None:
+    from backend.app.routers.crm_enhanced import (
+        ClientProfileUpdate,
+        FamilyMemberCreate,
+        FamilyMemberUpdate,
+    )
+
+    assert ClientProfileUpdate(passport_expiry="2030-01-01").passport_expiry == "2030-01-01"
+    assert (
+        FamilyMemberCreate(
+            full_name="Synthetic Member",
+            relationship="child",
+            passport_expiry="2030-01-01",
+            visa_expiry="2030-01-01",
+        ).passport_expiry
+        == "2030-01-01"
+    )
+    assert FamilyMemberUpdate(visa_expiry="2030-01-01").visa_expiry == "2030-01-01"
+
+
 class TestGetClientProfile:
     @pytest.mark.asyncio
     async def test_profile_success(

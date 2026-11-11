@@ -227,6 +227,14 @@ def test_passport_240_day_boundary_and_expired() -> None:
     assert run(client=cl(0))["attention"][0]["state"] == "expired"
 
 
+def test_year_one_document_dates_are_ignored_like_null() -> None:
+    client = {"id": 1, "full_name": "Client A", "passport_expiry": date(1, 1, 1)}
+    passport = doc(1, "passport", date(1, 1, 1))
+    kitas = doc(2, "kitas", date(1, 1, 1))
+
+    assert run([passport, kitas], client=client)["attention"] == []
+
+
 def test_only_latest_passport_counts_and_dedupes_field_and_doc() -> None:
     client = {"id": 1, "full_name": "Client A", "passport_expiry": d(-100)}
     renewed = doc(7, "passport", d(2000))

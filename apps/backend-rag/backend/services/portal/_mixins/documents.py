@@ -20,7 +20,7 @@ Depends on PortalService for:
 
 import asyncio
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 import asyncpg
@@ -29,6 +29,7 @@ from backend.app.core.config import settings
 from backend.app.utils.logging_utils import get_logger
 from backend.services.common.background import spawn
 from backend.services.common.cache import cache_invalidating
+from backend.services.crm.documents import validate_client_document_date
 from backend.services.crm.drive_taxonomy import (
     canonical_folders,
     folder_for_category,
@@ -655,6 +656,13 @@ class PortalDocumentsMixin:
                 text=ocr_result.get("text", ""),
                 document_type=document_type,
             )
+            detected_expiry = expiry_result.get("expiry_date")
+            if detected_expiry:
+                try:
+                    validate_client_document_date(date.fromisoformat(str(detected_expiry)))
+                except ValueError:
+                    logger.warning("Portal document expiry outside supported range; skipping field")
+                    expiry_result["expiry_date"] = None
             processing_results["expiry_detection"] = expiry_result
 
             if expiry_result["expiry_date"]:

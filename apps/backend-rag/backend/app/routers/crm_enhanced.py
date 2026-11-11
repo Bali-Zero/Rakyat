@@ -17,7 +17,7 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
@@ -30,11 +30,26 @@ from backend.app.utils.json_utils import from_jsonb, to_jsonb
 from backend.core.cache import invalidate_cache
 from backend.services.crm.admin_document_visibility import admin_document_not_team_deleted_clause
 from backend.services.crm.client_attention import build_client_attention, today_wita
+from backend.services.crm.documents import validate_client_document_date
 from backend.services.crm.gender import normalize_gender_lenient
 from backend.services.crm.permit_label import resolve_permit_label
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_document_date_string(value: str | None) -> str | None:
+    """Reject asyncpg's date-infinity sentinels at HTTP request boundaries."""
+    if not value:
+        return value
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        # The existing write handlers retain their invalid-format behaviour.
+        return value
+    validate_client_document_date(parsed)
+    return value
+
 
 # Model and OCR output read from a client document is client data: a log line
 # may say how long it was and which fields came back, never any part of it.
@@ -383,6 +398,7 @@ async def _auto_ocr_passport(db_pool: Any, client_id: int, file_id: str) -> dict
             if extracted.get("expiry_date"):
                 try:
                     expiry = datetime.strptime(extracted["expiry_date"], "%Y-%m-%d").date()
+                    validate_client_document_date(expiry)
                     update_parts.append(f"passport_expiry = ${param_idx}")
                     params.append(expiry)
                     param_idx += 1
@@ -494,6 +510,7 @@ async def _auto_ocr_visa(
             if extracted.get("expiry_date"):
                 try:
                     expiry = datetime.strptime(extracted["expiry_date"], "%Y-%m-%d").date()
+                    validate_client_document_date(expiry)
                     update_parts.append(f"expiry_date = ${param_idx}")
                     params.append(expiry)
                     param_idx += 1
@@ -527,6 +544,7 @@ async def _auto_ocr_visa(
                     expiry_date_parsed = datetime.strptime(
                         extracted["expiry_date"], "%Y-%m-%d"
                     ).date()
+                    validate_client_document_date(expiry_date_parsed)
                 except ValueError:
                     logger.info(
                         "crm_enhanced.visa_expiry_unparseable",
@@ -1015,6 +1033,11 @@ class FamilyMemberCreate(BaseModel):
     phone: str | None = None
     notes: str | None = None
 
+    @field_validator("passport_expiry", "visa_expiry")
+    @classmethod
+    def validate_document_dates(cls, value: str | None) -> str | None:
+        return _validate_document_date_string(value)
+
 
 class FamilyMemberUpdate(BaseModel):
     full_name: str | None = None
@@ -1029,6 +1052,11 @@ class FamilyMemberUpdate(BaseModel):
     phone: str | None = None
     notes: str | None = None
 
+    @field_validator("passport_expiry", "visa_expiry")
+    @classmethod
+    def validate_document_dates(cls, value: str | None) -> str | None:
+        return _validate_document_date_string(value)
+
 
 class DocumentCreate(BaseModel):
     document_type: str
@@ -1041,6 +1069,11 @@ class DocumentCreate(BaseModel):
     notes: str | None = None
     family_member_id: int | None = None  # If document belongs to family member
     practice_id: int | None = None
+
+    @field_validator("expiry_date")
+    @classmethod
+    def validate_document_date(cls, value: str | None) -> str | None:
+        return _validate_document_date_string(value)
 
 
 class DocumentUpdate(BaseModel):
@@ -1055,6 +1088,11 @@ class DocumentUpdate(BaseModel):
     notes: str | None = None
     is_archived: bool | None = None
     client_visible: bool | None = None
+
+    @field_validator("expiry_date")
+    @classmethod
+    def validate_document_date(cls, value: str | None) -> str | None:
+        return _validate_document_date_string(value)
 
 
 class ClientProfileUpdate(BaseModel):
@@ -1075,6 +1113,11 @@ class ClientProfileUpdate(BaseModel):
     date_of_birth: str | None = None
     passport_expiry: str | None = None
     company_name: str | None = None
+
+    @field_validator("passport_expiry")
+    @classmethod
+    def validate_document_date(cls, value: str | None) -> str | None:
+        return _validate_document_date_string(value)
 
 
 # ============================================
@@ -1624,6 +1667,7 @@ async def create_family_member(
         if data.passport_expiry:
             try:
                 passport_expiry = datetime.strptime(data.passport_expiry, "%Y-%m-%d").date()
+                validate_client_document_date(passport_expiry)
             except ValueError:
                 passport_expiry = None
 
@@ -1631,6 +1675,7 @@ async def create_family_member(
         if data.visa_expiry:
             try:
                 visa_expiry = datetime.strptime(data.visa_expiry, "%Y-%m-%d").date()
+                validate_client_document_date(visa_expiry)
             except ValueError:
                 visa_expiry = None
 
@@ -1689,6 +1734,7 @@ async def update_family_member(
             elif isinstance(value, str):
                 try:
                     value = datetime.strptime(value, "%Y-%m-%d").date()
+                    validate_client_document_date(value)
                 except ValueError:
                     value = None
 
