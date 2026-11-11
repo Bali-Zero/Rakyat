@@ -20,6 +20,7 @@ import {
   readSessionIdentity,
   useSessionIdentity,
 } from "./session-identity";
+import { notifySessionChanged } from "./session-signal";
 import { tokenFor } from "./session-test-utils";
 
 // A pending fetch the test resolves by hand; `auths` records the bearer each
@@ -307,5 +308,67 @@ describe("getProfile against delayed cross-tab storage events", () => {
     pending[0].resolve(PROFILE_A);
     await expect(call).resolves.toEqual(PROFILE_A);
     expect(localStorage.getItem("user_profile")).toBeNull();
+  });
+});
+
+describe("getProfile: the stored token must still be VALID, not merely equal", () => {
+  const PROFILE_A = { id: "A", email: "a@example.test", name: "A" };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-12T10:00:00Z"));
+  });
+  afterEach(() => vi.useRealTimers());
+
+  // Sent with 31 s left; 2 s later it is expired under the 30 s skew.
+  async function issue() {
+    const auth = new AuthApi(client);
+    localStorage.setItem("auth_token", tokenFor("A", 31));
+    const call = auth.getProfile().catch((e) => e);
+    await waitFor(() => expect(pending).toHaveLength(1));
+    vi.setSystemTime(Date.now() + 2000);
+    expect(readSessionIdentity()).toBeNull();
+    return { call };
+  }
+
+  it("token unchanged, epoch unchanged, expired by delivery: not written, not returned", async () => {
+    const { call } = await issue();
+    pending[0].resolve(PROFILE_A);
+    expect(await call).toBeInstanceOf(StaleSessionError);
+    expect(localStorage.getItem("user_profile")).toBeNull();
+  });
+
+  it("token unchanged, epoch moved, expired by delivery: not returned either", async () => {
+    const { call } = await issue();
+    notifySessionChanged(); // a same-tab write in between
+    pending[0].resolve(PROFILE_A);
+    expect(await call).toBeInstanceOf(StaleSessionError);
+    expect(localStorage.getItem("user_profile")).toBeNull();
+  });
+
+  it("still valid at delivery, epoch moved: returned but not written", async () => {
+    const auth = new AuthApi(client);
+    localStorage.setItem("auth_token", tokenFor("A", 3600));
+    const call = auth.getProfile();
+    await waitFor(() => expect(pending).toHaveLength(1));
+    notifySessionChanged();
+    pending[0].resolve(PROFILE_A);
+    await expect(call).resolves.toEqual(PROFILE_A);
+    expect(localStorage.getItem("user_profile")).toBeNull();
+  });
+
+  it("expired by delivery but the stored profile belongs to a currently valid other token: that profile is returned", async () => {
+    const { call } = await issue();
+    // another tab signed B in meanwhile (token + profile stored)
+    localStorage.setItem("auth_token", tokenFor("B", 3600));
+    localStorage.setItem(
+      "user_profile",
+      JSON.stringify({ id: "B", email: "b@example.test" }),
+    );
+    pending[0].resolve(PROFILE_A);
+    await expect(call).resolves.toMatchObject({ id: "B" });
+    expect(JSON.parse(localStorage.getItem("user_profile") ?? "{}").id).toBe(
+      "B",
+    );
   });
 });

@@ -63,19 +63,26 @@ still reads A/E. So the proof is the credential actually sent:
 path as `request()`, which still returns only data) returns
 `{data, sentToken, sentSub}`: the exact bearer placed in the Authorization
 header at send time, `null` if the request went out cookie-only, and its
-decoded `sub`. The token is returned there and nowhere else; never log or
+decoded `sub`. It is read from the FINAL headers object passed to `fetch`
+(`bearerTokenFromHeaders`), whatever produced them: the managed token or a
+caller-supplied `Authorization`. A non-Bearer scheme, a malformed value, or two
+spellings of the header (fetch would join them) give `null`/`null`. The token is returned there and nowhere else; never log or
 render it. The in-memory per-tab epoch (`getSessionEpoch()`) is kept: it is
 bumped on every signal above and on every session-key `storage` event, and is
 an extra same-tab guard, no longer the proof.
 
 `AuthApi.getProfile()` uses that path and writes `user_profile` only if the
 token was sent (`sentToken` non-null), AND a fresh synchronous read of storage
-shows the same token (`readStoredToken() === sentToken`), AND the epoch is
-unchanged. If the token in storage is no longer the one sent, nothing is
-written, and the call returns the stored profile only when that profile's `id`
+gives a CURRENTLY VALID token (`readStoredValidToken()`, the one shared
+`TOKEN_CLOCK_SKEW_SECONDS` of `utils/token.ts`, also used by `isTokenExpired`
+and the identity) equal to the sent one, AND the epoch is unchanged. Equality
+alone is not enough: a token sent with 31 s left is expired under the 30 s
+skew two seconds later and identifies nobody. If the valid stored token is not
+the one sent (changed, removed or expired), nothing is written or returned from
+the response, and the call returns the stored profile only when that profile's `id`
 is the `sub` of the currently valid stored token; otherwise it throws the
 exported `StaleSessionError`. A cookie-only response is returned as before and
-never written. If the token is unchanged but the epoch moved (a same-tab
+never written. If the token is still valid and unchanged but the epoch moved (a same-tab
 write in between), the response is returned unwritten: it belongs to the
 credential still in force. Every caller of `getProfile()` was read (44 call
 sites): each sits in a try/catch or has a `.catch`, so a throw reads as a
@@ -126,12 +133,37 @@ and the `/hr` dashboard. They are follow-ups, as is the HR "my card" page
 network behaviour, redirects, cookie attributes and token lifetime are
 unchanged.
 
+**S6. Profile invariant (self-healing).** `user_profile` belongs to the sub of
+the currently valid stored token, or is absent. `enforceProfileInvariant()`
+(`session-credential.ts`) removes a profile that breaks it and signals the
+removal (kind `enforced`, which also drops the `ApiClientBase` in-memory copy).
+It runs on every session signal, every `storage` event on the session keys,
+`focus`, and `visibilitychange` to visible. It is installed once per page load
+by `installProfileInvariantEnforcer()`, called at module load from
+`lib/api/client.ts` (every page that uses the ApiClient singleton, which the
+workspace and portal layouts do) and from `lib/api/public-auth.ts` (the portal
+login, which deliberately does not import the ApiClient), and from
+`session-identity.ts`. It cannot loop: with nothing to remove it does nothing
+and signals nothing, so the signal fired by its own removal ends it.
+Login order: `AuthApi.login`, `verifyMagicLink` and the public client write the
+TOKEN first and the profile second. The token write fires a token-kind signal:
+a previous user's profile is removed there (correct), then the profile write
+fires a profile-kind signal and the new profile matches the new token, so it
+stays. A profile-kind signal additionally tolerates a profile with no valid
+token (a client that wrote the profile first, and the client's own unit of
+work); a profile that contradicts a VALID token is removed on every trigger. A
+valid token whose `sub` cannot be decoded (not a JWT; the backend never issues
+one) cannot be judged and keeps the profile. Consequence, stated plainly: a
+profile written with no valid token survives until the next token signal,
+storage event, focus or visibility change.
+
 ## Where each rule is proved
 
 - S2/S3 signals and epoch: `session-signal.test.ts`.
 - S3 getProfile guard, real `AuthApi` + `ApiClientBase`:
   `src/lib/api/auth/auth.api.session.test.ts`; the credential capture:
   `src/lib/api/client-credential.test.ts`.
+- S6 enforcer and login order: `session-credential.test.ts`.
 - S1/S4 and the races through a bound page and the real transport, including
   the delayed cross-tab `storage` events: `session-identity.test.tsx`,
   `session-credential-race.test.tsx`.

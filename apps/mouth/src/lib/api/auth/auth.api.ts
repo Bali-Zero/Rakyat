@@ -5,8 +5,8 @@ import { logger } from "@/lib/logger";
 import { getSessionEpoch } from "@/lib/auth/session-signal";
 import {
   readStoredProfileFor,
-  readStoredToken,
   readStoredValidSub,
+  readStoredValidToken,
 } from "@/lib/auth/session-credential";
 
 type AuthApiClient = Pick<
@@ -210,16 +210,20 @@ export class AuthApi {
     // (the endpoint is bearer-only, so this is in practice a 401 above).
     if (sentToken === null) return profile;
 
-    // FRESH read of storage, not an event or the epoch.
-    if (readStoredToken() === sentToken) {
-      // Same credential still in force; the epoch is the extra same-tab guard
-      // for the write.
+    // FRESH read of storage, not an event or the epoch. The stored token must
+    // be CURRENTLY VALID (the same skew as the session identity) and be the
+    // one that was sent: a token that expired while the request was in
+    // flight no longer identifies anybody, so its profile is neither written
+    // nor returned.
+    if (readStoredValidToken() === sentToken) {
+      // Same credential still in force. The epoch is the extra same-tab guard
+      // for the WRITE only: a moved epoch returns the response unwritten.
       if (getSessionEpoch() === issuedEpoch)
         this.client.setUserProfile(profile);
       return profile;
     }
 
-    // The credential that fetched this profile left the tab. Never write it.
+    // The credential that fetched this profile left the tab (or expired). Never write it.
     // Give back the stored profile only if it belongs to the session now in
     // force; otherwise there is nothing truthful to return.
     const currentSub = readStoredValidSub();

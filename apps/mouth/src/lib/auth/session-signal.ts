@@ -21,11 +21,24 @@ export function getSessionEpoch(): number {
   return epoch;
 }
 
-/** Bump the epoch and tell this tab. Call right AFTER the storage mutation. */
-export function notifySessionChanged(): void {
+/**
+ * What changed: the bearer token (default), a `user_profile` write, or a
+ * `user_profile` removal by the invariant enforcer ("enforced", so in-memory
+ * copies of the profile can be dropped with it).
+ */
+export type SessionChangeKind = "token" | "profile" | "enforced";
+
+/**
+ * Bump the epoch and tell this tab. Call right AFTER the storage mutation.
+ * `kind` rides in the event detail: the profile invariant enforcer does not
+ * treat the profile write that completes a login as a violation.
+ */
+export function notifySessionChanged(kind: SessionChangeKind = "token"): void {
   epoch += 1;
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new Event(SESSION_CHANGED_EVENT));
+    window.dispatchEvent(
+      new CustomEvent(SESSION_CHANGED_EVENT, { detail: { kind } }),
+    );
   }
 }
 

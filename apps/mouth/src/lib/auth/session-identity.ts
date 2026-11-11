@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 
-import { decodeJwtPayload } from "@/lib/utils/token";
+import { TOKEN_CLOCK_SKEW_SECONDS, decodeJwtPayload } from "@/lib/utils/token";
 import {
-  TOKEN_CLOCK_SKEW_SECONDS,
+  installProfileInvariantEnforcer,
   readStoredValidSub,
   readStoredValidToken,
 } from "./session-credential";
@@ -22,6 +22,8 @@ import {
  * No client-side signature check (the backend verifies); the token and the
  * `sub` are never logged or rendered by this module.
  */
+installProfileInvariantEnforcer();
+
 export interface SessionIdentity {
   sub: string;
   epoch: number;

@@ -5,7 +5,8 @@ import type {
 } from "./types/api-client.types";
 import type { UserProfile } from "@/types";
 import { safeStorage } from "@/lib/utils/storage";
-import { getTokenSubject } from "@/lib/utils/token";
+import { installProfileInvariantEnforcer } from "@/lib/auth/session-credential";
+import { bearerTokenFromHeaders, getTokenSubject } from "@/lib/utils/token";
 import {
   AUTH_TOKEN_STORAGE_KEY,
   USER_PROFILE_STORAGE_KEY,
@@ -39,6 +40,9 @@ class PublicAuthRequestError extends Error {
 }
 
 /** Minimal transport used only by unauthenticated auth screens. */
+// SESSION.md S6: the portal login writes session state too.
+installProfileInvariantEnforcer();
+
 export class PublicAuthClient {
   private token: string | null = null;
   private csrfToken: string | null = null;
@@ -89,8 +93,9 @@ export class PublicAuthClient {
     }
     if (this.token) {
       headers.Authorization = `Bearer ${this.token}`;
-      sent.token = this.token;
     }
+    // Final headers, as passed to fetch (see ApiClientBase.performRequest).
+    sent.token = bearerTokenFromHeaders(headers);
 
     try {
       const response = await fetch(endpoint, {
@@ -128,7 +133,7 @@ export class PublicAuthClient {
 
   setUserProfile(profile: UserProfile): void {
     safeStorage.setItem(USER_PROFILE_STORAGE_KEY, JSON.stringify(profile));
-    notifySessionChanged();
+    notifySessionChanged("profile");
   }
 
   setCsrfToken(token: string): void {

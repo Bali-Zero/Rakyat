@@ -14,7 +14,7 @@ import {
 } from "./session-signal";
 import { tokenFor } from "./session-test-utils";
 
-const PROFILE = { id: "7", email: "a@example.test" } as never;
+const PROFILE = { id: "1", email: "a@example.test" } as never;
 
 describe("bz:session-changed signal and epoch", () => {
   let fired: number;

@@ -93,3 +93,72 @@ describe("requestWithCredential", () => {
     expect(spy).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("sentToken comes from the FINAL headers passed to fetch", () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => vi.restoreAllMocks());
+
+  async function sendWith(headers?: Record<string, string>, stored?: string) {
+    if (stored) localStorage.setItem("auth_token", stored);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(ok({}));
+    return new ApiClientBase("https://api.test").requestWithCredential(
+      "/api/x",
+      headers ? { headers } : {},
+    );
+  }
+
+  it("managed token", async () => {
+    const t = tokenFor("1");
+    const r = await sendWith(undefined, t);
+    expect([r.sentToken, r.sentSub]).toEqual([t, "1"]);
+  });
+
+  it("caller-supplied Bearer with no managed token is what is sent, so it is reported", async () => {
+    const t = tokenFor("2");
+    const r = await sendWith({ Authorization: `Bearer ${t}` });
+    expect([r.sentToken, r.sentSub]).toEqual([t, "2"]);
+  });
+
+  it("caller-supplied lower-case header with no managed token is reported", async () => {
+    const t = tokenFor("2");
+    const r = await sendWith({ authorization: `Bearer ${t}` });
+    expect([r.sentToken, r.sentSub]).toEqual([t, "2"]);
+  });
+
+  it("caller-supplied non-Bearer or malformed Authorization is null/null", async () => {
+    for (const value of [
+      "Basic abc",
+      "Bearer",
+      "Bearer a b",
+      "Bearer a, Bearer b",
+      "",
+    ]) {
+      const r = await sendWith({ Authorization: value });
+      expect([r.sentToken, r.sentSub]).toEqual([null, null]);
+    }
+  });
+
+  it("two Authorization spellings (fetch would join them) is null/null", async () => {
+    const r = await sendWith({ authorization: "Bearer zzz" }, tokenFor("1"));
+    expect([r.sentToken, r.sentSub]).toEqual([null, null]);
+  });
+
+  it("no Authorization at all is null/null", async () => {
+    const r = await sendWith({ "X-Other": "1" });
+    expect([r.sentToken, r.sentSub]).toEqual([null, null]);
+  });
+
+  it("the public auth client reports a caller-supplied Bearer and null for non-Bearer", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(ok({}));
+    const client = new PublicAuthClient();
+    const t = tokenFor("5");
+    const a = await client.requestWithCredential("/api/auth/profile", {
+      headers: { Authorization: `Bearer ${t}` },
+    });
+    expect([a.sentToken, a.sentSub]).toEqual([t, "5"]);
+    const b = await client.requestWithCredential("/api/auth/profile", {
+      headers: { Authorization: "Basic abc" },
+    });
+    expect([b.sentToken, b.sentSub]).toEqual([null, null]);
+  });
+});

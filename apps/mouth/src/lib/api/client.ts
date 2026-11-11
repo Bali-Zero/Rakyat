@@ -6,14 +6,24 @@ import type {
   SessionState,
 } from "./types/api-client.types";
 import { safeStorage } from "@/lib/utils/storage";
-import { getTokenSubject, isTokenExpired } from "@/lib/utils/token";
+import {
+  bearerTokenFromHeaders,
+  getTokenSubject,
+  isTokenExpired,
+} from "@/lib/utils/token";
 import {
   AUTH_TOKEN_STORAGE_KEY,
+  SESSION_CHANGED_EVENT,
   USER_PROFILE_STORAGE_KEY,
   notifySessionChanged,
 } from "@/lib/auth/session-signal";
+import { installProfileInvariantEnforcer } from "@/lib/auth/session-credential";
 import { logger } from "@/lib/logger";
 import { ApiError } from "./error-handler";
+
+// SESSION.md S6: every page that can write session state also keeps
+// user_profile consistent with the stored token.
+installProfileInvariantEnforcer();
 
 /** FastAPI validation error structure */
 interface FastAPIValidationError {
@@ -89,6 +99,16 @@ export class ApiClientBase implements IApiClient {
           this.userProfile = null;
         }
       }
+      // The profile invariant enforcer removes a foreign profile from storage;
+      // drop the in-memory copy with it so isAdmin()/getAdminHeaders() never
+      // read a profile storage no longer holds.
+      window.addEventListener(SESSION_CHANGED_EVENT, (event) => {
+        if (
+          (event as CustomEvent<{ kind?: string }>).detail?.kind === "enforced"
+        ) {
+          this.userProfile = null;
+        }
+      });
       // Seed impersonation from localStorage so the very first portal fetch
       // on page reload already carries as_client.
       try {
@@ -145,7 +165,7 @@ export class ApiClientBase implements IApiClient {
           },
         );
       }
-      notifySessionChanged();
+      notifySessionChanged("profile");
     }
   }
 
@@ -444,8 +464,10 @@ export class ApiClientBase implements IApiClient {
     const currentToken = this.getToken();
     if (currentToken) {
       headers["Authorization"] = `Bearer ${currentToken}`;
-      sent.token = currentToken;
     }
+    // The credential is whatever the FINAL headers carry (managed token or a
+    // caller-supplied Authorization), not what this class meant to attach.
+    sent.token = bearerTokenFromHeaders(headers);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
