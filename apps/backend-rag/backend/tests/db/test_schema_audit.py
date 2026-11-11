@@ -51,12 +51,15 @@ def _build_conn(
     canonical_numbers: list[int],
     extra_tables: set[str] | None = None,
     client_email_duplicates: list[dict[str, object]] | None = None,
+    conversations_privileges: dict[str, object] | None = None,
 ) -> AsyncMock:
     """Build a connection that responds to the SQL the audit issues.
 
     The audit only ever calls:
     - ``fetchval`` for ``information_schema.tables`` existence checks
     - ``fetch`` against the two tracking tables
+    - ``fetchrow`` for the conversations runtime-privileges query; ``None``
+      (the default) answers like a database without ``backend_rag_v2``
 
     We dispatch on the SQL string to keep the fake light.
     """
@@ -82,8 +85,14 @@ def _build_conn(
             return client_email_duplicates
         raise AssertionError(f"unexpected fetch SQL: {sql!r}")
 
+    async def _fetchrow(sql: str, role: str) -> dict[str, object] | None:
+        if "has_table_privilege" not in sql or role != "backend_rag_v2":
+            raise AssertionError(f"unexpected fetchrow SQL: {sql!r} ({role!r})")
+        return conversations_privileges
+
     conn.fetchval.side_effect = _fetchval
     conn.fetch.side_effect = _fetch
+    conn.fetchrow.side_effect = _fetchrow
     return conn
 
 
@@ -582,6 +591,53 @@ async def test_client_email_check_skips_when_clients_table_missing(
     report = await run_audit(database_url="postgres://fake", required_tables=[])
 
     assert "client_email_duplicates" not in {finding.code for finding in report.findings}
+
+
+@pytest.mark.asyncio
+async def test_conversations_runtime_privileges_check_is_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = _build_conn(
+        legacy_table_exists=True,
+        canonical_table_exists=True,
+        legacy_numbers=[1],
+        canonical_numbers=[1],
+    )
+    _patch_manager(monkeypatch, pending_list=[], conn=conn)
+
+    report = await run_audit(database_url="postgres://fake", required_tables=[])
+
+    assert "conversations_runtime_privileges" in report.checks_run
+    conn.fetchrow.assert_awaited_once()
+    assert report.ok
+
+
+@pytest.mark.asyncio
+async def test_conversations_runtime_privileges_missing_insert_fails_the_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = _build_conn(
+        legacy_table_exists=True,
+        canonical_table_exists=True,
+        legacy_numbers=[1],
+        canonical_numbers=[1],
+        conversations_privileges={
+            "is_superuser": False,
+            "table_exists": True,
+            "can_select": True,
+            "can_insert": False,
+            "can_update": True,
+            "sequence_name": "public.conversations_id_seq",
+            "can_use_sequence": True,
+        },
+    )
+    _patch_manager(monkeypatch, pending_list=[], conn=conn)
+
+    report = await run_audit(database_url="postgres://fake", required_tables=[])
+
+    [finding] = [f for f in report.findings if f.code == "conversations_runtime_privilege_missing"]
+    assert finding.severity == "error" and not report.ok
+    assert finding.details["missing"] == ["INSERT on public.conversations"]
 
 
 # ---------------------------------------------------------------------------
