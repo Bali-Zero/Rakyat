@@ -572,7 +572,10 @@ async def receive_payment_webhook(
     providers = getattr(request.app.state, "garuda_payment_providers", None)
     if providers:
         try:
-            routing_order_id = json.loads(raw_body).get("order_id")
+            _routing_body = json.loads(raw_body)
+            routing_order_id = _routing_body.get("order_id") or _routing_body.get(
+                "external_id"
+            )
         except (ValueError, UnicodeDecodeError, AttributeError):
             routing_order_id = None
         if isinstance(routing_order_id, str) and routing_order_id:
@@ -623,28 +626,40 @@ async def receive_payment_webhook(
         NormalizedRefundEvent,
     )
 
+    # Adapters whose notification signature does not cover the
+    # status fields (Midtrans) re-read the authoritative state
+    # before OP-02 (paid) or the refund handler may act on a body.
+    _verify = None
     if isinstance(event, NormalizedPaidEvent):
-        # Adapters whose notification signature does not cover the
-        # status fields (Midtrans) re-read the authoritative state
-        # before OP-02 may act on the body.
-        verify_paid = getattr(provider, "verify_paid_event", None)
-        if verify_paid is not None:
-            try:
-                event = await verify_paid(event)
-            except WebhookUnparseable as exc:
-                # Authentic but refused: on the record in the inbox
-                # (quarantine alarm reads it), 204 so the provider
-                # does not retry a decision we have already taken.
-                await repository.record_quarantined_webhook(
-                    provider_name=provider_name,
-                    provider_event_id=event.provider_event_id,
-                    canonical_payload_sha256=digest,
-                    order_id=event.provider_session_id,
-                    reason=(
-                        "amount_mismatch" if "amount" in str(exc) else "unexpected_state"
-                    ),
-                )
-                return
+        _verify = getattr(provider, "verify_paid_event", None)
+    elif isinstance(event, NormalizedRefundEvent):
+        _verify = getattr(provider, "verify_refund_event", None)
+    if _verify is not None:
+        from backend.services.payments.midtrans import WebhookTransientError
+
+        try:
+            event = await _verify(event)
+        except WebhookTransientError as exc:
+            # Nothing persisted: the provider retries and the Paid
+            # identity must still be fresh when it does.
+            raise HTTPException(
+                status_code=503, detail={"code": "SERVICE_UNAVAILABLE", "retryable": True}
+            ) from exc
+        except WebhookUnparseable as exc:
+            # Authentic but refused: on the record in the inbox
+            # (quarantine alarm reads it), 204 so the provider
+            # does not retry a decision we have already taken.
+            await repository.record_quarantined_webhook(
+                provider_name=provider_name,
+                provider_event_id=event.provider_event_id,
+                canonical_payload_sha256=digest,
+                order_id=event.provider_session_id,
+                reason=(
+                    "amount_mismatch" if "amount" in str(exc) else "unexpected_state"
+                ),
+            )
+            return
+    if isinstance(event, NormalizedPaidEvent):
         await repository.handle_paid_event(
             event, canonical_payload_sha256=digest, provider_name=provider_name
         )

@@ -114,6 +114,7 @@ async def test_checkout_is_snap_with_explicit_methods_and_integer_amount():
     )
     assert session.provider_session_id == "ord_test_1"
     assert session.checkout_url.startswith("https://app.sandbox.midtrans.com/")
+    assert seen["url"].startswith("https://app.sandbox.midtrans.com/snap/")
     assert seen["url"].endswith("/snap/v1/transactions")
     assert seen["json"]["transaction_details"] == {"order_id": "ord_test_1", "gross_amount": 790000}
     assert seen["json"]["enabled_payments"] == ENABLED_PAYMENTS
@@ -283,11 +284,11 @@ async def test_qris_refund_uses_api_and_returns_refund_key():
                     "gross_amount": "790000.00",
                 },
             )
-        return httpx.Response(200, json={"status_code": "200", "refund_chargebacks": [{"refund_id": 1}]})
+        return httpx.Response(200, json={"status_code": "200", "refund_chargeback_id": 987, "refund_amount": "790000.00", "refund_key": "idem-r2"})
 
     provider = _provider(handler)
     refund_id = await provider.refund(provider_charge_id="txn_test_1", idempotency_key="idem-r2")
-    assert refund_id == "idem-r2"
+    assert refund_id == "987"
     assert any("/refund" in url for url in calls)
 
 
@@ -311,3 +312,44 @@ def test_cancel_parses_to_failure():
     body = _sign(_body(status_code="202", transaction_status="cancel"))
     event = provider.parse_event(raw_body=json.dumps(body).encode(), headers={})
     assert isinstance(event, NormalizedFailureEvent)
+
+
+def test_qris_expire_with_202_parses_to_failure():
+    provider = _provider()
+    body = _sign(_body(status_code="202", transaction_status="expire", payment_type="qris"))
+    event = provider.parse_event(raw_body=json.dumps(body).encode(), headers={})
+    assert isinstance(event, NormalizedFailureEvent)
+
+
+@pytest.mark.asyncio
+async def test_verify_refund_event_rejects_forged_refund():
+    # Settlement body with only the (unsigned) status flipped to
+    # refund: the Status API still says settlement, so no refund
+    # may be recorded.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"transaction_status": "settlement", "transaction_id": "txn_test_1", "gross_amount": "790000.00"},
+        )
+
+    provider = _provider(handler)
+    event = provider.parse_event(
+        raw_body=json.dumps(_sign(_body(transaction_status="refund"))).encode(), headers={}
+    )
+    assert isinstance(event, NormalizedRefundEvent)
+    with pytest.raises(WebhookUnparseable, match="Status API says"):
+        await provider.verify_refund_event(event)
+
+
+@pytest.mark.asyncio
+async def test_transient_status_error_is_retryable_not_refusal():
+    from backend.services.payments.midtrans import WebhookTransientError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={})
+
+    provider = _provider(handler)
+    event = provider.parse_event(raw_body=json.dumps(_sign(_body())).encode(), headers={})
+    assert isinstance(event, NormalizedPaidEvent)
+    with pytest.raises(WebhookTransientError):
+        await provider.verify_paid_event(event)

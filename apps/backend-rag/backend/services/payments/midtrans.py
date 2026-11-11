@@ -67,8 +67,21 @@ from backend.services.payments.terminal_taxonomy import (
 
 logger = logging.getLogger(__name__)
 
+
+class WebhookTransientError(Exception):
+    """The authoritative check could not run (5xx/transport).
+
+    NOT a refusal: the route answers 503 so the provider retries,
+    and nothing is persisted — persisting the Paid identity here
+    would swallow the retry as a duplicate.
+    """
+
 _SANDBOX_API = "https://api.sandbox.midtrans.com"
 _LIVE_API = "https://api.midtrans.com"
+# Snap lives on the APP host, Status/Refund on the API host — one
+# base for both was gate finding #1 (every checkout would 404).
+_SANDBOX_SNAP = "https://app.sandbox.midtrans.com"
+_LIVE_SNAP = "https://app.midtrans.com"
 _CHECKOUT_TTL_MINUTES = 60
 
 #: Snap methods for v1 (D1). Explicit, never the `bank_transfer`
@@ -93,7 +106,7 @@ _STATUSES_WITH_NO_ACCEPTED_CHARGE = frozenset({"expire", "cancel", "deny", "fail
 _STATUS_CODE_PAIRS = {
     "200": {"settlement", "capture", "refund", "partial_refund", "chargeback", "partial_chargeback"},
     "201": {"pending"},
-    "202": {"deny", "cancel", "failure"},
+    "202": {"deny", "cancel", "failure", "expire"},
     "407": {"expire"},
 }
 
@@ -143,6 +156,7 @@ class MidtransPaymentProvider:
                 )
             self._mode = "live"
             self._base_url = _LIVE_API
+            self._snap_base_url = _LIVE_SNAP
         elif server_key.startswith("SB-Mid-server-"):
             if live_enabled:
                 raise ValueError(
@@ -152,6 +166,7 @@ class MidtransPaymentProvider:
                 )
             self._mode = "sandbox"
             self._base_url = _SANDBOX_API
+            self._snap_base_url = _SANDBOX_SNAP
         else:
             raise ValueError(
                 "MidtransPaymentProvider requires a sandbox (SB-Mid-server-) or "
@@ -183,7 +198,7 @@ class MidtransPaymentProvider:
             f"/return?return_nonce={quote(return_nonce, safe='')}"
         )
         response = await self._client.post(
-            f"{self._base_url}/snap/v1/transactions",
+            f"{self._snap_base_url}/snap/v1/transactions",
             auth=(self._server_key, ""),
             headers={"X-Idempotency-Key": idempotency_key},
             json={
@@ -313,15 +328,45 @@ class MidtransPaymentProvider:
         raise WebhookUnparseable(f"unhandled Midtrans transaction_status: {tx_status!r}")
 
     async def _fetch_status(self, order_id: str) -> tuple[int, dict[str, Any]]:
-        response = await self._client.get(
-            f"{self._base_url}/v2/{quote(order_id, safe='')}/status",
-            auth=(self._server_key, ""),
-        )
+        try:
+            response = await self._client.get(
+                f"{self._base_url}/v2/{quote(order_id, safe='')}/status",
+                auth=(self._server_key, ""),
+            )
+        except httpx.HTTPError as exc:
+            raise WebhookTransientError(f"Status API unreachable: {exc}") from exc
         try:
             body = response.json()
         except ValueError:
             body = {}
         return response.status_code, body if isinstance(body, dict) else {}
+
+    async def verify_refund_event(
+        self, event: NormalizedRefundEvent
+    ) -> NormalizedRefundEvent:
+        """A refund body is no more self-proving than a Paid body:
+        `transaction_status` is unsigned, so a settlement body with
+        the status flipped to `refund` would otherwise record a
+        refund that never happened. The Status API must agree."""
+        http_status, body = await self._fetch_status(event.provider_session_id)
+        if http_status >= 500:
+            raise WebhookTransientError(f"Status API HTTP {http_status}")
+        tx_status = body.get("transaction_status")
+        if http_status != 200 or tx_status not in (
+            "refund",
+            "chargeback",
+            "partial_refund",
+            "partial_chargeback",
+        ):
+            raise WebhookUnparseable(
+                f"webhook claimed refund but Status API says {tx_status!r} "
+                f"(HTTP {http_status}) for order {event.provider_session_id}"
+            )
+        if str(body.get("transaction_id", "")) != event.provider_charge_id:
+            raise WebhookUnparseable("Status API transaction_id disagrees with refund body")
+        if tx_status.startswith("partial"):
+            raise WebhookUnparseable("authoritative status is a PARTIAL refund — staff case")
+        return event
 
     async def verify_paid_event(self, event: NormalizedPaidEvent) -> NormalizedPaidEvent:
         """Re-read the authoritative state before OP-02 acts on a Paid body.
@@ -332,6 +377,15 @@ class MidtransPaymentProvider:
         `WebhookUnparseable`: loud, quarantined, never a practice.
         """
         http_status, body = await self._fetch_status(event.provider_session_id)
+        if http_status >= 500:
+            # Transient: the provider must RETRY, so the route
+            # answers 503 and nothing is written to the inbox — a
+            # quarantined Paid identity would swallow the retry as
+            # a duplicate (gate finding).
+            raise WebhookTransientError(
+                f"authoritative status check HTTP {http_status} "
+                f"for order {event.provider_session_id}"
+            )
         if http_status != 200:
             raise WebhookUnparseable(
                 f"authoritative status check for order {event.provider_session_id} "
@@ -404,11 +458,15 @@ class MidtransPaymentProvider:
         except httpx.HTTPError as exc:
             raise RefundFailed(f"Midtrans refund failed for charge {provider_charge_id}") from exc
         refund_body: dict[str, Any] = response.json()
-        # Application-level proof, not just HTTP 2xx (Astra 6).
-        refunds = refund_body.get("refund_chargebacks") or refund_body.get("refunds")
-        if not refunds:
+        # Application-level proof, not just HTTP 2xx. The documented
+        # success shape carries refund_chargeback_id / refund_amount /
+        # refund_key — an earlier draft demanded a `refunds` list the
+        # API never sends and would have refused real refunds while
+        # the money moved (gate finding).
+        refund_id = refund_body.get("refund_chargeback_id") or refund_body.get("refund_key")
+        if refund_body.get("status_code") not in ("200", 200) or not refund_id:
             raise RefundFailed("Midtrans refund response carries no refund record")
-        return idempotency_key
+        return str(refund_id)
 
     async def _fetch_status_by_charge(self, charge_id: str) -> tuple[int, dict[str, Any]]:
         # The Status endpoint accepts a transaction_id in place of
@@ -416,4 +474,9 @@ class MidtransPaymentProvider:
         return await self._fetch_status(charge_id)
 
 
-__all__ = ["ENABLED_PAYMENTS", "MidtransFeeConfig", "MidtransPaymentProvider"]
+__all__ = [
+    "ENABLED_PAYMENTS",
+    "MidtransFeeConfig",
+    "MidtransPaymentProvider",
+    "WebhookTransientError",
+]
