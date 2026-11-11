@@ -24,18 +24,22 @@ type NavItem = SubNavItem & {
   ownerOnly?: boolean;
 };
 
+// "My HR" is the personal page for everyone. Everything else in the space is an HR
+// admin's tool: a member reaches the leave request form and a payslip from "My HR"
+// (those routes stay open to them), not from the navigation.
 const allNavItems: NavItem[] = [
-  { href: "/hr", label: "My HR", icon: LayoutDashboard, adminOnly: false },
+  { href: "/hr/me", label: "My HR", icon: LayoutDashboard, adminOnly: false },
+  { href: "/hr", label: "Team overview", icon: Users, adminOnly: true },
   { href: "/hr/employees", label: "Employees", icon: Users, adminOnly: true },
-  { href: "/hr/bonuses", label: "Bonuses", icon: Gift, adminOnly: false },
-  { href: "/hr/payroll", label: "Payroll", icon: Banknote, adminOnly: false },
-  { href: "/hr/leave", label: "Leave", icon: Calendar, adminOnly: false },
+  { href: "/hr/bonuses", label: "Bonuses", icon: Gift, adminOnly: true },
+  { href: "/hr/payroll", label: "Payroll", icon: Banknote, adminOnly: true },
+  { href: "/hr/leave", label: "Leave", icon: Calendar, adminOnly: true },
   { href: "/hr/settings", label: "Settings", icon: Settings, adminOnly: true },
   {
     href: "/accounting",
     label: "Accounting",
     icon: Receipt,
-    adminOnly: false,
+    adminOnly: true,
     accountingOnly: true,
   },
   {

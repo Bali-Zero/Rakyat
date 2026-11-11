@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
 import { Gift, Banknote, Calendar, Users } from "lucide-react";
 import * as hrApi from "@/lib/api/hr/hr";
@@ -192,14 +193,25 @@ function Notice({
 }
 
 export default function HRDashboardPage() {
+  const router = useRouter();
   const { capabilities, loaded, failed } = useHrCapabilities();
+  // A member's HR page is /hr/me; this dashboard is the HR admin's team overview.
+  const toMyHr =
+    loaded &&
+    !failed &&
+    !capabilities.hr_admin &&
+    capabilities.has_employee_record;
   const [cards, setCards] = useState<{
     admin: Card<AdminDashboard>;
     personal: Card<PersonalDashboard>;
   } | null>(null);
 
   useEffect(() => {
-    if (!loaded || failed) return;
+    if (toMyHr) router.replace("/hr/me");
+  }, [toMyHr, router]);
+
+  useEffect(() => {
+    if (!loaded || failed || toMyHr) return;
     let mounted = true;
     Promise.all([
       loadCard(capabilities.hr_admin, hrApi.getDashboard),
@@ -210,7 +222,13 @@ export default function HRDashboardPage() {
     return () => {
       mounted = false;
     };
-  }, [loaded, failed, capabilities.hr_admin, capabilities.has_employee_record]);
+  }, [
+    loaded,
+    failed,
+    toMyHr,
+    capabilities.hr_admin,
+    capabilities.has_employee_record,
+  ]);
 
   if (failed) {
     return (
@@ -219,6 +237,8 @@ export default function HRDashboardPage() {
       </Notice>
     );
   }
+
+  if (toMyHr) return null;
 
   if (!cards) {
     return (

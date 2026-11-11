@@ -11,6 +11,12 @@ In: ONE read route, `GET /api/hr/me/card`, through which a staff member reads th
 the import tool through which HR fills cards (JSON on stdin). The read side is clauses C1-C4 and
 C9; the write side is C5-C8 and C10.
 
+`GET /api/hr/me/overview` (`hr_overview_models.py`, `hr_overview_logic.py`) returns this same
+card plus the member's payslips, bonuses, leave and attendance for the "My HR" page. It takes no
+parameter either, resolves the member exactly as C1 does (the token's `sub`), reuses
+`get_card_for_member` and `member_card` unchanged, and echoes the `sub` as `team_member_id` so the
+page can check the owner of the answer against the bearer it sent.
+
 Explicitly out, on purpose:
 - **HTTP writes of card data.** No PATCH, no POST, no admin card route. The legacy
   `POST /employees` is untouched (its response no longer carries `profile`).

@@ -12,7 +12,13 @@ vi.mock("@/lib/api/hr/hr", () => ({ getCapabilities: getCapabilitiesMock }));
 
 import HRLayout from "../layout";
 
-const MEMBER_LINKS = ["My HR", "Bonuses", "Payroll", "Leave"];
+const ADMIN_ONLY_LABELS = [
+  "Team overview",
+  "Bonuses",
+  "Payroll",
+  "Leave",
+  "Accounting",
+];
 
 function hrefs(): string[] {
   return screen
@@ -36,10 +42,22 @@ describe("HR layout navigation", () => {
     });
     render(<HRLayout>x</HRLayout>);
     await waitFor(() => expect(getCapabilitiesMock).toHaveBeenCalled());
-    expect(hrefs()).toEqual(["/hr", "/hr/bonuses", "/hr/payroll", "/hr/leave"]);
-    for (const label of MEMBER_LINKS) {
-      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    expect(hrefs()).toEqual(["/hr/me"]);
+    expect(screen.getAllByText("My HR").length).toBeGreaterThan(0);
+    for (const label of ADMIN_ONLY_LABELS) {
+      expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
+  });
+
+  it("shows an accounting admin who is not an HR admin only My HR", async () => {
+    getCapabilitiesMock.mockResolvedValue({
+      hr_admin: false,
+      accounting_admin: true,
+      has_employee_record: true,
+    });
+    render(<HRLayout>x</HRLayout>);
+    await waitFor(() => expect(getCapabilitiesMock).toHaveBeenCalled());
+    expect(hrefs()).toEqual(["/hr/me"]);
   });
 
   it("adds the admin pages for an HR admin, without accounting", async () => {
@@ -51,6 +69,15 @@ describe("HR layout navigation", () => {
     render(<HRLayout>x</HRLayout>);
     await waitFor(() => expect(hrefs()).toContain("/hr/employees"));
     expect(hrefs()).toContain("/hr/settings");
+    expect(hrefs()).toEqual(
+      expect.arrayContaining([
+        "/hr/me",
+        "/hr",
+        "/hr/bonuses",
+        "/hr/payroll",
+        "/hr/leave",
+      ]),
+    );
     expect(hrefs()).not.toContain("/accounting");
     expect(hrefs()).not.toContain("/hr/owner-cashout");
   });
