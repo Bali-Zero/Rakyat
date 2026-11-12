@@ -46,6 +46,8 @@ import {
 } from "@/components/process/kanban-colors";
 import { RequiredDocumentsCard } from "./RequiredDocumentsCard";
 import { SelectServiceCard } from "./SelectServiceCard";
+import { InvoiceCompanyCard } from "./InvoiceCompanyCard";
+import { mergePracticeUpdate } from "./mergePracticeUpdate";
 import { useTeamMemberOptions } from "@/hooks/useTeamMembers";
 import { useInvalidateClient } from "@/hooks/useClientDetail";
 import { initialsOf } from "@/lib/team-initials";
@@ -274,11 +276,12 @@ export default function CaseDetailPage() {
     });
   };
 
-  const applyPracticeUpdate = (updatedPractice: Practice) => {
+  const applyPracticeUpdate = (
+    updatedPractice: Practice,
+    options?: { service?: boolean },
+  ) => {
     setPractice((currentPractice) =>
-      currentPractice
-        ? { ...currentPractice, ...updatedPractice }
-        : updatedPractice,
+      mergePracticeUpdate(currentPractice, updatedPractice, options),
     );
   };
 
@@ -984,7 +987,10 @@ export default function CaseDetailPage() {
 
       {/* Open inquiry: service still to be chosen (required before Documents) */}
       {caseId && practice.practice_type_code === OPEN_INQUIRY_TYPE_CODE && (
-        <SelectServiceCard practiceId={caseId} onSaved={applyPracticeUpdate} />
+        <SelectServiceCard
+          practiceId={caseId}
+          onSaved={(saved) => applyPracticeUpdate(saved, { service: true })}
+        />
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1165,6 +1171,17 @@ export default function CaseDetailPage() {
                 })()}
             </div>
           </div>
+
+          {caseId && (
+            <InvoiceCompanyCard
+              practice={practice}
+              onSaved={(patch) =>
+                setPractice((current) =>
+                  current ? { ...current, ...patch } : current,
+                )
+              }
+            />
+          )}
 
           {/* Process Details */}
           <div

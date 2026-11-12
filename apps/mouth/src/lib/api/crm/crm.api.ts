@@ -8,6 +8,8 @@ import type {
   Client,
   CreateClientParams,
   CreatePracticeParams,
+  InvoiceCompanyParams,
+  InvoiceCompanySuggestion,
   RenewalAlert,
   ClientSummary,
   ClientProfile,
@@ -406,6 +408,21 @@ export class CrmApi {
   }
 
   /**
+   * Companies the client is linked to and what the "Invoice to company" field
+   * should prefill for this service (rule lives on the backend only).
+   */
+  async getInvoiceCompanySuggestion(
+    clientId: number,
+    practiceTypeCode?: string,
+  ): Promise<InvoiceCompanySuggestion> {
+    const params = new URLSearchParams({ client_id: String(clientId) });
+    if (practiceTypeCode) params.set("practice_type_code", practiceTypeCode);
+    return this.client.request<InvoiceCompanySuggestion>(
+      `/api/crm/practices/invoice-company/suggestion?${params.toString()}`,
+    );
+  }
+
+  /**
    * Create a new practice/case
    */
   async createPractice(data: CreatePracticeParams): Promise<Practice> {
@@ -435,7 +452,8 @@ export class CrmApi {
       assigned_to: string | null;
       notes: string;
       start_date: string | null;
-    }>,
+    }> &
+      InvoiceCompanyParams,
   ): Promise<Practice> {
     // Note: trailing slash required to avoid 307 redirect which converts PATCH to GET
     return this.client.request<Practice>(
