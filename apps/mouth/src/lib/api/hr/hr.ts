@@ -205,6 +205,45 @@ export const editPersonCard = (
     { method: "PATCH", body: JSON.stringify(body) },
   );
 
+// People console, HR documents — STAFF_CARD.md C12. Only the global admins may call these. The
+// file goes up as multipart (field `file`); the browser sets the boundary, so no Content-Type here.
+export const DOC_SLOTS = [
+  "ktp",
+  "kk",
+  "npwp",
+  "bpjs_kes",
+  "bpjs_tk",
+  "contract",
+] as const;
+export type DocSlot = (typeof DOC_SLOTS)[number];
+export const DOC_MAX_BYTES = 4 * 1024 * 1024;
+export interface PersonDocumentResult {
+  slot: DocSlot;
+  file_id: string | null;
+  previous: "trashed" | "kept" | "none";
+}
+export const uploadPersonDocument = (
+  teamMemberId: string,
+  slot: DocSlot,
+  file: File,
+): Promise<CredentialedResponse<PersonDocumentResult>> => {
+  const form = new FormData();
+  form.append("file", file);
+  return api.requestWithCredential<PersonDocumentResult>(
+    `${BASE}/people/${encodeURIComponent(teamMemberId)}/documents/${slot}`,
+    { method: "POST", body: form },
+    90000,
+  );
+};
+export const removePersonDocument = (
+  teamMemberId: string,
+  slot: DocSlot,
+): Promise<CredentialedResponse<PersonDocumentResult>> =>
+  api.requestWithCredential<PersonDocumentResult>(
+    `${BASE}/people/${encodeURIComponent(teamMemberId)}/documents/${slot}`,
+    { method: "DELETE" },
+  );
+
 // Dashboard
 export const getDashboard = () => api.get<AdminDashboard>(`${BASE}/dashboard`);
 export const getMyDashboard = () =>

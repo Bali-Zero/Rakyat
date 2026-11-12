@@ -9862,6 +9862,31 @@ export interface paths {
     patch: operations["edit_person_card_api_hr_people__team_member_id__card_patch"];
     trace?: never;
   };
+  "/api/hr/people/{team_member_id}/documents/{slot}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Upload Person Document
+     * @description Upload or replace one HR paper (global admins only). The type is read from the magic
+     *     bytes (PDF, JPEG, PNG) and the size is capped; nothing the client names is trusted.
+     */
+    post: operations["upload_person_document_api_hr_people__team_member_id__documents__slot__post"];
+    /**
+     * Remove Person Document
+     * @description Empty one HR paper's slot; the file goes to the Drive trash only when this door made it.
+     */
+    delete: operations["remove_person_document_api_hr_people__team_member_id__documents__slot__delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/hr/people/{team_member_id}/overview": {
     parameters: {
       query?: never;
@@ -20220,6 +20245,11 @@ export interface components {
       tier?: string | null;
       /** Title */
       title?: string | null;
+    };
+    /** Body_upload_person_document_api_hr_people__team_member_id__documents__slot__post */
+    Body_upload_person_document_api_hr_people__team_member_id__documents__slot__post: {
+      /** File */
+      file: string;
     };
     /** Body_upload_slide_api_war_room_upload_slide_post */
     Body_upload_slide_api_war_room_upload_slide_post: {
@@ -44722,6 +44752,74 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["PersonOverview"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  upload_person_document_api_hr_people__team_member_id__documents__slot__post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        team_member_id: string;
+        slot: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "multipart/form-data": components["schemas"]["Body_upload_person_document_api_hr_people__team_member_id__documents__slot__post"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  remove_person_document_api_hr_people__team_member_id__documents__slot__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        team_member_id: string;
+        slot: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
         };
       };
       /** @description Validation Error */
