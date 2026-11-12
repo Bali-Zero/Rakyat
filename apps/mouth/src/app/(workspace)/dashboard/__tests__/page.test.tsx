@@ -177,6 +177,22 @@ describe("DashboardPage - Unit Tests", () => {
       name: "Team User",
       role: "team",
     });
+    vi.spyOn(api.blog, "listArticles").mockResolvedValue({
+      articles: [
+        {
+          slug: "remote-work-bali-budget-workday-readiness",
+          title:
+            "Working Remotely from Bali: Budget for the Workday, Not Just the Stay",
+          category: "living",
+          publishedAt: "2026-11-12T02:36:47.148Z",
+          coverImage:
+            "/static/news/remote-work-bali-budget-workday-readiness.jpg",
+          excerpt:
+            "An IDN Times career article published on 8 November discusses the preparation behind a sustainable digital-nomad lifestyle.",
+        },
+      ],
+      total: 1,
+    });
     vi.mocked(useDashboardData).mockReturnValue(mockUseDashboardData());
     // Ops panel adapters (WS2 slice 2) — default to live, healthy data
     vi.mocked(getSystemPulse).mockResolvedValue([
@@ -203,12 +219,14 @@ describe("DashboardPage - Unit Tests", () => {
     vi.restoreAllMocks();
   });
 
-  it("should render and load dashboard data successfully", async () => {
+  it("should render and load dashboard data successfully with the news carousel and without My role", async () => {
     render(<DashboardPage />, { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(screen.getByTestId("role-widget")).toBeInTheDocument();
+      expect(screen.getByTestId("dashboard-news-carousel")).toBeInTheDocument();
     });
+    expect(screen.queryByTestId("role-widget")).not.toBeInTheDocument();
+    expect(screen.queryByText("My role")).not.toBeInTheDocument();
   });
 
   it("should handle loading state", async () => {
