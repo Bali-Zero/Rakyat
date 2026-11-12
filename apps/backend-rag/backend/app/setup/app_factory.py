@@ -17,16 +17,11 @@ import time
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.responses import ORJSONResponse
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.app.core.config import settings
-from backend.app.setup.exception_handlers import (
-    general_exception_handler,
-    http_exception_handler,
-    starlette_http_exception_handler,
-)
+from backend.app.setup.exception_handlers import register_exception_handlers
 from backend.app.setup.logging_config import configure_logging
 from backend.app.setup.middleware_config import register_middleware
 from backend.app.setup.observability import setup_observability
@@ -770,9 +765,7 @@ def create_app() -> FastAPI:
     )
 
     # Register global exception handlers (MUST be before middleware to catch all exceptions)
-    app.add_exception_handler(HTTPException, http_exception_handler)
-    app.add_exception_handler(StarletteHTTPException, starlette_http_exception_handler)
-    app.add_exception_handler(Exception, general_exception_handler)
+    register_exception_handlers(app)
 
     # Register middleware (CORS, Auth, Tracing, Error Monitoring, Rate Limiting)
     register_middleware(app)

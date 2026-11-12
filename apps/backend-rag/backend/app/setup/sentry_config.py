@@ -110,8 +110,31 @@ _PII_EXACT_KEYS: frozenset[str] = frozenset(
         "nz_access_token",
         "nz_csrf_token",
         "evidence_ref",
+        # HR staff card (STAFF_CARD.md C11). Exact keys, never substrings: "address" or
+        # "gender" as a substring would eat unrelated debug keys (scar #3). The route rule
+        # below (`/api/hr/`) is the structural cover; these are defence in depth for the same
+        # fields reaching an event through a log record, a breadcrumb or `extra`.
+        "legal_name",
+        "nik",
+        "birth_place",
+        "birth_date",
+        "address",
+        "religion",
+        "marital_status",
+        "gender",
+        "bank_account",
+        "bank_account_holder",
+        "bpjs_kesehatan_number",
+        "bpjs_ketenagakerjaan_number",
+        "base_salary_idr",
     }
 )
+
+# HR request bodies are personal by nature, whatever their keys: the FastAPI integration
+# attaches the request JSON to the event (`request.data`), and a key-based scrub only knows
+# the keys it was told. Every event of an `/api/hr/` request therefore loses its body and its
+# query string, wholesale. Decided by the route, not by the content.
+_HR_ROUTE_PREFIX = "/api/hr/"
 
 # Keys to treat as "query-string-ish" — the value is a URL-encoded param
 # blob that we redact by key rather than parsing.
@@ -321,6 +344,30 @@ def _is_health_transaction(event: dict[str, Any]) -> bool:
         return False
 
 
+def _is_hr_route_event(event: dict[str, Any]) -> bool:
+    """True when the event belongs to an `/api/hr/` request (by URL path or route name)."""
+    from urllib.parse import urlparse
+
+    request = event.get("request")
+    url = request.get("url") if isinstance(request, dict) else None
+    if isinstance(url, str) and (urlparse(url).path + "/").startswith(_HR_ROUTE_PREFIX):
+        return True
+    name = event.get("transaction")
+    return isinstance(name, str) and (name + "/").startswith(_HR_ROUTE_PREFIX)
+
+
+def _drop_hr_request_payload(event: dict[str, Any]) -> dict[str, Any]:
+    """Replace what the SDK copied from an HR request (body, query string, form data)."""
+    request = event.get("request")
+    if not isinstance(request, dict):
+        return event
+    cleaned = dict(request)
+    for key in ("data", "query_string", "cookies"):
+        if key in cleaned:
+            cleaned[key] = PII_REDACTION_PLACEHOLDER
+    return {**event, "request": cleaned}
+
+
 def _before_send_impl(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] | None:
     """Inner implementation. Drops health-check transactions, scrubs PII.
 
@@ -330,12 +377,12 @@ def _before_send_impl(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, 
     to be added at cron entrypoints (`cron-wrapper.sh`, `auto_sentinel.sh`,
     `cron_notifiers.py`) in a follow-up before a dedup filter can land here.
     """
+    if _is_hr_route_event(event):
+        event = _drop_hr_request_payload(event)
     return _scrub(event)
 
 
-def _before_send_transaction(
-    event: dict[str, Any], hint: dict[str, Any]
-) -> dict[str, Any] | None:
+def _before_send_transaction(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] | None:
     """Transaction hook. Drops health-check metronomes, scrubs the rest.
 
     A SEPARATE HOOK, and that is not a style choice. The SDK guards

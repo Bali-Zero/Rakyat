@@ -5,6 +5,7 @@ import { Users, Plus, X, Shield, ShieldAlert, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import * as hrApi from "@/lib/api/hr/hr";
 import { isNonHumanRole, useTeamMembers } from "@/hooks/useTeamMembers";
+import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
 import type { HREmployee, EmployeeCreatePayload, PTKPStatus } from "@/types/hr";
 import { Money } from "@balizero/core";
 
@@ -61,6 +62,9 @@ const INITIAL_FORM: EmployeeCreatePayload = {
 };
 
 export default function EmployeesPage() {
+  // Same rule as the People card edit (STAFF_CARD.md C11): only `hr_card_write` creates or
+  // changes a record here; the server refuses everyone else with a 403 anyway.
+  const canWrite = useHrCapabilities().capabilities.hr_card_write;
   const [employees, setEmployees] = useState<HREmployee[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -194,17 +198,19 @@ export default function EmployeesPage() {
             <Users size={16} />
             {employees.length} total
           </div>
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--bz-accent)]/10 text-[var(--bz-accent)] hover:bg-[var(--bz-accent)]/20 text-sm transition-colors"
-          >
-            {showForm ? <X size={16} /> : <Plus size={16} />}
-            {showForm ? "Cancel" : "Add Employee"}
-          </button>
+          {canWrite && (
+            <button
+              onClick={() => setShowForm(!showForm)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--bz-accent)]/10 text-[var(--bz-accent)] hover:bg-[var(--bz-accent)]/20 text-sm transition-colors"
+            >
+              {showForm ? <X size={16} /> : <Plus size={16} />}
+              {showForm ? "Cancel" : "Add Employee"}
+            </button>
+          )}
         </div>
       </div>
 
-      {showForm && (
+      {canWrite && showForm && (
         <form
           onSubmit={handleSubmit}
           className="border rounded-xl p-5 space-y-4"

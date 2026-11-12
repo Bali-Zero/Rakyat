@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import calendar
 import logging
+from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
 from typing import Any
@@ -123,6 +124,22 @@ _LOCK_ERRORS = (
     asyncpg.exceptions.LockNotAvailableError,
     asyncpg.exceptions.DeadlockDetectedError,
 )
+
+
+def _lock_visible_person_sql() -> str:
+    # Imported at call time: hr_people_service imports this module (business_today).
+    from backend.app.services.hr.hr_people_service import VISIBLE_PERSON_PREDICATE
+
+    return f"""
+        SELECT tm.id
+        FROM team_members tm
+        LEFT JOIN hr_employees e ON e.team_member_id = tm.id
+        WHERE tm.id = $1 AND tm.email = $2 AND {VISIBLE_PERSON_PREDICATE}
+        FOR SHARE OF tm
+    """
+
+
+CARD_EDIT_LOCK_TIMEOUT_MS = 5000  # the import's bound (C8): wait at most this for a member lock
 
 
 class HRCardCode(str, Enum):
@@ -259,29 +276,36 @@ class HRService:
         WHERE tm.id = $1 AND COALESCE(tm.role, '') <> 'client' AND tm.active = true
     """
 
-    # $11 is a Python dict bound to jsonb: the pool codec encodes it exactly once.
+    # $11 is a Python dict bound to jsonb: the pool codec encodes it exactly once. $12 is the
+    # text[] of cleared keys (C11): a cleared column becomes NULL, a cleared profile key is
+    # removed, `contract_number` removes `profile.contract.number`; empty for the import.
     _CARD_UPDATE_SQL = """
         UPDATE hr_employees SET
             hire_date = COALESCE($2, hire_date),
-            npwp = COALESCE($3, npwp),
+            npwp = CASE WHEN 'npwp' = ANY($12::text[]) THEN NULL ELSE COALESCE($3, npwp) END,
             ptkp_status = COALESCE($4, ptkp_status),
-            bpjs_kesehatan_number = COALESCE($5, bpjs_kesehatan_number),
-            bpjs_ketenagakerjaan_number = COALESCE($6, bpjs_ketenagakerjaan_number),
-            bank_name = COALESCE($7, bank_name),
-            bank_account = COALESCE($8, bank_account),
-            bank_account_holder = COALESCE($9, bank_account_holder),
+            bpjs_kesehatan_number = CASE WHEN 'bpjs_kesehatan_number' = ANY($12::text[]) THEN NULL ELSE COALESCE($5, bpjs_kesehatan_number) END,
+            bpjs_ketenagakerjaan_number = CASE WHEN 'bpjs_ketenagakerjaan_number' = ANY($12::text[]) THEN NULL ELSE COALESCE($6, bpjs_ketenagakerjaan_number) END,
+            bank_name = CASE WHEN 'bank_name' = ANY($12::text[]) THEN NULL ELSE COALESCE($7, bank_name) END,
+            bank_account = CASE WHEN 'bank_account' = ANY($12::text[]) THEN NULL ELSE COALESCE($8, bank_account) END,
+            bank_account_holder = CASE WHEN 'bank_account_holder' = ANY($12::text[]) THEN NULL ELSE COALESCE($9, bank_account_holder) END,
             is_active = COALESCE($10, is_active),
-            profile = (CASE WHEN jsonb_typeof(profile) = 'object' THEN profile ELSE '{}'::jsonb END)
+            profile = ((CASE WHEN jsonb_typeof(profile) = 'object' THEN profile ELSE '{}'::jsonb END)
+                    - $12::text[])
                 || $11::jsonb
                 || CASE WHEN $11::jsonb ? 'docs' THEN jsonb_build_object(
                     'docs',
                     (CASE WHEN jsonb_typeof(profile->'docs') = 'object' THEN profile->'docs'
                           ELSE '{}'::jsonb END) || ($11::jsonb->'docs'))
                     ELSE '{}'::jsonb END
-                || CASE WHEN $11::jsonb ? 'contract' THEN jsonb_build_object(
+                || CASE WHEN $11::jsonb ? 'contract' OR ('contract_number' = ANY($12::text[])
+                                          AND jsonb_typeof(profile->'contract') = 'object')
+                    THEN jsonb_build_object(
                     'contract',
-                    (CASE WHEN jsonb_typeof(profile->'contract') = 'object' THEN profile->'contract'
-                          ELSE '{}'::jsonb END) || ($11::jsonb->'contract'))
+                    ((CASE WHEN jsonb_typeof(profile->'contract') = 'object' THEN profile->'contract'
+                           ELSE '{}'::jsonb END)
+                        - ARRAY(SELECT 'number' WHERE 'contract_number' = ANY($12::text[])))
+                    || COALESCE($11::jsonb->'contract', '{}'::jsonb))
                     ELSE '{}'::jsonb END,
             updated_at = NOW()
         WHERE team_member_id = $1
@@ -359,14 +383,19 @@ class HRService:
         team_member_id: str,
         fields: dict[str, Any],
         profile_patch: dict[str, Any],
+        clear: Sequence[str] = (),
     ) -> int | None:
         """Non-clobbering card write on a caller-owned connection (the import batches many).
+
+        `clear` (C11, the HTTP edit only) names columns to set NULL and profile keys to remove
+        in the same statement; an insert has nothing to clear and ignores it.
 
         Returns the row id, or None when no row was written (no such member). A
         concurrent insert falls through to the update; a stored profile that is not
         an object after the merge fails and rolls this write back.
         """
         fields, profile_patch = self._checked_patch(fields, profile_patch)
+        cleared = sorted({str(k) for k in clear})
         args = (
             team_member_id,
             fields.get("hire_date"),
@@ -382,13 +411,13 @@ class HRService:
         )
         try:
             async with conn.transaction():
-                row = await conn.fetchrow(self._CARD_UPDATE_SQL, *args)
+                row = await conn.fetchrow(self._CARD_UPDATE_SQL, *args, cleared)
                 if row is None:
                     if fields.get("hire_date") is None:
                         raise HRCardError(HRCardCode.HIRE_DATE_REQUIRED)
                     row = await conn.fetchrow(self._CARD_INSERT_SQL, *args)
                     if row is None:  # a concurrent writer inserted the row: update it
-                        row = await conn.fetchrow(self._CARD_UPDATE_SQL, *args)
+                        row = await conn.fetchrow(self._CARD_UPDATE_SQL, *args, cleared)
                 if row is not None and row["profile_type"] != "object":
                     raise HRCardError(HRCardCode.PROFILE_NOT_OBJECT)
         except HRCardError:
@@ -401,6 +430,49 @@ class HRService:
             return None
         logger.info(f"HR card merged: team_member_id={team_member_id}")
         return row["id"]
+
+    async def lock_visible_person(self, conn: Any, team_member_id: str, email: str) -> bool:
+        """Lock the team_members row FOR SHARE, re-checking in the SAME statement that the
+        member is still a person the People console shows (the full `VISIBLE_PERSON_PREDICATE`:
+        active, not client/monitoring/partner, with an HR row or a named staff role) and that the
+        stored email is the one the route looked up. False when the row no longer qualifies.
+        A savepoint keeps a failed lock from aborting the caller's transaction."""
+        try:
+            async with conn.transaction():
+                found = await conn.fetchval(_lock_visible_person_sql(), team_member_id, email)
+        except _LOCK_ERRORS:
+            raise HRCardError(HRCardCode.LOCK_TIMEOUT) from None
+        except Exception:
+            raise HRCardError(HRCardCode.DB_ERROR) from None
+        return found is not None
+
+    async def edit_card(
+        self,
+        team_member_id: str,
+        email: str,
+        fields: dict[str, Any],
+        profile_patch: dict[str, Any],
+        clear: Sequence[str],
+    ) -> int | None:
+        """One HR admin edit of one card (C11): lock the member, merge and clear, one transaction.
+
+        Same `lock_timeout` as the import (C8), same merge as C5. The member lock re-checks the
+        People visibility predicate, so a member deactivated or turned monitoring/partner after
+        the route's lookup is not written. Returns the row id, or None when the person no longer
+        qualifies. Failures are HRCardError codes; no value reaches any message or log.
+        """
+        try:
+            async with self.db_pool.acquire() as conn, conn.transaction():
+                await conn.execute(f"SET LOCAL lock_timeout = {int(CARD_EDIT_LOCK_TIMEOUT_MS)}")
+                if not await self.lock_visible_person(conn, team_member_id, email):
+                    return None
+                return await self.merge_card_on(conn, team_member_id, fields, profile_patch, clear)
+        except HRCardError:
+            raise
+        except _LOCK_ERRORS:
+            raise HRCardError(HRCardCode.LOCK_TIMEOUT) from None
+        except Exception:
+            raise HRCardError(HRCardCode.DB_ERROR) from None
 
     # ─── BONUS RATES ─────────────────────────────────────────────────
 

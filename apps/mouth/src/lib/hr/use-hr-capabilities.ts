@@ -11,6 +11,7 @@ export const NO_CAPABILITIES: HrCapabilities = {
   has_employee_record: false,
   people_scope: null,
   hr_edit: false,
+  hr_card_write: false,
 };
 
 export interface HrCapabilitiesState {
