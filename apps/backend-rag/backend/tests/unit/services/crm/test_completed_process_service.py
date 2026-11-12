@@ -1,123 +1,281 @@
-"""Unit tests for CompletedProcessService._upload_final_documents (2026-08-08).
+"""Unit tests for CompletedProcessService (completed-stage automation, owner option (a), 2026-11-12).
 
-Covers two things from the same change:
+Spec rows (behaviour -> test):
 
-1. GUILT (double-count regression): _save_final_document_record used to run
-   INSIDE the same try/except as the Drive upload call, writing to the
-   never-provisioned `client_documents` table. When that DB write raised, a
-   doc already appended to `uploaded` would ALSO land in `failed` via the
-   outer except — double-counted in both lists. The write is gone now (the
-   feature that would pass final_documents has zero live callers — see
-   trigger_on_completed in crm_practices.py); the Drive-upload try/except is
-   scoped to just the upload call, so a doc lands in exactly one of
-   uploaded/failed, never both.
-
-2. INNOCENCE: a successful Drive upload still lands in `uploaded` with the
-   right shape, and no DB write is attempted (db_pool.acquire never called)
-   — the dormant client_documents INSERT does not silently resurrect.
+C1  Activity: every Completed writes ONE ``process_completed`` activity row, whatever happens to
+    the mail -> test_every_branch_writes_one_activity_row, test_activity_row_survives_a_mail_failure
+C2  The client "Congratulations" email is gone for good (the listener mail is the only client
+    email) -> test_no_client_mail_in_any_branch, test_the_dead_client_mail_and_upload_paths_are_gone
+C3  Client with email AND an assignee other than the client: the listener cc'd the assignee, so
+    NO team mail -> test_client_with_email_and_assignee_gets_no_team_mail
+C4  Client without email: the listener skipped, the assignee (else created_by) gets the team mail
+    -> test_client_without_email_team_mail_goes_to_assignee, test_missing_client_row_counts_as_no_email
+C5  No assignee: the listener mail had no cc, created_by gets the team mail
+    -> test_no_assignee_team_mail_goes_to_created_by
+C6  Nobody to tell (no assignee, no creator): no mail, activity still written
+    -> test_nobody_to_tell_sends_nothing
+C7  Never mail the client their own team mail: an assignee equal to the client's address falls
+    through to created_by -> test_assignee_equal_to_client_address_falls_through_to_created_by
+C8  Subject and body use the service display name (practice_types.name), not the code
+    -> test_team_mail_uses_the_service_display_name_not_the_code
+C9  ``_fetch_client_data`` selects only columns that exist on prod ``clients``
+    -> test_fetch_client_data_selects_no_dead_column (+ the real-Postgres file
+       test_completed_process_service_pg.py)
+C10 Practice not found: error, no activity row, no mail -> test_unknown_practice
 """
 
 from __future__ import annotations
 
+import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.services.crm.completed_process_service import CompletedProcessService
+from backend.services.crm.completed_process_service import (
+    CompletedProcessService,
+    team_recipient,
+)
+
+CLIENT_EMAIL = "client.placeholder@example.test"
+ASSIGNEE = "consultant.placeholder@example.test"
+CREATOR = "creator.placeholder@example.test"
 
 
 def _make_service() -> tuple[CompletedProcessService, MagicMock]:
     pool = MagicMock()
-    # completed_process_service.py imports ClientStorageProvisioner eagerly at
-    # module scope — patch the name bound in *this* module, not its origin
-    # module, or the real ClientStorageProvisioner() constructor still runs.
-    # (ZohoEmailService was removed 2026-09-27 — the Brevo→Zoho fallback
-    # called it with the wrong keyword arguments since the call site was
-    # first written, so it never actually worked; see TestSendWithBrevoFallback.)
-    with patch("backend.services.crm.completed_process_service.ClientStorageProvisioner"):
-        svc = CompletedProcessService(pool)
-    svc.drive_service = AsyncMock()
-    return svc, pool
+    return CompletedProcessService(pool), pool
 
 
-@pytest.mark.asyncio
-async def test_successful_upload_lands_in_uploaded_only_and_no_db_write() -> None:
-    svc, pool = _make_service()
-    svc.drive_service.upload_final_document.return_value = {
-        "success": True,
-        "file_id": "gd-1",
-        "file_url": "https://drive.example/gd-1",
+def _practice(**over) -> dict:
+    base = {
+        "id": 501,
+        "client_id": 7,
+        "assigned_to": ASSIGNEE,
+        "created_by": CREATOR,
+        "practice_type_code": "CODE_X",
+        "practice_type_name": "Service Display Name",
     }
+    base.update(over)
+    return base
 
-    uploaded, failed = await svc._upload_final_documents(
-        client_data={"id": 10, "drive_final_folder_id": "folder-1"},
-        documents=[{"content": b"pdf", "filename": "doc.pdf"}],
-    )
 
-    assert uploaded == [{"filename": "doc.pdf", "file_url": "https://drive.example/gd-1"}]
-    assert failed == []
-    # No dormant client_documents write resurrected — the connection pool
-    # is never touched by a successful upload.
-    pool.acquire.assert_not_called()
+def _client(email: str | None = CLIENT_EMAIL) -> dict:
+    return {"id": 7, "full_name": "Placeholder Client", "email": email}
+
+
+def _service(practice: dict | None, client: dict | None):
+    svc, _pool = _make_service()
+    svc._fetch_practice_data = AsyncMock(return_value=practice)
+    svc._fetch_client_data = AsyncMock(return_value=client)
+    svc._log_activity = AsyncMock()
+    svc._send_with_brevo_fallback = AsyncMock()
+    return svc
+
+
+def _sent(svc) -> list[tuple[str, str, str]]:
+    """(to, subject, body) of every mail the service tried to send."""
+    return [
+        (c.args[0], c.args[1], c.args[2]) for c in svc._send_with_brevo_fallback.await_args_list
+    ]
+
+
+# --- C3 innocence: the team already got the listener's cc -------------------------------
 
 
 @pytest.mark.asyncio
-async def test_upload_exception_lands_in_failed_only_not_also_uploaded() -> None:
-    """GUILT: the exact double-count regression this change fixes. Before
-    the fix, an exception raised past the Drive call (e.g. from the DB
-    write that used to sit inside the same try block) would still find the
-    doc already appended to `uploaded` from the line above it."""
-    svc, _pool = _make_service()
-    svc.drive_service.upload_final_document.side_effect = RuntimeError("drive down")
+async def test_client_with_email_and_assignee_gets_no_team_mail() -> None:
+    svc = _service(_practice(), _client())
+    result = await svc.trigger_on_completed(501, "staff@example.test")
+    assert result == {"success": True, "team_notified": False}
+    assert _sent(svc) == []
+    svc._log_activity.assert_awaited_once()
 
-    uploaded, failed = await svc._upload_final_documents(
-        client_data={"id": 10, "drive_final_folder_id": "folder-1"},
-        documents=[{"content": b"pdf", "filename": "doc.pdf"}],
-    )
 
-    assert uploaded == []
-    assert len(failed) == 1
-    assert failed[0]["filename"] == "doc.pdf"
-    assert "drive down" in failed[0]["reason"]
+# --- C4 guilt: the listener skipped, the team member must be told -----------------------
 
 
 @pytest.mark.asyncio
-async def test_drive_reports_failure_without_exception_lands_in_failed() -> None:
-    svc, _pool = _make_service()
-    svc.drive_service.upload_final_document.return_value = {
-        "success": False,
-        "error": "quota exceeded",
-    }
-
-    uploaded, failed = await svc._upload_final_documents(
-        client_data={"id": 10, "drive_final_folder_id": "folder-1"},
-        documents=[{"content": b"pdf", "filename": "doc.pdf"}],
-    )
-
-    assert uploaded == []
-    assert failed == [{"filename": "doc.pdf", "reason": "drive_api: quota exceeded"}]
+async def test_client_without_email_team_mail_goes_to_assignee() -> None:
+    svc = _service(_practice(), _client(email=None))
+    result = await svc.trigger_on_completed(501, "staff@example.test")
+    assert result == {"success": True, "team_notified": True}
+    ((to, subject, body),) = _sent(svc)
+    assert to == ASSIGNEE
+    assert subject.startswith("[TEAM]")
+    assert "no email on file" in body
+    svc._log_activity.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_no_final_folder_fails_all_documents_without_calling_drive() -> None:
-    svc, _pool = _make_service()
+async def test_empty_string_email_counts_as_no_email() -> None:
+    svc = _service(_practice(), _client(email=""))
+    await svc.trigger_on_completed(501, "staff@example.test")
+    assert [to for to, _, _ in _sent(svc)] == [ASSIGNEE]
 
-    uploaded, failed = await svc._upload_final_documents(
-        client_data={"id": 10, "drive_final_folder_id": None},
-        documents=[{"content": b"pdf", "filename": "a.pdf"}, {"content": b"pdf", "filename": "b.pdf"}],
+
+@pytest.mark.asyncio
+async def test_missing_client_row_counts_as_no_email() -> None:
+    svc = _service(_practice(), None)
+    result = await svc.trigger_on_completed(501, "staff@example.test")
+    assert result["success"] is True
+    ((to, subject, _body),) = _sent(svc)
+    assert to == ASSIGNEE
+    assert "Client #7" in subject
+    svc._log_activity.assert_awaited_once()
+
+
+# --- C5 guilt: no assignee, so the listener mail copied nobody --------------------------
+
+
+@pytest.mark.asyncio
+async def test_no_assignee_team_mail_goes_to_created_by() -> None:
+    svc = _service(_practice(assigned_to=None), _client())
+    result = await svc.trigger_on_completed(501, "staff@example.test")
+    assert result["team_notified"] is True
+    ((to, _subject, body),) = _sent(svc)
+    assert to == CREATOR
+    assert "No team member is assigned" in body
+
+
+@pytest.mark.asyncio
+async def test_blank_assignee_is_no_assignee() -> None:
+    svc = _service(_practice(assigned_to=""), _client())
+    await svc.trigger_on_completed(501, "staff@example.test")
+    assert [to for to, _, _ in _sent(svc)] == [CREATOR]
+
+
+# --- C6 / C7 ----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_nobody_to_tell_sends_nothing() -> None:
+    for client in (_client(), _client(email=None)):
+        svc = _service(_practice(assigned_to=None, created_by=None), client)
+        result = await svc.trigger_on_completed(501, "staff@example.test")
+        assert result == {"success": True, "team_notified": False}
+        assert _sent(svc) == []
+        svc._log_activity.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_assignee_equal_to_client_address_falls_through_to_created_by() -> None:
+    svc = _service(_practice(assigned_to=CLIENT_EMAIL), _client())
+    await svc.trigger_on_completed(501, "staff@example.test")
+    # The listener did not cc the client on their own mail, so the team is not covered: the
+    # creator is told, and the client never receives a "[TEAM]" mail.
+    assert [to for to, _, _ in _sent(svc)] == [CREATOR]
+
+
+def test_team_recipient_truth_table() -> None:
+    p = _practice()
+    assert team_recipient(p, CLIENT_EMAIL) == (None, None)
+    assert team_recipient(p, None) == (ASSIGNEE, "no_client_email")
+    assert team_recipient(_practice(assigned_to=None), CLIENT_EMAIL) == (CREATOR, "no_assignee")
+    assert team_recipient(_practice(assigned_to=None, created_by=None), None) == (
+        None,
+        "no_client_email",
     )
 
-    assert uploaded == []
-    assert {f["filename"] for f in failed} == {"a.pdf", "b.pdf"}
-    assert all(f["reason"] == "no_final_folder" for f in failed)
-    svc.drive_service.upload_final_document.assert_not_called()
+
+# --- C1 / C2 ----------------------------------------------------------------------------
 
 
-def test_save_final_document_record_no_longer_exists() -> None:
-    """GUILT: the dormant client_documents INSERT must not be re-introduced
-    under its old name — a future re-add should write to `documents` with
-    an explicit column mapping, not silently resurrect this method."""
+_BRANCHES = [
+    (_practice(), _client()),
+    (_practice(), _client(email=None)),
+    (_practice(assigned_to=None), _client()),
+    (_practice(assigned_to=None, created_by=None), _client()),
+    (_practice(), None),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("practice", "client"), _BRANCHES)
+async def test_every_branch_writes_one_activity_row(practice, client) -> None:
+    svc = _service(practice, client)
+    await svc.trigger_on_completed(501, "staff@example.test")
+    svc._log_activity.assert_awaited_once()
+    assert svc._log_activity.await_args.kwargs["practice_id"] == 501
+    assert svc._log_activity.await_args.kwargs["description"] == "Process completed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("practice", "client"), _BRANCHES)
+async def test_no_client_mail_in_any_branch(practice, client) -> None:
+    svc = _service(practice, client)
+    await svc.trigger_on_completed(501, "staff@example.test")
+    for to, subject, body in _sent(svc):
+        assert to != CLIENT_EMAIL
+        assert not subject.startswith("[CLIENT]")
+        assert "Congratulations" not in subject + body
+
+
+def test_the_dead_client_mail_and_upload_paths_are_gone() -> None:
+    assert not hasattr(CompletedProcessService, "_send_completion_email")
+    assert not hasattr(CompletedProcessService, "_upload_final_documents")
     assert not hasattr(CompletedProcessService, "_save_final_document_record")
+    assert (
+        "final_documents"
+        not in inspect.signature(CompletedProcessService.trigger_on_completed).parameters
+    )
+    svc, _pool = _make_service()
+    assert not hasattr(svc, "drive_service")
+
+
+@pytest.mark.asyncio
+async def test_activity_row_survives_a_mail_failure() -> None:
+    svc = _service(_practice(), _client(email=None))
+    svc._send_with_brevo_fallback.side_effect = RuntimeError("Brevo down")
+    result = await svc.trigger_on_completed(501, "staff@example.test")
+    assert result == {"success": True, "team_notified": False}
+    svc._log_activity.assert_awaited_once()
+
+
+# --- C8 ---------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_team_mail_uses_the_service_display_name_not_the_code() -> None:
+    svc = _service(_practice(), _client(email=None))
+    await svc.trigger_on_completed(501, "staff@example.test")
+    ((_to, subject, body),) = _sent(svc)
+    assert "Service Display Name" in subject
+    assert "Service Display Name" in body
+    assert "CODE_X" not in subject + body
+
+
+@pytest.mark.asyncio
+async def test_team_mail_without_a_service_name_says_service_not_the_code() -> None:
+    svc = _service(_practice(practice_type_name=None), _client(email=None))
+    await svc.trigger_on_completed(501, "staff@example.test")
+    ((_to, subject, body),) = _sent(svc)
+    assert subject.endswith("(Service)")
+    assert "CODE_X" not in subject + body
+
+
+# --- C9 / C10 ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_client_data_selects_no_dead_column() -> None:
+    svc, pool = _make_service()
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(return_value=None)
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    await svc._fetch_client_data(7)
+    sql = conn.fetchrow.await_args.args[0]
+    assert "drive_documents_folder_id" not in sql
+    assert "drive_final_folder_id" not in sql
+
+
+@pytest.mark.asyncio
+async def test_unknown_practice() -> None:
+    svc = _service(None, None)
+    result = await svc.trigger_on_completed(501, "staff@example.test")
+    assert result == {"success": False, "error": "Practice not found"}
+    svc._log_activity.assert_not_awaited()
+    assert _sent(svc) == []
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +322,7 @@ async def test_brevo_failure_records_failed_brevo_and_alerts() -> None:
         patch(
             "backend.services.crm.completed_process_service.log_email_attempt",
             AsyncMock(return_value=42),
-        ) ,
+        ),
         patch(
             "backend.services.crm.completed_process_service.record_email_result",
             AsyncMock(),
