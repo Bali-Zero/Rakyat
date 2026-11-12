@@ -234,7 +234,7 @@ export type DocSlot = (typeof DOC_SLOTS)[number];
 export const DOC_MAX_BYTES = 4 * 1024 * 1024;
 export interface PersonDocumentResult {
   slot: DocSlot;
-  documents: HrDocuments | null;
+  documents: HrDocuments;
 }
 export const uploadPersonDocument = (
   teamMemberId: string,

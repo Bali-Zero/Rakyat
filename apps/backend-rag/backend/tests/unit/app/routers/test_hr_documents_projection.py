@@ -120,3 +120,23 @@ def test_the_legacy_employee_shape_never_carries_the_profile():
 
     row = HRService._legacy_row({"id": 1, "profile": PROFILE, "bank_name": "B"})
     assert "profile" not in row and NIKISH not in str(row)
+
+
+def test_the_openapi_contract_makes_documents_and_every_slot_required():
+    """The runtime always returns the full map, so the contract says so: `documents` is required
+    and non-nullable on the card and on the door's answer; the map has exactly six required
+    closed keys, each `{present, file_id}` with both required and `file_id` nullable."""
+    from backend.app.services.hr.hr_card_models import DocumentChangeResult, StaffCard
+
+    for model in (StaffCard, DocumentChangeResult):
+        schema = model.model_json_schema(mode="serialization")
+        assert "documents" in schema["required"]
+        assert "anyOf" not in schema["properties"]["documents"]  # not nullable
+    defs = DocumentChangeResult.model_json_schema(mode="serialization")["$defs"]
+    docs = defs["DocumentsMap"]
+    assert set(docs["required"]) == SIX and set(docs["properties"]) == SIX
+    assert docs["additionalProperties"] is False
+    state = defs["DocumentState"]
+    assert set(state["required"]) == {"present", "file_id"}
+    assert state["additionalProperties"] is False
+    assert {"type": "null"} in state["properties"]["file_id"]["anyOf"]

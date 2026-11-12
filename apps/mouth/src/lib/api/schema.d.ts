@@ -22054,10 +22054,11 @@ export interface components {
     /**
      * DocumentChangeResult
      * @description The answer of the C13 door: which slot changed and the six-key map after the write
-     *     (null only if the fresh read after an uncertain commit failed). Never a stored value.
+     *     (always present: an uncertain commit that cannot be reconciled is an error, never a null).
+     *     Never a stored value.
      */
     DocumentChangeResult: {
-      documents?: components["schemas"]["DocumentsMap"] | null;
+      documents: components["schemas"]["DocumentsMap"];
       /** Slot */
       slot: string;
     };
@@ -22109,11 +22110,8 @@ export interface components {
      */
     DocumentState: {
       /** File Id */
-      file_id?: string | null;
-      /**
-       * Present
-       * @default false
-       */
+      file_id: string | null;
+      /** Present */
       present: boolean;
     };
     /** DocumentUpdate */
@@ -22184,15 +22182,15 @@ export interface components {
     DocumentationStatus: "AVAILABLE" | "UNKNOWN";
     /**
      * DocumentsMap
-     * @description Closed: exactly these six keys, never a stored `docs` key.
+     * @description Closed: exactly these six REQUIRED keys, never a stored `docs` key.
      */
     DocumentsMap: {
-      bpjs_kes?: components["schemas"]["DocumentState"];
-      bpjs_tk?: components["schemas"]["DocumentState"];
-      contract?: components["schemas"]["DocumentState"];
-      kk?: components["schemas"]["DocumentState"];
-      ktp?: components["schemas"]["DocumentState"];
-      npwp?: components["schemas"]["DocumentState"];
+      bpjs_kes: components["schemas"]["DocumentState"];
+      bpjs_tk: components["schemas"]["DocumentState"];
+      contract: components["schemas"]["DocumentState"];
+      kk: components["schemas"]["DocumentState"];
+      ktp: components["schemas"]["DocumentState"];
+      npwp: components["schemas"]["DocumentState"];
     };
     /** DriveBacklogItem */
     DriveBacklogItem: {
@@ -27962,7 +27960,7 @@ export interface components {
       contract?: components["schemas"]["StaffContractRead"] | null;
       /** Department */
       department?: string | null;
-      documents?: components["schemas"]["DocumentsMap"];
+      documents: components["schemas"]["DocumentsMap"];
       /** Employee Id */
       employee_id: number;
       /** Employer Entity */

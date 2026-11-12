@@ -164,27 +164,32 @@ class DocumentState(BaseModel):
     """One paper: `present` is true iff the stored slot value is a non-empty string; `file_id` is
     that value only when it is VERIFIED (the door wrote it and `doc_proof` says so), else null."""
 
-    present: bool = False
-    file_id: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    present: bool
+    file_id: str | None
 
 
 class DocumentsMap(BaseModel):
-    """Closed: exactly these six keys, never a stored `docs` key."""
+    """Closed: exactly these six REQUIRED keys, never a stored `docs` key."""
 
-    ktp: DocumentState = Field(default_factory=DocumentState)
-    kk: DocumentState = Field(default_factory=DocumentState)
-    npwp: DocumentState = Field(default_factory=DocumentState)
-    bpjs_kes: DocumentState = Field(default_factory=DocumentState)
-    bpjs_tk: DocumentState = Field(default_factory=DocumentState)
-    contract: DocumentState = Field(default_factory=DocumentState)
+    model_config = ConfigDict(extra="forbid")
+
+    ktp: DocumentState
+    kk: DocumentState
+    npwp: DocumentState
+    bpjs_kes: DocumentState
+    bpjs_tk: DocumentState
+    contract: DocumentState
 
 
 class DocumentChangeResult(BaseModel):
     """The answer of the C13 door: which slot changed and the six-key map after the write
-    (null only if the fresh read after an uncertain commit failed). Never a stored value."""
+    (always present: an uncertain commit that cannot be reconciled is an error, never a null).
+    Never a stored value."""
 
     slot: str
-    documents: DocumentsMap | None = None
+    documents: DocumentsMap
 
 
 def _slot_value(profile: dict[str, Any], slot: str) -> Any:
@@ -248,7 +253,7 @@ class StaffCard(BaseModel):
     unit: str | None = None
     on_payroll: bool = True
     contract: StaffContractRead | None = None
-    documents: DocumentsMap = Field(default_factory=DocumentsMap)
+    documents: DocumentsMap
     end_date: date | None = None
 
 
