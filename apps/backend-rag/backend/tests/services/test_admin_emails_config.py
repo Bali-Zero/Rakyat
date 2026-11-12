@@ -160,8 +160,9 @@ class TestAdminSetConsumers:
         finally:
             crm_utils.settings = original
 
-    def test_hr_admin_union_preserves_ruslana(self) -> None:
-        """Domain-specific extras (Ruslana) survive an ADMIN_EMAILS override."""
+    def test_hr_admin_union_preserves_the_direktur_and_not_ruslana(self) -> None:
+        """Domain-specific extras (the Direktur) survive an ADMIN_EMAILS override; Ruslana is
+        no longer an HR admin (owner decision 2026-11-12)."""
         s = _fresh_settings({"ADMIN_EMAILS": "new-admin@example.com"})
         import backend.app.utils.hr_utils as hr_utils
 
@@ -169,7 +170,8 @@ class TestAdminSetConsumers:
         try:
             hr_utils.settings = s
             emails = hr_utils._hr_admin_emails()
-            assert "ruslana@balizero.com" in emails
+            assert "adit@balizero.com" in emails
+            assert "ruslana@balizero.com" not in emails
             assert "new-admin@example.com" in emails
         finally:
             hr_utils.settings = original

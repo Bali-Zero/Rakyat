@@ -13,22 +13,35 @@ Legal references:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
 from backend.app.core.config import settings
 
 # ─── RBAC ────────────────────────────────────────────────────────────────
 
 # HR-specific additions on top of the global admin allowlist
-# (`settings.admin_emails_set`). Admins carry over automatically — Ruslana is
-# the HR-specialist case who is admin for HR only. HIGH-7 (audit 2026-04-18).
+# (`settings.admin_emails_set`). Admins carry over automatically. HIGH-7 (audit 2026-04-18).
 # Reorganisation 2026-11-09: tax@ no longer holds an HR role. Owner decision
 # 2026-11-10: the Direktur is an HR admin (full HR access, including the pay
-# fields of employee records). No tax or setup address is.
-HR_EXTRA_ADMIN_EMAILS: frozenset[str] = frozenset(
-    {"ruslana@balizero.com", "adit@balizero.com"},
-)
+# fields of employee records). No tax or setup address is. Owner decision
+# 2026-11-12: Ruslana is no longer an HR admin; she keeps her delegated leave approval
+# (hr_leave_routing) and a read-only People view of four members (HR_SCOPED_VIEWERS).
+HR_EXTRA_ADMIN_EMAILS: frozenset[str] = frozenset({"adit@balizero.com"})
+
+# Read-only People viewers (owner decision 2026-11-12): viewer email -> the member emails
+# that viewer may SEE. All lower-case. A scoped viewer never edits anything.
+HR_SCOPED_VIEWERS: Mapping[str, frozenset[str]] = {
+    "ruslana@balizero.com": frozenset(
+        {
+            "rina@balizero.com",
+            "rio@balizero.com",
+            "dea@balizero.com",
+            "candra@balizero.com",
+        }
+    ),
+}
 
 
 def _hr_admin_emails() -> frozenset[str]:
@@ -40,6 +53,30 @@ def is_hr_admin(user: dict[str, Any]) -> bool:
     """Check if user has HR admin privileges."""
     email = (user.get("email") or "").lower()
     return email in _hr_admin_emails() or user.get("role") == "admin"
+
+
+def hr_people_scope(user: dict[str, Any]) -> Literal["all"] | frozenset[str] | None:
+    """Whose HR picture the caller may read in the People console.
+
+    "all" for HR admins, the member-email set for a scoped viewer, None otherwise
+    (a plain member, a client, or no identity at all).
+    """
+    if user.get("role") == "client":
+        return None
+    if is_hr_admin(user):
+        return "all"
+    email = (user.get("email") or "").lower().strip()
+    return HR_SCOPED_VIEWERS.get(email)
+
+
+def can_view_hr_member(user: dict[str, Any], member_email: str | None) -> bool:
+    """True when the caller's People scope covers that member (case-insensitive)."""
+    scope = hr_people_scope(user)
+    if scope is None:
+        return False
+    if scope == "all":
+        return True
+    return (member_email or "").lower().strip() in scope
 
 
 # ─── PTKP (Non-Taxable Income) — Annual ─────────────────────────────────

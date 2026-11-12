@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 
+import { dropProtectedUiBreadcrumb } from "@/lib/sentry-breadcrumbs";
 import { IGNORE_ERRORS, isKnownNoise } from "@/lib/sentry-noise";
 
 Sentry.init({
@@ -28,6 +29,8 @@ Sentry.init({
     }),
   ],
   ignoreErrors: [...IGNORE_ERRORS],
+  // Clicks and keys inside a page's protected HR region leave no breadcrumb.
+  beforeBreadcrumb: dropProtectedUiBreadcrumb,
   beforeSend(event) {
     // Non inviare errori in development
     if (process.env.NODE_ENV === "development") {

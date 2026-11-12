@@ -20,7 +20,7 @@ def _service(has_record: bool) -> Any:
     return service
 
 
-async def _caps(email: str, has_record: bool = True, role: str = "member") -> dict[str, bool]:
+async def _caps(email: str, has_record: bool = True, role: str = "member") -> dict[str, Any]:
     user = {"email": email, "role": role}
     with patch.object(hr_router, "_get_hr_service", return_value=_service(has_record)):
         return await get_my_capabilities(current_user=user, db_pool=MagicMock())
@@ -29,7 +29,32 @@ async def _caps(email: str, has_record: bool = True, role: str = "member") -> di
 @pytest.mark.asyncio
 async def test_member_sees_only_their_own_card():
     caps = await _caps(MEMBER)
-    assert caps == {"hr_admin": False, "accounting_admin": False, "has_employee_record": True}
+    assert caps == {
+        "hr_admin": False,
+        "accounting_admin": False,
+        "has_employee_record": True,
+        "people_scope": None,
+        "hr_edit": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_hr_admin_gets_people_scope_all_and_edit():
+    caps = await _caps(HR_ONLY_ADMIN)
+    assert caps["people_scope"] == "all" and caps["hr_edit"] is True
+
+
+@pytest.mark.asyncio
+async def test_scoped_viewer_gets_scoped_without_edit():
+    caps = await _caps("ruslana@balizero.com")
+    assert caps["hr_admin"] is False
+    assert caps["people_scope"] == "scoped" and caps["hr_edit"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_client_never_gets_a_people_scope():
+    caps = await _caps("ruslana@balizero.com", role="client")
+    assert caps["people_scope"] is None and caps["hr_edit"] is False
 
 
 @pytest.mark.asyncio

@@ -290,6 +290,7 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     RouterEntry(name="hr_late_reply", process_groups=_API, tags=("hr",)),
     RouterEntry(name="hr_my_late_incident", process_groups=_API, tags=("hr", "gate")),
     RouterEntry(name="hr_owner_cashout", process_groups=_API, tags=("hr",)),
+    RouterEntry(name="hr_people", process_groups=_API, tags=("hr",)),
     # ── Image Generation ──
     RouterEntry(name="image_generation", process_groups=_API, tags=("media",)),
     # ── Ingestion ──

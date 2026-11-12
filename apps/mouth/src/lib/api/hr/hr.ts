@@ -4,6 +4,7 @@
  */
 
 import { api } from "@/lib/api";
+import type { components } from "@/lib/api/schema";
 import type { CredentialedResponse } from "@/lib/api/types/api-client.types";
 import type {
   AdminDashboard,
@@ -44,6 +45,10 @@ export interface HrCapabilities {
   hr_admin: boolean;
   accounting_admin: boolean;
   has_employee_record: boolean;
+  /** Whose HR picture the People console shows: everyone, a few people, or nobody. */
+  people_scope: "all" | "scoped" | null;
+  /** The viewer may edit HR data (read-only People for everyone else). */
+  hr_edit: boolean;
 }
 export const getCapabilities = () =>
   api.get<HrCapabilities>(`${BASE}/me/capabilities`);
@@ -156,6 +161,25 @@ export interface MyHrOverview {
 export const getMyHrOverview = (): Promise<
   CredentialedResponse<MyHrOverview>
 > => api.requestWithCredential<MyHrOverview>(`${BASE}/me/overview`);
+
+// People console (read side) — the roster and one person's overview. Both answers
+// name the bearer they were read for (`viewer_team_member_id`) and the page binds them
+// to the session (src/lib/auth/SESSION.md S4), so both read through requestWithCredential.
+export type PeopleRoster = components["schemas"]["PeopleRoster"];
+export type PersonRow = components["schemas"]["PersonRow"];
+export type PeoplePulse = components["schemas"]["PeoplePulse"];
+export type PersonOverview = Omit<
+  components["schemas"]["PersonOverview"],
+  "person"
+> & { person: MyHrOverview };
+export const getPeople = (): Promise<CredentialedResponse<PeopleRoster>> =>
+  api.requestWithCredential<PeopleRoster>(`${BASE}/people`);
+export const getPersonOverview = (
+  teamMemberId: string,
+): Promise<CredentialedResponse<PersonOverview>> =>
+  api.requestWithCredential<PersonOverview>(
+    `${BASE}/people/${encodeURIComponent(teamMemberId)}/overview`,
+  );
 
 // Dashboard
 export const getDashboard = () => api.get<AdminDashboard>(`${BASE}/dashboard`);

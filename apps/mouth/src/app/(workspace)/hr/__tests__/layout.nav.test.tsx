@@ -13,7 +13,9 @@ vi.mock("@/lib/api/hr/hr", () => ({ getCapabilities: getCapabilitiesMock }));
 import HRLayout from "../layout";
 
 const HIDDEN_FROM_A_MEMBER = [
+  "People",
   "Team overview",
+  "Employees",
   "Bonuses",
   "Payroll",
   "Leave",
@@ -39,6 +41,8 @@ describe("HR layout navigation", () => {
       hr_admin: false,
       accounting_admin: false,
       has_employee_record: true,
+      people_scope: null,
+      hr_edit: false,
     });
     render(<HRLayout>x</HRLayout>);
     await waitFor(() => expect(getCapabilitiesMock).toHaveBeenCalled());
@@ -54,6 +58,8 @@ describe("HR layout navigation", () => {
       hr_admin: false,
       accounting_admin: true,
       has_employee_record: true,
+      people_scope: null,
+      hr_edit: false,
     });
     render(<HRLayout>x</HRLayout>);
     await waitFor(() => expect(hrefs()).toContain("/accounting"));
@@ -65,21 +71,37 @@ describe("HR layout navigation", () => {
       hr_admin: true,
       accounting_admin: false,
       has_employee_record: true,
+      people_scope: "all",
+      hr_edit: true,
     });
     render(<HRLayout>x</HRLayout>);
-    await waitFor(() => expect(hrefs()).toContain("/hr/employees"));
-    expect(hrefs()).toContain("/hr/settings");
-    expect(hrefs()).toEqual(
-      expect.arrayContaining([
-        "/hr/me",
-        "/hr",
-        "/hr/bonuses",
-        "/hr/payroll",
-        "/hr/leave",
-      ]),
-    );
+    await waitFor(() => expect(hrefs()).toContain("/hr/settings"));
+    expect(hrefs()).toEqual([
+      "/hr/me",
+      "/hr",
+      "/hr/bonuses",
+      "/hr/payroll",
+      "/hr/leave",
+      "/hr/settings",
+    ]);
+    expect(screen.getAllByText("People").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Team overview")).not.toBeInTheDocument();
+    expect(screen.queryByText("Employees")).not.toBeInTheDocument();
     expect(hrefs()).not.toContain("/accounting");
     expect(hrefs()).not.toContain("/hr/owner-cashout");
+  });
+
+  it("shows a scoped viewer My HR and People and nothing else", async () => {
+    getCapabilitiesMock.mockResolvedValue({
+      hr_admin: false,
+      accounting_admin: false,
+      has_employee_record: true,
+      people_scope: "scoped",
+      hr_edit: false,
+    });
+    render(<HRLayout>x</HRLayout>);
+    await waitFor(() => expect(hrefs()).toContain("/hr"));
+    expect(hrefs()).toEqual(["/hr/me", "/hr"]);
   });
 
   it("links accounting for an accounting admin", async () => {
@@ -87,6 +109,8 @@ describe("HR layout navigation", () => {
       hr_admin: true,
       accounting_admin: true,
       has_employee_record: true,
+      people_scope: "all",
+      hr_edit: true,
     });
     render(<HRLayout>x</HRLayout>);
     await waitFor(() => expect(hrefs()).toContain("/accounting"));

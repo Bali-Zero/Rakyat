@@ -9,7 +9,7 @@ RBAC:
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import date
 from typing import Any
 
 import asyncpg
@@ -23,11 +23,14 @@ from backend.app.services.hr.hr_leave_notifier import (
     notify_leave_request_reviewed,
 )
 from backend.app.services.hr.hr_leave_routing import reports_of, resolve_approver
-from backend.app.services.hr.hr_overview_logic import bonus_totals
+from backend.app.services.hr.hr_overview_compose import (
+    OverviewReadError,
+    compose_member_overview,
+)
 from backend.app.services.hr.hr_overview_models import MyHrOverview
 from backend.app.services.hr.hr_service import HRCardError, HRService
 from backend.app.utils.crm_utils import is_crm_admin
-from backend.app.utils.hr_utils import is_hr_admin
+from backend.app.utils.hr_utils import hr_people_scope, is_hr_admin
 from backend.core.cache import invalidate_cache
 
 logger = logging.getLogger(__name__)
@@ -168,7 +171,7 @@ async def _get_my_employee_id(
 async def get_my_capabilities(
     current_user: dict[str, Any] = Depends(get_current_user),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
-) -> dict[str, bool]:
+) -> dict[str, Any]:
     """What the caller may see in the HR & accounting space.
 
     The single answer the frontend reads instead of mirroring the allowlists or
@@ -176,10 +179,13 @@ async def get_my_capabilities(
     """
     service = _get_hr_service(db_pool)
     employee = await service.get_employee_by_email(current_user["email"])
+    scope = hr_people_scope(current_user)
     return {
         "hr_admin": is_hr_admin(current_user),
         "accounting_admin": is_crm_admin(current_user),
         "has_employee_record": employee is not None,
+        "people_scope": (None if scope is None else "all" if scope == "all" else "scoped"),
+        "hr_edit": is_hr_admin(current_user),
     }
 
 
@@ -226,25 +232,14 @@ async def get_my_overview(
     member_id = _get_user_id(current_user)
     service = _get_hr_service(db_pool)
     try:
-        card = await service.get_card_for_member(member_id)
+        overview = await compose_member_overview(service, str(member_id))
     except HRCardError:  # a code, never a driver message
         raise HTTPException(status_code=500, detail="Card operation failed") from None
-    if not card:
-        raise HTTPException(status_code=404, detail="No HR employee record found for your account")
-    try:
-        rows = await service.get_my_overview_rows(card["id"], member_id)
-    except Exception as exc:  # a fixed message: a driver error can quote a value
-        logger.error("hr overview read failed (%s)", type(exc).__name__)
+    except OverviewReadError:  # the class was logged where it happened
         raise HTTPException(status_code=500, detail="Overview read failed") from None
-    return MyHrOverview(
-        team_member_id=str(member_id),
-        card=member_card(card),
-        payslips=rows["payslips"],
-        bonuses=rows["bonuses"],
-        bonus_totals=bonus_totals(rows["bonuses"], datetime.now(timezone.utc)),
-        leave={"balances": rows["balances"], "requests": rows["requests"]},
-        attendance=rows["attendance"],
-    )
+    if overview is None:
+        raise HTTPException(status_code=404, detail="No HR employee record found for your account")
+    return overview
 
 
 # ─── EMPLOYEES (admin only) ─────────────────────────────────────────────
