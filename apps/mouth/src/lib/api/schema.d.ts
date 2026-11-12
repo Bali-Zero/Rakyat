@@ -9815,6 +9815,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/hr/people/{team_member_id}/card": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Edit Person Card
+     * @description Edit, clear or create one person's HR card; answer with the person's refreshed overview.
+     *
+     *     Only a global admin (403 otherwise). The person must be a visible one (the People
+     *     predicate), so a client, monitoring or partner account never gets a card. Every error is a
+     *     fixed code; the log names the actor, the target and the KEY NAMES touched, never a value.
+     */
+    patch: operations["edit_person_card_api_hr_people__team_member_id__card_patch"];
+    trace?: never;
+  };
   "/api/hr/people/{team_member_id}/overview": {
     parameters: {
       query?: never;
@@ -20543,6 +20567,31 @@ export interface components {
       extension: components["schemas"]["ExtensionPolicy"];
       stay: components["schemas"]["StayPolicy"];
     };
+    /** CardEditBody */
+    CardEditBody: {
+      card?: components["schemas"]["StaffCardPatch"];
+      /** Clear */
+      clear?: (
+        | "npwp"
+        | "bpjs_kesehatan_number"
+        | "bpjs_ketenagakerjaan_number"
+        | "bank_name"
+        | "bank_account"
+        | "bank_account_holder"
+        | "legal_name"
+        | "nik"
+        | "birth_place"
+        | "birth_date"
+        | "gender"
+        | "address"
+        | "religion"
+        | "marital_status"
+        | "employer_entity"
+        | "unit"
+        | "end_date"
+        | "contract_number"
+      )[];
+    };
     /** CaseCreateBody */
     CaseCreateBody: {
       basis: components["schemas"]["GuaranteeBasis"];
@@ -27859,12 +27908,79 @@ export interface components {
       /** Unit */
       unit?: string | null;
     };
+    /**
+     * StaffCardPatch
+     * @description What one import card may set. `profile` may be absent, never an explicit null.
+     */
+    StaffCardPatch: {
+      /** Bank Account */
+      bank_account?: string | null;
+      /** Bank Account Holder */
+      bank_account_holder?: string | null;
+      /** Bank Name */
+      bank_name?: string | null;
+      /** Bpjs Kesehatan Number */
+      bpjs_kesehatan_number?: string | null;
+      /** Bpjs Ketenagakerjaan Number */
+      bpjs_ketenagakerjaan_number?: string | null;
+      /** Hire Date */
+      hire_date?: string | null;
+      /** Is Active */
+      is_active?: boolean | null;
+      /** Npwp */
+      npwp?: string | null;
+      profile?: components["schemas"]["StaffProfilePatch"];
+      /** Ptkp Status */
+      ptkp_status?: string | null;
+    };
+    /** StaffContract */
+    StaffContract: {
+      /** File Id */
+      file_id?: string | null;
+      /** Number */
+      number?: string | null;
+    };
     /** StaffContractRead */
     StaffContractRead: {
       /** File Id */
       file_id?: string | null;
       /** Number */
       number?: string | null;
+    };
+    /**
+     * StaffProfilePatch
+     * @description The documented keys of hr_employees.profile; any other key is rejected.
+     *
+     *     `contract` and `docs` may be absent but never an explicit null (no silent drop).
+     */
+    StaffProfilePatch: {
+      /** Address */
+      address?: string | null;
+      /** Birth Date */
+      birth_date?: string | null;
+      /** Birth Place */
+      birth_place?: string | null;
+      contract?: components["schemas"]["StaffContract"];
+      /** Docs */
+      docs?: {
+        [key: string]: string;
+      };
+      /** Employer Entity */
+      employer_entity?: string | null;
+      /** End Date */
+      end_date?: string | null;
+      /** Gender */
+      gender?: string | null;
+      /** Legal Name */
+      legal_name?: string | null;
+      /** Marital Status */
+      marital_status?: string | null;
+      /** Nik */
+      nik?: string | null;
+      /** Religion */
+      religion?: string | null;
+      /** Unit */
+      unit?: string | null;
     };
     /** StartPayload */
     StartPayload: {
@@ -44515,6 +44631,41 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["PeopleRoster"];
+        };
+      };
+    };
+  };
+  edit_person_card_api_hr_people__team_member_id__card_patch: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        team_member_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CardEditBody"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PersonOverview"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };

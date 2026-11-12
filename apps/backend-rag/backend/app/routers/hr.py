@@ -36,7 +36,7 @@ from backend.app.services.hr.hr_service import (
     business_today,
 )
 from backend.app.utils.crm_utils import is_crm_admin
-from backend.app.utils.hr_utils import hr_people_scope, is_hr_admin
+from backend.app.utils.hr_utils import can_write_hr_card, hr_people_scope, is_hr_admin
 from backend.core.cache import invalidate_cache
 
 logger = logging.getLogger(__name__)
@@ -213,6 +213,7 @@ async def get_my_capabilities(
         "has_employee_record": employee is not None,
         "people_scope": (None if scope is None else "all" if scope == "all" else "scoped"),
         "hr_edit": is_hr_admin(current_user),
+        "hr_card_write": can_write_hr_card(current_user),
     }
 
 
