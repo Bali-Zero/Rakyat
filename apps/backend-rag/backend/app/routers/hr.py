@@ -9,7 +9,7 @@ RBAC:
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import date
 from typing import Any
 
 import asyncpg
@@ -23,11 +23,20 @@ from backend.app.services.hr.hr_leave_notifier import (
     notify_leave_request_reviewed,
 )
 from backend.app.services.hr.hr_leave_routing import reports_of, resolve_approver
-from backend.app.services.hr.hr_overview_logic import bonus_totals
+from backend.app.services.hr.hr_overview_compose import (
+    OverviewReadError,
+    compose_member_overview,
+)
 from backend.app.services.hr.hr_overview_models import MyHrOverview
-from backend.app.services.hr.hr_service import HRCardError, HRService
+from backend.app.services.hr.hr_service import (
+    BonusPeriodLockedError,
+    HRCardError,
+    HRService,
+    PayrollBonusesChangedError,
+    business_today,
+)
 from backend.app.utils.crm_utils import is_crm_admin
-from backend.app.utils.hr_utils import is_hr_admin
+from backend.app.utils.hr_utils import hr_people_scope, is_hr_admin
 from backend.core.cache import invalidate_cache
 
 logger = logging.getLogger(__name__)
@@ -59,6 +68,27 @@ class BonusRateCreate(BaseModel):
     effective_to: date | None = None
     is_active: bool = True
     notes: str | None = None
+
+
+class ManualBonusCreate(BaseModel):
+    """A bonus an HR admin enters by hand (no practice behind it)."""
+
+    employee_id: int
+    amount_idr: int = Field(gt=0, le=100_000_000)
+    reason: str = Field(min_length=3, max_length=300)
+    practice_type_code: str | None = Field(default=None, max_length=50)
+    awarded_on: date | None = None
+
+    @model_validator(mode="after")
+    def reason_has_text(self) -> ManualBonusCreate:
+        if len(self.reason.strip()) < 3:
+            msg = "reason must have at least 3 characters"
+            raise ValueError(msg)
+        return self
+
+
+class BonusRejectRequest(BaseModel):
+    note: str | None = Field(default=None, max_length=300)
 
 
 class LeaveRequestCreate(BaseModel):
@@ -168,7 +198,7 @@ async def _get_my_employee_id(
 async def get_my_capabilities(
     current_user: dict[str, Any] = Depends(get_current_user),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
-) -> dict[str, bool]:
+) -> dict[str, Any]:
     """What the caller may see in the HR & accounting space.
 
     The single answer the frontend reads instead of mirroring the allowlists or
@@ -176,10 +206,13 @@ async def get_my_capabilities(
     """
     service = _get_hr_service(db_pool)
     employee = await service.get_employee_by_email(current_user["email"])
+    scope = hr_people_scope(current_user)
     return {
         "hr_admin": is_hr_admin(current_user),
         "accounting_admin": is_crm_admin(current_user),
         "has_employee_record": employee is not None,
+        "people_scope": (None if scope is None else "all" if scope == "all" else "scoped"),
+        "hr_edit": is_hr_admin(current_user),
     }
 
 
@@ -226,25 +259,14 @@ async def get_my_overview(
     member_id = _get_user_id(current_user)
     service = _get_hr_service(db_pool)
     try:
-        card = await service.get_card_for_member(member_id)
+        overview = await compose_member_overview(service, str(member_id))
     except HRCardError:  # a code, never a driver message
         raise HTTPException(status_code=500, detail="Card operation failed") from None
-    if not card:
-        raise HTTPException(status_code=404, detail="No HR employee record found for your account")
-    try:
-        rows = await service.get_my_overview_rows(card["id"], member_id)
-    except Exception as exc:  # a fixed message: a driver error can quote a value
-        logger.error("hr overview read failed (%s)", type(exc).__name__)
+    except OverviewReadError:  # the class was logged where it happened
         raise HTTPException(status_code=500, detail="Overview read failed") from None
-    return MyHrOverview(
-        team_member_id=str(member_id),
-        card=member_card(card),
-        payslips=rows["payslips"],
-        bonuses=rows["bonuses"],
-        bonus_totals=bonus_totals(rows["bonuses"], datetime.now(timezone.utc)),
-        leave={"balances": rows["balances"], "requests": rows["requests"]},
-        attendance=rows["attendance"],
-    )
+    if overview is None:
+        raise HTTPException(status_code=404, detail="No HR employee record found for your account")
+    return overview
 
 
 # ─── EMPLOYEES (admin only) ─────────────────────────────────────────────
@@ -314,6 +336,18 @@ async def list_bonus_rates(
     return {"rates": rates, "count": len(rates)}
 
 
+@router.get("/bonus-practice-types")
+async def list_bonus_practice_types(
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """Active practice types (tax included) for the rate and manual-bonus dropdowns."""
+    _require_hr_admin(current_user)
+    service = _get_hr_service(db_pool)
+    types = await service.list_bonus_practice_types()
+    return {"practice_types": types, "count": len(types)}
+
+
 @router.post("/bonus-rates")
 async def upsert_bonus_rate(
     data: BonusRateCreate,
@@ -323,7 +357,10 @@ async def upsert_bonus_rate(
     """Create or update a bonus rate."""
     _require_hr_admin(current_user)
     service = _get_hr_service(db_pool)
-    result = await service.upsert_bonus_rate(data.model_dump())
+    payload = data.model_dump()
+    # A rate always starts somewhere: the form sends null, the column is NOT NULL.
+    payload["effective_from"] = data.effective_from or business_today()
+    result = await service.upsert_bonus_rate(payload)
     await invalidate_cache("zantara:hr_bonuses:*")
     return {"success": True, "rate": result}
 
@@ -348,7 +385,38 @@ async def list_bonuses(
         employee_id = my_id  # Force filter to own bonuses
 
     bonuses = await service.list_bonuses(employee_id, status, month, year)
+    if not is_hr_admin(current_user):
+        # Who entered a manual bonus is an admin-side fact.
+        bonuses = [{k: v for k, v in b.items() if k != "created_by"} for b in bonuses]
     return {"bonuses": bonuses, "count": len(bonuses)}
+
+
+@router.post("/bonuses")
+async def create_manual_bonus(
+    data: ManualBonusCreate,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """Add a bonus by hand for any active employee (admin only). Starts pending."""
+    _require_hr_admin(current_user)
+    service = _get_hr_service(db_pool)
+    try:
+        bonus = await service.create_manual_bonus(
+            employee_id=data.employee_id,
+            amount_idr=data.amount_idr,
+            reason=data.reason,
+            practice_type_code=data.practice_type_code,
+            awarded_on=data.awarded_on or business_today(),
+            created_by=(current_user.get("email") or "").lower(),
+        )
+    except BonusPeriodLockedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if bonus is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    await invalidate_cache("zantara:hr_bonuses:*")
+    return {"success": True, "bonus": bonus}
 
 
 @router.get("/bonuses/historical")
@@ -383,8 +451,50 @@ async def approve_bonus(
         result = await service.approve_bonus(bonus_id, approver_id)
         await invalidate_cache("zantara:hr_bonuses:*")
         return {"success": True, "bonus": result}
+    except BonusPeriodLockedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/bonuses/{bonus_id}/reject")
+async def reject_bonus(
+    bonus_id: int,
+    data: BonusRejectRequest | None = None,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """Reject a pending bonus (admin only)."""
+    _require_hr_admin(current_user)
+    service = _get_hr_service(db_pool)
+    try:
+        result = await service.reject_bonus(
+            bonus_id, _get_user_id(current_user), data.note if data else None
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    await invalidate_cache("zantara:hr_bonuses:*")
+    return {"success": True, "bonus": result}
+
+
+@router.delete("/bonuses/{bonus_id}")
+async def delete_manual_bonus(
+    bonus_id: int,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """Delete a pending MANUAL bonus (admin only); unknown id is a 404, any other row a 409."""
+    _require_hr_admin(current_user)
+    service = _get_hr_service(db_pool)
+    outcome = await service.delete_manual_bonus(bonus_id)
+    if outcome == "missing":
+        raise HTTPException(status_code=404, detail="Bonus not found")
+    if outcome != "deleted":
+        raise HTTPException(status_code=409, detail="Only a pending manual bonus can be deleted")
+    await invalidate_cache("zantara:hr_bonuses:*")
+    return {"success": True}
 
 
 # ─── PAYROLL ─────────────────────────────────────────────────────────────
@@ -473,6 +583,8 @@ async def approve_payroll(
         result = await service.approve_payroll(period_id, approver_id)
         await invalidate_cache("zantara:hr_payroll:*")
         return {"success": True, "period": result}
+    except PayrollBonusesChangedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

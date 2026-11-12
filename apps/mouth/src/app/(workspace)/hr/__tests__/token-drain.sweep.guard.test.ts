@@ -12,12 +12,15 @@ import { join } from "node:path";
  * on-accent ink reads --bz-on-warm. No raw hex, no status rgba, no palette
  * utilities.
  *
+ * The hub (`/hr`) is the People console since 2026-11-12: it shares the owner-approved
+ * My HR palette (`_components/hr-panels.tsx`, same as `/hr/me`), so it is no longer a
+ * dashboard-recipe surface and is not pinned here.
+ *
  * Named `token-drain.sweep.guard.test.ts` (not the slice-4 name) so it can
  * coexist with the HR detail-page guard from the slice-4 line of work.
  */
 
 const PAGES = {
-  hub: join(__dirname, "..", "page.tsx"),
   payroll: join(__dirname, "..", "payroll", "page.tsx"),
   ownerCashout: join(__dirname, "..", "owner-cashout", "page.tsx"),
   hrSettings: join(__dirname, "..", "settings", "page.tsx"),
@@ -62,16 +65,6 @@ describe("HR suite drain guard (WS2 slice 6)", () => {
     });
   }
 
-  it("hub: stat accents read --state-*/neon, amounts read Money", () => {
-    const src = readFileSync(PAGES.hub, "utf8");
-    expect(src).toContain("var(--state-info)");
-    expect(src).toContain("var(--state-warning)");
-    expect(src).toContain("var(--state-success)");
-    expect(src).toContain("var(--bz-neon-purple)");
-    expect(src).toContain('import { Money } from "@balizero/core"');
-    expect(src).not.toContain("formatIDR(");
-  });
-
   it("payroll list: hue-preserving status map + Money figures", () => {
     const src = readFileSync(PAGES.payroll, "utf8");
     expect(src).toContain("bg-[var(--state-info)]/10 text-[var(--state-info)]");
@@ -96,7 +89,6 @@ describe("HR suite drain guard (WS2 slice 6)", () => {
 
   it("panels read the dashboard recipe across the suite", () => {
     for (const path of [
-      PAGES.hub,
       PAGES.payroll,
       PAGES.ownerCashout,
       PAGES.hrSettings,

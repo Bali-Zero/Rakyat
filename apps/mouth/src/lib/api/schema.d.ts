@@ -9096,6 +9096,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/hr/bonus-practice-types": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Bonus Practice Types
+     * @description Active practice types (tax included) for the rate and manual-bonus dropdowns.
+     */
+    get: operations["list_bonus_practice_types_api_hr_bonus_practice_types_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/hr/bonus-rates": {
     parameters: {
       query?: never;
@@ -9133,7 +9153,11 @@ export interface paths {
      */
     get: operations["list_bonuses_api_hr_bonuses_get"];
     put?: never;
-    post?: never;
+    /**
+     * Create Manual Bonus
+     * @description Add a bonus by hand for any active employee (admin only). Starts pending.
+     */
+    post: operations["create_manual_bonus_api_hr_bonuses_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -9164,6 +9188,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/hr/bonuses/{bonus_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Delete Manual Bonus
+     * @description Delete a pending MANUAL bonus (admin only); unknown id is a 404, any other row a 409.
+     */
+    delete: operations["delete_manual_bonus_api_hr_bonuses__bonus_id__delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/hr/bonuses/{bonus_id}/approve": {
     parameters: {
       query?: never;
@@ -9178,6 +9222,26 @@ export interface paths {
      * @description Approve a pending bonus.
      */
     post: operations["approve_bonus_api_hr_bonuses__bonus_id__approve_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/hr/bonuses/{bonus_id}/reject": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reject Bonus
+     * @description Reject a pending bonus (admin only).
+     */
+    post: operations["reject_bonus_api_hr_bonuses__bonus_id__reject_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -9740,6 +9804,49 @@ export interface paths {
      * @description Get payslip with deduction breakdown.
      */
     get: operations["get_payslip_detail_api_hr_payslips__payslip_id__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/hr/people": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List People
+     * @description Every staff member the caller may see, with the flags that need attention.
+     *
+     *     HR admins see all staff (people without an HR record included) plus the pulse; a
+     *     scoped viewer sees only their members, no pulse.
+     */
+    get: operations["list_people_api_hr_people_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/hr/people/{team_member_id}/overview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Person Overview
+     * @description One person's HR picture: exactly the shape `/me/overview` gives that member.
+     */
+    get: operations["get_person_overview_api_hr_people__team_member_id__overview_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -20139,6 +20246,11 @@ export interface components {
       /** Practice Type Code */
       practice_type_code: string;
     };
+    /** BonusRejectRequest */
+    BonusRejectRequest: {
+      /** Note */
+      note?: string | null;
+    };
     /**
      * BonusTotals
      * @description Server-side totals; rejected, reversed and cancelled bonuses are never counted.
@@ -24262,6 +24374,22 @@ export interface components {
       masked_email: string;
     };
     /**
+     * ManualBonusCreate
+     * @description A bonus an HR admin enters by hand (no practice behind it).
+     */
+    ManualBonusCreate: {
+      /** Amount Idr */
+      amount_idr: number;
+      /** Awarded On */
+      awarded_on?: string | null;
+      /** Employee Id */
+      employee_id: number;
+      /** Practice Type Code */
+      practice_type_code?: string | null;
+      /** Reason */
+      reason: string;
+    };
+    /**
      * MaritalStatus
      * @enum {string}
      */
@@ -25259,6 +25387,15 @@ export interface components {
       /** Year */
       year: number;
     };
+    /** PayrollMonth */
+    PayrollMonth: {
+      /** Month */
+      month: number;
+      /** Status */
+      status: string | null;
+      /** Year */
+      year: number;
+    };
     /** PayslipSummary */
     PayslipSummary: {
       /** Allowance Total Idr */
@@ -25280,6 +25417,35 @@ export interface components {
       /** Thr Idr */
       thr_idr: number;
     };
+    /** PeoplePulse */
+    PeoplePulse: {
+      /** Active People */
+      active_people: number;
+      /** Bonuses Pending Count */
+      bonuses_pending_count: number;
+      /** Bonuses Pending Idr */
+      bonuses_pending_idr: number;
+      /** Leave Pending Count */
+      leave_pending_count: number;
+      payroll: components["schemas"]["PayrollMonth"];
+      /** People Without Record */
+      people_without_record: number;
+    };
+    /** PeopleRoster */
+    PeopleRoster: {
+      /** Can Edit */
+      can_edit: boolean;
+      /** People */
+      people: components["schemas"]["PersonRow"][];
+      pulse: components["schemas"]["PeoplePulse"] | null;
+      /**
+       * Scope
+       * @enum {string}
+       */
+      scope: "all" | "scoped";
+      /** Viewer Team Member Id */
+      viewer_team_member_id: string;
+    };
     /**
      * PermissionItem
      * @description Permission entry.
@@ -25295,6 +25461,45 @@ export interface components {
       role: string;
       /** Type */
       type: string;
+    };
+    /** PersonFlags */
+    PersonFlags: {
+      /** Bonuses Pending */
+      bonuses_pending: number;
+      /** Leave Pending */
+      leave_pending: number;
+      /** On Leave Today */
+      on_leave_today: boolean;
+      /** Papers Missing */
+      papers_missing: number | null;
+    };
+    /** PersonOverview */
+    PersonOverview: {
+      person: components["schemas"]["MyHrOverview"];
+      /** Viewer Team Member Id */
+      viewer_team_member_id: string;
+    };
+    /** PersonRow */
+    PersonRow: {
+      /** Active */
+      active: boolean;
+      /** Department */
+      department: string | null;
+      /** Employee Id */
+      employee_id: number | null;
+      flags: components["schemas"]["PersonFlags"];
+      /** Has Record */
+      has_record: boolean;
+      /** Hire Date */
+      hire_date: string | null;
+      /** Name */
+      name: string | null;
+      /** Role */
+      role: string | null;
+      /** Team Member Id */
+      team_member_id: string;
+      /** Unit */
+      unit: string | null;
     };
     /**
      * PlanListResponse
@@ -43270,6 +43475,28 @@ export interface operations {
       };
     };
   };
+  list_bonus_practice_types_api_hr_bonus_practice_types_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+    };
+  };
   list_bonus_rates_api_hr_bonus_rates_get: {
     parameters: {
       query?: never;
@@ -43363,6 +43590,41 @@ export interface operations {
       };
     };
   };
+  create_manual_bonus_api_hr_bonuses_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ManualBonusCreate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   list_bonus_historical_api_hr_bonuses_historical_get: {
     parameters: {
       query?: {
@@ -43370,6 +43632,39 @@ export interface operations {
       };
       header?: never;
       path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  delete_manual_bonus_api_hr_bonuses__bonus_id__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bonus_id: number;
+      };
       cookie?: never;
     };
     requestBody?: never;
@@ -43406,6 +43701,43 @@ export interface operations {
       cookie?: never;
     };
     requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  reject_bonus_api_hr_bonuses__bonus_id__reject_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bonus_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["BonusRejectRequest"] | null;
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {
@@ -43785,7 +44117,7 @@ export interface operations {
         };
         content: {
           "application/json": {
-            [key: string]: boolean;
+            [key: string]: unknown;
           };
         };
       };
@@ -44208,6 +44540,57 @@ export interface operations {
           "application/json": {
             [key: string]: unknown;
           };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_people_api_hr_people_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PeopleRoster"];
+        };
+      };
+    };
+  };
+  get_person_overview_api_hr_people__team_member_id__overview_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        team_member_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PersonOverview"];
         };
       };
       /** @description Validation Error */

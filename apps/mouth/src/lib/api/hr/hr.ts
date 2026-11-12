@@ -4,12 +4,14 @@
  */
 
 import { api } from "@/lib/api";
+import type { components } from "@/lib/api/schema";
 import type { CredentialedResponse } from "@/lib/api/types/api-client.types";
 import type {
   AdminDashboard,
   Bonus,
   BonusHistoricalRecord,
   BonusRate,
+  BonusPracticeType,
   BonusRatePayload,
   EmployeeCreatePayload,
   HREmployee,
@@ -17,6 +19,7 @@ import type {
   LeaveRequest,
   LeaveRequestPayload,
   LeaveType,
+  ManualBonusPayload,
   PayrollPeriod,
   Payslip,
   PayslipDetail,
@@ -44,6 +47,10 @@ export interface HrCapabilities {
   hr_admin: boolean;
   accounting_admin: boolean;
   has_employee_record: boolean;
+  /** Whose HR picture the People console shows: everyone, a few people, or nobody. */
+  people_scope: "all" | "scoped" | null;
+  /** The viewer may edit HR data (read-only People for everyone else). */
+  hr_edit: boolean;
 }
 export const getCapabilities = () =>
   api.get<HrCapabilities>(`${BASE}/me/capabilities`);
@@ -157,6 +164,25 @@ export const getMyHrOverview = (): Promise<
   CredentialedResponse<MyHrOverview>
 > => api.requestWithCredential<MyHrOverview>(`${BASE}/me/overview`);
 
+// People console (read side) — the roster and one person's overview. Both answers
+// name the bearer they were read for (`viewer_team_member_id`) and the page binds them
+// to the session (src/lib/auth/SESSION.md S4), so both read through requestWithCredential.
+export type PeopleRoster = components["schemas"]["PeopleRoster"];
+export type PersonRow = components["schemas"]["PersonRow"];
+export type PeoplePulse = components["schemas"]["PeoplePulse"];
+export type PersonOverview = Omit<
+  components["schemas"]["PersonOverview"],
+  "person"
+> & { person: MyHrOverview };
+export const getPeople = (): Promise<CredentialedResponse<PeopleRoster>> =>
+  api.requestWithCredential<PeopleRoster>(`${BASE}/people`);
+export const getPersonOverview = (
+  teamMemberId: string,
+): Promise<CredentialedResponse<PersonOverview>> =>
+  api.requestWithCredential<PersonOverview>(
+    `${BASE}/people/${encodeURIComponent(teamMemberId)}/overview`,
+  );
+
 // Dashboard
 export const getDashboard = () => api.get<AdminDashboard>(`${BASE}/dashboard`);
 export const getMyDashboard = () =>
@@ -179,6 +205,12 @@ export const listBonusRates = () =>
 export const upsertBonusRate = (data: BonusRatePayload) =>
   api.post<{ success: boolean; rate: BonusRate }>(`${BASE}/bonus-rates`, data);
 
+/** HR-admin only. Active practice types, tax included, grouped server-side. */
+export const listBonusPracticeTypes = () =>
+  api.get<{ practice_types: BonusPracticeType[]; count: number }>(
+    `${BASE}/bonus-practice-types`,
+  );
+
 // Bonuses
 export const listBonuses = (
   params?: Record<string, string | number | null | undefined>,
@@ -189,6 +221,17 @@ export const approveBonus = (id: number) =>
     `${BASE}/bonuses/${id}/approve`,
     {},
   );
+/** HR-admin only. Starts pending; 409 when that payroll month is already locked. */
+export const createManualBonus = (data: ManualBonusPayload) =>
+  api.post<{ success: boolean; bonus: Bonus }>(`${BASE}/bonuses`, data);
+export const rejectBonus = (id: number, note?: string) =>
+  api.post<{ success: boolean; bonus: Bonus }>(
+    `${BASE}/bonuses/${id}/reject`,
+    note ? { note } : {},
+  );
+/** Only a pending MANUAL bonus can be deleted (409 otherwise). */
+export const deleteBonus = (id: number) =>
+  api.delete<{ success: boolean }>(`${BASE}/bonuses/${id}`);
 /** HR-admin only — 403 for team members. Callers must tolerate the rejection. */
 export const listBonusHistorical = (year?: number) =>
   api.get<{ records: BonusHistoricalRecord[]; count: number }>(

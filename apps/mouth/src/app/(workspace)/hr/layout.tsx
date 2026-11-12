@@ -20,17 +20,25 @@ import { SubNav, type SubNavItem } from "@balizero/core";
 
 type NavItem = SubNavItem & {
   adminOnly: boolean;
+  /** Anyone with a People scope: full HR admins and the scoped read-only viewer. */
+  peopleOnly?: boolean;
   accountingOnly?: boolean;
   ownerOnly?: boolean;
 };
 
-// "My HR" is the personal page for everyone. Everything else in the space is an HR
-// admin's tool: a member reaches the leave request form and a payslip from "My HR"
-// (those routes stay open to them), not from the navigation.
+// "My HR" is the personal page for everyone. "People" is the HR console: everyone's Pay,
+// Time and Me, for HR admins and for the scoped read-only viewer. The rest is an HR admin's
+// tool: a member reaches the leave request form and a payslip from "My HR" (those routes
+// stay open to them), not from the navigation. "Add employee" lives inside People.
 const allNavItems: NavItem[] = [
   { href: "/hr/me", label: "My HR", icon: LayoutDashboard, adminOnly: false },
-  { href: "/hr", label: "Team overview", icon: Users, adminOnly: true },
-  { href: "/hr/employees", label: "Employees", icon: Users, adminOnly: true },
+  {
+    href: "/hr",
+    label: "People",
+    icon: Users,
+    adminOnly: false,
+    peopleOnly: true,
+  },
   { href: "/hr/bonuses", label: "Bonuses", icon: Gift, adminOnly: true },
   { href: "/hr/payroll", label: "Payroll", icon: Banknote, adminOnly: true },
   { href: "/hr/leave", label: "Leave", icon: Calendar, adminOnly: true },
@@ -66,6 +74,7 @@ export default function HRLayout({ children }: { children: React.ReactNode }) {
   // Until the server answers, every member sees the member view and nothing more.
   const navItems = allNavItems.filter((item) => {
     if (item.adminOnly && !capabilities.hr_admin) return false;
+    if (item.peopleOnly && !capabilities.people_scope) return false;
     if (item.accountingOnly && !capabilities.accounting_admin) return false;
     if (item.ownerOnly && !isOwnerUser) return false;
     return true;

@@ -83,6 +83,7 @@ def include_routers(api: FastAPI) -> None:
         hr_late_reply,  # [NEW] Late check-in reply form (token-auth, public)
         hr_my_late_incident,  # [INTAKE-GATE] self-resolve own late incident (gate clear)
         hr_owner_cashout,  # [NEW] Owner-only weekly cashout
+        hr_people,  # People console, read side
         ingest,
         instagram_chat,
         intake_gate,  # [INTAKE-GATE] login-gate status (Anello 7)
@@ -276,6 +277,7 @@ def include_routers(api: FastAPI) -> None:
     api.include_router(hr_late_reply.router)  # [NEW] Late check-in reply form
     api.include_router(hr_my_late_incident.router)  # [INTAKE-GATE] self-resolve own late incident
     api.include_router(hr_owner_cashout.router)  # [NEW] Owner weekly cashout
+    api.include_router(hr_people.router)  # People console, read side
     api.include_router(intake_gate.router)  # [INTAKE-GATE] login-gate status (Anello 7)
 
     # Notification router (Automated email alerts)
@@ -580,6 +582,7 @@ def include_light_routers(api: FastAPI) -> None:
         hr_late_reply,
         hr_my_late_incident,  # [INTAKE-GATE] self-resolve own late incident (gate clear)
         hr_owner_cashout,
+        hr_people,
         image_generation,
         instagram_chat,
         intake_gate,  # [INTAKE-GATE] login-gate status (Anello 7)
@@ -744,6 +747,7 @@ def include_light_routers(api: FastAPI) -> None:
     api.include_router(hr_late_reply.router)
     api.include_router(hr_my_late_incident.router)  # [INTAKE-GATE] self-resolve own late incident
     api.include_router(hr_owner_cashout.router)  # [NEW] Owner weekly cashout
+    api.include_router(hr_people.router)  # People console, read side
     api.include_router(intake_gate.router)  # [INTAKE-GATE] login-gate status (Anello 7)
 
     # Notifications module router

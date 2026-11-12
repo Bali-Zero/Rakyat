@@ -1,295 +1,853 @@
 "use client";
-
-import React, { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import type { LucideIcon } from "lucide-react";
-import { Gift, Banknote, Calendar, Users } from "lucide-react";
-import * as hrApi from "@/lib/api/hr/hr";
-import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
-import type { AdminDashboard, PersonalDashboard } from "@/types/hr";
-import { Money } from "@balizero/core";
-
-/** Dashboard panel recipe — follows the active Kita surface theme. */
-const PANEL: React.CSSProperties = {
-  background: "var(--bz-card)",
-  borderColor: "var(--bz-border)",
-  boxShadow: "var(--bz-shadow-card)",
-};
-
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  sub,
-  color,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: React.ReactNode;
-  sub?: React.ReactNode;
-  color: string;
-}) {
-  return (
-    <div className="border rounded-xl p-5" style={PANEL}>
-      <div className="flex items-center gap-3 mb-3">
-        <div className={`p-2 rounded-lg ${color}`}>
-          <Icon size={20} />
-        </div>
-        <span className="text-sm text-[var(--bz-text-2)]">{label}</span>
-      </div>
-      <div className="text-2xl font-bold text-[var(--bz-text-1)]">{value}</div>
-      {sub && <div className="text-xs text-[var(--bz-text-3)] mt-1">{sub}</div>}
-    </div>
-  );
-}
-
-function AdminDashboardView({ data }: { data: AdminDashboard }) {
-  return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-[var(--bz-text-1)]">
-        HR Dashboard
-      </h1>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          icon={Users}
-          label="Active Employees"
-          value={String(data.employee_count || 0)}
-          color="bg-[var(--state-info)]/10 text-[var(--state-info)]"
-        />
-        <StatCard
-          icon={Gift}
-          label="Pending Bonuses"
-          value={String(data.pending_bonuses?.count || 0)}
-          sub={
-            data.pending_bonuses?.total ? (
-              <Money value={data.pending_bonuses.total} />
-            ) : undefined
-          }
-          color="bg-[var(--state-warning)]/10 text-[var(--state-warning)]"
-        />
-        <StatCard
-          icon={Calendar}
-          label="Leave Requests"
-          value={String(data.pending_leave_requests || 0)}
-          sub="pending approval"
-          color="bg-[var(--bz-neon-purple)]/10 text-[var(--bz-neon-purple)]"
-        />
-        <StatCard
-          icon={Banknote}
-          label="Current Period"
-          value={data.current_period?.status || "No period"}
-          sub={
-            data.current_period
-              ? `${data.current_period.payroll_month}/${data.current_period.payroll_year}`
-              : "Not calculated yet"
-          }
-          color="bg-[var(--state-success)]/10 text-[var(--state-success)]"
-        />
-      </div>
-    </div>
-  );
-}
-
-function PersonalDashboardView({ data }: { data: PersonalDashboard }) {
-  const annualBalance = data.leave_balances?.find((b) => b.code === "annual");
-  return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-[var(--bz-text-1)]">
-        My HR Dashboard
-      </h1>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <StatCard
-          icon={Gift}
-          label="This Month Bonuses"
-          value={String(data.month_bonuses?.count || 0)}
-          sub={
-            data.month_bonuses?.total ? (
-              <Money value={data.month_bonuses.total} />
-            ) : (
-              "No bonuses yet"
-            )
-          }
-          color="bg-[var(--state-warning)]/10 text-[var(--state-warning)]"
-        />
-        <StatCard
-          icon={Banknote}
-          label="Latest Payslip"
-          value={
-            data.latest_payslip ? (
-              <Money value={data.latest_payslip.net_salary_idr} />
-            ) : (
-              "N/A"
-            )
-          }
-          sub={
-            data.latest_payslip
-              ? `${data.latest_payslip.payroll_month}/${data.latest_payslip.payroll_year}`
-              : "No payslip yet"
-          }
-          color="bg-[var(--state-success)]/10 text-[var(--state-success)]"
-        />
-        <StatCard
-          icon={Calendar}
-          label="Leave Balance"
-          value={
-            annualBalance
-              ? `${annualBalance.allocated_days - annualBalance.used_days - annualBalance.pending_days} days`
-              : "N/A"
-          }
-          sub="annual leave remaining"
-          color="bg-[var(--bz-neon-purple)]/10 text-[var(--bz-neon-purple)]"
-        />
-      </div>
-    </div>
-  );
-}
-
 /**
- * Dashboard states. Each card is skipped (not the caller's to see), loaded, or
- * failed; a skipped card is never an error and a failed one is never "absent".
+ * People: the HR console, read side. Everyone on one roster, and for the selected person
+ * the same three panels (Pay, Time, Me) the person sees on their own "My HR" page.
+ * HR admins see everyone plus the pulse; the scoped viewer sees a few people, read only.
+ * Write actions are not here: this page has no edit, upload or delete control.
  *
- *   capabilities read failed            -> access error, nothing else
- *   a card loaded                       -> that card; a failed sibling gets a notice
- *   no card loaded, at least one failed -> load error
- *   both skipped (no admin, no record)  -> "no HR record"
+ * Personal data: bound to the bearer token's identity per src/lib/auth/SESSION.md S4.
+ * The roster and each person's overview are fetched with requestWithCredential and kept
+ * only if acceptResponse() says they were fetched with THIS identity's bearer and name it
+ * (`viewer_team_member_id`) as the reader. Every result is stored with the identity (and,
+ * for a person, the member id) it was fetched for and shown only while both still match
+ * this render, so a late answer for a previous person or identity is never displayed.
+ * Nothing here is logged, cached or persisted.
  */
-type Card<T> =
-  { status: "skipped" } | { status: "loaded"; data: T } | { status: "failed" };
+import React, { Suspense, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import type { LucideIcon } from "lucide-react";
+import {
+  BadgeCheck,
+  CalendarHeart,
+  Clock,
+  Gift,
+  Landmark,
+  Search,
+  Sparkles,
+  Upload,
+  UserPlus,
+  Users,
+} from "lucide-react";
+import { DESK_SERIF } from "@balizero/core";
+import { ApiError } from "@/lib/api/error-handler";
+import {
+  getPeople,
+  getPersonOverview,
+  type PeopleRoster,
+  type PersonOverview,
+  type PersonRow,
+} from "@/lib/api/hr/hr";
+import {
+  acceptResponse,
+  isSameIdentity,
+  useSessionIdentity,
+  type SessionIdentity,
+} from "@/lib/auth/session-identity";
+import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
+import {
+  Bubble,
+  CARD,
+  Chip,
+  daysUntil,
+  greeting,
+  HAIR,
+  IDR,
+  INK,
+  leaveOf,
+  MeDetail,
+  MONTHS,
+  PanelCards,
+  PayDetail,
+  SOFT,
+  tenure,
+  tint,
+  TimeDetail,
+  TONE,
+  type Panel,
+} from "./_components/hr-panels";
 
-async function loadCard<T>(
-  wanted: boolean,
-  fetcher: () => Promise<T>,
-): Promise<Card<T>> {
-  if (!wanted) return { status: "skipped" };
-  try {
-    return { status: "loaded", data: await fetcher() };
-  } catch {
-    return { status: "failed" };
-  }
+const AMBER = "#f59e0b";
+const CORAL = "#ef6a3a";
+const PALETTE = [
+  "#14a37f",
+  "#3b82f6",
+  "#ef6a3a",
+  "#8b5cf6",
+  "#e11d74",
+  "#0ea5b7",
+  "#d97706",
+  "#6366f1",
+];
+const hash = (v: string) => {
+  let h = 0;
+  for (const ch of v) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h;
+};
+const nameOf = (p: PersonRow) => p.name?.trim() || "Unnamed";
+const colorOf = (p: PersonRow) =>
+  PALETTE[hash(p.team_member_id) % PALETTE.length];
+const initials = (name: string) =>
+  name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]!.toUpperCase())
+    .join("");
+
+const GROUP_FIRST = ["Setup", "Tax"];
+const GROUP_LAST = ["Office", "Former"];
+function groupOf(p: PersonRow): string {
+  if (!p.active) return "Former";
+  const d = (p.department ?? "").trim();
+  return d ? d.charAt(0).toUpperCase() + d.slice(1).toLowerCase() : "Office";
+}
+function groupRank(g: string) {
+  const first = GROUP_FIRST.indexOf(g);
+  if (first >= 0) return first;
+  const last = GROUP_LAST.indexOf(g);
+  return last >= 0 ? 1000 + last : 100;
 }
 
-function Notice({
+const plural = (n: number, one: string, many: string) =>
+  `${n} ${n === 1 ? one : many}`;
+
+function Avatar({ person, size = 40 }: { person: PersonRow; size?: number }) {
+  const c = colorOf(person);
+  return (
+    <span
+      className="inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white"
+      style={{
+        width: size,
+        height: size,
+        fontSize: size * 0.38,
+        background: `linear-gradient(135deg, ${c}, color-mix(in srgb, ${c} 70%, #000))`,
+        boxShadow: `0 8px 18px -10px ${c}`,
+      }}
+      aria-hidden
+    >
+      {initials(nameOf(person))}
+    </span>
+  );
+}
+
+function Badge({
   tone,
+  label,
   children,
 }: {
-  tone: "danger" | "muted";
+  tone: string;
+  label: string;
+  children?: React.ReactNode;
+}) {
+  // The label is a person's HR state ("2 bonuses waiting"), so it is TEXT, never an
+  // attribute: Sentry's click breadcrumbs serialise aria-label and title, not text.
+  return (
+    <span className="group relative inline-flex">
+      {children ? (
+        <span
+          aria-hidden
+          className="rounded-full px-1.5 py-0.5 text-[10px] font-bold"
+          style={{ color: tone, background: tint(tone, 16) }}
+        >
+          {children}
+        </span>
+      ) : (
+        <span
+          aria-hidden
+          className="inline-block h-2 w-2 rounded-full"
+          style={{ background: tone }}
+        />
+      )}
+      <span className="sr-only">{label}</span>
+      <span
+        aria-hidden
+        className="pointer-events-none absolute right-0 bottom-full z-10 mb-1 hidden rounded-md bg-black/80 px-2 py-1 text-[11px] font-medium whitespace-nowrap text-white group-hover:block"
+      >
+        {label}
+      </span>
+    </span>
+  );
+}
+
+function RowBadges({ person }: { person: PersonRow }) {
+  const f = person.flags;
+  return (
+    <span className="flex shrink-0 items-center gap-1.5">
+      {f.on_leave_today && <Badge tone={TONE.time} label="On leave today" />}
+      {f.bonuses_pending > 0 && (
+        <Badge
+          tone={AMBER}
+          label={plural(f.bonuses_pending, "bonus waiting", "bonuses waiting")}
+        />
+      )}
+      {f.leave_pending > 0 && (
+        <Badge
+          tone={TONE.time}
+          label={plural(
+            f.leave_pending,
+            "leave request to approve",
+            "leave requests to approve",
+          )}
+        />
+      )}
+      {!person.has_record && (
+        <Badge tone="#94a3b8" label="No HR record yet">
+          new
+        </Badge>
+      )}
+      {f.papers_missing != null && f.papers_missing > 0 && (
+        <Badge
+          tone={CORAL}
+          label={plural(f.papers_missing, "paper missing", "papers missing")}
+        >
+          {f.papers_missing}
+        </Badge>
+      )}
+    </span>
+  );
+}
+
+function PillLink({
+  href,
+  tone,
+  filledStyle,
+  icon: Icon,
+  children,
+}: {
+  href: string;
+  tone: string;
+  filledStyle?: boolean;
+  icon: LucideIcon;
   children: React.ReactNode;
 }) {
-  return tone === "danger" ? (
-    <div
-      role="alert"
-      className="bg-[var(--state-danger)]/10 border border-[var(--state-danger)]/30 rounded-xl p-6 text-[var(--state-danger)]"
+  return (
+    <Link
+      href={href}
+      className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[13px] font-semibold transition-all duration-200 hover:-translate-y-0.5"
+      style={
+        filledStyle
+          ? {
+              background: tone,
+              color: "#fff",
+              boxShadow: `0 8px 18px -10px ${tone}`,
+            }
+          : {
+              color: tone,
+              border: `1.5px solid ${tint(tone, 55)}`,
+              background: tint(tone, 6),
+            }
+      }
     >
+      <Icon className="h-4 w-4" aria-hidden />
       {children}
-    </div>
+    </Link>
+  );
+}
+
+function PulseCard({
+  icon,
+  tone,
+  label,
+  value,
+  hint,
+  href,
+}: {
+  icon: LucideIcon;
+  tone: string;
+  label: string;
+  value: React.ReactNode;
+  hint: React.ReactNode;
+  href?: string;
+}) {
+  const cls =
+    "flex min-w-0 flex-col gap-3 rounded-[28px] border p-4 sm:p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg";
+  const style = { background: tint(tone, 7), borderColor: tint(tone, 26) };
+  const inner = (
+    <>
+      <div className="flex items-center gap-3">
+        <Bubble icon={icon} tone={tone} size={36} />
+        <span className={`text-[13px] font-semibold ${SOFT}`}>{label}</span>
+      </div>
+      <div>
+        <div
+          className={`text-[30px] font-semibold leading-none tracking-tight ${INK}`}
+        >
+          {value}
+        </div>
+        <div className={`mt-1.5 text-[13px] ${SOFT}`}>{hint}</div>
+      </div>
+    </>
+  );
+  return href ? (
+    <Link href={href} className={cls} style={style}>
+      {inner}
+    </Link>
   ) : (
-    <div
-      className="border rounded-xl p-6 text-[var(--bz-text-2)]"
-      style={PANEL}
-    >
-      {children}
+    <div className={cls} style={style}>
+      {inner}
     </div>
   );
 }
 
-export default function HRDashboardPage() {
+function Pulse({ roster }: { roster: PeopleRoster }) {
+  const p = roster.pulse;
+  if (!p) return null;
+  const month = MONTHS[p.payroll.month - 1] ?? "";
+  const status = p.payroll.status;
+  return (
+    <div className="mb-8 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+      <PulseCard
+        icon={Users}
+        tone={TONE.pay}
+        label="Active people"
+        value={p.active_people}
+        hint={
+          p.people_without_record
+            ? `${p.people_without_record} without an HR record yet`
+            : "everyone has an HR record"
+        }
+      />
+      <PulseCard
+        icon={Gift}
+        tone={AMBER}
+        label="Bonuses waiting"
+        value={p.bonuses_pending_count}
+        hint={
+          p.bonuses_pending_count
+            ? `${IDR.format(p.bonuses_pending_idr)} to approve`
+            : "nothing waiting"
+        }
+        href="/hr/bonuses"
+      />
+      <PulseCard
+        icon={CalendarHeart}
+        tone={TONE.time}
+        label="Leave to approve"
+        value={p.leave_pending_count}
+        hint={
+          p.leave_pending_count
+            ? "requests are waiting for a yes"
+            : "nothing waiting"
+        }
+        href="/hr/leave"
+      />
+      <PulseCard
+        icon={Landmark}
+        tone={TONE.me}
+        label={`Payroll ${month}`}
+        value={
+          <span className="inline-flex items-center gap-2 text-[19px] leading-tight">
+            {status ? (
+              <BadgeCheck className="h-5 w-5" aria-hidden />
+            ) : (
+              <Clock className="h-5 w-5" aria-hidden />
+            )}
+            <span className="capitalize">{status ?? "Not uploaded yet"}</span>
+          </span>
+        }
+        hint={status ? "this month's payroll period" : "no payroll period yet"}
+        href="/hr/payroll"
+      />
+    </div>
+  );
+}
+
+type RosterLoad =
+  | { kind: "loading" }
+  | { kind: "ready"; roster: PeopleRoster }
+  | { kind: "changed" }
+  | { kind: "error"; forbidden: boolean };
+type PersonLoad =
+  | { kind: "loading" }
+  | { kind: "ready"; data: PersonOverview }
+  | { kind: "no-record" }
+  | { kind: "changed" }
+  | { kind: "error"; forbidden: boolean };
+
+const LOADING = { kind: "loading" } as const;
+
+function Neutral({ children }: { children: React.ReactNode }) {
+  return (
+    <p
+      className={`max-w-[1320px] rounded-2xl border border-dashed ${HAIR} px-4 py-6 text-center text-[14px] ${SOFT}`}
+      role="status"
+    >
+      {children}
+    </p>
+  );
+}
+
+function errorKind(err: unknown) {
+  return {
+    kind: "error" as const,
+    forbidden: err instanceof ApiError && err.statusCode === 403,
+  };
+}
+
+function PeopleConsole() {
   const router = useRouter();
+  const params = useSearchParams();
   const { capabilities, loaded, failed } = useHrCapabilities();
-  // A member's HR page is /hr/me; this dashboard is the HR admin's team overview.
+  const identity = useSessionIdentity();
+  const scope = capabilities.people_scope;
+  // A member's HR page is /hr/me; People is for the people scope.
   const toMyHr =
-    loaded &&
-    !failed &&
-    !capabilities.hr_admin &&
-    capabilities.has_employee_record;
-  const [cards, setCards] = useState<{
-    admin: Card<AdminDashboard>;
-    personal: Card<PersonalDashboard>;
-  } | null>(null);
+    loaded && !failed && !scope && capabilities.has_employee_record;
+
+  const [rslot, setRslot] = useState<{
+    owner: SessionIdentity | null;
+    load: RosterLoad;
+  }>({ owner: null, load: LOADING });
+  const rload: RosterLoad =
+    identity && isSameIdentity(rslot.owner, identity) ? rslot.load : LOADING;
+  const roster = rload.kind === "ready" ? rload.roster : null;
+
+  const urlPerson = params?.get("person") ?? null;
+  const [picked, setPicked] = useState<string | null>(urlPerson);
+  useEffect(() => {
+    setPicked(urlPerson);
+  }, [urlPerson]);
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState<Panel>("pay");
+
+  // The selection is only ever a member of the accepted roster.
+  const selected: PersonRow | null = useMemo(() => {
+    if (!roster) return null;
+    return (
+      roster.people.find((p) => p.team_member_id === picked) ??
+      roster.people[0] ??
+      null
+    );
+  }, [roster, picked]);
+  const selectedId = selected?.team_member_id ?? null;
+  const selectedHasRecord = selected?.has_record ?? false;
+
+  const [pslot, setPslot] = useState<{
+    owner: SessionIdentity | null;
+    id: string | null;
+    load: PersonLoad;
+  }>({ owner: null, id: null, load: LOADING });
+  const pload: PersonLoad =
+    identity &&
+    selectedId &&
+    isSameIdentity(pslot.owner, identity) &&
+    pslot.id === selectedId
+      ? pslot.load
+      : LOADING;
 
   useEffect(() => {
     if (toMyHr) router.replace("/hr/me");
   }, [toMyHr, router]);
 
   useEffect(() => {
-    if (!loaded || failed || toMyHr) return;
-    let mounted = true;
-    Promise.all([
-      loadCard(capabilities.hr_admin, hrApi.getDashboard),
-      loadCard(capabilities.has_employee_record, hrApi.getMyDashboard),
-    ]).then(([admin, personal]) => {
-      if (mounted) setCards({ admin, personal });
-    });
+    setRslot({ owner: null, load: LOADING });
+    if (!identity || !loaded || failed || !scope) return;
+    let live = true;
+    getPeople()
+      .then((res) => {
+        if (!live) return;
+        setRslot({
+          owner: identity,
+          load: acceptResponse(res, identity, res.data.viewer_team_member_id)
+            ? { kind: "ready", roster: res.data }
+            : { kind: "changed" },
+        });
+      })
+      .catch((err: unknown) => {
+        if (live) setRslot({ owner: identity, load: errorKind(err) });
+      });
     return () => {
-      mounted = false;
+      live = false;
     };
-  }, [
-    loaded,
-    failed,
-    toMyHr,
-    capabilities.hr_admin,
-    capabilities.has_employee_record,
-  ]);
+  }, [identity, loaded, failed, scope]);
 
-  if (failed) {
+  useEffect(() => {
+    setPslot({ owner: null, id: null, load: LOADING });
+    if (!identity || !selectedId || !selectedHasRecord) return;
+    let live = true;
+    getPersonOverview(selectedId)
+      .then((res) => {
+        if (!live) return;
+        const accepted = acceptResponse(
+          res,
+          identity,
+          res.data.viewer_team_member_id,
+        );
+        setPslot({
+          owner: identity,
+          id: selectedId,
+          load: !accepted
+            ? { kind: "changed" }
+            : res.data.person.team_member_id === selectedId
+              ? { kind: "ready", data: res.data }
+              : { kind: "error", forbidden: false },
+        });
+      })
+      .catch((err: unknown) => {
+        if (!live) return;
+        setPslot({
+          owner: identity,
+          id: selectedId,
+          load:
+            err instanceof ApiError && err.statusCode === 404
+              ? { kind: "no-record" }
+              : errorKind(err),
+        });
+      });
+    return () => {
+      live = false;
+    };
+  }, [identity, selectedId, selectedHasRecord]);
+
+  const grouped = useMemo(() => {
+    if (!roster) return [];
+    const f = q.trim().toLowerCase();
+    const list = roster.people.filter(
+      (p) =>
+        !f ||
+        `${nameOf(p)} ${p.role ?? ""} ${p.unit ?? ""}`
+          .toLowerCase()
+          .includes(f),
+    );
+    const groups = new Map<string, PersonRow[]>();
+    for (const p of list) {
+      const g = groupOf(p);
+      groups.set(g, [...(groups.get(g) ?? []), p]);
+    }
+    return [...groups.entries()].sort(
+      ([a], [b]) => groupRank(a) - groupRank(b) || a.localeCompare(b),
+    );
+  }, [roster, q]);
+
+  const choose = (id: string) => {
+    setPicked(id);
+    router.replace(`/hr?person=${encodeURIComponent(id)}`, { scroll: false });
+  };
+
+  if (failed)
     return (
-      <Notice tone="danger">
+      <Neutral>
         Could not load your HR access. Reload the page to retry.
-      </Notice>
+      </Neutral>
     );
-  }
-
   if (toMyHr) return null;
-
-  if (!cards) {
+  if (loaded && !scope)
     return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-[var(--bz-text-1)]">
-          HR Dashboard
-        </h1>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => (
-            <div
-              key={i}
-              className="border rounded-xl p-5 animate-pulse"
-              style={PANEL}
-            >
-              <div className="h-4 bg-[var(--bz-glass-rim)] rounded w-24 mb-4" />
-              <div className="h-8 bg-[var(--bz-glass-rim)] rounded w-32" />
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  const { admin, personal } = cards;
-  if (admin.status === "skipped" && personal.status === "skipped") {
-    return (
-      <Notice tone="muted">
+      <Neutral>
         No HR record is linked to your account yet. Ask HR to create it.
-      </Notice>
+      </Neutral>
     );
-  }
-  if (admin.status !== "loaded" && personal.status !== "loaded") {
+  if (rload.kind === "changed")
     return (
-      <Notice tone="danger">
-        Failed to load the HR dashboard. Reload the page to retry.
-      </Notice>
+      <Neutral>
+        Your session changed, so this page was cleared. Reload to see People.
+      </Neutral>
     );
-  }
+  if (rload.kind === "error")
+    return (
+      <Neutral>
+        {rload.forbidden
+          ? "You do not have access to People."
+          : "We could not load People. Reload to try again."}
+      </Neutral>
+    );
+  if (!roster) return <div className="h-64" />;
+
+  const full = roster.scope === "all";
+  const viewer = roster.people.find(
+    (p) => p.team_member_id === roster.viewer_team_member_id,
+  );
+  const first = viewer?.name?.trim().split(/\s+/)[0];
+  const person = pload.kind === "ready" ? pload.data.person : null;
+  const card = person?.card;
+  const since = card ? tenure(card.hire_date, "their first month") : null;
+  const ends = card ? daysUntil(card.end_date) : null;
+  const tone = TONE[open];
 
   return (
-    <div className="space-y-10">
-      {admin.status === "loaded" && <AdminDashboardView data={admin.data} />}
-      {admin.status === "failed" && (
-        <Notice tone="danger">Could not load the team overview.</Notice>
-      )}
-      {personal.status === "loaded" && (
-        <PersonalDashboardView data={personal.data} />
-      )}
-      {personal.status === "failed" && (
-        <Notice tone="danger">Could not load your own HR card.</Notice>
-      )}
+    <div className="sentry-block max-w-[1320px]" data-sentry-block="">
+      <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className={`text-[14px] font-medium ${SOFT}`}>
+            {greeting()}
+            {first ? `, ${first}` : ""}
+          </p>
+          <h1 className={`text-[40px] leading-tight ${INK}`} style={DESK_SERIF}>
+            People
+          </h1>
+          <p className={`mt-1 text-[14px] ${SOFT}`}>
+            {full
+              ? "Everyone at Bali Zero, in one place"
+              : "The people you look after"}
+          </p>
+        </div>
+        {full && (
+          <div className="flex flex-wrap gap-2">
+            <PillLink
+              href="/hr/payroll"
+              tone={TONE.pay}
+              filledStyle
+              icon={Upload}
+            >
+              Upload payroll
+            </PillLink>
+            <PillLink href="/hr/employees" tone={TONE.pay} icon={UserPlus}>
+              Add employee
+            </PillLink>
+          </div>
+        )}
+      </header>
+
+      {full && <Pulse roster={roster} />}
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
+        <div className="lg:hidden">
+          <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-2">
+            {roster.people.map((p) => (
+              <button
+                key={p.team_member_id}
+                type="button"
+                onClick={() => choose(p.team_member_id)}
+                aria-pressed={p.team_member_id === selectedId}
+                className="flex w-[68px] shrink-0 flex-col items-center gap-1.5"
+              >
+                {/* The name is the button's text, never an attribute: Sentry's click
+                    breadcrumbs record aria-label and title, not text content. */}
+                <span className="sr-only">{nameOf(p)}</span>
+                <span
+                  className="rounded-full p-0.5 transition-all"
+                  style={{
+                    boxShadow:
+                      p.team_member_id === selectedId
+                        ? `0 0 0 2.5px ${colorOf(p)}`
+                        : "none",
+                  }}
+                >
+                  <Avatar person={p} size={52} />
+                </span>
+                <span
+                  aria-hidden
+                  className={`w-full truncate text-center text-[11px] font-medium ${p.team_member_id === selectedId ? INK : SOFT}`}
+                >
+                  {nameOf(p).split(/\s+/)[0]}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <aside className="hidden lg:block">
+          <div
+            className={`sticky top-4 flex max-h-[calc(100vh-2rem)] flex-col gap-4 overflow-y-auto rounded-[28px] border ${HAIR} p-4`}
+            style={{ background: CARD }}
+          >
+            <label
+              className={`flex items-center gap-2 rounded-full border ${HAIR} px-4 py-2.5 focus-within:shadow-md`}
+            >
+              <Search className={`h-4 w-4 ${SOFT}`} aria-hidden />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search people"
+                aria-label="Search people"
+                className={`w-full bg-transparent text-[14px] outline-none placeholder:opacity-60 ${INK}`}
+              />
+            </label>
+            {grouped.map(([g, list]) => (
+              <div key={g}>
+                <p
+                  className={`mb-1.5 px-2 text-[11px] font-bold uppercase tracking-wider ${SOFT}`}
+                >
+                  {g} <span className="opacity-60">· {list.length}</span>
+                </p>
+                <ul className="flex flex-col gap-0.5">
+                  {list.map((p) => {
+                    const on = p.team_member_id === selectedId;
+                    const col = colorOf(p);
+                    return (
+                      <li key={p.team_member_id}>
+                        <button
+                          type="button"
+                          onClick={() => choose(p.team_member_id)}
+                          aria-pressed={on}
+                          className="relative flex w-full items-center gap-3 rounded-2xl py-2 pl-4 pr-3 text-left transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+                          style={on ? { background: tint(col, 14) } : undefined}
+                        >
+                          {on && (
+                            <span
+                              className="absolute bottom-2 left-1 top-2 w-1 rounded-full"
+                              style={{ background: col }}
+                            />
+                          )}
+                          <Avatar person={p} size={36} />
+                          <span className="min-w-0 flex-1">
+                            <span
+                              className={`block truncate text-[14px] font-semibold ${INK}`}
+                            >
+                              {nameOf(p)}
+                            </span>
+                            <span
+                              className={`block truncate text-[12px] ${SOFT}`}
+                            >
+                              {[p.role, p.unit].filter(Boolean).join(" · ")}
+                            </span>
+                          </span>
+                          <RowBadges person={p} />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+            {grouped.length === 0 && (
+              <p className={`px-2 text-[13px] ${SOFT}`}>
+                {roster.people.length
+                  ? "Nobody matches that search."
+                  : "Nobody to show yet."}
+              </p>
+            )}
+          </div>
+        </aside>
+
+        <div className="@container min-w-0">
+          {!selected ? (
+            <div className="h-64" />
+          ) : (
+            <>
+              <div
+                className={`mb-6 flex flex-wrap items-center justify-between gap-4 rounded-[28px] border ${HAIR} p-5`}
+                style={{
+                  background: `linear-gradient(120deg, ${tint(colorOf(selected), 12)}, ${CARD} 70%)`,
+                }}
+              >
+                <div className="flex min-w-0 items-center gap-4">
+                  <Avatar person={selected} size={72} />
+                  <div className="min-w-0">
+                    <h2
+                      className={`truncate text-[28px] leading-tight ${INK}`}
+                      style={DESK_SERIF}
+                    >
+                      {nameOf(selected)}
+                    </h2>
+                    <p className={`text-[14px] ${SOFT}`}>
+                      {[
+                        card?.role ?? selected.role,
+                        card?.unit ?? selected.unit,
+                        card?.employer_entity,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {since && (
+                        <Chip tone={TONE.me}>
+                          <Sparkles className="h-3.5 w-3.5" aria-hidden />{" "}
+                          {since}
+                        </Chip>
+                      )}
+                      {ends !== null && ends >= 0 && ends <= 120 && (
+                        <Chip tone={AMBER}>
+                          <CalendarHeart className="h-3.5 w-3.5" aria-hidden />{" "}
+                          contract ends in {ends} days
+                        </Chip>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {!selected.has_record || pload.kind === "no-record" ? (
+                <div
+                  className={`rounded-[28px] border border-dashed ${HAIR} p-8 text-center`}
+                >
+                  <p className={`text-[16px] font-semibold ${INK}`}>
+                    No HR record yet
+                  </p>
+                  <p className={`mt-1 text-[14px] ${SOFT}`}>
+                    There is nothing to show for this person until an HR record
+                    exists.
+                  </p>
+                  {full && (
+                    <p className="mt-4">
+                      <PillLink
+                        href="/hr/employees"
+                        tone={TONE.me}
+                        filledStyle
+                        icon={UserPlus}
+                      >
+                        Create record
+                      </PillLink>
+                    </p>
+                  )}
+                </div>
+              ) : pload.kind === "changed" ? (
+                <Neutral>
+                  Your session changed, so this person was cleared. Reload to
+                  see People.
+                </Neutral>
+              ) : pload.kind === "error" ? (
+                <Neutral>
+                  {pload.forbidden
+                    ? "You cannot view this person."
+                    : "We could not load this person. Select them again to retry."}
+                </Neutral>
+              ) : !person ? (
+                <div className="h-64" />
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 gap-4 @lg:grid-cols-3">
+                    <PanelCards
+                      me={person}
+                      open={open}
+                      onPick={setOpen}
+                      viewer="admin"
+                      compact
+                    />
+                  </div>
+                  <div
+                    className="mt-6 overflow-hidden rounded-[28px] border p-6 md:p-8"
+                    style={{ borderColor: tint(tone, 30), background: CARD }}
+                  >
+                    <div
+                      className="-mx-6 -mt-6 mb-8 h-1.5 md:-mx-8 md:-mt-8"
+                      style={{ background: tone }}
+                    />
+                    {open === "pay" && (
+                      <PayDetail
+                        me={person}
+                        viewer="admin"
+                        payslipLinks={full}
+                      />
+                    )}
+                    {open === "time" && (
+                      <TimeDetail
+                        me={person}
+                        leave={leaveOf(person)}
+                        viewer="admin"
+                      />
+                    )}
+                    {open === "me" && <MeDetail me={person} viewer="admin" />}
+                    <p
+                      className={`mt-8 border-t ${HAIR} pt-4 text-[12px] ${SOFT}`}
+                    >
+                      Visible only to HR admins.
+                    </p>
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </div>
     </div>
+  );
+}
+
+export default function PeoplePage() {
+  return (
+    <Suspense fallback={<div className="h-64" />}>
+      <PeopleConsole />
+    </Suspense>
   );
 }
