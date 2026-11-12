@@ -205,7 +205,7 @@ export const editPersonCard = (
     { method: "PATCH", body: JSON.stringify(body) },
   );
 
-// People console, HR documents — STAFF_CARD.md C12. Only the global admins may call these. The
+// People console, HR documents — STAFF_CARD.md C13. Only the global admins may call these. The
 // file goes up as multipart (field `file`); the browser sets the boundary, so no Content-Type here.
 export const DOC_SLOTS = [
   "ktp",

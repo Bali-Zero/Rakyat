@@ -725,7 +725,7 @@ export function MeDetail({
 }: {
   me: Me;
   viewer?: Viewer;
-  // The People console renders its own Documents block (STAFF_CARD.md C12) in place of these chips.
+  // The People console renders its own Documents block (STAFF_CARD.md C13) in place of these chips.
   showPapers?: boolean;
 }) {
   const you = viewer === "self";

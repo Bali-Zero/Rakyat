@@ -1,6 +1,6 @@
 "use client";
 /**
- * The People console Documents block (STAFF_CARD.md C12): six papers, each present or missing with
+ * The People console Documents block (STAFF_CARD.md C13): six papers, each present or missing with
  * the existing Drive "Open" link, and for `hr_card_write` viewers Upload / Replace and Remove.
  *
  * Personal data never reaches a DOM ATTRIBUTE: no person name, file name or file title is ever

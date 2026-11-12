@@ -9873,8 +9873,12 @@ export interface paths {
     put?: never;
     /**
      * Upload Person Document
-     * @description Upload or replace one HR paper (global admins only). The type is read from the magic
-     *     bytes (PDF, JPEG, PNG) and the size is capped; nothing the client names is trusted.
+     * @description Upload or replace one HR paper (global admins only).
+     *
+     *     No `UploadFile` parameter on purpose: FastAPI would parse the whole form before the writer
+     *     check and the size check. Here the writer dependency has already run when the body is first
+     *     touched; the body is read under a hard byte cap and only then parsed. The type is read from
+     *     the magic bytes (PDF, JPEG, PNG); nothing the client names is trusted.
      */
     post: operations["upload_person_document_api_hr_people__team_member_id__documents__slot__post"];
     /**
@@ -20245,11 +20249,6 @@ export interface components {
       tier?: string | null;
       /** Title */
       title?: string | null;
-    };
-    /** Body_upload_person_document_api_hr_people__team_member_id__documents__slot__post */
-    Body_upload_person_document_api_hr_people__team_member_id__documents__slot__post: {
-      /** File */
-      file: string;
     };
     /** Body_upload_slide_api_war_room_upload_slide_post */
     Body_upload_slide_api_war_room_upload_slide_post: {
@@ -44775,11 +44774,7 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody: {
-      content: {
-        "multipart/form-data": components["schemas"]["Body_upload_person_document_api_hr_people__team_member_id__documents__slot__post"];
-      };
-    };
+    requestBody?: never;
     responses: {
       /** @description Successful Response */
       200: {

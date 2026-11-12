@@ -280,7 +280,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("People documents block (/hr, C12)", () => {
+describe("People documents block (/hr, C13)", () => {
   it("lists the six papers as present or missing with the Open link", async () => {
     await open("A");
     await waitFor(() =>

@@ -593,7 +593,7 @@ function PeopleConsole() {
     };
   }, [identity, selectedId, selectedHasRecord]);
 
-  // A document change (STAFF_CARD.md C12): accepted only for the identity and the person it was
+  // A document change (STAFF_CARD.md C13): accepted only for the identity and the person it was
   // sent for (same rule as saveCard); on success the person's overview is read again so the
   // card, the roster's missing-papers count and the Documents rows all show the new state.
   async function changeDocument(
