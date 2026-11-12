@@ -51,8 +51,10 @@ export interface HrCapabilities {
   people_scope: "all" | "scoped" | null;
   /** The viewer may edit HR data (read-only People for everyone else). */
   hr_edit: boolean;
-  /** The viewer may edit, clear or create any person's HR card (the global admins only). */
+  /** The viewer may edit, clear or create any person's HR card (the owner and the accountant only). */
   hr_card_write: boolean;
+  /** The viewer may calculate, approve or mark paid a payroll period (the same two people). */
+  hr_payroll_write: boolean;
 }
 export const getCapabilities = () =>
   api.get<HrCapabilities>(`${BASE}/me/capabilities`);

@@ -20,6 +20,7 @@ ASYA = {"user_id": "tm-asya", "email": "asya@balizero.com", "role": "member"}
 ADIT = {"user_id": "tm-adit", "email": "adit@balizero.com", "role": "member"}
 SCOPED = {"user_id": "tm-scoped", "email": "ruslana@balizero.com", "role": "member"}
 MEMBER = {"user_id": "tm-m", "email": "krisna@balizero.com", "role": "member"}
+IT_ADMIN = {"user_id": "tm-it", "email": "it.dev@balizero.com", "role": "member"}
 CLIENT = {"user_id": "tm-c", "email": "zero@balizero.com", "role": "client"}
 
 ID_IN = "11111111-1111-4111-8111-111111111111"
@@ -47,6 +48,17 @@ def _people() -> MagicMock:
 
 
 @pytest.fixture
+def it_admin_in_allowlist(monkeypatch):
+    """A synthetic IT account that IS a global admin: it must still not write HR data."""
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(
+        settings, "admin_emails", "zero@balizero.com,asya@balizero.com,it.dev@balizero.com"
+    )
+    assert "it.dev@balizero.com" in settings.admin_emails_set
+
+
+@pytest.fixture
 def make_client():
     patchers: list[Any] = []
 
@@ -69,7 +81,7 @@ def make_client():
 
 
 @pytest.mark.parametrize("user", [OWNER, ASYA])
-def test_the_global_admins_may_write(make_client, user):
+def test_the_hr_writers_may_write(make_client, user):
     client, hr = make_client(user)
     res = client.patch(URL, json={"card": {"bank_name": "Bank Contoh"}})
     assert res.status_code == 200
@@ -80,8 +92,9 @@ def test_the_global_admins_may_write(make_client, user):
     )
 
 
-@pytest.mark.parametrize("user", [ADIT, SCOPED, MEMBER, CLIENT])
-def test_everyone_else_is_refused_before_any_work(make_client, user):
+@pytest.mark.parametrize("user", [ADIT, SCOPED, MEMBER, CLIENT, IT_ADMIN])
+def test_everyone_else_is_refused_before_any_work(make_client, it_admin_in_allowlist, user):
+    # IT_ADMIN is a global admin (in the allow-list) but not an HR writer (2026-11-13).
     client, hr = make_client(user)
     res = client.patch(URL, json={"card": {"bank_name": "Bank Contoh"}})
     assert res.status_code == 403
