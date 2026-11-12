@@ -32,6 +32,8 @@ export interface HREmployee {
   bpjs_kesehatan_number: string | null;
   bpjs_ketenagakerjaan_number: string | null;
   is_active: boolean;
+  /** false = the card says not on payroll (server-derived; absent means true). */
+  on_payroll?: boolean;
   notes: string | null;
   created_at: string;
   updated_at: string;

@@ -166,6 +166,33 @@ describe("per-member table", () => {
     expect(rows[rows.length - 1]).toHaveTextContent("Rp 1.000.000");
   });
 
+  it("leaves an off-payroll person out of the table and out of the Add bonus list", async () => {
+    hrApiMock.listEmployees.mockResolvedValue({
+      employees: [
+        ...EMPLOYEES,
+        {
+          id: 9,
+          full_name: "Wayan Contoh",
+          email: "wayan.contoh@example.com",
+          department: "office",
+          on_payroll: false,
+        },
+      ],
+      count: 5,
+    });
+    const user = userEvent.setup();
+    render(<BonusesPage />);
+    const table = await screen.findByRole("table");
+    expect(within(table).queryByText(/Wayan Contoh/)).toBeNull();
+    expect(within(table).getByText(/Fake Tax Two/)).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Add bonus" }));
+    const dialog = await screen.findByRole("dialog");
+    const select = within(dialog).getByLabelText("Person");
+    expect(
+      within(select).queryByRole("option", { name: "Wayan Contoh" }),
+    ).toBeNull();
+  });
+
   it("the department chips narrow rows and the table to that team", async () => {
     const user = userEvent.setup();
     render(<BonusesPage />);

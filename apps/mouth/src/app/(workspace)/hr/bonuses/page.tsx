@@ -105,7 +105,10 @@ export default function BonusesPage() {
         // HR-admin only: every active member is a row of the per-member table,
         // the tax team included, and the Add bonus form picks from the same list.
         const emp = await hrApi.listEmployees();
-        setEmployees(emp.employees || []);
+        // Off-payroll people never get a payroll bonus, so they are no row and no option.
+        setEmployees(
+          (emp.employees || []).filter((e) => e.on_payroll !== false),
+        );
       } catch {
         setEmployees([]);
       }
