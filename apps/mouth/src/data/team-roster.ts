@@ -84,7 +84,7 @@ export const TEAM_ROSTER: RosterMember[] = [
   {
     slug: "adit",
     name: "Adit",
-    role: "Direktur",
+    role: "Director",
     dept: "setup",
     email: "adit@balizero.com",
     photo: "/static/team/adit.jpg",
@@ -106,28 +106,12 @@ export const TEAM_ROSTER: RosterMember[] = [
     photo: "/static/team/krisna-20260927.jpg",
   },
   {
-    slug: "dea",
-    name: "Dea",
-    role: "Executive Consultant",
-    dept: "setup",
-    email: "dea@balizero.com",
-    photo: "/static/team/dea.jpg",
-  },
-  {
     slug: "surya",
     name: "Surya",
-    role: "Team Leader",
+    role: "Senior Consultant",
     dept: "setup",
     email: "surya@balizero.com",
     photo: "/static/team/surya.jpg",
-  },
-  {
-    slug: "candra",
-    name: "Candra",
-    role: "Consultant",
-    dept: "setup",
-    email: "candra@balizero.com",
-    photo: "/static/team/candra.jpg",
   },
   {
     slug: "damar",
@@ -145,6 +129,14 @@ export const TEAM_ROSTER: RosterMember[] = [
     email: "vino@balizero.com",
     photo: "/static/team/vino.jpg",
   },
+  {
+    slug: "rio",
+    name: "Rio",
+    role: "Junior Consultant",
+    dept: "setup",
+    email: "rio@balizero.com",
+    photo: "/static/team/rio.jpg",
+  },
 
   // ── Tax ─────────────────────────────────────────────────────────────────
   {
@@ -158,17 +150,34 @@ export const TEAM_ROSTER: RosterMember[] = [
   {
     slug: "kadek",
     name: "Kadek",
-    role: "Tax Lead",
+    role: "Tax Consultant",
     dept: "tax",
     email: "kadek.tax@balizero.com",
+    photo: "/static/team/kadek.jpg",
   },
   {
     slug: "dewaayu",
     name: "Dewa Ayu",
-    role: "Tax Lead",
+    role: "Tax Consultant",
     dept: "tax",
     email: "dewaayu.tax@balizero.com",
     photo: "/static/team/dewaayu.jpg",
+  },
+  {
+    slug: "dea",
+    name: "Dea",
+    role: "Tax Consultant",
+    dept: "tax",
+    email: "dea@balizero.com",
+    photo: "/static/team/dea.jpg",
+  },
+  {
+    slug: "candra",
+    name: "Candra",
+    role: "Tax Consultant",
+    dept: "tax",
+    email: "candra@balizero.com",
+    photo: "/static/team/candra.jpg",
   },
   {
     slug: "faisha",
@@ -199,6 +208,7 @@ export const TEAM_ROSTER: RosterMember[] = [
     role: "Reception",
     dept: "support",
     email: "rina@balizero.com",
+    photo: "/static/team/rina.jpg",
   },
   {
     slug: "sahira",
