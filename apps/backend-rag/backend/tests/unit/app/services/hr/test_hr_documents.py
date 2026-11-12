@@ -497,8 +497,9 @@ def _unknown(svc: HRDocumentService, verified: str | None, holds: bool | None) -
         raise HRDocError(HRDocCode.COMMIT_UNKNOWN)
 
     svc._db_step = step  # type: ignore[method-assign,assignment]
-    svc._slot_holds = AsyncMock(return_value=holds)  # type: ignore[method-assign]
-    svc._documents = AsyncMock(return_value=DOCS)  # type: ignore[method-assign]
+    svc._reconcile = AsyncMock(  # type: ignore[method-assign]
+        return_value=(holds, DOCS if holds is not None else None)
+    )
 
 
 @pytest.mark.asyncio
@@ -541,3 +542,23 @@ async def test_a_certain_rollback_still_compensates():
     with pytest.raises(HRDocError):
         await _up(svc)
     assert len(d.trashed) == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_failing_to_read_never_returns_a_null_map_as_success():
+    """The map comes from the reconciliation read itself: when that read fails the upload raises,
+    it never reports success with `documents: None`."""
+    d = FakeDrive()
+    svc = _svc(d)
+
+    async def step(**kw: Any) -> None:
+        raise HRDocError(HRDocCode.COMMIT_UNKNOWN)
+
+    class _Broken:
+        def acquire(self) -> Any:
+            raise RuntimeError("pool down")
+
+    svc._db_step = step  # type: ignore[method-assign,assignment]
+    svc.db_pool = _Broken()  # type: ignore[assignment]
+    with pytest.raises(HRDocError):
+        await _up(svc)

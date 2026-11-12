@@ -336,6 +336,11 @@ def test_a_non_object_contract_is_rejected(bad):
         {"contract": {"file_id": "x"}},
         {"contract": {"number": "C-1", "file_id": "x"}},
         {"unit": "Tax", "docs": {"contract": "x"}},
+        {"unit": "Tax", "docs": {}},
+        {"unit": "Tax", "docs": None},
+        {"unit": "Tax", "doc_proof": None},
+        {"contract": {"file_id": None}},
+        {"contract": {"number": "C-1", "file_id": None}},
     ],
 )
 def test_the_door_owned_keys_are_refused_whole_with_their_own_outcome(profile):

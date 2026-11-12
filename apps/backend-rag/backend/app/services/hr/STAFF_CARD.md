@@ -424,7 +424,11 @@ yet every layer treated it as a Drive id. So provenance comes before display.
   slot (with its proof) is re-read under the same locks; if it holds the new id the upload succeeded,
   if not the new file is trashed, if that cannot be told it is left in place. After the commit the
   card's unit is read again under the member lock and the person folder moved if it changed. Drive
-  failures are `502 drive_unavailable` with a fixed message; a lock timeout is 409 as in C11.
+  failures are `502 drive_unavailable` with a fixed message; a lock timeout is 409 as in C11. A C11
+  unit change does not move Drive folders: the folder is realigned by the next UPLOAD only, never by
+  a DELETE (remove does not touch the folder). The reconciliation read returns the documents map
+  from the same locked read that confirms the commit, so a landed upload always answers with the
+  full six-key map.
 - *Trash only what the door made (R6).* On replace or remove the previous file is moved to the Drive
   trash only if the previous value was VERIFIED when read under the lock AND Drive's own listing of
   this door's files (appProperties member AND slot, inside the person folder, not trashed, pdf, jpeg

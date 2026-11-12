@@ -22,7 +22,7 @@ SCOPED = {"user_id": "tm-scoped", "email": "ruslana@balizero.com", "role": "memb
 ID_IN = "11111111-1111-4111-8111-111111111111"
 ID_NONE = "22222222-2222-4222-8222-222222222222"
 PDF = b"%PDF-1.7\n synthetic"
-SECRET_NAME = "Made-Contoh-Rahasia.pdf"
+PRIVATE_FILENAME = "Made-Contoh-Rahasia.pdf"
 
 
 def _url(slot: str = "ktp", member: str = ID_IN) -> str:
@@ -71,7 +71,9 @@ def make_client():
         p.stop()
 
 
-def _post(client: TestClient, slot: str = "ktp", data: bytes = PDF, name: str = SECRET_NAME, **kw):
+def _post(
+    client: TestClient, slot: str = "ktp", data: bytes = PDF, name: str = PRIVATE_FILENAME, **kw
+):
     return client.post(_url(slot, **kw), files={"file": (name, data, "image/png")})
 
 
@@ -130,7 +132,7 @@ def test_bad_files_422(make_client, data, code):
     client, doc = make_client(OWNER)
     res = _post(client, data=data)
     assert res.status_code == 422 and res.json()["detail"][0]["code"] == code
-    assert SECRET_NAME not in res.text
+    assert PRIVATE_FILENAME not in res.text
     doc.upload.assert_not_awaited()
 
 
@@ -159,7 +161,7 @@ def test_service_errors_are_fixed_answers(make_client, code, status, body):
     client, _ = make_client(OWNER, doc)
     for res in (_post(client), client.delete(_url())):
         assert res.status_code == status and body in res.text
-        assert SECRET_NAME not in res.text
+        assert PRIVATE_FILENAME not in res.text
 
 
 def test_remove_and_logs_carry_no_filename(make_client, caplog):
@@ -169,7 +171,7 @@ def test_remove_and_logs_carry_no_filename(make_client, caplog):
         _post(client, data=b"GIF89a....")
         assert client.delete(_url("kk")).status_code == 200
     doc.remove.assert_awaited_once()
-    assert SECRET_NAME not in caplog.text and "Made" not in caplog.text
+    assert PRIVATE_FILENAME not in caplog.text and "Made" not in caplog.text
     assert "slot=ktp" in caplog.text and "actor=tm-owner" in caplog.text
 
 

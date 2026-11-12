@@ -376,12 +376,16 @@ class HRDocumentService:
                 raise HRDocError(HRDocCode.LOCK_TIMEOUT) from None
             raise HRDocError(HRDocCode.DB_ERROR) from None
 
-    async def _slot_holds(self, member_id: str, slot: str, file_id: str) -> bool | None:
-        """Does the slot hold `file_id` WITH a matching proof? None when it cannot be told.
+    async def _reconcile(
+        self, member_id: str, slot: str, file_id: str
+    ) -> tuple[bool | None, dict[str, Any] | None]:
+        """(does the slot hold `file_id` WITH a matching proof?, the documents map), both from
+        the SAME locked read. (None, None) when it cannot be told.
 
         Takes the SAME locks as the DB step, in a transaction, in the same order (member advisory
         lock, then the hr_employees row lock): the read waits for the original COMMIT, if it is
-        still in flight, to finish and therefore sees its outcome."""
+        still in flight, to finish and therefore sees its outcome. The map comes from the row the
+        verdict was read from, so there is no second read that could fail."""
         try:
             async with self.db_pool.acquire() as conn, conn.transaction():
                 await conn.execute(f"SET LOCAL lock_timeout = {int(CARD_EDIT_LOCK_TIMEOUT_MS)}")
@@ -389,20 +393,17 @@ class HRDocumentService:
                     "SELECT pg_advisory_xact_lock(hashtext('hr_docs_folder:'||$1))", member_id
                 )
                 row = await conn.fetchrow(_PREVIOUS_SQL, member_id, slot)  # FOR UPDATE
-        except Exception:
-            return None
-        return bool(row is not None and row["v"] == file_id and row["pid"] == file_id)
-
-    async def _documents(self, member_id: str) -> dict[str, Any] | None:
-        """The documents map from a fresh read, or None if it cannot be read (best effort)."""
-        try:
-            async with self.db_pool.acquire() as conn:
                 profile = await conn.fetchval(
                     "SELECT profile FROM hr_employees WHERE team_member_id = $1", member_id
                 )
+            documents = project_documents(profile)
         except Exception:
-            return None
-        return project_documents(profile)
+            return None, None
+        holds = bool(row is not None and row["v"] == file_id and row["pid"] == file_id)
+        return holds, documents
+
+    async def _slot_holds(self, member_id: str, slot: str, file_id: str) -> bool | None:
+        return (await self._reconcile(member_id, slot, file_id))[0]
 
     async def _our_folder(self, member_id: str) -> str | None:
         """The member's person folder id, or None when there is not exactly one."""
@@ -455,7 +456,7 @@ class HRDocumentService:
         advisory lock, so a PATCH cannot change the unit between the two."""
         try:
             await self.ensure_folder(member_id, skip_if_unit=used_unit)
-        except Exception as exc:  # the file is saved; the next upload or move corrects the folder
+        except Exception as exc:  # the file is saved; the next upload corrects the folder
             logger.warning("hr documents unit follow-up failed (%s)", type(exc).__name__)
 
     # ── public flows ──
@@ -499,13 +500,13 @@ class HRDocumentService:
             )
         except HRDocError as exc:
             if exc.code is HRDocCode.COMMIT_UNKNOWN:
-                landed = await self._slot_holds(member_id, slot, new_id)
+                landed, reconciled = await self._reconcile(member_id, slot, new_id)
                 if landed:  # it did commit: carry on as a success
                     await self._trash_if_ours(
                         member_id, slot, state.get("verified"), new_id, folder_id
                     )
                     await self._follow_unit_change(member_id, ctx.unit)
-                    return {"slot": slot, "documents": await self._documents(member_id)}
+                    return {"slot": slot, "documents": reconciled}
                 if landed is None:  # cannot tell: an orphan file is safer than a dangling id
                     logger.error("hr documents upload left in place, outcome unverifiable")
                     raise

@@ -271,6 +271,10 @@ async def test_an_error_at_commit_is_commit_unknown_and_reconcile_tells_the_trut
     assert await svc._slot_holds(A_ID, "ktp", "boomid123456") is False
     await _step(svc, "ktp", "goodid123456")
     assert await svc._slot_holds(A_ID, "ktp", "goodid123456") is True
+    holds, documents = await svc._reconcile(A_ID, "ktp", "goodid123456")  # same locked read
+    assert holds is True and documents is not None
+    assert set(documents) == {"ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk", "contract"}
+    assert documents["ktp"] == {"present": True, "file_id": "goodid123456"}
     # a value without its proof does not count as landed
     await _set(pool, {"docs": {"ktp": "unproven12345"}})
     assert await svc._slot_holds(A_ID, "ktp", "unproven12345") is False
