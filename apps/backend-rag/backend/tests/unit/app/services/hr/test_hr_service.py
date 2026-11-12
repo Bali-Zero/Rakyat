@@ -185,12 +185,12 @@ class TestBonuses:
     @pytest.mark.asyncio
     async def test_approve_bonus(self, hr_service, mock_db_pool):
         mock_db_pool._mock_conn.fetchrow = AsyncMock(
-            return_value={
-                "id": 1,
-                "status": "approved",
-                "approved_by": "uxxx2@dxx1.com",
-            }
+            side_effect=[
+                {"status": "pending", "m": 4, "y": 2026},  # the row lock read
+                {"id": 1, "status": "approved", "approved_by": "uxxx2@dxx1.com"},
+            ]
         )
+        mock_db_pool._mock_conn.fetchval = AsyncMock(return_value=None)  # no period row
         result = await hr_service.approve_bonus(1, "uxxx2@dxx1.com")
         assert result["status"] == "approved"
 
@@ -341,12 +341,12 @@ class TestPayroll:
     @pytest.mark.asyncio
     async def test_approve_payroll(self, hr_service, mock_db_pool):
         mock_db_pool._mock_conn.fetchrow = AsyncMock(
-            return_value={
-                "id": 1,
-                "status": "approved",
-                "approved_by": "admin",
-            }
+            side_effect=[
+                {"id": 1, "status": "calculated", "payroll_month": 4, "payroll_year": 2026},
+                {"id": 1, "status": "approved", "approved_by": "admin"},
+            ]
         )
+        mock_db_pool._mock_conn.fetchval = AsyncMock(return_value=None)  # no bonus drift
         result = await hr_service.approve_payroll(1, "admin")
         assert result["status"] == "approved"
 

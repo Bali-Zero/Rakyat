@@ -8,6 +8,7 @@ import pytest
 from backend.app.services.hr.hr_service import (
     BonusPeriodLockedError,
     HRService,
+    PayrollBonusesChangedError,
     department_of,
     practice_group,
 )
@@ -99,12 +100,12 @@ class TestCreateManualBonus:
     async def test_locked_month_raises_and_inserts_nothing(self, svc, pool):
         conn = pool._conn
         conn.fetchrow = AsyncMock(return_value={"id": 7})
-        conn.fetchval = AsyncMock(return_value=1)  # approved/paid period exists
+        conn.fetchval = AsyncMock(return_value="approved")  # the period's status
         with pytest.raises(BonusPeriodLockedError):
             await svc.create_manual_bonus(**_args())
         assert conn.fetchrow.await_count == 1
         lock_sql, month, year = conn.fetchval.await_args.args
-        assert "'approved', 'paid'" in lock_sql and (month, year) == (11, 2026)
+        assert "FOR SHARE" in lock_sql and (month, year) == (11, 2026)
 
 
 class TestRejectAndDelete:
@@ -220,3 +221,41 @@ class TestListingAndTotals:
         conn.fetchrow = AsyncMock(return_value={"bonus_count": 0})
         await svc.get_bonus_summary(1, 11, 2026)
         assert "NOT IN ('rejected', 'reversed', 'cancelled')" in conn.fetchrow.await_args.args[0]
+
+
+class TestPeriodLocks:
+    @pytest.mark.asyncio
+    async def test_approve_bonus_in_a_locked_month_raises(self, svc, pool):
+        conn = pool._conn
+        conn.fetchrow = AsyncMock(return_value={"status": "pending", "m": 11, "y": 2026})
+        conn.fetchval = AsyncMock(return_value="paid")
+        with pytest.raises(BonusPeriodLockedError):
+            await svc.approve_bonus(3, "tm-1")
+        assert conn.fetchrow.await_count == 1  # never reached the UPDATE
+        assert "FOR UPDATE" in conn.fetchrow.await_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_approve_bonus_unknown_or_not_pending_keeps_the_value_error(self, svc, pool):
+        conn = pool._conn
+        conn.fetchrow = AsyncMock(return_value=None)
+        with pytest.raises(ValueError):
+            await svc.approve_bonus(3, "tm-1")
+        conn.fetchrow = AsyncMock(return_value={"status": "approved", "m": 1, "y": 2026})
+        with pytest.raises(ValueError):
+            await svc.approve_bonus(3, "tm-1")
+
+    @pytest.mark.asyncio
+    async def test_approve_payroll_refuses_when_bonuses_drifted(self, svc, pool):
+        conn = pool._conn
+        conn.fetchrow = AsyncMock(
+            return_value={
+                "id": 1,
+                "status": "calculated",
+                "payroll_month": 11,
+                "payroll_year": 2026,
+            }
+        )
+        conn.fetchval = AsyncMock(return_value=42)  # an employee whose bonus total differs
+        with pytest.raises(PayrollBonusesChangedError, match="recalculate"):
+            await svc.approve_payroll(1, "tm-1")
+        assert conn.fetchrow.await_count == 1  # the UPDATE never ran

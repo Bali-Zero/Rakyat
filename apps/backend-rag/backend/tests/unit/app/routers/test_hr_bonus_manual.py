@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.routers import hr as hr_router
-from backend.app.services.hr.hr_service import BonusPeriodLockedError
+from backend.app.services.hr.hr_service import BonusPeriodLockedError, PayrollBonusesChangedError
 
 ADMIN = {"user_id": "tm-admin", "email": "Asya@balizero.com", "role": "member"}
 MEMBER = {"user_id": "tm-fake-7", "email": "fake.member@balizero.com", "role": "member"}
@@ -147,3 +147,33 @@ def test_member_bonus_list_hides_created_by_admin_keeps_it(make_client):
     assert svc.list_bonuses.await_args.args[0] == 7  # forced to the member's own rows
     admin = make_client(ADMIN, svc).get("/api/hr/bonuses").json()
     assert admin["bonuses"][0]["created_by"] == "asya@balizero.com"
+
+
+def test_approve_bonus_maps_200_409_400(make_client):
+    svc = AsyncMock()
+    c = make_client(ADMIN, svc)
+    svc.approve_bonus = AsyncMock(return_value={"id": 3, "status": "approved"})
+    assert c.post("/api/hr/bonuses/3/approve").status_code == 200
+    svc.approve_bonus = AsyncMock(
+        side_effect=BonusPeriodLockedError("That month's payroll is already approved")
+    )
+    res = c.post("/api/hr/bonuses/3/approve")
+    assert res.status_code == 409 and "payroll is already approved" in res.json()["detail"]
+    svc.approve_bonus = AsyncMock(side_effect=ValueError("not pending"))
+    assert c.post("/api/hr/bonuses/3/approve").status_code == 400
+
+
+def test_approve_payroll_maps_200_409_400(make_client):
+    svc = AsyncMock()
+    c = make_client(ADMIN, svc)
+    svc.approve_payroll = AsyncMock(return_value={"id": 1, "status": "approved"})
+    assert c.post("/api/hr/payroll/1/approve").status_code == 200
+    svc.approve_payroll = AsyncMock(
+        side_effect=PayrollBonusesChangedError(
+            "Bonuses changed since this payroll was calculated; recalculate before approving"
+        )
+    )
+    res = c.post("/api/hr/payroll/1/approve")
+    assert res.status_code == 409 and "recalculate" in res.json()["detail"]
+    svc.approve_payroll = AsyncMock(side_effect=ValueError("not calculated"))
+    assert c.post("/api/hr/payroll/1/approve").status_code == 400

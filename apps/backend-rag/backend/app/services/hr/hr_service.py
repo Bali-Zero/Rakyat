@@ -47,7 +47,32 @@ MANUAL_BONUS_CODE = "manual"
 
 
 class BonusPeriodLockedError(Exception):
-    """The payroll month of a manual bonus is already approved or paid."""
+    """The payroll month of a bonus is already approved or paid."""
+
+
+class PayrollBonusesChangedError(Exception):
+    """Approved bonuses no longer match the payslips the period was calculated with."""
+
+
+async def _lock_payroll_month(conn: Any, month: int, year: int) -> None:
+    """Share-lock the payroll period of a month and refuse when it is approved or paid.
+
+    Serialises bonus insert/approval against payroll approval (which takes the same row
+    FOR UPDATE). No period row: nothing is locked and nothing is raised. Must run inside
+    a transaction, or the lock is released at once.
+    """
+    status = await conn.fetchval(
+        """
+        SELECT status FROM hr_payroll_periods
+        WHERE payroll_month = $1 AND payroll_year = $2
+        FOR SHARE
+        """,
+        month,
+        year,
+    )
+    if status in ("approved", "paid"):
+        msg = "That month's payroll is already approved"
+        raise BonusPeriodLockedError(msg)
 
 
 def department_of(email: str | None, stored: str | None = None) -> str:
@@ -497,21 +522,32 @@ class HRService:
             return [dict(r) for r in rows]
 
     async def approve_bonus(self, bonus_id: int, approved_by: str) -> dict[str, Any]:
-        """Approve a pending bonus."""
+        """Approve a pending bonus, unless its payroll month is already approved or paid."""
         async with self.db_pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                UPDATE hr_bonus_ledger
-                SET status = 'approved', approved_by = $2, approved_at = NOW()
-                WHERE id = $1 AND status = 'pending'
-                RETURNING *
-            """,
-                bonus_id,
-                approved_by,
-            )
-            if not row:
-                msg = f"Bonus {bonus_id} not found or not pending"
-                raise ValueError(msg)
+            async with conn.transaction():
+                cur = await conn.fetchrow(
+                    """
+                    SELECT status,
+                           EXTRACT(MONTH FROM (awarded_at AT TIME ZONE 'Asia/Makassar'))::int AS m,
+                           EXTRACT(YEAR FROM (awarded_at AT TIME ZONE 'Asia/Makassar'))::int AS y
+                    FROM hr_bonus_ledger WHERE id = $1 FOR UPDATE
+                    """,
+                    bonus_id,
+                )
+                if not cur or cur["status"] != "pending":
+                    msg = f"Bonus {bonus_id} not found or not pending"
+                    raise ValueError(msg)
+                await _lock_payroll_month(conn, cur["m"], cur["y"])
+                row = await conn.fetchrow(
+                    """
+                    UPDATE hr_bonus_ledger
+                    SET status = 'approved', approved_by = $2, approved_at = NOW()
+                    WHERE id = $1 AND status = 'pending'
+                    RETURNING *
+                    """,
+                    bonus_id,
+                    approved_by,
+                )
             logger.info("Bonus %s approved by %s", bonus_id, approved_by)
             return dict(row)
 
@@ -571,18 +607,7 @@ class HRService:
                     if not known:
                         msg = "Unknown or inactive service"
                         raise ValueError(msg)
-                locked = await conn.fetchval(
-                    """
-                    SELECT 1 FROM hr_payroll_periods
-                    WHERE payroll_month = $1 AND payroll_year = $2
-                      AND status IN ('approved', 'paid')
-                    """,
-                    awarded_on.month,
-                    awarded_on.year,
-                )
-                if locked:
-                    msg = "Payroll for that month is already approved"
-                    raise BonusPeriodLockedError(msg)
+                await _lock_payroll_month(conn, awarded_on.month, awarded_on.year)
                 row = await conn.fetchrow(
                     """
                     INSERT INTO hr_bonus_ledger (
@@ -749,7 +774,8 @@ class HRService:
                         month,
                         year,
                     )
-                    bonus_total = bonus_row["total"]
+                    # SUM(bigint) is numeric: asyncpg returns Decimal, which the float tax maths rejects.
+                    bonus_total = int(bonus_row["total"])
 
                     # Calculate BPJS
                     bpjs = calculate_bpjs(salary)
@@ -930,21 +956,56 @@ class HRService:
             return result
 
     async def approve_payroll(self, period_id: int, approved_by: str) -> dict[str, Any]:
-        """Approve a payroll period (locks it)."""
+        """Approve a payroll period (locks it).
+
+        The period row is locked FOR UPDATE first, so bonus inserts and approvals (which
+        share-lock it) either finished before the comparison below or wait and then see
+        the period approved. Refuses when the approved+paid bonuses of the month no longer
+        match what the payslips were calculated with.
+        """
         async with self.db_pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                UPDATE hr_payroll_periods
-                SET status = 'approved', approved_by = $2
-                WHERE id = $1 AND status = 'calculated'
-                RETURNING *
-            """,
-                period_id,
-                approved_by,
-            )
-            if not row:
-                msg = f"Period {period_id} not found or not in 'calculated' status"
-                raise ValueError(msg)
+            async with conn.transaction():
+                period = await conn.fetchrow(
+                    "SELECT * FROM hr_payroll_periods WHERE id = $1 FOR UPDATE", period_id
+                )
+                if not period or period["status"] != "calculated":
+                    msg = f"Period {period_id} not found or not in 'calculated' status"
+                    raise ValueError(msg)
+                drift = await conn.fetchval(
+                    """
+                    SELECT e.id FROM hr_employees e
+                    LEFT JOIN hr_payslips ps
+                           ON ps.employee_id = e.id AND ps.payroll_period_id = $1
+                    WHERE e.is_active = TRUE
+                      AND COALESCE(ps.bonus_total_idr, 0) <> COALESCE((
+                            SELECT SUM(b.amount_idr) FROM hr_bonus_ledger b
+                            WHERE b.employee_id = e.id
+                              AND b.status IN ('approved', 'paid')
+                              AND EXTRACT(MONTH FROM (b.awarded_at AT TIME ZONE 'Asia/Makassar')) = $2
+                              AND EXTRACT(YEAR FROM (b.awarded_at AT TIME ZONE 'Asia/Makassar')) = $3
+                          ), 0)
+                    LIMIT 1
+                    """,
+                    period_id,
+                    period["payroll_month"],
+                    period["payroll_year"],
+                )
+                if drift is not None:
+                    msg = (
+                        "Bonuses changed since this payroll was calculated; "
+                        "recalculate before approving"
+                    )
+                    raise PayrollBonusesChangedError(msg)
+                row = await conn.fetchrow(
+                    """
+                    UPDATE hr_payroll_periods
+                    SET status = 'approved', approved_by = $2
+                    WHERE id = $1 AND status = 'calculated'
+                    RETURNING *
+                    """,
+                    period_id,
+                    approved_by,
+                )
             logger.info("Payroll period %s approved by %s", period_id, approved_by)
             return dict(row)
 

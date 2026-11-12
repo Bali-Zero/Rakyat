@@ -32,6 +32,7 @@ from backend.app.services.hr.hr_service import (
     BonusPeriodLockedError,
     HRCardError,
     HRService,
+    PayrollBonusesChangedError,
     business_today,
 )
 from backend.app.utils.crm_utils import is_crm_admin
@@ -447,6 +448,8 @@ async def approve_bonus(
         result = await service.approve_bonus(bonus_id, approver_id)
         await invalidate_cache("zantara:hr_bonuses:*")
         return {"success": True, "bonus": result}
+    except BonusPeriodLockedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -577,6 +580,8 @@ async def approve_payroll(
         result = await service.approve_payroll(period_id, approver_id)
         await invalidate_cache("zantara:hr_payroll:*")
         return {"success": True, "period": result}
+    except PayrollBonusesChangedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
