@@ -265,10 +265,16 @@ async def test_two_folders_for_one_member_is_a_drive_error_not_a_guess():
 
 # ── upload flow ──
 
+DOCS = {
+    k: {"present": False, "file_id": None}
+    for k in ("ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk", "contract")
+}
+ACTOR = "zero@balizero.com"
+
 
 async def _up(svc: HRDocumentService, **kw: Any) -> dict[str, Any]:
     return await svc.upload(
-        actor_id="tm-owner",
+        actor_email=ACTOR,
         member_id=MEMBER,
         email="dea@balizero.com",
         slot=kw.get("slot", "ktp"),
@@ -279,28 +285,34 @@ async def _up(svc: HRDocumentService, **kw: Any) -> dict[str, Any]:
     )
 
 
+def _step(verified: str | None) -> AsyncMock:
+    return AsyncMock(return_value=(verified, DOCS))
+
+
 @pytest.mark.asyncio
-async def test_upload_title_properties_and_result(monkeypatch):
+async def test_upload_title_properties_and_result():
     d = FakeDrive()
     svc = _svc(d)
-    svc._db_step = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    svc._db_step = _step(None)  # type: ignore[method-assign]
     res = await _up(svc)
-    f = d.files[res["file_id"]]
+    f = d.files[next(iter(d.files))]
     assert f["name"] == "KTP - Made Contoh - 2026-11-12.pdf"
     assert f["appProperties"] == {hd.MEMBER_PROP: MEMBER, hd.SLOT_PROP: "ktp"}
     assert f["mime"] == "application/pdf"
-    assert res == {"slot": "ktp", "file_id": res["file_id"], "previous": "none"}
+    assert res == {"slot": "ktp", "documents": DOCS}  # N5: no `previous`, no file id of the past
+    assert svc._db_step.await_args.kwargs["actor_email"] == ACTOR
+    assert svc._db_step.await_args.kwargs["new_id"] in d.files
 
 
 @pytest.mark.asyncio
-async def test_a_real_previous_upload_of_the_same_slot_is_trashed():
+async def test_a_verified_previous_upload_of_the_same_slot_is_trashed_by_its_listing_id():
     d = FakeDrive()
     d.seed_person_folder()
     d.add_file("prevfile12345", slot="kk")
     svc = _svc(d)
-    svc._db_step = AsyncMock(return_value="prevfile12345")  # type: ignore[method-assign]
-    res = await _up(svc, slot="kk")
-    assert res["previous"] == "trashed" and d.trashed == ["prevfile12345"]
+    svc._db_step = _step("prevfile12345")  # type: ignore[method-assign]
+    await _up(svc, slot="kk")
+    assert d.trashed == ["prevfile12345"]
 
 
 @pytest.mark.asyncio
@@ -314,10 +326,10 @@ async def test_a_real_previous_upload_of_the_same_slot_is_trashed():
         "other_member",
         "trashed",
         "bad_mime",
-        "unknown",
+        "gone",
     ],
 )
-async def test_a_previous_that_is_not_exactly_our_file_for_this_slot_is_kept(kind):
+async def test_a_verified_previous_that_the_listing_does_not_return_is_kept(kind):
     d = FakeDrive()
     pf = d.seed_person_folder()
     d.folders["other-folder"] = {
@@ -326,7 +338,7 @@ async def test_a_previous_that_is_not_exactly_our_file_for_this_slot_is_kept(kin
         "parents": [ROOT],
         "appProperties": {},
     }
-    if kind == "folder":  # a person-folder id pasted into the slot: it carries nz_hr_member too
+    if kind == "folder":  # a folder id as the proof id: it carries nz_hr_member too
         d.files["prevfile12345"] = {
             "name": "f",
             "parent": "u-seed",
@@ -347,10 +359,20 @@ async def test_a_previous_that_is_not_exactly_our_file_for_this_slot_is_kept(kin
     elif kind == "bad_mime":
         d.add_file("prevfile12345", slot="kk", mime="text/html")
     svc = _svc(d)
-    svc._db_step = AsyncMock(return_value="prevfile12345")  # type: ignore[method-assign]
-    res = await _up(svc, slot="kk")
-    assert res["previous"] == "kept" and d.trashed == []
-    assert pf in d.folders and "prevfile12345" not in d.trashed
+    svc._db_step = _step("prevfile12345")  # type: ignore[method-assign]
+    await _up(svc, slot="kk")
+    assert d.trashed == [] and pf in d.folders
+
+
+@pytest.mark.asyncio
+async def test_an_unverified_previous_makes_no_drive_call_at_all():
+    d = FakeDrive()
+    d.seed_person_folder()
+    d.add_file("somefile12345", slot="kk")
+    svc = _svc(d)
+    svc._db_step = _step(None)  # the DB step returns a previous ONLY when it was verified
+    await _up(svc, slot="kk")
+    assert d.trashed == [] and getattr(d, "listed", []) == []
 
 
 @pytest.mark.asyncio
@@ -378,23 +400,19 @@ async def test_drive_upload_error_is_a_fixed_code_without_the_message():
 
 
 @pytest.mark.asyncio
-async def test_remove_trashes_ours_only():
+async def test_remove_trashes_the_verified_file_only_and_an_unverified_one_touches_nothing():
     d = FakeDrive()
     d.seed_person_folder()
     d.add_file("fileid1234567", slot="kk")
     svc = _svc(d)
-    svc._db_step = AsyncMock(return_value="fileid1234567")  # type: ignore[method-assign]
-    res = await svc.remove(actor_id="a", member_id=MEMBER, email="e", slot="kk")
-    assert res == {"slot": "kk", "file_id": None, "previous": "trashed"}
-    d.add_file("fileid7654321", slot="ktp")  # same member, other slot
-    svc._db_step = AsyncMock(return_value="fileid7654321")  # type: ignore[method-assign]
-    assert (await svc.remove(actor_id="a", member_id=MEMBER, email="e", slot="kk"))[
-        "previous"
-    ] == "kept"
-    svc._db_step = AsyncMock(return_value=None)  # type: ignore[method-assign]
-    assert (await svc.remove(actor_id="a", member_id=MEMBER, email="e", slot="kk"))[
-        "previous"
-    ] == "none"
+    svc._db_step = _step("fileid1234567")  # type: ignore[method-assign]
+    res = await svc.remove(actor_email=ACTOR, member_id=MEMBER, email="e", slot="kk")
+    assert res == {"slot": "kk", "documents": DOCS} and d.trashed == ["fileid1234567"]
+    d.trashed.clear()
+    d.listed = []
+    svc._db_step = _step(None)  # legacy / unverified: the slot is cleared, Drive is not called
+    await svc.remove(actor_email=ACTOR, member_id=MEMBER, email="e", slot="kk")
+    assert d.trashed == [] and d.listed == []
 
 
 def test_slot_set_is_the_five_docs_plus_contract():
@@ -443,34 +461,19 @@ async def test_context_errors_surface_from_inside_the_lock():
     assert e2.value.code is HRDocCode.HR_RECORD_REQUIRED
 
 
-# ── nothing unverified reaches the audit or the logs ──
+# ── nothing stored reaches the logs, Drive or a response ──
 
 NIKISH = "3171234567890001"
 
 
-def test_value_sha_is_16_hex_of_sha256():
-    import hashlib
-
-    assert hd.value_sha(NIKISH) == hashlib.sha256(NIKISH.encode()).hexdigest()[:16]
-    assert len(hd.value_sha("x")) == 16
+def test_the_door_keeps_no_hash_and_no_audit_insert():
+    assert not hasattr(hd, "value_sha") and not hasattr(hd, "_AUDIT_SQL")
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("previous", [NIKISH, "KTP Made Contoh.pdf", "short", "a" * 300])
-async def test_a_previous_value_drive_does_not_know_is_kept_without_a_trace(previous, caplog):
-    d = FakeDrive()  # knows no such file: the door's own file list
-    svc = _svc(d)
-    svc._db_step = AsyncMock(return_value=previous)  # type: ignore[method-assign]
-    with caplog.at_level(logging.DEBUG):
-        res = await _up(svc)
-    assert res["previous"] == "kept" and d.trashed == []
-    assert previous not in caplog.text and previous not in str(res)
-    assert previous not in str(getattr(d, "listed", []))  # never an input to any Drive call
-
-
-@pytest.mark.asyncio
-async def test_a_drive_error_on_the_previous_is_kept_and_not_logged(caplog):
+async def test_a_drive_error_while_trashing_is_swallowed_and_not_logged(caplog):
     d = FakeDrive()
+    d.seed_person_folder()
     prev = "A" * 33
 
     async def boom(*_a, **_k):
@@ -478,23 +481,24 @@ async def test_a_drive_error_on_the_previous_is_kept_and_not_logged(caplog):
 
     d.list_files_by_app_properties = boom  # type: ignore[method-assign]
     svc = _svc(d)
-    svc._db_step = AsyncMock(return_value=prev)  # type: ignore[method-assign]
+    svc._db_step = _step(prev)  # type: ignore[method-assign]
     with caplog.at_level(logging.DEBUG):
         res = await _up(svc)
-    assert res["previous"] == "kept"
+    assert res["slot"] == "ktp"
     assert NIKISH not in caplog.text and prev not in caplog.text
 
 
 # ── commit outcome unknown ──
 
 
-def _unknown(svc: HRDocumentService, previous: str | None, holds: bool | None) -> None:
+def _unknown(svc: HRDocumentService, verified: str | None, holds: bool | None) -> None:
     async def step(**kw: Any) -> None:
-        kw["state"]["previous"] = previous
+        kw["state"]["verified"] = verified
         raise HRDocError(HRDocCode.COMMIT_UNKNOWN)
 
     svc._db_step = step  # type: ignore[method-assign,assignment]
     svc._slot_holds = AsyncMock(return_value=holds)  # type: ignore[method-assign]
+    svc._documents = AsyncMock(return_value=DOCS)  # type: ignore[method-assign]
 
 
 @pytest.mark.asyncio
@@ -505,7 +509,7 @@ async def test_commit_unknown_and_the_write_landed_is_a_success_and_trashes_ours
     svc = _svc(d)
     _unknown(svc, "oldfile12345", True)
     res = await _up(svc)
-    assert res["previous"] == "trashed" and res["file_id"] in d.files
+    assert res == {"slot": "ktp", "documents": DOCS}
     assert d.trashed == ["oldfile12345"]  # the NEW file was not trashed
 
 

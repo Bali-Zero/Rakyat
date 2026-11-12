@@ -246,3 +246,43 @@ def test_production_init_turns_request_bodies_off(monkeypatch):
     monkeypatch.setattr("sentry_sdk.init", lambda **kw: captured.update(kw))
     _init_sentry_blocking("https://example.invalid/1")
     assert captured["max_request_body_size"] == "never"
+
+
+def test_a_failing_card_read_sends_no_stored_slot_value_to_sentry(transport):
+    """Acceptance 2 (C13): a NIK-like value in a document slot never reaches a Sentry event, even
+    when the request fails right after the card was composed."""
+    from backend.app.routers import hr as hr_router
+    from backend.app.services.hr import hr_card_models
+
+    nik = "3171234567890009"
+    row = {
+        "id": 7,
+        "is_active": True,
+        "full_name": "Made Contoh",
+        "profile": {"docs": {"ktp": nik}, "contract": {"file_id": nik, "number": "C"}},
+    }
+    service = MagicMock()
+    service.get_card_for_member = AsyncMock(return_value=row)
+    real = hr_card_models.member_card
+
+    def compose_then_fail(card: Any) -> Any:
+        real(card)
+        raise RuntimeError("card composition failed")
+
+    app = FastAPI()
+    app.include_router(hr_router.router)
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": "tm-owner",
+        "email": "zero@balizero.com",
+        "role": "member",
+    }
+    app.dependency_overrides[get_database_pool] = lambda: MagicMock()
+    with (
+        patch.object(hr_router, "_get_hr_service", return_value=service),
+        patch.object(hr_router, "member_card", compose_then_fail),
+    ):
+        res = TestClient(app, raise_server_exceptions=False).get("/api/hr/me/card")
+    assert res.status_code == 500
+    sentry_sdk.flush()
+    assert transport.payloads, "the SDK captured nothing: the test would be vacuous"
+    assert all(nik not in p for p in transport.payloads)

@@ -27,6 +27,7 @@ from starlette.formparsers import MultiPartParser
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.routers.hr import _get_user_id
 from backend.app.services.hr.hr_card_edit import CardEditBody, safe_validation_errors
+from backend.app.services.hr.hr_card_models import DocumentChangeResult
 from backend.app.services.hr.hr_documents import (
     ALL_SLOTS,
     MAX_BYTES,
@@ -373,6 +374,7 @@ async def upload_person_document(
     if detected is None:
         return _field_422("file", "unsupported_type", "Only PDF, JPEG or PNG files are accepted")
     actor_id = str(_get_user_id(current_user))
+    actor_email = str(current_user.get("email") or "").lower().strip()
     try:
         drive = await get_hr_drive_service()
     except Exception as exc:
@@ -380,7 +382,7 @@ async def upload_person_document(
         return _doc_error_response(HRDocCode.DRIVE_UNAVAILABLE)
     try:
         result = await HRDocumentService(db_pool, drive).upload(
-            actor_id=actor_id,
+            actor_email=actor_email,
             member_id=member_id,
             email=member_email,
             slot=slot,
@@ -398,11 +400,10 @@ async def upload_person_document(
         )
         return _doc_error_response(exc.code)
     logger.info(
-        "hr document upload actor=%s target=%s slot=%s previous=%s",
+        "hr document upload actor=%s target=%s slot=%s",
         actor_id,
         member_id,
         slot,
-        result["previous"],
     )
     return JSONResponse(status_code=200, content=result)
 
@@ -419,6 +420,7 @@ async def remove_person_document(
         return ctx
     member_id, member_email = ctx
     actor_id = str(_get_user_id(current_user))
+    actor_email = str(current_user.get("email") or "").lower().strip()
     try:
         drive = await get_hr_drive_service()
     except Exception as exc:
@@ -426,7 +428,7 @@ async def remove_person_document(
         return _doc_error_response(HRDocCode.DRIVE_UNAVAILABLE)
     try:
         result = await HRDocumentService(db_pool, drive).remove(
-            actor_id=actor_id, member_id=member_id, email=member_email, slot=slot
+            actor_email=actor_email, member_id=member_id, email=member_email, slot=slot
         )
     except HRDocError as exc:
         logger.warning(
@@ -438,11 +440,10 @@ async def remove_person_document(
         )
         return _doc_error_response(exc.code)
     logger.info(
-        "hr document remove actor=%s target=%s slot=%s previous=%s",
+        "hr document remove actor=%s target=%s slot=%s",
         actor_id,
         member_id,
         slot,
-        result["previous"],
     )
     return JSONResponse(status_code=200, content=result)
 
@@ -451,6 +452,7 @@ router.add_api_route(
     "/{team_member_id}/documents/{slot}",
     upload_person_document,
     methods=["POST"],
+    response_model=DocumentChangeResult,
     route_class_override=_NoEchoValidationRoute,
     # The handler takes no body parameter (it reads the stream itself, after authz and under a
     # cap), so the multipart body is declared here for the generated clients.
@@ -474,5 +476,6 @@ router.add_api_route(
     "/{team_member_id}/documents/{slot}",
     remove_person_document,
     methods=["DELETE"],
+    response_model=DocumentChangeResult,
     route_class_override=_NoEchoValidationRoute,
 )

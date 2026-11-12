@@ -22052,6 +22052,16 @@ export interface components {
       zeroed: number;
     };
     /**
+     * DocumentChangeResult
+     * @description The answer of the C13 door: which slot changed and the six-key map after the write
+     *     (null only if the fresh read after an uncertain commit failed). Never a stored value.
+     */
+    DocumentChangeResult: {
+      documents?: components["schemas"]["DocumentsMap"] | null;
+      /** Slot */
+      slot: string;
+    };
+    /**
      * DocumentChunk
      * @description Single document chunk to ingest
      */
@@ -22091,6 +22101,20 @@ export interface components {
       notes?: string | null;
       /** Practice Id */
       practice_id?: number | null;
+    };
+    /**
+     * DocumentState
+     * @description One paper: `present` is true iff the stored slot value is a non-empty string; `file_id` is
+     *     that value only when it is VERIFIED (the door wrote it and `doc_proof` says so), else null.
+     */
+    DocumentState: {
+      /** File Id */
+      file_id?: string | null;
+      /**
+       * Present
+       * @default false
+       */
+      present: boolean;
     };
     /** DocumentUpdate */
     DocumentUpdate: {
@@ -22158,6 +22182,18 @@ export interface components {
      * @enum {string}
      */
     DocumentationStatus: "AVAILABLE" | "UNKNOWN";
+    /**
+     * DocumentsMap
+     * @description Closed: exactly these six keys, never a stored `docs` key.
+     */
+    DocumentsMap: {
+      bpjs_kes?: components["schemas"]["DocumentState"];
+      bpjs_tk?: components["schemas"]["DocumentState"];
+      contract?: components["schemas"]["DocumentState"];
+      kk?: components["schemas"]["DocumentState"];
+      ktp?: components["schemas"]["DocumentState"];
+      npwp?: components["schemas"]["DocumentState"];
+    };
     /** DriveBacklogItem */
     DriveBacklogItem: {
       /** Backlog Type */
@@ -27926,10 +27962,7 @@ export interface components {
       contract?: components["schemas"]["StaffContractRead"] | null;
       /** Department */
       department?: string | null;
-      /** Docs */
-      docs?: {
-        [key: string]: string;
-      };
+      documents?: components["schemas"]["DocumentsMap"];
       /** Employee Id */
       employee_id: number;
       /** Employer Entity */
@@ -27998,10 +28031,12 @@ export interface components {
       /** Number */
       number?: string | null;
     };
-    /** StaffContractRead */
+    /**
+     * StaffContractRead
+     * @description `contract.file_id` is NOT here: a stored slot value is untrusted free text (C13), and only
+     *     the `documents` map of the card says whether a paper is on file and which file is verified.
+     */
     StaffContractRead: {
-      /** File Id */
-      file_id?: string | null;
       /** Number */
       number?: string | null;
     };
@@ -44789,7 +44824,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["DocumentChangeResult"];
         };
       };
       /** @description Validation Error */
@@ -44821,7 +44856,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["DocumentChangeResult"];
         };
       };
       /** @description Validation Error */

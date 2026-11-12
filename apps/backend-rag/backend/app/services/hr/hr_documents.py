@@ -4,23 +4,25 @@ Files live in the owner's Drive tree (`settings.hr_documents_drive_root_id`), on
 person under a folder per UNIT. The tree is written as the tree's owner (domain-wide delegation,
 `settings.hr_documents_drive_subject`), because the service account alone is only a reader there.
 
-Nothing here puts a personal value (name, file title, file bytes) in a log, an error or an audit
-row: errors are `HRDocError` codes, the audit row carries slot + file ids only.
+Nothing here puts a personal value (name, file title, file bytes, a stored slot value) in a log, an
+error or a response: errors are `HRDocError` codes. Provenance lives in the card itself
+(`profile.doc_proof.<slot> = {id, by, at}`, written in the same UPDATE as the slot): there is no
+audit table in the door's transaction (production has none).
 """
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from enum import Enum
 from typing import Any
 
 import asyncpg
 
 from backend.app.core.config import settings
+from backend.app.services.hr.hr_card_models import project_documents
 from backend.app.services.hr.hr_people_service import DOC_SLOTS
 from backend.app.services.hr.hr_service import (
     _LOCK_ERRORS,
@@ -54,8 +56,6 @@ MEMBER_PROP = "nz_hr_member"
 SLOT_PROP = "nz_hr_slot"
 FOLDER_MIME = "application/vnd.google-apps.folder"
 DOC_MIMES = frozenset({"application/pdf", "image/jpeg", "image/png"})  # what this door uploads
-AUDIT_UPLOAD = "hr_document_upload"
-AUDIT_REMOVE = "hr_document_remove"
 
 
 class HRDocCode(str, Enum):
@@ -123,46 +123,89 @@ _CONTEXT_SQL = """
     WHERE tm.id = $1
 """
 
-# FOR UPDATE: the previous id is read under the same row lock the new write takes.
+# FOR UPDATE: the previous state is read under the same row lock the new write takes. Both the
+# slot value and the proof come out of ONE statement of ONE row, as jsonb (their types matter).
 _PREVIOUS_SQL = """
     SELECT CASE WHEN jsonb_typeof(profile) <> 'object' THEN NULL
-                WHEN $2 = 'contract' THEN
+                WHEN $2::text = 'contract' THEN
                     CASE WHEN jsonb_typeof(profile->'contract') = 'object'
-                         THEN profile->'contract'->>'file_id' END
+                         THEN profile->'contract'->'file_id' END
                 ELSE CASE WHEN jsonb_typeof(profile->'docs') = 'object'
-                          THEN profile->'docs'->>$2 END
-           END
+                          THEN profile->'docs'->$2::text END
+           END AS v,
+           CASE WHEN jsonb_typeof(profile) = 'object'
+                     AND jsonb_typeof(profile->'doc_proof') = 'object'
+                     AND jsonb_typeof(profile->'doc_proof'->$2::text) = 'object'
+                THEN profile->'doc_proof'->$2::text->'id' END AS pid,
+           jsonb_typeof(profile) = 'object' AS is_object
     FROM hr_employees WHERE team_member_id = $1 FOR UPDATE
 """
 
-_REMOVE_DOC_SQL = """
-    UPDATE hr_employees SET
-        profile = jsonb_set(profile, '{docs}', (profile->'docs') - $2::text),
-        updated_at = NOW()
-    WHERE team_member_id = $1 AND jsonb_typeof(profile) = 'object'
-      AND jsonb_typeof(profile->'docs') = 'object'
-"""
+# The write (R2 + N1 + N4): the slot and `doc_proof.<slot>` in ONE UPDATE, per slot, through
+# jsonb_set, so the other five proofs and every other profile key survive. A contract write or
+# remove also deletes the legacy duplicate `docs.contract`. $1 member, $2 slot, $3 new id (NULL on
+# remove), $4 actor email, $5 UTC timestamp. Only constants are formatted into it.
+_DOCS_OBJ = (
+    "COALESCE(CASE WHEN jsonb_typeof(profile->'docs') = 'object' THEN profile->'docs' END,"
+    " '{}'::jsonb)"
+)
+_CONTRACT_OBJ = (
+    "COALESCE(CASE WHEN jsonb_typeof(profile->'contract') = 'object' THEN profile->'contract' END,"
+    " '{}'::jsonb)"
+)
+_PROOF_OBJ = (
+    "COALESCE(CASE WHEN jsonb_typeof(profile->'doc_proof') = 'object' THEN profile->'doc_proof' END,"
+    " '{}'::jsonb)"
+)
+_STAMP = "jsonb_build_object('id', $3::text, 'by', $4::text, 'at', $5::text)"
+_DROP_LEGACY_CONTRACT_DUP = (
+    "CASE WHEN jsonb_typeof(profile->'docs') = 'object'"
+    " THEN jsonb_set({inner}, '{{docs}}', (profile->'docs') - 'contract') ELSE {inner} END"
+)
 
-_REMOVE_CONTRACT_SQL = """
-    UPDATE hr_employees SET
-        profile = jsonb_set(profile, '{contract}', (profile->'contract') - 'file_id'),
-        updated_at = NOW()
-    WHERE team_member_id = $1 AND jsonb_typeof(profile) = 'object'
-      AND jsonb_typeof(profile->'contract') = 'object'
-"""
+
+def _write_sql(slot: str, remove: bool) -> str:
+    if slot == CONTRACT_SLOT:
+        if remove:
+            c = (
+                "CASE WHEN jsonb_typeof(profile->'contract') = 'object' THEN"
+                " jsonb_set(profile, '{contract}', (profile->'contract') - 'file_id')"
+                " ELSE profile END"
+            )
+        else:
+            c = (
+                f"jsonb_set(profile, '{{contract}}', {_CONTRACT_OBJ}"
+                " || jsonb_build_object('file_id', $3::text))"
+            )
+        inner = _DROP_LEGACY_CONTRACT_DUP.format(inner=c)
+    elif remove:
+        inner = f"jsonb_set(profile, '{{docs}}', {_DOCS_OBJ} - $2::text)"
+    else:
+        inner = (
+            f"jsonb_set(profile, '{{docs}}', {_DOCS_OBJ} || jsonb_build_object($2::text, $3::text))"
+        )
+    proofed = (
+        f"jsonb_set({inner}, '{{doc_proof}}',"
+        f" {_PROOF_OBJ} || jsonb_build_object($2::text, {_STAMP}))"
+    )
+    return (
+        f"UPDATE hr_employees SET profile = {proofed}, updated_at = NOW()"
+        " WHERE team_member_id = $1 AND jsonb_typeof(profile) = 'object' RETURNING profile"
+    )
 
 
-def value_sha(value: str) -> str:
-    """First 16 hex of the sha256: what the audit keeps of a value this request did not create
-    (the card's old slot is free text under C10, so it may be a NIK or a file name)."""
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+_WRITE_SQL = {
+    (slot, remove): _write_sql(slot, remove) for slot in ALL_SLOTS for remove in (False, True)
+}
 
 
-_AUDIT_SQL = """
-    INSERT INTO security_audit_log
-        (user_id, action, resource_type, resource_id, success, details)
-    VALUES ($1, $2, 'hr_employee', $3, TRUE, $4::jsonb)
-"""
+def _verified_previous(row: Any) -> str | None:
+    """The previous slot value iff it is VERIFIED: a JSON string equal to `doc_proof.<slot>.id`
+    (a JSON string). Plain equality, nothing hashed, nothing looked up. Anything else is None."""
+    value, proof = row["v"], row["pid"]
+    if isinstance(value, str) and value.strip() and isinstance(proof, str) and proof == value:
+        return value
+    return None
 
 
 class HRDocumentService:
@@ -257,20 +300,24 @@ class HRDocumentService:
     async def _db_step(
         self,
         *,
-        actor_id: str,
+        actor_email: str,
         member_id: str,
         email: str,
         slot: str,
         new_id: str | None,
         state: dict[str, Any] | None = None,
-    ) -> str | None:
-        """Returns the previous file id. One transaction: member lock, visibility lock, previous,
-        write, audit. Raises HRDocError. An error BEFORE the commit is a certain rollback; one at or
-        after COMMIT (or a connection lost then) is COMMIT_UNKNOWN: the caller must reconcile, not
-        assume. `state["previous"]` is set as soon as it is read, so a caller still has it then."""
+    ) -> tuple[str | None, dict[str, Any]]:
+        """One transaction touching ONLY `hr_employees` (and the row lock on `team_members`): member
+        lock, visibility lock, read the previous state, ONE UPDATE of the slot and its proof.
+
+        Returns (verified previous value or None, the six-key documents map after the write). The
+        previous value is returned ONLY when it was verified (R2/R6); an unverified one never
+        leaves this function. Raises HRDocError. An error BEFORE the commit is a certain rollback;
+        one at or after COMMIT (or a connection lost then) is COMMIT_UNKNOWN: the caller must
+        reconcile, not assume. `state["verified"]` is set as soon as it is read."""
         service = HRService(self.db_pool)
         phase = "before"  # before -> committing -> done
-        result: str | None = None
+        result: tuple[str | None, dict[str, Any]] | None = None
         try:
             async with self.db_pool.acquire() as conn:
                 tx = conn.transaction()
@@ -285,34 +332,22 @@ class HRDocumentService:
                     prev_row = await conn.fetchrow(_PREVIOUS_SQL, member_id, slot)
                     if prev_row is None:
                         raise HRDocError(HRDocCode.HR_RECORD_REQUIRED)
-                    previous = prev_row[0]
+                    if not prev_row["is_object"]:
+                        raise HRDocError(HRDocCode.DB_ERROR)
+                    verified = _verified_previous(prev_row)
                     if state is not None:
-                        state["previous"] = str(previous) if previous else None
-                    if new_id is not None:
-                        patch = (
-                            {"contract": {"file_id": new_id}}
-                            if slot == CONTRACT_SLOT
-                            else {"docs": {slot: new_id}}
-                        )
-                        if await service.merge_card_on(conn, member_id, {}, patch) is None:
-                            raise HRDocError(HRDocCode.NOT_FOUND)
-                    elif previous:
-                        if slot == CONTRACT_SLOT:
-                            await conn.execute(_REMOVE_CONTRACT_SQL, member_id)
-                        else:
-                            await conn.execute(_REMOVE_DOC_SQL, member_id, slot)
-                    if new_id is not None or previous:
-                        await conn.execute(
-                            _AUDIT_SQL,
-                            actor_id,
-                            AUDIT_UPLOAD if new_id is not None else AUDIT_REMOVE,
-                            member_id,
-                            {
-                                "slot": slot,
-                                "new_id": new_id,  # created by this request: clear is fine
-                                "previous_sha": value_sha(str(previous)) if previous else None,
-                            },
-                        )
+                        state["verified"] = verified
+                    written = await conn.fetchrow(
+                        _WRITE_SQL[(slot, new_id is None)],
+                        member_id,
+                        slot,
+                        new_id,
+                        actor_email,
+                        datetime.now(UTC).isoformat(timespec="seconds"),
+                    )
+                    if written is None:
+                        raise HRDocError(HRDocCode.NOT_FOUND)
+                    documents = project_documents(written["profile"])
                 except BaseException:
                     try:
                         await tx.rollback()
@@ -322,12 +357,12 @@ class HRDocumentService:
                 phase = "committing"
                 await tx.commit()
                 phase = "done"
-                result = str(previous) if previous else None
+                result = (verified, documents)
             return result
         except HRDocError:
             raise
         except Exception as exc:
-            if phase == "done":  # committed; only the release failed
+            if phase == "done" and result is not None:  # committed; only the release failed
                 return result
             if phase == "committing":
                 logger.error("hr documents commit outcome unknown (%s)", type(exc).__name__)
@@ -342,7 +377,7 @@ class HRDocumentService:
             raise HRDocError(HRDocCode.DB_ERROR) from None
 
     async def _slot_holds(self, member_id: str, slot: str, file_id: str) -> bool | None:
-        """Does the card's slot hold `file_id`? None when it cannot be told.
+        """Does the slot hold `file_id` WITH a matching proof? None when it cannot be told.
 
         Takes the SAME locks as the DB step, in a transaction, in the same order (member advisory
         lock, then the hr_employees row lock): the read waits for the original COMMIT, if it is
@@ -356,7 +391,18 @@ class HRDocumentService:
                 row = await conn.fetchrow(_PREVIOUS_SQL, member_id, slot)  # FOR UPDATE
         except Exception:
             return None
-        return bool(row is not None and row[0] == file_id)
+        return bool(row is not None and row["v"] == file_id and row["pid"] == file_id)
+
+    async def _documents(self, member_id: str) -> dict[str, Any] | None:
+        """The documents map from a fresh read, or None if it cannot be read (best effort)."""
+        try:
+            async with self.db_pool.acquire() as conn:
+                profile = await conn.fetchval(
+                    "SELECT profile FROM hr_employees WHERE team_member_id = $1", member_id
+                )
+        except Exception:
+            return None
+        return project_documents(profile)
 
     async def _our_folder(self, member_id: str) -> str | None:
         """The member's person folder id, or None when there is not exactly one."""
@@ -371,39 +417,36 @@ class HRDocumentService:
         self,
         member_id: str,
         slot: str,
-        previous: str | None,
+        verified_previous: str | None,
         new_id: str | None,
         folder_id: str | None,
-    ) -> str:
-        """After the commit: trash the replaced file ONLY if it is one of THIS door's own files.
-
-        "Previous values are opaque" (C13): `previous` came out of a card slot, which is free text
-        under C10, so it is never sent to Drive, logged or used in a query. Instead Drive is asked
-        for the door's own files (appProperties nz_hr_member = member AND nz_hr_slot = slot, inside
-        the member's person folder, not trashed, a pdf/jpeg/png), and `previous` is only COMPARED,
-        locally, with the ids Drive returned. No match, no folder, or any error is "kept"."""
-        if not previous or previous == new_id:
-            return "none"
-        if not folder_id:
-            return "kept"
+    ) -> None:
+        """After the commit: trash the replaced file ONLY if the previous value was VERIFIED (R2:
+        it equals `doc_proof.<slot>.id`) and Drive's own listing of this door's files for this
+        member and slot (appProperties, inside the person folder, not trashed, pdf/jpeg/png)
+        returns an entry whose id equals it, compared locally. The LISTING entry's id is what is
+        trashed, never the stored value. An unverified value is never sent anywhere: no Drive
+        call is made at all. Any error leaves the file in place; nothing stored is logged."""
+        if not verified_previous or verified_previous == new_id or not folder_id:
+            return
         try:
             ours = await self.drive.list_files_by_app_properties(
                 {MEMBER_PROP: member_id, SLOT_PROP: slot}, folder_id, sorted(DOC_MIMES)
             )
-            matches = [
-                f
-                for f in ours
-                if f.get("id") == previous
-                and f.get("mimeType") in DOC_MIMES
-                and folder_id in (f.get("parents") or [folder_id])
-            ]
-            if not matches:
-                return "kept"
-            await self.drive.trash_file(previous)  # an id Drive itself returned
-            return "trashed"
+            entry = next(
+                (
+                    f
+                    for f in ours
+                    if f.get("id") == verified_previous
+                    and f.get("mimeType") in DOC_MIMES
+                    and folder_id in (f.get("parents") or [folder_id])
+                ),
+                None,
+            )
+            if entry is not None:
+                await self.drive.trash_file(str(entry["id"]))  # the listing's id
         except Exception as exc:
             logger.warning("hr documents previous file left in place (%s)", type(exc).__name__)
-            return "kept"
 
     async def _follow_unit_change(self, member_id: str, used_unit: str) -> None:
         """After the commit: if the card's unit changed since the folder step (a C11 PATCH in
@@ -420,7 +463,7 @@ class HRDocumentService:
     async def upload(
         self,
         *,
-        actor_id: str,
+        actor_email: str,
         member_id: str,
         email: str,
         slot: str,
@@ -444,9 +487,10 @@ class HRDocumentService:
             logger.error("hr documents drive upload failed (%s)", type(exc).__name__)
             raise HRDocError(HRDocCode.DRIVE_UNAVAILABLE) from None
         state: dict[str, Any] = {}
+        documents: dict[str, Any] | None
         try:
-            previous = await self._db_step(
-                actor_id=actor_id,
+            verified, documents = await self._db_step(
+                actor_email=actor_email,
                 member_id=member_id,
                 email=email,
                 slot=slot,
@@ -457,11 +501,11 @@ class HRDocumentService:
             if exc.code is HRDocCode.COMMIT_UNKNOWN:
                 landed = await self._slot_holds(member_id, slot, new_id)
                 if landed:  # it did commit: carry on as a success
-                    outcome = await self._trash_if_ours(
-                        member_id, slot, state.get("previous"), new_id, folder_id
+                    await self._trash_if_ours(
+                        member_id, slot, state.get("verified"), new_id, folder_id
                     )
                     await self._follow_unit_change(member_id, ctx.unit)
-                    return {"slot": slot, "file_id": new_id, "previous": outcome}
+                    return {"slot": slot, "documents": await self._documents(member_id)}
                 if landed is None:  # cannot tell: an orphan file is safer than a dangling id
                     logger.error("hr documents upload left in place, outcome unverifiable")
                     raise
@@ -470,26 +514,27 @@ class HRDocumentService:
             except Exception as terr:
                 logger.error("hr documents compensation trash failed (%s)", type(terr).__name__)
             raise
-        outcome = await self._trash_if_ours(member_id, slot, previous, new_id, folder_id)
+        await self._trash_if_ours(member_id, slot, verified, new_id, folder_id)
         await self._follow_unit_change(member_id, ctx.unit)
-        return {"slot": slot, "file_id": new_id, "previous": outcome}
+        return {"slot": slot, "documents": documents}
 
     async def remove(
-        self, *, actor_id: str, member_id: str, email: str, slot: str
+        self, *, actor_email: str, member_id: str, email: str, slot: str
     ) -> dict[str, Any]:
         await self._read_context(member_id)  # 404 / hr_record_required before the write
         try:
-            previous = await self._db_step(
-                actor_id=actor_id, member_id=member_id, email=email, slot=slot, new_id=None
+            verified, documents = await self._db_step(
+                actor_email=actor_email, member_id=member_id, email=email, slot=slot, new_id=None
             )
         except HRDocError as exc:
             if exc.code is HRDocCode.COMMIT_UNKNOWN:  # nothing was uploaded; keep the old file
                 raise HRDocError(HRDocCode.DB_ERROR) from None
             raise
-        outcome = await self._trash_if_ours(
-            member_id, slot, previous, None, await self._our_folder(member_id) if previous else None
-        )
-        return {"slot": slot, "file_id": None, "previous": outcome}
+        if verified:  # an unverified value clears the slot and trashes nothing, calls nothing
+            await self._trash_if_ours(
+                member_id, slot, verified, None, await self._our_folder(member_id)
+            )
+        return {"slot": slot, "documents": documents}
 
 
 async def get_hr_drive_service() -> Any:

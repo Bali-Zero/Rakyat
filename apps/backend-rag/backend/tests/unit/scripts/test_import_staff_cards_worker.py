@@ -316,11 +316,38 @@ def test_a_present_non_object_fields_or_profile_is_rejected_not_normalised(key, 
     assert card is None and reason == "bad_shape"
 
 
-@pytest.mark.parametrize("sub", ["docs", "contract"])
 @pytest.mark.parametrize("bad", [None, [], False, 0, ""])
-def test_a_non_object_docs_or_contract_is_rejected(sub, bad):
-    card, reason = imp.validate_card({"email": "fake.one@balizero.com", "profile": {sub: bad}})
+def test_a_non_object_contract_is_rejected(bad):
+    card, reason = imp.validate_card(
+        {"email": "fake.one@balizero.com", "profile": {"contract": bad}}
+    )
     assert card is None and reason == "invalid_profile"
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        {"docs": {"ktp": "x"}},
+        {"docs": {}},
+        {"docs": None},
+        {"docs": ["x"]},
+        {"doc_proof": {"ktp": {"id": "x"}}},
+        {"doc_proof": {}},
+        {"contract": {"file_id": "x"}},
+        {"contract": {"number": "C-1", "file_id": "x"}},
+        {"unit": "Tax", "docs": {"contract": "x"}},
+    ],
+)
+def test_the_door_owned_keys_are_refused_whole_with_their_own_outcome(profile):
+    card, reason = imp.validate_card({"email": "fake.one@balizero.com", "profile": profile})
+    assert card is None and reason == "doc_keys_door_only"
+
+
+def test_contract_number_alone_is_still_importable():
+    card, reason = imp.validate_card(
+        {"email": "fake.one@balizero.com", "profile": {"contract": {"number": "C-1"}}}
+    )
+    assert reason is None and card["profile"] == {"contract": {"number": "C-1"}}
 
 
 def test_absent_fields_and_profile_are_fine_and_an_unset_profile_dumps_empty():
@@ -457,7 +484,7 @@ def test_every_outcome_and_code_the_worker_can_produce_is_in_the_launcher_closed
         "bad_shape", "unknown_key", "email_missing", "invalid_ptkp", "invalid_profile",
         "invalid_fields", "ambiguous_email", "member_changed", "not_applied", "bad_document",
     }  # fmt: skip
-    reasons |= {"email_noncanonical"}
+    reasons |= {"email_noncanonical", "doc_keys_door_only"}
     produced = {f"rejected:{r}" for r in reasons} | {f"rejected:{c.value}" for c in HRCardCode}
     produced |= {"resolved", "not_found", "applied", "would_update", "would_insert"}
     produced |= {"blocked:not_found", "unclassified"}

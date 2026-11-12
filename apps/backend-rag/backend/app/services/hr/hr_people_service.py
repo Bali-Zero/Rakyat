@@ -11,6 +11,7 @@ from typing import Any
 
 import asyncpg
 
+from backend.app.services.hr.hr_card_models import project_documents
 from backend.app.services.hr.hr_service import business_today
 
 DOC_SLOTS = ("ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk")  # + the contract file = 6 papers
@@ -83,13 +84,10 @@ _PULSE_SQL = """
 
 
 def papers_missing(profile: Any) -> int:
-    """How many of the six paper slots (contract + five documents) have no file on record."""
-    p = profile if isinstance(profile, dict) else {}
-    docs = p.get("docs") if isinstance(p.get("docs"), dict) else {}
-    contract = p.get("contract") if isinstance(p.get("contract"), dict) else {}
-    missing = sum(1 for slot in DOC_SLOTS if not (isinstance(docs.get(slot), str) and docs[slot]))
-    contract_file = contract.get("file_id")
-    return missing + (0 if isinstance(contract_file, str) and contract_file else 1)
+    """How many of the six paper slots (contract + five documents) have no file on record.
+
+    Counts `present` of the shared projection (C13), so it agrees with every card response."""
+    return sum(1 for d in project_documents(profile).values() if not d["present"])
 
 
 class HRPeopleService:

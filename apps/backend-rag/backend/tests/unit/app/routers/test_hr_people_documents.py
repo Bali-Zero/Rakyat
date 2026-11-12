@@ -37,10 +37,16 @@ def make_client():
         doc = doc or MagicMock()
         if not isinstance(doc.upload, AsyncMock):
             doc.upload = AsyncMock(
-                return_value={"slot": "ktp", "file_id": "f9", "previous": "none"}
+                return_value={
+                    "slot": "ktp",
+                    "documents": {"ktp": {"present": True, "file_id": "f9"}},
+                }
             )
             doc.remove = AsyncMock(
-                return_value={"slot": "ktp", "file_id": None, "previous": "none"}
+                return_value={
+                    "slot": "ktp",
+                    "documents": {"ktp": {"present": False, "file_id": None}},
+                }
             )
         app = FastAPI()
         register_exception_handlers(app)
@@ -74,10 +80,10 @@ def test_writers_upload(make_client, user):
     client, doc = make_client(user)
     res = _post(client)
     assert res.status_code == 200
-    assert res.json() == {"slot": "ktp", "file_id": "f9", "previous": "none"}
+    assert res.json() == {"slot": "ktp", "documents": {"ktp": {"present": True, "file_id": "f9"}}}
     kw = doc.upload.await_args.kwargs
     assert kw["mime"] == "application/pdf" and kw["ext"] == "pdf"  # bytes, not the client's png
-    assert kw["actor_id"] == user["user_id"] and kw["email"] == "dea@balizero.com"
+    assert kw["actor_email"] == user["email"] and kw["email"] == "dea@balizero.com"
 
 
 @pytest.mark.parametrize("user", [ADIT, SCOPED])
@@ -184,7 +190,9 @@ CAP = 4 * 1024 * 1024 + 64 * 1024
 
 def _app(user: dict[str, Any], doc: Any = None) -> tuple[FastAPI, Any]:
     doc = doc or MagicMock()
-    doc.upload = AsyncMock(return_value={"slot": "ktp", "file_id": "f9", "previous": "none"})
+    doc.upload = AsyncMock(
+        return_value={"slot": "ktp", "documents": {"ktp": {"present": True, "file_id": "f9"}}}
+    )
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(hr_people.router)
