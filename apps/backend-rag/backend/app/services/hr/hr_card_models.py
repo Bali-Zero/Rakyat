@@ -117,6 +117,7 @@ class StaffProfilePatch(BaseModel):
     marital_status: Text(50) | None = None
     employer_entity: Text(255) | None = None
     unit: Text(100) | None = None
+    on_payroll: StrictBool | None = None
     contract: StaffContract = Field(default_factory=StaffContract)
     docs: dict[_Slot, _FileId] = Field(default_factory=dict)
     end_date: date | None = None
@@ -181,6 +182,7 @@ class StaffCard(BaseModel):
     marital_status: str | None = None
     employer_entity: str | None = None
     unit: str | None = None
+    on_payroll: bool = True
     contract: StaffContractRead | None = None
     docs: dict[str, str] = Field(default_factory=dict)
     end_date: date | None = None
@@ -224,6 +226,9 @@ def _profile_view(profile: Any) -> dict[str, Any]:
     """Coerce the stored profile to what the response model accepts; never raises."""
     p = profile if isinstance(profile, dict) else {}
     view: dict[str, Any] = {k: _str_or_none(p.get(k)) for k in _PROFILE_STR_KEYS}
+    # Only a stored JSON `false` takes a person off payroll (STAFF_CARD.md C12); absent or any
+    # other stored value reads as the default, on payroll.
+    view["on_payroll"] = p.get("on_payroll") is not False
     view["birth_date"] = _date_or_none(p.get("birth_date"))
     view["end_date"] = _date_or_none(p.get("end_date"))
     contract = p.get("contract")

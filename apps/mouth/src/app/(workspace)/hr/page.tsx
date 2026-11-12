@@ -82,6 +82,7 @@ import {
 } from "./_components/hr-panels";
 
 const AMBER = "#f59e0b";
+const SOFT_TONE = "#64748b";
 const CORAL = "#ef6a3a";
 const PALETTE = [
   "#14a37f",
@@ -893,6 +894,9 @@ function PeopleConsole() {
                           <CalendarHeart className="h-3.5 w-3.5" aria-hidden />{" "}
                           contract ends in {ends} days
                         </Chip>
+                      )}
+                      {card?.on_payroll === false && (
+                        <Chip tone={SOFT_TONE}>Not on payroll</Chip>
                       )}
                     </div>
                   </div>

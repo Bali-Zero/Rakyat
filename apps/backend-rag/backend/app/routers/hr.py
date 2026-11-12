@@ -14,6 +14,7 @@ from typing import Any
 
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
 from backend.app.dependencies import get_current_user, get_database_pool
@@ -32,7 +33,9 @@ from backend.app.services.hr.hr_service import (
     BonusPeriodLockedError,
     HRCardError,
     HRService,
+    OffPayrollError,
     PayrollBonusesChangedError,
+    PayrollRosterChangedError,
     business_today,
 )
 from backend.app.utils.crm_utils import is_crm_admin
@@ -241,7 +244,10 @@ async def get_my_card(
         raise HTTPException(status_code=500, detail="Card operation failed") from None
     if not card:
         raise HTTPException(status_code=404, detail="No HR employee record found for your account")
-    return member_card(card)
+    own = member_card(card)
+    if not own.on_payroll:  # no personal payroll for an off-payroll member
+        own = own.model_copy(update={"base_salary_idr": None})
+    return own
 
 
 @router.get("/me/overview", response_model=MyHrOverview)
@@ -260,7 +266,7 @@ async def get_my_overview(
     member_id = _get_user_id(current_user)
     service = _get_hr_service(db_pool)
     try:
-        overview = await compose_member_overview(service, str(member_id))
+        overview = await compose_member_overview(service, str(member_id), self_view=True)
     except HRCardError:  # a code, never a driver message
         raise HTTPException(status_code=500, detail="Card operation failed") from None
     except OverviewReadError:  # the class was logged where it happened
@@ -305,6 +311,8 @@ async def get_employee(
         raise HTTPException(status_code=404, detail="Employee not found")
     if not is_hr_admin(current_user):
         emp = {k: v for k, v in emp.items() if k != "notes"}  # HR free text is admin-only
+        if not await service.is_on_payroll(employee_id):  # no personal payroll figures
+            emp["base_salary_idr"] = None
     return emp
 
 
@@ -389,6 +397,8 @@ async def list_bonuses(
     if not is_hr_admin(current_user):
         my_id = await _get_my_employee_id(service, current_user)
         employee_id = my_id  # Force filter to own bonuses
+        if not await service.is_on_payroll(my_id):  # no personal payroll for an off-payroll member
+            return {"bonuses": [], "count": 0}
 
     bonuses = await service.list_bonuses(employee_id, status, month, year)
     if not is_hr_admin(current_user):
@@ -417,6 +427,12 @@ async def create_manual_bonus(
         )
     except BonusPeriodLockedError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except OffPayrollError:
+        # A response, not an HTTPException: the app's handler would drop the `code` key.
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "This person is not on payroll", "code": "off_payroll"},
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if bonus is None:
@@ -459,6 +475,11 @@ async def approve_bonus(
         return {"success": True, "bonus": result}
     except BonusPeriodLockedError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except OffPayrollError:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "This person is not on payroll", "code": "off_payroll"},
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -549,6 +570,8 @@ async def list_payslips(
     if not is_hr_admin(current_user):
         my_id = await _get_my_employee_id(service, current_user)
         employee_id = my_id
+        if not await service.is_on_payroll(my_id):  # no personal payroll for an off-payroll member
+            return {"payslips": [], "count": 0}
 
     payslips = await service.get_payslips(employee_id, period_id)
     return {"payslips": payslips, "count": len(payslips)}
@@ -571,6 +594,8 @@ async def get_payslip_detail(
         my_id = await _get_my_employee_id(service, current_user)
         if detail.get("employee_id") != my_id:
             raise HTTPException(status_code=403, detail="Access denied")
+        if not await service.is_on_payroll(my_id):
+            raise HTTPException(status_code=404, detail="Payslip not found")
 
     return detail
 
@@ -591,6 +616,10 @@ async def approve_payroll(
         return {"success": True, "period": result}
     except PayrollBonusesChangedError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except PayrollRosterChangedError as e:
+        return JSONResponse(
+            status_code=409, content={"detail": str(e), "code": "payroll_roster_changed"}
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

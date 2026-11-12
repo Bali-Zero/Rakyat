@@ -69,7 +69,7 @@ export default function MyHrPage() {
     owner: SessionIdentity | null;
     load: Load;
   }>({ owner: null, load: { kind: "loading" } });
-  const [open, setOpen] = useState<Panel>("pay");
+  const [picked, setPicked] = useState<Panel>("pay");
   const load: Load =
     identity && isSameIdentity(slot.owner, identity)
       ? slot.load
@@ -125,6 +125,10 @@ export default function MyHrPage() {
     );
   if (!me) return <div className="h-64" />;
   const c = me.card;
+  // A person whose card says they are not on payroll has no personal payroll to show: no Pay
+  // panel, no payslip or bonus block, and no empty "first payslip" nag.
+  const paid = c.on_payroll !== false;
+  const open: Panel = paid || picked !== "pay" ? picked : "time";
   const ends = daysUntil(c.end_date);
   const first = (c.full_name ?? c.legal_name ?? "").split(/\s+/)[0] || "there";
   const since = tenure(c.hire_date);
@@ -167,8 +171,10 @@ export default function MyHrPage() {
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <PanelCards me={me} open={open} onPick={setOpen} />
+      <div
+        className={`grid gap-4 ${paid ? "md:grid-cols-3" : "md:grid-cols-2"}`}
+      >
+        <PanelCards me={me} open={open} onPick={setPicked} hidePay={!paid} />
       </div>
 
       <div

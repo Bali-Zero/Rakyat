@@ -864,12 +864,15 @@ export function PanelCards({
   onPick,
   viewer = "self",
   compact = false,
+  hidePay = false,
 }: {
   me: Me;
   open: Panel;
   onPick: (p: Panel) => void;
   viewer?: Viewer;
   compact?: boolean;
+  /** An off-payroll member's own page: no Pay panel at all. */
+  hidePay?: boolean;
 }) {
   const you = viewer === "self";
   const c = me.card;
@@ -890,41 +893,49 @@ export function PanelCards({
   const big = compact ? "text-[22px] @2xl:text-[28px]" : "text-[32px]";
   return (
     <>
-      <PanelCard id="pay" open={open} onPick={onPick} icon={Wallet} title="Pay">
-        <span>
-          <span
-            className={`block ${big} font-semibold leading-none tracking-tight ${INK}`}
-          >
-            {slip ? IDR.format(slip.net_salary_idr) : "—"}
+      {!hidePay && (
+        <PanelCard
+          id="pay"
+          open={open}
+          onPick={onPick}
+          icon={Wallet}
+          title="Pay"
+        >
+          <span>
+            <span
+              className={`block ${big} font-semibold leading-none tracking-tight ${INK}`}
+            >
+              {slip ? IDR.format(slip.net_salary_idr) : "—"}
+            </span>
+            <span className={`mt-1.5 block text-[13px] ${SOFT}`}>
+              {slip
+                ? `${you ? "Your take-home" : "Take-home"} for ${monthLabel(slipMonth(slip))}`
+                : you
+                  ? "Your first payslip is on its way"
+                  : "No payslip yet"}
+            </span>
           </span>
-          <span className={`mt-1.5 block text-[13px] ${SOFT}`}>
-            {slip
-              ? `${you ? "Your take-home" : "Take-home"} for ${monthLabel(slipMonth(slip))}`
-              : you
-                ? "Your first payslip is on its way"
-                : "No payslip yet"}
-          </span>
-        </span>
-        {me.payslips.length > 1 ? (
-          <PayBars slips={me.payslips} tone={TONE.pay} />
-        ) : (
-          <div className="h-[64px]" />
-        )}
-        <span className="flex flex-wrap gap-2">
-          {diff > 0 && (
-            <Chip tone={TONE.pay}>
-              <TrendingUp className="h-3.5 w-3.5" aria-hidden /> +
-              {IDR.format(diff)} vs {monthOnly(slipMonth(prev!))}
-            </Chip>
+          {me.payslips.length > 1 ? (
+            <PayBars slips={me.payslips} tone={TONE.pay} />
+          ) : (
+            <div className="h-[64px]" />
           )}
-          <Chip tone={TONE.pay}>
-            <PartyPopper className="h-3.5 w-3.5" aria-hidden />{" "}
-            {monthBon.month_count
-              ? `${IDR.format(monthBon.month_total_idr)} bonuses this month`
-              : "No bonus yet this month"}
-          </Chip>
-        </span>
-      </PanelCard>
+          <span className="flex flex-wrap gap-2">
+            {diff > 0 && (
+              <Chip tone={TONE.pay}>
+                <TrendingUp className="h-3.5 w-3.5" aria-hidden /> +
+                {IDR.format(diff)} vs {monthOnly(slipMonth(prev!))}
+              </Chip>
+            )}
+            <Chip tone={TONE.pay}>
+              <PartyPopper className="h-3.5 w-3.5" aria-hidden />{" "}
+              {monthBon.month_count
+                ? `${IDR.format(monthBon.month_total_idr)} bonuses this month`
+                : "No bonus yet this month"}
+            </Chip>
+          </span>
+        </PanelCard>
+      )}
 
       <PanelCard
         id="time"

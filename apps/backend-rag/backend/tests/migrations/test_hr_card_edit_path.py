@@ -235,3 +235,23 @@ async def test_a_concurrent_deactivation_waits_for_the_edits_commit(  # noqa: F8
     assert await edit is not None
     await _set(pool, "tm-a", "active = false")  # free once the edit committed
     assert (await _row(pool, "tm-a"))["bank_name"] == "Fake Bank"
+
+
+@pytest.mark.asyncio
+async def test_the_import_door_sets_on_payroll_and_the_edit_door_clears_it(  # noqa: F811
+    pool: asyncpg.Pool,
+) -> None:
+    from backend.scripts import _import_staff_cards_worker as imp
+
+    async with pool.acquire() as conn:
+        document = {"cards": [{"email": A[1], "profile": {"on_payroll": False}}]}
+        counts, ok = await imp.run(conn, document, apply=True)
+        assert ok is True and counts["applied"] == 1
+    assert (await _profile(pool, "tm-a"))["on_payroll"] is False
+    async with pool.acquire() as conn:
+        document = {"cards": [{"email": A[1], "profile": {"on_payroll": "no"}}]}
+        _, ok = await imp.run(conn, document, apply=True)
+        assert ok is False  # strict bool: a string is refused, nothing written
+    assert (await _profile(pool, "tm-a"))["on_payroll"] is False
+    await _edit(pool, A, clear=["on_payroll"])
+    assert "on_payroll" not in await _profile(pool, "tm-a")  # key gone: back to default true

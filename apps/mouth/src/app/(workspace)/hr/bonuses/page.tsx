@@ -74,6 +74,9 @@ export default function BonusesPage() {
   const [member, setMember] = useState<string>(ALL);
   const [department, setDepartment] = useState<string>(ALL);
   const [employees, setEmployees] = useState<HREmployee[]>([]);
+  // Employees whose card says not on payroll: their old bonus rows stay in the ledger, but they
+  // are no row of the member table and no line of the CSV.
+  const [offPayroll, setOffPayroll] = useState<ReadonlySet<number>>(new Set());
   const [practiceTypes, setPracticeTypes] = useState<BonusPracticeType[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const { capabilities } = useHrCapabilities();
@@ -105,9 +108,15 @@ export default function BonusesPage() {
         // HR-admin only: every active member is a row of the per-member table,
         // the tax team included, and the Add bonus form picks from the same list.
         const emp = await hrApi.listEmployees();
-        setEmployees(emp.employees || []);
+        // Off-payroll people never get a payroll bonus, so they are no row and no option.
+        const all = emp.employees || [];
+        setEmployees(all.filter((e) => e.on_payroll !== false));
+        setOffPayroll(
+          new Set(all.filter((e) => e.on_payroll === false).map((e) => e.id)),
+        );
       } catch {
         setEmployees([]);
+        setOffPayroll(new Set());
       }
       try {
         const types = await hrApi.listBonusPracticeTypes();
@@ -221,7 +230,21 @@ export default function BonusesPage() {
   );
 
   const months = useMemo(() => groupBonusesByMonth(filtered), [filtered]);
-  const memberTotals = useMemo(() => aggregateByMember(filtered), [filtered]);
+  const payrollFiltered = useMemo(
+    () =>
+      filtered.filter(
+        (b) => b.employee_id == null || !offPayroll.has(b.employee_id),
+      ),
+    [filtered, offPayroll],
+  );
+  const csvMonths = useMemo(
+    () => groupBonusesByMonth(payrollFiltered),
+    [payrollFiltered],
+  );
+  const memberTotals = useMemo(
+    () => aggregateByMember(payrollFiltered),
+    [payrollFiltered],
+  );
 
   /** Every active member in the current department/member scope, bonus or not. */
   const memberRows = useMemo(
@@ -387,10 +410,10 @@ export default function BonusesPage() {
             onClick={() =>
               downloadCsv(
                 `bali-zero-bonuses-${year === ALL ? "all" : year}.csv`,
-                bonusesToCsv(months),
+                bonusesToCsv(csvMonths),
               )
             }
-            disabled={months.length === 0}
+            disabled={csvMonths.length === 0}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--bz-surface)] text-[var(--bz-text-1)] hover:bg-[var(--surface-raised)] text-sm transition-colors disabled:opacity-40"
           >
             <Download size={14} />

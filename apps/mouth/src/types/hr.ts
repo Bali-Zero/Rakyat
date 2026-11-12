@@ -32,6 +32,8 @@ export interface HREmployee {
   bpjs_kesehatan_number: string | null;
   bpjs_ketenagakerjaan_number: string | null;
   is_active: boolean;
+  /** false = the card says not on payroll (server-derived; absent means true). */
+  on_payroll?: boolean;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -288,8 +290,10 @@ export interface AdminDashboard {
 }
 
 export interface PersonalDashboard {
-  month_bonuses: { count: number; total: number };
-  latest_payslip: {
+  /** false = the card says not on payroll: no payslip and no bonus totals are sent. */
+  on_payroll: boolean;
+  month_bonuses?: { count: number; total: number };
+  latest_payslip?: {
     net_salary_idr: number;
     payroll_month: number;
     payroll_year: number;

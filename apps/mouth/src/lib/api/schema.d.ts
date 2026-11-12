@@ -20611,6 +20611,7 @@ export interface components {
         | "marital_status"
         | "employer_entity"
         | "unit"
+        | "on_payroll"
         | "end_date"
         | "contract_number"
       )[];
@@ -27922,6 +27923,11 @@ export interface components {
       nik?: string | null;
       /** Npwp */
       npwp?: string | null;
+      /**
+       * On Payroll
+       * @default true
+       */
+      on_payroll: boolean;
       /** Ptkp Status */
       ptkp_status?: string | null;
       /** Religion */
@@ -28000,6 +28006,8 @@ export interface components {
       marital_status?: string | null;
       /** Nik */
       nik?: string | null;
+      /** On Payroll */
+      on_payroll?: boolean | null;
       /** Religion */
       religion?: string | null;
       /** Unit */

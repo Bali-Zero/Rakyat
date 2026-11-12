@@ -52,7 +52,7 @@ class TestCreateManualBonus:
     @pytest.mark.asyncio
     async def test_inserts_pending_manual_row_at_noon_wita(self, svc, pool):
         conn = pool._conn
-        conn.fetchrow = AsyncMock(side_effect=[{"id": 7}, {"id": 99, "source": "manual"}])
+        conn.fetchrow = AsyncMock(side_effect=[{"id": 7, "on_payroll": True}, {"id": 99, "source": "manual"}])
         conn.fetchval = AsyncMock(return_value=None)  # period not locked
         row = await svc.create_manual_bonus(**_args())
         assert row == {"id": 99, "source": "manual"}
@@ -75,7 +75,7 @@ class TestCreateManualBonus:
     @pytest.mark.asyncio
     async def test_named_service_is_stored_as_the_code(self, svc, pool):
         conn = pool._conn
-        conn.fetchrow = AsyncMock(side_effect=[{"id": 7}, {"id": 1}])
+        conn.fetchrow = AsyncMock(side_effect=[{"id": 7, "on_payroll": True}, {"id": 1}])
         conn.fetchval = AsyncMock(side_effect=[1, None])  # service known, month open
         await svc.create_manual_bonus(**_args(practice_type_code="tax_fake_service"))
         assert conn.fetchrow.await_args_list[1].args[2] == "tax_fake_service"
@@ -90,7 +90,7 @@ class TestCreateManualBonus:
     @pytest.mark.asyncio
     async def test_unknown_service_is_a_value_error(self, svc, pool):
         conn = pool._conn
-        conn.fetchrow = AsyncMock(return_value={"id": 7})
+        conn.fetchrow = AsyncMock(return_value={"id": 7, "on_payroll": True})
         conn.fetchval = AsyncMock(return_value=None)
         with pytest.raises(ValueError):
             await svc.create_manual_bonus(**_args(practice_type_code="nope"))
@@ -99,7 +99,7 @@ class TestCreateManualBonus:
     @pytest.mark.asyncio
     async def test_locked_month_raises_and_inserts_nothing(self, svc, pool):
         conn = pool._conn
-        conn.fetchrow = AsyncMock(return_value={"id": 7})
+        conn.fetchrow = AsyncMock(return_value={"id": 7, "on_payroll": True})
         conn.fetchval = AsyncMock(return_value="approved")  # the period's status
         with pytest.raises(BonusPeriodLockedError):
             await svc.create_manual_bonus(**_args())

@@ -185,6 +185,30 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("My HR page (/hr/me), off-payroll viewer", () => {
+  it("shows no Pay panel, payslip, bonus or first-payslip nag, but keeps Time and Me", async () => {
+    const off: MyHrOverview = {
+      ...EMPTY("A"),
+      card: { ...overview("A").card, on_payroll: false, base_salary_idr: null },
+    };
+    await loaded("A", off);
+    expect(screen.queryByRole("button", { name: /^Pay/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Time/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Me/ })).toBeInTheDocument();
+    expect(shown("payslip")).toBeNull();
+    expect(shown("bonus")).toBeNull();
+    expect(shown("Take-home")).toBeNull();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toContain(
+      "Made",
+    );
+  });
+
+  it("an on-payroll viewer still gets the Pay panel", async () => {
+    await loaded("A", overview("A"));
+    expect(screen.getByRole("button", { name: /^Pay/ })).toBeInTheDocument();
+  });
+});
+
 describe("My HR page (/hr/me)", () => {
   it("reads the overview with the bearer and renders Pay, Time and Me", async () => {
     const token = tokenFor("A");

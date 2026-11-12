@@ -158,6 +158,7 @@ export function CardEditForm({
 }) {
   const refs = useRef<Record<string, El | null>>({});
   const activeRef = useRef<HTMLInputElement | null>(null);
+  const payrollRef = useRef<HTMLInputElement | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [general, setGeneral] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -171,6 +172,8 @@ export function CardEditForm({
     }
     if (activeRef.current)
       activeRef.current.checked = initial?.is_active ?? true;
+    if (payrollRef.current)
+      payrollRef.current.checked = initial?.on_payroll !== false;
     // mounted once per person: the page keys the form by member and mode
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -214,6 +217,13 @@ export function CardEditForm({
     const wasActive = initial?.is_active ?? true;
     const isActive = activeRef.current?.checked ?? wasActive;
     if (isActive !== wasActive) cardPatch["is_active"] = isActive;
+    // On payroll: false is stored; turning it back on clears the key (absent means true).
+    const wasOnPayroll = initial?.on_payroll !== false;
+    const onPayroll = payrollRef.current?.checked ?? wasOnPayroll;
+    if (onPayroll !== wasOnPayroll) {
+      if (onPayroll) clear.push("on_payroll");
+      else profile["on_payroll"] = false;
+    }
     if (profile["contract"] === undefined) delete profile["contract"];
     if (Object.keys(profile).length) cardPatch["profile"] = profile;
 
@@ -325,6 +335,14 @@ export function CardEditForm({
               <label className="flex items-center gap-2">
                 <input ref={activeRef} type="checkbox" />
                 <span className={`text-[13px] font-medium ${INK}`}>Active</span>
+              </label>
+            )}
+            {g.title === "Employment" && (
+              <label className="flex items-center gap-2">
+                <input ref={payrollRef} type="checkbox" role="switch" />
+                <span className={`text-[13px] font-medium ${INK}`}>
+                  On payroll
+                </span>
               </label>
             )}
           </div>

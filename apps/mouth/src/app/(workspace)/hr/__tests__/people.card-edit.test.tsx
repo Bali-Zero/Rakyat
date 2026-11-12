@@ -214,13 +214,13 @@ async function open(sub: string, scope: "all" | "scoped" = "all") {
   await waitFor(() => expect(call("/api/hr/people")).toHaveLength(1));
   await act(async () => call("/api/hr/people")[0].resolve(roster(sub, scope)));
 }
-async function openA(sub = "A") {
+async function openA(sub = "A", over: Record<string, unknown> = {}) {
   await open(sub);
   await waitFor(() =>
     expect(call(`/api/hr/people/${ID_A}/overview`)).toHaveLength(1),
   );
   await act(async () =>
-    call(`/api/hr/people/${ID_A}/overview`)[0].resolve(person(sub, ID_A)),
+    call(`/api/hr/people/${ID_A}/overview`)[0].resolve(person(sub, ID_A, over)),
   );
 }
 const field = (label: string) =>
@@ -344,6 +344,51 @@ describe("People card edit (/hr)", () => {
     expect(screen.getAllByText(/Unit Baru/).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: /^Me/ }));
     expect(screen.getAllByText("Nama Baru Contoh").length).toBeGreaterThan(0);
+  });
+
+  it("shows a neutral Not on payroll chip only for a person whose card says so", async () => {
+    await openA("A", { on_payroll: false });
+    expect(screen.getByText("Not on payroll")).toBeInTheDocument();
+    // the unit label stays
+    expect(screen.getAllByText(new RegExp(FIX.unit)).length).toBeGreaterThan(0);
+  });
+
+  it("shows no chip for a person on payroll, and the switch starts on", async () => {
+    await openA();
+    expect(screen.queryByText("Not on payroll")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Edit$/ }));
+    const sw = screen.getByRole("switch", { name: "On payroll" });
+    expect((sw as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("the On payroll switch sends false when turned off, and clears the key when turned back on", async () => {
+    await openA();
+    fireEvent.click(screen.getByRole("button", { name: /^Edit$/ }));
+    fireEvent.click(screen.getByRole("switch", { name: "On payroll" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    await waitFor(() =>
+      expect(call(`/api/hr/people/${ID_A}/card`, "PATCH")).toHaveLength(1),
+    );
+    expect(
+      JSON.parse(call(`/api/hr/people/${ID_A}/card`, "PATCH")[0].body!),
+    ).toEqual({ card: { profile: { on_payroll: false } } });
+  });
+
+  it("an off-payroll card opens with the switch off; turning it on sends clear", async () => {
+    await openA("A", { on_payroll: false });
+    fireEvent.click(screen.getByRole("button", { name: /^Edit$/ }));
+    const sw = screen.getByRole("switch", { name: "On payroll" });
+    expect((sw as HTMLInputElement).checked).toBe(false);
+    // DOM privacy: the state lives in the property, not in an attribute
+    expect(sw.getAttributeNames().sort()).toEqual(["role", "type"]);
+    fireEvent.click(sw);
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    await waitFor(() =>
+      expect(call(`/api/hr/people/${ID_A}/card`, "PATCH")).toHaveLength(1),
+    );
+    expect(
+      JSON.parse(call(`/api/hr/people/${ID_A}/card`, "PATCH")[0].body!),
+    ).toEqual({ card: {}, clear: ["on_payroll"] });
   });
 
   it("sends nothing when nothing changed", async () => {
