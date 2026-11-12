@@ -15,13 +15,28 @@ from backend.app.services.hr.hr_service import business_today
 
 DOC_SLOTS = ("ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk")  # + the contract file = 6 papers
 
-_ROSTER_SQL = """
+# Who counts as a person in People (owner review 2026-11-12). Clients share `team_members`, and
+# so do system, test and external accounts. A member WITH an hr_employees row is a person (any
+# role but client); without one only a company address with a staff-like role is. Used by
+# both SQLs below, over the aliases `tm` (team_members) and `e` (hr_employees, LEFT JOINed).
+VISIBLE_PERSON_PREDICATE = """
+      tm.active = true
+      AND COALESCE(tm.role, '') <> 'client'
+      AND (
+        e.id IS NOT NULL
+        OR (
+          lower(tm.email) LIKE '%@balizero.com'
+          AND COALESCE(tm.role, '') NOT IN ('client', 'member', 'monitoring')
+        )
+      )
+"""
+
+_ROSTER_SQL = f"""
     SELECT tm.id AS team_member_id, tm.full_name, tm.role, tm.department,
            e.id AS employee_id, e.hire_date, e.is_active AS employee_active, e.profile
     FROM team_members tm
     LEFT JOIN hr_employees e ON e.team_member_id = tm.id
-    WHERE COALESCE(tm.role, '') <> 'client'
-      AND tm.active = true
+    WHERE {VISIBLE_PERSON_PREDICATE}
       AND ($1::text[] IS NULL OR lower(tm.email) = ANY($1::text[]))
     ORDER BY lower(COALESCE(tm.department, '')), lower(COALESCE(tm.full_name, ''))
 """
@@ -47,9 +62,11 @@ _ON_LEAVE_SQL = """
       AND employee_id = ANY($1::int[])
 """
 
-_MEMBER_EMAIL_SQL = """
-    SELECT email FROM team_members
-    WHERE id = $1 AND COALESCE(role, '') <> 'client' AND active = true
+_MEMBER_EMAIL_SQL = f"""
+    SELECT tm.email
+    FROM team_members tm
+    LEFT JOIN hr_employees e ON e.team_member_id = tm.id
+    WHERE tm.id = $1 AND {VISIBLE_PERSON_PREDICATE}
 """
 
 _PULSE_SQL = """

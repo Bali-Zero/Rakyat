@@ -1,5 +1,6 @@
 """HRPeopleService: roster flags and pulse over an in-memory fake connection."""
 
+import sqlite3
 from contextlib import asynccontextmanager
 from datetime import date
 from typing import Any
@@ -129,3 +130,51 @@ async def test_pulse_numbers():
     assert pulse["leave_pending_count"] == 1
     assert pulse["payroll"]["status"] == "draft"
     assert pulse["payroll"]["month"] == business_today().month
+
+
+# ─── who counts as a person: the shared predicate, run for real over an in-memory table ───
+
+
+def _visible(rows: list[tuple[str, str, str | None, bool, bool]]) -> set[str]:
+    """rows: (id, email, role, active, has_hr_record). Runs the predicate text itself."""
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE team_members (id TEXT, email TEXT, role TEXT, active INT)")
+    db.execute("CREATE TABLE hr_employees (id INTEGER, team_member_id TEXT)")
+    for i, (tid, email, role, active, rec) in enumerate(rows):
+        db.execute("INSERT INTO team_members VALUES (?,?,?,?)", (tid, email, role, int(active)))
+        if rec:
+            db.execute("INSERT INTO hr_employees VALUES (?,?)", (i + 1, tid))
+    sql = mod.VISIBLE_PERSON_PREDICATE.replace("tm.active = true", "tm.active = 1")
+    found = db.execute(
+        "SELECT tm.id FROM team_members tm LEFT JOIN hr_employees e ON e.team_member_id = tm.id"
+        f" WHERE {sql}"
+    ).fetchall()
+    return {r[0] for r in found}
+
+
+def test_predicate_lists_employees_not_system_test_or_external_accounts():
+    rows = [
+        ("consultant", "a.person@balizero.com", "consultant", True, False),
+        ("consultant-upper", "B.Person@BaliZero.com", "consultant", True, False),
+        ("member-with-record", "c.person@balizero.com", "member", True, True),
+        ("e2e-member", "e2e.bot@balizero.com", "member", True, False),
+        ("monitor", "health@balizero.com", "monitoring", True, False),
+        ("external", "advisor@example.com", "consultant", True, False),
+        ("external-with-record", "d.person@example.com", "consultant", True, True),
+        ("client-with-record", "client@balizero.com", "client", True, True),
+        ("inactive", "f.person@balizero.com", "consultant", False, True),
+        ("no-role", "g.person@balizero.com", None, True, False),
+    ]
+    assert _visible(rows) == {
+        "consultant",
+        "consultant-upper",
+        "member-with-record",
+        "external-with-record",
+        "no-role",
+    }
+
+
+def test_both_queries_use_the_one_predicate():
+    assert mod.VISIBLE_PERSON_PREDICATE in mod._ROSTER_SQL
+    assert mod.VISIBLE_PERSON_PREDICATE in mod._MEMBER_EMAIL_SQL
+    assert "LEFT JOIN hr_employees e" in mod._MEMBER_EMAIL_SQL
