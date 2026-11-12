@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -429,5 +430,29 @@ describe("People card edit (/hr)", () => {
     );
     expect(screen.queryByText(/Unit Intruso/)).toBeNull();
     expect(screen.getByText(/session changed/i)).toBeInTheDocument();
+  });
+
+  it("keeps the pulse in step with a save that toggles Active", async () => {
+    await openA();
+    const count = () =>
+      within(
+        screen.getByText(/^Active people/).parentElement!.parentElement!,
+      ).getByText(/^\d+$/).textContent;
+    expect(count()).toBe("2");
+    fireEvent.click(screen.getByRole("button", { name: /^Edit$/ }));
+    fireEvent.click(screen.getByLabelText("Active"));
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    await waitFor(() =>
+      expect(call(`/api/hr/people/${ID_A}/card`, "PATCH")).toHaveLength(1),
+    );
+    expect(
+      JSON.parse(call(`/api/hr/people/${ID_A}/card`, "PATCH")[0].body!),
+    ).toEqual({ card: { is_active: false } });
+    await act(async () =>
+      call(`/api/hr/people/${ID_A}/card`, "PATCH")[0].resolve(
+        person("A", ID_A, { is_active: false }),
+      ),
+    );
+    expect(count()).toBe("1");
   });
 });

@@ -608,12 +608,19 @@ function PeopleConsole() {
                   : p,
               ),
               pulse:
-                r.pulse && old && !old.has_record
+                r.pulse && old
                   ? {
                       ...r.pulse,
                       people_without_record: Math.max(
                         0,
-                        r.pulse.people_without_record - 1,
+                        r.pulse.people_without_record -
+                          (old.has_record ? 0 : 1),
+                      ),
+                      active_people: Math.max(
+                        0,
+                        r.pulse.active_people +
+                          (fresh.is_active ? 1 : 0) -
+                          (old.active ? 1 : 0),
                       ),
                     }
                   : r.pulse,
