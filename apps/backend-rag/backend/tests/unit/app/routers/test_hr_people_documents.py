@@ -380,3 +380,19 @@ def test_malformed_multipart_never_reaches_a_500(make_client, body):
     res = _raw_post(client, body)
     assert res.status_code == 422
     doc.upload.assert_not_awaited()
+
+
+def test_a_global_admin_outside_the_hr_writer_set_is_refused_on_both_routes(make_client):
+    from backend.app.utils import hr_utils
+
+    gadmin = {"user_id": "tm-g", "email": "gadmin@balizero.com", "role": "member"}
+    with patch.object(
+        hr_utils.settings, "admin_emails", "zero@balizero.com,asya@balizero.com,gadmin@balizero.com"
+    ):
+        assert "gadmin@balizero.com" in hr_utils.settings.admin_emails_set  # a real global admin
+        assert "gadmin@balizero.com" not in hr_utils.HR_WRITER_EMAILS
+        client, doc = make_client(gadmin)
+        assert _post(client).status_code == 403
+        assert client.delete(_url()).status_code == 403
+    doc.upload.assert_not_awaited()
+    doc.remove.assert_not_awaited()
