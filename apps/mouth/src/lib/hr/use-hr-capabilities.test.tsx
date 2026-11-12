@@ -24,6 +24,8 @@ describe("useHrCapabilities", () => {
         hr_admin: false,
         accounting_admin: false,
         has_employee_record: false,
+        people_scope: null,
+        hr_edit: false,
       },
       loaded: false,
       failed: false,
@@ -35,6 +37,8 @@ describe("useHrCapabilities", () => {
       hr_admin: true,
       accounting_admin: false,
       has_employee_record: true,
+      people_scope: "all" as const,
+      hr_edit: true,
     };
     getCapabilitiesMock.mockResolvedValue(answer);
     const { result } = renderHook(() => useHrCapabilities());

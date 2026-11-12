@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from tests.unit.app.routers.test_hr_my_overview import CARD_ROW, ROWS
 
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.routers import hr as hr_router
 from backend.app.routers import hr_people
 from backend.app.services.hr.hr_overview_compose import compose_member_overview
 from backend.app.services.hr.hr_service import HRCardCode, HRCardError
+from backend.tests.unit.app.routers.test_hr_my_overview import CARD_ROW, ROWS
 
 # Synthetic data only.
 ADMIN = {"user_id": "tm-admin", "email": "zero@balizero.com", "role": "member"}

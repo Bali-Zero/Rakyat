@@ -25287,7 +25287,7 @@ export interface components {
       /** Month */
       month: number;
       /** Status */
-      status?: string | null;
+      status: string | null;
       /** Year */
       year: number;
     };
@@ -25331,8 +25331,8 @@ export interface components {
       /** Can Edit */
       can_edit: boolean;
       /** People */
-      people?: components["schemas"]["PersonRow"][];
-      pulse?: components["schemas"]["PeoplePulse"] | null;
+      people: components["schemas"]["PersonRow"][];
+      pulse: components["schemas"]["PeoplePulse"] | null;
       /**
        * Scope
        * @enum {string}
@@ -25359,23 +25359,14 @@ export interface components {
     };
     /** PersonFlags */
     PersonFlags: {
-      /**
-       * Bonuses Pending
-       * @default 0
-       */
+      /** Bonuses Pending */
       bonuses_pending: number;
-      /**
-       * Leave Pending
-       * @default 0
-       */
+      /** Leave Pending */
       leave_pending: number;
-      /**
-       * On Leave Today
-       * @default false
-       */
+      /** On Leave Today */
       on_leave_today: boolean;
       /** Papers Missing */
-      papers_missing?: number | null;
+      papers_missing: number | null;
     };
     /** PersonOverview */
     PersonOverview: {
@@ -25385,31 +25376,25 @@ export interface components {
     };
     /** PersonRow */
     PersonRow: {
-      /**
-       * Active
-       * @default true
-       */
+      /** Active */
       active: boolean;
       /** Department */
-      department?: string | null;
+      department: string | null;
       /** Employee Id */
-      employee_id?: number | null;
-      flags?: components["schemas"]["PersonFlags"];
-      /**
-       * Has Record
-       * @default false
-       */
+      employee_id: number | null;
+      flags: components["schemas"]["PersonFlags"];
+      /** Has Record */
       has_record: boolean;
       /** Hire Date */
-      hire_date?: string | null;
+      hire_date: string | null;
       /** Name */
-      name?: string | null;
+      name: string | null;
       /** Role */
-      role?: string | null;
+      role: string | null;
       /** Team Member Id */
       team_member_id: string;
       /** Unit */
-      unit?: string | null;
+      unit: string | null;
     };
     /**
      * PlanListResponse
