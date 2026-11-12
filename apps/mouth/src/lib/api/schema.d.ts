@@ -9728,6 +9728,49 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/hr/people": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List People
+     * @description Every staff member the caller may see, with the flags that need attention.
+     *
+     *     HR admins see all staff (people without an HR record included) plus the pulse; a
+     *     scoped viewer sees only their members, no pulse.
+     */
+    get: operations["list_people_api_hr_people_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/hr/people/{team_member_id}/overview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Person Overview
+     * @description One person's HR picture: exactly the shape `/me/overview` gives that member.
+     */
+    get: operations["get_person_overview_api_hr_people__team_member_id__overview_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/ingest/batch": {
     parameters: {
       query?: never;
@@ -25239,6 +25282,15 @@ export interface components {
       /** Year */
       year: number;
     };
+    /** PayrollMonth */
+    PayrollMonth: {
+      /** Month */
+      month: number;
+      /** Status */
+      status?: string | null;
+      /** Year */
+      year: number;
+    };
     /** PayslipSummary */
     PayslipSummary: {
       /** Allowance Total Idr */
@@ -25260,6 +25312,35 @@ export interface components {
       /** Thr Idr */
       thr_idr: number;
     };
+    /** PeoplePulse */
+    PeoplePulse: {
+      /** Active People */
+      active_people: number;
+      /** Bonuses Pending Count */
+      bonuses_pending_count: number;
+      /** Bonuses Pending Idr */
+      bonuses_pending_idr: number;
+      /** Leave Pending Count */
+      leave_pending_count: number;
+      payroll: components["schemas"]["PayrollMonth"];
+      /** People Without Record */
+      people_without_record: number;
+    };
+    /** PeopleRoster */
+    PeopleRoster: {
+      /** Can Edit */
+      can_edit: boolean;
+      /** People */
+      people?: components["schemas"]["PersonRow"][];
+      pulse?: components["schemas"]["PeoplePulse"] | null;
+      /**
+       * Scope
+       * @enum {string}
+       */
+      scope: "all" | "scoped";
+      /** Viewer Team Member Id */
+      viewer_team_member_id: string;
+    };
     /**
      * PermissionItem
      * @description Permission entry.
@@ -25275,6 +25356,60 @@ export interface components {
       role: string;
       /** Type */
       type: string;
+    };
+    /** PersonFlags */
+    PersonFlags: {
+      /**
+       * Bonuses Pending
+       * @default 0
+       */
+      bonuses_pending: number;
+      /**
+       * Leave Pending
+       * @default 0
+       */
+      leave_pending: number;
+      /**
+       * On Leave Today
+       * @default false
+       */
+      on_leave_today: boolean;
+      /** Papers Missing */
+      papers_missing?: number | null;
+    };
+    /** PersonOverview */
+    PersonOverview: {
+      person: components["schemas"]["MyHrOverview"];
+      /** Viewer Team Member Id */
+      viewer_team_member_id: string;
+    };
+    /** PersonRow */
+    PersonRow: {
+      /**
+       * Active
+       * @default true
+       */
+      active: boolean;
+      /** Department */
+      department?: string | null;
+      /** Employee Id */
+      employee_id?: number | null;
+      flags?: components["schemas"]["PersonFlags"];
+      /**
+       * Has Record
+       * @default false
+       */
+      has_record: boolean;
+      /** Hire Date */
+      hire_date?: string | null;
+      /** Name */
+      name?: string | null;
+      /** Role */
+      role?: string | null;
+      /** Team Member Id */
+      team_member_id: string;
+      /** Unit */
+      unit?: string | null;
     };
     /**
      * PlanListResponse
@@ -43731,7 +43866,7 @@ export interface operations {
         };
         content: {
           "application/json": {
-            [key: string]: boolean;
+            [key: string]: unknown;
           };
         };
       };
@@ -44154,6 +44289,57 @@ export interface operations {
           "application/json": {
             [key: string]: unknown;
           };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_people_api_hr_people_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PeopleRoster"];
+        };
+      };
+    };
+  };
+  get_person_overview_api_hr_people__team_member_id__overview_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        team_member_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PersonOverview"];
         };
       };
       /** @description Validation Error */

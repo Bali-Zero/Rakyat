@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from backend.app.routers.hr import _require_can_review_leave
+from backend.app.utils.hr_utils import is_hr_admin
 
 
 def _mock_service_returning_request(requester_email: str) -> Any:
@@ -45,14 +46,23 @@ class TestRequireCanReviewLeave:
         assert req["id"] == 1
 
     @pytest.mark.asyncio
-    async def test_ruslana_approves_dea(self) -> None:
-        service = _mock_service_returning_request("dea@balizero.com")
-        req = await _require_can_review_leave(
-            service,
-            {"email": "ruslana@balizero.com", "role": "member"},
-            1,
-        )
+    async def test_ruslana_approves_her_direct_report_without_being_an_hr_admin(self) -> None:
+        # Owner decision 2026-11-12: Ruslana is no longer an HR admin; her delegated
+        # approval (hr_leave_routing: Rina -> Ruslana) is what lets her review Rina's leave.
+        user = {"email": "ruslana@balizero.com", "role": "member"}
+        assert is_hr_admin(user) is False
+        service = _mock_service_returning_request("rina@balizero.com")
+        req = await _require_can_review_leave(service, user, 1)
         assert req["id"] == 1
+
+    @pytest.mark.asyncio
+    async def test_ruslana_can_no_longer_review_someone_else_s_leave(self) -> None:
+        service = _mock_service_returning_request("dea@balizero.com")
+        with pytest.raises(HTTPException) as exc:
+            await _require_can_review_leave(
+                service, {"email": "ruslana@balizero.com", "role": "member"}, 1
+            )
+        assert exc.value.status_code == 403
 
     # ─── Supervisor delegation ───────────────────────────────────────
     @pytest.mark.asyncio

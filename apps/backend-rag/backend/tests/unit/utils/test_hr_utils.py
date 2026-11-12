@@ -3,17 +3,57 @@
 from datetime import date
 
 from backend.app.utils.hr_utils import (
+    HR_SCOPED_VIEWERS,
     UMK_BADUNG_2026,
     calculate_bpjs,
     calculate_pph21_annual,
     calculate_pph21_monthly,
     calculate_thr,
+    can_view_hr_member,
+    hr_people_scope,
     is_hr_admin,
     total_employee_deductions,
     validate_minimum_wage,
 )
 
 # ─── RBAC ────────────────────────────────────────────────────────────────
+
+SCOPED = frozenset(
+    {"rina@balizero.com", "rio@balizero.com", "dea@balizero.com", "candra@balizero.com"}
+)
+
+
+class TestPeopleScope:
+    def test_ruslana_is_not_an_hr_admin_any_more(self) -> None:
+        assert not is_hr_admin({"email": "ruslana@balizero.com", "role": "member"})
+
+    def test_ruslana_is_a_scoped_viewer_of_exactly_four_members(self) -> None:
+        assert HR_SCOPED_VIEWERS["ruslana@balizero.com"] == SCOPED
+        user = {"email": "Ruslana@Balizero.com", "role": "member"}
+        assert hr_people_scope(user) == SCOPED
+
+    def test_hr_admins_see_all(self) -> None:
+        for email in ("zero@balizero.com", "asya@balizero.com", "adit@balizero.com"):
+            assert hr_people_scope({"email": email, "role": "member"}) == "all", email
+
+    def test_plain_member_and_missing_identity_have_no_scope(self) -> None:
+        assert hr_people_scope({"email": "krisna@balizero.com", "role": "member"}) is None
+        assert hr_people_scope({}) is None
+
+    def test_a_client_never_gets_a_scope_even_with_a_viewer_email(self) -> None:
+        assert hr_people_scope({"email": "ruslana@balizero.com", "role": "client"}) is None
+        assert hr_people_scope({"email": "zero@balizero.com", "role": "client"}) is None
+
+    def test_can_view_member_is_case_insensitive_and_exact(self) -> None:
+        ruslana = {"email": "ruslana@balizero.com", "role": "member"}
+        assert can_view_hr_member(ruslana, "DEA@balizero.com")
+        assert not can_view_hr_member(ruslana, "krisna@balizero.com")
+        assert not can_view_hr_member(ruslana, "")
+        assert not can_view_hr_member(ruslana, None)
+        assert can_view_hr_member({"email": "adit@balizero.com", "role": "member"}, "x@y.z")
+        assert not can_view_hr_member(
+            {"email": "krisna@balizero.com", "role": "member"}, "dea@balizero.com"
+        )
 
 
 class TestIsHrAdmin:
