@@ -50,6 +50,7 @@ from backend.db.repositories.client_repository import (
 )
 from backend.phone_lock import lock_phone_cores, phone_core
 from backend.services.common.background import spawn
+from backend.services.crm import client_search
 from backend.services.crm.client_service import ClientService
 from backend.services.crm.documents import validate_client_document_date
 from backend.services.crm.gender import normalize_gender
@@ -958,21 +959,33 @@ async def list_clients(
             # users — everyone sees the full client list. The RBAC filter from
             # get_crm_user_filter() above already handles this correctly.
 
-            if search:
-                search_pattern = f"%{search}%"
-                # NIB/NPWP: on the client row, or on a linked company (the create
-                # path moves the NIB onto companies). The whole group is AND-ed, so
-                # the RBAC clause above still bounds every match.
-                ident = f"${param_index + 3}"
-                query_parts.append(
-                    f" AND (c.full_name ILIKE ${param_index} OR c.email ILIKE ${param_index + 1} OR c.phone ILIKE ${param_index + 2}"
-                    f" OR c.nib ILIKE {ident} OR c.npwp ILIKE {ident}"
-                    " OR EXISTS (SELECT 1 FROM client_company_links ccl"
-                    " JOIN companies co ON co.id = ccl.company_id"
-                    f" WHERE ccl.client_id = c.id AND (co.nib ILIKE {ident} OR co.npwp_company ILIKE {ident})))",
-                )
-                params.extend([search_pattern, search_pattern, search_pattern, search_pattern])
-                param_index += 4
+            smart_search = None
+            if isinstance(search, str) and search.strip():
+                if await client_search.smart_search_available(conn):
+                    smart_search = await client_search.build_client_search(
+                        conn, search, param_index
+                    )
+                if smart_search is not None:
+                    query_parts.append(smart_search.clause)
+                    params.extend(smart_search.params)
+                    param_index = smart_search.next_index
+                else:
+                    # Migration 358 not applied yet, or every typed token is shorter than a
+                    # trigram: the legacy substring search answers.
+                    search_pattern = f"%{search}%"
+                    # NIB/NPWP: on the client row, or on a linked company (the create
+                    # path moves the NIB onto companies). The whole group is AND-ed, so
+                    # the RBAC clause above still bounds every match.
+                    ident = f"${param_index + 3}"
+                    query_parts.append(
+                        f" AND (c.full_name ILIKE ${param_index} OR c.email ILIKE ${param_index + 1} OR c.phone ILIKE ${param_index + 2}"
+                        f" OR c.nib ILIKE {ident} OR c.npwp ILIKE {ident}"
+                        " OR EXISTS (SELECT 1 FROM client_company_links ccl"
+                        " JOIN companies co ON co.id = ccl.company_id"
+                        f" WHERE ccl.client_id = c.id AND (co.nib ILIKE {ident} OR co.npwp_company ILIKE {ident})))",
+                    )
+                    params.extend([search_pattern, search_pattern, search_pattern, search_pattern])
+                    param_index += 4
 
             if nationality:
                 query_parts.append(f" AND c.nationality ILIKE ${param_index}")
@@ -993,8 +1006,9 @@ async def list_clients(
                     params.append(passport_expiring_days)
                     param_index += 1
 
+            order_by = smart_search.order_by if smart_search else "c.created_at DESC"
             query_parts.append(
-                f" ORDER BY c.created_at DESC LIMIT ${param_index} OFFSET ${param_index + 1}",
+                f" ORDER BY {order_by} LIMIT ${param_index} OFFSET ${param_index + 1}",
             )
             params.extend([limit, offset])
 

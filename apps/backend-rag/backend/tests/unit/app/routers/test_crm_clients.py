@@ -197,6 +197,7 @@ class TestListClients:
 
         mock_row = TestCreateClient._create_mock_row(sample_client_data)
         conn.fetch = AsyncMock(return_value=[mock_row])
+        conn.fetchval = AsyncMock(side_effect=[True, "john"])  # available, folded query
 
         response = client.get("/api/crm/clients/?search=John")
 
