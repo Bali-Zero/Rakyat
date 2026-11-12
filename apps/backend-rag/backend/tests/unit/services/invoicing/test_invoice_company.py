@@ -169,7 +169,12 @@ def test_company_without_npwp_or_address_prints_neither() -> None:
     [
         ("Bayu Bali", (["bayu", "bali"], None)),
         ("PT.BAYU", (["bayu"], None)),
-        ("pt bayu cv", (["bayu"], None)),
+        ("pt bayu cv", (["bayu", "cv"], None)),
+        ("Bayu CV", (["bayu", "cv"], None)),
+        ("bayu pt", (["bayu", "pt"], None)),
+        ("pt b", ([], None)),
+        ("Straße", (["strasse"], None)),
+        ("bayu, Tbk,", (["bayu"], None)),
         ("bayu, Tbk.", (["bayu"], None)),
         ("pt", ([], None)),
         ("b", ([], None)),
@@ -201,4 +206,7 @@ def test_normalizer_ignores_a_trailing_tbk() -> None:
 
     assert normalize_company_name("PT Maju Jaya, Tbk.") == normalize_company_name("maju jaya")
     assert normalize_company_name("PT Maju (Tbk)") == "maju"
+    assert normalize_company_name("PT Maju Jaya Tbk,") == "majujaya"
+    assert normalize_company_name("PT Maju Jaya, Tbk.;") == "majujaya"
+    assert normalize_company_name("PT Straße") == "strasse"
     assert normalize_company_name("PT Tbkmaju") == "tbkmaju"

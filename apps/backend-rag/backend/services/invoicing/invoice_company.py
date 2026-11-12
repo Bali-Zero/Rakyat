@@ -20,8 +20,7 @@ AUTOFILL_CATEGORIES = frozenset({"company", "corporate"})
 NEW_LINK_ROLE = "Director"
 _MIN_NPWP_DIGITS = 15
 _LEADING_LEGAL = re.compile(r"^\s*(pt|cv)\b\.?\s*", re.IGNORECASE)
-_TRAILING_TBK = re.compile(r"[\s,.(]*\btbk\b[\s.)]*$", re.IGNORECASE)
-_LEGAL_WORDS = frozenset({"pt", "cv", "tbk"})
+_TRAILING_TBK = re.compile(r"[\s,.(]*\btbk\b[\s,.;)]*$", re.IGNORECASE)
 SEARCH_LIMIT = 8
 _MIN_SEARCH_CHARS = 2
 _MIN_SEARCH_DIGITS = 4
@@ -115,20 +114,17 @@ async def fetch_client_company_links(
 
 
 async def _find_by_name(conn: asyncpg.Connection, normalized: str) -> list[asyncpg.Record]:
-    rows = await conn.fetch(
-        "SELECT id, company_name, npwp_company FROM companies"
-        " WHERE regexp_replace(lower(company_name), '[^a-z0-9]', '', 'g') LIKE '%' || $1 || '%'",
-        normalized,
-    )
+    rows = await conn.fetch("SELECT id, company_name, npwp_company FROM companies")
     return [row for row in rows if normalize_company_name(row["company_name"]) == normalized]
 
 
 def parse_search_query(query: str | None) -> tuple[list[str], str | None]:
     """Split a typed query into (name words, NPWP digits).
 
-    Words are alphanumeric runs, casefolded, with the legal-form words PT / CV / Tbk
-    dropped wherever they stand. A query with no letters and enough digits is an NPWP
-    search. Fewer than two characters is no search at all.
+    Words are alphanumeric runs, casefolded, after the same affix rules the save path
+    uses (a leading PT/CV and a trailing Tbk are dropped, nothing else), so "Bayu CV"
+    keeps "cv" exactly as saving it would. A query with no letters and enough digits is
+    an NPWP search. Fewer than two characters is no search at all.
     """
     text = (query or "").strip()
     if len(text) < _MIN_SEARCH_CHARS:
@@ -136,8 +132,9 @@ def parse_search_query(query: str | None) -> tuple[list[str], str | None]:
     if not re.search(r"[^\W\d_]", text):
         digits = re.sub(r"\D", "", text)
         return [], digits if len(digits) >= _MIN_SEARCH_DIGITS else None
-    words = [w for w in re.split(r"[^a-z0-9]+", text.casefold()) if w and w not in _LEGAL_WORDS]
-    return words, None
+    text = _TRAILING_TBK.sub("", _LEADING_LEGAL.sub("", text, count=1))
+    words = [w for w in re.split(r"[^a-z0-9]+", text.casefold()) if w]
+    return (words, None) if len("".join(words)) >= _MIN_SEARCH_CHARS else ([], None)
 
 
 def match_tier(normalized_name: str, words: list[str]) -> int | None:
@@ -167,11 +164,10 @@ async def search_companies(
         )
         tiers = {row["id"]: 0 for row in rows}
     elif words:
-        rows = await conn.fetch(
-            "SELECT id, company_name FROM companies"
-            " WHERE regexp_replace(lower(company_name), '[^a-z0-9]', '', 'g') LIKE ALL($1::text[])",
-            [f"%{word}%" for word in words],
-        )
+        # No SQL prefilter: the Python normaliser casefolds (sharp s becomes ss) and
+        # lower() does not, so any SQL narrowing could drop a valid match. The table is
+        # ~2k rows; the scan is measured in the PR.
+        rows = await conn.fetch("SELECT id, company_name FROM companies")
         tiers = {}
         for row in rows:
             tier = match_tier(normalize_company_name(row["company_name"]), words)

@@ -112,6 +112,7 @@ export function InvoiceCompanyField({
   // for an older query is never shown, and the pick made from it (name shown in
   // the selector) for a company the suggestion did not list.
   const [search, setSearch] = useState<{
+    ctx: string;
     q: string;
     rows: InvoiceCompanyMatch[];
   } | null>(null);
@@ -214,6 +215,7 @@ export function InvoiceCompanyField({
   }, [clientId, practiceTypeCode, autofill]);
 
   const typedQuery = value.name.trim();
+  const searchCtx = `${clientId ?? ""}|${practiceTypeCode ?? ""}`;
   const searchActive =
     clientId !== undefined &&
     value.companyId === null &&
@@ -229,7 +231,8 @@ export function InvoiceCompanyField({
       Promise.resolve()
         .then(() => api.crm.searchInvoiceCompanies(clientId, typedQuery))
         .then((r) => {
-          if (!cancelled) setSearch({ q: typedQuery, rows: r.companies });
+          if (!cancelled)
+            setSearch({ ctx: searchCtx, q: typedQuery, rows: r.companies });
         })
         .catch((err) => {
           if (cancelled) return;
@@ -244,7 +247,12 @@ export function InvoiceCompanyField({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [searchActive, clientId, typedQuery]);
+  }, [searchActive, clientId, typedQuery, searchCtx]);
+
+  // Editing the name (also back to an earlier text) reopens a list the user had closed.
+  useEffect(() => {
+    setDismissedFor(null);
+  }, [typedQuery]);
 
   const options = [...companies];
   if (
@@ -366,6 +374,7 @@ export function InvoiceCompanyField({
       )}
       {searchActive &&
         search?.q === typedQuery &&
+        search.ctx === searchCtx &&
         dismissedFor !== typedQuery && (
           <div
             className="rounded-lg border border-[var(--border)] p-2 text-sm space-y-1"

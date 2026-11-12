@@ -99,7 +99,7 @@ def names(rows: list[dict]) -> list[str]:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "typed",
-    ["bayu", "BAYU", "Bayu", "PT.BAYU", "pt bayu", "PT. Bayu", "cv bayu", "bayu pt", " bayu "],
+    ["bayu", "BAYU", "Bayu", "PT.BAYU", "pt bayu", "PT. Bayu", "cv bayu", " bayu "],
 )
 async def test_casing_prefix_and_punctuation_find_the_same_company(
     pool: asyncpg.Pool, typed: str
@@ -221,3 +221,45 @@ async def test_search_needs_the_same_client_visibility_as_the_suggestion(
     with pytest.raises(HTTPException) as err:
         await search(pool, theirs, "bayu", STAFF)
     assert err.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a_legal_word_that_is_part_of_the_name_is_kept_like_the_save_path_keeps_it(
+    pool: asyncpg.Pool,
+) -> None:
+    client = await person(pool)
+    target = await company(pool, "PT Bayu CV")
+    await company(pool, "PT Bayu Santero")
+    assert [r["id"] for r in await search(pool, client, "Bayu CV")] == [target]
+    assert {r["company_name"] for r in await search(pool, client, "bayu")} == {
+        "PT Bayu CV",
+        "PT Bayu Santero",
+    }
+
+
+@pytest.mark.asyncio
+async def test_unicode_casefold_matches_in_search_and_save(pool: asyncpg.Pool) -> None:
+    client = await person(pool)
+    target = await company(pool, "PT Straße Mulia")
+    assert [r["id"] for r in await search(pool, client, "STRASSE")] == [target]
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            resolved = await invoice_company.resolve_invoice_company(
+                conn, client, company_id=None, name="strasse mulia", npwp=None, actor="synthetic"
+            )
+    assert resolved == target
+    assert await pool.fetchval("SELECT count(*) FROM companies") == 1
+
+
+@pytest.mark.asyncio
+async def test_trailing_tbk_with_punctuation_never_duplicates_on_save(pool: asyncpg.Pool) -> None:
+    client = await person(pool)
+    target = await company(pool, "PT Maju Jaya Tbk,")
+    assert [r["id"] for r in await search(pool, client, "maju jaya")] == [target]
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            resolved = await invoice_company.resolve_invoice_company(
+                conn, client, company_id=None, name="Maju Jaya", npwp=None, actor="synthetic"
+            )
+    assert resolved == target
+    assert await pool.fetchval("SELECT count(*) FROM companies") == 1

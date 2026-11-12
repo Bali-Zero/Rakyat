@@ -601,6 +601,7 @@ describe("InvoiceCompanyField live company search", () => {
       suggested_company_id: null,
       companies: [],
     });
+    mockSearch.mockReset();
     mockSearch.mockResolvedValue({ companies: [] });
   });
 
@@ -788,5 +789,83 @@ describe("InvoiceCompanyField live company search", () => {
     act(() => setterRef.current?.(EMPTY_INVOICE_COMPANY));
     expect(screen.queryByLabelText("Company name")).toBeNull();
     expect(screen.getByRole("combobox")).toHaveValue("");
+  });
+
+  it("a search pending for the previous service that resolves late shows nothing", async () => {
+    let resolveOld: (v: unknown) => void = () => {};
+    mockSearch.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveOld = resolve)),
+    );
+    mockSearch.mockResolvedValueOnce({ companies: [] });
+    const typed = { companyId: null, name: "bayu", npwp: "" };
+    const { rerender } = render(<Harness initial={typed} onValue={vi.fn()} />);
+    await waitFor(() => expect(mockSearch).toHaveBeenCalledTimes(1));
+    rerender(
+      <Harness
+        initial={typed}
+        code="kitas_working_onshore"
+        onValue={vi.fn()}
+      />,
+    );
+    await act(async () => {
+      resolveOld({ companies: [match(21, "PT Bayu Lama")] });
+    });
+    expect(screen.queryByRole("button", { name: "PT Bayu Lama" })).toBeNull();
+  });
+
+  it("a list shown for the previous service is withdrawn when the service changes", async () => {
+    mockSearch.mockResolvedValueOnce({
+      companies: [match(21, "PT Bayu Lama")],
+    });
+    mockSearch.mockImplementationOnce(() => new Promise(() => {}));
+    const typed = { companyId: null, name: "bayu", npwp: "" };
+    const { rerender } = render(<Harness initial={typed} onValue={vi.fn()} />);
+    await screen.findByRole("button", { name: "PT Bayu Lama" });
+    rerender(
+      <Harness
+        initial={typed}
+        code="kitas_working_onshore"
+        onValue={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "PT Bayu Lama" })).toBeNull();
+  });
+
+  it("editing the name away from a closed list and back reopens it", async () => {
+    mockSearch.mockResolvedValue({ companies: [match(21, "PT Bayu Lain")] });
+    render(<Harness onValue={vi.fn()} />);
+    const user = await typeName("bayu");
+    await user.click(
+      await screen.findByRole("button", { name: "Create «bayu»" }),
+    );
+    expect(screen.queryByTestId("invoice-company-search")).toBeNull();
+    await user.type(screen.getByLabelText("Company name"), "x");
+    await user.type(screen.getByLabelText("Company name"), "{Backspace}");
+    expect(
+      await screen.findByRole("button", { name: "Create «bayu»" }),
+    ).toBeInTheDocument();
+  });
+
+  it("after a service change the list is searched again for the new service", async () => {
+    mockSearch.mockResolvedValueOnce({
+      companies: [match(21, "PT Bayu Lama")],
+    });
+    mockSearch.mockResolvedValueOnce({
+      companies: [match(22, "PT Bayu Baru")],
+    });
+    const typed = { companyId: null, name: "bayu", npwp: "" };
+    const { rerender } = render(<Harness initial={typed} onValue={vi.fn()} />);
+    await screen.findByRole("button", { name: "PT Bayu Lama" });
+    rerender(
+      <Harness
+        initial={typed}
+        code="kitas_working_onshore"
+        onValue={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", { name: "PT Bayu Baru" }),
+    ).toBeInTheDocument();
+    expect(mockSearch).toHaveBeenCalledTimes(2);
   });
 });
