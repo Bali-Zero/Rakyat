@@ -105,7 +105,10 @@ class TestCreateManualBonus:
             await svc.create_manual_bonus(**_args())
         assert conn.fetchrow.await_count == 1
         lock_sql, month, year = conn.fetchval.await_args.args
-        assert "FOR SHARE" in lock_sql and (month, year) == (11, 2026)
+        assert "payroll_month" in lock_sql and (month, year) == (11, 2026)
+        # the shared month lock was taken before the status read
+        assert "pg_advisory_xact_lock_shared" in conn.execute.await_args_list[0].args[0]
+        assert conn.execute.await_args_list[0].args[1] == "hr_payroll_month:2026-11"
 
 
 class TestRejectAndDelete:
@@ -258,4 +261,5 @@ class TestPeriodLocks:
         conn.fetchval = AsyncMock(return_value=42)  # an employee whose bonus total differs
         with pytest.raises(PayrollBonusesChangedError, match="recalculate"):
             await svc.approve_payroll(1, "tm-1")
-        assert conn.fetchrow.await_count == 1  # the UPDATE never ran
+        assert conn.fetchrow.await_count == 2  # the UPDATE never ran
+        assert "pg_advisory_xact_lock(" in conn.execute.await_args.args[0]  # exclusive

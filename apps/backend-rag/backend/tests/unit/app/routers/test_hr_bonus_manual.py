@@ -177,3 +177,20 @@ def test_approve_payroll_maps_200_409_400(make_client):
     assert res.status_code == 409 and "recalculate" in res.json()["detail"]
     svc.approve_payroll = AsyncMock(side_effect=ValueError("not calculated"))
     assert c.post("/api/hr/payroll/1/approve").status_code == 400
+
+
+def test_bonus_rate_without_effective_from_reaches_the_service_with_a_date(make_client):
+    svc = AsyncMock()
+    svc.upsert_bonus_rate = AsyncMock(return_value={"id": 1})
+    c = make_client(ADMIN, svc)
+    body = {"practice_type_code": "tax_fake", "amount_idr": 300000}
+    assert c.post("/api/hr/bonus-rates", json=body).status_code == 200
+    assert isinstance(svc.upsert_bonus_rate.await_args.args[0]["effective_from"], date)
+    # the Settings form sends an explicit null
+    assert c.post("/api/hr/bonus-rates", json={**body, "effective_from": None}).status_code == 200
+    assert isinstance(svc.upsert_bonus_rate.await_args.args[0]["effective_from"], date)
+    # an edit that sends its dates keeps them
+    kept = {**body, "effective_from": "2026-03-01", "effective_to": "2026-12-31"}
+    assert c.post("/api/hr/bonus-rates", json=kept).status_code == 200
+    sent = svc.upsert_bonus_rate.await_args.args[0]
+    assert (sent["effective_from"], sent["effective_to"]) == (date(2026, 3, 1), date(2026, 12, 31))

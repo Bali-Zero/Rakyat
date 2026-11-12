@@ -357,7 +357,10 @@ async def upsert_bonus_rate(
     """Create or update a bonus rate."""
     _require_hr_admin(current_user)
     service = _get_hr_service(db_pool)
-    result = await service.upsert_bonus_rate(data.model_dump())
+    payload = data.model_dump()
+    # A rate always starts somewhere: the form sends null, the column is NOT NULL.
+    payload["effective_from"] = data.effective_from or business_today()
+    result = await service.upsert_bonus_rate(payload)
     await invalidate_cache("zantara:hr_bonuses:*")
     return {"success": True, "rate": result}
 

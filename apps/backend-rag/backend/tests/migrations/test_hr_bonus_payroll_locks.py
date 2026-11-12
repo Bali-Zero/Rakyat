@@ -7,6 +7,7 @@ on the payroll period row instead of racing.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -20,7 +21,7 @@ from backend.app.services.hr.hr_service import (
     BonusPeriodLockedError,
     HRService,
     PayrollBonusesChangedError,
-    _lock_payroll_month,
+    payroll_month_lock_key,
 )
 from backend.db.migration_base import split_migration_sql
 from backend.migrations.migration_068_hr_payroll import UPGRADE_SQL
@@ -189,47 +190,145 @@ async def test_a_bonus_for_someone_without_a_payslip_is_a_mismatch(env: Env) -> 
         await env.svc.approve_payroll(period_id, env.admin)
 
 
+def _manual(env: Env, day: int = 12) -> dict:
+    return {
+        "employee_id": env.emp_id,
+        "amount_idr": 1,
+        "reason": "blocked insert",
+        "practice_type_code": None,
+        "awarded_on": date(YEAR, MONTH, day),
+        "created_by": "fake.admin@example.com",
+    }
+
+
+class _Hold:
+    """An open transaction holding the month lock, as an in-flight request would."""
+
+    def __init__(self, pool: asyncpg.Pool, *, exclusive: bool, period_row: int | None = None):
+        self.pool, self.exclusive, self.period_row = pool, exclusive, period_row
+
+    async def __aenter__(self) -> None:
+        self.conn = await self.pool.acquire()
+        self.tx = self.conn.transaction()
+        await self.tx.start()
+        fn = "pg_advisory_xact_lock" if self.exclusive else "pg_advisory_xact_lock_shared"
+        # the key is built by the production function, so the test locks what the code locks
+        await self.conn.execute(f"SELECT {fn}(hashtext($1))", payroll_month_lock_key(MONTH, YEAR))
+        if self.period_row is not None:
+            await self.conn.fetchrow(
+                "SELECT * FROM hr_payroll_periods WHERE id=$1 FOR UPDATE", self.period_row
+            )
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.tx.rollback()
+        await self.pool.release(self.conn)
+
+
+def test_the_lock_key_is_per_month() -> None:
+    assert payroll_month_lock_key(3, 2026) == "hr_payroll_month:2026-03"
+    assert payroll_month_lock_key(3, 2026) != payroll_month_lock_key(3, 2027)
+
+
 @pytest.mark.asyncio
-async def test_payroll_approval_waits_for_a_session_holding_the_month(env: Env) -> None:
+async def test_with_no_period_row_an_in_flight_bonus_blocks_calculate(env: Env) -> None:
+    assert await _period_id(env.pool) is None
+    async with _Hold(env.pool, exclusive=False):  # an approval/insert mid-transaction
+        with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
+            await env.quick.calculate_payroll(MONTH, YEAR, env.admin)
+    assert await _period_id(env.pool) is None  # nothing half-created
+    await env.svc.calculate_payroll(MONTH, YEAR, env.admin)  # free again
+
+
+@pytest.mark.asyncio
+async def test_an_in_flight_bonus_blocks_payroll_approval_on_an_existing_period(env: Env) -> None:
     await env.svc.calculate_payroll(MONTH, YEAR, env.admin)
     period_id = await _period_id(env.pool)
-    async with env.pool.acquire() as a:
-        tx = a.transaction()
-        await tx.start()
-        try:
-            await _lock_payroll_month(a, MONTH, YEAR)  # tx A holds FOR SHARE
-            with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
-                await env.quick.approve_payroll(period_id, env.admin)
-        finally:
-            await tx.rollback()
+    async with _Hold(env.pool, exclusive=False):
+        with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
+            await env.quick.approve_payroll(period_id, env.admin)
+        with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
+            await env.quick.calculate_payroll(MONTH, YEAR, env.admin)
     assert (await env.svc.approve_payroll(period_id, env.admin))["status"] == "approved"
 
 
 @pytest.mark.asyncio
-async def test_bonus_insert_and_approval_wait_for_payroll_approval(env: Env) -> None:
-    await env.svc.calculate_payroll(MONTH, YEAR, env.admin)
-    period_id = await _period_id(env.pool)
+async def test_payroll_work_blocks_bonus_insert_and_approval_with_no_period_row(env: Env) -> None:
     pending = await _bonus(env.pool, env.emp_id, "pending")
-    async with env.pool.acquire() as a:
-        tx = a.transaction()
-        await tx.start()
-        try:
-            await a.fetchrow("SELECT * FROM hr_payroll_periods WHERE id=$1 FOR UPDATE", period_id)
-            with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
-                await env.quick.create_manual_bonus(
-                    employee_id=env.emp_id,
-                    amount_idr=1,
-                    reason="blocked insert",
-                    practice_type_code=None,
-                    awarded_on=date(YEAR, MONTH, 12),
-                    created_by="fake.admin@example.com",
-                )
-            with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
-                await env.quick.approve_bonus(pending, env.admin)
-        finally:
-            await tx.rollback()
+    assert await _period_id(env.pool) is None
+    async with _Hold(env.pool, exclusive=True):  # calculate/approve mid-transaction
+        with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
+            await env.quick.approve_bonus(pending, env.admin)
+        with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
+            await env.quick.create_manual_bonus(**_manual(env))
     async with env.pool.acquire() as conn:
         assert (
             await conn.fetchval("SELECT status FROM hr_bonus_ledger WHERE id=$1", pending)
             == "pending"
         )
+    assert (await env.svc.approve_bonus(pending, env.admin))["status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_payroll_approval_holding_the_period_row_blocks_bonuses(env: Env) -> None:
+    await env.svc.calculate_payroll(MONTH, YEAR, env.admin)
+    period_id = await _period_id(env.pool)
+    pending = await _bonus(env.pool, env.emp_id, "pending")
+    # exclusive month lock plus the period row: what approve_payroll holds mid-flight
+    async with _Hold(env.pool, exclusive=True, period_row=period_id):
+        with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
+            await env.quick.create_manual_bonus(**_manual(env))
+        with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
+            await env.quick.approve_bonus(pending, env.admin)
+
+
+@pytest.mark.asyncio
+async def test_no_initial_period_end_to_end_the_payslip_includes_the_bonus(env: Env) -> None:
+    pending = await _bonus(env.pool, env.emp_id, "pending")
+    await env.svc.approve_bonus(pending, env.admin)  # committed, no period row existed
+    await env.svc.calculate_payroll(MONTH, YEAR, env.admin)
+    period_id = await _period_id(env.pool)
+    assert (await env.svc.approve_payroll(period_id, env.admin))["status"] == "approved"
+    async with env.pool.acquire() as conn:
+        assert (
+            await conn.fetchval(
+                "SELECT bonus_total_idr FROM hr_payslips WHERE employee_id=$1 AND payroll_period_id=$2",
+                env.emp_id,
+                period_id,
+            )
+            == 100_000
+        )
+    assert (await env.svc.mark_payroll_paid(period_id))["status"] == "paid"
+
+
+@pytest.mark.asyncio
+async def test_two_shared_holders_do_not_block_each_other(env: Env) -> None:
+    first = await _bonus(env.pool, env.emp_id, "pending")
+    second = await _bonus(env.pool, env.emp_id, "pending")
+    async with _Hold(env.pool, exclusive=False):  # a third in-flight shared holder
+        results = await asyncio.gather(
+            env.quick.approve_bonus(first, env.admin),
+            env.quick.approve_bonus(second, env.admin),
+            env.quick.create_manual_bonus(**_manual(env)),
+        )
+    assert [r["status"] for r in results] == ["approved", "approved", "pending"]
+
+
+@pytest.mark.asyncio
+async def test_rate_upsert_without_effective_from_stores_today(env: Env) -> None:
+    from backend.app.services.hr.hr_service import business_today
+
+    async with env.pool.acquire() as conn:
+        await conn.execute("DELETE FROM hr_bonus_rates WHERE practice_type_code='tax_fake'")
+    rate = await env.svc.upsert_bonus_rate(
+        {"practice_type_code": "tax_fake", "amount_idr": 5, "effective_from": None}
+    )
+    assert rate["effective_from"] == business_today()
+    kept = await env.svc.upsert_bonus_rate(
+        {
+            "practice_type_code": "tax_fake",
+            "amount_idr": 6,
+            "effective_from": date(2026, 3, 1),
+            "effective_to": date(2026, 12, 31),
+        }
+    )
+    assert (kept["effective_from"], kept["effective_to"]) == (date(2026, 3, 1), date(2026, 12, 31))

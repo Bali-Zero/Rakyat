@@ -165,6 +165,39 @@ class TestBonusRates:
 # ============================================================================
 
 
+class TestBonusRateDefaults:
+    @pytest.mark.asyncio
+    async def test_a_rate_without_effective_from_is_stored_as_of_today(
+        self, hr_service, mock_db_pool
+    ):
+        from backend.app.services.hr.hr_service import business_today
+
+        mock_db_pool._mock_conn.fetchrow = AsyncMock(return_value={"id": 1})
+        for given in (None, {}):  # explicit null, as the Settings form sends, and absent
+            data = {"practice_type_code": "tax_fake", "amount_idr": 5}
+            if given is None:
+                data["effective_from"] = None
+            await hr_service.upsert_bonus_rate(data)
+            params = mock_db_pool._mock_conn.fetchrow.await_args.args
+            assert params[3] == business_today()  # $3 effective_from, never NULL
+
+    @pytest.mark.asyncio
+    async def test_an_edit_that_sends_the_dates_keeps_them(self, hr_service, mock_db_pool):
+        from datetime import date
+
+        mock_db_pool._mock_conn.fetchrow = AsyncMock(return_value={"id": 1})
+        await hr_service.upsert_bonus_rate(
+            {
+                "practice_type_code": "tax_fake",
+                "amount_idr": 5,
+                "effective_from": date(2026, 3, 1),
+                "effective_to": date(2026, 12, 31),
+            }
+        )
+        params = mock_db_pool._mock_conn.fetchrow.await_args.args
+        assert params[3] == date(2026, 3, 1) and params[4] == date(2026, 12, 31)
+
+
 class TestBonuses:
     @pytest.mark.asyncio
     async def test_list_bonuses_no_filter(self, hr_service, mock_db_pool):
@@ -342,6 +375,7 @@ class TestPayroll:
     async def test_approve_payroll(self, hr_service, mock_db_pool):
         mock_db_pool._mock_conn.fetchrow = AsyncMock(
             side_effect=[
+                {"payroll_month": 4, "payroll_year": 2026},
                 {"id": 1, "status": "calculated", "payroll_month": 4, "payroll_year": 2026},
                 {"id": 1, "status": "approved", "approved_by": "admin"},
             ]
@@ -359,7 +393,12 @@ class TestPayroll:
     @pytest.mark.asyncio
     async def test_mark_payroll_paid(self, hr_service, mock_db_pool):
         conn = mock_db_pool._mock_conn
-        conn.fetchrow = AsyncMock(return_value={"id": 1, "status": "paid"})
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"payroll_month": 4, "payroll_year": 2026},
+                {"id": 1, "status": "paid"},
+            ]
+        )
         conn.execute = AsyncMock()
         result = await hr_service.mark_payroll_paid(1)
         assert result["status"] == "paid"

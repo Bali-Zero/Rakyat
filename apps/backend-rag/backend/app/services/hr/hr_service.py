@@ -54,19 +54,31 @@ class PayrollBonusesChangedError(Exception):
     """Approved bonuses no longer match the payslips the period was calculated with."""
 
 
-async def _lock_payroll_month(conn: Any, month: int, year: int) -> None:
-    """Share-lock the payroll period of a month and refuse when it is approved or paid.
+def payroll_month_lock_key(month: int, year: int) -> str:
+    """The advisory-lock key of a payroll month (also what the tests lock on)."""
+    return f"hr_payroll_month:{year:04d}-{month:02d}"
 
-    Serialises bonus insert/approval against payroll approval (which takes the same row
-    FOR UPDATE). No period row: nothing is locked and nothing is raised. Must run inside
-    a transaction, or the lock is released at once.
+
+async def _lock_payroll_month(conn: Any, month: int, year: int, *, exclusive: bool) -> None:
+    """Take the transaction-scoped advisory lock of a payroll month.
+
+    It exists before any period row does, which a row lock cannot: whoever ADDS money to
+    a month (bonus insert, bonus approval) holds it SHARED, whoever FIXES the month's
+    money (calculate, approve, mark paid) holds it EXCLUSIVE, so the two never interleave
+    even when no hr_payroll_periods row exists yet. Must run inside a transaction (it is
+    released at commit/rollback). Lock order everywhere: bonus row, month lock, period row.
+    """
+    fn = "pg_advisory_xact_lock" if exclusive else "pg_advisory_xact_lock_shared"
+    await conn.execute(f"SELECT {fn}(hashtext($1))", payroll_month_lock_key(month, year))
+
+
+async def _refuse_if_payroll_closed(conn: Any, month: int, year: int) -> None:
+    """Raise BonusPeriodLockedError when the month's payroll is approved or paid.
+
+    Only meaningful under the month lock, which makes this plain read race-free.
     """
     status = await conn.fetchval(
-        """
-        SELECT status FROM hr_payroll_periods
-        WHERE payroll_month = $1 AND payroll_year = $2
-        FOR SHARE
-        """,
+        "SELECT status FROM hr_payroll_periods WHERE payroll_month = $1 AND payroll_year = $2",
         month,
         year,
     )
@@ -423,7 +435,7 @@ class HRService:
             """,
                 data["practice_type_code"],
                 data["amount_idr"],
-                data.get("effective_from", date.today()),
+                data.get("effective_from") or business_today(),
                 data.get("effective_to"),
                 data.get("is_active", True),
                 data.get("notes"),
@@ -537,7 +549,8 @@ class HRService:
                 if not cur or cur["status"] != "pending":
                     msg = f"Bonus {bonus_id} not found or not pending"
                     raise ValueError(msg)
-                await _lock_payroll_month(conn, cur["m"], cur["y"])
+                await _lock_payroll_month(conn, cur["m"], cur["y"], exclusive=False)
+                await _refuse_if_payroll_closed(conn, cur["m"], cur["y"])
                 row = await conn.fetchrow(
                     """
                     UPDATE hr_bonus_ledger
@@ -607,7 +620,8 @@ class HRService:
                     if not known:
                         msg = "Unknown or inactive service"
                         raise ValueError(msg)
-                await _lock_payroll_month(conn, awarded_on.month, awarded_on.year)
+                await _lock_payroll_month(conn, awarded_on.month, awarded_on.year, exclusive=False)
+                await _refuse_if_payroll_closed(conn, awarded_on.month, awarded_on.year)
                 row = await conn.fetchrow(
                     """
                     INSERT INTO hr_bonus_ledger (
@@ -727,6 +741,7 @@ class HRService:
 
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
+                await _lock_payroll_month(conn, month, year, exclusive=True)
                 # Create or get period
                 period = await conn.fetchrow(
                     """
@@ -958,17 +973,32 @@ class HRService:
     async def approve_payroll(self, period_id: int, approved_by: str) -> dict[str, Any]:
         """Approve a payroll period (locks it).
 
-        The period row is locked FOR UPDATE first, so bonus inserts and approvals (which
-        share-lock it) either finished before the comparison below or wait and then see
-        the period approved. Refuses when the approved+paid bonuses of the month no longer
-        match what the payslips were calculated with.
+        Order: read the period's month unlocked, take the month lock EXCLUSIVE (waits for
+        in-flight bonus inserts/approvals, blocks new ones), lock the period row, re-check
+        it, then compare bonuses. Refuses when the approved+paid bonuses of the month no
+        longer match what the payslips were calculated with.
         """
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
+                seen = await conn.fetchrow(
+                    "SELECT payroll_month, payroll_year FROM hr_payroll_periods WHERE id = $1",
+                    period_id,
+                )
+                if not seen:
+                    msg = f"Period {period_id} not found or not in 'calculated' status"
+                    raise ValueError(msg)
+                await _lock_payroll_month(
+                    conn, seen["payroll_month"], seen["payroll_year"], exclusive=True
+                )
                 period = await conn.fetchrow(
                     "SELECT * FROM hr_payroll_periods WHERE id = $1 FOR UPDATE", period_id
                 )
-                if not period or period["status"] != "calculated":
+                if (
+                    not period
+                    or period["status"] != "calculated"
+                    or (period["payroll_month"], period["payroll_year"])
+                    != (seen["payroll_month"], seen["payroll_year"])
+                ):
                     msg = f"Period {period_id} not found or not in 'calculated' status"
                     raise ValueError(msg)
                 drift = await conn.fetchval(
@@ -1013,6 +1043,14 @@ class HRService:
         """Mark payroll as paid."""
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
+                seen = await conn.fetchrow(
+                    "SELECT payroll_month, payroll_year FROM hr_payroll_periods WHERE id = $1",
+                    period_id,
+                )
+                if seen:
+                    await _lock_payroll_month(
+                        conn, seen["payroll_month"], seen["payroll_year"], exclusive=True
+                    )
                 row = await conn.fetchrow(
                     """
                     UPDATE hr_payroll_periods
