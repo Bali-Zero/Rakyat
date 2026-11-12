@@ -37,7 +37,9 @@ const FUNNEL_HREF: Record<Exclude<Funnel, null>, string> = {
 // Fix for CRO audit 2026-04-19 (bait-and-switch bug).
 const FUNNEL_PRICING_HREF: Record<Exclude<Funnel, null>, string> = {
   visa: "https://visa.balizero.com/pricing",
-  kbli: "https://kita.balizero.com/kbli/pricing",
+  // kita.balizero.com is the internal host; /kbli/pricing there is a "Page
+  // not found". The public company-setup page carries the licensing packages.
+  kbli: "/services/company",
   tax: "https://tax.balizero.com/pricing",
   property: "https://balizero.com/pricing",
 };

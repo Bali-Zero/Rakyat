@@ -242,6 +242,10 @@
 }
 
 :root {
+  /* Toast stack (components/ui/toast.tsx): above dialogs/popovers (z-50) and
+     sticky bars (z-40), level with the chat Toast (z-[100]). */
+  --z-toast: 100;
+
   /* Map design system vars to kbli theme */
   --background: var(--kbli-bg-base);
   --background-secondary: var(--kbli-bg-elevated);

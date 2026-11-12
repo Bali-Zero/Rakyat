@@ -66,6 +66,20 @@ export function normalizeCategory(rawCategory: string): ArticleCategory {
 }
 
 /**
+ * The raw category names a public category gathers — what the backend news
+ * table may store for it. GET /api/news filters with an exact `category = $1`,
+ * and its rows say immigration / tax / legal / lifestyle / tech, not the public
+ * visas / taxes / living / trends; sending the public name matched nothing.
+ * An unknown name is passed through unchanged.
+ */
+export function backendCategoriesFor(publicCategory: string): string[] {
+  const raw = Object.keys(CATEGORY_MAP).filter(
+    (key) => CATEGORY_MAP[key] === publicCategory,
+  );
+  return raw.length > 0 ? raw : [publicCategory];
+}
+
+/**
  * Locale suffixes that exist as translated `.mdx` variants. None of them has a
  * public page of its own — verified against the live sitemap 2026-08-11, which
  * carries zero `.it`/`.id`/`.fr`/`.ru` URLs and no `/it/`-style prefix.
