@@ -33,6 +33,11 @@ from backend.app.services.hr.hr_service import (
 
 logger = logging.getLogger(__name__)
 
+# googleapiclient logs every request URL (query included) at DEBUG/INFO. The door never puts a
+# stored value in one, but a Drive URL is not a place for personal data either: belt and braces.
+for _name in ("googleapiclient.discovery", "googleapiclient.http"):
+    logging.getLogger(_name).setLevel(logging.WARNING)
+
 CONTRACT_SLOT = "contract"
 ALL_SLOTS: tuple[str, ...] = (*DOC_SLOTS, CONTRACT_SLOT)
 SLOT_LABELS = {
@@ -146,8 +151,6 @@ _REMOVE_CONTRACT_SQL = """
       AND jsonb_typeof(profile->'contract') = 'object'
 """
 
-_DRIVE_ID = re.compile(r"^[A-Za-z0-9_-]{10,200}$")
-
 
 def value_sha(value: str) -> str:
     """First 16 hex of the sha256: what the audit keeps of a value this request did not create
@@ -214,7 +217,9 @@ class HRDocumentService:
             raise HRDocError(HRDocCode.DB_ERROR) from None
         return self._context_from(row)
 
-    async def ensure_folder(self, member_id: str) -> tuple[str, _Context]:
+    async def ensure_folder(
+        self, member_id: str, *, skip_if_unit: str | None = None
+    ) -> tuple[str | None, _Context]:
         """Find or create the person's folder (moving it when the unit changed).
 
         Lock order, the same everywhere: the MEMBER advisory lock first, then the context (unit,
@@ -227,6 +232,10 @@ class HRDocumentService:
                     "SELECT pg_advisory_xact_lock(hashtext('hr_docs_folder:'||$1))", member_id
                 )
                 ctx = self._context_from(await conn.fetchrow(_CONTEXT_SQL, member_id))
+                if skip_if_unit is not None and unit_folder_name(ctx.unit) == unit_folder_name(
+                    skip_if_unit
+                ):
+                    return None, ctx  # nothing moved since the caller's folder step
                 await conn.execute(
                     "SELECT pg_advisory_xact_lock(hashtext('hr_docs_unit:'||$1))",
                     unit_folder_name(ctx.unit),
@@ -366,27 +375,31 @@ class HRDocumentService:
         new_id: str | None,
         folder_id: str | None,
     ) -> str:
-        """After the commit: trash the replaced file ONLY if this door made it for this member and
-        this slot. ALL must hold: a Drive-id-shaped value Drive knows, a pdf/jpeg/png (never a
-        folder), not trashed, appProperties nz_hr_member == member and nz_hr_slot == slot, and its
-        parent is the member's person folder. Anything else (a folder id or free text pasted in by
-        an import, another slot's file, another member's, an error) is "kept", with no value logged."""
+        """After the commit: trash the replaced file ONLY if it is one of THIS door's own files.
+
+        "Previous values are opaque" (C13): `previous` came out of a card slot, which is free text
+        under C10, so it is never sent to Drive, logged or used in a query. Instead Drive is asked
+        for the door's own files (appProperties nz_hr_member = member AND nz_hr_slot = slot, inside
+        the member's person folder, not trashed, a pdf/jpeg/png), and `previous` is only COMPARED,
+        locally, with the ids Drive returned. No match, no folder, or any error is "kept"."""
         if not previous or previous == new_id:
             return "none"
-        if not _DRIVE_ID.match(previous) or not folder_id:
+        if not folder_id:
             return "kept"
         try:
-            meta = await self.drive.get_document_meta(previous)
-            if (
-                meta is None
-                or meta.get("trashed")
-                or meta.get("mimeType") not in DOC_MIMES
-                or meta.get("appProperties", {}).get(MEMBER_PROP) != member_id
-                or meta.get("appProperties", {}).get(SLOT_PROP) != slot
-                or folder_id not in (meta.get("parents") or [])
-            ):
+            ours = await self.drive.list_files_by_app_properties(
+                {MEMBER_PROP: member_id, SLOT_PROP: slot}, folder_id, sorted(DOC_MIMES)
+            )
+            matches = [
+                f
+                for f in ours
+                if f.get("id") == previous
+                and f.get("mimeType") in DOC_MIMES
+                and folder_id in (f.get("parents") or [folder_id])
+            ]
+            if not matches:
                 return "kept"
-            await self.drive.trash_file(previous)
+            await self.drive.trash_file(previous)  # an id Drive itself returned
             return "trashed"
         except Exception as exc:
             logger.warning("hr documents previous file left in place (%s)", type(exc).__name__)
@@ -394,11 +407,11 @@ class HRDocumentService:
 
     async def _follow_unit_change(self, member_id: str, used_unit: str) -> None:
         """After the commit: if the card's unit changed since the folder step (a C11 PATCH in
-        between), run the folder step again; it moves the person folder, and the files with it."""
+        between), run the folder step again; it moves the person folder, and the files with it.
+        The re-read and the move happen inside ensure_folder, i.e. while holding the member
+        advisory lock, so a PATCH cannot change the unit between the two."""
         try:
-            now = await self._read_context(member_id)
-            if unit_folder_name(now.unit) != unit_folder_name(used_unit):
-                await self.ensure_folder(member_id)
+            await self.ensure_folder(member_id, skip_if_unit=used_unit)
         except Exception as exc:  # the file is saved; the next upload or move corrects the folder
             logger.warning("hr documents unit follow-up failed (%s)", type(exc).__name__)
 

@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from io import BytesIO
 from typing import Any
@@ -853,27 +854,38 @@ class ServiceAccountDriveService:
                 break
         return found
 
-    async def get_document_meta(self, file_id: str) -> dict[str, Any] | None:
-        """mimeType, trashed, parents and appProperties of one file, or None when Drive has no
-        such file (404). Any other error propagates."""
-        request = self.service.files().get(
-            fileId=file_id,
-            fields="id, mimeType, trashed, parents, appProperties",
-            supportsAllDrives=True,
-        )
-        try:
-            meta = await asyncio.to_thread(request.execute)
-        except Exception as exc:
-            if getattr(getattr(exc, "resp", None), "status", None) == 404:
-                return None
-            raise
-        return {
-            "id": meta.get("id"),
-            "mimeType": meta.get("mimeType"),
-            "trashed": bool(meta.get("trashed")),
-            "parents": list(meta.get("parents") or []),
-            "appProperties": dict(meta.get("appProperties") or {}),
-        }
+    async def list_files_by_app_properties(
+        self, props: dict[str, str], parent_id: str, mimes: Sequence[str]
+    ) -> list[dict[str, Any]]:
+        """Live (not trashed) files directly inside `parent_id` whose appProperties equal ALL of
+        `props` and whose mimeType is one of `mimes`. Every input is one the caller resolved
+        itself (a member id, a slot, a folder id Drive returned, a closed set of types); nothing
+        read from stored data may be passed here. Returns id, mimeType, parents and appProperties."""
+        esc = lambda v: str(v).replace("\\", "\\\\").replace("'", "\\'")  # noqa: E731
+        clauses = [
+            f"appProperties has {{ key='{esc(k)}' and value='{esc(v)}' }}" for k, v in props.items()
+        ]
+        clauses.append(f"'{esc(parent_id)}' in parents")
+        clauses.append("trashed = false")
+        clauses.append("(" + " or ".join(f"mimeType = '{esc(m)}'" for m in mimes) + ")")
+        found: list[dict[str, Any]] = []
+        page_token = None
+        for _ in range(20):
+            params: dict[str, Any] = {
+                "q": " and ".join(clauses),
+                "fields": "nextPageToken, files(id, mimeType, parents, appProperties)",
+                "supportsAllDrives": True,
+                "includeItemsFromAllDrives": True,
+                "pageSize": 100,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            result = await asyncio.to_thread(self.service.files().list(**params).execute)
+            found.extend(result.get("files", []))
+            page_token = result.get("nextPageToken")
+            if not page_token:
+                break
+        return found
 
     async def trash_file(self, file_id: str) -> None:
         """Move one file to the Drive trash (recoverable). Never a permanent delete."""

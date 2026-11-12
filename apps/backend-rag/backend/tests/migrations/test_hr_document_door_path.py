@@ -273,3 +273,126 @@ async def test_a_unit_change_between_the_folder_step_and_the_commit_ends_in_the_
     assert unit_folder["name"] == "MANAGEMENT" and unit_folder["parents"] == [ROOT]
     assert drive.files[out["file_id"]]["parent"] == person["id"]  # the file moved with its folder
     assert len(drive.moves) == 1
+
+
+# ── the real googleapiclient: a stored value is never in a request or a log (C13, "opaque") ──
+
+
+def _real_drive(responses: list[tuple[int, Any]]) -> tuple[Any, Any]:
+    from googleapiclient.discovery import build
+    from googleapiclient.http import HttpMockSequence
+
+    from backend.services.integrations.service_account_drive_service import (
+        ServiceAccountDriveService,
+    )
+
+    http = HttpMockSequence([({"status": str(st)}, json.dumps(body)) for st, body in responses])
+    drive = ServiceAccountDriveService.__new__(ServiceAccountDriveService)
+    drive.service = build("drive", "v3", http=http, static_discovery=True)
+    drive.root_folder_id = "root"
+    return drive, http
+
+
+def _wire(http: Any) -> str:
+    return json.dumps([(r[0], r[1], str(r[2])) for r in http.request_sequence])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op", ["replace", "remove"])
+@pytest.mark.parametrize("hit", [False, True])
+async def test_the_real_sdk_never_sees_the_stored_value(  # noqa: F811
+    pool: asyncpg.Pool, caplog: pytest.LogCaptureFixture, op: str, hit: bool
+) -> None:
+    svc = await _prep(pool)
+    stored = NIK if not hit else "RealDriveFile12345"
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE hr_employees SET profile = $1 WHERE team_member_id = 'tm-a'",
+            {"docs": {"ktp": stored}},
+        )
+    folder = {"files": [{"id": "pf1", "name": "x", "parents": ["u1"]}]}
+    door_files = {
+        "files": [{"id": "RealDriveFile12345", "mimeType": "application/pdf", "parents": ["pf1"]}]
+    }
+    seq: list[tuple[int, Any]] = []
+    if op == "remove":
+        seq.append((200, folder))  # _our_folder
+    seq.append((200, door_files))  # the door's own files
+    if hit:
+        seq.append((200, {"id": "RealDriveFile12345", "trashed": True}))  # the trash
+    drive, http = _real_drive(seq)
+    svc.drive = drive
+    with caplog.at_level(logging.DEBUG):
+        if op == "remove":
+            out = await svc.remove(actor_id="tm-owner", member_id=A_ID, email=A_MAIL, slot="ktp")
+        else:
+            prev = await _step(svc, "ktp", "newfile1234567")
+            assert prev == stored
+            out = {"previous": await svc._trash_if_ours(A_ID, "ktp", prev, "newfile1234567", "pf1")}
+    assert out["previous"] == ("trashed" if hit else "kept")
+    wire = _wire(http)
+    assert NIK not in wire and NIK not in caplog.text
+    patched = [r for r in http.request_sequence if r[1] == "PATCH"]
+    assert bool(patched) is hit  # only a match, by id equality, ever reaches files.update
+    blob = json.dumps([dict(r["details"]) for r in await _audit(pool)])
+    assert NIK not in blob
+
+
+@pytest.mark.asyncio
+async def test_a_card_patch_waits_for_the_doors_folder_move_and_the_next_move_matches(  # noqa: F811
+    pool: asyncpg.Pool,
+) -> None:
+    import asyncio
+
+    from backend.app.services.hr.hr_service import HRService
+    from backend.tests.unit.app.services.hr.test_hr_documents import FakeDrive
+
+    svc = await _prep(pool)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE hr_employees SET profile = $1 WHERE team_member_id = 'tm-a'", {"unit": "Tax"}
+        )
+    drive = FakeDrive()
+    svc.drive = drive
+    real_upload, real_move = drive.upload_file_to_folder, drive.move_file
+    patch_task: list[asyncio.Task[Any]] = []
+    waited: list[bool] = []
+
+    async def upload_then_patch_one(*a: Any, **kw: Any) -> Any:
+        res = await real_upload(*a, **kw)
+        async with pool.acquire() as conn:  # first PATCH: lands before the door's re-check
+            await conn.execute(
+                "UPDATE hr_employees SET profile = profile || $1 WHERE team_member_id = 'tm-a'",
+                {"unit": "Management"},
+            )
+        return res
+
+    async def move_while_a_second_patch_tries(*a: Any, **kw: Any) -> Any:
+        patch_task.append(
+            asyncio.create_task(
+                HRService(pool).edit_card(A_ID, A_MAIL, {}, {"unit": "Marketing"}, [])
+            )
+        )
+        await asyncio.sleep(0.4)
+        waited.append(not patch_task[0].done())  # the door holds the member lock during the move
+        return await real_move(*a, **kw)
+
+    drive.upload_file_to_folder = upload_then_patch_one  # type: ignore[method-assign]
+    drive.move_file = move_while_a_second_patch_tries  # type: ignore[method-assign]
+    await svc.upload(
+        actor_id="tm-owner",
+        member_id=A_ID,
+        email=A_MAIL,
+        slot="ktp",
+        data=b"%PDF-1.7",
+        mime="application/pdf",
+        ext="pdf",
+    )
+    assert waited == [True]
+    assert await asyncio.wait_for(patch_task[0], 5) is not None
+    assert (await _profile(pool))["unit"] == "Marketing"
+    person = next(f for f in drive.folders.values() if f["appProperties"])
+    assert drive.folders[person["parents"][0]]["name"] == "MANAGEMENT"  # what the door last saw
+    drive.move_file = real_move  # type: ignore[method-assign]
+    await svc.ensure_folder(A_ID)  # the next door call follows the final unit
+    assert drive.folders[person["parents"][0]]["name"] == "MARKETING"

@@ -386,14 +386,24 @@ takes a person off payroll; the read side (`member_card`) and the SQL predicate
   original commit to finish); if it holds the new id the upload succeeded, if not the new file
   is trashed, if that cannot be told it is left in place. Drive failures are `502 drive_unavailable` with a
   fixed message; a lock timeout is 409 as in C11.
-- *Trash only what is ours.* After the commit the replaced (or removed) file is moved to the Drive
-  trash ONLY if ALL hold: Drive knows it, it is a pdf, jpeg or png (never a folder), it is not
-  already trashed, its appProperties `nz_hr_member` is this member AND `nz_hr_slot` is this slot,
-  and its parent is this member's person folder. Anything else (a folder id or free text imported
-  into the slot, another slot's file, another member's, a foreign file, a Drive error) is `kept`.
-  The response is `{slot, file_id, previous}` with `previous` one of `trashed`, `kept`, `none`.
-  After an upload the card's unit is read again: if it changed since the folder step, the folder
-  step runs again and moves the person folder (the files move with it).
+- *Previous values are opaque.* A value read from a card slot is free text (C10 accepts any text),
+  so it is never sent to Drive, never put in a log, an error, an audit row or a response, and never
+  used to build a query. The door finds what it may trash ONLY by asking Drive for ITS OWN files:
+  a query on appProperties `nz_hr_member` = the member id AND `nz_hr_slot` = the slot, inside the
+  member's person folder, not trashed, with a MIME type from the door's set (pdf, jpeg, png: never
+  a folder). The only Drive inputs are the member id, the slot, the folder ids the door resolved
+  and ids Drive itself returned. The previous value is then COMPARED, locally, with those ids: the
+  file is moved to the Drive trash only if its id equals the previous value, otherwise the outcome
+  is `kept` (so are a folder id or free text pasted into the slot, another slot's file, another
+  member's, a foreign file and any Drive error). The audit keeps only the sha prefix of the previous
+  value. The `googleapiclient.discovery` and `googleapiclient.http` loggers are held at WARNING.
+- *Trash only what is ours.* The response is `{slot, file_id, previous}` with `previous` one of
+  `trashed`, `kept`, `none`. After an upload the card's unit is read again while holding the member
+  advisory lock; if it changed since the folder step, the folder step runs again and moves the
+  person folder (the files move with it). Lock order, everywhere: the member advisory lock
+  (`hr_docs_folder:<id>`), then the row lock, then the unit advisory lock; the C11 edit takes the
+  same member advisory lock first. The upload body is declared in OpenAPI (`openapi_extra`, one
+  binary part `file`) while parsing stays after the writer check.
 - *Audit and logs.* One `security_audit_log` row per change (`hr_document_upload` or
   `hr_document_remove`), in the same transaction as the card write, details = slot, the new id (made
   by this request) and `previous_sha` (first 16 hex of the sha256 of the old value, which is free
@@ -420,3 +430,4 @@ Paths are under `backend/tests/` unless given.
 | C12 | `tests/migrations/test_hr_off_payroll.py` (real Postgres: calculate, stale slip, approved period, PATCH set and clear, manual bonus 409, my-dashboard, /me/overview); `tests/migrations/test_hr_card_edit_path.py::test_the_import_door_*`; `unit/app/services/hr/test_hr_card_models.py` (strict bool, read default) |
 | C11 | `unit/app/routers/test_hr_people_card_edit.py` (authz matrix, 404, 422 matrix, no echo, fixed failures, keys-only log); `unit/app/routers/test_hr_capabilities.py::test_card_write_is_for_the_global_admins_only`; `unit/app/services/hr/test_hr_card_service.py::test_edit_card_*`, `::test_merge_card_on_passes_the_cleared_keys_*`; `tests/migrations/test_hr_card_edit_path.py` (real Postgres: set, clear, nested clear, docs untouched, create, serialisation, no value in logs, deactivated / monitoring / partner after the lookup, lock probe); `unit/app/setup/test_sentry_hr_request_redaction.py` (real SDK); `unit/app/routers/test_hr_staff_card.py::test_post_employees_is_for_the_global_admins_only` |
 | C13 | `unit/app/services/hr/test_hr_documents.py` (fake Drive: unit and person folders, move, title, appProperties, trash-ours vs keep-foreign, compensation, magic bytes); `unit/app/routers/test_hr_people_documents.py` (authz incl. HR extra admin and scoped viewer, 404, 422s, 4 MB edge, fixed 409 / 502, no name echoed); `tests/migrations/test_hr_document_door_path.py` (real Postgres: card + audit in one transaction, rollback leaves neither) |
+| C13 (opaque previous values) | `tests/migrations/test_hr_document_door_path.py::test_the_real_sdk_never_sees_the_stored_value` (real googleapiclient with HttpMockSequence, DEBUG logging: no value in any request, log or audit row; only an id equal to the previous value reaches `files.update`); `unit/app/services/hr/test_hr_documents.py::test_a_previous_that_is_not_exactly_our_file_for_this_slot_is_kept`, `::test_a_real_previous_upload_of_the_same_slot_is_trashed`, `::test_a_previous_value_drive_does_not_know_is_kept_without_a_trace`; `::test_a_card_patch_waits_for_the_doors_folder_move_and_the_next_move_matches` (lock order) |

@@ -127,7 +127,10 @@ async def test_edit_card_locks_the_member_then_merges_with_a_lock_timeout():
     conn.fetchval = AsyncMock(return_value="tm-1")
     conn.fetchrow = AsyncMock(return_value={"id": 7, "profile_type": "object"})
     assert await HRService(pool).edit_card("tm-1", "a@b.c", {"npwp": "N"}, {}, ["nik"]) == 7
-    assert "lock_timeout" in conn.execute.await_args.args[0]
+    sqls = [c.args[0] for c in conn.execute.await_args_list]
+    assert "lock_timeout" in sqls[0]
+    # one lock order with the HR document door (C13): member advisory lock, then the row lock
+    assert "hr_docs_folder" in sqls[1] and conn.execute.await_args_list[1].args[1] == "tm-1"
     assert "FOR SHARE" in conn.fetchval.await_args.args[0]
     assert conn.fetchrow.await_args.args[-1] == ["nik"]
 

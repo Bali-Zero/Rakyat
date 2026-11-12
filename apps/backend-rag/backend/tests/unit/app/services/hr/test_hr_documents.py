@@ -75,19 +75,25 @@ class FakeDrive:
         }
         return {"id": fid}
 
-    async def get_document_meta(self, file_id):
-        f = self.files.get(file_id)
-        if f is None:
-            return None
-        if file_id in self.folders:  # a folder id is a real Drive object too
-            return None
-        return {
-            "id": file_id,
-            "mimeType": f["mime"],
-            "trashed": file_id in self.trashed or bool(f.get("trashed")),
-            "parents": [f["parent"]],
-            "appProperties": dict(f["appProperties"]),
-        }
+    async def list_files_by_app_properties(self, props, parent_id, mimes):
+        """What the Drive query returns: live files in the folder with ALL these appProperties and
+        an allowed type. (A folder id in `files` is excluded by the type filter, as in Drive.)"""
+        self.listed = getattr(self, "listed", [])
+        self.listed.append((dict(props), parent_id))
+        return [
+            {
+                "id": fid,
+                "mimeType": f["mime"],
+                "parents": [f["parent"]],
+                "appProperties": dict(f["appProperties"]),
+            }
+            for fid, f in self.files.items()
+            if f["parent"] == parent_id
+            and fid not in self.trashed
+            and not f.get("trashed")
+            and f["mime"] in mimes
+            and all(f["appProperties"].get(k) == v for k, v in props.items())
+        ]
 
     def seed_person_folder(self, unit: str = "TAX") -> str:
         """The unit folder and the member's person folder, as an earlier upload left them."""
@@ -452,13 +458,14 @@ def test_value_sha_is_16_hex_of_sha256():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("previous", [NIKISH, "KTP Made Contoh.pdf", "short", "a" * 300])
 async def test_a_previous_value_drive_does_not_know_is_kept_without_a_trace(previous, caplog):
-    d = FakeDrive()  # knows no such file: get_document_meta -> None
+    d = FakeDrive()  # knows no such file: the door's own file list
     svc = _svc(d)
     svc._db_step = AsyncMock(return_value=previous)  # type: ignore[method-assign]
     with caplog.at_level(logging.DEBUG):
         res = await _up(svc)
     assert res["previous"] == "kept" and d.trashed == []
     assert previous not in caplog.text and previous not in str(res)
+    assert previous not in str(getattr(d, "listed", []))  # never an input to any Drive call
 
 
 @pytest.mark.asyncio
@@ -466,10 +473,10 @@ async def test_a_drive_error_on_the_previous_is_kept_and_not_logged(caplog):
     d = FakeDrive()
     prev = "A" * 33
 
-    async def boom(_fid):
+    async def boom(*_a, **_k):
         raise RuntimeError(f"drive says {prev} {NIKISH}")
 
-    d.get_document_meta = boom  # type: ignore[method-assign]
+    d.list_files_by_app_properties = boom  # type: ignore[method-assign]
     svc = _svc(d)
     svc._db_step = AsyncMock(return_value=prev)  # type: ignore[method-assign]
     with caplog.at_level(logging.DEBUG):

@@ -452,6 +452,23 @@ router.add_api_route(
     upload_person_document,
     methods=["POST"],
     route_class_override=_NoEchoValidationRoute,
+    # The handler takes no body parameter (it reads the stream itself, after authz and under a
+    # cap), so the multipart body is declared here for the generated clients.
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["file"],
+                        "properties": {"file": {"type": "string", "format": "binary"}},
+                        "additionalProperties": False,
+                    }
+                }
+            },
+        }
+    },
 )
 router.add_api_route(
     "/{team_member_id}/documents/{slot}",
