@@ -40,6 +40,7 @@ function rate(
   name: string,
   amount: number,
   active = true,
+  extra: Record<string, unknown> = {},
 ) {
   return {
     id,
@@ -52,14 +53,22 @@ function rate(
     notes: null,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
+    ...extra,
   };
 }
+
+// A rate with every field an upsert could blank: notes and both dates.
+const VISA_EXTRA = {
+  notes: "Fake agreed note",
+  effective_from: "2026-03-01",
+  effective_to: "2026-12-31",
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
   hrApiMock.listBonusRates.mockResolvedValue({
     rates: [
-      rate(1, "visa_fake", "Fake visa", 500_000),
+      rate(1, "visa_fake", "Fake visa", 500_000, true, VISA_EXTRA),
       rate(2, "company_fake", "Fake company", 750_000, false),
     ],
     count: 2,
@@ -148,13 +157,15 @@ describe("HR settings", () => {
     ).toHaveLength(1);
   });
 
-  it("inline edit keeps the dates and notes, and the switch turns a rate off", async () => {
+  it("an inline amount edit and an active toggle send notes and both dates back unchanged", async () => {
+    // the server echoes what it stored, as the real upsert does
     hrApiMock.upsertBonusRate.mockImplementation(async (p) => ({
       success: true,
-      rate: {
-        ...rate(1, p.practice_type_code, "", p.amount_idr, p.is_active),
-        notes: null,
-      },
+      rate: rate(1, p.practice_type_code, "", p.amount_idr, p.is_active, {
+        notes: p.notes ?? null,
+        effective_from: p.effective_from ?? null,
+        effective_to: p.effective_to ?? null,
+      }),
     }));
     const user = userEvent.setup();
     render(<HRSettingsPage />);
@@ -166,24 +177,29 @@ describe("HR settings", () => {
     await user.type(input, "650000");
     await user.click(screen.getByRole("button", { name: "Save amount" }));
     await waitFor(() =>
-      expect(hrApiMock.upsertBonusRate).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          practice_type_code: "visa_fake",
-          amount_idr: 650000,
-          effective_from: "2026-01-01",
-          is_active: true,
-        }),
-      ),
+      expect(hrApiMock.upsertBonusRate).toHaveBeenCalledTimes(1),
     );
+    expect(hrApiMock.upsertBonusRate).toHaveBeenLastCalledWith({
+      practice_type_code: "visa_fake",
+      amount_idr: 650000,
+      effective_from: "2026-03-01",
+      effective_to: "2026-12-31",
+      is_active: true,
+      notes: "Fake agreed note",
+    });
+
     await user.click(screen.getByRole("switch", { name: "Fake visa active" }));
     await waitFor(() =>
-      expect(hrApiMock.upsertBonusRate).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          practice_type_code: "visa_fake",
-          is_active: false,
-        }),
-      ),
+      expect(hrApiMock.upsertBonusRate).toHaveBeenCalledTimes(2),
     );
+    expect(hrApiMock.upsertBonusRate).toHaveBeenLastCalledWith({
+      practice_type_code: "visa_fake",
+      amount_idr: 650000,
+      effective_from: "2026-03-01",
+      effective_to: "2026-12-31",
+      is_active: false,
+      notes: "Fake agreed note",
+    });
     await waitFor(() =>
       expect(
         screen.getByRole("switch", { name: "Fake visa active" }),
