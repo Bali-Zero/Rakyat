@@ -9862,6 +9862,35 @@ export interface paths {
     patch: operations["edit_person_card_api_hr_people__team_member_id__card_patch"];
     trace?: never;
   };
+  "/api/hr/people/{team_member_id}/documents/{slot}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Upload Person Document
+     * @description Upload or replace one HR paper (global admins only).
+     *
+     *     No `UploadFile` parameter on purpose: FastAPI would parse the whole form before the writer
+     *     check and the size check. Here the writer dependency has already run when the body is first
+     *     touched; the body is read under a hard byte cap and only then parsed. The type is read from
+     *     the magic bytes (PDF, JPEG, PNG); nothing the client names is trusted.
+     */
+    post: operations["upload_person_document_api_hr_people__team_member_id__documents__slot__post"];
+    /**
+     * Remove Person Document
+     * @description Empty one HR paper's slot; the file goes to the Drive trash only when this door made it.
+     */
+    delete: operations["remove_person_document_api_hr_people__team_member_id__documents__slot__delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/hr/people/{team_member_id}/overview": {
     parameters: {
       query?: never;
@@ -22023,6 +22052,17 @@ export interface components {
       zeroed: number;
     };
     /**
+     * DocumentChangeResult
+     * @description The answer of the C13 door: which slot changed and the six-key map after the write
+     *     (always present: an uncertain commit that cannot be reconciled is an error, never a null).
+     *     Never a stored value.
+     */
+    DocumentChangeResult: {
+      documents: components["schemas"]["DocumentsMap"];
+      /** Slot */
+      slot: string;
+    };
+    /**
      * DocumentChunk
      * @description Single document chunk to ingest
      */
@@ -22062,6 +22102,17 @@ export interface components {
       notes?: string | null;
       /** Practice Id */
       practice_id?: number | null;
+    };
+    /**
+     * DocumentState
+     * @description One paper: `present` is true iff the stored slot value is a non-empty string; `file_id` is
+     *     that value only when it is VERIFIED (the door wrote it and `doc_proof` says so), else null.
+     */
+    DocumentState: {
+      /** File Id */
+      file_id: string | null;
+      /** Present */
+      present: boolean;
     };
     /** DocumentUpdate */
     DocumentUpdate: {
@@ -22129,6 +22180,18 @@ export interface components {
      * @enum {string}
      */
     DocumentationStatus: "AVAILABLE" | "UNKNOWN";
+    /**
+     * DocumentsMap
+     * @description Closed: exactly these six REQUIRED keys, never a stored `docs` key.
+     */
+    DocumentsMap: {
+      bpjs_kes: components["schemas"]["DocumentState"];
+      bpjs_tk: components["schemas"]["DocumentState"];
+      contract: components["schemas"]["DocumentState"];
+      kk: components["schemas"]["DocumentState"];
+      ktp: components["schemas"]["DocumentState"];
+      npwp: components["schemas"]["DocumentState"];
+    };
     /** DriveBacklogItem */
     DriveBacklogItem: {
       /** Backlog Type */
@@ -27897,10 +27960,7 @@ export interface components {
       contract?: components["schemas"]["StaffContractRead"] | null;
       /** Department */
       department?: string | null;
-      /** Docs */
-      docs?: {
-        [key: string]: string;
-      };
+      documents: components["schemas"]["DocumentsMap"];
       /** Employee Id */
       employee_id: number;
       /** Employer Entity */
@@ -27969,10 +28029,12 @@ export interface components {
       /** Number */
       number?: string | null;
     };
-    /** StaffContractRead */
+    /**
+     * StaffContractRead
+     * @description `contract.file_id` is NOT here: a stored slot value is untrusted free text (C13), and only
+     *     the `documents` map of the card says whether a paper is on file and which file is verified.
+     */
     StaffContractRead: {
-      /** File Id */
-      file_id?: string | null;
       /** Number */
       number?: string | null;
     };
@@ -44722,6 +44784,77 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["PersonOverview"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  upload_person_document_api_hr_people__team_member_id__documents__slot__post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        team_member_id: string;
+        slot: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "multipart/form-data": {
+          /** Format: binary */
+          file: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DocumentChangeResult"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  remove_person_document_api_hr_people__team_member_id__documents__slot__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        team_member_id: string;
+        slot: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DocumentChangeResult"];
         };
       };
       /** @description Validation Error */

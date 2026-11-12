@@ -151,8 +151,77 @@ class StaffCardPatch(BaseModel):
 
 
 class StaffContractRead(BaseModel):
+    """`contract.file_id` is NOT here: a stored slot value is untrusted free text (C13), and only
+    the `documents` map of the card says whether a paper is on file and which file is verified."""
+
     number: str | None = None
-    file_id: str | None = None
+
+
+DOCUMENT_SLOTS = ("ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk", "contract")
+
+
+class DocumentState(BaseModel):
+    """One paper: `present` is true iff the stored slot value is a non-empty string; `file_id` is
+    that value only when it is VERIFIED (the door wrote it and `doc_proof` says so), else null."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    present: bool
+    file_id: str | None
+
+
+class DocumentsMap(BaseModel):
+    """Closed: exactly these six REQUIRED keys, never a stored `docs` key."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ktp: DocumentState
+    kk: DocumentState
+    npwp: DocumentState
+    bpjs_kes: DocumentState
+    bpjs_tk: DocumentState
+    contract: DocumentState
+
+
+class DocumentChangeResult(BaseModel):
+    """The answer of the C13 door: which slot changed and the six-key map after the write
+    (always present: an uncertain commit that cannot be reconciled is an error, never a null).
+    Never a stored value."""
+
+    slot: str
+    documents: DocumentsMap
+
+
+def _slot_value(profile: dict[str, Any], slot: str) -> Any:
+    if slot == "contract":
+        contract = profile.get("contract")
+        return contract.get("file_id") if isinstance(contract, dict) else None
+    docs = profile.get("docs")
+    return docs.get(slot) if isinstance(docs, dict) else None
+
+
+def project_documents(profile: Any) -> dict[str, dict[str, Any]]:
+    """The ONE projection (STAFF_CARD.md C13): the six-key `documents` map of a stored profile.
+
+    Pure: a dict in, a dict out, no I/O, so it cannot fail open. A slot is VERIFIED iff its value is
+    a JSON string AND `doc_proof.<slot>` is an object whose `id` is a JSON string equal to it; only
+    then is the value echoed as `file_id`. An unverified value is reported as `present` and never
+    shown. A non-string or blank value is absent and is not echoed either."""
+    p = profile if isinstance(profile, dict) else {}
+    proofs = p.get("doc_proof") if isinstance(p.get("doc_proof"), dict) else {}
+    out: dict[str, dict[str, Any]] = {}
+    for slot in DOCUMENT_SLOTS:
+        value = _slot_value(p, slot)
+        present = isinstance(value, str) and bool(value.strip())
+        proof = proofs.get(slot)
+        verified = (
+            present
+            and isinstance(proof, dict)
+            and isinstance(proof.get("id"), str)
+            and proof["id"] == value
+        )
+        out[slot] = {"present": bool(present), "file_id": value if verified else None}
+    return out
 
 
 class StaffCard(BaseModel):
@@ -184,7 +253,7 @@ class StaffCard(BaseModel):
     unit: str | None = None
     on_payroll: bool = True
     contract: StaffContractRead | None = None
-    docs: dict[str, str] = Field(default_factory=dict)
+    documents: DocumentsMap
     end_date: date | None = None
 
 
@@ -233,19 +302,11 @@ def _profile_view(profile: Any) -> dict[str, Any]:
     view["end_date"] = _date_or_none(p.get("end_date"))
     contract = p.get("contract")
     view["contract"] = (
-        {
-            "number": _str_or_none(contract.get("number")),
-            "file_id": _str_or_none(contract.get("file_id")),
-        }
-        if isinstance(contract, dict)
-        else None
+        {"number": _str_or_none(contract.get("number"))} if isinstance(contract, dict) else None
     )
-    docs = p.get("docs")
-    view["docs"] = (
-        {k: v for k, v in docs.items() if isinstance(k, str) and isinstance(v, str)}
-        if isinstance(docs, dict)
-        else {}
-    )
+    # R4/N6: raw `docs`, `contract.file_id` and `doc_proof` never leave here; the closed
+    # `documents` map replaces them in EVERY response that carries a card.
+    view["documents"] = project_documents(p)
     return view
 
 

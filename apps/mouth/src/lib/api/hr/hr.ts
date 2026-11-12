@@ -62,7 +62,20 @@ export const getCapabilities = () =>
 // Own staff card — the member's own values in full, without the HR notes.
 export interface HrContract {
   number?: string | null;
-  file_id?: string | null;
+}
+/** One paper: `present` = a value is on file; `file_id` is set ONLY when the door verified it. */
+export interface HrDocumentState {
+  present: boolean;
+  file_id: string | null;
+}
+/** Closed: exactly these six keys. The API never returns a stored slot value (STAFF_CARD.md C13). */
+export interface HrDocuments {
+  ktp: HrDocumentState;
+  kk: HrDocumentState;
+  npwp: HrDocumentState;
+  bpjs_kes: HrDocumentState;
+  bpjs_tk: HrDocumentState;
+  contract: HrDocumentState;
 }
 export interface HrStaffCard {
   employee_id: number;
@@ -92,7 +105,7 @@ export interface HrStaffCard {
   /** false = the person is not on payroll (absent on older answers means true). */
   on_payroll?: boolean;
   contract: HrContract | null;
-  docs: Record<string, string>;
+  documents: HrDocuments;
   end_date: string | null;
 }
 export const getMyCard = () => api.get<HrStaffCard>(`${BASE}/me/card`);
@@ -205,6 +218,44 @@ export const editPersonCard = (
   api.requestWithCredential<PersonOverview>(
     `${BASE}/people/${encodeURIComponent(teamMemberId)}/card`,
     { method: "PATCH", body: JSON.stringify(body) },
+  );
+
+// People console, HR documents — STAFF_CARD.md C13. Only the global admins may call these. The
+// file goes up as multipart (field `file`); the browser sets the boundary, so no Content-Type here.
+export const DOC_SLOTS = [
+  "ktp",
+  "kk",
+  "npwp",
+  "bpjs_kes",
+  "bpjs_tk",
+  "contract",
+] as const;
+export type DocSlot = (typeof DOC_SLOTS)[number];
+export const DOC_MAX_BYTES = 4 * 1024 * 1024;
+export interface PersonDocumentResult {
+  slot: DocSlot;
+  documents: HrDocuments;
+}
+export const uploadPersonDocument = (
+  teamMemberId: string,
+  slot: DocSlot,
+  file: File,
+): Promise<CredentialedResponse<PersonDocumentResult>> => {
+  const form = new FormData();
+  form.append("file", file);
+  return api.requestWithCredential<PersonDocumentResult>(
+    `${BASE}/people/${encodeURIComponent(teamMemberId)}/documents/${slot}`,
+    { method: "POST", body: form },
+    90000,
+  );
+};
+export const removePersonDocument = (
+  teamMemberId: string,
+  slot: DocSlot,
+): Promise<CredentialedResponse<PersonDocumentResult>> =>
+  api.requestWithCredential<PersonDocumentResult>(
+    `${BASE}/people/${encodeURIComponent(teamMemberId)}/documents/${slot}`,
+    { method: "DELETE" },
   );
 
 // Dashboard

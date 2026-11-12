@@ -72,7 +72,7 @@ class CardEditBody(BaseModel):
         for name in profile.model_fields_set - {"contract", "docs"}:
             if getattr(profile, name) is None:
                 raise ValueError("a null sets nothing: list the key under clear to empty it")
-        if profile.docs or "file_id" in profile.contract.model_fields_set:
+        if "docs" in profile.model_fields_set or "file_id" in profile.contract.model_fields_set:
             raise ValueError("documents are not edited here")
         if profile.contract.model_fields_set - {"number", "file_id"}:
             raise ValueError("unknown contract key")

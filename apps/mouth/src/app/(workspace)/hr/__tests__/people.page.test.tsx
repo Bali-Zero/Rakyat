@@ -173,8 +173,15 @@ function overview(owner: string, name: string): MyHrOverview {
       marital_status: null,
       employer_entity: "PT Contoh",
       unit: "Unit Contoh",
-      contract: { number: "C-000", file_id: null },
-      docs: {},
+      contract: { number: "C-000" },
+      documents: {
+        ktp: { present: false, file_id: null },
+        kk: { present: false, file_id: null },
+        npwp: { present: false, file_id: null },
+        bpjs_kes: { present: false, file_id: null },
+        bpjs_tk: { present: false, file_id: null },
+        contract: { present: false, file_id: null },
+      },
       end_date: null,
     },
     payslips: [

@@ -156,8 +156,14 @@ def test_clearing_contract_number_is_expressible(make_client):
         ({"clear": ["ptkp_status"]}, "clear"),
         ({"clear": ["docs"]}, "clear"),
         ({"card": {"unit": None}}, ""),  # a null sets nothing
-        ({"card": {"profile": {"docs": {"ktp": "f1"}}}}, ""),  # documents are the upload PR's
+        ({"card": {"profile": {"docs": {"ktp": "f1"}}}}, ""),  # documents are the door's (C13)
         ({"card": {"profile": {"contract": {"file_id": "f1"}}}}, ""),
+        ({"card": {"profile": {"doc_proof": {"ktp": {"id": "f1"}}}}}, ""),  # and so is the proof
+        ({"clear": ["doc_proof"]}, "clear"),
+        ({"card": {"unit": "Tax", "profile": {"docs": {}}}}, ""),  # presence, not truthiness
+        ({"card": {"unit": "Tax", "profile": {"contract": {"file_id": None}}}}, ""),
+        ({"card": {"unit": "Tax", "profile": {"doc_proof": {}}}}, ""),
+        ({"card": {"unit": "Tax", "profile": {"docs": None}}}, ""),
         ({"card": {}}, ""),  # nothing to change
         ({"clear": ["unit", "unit"]}, ""),
     ],

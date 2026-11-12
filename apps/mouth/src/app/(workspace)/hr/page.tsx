@@ -40,8 +40,12 @@ import {
   editPersonCard,
   getPeople,
   getPersonOverview,
+  removePersonDocument,
+  uploadPersonDocument,
   type CardEditBody,
+  type DocSlot,
   type CardEditFieldError,
+  type HrDocuments,
   type HrStaffCard,
   type PeopleRoster,
   type PersonOverview,
@@ -54,6 +58,7 @@ import {
   type SessionIdentity,
 } from "@/lib/auth/session-identity";
 import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
+import { DocumentsBlock, type DocResult } from "./_components/documents-block";
 import {
   CardEditForm,
   type CardEditMode,
@@ -400,12 +405,9 @@ function errorKind(err: unknown) {
   };
 }
 
-const PAPER_SLOTS = ["ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk"];
-/** The backend's `papers_missing` for a refreshed card (five document slots + the contract file). */
+/** The backend's `papers_missing` for a refreshed card: the six slots that are not `present`. */
 function papersMissing(card: HrStaffCard): number {
-  const docs = card.docs ?? {};
-  const missing = PAPER_SLOTS.filter((slot) => !docs[slot]).length;
-  return missing + (card.contract?.file_id ? 0 : 1);
+  return Object.values(card.documents ?? {}).filter((d) => !d.present).length;
 }
 
 /** A failed card save as the form shows it: fixed texts only, never a value. */
@@ -432,6 +434,37 @@ function saveFailure(err: unknown): CardEditResult {
       return { ok: false, errors: [], general: "This person was not found." };
   }
   return { ok: false, errors: [], general: "Could not save. Try again." };
+}
+
+function docFailure(err: unknown): DocResult {
+  if (err instanceof ApiError) {
+    const detail = (err.data as { detail?: unknown } | undefined)?.detail;
+    const first = Array.isArray(detail)
+      ? (detail[0] as { message?: unknown } | undefined)
+      : undefined;
+    if (err.statusCode === 422 && typeof first?.message === "string")
+      return { ok: false, message: first.message };
+    if (err.statusCode === 403)
+      return { ok: false, message: "You cannot change documents." };
+    if (err.statusCode === 404)
+      return { ok: false, message: "This person was not found." };
+    if (err.statusCode === 409) {
+      const code = (detail as { code?: unknown } | undefined)?.code;
+      return {
+        ok: false,
+        message:
+          code === "hr_record_required"
+            ? "Add this person to HR first."
+            : "This card is being saved by someone else. Try again.",
+      };
+    }
+    if (err.statusCode === 502)
+      return {
+        ok: false,
+        message: "Document storage is unavailable. Try again in a moment.",
+      };
+  }
+  return { ok: false, message: "Could not save. Try again." };
 }
 
 function PeopleConsole() {
@@ -557,6 +590,112 @@ function PeopleConsole() {
       live = false;
     };
   }, [identity, selectedId, selectedHasRecord]);
+
+  // A document change (STAFF_CARD.md C13): accepted only for the identity and the person it was
+  // sent for (same rule as saveCard); on success the person's overview is read again so the
+  // card, the roster's missing-papers count and the Documents rows all show the new state.
+  async function changeDocument(
+    slot: DocSlot,
+    send: (id: string) => ReturnType<typeof uploadPersonDocument>,
+  ): Promise<DocResult> {
+    const id = selectedId;
+    const sentFor = identity;
+    if (!id || !sentFor)
+      return {
+        ok: false,
+        message: "Your session changed. Reload to continue.",
+      };
+    try {
+      const res = await send(id);
+      if (!acceptResponse(res, sentFor) || res.data.slot !== slot)
+        return {
+          ok: false,
+          message:
+            "Your session changed, so the answer was discarded. Reload to check the documents.",
+        };
+      // The write succeeded: apply the returned map now, identity- and person-bound. The overview
+      // read below only refreshes the rest and is best effort; its failure is never a save error.
+      const applyMap = (docs: HrDocuments) => {
+        setPslot((prev) => {
+          if (
+            prev.id !== id ||
+            prev.load.kind !== "ready" ||
+            !isSameIdentity(prev.owner, sentFor)
+          )
+            return prev;
+          const data = prev.load.data;
+          return {
+            ...prev,
+            load: {
+              kind: "ready",
+              data: {
+                ...data,
+                person: {
+                  ...data.person,
+                  card: { ...data.person.card, documents: docs },
+                },
+              },
+            },
+          };
+        });
+        setRslot((prev) => {
+          if (
+            prev.load.kind !== "ready" ||
+            !isSameIdentity(prev.owner, sentFor)
+          )
+            return prev;
+          const r = prev.load.roster;
+          return {
+            owner: prev.owner,
+            load: {
+              kind: "ready",
+              roster: {
+                ...r,
+                people: r.people.map((p) =>
+                  p.team_member_id === id
+                    ? {
+                        ...p,
+                        flags: {
+                          ...p.flags,
+                          papers_missing: Object.values(docs).filter(
+                            (d) => !d.present,
+                          ).length,
+                        },
+                      }
+                    : p,
+                ),
+              },
+            },
+          };
+        });
+      };
+      if (res.data.documents) applyMap(res.data.documents);
+      try {
+        const fresh = await getPersonOverview(id);
+        if (
+          acceptResponse(fresh, sentFor, fresh.data.viewer_team_member_id) &&
+          fresh.data.person.team_member_id === id
+        ) {
+          if (selectedIdRef.current === id)
+            setPslot({
+              owner: sentFor,
+              id,
+              load: { kind: "ready", data: fresh.data },
+            });
+          applyMap(fresh.data.person.card.documents);
+        }
+      } catch {
+        /* best effort: the saved state is already on screen */
+      }
+      return { ok: true };
+    } catch (err: unknown) {
+      return docFailure(err);
+    }
+  }
+  const uploadDocument = (slot: DocSlot, file: File) =>
+    changeDocument(slot, (id) => uploadPersonDocument(id, slot, file));
+  const removeDocument = (slot: DocSlot) =>
+    changeDocument(slot, (id) => removePersonDocument(id, slot));
 
   async function saveCard(body: CardEditBody): Promise<CardEditResult> {
     const id = selectedId;
@@ -1021,7 +1160,18 @@ function PeopleConsole() {
                         viewer="admin"
                       />
                     )}
-                    {open === "me" && <MeDetail me={person} viewer="admin" />}
+                    {open === "me" && (
+                      <MeDetail me={person} viewer="admin" showPapers={false} />
+                    )}
+                    {open === "me" && (
+                      <DocumentsBlock
+                        key={selected.team_member_id}
+                        card={person.card}
+                        canWrite={canWriteCard}
+                        onUpload={uploadDocument}
+                        onRemove={removeDocument}
+                      />
+                    )}
                     <p
                       className={`mt-8 border-t ${HAIR} pt-4 text-[12px] ${SOFT}`}
                     >

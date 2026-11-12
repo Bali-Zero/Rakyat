@@ -10,7 +10,9 @@ Migration 354). Code: `hr_card_models.py`, `hr_service.py`, `routers/hr.py`, and
 In: ONE read route, `GET /api/hr/me/card`, through which a staff member reads their own card, the
 import tool through which HR fills cards (JSON on stdin), and ONE write route,
 `PATCH /api/hr/people/{team_member_id}/card`, through which the HR writers (owner and accountant) edit, clear or create
-any person's card (C11). The read side is clauses C1-C4 and C9; the write side is C5-C8, C10 and C11.
+any person's card (C11), and the document door (`POST|DELETE /api/hr/people/{team_member_id}/documents/{slot}`),
+the only route that writes a file id (C13; same writers as C11). The read side is clauses C1-C4 and C9; the write side is
+C5-C8 and C10-C13.
 
 `GET /api/hr/me/overview` (`hr_overview_models.py`, `hr_overview_logic.py`) returns this same
 card plus the member's payslips, bonuses, leave and attendance for the "My HR" page. It takes no
@@ -19,13 +21,14 @@ parameter either, resolves the member exactly as C1 does (the token's `sub`), re
 page can check the owner of the answer against the bearer it sent.
 
 Explicitly out, on purpose:
-- **Any HTTP write of card data other than C11's one route.** No POST, no other PATCH. The legacy
+- **Any HTTP write of card data other than C11's route and C13's document door.** No other POST, no other PATCH. The legacy
   `POST /employees` is untouched (its response no longer carries `profile`).
-- **Any other new route with a path or query parameter** (C11's is the one exception).
+- **Any other new route with a path or query parameter** (C11's and C13's are the exceptions).
 - **Deleting profile data outside C11.** The import and `merge_card_on` without `clear` only add or
   overwrite. C11 removes a key only when the caller names it under `clear`, from a closed list.
-- **Documents.** C11 never writes `profile.docs` or `profile.contract.file_id` (uploading,
-  replacing and removing the Drive files is a separate decision with its own spec).
+- **Documents outside C13.** C10 and C11 never write `profile.docs`, `profile.contract.file_id` or
+  `profile.doc_proof` (C10 refuses the whole card, C11 the request); only the
+  C13 door does. Bulk upload, OCR and an employee-facing viewing proxy are not part of it.
 - **Case-insensitive or normalised identity matching** on the read path (see C1).
 
 ## Clauses
@@ -301,8 +304,8 @@ narrowed 2026-11-13: global admin alone no longer suffices.
   `religion`, `marital_status`, `employer_entity`, `unit`, `end_date`, `contract_number`. Not
   clearable: `hire_date` (a record always has one), `is_active` (a boolean you set), `ptkp_status`
   (NOT NULL with a default), documents. 422 when a key is both set and cleared, when a set key is an
-  explicit `null` (a null sets nothing; name the key under `clear`), when `docs` or
-  `contract.file_id` is sent, when a key repeats under `clear`, or when the body changes nothing.
+  explicit `null` (a null sets nothing; name the key under `clear`), when `docs`,
+  `contract.file_id` or `doc_proof` is sent, when a key repeats under `clear`, or when the body changes nothing.
 - *Semantics.* The write is `merge_card_on` (C5) with its `clear` argument, one statement in one
   transaction: omitted keys are preserved, `docs` and `contract.file_id` are untouched, a cleared
   column becomes a real NULL, a cleared profile key is REMOVED from the jsonb (not set to null),
@@ -358,6 +361,85 @@ takes a person off payroll; the read side (`member_card`) and the SQL predicate
   person (`/people/{id}/overview`, the payroll and employees admin pages) sees exactly what they saw
   before. Leave and attendance are untouched.
 
+**C13 The HR document door** (`POST` and `DELETE /api/hr/people/{team_member_id}/documents/{slot}`,
+`routers/hr_people.py`, `hr_documents.py`; spec "HR card document slots", v2.1). The ONE writer of
+the six document slots (`docs.ktp`, `docs.kk`, `docs.npwp`, `docs.bpjs_kes`, `docs.bpjs_tk` and
+`contract.file_id`; `slot` is `ktp`, `kk`, `npwp`, `bpjs_kes`, `bpjs_tk` or `contract`) and of
+`profile.doc_proof`. Root cause of the earlier rounds: a stored slot value is untrusted free text,
+yet every layer treated it as a Drive id. So provenance comes before display.
+- *One writer (R1).* Only this door writes a slot value, the legacy `docs.contract` duplicate or
+  `profile.doc_proof`. It writes only an id Drive returned for a file it created in this request.
+  The C10 import refuses a card carrying `docs`, `contract.file_id` or `doc_proof` as a whole, with
+  the outcome `rejected:doc_keys_door_only` (in the launcher's closed outcome grammar), and writes
+  nothing for it; `contract.number` and every other key import as before. C11 refuses the same keys.
+  A slot is cleared only by this door's DELETE.
+- *Provenance lives in the card (R2, N1, N4, N7, N8).* Each write sets, in the SAME `UPDATE` of the
+  same row, the slot value and `profile.doc_proof.<slot> = {id, by, at}` (id = the new file id, `by`
+  = the actor's email, `at` = UTC ISO time) through `jsonb_set`, per slot, so the other proofs and
+  every other profile key survive. A remove clears the slot and sets `{id: null, by, at}`. A write or
+  remove on `contract` also deletes `docs.contract`. A slot is VERIFIED iff its value is a JSON
+  string equal to the JSON string `doc_proof.<slot>.id`: exact equality, no format check, no hash, no
+  lookup. Nothing is hashed anywhere. There is NO audit-table write in the door's transaction
+  (`security_audit_log` does not exist in production): it touches only `hr_employees` (and the row
+  lock on `team_members`). `doc_proof.<slot>` keeps the LAST change (who, when); no per-change
+  history is kept, and no code consumes one.
+- *Opaque until verified (R3).* An unverified slot value is never sent to Drive, logged at any
+  level, placed in an error, a response or a Sentry event, or used to build a query, a URL or a Drive
+  call. That includes the previous value of a replace or remove. The `googleapiclient.discovery` and
+  `googleapiclient.http` loggers are held at WARNING, and `sentry_sdk.init` sets
+  `max_request_body_size="never"`.
+- *The API returns a derived map, never raw values (R4, N5, N6).* ONE pure projection,
+  `hr_card_models.project_documents`, runs inside the shared card view (`member_card` /
+  `_profile_view`), so every response that contains a card inherits it: `GET /me/card`,
+  `GET /me/overview`, `GET /people/{id}/overview`, the C11 PATCH response (the person's overview)
+  and, through `compose_member_overview`, every composer built on them. (`/employees` and
+  `/employees/{id}` serve the legacy shape without the profile.) The card carries no `docs`, no
+  `contract.file_id` and no `doc_proof`; `contract.number` stays. It carries `documents`, a closed
+  object with exactly the six keys, each `{present, file_id}`: `present` is true iff the stored value
+  is a non-empty string (a non-string or blank value is absent and never echoed); `file_id` is the
+  value only when the slot is verified, else null. The roster's `papers_missing` counts `present`.
+  The door's own responses are `{slot, documents}`: the six-key map after the write, and no
+  `previous` anywhere.
+- *Who and what.* The HR writers only (`can_write_hr_card`, the closed set `HR_WRITER_EMAILS`: not
+  every global admin), checked before any lookup (403). The person must be a visible one (404) and
+  have an `hr_employees` row (409 `hr_record_required`). An unknown slot, an empty file, a file over
+  4 MB or one that is not PDF, JPEG or PNG by its MAGIC BYTES is a 422. The body is touched only after
+  the writer check, under a hard cap of 4 MB + 64 KiB (413 on a declared length over it, and as soon
+  as a chunked body passes it), then parsed as multipart with exactly one file part named `file`: no
+  field, a closing boundary, a boundary of at most 70 characters, every parser error a fixed 422. The
+  body is declared in OpenAPI through `openapi_extra`.
+- *Where the file lives.* The owner's private tree `HR&FINANCE/HR/DOKUMEN KARYAWAN`
+  (`settings.hr_documents_drive_root_id`), as `<UNIT>/<person display name>/`; UNIT is the card's
+  `profile.unit` stripped and upper-cased (`LAINNYA` when absent). Unit and person folders are found
+  (or created) by exact name / appProperty `nz_hr_member`; a person folder under another unit is
+  MOVED, never duplicated. Lock order, everywhere: the member advisory lock
+  (`hr_docs_folder:<id>`, the C11 edit takes it first too), then the row lock, then the per-unit
+  advisory lock. Each request builds its own Drive client (googleapiclient is not thread-safe),
+  as the tree owner's delegated identity (`settings.hr_documents_drive_subject`). Sharing is never
+  changed and nothing is permanently deleted.
+- *Upload and its failures.* Title `<LABEL> - <full name> - <YYYY-MM-DD WITA>.<ext of the DETECTED
+  type>`, appProperties `nz_hr_member` and `nz_hr_slot`. One transaction: member lock, visibility
+  lock, read the previous slot and proof in ONE statement, ONE UPDATE; any failure before the commit
+  rolls back and the just-uploaded file is trashed. A failure AT or after COMMIT proves nothing: the
+  slot (with its proof) is re-read under the same locks; if it holds the new id the upload succeeded,
+  if not the new file is trashed, if that cannot be told it is left in place. After the commit the
+  card's unit is read again under the member lock and the person folder moved if it changed. Drive
+  failures are `502 drive_unavailable` with a fixed message; a lock timeout is 409 as in C11. A C11
+  unit change does not move Drive folders: the folder is realigned by the next UPLOAD only, never by
+  a DELETE (remove does not touch the folder). The reconciliation read returns the documents map
+  from the same locked read that confirms the commit, so a landed upload always answers with the
+  full six-key map.
+- *Trash only what the door made (R6).* On replace or remove the previous file is moved to the Drive
+  trash only if the previous value was VERIFIED when read under the lock AND Drive's own listing of
+  this door's files (appProperties member AND slot, inside the person folder, not trashed, pdf, jpeg
+  or png, never a folder) returns an entry whose `id` equals the proof id, compared locally; the
+  LISTING entry's id is what is trashed, never the stored value. An unverified (legacy) value is
+  never trashed, never queried, never sent anywhere: its remove clears the slot and makes no Drive
+  call at all. Logs carry actor id, target id and slot, no value.
+- *Display.* The frontend links only `documents.<slot>.file_id`, counts `present`, and shows a
+  present-but-unverified slot as "On file - not yet in DOKUMEN KARYAWAN" with no link and no value;
+  Upload / Replace and Remove (when `present`) are for the HR writers.
+
 ## Clause-to-test index
 
 Paths are under `backend/tests/` unless given.
@@ -376,3 +458,4 @@ Paths are under `backend/tests/` unless given.
 | C10 | `unit/scripts/test_import_staff_cards.py` (real launcher in a subprocess): `::test_family1_*` (real worker, fake driver: warnings, import-time output, `logging.log(60, ...)`, exceptions at connect / codec / transaction / commit / close, `SystemExit(0)`, `SystemExit(<sentinel>)`, `SystemExit(7)`, SIGKILL before and after the decision, hang, SIGINT before and after the decision, bad and wrong-shape stdin), `::test_protocol_*` and `::test_family2_*` (stub worker: garbage, oversized, unknown key, code outside the set, negative, huge, sentinel in a string field, duplicate / contradictory / trailing records, raw bytes and flags, large input, `python -I -W ignore`, closed stdout), `::test_the_worker_comes_from_the_launchers_own_tree_*`, `::test_production_layout_*` (an interpreter with no third-party packages, the fake driver only in a `PYTHONPATH` directory outside ROOT: dry-run and apply), `::test_without_pythonpath_the_bare_interpreter_*`, `::test_a_backend_package_in_pythonpath_or_cwd_is_never_used`, `::test_sitecustomize_and_usercustomize_in_pythonpath_are_not_executed`, `::test_the_dependency_filter_*`, `::test_pythonpath_unset_or_empty_*`, `::test_pythonpath_dirs_are_appended_at_the_end_*`, `::test_a_nonexistent_pythonpath_entry_naming_a_sentinel_*`, `::test_a_launcher_without_dash_i_refuses_*`, `::test_pythonwarnings_with_and_without_dash_i`, `::test_the_worker_is_started_isolated_*` (exact command line, own session, only the result fd), `::test_the_worker_has_no_controlling_terminal_*` (pty), `::test_a_stdin_that_never_ends_*`, `::test_a_signal_while_reading_stdin_*`, `::test_an_input_over_the_cap_*`, `::test_an_exception_or_exit_anywhere_after_the_arguments_is_one_fixed_line`, `::test_every_parse_error_is_the_one_fixed_line_and_exit_2`, `::test_help_is_static_text`, `::test_the_launcher_imports_the_standard_library_only`, `::test_the_test_timeout_knob_can_only_shorten_the_deadline`, `::test_the_truthfulness_table_row_by_row`, `::test_exit_zero_needs_*`, `::test_a_result_is_taken_only_when_it_matches_the_closed_grammar`, `::test_a_spawn_failure_*`, `::test_the_launcher_refuses_without_the_isolated_flag_in_main`; the shared test root is `tests/fixtures/import_root.py`; `unit/scripts/test_import_staff_cards_worker.py``::test_the_records_the_worker_writes_are_exactly_what_the_launcher_accepts`, `::test_every_outcome_and_code_the_worker_can_produce_is_in_the_launcher_closed_sets`, `::test_work_*`, `::test_the_worker_refuses_to_run_without_a_result_pipe`, `::test_validate_card_reads_pydantic_errors_without_the_input` |
 | C12 | `tests/migrations/test_hr_off_payroll.py` (real Postgres: calculate, stale slip, approved period, PATCH set and clear, manual bonus 409, my-dashboard, /me/overview); `tests/migrations/test_hr_card_edit_path.py::test_the_import_door_*`; `unit/app/services/hr/test_hr_card_models.py` (strict bool, read default) |
 | C11 | `unit/app/routers/test_hr_people_card_edit.py` (authz matrix, 404, 422 matrix, no echo, fixed failures, keys-only log); `unit/app/routers/test_hr_capabilities.py::test_card_write_is_for_the_global_admins_only`; `unit/app/services/hr/test_hr_card_service.py::test_edit_card_*`, `::test_merge_card_on_passes_the_cleared_keys_*`; `tests/migrations/test_hr_card_edit_path.py` (real Postgres: set, clear, nested clear, docs untouched, create, serialisation, no value in logs, deactivated / monitoring / partner after the lookup, lock probe); `unit/app/setup/test_sentry_hr_request_redaction.py` (real SDK); `unit/app/routers/test_hr_staff_card.py::test_post_employees_is_for_the_global_admins_only` |
+| C13 | `unit/app/services/hr/test_hr_documents.py` (fake Drive: folders, move, title, appProperties, trash only a verified id the listing returns, no Drive call for an unverified one, compensation, commit unknown); `unit/app/routers/test_hr_people_documents.py` (authz incl. HR extra admin, scoped viewer and a global admin outside the writer set, 404, 422s, 4 MB edge, body cap before authz, parser holes, fixed 409 / 502); `unit/app/routers/test_hr_documents_projection.py` (every card response: closed six-key map, no stored value, no `docs` / `doc_proof` / `contract.file_id`); `unit/app/services/hr/test_hr_card_models.py`; `unit/scripts/test_import_staff_cards_worker.py` (`doc_keys_door_only`); `unit/app/routers/test_hr_people_card_edit.py` (C11 refuses the keys); `unit/app/setup/test_sentry_hr_request_redaction.py` (real SDK: body not read before the 403, no slot value in an event); `tests/migrations/test_hr_document_door_path.py` (real Postgres with NO audit table: slot and proof in one UPDATE, per-slot proofs kept, `docs.contract` deleted, verified vs unverified previous, commit unknown and reconcile under the locks, unit interleavings, real googleapiclient with HttpMockSequence at DEBUG, import refusing the door keys, a NIK-like value absent from the card view) |

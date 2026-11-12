@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from io import BytesIO
 from typing import Any
@@ -118,8 +119,14 @@ class ServiceAccountDriveService:
         *,
         root_folder_id: str | None = None,
         delegated_user: str | None = None,
+        validate_folders: bool = True,
     ) -> None:
-        """Initialize Service Account Drive Service."""
+        """Initialize Service Account Drive Service.
+
+        `validate_folders=False` skips the boot-time probe of the configured parent folders (four
+        network calls): a per-request client (HR documents) must not pay them on every request.
+        `build()` itself uses the bundled discovery document, so it does not touch the network.
+        """
         import base64
 
         self.root_folder_id = root_folder_id or settings.google_drive_root_folder_id
@@ -181,7 +188,8 @@ class ServiceAccountDriveService:
         # 2026, silently breaking every company-client create_client_folder call. The
         # BackgroundTask exception was swallowed by crm_clients.py and never surfaced.
         # See cicatrix-scars.md (2026-05-21) for the full incident.
-        self._validate_configured_folders()
+        if validate_folders:
+            self._validate_configured_folders()
 
     def _validate_configured_folders(self) -> None:
         """Verify each configured parent folder ID exists and is accessible.
@@ -240,16 +248,19 @@ class ServiceAccountDriveService:
         name: str,
         parent_id: str | None = None,
         user_id: str | None = None,  # Kept for API compatibility
+        app_properties: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Create a new folder in Google Drive."""
         if not parent_id:
             parent_id = self.root_folder_id
 
-        folder_metadata = {
+        folder_metadata: dict[str, Any] = {
             "name": name,
             "mimeType": "application/vnd.google-apps.folder",
             "parents": [parent_id] if parent_id else [],
         }
+        if app_properties:
+            folder_metadata["appProperties"] = dict(app_properties)
 
         # Build request
         request = self.service.files().create(
@@ -369,6 +380,7 @@ class ServiceAccountDriveService:
         file_name: str,
         mime_type: str | None = None,
         user_id: str | None = None,  # Kept for API compatibility
+        app_properties: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Upload a file to Google Drive folder."""
         if not mime_type:
@@ -378,7 +390,9 @@ class ServiceAccountDriveService:
             elif file_name.lower().endswith((".png", ".jpg", ".jpeg")):
                 mime_type = "image/jpeg"
 
-        file_metadata = {"name": file_name, "parents": [folder_id]}
+        file_metadata: dict[str, Any] = {"name": file_name, "parents": [folder_id]}
+        if app_properties:
+            file_metadata["appProperties"] = dict(app_properties)
 
         # Create file stream
         file_stream = BytesIO(file_content)
@@ -813,6 +827,73 @@ class ServiceAccountDriveService:
         result = await asyncio.to_thread(request.execute)
         logger.info("Moved file %s from %s to %s", file_id, from_parent_id, to_parent_id)
         return result
+
+    async def find_folders_by_app_property(self, key: str, value: str) -> list[dict[str, Any]]:
+        """Every live (not trashed) physical folder carrying appProperties[key] == value."""
+        esc = lambda s: s.replace("\\", "\\\\").replace("'", "\\'")  # noqa: E731
+        query = (
+            f"appProperties has {{ key='{esc(key)}' and value='{esc(value)}' }} "
+            "and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        )
+        found: list[dict[str, Any]] = []
+        page_token = None
+        for _ in range(20):
+            params: dict[str, Any] = {
+                "q": query,
+                "fields": "nextPageToken, files(id, name, parents)",
+                "supportsAllDrives": True,
+                "includeItemsFromAllDrives": True,
+                "pageSize": 100,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            result = await asyncio.to_thread(self.service.files().list(**params).execute)
+            found.extend(result.get("files", []))
+            page_token = result.get("nextPageToken")
+            if not page_token:
+                break
+        return found
+
+    async def list_files_by_app_properties(
+        self, props: dict[str, str], parent_id: str, mimes: Sequence[str]
+    ) -> list[dict[str, Any]]:
+        """Live (not trashed) files directly inside `parent_id` whose appProperties equal ALL of
+        `props` and whose mimeType is one of `mimes`. Every input is one the caller resolved
+        itself (a member id, a slot, a folder id Drive returned, a closed set of types); nothing
+        read from stored data may be passed here. Returns id, mimeType, parents and appProperties."""
+        esc = lambda v: str(v).replace("\\", "\\\\").replace("'", "\\'")  # noqa: E731
+        clauses = [
+            f"appProperties has {{ key='{esc(k)}' and value='{esc(v)}' }}" for k, v in props.items()
+        ]
+        clauses.append(f"'{esc(parent_id)}' in parents")
+        clauses.append("trashed = false")
+        clauses.append("(" + " or ".join(f"mimeType = '{esc(m)}'" for m in mimes) + ")")
+        found: list[dict[str, Any]] = []
+        page_token = None
+        for _ in range(20):
+            params: dict[str, Any] = {
+                "q": " and ".join(clauses),
+                "fields": "nextPageToken, files(id, mimeType, parents, appProperties)",
+                "supportsAllDrives": True,
+                "includeItemsFromAllDrives": True,
+                "pageSize": 100,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            result = await asyncio.to_thread(self.service.files().list(**params).execute)
+            found.extend(result.get("files", []))
+            page_token = result.get("nextPageToken")
+            if not page_token:
+                break
+        return found
+
+    async def trash_file(self, file_id: str) -> None:
+        """Move one file to the Drive trash (recoverable). Never a permanent delete."""
+        request = self.service.files().update(
+            fileId=file_id, body={"trashed": True}, fields="id, trashed", supportsAllDrives=True
+        )
+        await asyncio.to_thread(request.execute)
+        logger.info("Trashed Drive file %s", file_id)
 
     async def get_start_page_token(self) -> str:
         """Get the current start page token for changes tracking."""

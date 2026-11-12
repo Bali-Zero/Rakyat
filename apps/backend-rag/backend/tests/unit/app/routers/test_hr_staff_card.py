@@ -35,7 +35,10 @@ FAKE_ROW: dict[str, Any] = {
         "legal_name": "Fake Legal Name",
         "nik": "0000000000000042",
         "employer_entity": "PT Fake Entity",
-        "docs": {"ktp": "file-1"},
+        "docs": {"ktp": "file-1", "kk": "file-2"},
+        "doc_proof": {
+            "ktp": {"id": "file-1", "by": "x@balizero.com", "at": "2026-11-12T00:00:00+00:00"}
+        },
         "address": "1 Fake Street",
     },
     "full_name": "Fake Member",
@@ -86,7 +89,15 @@ def test_member_gets_own_card_in_full_without_notes(make_client):
     body = res.json()
     assert body["employee_id"] == 7 and body["full_name"] == "Fake Member"
     assert body["npwp"] == "00.000.000.0-000.000" and body["base_salary_idr"] == 1
-    assert body["nik"] == "0000000000000042" and body["docs"] == {"ktp": "file-1"}
+    assert body["nik"] == "0000000000000042"
+    # R4: a verified slot shows its id, an unverified one is only "present", the rest is absent
+    assert body["documents"]["ktp"] == {"present": True, "file_id": "file-1"}
+    assert body["documents"]["kk"] == {"present": True, "file_id": None}
+    assert body["documents"]["npwp"] == {"present": False, "file_id": None}
+    assert set(body["documents"]) == {"ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk", "contract"}
+    assert (
+        "docs" not in body and "doc_proof" not in body and "file_id" not in (body["contract"] or {})
+    )
     assert "notes" not in body and "team_member_id" not in body
 
 
@@ -119,7 +130,11 @@ def test_a_database_failure_is_a_fixed_500_without_driver_text(make_client):
 def test_a_non_object_stored_profile_still_reads(make_client, stored):
     res = make_client(MEMBER, _service(card={**FAKE_ROW, "profile": stored})).get("/api/hr/me/card")
     body = res.json()
-    assert res.status_code == 200 and body["docs"] == {} and body["contract"] is None
+    assert (
+        res.status_code == 200
+        and all(not d["present"] for d in body["documents"].values())
+        and body["contract"] is None
+    )
     assert body["legal_name"] is None and body["full_name"] == "Fake Member"
 
 
@@ -137,8 +152,12 @@ def test_odd_stored_strings_and_values_read_as_stored(make_client):
     }
     body = make_client(MEMBER, _service(card=odd)).get("/api/hr/me/card").json()
     assert body["legal_name"] == "a​b\x07c" and body["address"] == "l1\nl2"
-    assert body["birth_date"] is None and body["nik"] is None and body["docs"] == {}
-    assert body["contract"] == {"number": "N\nX", "file_id": None}
+    assert (
+        body["birth_date"] is None
+        and body["nik"] is None
+        and not body["documents"]["ktp"]["present"]
+    )
+    assert body["contract"] == {"number": "N\nX"}
 
 
 def test_the_surface_added_is_one_get_without_path_or_query_parameters():

@@ -499,6 +499,12 @@ class HRService:
         try:
             async with self.db_pool.acquire() as conn, conn.transaction():
                 await conn.execute(f"SET LOCAL lock_timeout = {int(CARD_EDIT_LOCK_TIMEOUT_MS)}")
+                # One lock order with the HR document door (STAFF_CARD.md C13): the per-member
+                # advisory lock first, then the row lock, so a unit change cannot land between the
+                # door's unit read and its folder move.
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext('hr_docs_folder:'||$1))", team_member_id
+                )
                 if not await self.lock_visible_person(conn, team_member_id, email):
                     return None
                 return await self.merge_card_on(conn, team_member_id, fields, profile_patch, clear)
