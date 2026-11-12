@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import type {
   InvoiceCompanyChoice,
+  InvoiceCompanyMatch,
   InvoiceCompanyParams,
 } from "@/lib/api/crm/crm.types";
 import { logger } from "@/lib/logger";
@@ -34,6 +35,8 @@ export interface InvoiceCompanyAmbiguity {
 }
 
 const NEW = "__new__";
+const SEARCH_MIN_CHARS = 2;
+const SEARCH_DEBOUNCE_MS = 250;
 
 export function invoiceCompanyParams(
   value: InvoiceCompanyValue,
@@ -105,6 +108,16 @@ export function InvoiceCompanyField({
   const [companies, setCompanies] = useState<InvoiceCompanyChoice[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [typing, setTyping] = useState(false);
+  // Live matches for the typed name; kept with the query they answer so a list
+  // for an older query is never shown, and the pick made from it (name shown in
+  // the selector) for a company the suggestion did not list.
+  const [search, setSearch] = useState<{
+    ctx: string;
+    q: string;
+    rows: InvoiceCompanyMatch[];
+  } | null>(null);
+  const [dismissedFor, setDismissedFor] = useState<string | null>(null);
+  const [picked, setPicked] = useState<InvoiceCompanyChoice | null>(null);
   const touched = useRef(false);
   const autoFilled = useRef(false);
   const prefillId = useRef<number | null>(null);
@@ -133,6 +146,9 @@ export function InvoiceCompanyField({
       setTyping(false);
       setCompanies([]);
       setLoaded(false);
+      setSearch(null);
+      setDismissedFor(null);
+      setPicked(null);
       onChangeRef.current(EMPTY_INVOICE_COMPANY);
     }
     if (!autofill) {
@@ -198,7 +214,57 @@ export function InvoiceCompanyField({
     };
   }, [clientId, practiceTypeCode, autofill]);
 
+  const typedQuery = value.name.trim();
+  const searchCtx = `${clientId ?? ""}|${practiceTypeCode ?? ""}`;
+  const searchActive =
+    clientId !== undefined &&
+    value.companyId === null &&
+    typedQuery.length >= SEARCH_MIN_CHARS &&
+    !disabled;
+  useEffect(() => {
+    if (!searchActive || clientId === undefined) {
+      setSearch(null);
+      return;
+    }
+    // A list exists only for a request that succeeded for this text and context:
+    // drop whatever an earlier generation left before asking again.
+    setSearch(null);
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      Promise.resolve()
+        .then(() => api.crm.searchInvoiceCompanies(clientId, typedQuery))
+        .then((r) => {
+          if (!cancelled)
+            setSearch({ ctx: searchCtx, q: typedQuery, rows: r.companies });
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          logger.warn(
+            "Invoice company search unavailable",
+            { component: "InvoiceCompanyField", action: "search" },
+            toError(err),
+          );
+        });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [searchActive, clientId, typedQuery, searchCtx]);
+
+  // Editing the name (also back to an earlier text) reopens a list the user had closed.
+  useEffect(() => {
+    setDismissedFor(null);
+  }, [typedQuery]);
+
   const options = [...companies];
+  if (
+    picked &&
+    value.companyId === picked.id &&
+    !options.some((c) => c.id === picked.id)
+  ) {
+    options.push(picked);
+  }
   if (
     value.companyId !== null &&
     !options.some((c) => c.id === value.companyId)
@@ -309,6 +375,52 @@ export function InvoiceCompanyField({
           />
         </div>
       )}
+      {searchActive &&
+        search?.q === typedQuery &&
+        search.ctx === searchCtx &&
+        dismissedFor !== typedQuery && (
+          <div
+            className="rounded-lg border border-[var(--border)] p-2 text-sm space-y-1"
+            data-testid="invoice-company-search"
+          >
+            {search.rows.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                disabled={disabled}
+                onClick={() => {
+                  touched.current = true;
+                  setTyping(false);
+                  setSearch(null);
+                  setPicked({
+                    id: m.id,
+                    company_name: m.company_name,
+                    npwp_company: null,
+                    role: null,
+                    is_director: false,
+                  });
+                  onChange({ companyId: m.id, name: "", npwp: "" });
+                }}
+                className="block w-full text-left px-3 py-1.5 rounded hover:bg-[var(--background-elevated)]"
+              >
+                {m.company_name}
+                {m.linked && (
+                  <span className="ml-2 text-xs text-[var(--foreground-muted)]">
+                    linked to this client
+                  </span>
+                )}
+              </button>
+            ))}
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => setDismissedFor(typedQuery)}
+              className="block w-full text-left px-3 py-1.5 rounded border border-dashed border-[var(--border)] hover:bg-[var(--background-elevated)]"
+            >
+              Create &laquo;{typedQuery}&raquo;
+            </button>
+          </div>
+        )}
       {ambiguity && (
         <div
           role="alert"

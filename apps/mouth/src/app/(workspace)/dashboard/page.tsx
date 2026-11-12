@@ -60,7 +60,8 @@ import {
   LedgerSection,
   type KpiTone,
 } from "./desk";
-import { PortalChallengeWidget } from "./PortalChallengeWidget";
+import { TeamReelMonthlyHub } from "./TeamReelMonthlyHub";
+import { PortalChampionsLastMonthPodium } from "./PortalChampionsLastMonthPodium";
 import { VisaOracleTestingBanner } from "./VisaOracleTestingBanner";
 import { RefreshCw } from "lucide-react";
 
@@ -560,11 +561,8 @@ export default function DashboardPage() {
             is an assigned tester with cases still open today. */}
         <VisaOracleTestingBanner identity={authIdentity} />
 
-        {/* Portal Champion challenge — where PR #6483 shipped it. concept §7
-            forbids reordering the dashboard's sections. */}
-        <div className="mb-4">
-          <PortalChallengeWidget identity={authIdentity} />
-        </div>
+        {/* Continuous 9:16 Team Reel H5 + Monthly News Feature Boxes */}
+        <TeamReelMonthlyHub />
 
         {/* 00 · Zantara AI */}
         <LedgerSection
@@ -746,6 +744,9 @@ export default function DashboardPage() {
             </div>
           </LedgerSection>
         </div>
+
+        {/* Last Month News — Portal Champions Podium Only (Blue Background) */}
+        <PortalChampionsLastMonthPodium identity={authIdentity} />
       </div>
     </DashboardErrorBoundary>
   );

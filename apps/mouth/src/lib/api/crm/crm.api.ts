@@ -9,6 +9,7 @@ import type {
   CreateClientParams,
   CreatePracticeParams,
   InvoiceCompanyParams,
+  InvoiceCompanyMatch,
   InvoiceCompanySuggestion,
   RenewalAlert,
   ClientSummary,
@@ -419,6 +420,23 @@ export class CrmApi {
     if (practiceTypeCode) params.set("practice_type_code", practiceTypeCode);
     return this.client.request<InvoiceCompanySuggestion>(
       `/api/crm/practices/invoice-company/suggestion?${params.toString()}`,
+    );
+  }
+
+  /**
+   * Existing companies matching what is typed in the invoice-company field.
+   * Matching (case, PT/CV/Tbk, word order, NPWP) lives on the backend only.
+   */
+  async searchInvoiceCompanies(
+    clientId: number,
+    query: string,
+  ): Promise<{ companies: InvoiceCompanyMatch[] }> {
+    const params = new URLSearchParams({
+      client_id: String(clientId),
+      q: query,
+    });
+    return this.client.request<{ companies: InvoiceCompanyMatch[] }>(
+      `/api/crm/practices/invoice-company/search?${params.toString()}`,
     );
   }
 

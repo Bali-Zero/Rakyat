@@ -6,19 +6,20 @@ import { ApiError } from "@/lib/api/error-handler";
 import type { Practice } from "@/lib/api/crm/crm.types";
 import { InvoiceCompanyCard } from "./InvoiceCompanyCard";
 
-const { mockSuggest, mockUpdate, toastSuccess, toastError } = vi.hoisted(
-  () => ({
+const { mockSuggest, mockSearch, mockUpdate, toastSuccess, toastError } =
+  vi.hoisted(() => ({
     mockSuggest: vi.fn(),
+    mockSearch: vi.fn(),
     mockUpdate: vi.fn(),
     toastSuccess: vi.fn(),
     toastError: vi.fn(),
-  }),
-);
+  }));
 
 vi.mock("@/lib/api", () => ({
   api: {
     crm: {
       getInvoiceCompanySuggestion: mockSuggest,
+      searchInvoiceCompanies: mockSearch,
       updatePractice: mockUpdate,
     },
   },
@@ -130,6 +131,33 @@ describe("InvoiceCompanyCard", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(mockUpdate).toHaveBeenCalledWith(5, { invoice_company_id: null }),
+    );
+  });
+
+  it("a company picked from the live search is saved by id", async () => {
+    const user = userEvent.setup();
+    mockSuggest.mockResolvedValue({
+      autofill: true,
+      suggested_company_id: null,
+      companies: [],
+    });
+    mockSearch.mockResolvedValue({
+      companies: [{ id: 41, company_name: "PT BAYU BALI NOL", linked: false }],
+    });
+    mockUpdate.mockResolvedValue(
+      practice({
+        invoice_company_id: 41,
+        invoice_company_name: "PT BAYU BALI NOL",
+      }),
+    );
+    render(<InvoiceCompanyCard practice={practice()} onSaved={vi.fn()} />);
+    await user.type(await screen.findByLabelText("Company name"), "bayu");
+    await user.click(
+      await screen.findByRole("button", { name: "PT BAYU BALI NOL" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenCalledWith(5, { invoice_company_id: 41 }),
     );
   });
 

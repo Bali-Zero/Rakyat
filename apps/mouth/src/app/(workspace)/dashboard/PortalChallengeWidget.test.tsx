@@ -620,7 +620,7 @@ describe("Champion hero", () => {
     const [framed] = arena.getAllByRole("img", { name: "Contender A" });
     expect(framed.style.objectPosition).toBe("50% 34%");
     expect(framed.style.transform).toBe(
-      "translate(50%, 50%) scale(2.45) translate(-50%, -34%)",
+      "translate(50%, 50%) scale(1.35) translate(-50%, -34%)",
     );
     const [plain] = arena.getAllByRole("img", { name: "Contender B" });
     expect(plain.style.transform).toBe("");
@@ -659,7 +659,7 @@ describe("Champion hero", () => {
         expect(portrait.tagName).toBe("IMG");
         expect(portrait.getAttribute("src")).toBe(approved);
         expect(portrait.style.transform).toBe(
-          "translate(50%, 50%) scale(2.45) translate(-55%, -33%)",
+          "translate(50%, 50%) scale(1.35) translate(-50%, -34%)",
         );
       }
     }

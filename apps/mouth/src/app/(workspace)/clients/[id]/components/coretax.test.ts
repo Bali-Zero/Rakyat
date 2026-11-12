@@ -6,7 +6,7 @@ describe("formatNpwp", () => {
     expect(formatNpwp("1234567890123456")).toBe("1234 5678 9012 3456");
   });
   it("leaves anything else exactly as stored", () => {
-    expect(formatNpwp("11.222.333.4-555.000")).toBe("11.222.333.4-555.000");
+    expect(formatNpwp("99.123.456.7-890.123")).toBe("99.123.456.7-890.123");
     expect(formatNpwp("123456789012345")).toBe("123456789012345");
     expect(formatNpwp("12345678901234567")).toBe("12345678901234567");
     expect(formatNpwp("SYNTHETIC-TAX-0001")).toBe("SYNTHETIC-TAX-0001");
