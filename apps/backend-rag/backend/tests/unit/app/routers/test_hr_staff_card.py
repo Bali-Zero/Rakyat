@@ -160,3 +160,28 @@ def test_member_self_read_of_the_employee_row_has_no_notes(make_client):
 def test_admin_read_of_the_employee_row_still_has_notes(make_client):
     res = make_client(ADMIN, _employee_service()).get("/api/hr/employees/7")
     assert res.status_code == 200 and res.json()["notes"] == "fake hr note"
+
+
+# ─── the legacy write door obeys the card-write rule (C11: two doors, one rule) ───
+
+_EMPLOYEE = {"team_member_id": "tm-fake-7", "hire_date": "2025-01-15", "base_salary_idr": 1}
+
+
+@pytest.mark.parametrize(
+    "email,status",
+    [
+        ("zero@balizero.com", 200),
+        ("asya@balizero.com", 200),
+        ("adit@balizero.com", 403),  # HR extra admin: reads and bonuses, no card writes
+        ("ruslana@balizero.com", 403),
+        ("fake.member@balizero.com", 403),
+    ],
+)
+def test_post_employees_is_for_the_global_admins_only(make_client, email, status):
+    service = AsyncMock()
+    service.upsert_employee = AsyncMock(return_value={"id": 7})
+    client = make_client({"id": "tm-x", "email": email, "role": "member"}, service)
+    with patch.object(hr_router, "invalidate_cache", AsyncMock()):
+        res = client.post("/api/hr/employees", json=_EMPLOYEE)
+    assert res.status_code == status
+    assert service.upsert_employee.await_count == (1 if status == 200 else 0)

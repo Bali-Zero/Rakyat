@@ -13,7 +13,6 @@ import { logger } from "@/lib/logger";
 import { ErrorBoundary } from "@/components/optimization";
 import { ZantaraWidget } from "@/components/workspace/ZantaraWidget";
 import { KitaCommandPalette } from "@/components/workspace/KitaCommandPalette";
-import { PortalChampionCelebration } from "@/components/workspace/PortalChampionCelebration";
 import { VisaOracleTestingGuideOverlay } from "./dashboard/VisaOracleTestingGuideOverlay";
 import { I18nProvider } from "@/i18n";
 import { routeTitles } from "@/types/navigation";
@@ -438,7 +437,6 @@ export default function WorkspaceLayout({ children }: WorkspaceLayoutProps) {
             onRefresh={refetchGate}
             onEnter={() => setGateBypassed(true)}
           />
-          <PortalChampionCelebration key={user.email} identity={user.email} />
         </ToastProvider>
       </I18nProvider>
     );
@@ -530,7 +528,6 @@ export default function WorkspaceLayout({ children }: WorkspaceLayoutProps) {
           onClose={() => setIsZantaraOpen(false)}
         />
         <KitaCommandPalette />
-        <PortalChampionCelebration key={user.email} identity={user.email} />
         <VisaOracleTestingGuideOverlay
           identity={api.getUserProfile()?.email?.trim().toLowerCase() ?? ""}
         />

@@ -19,7 +19,6 @@
 import React from "react";
 import Link from "next/link";
 import { Sparkles } from "lucide-react";
-import { RoleWidget } from "@/components/dashboard";
 import { DashboardErrorBoundary } from "@/components/ErrorBoundary";
 import { TeamActivityPanel } from "@/components/dashboard/TeamActivityPanel";
 import type {
@@ -29,7 +28,6 @@ import type {
 import { dashboardQueryKey, useDashboardData } from "@/hooks/useDashboardData";
 import { useRealtime } from "@/lib/realtime";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { normalizeDashboardRole } from "@/lib/dashboard-role";
 import { logger } from "@/lib/logger";
 import { STRINGS } from "@/lib/strings";
 import { api } from "@/lib/api";
@@ -42,7 +40,6 @@ import {
 } from "@balizero/core";
 import {
   EmptyState,
-  Eyebrow,
   Masthead,
   StatePill,
 } from "@/components/workspace/r19";
@@ -60,34 +57,22 @@ import {
   LedgerSection,
   type KpiTone,
 } from "./desk";
-import { PortalChallengeWidget } from "./PortalChallengeWidget";
+import { TeamReelMonthlyHub } from "./TeamReelMonthlyHub";
+import { PortalChampionsLastMonthPodium } from "./PortalChampionsLastMonthPodium";
+import {
+  DashboardNewsCarousel,
+  type DashboardNewsArticle,
+} from "./DashboardNewsCarousel";
 import { VisaOracleTestingBanner } from "./VisaOracleTestingBanner";
 import { RefreshCw } from "lucide-react";
 
-// ── Intel categories ───────────────────────────────────────
-// There is no category COLOUR here any more. The old map read the
-// --bz-chart-* ramp, which the kita theme block deliberately does not
-// redeclare (globals.css says so in as many words), so on this page it paints
-// the pre-R19 palette — and `--bz-chart-5` is literally `var(--bz-copper)`.
-// An article's subject would then have painted the one colour that means "you
-// are the next actor", keyed off a raw `article.category` string. The fusion's
-// own intelligence feed carries the category as a WORD in the eyebrow and no
-// colour at all, which is what the rows below do.
-
-interface IntelArticle {
-  slug: string;
-  title: string;
-  category: string;
-  publishedAt: string;
-  excerpt?: string;
-}
-
+// ── Intel feed (latest 6 published articles) ──────────────
 function useIntelFeed(identity: string) {
-  return useQuery<IntelArticle[]>({
+  return useQuery<DashboardNewsArticle[]>({
     queryKey: ["intel-feed", identity],
     queryFn: async () => {
-      const data = await api.blog.listArticles(8, 0);
-      return ((data.articles ?? []) as IntelArticle[]).slice(0, 8);
+      const data = await api.blog.listArticles(6, 0);
+      return ((data.articles ?? []) as DashboardNewsArticle[]).slice(0, 6);
     },
     staleTime: 5 * 60_000,
     refetchInterval: 10 * 60_000,
@@ -280,30 +265,6 @@ function PipelineRow({ p, mark }: { p: CasePreview; mark: string }) {
   );
 }
 
-// ── Intel article row ──────────────────────────────────────
-function IntelRow({ article, mark }: { article: IntelArticle; mark: string }) {
-  const catLabel = article.category.replace(/[-_]/g, " ").toUpperCase();
-  const href = `https://balizero.com/${article.category}/${article.slug}`;
-  const date = new Date(article.publishedAt).toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-  });
-
-  return (
-    <LedgerRow
-      mark={mark}
-      primary={<Eyebrow className="truncate">{catLabel}</Eyebrow>}
-      secondary={article.title}
-      trailing={date}
-      action={
-        <DeskLink href={href} external label={`Read: ${article.title}`}>
-          Read
-        </DeskLink>
-      }
-    />
-  );
-}
-
 // ── The action margin ──────────────────────────────────────
 function MarginRow({ item, mark }: { item: ActionMarginItem; mark: string }) {
   return (
@@ -367,7 +328,6 @@ export default function DashboardPage() {
 
   const realtime = useRealtime();
   const queryClient = useQueryClient();
-  const role = normalizeDashboardRole(user?.role, user?.is_admin ?? false);
 
   React.useEffect(() => {
     const unsubscribe = realtime.subscribe("dashboard_update", () => {
@@ -560,11 +520,8 @@ export default function DashboardPage() {
             is an assigned tester with cases still open today. */}
         <VisaOracleTestingBanner identity={authIdentity} />
 
-        {/* Portal Champion challenge — where PR #6483 shipped it. concept §7
-            forbids reordering the dashboard's sections. */}
-        <div className="mb-4">
-          <PortalChallengeWidget identity={authIdentity} />
-        </div>
+        {/* Continuous 9:16 Team Reel H5 + Monthly News Feature Boxes */}
+        <TeamReelMonthlyHub />
 
         {/* 00 · Zantara AI */}
         <LedgerSection
@@ -677,10 +634,7 @@ export default function DashboardPage() {
           </LedgerSection>
         </div>
 
-        {/* Process pipeline · Intelligence feed · My role */}
-        {/* Equal thirds, as the fusion's `.three-col` has them. An uneven
-            template starved the third column and truncated "My role" at
-            1440 — measured in the dev-server render. */}
+        {/* Process pipeline + Latest 6 Published Articles Carousel (My role removed) */}
         <div className="mt-4 grid grid-cols-1 gap-6 xl:grid-cols-3">
           <LedgerSection
             ordinal={nextOrdinal()}
@@ -711,41 +665,19 @@ export default function DashboardPage() {
           <LedgerSection
             ordinal={nextOrdinal()}
             title="Intelligence feed"
-            right={<DeskLink href="/intelligence">All</DeskLink>}
+            meta="Latest 6 articles"
+            right={<DeskLink href="https://balizero.com/news" external>All news</DeskLink>}
+            className="xl:col-span-2"
           >
-            {intelLoading && (
-              <div className="flex flex-col gap-1 py-3">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <div
-                    key={i}
-                    className="h-10 animate-pulse bg-[var(--bz-card)]"
-                  />
-                ))}
-              </div>
-            )}
-            {!intelLoading &&
-              (!intelArticles || intelArticles.length === 0) && (
-                <EmptyState className="border-t-0">
-                  No recent articles.
-                </EmptyState>
-              )}
-            {!intelLoading &&
-              intelArticles &&
-              intelArticles.map((article, i) => (
-                <IntelRow
-                  key={article.slug}
-                  article={article}
-                  mark={String(i + 1).padStart(2, "0")}
-                />
-              ))}
-          </LedgerSection>
-
-          <LedgerSection ordinal={nextOrdinal()} title="My role">
-            <div className="pt-3">
-              <RoleWidget role={role} userId={user?.email ?? ""} />
-            </div>
+            <DashboardNewsCarousel
+              articles={intelArticles ?? []}
+              isLoading={intelLoading}
+            />
           </LedgerSection>
         </div>
+
+        {/* Last Month News — Portal Champions Podium Only (Blue Background) */}
+        <PortalChampionsLastMonthPodium identity={authIdentity} />
       </div>
     </DashboardErrorBoundary>
   );

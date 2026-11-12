@@ -35,6 +35,7 @@ async def test_member_sees_only_their_own_card():
         "has_employee_record": True,
         "people_scope": None,
         "hr_edit": False,
+        "hr_card_write": False,
     }
 
 
@@ -79,3 +80,21 @@ async def test_answer_matches_the_route_guards(email: str, role: str):
     caps = await _caps(email, role=role)
     assert caps["hr_admin"] is is_hr_admin(user)
     assert caps["accounting_admin"] is is_crm_admin(user)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "email,role,expected",
+    [
+        ("zero@balizero.com", "member", True),
+        ("asya@balizero.com", "member", True),
+        (HR_ONLY_ADMIN, "member", False),  # HR extra: view + bonus powers, no card writes
+        ("ruslana@balizero.com", "member", False),  # scoped viewer
+        (MEMBER, "member", False),
+        (MEMBER, "admin", False),  # the role claim grants nothing here
+        ("zero@balizero.com", "client", False),
+    ],
+)
+async def test_card_write_is_for_the_global_admins_only(email: str, role: str, expected: bool):
+    caps = await _caps(email, role=role)
+    assert caps["hr_card_write"] is expected

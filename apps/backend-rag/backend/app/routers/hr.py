@@ -36,7 +36,7 @@ from backend.app.services.hr.hr_service import (
     business_today,
 )
 from backend.app.utils.crm_utils import is_crm_admin
-from backend.app.utils.hr_utils import hr_people_scope, is_hr_admin
+from backend.app.utils.hr_utils import can_write_hr_card, hr_people_scope, is_hr_admin
 from backend.core.cache import invalidate_cache
 
 logger = logging.getLogger(__name__)
@@ -213,6 +213,7 @@ async def get_my_capabilities(
         "has_employee_record": employee is not None,
         "people_scope": (None if scope is None else "all" if scope == "all" else "scoped"),
         "hr_edit": is_hr_admin(current_user),
+        "hr_card_write": can_write_hr_card(current_user),
     }
 
 
@@ -313,8 +314,13 @@ async def upsert_employee(
     current_user: dict[str, Any] = Depends(get_current_user),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    """Create or update an HR employee record."""
-    _require_hr_admin(current_user)
+    """Create or update an HR employee record (bank and tax columns included).
+
+    Same rule as the card edit (STAFF_CARD.md C11): only the global admins write. The HR extra
+    admin keeps the reads and the bonus powers, not this door.
+    """
+    if not can_write_hr_card(current_user):
+        raise HTTPException(status_code=403, detail="Card write access required")
     service = _get_hr_service(db_pool)
     result = await service.upsert_employee(data.model_dump())
     await invalidate_cache("zantara:hr_employees:*")

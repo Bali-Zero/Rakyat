@@ -49,6 +49,13 @@ export interface InvoiceCompanySuggestion {
   companies: InvoiceCompanyChoice[];
 }
 
+export interface InvoiceCompanyMatch {
+  id: number;
+  company_name: string;
+  /** Already linked to the client of the search. */
+  linked: boolean;
+}
+
 export type InvoiceCompanyParams = {
   invoice_company_id?: number | null;
   invoice_company_name?: string;

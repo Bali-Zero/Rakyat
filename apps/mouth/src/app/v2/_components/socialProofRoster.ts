@@ -80,7 +80,7 @@ const TEAM_SPEC: SPEntry[] = [
   },
   {
     slug: "adit",
-    roleOverride: "Direktur",
+    roleOverride: "Director",
     department: "Setup",
     accent: "#f59e0b",
   },

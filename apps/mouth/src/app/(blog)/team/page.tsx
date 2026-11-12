@@ -88,7 +88,7 @@ const LEADERSHIP_COUNT_WORD =
 const SETUP_TEAM: TeamMember[] = compose([
   {
     slug: "adit",
-    roleOverride: "Direktur",
+    roleOverride: "Director",
   },
   {
     slug: "ari",
@@ -101,13 +101,22 @@ const SETUP_TEAM: TeamMember[] = compose([
     roleOverride: "Senior Consultant",
   },
   {
-    slug: "dea",
+    slug: "surya",
+    roleOverride: "Senior Consultant",
+    // The tool Surya is responsible for, on its real page.
+    project: { label: "E-VOA", href: "/visa/voa" },
   },
   {
-    slug: "candra",
+    slug: "damar",
+    roleOverride: "Junior Consultant",
   },
   {
     slug: "vino",
+    roleOverride: "Junior Consultant",
+  },
+  {
+    slug: "rio",
+    roleOverride: "Junior Consultant",
   },
   {
     slug: "sahira",
@@ -129,6 +138,14 @@ const TAX_TEAM: TeamMember[] = compose([
     roleOverride: "Tax Consultant",
   },
   {
+    slug: "dea",
+    roleOverride: "Tax Consultant",
+  },
+  {
+    slug: "candra",
+    roleOverride: "Tax Consultant",
+  },
+  {
     slug: "faisha",
   },
 ]);
@@ -144,22 +161,12 @@ const ACCOUNTING_TEAM: TeamMember[] = compose([
 ]);
 
 // Marketing is an editorial grouping unique to this page (Zero is not in the public roster;
-// Surya/Subhi live under setup/support in the SSOT but are presented here as marketing).
+// Subhi lives under support in the SSOT but is presented here with Marketing & AI).
 const MARKETING_TEAM: TeamMember[] = compose([
   {
     nameOverride: "Zero",
     roleOverride: "SOTA Marketing",
     photoOverride: "/static/team/zero.jpg",
-  },
-  {
-    slug: "surya",
-    roleOverride: "Marketing Specialist",
-    // The tool Surya is responsible for, on its real page.
-    project: { label: "E-VOA", href: "/visa/voa" },
-  },
-  {
-    slug: "damar",
-    roleOverride: "Marketing Junior",
   },
   {
     slug: "subhi",

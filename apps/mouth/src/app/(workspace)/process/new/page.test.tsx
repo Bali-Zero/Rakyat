@@ -14,6 +14,7 @@ const {
   mockGetClientPractices,
   mockCreatePractice,
   mockSuggest,
+  mockSearch,
   mockGetClients,
   mockToastError,
   mockRefetchClientProfile,
@@ -26,6 +27,7 @@ const {
   mockGetClientPractices: vi.fn(),
   mockCreatePractice: vi.fn(),
   mockSuggest: vi.fn(),
+  mockSearch: vi.fn(),
   mockGetClients: vi.fn(),
   mockToastError: vi.fn(),
   mockRefetchClientProfile: vi.fn(),
@@ -52,6 +54,7 @@ vi.mock("@/lib/api", () => ({
       getClientPractices: mockGetClientPractices,
       createPractice: mockCreatePractice,
       getInvoiceCompanySuggestion: mockSuggest,
+      searchInvoiceCompanies: mockSearch,
       getClients: mockGetClients,
     },
   },
@@ -138,6 +141,7 @@ describe("NewPracticePage", () => {
       suggested_company_id: null,
       companies: [],
     });
+    mockSearch.mockResolvedValue({ companies: [] });
     mockRefetchClientProfile.mockResolvedValue({
       client: { id: 7 },
       practices: [{ id: 71 }],
@@ -267,6 +271,26 @@ describe("NewPracticePage", () => {
     } finally {
       if (original) stableSearchParams.get.mockImplementation(original);
     }
+  });
+
+  it("a company picked from the live search is sent by id and nothing is typed in", async () => {
+    const user = userEvent.setup();
+    mockSearch.mockResolvedValue({
+      companies: [{ id: 31, company_name: "PT BAYU BALI NOL", linked: false }],
+    });
+    await renderPage();
+    const selects = await screen.findAllByRole("combobox");
+    await user.selectOptions(selects[0], "visa");
+    await user.selectOptions(selects[1], "SYNTHETIC_VISA");
+    await user.type(await screen.findByLabelText("Company name"), "bayu");
+    await user.click(
+      await screen.findByRole("button", { name: "PT BAYU BALI NOL" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Create Process" }));
+    await waitFor(() => expect(mockCreatePractice).toHaveBeenCalledTimes(1));
+    const body = mockCreatePractice.mock.calls[0][0];
+    expect(body).toMatchObject({ invoice_company_id: 31 });
+    expect(body).not.toHaveProperty("invoice_company_name");
   });
 
   it("a 409 on a typed name shows the chooser and the pick is sent on the next Create", async () => {

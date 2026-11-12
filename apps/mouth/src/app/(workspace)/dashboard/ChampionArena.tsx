@@ -234,7 +234,6 @@ export function ChampionArena({
                     type="button"
                     onClick={() => setSelected(entry.member)}
                     aria-pressed={contender?.member === entry.member}
-                    aria-label={`Lihat peluang ${entry.display_name}`}
                     className={cn(
                       FOCUS,
                       "group relative flex min-w-0 flex-col items-center rounded-xl border px-1.5 pb-3 pt-3 text-center transition-colors sm:px-4 sm:pb-4",
@@ -247,6 +246,7 @@ export function ChampionArena({
                         "ring-2 ring-[var(--bz-kita-ink-panel-copper)] ring-offset-2 ring-offset-[var(--bz-kita-ink-fill)]",
                     )}
                   >
+                    <div className="sr-only">Lihat peluang</div>
                     {index === 0 && (
                       <Crown
                         size={22}
@@ -266,27 +266,40 @@ export function ChampionArena({
                           : "max-w-20 sm:max-w-28",
                       )}
                     />
-                    <span className="text-[11px] font-bold uppercase tracking-widest text-[var(--bz-kita-ink-panel-copper)]">
+                    <span
+                      aria-hidden="true"
+                      className="text-[11px] font-bold uppercase tracking-widest text-[var(--bz-kita-ink-panel-copper)]"
+                    >
                       {isClosed ? `Juara ${entry.rank} · #${entry.rank}` : `#${entry.rank}`}
                       {entry.is_me ? " · Kamu" : ""}
                     </span>
-                    <span className="mt-0.5 line-clamp-2 max-w-full break-words text-xs font-bold leading-tight sm:text-lg">
+                    <span
+                      aria-hidden="true"
+                      className="mt-0.5 line-clamp-2 max-w-full break-words text-xs font-bold leading-tight sm:text-lg"
+                    >
                       {entry.display_name}
                     </span>
                     <motion.span
+                      aria-hidden="true"
                       key={scoreOf(entry, round2)}
-                      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+                      initial={reduceMotion ? false : { opacity: 1, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
                       className="mt-1.5 text-3xl font-black tabular-nums leading-none sm:text-5xl"
                       style={SERIF}
                     >
                       {scoreOf(entry, round2)}
                     </motion.span>
-                    <span className="mt-1 text-[11px] uppercase tracking-[0.2em] opacity-60">
+                    <span
+                      aria-hidden="true"
+                      className="mt-1 text-[11px] uppercase tracking-[0.2em] opacity-75"
+                    >
                       poin
                     </span>
                     {isClosed && entryR2Bonus > 0 && (
-                      <div className="mt-2.5 flex w-full flex-col items-center rounded-lg border border-[var(--bz-kita-ink-panel-copper)] bg-[color-mix(in_srgb,var(--bz-copper)_20%,transparent)] px-2 py-1.5">
+                      <div
+                        aria-hidden="true"
+                        className="mt-2.5 flex w-full flex-col items-center rounded-lg border border-[var(--bz-kita-ink-panel-copper)] bg-[color-mix(in_srgb,var(--bz-copper)_20%,transparent)] px-2 py-1.5"
+                      >
                         <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--bz-kita-ink-panel-copper)]">
                           Bonus Diraih
                         </span>

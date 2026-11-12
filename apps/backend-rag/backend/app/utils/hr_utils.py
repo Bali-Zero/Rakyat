@@ -55,6 +55,19 @@ def is_hr_admin(user: dict[str, Any]) -> bool:
     return email in _hr_admin_emails() or user.get("role") == "admin"
 
 
+def can_write_hr_card(user: dict[str, Any]) -> bool:
+    """May this caller edit any employee's HR card (STAFF_CARD.md C11)?
+
+    Only the GLOBAL admins (`settings.admin_emails_set`: the owner and Asya). Not the HR
+    extras (they keep view and bonus powers), never a scoped viewer, a member or a client,
+    and the token's `role` claim does not grant it: it is an email allow-list, nothing else.
+    """
+    if user.get("role") == "client":
+        return False
+    email = (user.get("email") or "").lower().strip()
+    return email in settings.admin_emails_set
+
+
 def hr_people_scope(user: dict[str, Any]) -> Literal["all"] | frozenset[str] | None:
     """Whose HR picture the caller may read in the People console.
 

@@ -232,3 +232,11 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
         },
         headers={"X-Correlation-ID": correlation_id},
     )
+
+
+def register_exception_handlers(app: Any) -> None:
+    """The three global handlers every app instance carries (one place, so a test can mount
+    the very same registration instead of a copy)."""
+    app.add_exception_handler(HTTPException, http_exception_handler)
+    app.add_exception_handler(StarletteHTTPException, starlette_http_exception_handler)
+    app.add_exception_handler(Exception, general_exception_handler)
