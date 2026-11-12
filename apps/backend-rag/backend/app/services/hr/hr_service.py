@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import calendar
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import asyncpg
 
+from backend.app.services.hr.hr_leave_routing import SETUP_TEAM_EMAILS, TAX_TEAM_EMAILS
 from backend.app.services.hr.hr_overview_logic import aggregate_attendance, unambiguous_email
 from backend.app.utils.hr_utils import (
     calculate_bpjs,
@@ -37,6 +39,47 @@ BUSINESS_TZ = "Asia/Makassar"
 def business_today() -> date:
     """Today's date in WITA — the server clock is UTC, the business is not."""
     return (datetime.now(timezone.utc) + timedelta(hours=8)).date()
+
+
+#: What a manual bonus stores in practice_type_code when no service is named
+#: (the column is NOT NULL and has no foreign key).
+MANUAL_BONUS_CODE = "manual"
+
+
+class BonusPeriodLockedError(Exception):
+    """The payroll month of a manual bonus is already approved or paid."""
+
+
+def department_of(email: str | None, stored: str | None = None) -> str:
+    """The department chip of a person: 'tax', 'setup' or 'office'.
+
+    The org chart in hr_leave_routing is authoritative (the stored column is free
+    text); the stored value is only a fallback for addresses outside both sets.
+    """
+    mail = (email or "").lower().strip()
+    if mail in TAX_TEAM_EMAILS:
+        return "tax"
+    if mail in SETUP_TEAM_EMAILS:
+        return "setup"
+    guess = (stored or "").lower().strip()
+    return guess if guess in ("tax", "setup") else "office"
+
+
+def practice_group(code: str, category: str | None = None) -> str:
+    """Settings dropdown group of a practice type: visa | company | tax | other."""
+    low = (code or "").lower()
+    cat = (category or "").lower()
+    if low.startswith("tax") or cat == "tax":
+        return "tax"
+    if low.startswith("company") or cat in ("company", "business"):
+        return "company"
+    if low.startswith(("visa", "kitas", "kitap", "voa", "extension")) or cat in (
+        "visa",
+        "kitas",
+        "kitap",
+    ):
+        return "visa"
+    return "other"
 
 
 _LOCK_ERRORS = (
@@ -76,13 +119,18 @@ class HRService:
         """List all HR employees with team member info."""
         async with self.db_pool.acquire() as conn:
             rows = await conn.fetch("""
-                SELECT e.*, tm.full_name, tm.email, tm.role
+                SELECT e.*, tm.full_name, tm.email, tm.role, tm.department
                 FROM hr_employees e
                 JOIN team_members tm ON tm.id = e.team_member_id
                 WHERE e.is_active = TRUE
                 ORDER BY tm.full_name
             """)
-            return [self._legacy_row(r) for r in rows]
+            out = []
+            for r in rows:
+                row = self._legacy_row(r)
+                row["department"] = department_of(row.get("email"), row.get("department"))
+                out.append(row)
+            return out
 
     @staticmethod
     def _legacy_row(row: Any) -> dict[str, Any]:
@@ -373,11 +421,12 @@ class HRService:
         async with self.db_pool.acquire() as conn:
             query = """
                 SELECT bl.*, tm.full_name as employee_name, tm.email as employee_email,
+                       tm.department as employee_department,
                        p.status as practice_status, c.full_name as client_name
                 FROM hr_bonus_ledger bl
                 JOIN hr_employees e ON e.id = bl.employee_id
                 JOIN team_members tm ON tm.id = e.team_member_id
-                JOIN practices p ON p.id = bl.practice_id
+                LEFT JOIN practices p ON p.id = bl.practice_id
                 LEFT JOIN clients c ON c.id = p.client_id
                 WHERE 1=1
             """
@@ -409,7 +458,14 @@ class HRService:
 
             query += " ORDER BY bl.awarded_at DESC"
             rows = await conn.fetch(query, *params)
-            return [dict(r) for r in rows]
+            out = []
+            for r in rows:
+                row = dict(r)
+                row["employee_department"] = department_of(
+                    row.get("employee_email"), row.get("employee_department")
+                )
+                out.append(row)
+            return out
 
     async def list_bonus_historical(
         self,
@@ -459,6 +515,128 @@ class HRService:
             logger.info("Bonus %s approved by %s", bonus_id, approved_by)
             return dict(row)
 
+    # ─── MANUAL BONUSES ──────────────────────────────────────────────
+
+    async def list_bonus_practice_types(self) -> list[dict[str, Any]]:
+        """Active practice types for the rate / manual-bonus dropdowns, tax included."""
+        async with self.db_pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT code, name, category
+                FROM practice_types
+                WHERE is_active = TRUE
+                ORDER BY code
+            """)
+        out = [
+            {
+                "code": r["code"],
+                "name": r["name"],
+                "category": r["category"],
+                "group": practice_group(r["code"], r["category"]),
+            }
+            for r in rows
+        ]
+        order = {"visa": 0, "company": 1, "tax": 2, "other": 3}
+        out.sort(key=lambda t: (order[t["group"]], str(t["name"] or "").lower()))
+        return out
+
+    async def create_manual_bonus(
+        self,
+        *,
+        employee_id: int,
+        amount_idr: int,
+        reason: str,
+        practice_type_code: str | None,
+        awarded_on: date,
+        created_by: str,
+    ) -> dict[str, Any] | None:
+        """Insert a pending manual bonus. None when the employee is unknown or inactive.
+
+        Raises ValueError for an unknown service code and BonusPeriodLockedError when
+        the payroll month of `awarded_on` is already approved or paid.
+        """
+        awarded_at = datetime.combine(awarded_on, time(12, 0), tzinfo=ZoneInfo(BUSINESS_TZ))
+        async with self.db_pool.acquire() as conn:
+            async with conn.transaction():
+                emp = await conn.fetchrow(
+                    "SELECT id FROM hr_employees WHERE id = $1 AND is_active = TRUE",
+                    employee_id,
+                )
+                if not emp:
+                    return None
+                if practice_type_code:
+                    known = await conn.fetchval(
+                        "SELECT 1 FROM practice_types WHERE code = $1 AND is_active = TRUE",
+                        practice_type_code,
+                    )
+                    if not known:
+                        msg = "Unknown or inactive service"
+                        raise ValueError(msg)
+                locked = await conn.fetchval(
+                    """
+                    SELECT 1 FROM hr_payroll_periods
+                    WHERE payroll_month = $1 AND payroll_year = $2
+                      AND status IN ('approved', 'paid')
+                    """,
+                    awarded_on.month,
+                    awarded_on.year,
+                )
+                if locked:
+                    msg = "Payroll for that month is already approved"
+                    raise BonusPeriodLockedError(msg)
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO hr_bonus_ledger (
+                        employee_id, practice_type_code, amount_idr, status,
+                        awarded_at, source, reason, created_by
+                    ) VALUES ($1, $2, $3, 'pending', $4, 'manual', $5, $6)
+                    RETURNING *
+                    """,
+                    employee_id,
+                    practice_type_code or MANUAL_BONUS_CODE,
+                    amount_idr,
+                    awarded_at,
+                    reason.strip(),
+                    created_by,
+                )
+        logger.info("Manual bonus %s created for employee %s", row["id"], employee_id)
+        return dict(row)
+
+    async def reject_bonus(
+        self, bonus_id: int, rejected_by: str, note: str | None = None
+    ) -> dict[str, Any]:
+        """Reject a pending bonus (practice or manual)."""
+        async with self.db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE hr_bonus_ledger
+                SET status = 'rejected', approved_by = $2, approved_at = NOW(),
+                    notes = COALESCE($3, notes)
+                WHERE id = $1 AND status = 'pending'
+                RETURNING *
+                """,
+                bonus_id,
+                rejected_by,
+                note,
+            )
+            if not row:
+                msg = f"Bonus {bonus_id} not found or not pending"
+                raise ValueError(msg)
+            logger.info("Bonus %s rejected by %s", bonus_id, rejected_by)
+            return dict(row)
+
+    async def delete_manual_bonus(self, bonus_id: int) -> bool:
+        """Delete a pending manual bonus. False when it is not one (or does not exist)."""
+        async with self.db_pool.acquire() as conn:
+            deleted = await conn.fetchval(
+                """
+                DELETE FROM hr_bonus_ledger
+                WHERE id = $1 AND source = 'manual' AND status = 'pending'
+                RETURNING id
+                """,
+                bonus_id,
+            )
+        return deleted is not None
+
     async def get_bonus_summary(
         self,
         employee_id: int,
@@ -476,6 +654,7 @@ class HRService:
                     COALESCE(SUM(amount_idr), 0) as grand_total
                 FROM hr_bonus_ledger
                 WHERE employee_id = $1
+                  AND status NOT IN ('rejected', 'reversed', 'cancelled')
                   AND EXTRACT(MONTH FROM (awarded_at AT TIME ZONE 'Asia/Makassar')) = $2
                   AND EXTRACT(YEAR FROM (awarded_at AT TIME ZONE 'Asia/Makassar')) = $3
             """,
@@ -1226,6 +1405,7 @@ class HRService:
                 SELECT COUNT(*) as count, COALESCE(SUM(amount_idr), 0) as total
                 FROM hr_bonus_ledger
                 WHERE employee_id = $1
+                  AND status NOT IN ('rejected', 'reversed', 'cancelled')
                   AND EXTRACT(MONTH FROM (awarded_at AT TIME ZONE 'Asia/Makassar')) = $2
                   AND EXTRACT(YEAR FROM (awarded_at AT TIME ZONE 'Asia/Makassar')) = $3
             """,
