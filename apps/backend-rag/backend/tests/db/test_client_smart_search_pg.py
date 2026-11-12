@@ -587,3 +587,88 @@ async def test_the_ascii_fast_path_folds_exactly_like_the_full_path(pool: asyncp
             "SELECT public.bz_fold($1::text), public.bz_fold_full($1::text)", text
         )
         assert fast == full, text
+
+
+@pytest.mark.asyncio
+async def test_a_short_token_never_borrows_an_unrelated_company_identifier(
+    pool: asyncpg.Pool,
+) -> None:
+    await book(pool)
+    # "12" is inside the linked company's NIB, but the client "Nobody Special" has no company,
+    # and a token under three digits is never an identifier fragment.
+    assert await search(pool, "nobody 12") == []
+    assert await search(pool, "rossi 12") == []  # "12" is in his phone only as a digit run
+    assert await search(pool, "rossi ma") == ["Mario Rossi"]
+
+
+@pytest.mark.asyncio
+async def test_the_key_functions_do_not_depend_on_session_settings(pool: asyncpg.Pool) -> None:
+    samples = [
+        "Mario Rossi",
+        "O'Brien-Smith, Jr.",
+        "Müller \\ [x] a.b_c@Example.TEST",
+        "Straße ŒUVRE İSTANBUL I",
+        "Иван Иванов",
+        "no\u00a0break  space",
+    ]
+    queries = [
+        "SELECT public.bz_fold($1::text), public.bz_name_key($1::text),"
+        " public.bz_client_key($1::text, $1::text), public.bz_phone_key($1::text, $1::text, $1::text),"
+        " public.bz_ident_key($1::text, $1::text), public.bz_name_rank($1::text, ARRAY['mario'])"
+    ]
+    settings = [
+        {"standard_conforming_strings": "off"},
+        {"search_path": "pg_temp"},
+        {"escape_string_warning": "off", "lc_messages": "C"},
+    ]
+    dsn = os.environ["NUZ_UNIVERSAL_PG_DSN"]
+    async with pool.acquire() as conn:
+        baseline = {t: [tuple(await conn.fetchrow(q, t)) for q in queries] for t in samples}
+    # A fresh connection per setting: the function bodies are parsed again under that setting.
+    for setting in settings:
+        fresh = await asyncpg.connect(dsn, server_settings=setting)
+        try:
+            for text in samples:
+                got = [tuple(await fresh.fetchrow(q, text)) for q in queries]
+                assert got == baseline[text], (setting, text)
+        finally:
+            await fresh.close()
+    # Case folding is explicit: a dotted capital I folds to "i" in both paths.
+    folded = await pool.fetchval("SELECT public.bz_fold($1::text)", "ISTANBUL İstanbul")
+    assert folded == "istanbul istanbul"
+
+
+async def _generic_plan(pool: asyncpg.Pool, typed: str) -> str:
+    async with pool.acquire() as conn:
+        built = await client_search.build_client_search(conn, typed, 1)
+        assert built is not None
+        types = ["text[]" if isinstance(p, list) else "text" for p in built.params]
+
+        def literal(value: Any) -> str:
+            if isinstance(value, list):
+                return "ARRAY[" + ", ".join(literal(v) for v in value) + "]::text[]"
+            return "'" + str(value).replace("'", "''") + "'"
+
+        await conn.execute("SET enable_seqscan = off")
+        await conn.execute("SET enable_indexscan = off")
+        await conn.execute("SET plan_cache_mode = force_generic_plan")
+        await conn.execute(
+            f"PREPARE gp({', '.join(types)}) AS SELECT c.id FROM clients c"
+            " WHERE c.deleted_at IS NULL" + built.clause + " ORDER BY " + built.order_by
+        )
+        rows = await conn.fetch(
+            f"EXPLAIN EXECUTE gp({', '.join(literal(p) for p in built.params)})"
+        )
+        await conn.execute("DEALLOCATE gp")
+    return "\n".join(r[0] for r in rows)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("typed", ["rossi", "acme", "0812-3456-7890", "mar rossi"])
+async def test_a_generic_plan_still_uses_the_expression_indexes(
+    pool: asyncpg.Pool, typed: str
+) -> None:
+    await book(pool)
+    plan = await _generic_plan(pool, typed)
+    assert "idx_clients_smart_key" in plan, plan
+    assert "Seq Scan on clients" not in plan, plan

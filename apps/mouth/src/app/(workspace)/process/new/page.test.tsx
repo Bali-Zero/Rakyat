@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -779,6 +779,41 @@ describe("NewPracticePage", () => {
       expect(await screen.findByText("Synthetic Reopened")).toBeInTheDocument();
     });
 
+    it("a response that arrives after unmount does nothing", async () => {
+      const user = userEvent.setup();
+      let resolveOld: (v: unknown) => void = () => {};
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+      const input = await renderSearch();
+      mockGetClients.mockImplementationOnce(
+        () => new Promise((resolve) => (resolveOld = resolve)),
+      );
+      await user.type(input, "ma");
+      await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(1));
+      cleanup();
+      resolveOld([found(1, "Synthetic Alpha")]);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(consoleError).not.toHaveBeenCalled();
+      expect(casesMetrics.trackError).not.toHaveBeenCalled();
+      consoleError.mockRestore();
+    });
+
+    it("a failure that arrives after unmount is not reported", async () => {
+      const user = userEvent.setup();
+      let rejectOld: (e: Error) => void = () => {};
+      const input = await renderSearch();
+      mockGetClients.mockImplementationOnce(
+        () => new Promise((_, reject) => (rejectOld = reject)),
+      );
+      await user.type(input, "ma");
+      await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(1));
+      cleanup();
+      rejectOld(new Error("late failure"));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(casesMetrics.trackError).not.toHaveBeenCalled();
+    });
+
     it("a request that fails after a newer one started is not reported", async () => {
       const user = userEvent.setup();
       let rejectOld: (e: Error) => void = () => {};
@@ -821,7 +856,16 @@ describe("NewPracticePage", () => {
       await screen.findByText("Synthetic Alpha");
       await user.type(input, "b");
       await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(2));
-      await waitFor(() => expect(mockToastError).toBeDefined());
+      await waitFor(() =>
+        expect(
+          vi
+            .mocked(casesMetrics.trackError)
+            .mock.calls.some(
+              (call) =>
+                call[0] === "Client Search Failed" && call[1] === "boom",
+            ),
+        ).toBe(true),
+      );
       expect(screen.queryByText("Synthetic Alpha")).toBeNull();
     });
 

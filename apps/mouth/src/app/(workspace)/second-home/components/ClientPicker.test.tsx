@@ -127,6 +127,27 @@ describe("ClientPicker search", () => {
     expect(screen.queryByText("Synthetic Alpha")).toBeNull();
   });
 
+  it("a response that arrives after unmount does nothing", async () => {
+    let resolveOld: (v: Client[]) => void = () => {};
+    mockGetClients.mockImplementationOnce(
+      () => new Promise<Client[]>((resolve) => (resolveOld = resolve)),
+    );
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const { unmount } = render(<Harness />);
+    await userEvent.setup().type(screen.getByLabelText("Search client"), "ma");
+    await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(1));
+    unmount();
+    await act(async () => {
+      resolveOld([client(1, "Synthetic Alpha")]);
+    });
+    await settle(50);
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(mockLogError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it("a response or failure that arrives after unmount does nothing", async () => {
     let rejectOld: (e: Error) => void = () => {};
     mockGetClients.mockImplementationOnce(

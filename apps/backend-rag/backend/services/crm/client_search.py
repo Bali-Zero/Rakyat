@@ -39,11 +39,11 @@ _NUMERIC_QUERY = re.compile(r"[\d\s().+\-/]+")
 _DIGITS = re.compile(r"[0-9]+")
 
 # One definition per key, the same text the migration indexes (aliases do not matter).
-CLIENT_KEY = "public.bz_client_key(c.full_name, c.email)"
-PHONE_KEY = "public.bz_phone_key(c.phone, c.phone_normalized, c.whatsapp)"
-CLIENT_IDENT = "public.bz_ident_key(c.nib, c.npwp)"
-COMPANY_KEY = "public.bz_name_key(co.company_name)"
-COMPANY_IDENT = "public.bz_ident_key(co.nib, co.npwp_company)"
+CLIENT_EXPR = "public.bz_client_key(c.full_name, c.email)"
+PHONE_EXPR = "public.bz_phone_key(c.phone, c.phone_normalized, c.whatsapp)"
+CLIENT_IDENT_EXPR = "public.bz_ident_key(c.nib, c.npwp)"
+COMPANY_NAME_EXPR = "public.bz_name_key(co.company_name)"
+COMPANY_IDENT_EXPR = "public.bz_ident_key(co.nib, co.npwp_company)"
 INDEX_NAMES = (
     "idx_clients_smart_key",
     "idx_clients_smart_phone",
@@ -79,11 +79,11 @@ def _like(expr: str, param: str) -> str:
 def _token_clause(index: int, *, long_token: bool, numeric: bool, core_index: int | None) -> str:
     """OR of the places one token can match; the arms of a long token are all index-served."""
     param = f"${index}::text"
-    company_exprs = [COMPANY_KEY, COMPANY_IDENT]
-    company_arms = [_like(COMPANY_KEY, param)]
-    if numeric:
-        company_arms.append(_like(COMPANY_IDENT, param))
-    parts = [_like(CLIENT_KEY, param)]
+    company_exprs = [COMPANY_NAME_EXPR, COMPANY_IDENT_EXPR]
+    company_arms = [_like(COMPANY_NAME_EXPR, param)]
+    if numeric and long_token:
+        company_arms.append(_like(COMPANY_IDENT_EXPR, param))
+    parts = [_like(CLIENT_EXPR, param)]
     if long_token:
         # One ANY(ARRAY(subselect)) per company key: an InitPlan the planner can BitmapOr with the
         # client key. An `IN (SELECT ...)` inside this OR is NOT indexable (seq scan, ~1.3 s), and
@@ -94,15 +94,15 @@ def _token_clause(index: int, *, long_token: bool, numeric: bool, core_index: in
                 f" JOIN companies co ON co.id = ccl.company_id WHERE {_like(company_expr, param)}))"
             )
         if numeric:
-            parts.append(_like(CLIENT_IDENT, param))
+            parts.append(_like(CLIENT_IDENT_EXPR, param))
             if core_index is not None:
-                parts.append(_like(PHONE_KEY, f"${core_index}::text"))
+                parts.append(_like(PHONE_EXPR, f"${core_index}::text"))
     else:
         # A short token only filters rows another (long) token already found.
         parts.append(
             "EXISTS (SELECT 1 FROM client_company_links ccl"
             " JOIN companies co ON co.id = ccl.company_id"
-            f" WHERE ccl.client_id = c.id AND {' OR '.join(company_arms)})"
+            f" WHERE ccl.client_id = c.id AND ({' OR '.join(company_arms)}))"
         )
     return "(" + " OR ".join(parts) + ")"
 

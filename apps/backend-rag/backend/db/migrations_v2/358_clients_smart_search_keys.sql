@@ -20,32 +20,51 @@
 -- blocks writes (not reads) for the build (measured ~1.5 s for the clients key index, ~3 s for
 -- all five, dominated by bz_fold at ~100 us per row); CREATE INDEX CONCURRENTLY cannot run
 -- inside the runner transaction. lock_timeout bounds the wait for the lock, not the build.
+-- Function environment: pg_catalog is always searched first, so unqualified built-ins are not
+-- shadowed; the two settings that DID change results are fixed in the bodies (no backslash in any
+-- string literal, explicit "C" collation for lower()), and a test compares the output across them.
 -- depends: 357
 SET LOCAL lock_timeout = '5s';
 SET LOCAL search_path = public, pg_catalog;
 
-CREATE OR REPLACE FUNCTION public.bz_fold_full(txt text) RETURNS text
+-- The punctuation fold both paths end with. The class is assembled with chr() so that no
+-- backslash sits in a string literal: with standard_conforming_strings = off a literal backslash
+-- is parsed differently, and an IMMUTABLE function must not depend on a session setting. The
+-- character class is explicit (ASCII punctuation, ASCII whitespace via [:space:], no-break
+-- space, curly quotes, dashes, ellipsis, middle dot, bullet): the input is already in the "C"
+-- collation, so [:space:] is ASCII-only and does not follow the database locale.
+CREATE OR REPLACE FUNCTION public.bz_fold_spaces(txt text) RETURNS text
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $fn$
     SELECT btrim(regexp_replace(
+        txt,
+        '[[:space:]!"#$%&''()*+,./:;<=>?@^_`{|}~ ‘’“”–—…·•'
+            || chr(92) || '[' || chr(92) || chr(92) || chr(92) || ']' || chr(92) || '-]+',
+        ' ', 'g'))
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.bz_fold_full(txt text) RETURNS text
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $fn$
+    SELECT public.bz_fold_spaces(
         translate(
             lower(replace(replace(replace(replace(replace(replace(replace(replace(
                 COALESCE(txt, ''),
-                'ß', 'ss'), 'ẞ', 'ss'), 'æ', 'ae'), 'Æ', 'ae'), 'œ', 'oe'), 'Œ', 'oe'), 'þ', 'th'), 'Þ', 'th')),
+                'ß', 'ss'), 'ẞ', 'ss'), 'æ', 'ae'), 'Æ', 'ae'), 'œ', 'oe'), 'Œ', 'oe'), 'þ', 'th'), 'Þ', 'th') COLLATE "C"),
             'ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝàáâãäåçèéêëìíîïðñòóôõöøùúûüýÿĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĸĹĺĻļĽľŁłŃńŅņŇňŊŋŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŸŹźŻżŽžƠơƯưǍǎǏǐǑǒǓǔǕǖǗǘǙǚǛǜǞǟǠǡǦǧǨǩǪǫǬǭǰǴǵǸǹǺǻȀȁȂȃȄȅȆȇȈȉȊȋȌȍȎȏȐȑȒȓȔȕȖȗȘșȚțȞȟȦȧȨȩȪȫȬȭȮȯȰȱȲȳḀḁḂḃḄḅḆḇḈḉḊḋḌḍḎḏḐḑḒḓḔḕḖḗḘḙḚḛḜḝḞḟḠḡḢḣḤḥḦḧḨḩḪḫḬḭḮḯḰḱḲḳḴḵḶḷḸḹḺḻḼḽḾḿṀṁṂṃṄṅṆṇṈṉṊṋṌṍṎṏṐṑṒṓṔṕṖṗṘṙṚṛṜṝṞṟṠṡṢṣṤṥṦṧṨṩṪṫṬṭṮṯṰṱṲṳṴṵṶṷṸṹṺṻṼṽṾṿẀẁẂẃẄẅẆẇẈẉẊẋẌẍẎẏẐẑẒẓẔẕẖẗẘẙẠạẢảẤấẦầẨẩẪẫẬậẮắẰằẲẳẴẵẶặẸẹẺẻẼẽẾếỀềỂểỄễỆệỈỉỊịỌọỎỏỐốỒồỔổỖỗỘộỚớỜờỞởỠỡỢợỤụỦủỨứỪừỬửỮữỰựỲỳỴỵỶỷỸỹёЁЀЂЃЄЅІЇЈЉЊЋЌЍЎЏАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯҐҒҔҖҘҚҜҞҠҢҤҦҨҪҬҮҰҲҴҶҸҺҼҾ̴̵̶̷̸̡̢̧̨̛̖̗̘̙̜̝̞̟̠̣̤̥̦̩̪̫̬̭̮̯̰̱̲̳̹̺̻̼͇͈͉͍͎̀́̂̃̄̅̆̇̈̉̊̋̌̍̎̏̐̑̒̓̔̽̾̿̀́͂̓̈́͆͊͋͌̕̚ͅ͏͓͔͕͖͙͚͐͑͒͗͛ͣͤͥͦͧͨͩͪͫͬͭͮͯ͘͜͟͢͝͞͠͡',
-            'aaaaaaceeeeiiiidnoooooouuuuyaaaaaaceeeeiiiidnoooooouuuuyyaaaaaaccccccccddddeeeeeeeeeegggggggghhhhiiiiiiiiiijjkkkllllllllnnnnnnnnoooooorrrrrrssssssssttttttuuuuuuuuuuuuwwyyyzzzzzzoouuaaiioouuuuuuuuuuaaaaggkkoooojggnnaaaaaaeeeeiiiioooorrrruuuusstthhaaeeooooooooyyaabbbbbbccddddddddddeeeeeeeeeeffgghhhhhhhhhhiiiikkkkkkllllllllmmmmmmnnnnnnnnoooooooopppprrrrrrrrssssssssssttttttttuuuuuuuuuuvvvvwwwwwwwwwwxxxxyyzzzzzzhtwyaaaaaaaaaaaaaaaaaaaaaaaaeeeeeeeeeeeeeeeeiiiioooooooooooooooooooooooouuuuuuuuuuuuuuyyyyyyyyееѐђѓєѕіїјљњћќѝўџабвгдежзийклмнопрстуфхцчшщъыьэюяґғҕҗҙқҝҟҡңҥҧҩҫҭүұҳҵҷҹһҽҿ'),
-        '[[:space:]!"#$%&''()*+,./:;<=>?@\[\\\]^_`{|}~\-‘’“”–—…·•]+', ' ', 'g'))
+            'aaaaaaceeeeiiiidnoooooouuuuyaaaaaaceeeeiiiidnoooooouuuuyyaaaaaaccccccccddddeeeeeeeeeegggggggghhhhiiiiiiiiiijjkkkllllllllnnnnnnnnoooooorrrrrrssssssssttttttuuuuuuuuuuuuwwyyyzzzzzzoouuaaiioouuuuuuuuuuaaaaggkkoooojggnnaaaaaaeeeeiiiioooorrrruuuusstthhaaeeooooooooyyaabbbbbbccddddddddddeeeeeeeeeeffgghhhhhhhhhhiiiikkkkkkllllllllmmmmmmnnnnnnnnoooooooopppprrrrrrrrssssssssssttttttttuuuuuuuuuuvvvvwwwwwwwwwwxxxxyyzzzzzzhtwyaaaaaaaaaaaaaaaaaaaaaaaaeeeeeeeeeeeeeeeeiiiioooooooooooooooooooooooouuuuuuuuuuuuuuyyyyyyyyееѐђѓєѕіїјљњћќѝўџабвгдежзийклмнопрстуфхцчшщъыьэюяґғҕҗҙқҝҟҡңҥҧҩҫҭүұҳҵҷҹһҽҿ')
+    )
 $fn$;
 
 -- ASCII fast path: the accent map cannot touch an ASCII character, so for an ASCII-only value
--- (the vast majority of names, e-mails) only lower() and the punctuation fold apply. Measured:
--- the full path costs ~100 us per value, which the expression-index recheck pays per candidate row.
--- A test asserts bz_fold = bz_fold_full on ASCII input.
+-- (the vast majority of names and e-mails) only lower() and the punctuation fold apply. The test
+-- is octet_length = length (the database encoding is UTF8, checked by the migration guard), which
+-- needs no regular expression and no session setting. Measured: the full path costs ~100 us per
+-- value, which the expression-index recheck pays per candidate row. A test asserts
+-- bz_fold = bz_fold_full on ASCII input.
 CREATE OR REPLACE FUNCTION public.bz_fold(txt text) RETURNS text
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $fn$
     SELECT CASE
-        WHEN COALESCE(txt, '') ~ '^[\x01-\x7f]*$' THEN btrim(regexp_replace(
-            lower(COALESCE(txt, '')),
-            '[[:space:]!"#$%&''()*+,./:;<=>?@\[\\\]^_`{|}~\-‘’“”–—…·•]+', ' ', 'g'))
+        WHEN octet_length(COALESCE(txt, '')) = length(COALESCE(txt, ''))
+            THEN public.bz_fold_spaces(lower(COALESCE(txt, '') COLLATE "C"))
         ELSE public.bz_fold_full(txt)
     END
 $fn$;
@@ -92,8 +111,8 @@ CREATE OR REPLACE FUNCTION public.bz_name_rank(name text, tokens text[]) RETURNS
 LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $fn$
 DECLARE
     folded text := public.bz_fold(name);
-    words text[] := string_to_array(public.bz_fold(name), ' ');
-    compact text := replace(public.bz_fold(name), ' ', '');
+    words text[] := string_to_array(folded, ' ');
+    compact text := replace(folded, ' ', '');
     tok text;
 BEGIN
     IF words @> tokens AND words <@ tokens THEN
@@ -112,9 +131,18 @@ END
 $fn$;
 
 DO $migration$
+DECLARE
+    trgm_schema text;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') THEN
+    SELECT n.nspname INTO trgm_schema
+    FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
+    WHERE e.extname = 'pg_trgm';
+    IF trgm_schema IS NULL THEN
         RAISE NOTICE 'Migration 358: pg_trgm not installed; skipping the indexes (the search keeps the legacy path).';
+        RETURN;
+    END IF;
+    IF pg_encoding_to_char((SELECT encoding FROM pg_database WHERE datname = current_database())) <> 'UTF8' THEN
+        RAISE NOTICE 'Migration 358: database encoding is not UTF8 (the ASCII fast path assumes it); skipping the indexes.';
         RETURN;
     END IF;
 
@@ -124,12 +152,9 @@ BEGIN
           AND column_name IN ('full_name', 'email', 'phone', 'phone_normalized',
                               'whatsapp', 'nib', 'npwp')
     ) = 7 THEN
-        CREATE INDEX IF NOT EXISTS idx_clients_smart_key ON public.clients
-            USING gin ((public.bz_client_key(full_name, email)) gin_trgm_ops);
-        CREATE INDEX IF NOT EXISTS idx_clients_smart_phone ON public.clients
-            USING gin ((public.bz_phone_key(phone, phone_normalized, whatsapp)) gin_trgm_ops);
-        CREATE INDEX IF NOT EXISTS idx_clients_smart_ident ON public.clients
-            USING gin ((public.bz_ident_key(nib, npwp)) gin_trgm_ops);
+        EXECUTE format('CREATE INDEX IF NOT EXISTS idx_clients_smart_key ON public.clients USING gin ((public.bz_client_key(full_name, email)) %I.gin_trgm_ops)', trgm_schema);
+        EXECUTE format('CREATE INDEX IF NOT EXISTS idx_clients_smart_phone ON public.clients USING gin ((public.bz_phone_key(phone, phone_normalized, whatsapp)) %I.gin_trgm_ops)', trgm_schema);
+        EXECUTE format('CREATE INDEX IF NOT EXISTS idx_clients_smart_ident ON public.clients USING gin ((public.bz_ident_key(nib, npwp)) %I.gin_trgm_ops)', trgm_schema);
     ELSE
         RAISE NOTICE 'Migration 358: clients (or one of its columns) not present; skipping its indexes (CI/fresh schema).';
     END IF;
@@ -139,10 +164,8 @@ BEGIN
         WHERE table_schema = 'public' AND table_name = 'companies'
           AND column_name IN ('company_name', 'nib', 'npwp_company')
     ) = 3 THEN
-        CREATE INDEX IF NOT EXISTS idx_companies_smart_name ON public.companies
-            USING gin ((public.bz_name_key(company_name)) gin_trgm_ops);
-        CREATE INDEX IF NOT EXISTS idx_companies_smart_ident ON public.companies
-            USING gin ((public.bz_ident_key(nib, npwp_company)) gin_trgm_ops);
+        EXECUTE format('CREATE INDEX IF NOT EXISTS idx_companies_smart_name ON public.companies USING gin ((public.bz_name_key(company_name)) %I.gin_trgm_ops)', trgm_schema);
+        EXECUTE format('CREATE INDEX IF NOT EXISTS idx_companies_smart_ident ON public.companies USING gin ((public.bz_ident_key(nib, npwp_company)) %I.gin_trgm_ops)', trgm_schema);
     ELSE
         RAISE NOTICE 'Migration 358: companies (or one of its columns) not present; skipping its indexes.';
     END IF;
@@ -164,3 +187,4 @@ DROP FUNCTION IF EXISTS public.bz_name_key(text);
 DROP FUNCTION IF EXISTS public.bz_phone_core(text);
 DROP FUNCTION IF EXISTS public.bz_fold(text);
 DROP FUNCTION IF EXISTS public.bz_fold_full(text);
+DROP FUNCTION IF EXISTS public.bz_fold_spaces(text);
