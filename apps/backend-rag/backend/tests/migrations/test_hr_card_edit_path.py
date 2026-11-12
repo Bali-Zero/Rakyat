@@ -163,14 +163,14 @@ async def test_a_concurrent_set_and_clear_of_different_keys_loses_neither(
 
 @pytest.mark.asyncio
 async def test_no_value_reaches_the_logs_or_an_error(pool: asyncpg.Pool, caplog: Any) -> None:  # noqa: F811
-    secret_bank, secret_addr = "Bank Rahasia Contoh", "Jalan Rahasia 99"
+    marker_bank, marker_addr = "Bank Rahasia Contoh", "Jalan Rahasia 99"
     with caplog.at_level(logging.DEBUG):
-        await _edit(pool, A, {"bank_name": secret_bank}, {"nik": NIK, "address": secret_addr})
+        await _edit(pool, A, {"bank_name": marker_bank}, {"nik": NIK, "address": marker_addr})
         await _edit(pool, A, clear=["nik"])
         with pytest.raises(HRCardError) as exc:
-            await _edit(pool, B, {"bank_name": secret_bank})
+            await _edit(pool, B, {"bank_name": marker_bank})
     text = caplog.text + str(exc.value) + repr(exc.value)
-    for value in (secret_bank, secret_addr, NIK):
+    for value in (marker_bank, marker_addr, NIK):
         assert value not in text
 
 
