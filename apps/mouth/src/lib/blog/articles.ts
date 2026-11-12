@@ -140,6 +140,7 @@ function cleanExcerpt(text: string | null): string {
     .replace(/\*\*(.*?)\*\*/g, "$1") // **bold**
     .replace(/\*(.*?)\*/g, "$1") // *italic*
     .replace(/\[(.*?)\]\(.*?\)/g, "$1") // [link](url)
+    .replace(/\[([^\]]+)\]\([^)]*$/g, "$1") // truncated [link](url... at end of string
     .replace(/`(.*?)`/g, "$1") // `code`
     .replace(/\n{2,}/g, " ") // collapse blank lines
     .trim();
