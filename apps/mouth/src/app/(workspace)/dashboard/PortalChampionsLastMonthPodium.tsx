@@ -6,7 +6,6 @@ import type { PortalChallengeResponse } from "@/lib/api/dashboard/dashboard.api"
 import { StatePill } from "@/components/workspace/r19";
 import { ChampionArena } from "./ChampionArena";
 import { usePortalChallenge } from "./_lib/usePortalChallenge";
-import { R19_TYPE } from "./r19";
 
 /**
  * Official closed Round 2 ("Lascia o raddoppia", 29 Sep – 29 Oct 2026 WITA)
@@ -288,7 +287,6 @@ export function PortalChampionsLastMonthPodium({
       data-testid="portal-champions-last-month-podium"
       aria-label="Last Month's News — Portal Champion Final Podium"
       className="mt-8 flex flex-col gap-3"
-      style={R19_TYPE}
     >
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--bz-border)] pb-2">
         <div className="flex items-center gap-2">
