@@ -1129,7 +1129,9 @@ function PeopleConsole() {
                         viewer="admin"
                       />
                     )}
-                    {open === "me" && <MeDetail me={person} viewer="admin" />}
+                    {open === "me" && (
+                      <MeDetail me={person} viewer="admin" showPapers={false} />
+                    )}
                     {open === "me" && (
                       <DocumentsBlock
                         key={selected.team_member_id}
