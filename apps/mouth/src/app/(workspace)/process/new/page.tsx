@@ -279,9 +279,13 @@ export default function NewPracticePage() {
   }, [formData.client_id]);
 
   useEffect(() => {
+    // A list exists only for a request that succeeded for the text now in the box:
+    // drop what the previous text left and ignore any response that outlives it.
+    setClients([]);
+    let cancelled = false;
     const searchClients = async () => {
       if (!clientSearch.trim()) {
-        setClients([]);
+        setIsSearchingClients(false);
         return;
       }
       setIsSearchingClients(true);
@@ -305,8 +309,9 @@ export default function NewPracticePage() {
           results.length,
           userEmail.current || undefined,
         );
-        setClients(results);
+        if (!cancelled) setClients(results);
       } catch (error) {
+        if (cancelled) return;
         const apiDuration = performance.now() - apiStart;
         casesMetrics.trackApiCall(
           "/api/crm/clients/search",
@@ -329,11 +334,14 @@ export default function NewPracticePage() {
           toError(error),
         );
       } finally {
-        setIsSearchingClients(false);
+        if (!cancelled) setIsSearchingClients(false);
       }
     };
     const debounce = setTimeout(searchClients, 300);
-    return () => clearTimeout(debounce);
+    return () => {
+      cancelled = true;
+      clearTimeout(debounce);
+    };
   }, [clientSearch]);
 
   useEffect(() => {
