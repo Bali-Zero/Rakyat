@@ -51,6 +51,8 @@ export interface HrCapabilities {
   people_scope: "all" | "scoped" | null;
   /** The viewer may edit HR data (read-only People for everyone else). */
   hr_edit: boolean;
+  /** The viewer may edit, clear or create any person's HR card (the global admins only). */
+  hr_card_write: boolean;
 }
 export const getCapabilities = () =>
   api.get<HrCapabilities>(`${BASE}/me/capabilities`);
@@ -181,6 +183,24 @@ export const getPersonOverview = (
 ): Promise<CredentialedResponse<PersonOverview>> =>
   api.requestWithCredential<PersonOverview>(
     `${BASE}/people/${encodeURIComponent(teamMemberId)}/overview`,
+  );
+
+// People console, card edit — STAFF_CARD.md C11. Only the global admins may call it; the
+// answer is the person's refreshed overview, bound to the session like the read.
+export type CardEditBody = components["schemas"]["CardEditBody"];
+/** One entry of a 422: a closed field key (or ""), a code and a fixed message; never a value. */
+export interface CardEditFieldError {
+  field: string;
+  code: string;
+  message: string;
+}
+export const editPersonCard = (
+  teamMemberId: string,
+  body: CardEditBody,
+): Promise<CredentialedResponse<PersonOverview>> =>
+  api.requestWithCredential<PersonOverview>(
+    `${BASE}/people/${encodeURIComponent(teamMemberId)}/card`,
+    { method: "PATCH", body: JSON.stringify(body) },
   );
 
 // Dashboard

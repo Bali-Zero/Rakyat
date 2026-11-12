@@ -3,7 +3,9 @@
  * People: the HR console, read side. Everyone on one roster, and for the selected person
  * the same three panels (Pay, Time, Me) the person sees on their own "My HR" page.
  * HR admins see everyone plus the pulse; the scoped viewer sees a few people, read only.
- * Write actions are not here: this page has no edit, upload or delete control.
+ * The one write is the card edit (STAFF_CARD.md C11), only for `hr_card_write` viewers (the
+ * global admins): an inline form that edits, clears or creates a person's HR card. There is
+ * no upload or delete control here.
  *
  * Personal data: bound to the bearer token's identity per src/lib/auth/SESSION.md S4.
  * The roster and each person's overview are fetched with requestWithCredential and kept
@@ -11,6 +13,8 @@
  * (`viewer_team_member_id`) as the reader. Every result is stored with the identity (and,
  * for a person, the member id) it was fetched for and shown only while both still match
  * this render, so a late answer for a previous person or identity is never displayed.
+ * The card PATCH answer is accepted under the same rule: only for the identity it was sent
+ * with, and only if it names the member it was sent for.
  * Nothing here is logged, cached or persisted.
  */
 import React, { Suspense, useEffect, useMemo, useState } from "react";
@@ -23,6 +27,7 @@ import {
   Clock,
   Gift,
   Landmark,
+  Pencil,
   Search,
   Sparkles,
   Upload,
@@ -32,8 +37,12 @@ import {
 import { DESK_SERIF } from "@balizero/core";
 import { ApiError } from "@/lib/api/error-handler";
 import {
+  editPersonCard,
   getPeople,
   getPersonOverview,
+  type CardEditBody,
+  type CardEditFieldError,
+  type HrStaffCard,
   type PeopleRoster,
   type PersonOverview,
   type PersonRow,
@@ -45,6 +54,11 @@ import {
   type SessionIdentity,
 } from "@/lib/auth/session-identity";
 import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
+import {
+  CardEditForm,
+  type CardEditMode,
+  type CardEditResult,
+} from "./_components/card-edit-form";
 import {
   Bubble,
   CARD,
@@ -385,6 +399,40 @@ function errorKind(err: unknown) {
   };
 }
 
+const PAPER_SLOTS = ["ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk"];
+/** The backend's `papers_missing` for a refreshed card (five document slots + the contract file). */
+function papersMissing(card: HrStaffCard): number {
+  const docs = card.docs ?? {};
+  const missing = PAPER_SLOTS.filter((slot) => !docs[slot]).length;
+  return missing + (card.contract?.file_id ? 0 : 1);
+}
+
+/** A failed card save as the form shows it: fixed texts only, never a value. */
+function saveFailure(err: unknown): CardEditResult {
+  if (err instanceof ApiError) {
+    const detail = (err.data as { detail?: unknown } | undefined)?.detail;
+    if (err.statusCode === 422 && Array.isArray(detail)) {
+      return {
+        ok: false,
+        errors: (detail as CardEditFieldError[]).filter(
+          (e) => typeof e?.field === "string" && typeof e?.message === "string",
+        ),
+      };
+    }
+    if (err.statusCode === 403)
+      return { ok: false, errors: [], general: "You cannot edit this card." };
+    if (err.statusCode === 409)
+      return {
+        ok: false,
+        errors: [],
+        general: "This card is being saved by someone else. Try again.",
+      };
+    if (err.statusCode === 404)
+      return { ok: false, errors: [], general: "This person was not found." };
+  }
+  return { ok: false, errors: [], general: "Could not save. Try again." };
+}
+
 function PeopleConsole() {
   const router = useRouter();
   const params = useSearchParams();
@@ -410,6 +458,11 @@ function PeopleConsole() {
   }, [urlPerson]);
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<Panel>("pay");
+  // The card form is bound to one person and one mode; another selection closes it.
+  const [editing, setEditing] = useState<{
+    id: string;
+    mode: CardEditMode;
+  } | null>(null);
 
   // The selection is only ever a member of the accepted roster.
   const selected: PersonRow | null = useMemo(() => {
@@ -500,6 +553,81 @@ function PeopleConsole() {
     };
   }, [identity, selectedId, selectedHasRecord]);
 
+  async function saveCard(body: CardEditBody): Promise<CardEditResult> {
+    const id = selectedId;
+    const sentFor = identity;
+    if (!id || !sentFor)
+      return {
+        ok: false,
+        errors: [],
+        general: "Your session changed. Reload to continue.",
+      };
+    try {
+      const res = await editPersonCard(id, body);
+      if (
+        !acceptResponse(res, sentFor, res.data.viewer_team_member_id) ||
+        res.data.person.team_member_id !== id
+      )
+        return {
+          ok: false,
+          errors: [],
+          general:
+            "Your session changed, so the answer was discarded. Reload to check the card.",
+        };
+      const fresh = res.data.person.card;
+      setPslot({
+        owner: sentFor,
+        id,
+        load: { kind: "ready", data: res.data },
+      });
+      setRslot((prev) => {
+        if (prev.load.kind !== "ready" || !isSameIdentity(prev.owner, sentFor))
+          return prev;
+        const r = prev.load.roster;
+        const old = r.people.find((p) => p.team_member_id === id);
+        return {
+          owner: prev.owner,
+          load: {
+            kind: "ready",
+            roster: {
+              ...r,
+              people: r.people.map((p) =>
+                p.team_member_id === id
+                  ? {
+                      ...p,
+                      has_record: true,
+                      employee_id: fresh.employee_id,
+                      hire_date: fresh.hire_date,
+                      unit: fresh.unit,
+                      active: fresh.is_active,
+                      flags: {
+                        ...p.flags,
+                        papers_missing: papersMissing(fresh),
+                      },
+                    }
+                  : p,
+              ),
+              pulse:
+                r.pulse && old && !old.has_record
+                  ? {
+                      ...r.pulse,
+                      people_without_record: Math.max(
+                        0,
+                        r.pulse.people_without_record - 1,
+                      ),
+                    }
+                  : r.pulse,
+            },
+          },
+        };
+      });
+      setEditing(null);
+      return { ok: true };
+    } catch (err: unknown) {
+      return saveFailure(err);
+    }
+  }
+
   const grouped = useMemo(() => {
     if (!roster) return [];
     const f = q.trim().toLowerCase();
@@ -555,6 +683,8 @@ function PeopleConsole() {
   if (!roster) return <div className="h-64" />;
 
   const full = roster.scope === "all";
+  const canWriteCard = full && capabilities.hr_card_write === true;
+  const formMode = editing && editing.id === selectedId ? editing.mode : null;
   const viewer = roster.people.find(
     (p) => p.team_member_id === roster.viewer_team_member_id,
   );
@@ -755,9 +885,48 @@ function PeopleConsole() {
                     </div>
                   </div>
                 </div>
+                {canWriteCard &&
+                  person &&
+                  formMode === null &&
+                  selected.has_record && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditing({
+                          id: selected.team_member_id,
+                          mode: "edit",
+                        })
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[13px] font-semibold transition-all duration-200 hover:-translate-y-0.5"
+                      style={{
+                        color: TONE.me,
+                        border: `1.5px solid ${tint(TONE.me, 55)}`,
+                        background: tint(TONE.me, 6),
+                      }}
+                    >
+                      <Pencil className="h-4 w-4" aria-hidden />
+                      Edit
+                    </button>
+                  )}
               </div>
 
-              {!selected.has_record || pload.kind === "no-record" ? (
+              {formMode === "create" ? (
+                <CardEditForm
+                  key={`${selected.team_member_id}:create`}
+                  mode="create"
+                  card={null}
+                  onSubmit={saveCard}
+                  onCancel={() => setEditing(null)}
+                />
+              ) : formMode === "edit" && person ? (
+                <CardEditForm
+                  key={`${selected.team_member_id}:edit`}
+                  mode="edit"
+                  card={person.card}
+                  onSubmit={saveCard}
+                  onCancel={() => setEditing(null)}
+                />
+              ) : !selected.has_record || pload.kind === "no-record" ? (
                 <div
                   className={`rounded-[28px] border border-dashed ${HAIR} p-8 text-center`}
                 >
@@ -768,16 +937,25 @@ function PeopleConsole() {
                     There is nothing to show for this person until an HR record
                     exists.
                   </p>
-                  {full && (
+                  {canWriteCard && (
                     <p className="mt-4">
-                      <PillLink
-                        href="/hr/employees"
-                        tone={TONE.me}
-                        filledStyle
-                        icon={UserPlus}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditing({
+                            id: selected.team_member_id,
+                            mode: "create",
+                          })
+                        }
+                        className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[13px] font-semibold text-white transition-all duration-200 hover:-translate-y-0.5"
+                        style={{
+                          background: TONE.me,
+                          boxShadow: `0 8px 18px -10px ${TONE.me}`,
+                        }}
                       >
-                        Create record
-                      </PillLink>
+                        <UserPlus className="h-4 w-4" aria-hidden />
+                        Add to HR
+                      </button>
                     </p>
                   )}
                 </div>

@@ -505,17 +505,16 @@ describe("People page (/hr)", () => {
     expect(call(`/api/hr/people/${ID_A}/overview`)).toHaveLength(0);
   });
 
-  it("shows a friendly empty state for a person without a record, with Create record for admins only", async () => {
+  it("shows a friendly empty state for a person without a record, with no Create link for an admin who cannot write cards", async () => {
     nav.person = ID_N;
     await open("A");
     // the empty-state card (the roster badge says the same thing as sr-only text)
     expect(
       screen.getByText(/There is nothing to show for this person/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Create record/ })).toHaveAttribute(
-      "href",
-      "/hr/employees",
-    );
+    // hr_card_write is false in these capabilities: nothing leads to the old page
+    expect(screen.queryByRole("link", { name: /Create record/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Add to HR/ })).toBeNull();
     expect(call(`/api/hr/people/${ID_N}/overview`)).toHaveLength(0);
   });
 
