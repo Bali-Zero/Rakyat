@@ -240,16 +240,19 @@ class ServiceAccountDriveService:
         name: str,
         parent_id: str | None = None,
         user_id: str | None = None,  # Kept for API compatibility
+        app_properties: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Create a new folder in Google Drive."""
         if not parent_id:
             parent_id = self.root_folder_id
 
-        folder_metadata = {
+        folder_metadata: dict[str, Any] = {
             "name": name,
             "mimeType": "application/vnd.google-apps.folder",
             "parents": [parent_id] if parent_id else [],
         }
+        if app_properties:
+            folder_metadata["appProperties"] = dict(app_properties)
 
         # Build request
         request = self.service.files().create(
@@ -369,6 +372,7 @@ class ServiceAccountDriveService:
         file_name: str,
         mime_type: str | None = None,
         user_id: str | None = None,  # Kept for API compatibility
+        app_properties: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Upload a file to Google Drive folder."""
         if not mime_type:
@@ -378,7 +382,9 @@ class ServiceAccountDriveService:
             elif file_name.lower().endswith((".png", ".jpg", ".jpeg")):
                 mime_type = "image/jpeg"
 
-        file_metadata = {"name": file_name, "parents": [folder_id]}
+        file_metadata: dict[str, Any] = {"name": file_name, "parents": [folder_id]}
+        if app_properties:
+            file_metadata["appProperties"] = dict(app_properties)
 
         # Create file stream
         file_stream = BytesIO(file_content)
@@ -813,6 +819,55 @@ class ServiceAccountDriveService:
         result = await asyncio.to_thread(request.execute)
         logger.info("Moved file %s from %s to %s", file_id, from_parent_id, to_parent_id)
         return result
+
+    async def find_folders_by_app_property(self, key: str, value: str) -> list[dict[str, Any]]:
+        """Every live (not trashed) physical folder carrying appProperties[key] == value."""
+        esc = lambda s: s.replace("\\", "\\\\").replace("'", "\\'")  # noqa: E731
+        query = (
+            f"appProperties has {{ key='{esc(key)}' and value='{esc(value)}' }} "
+            "and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        )
+        found: list[dict[str, Any]] = []
+        page_token = None
+        for _ in range(20):
+            params: dict[str, Any] = {
+                "q": query,
+                "fields": "nextPageToken, files(id, name, parents)",
+                "supportsAllDrives": True,
+                "includeItemsFromAllDrives": True,
+                "pageSize": 100,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            result = await asyncio.to_thread(self.service.files().list(**params).execute)
+            found.extend(result.get("files", []))
+            page_token = result.get("nextPageToken")
+            if not page_token:
+                break
+        return found
+
+    async def get_app_properties(self, file_id: str) -> dict[str, str] | None:
+        """appProperties of one file, or None when it is gone or already in the trash."""
+        request = self.service.files().get(
+            fileId=file_id, fields="id, trashed, appProperties", supportsAllDrives=True
+        )
+        try:
+            meta = await asyncio.to_thread(request.execute)
+        except Exception as exc:
+            if getattr(getattr(exc, "resp", None), "status", None) == 404:
+                return None
+            raise
+        if meta.get("trashed"):
+            return None
+        return dict(meta.get("appProperties") or {})
+
+    async def trash_file(self, file_id: str) -> None:
+        """Move one file to the Drive trash (recoverable). Never a permanent delete."""
+        request = self.service.files().update(
+            fileId=file_id, body={"trashed": True}, fields="id, trashed", supportsAllDrives=True
+        )
+        await asyncio.to_thread(request.execute)
+        logger.info("Trashed Drive file %s", file_id)
 
     async def get_start_page_token(self) -> str:
         """Get the current start page token for changes tracking."""

@@ -10,7 +10,9 @@ Migration 354). Code: `hr_card_models.py`, `hr_service.py`, `routers/hr.py`, and
 In: ONE read route, `GET /api/hr/me/card`, through which a staff member reads their own card, the
 import tool through which HR fills cards (JSON on stdin), and ONE write route,
 `PATCH /api/hr/people/{team_member_id}/card`, through which the global admins edit, clear or create
-any person's card (C11). The read side is clauses C1-C4 and C9; the write side is C5-C8, C10 and C11.
+any person's card (C11), and the document door (`POST|DELETE /api/hr/people/{team_member_id}/documents/{slot}`),
+the only route that writes a file id (C12). The read side is clauses C1-C4 and C9; the write side is
+C5-C8 and C10-C12.
 
 `GET /api/hr/me/overview` (`hr_overview_models.py`, `hr_overview_logic.py`) returns this same
 card plus the member's payslips, bonuses, leave and attendance for the "My HR" page. It takes no
@@ -19,13 +21,13 @@ parameter either, resolves the member exactly as C1 does (the token's `sub`), re
 page can check the owner of the answer against the bearer it sent.
 
 Explicitly out, on purpose:
-- **Any HTTP write of card data other than C11's one route.** No POST, no other PATCH. The legacy
+- **Any HTTP write of card data other than C11's route and C12's document door.** No other POST, no other PATCH. The legacy
   `POST /employees` is untouched (its response no longer carries `profile`).
-- **Any other new route with a path or query parameter** (C11's is the one exception).
+- **Any other new route with a path or query parameter** (C11's and C12's are the exceptions).
 - **Deleting profile data outside C11.** The import and `merge_card_on` without `clear` only add or
   overwrite. C11 removes a key only when the caller names it under `clear`, from a closed list.
-- **Documents.** C11 never writes `profile.docs` or `profile.contract.file_id` (uploading,
-  replacing and removing the Drive files is a separate decision with its own spec).
+- **Documents outside C12.** C11 never writes `profile.docs` or `profile.contract.file_id`; only the
+  C12 door does. Bulk upload, OCR and an employee-facing viewing proxy are not part of it.
 - **Case-insensitive or normalised identity matching** on the read path (see C1).
 
 ## Clauses
@@ -352,6 +354,38 @@ takes a person off payroll; the read side (`member_card`) and the SQL predicate
   signal); the People console (chip, and the switch in the edit form). An HR viewer of the same
   person (`/people/{id}/overview`, the payroll and employees admin pages) sees exactly what they saw
   before. Leave and attendance are untouched.
+||||||| parent of 57e05f91 (feat(hr): document door to upload, replace and remove staff papers in the owner's Drive tree (C12))
+
+**C12 The HR document door** (`POST` and `DELETE /api/hr/people/{team_member_id}/documents/{slot}`,
+`routers/hr_people.py`, `hr_documents.py`). The one route that writes `profile.docs.<slot>` and
+`profile.contract.file_id`; `slot` is one of `ktp`, `kk`, `npwp`, `bpjs_kes`, `bpjs_tk`, `contract`.
+- *Who and what.* The global admins only (`can_write_hr_card`), checked before any lookup (403). The
+  person must be a visible one (404) and have an `hr_employees` row (409 `hr_record_required`: add
+  them to HR first). An unknown slot, an empty file, a file over 4 MB (the Vercel body limit) or one
+  that is not PDF, JPEG or PNG by its MAGIC BYTES is a 422 (`%PDF-`, `FF D8 FF`, the 8-byte PNG
+  signature). The client's MIME type and file name are never read.
+- *Where the file lives.* The owner's private tree `HR&FINANCE/HR/DOKUMEN KARYAWAN`
+  (`settings.hr_documents_drive_root_id`), as `<UNIT>/<person display name>/`. UNIT is the card's
+  `profile.unit` stripped and upper-cased, `LAINNYA` when absent; unit folders are found (or created)
+  by exact name under the root. The person folder is found by its appProperty `nz_hr_member`; a
+  folder found under another unit is MOVED to the current unit, never duplicated; one that is not
+  found is created. Find-or-create runs under `pg_advisory_xact_lock(hashtext('hr_docs_folder:'||id))`
+  (and a per-unit lock). Writes use the tree owner's delegated identity
+  (`settings.hr_documents_drive_subject`): the service account alone is a reader there. Sharing is
+  never changed and nothing is ever permanently deleted.
+- *Upload.* Title `<LABEL> - <full name> - <YYYY-MM-DD WITA>.<ext of the DETECTED type>`, appProperties
+  `nz_hr_member` and `nz_hr_slot`. Then ONE transaction: member lock (`lock_visible_person`), read the
+  previous id, write the new id through `merge_card_on`, insert the audit row; any failure rolls all of
+  it back and the just-uploaded file is trashed. Drive failures are `502 drive_unavailable` with a
+  fixed message; a lock timeout is 409 as in C11.
+- *Trash only what is ours.* After the commit the replaced (or removed) file is moved to the Drive
+  trash ONLY if its appProperties `nz_hr_member` equals this member, i.e. this door made it. A file
+  anyone else put there is left untouched. The response is `{slot, file_id, previous}` with
+  `previous` one of `trashed`, `kept`, `none`.
+- *Audit and logs.* One `security_audit_log` row per change (`hr_document_upload` or
+  `hr_document_remove`), in the same transaction as the card write, details = slot, new id, previous
+  id: never a file name or a person's name. Logs carry actor id, target id, slot and outcome. The 422
+  uses the no-echo route class of C11.
 
 ## Clause-to-test index
 
@@ -371,3 +405,4 @@ Paths are under `backend/tests/` unless given.
 | C10 | `unit/scripts/test_import_staff_cards.py` (real launcher in a subprocess): `::test_family1_*` (real worker, fake driver: warnings, import-time output, `logging.log(60, ...)`, exceptions at connect / codec / transaction / commit / close, `SystemExit(0)`, `SystemExit(<sentinel>)`, `SystemExit(7)`, SIGKILL before and after the decision, hang, SIGINT before and after the decision, bad and wrong-shape stdin), `::test_protocol_*` and `::test_family2_*` (stub worker: garbage, oversized, unknown key, code outside the set, negative, huge, sentinel in a string field, duplicate / contradictory / trailing records, raw bytes and flags, large input, `python -I -W ignore`, closed stdout), `::test_the_worker_comes_from_the_launchers_own_tree_*`, `::test_production_layout_*` (an interpreter with no third-party packages, the fake driver only in a `PYTHONPATH` directory outside ROOT: dry-run and apply), `::test_without_pythonpath_the_bare_interpreter_*`, `::test_a_backend_package_in_pythonpath_or_cwd_is_never_used`, `::test_sitecustomize_and_usercustomize_in_pythonpath_are_not_executed`, `::test_the_dependency_filter_*`, `::test_pythonpath_unset_or_empty_*`, `::test_pythonpath_dirs_are_appended_at_the_end_*`, `::test_a_nonexistent_pythonpath_entry_naming_a_sentinel_*`, `::test_a_launcher_without_dash_i_refuses_*`, `::test_pythonwarnings_with_and_without_dash_i`, `::test_the_worker_is_started_isolated_*` (exact command line, own session, only the result fd), `::test_the_worker_has_no_controlling_terminal_*` (pty), `::test_a_stdin_that_never_ends_*`, `::test_a_signal_while_reading_stdin_*`, `::test_an_input_over_the_cap_*`, `::test_an_exception_or_exit_anywhere_after_the_arguments_is_one_fixed_line`, `::test_every_parse_error_is_the_one_fixed_line_and_exit_2`, `::test_help_is_static_text`, `::test_the_launcher_imports_the_standard_library_only`, `::test_the_test_timeout_knob_can_only_shorten_the_deadline`, `::test_the_truthfulness_table_row_by_row`, `::test_exit_zero_needs_*`, `::test_a_result_is_taken_only_when_it_matches_the_closed_grammar`, `::test_a_spawn_failure_*`, `::test_the_launcher_refuses_without_the_isolated_flag_in_main`; the shared test root is `tests/fixtures/import_root.py`; `unit/scripts/test_import_staff_cards_worker.py``::test_the_records_the_worker_writes_are_exactly_what_the_launcher_accepts`, `::test_every_outcome_and_code_the_worker_can_produce_is_in_the_launcher_closed_sets`, `::test_work_*`, `::test_the_worker_refuses_to_run_without_a_result_pipe`, `::test_validate_card_reads_pydantic_errors_without_the_input` |
 | C12 | `tests/migrations/test_hr_off_payroll.py` (real Postgres: calculate, stale slip, approved period, PATCH set and clear, manual bonus 409, my-dashboard, /me/overview); `tests/migrations/test_hr_card_edit_path.py::test_the_import_door_*`; `unit/app/services/hr/test_hr_card_models.py` (strict bool, read default) |
 | C11 | `unit/app/routers/test_hr_people_card_edit.py` (authz matrix, 404, 422 matrix, no echo, fixed failures, keys-only log); `unit/app/routers/test_hr_capabilities.py::test_card_write_is_for_the_global_admins_only`; `unit/app/services/hr/test_hr_card_service.py::test_edit_card_*`, `::test_merge_card_on_passes_the_cleared_keys_*`; `tests/migrations/test_hr_card_edit_path.py` (real Postgres: set, clear, nested clear, docs untouched, create, serialisation, no value in logs, deactivated / monitoring / partner after the lookup, lock probe); `unit/app/setup/test_sentry_hr_request_redaction.py` (real SDK); `unit/app/routers/test_hr_staff_card.py::test_post_employees_is_for_the_global_admins_only` |
+| C12 | `unit/app/services/hr/test_hr_documents.py` (fake Drive: unit and person folders, move, title, appProperties, trash-ours vs keep-foreign, compensation, magic bytes); `unit/app/routers/test_hr_people_documents.py` (authz incl. HR extra admin and scoped viewer, 404, 422s, 4 MB edge, fixed 409 / 502, no name echoed); `tests/migrations/test_hr_document_door_path.py` (real Postgres: card + audit in one transaction, rollback leaves neither) |

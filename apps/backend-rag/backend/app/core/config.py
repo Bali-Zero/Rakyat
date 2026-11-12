@@ -1203,6 +1203,12 @@ class Settings(BaseSettings):
         None  # Set via GDRIVE_COMPANIES_FOLDER_ID env var (parent for company clients)
     )
 
+    # HR document door (STAFF_CARD.md C12): the owner's private tree HR&FINANCE/HR/DOKUMEN
+    # KARYAWAN and the Workspace user the service account impersonates to write into it (the
+    # service account itself is only a reader there).
+    hr_documents_drive_root_id: str = "1cihc-wQibnTrlJfbal4vPyJViS3CDsjX"
+    hr_documents_drive_subject: str = "zero@balizero.com"
+
     # Shared secret used by Pro-side `wa-mirror-auto-promote-leads.py` (and similar
     # service-to-service scripts that bypass POST /api/crm/clients/) to call
     # POST /api/crm/clients/{id}/ensure-drive-folder. Auth dependency:

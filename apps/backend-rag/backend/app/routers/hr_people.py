@@ -1,9 +1,10 @@
 """People console: `GET /api/hr/people`, `GET /api/hr/people/{id}/overview` and the one write,
-`PATCH /api/hr/people/{id}/card` (STAFF_CARD.md C11).
+`PATCH /api/hr/people/{id}/card` (STAFF_CARD.md C11) and the document door
+`POST|DELETE /api/hr/people/{id}/documents/{slot}` (C12).
 
 Scope is decided here from the session's email and the stored email of the member asked
-about, never from anything the client sends. The only write is the card edit, for the
-global admins alone.
+about, never from anything the client sends. The only writes are the card edit and the
+document door, for the global admins alone.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse, Response
@@ -23,6 +24,15 @@ from fastapi.routing import APIRoute
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.routers.hr import _get_user_id
 from backend.app.services.hr.hr_card_edit import CardEditBody, safe_validation_errors
+from backend.app.services.hr.hr_documents import (
+    ALL_SLOTS,
+    MAX_BYTES,
+    HRDocCode,
+    HRDocError,
+    HRDocumentService,
+    detect_type,
+    get_hr_drive_service,
+)
 from backend.app.services.hr.hr_overview_compose import (
     OverviewReadError,
     compose_member_overview,
@@ -207,5 +217,155 @@ router.add_api_route(
     edit_person_card,
     methods=["PATCH"],
     response_model=PersonOverview,
+    route_class_override=_NoEchoValidationRoute,
+)
+
+
+# ─── document door (C12) ───
+
+_DOC_ERROR_STATUS = {
+    HRDocCode.NOT_FOUND: (404, "No such person"),
+    HRDocCode.HR_RECORD_REQUIRED: (
+        409,
+        {"code": "hr_record_required", "message": "Add this person to HR first"},
+    ),
+    HRDocCode.DRIVE_UNAVAILABLE: (
+        502,
+        {"code": "drive_unavailable", "message": "Document storage is unavailable, try again"},
+    ),
+    HRDocCode.LOCK_TIMEOUT: (409, "Card is busy, try again"),
+    HRDocCode.DB_ERROR: (500, "Document operation failed"),
+}
+
+
+def _doc_error_response(code: HRDocCode) -> Response:
+    status, detail = _DOC_ERROR_STATUS[code]
+    return JSONResponse(status_code=status, content={"detail": detail})
+
+
+async def _document_context(
+    team_member_id: uuid.UUID, slot: str, db_pool: asyncpg.Pool
+) -> tuple[str, str] | Response:
+    """(member id, email) of a visible person, or the refusal. The slot is checked first: an
+    unknown slot never reaches a lookup."""
+    if slot not in ALL_SLOTS:
+        return _field_422("slot", "unknown_slot", "Unknown document slot")
+    member_id = str(team_member_id)
+    try:
+        member_email = await _get_people_service(db_pool).member_email(member_id)
+    except Exception as exc:
+        logger.error("hr document read failed (%s)", type(exc).__name__)
+        return JSONResponse(status_code=500, content={"detail": "Document operation failed"})
+    if member_email is None:
+        raise HTTPException(status_code=404, detail="No such person")
+    return member_id, member_email
+
+
+async def upload_person_document(
+    team_member_id: uuid.UUID,
+    slot: str,
+    file: UploadFile = File(...),
+    current_user: dict[str, Any] = Depends(require_card_writer),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> Response:
+    """Upload or replace one HR paper (global admins only). The type is read from the magic
+    bytes (PDF, JPEG, PNG) and the size is capped; nothing the client names is trusted."""
+    ctx = await _document_context(team_member_id, slot, db_pool)
+    if isinstance(ctx, Response):
+        return ctx
+    member_id, member_email = ctx
+    data = await file.read(MAX_BYTES + 1)
+    if not data:
+        return _field_422("file", "empty_file", "The file is empty")
+    if len(data) > MAX_BYTES:
+        return _field_422("file", "file_too_large", "The file is larger than 4 MB")
+    detected = detect_type(data)
+    if detected is None:
+        return _field_422("file", "unsupported_type", "Only PDF, JPEG or PNG files are accepted")
+    actor_id = str(_get_user_id(current_user))
+    try:
+        drive = await get_hr_drive_service()
+    except Exception as exc:
+        logger.error("hr document drive init failed (%s)", type(exc).__name__)
+        return _doc_error_response(HRDocCode.DRIVE_UNAVAILABLE)
+    try:
+        result = await HRDocumentService(db_pool, drive).upload(
+            actor_id=actor_id,
+            member_id=member_id,
+            email=member_email,
+            slot=slot,
+            data=data,
+            mime=detected[0],
+            ext=detected[1],
+        )
+    except HRDocError as exc:
+        logger.warning(
+            "hr document upload refused actor=%s target=%s slot=%s code=%s",
+            actor_id,
+            member_id,
+            slot,
+            exc.code.value,
+        )
+        return _doc_error_response(exc.code)
+    logger.info(
+        "hr document upload actor=%s target=%s slot=%s previous=%s",
+        actor_id,
+        member_id,
+        slot,
+        result["previous"],
+    )
+    return JSONResponse(status_code=200, content=result)
+
+
+async def remove_person_document(
+    team_member_id: uuid.UUID,
+    slot: str,
+    current_user: dict[str, Any] = Depends(require_card_writer),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> Response:
+    """Empty one HR paper's slot; the file goes to the Drive trash only when this door made it."""
+    ctx = await _document_context(team_member_id, slot, db_pool)
+    if isinstance(ctx, Response):
+        return ctx
+    member_id, member_email = ctx
+    actor_id = str(_get_user_id(current_user))
+    try:
+        drive = await get_hr_drive_service()
+    except Exception as exc:
+        logger.error("hr document drive init failed (%s)", type(exc).__name__)
+        return _doc_error_response(HRDocCode.DRIVE_UNAVAILABLE)
+    try:
+        result = await HRDocumentService(db_pool, drive).remove(
+            actor_id=actor_id, member_id=member_id, email=member_email, slot=slot
+        )
+    except HRDocError as exc:
+        logger.warning(
+            "hr document remove refused actor=%s target=%s slot=%s code=%s",
+            actor_id,
+            member_id,
+            slot,
+            exc.code.value,
+        )
+        return _doc_error_response(exc.code)
+    logger.info(
+        "hr document remove actor=%s target=%s slot=%s previous=%s",
+        actor_id,
+        member_id,
+        slot,
+        result["previous"],
+    )
+    return JSONResponse(status_code=200, content=result)
+
+
+router.add_api_route(
+    "/{team_member_id}/documents/{slot}",
+    upload_person_document,
+    methods=["POST"],
+    route_class_override=_NoEchoValidationRoute,
+)
+router.add_api_route(
+    "/{team_member_id}/documents/{slot}",
+    remove_person_document,
+    methods=["DELETE"],
     route_class_override=_NoEchoValidationRoute,
 )
