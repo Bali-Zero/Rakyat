@@ -351,4 +351,24 @@ describe("My HR page (/hr/me)", () => {
     await act(async () => pending[0].resolve({ detail: "no record" }, 404));
     expect(screen.getByText(/No HR record is linked/)).toBeInTheDocument();
   });
+
+  it("shows a legacy paper as exactly 'On file — not yet in DOKUMEN KARYAWAN', no link, no value", async () => {
+    const base = overview("A");
+    const legacy: MyHrOverview = {
+      ...base,
+      card: {
+        ...base.card,
+        documents: {
+          ...base.card.documents,
+          ktp: { present: true, file_id: null },
+        },
+      },
+    };
+    await loaded("A", legacy);
+    fireEvent.click(screen.getByRole("button", { name: /^Me/ }));
+    expect(
+      screen.getByText("ID card (KTP) · On file — not yet in DOKUMEN KARYAWAN"),
+    ).toBeInTheDocument();
+    expect(document.querySelector('a[href*="drive.google.com"]')).toBeNull();
+  });
 });

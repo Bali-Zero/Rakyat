@@ -12,7 +12,16 @@
 import React, { useRef, useState } from "react";
 import { ArrowUpRight, Check, FileText, Trash2, Upload } from "lucide-react";
 import { DOC_MAX_BYTES, type DocSlot, type HrStaffCard } from "@/lib/api/hr/hr";
-import { CARD, HAIR, INK, SOFT, TONE, driveUrl, tint } from "./hr-panels";
+import {
+  CARD,
+  HAIR,
+  INK,
+  SOFT,
+  TONE,
+  UNVERIFIED,
+  driveUrl,
+  tint,
+} from "./hr-panels";
 
 export type DocResult = { ok: true } | { ok: false; message: string };
 
@@ -25,7 +34,7 @@ const ROWS: [DocSlot, string][] = [
   ["contract", "Contract"],
 ];
 
-export const UNVERIFIED = "On file — not yet in DOKUMEN KARYAWAN";
+export { UNVERIFIED };
 export const DOC_TOO_LARGE =
   "That file is larger than 4 MB. Scan it at a lower resolution or compress it, then try again.";
 

@@ -45,6 +45,7 @@ import {
   type CardEditBody,
   type DocSlot,
   type CardEditFieldError,
+  type HrDocuments,
   type HrStaffCard,
   type PeopleRoster,
   type PersonOverview,
@@ -612,47 +613,80 @@ function PeopleConsole() {
           message:
             "Your session changed, so the answer was discarded. Reload to check the documents.",
         };
-      const fresh = await getPersonOverview(id);
-      if (
-        !acceptResponse(fresh, sentFor, fresh.data.viewer_team_member_id) ||
-        fresh.data.person.team_member_id !== id
-      )
-        return {
-          ok: false,
-          message: "Saved. Reload to see the new state.",
-        };
-      if (selectedIdRef.current === id)
-        setPslot({
-          owner: sentFor,
-          id,
-          load: { kind: "ready", data: fresh.data },
-        });
-      const card = fresh.data.person.card;
-      setRslot((prev) => {
-        if (prev.load.kind !== "ready" || !isSameIdentity(prev.owner, sentFor))
-          return prev;
-        const r = prev.load.roster;
-        return {
-          owner: prev.owner,
-          load: {
-            kind: "ready",
-            roster: {
-              ...r,
-              people: r.people.map((p) =>
-                p.team_member_id === id
-                  ? {
-                      ...p,
-                      flags: {
-                        ...p.flags,
-                        papers_missing: papersMissing(card),
-                      },
-                    }
-                  : p,
-              ),
+      // The write succeeded: apply the returned map now, identity- and person-bound. The overview
+      // read below only refreshes the rest and is best effort; its failure is never a save error.
+      const applyMap = (docs: HrDocuments) => {
+        setPslot((prev) => {
+          if (
+            prev.id !== id ||
+            prev.load.kind !== "ready" ||
+            !isSameIdentity(prev.owner, sentFor)
+          )
+            return prev;
+          const data = prev.load.data;
+          return {
+            ...prev,
+            load: {
+              kind: "ready",
+              data: {
+                ...data,
+                person: {
+                  ...data.person,
+                  card: { ...data.person.card, documents: docs },
+                },
+              },
             },
-          },
-        };
-      });
+          };
+        });
+        setRslot((prev) => {
+          if (
+            prev.load.kind !== "ready" ||
+            !isSameIdentity(prev.owner, sentFor)
+          )
+            return prev;
+          const r = prev.load.roster;
+          return {
+            owner: prev.owner,
+            load: {
+              kind: "ready",
+              roster: {
+                ...r,
+                people: r.people.map((p) =>
+                  p.team_member_id === id
+                    ? {
+                        ...p,
+                        flags: {
+                          ...p.flags,
+                          papers_missing: Object.values(docs).filter(
+                            (d) => !d.present,
+                          ).length,
+                        },
+                      }
+                    : p,
+                ),
+              },
+            },
+          };
+        });
+      };
+      if (res.data.documents) applyMap(res.data.documents);
+      try {
+        const fresh = await getPersonOverview(id);
+        if (
+          acceptResponse(fresh, sentFor, fresh.data.viewer_team_member_id) &&
+          fresh.data.person.team_member_id === id
+        ) {
+          if (selectedIdRef.current === id)
+            setPslot({
+              owner: sentFor,
+              id,
+              load: { kind: "ready", data: fresh.data },
+            });
+          applyMap(fresh.data.person.card.documents);
+        }
+      } catch {
+        /* best effort: the saved state is already on screen */
+      }
       return { ok: true };
     } catch (err: unknown) {
       return docFailure(err);

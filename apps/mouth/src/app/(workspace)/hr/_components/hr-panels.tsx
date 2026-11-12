@@ -137,6 +137,7 @@ export const greeting = () => {
   const h = new Date().getHours();
   return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
 };
+export const UNVERIFIED = "On file — not yet in DOKUMEN KARYAWAN";
 export const driveUrl = (id: string | null | undefined) =>
   id && /^[A-Za-z0-9_-]{10,200}$/.test(id)
     ? `https://drive.google.com/file/d/${id}/view`
@@ -809,7 +810,9 @@ export function MeDetail({
                     key={label}
                     className={`inline-flex items-center rounded-full border border-dashed ${HAIR} px-3.5 py-2 text-[13px] ${SOFT}`}
                   >
-                    {label} · {doc.present ? "on file" : "missing"}
+                    {doc.present
+                      ? `${label} · ${UNVERIFIED}`
+                      : `${label} · missing`}
                   </span>
                 );
               })}

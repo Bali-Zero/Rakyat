@@ -243,11 +243,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const SECRET_NAME = "Rahasia-Made-Contoh-ktp.pdf";
+const PRIVATE_FILENAME = "Rahasia-Made-Contoh-ktp.pdf";
 const PDF = () =>
   new File(
     [new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 1, 2, 3])],
-    SECRET_NAME,
+    PRIVATE_FILENAME,
     {
       type: "application/pdf",
     },
@@ -396,7 +396,7 @@ describe("People documents block (/hr, C13)", () => {
     );
     const sent = call(docUrl(ID_A, "kk"), "POST")[0].body as FormData;
     expect(sent).toBeInstanceOf(FormData);
-    expect((sent.get("file") as File).name).toBe(SECRET_NAME);
+    expect((sent.get("file") as File).name).toBe(PRIVATE_FILENAME);
     await act(async () =>
       call(docUrl(ID_A, "kk"), "POST")[0].resolve({
         slot: "kk",
@@ -423,6 +423,36 @@ describe("People documents block (/hr, C13)", () => {
     expect(
       within(rowOf(/Family card/)).getByRole("button", { name: /Replace/ }),
     ).toBeInTheDocument();
+  });
+
+  it("applies the returned map at once and a failing overview re-read is not a save error", async () => {
+    await openMe();
+    pick(rowOf(/Family card/), PDF());
+    await waitFor(() =>
+      expect(call(docUrl(ID_A, "kk"), "POST")).toHaveLength(1),
+    );
+    await act(async () =>
+      call(docUrl(ID_A, "kk"), "POST")[0].resolve({
+        slot: "kk",
+        documents: docsMap({
+          kk: { present: true, file_id: "FILEKK1234567" },
+        }),
+      }),
+    );
+    await waitFor(() =>
+      expect(call(`/api/hr/people/${ID_A}/overview`)).toHaveLength(2),
+    );
+    await act(async () =>
+      call(`/api/hr/people/${ID_A}/overview`)[1].resolve(
+        { detail: "boom" },
+        500,
+      ),
+    );
+    expect(
+      within(rowOf(/Family card/)).getByText("Present"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/Reload to see/);
   });
 
   it("removes only after a confirm", async () => {
@@ -471,7 +501,7 @@ describe("People documents block (/hr, C13)", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /Only PDF, JPEG or PNG/,
     );
-    expect(document.body.textContent).not.toContain(SECRET_NAME);
+    expect(document.body.textContent).not.toContain(PRIVATE_FILENAME);
   });
 
   it("discards an upload answer when the session's bearer changed while it was pending", async () => {
@@ -541,7 +571,7 @@ describe("People documents block (/hr, C13)", () => {
       "Made Contoh",
       "Made",
       "Contoh",
-      SECRET_NAME,
+      PRIVATE_FILENAME,
       "Rahasia",
       FIX.legal_name,
       FIX.nik,
