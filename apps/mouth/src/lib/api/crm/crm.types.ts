@@ -31,7 +31,29 @@ export interface Practice {
   family_member_id?: number;
   family_member_name?: string;
   family_member_relationship?: string;
+  invoice_company_id?: number | null;
+  invoice_company_name?: string | null;
 }
+
+export interface InvoiceCompanyChoice {
+  id: number;
+  company_name: string;
+  npwp_company: string | null;
+  role: string | null;
+  is_director: boolean;
+}
+
+export interface InvoiceCompanySuggestion {
+  autofill: boolean;
+  suggested_company_id: number | null;
+  companies: InvoiceCompanyChoice[];
+}
+
+export type InvoiceCompanyParams = {
+  invoice_company_id?: number | null;
+  invoice_company_name?: string;
+  invoice_company_npwp?: string;
+};
 
 export type TaxCompanyPilotKey = "ocean" | "bimala";
 export type TaxCompanyPilotConfidence =
@@ -1100,6 +1122,9 @@ export interface CreatePracticeParams {
   assigned_to?: string; // team member email
   start_date?: string;
   family_member_id?: number; // Optional: tag practice for a specific dependent (spouse/child)
+  invoice_company_id?: number; // Company the invoice is addressed to (pick)...
+  invoice_company_name?: string; // ...or type: creates/reuses the company and links the client
+  invoice_company_npwp?: string;
 }
 
 // ============================================

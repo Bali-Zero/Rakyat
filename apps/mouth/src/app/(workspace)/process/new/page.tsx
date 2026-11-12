@@ -33,6 +33,15 @@ import { toError } from "@/lib/types/common";
 import { useTeamMemberOptions } from "@/hooks/useTeamMembers";
 import { useInvalidateClient } from "@/hooks/useClientDetail";
 import { ReferrerDropdown } from "@/components/partners/ReferrerDropdown";
+import {
+  EMPTY_INVOICE_COMPANY,
+  InvoiceCompanyField,
+  ambiguityFromError,
+  invoiceCompanyIncomplete,
+  invoiceCompanyParams,
+  type InvoiceCompanyAmbiguity,
+  type InvoiceCompanyValue,
+} from "../InvoiceCompanyField";
 
 interface ServiceItem {
   code: string;
@@ -92,6 +101,27 @@ export default function NewPracticePage() {
     referrer_id: null as string | null,
     family_member_id: "" as string, // "" = for main client; otherwise the family member id as string
   });
+
+  const [invoiceCompany, setInvoiceCompany] = useState<InvoiceCompanyValue>(
+    EMPTY_INVOICE_COMPANY,
+  );
+  const [invoiceAmbiguity, setInvoiceAmbiguity] =
+    useState<InvoiceCompanyAmbiguity | null>(null);
+  const [invoiceLabel, setInvoiceLabel] = useState<string | null>(null);
+  const userPickedClient = useRef(false);
+
+  useEffect(() => {
+    // A chooser built for an older client/service/company must not stay actionable.
+    setInvoiceAmbiguity(null);
+  }, [formData.client_id, selectedServiceCode, invoiceCompany]);
+
+  // The company belongs to the client it was prefilled or typed for: any change
+  // of client (including Change, which unmounts the field) starts it empty.
+  useEffect(() => {
+    setInvoiceCompany(EMPTY_INVOICE_COMPANY);
+    setInvoiceAmbiguity(null);
+    setInvoiceLabel(null);
+  }, [formData.client_id]);
 
   // Family members of the selected client (for dependent-KITAS etc.)
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
@@ -199,13 +229,19 @@ export default function NewPracticePage() {
   useEffect(() => {
     const preselectedId = searchParams?.get("client_id");
     if (preselectedId) {
+      let cancelled = false;
       api.crm
         .getClient(Number(preselectedId))
         .then((client) => {
+          // A client the user picked by hand while this loaded wins.
+          if (cancelled || userPickedClient.current) return;
           setSelectedClient(client);
           setFormData((prev) => ({ ...prev, client_id: client.id }));
         })
         .catch((err) => logger.error("Failed to load preselected client", err));
+      return () => {
+        cancelled = true;
+      };
     }
   }, [searchParams]);
 
@@ -352,6 +388,14 @@ export default function NewPracticePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFieldErrors({});
+    setInvoiceAmbiguity(null);
+    if (invoiceCompanyIncomplete(invoiceCompany)) {
+      toast.error(
+        "Invoice company",
+        "Enter the company name, or clear the NPWP, before creating the process.",
+      );
+      return;
+    }
 
     // Service is optional at Inquiry (Ari, 2026-09-11): with no selection the
     // backend opens the process against the `open_inquiry` placeholder and
@@ -465,6 +509,7 @@ export default function NewPracticePage() {
         ...(result.data.family_member_id
           ? { family_member_id: result.data.family_member_id }
           : {}),
+        ...invoiceCompanyParams(invoiceCompany),
       } as CreatePracticeParams;
 
       const createdPractice = await api.crm.createPractice(backendData);
@@ -516,6 +561,11 @@ export default function NewPracticePage() {
         router.push(newId ? `/process/${newId}` : "/process");
       }
     } catch (error) {
+      const ambiguous = ambiguityFromError(error, invoiceCompany.name.trim());
+      if (ambiguous) {
+        setInvoiceAmbiguity(ambiguous);
+        return;
+      }
       const apiDuration = performance.now() - apiStart;
       casesMetrics.trackApiCall(
         "/api/crm/practices/create",
@@ -602,7 +652,9 @@ export default function NewPracticePage() {
                   type="button"
                   variant="ghost"
                   size="sm"
+                  disabled={isLoading}
                   onClick={() => {
+                    userPickedClient.current = true;
                     setSelectedClient(null);
                     setFormData((prev) => ({ ...prev, client_id: undefined }));
                     setClientSearch("");
@@ -618,6 +670,7 @@ export default function NewPracticePage() {
                   type="text"
                   value={clientSearch}
                   aria-label="Search client"
+                  disabled={isLoading}
                   onChange={(e) => {
                     setClientSearch(e.target.value);
                     setShowClientDropdown(true);
@@ -636,7 +689,10 @@ export default function NewPracticePage() {
                         <button
                           key={client.id}
                           type="button"
+                          disabled={isLoading}
                           onClick={() => {
+                            if (isLoading) return;
+                            userPickedClient.current = true;
                             setSelectedClient(client);
                             setFormData((prev) => ({
                               ...prev,
@@ -707,6 +763,7 @@ export default function NewPracticePage() {
                   <select
                     value={selectedCategory}
                     onChange={(e) => handleCategoryChange(e.target.value)}
+                    disabled={isLoading}
                     className={`${inputClass} appearance-none cursor-pointer pr-10`}
                   >
                     <option value="">-- Select category --</option>
@@ -722,7 +779,7 @@ export default function NewPracticePage() {
                   <select
                     value={selectedServiceCode}
                     onChange={(e) => handleServiceChange(e.target.value)}
-                    disabled={!selectedCategory}
+                    disabled={!selectedCategory || isLoading}
                     className={`${inputClass} appearance-none cursor-pointer pr-10 pl-4 ${!selectedCategory ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     <option value="">
@@ -826,6 +883,35 @@ export default function NewPracticePage() {
                 Pick a dependent when this process is for a spouse or child
                 (e.g. dependent KITAS). Leave as main client otherwise.
               </p>
+            </div>
+          )}
+
+          {formData.client_id && (
+            <div className="space-y-2">
+              <label className={labelClass}>
+                Invoice to company{" "}
+                <span className="text-[var(--foreground-muted)] font-normal">
+                  (optional)
+                </span>
+              </label>
+              <InvoiceCompanyField
+                clientId={formData.client_id}
+                practiceTypeCode={selectedServiceCode || undefined}
+                value={invoiceCompany}
+                onChange={(next) => {
+                  setInvoiceAmbiguity(null);
+                  setInvoiceLabel(null);
+                  setInvoiceCompany(next);
+                }}
+                savedName={invoiceLabel}
+                ambiguity={invoiceAmbiguity}
+                onPickCandidate={(id, name) => {
+                  setInvoiceAmbiguity(null);
+                  setInvoiceLabel(name);
+                  setInvoiceCompany({ companyId: id, name: "", npwp: "" });
+                }}
+                disabled={isLoading}
+              />
             </div>
           )}
 

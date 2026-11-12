@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   getProfile: vi.fn(),
   getPractice: vi.fn(),
   updatePractice: vi.fn(),
+  getInvoiceCompanySuggestion: vi.fn(),
   deletePractice: vi.fn(),
   invalidateClient: vi.fn(),
   isAdmin: vi.fn(),
@@ -52,6 +53,7 @@ vi.mock("@/lib/api", () => ({
     crm: {
       getPractice: mocks.getPractice,
       updatePractice: mocks.updatePractice,
+      getInvoiceCompanySuggestion: mocks.getInvoiceCompanySuggestion,
       deletePractice: mocks.deletePractice,
     },
   },
@@ -89,6 +91,7 @@ vi.mock("@/lib/logger", () => ({
   logger: {
     error: mocks.loggerError,
     info: mocks.loggerInfo,
+    warn: vi.fn(),
   },
 }));
 
@@ -185,6 +188,11 @@ describe("CaseDetailPage", () => {
     mocks.useParams.mockReturnValue({ id: "42" });
     mocks.getProfile.mockResolvedValue(profile);
     mocks.isAdmin.mockReturnValue(true);
+    mocks.getInvoiceCompanySuggestion.mockResolvedValue({
+      autofill: true,
+      suggested_company_id: null,
+      companies: [],
+    });
     mocks.updatePractice.mockImplementation(
       async (_practiceId: number, updates: Partial<Practice>) =>
         makePractice(updates),
