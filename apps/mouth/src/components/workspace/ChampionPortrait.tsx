@@ -27,6 +27,7 @@ const FACE_FRAMING: Record<string, readonly [number, number, number]> = {
   "krisna.jpg": [50, 34, 1.35],
   "rina.jpg": [50, 34, 1.35],
   "rio.jpg": [50, 34, 1.35],
+  "ruslana-2026-11.jpg": [50, 34, 1.35],
   "ruslana.jpg": [50, 34, 1.35],
   "subhi.jpg": [50, 34, 1.35],
   "surya.jpg": [50, 34, 1.35],
@@ -42,6 +43,7 @@ const FACE_FRAMING: Record<string, readonly [number, number, number]> = {
  */
 const SUPERSEDED_SOURCES = new Map<string, string>([
   ["/static/team/krisna.jpg", "/static/team/krisna-20260927.jpg"],
+  ["/static/team/ruslana.jpg", "/static/team/ruslana-2026-11.jpg"],
 ]);
 
 /**

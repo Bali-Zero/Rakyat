@@ -626,44 +626,50 @@ describe("Champion hero", () => {
     expect(plain.style.transform).toBe("");
   });
 
-  it("renders the backend's superseded Krisna avatar from the approved, face-framed file", () => {
-    const approved = String(rosterBySlug("krisna")?.photo);
-    expect(approved).toBe("/static/team/krisna-20260927.jpg");
-    expect(
-      existsSync(join(__dirname, "..", "..", "..", "..", "public", approved)),
-    ).toBe(true);
-    mockQuery(
-      response({
-        entries: [
-          entry({
-            member: "a",
-            display_name: "Contender A",
-            // What team_members.avatar still holds in production.
-            avatar_url: "/static/team/krisna.jpg",
-          }),
-          entry({
-            member: "b",
-            display_name: "Contender B",
-            rank: 2,
-            activations: 20,
-            award_tier: 2,
-            avatar_url: approved,
-          }),
-        ],
-      }),
-    );
-    render(<PortalChallengeWidget identity="fixture" />);
-    const arena = within(screen.getByTestId("champion-arena"));
-    for (const name of ["Contender A", "Contender B"]) {
-      for (const portrait of arena.getAllByRole("img", { name })) {
-        expect(portrait.tagName).toBe("IMG");
-        expect(portrait.getAttribute("src")).toBe(approved);
-        expect(portrait.style.transform).toBe(
-          "translate(50%, 50%) scale(1.35) translate(-50%, -34%)",
-        );
+  it.each([
+    ["krisna", "/static/team/krisna.jpg", "/static/team/krisna-20260927.jpg"],
+    ["ruslana", "/static/team/ruslana.jpg", "/static/team/ruslana-2026-11.jpg"],
+  ])(
+    "renders the backend's superseded %s avatar from the approved, face-framed file",
+    (slug, legacy, expected) => {
+      const approved = String(rosterBySlug(slug)?.photo);
+      expect(approved).toBe(expected);
+      expect(
+        existsSync(join(__dirname, "..", "..", "..", "..", "public", approved)),
+      ).toBe(true);
+      mockQuery(
+        response({
+          entries: [
+            entry({
+              member: "a",
+              display_name: "Contender A",
+              // What team_members.avatar still holds in production.
+              avatar_url: legacy,
+            }),
+            entry({
+              member: "b",
+              display_name: "Contender B",
+              rank: 2,
+              activations: 20,
+              award_tier: 2,
+              avatar_url: approved,
+            }),
+          ],
+        }),
+      );
+      render(<PortalChallengeWidget identity="fixture" />);
+      const arena = within(screen.getByTestId("champion-arena"));
+      for (const name of ["Contender A", "Contender B"]) {
+        for (const portrait of arena.getAllByRole("img", { name })) {
+          expect(portrait.tagName).toBe("IMG");
+          expect(portrait.getAttribute("src")).toBe(approved);
+          expect(portrait.style.transform).toBe(
+            "translate(50%, 50%) scale(1.35) translate(-50%, -34%)",
+          );
+        }
       }
-    }
-  });
+    },
+  );
 
   it("aliases only the exact legacy path and keeps the initials fallback", () => {
     mockQuery(
