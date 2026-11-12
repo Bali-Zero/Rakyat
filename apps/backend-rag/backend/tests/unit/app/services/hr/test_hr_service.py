@@ -219,11 +219,13 @@ class TestBonuses:
     async def test_approve_bonus(self, hr_service, mock_db_pool):
         mock_db_pool._mock_conn.fetchrow = AsyncMock(
             side_effect=[
-                {"status": "pending", "m": 4, "y": 2026},  # the row lock read
+                {"status": "pending", "employee_id": 1, "m": 4, "y": 2026},  # the row lock read
                 {"id": 1, "status": "approved", "approved_by": "uxxx2@dxx1.com"},
             ]
         )
-        mock_db_pool._mock_conn.fetchval = AsyncMock(return_value=None)  # no period row
+        mock_db_pool._mock_conn.fetchval = AsyncMock(
+            side_effect=[None, True]
+        )  # no period row; in set
         result = await hr_service.approve_bonus(1, "uxxx2@dxx1.com")
         assert result["status"] == "approved"
 

@@ -14,6 +14,7 @@ from backend.app.services.hr.hr_service import (
     BonusPeriodLockedError,
     OffPayrollError,
     PayrollBonusesChangedError,
+    PayrollRosterChangedError,
 )
 
 ADMIN = {"user_id": "tm-admin", "email": "Asya@balizero.com", "role": "member"}
@@ -217,3 +218,36 @@ def test_an_off_payroll_member_gets_no_personal_bonuses_or_payslips(make_client)
     assert client.get("/api/hr/payslips").json() == {"payslips": [], "count": 0}
     svc.list_bonuses.assert_not_awaited()
     svc.get_payslips.assert_not_awaited()
+
+
+def test_approving_a_bonus_of_an_off_payroll_person_is_a_409_off_payroll(make_client):
+    svc = AsyncMock()
+    svc.approve_bonus = AsyncMock(side_effect=OffPayrollError("x"))
+    res = make_client(ADMIN, svc).post("/api/hr/bonuses/3/approve")
+    assert res.status_code == 409 and res.json()["code"] == "off_payroll"
+
+
+def test_approving_a_payroll_whose_roster_changed_is_a_fixed_409(make_client):
+    svc = AsyncMock()
+    svc.approve_payroll = AsyncMock(side_effect=PayrollRosterChangedError("driver text"))
+    res = make_client(ADMIN, svc).post("/api/hr/payroll/4/approve")
+    assert res.status_code == 409
+    assert res.json()["code"] == "payroll_roster_changed"
+
+
+def test_an_off_payroll_member_reading_their_own_record_gets_no_salary(make_client):
+    svc = AsyncMock()
+    svc.get_employee_by_email = AsyncMock(return_value={"id": 7})
+    svc.get_employee = AsyncMock(
+        return_value={"id": 7, "base_salary_idr": 5_000_000, "notes": "n", "full_name": "Made"}
+    )
+    svc.is_on_payroll = AsyncMock(return_value=False)
+    own = make_client(MEMBER, svc).get("/api/hr/employees/7").json()
+    assert own["base_salary_idr"] is None and "notes" not in own
+    svc.is_on_payroll = AsyncMock(return_value=True)
+    assert (
+        make_client(MEMBER, svc).get("/api/hr/employees/7").json()["base_salary_idr"] == 5_000_000
+    )
+    # an HR admin reading the same record is unchanged
+    svc.is_on_payroll = AsyncMock(return_value=False)
+    assert make_client(ADMIN, svc).get("/api/hr/employees/7").json()["base_salary_idr"] == 5_000_000

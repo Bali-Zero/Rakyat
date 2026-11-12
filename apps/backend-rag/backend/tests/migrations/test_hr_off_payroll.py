@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import asyncpg
@@ -18,8 +18,12 @@ import pytest
 from backend.app.services.hr.hr_card_edit import CardEditBody
 from backend.app.services.hr.hr_overview_compose import compose_member_overview
 from backend.app.services.hr.hr_service import (
+    HRCardCode,
+    HRCardError,
     HRService,
     OffPayrollError,
+    PayrollRosterChangedError,
+    payroll_set_sql,
 )
 from backend.db.migration_base import split_migration_sql
 from backend.migrations.migration_068_hr_payroll import UPGRADE_SQL
@@ -263,3 +267,81 @@ async def test_an_active_login_with_an_active_card_keeps_its_slip(env: Env) -> N
     await env.svc.calculate_payroll(MONTH, YEAR, env.admin)
     await env.svc.calculate_payroll(MONTH, YEAR, env.admin)  # recalculate: still there, once
     assert await _slips(env.pool) == {env.on_id}
+
+
+@pytest.mark.asyncio
+async def test_a_card_edit_waits_for_a_calculate_that_holds_the_roster(env: Env) -> None:
+    """Guilt for the roster race: calculate read the set under FOR SHARE, so the flag flip
+    cannot commit between the select and the slip insert."""
+    async with env.pool.acquire() as holder, holder.transaction():
+        await holder.fetch(
+            f"SELECT e.id FROM hr_employees e JOIN team_members tm ON tm.id = e.team_member_id "
+            f"WHERE {payroll_set_sql()} FOR SHARE OF e, tm"
+        )  # exactly the lock calculate takes, held open
+        quick = await asyncpg.create_pool(
+            _dsn(),
+            init=init_prod_shaped_connection,
+            server_settings={"search_path": SCHEMA, "lock_timeout": "300ms"},
+            statement_cache_size=0,
+            min_size=1,
+            max_size=2,
+        )
+        try:
+            with pytest.raises(HRCardError) as err:
+                await HRService(quick).edit_card(
+                    "tm-on",
+                    "made.contoh@example.com",
+                    {},
+                    {"on_payroll": False},
+                    [],
+                )
+            assert err.value.code is HRCardCode.LOCK_TIMEOUT  # the edit waited, then timed out
+        finally:
+            await quick.close()
+    # once calculate's transaction is over the same edit goes through
+    await _set_flag(env, "tm-on", "made.contoh@example.com", False)
+    assert await env.svc.is_on_payroll(env.on_id) is False
+
+
+@pytest.mark.asyncio
+async def test_approve_refuses_when_the_roster_changed_after_calculate(env: Env) -> None:
+    period = (await env.svc.calculate_payroll(MONTH, YEAR, env.admin))["period_id"]
+    await _set_flag(env, "tm-on", "made.contoh@example.com", False)  # now outside the set
+    with pytest.raises(PayrollRosterChangedError):
+        await env.svc.approve_payroll(period, env.admin)
+    # someone joins the set with no slip: also refused
+    await _set_flag(env, "tm-on", "made.contoh@example.com", None)
+    await _set_flag(env, "tm-off", "wayan.contoh@example.com", None)
+    with pytest.raises(PayrollRosterChangedError):
+        await env.svc.approve_payroll(period, env.admin)
+    period = (await env.svc.calculate_payroll(MONTH, YEAR, env.admin))["period_id"]
+    assert (await env.svc.approve_payroll(period, env.admin))["status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_approve_with_no_change_is_ok(env: Env) -> None:
+    period = (await env.svc.calculate_payroll(MONTH, YEAR, env.admin))["period_id"]
+    assert (await env.svc.approve_payroll(period, env.admin))["status"] == "approved"
+
+
+async def _pending_bonus(env: Env, emp_id: int) -> int:
+    async with env.pool.acquire() as conn:
+        return await conn.fetchval(
+            "INSERT INTO hr_bonus_ledger (employee_id, practice_type_code, amount_idr, status, "
+            "awarded_at, source, reason) VALUES ($1,'manual',1000,'pending',$2,'manual','why') "
+            "RETURNING id",
+            emp_id,
+            datetime(2026, 11, 10, 4, 0, tzinfo=timezone.utc),
+        )
+
+
+@pytest.mark.asyncio
+async def test_approve_bonus_refuses_an_off_payroll_person_and_keeps_the_rest(env: Env) -> None:
+    off_bonus = await _pending_bonus(env, env.off_id)  # a pending bonus that already exists
+    on_bonus = await _pending_bonus(env, env.on_id)
+    with pytest.raises(OffPayrollError):
+        await env.svc.approve_bonus(off_bonus, env.admin)
+    assert (await env.svc.approve_bonus(on_bonus, env.admin))["status"] == "approved"
+    async with env.pool.acquire() as conn:
+        st = await conn.fetchval("SELECT status FROM hr_bonus_ledger WHERE id=$1", off_bonus)
+    assert st == "pending"

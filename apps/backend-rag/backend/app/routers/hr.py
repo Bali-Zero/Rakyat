@@ -35,6 +35,7 @@ from backend.app.services.hr.hr_service import (
     HRService,
     OffPayrollError,
     PayrollBonusesChangedError,
+    PayrollRosterChangedError,
     business_today,
 )
 from backend.app.utils.crm_utils import is_crm_admin
@@ -310,6 +311,8 @@ async def get_employee(
         raise HTTPException(status_code=404, detail="Employee not found")
     if not is_hr_admin(current_user):
         emp = {k: v for k, v in emp.items() if k != "notes"}  # HR free text is admin-only
+        if not await service.is_on_payroll(employee_id):  # no personal payroll figures
+            emp["base_salary_idr"] = None
     return emp
 
 
@@ -472,6 +475,11 @@ async def approve_bonus(
         return {"success": True, "bonus": result}
     except BonusPeriodLockedError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except OffPayrollError:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "This person is not on payroll", "code": "off_payroll"},
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -608,6 +616,10 @@ async def approve_payroll(
         return {"success": True, "period": result}
     except PayrollBonusesChangedError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except PayrollRosterChangedError as e:
+        return JSONResponse(
+            status_code=409, content={"detail": str(e), "code": "payroll_roster_changed"}
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

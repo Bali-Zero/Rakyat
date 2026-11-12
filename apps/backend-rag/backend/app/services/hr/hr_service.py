@@ -55,6 +55,10 @@ class PayrollBonusesChangedError(Exception):
     """Approved bonuses no longer match the payslips the period was calculated with."""
 
 
+class PayrollRosterChangedError(Exception):
+    """The payroll set no longer matches the owners of the period's payslips."""
+
+
 class OffPayrollError(Exception):
     """The employee's card says `on_payroll = false`: no payroll item may be created for them."""
 
@@ -637,12 +641,13 @@ class HRService:
             return [dict(r) for r in rows]
 
     async def approve_bonus(self, bonus_id: int, approved_by: str) -> dict[str, Any]:
-        """Approve a pending bonus, unless its payroll month is already approved or paid."""
+        """Approve a pending bonus, unless its payroll month is already approved or paid or its
+        employee is outside the payroll set (OffPayrollError)."""
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
                 cur = await conn.fetchrow(
                     """
-                    SELECT status,
+                    SELECT status, employee_id,
                            EXTRACT(MONTH FROM (awarded_at AT TIME ZONE 'Asia/Makassar'))::int AS m,
                            EXTRACT(YEAR FROM (awarded_at AT TIME ZONE 'Asia/Makassar'))::int AS y
                     FROM hr_bonus_ledger WHERE id = $1 FOR UPDATE
@@ -654,6 +659,15 @@ class HRService:
                     raise ValueError(msg)
                 await _lock_payroll_month(conn, cur["m"], cur["y"], exclusive=False)
                 await _refuse_if_payroll_closed(conn, cur["m"], cur["y"])
+                in_set = await conn.fetchval(
+                    f"SELECT {payroll_set_sql()} FROM hr_employees e "
+                    "JOIN team_members tm ON tm.id = e.team_member_id "
+                    "WHERE e.id = $1 FOR SHARE OF e, tm",
+                    cur["employee_id"],
+                )
+                if in_set is not True:
+                    msg = "This person is not on payroll"
+                    raise OffPayrollError(msg)
                 row = await conn.fetchrow(
                     """
                     UPDATE hr_bonus_ledger
@@ -886,7 +900,8 @@ class HRService:
                     FROM hr_employees e
                     JOIN team_members tm ON tm.id = e.team_member_id
                     WHERE {payroll_set_sql()}
-                """)
+                    FOR SHARE OF e, tm
+                """)  # share locks: a concurrent card or login edit waits for this commit
 
                 payslips = []
                 for emp in employees:
@@ -1167,6 +1182,19 @@ class HRService:
                         "recalculate before approving"
                     )
                     raise PayrollBonusesChangedError(msg)
+                roster = await conn.fetch(
+                    f"""
+                    SELECT e.id, {payroll_set_sql()} AS in_set
+                    FROM hr_employees e JOIN team_members tm ON tm.id = e.team_member_id
+                    FOR SHARE OF e, tm
+                    """
+                )
+                owners = await conn.fetch(
+                    "SELECT employee_id FROM hr_payslips WHERE payroll_period_id = $1", period_id
+                )
+                if {r["id"] for r in roster if r["in_set"]} != {r["employee_id"] for r in owners}:
+                    msg = "The team changed since this payroll was calculated: calculate again"
+                    raise PayrollRosterChangedError(msg)
                 row = await conn.fetchrow(
                     """
                     UPDATE hr_payroll_periods
