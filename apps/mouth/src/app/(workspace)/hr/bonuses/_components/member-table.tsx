@@ -95,7 +95,6 @@ export function MemberTable({
           <tbody>
             {rows.map((m) => {
               const empty = m.count === 0;
-              const tone = DEPT_TONE[m.department] ?? "var(--bz-accent)";
               return (
                 <tr
                   key={m.memberKey}
@@ -158,21 +157,14 @@ export function MemberTable({
                           className="font-semibold"
                           style={{ color: "var(--bz-accent)" }}
                         />
-                        <div
-                          className="h-1.5 w-24 overflow-hidden rounded-full"
-                          style={{ background: tint(tone, 14) }}
-                          aria-hidden="true"
+                        <span
+                          className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                          style={{
+                            background: tint("var(--bz-text-2)", 12),
+                            color: "var(--bz-text-2)",
+                          }}
                         >
-                          <div
-                            className="h-full rounded-full"
-                            style={{
-                              width: `${Math.max(m.share > 0 ? 4 : 0, Math.round(m.share * 100))}%`,
-                              background: tone,
-                            }}
-                          />
-                        </div>
-                        <span className="sr-only">
-                          {Math.round(m.share * 100)} percent of the total
+                          {Math.round(m.share * 100)}%
                         </span>
                       </div>
                     )}

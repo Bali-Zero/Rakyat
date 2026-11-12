@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import * as hrApi from "@/lib/api/hr/hr";
 import { PracticeTypePicker } from "@/components/hr/practice-type-picker";
@@ -70,7 +70,15 @@ export function AddBonusDialog({
     serviceCode: "",
     awardedOn: witaToday(),
   });
-  const [draft, setDraft] = useState<ManualBonusDraft>(blank);
+  // The typed values live in a ref, never in a controlled `value`: React mirrors a
+  // controlled input's value into its DOM attribute, and Sentry's click breadcrumbs
+  // serialise attributes. The inputs below are uncontrolled (defaultValue), so a
+  // person's amount, reason and date stay out of the markup.
+  const draftRef = useRef<ManualBonusDraft>(blank());
+  const [serviceCode, setServiceCode] = useState("");
+  const [reasonLength, setReasonLength] = useState(0);
+  const [formKey, setFormKey] = useState(0);
+  const [defaultDate, setDefaultDate] = useState(witaToday);
   const [errors, setErrors] = useState<ManualBonusErrors>({});
   const [saving, setSaving] = useState(false);
 
@@ -94,12 +102,17 @@ export function AddBonusDialog({
       }));
   }, [employees]);
 
-  const set = (patch: Partial<ManualBonusDraft>) =>
-    setDraft((d) => ({ ...d, ...patch }));
+  const set = (patch: Partial<ManualBonusDraft>) => {
+    draftRef.current = { ...draftRef.current, ...patch };
+  };
 
   const close = (next: boolean) => {
     if (!next) {
-      setDraft(blank());
+      draftRef.current = blank();
+      setServiceCode("");
+      setReasonLength(0);
+      setFormKey((k) => k + 1);
+      setDefaultDate(witaToday());
       setErrors({});
     }
     onOpenChange(next);
@@ -107,6 +120,7 @@ export function AddBonusDialog({
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const draft = { ...draftRef.current, serviceCode };
     const found = validateManualBonus(draft);
     setErrors(found);
     if (Object.keys(found).length > 0) return;
@@ -148,7 +162,12 @@ export function AddBonusDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={submit} className="space-y-3.5" noValidate>
+          <form
+            key={formKey}
+            onSubmit={submit}
+            className="space-y-3.5"
+            noValidate
+          >
             <div>
               <label
                 htmlFor="bonus-person"
@@ -158,7 +177,7 @@ export function AddBonusDialog({
               </label>
               <select
                 id="bonus-person"
-                value={draft.employeeId}
+                defaultValue=""
                 onChange={(e) => set({ employeeId: e.target.value })}
                 aria-invalid={!!errors.employeeId}
                 aria-describedby="bonus-person-err"
@@ -190,8 +209,8 @@ export function AddBonusDialog({
               <PracticeTypePicker
                 ariaLabel="Service"
                 types={types}
-                value={draft.serviceCode}
-                onChange={(serviceCode) => set({ serviceCode })}
+                value={serviceCode}
+                onChange={setServiceCode}
                 placeholder="No specific service"
                 clearable
               />
@@ -210,7 +229,7 @@ export function AddBonusDialog({
                   type="number"
                   min={1}
                   inputMode="numeric"
-                  value={draft.amount}
+                  defaultValue=""
                   onChange={(e) => set({ amount: e.target.value })}
                   aria-invalid={!!errors.amount}
                   aria-describedby="bonus-amount-err"
@@ -230,7 +249,7 @@ export function AddBonusDialog({
                 <input
                   id="bonus-date"
                   type="date"
-                  value={draft.awardedOn}
+                  defaultValue={defaultDate}
                   onChange={(e) => set({ awardedOn: e.target.value })}
                   aria-invalid={!!errors.awardedOn}
                   aria-describedby="bonus-date-err"
@@ -248,15 +267,18 @@ export function AddBonusDialog({
               >
                 <span>Reason</span>
                 <span style={{ color: "var(--bz-text-2)" }}>
-                  {draft.reason.length}/{REASON_MAX}
+                  {reasonLength}/{REASON_MAX}
                 </span>
               </label>
               <textarea
                 id="bonus-reason"
                 rows={3}
                 maxLength={REASON_MAX}
-                value={draft.reason}
-                onChange={(e) => set({ reason: e.target.value })}
+                defaultValue=""
+                onChange={(e) => {
+                  set({ reason: e.target.value });
+                  setReasonLength(e.target.value.length);
+                }}
                 aria-invalid={!!errors.reason}
                 aria-describedby="bonus-reason-err"
                 placeholder="What was it for?"

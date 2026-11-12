@@ -160,8 +160,8 @@ describe("per-member table", () => {
     expect(taxTwo).toHaveTextContent("—");
     expect(text("Fake Setup")).toHaveTextContent("Setup");
     expect(text("Fake Setup")).toHaveTextContent("Rp 600.000");
-    // The share bar's percentage is text for screen readers, not an attribute.
-    expect(text("Fake Setup")).toHaveTextContent("60 percent of the total");
+    // The share is text in a pill, never a style or an attribute.
+    expect(text("Fake Setup")).toHaveTextContent("60%");
     // footer: 600k + 200k + 200k
     expect(rows[rows.length - 1]).toHaveTextContent("Rp 1.000.000");
   });
@@ -344,6 +344,32 @@ describe("Add bonus", () => {
   });
 });
 
+describe("Tax filter", () => {
+  it("still lists the tax team at a dash when nothing is left to show for them", async () => {
+    // Only non-tax bonuses exist and there is no PDF recap: the Tax chip empties the months.
+    const user = userEvent.setup();
+    render(<BonusesPage />);
+    await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "Tax" }));
+    await user.click(screen.getByLabelText("Filter by status"));
+    await user.selectOptions(
+      screen.getByLabelText("Filter by status"),
+      "pending",
+    );
+    await screen.findByText(/No bonuses for this selection/);
+    const rows = within(screen.getByRole("table")).getAllByRole("row");
+    const two = rows.find((r) => r.textContent?.startsWith("Fake Tax Two"))!;
+    const one = rows.find((r) => r.textContent?.startsWith("Fake Tax One"))!;
+    for (const row of [one, two]) {
+      expect(row).toHaveTextContent("—");
+      expect(row.textContent).not.toMatch(/Rp/);
+    }
+    expect(rows.some((r) => r.textContent?.startsWith("Fake Setup"))).toBe(
+      false,
+    );
+  });
+});
+
 describe("Sentry protection", () => {
   // htmlTreeAsString (Sentry) serialises id, class and these attributes, never text.
   const RECORDED = ["aria-label", "title", "name", "alt", "id"];
@@ -364,33 +390,89 @@ describe("Sentry protection", () => {
     "bonus-reason",
     "bonus-reason-err",
   ]);
+  const opaque = (v: string) => /^(radix-)?_?r_/.test(v);
 
-  function leaked(region: Element): string[] {
-    const values = new Set(
-      Array.from(region.querySelectorAll("*")).flatMap((el) =>
-        RECORDED.map((a) => el.getAttribute(a)).filter((v): v is string => !!v),
-      ),
-    );
-    // Radix/React generate opaque ids for the dialog title and description.
-    return [...values].filter(
-      (v) => !FIXED_UI_STRINGS.has(v) && !/^(radix-)?_?r_/.test(v),
+  /** Every personal value of the fixtures and of the typed form, raw and formatted. */
+  const PERSONAL = [
+    "Fake Setup",
+    "Fake Tax One",
+    "Fake Tax Two",
+    "Fake Office",
+    "fake.setup@example.com",
+    "fake.office@example.com",
+    "fake.admin@example.com",
+    "Weekend filing",
+    "Already approved extra",
+    "Contoh alasan unik",
+    "1234567",
+    "1.234.567",
+    "600000",
+    "600.000",
+    "200000",
+    "200.000",
+    "1000000",
+    "1.000.000",
+    "60%",
+    "20%",
+  ];
+
+  function allAttributes(region: Element) {
+    return Array.from(region.querySelectorAll("*")).flatMap((el) =>
+      el.getAttributeNames().map((name) => ({
+        el,
+        name,
+        value: el.getAttribute(name) ?? "",
+      })),
     );
   }
 
-  it("never puts a person's name, amount or reason in an attribute Sentry's click breadcrumbs record", async () => {
+  it("never puts a person's name or personal value in ANY attribute of the protected regions", async () => {
     const user = userEvent.setup();
     render(<BonusesPage />);
     await openPeople(user);
     await user.click(await screen.findByRole("button", { name: "Add bonus" }));
-    await screen.findByRole("dialog");
-    // The page region and the portaled dialog are each protected on their own.
+    const dialog = await screen.findByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText("Person"), "3");
+    await user.type(within(dialog).getByLabelText("Amount (IDR)"), "1234567");
+    await user.type(
+      within(dialog).getByLabelText(/Reason/),
+      "Contoh alasan unik",
+    );
+    // the typed values are really in the form, as properties, not attributes
+    expect(
+      (within(dialog).getByLabelText("Amount (IDR)") as HTMLInputElement).value,
+    ).toBe("1234567");
+    expect(
+      (within(dialog).getByLabelText(/Reason/) as HTMLTextAreaElement).value,
+    ).toBe("Contoh alasan unik");
+
+    // the page region and the portaled dialog are each protected on their own
     const regions = document.querySelectorAll("[data-sentry-block]");
     expect(regions.length).toBe(2);
     expect(
       document.querySelector("[role=dialog] [data-sentry-block]"),
     ).not.toBeNull();
-    for (const region of regions) expect(leaked(region)).toEqual([]);
-    // names and amounts stay reachable as text
+
+    for (const region of regions) {
+      const attrs = allAttributes(region);
+      expect(attrs.length).toBeGreaterThan(50);
+      // 1. no attribute value contains any personal value (case-insensitive)
+      for (const { name, value, el } of attrs) {
+        for (const secret of PERSONAL) {
+          expect(
+            value.toLowerCase().includes(secret.toLowerCase()),
+            `${el.tagName} ${name}="${value}" carries ${secret}`,
+          ).toBe(false);
+        }
+      }
+      // 2. the five attributes Sentry records hold only fixed UI strings
+      const recorded = attrs
+        .filter((a) => RECORDED.includes(a.name))
+        .map((a) => a.value)
+        .filter((v) => !FIXED_UI_STRINGS.has(v) && !opaque(v));
+      expect(recorded).toEqual([]);
+    }
+    // names, amounts and reasons stay reachable as text
     expect(screen.getAllByText(/Fake Tax Two/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Weekend filing/).length).toBeGreaterThan(0);
   });
@@ -399,5 +481,20 @@ describe("Sentry protection", () => {
     render(<BonusesPage />);
     const table = await screen.findByRole("table");
     expect(table.closest("[data-sentry-block]")).not.toBeNull();
+  });
+
+  it("clears the typed values when the dialog is closed and reopened", async () => {
+    const user = userEvent.setup();
+    render(<BonusesPage />);
+    await user.click(await screen.findByRole("button", { name: "Add bonus" }));
+    let dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Amount (IDR)"), "777");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await user.click(screen.getByRole("button", { name: "Add bonus" }));
+    dialog = await screen.findByRole("dialog");
+    expect(
+      (within(dialog).getByLabelText("Amount (IDR)") as HTMLInputElement).value,
+    ).toBe("");
   });
 });

@@ -452,7 +452,7 @@ export default function BonusesPage() {
         })}
       </div>
 
-      {displayMonths.length === 0 ? (
+      {displayMonths.length === 0 && (
         <div
           className="border rounded-xl p-8 text-center"
           style={{ ...PANEL, color: "var(--bz-text-2)" }}
@@ -461,20 +461,22 @@ export default function BonusesPage() {
           No bonuses for this selection. Bonuses are created automatically when
           practices are completed{isAdmin ? ", or add one by hand" : ""}.
         </div>
-      ) : (
-        <>
-          {/* ─── Total per member, across the selected months ─────────── */}
-          {memberRows.length > 0 && (
-            <MemberTable
-              rows={memberRows}
-              monthCount={months.length}
-              bonusCount={filtered.length}
-              grandPending={grandPending}
-              grandApproved={grandApproved}
-              grandTotal={grandTotal}
-            />
-          )}
+      )}
 
+      {/* ─── Total per member, across the selected months ─────────── */}
+      {memberRows.length > 0 && (
+        <MemberTable
+          rows={memberRows}
+          monthCount={months.length}
+          bonusCount={filtered.length}
+          grandPending={grandPending}
+          grandApproved={grandApproved}
+          grandTotal={grandTotal}
+        />
+      )}
+
+      {displayMonths.length > 0 && (
+        <>
           {/* ─── Month by month → member by member ────────────────────── */}
           <div className="space-y-3">
             {displayMonths.map((month) => {
