@@ -45,6 +45,17 @@ FAKE_ROW: dict[str, Any] = {
 
 
 @pytest.fixture
+def it_admin_in_allowlist(monkeypatch):
+    """A synthetic IT account that IS a global admin: it must still not write HR data."""
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(
+        settings, "admin_emails", "zero@balizero.com,asya@balizero.com,it.dev@balizero.com"
+    )
+    assert "it.dev@balizero.com" in settings.admin_emails_set
+
+
+@pytest.fixture
 def make_client():
     patchers: list[Any] = []
 
@@ -175,9 +186,12 @@ _EMPLOYEE = {"team_member_id": "tm-fake-7", "hire_date": "2025-01-15", "base_sal
         ("adit@balizero.com", 403),  # HR extra admin: reads and bonuses, no card writes
         ("ruslana@balizero.com", 403),
         ("fake.member@balizero.com", 403),
+        ("it.dev@balizero.com", 403),  # global admin, but not an HR writer (2026-11-13)
     ],
 )
-def test_post_employees_is_for_the_global_admins_only(make_client, email, status):
+def test_post_employees_is_for_the_hr_writers_only(
+    make_client, it_admin_in_allowlist, email, status
+):
     service = AsyncMock()
     service.upsert_employee = AsyncMock(return_value={"id": 7})
     client = make_client({"id": "tm-x", "email": email, "role": "member"}, service)

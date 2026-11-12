@@ -9,7 +9,7 @@ Migration 354). Code: `hr_card_models.py`, `hr_service.py`, `routers/hr.py`, and
 
 In: ONE read route, `GET /api/hr/me/card`, through which a staff member reads their own card, the
 import tool through which HR fills cards (JSON on stdin), and ONE write route,
-`PATCH /api/hr/people/{team_member_id}/card`, through which the global admins edit, clear or create
+`PATCH /api/hr/people/{team_member_id}/card`, through which the HR writers (owner and accountant) edit, clear or create
 any person's card (C11). The read side is clauses C1-C4 and C9; the write side is C5-C8, C10 and C11.
 
 `GET /api/hr/me/overview` (`hr_overview_models.py`, `hr_overview_logic.py`) returns this same
@@ -274,9 +274,14 @@ the default). It changes nothing else.
 
 **C11 The HR write route** (`PATCH /api/hr/people/{team_member_id}/card`,
 `routers/hr_people.py`, body `hr_card_edit.CardEditBody`, service `HRService.edit_card`). Added
-2026-11-12 on the owner's order that the global admins can edit any employee's card.
+2026-11-12 on the owner's order that the owner and the accountant can edit any employee's card;
+narrowed 2026-11-13: global admin alone no longer suffices.
 - *Who.* `can_write_hr_card(user)` (`utils/hr_utils.py`): the email is in
-  `settings.admin_emails_set` (the owner and Asya) and the role claim is not `client`. NOT
+  the closed set `hr_utils.HR_WRITER_EMAILS` (the owner and the accountant, NOT every global admin:
+  `ADMIN_EMAILS` also holds an IT account that must not write HR data) and the role claim is not
+  `client`. The same set gates payroll calculate, approve and mark-paid (`can_run_payroll`, 403 for
+  the rest; reads stay with the HR admins) and `GET /api/hr/me/capabilities` reports it as
+  `hr_payroll_write`. NOT
   `HR_EXTRA_ADMIN_EMAILS`, NOT a scoped viewer, NOT a member; the `role` claim grants nothing.
   Everyone else gets 403 before any lookup. `GET /api/hr/me/capabilities` reports it as
   `hr_card_write`.

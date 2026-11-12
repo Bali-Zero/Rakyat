@@ -31,6 +31,7 @@ const caps = (write: boolean, scope: "all" | "scoped" = "all") => ({
     people_scope: scope,
     hr_edit: scope === "all",
     hr_card_write: write,
+    hr_payroll_write: write,
   },
   loaded: true,
   failed: false,

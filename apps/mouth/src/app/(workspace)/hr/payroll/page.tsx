@@ -35,6 +35,8 @@ export default function PayrollPage() {
   const [payslips, setPayslips] = useState<Payslip[]>([]);
   const { capabilities, loaded } = useHrCapabilities();
   const isAdmin = capabilities.hr_admin;
+  // Calculate, approve and mark-paid belong to the owner and the accountant only.
+  const canRunPayroll = capabilities.hr_payroll_write === true;
   const [loading, setLoading] = useState(true);
   const [calculating, setCalculating] = useState(false);
 
@@ -121,14 +123,16 @@ export default function PayrollPage() {
           <h1 className="text-2xl font-bold text-[var(--bz-text-1)]">
             Payroll Periods
           </h1>
-          <button
-            onClick={handleCalculate}
-            disabled={calculating}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--bz-accent)]/10 text-[var(--bz-accent)] hover:bg-[var(--bz-accent)]/20 text-sm transition-colors disabled:opacity-50"
-          >
-            <Calculator size={16} />
-            {calculating ? "Calculating..." : "Calculate Current Month"}
-          </button>
+          {canRunPayroll && (
+            <button
+              onClick={handleCalculate}
+              disabled={calculating}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--bz-accent)]/10 text-[var(--bz-accent)] hover:bg-[var(--bz-accent)]/20 text-sm transition-colors disabled:opacity-50"
+            >
+              <Calculator size={16} />
+              {calculating ? "Calculating..." : "Calculate Current Month"}
+            </button>
+          )}
         </div>
 
         {periods.length === 0 ? (
@@ -136,8 +140,8 @@ export default function PayrollPage() {
             className="border rounded-xl p-8 text-center text-[var(--bz-text-3)]"
             style={PANEL}
           >
-            No payroll periods yet. Click &quot;Calculate Current Month&quot; to
-            start.
+            No payroll periods yet.
+            {canRunPayroll && ' Click "Calculate Current Month" to start.'}
           </div>
         ) : (
           <div className="space-y-2">
@@ -166,7 +170,7 @@ export default function PayrollPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {period.status === "calculated" && (
+                  {canRunPayroll && period.status === "calculated" && (
                     <button
                       onClick={() => handleApprove(period.id)}
                       className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--state-warning)]/10 text-[var(--state-warning)] hover:bg-[var(--state-warning)]/20 text-sm"
@@ -175,7 +179,7 @@ export default function PayrollPage() {
                       Approve
                     </button>
                   )}
-                  {period.status === "approved" && (
+                  {canRunPayroll && period.status === "approved" && (
                     <button
                       onClick={() => handleMarkPaid(period.id)}
                       className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--state-success)]/10 text-[var(--state-success)] hover:bg-[var(--state-success)]/20 text-sm"
