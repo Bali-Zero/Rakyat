@@ -170,3 +170,79 @@ def test_the_exact_keys_do_not_over_match_debug_counters():
         "gender_ratio": 0.5,
     }
     assert _before_send({"extra": dict(keep)}, {})["extra"] == keep
+
+
+# ── the SDK must not buffer an upload before the writer check says 403 (C13) ──
+
+
+class _Counting:
+    def __init__(self, chunks: int, size: int = 64 * 1024) -> None:
+        self.chunks, self.size, self.pulled = chunks, size, 0
+
+    def __aiter__(self):
+        return self._gen()
+
+    async def _gen(self):
+        for _ in range(self.chunks):
+            self.pulled += 1
+            yield b"x" * self.size
+
+
+async def _upload_as_non_writer(body: _Counting) -> int:
+    import httpx
+
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(hr_people.router)
+    app.dependency_overrides[get_current_user] = lambda: {
+        "user_id": "tm-adit",
+        "email": "adit@balizero.com",
+        "role": "member",
+    }
+    app.dependency_overrides[get_database_pool] = lambda: MagicMock()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        res = await c.post(
+            f"/api/hr/people/{ID_IN}/documents/ktp",
+            content=body,
+            headers={
+                "content-type": "multipart/form-data; boundary=zz",
+                "content-length": "1000",  # small declared length: the cheap check cannot help
+            },
+        )
+    return res.status_code
+
+
+def _init_real_sdk(**extra: Any) -> MemoryTransport:
+    t = MemoryTransport()
+    sentry_sdk.init(
+        dsn="https://public@o0.ingest.sentry.io/1",
+        transport=t,
+        before_send=_before_send,
+        before_send_transaction=_before_send_transaction,
+        include_local_variables=False,
+        send_default_pii=False,
+        traces_sample_rate=1.0,
+        **extra,
+    )
+    return t
+
+
+@pytest.mark.asyncio
+async def test_a_non_writer_upload_is_refused_before_the_sdk_reads_the_body():
+    _init_real_sdk(max_request_body_size="never")
+    try:
+        body = _Counting(chunks=200)  # 12.5 MB
+        assert await _upload_as_non_writer(body) == 403
+        assert body.pulled <= 1
+    finally:
+        sentry_sdk.get_client().close()
+        sentry_sdk.init()
+
+
+def test_production_init_turns_request_bodies_off(monkeypatch):
+    from backend.app.setup.sentry_config import _init_sentry_blocking
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr("sentry_sdk.init", lambda **kw: captured.update(kw))
+    _init_sentry_blocking("https://example.invalid/1")
+    assert captured["max_request_body_size"] == "never"

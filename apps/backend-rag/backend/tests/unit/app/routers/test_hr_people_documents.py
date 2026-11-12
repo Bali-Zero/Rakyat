@@ -292,3 +292,91 @@ def test_each_request_builds_its_own_drive_client():
         a = asyncio.run(hd.get_hr_drive_service())
         b = asyncio.run(hd.get_hr_drive_service())
     assert a is not b and len(made) == 2
+
+
+# ── parser holes: one file part named `file`, nothing else, a closed body, a short boundary ──
+
+
+def _raw_post(client: TestClient, body: bytes, boundary: str = "zz", ctype: str | None = None):
+    return client.post(
+        _url(),
+        content=body,
+        headers={"content-type": ctype or f"multipart/form-data; boundary={boundary}"},
+    )
+
+
+def _part(name: str, filename: str | None, payload: bytes, b: str = "zz") -> bytes:
+    disp = f'form-data; name="{name}"' + (f'; filename="{filename}"' if filename else "")
+    return f"--{b}\r\nContent-Disposition: {disp}\r\n\r\n".encode() + payload + b"\r\n"
+
+
+def _closed(*parts: bytes, b: str = "zz") -> bytes:
+    return b"".join(parts) + f"--{b}--\r\n".encode()
+
+
+def _refused(res) -> None:
+    assert res.status_code == 422 and res.json()["detail"][0]["code"] == "invalid_upload"
+
+
+def test_a_well_formed_single_file_body_is_accepted(make_client):
+    client, doc = make_client(OWNER)
+    assert _raw_post(client, _closed(_part("file", "a.pdf", PDF))).status_code == 200
+    doc.upload.assert_awaited_once()
+
+
+def test_an_extra_field_is_refused(make_client):
+    client, doc = make_client(OWNER)
+    _refused(_raw_post(client, _closed(_part("note", None, b"x"), _part("file", "a.pdf", PDF))))
+    _refused(_raw_post(client, _closed(_part("file", "a.pdf", PDF), _part("note", None, b"x"))))
+    doc.upload.assert_not_awaited()
+
+
+def test_a_field_named_file_without_a_filename_is_refused(make_client):
+    client, doc = make_client(OWNER)
+    _refused(_raw_post(client, _closed(_part("file", None, PDF))))
+    doc.upload.assert_not_awaited()
+
+
+def test_a_body_without_its_closing_boundary_is_refused(make_client):
+    client, doc = make_client(OWNER)
+    _refused(_raw_post(client, _part("file", "a.pdf", PDF)))  # no closing boundary at all
+    _refused(_raw_post(client, _part("file", "a.pdf", PDF) + b"--zz\r\n"))  # opened, never closed
+    doc.upload.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "ctype",
+    [
+        "multipart/form-data",  # no boundary
+        "multipart/form-data; boundary=",
+        "multipart/form-data; boundary=" + "b" * 71,  # over RFC 2046's 70
+        'multipart/form-data; boundary="' + "b" * 200 + '"',
+    ],
+)
+def test_a_missing_or_overlong_boundary_is_a_422_not_a_500(make_client, ctype):
+    client, doc = make_client(OWNER)
+    _refused(_raw_post(client, _closed(_part("file", "a.pdf", PDF)), ctype=ctype))
+    doc.upload.assert_not_awaited()
+
+
+def test_a_70_character_boundary_is_fine(make_client):
+    client, _ = make_client(OWNER)
+    b = "b" * 70
+    res = _raw_post(client, _closed(_part("file", "a.pdf", PDF, b), b=b), boundary=b)
+    assert res.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"--zz\r\nContent-Disposition form-data name=file\r\n\r\nx\r\n--zz--\r\n",  # malformed header
+        b'--zz\r\nContent-Disposition: form-data; name="file"; filename="a.pdf"\r\n',  # truncated
+        b"\x00\xff\xfe--zz--",
+        b"--zz--",
+    ],
+)
+def test_malformed_multipart_never_reaches_a_500(make_client, body):
+    client, doc = make_client(OWNER)
+    res = _raw_post(client, body)
+    assert res.status_code == 422
+    doc.upload.assert_not_awaited()

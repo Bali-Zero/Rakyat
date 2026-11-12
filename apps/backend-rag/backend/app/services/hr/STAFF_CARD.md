@@ -364,7 +364,9 @@ takes a person off payroll; the read side (`member_card`) and the SQL predicate
   that is not PDF, JPEG or PNG by its MAGIC BYTES is a 422 (`%PDF-`, `FF D8 FF`, the 8-byte PNG
   signature). The client's MIME type and file name are never read. The body is touched only after
   the writer check, under a hard cap of 4 MB + 64 KiB (413 at once on a declared length over it, and
-  as soon as a chunked body passes it), then parsed as multipart with exactly one part named `file`.
+  as soon as a chunked body passes it), then parsed as multipart with exactly one file part named `file`: no field, a closing boundary,
+  a boundary of at most 70 characters, every parser error a fixed 422. The Sentry SDK is
+  initialised with `max_request_body_size="never"` so it does not buffer a body before the 403.
 - *Where the file lives.* The owner's private tree `HR&FINANCE/HR/DOKUMEN KARYAWAN`
   (`settings.hr_documents_drive_root_id`), as `<UNIT>/<person display name>/`. UNIT is the card's
   `profile.unit` stripped and upper-cased, `LAINNYA` when absent; unit folders are found (or created)
@@ -380,13 +382,18 @@ takes a person off payroll; the read side (`member_card`) and the SQL predicate
   `nz_hr_member` and `nz_hr_slot`. Then ONE transaction: member lock (`lock_visible_person`), read the
   previous id, write the new id through `merge_card_on`, insert the audit row; any failure rolls all of
   it back and the just-uploaded file is trashed. A failure AT or after COMMIT proves nothing: the slot
-  is re-read on a fresh connection; if it holds the new id the upload succeeded, if not the new file
+  is re-read in a transaction that takes the same locks as the DB step (so it waits for the
+  original commit to finish); if it holds the new id the upload succeeded, if not the new file
   is trashed, if that cannot be told it is left in place. Drive failures are `502 drive_unavailable` with a
   fixed message; a lock timeout is 409 as in C11.
 - *Trash only what is ours.* After the commit the replaced (or removed) file is moved to the Drive
-  trash ONLY if its appProperties `nz_hr_member` equals this member, i.e. this door made it. A file
-  anyone else put there is left untouched. The response is `{slot, file_id, previous}` with
-  `previous` one of `trashed`, `kept`, `none`.
+  trash ONLY if ALL hold: Drive knows it, it is a pdf, jpeg or png (never a folder), it is not
+  already trashed, its appProperties `nz_hr_member` is this member AND `nz_hr_slot` is this slot,
+  and its parent is this member's person folder. Anything else (a folder id or free text imported
+  into the slot, another slot's file, another member's, a foreign file, a Drive error) is `kept`.
+  The response is `{slot, file_id, previous}` with `previous` one of `trashed`, `kept`, `none`.
+  After an upload the card's unit is read again: if it changed since the folder step, the folder
+  step runs again and moves the person folder (the files move with it).
 - *Audit and logs.* One `security_audit_log` row per change (`hr_document_upload` or
   `hr_document_remove`), in the same transaction as the card write, details = slot, the new id (made
   by this request) and `previous_sha` (first 16 hex of the sha256 of the old value, which is free

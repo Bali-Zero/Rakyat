@@ -48,6 +48,7 @@ FALLBACK_UNIT = "LAINNYA"
 MEMBER_PROP = "nz_hr_member"
 SLOT_PROP = "nz_hr_slot"
 FOLDER_MIME = "application/vnd.google-apps.folder"
+DOC_MIMES = frozenset({"application/pdf", "image/jpeg", "image/png"})  # what this door uploads
 AUDIT_UPLOAD = "hr_document_upload"
 AUDIT_REMOVE = "hr_document_remove"
 
@@ -143,17 +144,6 @@ _REMOVE_CONTRACT_SQL = """
         updated_at = NOW()
     WHERE team_member_id = $1 AND jsonb_typeof(profile) = 'object'
       AND jsonb_typeof(profile->'contract') = 'object'
-"""
-
-_CURRENT_SQL = """
-    SELECT CASE WHEN jsonb_typeof(profile) <> 'object' THEN NULL
-                WHEN $2 = 'contract' THEN
-                    CASE WHEN jsonb_typeof(profile->'contract') = 'object'
-                         THEN profile->'contract'->>'file_id' END
-                ELSE CASE WHEN jsonb_typeof(profile->'docs') = 'object'
-                          THEN profile->'docs'->>$2 END
-           END
-    FROM hr_employees WHERE team_member_id = $1
 """
 
 _DRIVE_ID = re.compile(r"^[A-Za-z0-9_-]{10,200}$")
@@ -343,31 +333,74 @@ class HRDocumentService:
             raise HRDocError(HRDocCode.DB_ERROR) from None
 
     async def _slot_holds(self, member_id: str, slot: str, file_id: str) -> bool | None:
-        """On a FRESH connection: does the card's slot hold `file_id`? None when it cannot be told."""
+        """Does the card's slot hold `file_id`? None when it cannot be told.
+
+        Takes the SAME locks as the DB step, in a transaction, in the same order (member advisory
+        lock, then the hr_employees row lock): the read waits for the original COMMIT, if it is
+        still in flight, to finish and therefore sees its outcome."""
         try:
-            async with self.db_pool.acquire() as conn:
-                row = await conn.fetchrow(_CURRENT_SQL, member_id, slot)
+            async with self.db_pool.acquire() as conn, conn.transaction():
+                await conn.execute(f"SET LOCAL lock_timeout = {int(CARD_EDIT_LOCK_TIMEOUT_MS)}")
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext('hr_docs_folder:'||$1))", member_id
+                )
+                row = await conn.fetchrow(_PREVIOUS_SQL, member_id, slot)  # FOR UPDATE
         except Exception:
             return None
         return bool(row is not None and row[0] == file_id)
 
-    async def _trash_if_ours(self, member_id: str, previous: str | None, new_id: str | None) -> str:
-        """After the commit: trash the replaced file only when this door made it (its appProperties
-        name this member). A file someone else put there, a value Drive does not know (free text
-        from an import) and any Drive error all leave it alone ("kept"), with no value logged."""
+    async def _our_folder(self, member_id: str) -> str | None:
+        """The member's person folder id, or None when there is not exactly one."""
+        try:
+            found = await self.drive.find_folders_by_app_property(MEMBER_PROP, member_id)
+        except Exception as exc:
+            logger.warning("hr documents folder lookup failed (%s)", type(exc).__name__)
+            return None
+        return str(found[0]["id"]) if len(found) == 1 else None
+
+    async def _trash_if_ours(
+        self,
+        member_id: str,
+        slot: str,
+        previous: str | None,
+        new_id: str | None,
+        folder_id: str | None,
+    ) -> str:
+        """After the commit: trash the replaced file ONLY if this door made it for this member and
+        this slot. ALL must hold: a Drive-id-shaped value Drive knows, a pdf/jpeg/png (never a
+        folder), not trashed, appProperties nz_hr_member == member and nz_hr_slot == slot, and its
+        parent is the member's person folder. Anything else (a folder id or free text pasted in by
+        an import, another slot's file, another member's, an error) is "kept", with no value logged."""
         if not previous or previous == new_id:
             return "none"
-        if not _DRIVE_ID.match(previous):  # not even shaped like a Drive id: never sent to Drive
+        if not _DRIVE_ID.match(previous) or not folder_id:
             return "kept"
         try:
-            props = await self.drive.get_app_properties(previous)
-            if props is None or props.get(MEMBER_PROP) != member_id:
+            meta = await self.drive.get_document_meta(previous)
+            if (
+                meta is None
+                or meta.get("trashed")
+                or meta.get("mimeType") not in DOC_MIMES
+                or meta.get("appProperties", {}).get(MEMBER_PROP) != member_id
+                or meta.get("appProperties", {}).get(SLOT_PROP) != slot
+                or folder_id not in (meta.get("parents") or [])
+            ):
                 return "kept"
             await self.drive.trash_file(previous)
             return "trashed"
         except Exception as exc:
             logger.warning("hr documents previous file left in place (%s)", type(exc).__name__)
             return "kept"
+
+    async def _follow_unit_change(self, member_id: str, used_unit: str) -> None:
+        """After the commit: if the card's unit changed since the folder step (a C11 PATCH in
+        between), run the folder step again; it moves the person folder, and the files with it."""
+        try:
+            now = await self._read_context(member_id)
+            if unit_folder_name(now.unit) != unit_folder_name(used_unit):
+                await self.ensure_folder(member_id)
+        except Exception as exc:  # the file is saved; the next upload or move corrects the folder
+            logger.warning("hr documents unit follow-up failed (%s)", type(exc).__name__)
 
     # ── public flows ──
 
@@ -411,7 +444,10 @@ class HRDocumentService:
             if exc.code is HRDocCode.COMMIT_UNKNOWN:
                 landed = await self._slot_holds(member_id, slot, new_id)
                 if landed:  # it did commit: carry on as a success
-                    outcome = await self._trash_if_ours(member_id, state.get("previous"), new_id)
+                    outcome = await self._trash_if_ours(
+                        member_id, slot, state.get("previous"), new_id, folder_id
+                    )
+                    await self._follow_unit_change(member_id, ctx.unit)
                     return {"slot": slot, "file_id": new_id, "previous": outcome}
                 if landed is None:  # cannot tell: an orphan file is safer than a dangling id
                     logger.error("hr documents upload left in place, outcome unverifiable")
@@ -421,7 +457,8 @@ class HRDocumentService:
             except Exception as terr:
                 logger.error("hr documents compensation trash failed (%s)", type(terr).__name__)
             raise
-        outcome = await self._trash_if_ours(member_id, previous, new_id)
+        outcome = await self._trash_if_ours(member_id, slot, previous, new_id, folder_id)
+        await self._follow_unit_change(member_id, ctx.unit)
         return {"slot": slot, "file_id": new_id, "previous": outcome}
 
     async def remove(
@@ -436,7 +473,9 @@ class HRDocumentService:
             if exc.code is HRDocCode.COMMIT_UNKNOWN:  # nothing was uploaded; keep the old file
                 raise HRDocError(HRDocCode.DB_ERROR) from None
             raise
-        outcome = await self._trash_if_ours(member_id, previous, None)
+        outcome = await self._trash_if_ours(
+            member_id, slot, previous, None, await self._our_folder(member_id) if previous else None
+        )
         return {"slot": slot, "file_id": None, "previous": outcome}
 
 

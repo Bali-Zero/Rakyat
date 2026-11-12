@@ -853,10 +853,13 @@ class ServiceAccountDriveService:
                 break
         return found
 
-    async def get_app_properties(self, file_id: str) -> dict[str, str] | None:
-        """appProperties of one file, or None when it is gone or already in the trash."""
+    async def get_document_meta(self, file_id: str) -> dict[str, Any] | None:
+        """mimeType, trashed, parents and appProperties of one file, or None when Drive has no
+        such file (404). Any other error propagates."""
         request = self.service.files().get(
-            fileId=file_id, fields="id, trashed, appProperties", supportsAllDrives=True
+            fileId=file_id,
+            fields="id, mimeType, trashed, parents, appProperties",
+            supportsAllDrives=True,
         )
         try:
             meta = await asyncio.to_thread(request.execute)
@@ -864,9 +867,13 @@ class ServiceAccountDriveService:
             if getattr(getattr(exc, "resp", None), "status", None) == 404:
                 return None
             raise
-        if meta.get("trashed"):
-            return None
-        return dict(meta.get("appProperties") or {})
+        return {
+            "id": meta.get("id"),
+            "mimeType": meta.get("mimeType"),
+            "trashed": bool(meta.get("trashed")),
+            "parents": list(meta.get("parents") or []),
+            "appProperties": dict(meta.get("appProperties") or {}),
+        }
 
     async def trash_file(self, file_id: str) -> None:
         """Move one file to the Drive trash (recoverable). Never a permanent delete."""

@@ -75,9 +75,43 @@ class FakeDrive:
         }
         return {"id": fid}
 
-    async def get_app_properties(self, file_id):
+    async def get_document_meta(self, file_id):
         f = self.files.get(file_id)
-        return None if f is None or file_id in self.trashed else dict(f["appProperties"])
+        if f is None:
+            return None
+        if file_id in self.folders:  # a folder id is a real Drive object too
+            return None
+        return {
+            "id": file_id,
+            "mimeType": f["mime"],
+            "trashed": file_id in self.trashed or bool(f.get("trashed")),
+            "parents": [f["parent"]],
+            "appProperties": dict(f["appProperties"]),
+        }
+
+    def seed_person_folder(self, unit: str = "TAX") -> str:
+        """The unit folder and the member's person folder, as an earlier upload left them."""
+        self.folders["u-seed"] = {
+            "id": "u-seed",
+            "name": unit,
+            "parents": [ROOT],
+            "appProperties": {},
+        }
+        self.folders["pf-seed"] = {
+            "id": "pf-seed",
+            "name": "Made Contoh",
+            "parents": ["u-seed"],
+            "appProperties": {hd.MEMBER_PROP: MEMBER},
+        }
+        return "pf-seed"
+
+    def add_file(self, fid, *, member=MEMBER, slot="kk", mime="application/pdf", parent="pf-seed"):
+        props = {}
+        if member:
+            props[hd.MEMBER_PROP] = member
+        if slot:
+            props[hd.SLOT_PROP] = slot
+        self.files[fid] = {"name": "o", "parent": parent, "mime": mime, "appProperties": props}
 
     async def trash_file(self, file_id):
         self.trashed.append(file_id)
@@ -253,32 +287,64 @@ async def test_upload_title_properties_and_result(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_replace_trashes_our_previous_and_keeps_a_foreign_one():
+async def test_a_real_previous_upload_of_the_same_slot_is_trashed():
     d = FakeDrive()
-    d.files["oldours12345"] = {
-        "name": "o",
-        "parent": "p",
-        "mime": "x",
-        "appProperties": {hd.MEMBER_PROP: MEMBER},
+    d.seed_person_folder()
+    d.add_file("prevfile12345", slot="kk")
+    svc = _svc(d)
+    svc._db_step = AsyncMock(return_value="prevfile12345")  # type: ignore[method-assign]
+    res = await _up(svc, slot="kk")
+    assert res["previous"] == "trashed" and d.trashed == ["prevfile12345"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "folder",
+        "other_slot",
+        "other_folder",
+        "foreign",
+        "other_member",
+        "trashed",
+        "bad_mime",
+        "unknown",
+    ],
+)
+async def test_a_previous_that_is_not_exactly_our_file_for_this_slot_is_kept(kind):
+    d = FakeDrive()
+    pf = d.seed_person_folder()
+    d.folders["other-folder"] = {
+        "id": "other-folder",
+        "name": "z",
+        "parents": [ROOT],
+        "appProperties": {},
     }
-    d.files["oldforeign12345"] = {"name": "o", "parent": "p", "mime": "x", "appProperties": {}}
-    d.files["oldother12345"] = {
-        "name": "o",
-        "parent": "p",
-        "mime": "x",
-        "appProperties": {hd.MEMBER_PROP: "someone-else"},
-    }
-    for prev, want, trashed in (
-        ("oldours12345", "trashed", ["oldours12345"]),
-        ("oldforeign12345", "kept", []),
-        ("oldother12345", "kept", []),
-    ):
-        d.trashed.clear()
-        svc = _svc(d)
-        svc._db_step = AsyncMock(return_value=prev)  # type: ignore[method-assign]
-        res = await _up(svc)
-        assert res["previous"] == want
-        assert d.trashed == trashed
+    if kind == "folder":  # a person-folder id pasted into the slot: it carries nz_hr_member too
+        d.files["prevfile12345"] = {
+            "name": "f",
+            "parent": "u-seed",
+            "mime": "application/vnd.google-apps.folder",
+            "appProperties": {hd.MEMBER_PROP: MEMBER, hd.SLOT_PROP: "kk"},
+        }
+    elif kind == "other_slot":
+        d.add_file("prevfile12345", slot="ktp")
+    elif kind == "other_folder":
+        d.add_file("prevfile12345", slot="kk", parent="other-folder")
+    elif kind == "foreign":
+        d.add_file("prevfile12345", member=None, slot=None)
+    elif kind == "other_member":
+        d.add_file("prevfile12345", member="someone-else", slot="kk")
+    elif kind == "trashed":
+        d.add_file("prevfile12345", slot="kk")
+        d.files["prevfile12345"]["trashed"] = True
+    elif kind == "bad_mime":
+        d.add_file("prevfile12345", slot="kk", mime="text/html")
+    svc = _svc(d)
+    svc._db_step = AsyncMock(return_value="prevfile12345")  # type: ignore[method-assign]
+    res = await _up(svc, slot="kk")
+    assert res["previous"] == "kept" and d.trashed == []
+    assert pf in d.folders and "prevfile12345" not in d.trashed
 
 
 @pytest.mark.asyncio
@@ -308,16 +374,17 @@ async def test_drive_upload_error_is_a_fixed_code_without_the_message():
 @pytest.mark.asyncio
 async def test_remove_trashes_ours_only():
     d = FakeDrive()
-    d.files["fileid1234567"] = {
-        "name": "o",
-        "parent": "p",
-        "mime": "x",
-        "appProperties": {hd.MEMBER_PROP: MEMBER},
-    }
+    d.seed_person_folder()
+    d.add_file("fileid1234567", slot="kk")
     svc = _svc(d)
     svc._db_step = AsyncMock(return_value="fileid1234567")  # type: ignore[method-assign]
     res = await svc.remove(actor_id="a", member_id=MEMBER, email="e", slot="kk")
     assert res == {"slot": "kk", "file_id": None, "previous": "trashed"}
+    d.add_file("fileid7654321", slot="ktp")  # same member, other slot
+    svc._db_step = AsyncMock(return_value="fileid7654321")  # type: ignore[method-assign]
+    assert (await svc.remove(actor_id="a", member_id=MEMBER, email="e", slot="kk"))[
+        "previous"
+    ] == "kept"
     svc._db_step = AsyncMock(return_value=None)  # type: ignore[method-assign]
     assert (await svc.remove(actor_id="a", member_id=MEMBER, email="e", slot="kk"))[
         "previous"
@@ -385,7 +452,7 @@ def test_value_sha_is_16_hex_of_sha256():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("previous", [NIKISH, "KTP Made Contoh.pdf", "short", "a" * 300])
 async def test_a_previous_value_drive_does_not_know_is_kept_without_a_trace(previous, caplog):
-    d = FakeDrive()  # knows no such file: get_app_properties -> None
+    d = FakeDrive()  # knows no such file: get_document_meta -> None
     svc = _svc(d)
     svc._db_step = AsyncMock(return_value=previous)  # type: ignore[method-assign]
     with caplog.at_level(logging.DEBUG):
@@ -402,7 +469,7 @@ async def test_a_drive_error_on_the_previous_is_kept_and_not_logged(caplog):
     async def boom(_fid):
         raise RuntimeError(f"drive says {prev} {NIKISH}")
 
-    d.get_app_properties = boom  # type: ignore[method-assign]
+    d.get_document_meta = boom  # type: ignore[method-assign]
     svc = _svc(d)
     svc._db_step = AsyncMock(return_value=prev)  # type: ignore[method-assign]
     with caplog.at_level(logging.DEBUG):
@@ -426,12 +493,8 @@ def _unknown(svc: HRDocumentService, previous: str | None, holds: bool | None) -
 @pytest.mark.asyncio
 async def test_commit_unknown_and_the_write_landed_is_a_success_and_trashes_ours():
     d = FakeDrive()
-    d.files["oldfile12345"] = {
-        "name": "o",
-        "parent": "p",
-        "mime": "x",
-        "appProperties": {hd.MEMBER_PROP: MEMBER},
-    }
+    d.seed_person_folder()
+    d.add_file("oldfile12345", slot="ktp")
     svc = _svc(d)
     _unknown(svc, "oldfile12345", True)
     res = await _up(svc)

@@ -203,3 +203,73 @@ async def test_a_failure_before_commit_is_a_plain_db_error(pool: asyncpg.Pool) -
     with pytest.raises(HRDocError) as exc:
         await _step(svc, "ktp", "f1")
     assert exc.value.code is HRDocCode.DB_ERROR
+
+
+@pytest.mark.asyncio
+async def test_reconcile_waits_for_an_in_flight_commit_then_reads_its_outcome(  # noqa: F811
+    pool: asyncpg.Pool,
+) -> None:
+    import asyncio
+
+    svc = await _prep(pool)
+    holder = await pool.acquire()
+    try:
+        tx = holder.transaction()
+        await tx.start()
+        # the original DB step, still before its COMMIT: it holds the member lock and the row
+        await holder.execute("SELECT pg_advisory_xact_lock(hashtext('hr_docs_folder:'||$1))", A_ID)
+        await holder.execute(
+            "UPDATE hr_employees SET profile = $1 WHERE team_member_id = $2",
+            {"docs": {"ktp": "landed123456"}},
+            A_ID,
+        )
+        task = asyncio.create_task(svc._slot_holds(A_ID, "ktp", "landed123456"))
+        await asyncio.sleep(0.4)
+        assert not task.done()  # the reconcile read is waiting on the same locks
+        await tx.commit()
+        assert await asyncio.wait_for(task, 5) is True
+    finally:
+        await pool.release(holder)
+
+
+@pytest.mark.asyncio
+async def test_a_unit_change_between_the_folder_step_and_the_commit_ends_in_the_new_unit(  # noqa: F811
+    pool: asyncpg.Pool,
+) -> None:
+    from backend.tests.unit.app.services.hr.test_hr_documents import ROOT, FakeDrive
+
+    svc = await _prep(pool)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE hr_employees SET profile = $1 WHERE team_member_id = 'tm-a'",
+            {"unit": "Tax"},
+        )
+    drive = FakeDrive()
+    svc.drive = drive
+    real_upload = drive.upload_file_to_folder
+
+    async def upload_then_unit_changes(*a: Any, **kw: Any) -> Any:
+        res = await real_upload(*a, **kw)
+        async with pool.acquire() as conn:  # the C11 PATCH lands after ensure_folder
+            await conn.execute(
+                "UPDATE hr_employees SET profile = profile || $1 WHERE team_member_id = 'tm-a'",
+                {"unit": "Management"},
+            )
+        return res
+
+    drive.upload_file_to_folder = upload_then_unit_changes  # type: ignore[method-assign]
+    out = await svc.upload(
+        actor_id="tm-owner",
+        member_id=A_ID,
+        email=A_MAIL,
+        slot="ktp",
+        data=b"%PDF-1.7",
+        mime="application/pdf",
+        ext="pdf",
+    )
+    assert out["file_id"] in drive.files
+    person = next(f for f in drive.folders.values() if f["appProperties"])
+    unit_folder = drive.folders[person["parents"][0]]
+    assert unit_folder["name"] == "MANAGEMENT" and unit_folder["parents"] == [ROOT]
+    assert drive.files[out["file_id"]]["parent"] == person["id"]  # the file moved with its folder
+    assert len(drive.moves) == 1

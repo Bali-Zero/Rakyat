@@ -488,6 +488,11 @@ def _init_sentry_blocking(dsn: str) -> None:
         # in garuda_portal_auth.py) would leak regardless of how complete
         # `_PII_KEY_SUBSTRINGS` is — key-based redaction cannot reach it.
         include_local_variables=False,
+        # The Starlette/FastAPI integrations read the request body to attach it to an event, and
+        # do it BEFORE the route's dependencies run: an upload by a caller who is then refused
+        # (403) would already have been buffered. "never" keeps the body out of every event (the
+        # PII boundary wants that anyway) and stops the read.
+        max_request_body_size="never",
     )
 
 

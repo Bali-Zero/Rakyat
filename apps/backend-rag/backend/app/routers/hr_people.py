@@ -10,6 +10,7 @@ document door, for the global admins alone.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from collections.abc import Callable, Coroutine
 from typing import Any
@@ -21,7 +22,7 @@ from fastapi.requests import Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.routing import APIRoute
 from starlette.datastructures import UploadFile
-from starlette.formparsers import MultiPartException, MultiPartParser
+from starlette.formparsers import MultiPartParser
 
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.routers.hr import _get_user_id
@@ -286,30 +287,58 @@ async def _read_capped_body(request: Request) -> bytes | None:
     return bytes(buf)
 
 
+_BOUNDARY = re.compile(r'boundary=(?:"([^"]+)"|([^;\s]+))', re.IGNORECASE)
+
+
+def _boundary_of(content_type: str) -> bytes | None:
+    """The multipart boundary, or None when absent or longer than RFC 2046's 70 characters."""
+    found = _BOUNDARY.search(content_type)
+    raw = (found.group(1) or found.group(2)) if found else ""
+    if not raw or len(raw) > 70:
+        return None
+    try:
+        return raw.encode("ascii")
+    except UnicodeEncodeError:
+        return None
+
+
 async def _single_file(request: Request, body: bytes) -> bytes | Response:
-    """The bytes of the ONE part named `file` in a buffered multipart body, else a 422."""
+    """The bytes of the ONE part named `file` in a buffered multipart body, else a fixed 422.
+
+    Refused: no multipart content type, a boundary over 70 characters, a body that does not end in
+    its closing boundary, any field at all, more or fewer than one file part, a file part under
+    another name, and anything the parser itself rejects (every exception is caught)."""
     bad = _field_422("file", "invalid_upload", "Send exactly one file in the field 'file'")
-    if "multipart/form-data" not in request.headers.get("content-type", "").lower():
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" not in content_type.lower():
+        return bad
+    boundary = _boundary_of(content_type)
+    if boundary is None or not body.rstrip(b"\r\n \t").endswith(b"--" + boundary + b"--"):
         return bad
 
     async def stream() -> Any:
         yield body
         yield b""
 
+    form = None
     try:
         form = await MultiPartParser(
-            request.headers, stream(), max_files=1, max_fields=3, max_part_size=_BODY_CAP
+            request.headers, stream(), max_files=1, max_fields=0, max_part_size=_BODY_CAP
         ).parse()
-    except MultiPartException:
-        return bad
-    try:
         items = list(form.multi_items())
-        files = [(k, v) for k, v in items if isinstance(v, UploadFile)]
-        if len(files) != 1 or files[0][0] != "file":
+        if len(items) != 1 or items[0][0] != "file" or not isinstance(items[0][1], UploadFile):
             return bad
-        return await files[0][1].read()
+        return await items[0][1].read()
+    except (
+        Exception
+    ):  # MultiPartException, but also whatever a malformed body makes the parser raise
+        return bad
     finally:
-        await form.close()
+        if form is not None:
+            try:
+                await form.close()
+            except Exception:
+                pass
 
 
 async def upload_person_document(
