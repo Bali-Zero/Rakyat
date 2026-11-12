@@ -30,8 +30,9 @@ export function ClientPicker({
   useEffect(() => {
     // A list exists only for a request that succeeded for the text now in the box:
     // drop whatever the previous text left, and ignore any response that outlives it.
+    // A closed dropdown searches nothing and keeps nothing: reopening starts a new request.
     setResults([]);
-    if (!search.trim()) {
+    if (!search.trim() || !showDropdown) {
       setIsSearching(false);
       return;
     }
@@ -57,7 +58,7 @@ export function ClientPicker({
       cancelled = true;
       clearTimeout(debounce);
     };
-  }, [search]);
+  }, [search, showDropdown]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {

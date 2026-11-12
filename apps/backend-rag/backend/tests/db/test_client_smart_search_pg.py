@@ -381,7 +381,7 @@ async def test_keys_follow_updates_and_do_not_leak_into_the_response(pool: async
     assert await search(pool, "before") == []
     assert await search(pool, "apres") == ["Après Move"]
     assert await search(pool, "0813-9999") == ["Après Move"]
-    assert {"name_key", "search_key", "phone_key", "ident_key"}.isdisjoint(
+    assert {"name_words", "name_key", "search_key", "phone_key", "ident_key"}.isdisjoint(
         ClientResponse.model_fields
     )
 
@@ -395,10 +395,10 @@ async def test_migration_is_idempotent_guarded_and_immutable(pool: asyncpg.Pool)
     ) in ("i", b"i")
     cols = await pool.fetchval(
         "SELECT count(*) FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'clients'"
-        " AND column_name IN ('name_key', 'search_key', 'phone_key', 'ident_key')",
+        " AND column_name IN ('name_words', 'name_key', 'search_key', 'phone_key', 'ident_key')",
         schema,
     )
-    assert cols == 4
+    assert cols == 5
     company_cols = await pool.fetchval(
         "SELECT count(*) FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'companies'"
         " AND column_name IN ('name_key', 'ident_key')",
@@ -441,7 +441,7 @@ async def test_without_migration_the_legacy_substring_search_still_answers(
 ) -> None:
     await book(pool)
     await pool.execute(
-        "ALTER TABLE clients DROP COLUMN name_key, DROP COLUMN search_key, DROP COLUMN phone_key, DROP COLUMN ident_key"
+        "ALTER TABLE clients DROP COLUMN name_words, DROP COLUMN name_key, DROP COLUMN search_key, DROP COLUMN phone_key, DROP COLUMN ident_key"
     )
     assert await search(pool, "Mario") == ["Mario Rossi"]
     assert await search(pool, "9120000000002") == ["Mario Rossi"]
@@ -460,3 +460,35 @@ async def test_ranking_exact_means_the_same_words_in_any_order(pool: asyncpg.Poo
     await add(pool, "Rossi Mario Zed")
     await add(pool, "Mario Rossi")
     assert await search(pool, "rossi mario") == ["Mario Rossi", "Rossi Mario Zed", "Mario Rossi Jr"]
+
+
+@pytest.mark.asyncio
+async def test_exact_rank_needs_the_same_words_not_the_same_letters(pool: asyncpg.Pool) -> None:
+    exact = await add(pool, "Ann Anna")
+    other = await add(pool, "Annabel")
+    await pool.execute(
+        "UPDATE clients SET updated_at = now() + interval '1 day' WHERE id = $1", other
+    )
+    assert exact and other
+    assert await search(pool, "ann anna") == ["Ann Anna", "Annabel"]
+
+
+@pytest.mark.asyncio
+async def test_prefix_rank_means_the_first_word_not_a_run_across_words(pool: asyncpg.Pool) -> None:
+    await add(pool, "Mariorossi Zed")
+    other = await add(pool, "Mario Rossi")
+    await pool.execute(
+        "UPDATE clients SET updated_at = now() + interval '1 day' WHERE id = $1", other
+    )
+    # "marior" starts the first word of the first client only; the second matches across the space.
+    assert await search(pool, "marior") == ["Mariorossi Zed", "Mario Rossi"]
+
+
+@pytest.mark.asyncio
+async def test_exact_rank_needs_every_typed_word_as_a_whole_word(pool: asyncpg.Pool) -> None:
+    await add(pool, "Mar Mario")
+    other = await add(pool, "Mario")
+    await pool.execute(
+        "UPDATE clients SET updated_at = now() + interval '1 day' WHERE id = $1", other
+    )
+    assert await search(pool, "mar mario") == ["Mar Mario", "Mario"]

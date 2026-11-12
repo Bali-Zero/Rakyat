@@ -714,6 +714,71 @@ describe("NewPracticePage", () => {
       expect(screen.getByText("Synthetic Beta")).toBeInTheDocument();
     });
 
+    it("clearing the text stops the spinner at once, not after the debounce", async () => {
+      const user = userEvent.setup();
+      const input = await renderSearch();
+      mockGetClients.mockImplementationOnce(() => new Promise(() => {}));
+      await user.type(input, "ma");
+      await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(1));
+      expect(document.querySelector(".animate-spin")).not.toBeNull();
+      await user.clear(input);
+      expect(document.querySelector(".animate-spin")).toBeNull();
+    });
+
+    it("revert to an earlier text ignores the original request and shows the current one", async () => {
+      const user = userEvent.setup();
+      let resolveFirst: (v: unknown) => void = () => {};
+      let resolveSecond: (v: unknown) => void = () => {};
+      const input = await renderSearch();
+      mockGetClients.mockImplementationOnce(
+        () => new Promise((resolve) => (resolveFirst = resolve)),
+      );
+      mockGetClients.mockImplementationOnce(
+        () => new Promise((resolve) => (resolveSecond = resolve)),
+      );
+      await user.type(input, "ma");
+      await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(1));
+      await user.type(input, "b");
+      await user.type(input, "{Backspace}");
+      await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(2));
+      resolveFirst([found(1, "Synthetic Original")]);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(screen.queryByText("Synthetic Original")).toBeNull();
+      resolveSecond([found(2, "Synthetic Current")]);
+      expect(await screen.findByText("Synthetic Current")).toBeInTheDocument();
+    });
+
+    it("closing the list (outside click or Escape) mid-request drops the response and a late failure; reopening searches again", async () => {
+      const user = userEvent.setup();
+      let resolveFirst: (v: unknown) => void = () => {};
+      let rejectSecond: (e: Error) => void = () => {};
+      const input = await renderSearch();
+      mockGetClients.mockImplementationOnce(
+        () => new Promise((resolve) => (resolveFirst = resolve)),
+      );
+      mockGetClients.mockImplementationOnce(
+        () => new Promise((_, reject) => (rejectSecond = reject)),
+      );
+      mockGetClients.mockResolvedValueOnce([found(3, "Synthetic Reopened")]);
+      await user.type(input, "ma");
+      await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(1));
+      await user.click(document.body);
+      resolveFirst([found(1, "Synthetic Closed")]);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(screen.queryByText("Synthetic Closed")).toBeNull();
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(mockGetClients).toHaveBeenCalledTimes(1);
+      await user.click(input);
+      await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(2));
+      await user.keyboard("{Escape}");
+      rejectSecond(new Error("late failure"));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(casesMetrics.trackError).not.toHaveBeenCalled();
+      await user.click(document.body);
+      await user.click(input);
+      expect(await screen.findByText("Synthetic Reopened")).toBeInTheDocument();
+    });
+
     it("a request that fails after a newer one started is not reported", async () => {
       const user = userEvent.setup();
       let rejectOld: (e: Error) => void = () => {};

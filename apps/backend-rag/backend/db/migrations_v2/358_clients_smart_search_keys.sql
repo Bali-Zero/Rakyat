@@ -10,7 +10,8 @@
 -- 308 (digits, ONE leading 62 or 0 stripped), without the six-digit floor: search accepts
 -- fragments, dedup does not.
 -- GENERATED STORED key columns carry the folded text, so they cannot drift from the columns
--- they read and need no trigger: clients.name_key (compact folded name), search_key (name and
+-- they read and need no trigger: clients.name_words (folded name, words separated by one
+-- space: used for ranking), name_key (compact folded name), search_key (name and
 -- e-mail), phone_key, ident_key, and companies.name_key / ident_key. Folding on the fly was
 -- measured at ~100 ms per query on 12.5k clients + 1.8k companies (translate over a ~700
 -- character map costs ~50 us per value); stored keys make the search a plain LIKE.
@@ -56,6 +57,9 @@ BEGIN
     END IF;
 
     ALTER TABLE public.clients
+        ADD COLUMN IF NOT EXISTS name_words text GENERATED ALWAYS AS (
+            public.bz_fold(full_name)
+        ) STORED,
         ADD COLUMN IF NOT EXISTS name_key text GENERATED ALWAYS AS (
             replace(public.bz_fold(full_name), ' ', '')
         ) STORED,
@@ -99,5 +103,6 @@ ALTER TABLE IF EXISTS public.clients DROP COLUMN IF EXISTS ident_key;
 ALTER TABLE IF EXISTS public.clients DROP COLUMN IF EXISTS phone_key;
 ALTER TABLE IF EXISTS public.clients DROP COLUMN IF EXISTS search_key;
 ALTER TABLE IF EXISTS public.clients DROP COLUMN IF EXISTS name_key;
+ALTER TABLE IF EXISTS public.clients DROP COLUMN IF EXISTS name_words;
 DROP FUNCTION IF EXISTS public.bz_phone_core(text);
 DROP FUNCTION IF EXISTS public.bz_fold(text);

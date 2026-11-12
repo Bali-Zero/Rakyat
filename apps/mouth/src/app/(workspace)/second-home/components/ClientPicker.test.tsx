@@ -142,4 +142,72 @@ describe("ClientPicker search", () => {
     await settle(50);
     expect(mockLogError).not.toHaveBeenCalled();
   });
+
+  it("revert to an earlier text ignores the original request and shows the current one", async () => {
+    let resolveFirst: (v: Client[]) => void = () => {};
+    let resolveSecond: (v: Client[]) => void = () => {};
+    mockGetClients.mockImplementationOnce(
+      () => new Promise<Client[]>((resolve) => (resolveFirst = resolve)),
+    );
+    mockGetClients.mockImplementationOnce(
+      () => new Promise<Client[]>((resolve) => (resolveSecond = resolve)),
+    );
+    render(<Harness />);
+    const user = userEvent.setup();
+    const input = screen.getByLabelText("Search client");
+    await user.type(input, "ma");
+    await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(1));
+    await user.type(input, "b");
+    await user.type(input, "{Backspace}");
+    await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      resolveFirst([client(1, "Synthetic Original")]);
+    });
+    expect(screen.queryByText("Synthetic Original")).toBeNull();
+    await act(async () => {
+      resolveSecond([client(2, "Synthetic Current")]);
+    });
+    expect(await screen.findByText("Synthetic Current")).toBeInTheDocument();
+  });
+
+  it("closing the list mid-request drops the response and a late failure; reopening searches again", async () => {
+    let resolveFirst: (v: Client[]) => void = () => {};
+    let rejectSecond: (e: Error) => void = () => {};
+    mockGetClients.mockImplementationOnce(
+      () => new Promise<Client[]>((resolve) => (resolveFirst = resolve)),
+    );
+    mockGetClients.mockResolvedValueOnce([client(3, "Synthetic Reopened")]);
+    render(<Harness />);
+    const user = userEvent.setup();
+    const input = screen.getByLabelText("Search client");
+    await user.type(input, "ma");
+    await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(1));
+    await user.click(document.body);
+    await act(async () => {
+      resolveFirst([client(1, "Synthetic Closed")]);
+    });
+    expect(screen.queryByText("Synthetic Closed")).toBeNull();
+    expect(document.querySelector(".animate-spin")).toBeNull();
+    await user.click(input);
+    expect(await screen.findByText("Synthetic Reopened")).toBeInTheDocument();
+    expect(mockGetClients).toHaveBeenCalledTimes(2);
+    expect(rejectSecond).toBeDefined();
+  });
+
+  it("a failure that arrives after the list was closed is not reported", async () => {
+    let rejectFirst: (e: Error) => void = () => {};
+    mockGetClients.mockImplementationOnce(
+      () => new Promise<Client[]>((_, reject) => (rejectFirst = reject)),
+    );
+    render(<Harness />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Search client"), "ma");
+    await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(1));
+    await user.click(document.body);
+    await act(async () => {
+      rejectFirst(new Error("late"));
+    });
+    await settle(50);
+    expect(mockLogError).not.toHaveBeenCalled();
+  });
 });

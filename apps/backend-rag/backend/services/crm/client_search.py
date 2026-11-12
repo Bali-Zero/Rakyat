@@ -74,8 +74,8 @@ async def smart_search_available(conn: asyncpg.Connection) -> bool:
                 "SELECT count(*) FROM information_schema.columns"
                 " WHERE table_schema = ANY (current_schemas(false))"
                 " AND ((table_name = 'clients' AND column_name IN"
-                " ('name_key', 'search_key', 'phone_key', 'ident_key'))"
-                " OR (table_name = 'companies' AND column_name IN ('name_key', 'ident_key')))) = 6"
+                " ('name_words', 'name_key', 'search_key', 'phone_key', 'ident_key'))"
+                " OR (table_name = 'companies' AND column_name IN ('name_key', 'ident_key')))) = 7"
             )
         )
     except asyncpg.PostgresError:
@@ -110,19 +110,19 @@ async def build_client_search(
         index += 1
 
     # Ranking, evaluated only for matched rows and on stored keys (no folding per row):
-    # 0 exact (every token inside the name and the name is exactly as long as the tokens
-    # together, so the name is those words in some order), 1 prefix (the name starts with the
-    # first token), 2 every token inside the name, 3 matched through e-mail, phone, identifiers
-    # or a linked company; then most recently updated.
-    first_param, total_param = f"${index}::text", f"${index + 1}::int"
-    params.extend([tokens[0], sum(len(t) for t in tokens)])
+    # 0 exact (the name's words are exactly the typed words, in any order), 1 prefix (the first
+    # word of the name starts with the first token), 2 every token inside the name, 3 matched
+    # through e-mail, phone, identifiers or a linked company; then most recently updated.
+    first_param, words_param = f"${index}::text", f"${index + 1}::text[]"
+    params.extend([tokens[0], tokens])
     index += 2
     name_all = " AND ".join(
         f"{_NAME_COMPACT} LIKE '%' || ${start_index + i}::text || '%'" for i in range(len(tokens))
     )
     order_by = (
-        f"CASE WHEN ({name_all}) AND length({_NAME_COMPACT}) = {total_param} THEN 0"
-        f" WHEN {_NAME_COMPACT} LIKE {first_param} || '%' THEN 1"
+        f"CASE WHEN string_to_array(c.name_words, ' ') @> {words_param}"
+        f" AND string_to_array(c.name_words, ' ') <@ {words_param} THEN 0"
+        f" WHEN c.name_words LIKE {first_param} || '%' THEN 1"
         f" WHEN ({name_all}) THEN 2"
         " ELSE 3 END, c.updated_at DESC NULLS LAST, c.id"
     )

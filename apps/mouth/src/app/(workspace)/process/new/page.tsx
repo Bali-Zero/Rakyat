@@ -281,13 +281,14 @@ export default function NewPracticePage() {
   useEffect(() => {
     // A list exists only for a request that succeeded for the text now in the box:
     // drop what the previous text left and ignore any response that outlives it.
+    // A closed dropdown searches nothing and keeps nothing: reopening starts a new request.
     setClients([]);
+    if (!clientSearch.trim() || !showClientDropdown) {
+      setIsSearchingClients(false);
+      return;
+    }
     let cancelled = false;
     const searchClients = async () => {
-      if (!clientSearch.trim()) {
-        setIsSearchingClients(false);
-        return;
-      }
       setIsSearchingClients(true);
       const apiStart = performance.now();
       try {
@@ -342,7 +343,7 @@ export default function NewPracticePage() {
       cancelled = true;
       clearTimeout(debounce);
     };
-  }, [clientSearch]);
+  }, [clientSearch, showClientDropdown]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
