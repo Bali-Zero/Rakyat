@@ -154,11 +154,6 @@ export function TeamReelMonthlyHub() {
                 <button
                   type="button"
                   onClick={toggleAudio}
-                  aria-label={
-                    isMuted
-                      ? "Enable soundtrack audio"
-                      : "Mute soundtrack audio"
-                  }
                   className="absolute bottom-3 right-3 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.08em] backdrop-blur-md transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2"
                   style={{
                     background: "rgba(9, 13, 22, 0.82)",
@@ -304,7 +299,7 @@ export function TeamReelMonthlyHub() {
                 rel="noopener noreferrer"
                 className="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-4 py-2.5 text-[12px] font-bold transition-transform hover:scale-[1.02]"
                 style={{
-                  background: "rgb(59, 130, 246)",
+                  background: "rgb(29, 78, 216)",
                   color: "rgb(255, 255, 255)",
                   boxShadow: "0 10px 24px -8px rgba(59, 130, 246, 0.65)",
                 }}
@@ -477,7 +472,7 @@ export function TeamReelMonthlyHub() {
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-[12px] font-extrabold transition-transform hover:scale-[1.02]"
                 style={{
-                  background: "rgb(59, 130, 246)",
+                  background: "rgb(29, 78, 216)",
                   color: "rgb(255, 255, 255)",
                 }}
               >

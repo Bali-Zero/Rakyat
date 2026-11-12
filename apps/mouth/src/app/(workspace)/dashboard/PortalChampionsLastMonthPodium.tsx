@@ -3,7 +3,6 @@
 import React from "react";
 import { Trophy } from "lucide-react";
 import type { PortalChallengeResponse } from "@/lib/api/dashboard/dashboard.api";
-import { StatePill } from "@/components/workspace/r19";
 import { ChampionArena } from "./ChampionArena";
 import { usePortalChallenge } from "./_lib/usePortalChallenge";
 
@@ -309,7 +308,11 @@ export function PortalChampionsLastMonthPodium({
       {/* Original Blue-Ink Podium (`ChampionArena`) ONLY — all secondary tables stripped */}
       <ChampionArena
         data={resolvedData}
-        countdown={<StatePill tone="ok" label="Selesai" />}
+        countdown={
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--bz-kita-ink-panel-copper)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--bz-kita-ink-panel-copper)]">
+            Selesai
+          </span>
+        }
       />
     </section>
   );
