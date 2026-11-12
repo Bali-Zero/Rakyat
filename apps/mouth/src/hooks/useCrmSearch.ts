@@ -58,13 +58,9 @@ export function useCrmSearch(options: UseCrmSearchOptions = {}) {
         limit,
       });
 
-      // Generate suggestions from client names
-      const suggestions = clients
-        .map((c: Client) => c.full_name)
-        .filter((name: string) =>
-          name.toLowerCase().includes(debouncedQuery.toLowerCase()),
-        )
-        .slice(0, 5);
+      // Suggestions are the names of what the backend matched (it folds case, accents,
+      // punctuation and word order itself, so no second client-side filter).
+      const suggestions = clients.map((c: Client) => c.full_name).slice(0, 5);
 
       return {
         clients,
@@ -194,20 +190,18 @@ export function useGlobalSearch(options: { limit?: number } = {}) {
       });
 
       // Map to SearchResult format
-      return clients.map(
-        (client: Client): SearchResult => ({
-          id: client.id,
-          type: "client",
-          title: client.full_name,
-          subtitle: client.email || client.phone || undefined,
-          status: client.status,
-          url: `/clients/${client.id}`,
-          metadata: {
-            nationality: client.nationality,
-            assignedTo: client.assigned_to,
-          },
-        }),
-      );
+      return clients.map((client: Client): SearchResult => ({
+        id: client.id,
+        type: "client",
+        title: client.full_name,
+        subtitle: client.email || client.phone || undefined,
+        status: client.status,
+        url: `/clients/${client.id}`,
+        metadata: {
+          nationality: client.nationality,
+          assignedTo: client.assigned_to,
+        },
+      }));
     },
     enabled: debouncedQuery.length >= 2,
     staleTime: 30 * 1000,

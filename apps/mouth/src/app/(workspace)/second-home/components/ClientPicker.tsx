@@ -28,27 +28,37 @@ export function ClientPicker({
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!search.trim()) {
-      setResults([]);
+    // A list exists only for a request that succeeded for the text now in the box:
+    // drop whatever the previous text left, and ignore any response that outlives it.
+    // A closed dropdown searches nothing and keeps nothing: reopening starts a new request.
+    setResults([]);
+    if (!search.trim() || !showDropdown) {
+      setIsSearching(false);
       return;
     }
     setIsSearching(true);
+    let cancelled = false;
     const debounce = setTimeout(async () => {
       try {
         const found = await api.crm.getClients({ search, limit: 20 });
-        setResults(found);
+        if (!cancelled) setResults(found);
       } catch (error) {
-        logger.error(
-          "Failed to search clients",
-          { component: "SecondHomeClientPicker", action: "search" },
-          toError(error),
-        );
+        if (!cancelled) {
+          logger.error(
+            "Failed to search clients",
+            { component: "SecondHomeClientPicker", action: "search" },
+            toError(error),
+          );
+        }
       } finally {
-        setIsSearching(false);
+        if (!cancelled) setIsSearching(false);
       }
     }, 300);
-    return () => clearTimeout(debounce);
-  }, [search]);
+    return () => {
+      cancelled = true;
+      clearTimeout(debounce);
+    };
+  }, [search, showDropdown]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
