@@ -164,13 +164,20 @@ def test_predicate_lists_employees_not_system_test_or_external_accounts():
         ("client-with-record", "client@balizero.com", "client", True, True),
         ("inactive", "f.person@balizero.com", "consultant", False, True),
         ("no-role", "g.person@balizero.com", None, True, False),
+        ("no-role-with-record", "h.person@balizero.com", None, True, True),
+        # the non-person roles are excluded first, HR row or not, whatever their spelling
+        ("monitor-with-record", "health2@balizero.com", "monitoring", True, True),
+        ("monitor-upper", "health3@balizero.com", "Monitoring", True, False),
+        ("partner", "partner@balizero.com", "partner", True, False),
+        ("partner-with-record", "partner2@balizero.com", "Partner", True, True),
+        ("client-padded", "client2@balizero.com", " client ", True, True),
     ]
     assert _visible(rows) == {
         "consultant",
         "consultant-upper",
         "member-with-record",
         "external-with-record",
-        "no-role",
+        "no-role-with-record",
     }
 
 

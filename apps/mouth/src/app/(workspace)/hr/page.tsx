@@ -601,9 +601,11 @@ function PeopleConsole() {
                 type="button"
                 onClick={() => choose(p.team_member_id)}
                 aria-pressed={p.team_member_id === selectedId}
-                aria-label={nameOf(p)}
                 className="flex w-[68px] shrink-0 flex-col items-center gap-1.5"
               >
+                {/* The name is the button's text, never an attribute: Sentry's click
+                    breadcrumbs record aria-label and title, not text content. */}
+                <span className="sr-only">{nameOf(p)}</span>
                 <span
                   className="rounded-full p-0.5 transition-all"
                   style={{
@@ -616,6 +618,7 @@ function PeopleConsole() {
                   <Avatar person={p} size={52} />
                 </span>
                 <span
+                  aria-hidden
                   className={`w-full truncate text-center text-[11px] font-medium ${p.team_member_id === selectedId ? INK : SOFT}`}
                 >
                   {nameOf(p).split(/\s+/)[0]}

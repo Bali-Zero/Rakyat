@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -265,6 +266,38 @@ describe("People page (/hr)", () => {
     expect(screen.getByText("Visible only to HR admins.")).toBeInTheDocument();
   });
 
+  it("never puts a person's name or personal value in an attribute Sentry's click breadcrumbs record", async () => {
+    await open("A");
+    await waitFor(() =>
+      expect(call(`/api/hr/people/${ID_A}/overview`)).toHaveLength(1),
+    );
+    await act(async () =>
+      call(`/api/hr/people/${ID_A}/overview`)[0].resolve(
+        person("A", ID_A, "Made Contoh"),
+      ),
+    );
+    // htmlTreeAsString (Sentry 11) serialises id, class and these attributes, never text.
+    const recorded = ["aria-label", "title", "name", "alt", "type", "id"];
+    const values = Array.from(document.body.querySelectorAll("*")).flatMap(
+      (el) => recorded.map((a) => el.getAttribute(a) ?? ""),
+    );
+    for (const secret of [
+      "Made",
+      "Contoh",
+      "Wayan",
+      "Dua",
+      "Ketut",
+      "Tanpa",
+      "Contoh Bank",
+    ]) {
+      expect(values.filter((v) => v.includes(secret))).toEqual([]);
+    }
+    // the mobile roster buttons keep an accessible name from their text
+    expect(
+      screen.getAllByRole("button", { name: /Wayan Dua/ }).length,
+    ).toBeGreaterThan(0);
+  });
+
   it("makes every roster badge visible to a screen reader and a tooltip", async () => {
     await open("A");
     expect(screen.getByLabelText("3 papers missing")).toHaveAttribute(
@@ -507,8 +540,10 @@ describe("People page (/hr)", () => {
     fireEvent.change(screen.getByLabelText("Search people"), {
       target: { value: "wayan" },
     });
-    expect(screen.queryByText("Ketut Tanpa")).toBeNull();
-    expect(screen.getAllByText("Wayan Dua").length).toBeGreaterThan(0);
+    // the search box lives in the desktop rail and filters it
+    const rail = within(document.querySelector("aside") as HTMLElement);
+    expect(rail.queryByText("Ketut Tanpa")).toBeNull();
+    expect(rail.getAllByText("Wayan Dua").length).toBeGreaterThan(0);
   });
 
   it("redirects a plain member with a record to /hr/me and fetches nothing", async () => {

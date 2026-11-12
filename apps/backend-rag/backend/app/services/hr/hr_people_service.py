@@ -16,17 +16,19 @@ from backend.app.services.hr.hr_service import business_today
 DOC_SLOTS = ("ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk")  # + the contract file = 6 papers
 
 # Who counts as a person in People (owner review 2026-11-12). Clients share `team_members`, and
-# so do system, test and external accounts. A member WITH an hr_employees row is a person (any
-# role but client); without one only a company address with a staff-like role is. Used by
-# both SQLs below, over the aliases `tm` (team_members) and `e` (hr_employees, LEFT JOINed).
+# so do system, test, partner and external accounts. The non-person roles are excluded FIRST,
+# whatever else the row has (an HR row attached to a system or partner account by mistake does
+# not make it a person). Then: a member WITH an hr_employees row is a person; without one only
+# a company address with a named staff role is (`member` is the role of test/bot logins). Used
+# by both SQLs below, over the aliases `tm` (team_members) and `e` (hr_employees, LEFT JOINed).
 VISIBLE_PERSON_PREDICATE = """
       tm.active = true
-      AND COALESCE(tm.role, '') <> 'client'
+      AND lower(trim(COALESCE(tm.role, ''))) NOT IN ('client', 'monitoring', 'partner')
       AND (
         e.id IS NOT NULL
         OR (
           lower(tm.email) LIKE '%@balizero.com'
-          AND COALESCE(tm.role, '') NOT IN ('client', 'member', 'monitoring')
+          AND lower(trim(COALESCE(tm.role, ''))) NOT IN ('', 'member')
         )
       )
 """
