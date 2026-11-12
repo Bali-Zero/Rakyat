@@ -126,11 +126,13 @@ class CompletedProcessService:
             return {"success": True, "team_notified": team_notified}
 
         except Exception as error:
+            # No exc_info: the formatter would re-emit the raw exception message (a provider or
+            # driver error can echo an address). The scrubbed text and the type are enough.
             logger.error(
-                "Process completion automation failed for practice %s: %s",
+                "Process completion automation failed for practice %s (%s): %s",
                 practice_id,
+                type(error).__name__,
                 _bounded_scrub(str(error), 400),
-                exc_info=True,
             )
             return {"success": False, "error": _bounded_scrub(str(error), 400)}
 

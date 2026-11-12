@@ -174,7 +174,11 @@ async def test_outer_failure_log_does_not_leak_the_address(caplog):
     with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
         result = await svc.trigger_on_completed(practice_id=99, triggered_by="staff@balizero.com")
     assert result["success"] is False
-    joined = " ".join(r.getMessage() for r in caplog.records)
-    assert _ADDR not in joined
-    assert "insert failed" in joined
+    # caplog.text is the FULLY formatted output, exception info and traceback included: the
+    # production formatter prints those too, and getMessage() alone would miss them.
+    assert _ADDR not in caplog.text
+    assert "completed.process.probe" not in caplog.text
+    assert "insert failed" in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert "Traceback" not in caplog.text
     assert _ADDR not in result["error"]
