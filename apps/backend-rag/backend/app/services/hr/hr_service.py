@@ -64,6 +64,19 @@ class OffPayrollError(Exception):
 ON_PAYROLL_SQL = "((e.profile -> 'on_payroll') IS DISTINCT FROM 'false'::jsonb)"
 
 
+def payroll_set_sql() -> str:
+    """SQL predicate over `hr_employees e JOIN team_members tm`: who is on the monthly payroll.
+
+    Exactly: an active card, a login that is active and not a client/monitoring/partner (the
+    People rule, `VISIBLE_PERSON_PREDICATE`, whose card clause is already true on this join),
+    and a card that does not say `on_payroll = false`. Imported at call time: hr_people_service
+    imports this module.
+    """
+    from backend.app.services.hr.hr_people_service import VISIBLE_PERSON_PREDICATE
+
+    return f"(e.is_active = TRUE AND {ON_PAYROLL_SQL} AND ({VISIBLE_PERSON_PREDICATE}))"
+
+
 def payroll_month_lock_key(month: int, year: int) -> str:
     """The advisory-lock key of a payroll month (also what the tests lock on)."""
     return f"hr_payroll_month:{year:04d}-{month:02d}"
@@ -182,7 +195,7 @@ class HRService:
         """List all HR employees with team member info."""
         async with self.db_pool.acquire() as conn:
             rows = await conn.fetch(f"""
-                SELECT e.*, {ON_PAYROLL_SQL} AS on_payroll,
+                SELECT e.*, {payroll_set_sql()} AS on_payroll,
                        tm.full_name, tm.email, tm.role, tm.department
                 FROM hr_employees e
                 JOIN team_members tm ON tm.id = e.team_member_id
@@ -698,8 +711,9 @@ class HRService:
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
                 emp = await conn.fetchrow(
-                    f"SELECT e.id, {ON_PAYROLL_SQL} AS on_payroll "
-                    "FROM hr_employees e WHERE e.id = $1 AND e.is_active = TRUE",
+                    f"SELECT e.id, {payroll_set_sql()} AS on_payroll "
+                    "FROM hr_employees e JOIN team_members tm ON tm.id = e.team_member_id "
+                    "WHERE e.id = $1 AND e.is_active = TRUE",
                     employee_id,
                 )
                 if not emp:
@@ -830,7 +844,8 @@ class HRService:
         Calculate payroll for a given month.
         Creates period + payslips + deductions for all active employees that are on payroll
         (card `profile.on_payroll` is not false). Payslips of this period that belong to
-        anyone outside that set are deleted in the same transaction, unless the period was
+        anyone outside that set (inactive login, client/monitoring/partner role, inactive card or
+        off-payroll card) are deleted in the same transaction, unless the period was
         already approved or paid when this call found it.
         """
         period_start = date(year, month, 1)
@@ -870,7 +885,7 @@ class HRService:
                     SELECT e.*, tm.full_name, tm.email
                     FROM hr_employees e
                     JOIN team_members tm ON tm.id = e.team_member_id
-                    WHERE e.is_active = TRUE AND {ON_PAYROLL_SQL}
+                    WHERE {payroll_set_sql()}
                 """)
 
                 payslips = []
@@ -1129,9 +1144,10 @@ class HRService:
                 drift = await conn.fetchval(
                     f"""
                     SELECT e.id FROM hr_employees e
+                    JOIN team_members tm ON tm.id = e.team_member_id
                     LEFT JOIN hr_payslips ps
                            ON ps.employee_id = e.id AND ps.payroll_period_id = $1
-                    WHERE e.is_active = TRUE AND {ON_PAYROLL_SQL}
+                    WHERE {payroll_set_sql()}
                       AND COALESCE(ps.bonus_total_idr, 0) <> COALESCE((
                             SELECT SUM(b.amount_idr) FROM hr_bonus_ledger b
                             WHERE b.employee_id = e.id

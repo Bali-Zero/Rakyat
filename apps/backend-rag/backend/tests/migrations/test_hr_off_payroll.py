@@ -235,3 +235,31 @@ async def test_my_overview_hides_payroll_for_the_person_but_not_for_hr(env: Env)
     on_own = await compose_member_overview(env.svc, "tm-on", self_view=True)
     assert on_own is not None and on_own.card.on_payroll is True
     assert on_own.card.base_salary_idr == 5000000
+
+
+@pytest.mark.asyncio
+async def test_an_inactive_login_with_an_active_card_gets_no_slip_and_loses_a_stale_one(
+    env: Env,
+) -> None:
+    await env.svc.calculate_payroll(MONTH, YEAR, env.admin)  # on-payroll person: slip
+    async with env.pool.acquire() as conn:
+        await conn.execute("UPDATE team_members SET active = FALSE WHERE id = 'tm-on'")
+        assert await conn.fetchval("SELECT is_active FROM hr_employees WHERE id=$1", env.on_id)
+    result = await env.svc.calculate_payroll(MONTH, YEAR, env.admin)
+    assert result["employee_count"] == 0
+    assert await _slips(env.pool) == set()  # stale slip deleted, none created
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["client", "monitoring", "partner"])
+async def test_a_non_person_role_is_outside_the_payroll_set(env: Env, role: str) -> None:
+    async with env.pool.acquire() as conn:
+        await conn.execute("UPDATE team_members SET role = $1 WHERE id = 'tm-on'", role)
+    assert (await env.svc.calculate_payroll(MONTH, YEAR, env.admin))["employee_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_an_active_login_with_an_active_card_keeps_its_slip(env: Env) -> None:
+    await env.svc.calculate_payroll(MONTH, YEAR, env.admin)
+    await env.svc.calculate_payroll(MONTH, YEAR, env.admin)  # recalculate: still there, once
+    assert await _slips(env.pool) == {env.on_id}

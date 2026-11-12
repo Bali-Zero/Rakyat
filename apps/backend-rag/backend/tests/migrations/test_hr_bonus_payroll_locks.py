@@ -70,15 +70,18 @@ async def env() -> AsyncIterator[Env]:
         await admin.execute(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; CREATE SCHEMA {SCHEMA};")
         await admin.execute(
             f"SET search_path TO {SCHEMA};"
-            "CREATE TABLE team_members (id VARCHAR(36) PRIMARY KEY, full_name TEXT, email TEXT);"
+            "CREATE TABLE team_members (id VARCHAR(36) PRIMARY KEY, full_name TEXT, email TEXT,"
+            " role TEXT, active BOOLEAN NOT NULL DEFAULT TRUE);"
             "CREATE TABLE practices (id SERIAL PRIMARY KEY, status TEXT);"
         )
         await admin.execute(UPGRADE_SQL)
         await admin.execute(split_migration_sql(MIGRATION_354.read_text(encoding="utf-8"))[0])
         await admin.execute(split_migration_sql(MIGRATION.read_text(encoding="utf-8"))[0])
         await admin.execute(
-            "INSERT INTO team_members VALUES ('tm-admin','Fake Admin','fake.admin@example.com'),"
-            "('tm-a','Fake A','fake.a@example.com'),('tm-b','Fake B','fake.b@example.com');"
+            "INSERT INTO team_members (id, full_name, email, role) VALUES "
+            "('tm-admin','Fake Admin','fake.admin@example.com','admin'),"
+            "('tm-a','Fake A','fake.a@example.com','staff'),"
+            "('tm-b','Fake B','fake.b@example.com','staff');"
             "INSERT INTO hr_employees (team_member_id, hire_date, base_salary_idr) "
             "VALUES ('tm-a','2025-01-01',5000000),('tm-b','2025-01-01',5000000)"
         )

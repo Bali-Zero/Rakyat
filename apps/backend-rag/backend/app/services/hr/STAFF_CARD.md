@@ -332,6 +332,9 @@ takes a person off payroll; the read side (`member_card`) and the SQL predicate
 `hr_service.ON_PAYROLL_SQL` agree on that. The person keeps the card, the unit and the documents.
 - *Write.* Set and clear through the C11 route (`profile.on_payroll`; `on_payroll` is a `clear`
   key and clearing means back to the default, true). Nothing else writes it.
+- *The payroll set.* `hr_service.payroll_set_sql()`: card active, login (`team_members.active`) active, role
+  not client/monitoring/partner (`VISIBLE_PERSON_PREDICATE`), and the card not off payroll. Calculate,
+  the approve drift check, the manual bonus and the employees flag all use it.
 - *Who reads it.* `calculate_payroll` (excludes the person and, in the same transaction under the
   month lock, deletes the period's payslips of anyone outside the computed set unless the period was
   already approved or paid when found); `approve_payroll` (the bonus-drift check skips them);
