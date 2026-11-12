@@ -100,12 +100,42 @@ vi.mock("@/lib/metrics/cases-metrics", () => ({
   },
 }));
 
+const setterTrap = vi.hoisted(() => ({
+  armed: false,
+  calls: 0,
+  stacks: [] as string[],
+}));
+
+// Test seam: every useState setter is wrapped so a test can count the calls made while
+// "armed" (after unmount React ignores them silently, so only a count proves a guard works).
+vi.mock("react", async () => {
+  const actual = await vi.importActual<typeof import("react")>("react");
+  const useState = ((initial: unknown) => {
+    const [value, set] = actual.useState(initial);
+    const ref = actual.useRef<((...args: unknown[]) => void) | null>(null);
+    if (!ref.current) {
+      ref.current = (...args: unknown[]) => {
+        if (setterTrap.armed) {
+          setterTrap.calls += 1;
+          setterTrap.stacks.push(new Error().stack ?? "");
+        }
+        (set as (...a: unknown[]) => void)(...args);
+      };
+    }
+    return [value, ref.current];
+  }) as typeof actual.useState;
+  return { ...actual, useState, default: { ...actual, useState } };
+});
+
 vi.mock("@/lib/logger", () => ({
   logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
 
 describe("NewPracticePage", () => {
   beforeEach(() => {
+    setterTrap.armed = false;
+    setterTrap.calls = 0;
+    setterTrap.stacks = [];
     vi.clearAllMocks();
     mockGetPracticeTypesCatalog.mockResolvedValue({
       categories: [
@@ -779,12 +809,9 @@ describe("NewPracticePage", () => {
       expect(await screen.findByText("Synthetic Reopened")).toBeInTheDocument();
     });
 
-    it("a response that arrives after unmount does nothing", async () => {
+    it("a response that arrives after unmount invokes no state setter", async () => {
       const user = userEvent.setup();
       let resolveOld: (v: unknown) => void = () => {};
-      const consoleError = vi
-        .spyOn(console, "error")
-        .mockImplementation(() => {});
       const input = await renderSearch();
       mockGetClients.mockImplementationOnce(
         () => new Promise((resolve) => (resolveOld = resolve)),
@@ -792,11 +819,15 @@ describe("NewPracticePage", () => {
       await user.type(input, "ma");
       await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(1));
       cleanup();
+      setterTrap.armed = true;
+      setterTrap.calls = 0;
+      setterTrap.stacks = [];
       resolveOld([found(1, "Synthetic Alpha")]);
       await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(consoleError).not.toHaveBeenCalled();
+      expect(
+        setterTrap.stacks.filter((stack) => stack.includes("searchClients")),
+      ).toEqual([]);
       expect(casesMetrics.trackError).not.toHaveBeenCalled();
-      consoleError.mockRestore();
     });
 
     it("a failure that arrives after unmount is not reported", async () => {
@@ -809,8 +840,14 @@ describe("NewPracticePage", () => {
       await user.type(input, "ma");
       await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(1));
       cleanup();
+      setterTrap.armed = true;
+      setterTrap.calls = 0;
+      setterTrap.stacks = [];
       rejectOld(new Error("late failure"));
       await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(
+        setterTrap.stacks.filter((stack) => stack.includes("searchClients")),
+      ).toEqual([]);
       expect(casesMetrics.trackError).not.toHaveBeenCalled();
     });
 

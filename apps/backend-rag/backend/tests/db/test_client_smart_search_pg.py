@@ -672,3 +672,32 @@ async def test_a_generic_plan_still_uses_the_expression_indexes(
     plan = await _generic_plan(pool, typed)
     assert "idx_clients_smart_key" in plan, plan
     assert "Seq Scan on clients" not in plan, plan
+
+
+@pytest.mark.asyncio
+async def test_ranking_folds_a_matched_name_once(pool: asyncpg.Pool) -> None:
+    # Count the folds the REAL body of bz_name_rank performs: copy its source with every call to
+    # public.bz_fold routed through a counting wrapper, then run the copy once.
+    schema = await pool.fetchval("SELECT current_schema()")
+    source = await pool.fetchval(
+        "SELECT prosrc FROM pg_proc WHERE proname = 'bz_name_rank'"
+        " AND pronamespace = 'public'::regnamespace"
+    )
+    assert source.count("public.bz_fold(") >= 1
+    body = source.replace("public.bz_fold(", f'"{schema}".counted_fold(')
+    await pool.execute(f'CREATE SEQUENCE "{schema}".fold_calls')
+    await pool.execute(
+        f'CREATE FUNCTION "{schema}".counted_fold(t text) RETURNS text LANGUAGE plpgsql AS $f$'
+        f" BEGIN PERFORM nextval('\"{schema}\".fold_calls'); RETURN public.bz_fold(t); END $f$"
+    )
+    await pool.execute(
+        f'CREATE FUNCTION "{schema}".rank_counted(name text, tokens text[]) RETURNS integer'
+        f" LANGUAGE plpgsql AS $f${body}$f$"
+    )
+    rank = await pool.fetchval(
+        f"SELECT \"{schema}\".rank_counted($1::text, ARRAY['mario', 'rossi'])", "Mario Rossi Jr"
+    )
+    calls = await pool.fetchval(f'SELECT last_value FROM "{schema}".fold_calls')
+    is_called = await pool.fetchval(f'SELECT is_called FROM "{schema}".fold_calls')
+    assert rank == 1  # prefix: the first word starts with the first token
+    assert (calls if is_called else 0) == 1

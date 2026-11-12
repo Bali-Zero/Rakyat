@@ -22,6 +22,26 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+const setterTrap = vi.hoisted(() => ({ armed: false, calls: 0 }));
+
+// Test seam: every useState setter is wrapped so a test can count the calls made while
+// "armed" (after unmount React ignores them silently, so only a count proves a guard works).
+vi.mock("react", async () => {
+  const actual = await vi.importActual<typeof import("react")>("react");
+  const useState = ((initial: unknown) => {
+    const [value, set] = actual.useState(initial);
+    const ref = actual.useRef<((...args: unknown[]) => void) | null>(null);
+    if (!ref.current) {
+      ref.current = (...args: unknown[]) => {
+        if (setterTrap.armed) setterTrap.calls += 1;
+        (set as (...a: unknown[]) => void)(...args);
+      };
+    }
+    return [value, ref.current];
+  }) as typeof actual.useState;
+  return { ...actual, useState, default: { ...actual, useState } };
+});
+
 const client = (id: number, name: string): Client =>
   ({ id, full_name: name, email: `c${id}@example.test` }) as Client;
 
@@ -43,6 +63,8 @@ const settle = (ms = 450) =>
 
 describe("ClientPicker search", () => {
   beforeEach(() => {
+    setterTrap.armed = false;
+    setterTrap.calls = 0;
     mockGetClients.mockReset();
     mockLogError.mockClear();
   });
@@ -127,25 +149,23 @@ describe("ClientPicker search", () => {
     expect(screen.queryByText("Synthetic Alpha")).toBeNull();
   });
 
-  it("a response that arrives after unmount does nothing", async () => {
+  it("a response that arrives after unmount invokes no state setter", async () => {
     let resolveOld: (v: Client[]) => void = () => {};
     mockGetClients.mockImplementationOnce(
       () => new Promise<Client[]>((resolve) => (resolveOld = resolve)),
     );
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => {});
     const { unmount } = render(<Harness />);
     await userEvent.setup().type(screen.getByLabelText("Search client"), "ma");
     await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(1));
     unmount();
+    setterTrap.armed = true;
+    setterTrap.calls = 0;
     await act(async () => {
       resolveOld([client(1, "Synthetic Alpha")]);
     });
     await settle(50);
-    expect(consoleError).not.toHaveBeenCalled();
+    expect(setterTrap.calls).toBe(0);
     expect(mockLogError).not.toHaveBeenCalled();
-    consoleError.mockRestore();
   });
 
   it("a response or failure that arrives after unmount does nothing", async () => {
@@ -157,10 +177,13 @@ describe("ClientPicker search", () => {
     await userEvent.setup().type(screen.getByLabelText("Search client"), "ma");
     await waitFor(() => expect(mockGetClients).toHaveBeenCalledTimes(1));
     unmount();
+    setterTrap.armed = true;
+    setterTrap.calls = 0;
     await act(async () => {
       rejectOld(new Error("late"));
     });
     await settle(50);
+    expect(setterTrap.calls).toBe(0);
     expect(mockLogError).not.toHaveBeenCalled();
   });
 
