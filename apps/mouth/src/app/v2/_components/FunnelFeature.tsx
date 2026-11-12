@@ -35,13 +35,18 @@ const FUNNEL_HREF: Record<Exclude<Funnel, null>, string> = {
 // Separate destination for the "See transparent pricing" secondary CTA —
 // must land on an actual pricing page, not on the funnel landing.
 // Fix for CRO audit 2026-04-19 (bait-and-switch bug).
+// No balizero.com host serves /pricing (measured 12 Nov 2026: balizero.com
+// 404, tax.* "Page not found", visa.* 302 to /visa-oracle). The public
+// /services/<funnel> pages carry the packages.
 const FUNNEL_PRICING_HREF: Record<Exclude<Funnel, null>, string> = {
-  visa: "https://visa.balizero.com/pricing",
+  visa: "/services/visa",
   // kita.balizero.com is the internal host; /kbli/pricing there is a "Page
   // not found". The public company-setup page carries the licensing packages.
   kbli: "/services/company",
-  tax: "https://tax.balizero.com/pricing",
-  property: "https://balizero.com/pricing",
+  tax: "/services/tax",
+  // No property page lists numeric prices yet (cards say "Contact");
+  // /services/property is the live property packages page.
+  property: "/services/property",
 };
 
 interface FunnelFeatureProps {

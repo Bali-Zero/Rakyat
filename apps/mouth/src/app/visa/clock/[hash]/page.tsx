@@ -175,7 +175,7 @@ export default function VisaClockResultPage({
           Timeline generated {formatIsoDate(today)}. Government fees may change
           —{" "}
           <a
-            href="https://balizero.com/pricing"
+            href="https://balizero.com/services/visa"
             style={{ color: "var(--accent-funnel-text)" }}
           >
             pricing reference
