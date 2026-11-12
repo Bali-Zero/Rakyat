@@ -193,6 +193,33 @@ describe("per-member table", () => {
     ).toBeNull();
   });
 
+  it("an off-payroll person WITH bonus rows is no table row, while an on-payroll one is", async () => {
+    hrApiMock.listEmployees.mockResolvedValue({
+      employees: [
+        ...EMPLOYEES.map((e) => (e.id === 4 ? { ...e, on_payroll: false } : e)),
+      ],
+      count: 4,
+    });
+    hrApiMock.listBonuses.mockResolvedValue({
+      bonuses: [
+        ...LEDGER,
+        bonus({
+          id: 40,
+          employee_id: 4,
+          employee_name: "Fake Office",
+          employee_email: "fake.office@example.com",
+          employee_department: "office",
+          amount_idr: 77_000,
+        }),
+      ],
+      count: LEDGER.length + 1,
+    });
+    render(<BonusesPage />);
+    const table = await screen.findByRole("table");
+    expect(within(table).queryByText(/Fake Office/)).toBeNull(); // guilt
+    expect(within(table).getByText(/Fake Setup/)).toBeInTheDocument(); // innocence
+  });
+
   it("the department chips narrow rows and the table to that team", async () => {
     const user = userEvent.setup();
     render(<BonusesPage />);
