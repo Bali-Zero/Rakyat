@@ -191,8 +191,15 @@ function overview(
       marital_status: null,
       employer_entity: FIX.employer_entity,
       unit: FIX.unit,
-      contract: { number: FIX.contract_number, file_id: null },
-      docs: {},
+      contract: { number: FIX.contract_number },
+      documents: {
+        ktp: { present: false, file_id: null },
+        kk: { present: false, file_id: null },
+        npwp: { present: false, file_id: null },
+        bpjs_kes: { present: false, file_id: null },
+        bpjs_tk: { present: false, file_id: null },
+        contract: { present: false, file_id: null },
+      },
       end_date: null,
       ...over,
     },
@@ -263,9 +270,24 @@ function pick(li: HTMLElement, file: File) {
   Object.defineProperty(input, "files", { value: [file], configurable: true });
   fireEvent.change(input);
 }
+const NONE = { present: false, file_id: null };
+const docsMap = (over: Record<string, unknown> = {}) => ({
+  ktp: NONE,
+  kk: NONE,
+  npwp: NONE,
+  bpjs_kes: NONE,
+  bpjs_tk: NONE,
+  contract: NONE,
+  ...over,
+});
+const NIKISH = "3171234567890077"; // a stored legacy value must never reach the DOM
 const DOCS_ON = {
-  docs: { ktp: "FILEKTP12345678" },
-  contract: { number: "C-1", file_id: null },
+  // ktp: verified (the door wrote it); kk: legacy, present but unverified
+  documents: docsMap({
+    ktp: { present: true, file_id: "FILEKTP12345678" },
+    kk: { present: true, file_id: null },
+  }),
+  contract: { number: "C-1" },
 };
 
 beforeEach(() => {
@@ -306,10 +328,8 @@ describe("People documents block (/hr, C13)", () => {
     expect(openLink.getAttribute("href")).toBe(
       "https://drive.google.com/file/d/FILEKTP12345678/view",
     );
-    expect(
-      within(rowOf(/Family card/)).getByText("Missing"),
-    ).toBeInTheDocument();
-    expect(within(rowOf(/Family card/)).queryByRole("link")).toBeNull();
+    expect(within(rowOf(/Tax card/)).getByText("Missing")).toBeInTheDocument();
+    expect(within(rowOf(/Tax card/)).queryByRole("link")).toBeNull();
     expect(
       within(rowOf(/^Contract$/)).getByText("Missing"),
     ).toBeInTheDocument();
@@ -380,8 +400,9 @@ describe("People documents block (/hr, C13)", () => {
     await act(async () =>
       call(docUrl(ID_A, "kk"), "POST")[0].resolve({
         slot: "kk",
-        file_id: "FILEKK1234567",
-        previous: "none",
+        documents: docsMap({
+          kk: { present: true, file_id: "FILEKK1234567" },
+        }),
       }),
     );
     await waitFor(() =>
@@ -389,7 +410,11 @@ describe("People documents block (/hr, C13)", () => {
     );
     await act(async () =>
       call(`/api/hr/people/${ID_A}/overview`)[1].resolve(
-        person("A", ID_A, { docs: { kk: "FILEKK1234567" } }),
+        person("A", ID_A, {
+          documents: docsMap({
+            kk: { present: true, file_id: "FILEKK1234567" },
+          }),
+        }),
       ),
     );
     expect(
@@ -462,8 +487,9 @@ describe("People documents block (/hr, C13)", () => {
     await act(async () =>
       call(docUrl(ID_A, "kk"), "POST")[0].resolve({
         slot: "kk",
-        file_id: "FILEKK1234567",
-        previous: "none",
+        documents: docsMap({
+          kk: { present: true, file_id: "FILEKK1234567" },
+        }),
       }),
     );
     // no refresh of the person was issued for the old identity
@@ -491,8 +517,9 @@ describe("People documents block (/hr, C13)", () => {
     await act(async () =>
       call(docUrl(ID_A, "kk"), "POST")[0].resolve({
         slot: "kk",
-        file_id: "FILEKK1234567",
-        previous: "none",
+        documents: docsMap({
+          kk: { present: true, file_id: "FILEKK1234567" },
+        }),
       }),
     );
     fireEvent.click(screen.getByRole("button", { name: /^Me/ }));
@@ -543,5 +570,55 @@ describe("People documents block (/hr, C13)", () => {
     expect([...recorded]).toEqual([]);
     // the picked file name is not left in the input either
     expect(fileInputOf(rowOf(/Family card/)).value).toBe("");
+  });
+
+  it("shows a legacy value as on file, with no link and no value anywhere in the DOM, and Remove clears it", async () => {
+    await open("A");
+    await waitFor(() =>
+      expect(call(`/api/hr/people/${ID_A}/overview`)).toHaveLength(1),
+    );
+    await act(async () =>
+      call(`/api/hr/people/${ID_A}/overview`)[0].resolve(
+        person("A", ID_A, DOCS_ON),
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Me/ }));
+    const li = rowOf(/Family card/);
+    expect(
+      within(li).getByText("On file — not yet in DOKUMEN KARYAWAN"),
+    ).toBeInTheDocument();
+    expect(within(li).queryByRole("link")).toBeNull();
+    expect(within(li).queryByText("Present")).toBeNull();
+    expect(
+      within(li).getByRole("button", { name: /Replace/ }),
+    ).toBeInTheDocument();
+    // Remove is enabled for a present value, legacy included
+    fireEvent.click(within(li).getByRole("button", { name: /^Remove$/ }));
+    fireEvent.click(within(li).getByRole("button", { name: /Confirm remove/ }));
+    await waitFor(() =>
+      expect(call(docUrl(ID_A, "kk"), "DELETE")).toHaveLength(1),
+    );
+  });
+
+  it("never renders a stored value, in text or in any attribute", async () => {
+    await open("A");
+    await waitFor(() =>
+      expect(call(`/api/hr/people/${ID_A}/overview`)).toHaveLength(1),
+    );
+    // even if a stale or hostile answer still carried raw keys, the page reads only `documents`
+    await act(async () =>
+      call(`/api/hr/people/${ID_A}/overview`)[0].resolve(
+        person("A", ID_A, {
+          ...DOCS_ON,
+          docs: { kk: NIKISH },
+          doc_proof: { kk: { id: NIKISH } },
+        }),
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Me/ }));
+    expect(document.body.textContent).not.toContain(NIKISH);
+    for (const el of Array.from(document.querySelectorAll("*")))
+      for (const attr of el.getAttributeNames())
+        expect(el.getAttribute(attr) ?? "").not.toContain(NIKISH);
   });
 });

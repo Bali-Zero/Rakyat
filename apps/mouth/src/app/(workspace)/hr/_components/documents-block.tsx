@@ -25,13 +25,14 @@ const ROWS: [DocSlot, string][] = [
   ["contract", "Contract"],
 ];
 
+export const UNVERIFIED = "On file — not yet in DOKUMEN KARYAWAN";
 export const DOC_TOO_LARGE =
   "That file is larger than 4 MB. Scan it at a lower resolution or compress it, then try again.";
 
-function fileIdOf(card: HrStaffCard, slot: DocSlot): string | null {
-  const v =
-    slot === "contract" ? card.contract?.file_id : (card.docs?.[slot] ?? null);
-  return typeof v === "string" && v ? v : null;
+/** The API never returns a stored value: `present` says a paper is on file, `file_id` is set only
+ * when the door verified it. Only a verified id becomes a link. */
+function stateOf(card: HrStaffCard, slot: DocSlot) {
+  return card.documents?.[slot] ?? { present: false, file_id: null };
 }
 
 export function DocumentsBlock({
@@ -97,20 +98,24 @@ export function DocumentsBlock({
       </h3>
       <ul className={`mt-3 divide-y ${HAIR}`}>
         {ROWS.map(([slot, label]) => {
-          const id = fileIdOf(card, slot);
-          const url = driveUrl(id);
+          const doc = stateOf(card, slot);
+          const url = driveUrl(doc.file_id);
           const working = busy === slot;
           return (
             <li key={slot} className="flex flex-wrap items-center gap-3 py-3">
               <span className={`min-w-[10rem] text-[14px] font-medium ${INK}`}>
                 {label}
               </span>
-              {id ? (
+              {url ? (
                 <span
                   className="inline-flex items-center gap-1 text-[13px] font-semibold"
                   style={{ color: tone }}
                 >
                   <Check className="h-3.5 w-3.5" aria-hidden /> Present
+                </span>
+              ) : doc.present ? (
+                <span className={`text-[13px] font-medium ${SOFT}`}>
+                  {UNVERIFIED}
                 </span>
               ) : (
                 <span className={`text-[13px] ${SOFT}`}>Missing</span>
@@ -150,9 +155,9 @@ export function DocumentsBlock({
                     }}
                   >
                     <Upload className="h-3.5 w-3.5" aria-hidden />
-                    {working ? "Saving…" : id ? "Replace" : "Upload"}
+                    {working ? "Saving…" : doc.present ? "Replace" : "Upload"}
                   </button>
-                  {id &&
+                  {doc.present &&
                     (confirm === slot ? (
                       <>
                         <button

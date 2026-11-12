@@ -404,12 +404,9 @@ function errorKind(err: unknown) {
   };
 }
 
-const PAPER_SLOTS = ["ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk"];
-/** The backend's `papers_missing` for a refreshed card (five document slots + the contract file). */
+/** The backend's `papers_missing` for a refreshed card: the six slots that are not `present`. */
 function papersMissing(card: HrStaffCard): number {
-  const docs = card.docs ?? {};
-  const missing = PAPER_SLOTS.filter((slot) => !docs[slot]).length;
-  return missing + (card.contract?.file_id ? 0 : 1);
+  return Object.values(card.documents ?? {}).filter((d) => !d.present).length;
 }
 
 /** A failed card save as the form shows it: fixed texts only, never a value. */

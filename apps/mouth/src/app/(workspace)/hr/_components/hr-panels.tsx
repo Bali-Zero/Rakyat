@@ -731,10 +731,15 @@ export function MeDetail({
   const you = viewer === "self";
   const c = me.card;
   const tone = TONE.me;
-  const papers: [string, string | null][] = [
-    ["Contract", c.contract?.file_id ?? null],
+  const none = { present: false, file_id: null };
+  const papers: [string, { present: boolean; file_id: string | null }][] = [
+    ["Contract", c.documents?.contract ?? none],
     ...SLOTS.map(
-      ([k, l]) => [l, c.docs?.[k] ?? null] as [string, string | null],
+      ([k, l]) =>
+        [l, c.documents?.[k as keyof typeof c.documents] ?? none] as [
+          string,
+          { present: boolean; file_id: string | null },
+        ],
     ),
   ];
   return (
@@ -784,8 +789,8 @@ export function MeDetail({
             tone={tone}
           >
             <div className="flex flex-wrap gap-2">
-              {papers.map(([label, id]) => {
-                const url = driveUrl(id);
+              {papers.map(([label, doc]) => {
+                const url = driveUrl(doc.file_id);
                 return url ? (
                   <a
                     key={label}
@@ -804,7 +809,7 @@ export function MeDetail({
                     key={label}
                     className={`inline-flex items-center rounded-full border border-dashed ${HAIR} px-3.5 py-2 text-[13px] ${SOFT}`}
                   >
-                    {label} · missing
+                    {label} · {doc.present ? "on file" : "missing"}
                   </span>
                 );
               })}
@@ -855,14 +860,11 @@ export function filled(c: Card) {
     "bank_account",
     "bank_account_holder",
   ];
-  const docs = ["ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk"];
-  const have =
-    keys.filter((k) => s(c, k)).length +
-    docs.filter((k) => c.docs?.[k]).length +
-    (c.contract?.file_id ? 1 : 0);
-  const missingPapers =
-    docs.filter((k) => !c.docs?.[k]).length + (c.contract?.file_id ? 0 : 1);
-  return { have, total: keys.length + docs.length + 1, missingPapers };
+  const papers = Object.values(c.documents ?? {});
+  const onFile = papers.filter((d) => d.present).length;
+  const have = keys.filter((k) => s(c, k)).length + onFile;
+  const missingPapers = 6 - onFile;
+  return { have, total: keys.length + 6, missingPapers };
 }
 
 /**
