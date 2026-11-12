@@ -12,7 +12,11 @@ import path from "path";
 import matter from "gray-matter";
 import { unstable_cache } from "next/cache";
 import type { Article, ArticleListItem, ArticleCategory } from "./types";
-import { CATEGORY_MAP, normalizeCategory } from "./categories";
+import {
+  backendCategoriesFor,
+  CATEGORY_MAP,
+  normalizeCategory,
+} from "./categories";
 import { isPublishedFrontmatter } from "./publication";
 
 // gray-matter caches by content string when called without options, so a file with broken YAML
@@ -985,11 +989,24 @@ export const getAllArticles = unstable_cache(
     const allArticles: ArticleListItemWithUpdated[] = [];
     const seenSlugs = new Set<string>();
 
-    // 1. Fetch from backend API (priority)
-    const backendResult = await fetchBackendArticles({
-      category: options?.category,
-      limit: 100, // fetch more, we'll merge with MDX
-    });
+    // 1. Fetch from backend API (priority). The public category is translated
+    // to the backend's stored names first (visas → immigration, taxes → tax +
+    // legal, …): one request per name, merged.
+    const backendCategories = options?.category
+      ? backendCategoriesFor(options.category)
+      : [undefined];
+    const backendResults = await Promise.all(
+      backendCategories.map((category) =>
+        fetchBackendArticles({
+          category,
+          limit: 100, // fetch more, we'll merge with MDX
+        }),
+      ),
+    );
+    const backendItems = backendResults.flatMap((r) => r?.items ?? []);
+    const backendResult = backendResults.some(Boolean)
+      ? { items: backendItems }
+      : null;
 
     if (backendResult) {
       for (const item of backendResult.items) {
