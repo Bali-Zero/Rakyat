@@ -118,8 +118,14 @@ class ServiceAccountDriveService:
         *,
         root_folder_id: str | None = None,
         delegated_user: str | None = None,
+        validate_folders: bool = True,
     ) -> None:
-        """Initialize Service Account Drive Service."""
+        """Initialize Service Account Drive Service.
+
+        `validate_folders=False` skips the boot-time probe of the configured parent folders (four
+        network calls): a per-request client (HR documents) must not pay them on every request.
+        `build()` itself uses the bundled discovery document, so it does not touch the network.
+        """
         import base64
 
         self.root_folder_id = root_folder_id or settings.google_drive_root_folder_id
@@ -181,7 +187,8 @@ class ServiceAccountDriveService:
         # 2026, silently breaking every company-client create_client_folder call. The
         # BackgroundTask exception was swallowed by crm_clients.py and never surfaced.
         # See cicatrix-scars.md (2026-05-21) for the full incident.
-        self._validate_configured_folders()
+        if validate_folders:
+            self._validate_configured_folders()
 
     def _validate_configured_folders(self) -> None:
         """Verify each configured parent folder ID exists and is accessible.

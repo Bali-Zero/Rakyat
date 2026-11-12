@@ -1203,7 +1203,7 @@ class Settings(BaseSettings):
         None  # Set via GDRIVE_COMPANIES_FOLDER_ID env var (parent for company clients)
     )
 
-    # HR document door (STAFF_CARD.md C12): the owner's private tree HR&FINANCE/HR/DOKUMEN
+    # HR document door (STAFF_CARD.md C13): the owner's private tree HR&FINANCE/HR/DOKUMEN
     # KARYAWAN and the Workspace user the service account impersonates to write into it (the
     # service account itself is only a reader there).
     hr_documents_drive_root_id: str = "1cihc-wQibnTrlJfbal4vPyJViS3CDsjX"

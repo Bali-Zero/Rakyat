@@ -1,6 +1,6 @@
 """People console: `GET /api/hr/people`, `GET /api/hr/people/{id}/overview` and the one write,
 `PATCH /api/hr/people/{id}/card` (STAFF_CARD.md C11) and the document door
-`POST|DELETE /api/hr/people/{id}/documents/{slot}` (C12).
+`POST|DELETE /api/hr/people/{id}/documents/{slot}` (C13).
 
 Scope is decided here from the session's email and the stored email of the member asked
 about, never from anything the client sends. The only writes are the card edit and the
@@ -15,11 +15,13 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 
 import asyncpg
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.routing import APIRoute
+from starlette.datastructures import UploadFile
+from starlette.formparsers import MultiPartException, MultiPartParser
 
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.routers.hr import _get_user_id
@@ -221,7 +223,7 @@ router.add_api_route(
 )
 
 
-# ─── document door (C12) ───
+# ─── document door (C13) ───
 
 _DOC_ERROR_STATUS = {
     HRDocCode.NOT_FOUND: (404, "No such person"),
@@ -235,6 +237,7 @@ _DOC_ERROR_STATUS = {
     ),
     HRDocCode.LOCK_TIMEOUT: (409, "Card is busy, try again"),
     HRDocCode.DB_ERROR: (500, "Document operation failed"),
+    HRDocCode.COMMIT_UNKNOWN: (500, "Document operation failed"),
 }
 
 
@@ -261,20 +264,78 @@ async def _document_context(
     return member_id, member_email
 
 
+# The whole multipart body may exceed the file cap by its framing only.
+_BODY_CAP = MAX_BYTES + 64 * 1024
+
+
+def _too_large() -> Response:
+    return JSONResponse(status_code=413, content={"detail": "The upload is too large"})
+
+
+async def _read_capped_body(request: Request) -> bytes | None:
+    """The request body, or None the moment it passes the cap (a declared Content-Length over it
+    is refused before one byte is read; a chunked body is cut off as it grows)."""
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > _BODY_CAP:
+        return None
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf += chunk
+        if len(buf) > _BODY_CAP:
+            return None
+    return bytes(buf)
+
+
+async def _single_file(request: Request, body: bytes) -> bytes | Response:
+    """The bytes of the ONE part named `file` in a buffered multipart body, else a 422."""
+    bad = _field_422("file", "invalid_upload", "Send exactly one file in the field 'file'")
+    if "multipart/form-data" not in request.headers.get("content-type", "").lower():
+        return bad
+
+    async def stream() -> Any:
+        yield body
+        yield b""
+
+    try:
+        form = await MultiPartParser(
+            request.headers, stream(), max_files=1, max_fields=3, max_part_size=_BODY_CAP
+        ).parse()
+    except MultiPartException:
+        return bad
+    try:
+        items = list(form.multi_items())
+        files = [(k, v) for k, v in items if isinstance(v, UploadFile)]
+        if len(files) != 1 or files[0][0] != "file":
+            return bad
+        return await files[0][1].read()
+    finally:
+        await form.close()
+
+
 async def upload_person_document(
+    request: Request,
     team_member_id: uuid.UUID,
     slot: str,
-    file: UploadFile = File(...),
     current_user: dict[str, Any] = Depends(require_card_writer),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> Response:
-    """Upload or replace one HR paper (global admins only). The type is read from the magic
-    bytes (PDF, JPEG, PNG) and the size is capped; nothing the client names is trusted."""
+    """Upload or replace one HR paper (global admins only).
+
+    No `UploadFile` parameter on purpose: FastAPI would parse the whole form before the writer
+    check and the size check. Here the writer dependency has already run when the body is first
+    touched; the body is read under a hard byte cap and only then parsed. The type is read from
+    the magic bytes (PDF, JPEG, PNG); nothing the client names is trusted."""
     ctx = await _document_context(team_member_id, slot, db_pool)
     if isinstance(ctx, Response):
         return ctx
     member_id, member_email = ctx
-    data = await file.read(MAX_BYTES + 1)
+    body = await _read_capped_body(request)
+    if body is None:
+        return _too_large()
+    got = await _single_file(request, body)
+    if isinstance(got, Response):
+        return got
+    data = got
     if not data:
         return _field_422("file", "empty_file", "The file is empty")
     if len(data) > MAX_BYTES:

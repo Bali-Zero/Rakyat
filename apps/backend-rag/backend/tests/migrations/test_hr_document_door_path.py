@@ -1,15 +1,21 @@
-"""The HR document door (STAFF_CARD.md C12) DB step against a real Postgres: the card write and the
+"""The HR document door (STAFF_CARD.md C13) DB step against a real Postgres: the card write and the
 audit row share one transaction, and a failure leaves neither. Synthetic data only."""
 
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import asyncpg
 import pytest
 
-from backend.app.services.hr.hr_documents import HRDocCode, HRDocError, HRDocumentService
+from backend.app.services.hr.hr_documents import (
+    HRDocCode,
+    HRDocError,
+    HRDocumentService,
+    value_sha,
+)
 from backend.tests.migrations.test_hr_card_write_path import pool  # noqa: F401  (fixture)
 
 pytestmark = pytest.mark.integration
@@ -57,7 +63,7 @@ async def test_upload_writes_card_and_audit_together(pool: asyncpg.Pool) -> None
     rows = await _audit(pool)
     assert len(rows) == 1 and rows[0]["action"] == "hr_document_upload"
     assert rows[0]["resource_id"] == A_ID and rows[0]["user_id"] == "tm-owner"
-    assert rows[0]["details"] == {"slot": "ktp", "new_id": "f1", "previous_id": None}
+    assert rows[0]["details"] == {"slot": "ktp", "new_id": "f1", "previous_sha": None}
 
 
 @pytest.mark.asyncio
@@ -67,7 +73,7 @@ async def test_replace_returns_previous_and_keeps_the_other_slots(pool: asyncpg.
     await _step(svc, "kk", "f2")
     assert await _step(svc, "ktp", "f3") == "f1"
     assert (await _profile(pool))["docs"] == {"ktp": "f3", "kk": "f2"}
-    assert (await _audit(pool))[-1]["details"]["previous_id"] == "f1"
+    assert (await _audit(pool))[-1]["details"]["previous_sha"] == value_sha("f1")
 
 
 @pytest.mark.asyncio
@@ -93,7 +99,7 @@ async def test_remove_clears_the_slot_and_audits(pool: asyncpg.Pool) -> None:  #
     assert (await _profile(pool))["docs"] == {"kk": "f2"}
     last = (await _audit(pool))[-1]
     assert last["action"] == "hr_document_remove"
-    assert last["details"] == {"slot": "npwp", "new_id": None, "previous_id": "f1"}
+    assert last["details"] == {"slot": "npwp", "new_id": None, "previous_sha": value_sha("f1")}
 
 
 @pytest.mark.asyncio
@@ -128,3 +134,72 @@ async def test_no_hr_row_and_invisible_person_write_nothing(pool: asyncpg.Pool) 
         await _step(svc, "ktp", "f1", who=(A_ID, "other@balizero.com"))
     assert exc3.value.code is HRDocCode.NOT_FOUND
     assert await _audit(pool) == []
+
+
+NIK = "3171234567890001"
+
+
+@pytest.mark.asyncio
+async def test_free_text_in_a_slot_never_reaches_the_audit_or_the_logs(  # noqa: F811
+    pool: asyncpg.Pool, caplog: pytest.LogCaptureFixture
+) -> None:
+    svc = await _prep(pool)
+    async with pool.acquire() as conn:  # C10 accepts free text as a "file id"
+        await conn.execute(
+            "UPDATE hr_employees SET profile = $1 WHERE team_member_id = 'tm-a'",
+            {"docs": {"ktp": NIK, "kk": "KK Made Contoh.pdf"}},
+        )
+    with caplog.at_level(logging.DEBUG):
+        assert await _step(svc, "ktp", "newid1234567") == NIK  # replace
+        assert await _step(svc, "kk", None) == "KK Made Contoh.pdf"  # remove
+    rows = await _audit(pool)
+    blob = json.dumps([dict(r["details"]) for r in rows])
+    assert NIK not in blob and "Made Contoh" not in blob and NIK not in caplog.text
+    assert rows[0]["details"]["previous_sha"] == value_sha(NIK)
+    assert rows[1]["details"]["previous_sha"] == value_sha("KK Made Contoh.pdf")
+    assert rows[0]["details"]["new_id"] == "newid1234567"  # the new id is in clear
+
+
+@pytest.mark.asyncio
+async def test_an_error_at_commit_is_commit_unknown_and_reconcile_tells_the_truth(  # noqa: F811
+    pool: asyncpg.Pool,
+) -> None:
+    svc = await _prep(pool)
+    async with pool.acquire() as conn:  # a deferred check that only fires at COMMIT
+        await conn.execute(
+            """
+            CREATE FUNCTION boom_at_commit() RETURNS trigger AS $$
+            BEGIN
+                IF NEW.details->>'new_id' = 'boomid123456' THEN RAISE EXCEPTION 'no'; END IF;
+                RETURN NULL;
+            END $$ LANGUAGE plpgsql;
+            CREATE CONSTRAINT TRIGGER t_boom AFTER INSERT ON security_audit_log
+                DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION boom_at_commit();
+            """
+        )
+    state: dict[str, Any] = {}
+    with pytest.raises(HRDocError) as exc:
+        await svc._db_step(
+            actor_id="tm-owner",
+            member_id=A_ID,
+            email=A_MAIL,
+            slot="ktp",
+            new_id="boomid123456",
+            state=state,
+        )
+    assert exc.value.code is HRDocCode.COMMIT_UNKNOWN and state["previous"] is None
+    assert await _profile(pool) == {}  # it really rolled back
+    assert await svc._slot_holds(A_ID, "ktp", "boomid123456") is False
+    await _step(svc, "ktp", "goodid123456")
+    assert await svc._slot_holds(A_ID, "ktp", "goodid123456") is True
+    assert await svc._slot_holds(A_ID, "ktp", "boomid123456") is False
+
+
+@pytest.mark.asyncio
+async def test_a_failure_before_commit_is_a_plain_db_error(pool: asyncpg.Pool) -> None:  # noqa: F811
+    svc = await _prep(pool)
+    async with pool.acquire() as conn:
+        await conn.execute("ALTER TABLE security_audit_log ADD CONSTRAINT nope2 CHECK (false)")
+    with pytest.raises(HRDocError) as exc:
+        await _step(svc, "ktp", "f1")
+    assert exc.value.code is HRDocCode.DB_ERROR

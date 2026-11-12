@@ -1,7 +1,8 @@
-"""HR document door service (STAFF_CARD.md C12) with a fake Drive. Synthetic data only."""
+"""HR document door service (STAFF_CARD.md C13) with a fake Drive. Synthetic data only."""
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from datetime import date
 from typing import Any
@@ -83,8 +84,23 @@ class FakeDrive:
 
 
 class _Conn:
-    async def execute(self, *a: Any) -> None:
-        return None
+    def __init__(self, pool: _Pool) -> None:
+        self.pool = pool
+
+    async def execute(self, sql: str, *a: Any) -> None:
+        self.pool.events.append(
+            "lock:member"
+            if "hr_docs_folder" in sql
+            else "lock:unit"
+            if "hr_docs_unit" in sql
+            else "x"
+        )
+
+    async def fetchrow(self, sql: str, *a: Any) -> Any:
+        self.pool.events.append("context")
+        row = self.pool.row
+        self.pool.after_context()
+        return row
 
     @asynccontextmanager
     async def transaction(self):
@@ -92,15 +108,18 @@ class _Conn:
 
 
 class _Pool:
+    def __init__(self, unit: str, name: str) -> None:
+        self.row: Any = {"full_name": name, "employee_id": 1, "unit": unit}
+        self.events: list[str] = []
+        self.after_context = lambda: None
+
     @asynccontextmanager
     async def acquire(self):
-        yield _Conn()
+        yield _Conn(self)
 
 
 def _svc(drive: FakeDrive, unit: str = "Tax", name: str = "Made Contoh") -> HRDocumentService:
-    svc = HRDocumentService(_Pool(), drive)
-    svc._read_context = AsyncMock(return_value=hd._Context(full_name=name, unit=unit))  # type: ignore[method-assign]
-    return svc
+    return HRDocumentService(_Pool(unit, name), drive)
 
 
 # ── magic bytes ──
@@ -236,23 +255,23 @@ async def test_upload_title_properties_and_result(monkeypatch):
 @pytest.mark.asyncio
 async def test_replace_trashes_our_previous_and_keeps_a_foreign_one():
     d = FakeDrive()
-    d.files["old-ours"] = {
+    d.files["oldours12345"] = {
         "name": "o",
         "parent": "p",
         "mime": "x",
         "appProperties": {hd.MEMBER_PROP: MEMBER},
     }
-    d.files["old-foreign"] = {"name": "o", "parent": "p", "mime": "x", "appProperties": {}}
-    d.files["old-other"] = {
+    d.files["oldforeign12345"] = {"name": "o", "parent": "p", "mime": "x", "appProperties": {}}
+    d.files["oldother12345"] = {
         "name": "o",
         "parent": "p",
         "mime": "x",
         "appProperties": {hd.MEMBER_PROP: "someone-else"},
     }
     for prev, want, trashed in (
-        ("old-ours", "trashed", ["old-ours"]),
-        ("old-foreign", "kept", []),
-        ("old-other", "kept", []),
+        ("oldours12345", "trashed", ["oldours12345"]),
+        ("oldforeign12345", "kept", []),
+        ("oldother12345", "kept", []),
     ):
         d.trashed.clear()
         svc = _svc(d)
@@ -289,14 +308,14 @@ async def test_drive_upload_error_is_a_fixed_code_without_the_message():
 @pytest.mark.asyncio
 async def test_remove_trashes_ours_only():
     d = FakeDrive()
-    d.files["f1"] = {
+    d.files["fileid1234567"] = {
         "name": "o",
         "parent": "p",
         "mime": "x",
         "appProperties": {hd.MEMBER_PROP: MEMBER},
     }
     svc = _svc(d)
-    svc._db_step = AsyncMock(return_value="f1")  # type: ignore[method-assign]
+    svc._db_step = AsyncMock(return_value="fileid1234567")  # type: ignore[method-assign]
     res = await svc.remove(actor_id="a", member_id=MEMBER, email="e", slot="kk")
     assert res == {"slot": "kk", "file_id": None, "previous": "trashed"}
     svc._db_step = AsyncMock(return_value=None)  # type: ignore[method-assign]
@@ -308,3 +327,143 @@ async def test_remove_trashes_ours_only():
 def test_slot_set_is_the_five_docs_plus_contract():
     assert hd.ALL_SLOTS == ("ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk", "contract")
     assert set(hd.SLOT_LABELS) == set(hd.ALL_SLOTS)
+
+
+# ── lock order: member, then context (same transaction), then unit ──
+
+
+@pytest.mark.asyncio
+async def test_member_lock_then_context_then_unit_lock():
+    d = FakeDrive()
+    svc = _svc(d)
+    await svc.ensure_folder(MEMBER)
+    ev = [e for e in svc.db_pool.events if e != "x"]
+    assert ev == ["lock:member", "context", "lock:unit"]
+
+
+@pytest.mark.asyncio
+async def test_an_upload_that_resumes_after_a_unit_change_uses_the_new_unit():
+    d = FakeDrive()
+    svc = _svc(d, unit="Tax")
+
+    def change_unit_while_waiting_for_the_lock() -> None:
+        pass
+
+    # the unit changes BEFORE this request gets the member lock: the context read (after the lock)
+    # must see it
+    svc.db_pool.row = {"full_name": "Made Contoh", "employee_id": 1, "unit": "Management"}
+    fid, ctx = await svc.ensure_folder(MEMBER)
+    assert ctx.unit == "Management"
+    assert d.folders[d.folders[fid]["parents"][0]]["name"] == "MANAGEMENT"
+
+
+@pytest.mark.asyncio
+async def test_context_errors_surface_from_inside_the_lock():
+    svc = _svc(FakeDrive())
+    svc.db_pool.row = None
+    with pytest.raises(HRDocError) as e1:
+        await svc.ensure_folder(MEMBER)
+    assert e1.value.code is HRDocCode.NOT_FOUND
+    svc.db_pool.row = {"full_name": "x", "employee_id": None, "unit": ""}
+    with pytest.raises(HRDocError) as e2:
+        await svc.ensure_folder(MEMBER)
+    assert e2.value.code is HRDocCode.HR_RECORD_REQUIRED
+
+
+# ── nothing unverified reaches the audit or the logs ──
+
+NIKISH = "3171234567890001"
+
+
+def test_value_sha_is_16_hex_of_sha256():
+    import hashlib
+
+    assert hd.value_sha(NIKISH) == hashlib.sha256(NIKISH.encode()).hexdigest()[:16]
+    assert len(hd.value_sha("x")) == 16
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("previous", [NIKISH, "KTP Made Contoh.pdf", "short", "a" * 300])
+async def test_a_previous_value_drive_does_not_know_is_kept_without_a_trace(previous, caplog):
+    d = FakeDrive()  # knows no such file: get_app_properties -> None
+    svc = _svc(d)
+    svc._db_step = AsyncMock(return_value=previous)  # type: ignore[method-assign]
+    with caplog.at_level(logging.DEBUG):
+        res = await _up(svc)
+    assert res["previous"] == "kept" and d.trashed == []
+    assert previous not in caplog.text and previous not in str(res)
+
+
+@pytest.mark.asyncio
+async def test_a_drive_error_on_the_previous_is_kept_and_not_logged(caplog):
+    d = FakeDrive()
+    prev = "A" * 33
+
+    async def boom(_fid):
+        raise RuntimeError(f"drive says {prev} {NIKISH}")
+
+    d.get_app_properties = boom  # type: ignore[method-assign]
+    svc = _svc(d)
+    svc._db_step = AsyncMock(return_value=prev)  # type: ignore[method-assign]
+    with caplog.at_level(logging.DEBUG):
+        res = await _up(svc)
+    assert res["previous"] == "kept"
+    assert NIKISH not in caplog.text and prev not in caplog.text
+
+
+# ── commit outcome unknown ──
+
+
+def _unknown(svc: HRDocumentService, previous: str | None, holds: bool | None) -> None:
+    async def step(**kw: Any) -> None:
+        kw["state"]["previous"] = previous
+        raise HRDocError(HRDocCode.COMMIT_UNKNOWN)
+
+    svc._db_step = step  # type: ignore[method-assign,assignment]
+    svc._slot_holds = AsyncMock(return_value=holds)  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_commit_unknown_and_the_write_landed_is_a_success_and_trashes_ours():
+    d = FakeDrive()
+    d.files["oldfile12345"] = {
+        "name": "o",
+        "parent": "p",
+        "mime": "x",
+        "appProperties": {hd.MEMBER_PROP: MEMBER},
+    }
+    svc = _svc(d)
+    _unknown(svc, "oldfile12345", True)
+    res = await _up(svc)
+    assert res["previous"] == "trashed" and res["file_id"] in d.files
+    assert d.trashed == ["oldfile12345"]  # the NEW file was not trashed
+
+
+@pytest.mark.asyncio
+async def test_commit_unknown_and_the_write_did_not_land_trashes_the_new_file():
+    d = FakeDrive()
+    svc = _svc(d)
+    _unknown(svc, None, False)
+    with pytest.raises(HRDocError):
+        await _up(svc)
+    assert len(d.trashed) == 1 and d.trashed[0] in d.files
+
+
+@pytest.mark.asyncio
+async def test_commit_unknown_and_unverifiable_leaves_the_upload_in_place():
+    d = FakeDrive()
+    svc = _svc(d)
+    _unknown(svc, None, None)
+    with pytest.raises(HRDocError):
+        await _up(svc)
+    assert d.trashed == []
+
+
+@pytest.mark.asyncio
+async def test_a_certain_rollback_still_compensates():
+    d = FakeDrive()
+    svc = _svc(d)
+    svc._db_step = AsyncMock(side_effect=HRDocError(HRDocCode.LOCK_TIMEOUT))  # type: ignore[method-assign]
+    with pytest.raises(HRDocError):
+        await _up(svc)
+    assert len(d.trashed) == 1
