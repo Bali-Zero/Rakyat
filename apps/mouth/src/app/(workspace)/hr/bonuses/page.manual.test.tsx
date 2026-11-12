@@ -1,0 +1,346 @@
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import BonusesPage from "./page";
+
+const hrApiMock = vi.hoisted(() => ({
+  listBonuses: vi.fn(),
+  listBonusHistorical: vi.fn(),
+  approveBonus: vi.fn(),
+  rejectBonus: vi.fn(),
+  deleteBonus: vi.fn(),
+  createManualBonus: vi.fn(),
+  listEmployees: vi.fn(),
+  listBonusPracticeTypes: vi.fn(),
+  getCapabilities: vi.fn(),
+}));
+vi.mock("@/lib/api/hr/hr", () => hrApiMock);
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+
+// Synthetic people only.
+const EMPLOYEES = [
+  {
+    id: 1,
+    full_name: "Fake Setup",
+    email: "fake.setup@example.com",
+    department: "setup",
+  },
+  {
+    id: 2,
+    full_name: "Fake Tax One",
+    email: "fake.tax1@example.com",
+    department: "tax",
+  },
+  {
+    id: 3,
+    full_name: "Fake Tax Two",
+    email: "fake.tax2@example.com",
+    department: "tax",
+  },
+  {
+    id: 4,
+    full_name: "Fake Office",
+    email: "fake.office@example.com",
+    department: "office",
+  },
+];
+
+const TYPES = [
+  { code: "visa_fake", name: "Fake visa", category: "visa", group: "visa" },
+  {
+    code: "tax_fake_report",
+    name: "Fake annual report",
+    category: "tax",
+    group: "tax",
+  },
+];
+
+function bonus(over: Record<string, unknown> & { id: number }) {
+  return {
+    practice_id: 10,
+    employee_id: 1,
+    payroll_period_id: null,
+    bonus_rate_id: null,
+    practice_type_code: "visa_fake",
+    amount_idr: 100_000,
+    status: "approved",
+    awarded_at: "2026-07-10T02:00:00.000Z",
+    awarded_by: null,
+    approved_by: null,
+    approved_at: null,
+    employee_name: "Fake Setup",
+    employee_email: "fake.setup@example.com",
+    employee_department: "setup",
+    practice_status: "completed",
+    client_name: null,
+    notes: null,
+    source: "practice",
+    ...over,
+  };
+}
+
+const LEDGER = [
+  bonus({ id: 1, amount_idr: 600_000, status: "pending" }),
+  bonus({
+    id: 2,
+    practice_id: null,
+    source: "manual",
+    reason: "Weekend filing",
+    created_by: "fake.admin@example.com",
+    practice_type_code: "manual",
+    employee_id: 4,
+    employee_name: "Fake Office",
+    employee_email: "fake.office@example.com",
+    employee_department: "office",
+    amount_idr: 200_000,
+    status: "pending",
+  }),
+  bonus({
+    id: 3,
+    practice_id: null,
+    source: "manual",
+    reason: "Already approved extra",
+    practice_type_code: "tax_fake_report",
+    employee_id: 2,
+    employee_name: "Fake Tax One",
+    employee_email: "fake.tax1@example.com",
+    employee_department: "tax",
+    amount_idr: 200_000,
+    status: "approved",
+  }),
+];
+
+function asAdmin(isAdmin: boolean) {
+  hrApiMock.getCapabilities.mockResolvedValue({
+    hr_admin: isAdmin,
+    accounting_admin: false,
+    has_employee_record: true,
+  });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  hrApiMock.listBonuses.mockResolvedValue({
+    bonuses: LEDGER,
+    count: LEDGER.length,
+  });
+  hrApiMock.listBonusHistorical.mockResolvedValue({ records: [], count: 0 });
+  hrApiMock.listEmployees.mockResolvedValue({ employees: EMPLOYEES, count: 4 });
+  hrApiMock.listBonusPracticeTypes.mockResolvedValue({
+    practice_types: TYPES,
+    count: 2,
+  });
+  asAdmin(true);
+});
+
+async function openPeople(user: ReturnType<typeof userEvent.setup>) {
+  for (const name of [
+    /Fake Setup.*1 bonus/,
+    /Fake Office.*1 bonus/,
+    /Fake Tax One.*1 bonus/,
+  ]) {
+    await user.click(await screen.findByRole("button", { name }));
+  }
+}
+
+describe("per-member table", () => {
+  it("lists every active member, tax members with nothing as soft dashes, with department chips", async () => {
+    render(<BonusesPage />);
+    const table = await screen.findByRole("table");
+    const rows = within(table).getAllByRole("row");
+    const text = (name: string) =>
+      rows.find((r) => r.textContent?.startsWith(name));
+
+    const taxTwo = text("Fake Tax Two")!;
+    expect(taxTwo).toHaveTextContent("Tax");
+    expect(taxTwo.textContent).not.toMatch(/Rp/);
+    expect(taxTwo).toHaveTextContent("—");
+    expect(text("Fake Setup")).toHaveTextContent("Setup");
+    expect(text("Fake Setup")).toHaveTextContent("Rp 600.000");
+    // The share bar carries its percentage as an accessible label.
+    expect(within(text("Fake Setup")!).getByRole("img")).toHaveAttribute(
+      "aria-label",
+      "60 percent of the total",
+    );
+    // footer: 600k + 200k + 200k
+    expect(rows[rows.length - 1]).toHaveTextContent("Rp 1.000.000");
+  });
+
+  it("the department chips narrow rows and the table to that team", async () => {
+    const user = userEvent.setup();
+    render(<BonusesPage />);
+    await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "Tax" }));
+    await waitFor(() => {
+      const rows = within(screen.getByRole("table")).getAllByRole("row");
+      expect(rows.some((r) => r.textContent?.startsWith("Fake Setup"))).toBe(
+        false,
+      );
+      expect(rows.some((r) => r.textContent?.startsWith("Fake Tax Two"))).toBe(
+        true,
+      );
+    });
+    expect(screen.getByRole("button", { name: "Tax" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+});
+
+describe("row actions", () => {
+  it("an HR admin sees Approve and Reject on pending rows, Delete only on a pending manual one", async () => {
+    const user = userEvent.setup();
+    render(<BonusesPage />);
+    await openPeople(user);
+
+    const practiceRow = screen.getByText("visa fake").closest("li")!;
+    expect(within(practiceRow).getByText("Practice")).toBeInTheDocument();
+    expect(
+      within(practiceRow).getByRole("button", { name: /Approve/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(practiceRow).getByRole("button", { name: /Reject/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(practiceRow).queryByRole("button", { name: /Delete/ }),
+    ).toBeNull();
+
+    const manualPending = screen.getByText(/Weekend filing/).closest("li")!;
+    expect(within(manualPending).getByText("Manual")).toBeInTheDocument();
+    expect(manualPending).toHaveTextContent("added by fake.admin@example.com");
+    expect(
+      within(manualPending).getByRole("button", { name: /Delete/ }),
+    ).toBeInTheDocument();
+
+    const manualApproved = screen
+      .getByText(/Already approved extra/)
+      .closest("li")!;
+    expect(within(manualApproved).queryByRole("button")).toBeNull();
+  });
+
+  it("a team member sees the rows and the source, but no action and no Add bonus", async () => {
+    asAdmin(false);
+    const user = userEvent.setup();
+    render(<BonusesPage />);
+    await openPeople(user);
+    expect(screen.getByText(/Weekend filing/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Approve|Reject|Delete/ }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add bonus" })).toBeNull();
+  });
+
+  it("reject asks first, then rejects and drops the amount from the totals", async () => {
+    hrApiMock.rejectBonus.mockResolvedValue({ success: true });
+    const user = userEvent.setup();
+    render(<BonusesPage />);
+    await openPeople(user);
+    const row = screen.getByText("visa fake").closest("li")!;
+    await user.click(within(row).getByRole("button", { name: /Reject/ }));
+    expect(hrApiMock.rejectBonus).not.toHaveBeenCalled();
+    await user.click(within(row).getByRole("button", { name: /Yes, reject/ }));
+    expect(hrApiMock.rejectBonus).toHaveBeenCalledWith(1);
+    await waitFor(() =>
+      expect(within(row).getByText("rejected")).toBeInTheDocument(),
+    );
+    const rows = within(screen.getByRole("table")).getAllByRole("row");
+    expect(rows[rows.length - 1]).toHaveTextContent("Rp 400.000");
+  });
+
+  it("delete asks first, then removes the manual row", async () => {
+    hrApiMock.deleteBonus.mockResolvedValue({ success: true });
+    const user = userEvent.setup();
+    render(<BonusesPage />);
+    await openPeople(user);
+    const row = screen.getByText(/Weekend filing/).closest("li")!;
+    await user.click(within(row).getByRole("button", { name: /Delete/ }));
+    await user.click(within(row).getByRole("button", { name: /Yes, delete/ }));
+    expect(hrApiMock.deleteBonus).toHaveBeenCalledWith(2);
+    await waitFor(() =>
+      expect(screen.queryByText(/Weekend filing/)).toBeNull(),
+    );
+  });
+});
+
+describe("Add bonus", () => {
+  async function openForm(user: ReturnType<typeof userEvent.setup>) {
+    render(<BonusesPage />);
+    await user.click(await screen.findByRole("button", { name: "Add bonus" }));
+    return await screen.findByRole("dialog");
+  }
+
+  it("offers every active person grouped by department, the tax team included", async () => {
+    const user = userEvent.setup();
+    const dialog = await openForm(user);
+    const select = within(dialog).getByLabelText("Person");
+    const groups = [...select.querySelectorAll("optgroup")].map((g) => g.label);
+    expect(groups).toEqual(["Setup", "Tax", "Office"]);
+    expect(
+      within(select).getByRole("option", { name: "Fake Tax Two" }),
+    ).toBeInTheDocument();
+  });
+
+  it("explains what is missing and sends nothing", async () => {
+    const user = userEvent.setup();
+    const dialog = await openForm(user);
+    await user.click(within(dialog).getByRole("button", { name: "Add bonus" }));
+    expect(
+      within(dialog)
+        .getAllByRole("alert")
+        .map((a) => a.textContent),
+    ).toEqual([
+      "Choose who gets the bonus.",
+      "Enter a whole amount above 0.",
+      "Say why, in at least 3 characters.",
+    ]);
+    expect(hrApiMock.createManualBonus).not.toHaveBeenCalled();
+  });
+
+  it("submits a tax bonus with a service, reloads the ledger and closes", async () => {
+    hrApiMock.createManualBonus.mockResolvedValue({
+      success: true,
+      bonus: { id: 99 },
+    });
+    const user = userEvent.setup();
+    const dialog = await openForm(user);
+    await user.selectOptions(within(dialog).getByLabelText("Person"), "3");
+    await user.click(within(dialog).getByRole("combobox", { name: "Service" }));
+    await user.click(
+      await screen.findByRole("option", { name: "Fake annual report" }),
+    );
+    await user.type(within(dialog).getByLabelText("Amount (IDR)"), "250000");
+    await user.type(
+      within(dialog).getByLabelText(/Reason/),
+      "Closing the annual file",
+    );
+    const calls = hrApiMock.listBonuses.mock.calls.length;
+    await user.click(within(dialog).getByRole("button", { name: "Add bonus" }));
+    await waitFor(() =>
+      expect(hrApiMock.createManualBonus).toHaveBeenCalledTimes(1),
+    );
+    expect(hrApiMock.createManualBonus).toHaveBeenCalledWith({
+      employee_id: 3,
+      amount_idr: 250000,
+      reason: "Closing the annual file",
+      practice_type_code: "tax_fake_report",
+      awarded_on: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(hrApiMock.listBonuses.mock.calls.length).toBe(calls + 1);
+  });
+
+  it("keeps the form open when the server refuses (locked month)", async () => {
+    hrApiMock.createManualBonus.mockRejectedValue(
+      new Error("Payroll for that month is already approved"),
+    );
+    const user = userEvent.setup();
+    const dialog = await openForm(user);
+    await user.selectOptions(within(dialog).getByLabelText("Person"), "1");
+    await user.type(within(dialog).getByLabelText("Amount (IDR)"), "1000");
+    await user.type(within(dialog).getByLabelText(/Reason/), "Late extra");
+    await user.click(within(dialog).getByRole("button", { name: "Add bonus" }));
+    await waitFor(() => expect(hrApiMock.createManualBonus).toHaveBeenCalled());
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+});

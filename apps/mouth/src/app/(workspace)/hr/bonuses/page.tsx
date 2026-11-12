@@ -3,18 +3,24 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  CheckCircle,
   ChevronDown,
   ChevronRight,
   Download,
   Gift,
+  Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import * as hrApi from "@/lib/api/hr/hr";
-import type { Bonus, BonusHistoricalRecord } from "@/types/hr";
+import type {
+  Bonus,
+  BonusHistoricalRecord,
+  BonusPracticeType,
+  HREmployee,
+} from "@/types/hr";
 import {
   aggregateByMember,
   bonusesToCsv,
+  buildMemberTable,
   buildMonthlyReconciliation,
   formatBonusDate,
   groupBonusesByMonth,
@@ -23,6 +29,10 @@ import {
   type MonthAggregate,
 } from "@/lib/hr/bonus-aggregation";
 import { Money } from "@balizero/core";
+import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
+import { AddBonusDialog } from "./_components/add-bonus-dialog";
+import { BonusRow } from "./_components/bonus-row";
+import { MemberTable } from "./_components/member-table";
 
 /** Dashboard panel recipe — mirrors the day/dark-aware Kita surfaces. */
 const PANEL: React.CSSProperties = {
@@ -30,36 +40,14 @@ const PANEL: React.CSSProperties = {
   borderColor: "var(--bz-border)",
 };
 
-/** Bonus-status chip, honestly mapped to --state-* (12% tint + 30% rim). */
-const statusStyles: Record<string, React.CSSProperties> = {
-  pending: {
-    background: "color-mix(in srgb, var(--state-warning) 12%, transparent)",
-    color: "var(--state-warning)",
-    borderColor: "color-mix(in srgb, var(--state-warning) 30%, transparent)",
-  },
-  approved: {
-    background: "color-mix(in srgb, var(--state-info) 12%, transparent)",
-    color: "var(--state-info)",
-    borderColor: "color-mix(in srgb, var(--state-info) 30%, transparent)",
-  },
-  paid: {
-    background: "color-mix(in srgb, var(--state-success) 12%, transparent)",
-    color: "var(--state-success)",
-    borderColor: "color-mix(in srgb, var(--state-success) 30%, transparent)",
-  },
-  rejected: {
-    background: "color-mix(in srgb, var(--state-danger) 12%, transparent)",
-    color: "var(--state-danger)",
-    borderColor: "color-mix(in srgb, var(--state-danger) 30%, transparent)",
-  },
-  reversed: {
-    background: "color-mix(in srgb, var(--bz-text-pure) 6%, transparent)",
-    color: "var(--bz-text-2)",
-    borderColor: "var(--bz-border)",
-  },
-};
-
 const ALL = "all";
+
+const DEPARTMENT_CHIPS: { id: string; label: string }[] = [
+  { id: ALL, label: "All" },
+  { id: "setup", label: "Setup" },
+  { id: "tax", label: "Tax" },
+  { id: "office", label: "Office" },
+];
 
 function memberKeyOf(b: Bonus): string {
   return b.employee_id != null
@@ -84,17 +72,27 @@ export default function BonusesPage() {
   const [year, setYear] = useState<string>(ALL);
   const [status, setStatus] = useState<string>(ALL);
   const [member, setMember] = useState<string>(ALL);
+  const [department, setDepartment] = useState<string>(ALL);
+  const [employees, setEmployees] = useState<HREmployee[]>([]);
+  const [practiceTypes, setPracticeTypes] = useState<BonusPracticeType[]>([]);
+  const [addOpen, setAddOpen] = useState(false);
+  const { capabilities } = useHrCapabilities();
+  const isAdmin = capabilities.hr_admin;
   const [openMonths, setOpenMonths] = useState<Record<string, boolean>>({});
   const [openMembers, setOpenMembers] = useState<Record<string, boolean>>({});
 
+  const loadBonuses = React.useCallback(async () => {
+    try {
+      const data = await hrApi.listBonuses();
+      setBonuses(data.bonuses || []);
+    } catch {
+      /* keep the page usable — the empty state covers it */
+    }
+  }, []);
+
   useEffect(() => {
     async function load() {
-      try {
-        const data = await hrApi.listBonuses();
-        setBonuses(data.bonuses || []);
-      } catch {
-        /* keep the page usable — the empty state covers it */
-      }
+      await loadBonuses();
       try {
         // HR-admin only. Team members get a 403 and the reconciliation strip
         // simply stays hidden for them.
@@ -103,10 +101,24 @@ export default function BonusesPage() {
       } catch {
         setHistorical([]);
       }
+      try {
+        // HR-admin only: every active member is a row of the per-member table,
+        // the tax team included, and the Add bonus form picks from the same list.
+        const emp = await hrApi.listEmployees();
+        setEmployees(emp.employees || []);
+      } catch {
+        setEmployees([]);
+      }
+      try {
+        const types = await hrApi.listBonusPracticeTypes();
+        setPracticeTypes(types.practice_types || []);
+      } catch {
+        setPracticeTypes([]);
+      }
       setLoading(false);
     }
     load();
-  }, []);
+  }, [loadBonuses]);
 
   const handleApprove = async (id: number) => {
     try {
@@ -118,6 +130,32 @@ export default function BonusesPage() {
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to approve bonus",
+      );
+    }
+  };
+
+  const handleReject = async (id: number) => {
+    try {
+      await hrApi.rejectBonus(id);
+      setBonuses((prev) =>
+        prev.map((b) => (b.id === id ? { ...b, status: "rejected" } : b)),
+      );
+      toast.success("Bonus rejected");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to reject bonus",
+      );
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    try {
+      await hrApi.deleteBonus(id);
+      setBonuses((prev) => prev.filter((b) => b.id !== id));
+      toast.success("Bonus deleted");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to delete bonus",
       );
     }
   };
@@ -175,13 +213,29 @@ export default function BonusesPage() {
         if (year !== ALL && !witaMonthKey(b.awarded_at).startsWith(year))
           return false;
         if (member !== ALL && memberKeyOf(b) !== member) return false;
+        if (department !== ALL && b.employee_department !== department)
+          return false;
         return true;
       }),
-    [bonuses, status, year, member],
+    [bonuses, status, year, member, department],
   );
 
   const months = useMemo(() => groupBonusesByMonth(filtered), [filtered]);
   const memberTotals = useMemo(() => aggregateByMember(filtered), [filtered]);
+
+  /** Every active member in the current department/member scope, bonus or not. */
+  const memberRows = useMemo(
+    () =>
+      buildMemberTable(
+        memberTotals,
+        employees.filter(
+          (e) =>
+            (department === ALL || e.department === department) &&
+            (member === ALL || member === `id:${e.id}`),
+        ),
+      ),
+    [memberTotals, employees, department, member],
+  );
 
   const grandTotal = months.reduce((s, m) => s + m.total, 0);
   const grandPending = months.reduce((s, m) => s + m.pendingTotal, 0);
@@ -190,7 +244,8 @@ export default function BonusesPage() {
     0,
   );
 
-  const filtersNarrowView = status !== ALL || member !== ALL;
+  const filtersNarrowView =
+    status !== ALL || member !== ALL || department !== ALL;
 
   /**
    * Months to render = the filtered ledger months UNION any month that has a
@@ -318,6 +373,16 @@ export default function BonusesPage() {
               </option>
             ))}
           </select>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setAddOpen(true)}
+              className="flex items-center gap-1.5 rounded-full bg-[var(--bz-accent)] px-4 py-1.5 text-sm font-semibold text-[var(--bz-on-warm)]"
+            >
+              <Plus size={14} />
+              Add bonus
+            </button>
+          )}
           <button
             onClick={() =>
               downloadCsv(
@@ -353,6 +418,40 @@ export default function BonusesPage() {
         ))}
       </div>
 
+      <div
+        role="group"
+        aria-label="Filter by department"
+        className="flex flex-wrap items-center gap-2"
+      >
+        {DEPARTMENT_CHIPS.map((c) => {
+          const active = department === c.id;
+          return (
+            <button
+              key={c.id}
+              type="button"
+              aria-pressed={active}
+              onClick={() => setDepartment(c.id)}
+              className="rounded-full border px-3.5 py-1 text-sm font-semibold transition-colors"
+              style={
+                active
+                  ? {
+                      background: "var(--bz-accent)",
+                      borderColor: "var(--bz-accent)",
+                      color: "var(--bz-on-warm)",
+                    }
+                  : {
+                      background: "var(--bz-card)",
+                      borderColor: "var(--bz-border)",
+                      color: "var(--bz-text-2)",
+                    }
+              }
+            >
+              {c.label}
+            </button>
+          );
+        })}
+      </div>
+
       {displayMonths.length === 0 ? (
         <div
           className="border rounded-xl p-8 text-center"
@@ -360,148 +459,20 @@ export default function BonusesPage() {
         >
           <Gift size={20} className="mx-auto mb-2 opacity-50" />
           No bonuses for this selection. Bonuses are created automatically when
-          practices are completed.
+          practices are completed{isAdmin ? ", or add one by hand" : ""}.
         </div>
       ) : (
         <>
           {/* ─── Total per member, across the selected months ─────────── */}
-          {memberTotals.length > 0 && (
-            <section
-              className="border rounded-xl overflow-hidden"
-              style={PANEL}
-            >
-              <div
-                className="px-4 py-3 border-b"
-                style={{ borderColor: "var(--bz-border)" }}
-              >
-                <h2
-                  className="text-sm font-semibold"
-                  style={{ color: "var(--bz-text-1)" }}
-                >
-                  Total per member
-                </h2>
-                <p
-                  className="text-xs mt-0.5"
-                  style={{ color: "var(--bz-text-2)" }}
-                >
-                  Across every month in the current selection.
-                </p>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr
-                      className="text-xs uppercase tracking-wide"
-                      style={{ color: "var(--bz-text-2)" }}
-                    >
-                      <th className="text-left font-medium px-4 py-2">
-                        Member
-                      </th>
-                      <th className="text-right font-medium px-4 py-2">
-                        Months
-                      </th>
-                      <th className="text-right font-medium px-4 py-2">
-                        Bonuses
-                      </th>
-                      <th className="text-right font-medium px-4 py-2">
-                        Pending
-                      </th>
-                      <th className="text-right font-medium px-4 py-2">
-                        Approved
-                      </th>
-                      <th className="text-right font-medium px-4 py-2">
-                        Total
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {memberTotals.map((m) => (
-                      <tr
-                        key={m.memberKey}
-                        className="border-t"
-                        style={{
-                          borderColor:
-                            "color-mix(in srgb, var(--bz-border) 70%, transparent)",
-                          color: "var(--bz-text-1)",
-                        }}
-                      >
-                        <td
-                          className="px-4 py-2"
-                          style={{ color: "var(--bz-text-1)" }}
-                        >
-                          {m.employeeName}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {m.monthCount}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {m.count}
-                        </td>
-                        <td className="px-4 py-2 text-right">
-                          {m.byStatus.pending ? (
-                            <Money
-                              value={m.byStatus.pending}
-                              style={{ color: "var(--state-warning)" }}
-                            />
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-right">
-                          {m.byStatus.approved ? (
-                            <Money value={m.byStatus.approved} />
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-right font-semibold">
-                          <Money
-                            value={m.total}
-                            style={{ color: "var(--bz-accent)" }}
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr
-                      className="border-t font-semibold"
-                      style={{
-                        borderColor: "var(--bz-border-hover)",
-                        color: "var(--bz-text-1)",
-                      }}
-                    >
-                      <td className="px-4 py-2">All members</td>
-                      <td className="px-4 py-2 text-right tabular-nums">
-                        {months.length}
-                      </td>
-                      <td className="px-4 py-2 text-right tabular-nums">
-                        {filtered.length}
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        {grandPending ? (
-                          <Money
-                            value={grandPending}
-                            style={{ color: "var(--state-warning)" }}
-                          />
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        <Money value={grandApproved} />
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        <Money
-                          value={grandTotal}
-                          style={{ color: "var(--bz-accent)" }}
-                        />
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </section>
+          {memberRows.length > 0 && (
+            <MemberTable
+              rows={memberRows}
+              monthCount={months.length}
+              bonusCount={filtered.length}
+              grandPending={grandPending}
+              grandApproved={grandApproved}
+              grandTotal={grandTotal}
+            />
           )}
 
           {/* ─── Month by month → member by member ────────────────────── */}
@@ -801,63 +772,14 @@ export default function BonusesPage() {
                                 }}
                               >
                                 {m.bonuses.map((bonus) => (
-                                  <li
+                                  <BonusRow
                                     key={bonus.id}
-                                    className="flex items-center justify-between gap-3 px-4 py-2 pl-14 border-t"
-                                    style={{
-                                      borderColor:
-                                        "color-mix(in srgb, var(--bz-border) 50%, transparent)",
-                                    }}
-                                  >
-                                    <div className="min-w-0">
-                                      <div className="flex items-center gap-2">
-                                        <span
-                                          className="text-sm"
-                                          style={{ color: "var(--bz-text-1)" }}
-                                        >
-                                          {bonus.practice_type_code?.replace(
-                                            /_/g,
-                                            " ",
-                                          )}
-                                        </span>
-                                        <span
-                                          className="text-[10px] px-1.5 py-0.5 rounded-full border"
-                                          style={
-                                            statusStyles[bonus.status] ??
-                                            statusStyles.reversed
-                                          }
-                                        >
-                                          {bonus.status}
-                                        </span>
-                                      </div>
-                                      <div
-                                        className="text-xs mt-0.5 truncate"
-                                        style={{ color: "var(--bz-text-2)" }}
-                                      >
-                                        {formatBonusDate(bonus.awarded_at)}
-                                        {bonus.client_name &&
-                                          ` — ${bonus.client_name}`}
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center gap-3 shrink-0">
-                                      <Money
-                                        value={Number(bonus.amount_idr) || 0}
-                                        className="text-sm"
-                                        style={{ color: "var(--bz-text-1)" }}
-                                      />
-                                      {bonus.status === "pending" && (
-                                        <button
-                                          onClick={() =>
-                                            handleApprove(bonus.id)
-                                          }
-                                          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[color-mix(in_srgb,var(--state-success)_12%,transparent)] text-[var(--state-success)] hover:bg-[color-mix(in_srgb,var(--state-success)_20%,transparent)] text-xs transition-colors"
-                                        >
-                                          <CheckCircle size={12} />
-                                          Approve
-                                        </button>
-                                      )}
-                                    </div>
-                                  </li>
+                                    bonus={bonus}
+                                    isAdmin={isAdmin}
+                                    onApprove={handleApprove}
+                                    onReject={handleReject}
+                                    onDelete={handleDelete}
+                                  />
                                 ))}
                               </ul>
                             )}
@@ -872,6 +794,13 @@ export default function BonusesPage() {
           </div>
         </>
       )}
+      <AddBonusDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        employees={employees}
+        types={practiceTypes}
+        onCreated={loadBonuses}
+      />
     </div>
   );
 }

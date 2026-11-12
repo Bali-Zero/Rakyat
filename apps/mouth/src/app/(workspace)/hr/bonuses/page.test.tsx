@@ -8,6 +8,12 @@ const hrApiMock = vi.hoisted(() => ({
   listBonuses: vi.fn(),
   listBonusHistorical: vi.fn(),
   approveBonus: vi.fn(),
+  rejectBonus: vi.fn(),
+  deleteBonus: vi.fn(),
+  createManualBonus: vi.fn(),
+  listEmployees: vi.fn(),
+  listBonusPracticeTypes: vi.fn(),
+  getCapabilities: vi.fn(),
 }));
 
 vi.mock("@/lib/api/hr/hr", () => hrApiMock);
@@ -34,6 +40,7 @@ function bonus(over: Record<string, unknown> & { id: number }) {
     practice_status: "completed",
     client_name: null,
     notes: null,
+    source: "practice",
     ...over,
   };
 }
@@ -70,6 +77,16 @@ beforeEach(() => {
     count: BONUSES.length,
   });
   hrApiMock.listBonusHistorical.mockResolvedValue({ records: [], count: 0 });
+  hrApiMock.listEmployees.mockResolvedValue({ employees: [], count: 0 });
+  hrApiMock.listBonusPracticeTypes.mockResolvedValue({
+    practice_types: [],
+    count: 0,
+  });
+  hrApiMock.getCapabilities.mockResolvedValue({
+    hr_admin: false,
+    accounting_admin: false,
+    has_employee_record: true,
+  });
 });
 
 describe("BonusesPage", () => {
