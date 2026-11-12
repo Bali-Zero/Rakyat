@@ -1162,6 +1162,22 @@ async def get_practice_types_catalog(
         raise handle_database_error(e)
 
 
+async def _require_visible_client(
+    conn: asyncpg.Connection, current_user: dict, client_id: int
+) -> None:
+    filter_email = get_practices_user_filter(current_user)
+    if filter_email:
+        visible = await conn.fetchval(
+            "SELECT 1 FROM clients WHERE id = $1 AND (assigned_to = $2"
+            " OR EXISTS (SELECT 1 FROM practices WHERE client_id = $1"
+            " AND (created_by = $2 OR LOWER(assigned_to) = $2)))",
+            client_id,
+            filter_email,
+        )
+        if not visible:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+
 @router.get("/invoice-company/suggestion")
 async def invoice_company_suggestion(
     request: Request,
@@ -1173,17 +1189,7 @@ async def invoice_company_suggestion(
     """Companies the client is linked to and what the form should prefill for this service."""
     try:
         async with db_pool.acquire() as conn:
-            filter_email = get_practices_user_filter(current_user)
-            if filter_email:
-                visible = await conn.fetchval(
-                    "SELECT 1 FROM clients WHERE id = $1 AND (assigned_to = $2"
-                    " OR EXISTS (SELECT 1 FROM practices WHERE client_id = $1"
-                    " AND (created_by = $2 OR LOWER(assigned_to) = $2)))",
-                    client_id,
-                    filter_email,
-                )
-                if not visible:
-                    raise HTTPException(status_code=404, detail="Client not found")
+            await _require_visible_client(conn, current_user, client_id)
             category = (
                 await conn.fetchval(
                     "SELECT category FROM practice_types WHERE code = $1", practice_type_code
@@ -1207,6 +1213,26 @@ async def invoice_company_suggestion(
                 for c in result.companies
             ],
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_database_error(e)
+
+
+@router.get("/invoice-company/search")
+async def invoice_company_search(
+    request: Request,
+    client_id: int = Query(..., gt=0),
+    q: str = Query("", max_length=100),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Existing companies matching what is typed in the invoice-company field (ids and names)."""
+    try:
+        async with db_pool.acquire() as conn:
+            await _require_visible_client(conn, current_user, client_id)
+            companies = await invoice_company_service.search_companies(conn, client_id, q)
+        return {"companies": companies}
     except HTTPException:
         raise
     except Exception as e:
@@ -1249,8 +1275,7 @@ async def get_practice(
             """
             if practices_filter:
                 base_query += (
-                    " AND (c.assigned_to = $2 OR p.created_by = $2 "
-                    "OR LOWER(p.assigned_to) = $2)"
+                    " AND (c.assigned_to = $2 OR p.created_by = $2 OR LOWER(p.assigned_to) = $2)"
                 )
                 row = await conn.fetchrow(base_query, practice_id, practices_filter)
                 if not row:

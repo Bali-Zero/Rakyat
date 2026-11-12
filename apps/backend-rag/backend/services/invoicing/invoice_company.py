@@ -20,6 +20,11 @@ AUTOFILL_CATEGORIES = frozenset({"company", "corporate"})
 NEW_LINK_ROLE = "Director"
 _MIN_NPWP_DIGITS = 15
 _LEADING_LEGAL = re.compile(r"^\s*(pt|cv)\b\.?\s*", re.IGNORECASE)
+_TRAILING_TBK = re.compile(r"[\s,.(]*\btbk\b[\s.)]*$", re.IGNORECASE)
+_LEGAL_WORDS = frozenset({"pt", "cv", "tbk"})
+SEARCH_LIMIT = 8
+_MIN_SEARCH_CHARS = 2
+_MIN_SEARCH_DIGITS = 4
 
 
 class InvoiceCompanyError(Exception):
@@ -30,8 +35,9 @@ class InvoiceCompanyError(Exception):
 
 
 def normalize_company_name(name: str | None) -> str:
-    """Casefold, drop a leading PT/CV, keep only letters and digits."""
+    """Casefold, drop a leading PT/CV and a trailing Tbk, keep only letters and digits."""
     stripped = _LEADING_LEGAL.sub("", (name or "").strip(), count=1)
+    stripped = _TRAILING_TBK.sub("", stripped)
     return re.sub(r"[^a-z0-9]", "", stripped.casefold())
 
 
@@ -115,6 +121,85 @@ async def _find_by_name(conn: asyncpg.Connection, normalized: str) -> list[async
         normalized,
     )
     return [row for row in rows if normalize_company_name(row["company_name"]) == normalized]
+
+
+def parse_search_query(query: str | None) -> tuple[list[str], str | None]:
+    """Split a typed query into (name words, NPWP digits).
+
+    Words are alphanumeric runs, casefolded, with the legal-form words PT / CV / Tbk
+    dropped wherever they stand. A query with no letters and enough digits is an NPWP
+    search. Fewer than two characters is no search at all.
+    """
+    text = (query or "").strip()
+    if len(text) < _MIN_SEARCH_CHARS:
+        return [], None
+    if not re.search(r"[^\W\d_]", text):
+        digits = re.sub(r"\D", "", text)
+        return [], digits if len(digits) >= _MIN_SEARCH_DIGITS else None
+    words = [w for w in re.split(r"[^a-z0-9]+", text.casefold()) if w and w not in _LEGAL_WORDS]
+    return words, None
+
+
+def match_tier(normalized_name: str, words: list[str]) -> int | None:
+    """0 exact, 1 prefix, 2 contains (every word, any order); None when a word is missing."""
+    if not words or not all(word in normalized_name for word in words):
+        return None
+    joined = "".join(words)
+    if normalized_name == joined:
+        return 0
+    return 1 if normalized_name.startswith(joined) else 2
+
+
+async def search_companies(
+    conn: asyncpg.Connection, client_id: int, query: str | None, limit: int = SEARCH_LIMIT
+) -> list[dict[str, Any]]:
+    """Existing companies matching a typed query, linked-to-this-client first.
+
+    Names are compared through the same normaliser the save path dedups with, so a
+    company the search offers is one the save path would also reuse.
+    """
+    words, digits = parse_search_query(query)
+    if digits:
+        rows = await conn.fetch(
+            "SELECT id, company_name FROM companies"
+            " WHERE regexp_replace(coalesce(npwp_company, ''), '\\D', '', 'g') LIKE '%' || $1 || '%'",
+            digits,
+        )
+        tiers = {row["id"]: 0 for row in rows}
+    elif words:
+        rows = await conn.fetch(
+            "SELECT id, company_name FROM companies"
+            " WHERE regexp_replace(lower(company_name), '[^a-z0-9]', '', 'g') LIKE ALL($1::text[])",
+            [f"%{word}%" for word in words],
+        )
+        tiers = {}
+        for row in rows:
+            tier = match_tier(normalize_company_name(row["company_name"]), words)
+            if tier is not None:
+                tiers[row["id"]] = tier
+    else:
+        return []
+    linked = {
+        row["company_id"]
+        for row in await conn.fetch(
+            "SELECT company_id FROM client_company_links WHERE client_id = $1"
+            " AND (status IS NULL OR status = 'active') AND end_date IS NULL",
+            client_id,
+        )
+    }
+    ranked = sorted(
+        (row for row in rows if row["id"] in tiers),
+        key=lambda row: (
+            row["id"] not in linked,
+            tiers[row["id"]],
+            (row["company_name"] or "").casefold(),
+            row["id"],
+        ),
+    )
+    return [
+        {"id": row["id"], "company_name": row["company_name"], "linked": row["id"] in linked}
+        for row in ranked[:limit]
+    ]
 
 
 def link_lock_key(client_id: int, company_id: int) -> str:
