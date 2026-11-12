@@ -39,7 +39,12 @@ from backend.app.services.hr.hr_service import (
     business_today,
 )
 from backend.app.utils.crm_utils import is_crm_admin
-from backend.app.utils.hr_utils import can_write_hr_card, hr_people_scope, is_hr_admin
+from backend.app.utils.hr_utils import (
+    can_run_payroll,
+    can_write_hr_card,
+    hr_people_scope,
+    is_hr_admin,
+)
 from backend.core.cache import invalidate_cache
 
 logger = logging.getLogger(__name__)
@@ -217,6 +222,7 @@ async def get_my_capabilities(
         "people_scope": (None if scope is None else "all" if scope == "all" else "scoped"),
         "hr_edit": is_hr_admin(current_user),
         "hr_card_write": can_write_hr_card(current_user),
+        "hr_payroll_write": can_run_payroll(current_user),
     }
 
 
@@ -324,7 +330,7 @@ async def upsert_employee(
 ) -> dict[str, Any]:
     """Create or update an HR employee record (bank and tax columns included).
 
-    Same rule as the card edit (STAFF_CARD.md C11): only the global admins write. The HR extra
+    Same rule as the card edit (STAFF_CARD.md C11): only the HR writers (owner and accountant) write. The HR extra
     admin keeps the reads and the bonus powers, not this door.
     """
     if not can_write_hr_card(current_user):
@@ -527,6 +533,12 @@ async def delete_manual_bonus(
 # ─── PAYROLL ─────────────────────────────────────────────────────────────
 
 
+def _require_payroll_writer(current_user: dict[str, Any]) -> None:
+    """Payroll mutations belong to the owner and the accountant only (owner decision 2026-11-13)."""
+    if not can_run_payroll(current_user):
+        raise HTTPException(status_code=403, detail="Payroll write access required")
+
+
 @router.post("/payroll/calculate")
 async def calculate_payroll(
     data: PayrollCalculateRequest,
@@ -534,7 +546,7 @@ async def calculate_payroll(
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
     """Calculate payroll for a month (admin only)."""
-    _require_hr_admin(current_user)
+    _require_payroll_writer(current_user)
     service = _get_hr_service(db_pool)
     result = await service.calculate_payroll(
         data.month,
@@ -607,7 +619,7 @@ async def approve_payroll(
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
     """Approve a payroll period (locks it)."""
-    _require_hr_admin(current_user)
+    _require_payroll_writer(current_user)
     service = _get_hr_service(db_pool)
     try:
         approver_id = _get_user_id(current_user)
@@ -631,7 +643,7 @@ async def mark_payroll_paid(
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
     """Mark payroll period as paid."""
-    _require_hr_admin(current_user)
+    _require_payroll_writer(current_user)
     service = _get_hr_service(db_pool)
     try:
         result = await service.mark_payroll_paid(period_id)

@@ -23,6 +23,17 @@ GOOD = {"employee_id": 7, "amount_idr": 150000, "reason": "Weekend filing"}
 
 
 @pytest.fixture
+def it_admin_in_allowlist(monkeypatch):
+    """A synthetic IT account that IS a global admin: it must still not write HR data."""
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(
+        settings, "admin_emails", "zero@balizero.com,asya@balizero.com,it.dev@balizero.com"
+    )
+    assert "it.dev@balizero.com" in settings.admin_emails_set
+
+
+@pytest.fixture
 def make_client():
     patchers: list[Any] = []
 
@@ -166,6 +177,38 @@ def test_approve_bonus_maps_200_409_400(make_client):
     assert res.status_code == 409 and "payroll is already approved" in res.json()["detail"]
     svc.approve_bonus = AsyncMock(side_effect=ValueError("not pending"))
     assert c.post("/api/hr/bonuses/3/approve").status_code == 400
+
+
+@pytest.mark.parametrize(
+    "email,status",
+    [
+        ("zero@balizero.com", 200),
+        ("asya@balizero.com", 200),
+        ("it.dev@balizero.com", 403),  # global admin, not an HR writer (2026-11-13)
+        ("adit@balizero.com", 403),  # HR extra admin
+        ("fake.member@balizero.com", 403),
+    ],
+)
+@pytest.mark.parametrize(
+    "path,method",
+    [
+        ("/api/hr/payroll/calculate", "calculate_payroll"),
+        ("/api/hr/payroll/1/approve", "approve_payroll"),
+        ("/api/hr/payroll/1/mark-paid", "mark_payroll_paid"),
+    ],
+)
+def test_payroll_mutations_are_for_the_hr_writers_only(
+    make_client, it_admin_in_allowlist, email, status, path, method
+):
+    svc = AsyncMock()
+    setattr(svc, method, AsyncMock(return_value={"id": 1}))
+    body = {"month": 11, "year": 2026} if path.endswith("calculate") else None
+    user = {"user_id": "tm-x", "email": email, "role": "member"}
+    res = make_client(user, svc).post(path, json=body)
+    assert res.status_code == status
+    assert getattr(svc, method).await_count == (1 if status == 200 else 0)
+    if status == 403:
+        assert res.json()["detail"] == "Payroll write access required"
 
 
 def test_approve_payroll_maps_200_409_400(make_client):

@@ -9285,7 +9285,7 @@ export interface paths {
      * Upsert Employee
      * @description Create or update an HR employee record (bank and tax columns included).
      *
-     *     Same rule as the card edit (STAFF_CARD.md C11): only the global admins write. The HR extra
+     *     Same rule as the card edit (STAFF_CARD.md C11): only the HR writers (owner and accountant) write. The HR extra
      *     admin keeps the reads and the bonus powers, not this door.
      */
     post: operations["upsert_employee_api_hr_employees_post"];
