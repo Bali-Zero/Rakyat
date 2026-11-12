@@ -80,6 +80,7 @@ const call = (suffix: string, method = "GET") =>
 
 // Synthetic data only.
 const ID_A = "11111111-1111-4111-8111-111111111111";
+const ID_B = "22222222-2222-4222-8222-222222222222";
 const ID_N = "33333333-3333-4333-8333-333333333333";
 const FIX = {
   legal_name: "Fixture Legalname Zeta",
@@ -117,6 +118,18 @@ function roster(viewer: string, scope: "all" | "scoped" = "all"): PeopleRoster {
         department: "setup",
         unit: FIX.unit,
         hire_date: "2024-01-15",
+        active: true,
+        flags,
+      },
+      {
+        team_member_id: ID_B,
+        employee_id: 2,
+        has_record: true,
+        name: "Wayan Dua",
+        role: "staff",
+        department: "tax",
+        unit: "Unit Bee",
+        hire_date: "2024-02-01",
         active: true,
         flags,
       },
@@ -454,5 +467,58 @@ describe("People card edit (/hr)", () => {
       ),
     );
     expect(count()).toBe("1");
+  });
+
+  it("a late PATCH answer for A leaves B's panel alone once B is selected and loaded", async () => {
+    await openA();
+    fireEvent.click(screen.getByRole("button", { name: /^Edit$/ }));
+    type("Unit", "Unit Baru");
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    await waitFor(() =>
+      expect(call(`/api/hr/people/${ID_A}/card`, "PATCH")).toHaveLength(1),
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: /Wayan Dua/ })[0]);
+    await waitFor(() =>
+      expect(call(`/api/hr/people/${ID_B}/overview`)).toHaveLength(1),
+    );
+    await act(async () =>
+      call(`/api/hr/people/${ID_B}/overview`)[0].resolve(
+        person("A", ID_B, { legal_name: "Legal Bee Marker" }),
+      ),
+    );
+    await act(async () =>
+      call(`/api/hr/people/${ID_A}/card`, "PATCH")[0].resolve(
+        person("A", ID_A, { unit: "Unit Baru", legal_name: "Legal Ay Marker" }),
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Me/ }));
+    expect(screen.getAllByText("Legal Bee Marker").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Legal Ay Marker")).toBeNull();
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
+      "Wayan Dua",
+    );
+  });
+
+  it("does not apply a PATCH answer when the session's bearer changed while it was pending", async () => {
+    await openA();
+    fireEvent.click(screen.getByRole("button", { name: /^Edit$/ }));
+    type("Unit", "Unit Baru");
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    await waitFor(() =>
+      expect(call(`/api/hr/people/${ID_A}/card`, "PATCH")).toHaveLength(1),
+    );
+    await act(async () => {
+      localStorage.setItem("auth_token", tokenFor("B"));
+      window.dispatchEvent(new StorageEvent("storage", { key: "auth_token" }));
+    });
+    await act(async () =>
+      call(`/api/hr/people/${ID_A}/card`, "PATCH")[0].resolve(
+        person("A", ID_A, { unit: "Unit Intruso" }),
+      ),
+    );
+    expect(screen.queryByText(/Unit Intruso/)).toBeNull();
+    expect(screen.queryByText(/Unit Baru/)).toBeNull();
+    // the page re-reads People for the new bearer; nothing of the old identity is kept
+    await waitFor(() => expect(call("/api/hr/people")).toHaveLength(2));
   });
 });

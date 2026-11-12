@@ -17,7 +17,7 @@
  * with, and only if it names the member it was sent for.
  * Nothing here is logged, cached or persisted.
  */
-import React, { Suspense, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
@@ -474,6 +474,10 @@ function PeopleConsole() {
     );
   }, [roster, picked]);
   const selectedId = selected?.team_member_id ?? null;
+  // The save callback outlives the render that created it: it asks THIS ref who is selected
+  // when the answer lands, so a late answer for A never overwrites B's person slot.
+  const selectedIdRef = useRef<string | null>(null);
+  selectedIdRef.current = selectedId;
   const selectedHasRecord = selected?.has_record ?? false;
 
   const [pslot, setPslot] = useState<{
@@ -575,11 +579,12 @@ function PeopleConsole() {
             "Your session changed, so the answer was discarded. Reload to check the card.",
         };
       const fresh = res.data.person.card;
-      setPslot({
-        owner: sentFor,
-        id,
-        load: { kind: "ready", data: res.data },
-      });
+      if (selectedIdRef.current === id)
+        setPslot({
+          owner: sentFor,
+          id,
+          load: { kind: "ready", data: res.data },
+        });
       setRslot((prev) => {
         if (prev.load.kind !== "ready" || !isSameIdentity(prev.owner, sentFor))
           return prev;
@@ -628,7 +633,7 @@ function PeopleConsole() {
           },
         };
       });
-      setEditing(null);
+      setEditing((cur) => (cur && cur.id === id ? null : cur));
       return { ok: true };
     } catch (err: unknown) {
       return saveFailure(err);
