@@ -10,7 +10,11 @@ from fastapi.testclient import TestClient
 
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.routers import hr as hr_router
-from backend.app.services.hr.hr_service import BonusPeriodLockedError, PayrollBonusesChangedError
+from backend.app.services.hr.hr_service import (
+    BonusPeriodLockedError,
+    OffPayrollError,
+    PayrollBonusesChangedError,
+)
 
 ADMIN = {"user_id": "tm-admin", "email": "Asya@balizero.com", "role": "member"}
 MEMBER = {"user_id": "tm-fake-7", "email": "fake.member@balizero.com", "role": "member"}
@@ -194,3 +198,22 @@ def test_bonus_rate_without_effective_from_reaches_the_service_with_a_date(make_
     assert c.post("/api/hr/bonus-rates", json=kept).status_code == 200
     sent = svc.upsert_bonus_rate.await_args.args[0]
     assert (sent["effective_from"], sent["effective_to"]) == (date(2026, 3, 1), date(2026, 12, 31))
+
+
+def test_manual_bonus_for_an_off_payroll_person_is_a_409_with_a_fixed_code(make_client):
+    svc = AsyncMock()
+    svc.create_manual_bonus = AsyncMock(side_effect=OffPayrollError("x"))
+    res = make_client(ADMIN, svc).post("/api/hr/bonuses", json=GOOD)
+    assert res.status_code == 409
+    assert res.json() == {"detail": "This person is not on payroll", "code": "off_payroll"}
+
+
+def test_an_off_payroll_member_gets_no_personal_bonuses_or_payslips(make_client):
+    svc = AsyncMock()
+    svc.get_employee_by_email = AsyncMock(return_value={"id": 7})
+    svc.is_on_payroll = AsyncMock(return_value=False)
+    client = make_client(MEMBER, svc)
+    assert client.get("/api/hr/bonuses").json() == {"bonuses": [], "count": 0}
+    assert client.get("/api/hr/payslips").json() == {"payslips": [], "count": 0}
+    svc.list_bonuses.assert_not_awaited()
+    svc.get_payslips.assert_not_awaited()

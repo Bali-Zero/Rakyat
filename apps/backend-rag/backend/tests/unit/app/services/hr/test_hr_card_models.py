@@ -126,3 +126,29 @@ def test_the_read_model_never_raises_on_stored_content():
         card.docs == {} and card.contract is None and card.nik is None and card.is_active is False
     )
     assert member_card({"id": None, "profile": "x"}).employee_id == 0
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_on_payroll_accepts_a_strict_boolean(value):
+    assert StaffProfilePatch(on_payroll=value).on_payroll is value
+
+
+@pytest.mark.parametrize("bad", ["yes", "false", 1, 0, "true", []])
+def test_on_payroll_rejects_anything_but_a_boolean(bad):
+    with pytest.raises(ValidationError):
+        StaffProfilePatch(on_payroll=bad)
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected"),
+    [
+        ({}, True),
+        ({"on_payroll": True}, True),
+        ({"on_payroll": False}, False),
+        ({"on_payroll": "no"}, True),
+        ("junk", True),
+    ],
+)
+def test_the_read_side_defaults_to_on_payroll(profile, expected):
+    card = {"id": 1, "is_active": True, "profile": profile}
+    assert member_card(card).on_payroll is expected

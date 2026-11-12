@@ -55,6 +55,15 @@ class PayrollBonusesChangedError(Exception):
     """Approved bonuses no longer match the payslips the period was calculated with."""
 
 
+class OffPayrollError(Exception):
+    """The employee's card says `on_payroll = false`: no payroll item may be created for them."""
+
+
+#: SQL predicate over `hr_employees AS e`: true unless the card holds the JSON boolean
+#: `false` at `profile.on_payroll` (STAFF_CARD.md C12). Works on a non-object profile too.
+ON_PAYROLL_SQL = "((e.profile -> 'on_payroll') IS DISTINCT FROM 'false'::jsonb)"
+
+
 def payroll_month_lock_key(month: int, year: int) -> str:
     """The advisory-lock key of a payroll month (also what the tests lock on)."""
     return f"hr_payroll_month:{year:04d}-{month:02d}"
@@ -172,8 +181,9 @@ class HRService:
     async def list_employees(self) -> list[dict[str, Any]]:
         """List all HR employees with team member info."""
         async with self.db_pool.acquire() as conn:
-            rows = await conn.fetch("""
-                SELECT e.*, tm.full_name, tm.email, tm.role, tm.department
+            rows = await conn.fetch(f"""
+                SELECT e.*, {ON_PAYROLL_SQL} AS on_payroll,
+                       tm.full_name, tm.email, tm.role, tm.department
                 FROM hr_employees e
                 JOIN team_members tm ON tm.id = e.team_member_id
                 WHERE e.is_active = TRUE
@@ -192,6 +202,14 @@ class HRService:
         data = dict(row)
         data.pop("profile", None)
         return data
+
+    async def is_on_payroll(self, employee_id: int) -> bool:
+        """False only when the employee's card says `profile.on_payroll = false` (C12)."""
+        async with self.db_pool.acquire() as conn:
+            value = await conn.fetchval(
+                f"SELECT {ON_PAYROLL_SQL} FROM hr_employees e WHERE e.id = $1", employee_id
+            )
+        return value is not False
 
     async def get_employee(self, employee_id: int) -> dict[str, Any] | None:
         """Get employee by HR employee ID."""
@@ -672,18 +690,23 @@ class HRService:
     ) -> dict[str, Any] | None:
         """Insert a pending manual bonus. None when the employee is unknown or inactive.
 
-        Raises ValueError for an unknown service code and BonusPeriodLockedError when
-        the payroll month of `awarded_on` is already approved or paid.
+        Raises ValueError for an unknown service code, OffPayrollError when the employee's
+        card says they are not on payroll, and BonusPeriodLockedError when the payroll month
+        of `awarded_on` is already approved or paid.
         """
         awarded_at = datetime.combine(awarded_on, time(12, 0), tzinfo=ZoneInfo(BUSINESS_TZ))
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
                 emp = await conn.fetchrow(
-                    "SELECT id FROM hr_employees WHERE id = $1 AND is_active = TRUE",
+                    f"SELECT e.id, {ON_PAYROLL_SQL} AS on_payroll "
+                    "FROM hr_employees e WHERE e.id = $1 AND e.is_active = TRUE",
                     employee_id,
                 )
                 if not emp:
                     return None
+                if not emp["on_payroll"]:
+                    msg = "This person is not on payroll"
+                    raise OffPayrollError(msg)
                 if practice_type_code:
                     known = await conn.fetchval(
                         "SELECT 1 FROM practice_types WHERE code = $1 AND is_active = TRUE",
@@ -805,7 +828,10 @@ class HRService:
     ) -> dict[str, Any]:
         """
         Calculate payroll for a given month.
-        Creates period + payslips + deductions for all active employees.
+        Creates period + payslips + deductions for all active employees that are on payroll
+        (card `profile.on_payroll` is not false). Payslips of this period that belong to
+        anyone outside that set are deleted in the same transaction, unless the period was
+        already approved or paid when this call found it.
         """
         period_start = date(year, month, 1)
         last_day = calendar.monthrange(year, month)[1]
@@ -814,6 +840,12 @@ class HRService:
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
                 await _lock_payroll_month(conn, month, year, exclusive=True)
+                prior_status = await conn.fetchval(
+                    "SELECT status FROM hr_payroll_periods "
+                    "WHERE payroll_month = $1 AND payroll_year = $2",
+                    month,
+                    year,
+                )
                 # Create or get period
                 period = await conn.fetchrow(
                     """
@@ -833,12 +865,12 @@ class HRService:
                 )
                 period_id = period["id"]
 
-                # Get all active employees
-                employees = await conn.fetch("""
+                # Get all active employees that are on payroll
+                employees = await conn.fetch(f"""
                     SELECT e.*, tm.full_name, tm.email
                     FROM hr_employees e
                     JOIN team_members tm ON tm.id = e.team_member_id
-                    WHERE e.is_active = TRUE
+                    WHERE e.is_active = TRUE AND {ON_PAYROLL_SQL}
                 """)
 
                 payslips = []
@@ -955,6 +987,27 @@ class HRService:
                             "deduction_total": deduction_total,
                             "net_salary": net,
                         }
+                    )
+
+                if prior_status not in ("approved", "paid"):
+                    kept = [emp["id"] for emp in employees]
+                    await conn.execute(
+                        """
+                        DELETE FROM hr_deductions WHERE payslip_id IN (
+                            SELECT id FROM hr_payslips
+                            WHERE payroll_period_id = $1 AND employee_id <> ALL($2::int[])
+                        )
+                    """,
+                        period_id,
+                        kept,
+                    )
+                    await conn.execute(
+                        """
+                        DELETE FROM hr_payslips
+                        WHERE payroll_period_id = $1 AND employee_id <> ALL($2::int[])
+                    """,
+                        period_id,
+                        kept,
                     )
 
                 logger.info(f"Payroll calculated: {month}/{year}, {len(payslips)} employees")
@@ -1074,11 +1127,11 @@ class HRService:
                     msg = f"Period {period_id} not found or not in 'calculated' status"
                     raise ValueError(msg)
                 drift = await conn.fetchval(
-                    """
+                    f"""
                     SELECT e.id FROM hr_employees e
                     LEFT JOIN hr_payslips ps
                            ON ps.employee_id = e.id AND ps.payroll_period_id = $1
-                    WHERE e.is_active = TRUE
+                    WHERE e.is_active = TRUE AND {ON_PAYROLL_SQL}
                       AND COALESCE(ps.bonus_total_idr, 0) <> COALESCE((
                             SELECT SUM(b.amount_idr) FROM hr_bonus_ledger b
                             WHERE b.employee_id = e.id
@@ -1587,9 +1640,16 @@ class HRService:
             }
 
     async def get_my_dashboard(self, employee_id: int) -> dict[str, Any]:
-        """Personal dashboard for a team member."""
+        """Personal dashboard for a team member.
+
+        A person whose card says `on_payroll = false` gets `on_payroll: false` and no payroll
+        data at all (no payslip, no bonus totals); their leave balances stay.
+        """
         today = business_today()
         async with self.db_pool.acquire() as conn:
+            on_payroll = await conn.fetchval(
+                f"SELECT {ON_PAYROLL_SQL} FROM hr_employees e WHERE e.id = $1", employee_id
+            )
             # Current month bonuses
             bonuses = await conn.fetchrow(
                 """
@@ -1633,7 +1693,13 @@ class HRService:
                 today.year,
             )
 
+            if on_payroll is False:
+                return {
+                    "on_payroll": False,
+                    "leave_balances": [dict(r) for r in leave_balance],
+                }
             return {
+                "on_payroll": True,
                 "month_bonuses": dict(bonuses),
                 "latest_payslip": dict(latest_payslip) if latest_payslip else None,
                 "leave_balances": [dict(r) for r in leave_balance],

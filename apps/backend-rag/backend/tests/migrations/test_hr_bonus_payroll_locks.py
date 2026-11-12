@@ -30,6 +30,9 @@ pytestmark = pytest.mark.integration
 
 SCHEMA = "hrlock357"
 MIGRATION = Path(__file__).resolve().parents[2] / "db" / "migrations_v2" / "357_hr_bonus_manual.sql"
+MIGRATION_354 = (
+    Path(__file__).resolve().parents[2] / "db" / "migrations_v2" / "354_hr_employees_profile.sql"
+)
 MONTH, YEAR = 11, 2026
 AWARDED = datetime(2026, 11, 10, 4, 0, tzinfo=timezone.utc)
 
@@ -71,6 +74,7 @@ async def env() -> AsyncIterator[Env]:
             "CREATE TABLE practices (id SERIAL PRIMARY KEY, status TEXT);"
         )
         await admin.execute(UPGRADE_SQL)
+        await admin.execute(split_migration_sql(MIGRATION_354.read_text(encoding="utf-8"))[0])
         await admin.execute(split_migration_sql(MIGRATION.read_text(encoding="utf-8"))[0])
         await admin.execute(
             "INSERT INTO team_members VALUES ('tm-admin','Fake Admin','fake.admin@example.com'),"
