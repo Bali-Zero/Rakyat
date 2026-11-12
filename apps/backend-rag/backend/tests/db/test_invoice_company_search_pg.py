@@ -263,3 +263,59 @@ async def test_trailing_tbk_with_punctuation_never_duplicates_on_save(pool: asyn
             )
     assert resolved == target
     assert await pool.fetchval("SELECT count(*) FROM companies") == 1
+
+
+_FORMS = [
+    "PT. Bayu",
+    "PT: Bayu",
+    "PT-Bayu",
+    "(PT) Bayu",
+    "Bayu Tbk:",
+    "Bayu - Tbk",
+    "Bayu (Tbk).",
+    "Bayu Tbk,",
+]
+
+
+async def save_name(pool: asyncpg.Pool, client: int, name: str) -> int:
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            return await invoice_company.resolve_invoice_company(
+                conn, client, company_id=None, name=name, npwp=None, actor="synthetic"
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored", _FORMS)
+async def test_stored_affix_form_is_found_and_reused_by_a_plain_name(
+    pool: asyncpg.Pool, stored: str
+) -> None:
+    client = await person(pool)
+    target = await company(pool, stored)
+    assert [r["id"] for r in await search(pool, client, "bayu")] == [target]
+    assert await save_name(pool, client, "Bayu") == target
+    assert await pool.fetchval("SELECT count(*) FROM companies") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("typed", _FORMS)
+async def test_typed_affix_form_finds_and_reuses_a_plain_stored_name(
+    pool: asyncpg.Pool, typed: str
+) -> None:
+    client = await person(pool)
+    target = await company(pool, "PT Bayu")
+    assert [r["id"] for r in await search(pool, client, typed)] == [target]
+    assert await save_name(pool, client, typed) == target
+    assert await pool.fetchval("SELECT count(*) FROM companies") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("typed", ["Bayu Tbkx", "PTB Bayu", "Atbk Bayu"])
+async def test_letters_that_only_look_like_an_affix_neither_match_nor_reuse(
+    pool: asyncpg.Pool, typed: str
+) -> None:
+    client = await person(pool)
+    existing = await company(pool, "PT Bayu")
+    assert await search(pool, client, typed) == []
+    assert await save_name(pool, client, typed) != existing
+    assert await pool.fetchval("SELECT count(*) FROM companies") == 2

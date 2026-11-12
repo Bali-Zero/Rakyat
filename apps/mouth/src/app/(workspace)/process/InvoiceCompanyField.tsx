@@ -226,6 +226,9 @@ export function InvoiceCompanyField({
       setSearch(null);
       return;
     }
+    // A list exists only for a request that succeeded for this text and context:
+    // drop whatever an earlier generation left before asking again.
+    setSearch(null);
     let cancelled = false;
     const timer = setTimeout(() => {
       Promise.resolve()

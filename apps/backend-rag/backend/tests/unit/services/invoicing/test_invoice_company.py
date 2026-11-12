@@ -210,3 +210,52 @@ def test_normalizer_ignores_a_trailing_tbk() -> None:
     assert normalize_company_name("PT Maju Jaya, Tbk.;") == "majujaya"
     assert normalize_company_name("PT Straße") == "strasse"
     assert normalize_company_name("PT Tbkmaju") == "tbkmaju"
+
+
+_EQUIVALENT_TO_BAYU = [
+    "bayu",
+    "PT Bayu",
+    "PT. Bayu",
+    "PT: Bayu",
+    "PT-Bayu",
+    "(PT) Bayu",
+    "CV. Bayu",
+    "Bayu Tbk",
+    "Bayu Tbk:",
+    "Bayu - Tbk",
+    "Bayu (Tbk).",
+    "Bayu Tbk,",
+    "PT. Bayu, Tbk.",
+    "  PT  BAYU  ",
+]
+
+
+@pytest.mark.parametrize("form", _EQUIVALENT_TO_BAYU)
+def test_every_affix_form_normalizes_to_the_same_key(form: str) -> None:
+    from backend.services.invoicing.invoice_company import (
+        normalize_company_name,
+        parse_search_query,
+    )
+
+    assert normalize_company_name(form) == "bayu"
+    assert parse_search_query(form) == (["bayu"], None)
+
+
+@pytest.mark.parametrize(
+    ("form", "key"),
+    [
+        ("PTB Bayu", "ptbbayu"),
+        ("Bayu Tbkx", "bayutbkx"),
+        ("Bayu CV", "bayucv"),
+        ("Bayu PT", "bayupt"),
+        ("PT Bayu PT", "bayupt"),
+        ("Atbk Bayu", "atbkbayu"),
+        ("Bayu Atbk", "bayuatbk"),
+        ("Tbk Bayu", "tbkbayu"),
+        ("Bayu Tbk Tbk", "bayutbk"),
+    ],
+)
+def test_letters_that_only_look_like_an_affix_are_kept(form: str, key: str) -> None:
+    from backend.services.invoicing.invoice_company import normalize_company_name
+
+    assert normalize_company_name(form) == key

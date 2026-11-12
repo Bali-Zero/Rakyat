@@ -20,7 +20,9 @@ AUTOFILL_CATEGORIES = frozenset({"company", "corporate"})
 NEW_LINK_ROLE = "Director"
 _MIN_NPWP_DIGITS = 15
 _LEADING_LEGAL = re.compile(r"^\s*(pt|cv)\b\.?\s*", re.IGNORECASE)
-_TRAILING_TBK = re.compile(r"[\s,.(]*\btbk\b[\s,.;)]*$", re.IGNORECASE)
+_EDGE_NON_ALNUM = re.compile(r"^[^a-z0-9]+|[^a-z0-9]+$")
+_LEADING_LEGAL_TOKEN = re.compile(r"^(?:pt|cv)(?![a-z0-9])[^a-z0-9]*")
+_TRAILING_TBK_TOKEN = re.compile(r"(?<![a-z0-9])tbk$")
 SEARCH_LIMIT = 8
 _MIN_SEARCH_CHARS = 2
 _MIN_SEARCH_DIGITS = 4
@@ -33,11 +35,19 @@ class InvoiceCompanyError(Exception):
         self.detail = detail
 
 
+def strip_company_affixes(name: str | None) -> str:
+    """The one affix rule for names, queries and save: casefold, trim every leading and
+    trailing non-alphanumeric run, then drop a leading "pt"/"cv" token and a trailing
+    "tbk" token, each only as a separate word (bounded by a non-alphanumeric or the
+    string edge). "PTB Bayu" and "Bayu Tbkx" keep their letters; "Bayu CV" keeps "cv"."""
+    text = _EDGE_NON_ALNUM.sub("", (name or "").casefold())
+    text = _LEADING_LEGAL_TOKEN.sub("", text, count=1)
+    return _TRAILING_TBK_TOKEN.sub("", text, count=1)
+
+
 def normalize_company_name(name: str | None) -> str:
-    """Casefold, drop a leading PT/CV and a trailing Tbk, keep only letters and digits."""
-    stripped = _LEADING_LEGAL.sub("", (name or "").strip(), count=1)
-    stripped = _TRAILING_TBK.sub("", stripped)
-    return re.sub(r"[^a-z0-9]", "", stripped.casefold())
+    """The comparison key: the affix rule, then only letters and digits."""
+    return re.sub(r"[^a-z0-9]", "", strip_company_affixes(name))
 
 
 def normalize_npwp(npwp: str | None) -> str | None:
@@ -121,10 +131,10 @@ async def _find_by_name(conn: asyncpg.Connection, normalized: str) -> list[async
 def parse_search_query(query: str | None) -> tuple[list[str], str | None]:
     """Split a typed query into (name words, NPWP digits).
 
-    Words are alphanumeric runs, casefolded, after the same affix rules the save path
-    uses (a leading PT/CV and a trailing Tbk are dropped, nothing else), so "Bayu CV"
-    keeps "cv" exactly as saving it would. A query with no letters and enough digits is
-    an NPWP search. Fewer than two characters is no search at all.
+    Words are alphanumeric runs after the same affix rule names and save use
+    (`strip_company_affixes`), so "Bayu CV" keeps "cv" exactly as saving it would. A
+    query with no letters and enough digits is an NPWP search. Fewer than two
+    characters is no search at all.
     """
     text = (query or "").strip()
     if len(text) < _MIN_SEARCH_CHARS:
@@ -132,8 +142,7 @@ def parse_search_query(query: str | None) -> tuple[list[str], str | None]:
     if not re.search(r"[^\W\d_]", text):
         digits = re.sub(r"\D", "", text)
         return [], digits if len(digits) >= _MIN_SEARCH_DIGITS else None
-    text = _TRAILING_TBK.sub("", _LEADING_LEGAL.sub("", text, count=1))
-    words = [w for w in re.split(r"[^a-z0-9]+", text.casefold()) if w]
+    words = [w for w in re.split(r"[^a-z0-9]+", strip_company_affixes(text)) if w]
     return (words, None) if len("".join(words)) >= _MIN_SEARCH_CHARS else ([], None)
 
 

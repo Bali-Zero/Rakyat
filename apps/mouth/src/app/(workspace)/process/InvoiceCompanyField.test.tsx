@@ -868,4 +868,36 @@ describe("InvoiceCompanyField live company search", () => {
     ).toBeInTheDocument();
     expect(mockSearch).toHaveBeenCalledTimes(2);
   });
+
+  it("after a success, edit and revert, a failing retry leaves no list", async () => {
+    mockSearch.mockResolvedValueOnce({
+      companies: [match(21, "PT Bayu Lain")],
+    });
+    mockSearch.mockImplementation(() => new Promise(() => {}));
+    render(<Harness onValue={vi.fn()} />);
+    const user = await typeName("bayu");
+    await screen.findByRole("button", { name: "PT Bayu Lain" });
+    await user.type(screen.getByLabelText("Company name"), "x");
+    await user.type(screen.getByLabelText("Company name"), "{Backspace}");
+    expect(screen.queryByRole("button", { name: "PT Bayu Lain" })).toBeNull();
+    expect(screen.queryByTestId("invoice-company-search")).toBeNull();
+  });
+
+  it("a rejected retry after a success shows no list", async () => {
+    mockSearch.mockResolvedValueOnce({
+      companies: [match(21, "PT Bayu Lain")],
+    });
+    mockSearch.mockResolvedValueOnce({ companies: [] });
+    mockSearch.mockRejectedValue(new Error("boom"));
+    render(<Harness onValue={vi.fn()} />);
+    const user = await typeName("bayu");
+    await screen.findByRole("button", { name: "PT Bayu Lain" });
+    await user.type(screen.getByLabelText("Company name"), "x");
+    await screen.findByRole("button", { name: "Create «bayux»" });
+    await user.type(screen.getByLabelText("Company name"), "{Backspace}");
+    await waitFor(() => expect(mockSearch).toHaveBeenCalledTimes(3));
+    await settle(50);
+    expect(screen.queryByRole("button", { name: "PT Bayu Lain" })).toBeNull();
+    expect(screen.queryByTestId("invoice-company-search")).toBeNull();
+  });
 });
