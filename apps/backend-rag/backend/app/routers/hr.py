@@ -314,8 +314,13 @@ async def upsert_employee(
     current_user: dict[str, Any] = Depends(get_current_user),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    """Create or update an HR employee record."""
-    _require_hr_admin(current_user)
+    """Create or update an HR employee record (bank and tax columns included).
+
+    Same rule as the card edit (STAFF_CARD.md C11): only the global admins write. The HR extra
+    admin keeps the reads and the bonus powers, not this door.
+    """
+    if not can_write_hr_card(current_user):
+        raise HTTPException(status_code=403, detail="Card write access required")
     service = _get_hr_service(db_pool)
     result = await service.upsert_employee(data.model_dump())
     await invalidate_cache("zantara:hr_employees:*")

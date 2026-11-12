@@ -282,9 +282,13 @@ the default). It changes nothing else.
   `hr_card_write`.
 - *Which person.* The path id must be a UUID and a visible person by the People predicate
   (`VISIBLE_PERSON_PREDICATE`): a client, monitoring, partner, inactive or unknown account is 404.
-  The member row is then locked `FOR SHARE` with its exact stored email re-checked in the write's
-  own transaction (C8's lock), under the same 5 s `lock_timeout`; a member who changed in between is
-  404, a lock timeout is 409 `Card is busy, try again`.
+  The member row is then locked `FOR SHARE OF tm` in the write's own transaction, and that SAME
+  statement re-checks the full `VISIBLE_PERSON_PREDICATE` (imported, not copied) and the exact stored
+  email, under the same 5 s `lock_timeout`: a member deactivated, or turned monitoring / partner /
+  client, after the route's lookup is 404 and nothing is written; a concurrent
+  `UPDATE team_members SET active = false` waits for the edit's commit. Create mode passes the
+  predicate through its company-address-plus-named-role branch exactly as the roster shows that
+  person. A lock timeout is 409 `Card is busy, try again`.
 - *Body.* `{"card": StaffCardPatch, "clear": [...]}`, `extra=forbid` at every level. `card` is the
   import's `StaffCardPatch` unchanged (C6 validators, not loosened). `clear` is a closed list:
   `npwp`, `bpjs_kesehatan_number`, `bpjs_ketenagakerjaan_number`, `bank_name`, `bank_account`,
@@ -308,10 +312,19 @@ the default). It changes nothing else.
   default 422 (which echoes `input`): the route reduces it to
   `{"detail": [{"field", "code", "message"}]}`, `field` from the closed key set above (or empty), `message`
   from a fixed table, never an `input`, `ctx` or caller-invented key. Service failures are
-  `HRCardError(code)` mapped to a fixed text (409 / 422 `hire_date_required` / 500). The log carries
+  `HRCardError(code)` mapped to a fixed response (409 / 422 `hire_date_required` / 500); the 422 is
+  returned as a response, not raised as `HTTPException`, because the app's global handler flattens a
+  list `detail` to a string. Nothing reaches Sentry either: the FastAPI integration copies the request
+  JSON onto an event, so `sentry_config._before_send_impl` replaces `request.data`, `query_string` and
+  `cookies` of every `/api/hr/` event by the placeholder, by ROUTE whatever the keys (transaction path
+  included), and the HR card keys are also exact-match redaction keys. The log carries
   only the actor's team_member id, the target team_member id and the KEY NAMES set or cleared. No
   audit table is written: the repo has none for HR (`crm_audit_log` is CRM-entity specific) and a
   new one is a separate decision.
+- *Two doors, one rule.* The legacy `POST /api/hr/employees` also writes bank and tax columns, so it
+  requires `can_write_hr_card` too (403 otherwise). The HR extra admin keeps reads and bonus powers,
+  and neither route writes a card for them; the legacy Employees page gates its create and edit
+  controls on `hr_card_write`.
 
 ## Clause-to-test index
 
@@ -329,4 +342,4 @@ Paths are under `backend/tests/` unless given.
 | C8 | `unit/scripts/test_import_staff_cards_worker.py``::test_an_email_matching_two_staff_rows_is_ambiguous_*`, `::test_a_single_case_variant_*`, `::test_cards_are_written_in_resolved_member_id_order_*`, `::test_a_non_canonical_email_is_rejected_before_any_lookup`, `::test_a_canonical_email_is_used_byte_for_byte`, `::test_a_non_canonical_card_never_reaches_the_database`, `::test_the_lock_recheck_receives_the_card_email_unchanged`, `::test_a_member_that_no_longer_matches_*`, `::test_apply_sets_a_transaction_local_lock_timeout_*`; `tests/migrations/test_hr_card_write_path.py``::test_the_import_rejects_a_case_twin_email_as_ambiguous_*`, `::test_a_padded_twin_and_a_case_twin_make_either_canonical_address_ambiguous`, `::test_a_padded_twin_alone_makes_the_canonical_address_ambiguous_*`, `::test_a_card_naming_the_padded_address_is_refused_*`, `::test_a_lone_padded_row_is_not_found_*`, `::test_launcher_a_padded_twin_is_ambiguous_through_the_whole_tool`, `::test_a_member_renamed_between_resolve_and_merge_*`, `::test_a_member_turned_client_between_resolve_and_merge_*`, `::test_a_blocked_row_lock_is_rejected_as_lock_timeout_*`, `::test_real_apply_locks_members_in_sorted_id_order`, `::test_two_concurrent_batches_over_the_same_members_in_opposite_order`, and through the real launcher `::test_launcher_an_ambiguous_email_is_rejected_and_nothing_is_written`, `::test_launcher_a_member_renamed_between_resolve_and_merge_is_rejected` |
 | C9 | `test_member_self_read_of_the_employee_row_has_no_notes`, `test_the_legacy_employee_shape_never_carries_the_profile` |
 | C10 | `unit/scripts/test_import_staff_cards.py` (real launcher in a subprocess): `::test_family1_*` (real worker, fake driver: warnings, import-time output, `logging.log(60, ...)`, exceptions at connect / codec / transaction / commit / close, `SystemExit(0)`, `SystemExit(<sentinel>)`, `SystemExit(7)`, SIGKILL before and after the decision, hang, SIGINT before and after the decision, bad and wrong-shape stdin), `::test_protocol_*` and `::test_family2_*` (stub worker: garbage, oversized, unknown key, code outside the set, negative, huge, sentinel in a string field, duplicate / contradictory / trailing records, raw bytes and flags, large input, `python -I -W ignore`, closed stdout), `::test_the_worker_comes_from_the_launchers_own_tree_*`, `::test_production_layout_*` (an interpreter with no third-party packages, the fake driver only in a `PYTHONPATH` directory outside ROOT: dry-run and apply), `::test_without_pythonpath_the_bare_interpreter_*`, `::test_a_backend_package_in_pythonpath_or_cwd_is_never_used`, `::test_sitecustomize_and_usercustomize_in_pythonpath_are_not_executed`, `::test_the_dependency_filter_*`, `::test_pythonpath_unset_or_empty_*`, `::test_pythonpath_dirs_are_appended_at_the_end_*`, `::test_a_nonexistent_pythonpath_entry_naming_a_sentinel_*`, `::test_a_launcher_without_dash_i_refuses_*`, `::test_pythonwarnings_with_and_without_dash_i`, `::test_the_worker_is_started_isolated_*` (exact command line, own session, only the result fd), `::test_the_worker_has_no_controlling_terminal_*` (pty), `::test_a_stdin_that_never_ends_*`, `::test_a_signal_while_reading_stdin_*`, `::test_an_input_over_the_cap_*`, `::test_an_exception_or_exit_anywhere_after_the_arguments_is_one_fixed_line`, `::test_every_parse_error_is_the_one_fixed_line_and_exit_2`, `::test_help_is_static_text`, `::test_the_launcher_imports_the_standard_library_only`, `::test_the_test_timeout_knob_can_only_shorten_the_deadline`, `::test_the_truthfulness_table_row_by_row`, `::test_exit_zero_needs_*`, `::test_a_result_is_taken_only_when_it_matches_the_closed_grammar`, `::test_a_spawn_failure_*`, `::test_the_launcher_refuses_without_the_isolated_flag_in_main`; the shared test root is `tests/fixtures/import_root.py`; `unit/scripts/test_import_staff_cards_worker.py``::test_the_records_the_worker_writes_are_exactly_what_the_launcher_accepts`, `::test_every_outcome_and_code_the_worker_can_produce_is_in_the_launcher_closed_sets`, `::test_work_*`, `::test_the_worker_refuses_to_run_without_a_result_pipe`, `::test_validate_card_reads_pydantic_errors_without_the_input` |
-| C11 | `unit/app/routers/test_hr_people_card_edit.py` (authz matrix, 404, 422 matrix, no echo, fixed failures, keys-only log); `unit/app/routers/test_hr_capabilities.py::test_card_write_is_for_the_global_admins_only`; `unit/app/services/hr/test_hr_card_service.py::test_edit_card_*`, `::test_merge_card_on_passes_the_cleared_keys_*`; `tests/migrations/test_hr_card_edit_path.py` (real Postgres: set, clear, nested clear, docs untouched, create, serialisation, no value in logs) |
+| C11 | `unit/app/routers/test_hr_people_card_edit.py` (authz matrix, 404, 422 matrix, no echo, fixed failures, keys-only log); `unit/app/routers/test_hr_capabilities.py::test_card_write_is_for_the_global_admins_only`; `unit/app/services/hr/test_hr_card_service.py::test_edit_card_*`, `::test_merge_card_on_passes_the_cleared_keys_*`; `tests/migrations/test_hr_card_edit_path.py` (real Postgres: set, clear, nested clear, docs untouched, create, serialisation, no value in logs, deactivated / monitoring / partner after the lookup, lock probe); `unit/app/setup/test_sentry_hr_request_redaction.py` (real SDK); `unit/app/routers/test_hr_staff_card.py::test_post_employees_is_for_the_global_admins_only` |

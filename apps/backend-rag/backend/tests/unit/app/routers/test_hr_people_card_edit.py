@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.routers import hr_people
 from backend.app.services.hr.hr_service import HRCardCode, HRCardError
+from backend.app.setup.exception_handlers import register_exception_handlers
 from backend.tests.unit.app.routers.test_hr_my_overview import CARD_ROW, ROWS
 
 # Synthetic data only.
@@ -52,6 +53,7 @@ def make_client():
     def _make(user: dict[str, Any], hr: Any = None) -> tuple[TestClient, Any]:
         hr = hr or _hr_service()
         app = FastAPI()
+        register_exception_handlers(app)  # the app's real handlers, not a copy
         app.include_router(hr_people.router)
         app.dependency_overrides[get_current_user] = lambda: user
         app.dependency_overrides[get_database_pool] = lambda: MagicMock()
@@ -225,3 +227,12 @@ def test_the_log_names_actor_target_and_keys_but_never_a_value(make_client, capl
     text = caplog.text
     assert "tm-owner" in text and ID_IN in text and "nik" in text and "address" in text
     assert NIK not in text and "Bank Rahasia" not in text
+
+
+def test_the_structured_422_survives_the_apps_real_exception_handlers(make_client):
+    client, _ = make_client(OWNER, _hr_service(error=HRCardCode.HIRE_DATE_REQUIRED))
+    res = client.patch(URL, json={"card": {"bank_name": "Bank Contoh"}})
+    assert res.status_code == 422
+    assert res.json()["detail"] == [
+        {"field": "hire_date", "code": "hire_date_required", "message": "Hire date is required"}
+    ]

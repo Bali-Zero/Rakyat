@@ -126,6 +126,19 @@ _LOCK_ERRORS = (
 )
 
 
+def _lock_visible_person_sql() -> str:
+    # Imported at call time: hr_people_service imports this module (business_today).
+    from backend.app.services.hr.hr_people_service import VISIBLE_PERSON_PREDICATE
+
+    return f"""
+        SELECT tm.id
+        FROM team_members tm
+        LEFT JOIN hr_employees e ON e.team_member_id = tm.id
+        WHERE tm.id = $1 AND tm.email = $2 AND {VISIBLE_PERSON_PREDICATE}
+        FOR SHARE OF tm
+    """
+
+
 CARD_EDIT_LOCK_TIMEOUT_MS = 5000  # the import's bound (C8): wait at most this for a member lock
 
 
@@ -418,6 +431,21 @@ class HRService:
         logger.info(f"HR card merged: team_member_id={team_member_id}")
         return row["id"]
 
+    async def lock_visible_person(self, conn: Any, team_member_id: str, email: str) -> bool:
+        """Lock the team_members row FOR SHARE, re-checking in the SAME statement that the
+        member is still a person the People console shows (the full `VISIBLE_PERSON_PREDICATE`:
+        active, not client/monitoring/partner, with an HR row or a named staff role) and that the
+        stored email is the one the route looked up. False when the row no longer qualifies.
+        A savepoint keeps a failed lock from aborting the caller's transaction."""
+        try:
+            async with conn.transaction():
+                found = await conn.fetchval(_lock_visible_person_sql(), team_member_id, email)
+        except _LOCK_ERRORS:
+            raise HRCardError(HRCardCode.LOCK_TIMEOUT) from None
+        except Exception:
+            raise HRCardError(HRCardCode.DB_ERROR) from None
+        return found is not None
+
     async def edit_card(
         self,
         team_member_id: str,
@@ -428,14 +456,15 @@ class HRService:
     ) -> int | None:
         """One HR admin edit of one card (C11): lock the member, merge and clear, one transaction.
 
-        Same member lock and `lock_timeout` as the import (C8), same merge as C5. Returns the
-        row id, or None when the member no longer matches (renamed, deactivated, a client).
-        Failures are HRCardError codes; no value reaches any message or log.
+        Same `lock_timeout` as the import (C8), same merge as C5. The member lock re-checks the
+        People visibility predicate, so a member deactivated or turned monitoring/partner after
+        the route's lookup is not written. Returns the row id, or None when the person no longer
+        qualifies. Failures are HRCardError codes; no value reaches any message or log.
         """
         try:
             async with self.db_pool.acquire() as conn, conn.transaction():
                 await conn.execute(f"SET LOCAL lock_timeout = {int(CARD_EDIT_LOCK_TIMEOUT_MS)}")
-                if not await self.lock_staff_member(conn, team_member_id, email):
+                if not await self.lock_visible_person(conn, team_member_id, email):
                     return None
                 return await self.merge_card_on(conn, team_member_id, fields, profile_patch, clear)
         except HRCardError:

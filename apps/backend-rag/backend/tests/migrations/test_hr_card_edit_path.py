@@ -172,3 +172,66 @@ async def test_no_value_reaches_the_logs_or_an_error(pool: asyncpg.Pool, caplog:
     text = caplog.text + str(exc.value) + repr(exc.value)
     for value in (secret_bank, secret_addr, NIK):
         assert value not in text
+
+
+async def _set(pool: asyncpg.Pool, member: str, sql_set: str) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(f"UPDATE team_members SET {sql_set} WHERE id = $1", member)
+
+
+@pytest.mark.asyncio
+async def test_a_member_deactivated_after_the_lookup_is_not_written(pool: asyncpg.Pool) -> None:  # noqa: F811
+    await _set(pool, "tm-a", "active = false")  # committed after the route's lookup
+    assert await _edit(pool, A, {"bank_name": "Fake Bank"}, {"unit": "ops"}) is None
+    assert (await _row(pool, "tm-a"))["bank_name"] is None
+    assert await _profile(pool, "tm-a") == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["monitoring", "partner", "client"])
+async def test_a_member_whose_role_changed_after_the_lookup_is_not_written(  # noqa: F811
+    pool: asyncpg.Pool, role: str
+) -> None:
+    await _set(pool, "tm-a", f"role = '{role}'")
+    assert await _edit(pool, A, {"bank_name": "Fake Bank"}) is None
+    assert (await _row(pool, "tm-a"))["bank_name"] is None
+
+
+@pytest.mark.asyncio
+async def test_create_mode_passes_the_predicate_by_the_company_address_branch(  # noqa: F811
+    pool: asyncpg.Pool,
+) -> None:
+    # tm-b has no hr_employees row: only '@balizero.com' plus a named staff role qualifies.
+    assert await _edit(pool, B, {"hire_date": date(2025, 5, 1)}) is not None
+    # the same shape with the test/bot role `member` is not a person in People: refused
+    await _set(pool, "tm-q1", "role = 'member'")
+    assert (
+        await _edit(pool, ("tm-q1", "fake.q@balizero.com"), {"hire_date": date(2025, 5, 1)}) is None
+    )
+    assert await _row(pool, "tm-q1") is None
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_deactivation_waits_for_the_edits_commit(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    locked, release = asyncio.Event(), asyncio.Event()
+    original = HRService.merge_card_on
+
+    async def held(self: Any, *args: Any, **kwargs: Any) -> Any:
+        locked.set()  # the member lock is taken: hold the transaction open
+        await release.wait()
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(HRService, "merge_card_on", held)
+    edit = asyncio.create_task(_edit(pool, A, {"bank_name": "Fake Bank"}))
+    await asyncio.wait_for(locked.wait(), 5)
+    async with pool.acquire() as probe:
+        await probe.execute("SET lock_timeout = '300ms'")
+        with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
+            await probe.execute("UPDATE team_members SET active = false WHERE id = 'tm-a'")
+        await probe.execute("SET lock_timeout = 0")
+    release.set()
+    assert await edit is not None
+    await _set(pool, "tm-a", "active = false")  # free once the edit committed
+    assert (await _row(pool, "tm-a"))["bank_name"] == "Fake Bank"

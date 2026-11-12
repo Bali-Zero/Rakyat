@@ -140,19 +140,22 @@ async def require_card_writer(
     return current_user
 
 
-def _card_error_status(code: HRCardCode) -> HTTPException:
+def _field_422(field: str, code: str, message: str) -> JSONResponse:
+    """A structured 422 as a RESPONSE: the app's global HTTPException handler flattens a
+    list `detail` to a string, which would cost the page its per-field messages."""
+    return JSONResponse(
+        status_code=422, content={"detail": [{"field": field, "code": code, "message": message}]}
+    )
+
+
+def _card_error_response(code: HRCardCode) -> Response:
     if code is HRCardCode.HIRE_DATE_REQUIRED:
-        return HTTPException(
-            status_code=422,
-            detail=[{"field": "hire_date", "code": code.value, "message": "Hire date is required"}],
-        )
+        return _field_422("hire_date", code.value, "Hire date is required")
     if code is HRCardCode.INVALID_INPUT:
-        return HTTPException(
-            status_code=422, detail=[{"field": "", "code": code.value, "message": "Invalid value"}]
-        )
+        return _field_422("", code.value, "Invalid value")
     if code is HRCardCode.LOCK_TIMEOUT:
-        return HTTPException(status_code=409, detail="Card is busy, try again")
-    return HTTPException(status_code=500, detail="Card operation failed")
+        return JSONResponse(status_code=409, content={"detail": "Card is busy, try again"})
+    return JSONResponse(status_code=500, content={"detail": "Card operation failed"})
 
 
 async def edit_person_card(
@@ -160,7 +163,7 @@ async def edit_person_card(
     body: CardEditBody,
     current_user: dict[str, Any] = Depends(require_card_writer),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
-) -> PersonOverview:
+) -> PersonOverview | Response:
     """Edit, clear or create one person's HR card; answer with the person's refreshed overview.
 
     Only a global admin (403 otherwise). The person must be a visible one (the People
@@ -184,7 +187,7 @@ async def edit_person_card(
         logger.warning(
             "hr card edit refused actor=%s target=%s code=%s", actor_id, member_id, exc.code.value
         )
-        raise _card_error_status(exc.code) from None
+        return _card_error_response(exc.code)
     if row_id is None:  # the member changed under us (renamed, deactivated, now a client)
         raise HTTPException(status_code=404, detail="No such person")
     logger.info(
