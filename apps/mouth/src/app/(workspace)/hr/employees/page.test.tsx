@@ -25,6 +25,14 @@ vi.mock("sonner", () => ({
 }));
 
 const useTeamMembersMock = vi.hoisted(() => vi.fn());
+const capsState = vi.hoisted(() => ({ write: true }));
+vi.mock("@/lib/hr/use-hr-capabilities", () => ({
+  useHrCapabilities: () => ({
+    capabilities: { hr_card_write: capsState.write },
+    loaded: true,
+    failed: false,
+  }),
+}));
 
 vi.mock("@/hooks/useTeamMembers", async () => {
   const actual = await vi.importActual<typeof import("@/hooks/useTeamMembers")>(
@@ -68,6 +76,7 @@ const TEAM_MEMBERS = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  capsState.write = true;
   hrApiMock.listEmployees.mockResolvedValue({ employees: [] });
   useTeamMembersMock.mockReturnValue({ data: TEAM_MEMBERS, isLoading: false });
 });
@@ -110,5 +119,14 @@ describe("EmployeesPage team-member select", () => {
     await waitFor(() => {
       expect(select.querySelectorAll("option")).toHaveLength(2); // placeholder + Dea
     });
+  });
+});
+
+describe("EmployeesPage write controls", () => {
+  it("hides Add Employee from an HR admin who may not write cards", async () => {
+    capsState.write = false;
+    render(<EmployeesPage />);
+    await screen.findByText(/total/);
+    expect(screen.queryByRole("button", { name: /add employee/i })).toBeNull();
   });
 });
