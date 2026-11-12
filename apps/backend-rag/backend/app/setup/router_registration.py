@@ -223,33 +223,23 @@ def include_routers(api: FastAPI) -> None:
 
     from backend.app.routers import garuda_voa_public
 
-    api.include_router(
-        garuda_voa_public.router
-    )  # public /api/visa/voa eligibility funnel — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount
+    api.include_router(garuda_voa_public.router)  # public /api/visa/voa eligibility funnel — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount
 
     from backend.app.routers import garuda_orders_router
 
-    api.include_router(
-        garuda_orders_router.router
-    )  # L3 checkout/orders — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount
+    api.include_router(garuda_orders_router.router)  # L3 checkout/orders — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount
 
     from backend.app.routers import garuda_portal_auth
 
-    api.include_router(
-        garuda_portal_auth.router
-    )  # L4 magic-link auth — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount
+    api.include_router(garuda_portal_auth.router)  # L4 magic-link auth — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount
 
     from backend.app.routers import garuda_documents_router
 
-    api.include_router(
-        garuda_documents_router.router
-    )  # L5 documents+OCR hinge — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount; production store fails closed 503 until L1's retention-covered store exists (see module docstring)
+    api.include_router(garuda_documents_router.router)  # L5 documents+OCR hinge — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount; production store fails closed 503 until L1's retention-covered store exists (see module docstring)
 
     from backend.app.routers import garuda_staff_router
 
-    api.include_router(
-        garuda_staff_router.router
-    )  # staff surface (step 8, PR-02..PR-11) — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount
+    api.include_router(garuda_staff_router.router)  # staff surface (step 8, PR-02..PR-11) — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount
 
     from backend.app.routers import garuda_assignment_targets
 
@@ -317,9 +307,7 @@ def include_routers(api: FastAPI) -> None:
     api.include_router(portal_invite.router)
     api.include_router(portal_matters.router)
     api.include_router(portal_notifications.router)
-    api.include_router(
-        portal_notification_prefs.router
-    )  # P0 fix: was orphaned (manifest-only) → 404
+    api.include_router(portal_notification_prefs.router)  # P0 fix: was orphaned (manifest-only) → 404
     api.include_router(portal_process_timeline.router)
 
     # Compliance routers
@@ -705,33 +693,23 @@ def include_light_routers(api: FastAPI) -> None:
 
     from backend.app.routers import garuda_voa_public
 
-    api.include_router(
-        garuda_voa_public.router
-    )  # public /api/visa/voa eligibility funnel — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount
+    api.include_router(garuda_voa_public.router)  # public /api/visa/voa eligibility funnel — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount
 
     from backend.app.routers import garuda_orders_router
 
-    api.include_router(
-        garuda_orders_router.router
-    )  # L3 checkout/orders — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount
+    api.include_router(garuda_orders_router.router)  # L3 checkout/orders — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount
 
     from backend.app.routers import garuda_portal_auth
 
-    api.include_router(
-        garuda_portal_auth.router
-    )  # L4 magic-link auth — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount
+    api.include_router(garuda_portal_auth.router)  # L4 magic-link auth — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount
 
     from backend.app.routers import garuda_documents_router
 
-    api.include_router(
-        garuda_documents_router.router
-    )  # L5 documents+OCR hinge — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount; production store fails closed 503 until L1's retention-covered store exists (see module docstring)
+    api.include_router(garuda_documents_router.router)  # L5 documents+OCR hinge — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount; production store fails closed 503 until L1's retention-covered store exists (see module docstring)
 
     from backend.app.routers import garuda_staff_router
 
-    api.include_router(
-        garuda_staff_router.router
-    )  # staff surface (step 8, PR-02..PR-11) — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount
+    api.include_router(garuda_staff_router.router)  # staff surface (step 8, PR-02..PR-11) — flag GARUDA_PUBLIC_ENABLED checked per-request, not at mount
 
     from backend.app.routers import garuda_assignment_targets
 
@@ -798,9 +776,7 @@ def include_light_routers(api: FastAPI) -> None:
     api.include_router(portal_invite.router)
     api.include_router(portal_matters.router)
     api.include_router(portal_notifications.router)
-    api.include_router(
-        portal_notification_prefs.router
-    )  # P0 fix: was orphaned (manifest-only) → 404
+    api.include_router(portal_notification_prefs.router)  # P0 fix: was orphaned (manifest-only) → 404
     api.include_router(portal_process_timeline.router)
 
     # Compliance routers
@@ -868,9 +844,7 @@ def include_light_routers(api: FastAPI) -> None:
     # Blog routers (light)
     api.include_router(newsletter.router)
     api.include_router(article_composer.router)
-    api.include_router(
-        asset_upload.router
-    )  # [P1.2 2026-05-26] /api/assets/upload Tigris proxy (light variant)
+    api.include_router(asset_upload.router)  # [P1.2 2026-05-26] /api/assets/upload Tigris proxy (light variant)
 
     # Performance router
     api.include_router(performance.router)
