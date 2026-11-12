@@ -43,7 +43,7 @@ const CATEGORY_COVER_FALLBACKS: Record<string, string> = {
 
 function resolveArticleImage(article: DashboardNewsArticle): string {
   const candidate =
-    article.cardImage || article.coverImage || article.cover_image || "";
+    article.coverImage || article.cardImage || article.cover_image || "";
   if (
     candidate.startsWith("/") ||
     candidate.startsWith("https://") ||
@@ -149,14 +149,14 @@ export function DashboardNewsCarousel({
     return (
       <div
         data-testid="dashboard-news-carousel-loading"
-        className="mt-3 flex flex-col gap-3"
+        className="mt-4 flex w-full flex-col gap-4"
       >
-        <div className="h-[280px] w-full animate-pulse rounded-2xl bg-[var(--bz-card)]" />
-        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="h-[420px] w-full animate-pulse rounded-2xl bg-[var(--bz-card)]" />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {[1, 2, 3, 4, 5, 6].map((n) => (
             <div
               key={n}
-              className="h-24 animate-pulse rounded-xl bg-[var(--bz-card)]"
+              className="h-32 animate-pulse rounded-xl bg-[var(--bz-card)]"
             />
           ))}
         </div>
@@ -168,7 +168,7 @@ export function DashboardNewsCarousel({
     return (
       <div
         data-testid="dashboard-news-carousel-empty"
-        className="mt-3 rounded-2xl border border-[var(--bz-border)] bg-[var(--bz-card)] px-5 py-10 text-center text-[12px] text-[var(--bz-text-3)]"
+        className="mt-4 w-full rounded-2xl border border-[var(--bz-border)] bg-[var(--bz-card)] px-6 py-14 text-center text-[13px] text-[var(--bz-text-3)]"
       >
         No recent articles published yet.
       </div>
@@ -181,9 +181,10 @@ export function DashboardNewsCarousel({
     .replace(/[-_]/g, " ")
     .toUpperCase();
   const dateLabel = formatPublishedDate(current.publishedAt);
-  const readMinutes = current.readingTime && current.readingTime > 0
-    ? `${current.readingTime} min read`
-    : "3 min read";
+  const readMinutes =
+    current.readingTime && current.readingTime > 0
+      ? `${current.readingTime} min read`
+      : "3 min read";
   const articleHref = `https://balizero.com/${current.category}/${current.slug}`;
   const fallbackSrc =
     CATEGORY_COVER_FALLBACKS[(current.category || "business").toLowerCase()] ||
@@ -203,26 +204,26 @@ export function DashboardNewsCarousel({
   return (
     <div
       data-testid="dashboard-news-carousel"
-      className="mt-3 flex flex-col gap-3.5"
+      className="mt-4 flex w-full flex-col gap-4"
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}
       onFocusCapture={() => setIsPaused(true)}
       onBlurCapture={() => setIsPaused(false)}
     >
-      {/* ── Featured Active Article Card ── */}
+      {/* ── Full-Width Tall Featured Active Article Card ── */}
       <article
-        className="group relative overflow-hidden rounded-2xl border border-[var(--bz-border)] bg-[var(--bz-card)] transition-shadow duration-300"
+        className="group relative w-full overflow-hidden rounded-2xl border border-[var(--bz-border)] bg-[var(--bz-card)] transition-shadow duration-300"
         style={{
-          boxShadow: "0 16px 38px -22px rgba(18, 16, 13, 0.24)",
+          boxShadow: "0 20px 48px -22px rgba(18, 16, 13, 0.28)",
         }}
       >
-        <div className="grid grid-cols-1 items-stretch md:grid-cols-12">
-          {/* Large Cover Image (Left 7 cols on desktop) */}
+        <div className="grid grid-cols-1 items-stretch lg:grid-cols-12">
+          {/* Large Tall Cover Image (Left 7 cols on desktop) */}
           <a
             href={articleHref}
             target="_blank"
             rel="noopener noreferrer"
-            className="relative block aspect-[16/10] w-full overflow-hidden bg-[var(--surface-sunken)] md:col-span-7 md:aspect-auto md:min-h-[300px]"
+            className="relative block aspect-[16/10] w-full overflow-hidden bg-[var(--surface-sunken)] lg:col-span-7 lg:aspect-auto lg:min-h-[460px]"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -239,25 +240,25 @@ export function DashboardNewsCarousel({
               className="pointer-events-none absolute inset-0"
               style={{
                 background:
-                  "linear-gradient(180deg, rgba(9, 13, 22, 0.32) 0%, rgba(9, 13, 22, 0.04) 45%, rgba(9, 13, 22, 0.62) 100%)",
+                  "linear-gradient(180deg, rgba(9, 13, 22, 0.34) 0%, rgba(9, 13, 22, 0.04) 45%, rgba(9, 13, 22, 0.64) 100%)",
               }}
             />
 
             {/* Top-left Category & Slide Counter Pill */}
-            <div className="absolute left-3.5 top-3.5 flex flex-wrap items-center gap-2">
+            <div className="absolute left-4 top-4 flex flex-wrap items-center gap-2.5">
               <span
-                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-extrabold uppercase tracking-[0.12em]"
+                className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[11px] font-extrabold uppercase tracking-[0.12em]"
                 style={{
                   background: "rgba(9, 13, 22, 0.88)",
                   border: "1px solid rgba(247, 244, 238, 0.24)",
                   color: "rgb(247, 244, 238)",
                 }}
               >
-                <Newspaper className="h-3 w-3" aria-hidden="true" />
+                <Newspaper className="h-3.5 w-3.5" aria-hidden="true" />
                 {categoryUpper}
               </span>
               <span
-                className="inline-flex items-center rounded-full px-2.5 py-1 font-mono text-[11px] font-bold tracking-[0.08em]"
+                className="inline-flex items-center rounded-full px-3 py-1.5 font-mono text-[11px] font-bold tracking-[0.08em]"
                 style={{
                   background: "rgba(9, 13, 22, 0.84)",
                   border: "1px solid rgba(247, 244, 238, 0.2)",
@@ -271,21 +272,21 @@ export function DashboardNewsCarousel({
           </a>
 
           {/* Editorial Copy: Title, Subtitle, 2-Line Summary & Controls (Right 5 cols) */}
-          <div className="flex min-w-0 flex-col justify-between p-5 sm:p-6 md:col-span-5">
-            <div className="flex flex-col gap-2.5">
+          <div className="flex min-w-0 flex-col justify-between p-6 sm:p-8 lg:col-span-5 lg:p-10">
+            <div className="flex flex-col gap-4">
               {/* Date & Reading Time */}
-              <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--bz-text-3)]">
+              <div className="flex flex-wrap items-center gap-2.5 font-mono text-[12px] uppercase tracking-[0.12em] text-[var(--bz-text-3)]">
                 <span>{dateLabel}</span>
                 <span aria-hidden="true">·</span>
-                <span className="inline-flex items-center gap-1">
-                  <Clock className="h-3 w-3" aria-hidden="true" />
+                <span className="inline-flex items-center gap-1.5">
+                  <Clock className="h-3.5 w-3.5" aria-hidden="true" />
                   {readMinutes}
                 </span>
               </div>
 
               {/* Title */}
               <h3
-                className="text-[clamp(22px,2.2vw,28px)] font-normal leading-[1.12] tracking-[-0.015em] text-[var(--bz-text-1)]"
+                className="text-[clamp(26px,2.8vw,38px)] font-normal leading-[1.08] tracking-[-0.02em] text-[var(--bz-text-1)]"
                 style={SERIF}
               >
                 <a
@@ -301,7 +302,7 @@ export function DashboardNewsCarousel({
               {/* Subtitle */}
               <p
                 data-testid="carousel-article-subtitle"
-                className="border-l-2 border-[var(--bz-text-1)] pl-3 text-[13px] font-semibold leading-snug text-[var(--bz-text-1)] sm:text-[14px]"
+                className="border-l-2 border-[var(--bz-text-1)] pl-3.5 text-[15px] font-semibold leading-snug text-[var(--bz-text-1)] sm:text-[17px]"
               >
                 {subtitle}
               </p>
@@ -309,30 +310,30 @@ export function DashboardNewsCarousel({
               {/* 2-Line Summary */}
               <p
                 data-testid="carousel-article-summary"
-                className="mt-0.5 line-clamp-2 text-[12.5px] leading-relaxed text-[var(--bz-text-2)]"
+                className="mt-1 line-clamp-2 text-[14px] leading-relaxed text-[var(--bz-text-2)] sm:text-[15px]"
               >
                 {summary}
               </p>
             </div>
 
             {/* Footer Action & Prev/Next Controls */}
-            <div className="mt-5 flex items-center justify-between gap-3 border-t border-[var(--bz-border)] pt-3.5">
+            <div className="mt-6 flex items-center justify-between gap-4 border-t border-[var(--bz-border)] pt-5">
               <a
                 href={articleHref}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-[0.08em] text-[var(--bz-text-1)] transition-transform hover:translate-x-0.5"
+                className="inline-flex items-center gap-2 rounded-lg border border-[var(--bz-text-1)] bg-[var(--bz-text-1)] px-4 py-2.5 text-[12px] font-bold uppercase tracking-[0.08em] text-[var(--bz-card)] transition-transform hover:scale-[1.02]"
               >
                 <span>Read article</span>
-                <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
+                <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
               </a>
 
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={goPrev}
                   aria-label="Previous article"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--bz-border)] bg-[var(--surface-raised)] text-[var(--bz-text-1)] transition-colors hover:bg-[var(--bz-border)]"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[var(--bz-border)] bg-[var(--surface-raised)] text-[var(--bz-text-1)] transition-colors hover:bg-[var(--bz-border)]"
                 >
                   <ChevronLeft className="h-4 w-4" aria-hidden="true" />
                 </button>
@@ -340,7 +341,7 @@ export function DashboardNewsCarousel({
                   type="button"
                   onClick={goNext}
                   aria-label="Next article"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--bz-border)] bg-[var(--surface-raised)] text-[var(--bz-text-1)] transition-colors hover:bg-[var(--bz-border)]"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[var(--bz-border)] bg-[var(--surface-raised)] text-[var(--bz-text-1)] transition-colors hover:bg-[var(--bz-border)]"
                 >
                   <ChevronRight className="h-4 w-4" aria-hidden="true" />
                 </button>
@@ -350,11 +351,11 @@ export function DashboardNewsCarousel({
         </div>
       </article>
 
-      {/* ── 6-Article Thumbnail Selector Rail ── */}
+      {/* ── Full-Width 6-Article Thumbnail Selector Rail ── */}
       <div
         role="group"
         aria-label="Latest 6 published articles"
-        className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6"
+        className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6"
       >
         {items.map((item, idx) => {
           const isSelected = idx === activeIndex;
@@ -397,7 +398,7 @@ export function DashboardNewsCarousel({
               />
 
               {/* Thumbnail image */}
-              <div className="relative aspect-[16/9] w-full overflow-hidden bg-[var(--surface-sunken)]">
+              <div className="relative aspect-[16/10] w-full overflow-hidden bg-[var(--surface-sunken)]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={thumbSrc}
@@ -414,12 +415,12 @@ export function DashboardNewsCarousel({
               </div>
 
               {/* Compact meta & title */}
-              <div className="flex flex-1 flex-col justify-between gap-1 p-2.5">
+              <div className="flex flex-1 flex-col justify-between gap-1.5 p-3">
                 <div className="flex items-center justify-between gap-1 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--bz-text-3)]">
                   <span>{String(idx + 1).padStart(2, "0")}</span>
                   <span className="truncate">{catShort}</span>
                 </div>
-                <p className="line-clamp-2 text-[11px] font-bold leading-snug text-[var(--bz-text-1)]">
+                <p className="line-clamp-2 text-[12px] font-bold leading-snug text-[var(--bz-text-1)]">
                   {itemCopy.headline}
                 </p>
               </div>
