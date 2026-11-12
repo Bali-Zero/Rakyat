@@ -497,6 +497,8 @@ async def test_list_clients_with_filters(mock_db_pool, mock_current_user, sample
     from backend.app.routers.crm_clients import list_clients
 
     mock_db_pool._mock_conn.fetch.return_value = [sample_client_row]
+    # smart search available, then the folded query text
+    mock_db_pool._mock_conn.fetchval = AsyncMock(side_effect=[True, "john"])
 
     with (
         patch("backend.app.routers.crm_clients.get_crm_user_filter", return_value=None),
