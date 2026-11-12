@@ -116,6 +116,8 @@ function asAdmin(isAdmin: boolean) {
     hr_admin: isAdmin,
     accounting_admin: false,
     has_employee_record: true,
+    people_scope: isAdmin ? "all" : null,
+    hr_edit: isAdmin,
   });
 }
 
@@ -158,11 +160,8 @@ describe("per-member table", () => {
     expect(taxTwo).toHaveTextContent("—");
     expect(text("Fake Setup")).toHaveTextContent("Setup");
     expect(text("Fake Setup")).toHaveTextContent("Rp 600.000");
-    // The share bar carries its percentage as an accessible label.
-    expect(within(text("Fake Setup")!).getByRole("img")).toHaveAttribute(
-      "aria-label",
-      "60 percent of the total",
-    );
+    // The share bar's percentage is text for screen readers, not an attribute.
+    expect(text("Fake Setup")).toHaveTextContent("60 percent of the total");
     // footer: 600k + 200k + 200k
     expect(rows[rows.length - 1]).toHaveTextContent("Rp 1.000.000");
   });
@@ -342,5 +341,63 @@ describe("Add bonus", () => {
     await user.click(within(dialog).getByRole("button", { name: "Add bonus" }));
     await waitFor(() => expect(hrApiMock.createManualBonus).toHaveBeenCalled());
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+});
+
+describe("Sentry protection", () => {
+  // htmlTreeAsString (Sentry) serialises id, class and these attributes, never text.
+  const RECORDED = ["aria-label", "title", "name", "alt", "id"];
+  const FIXED_UI_STRINGS = new Set([
+    "Filter by year",
+    "Filter by status",
+    "Filter by member",
+    "Filter by department",
+    "Service",
+    "Search services",
+    "Clear service",
+    "bonus-person",
+    "bonus-person-err",
+    "bonus-amount",
+    "bonus-amount-err",
+    "bonus-date",
+    "bonus-date-err",
+    "bonus-reason",
+    "bonus-reason-err",
+  ]);
+
+  function leaked(region: Element): string[] {
+    const values = new Set(
+      Array.from(region.querySelectorAll("*")).flatMap((el) =>
+        RECORDED.map((a) => el.getAttribute(a)).filter((v): v is string => !!v),
+      ),
+    );
+    // Radix/React generate opaque ids for the dialog title and description.
+    return [...values].filter(
+      (v) => !FIXED_UI_STRINGS.has(v) && !/^(radix-)?_?r_/.test(v),
+    );
+  }
+
+  it("never puts a person's name, amount or reason in an attribute Sentry's click breadcrumbs record", async () => {
+    const user = userEvent.setup();
+    render(<BonusesPage />);
+    await openPeople(user);
+    await user.click(await screen.findByRole("button", { name: "Add bonus" }));
+    await screen.findByRole("dialog");
+    // The page region and the portaled dialog are each protected on their own.
+    const regions = document.querySelectorAll("[data-sentry-block]");
+    expect(regions.length).toBe(2);
+    expect(
+      document.querySelector("[role=dialog] [data-sentry-block]"),
+    ).not.toBeNull();
+    for (const region of regions) expect(leaked(region)).toEqual([]);
+    // names and amounts stay reachable as text
+    expect(screen.getAllByText(/Fake Tax Two/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Weekend filing/).length).toBeGreaterThan(0);
+  });
+
+  it("wraps the whole page, tables and bonus rows included", async () => {
+    render(<BonusesPage />);
+    const table = await screen.findByRole("table");
+    expect(table.closest("[data-sentry-block]")).not.toBeNull();
   });
 });

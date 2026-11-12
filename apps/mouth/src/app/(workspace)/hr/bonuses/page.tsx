@@ -77,7 +77,7 @@ export default function BonusesPage() {
   const [practiceTypes, setPracticeTypes] = useState<BonusPracticeType[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const { capabilities } = useHrCapabilities();
-  const isAdmin = capabilities.hr_admin;
+  const isAdmin = capabilities.hr_edit;
   const [openMonths, setOpenMonths] = useState<Record<string, boolean>>({});
   const [openMembers, setOpenMembers] = useState<Record<string, boolean>>({});
 
@@ -320,7 +320,7 @@ export default function BonusesPage() {
   ];
 
   return (
-    <div className="space-y-5">
+    <div className="sentry-block space-y-5" data-sentry-block="">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1
           className="text-2xl font-bold"

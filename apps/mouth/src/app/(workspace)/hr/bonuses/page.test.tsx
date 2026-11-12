@@ -86,6 +86,8 @@ beforeEach(() => {
     hr_admin: false,
     accounting_admin: false,
     has_employee_record: true,
+    people_scope: null,
+    hr_edit: false,
   });
 });
 

@@ -139,147 +139,152 @@ export function AddBonusDialog({
           color: "var(--bz-text-1)",
         }}
       >
-        <DialogHeader>
-          <DialogTitle>Add a bonus</DialogTitle>
-          <DialogDescription style={{ color: "var(--bz-text-2)" }}>
-            For work that did not go through a completed practice — tax services
-            included. It starts as pending, like any bonus.
-          </DialogDescription>
-        </DialogHeader>
+        <div className="sentry-block contents" data-sentry-block="">
+          <DialogHeader>
+            <DialogTitle>Add a bonus</DialogTitle>
+            <DialogDescription style={{ color: "var(--bz-text-2)" }}>
+              For work that did not go through a completed practice — tax
+              services included. It starts as pending, like any bonus.
+            </DialogDescription>
+          </DialogHeader>
 
-        <form onSubmit={submit} className="space-y-3.5" noValidate>
-          <div>
-            <label
-              htmlFor="bonus-person"
-              className="mb-1 block text-xs font-medium"
-            >
-              Person
-            </label>
-            <select
-              id="bonus-person"
-              value={draft.employeeId}
-              onChange={(e) => set({ employeeId: e.target.value })}
-              aria-invalid={!!errors.employeeId}
-              aria-describedby="bonus-person-err"
-              className="w-full rounded-xl border px-3 py-2 text-sm"
-              style={FIELD}
-            >
-              <option value="">Choose a person</option>
-              {people.map((g) => (
-                <optgroup key={g.dep} label={DEPARTMENT_LABEL[g.dep] ?? g.dep}>
-                  {g.list.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.full_name || p.email}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-            <Err id="bonus-person-err" message={errors.employeeId} />
-          </div>
-
-          <div>
-            <span className="mb-1 block text-xs font-medium">
-              Service{" "}
-              <span style={{ color: "var(--bz-text-2)" }}>(optional)</span>
-            </span>
-            <PracticeTypePicker
-              ariaLabel="Service"
-              types={types}
-              value={draft.serviceCode}
-              onChange={(serviceCode) => set({ serviceCode })}
-              placeholder="No specific service"
-              clearable
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
+          <form onSubmit={submit} className="space-y-3.5" noValidate>
             <div>
               <label
-                htmlFor="bonus-amount"
+                htmlFor="bonus-person"
                 className="mb-1 block text-xs font-medium"
               >
-                Amount (IDR)
+                Person
               </label>
-              <input
-                id="bonus-amount"
-                type="number"
-                min={1}
-                inputMode="numeric"
-                value={draft.amount}
-                onChange={(e) => set({ amount: e.target.value })}
-                aria-invalid={!!errors.amount}
-                aria-describedby="bonus-amount-err"
-                placeholder="250000"
+              <select
+                id="bonus-person"
+                value={draft.employeeId}
+                onChange={(e) => set({ employeeId: e.target.value })}
+                aria-invalid={!!errors.employeeId}
+                aria-describedby="bonus-person-err"
                 className="w-full rounded-xl border px-3 py-2 text-sm"
                 style={FIELD}
-              />
-              <Err id="bonus-amount-err" message={errors.amount} />
-            </div>
-            <div>
-              <label
-                htmlFor="bonus-date"
-                className="mb-1 block text-xs font-medium"
               >
-                Date
-              </label>
-              <input
-                id="bonus-date"
-                type="date"
-                value={draft.awardedOn}
-                onChange={(e) => set({ awardedOn: e.target.value })}
-                aria-invalid={!!errors.awardedOn}
-                aria-describedby="bonus-date-err"
-                className="w-full rounded-xl border px-3 py-2 text-sm"
-                style={FIELD}
-              />
-              <Err id="bonus-date-err" message={errors.awardedOn} />
+                <option value="">Choose a person</option>
+                {people.map((g) => (
+                  <optgroup
+                    key={g.dep}
+                    label={DEPARTMENT_LABEL[g.dep] ?? g.dep}
+                  >
+                    {g.list.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.full_name || p.email}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              <Err id="bonus-person-err" message={errors.employeeId} />
             </div>
-          </div>
 
-          <div>
-            <label
-              htmlFor="bonus-reason"
-              className="mb-1 flex justify-between text-xs font-medium"
-            >
-              <span>Reason</span>
-              <span style={{ color: "var(--bz-text-2)" }}>
-                {draft.reason.length}/{REASON_MAX}
+            <div>
+              <span className="mb-1 block text-xs font-medium">
+                Service{" "}
+                <span style={{ color: "var(--bz-text-2)" }}>(optional)</span>
               </span>
-            </label>
-            <textarea
-              id="bonus-reason"
-              rows={3}
-              maxLength={REASON_MAX}
-              value={draft.reason}
-              onChange={(e) => set({ reason: e.target.value })}
-              aria-invalid={!!errors.reason}
-              aria-describedby="bonus-reason-err"
-              placeholder="What was it for?"
-              className="w-full resize-none rounded-xl border px-3 py-2 text-sm"
-              style={FIELD}
-            />
-            <Err id="bonus-reason-err" message={errors.reason} />
-          </div>
+              <PracticeTypePicker
+                ariaLabel="Service"
+                types={types}
+                value={draft.serviceCode}
+                onChange={(serviceCode) => set({ serviceCode })}
+                placeholder="No specific service"
+                clearable
+              />
+            </div>
 
-          <div className="flex justify-end gap-2 pt-1">
-            <button
-              type="button"
-              onClick={() => close(false)}
-              className="rounded-full px-4 py-2 text-sm"
-              style={{ color: "var(--bz-text-2)" }}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="rounded-full bg-[var(--bz-accent)] px-5 py-2 text-sm font-semibold text-[var(--bz-on-warm)] disabled:opacity-50"
-            >
-              {saving ? "Adding…" : "Add bonus"}
-            </button>
-          </div>
-        </form>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label
+                  htmlFor="bonus-amount"
+                  className="mb-1 block text-xs font-medium"
+                >
+                  Amount (IDR)
+                </label>
+                <input
+                  id="bonus-amount"
+                  type="number"
+                  min={1}
+                  inputMode="numeric"
+                  value={draft.amount}
+                  onChange={(e) => set({ amount: e.target.value })}
+                  aria-invalid={!!errors.amount}
+                  aria-describedby="bonus-amount-err"
+                  placeholder="250000"
+                  className="w-full rounded-xl border px-3 py-2 text-sm"
+                  style={FIELD}
+                />
+                <Err id="bonus-amount-err" message={errors.amount} />
+              </div>
+              <div>
+                <label
+                  htmlFor="bonus-date"
+                  className="mb-1 block text-xs font-medium"
+                >
+                  Date
+                </label>
+                <input
+                  id="bonus-date"
+                  type="date"
+                  value={draft.awardedOn}
+                  onChange={(e) => set({ awardedOn: e.target.value })}
+                  aria-invalid={!!errors.awardedOn}
+                  aria-describedby="bonus-date-err"
+                  className="w-full rounded-xl border px-3 py-2 text-sm"
+                  style={FIELD}
+                />
+                <Err id="bonus-date-err" message={errors.awardedOn} />
+              </div>
+            </div>
+
+            <div>
+              <label
+                htmlFor="bonus-reason"
+                className="mb-1 flex justify-between text-xs font-medium"
+              >
+                <span>Reason</span>
+                <span style={{ color: "var(--bz-text-2)" }}>
+                  {draft.reason.length}/{REASON_MAX}
+                </span>
+              </label>
+              <textarea
+                id="bonus-reason"
+                rows={3}
+                maxLength={REASON_MAX}
+                value={draft.reason}
+                onChange={(e) => set({ reason: e.target.value })}
+                aria-invalid={!!errors.reason}
+                aria-describedby="bonus-reason-err"
+                placeholder="What was it for?"
+                className="w-full resize-none rounded-xl border px-3 py-2 text-sm"
+                style={FIELD}
+              />
+              <Err id="bonus-reason-err" message={errors.reason} />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => close(false)}
+                className="rounded-full px-4 py-2 text-sm"
+                style={{ color: "var(--bz-text-2)" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded-full bg-[var(--bz-accent)] px-5 py-2 text-sm font-semibold text-[var(--bz-on-warm)] disabled:opacity-50"
+              >
+                {saving ? "Adding…" : "Add bonus"}
+              </button>
+            </div>
+          </form>
+        </div>
       </DialogContent>
     </Dialog>
   );

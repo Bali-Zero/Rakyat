@@ -161,8 +161,7 @@ export function MemberTable({
                         <div
                           className="h-1.5 w-24 overflow-hidden rounded-full"
                           style={{ background: tint(tone, 14) }}
-                          role="img"
-                          aria-label={`${Math.round(m.share * 100)} percent of the total`}
+                          aria-hidden="true"
                         >
                           <div
                             className="h-full rounded-full"
@@ -172,6 +171,9 @@ export function MemberTable({
                             }}
                           />
                         </div>
+                        <span className="sr-only">
+                          {Math.round(m.share * 100)} percent of the total
+                        </span>
                       </div>
                     )}
                   </td>
