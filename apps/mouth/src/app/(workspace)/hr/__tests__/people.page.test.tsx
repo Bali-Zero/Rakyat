@@ -276,40 +276,39 @@ describe("People page (/hr)", () => {
         person("A", ID_A, "Made Contoh"),
       ),
     );
-    // htmlTreeAsString (Sentry 11) serialises id, class and these attributes, never text.
-    const recorded = ["aria-label", "title", "name", "alt", "type", "id"];
-    const values = Array.from(document.body.querySelectorAll("*")).flatMap(
-      (el) => recorded.map((a) => el.getAttribute(a) ?? ""),
+    // htmlTreeAsString (Sentry 11) serialises id, class and these attributes, never
+    // text. Inside the protected region every such value must be a fixed UI string:
+    // nothing derived from a person (name, counts, leave, papers, bank) may appear.
+    const recorded = ["aria-label", "title", "name", "alt", "id"];
+    const region = document.querySelector("[data-sentry-block]");
+    expect(region).not.toBeNull();
+    const values = new Set(
+      Array.from(region!.querySelectorAll("*")).flatMap((el) =>
+        recorded.map((a) => el.getAttribute(a)).filter((v): v is string => !!v),
+      ),
     );
-    for (const secret of [
-      "Made",
-      "Contoh",
-      "Wayan",
-      "Dua",
-      "Ketut",
-      "Tanpa",
-      "Contoh Bank",
-    ]) {
-      expect(values.filter((v) => v.includes(secret))).toEqual([]);
-    }
+    const FIXED_UI_STRINGS = new Set(["Search people"]);
+    expect([...values].filter((v) => !FIXED_UI_STRINGS.has(v))).toEqual([]);
     // the mobile roster buttons keep an accessible name from their text
     expect(
       screen.getAllByRole("button", { name: /Wayan Dua/ }).length,
     ).toBeGreaterThan(0);
   });
 
-  it("makes every roster badge visible to a screen reader and a tooltip", async () => {
+  it("makes every roster badge readable to a screen reader and on hover, as text", async () => {
     await open("A");
-    expect(screen.getByLabelText("3 papers missing")).toHaveAttribute(
-      "title",
+    for (const label of [
       "3 papers missing",
-    );
-    expect(screen.getByLabelText("2 bonuses waiting")).toBeInTheDocument();
-    expect(screen.getByLabelText("On leave today")).toBeInTheDocument();
-    expect(
-      screen.getByLabelText("1 leave request to approve"),
-    ).toBeInTheDocument();
-    expect(screen.getByLabelText("No HR record yet")).toBeInTheDocument();
+      "2 bonuses waiting",
+      "On leave today",
+      "1 leave request to approve",
+      "No HR record yet",
+    ]) {
+      // once for screen readers (sr-only), once in the hover tooltip (aria-hidden)
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+      expect(document.querySelector(`[aria-label="${label}"]`)).toBeNull();
+      expect(document.querySelector(`[title="${label}"]`)).toBeNull();
+    }
   });
 
   it("shows the pulse as links and the two header buttons to a full admin", async () => {
@@ -509,7 +508,10 @@ describe("People page (/hr)", () => {
   it("shows a friendly empty state for a person without a record, with Create record for admins only", async () => {
     nav.person = ID_N;
     await open("A");
-    expect(screen.getByText("No HR record yet")).toBeInTheDocument();
+    // the empty-state card (the roster badge says the same thing as sr-only text)
+    expect(
+      screen.getByText(/There is nothing to show for this person/),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Create record/ })).toHaveAttribute(
       "href",
       "/hr/employees",
@@ -531,7 +533,10 @@ describe("People page (/hr)", () => {
     };
     nav.person = ID_N;
     await open("S", "scoped");
-    expect(screen.getByText("No HR record yet")).toBeInTheDocument();
+    // the empty-state card (the roster badge says the same thing as sr-only text)
+    expect(
+      screen.getByText(/There is nothing to show for this person/),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Create record/ })).toBeNull();
   });
 

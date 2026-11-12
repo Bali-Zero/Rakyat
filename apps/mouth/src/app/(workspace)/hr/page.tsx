@@ -140,24 +140,33 @@ function Badge({
   label: string;
   children?: React.ReactNode;
 }) {
-  return children ? (
-    <span
-      role="img"
-      aria-label={label}
-      title={label}
-      className="rounded-full px-1.5 py-0.5 text-[10px] font-bold"
-      style={{ color: tone, background: tint(tone, 16) }}
-    >
-      {children}
+  // The label is a person's HR state ("2 bonuses waiting"), so it is TEXT, never an
+  // attribute: Sentry's click breadcrumbs serialise aria-label and title, not text.
+  return (
+    <span className="group relative inline-flex">
+      {children ? (
+        <span
+          aria-hidden
+          className="rounded-full px-1.5 py-0.5 text-[10px] font-bold"
+          style={{ color: tone, background: tint(tone, 16) }}
+        >
+          {children}
+        </span>
+      ) : (
+        <span
+          aria-hidden
+          className="inline-block h-2 w-2 rounded-full"
+          style={{ background: tone }}
+        />
+      )}
+      <span className="sr-only">{label}</span>
+      <span
+        aria-hidden
+        className="pointer-events-none absolute right-0 bottom-full z-10 mb-1 hidden rounded-md bg-black/80 px-2 py-1 text-[11px] font-medium whitespace-nowrap text-white group-hover:block"
+      >
+        {label}
+      </span>
     </span>
-  ) : (
-    <span
-      role="img"
-      aria-label={label}
-      title={label}
-      className="inline-block h-2 w-2 rounded-full"
-      style={{ background: tone }}
-    />
   );
 }
 
