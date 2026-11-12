@@ -6,22 +6,11 @@
 // ─── Enums ────────────────────────────────────────────────────────────
 
 export type BonusStatus =
-  | "pending"
-  | "approved"
-  | "rejected"
-  | "paid"
-  | "reversed";
+  "pending" | "approved" | "rejected" | "paid" | "reversed";
 export type PayrollStatus = "draft" | "calculated" | "approved" | "paid";
 export type LeaveStatus = "pending" | "approved" | "rejected" | "cancelled";
 export type PTKPStatus =
-  | "TK/0"
-  | "TK/1"
-  | "TK/2"
-  | "TK/3"
-  | "K/0"
-  | "K/1"
-  | "K/2"
-  | "K/3";
+  "TK/0" | "TK/1" | "TK/2" | "TK/3" | "K/0" | "K/1" | "K/2" | "K/3";
 
 // ─── Employees ────────────────────────────────────────────────────────
 
@@ -31,6 +20,8 @@ export interface HREmployee {
   full_name: string;
   email: string;
   role: string;
+  /** Org-chart department chip: tax | setup | office (server-derived). */
+  department?: string;
   hire_date: string;
   base_salary_idr: number;
   bank_name: string | null;
@@ -86,9 +77,13 @@ export interface BonusRatePayload {
 
 // ─── Bonuses ──────────────────────────────────────────────────────────
 
+/** practice = created by completing a practice; manual = entered by an HR admin. */
+export type BonusSource = "practice" | "manual";
+
 export interface Bonus {
   id: number;
-  practice_id: number;
+  /** null for a manual bonus. */
+  practice_id: number | null;
   employee_id: number;
   payroll_period_id: number | null;
   bonus_rate_id: number | null;
@@ -101,9 +96,34 @@ export interface Bonus {
   approved_at: string | null;
   employee_name: string;
   employee_email: string;
-  practice_status: string;
+  /** Org-chart department chip: tax | setup | office. */
+  employee_department?: string;
+  practice_status: string | null;
   client_name: string | null;
   notes: string | null;
+  source: BonusSource;
+  /** Why a manual bonus was given. */
+  reason?: string | null;
+  /** Who entered a manual bonus (HR-admin view only). */
+  created_by?: string | null;
+}
+
+/** An active practice type offered in the rate and manual-bonus dropdowns. */
+export type PracticeGroupId = "visa" | "company" | "tax" | "other";
+export interface BonusPracticeType {
+  code: string;
+  name: string;
+  category: string | null;
+  group: PracticeGroupId;
+}
+
+export interface ManualBonusPayload {
+  employee_id: number;
+  amount_idr: number;
+  reason: string;
+  practice_type_code?: string | null;
+  /** YYYY-MM-DD, WITA calendar day; the server defaults to today. */
+  awarded_on?: string;
 }
 
 /**

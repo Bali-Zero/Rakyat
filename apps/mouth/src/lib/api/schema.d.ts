@@ -9076,6 +9076,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/hr/bonus-practice-types": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Bonus Practice Types
+     * @description Active practice types (tax included) for the rate and manual-bonus dropdowns.
+     */
+    get: operations["list_bonus_practice_types_api_hr_bonus_practice_types_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/hr/bonus-rates": {
     parameters: {
       query?: never;
@@ -9113,7 +9133,11 @@ export interface paths {
      */
     get: operations["list_bonuses_api_hr_bonuses_get"];
     put?: never;
-    post?: never;
+    /**
+     * Create Manual Bonus
+     * @description Add a bonus by hand for any active employee (admin only). Starts pending.
+     */
+    post: operations["create_manual_bonus_api_hr_bonuses_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -9144,6 +9168,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/hr/bonuses/{bonus_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Delete Manual Bonus
+     * @description Delete a pending MANUAL bonus (admin only); unknown id is a 404, any other row a 409.
+     */
+    delete: operations["delete_manual_bonus_api_hr_bonuses__bonus_id__delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/hr/bonuses/{bonus_id}/approve": {
     parameters: {
       query?: never;
@@ -9158,6 +9202,26 @@ export interface paths {
      * @description Approve a pending bonus.
      */
     post: operations["approve_bonus_api_hr_bonuses__bonus_id__approve_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/hr/bonuses/{bonus_id}/reject": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reject Bonus
+     * @description Reject a pending bonus (admin only).
+     */
+    post: operations["reject_bonus_api_hr_bonuses__bonus_id__reject_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -20162,6 +20226,11 @@ export interface components {
       /** Practice Type Code */
       practice_type_code: string;
     };
+    /** BonusRejectRequest */
+    BonusRejectRequest: {
+      /** Note */
+      note?: string | null;
+    };
     /**
      * BonusTotals
      * @description Server-side totals; rejected, reversed and cancelled bonuses are never counted.
@@ -24283,6 +24352,22 @@ export interface components {
     MagicLinkPreviewResult: {
       /** Masked Email */
       masked_email: string;
+    };
+    /**
+     * ManualBonusCreate
+     * @description A bonus an HR admin enters by hand (no practice behind it).
+     */
+    ManualBonusCreate: {
+      /** Amount Idr */
+      amount_idr: number;
+      /** Awarded On */
+      awarded_on?: string | null;
+      /** Employee Id */
+      employee_id: number;
+      /** Practice Type Code */
+      practice_type_code?: string | null;
+      /** Reason */
+      reason: string;
     };
     /**
      * MaritalStatus
@@ -43336,6 +43421,28 @@ export interface operations {
       };
     };
   };
+  list_bonus_practice_types_api_hr_bonus_practice_types_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+    };
+  };
   list_bonus_rates_api_hr_bonus_rates_get: {
     parameters: {
       query?: never;
@@ -43429,6 +43536,41 @@ export interface operations {
       };
     };
   };
+  create_manual_bonus_api_hr_bonuses_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ManualBonusCreate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   list_bonus_historical_api_hr_bonuses_historical_get: {
     parameters: {
       query?: {
@@ -43436,6 +43578,39 @@ export interface operations {
       };
       header?: never;
       path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  delete_manual_bonus_api_hr_bonuses__bonus_id__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bonus_id: number;
+      };
       cookie?: never;
     };
     requestBody?: never;
@@ -43472,6 +43647,43 @@ export interface operations {
       cookie?: never;
     };
     requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  reject_bonus_api_hr_bonuses__bonus_id__reject_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bonus_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["BonusRejectRequest"] | null;
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {

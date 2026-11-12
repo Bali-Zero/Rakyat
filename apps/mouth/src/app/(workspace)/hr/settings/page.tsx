@@ -1,10 +1,21 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { Save, Plus, Settings } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Check, Pencil, Plus, Receipt, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import * as hrApi from "@/lib/api/hr/hr";
-import type { BonusRate } from "@/types/hr";
+import { PracticeTypePicker } from "@/components/hr/practice-type-picker";
+import {
+  GROUP_TONE,
+  PRACTICE_GROUPS,
+  groupOfCode,
+} from "@/lib/hr/practice-groups";
+import type {
+  BonusPracticeType,
+  BonusRate,
+  BonusRatePayload,
+  PracticeGroupId,
+} from "@/types/hr";
 import { Money } from "@balizero/core";
 
 /** Dashboard panel recipe — mirrors the day/dark-aware Kita surfaces. */
@@ -19,55 +30,142 @@ const INPUT_STYLE: React.CSSProperties = {
   borderColor: "var(--bz-border)",
 };
 
+const tint = (tone: string, pct: number) =>
+  `color-mix(in srgb, ${tone} ${pct}%, transparent)`;
+
+/** Keep what an upsert would otherwise blank (dates, notes) when one field changes. */
+function payloadOf(
+  rate: BonusRate,
+  over: Partial<BonusRatePayload>,
+): BonusRatePayload {
+  return {
+    practice_type_code: rate.practice_type_code,
+    amount_idr: rate.amount_idr,
+    effective_from: rate.effective_from ?? undefined,
+    effective_to: rate.effective_to ?? undefined,
+    is_active: rate.is_active,
+    notes: rate.notes ?? undefined,
+    ...over,
+  };
+}
+
 export default function HRSettingsPage() {
   const [rates, setRates] = useState<BonusRate[]>([]);
+  const [types, setTypes] = useState<BonusPracticeType[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editAmount, setEditAmount] = useState("");
-  const [newRate, setNewRate] = useState({
-    practice_type_code: "",
-    amount_idr: "",
-  });
+  const [newCode, setNewCode] = useState("");
+  const [newAmount, setNewAmount] = useState("");
+  const [onlyGroup, setOnlyGroup] = useState<PracticeGroupId | null>(null);
   const [showNew, setShowNew] = useState(false);
 
   useEffect(() => {
-    hrApi
-      .listBonusRates()
-      .then((data) => {
-        setRates(data.rates || []);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    let alive = true;
+    Promise.allSettled([
+      hrApi.listBonusRates(),
+      hrApi.listBonusPracticeTypes(),
+    ]).then(([r, t]) => {
+      if (!alive) return;
+      if (r.status === "fulfilled") setRates(r.value.rates || []);
+      if (t.status === "fulfilled") setTypes(t.value.practice_types || []);
+      setLoading(false);
+    });
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  const handleSave = async (code: string, amount: number) => {
-    try {
-      await hrApi.upsertBonusRate({
-        practice_type_code: code,
-        amount_idr: amount,
-      });
-      setRates((prev) =>
-        prev.map((r) =>
-          r.practice_type_code === code ? { ...r, amount_idr: amount } : r,
+  const rateCodes = useMemo(
+    () => new Set(rates.map((r) => r.practice_type_code)),
+    [rates],
+  );
+
+  const pickable = useMemo(
+    () => (onlyGroup ? types.filter((t) => t.group === onlyGroup) : types),
+    [types, onlyGroup],
+  );
+
+  const byGroup = useMemo(() => {
+    const out: Record<PracticeGroupId, BonusRate[]> = {
+      visa: [],
+      company: [],
+      tax: [],
+      other: [],
+    };
+    for (const r of rates) {
+      out[groupOfCode(r.practice_type_code, types)].push(r);
+    }
+    for (const list of Object.values(out)) {
+      list.sort((a, b) =>
+        (a.practice_type_name || a.practice_type_code).localeCompare(
+          b.practice_type_name || b.practice_type_code,
         ),
       );
-      setEditingId(null);
-      toast.success("Rate saved");
+    }
+    return out;
+  }, [rates, types]);
+
+  const openAdd = (group: PracticeGroupId | null) => {
+    setOnlyGroup(group);
+    setNewCode("");
+    setShowNew(true);
+  };
+
+  const replaceRate = (saved: BonusRate) =>
+    setRates((prev) =>
+      prev.map((r) =>
+        r.practice_type_code === saved.practice_type_code
+          ? { ...r, ...saved, practice_type_name: r.practice_type_name }
+          : r,
+      ),
+    );
+
+  const save = async (rate: BonusRate, over: Partial<BonusRatePayload>) => {
+    try {
+      const result = await hrApi.upsertBonusRate(payloadOf(rate, over));
+      replaceRate(result.rate ?? { ...rate, ...over });
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save rate");
+      return false;
+    }
+  };
+
+  const handleSaveAmount = async (rate: BonusRate) => {
+    const amount = Number(editAmount);
+    if (!Number.isFinite(amount) || amount < 0) return;
+    if (await save(rate, { amount_idr: amount })) {
+      setEditingId(null);
+      toast.success("Rate saved");
+    }
+  };
+
+  const handleToggle = async (rate: BonusRate) => {
+    if (await save(rate, { is_active: !rate.is_active })) {
+      toast.success(rate.is_active ? "Rate switched off" : "Rate switched on");
     }
   };
 
   const handleCreate = async () => {
-    if (!newRate.practice_type_code || !newRate.amount_idr) return;
+    const amount = Number(newAmount);
+    if (!newCode || !newAmount || !Number.isFinite(amount) || amount < 0) {
+      return;
+    }
     try {
       const result = await hrApi.upsertBonusRate({
-        practice_type_code: newRate.practice_type_code,
-        amount_idr: Number(newRate.amount_idr),
+        practice_type_code: newCode,
+        amount_idr: amount,
       });
-      setRates((prev) => [...prev, result.rate]);
-      setNewRate({ practice_type_code: "", amount_idr: "" });
+      const name = types.find((t) => t.code === newCode)?.name ?? null;
+      setRates((prev) => [
+        ...prev.filter((r) => r.practice_type_code !== newCode),
+        { ...result.rate, practice_type_name: name },
+      ]);
+      setNewCode("");
+      setNewAmount("");
       setShowNew(false);
+      setOnlyGroup(null);
       toast.success("Rate created");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create rate");
@@ -91,14 +189,24 @@ export default function HRSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-[var(--bz-text-1)]">
-          <Settings size={24} className="inline mr-2 mb-1" />
-          Bonus Rate Configuration
-        </h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--bz-text-1)]">
+            Bonus Rate Configuration
+          </h1>
+          <p className="mt-1 text-sm text-[var(--bz-text-2)]">
+            What a completed practice earns. Tax services can have a rate too —
+            and any bonus can also be added by hand from the Bonuses page.
+          </p>
+        </div>
         <button
-          onClick={() => setShowNew(!showNew)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--bz-accent)]/10 text-[var(--bz-accent)] hover:bg-[var(--bz-accent)]/20 text-sm"
+          type="button"
+          onClick={() => (showNew ? setShowNew(false) : openAdd(null))}
+          className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold"
+          style={{
+            background: tint("var(--bz-accent)", 14),
+            color: "var(--bz-accent)",
+          }}
         >
           <Plus size={16} />
           Add Rate
@@ -107,111 +215,232 @@ export default function HRSettingsPage() {
 
       {showNew && (
         <div
-          className="border rounded-lg p-4 flex items-end gap-3"
+          className="rounded-2xl border p-4"
           style={{ ...PANEL, borderColor: "var(--bz-border-accent)" }}
         >
-          <div className="flex-1">
-            <label className="block text-xs text-[var(--bz-text-2)] mb-1">
-              Practice Type Code
-            </label>
-            <input
-              type="text"
-              value={newRate.practice_type_code}
-              onChange={(e) =>
-                setNewRate((prev) => ({
-                  ...prev,
-                  practice_type_code: e.target.value,
-                }))
-              }
-              placeholder="e.g. property_sale"
-              className="w-full border rounded px-2 py-1.5 text-sm text-[var(--bz-text-1)]"
-              style={INPUT_STYLE}
-            />
-          </div>
-          <div className="w-40">
-            <label className="block text-xs text-[var(--bz-text-2)] mb-1">
-              Amount (IDR)
-            </label>
-            <input
-              type="number"
-              value={newRate.amount_idr}
-              onChange={(e) =>
-                setNewRate((prev) => ({ ...prev, amount_idr: e.target.value }))
-              }
-              placeholder="500000"
-              className="w-full border rounded px-2 py-1.5 text-sm text-[var(--bz-text-1)]"
-              style={INPUT_STYLE}
-            />
-          </div>
-          <button
-            onClick={handleCreate}
-            className="px-3 py-1.5 rounded bg-[var(--bz-accent)] text-[var(--bz-on-warm)] text-sm font-medium"
-          >
-            Create
-          </button>
-        </div>
-      )}
-
-      <div className="space-y-1">
-        <div className="grid grid-cols-3 text-xs text-[var(--bz-text-3)] px-4 py-2 uppercase tracking-wider">
-          <span>Practice Type</span>
-          <span>Bonus Amount</span>
-          <span>Status</span>
-        </div>
-        {rates.map((rate) => (
-          <div
-            key={rate.id}
-            className="grid grid-cols-3 items-center border rounded-lg px-4 py-3"
-            style={PANEL}
-          >
+          <div className="grid gap-3 sm:grid-cols-[1fr_12rem_auto] sm:items-end">
             <div>
-              <span className="text-[var(--bz-text-1)]">
-                {rate.practice_type_code?.replace(/_/g, " ")}
-              </span>
-              {rate.practice_type_name && (
-                <span className="text-xs text-[var(--bz-text-3)] ml-2">
-                  ({rate.practice_type_name})
-                </span>
-              )}
-            </div>
-            <div>
-              {editingId === rate.id ? (
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    value={editAmount}
-                    onChange={(e) => setEditAmount(e.target.value)}
-                    className="w-32 border rounded px-2 py-1 text-sm text-[var(--bz-text-1)]"
-                    style={INPUT_STYLE}
-                  />
-                  <button
-                    onClick={() =>
-                      handleSave(rate.practice_type_code, Number(editAmount))
-                    }
-                    className="p-1 text-[var(--state-success)]"
-                  >
-                    <Save size={14} />
-                  </button>
-                </div>
-              ) : (
+              <label className="mb-1 block text-xs text-[var(--bz-text-2)]">
+                Service
+              </label>
+              <PracticeTypePicker
+                ariaLabel="Service for the new rate"
+                types={pickable}
+                value={newCode}
+                onChange={setNewCode}
+                disabledCodes={rateCodes}
+                placeholder={
+                  onlyGroup === "tax"
+                    ? "Choose a tax service"
+                    : "Choose a service"
+                }
+              />
+              {onlyGroup && (
                 <button
-                  onClick={() => {
-                    setEditingId(rate.id);
-                    setEditAmount(String(rate.amount_idr));
-                  }}
-                  className="text-[var(--bz-accent)] hover:underline"
+                  type="button"
+                  onClick={() => setOnlyGroup(null)}
+                  className="mt-1 text-xs text-[var(--bz-accent)] hover:underline"
                 >
-                  <Money value={rate.amount_idr} />
+                  Showing {onlyGroup} services only — show all
                 </button>
               )}
             </div>
-            <span
-              className={`text-xs ${rate.is_active ? "text-[var(--state-success)]" : "text-[var(--bz-text-3)]"}`}
+            <div>
+              <label
+                htmlFor="new-rate-amount"
+                className="mb-1 block text-xs text-[var(--bz-text-2)]"
+              >
+                Amount (IDR)
+              </label>
+              <input
+                id="new-rate-amount"
+                type="number"
+                min={0}
+                value={newAmount}
+                onChange={(e) => setNewAmount(e.target.value)}
+                placeholder="500000"
+                className="w-full rounded-xl border px-3 py-2 text-sm text-[var(--bz-text-1)]"
+                style={INPUT_STYLE}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleCreate}
+              disabled={!newCode || !newAmount}
+              className="rounded-full bg-[var(--bz-accent)] px-5 py-2 text-sm font-semibold text-[var(--bz-on-warm)] disabled:opacity-40"
             >
-              {rate.is_active ? "Active" : "Inactive"}
-            </span>
+              Create
+            </button>
           </div>
-        ))}
+        </div>
+      )}
+
+      <div className="space-y-7">
+        {PRACTICE_GROUPS.map((g) => {
+          const list = byGroup[g.id];
+          if (list.length === 0 && g.id !== "tax") return null;
+          const tone = GROUP_TONE[g.id];
+          return (
+            <section key={g.id} aria-label={`${g.label} rates`}>
+              <div className="mb-2.5 flex items-center gap-2">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full"
+                  style={{ background: tone }}
+                />
+                <h2
+                  className="text-sm font-semibold uppercase tracking-wide"
+                  style={{ color: tone }}
+                >
+                  {g.id === "tax" ? "Tax services" : g.label}
+                </h2>
+                <span
+                  className="rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                  style={{ background: tint(tone, 14), color: tone }}
+                >
+                  {list.length}
+                </span>
+                {g.id === "tax" && list.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => openAdd("tax")}
+                    className="ml-auto flex items-center gap-1 text-xs font-semibold"
+                    style={{ color: tone }}
+                  >
+                    <Plus size={13} /> Add a tax rate
+                  </button>
+                )}
+              </div>
+
+              {list.length === 0 ? (
+                <div
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed p-5"
+                  style={{
+                    borderColor: tint(tone, 45),
+                    background: tint(tone, 6),
+                  }}
+                >
+                  <div className="flex items-center gap-3">
+                    <span
+                      className="flex h-10 w-10 items-center justify-center rounded-full"
+                      style={{ background: tint(tone, 16), color: tone }}
+                    >
+                      <Receipt size={18} />
+                    </span>
+                    <p className="text-sm text-[var(--bz-text-1)]">
+                      No tax rate yet.
+                      <span className="block text-xs text-[var(--bz-text-2)]">
+                        Set an amount per tax service, or add a bonus by hand
+                        whenever it is earned.
+                      </span>
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openAdd("tax")}
+                    className="flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold"
+                    style={{ background: tone, color: "var(--bz-on-warm)" }}
+                  >
+                    <Sparkles size={14} />
+                    Add a tax rate
+                  </button>
+                </div>
+              ) : (
+                <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+                  {list.map((rate) => (
+                    <div
+                      key={rate.id}
+                      className="flex flex-col gap-3 rounded-2xl border p-3.5"
+                      style={{
+                        ...PANEL,
+                        opacity: rate.is_active ? 1 : 0.6,
+                        borderLeft: `3px solid ${tone}`,
+                      }}
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-[var(--bz-text-1)]">
+                          {rate.practice_type_name ||
+                            rate.practice_type_code?.replace(/_/g, " ")}
+                        </div>
+                        <div className="truncate text-[11px] text-[var(--bz-text-3)]">
+                          {rate.practice_type_code}
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        {editingId === rate.id ? (
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number"
+                              min={0}
+                              aria-label="New amount"
+                              value={editAmount}
+                              onChange={(e) => setEditAmount(e.target.value)}
+                              className="w-28 rounded-lg border px-2 py-1 text-sm text-[var(--bz-text-1)]"
+                              style={INPUT_STYLE}
+                            />
+                            <button
+                              type="button"
+                              aria-label="Save amount"
+                              onClick={() => handleSaveAmount(rate)}
+                              className="rounded-full p-1.5"
+                              style={{
+                                color: "var(--state-success)",
+                                background: tint("var(--state-success)", 14),
+                              }}
+                            >
+                              <Check size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label="Cancel edit"
+                              onClick={() => setEditingId(null)}
+                              className="rounded-full p-1.5 text-[var(--bz-text-2)]"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            aria-label={`Edit amount for ${rate.practice_type_name || rate.practice_type_code}`}
+                            onClick={() => {
+                              setEditingId(rate.id);
+                              setEditAmount(String(rate.amount_idr));
+                            }}
+                            className="group flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold"
+                            style={{ background: tint(tone, 14), color: tone }}
+                          >
+                            <Money value={rate.amount_idr} />
+                            <Pencil size={11} className="opacity-60" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={rate.is_active}
+                          aria-label={`${rate.practice_type_name || rate.practice_type_code} active`}
+                          onClick={() => handleToggle(rate)}
+                          className="relative h-5 w-9 shrink-0 rounded-full transition-colors"
+                          style={{
+                            background: rate.is_active
+                              ? "var(--state-success)"
+                              : "var(--bz-border)",
+                          }}
+                        >
+                          <span
+                            className="absolute top-0.5 h-4 w-4 rounded-full bg-[var(--bz-card)] transition-all"
+                            style={{
+                              left: rate.is_active ? "1.1rem" : "0.15rem",
+                            }}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          );
+        })}
       </div>
     </div>
   );
