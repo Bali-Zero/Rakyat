@@ -9180,7 +9180,7 @@ export interface paths {
     post?: never;
     /**
      * Delete Manual Bonus
-     * @description Delete a pending MANUAL bonus (admin only); anything else is a 409.
+     * @description Delete a pending MANUAL bonus (admin only); unknown id is a 404, any other row a 409.
      */
     delete: operations["delete_manual_bonus_api_hr_bonuses__bonus_id__delete"];
     options?: never;

@@ -465,8 +465,10 @@ async def reject_bonus(
         result = await service.reject_bonus(
             bonus_id, _get_user_id(current_user), data.note if data else None
         )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e))
     await invalidate_cache("zantara:hr_bonuses:*")
     return {"success": True, "bonus": result}
 
@@ -477,10 +479,13 @@ async def delete_manual_bonus(
     current_user: dict[str, Any] = Depends(get_current_user),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    """Delete a pending MANUAL bonus (admin only); anything else is a 409."""
+    """Delete a pending MANUAL bonus (admin only); unknown id is a 404, any other row a 409."""
     _require_hr_admin(current_user)
     service = _get_hr_service(db_pool)
-    if not await service.delete_manual_bonus(bonus_id):
+    outcome = await service.delete_manual_bonus(bonus_id)
+    if outcome == "missing":
+        raise HTTPException(status_code=404, detail="Bonus not found")
+    if outcome != "deleted":
         raise HTTPException(status_code=409, detail="Only a pending manual bonus can be deleted")
     await invalidate_cache("zantara:hr_bonuses:*")
     return {"success": True}

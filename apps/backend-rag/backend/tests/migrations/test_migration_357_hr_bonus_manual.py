@@ -66,6 +66,7 @@ CREATE TABLE hr_bonus_ledger (
     amount_idr BIGINT NOT NULL CHECK (amount_idr >= 0),
     status VARCHAR(20) NOT NULL DEFAULT 'pending',
     awarded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    approved_by VARCHAR(36), approved_at TIMESTAMPTZ, notes TEXT,
     CONSTRAINT uq_hr_bonus_practice_emp UNIQUE (practice_id, employee_id));
 CREATE FUNCTION hr_validate_completed_practice() RETURNS TRIGGER AS $$
 DECLARE v_status TEXT;
@@ -157,3 +158,60 @@ async def test_constraints_trigger_and_idempotence(conn: asyncpg.Connection) -> 
         "WHERE table_schema = $1 AND table_name = 'hr_bonus_ledger' AND column_name = 'source')",
         SCHEMA,
     )
+
+
+class _OneConnectionPool:
+    """Just enough pool for HRService: acquire() yields the fixture's connection."""
+
+    def __init__(self, conn: asyncpg.Connection) -> None:
+        self._conn = conn
+
+    def acquire(self) -> _OneConnectionPool:
+        return self
+
+    async def __aenter__(self) -> asyncpg.Connection:
+        return self._conn
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_delete_and_reject_split_404_from_409_in_one_statement(
+    conn: asyncpg.Connection,
+) -> None:
+    from backend.app.services.hr.hr_service import HRService
+
+    forward, _ = _parts()
+    await conn.execute(forward)
+    svc = HRService(_OneConnectionPool(conn))  # type: ignore[arg-type]
+    ids = {}
+    for name, status in (
+        ("m_pending", "pending"),
+        ("m_approved", "approved"),
+        ("m_reject", "pending"),
+    ):
+        ids[name] = await conn.fetchval(
+            "INSERT INTO hr_bonus_ledger (employee_id, practice_type_code, amount_idr, "
+            "status, source, reason) VALUES (1, 'manual', 5, $1, 'manual', 'why') RETURNING id",
+            status,
+        )
+
+    # DELETE: unknown -> missing; exists but approved, or a practice row -> conflict; else deleted.
+    assert await svc.delete_manual_bonus(987654) == "missing"
+    assert await svc.delete_manual_bonus(ids["m_approved"]) == "conflict"
+    assert await svc.delete_manual_bonus(1) == "conflict"  # the practice bonus
+    assert await svc.delete_manual_bonus(ids["m_pending"]) == "deleted"
+    assert await svc.delete_manual_bonus(ids["m_pending"]) == "missing"  # now gone
+    assert await conn.fetchval("SELECT count(*) FROM hr_bonus_ledger WHERE id = 1") == 1
+
+    # REJECT: unknown -> LookupError; not pending -> ValueError; pending -> rejected row.
+    with pytest.raises(LookupError):
+        await svc.reject_bonus(987654, "tm-1")
+    with pytest.raises(ValueError):
+        await svc.reject_bonus(ids["m_approved"], "tm-1")
+    row = await svc.reject_bonus(ids["m_reject"], "tm-1", "dup")
+    assert row["status"] == "rejected" and row["id"] == ids["m_reject"] and "_existed" not in row
+    with pytest.raises(ValueError):
+        await svc.reject_bonus(ids["m_reject"], "tm-1")

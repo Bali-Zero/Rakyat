@@ -99,20 +99,24 @@ def test_create_manual_bonus_error_mapping(make_client, result, code):
     assert make_client(ADMIN, svc).post("/api/hr/bonuses", json=GOOD).status_code == code
 
 
-def test_reject_and_delete(make_client):
+def test_reject_maps_200_404_409(make_client):
     svc = AsyncMock()
-    svc.reject_bonus = AsyncMock(return_value={"id": 3, "status": "rejected"})
-    svc.delete_manual_bonus = AsyncMock(return_value=True)
     c = make_client(ADMIN, svc)
+    svc.reject_bonus = AsyncMock(return_value={"id": 3, "status": "rejected"})
     assert c.post("/api/hr/bonuses/3/reject", json={"note": "dup"}).status_code == 200
     assert svc.reject_bonus.await_args.args == (3, "tm-admin", "dup")
     assert c.post("/api/hr/bonuses/3/reject").status_code == 200  # body optional
-    assert c.delete("/api/hr/bonuses/3").status_code == 200
-
+    svc.reject_bonus = AsyncMock(side_effect=LookupError("not found"))
+    assert c.post("/api/hr/bonuses/999/reject").status_code == 404
     svc.reject_bonus = AsyncMock(side_effect=ValueError("not pending"))
-    svc.delete_manual_bonus = AsyncMock(return_value=False)
-    assert c.post("/api/hr/bonuses/3/reject").status_code == 400
-    assert c.delete("/api/hr/bonuses/3").status_code == 409
+    assert c.post("/api/hr/bonuses/3/reject").status_code == 409
+
+
+@pytest.mark.parametrize("outcome, code", [("deleted", 200), ("missing", 404), ("conflict", 409)])
+def test_delete_maps_200_404_409(make_client, outcome, code):
+    svc = AsyncMock()
+    svc.delete_manual_bonus = AsyncMock(return_value=outcome)
+    assert make_client(ADMIN, svc).delete("/api/hr/bonuses/3").status_code == code
 
 
 def test_reject_and_delete_are_admin_only(make_client):

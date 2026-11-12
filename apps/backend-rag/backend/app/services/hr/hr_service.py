@@ -604,38 +604,58 @@ class HRService:
     async def reject_bonus(
         self, bonus_id: int, rejected_by: str, note: str | None = None
     ) -> dict[str, Any]:
-        """Reject a pending bonus (practice or manual)."""
+        """Reject a pending bonus (practice or manual).
+
+        One statement decides: LookupError when no bonus has that id, ValueError when it
+        exists but is not pending. The existence probe shares the UPDATE's snapshot.
+        """
         async with self.db_pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                UPDATE hr_bonus_ledger
-                SET status = 'rejected', approved_by = $2, approved_at = NOW(),
-                    notes = COALESCE($3, notes)
-                WHERE id = $1 AND status = 'pending'
-                RETURNING *
+                WITH upd AS (
+                    UPDATE hr_bonus_ledger
+                    SET status = 'rejected', approved_by = $2, approved_at = NOW(),
+                        notes = COALESCE($3, notes)
+                    WHERE id = $1 AND status = 'pending'
+                    RETURNING *
+                )
+                SELECT upd.*, EXISTS (SELECT 1 FROM hr_bonus_ledger WHERE id = $1) AS _existed
+                FROM (SELECT 1) AS one LEFT JOIN upd ON TRUE
                 """,
                 bonus_id,
                 rejected_by,
                 note,
             )
-            if not row:
-                msg = f"Bonus {bonus_id} not found or not pending"
-                raise ValueError(msg)
+            if row is None or row["id"] is None:
+                if row is not None and row["_existed"]:
+                    msg = f"Bonus {bonus_id} is not pending"
+                    raise ValueError(msg)
+                msg = f"Bonus {bonus_id} not found"
+                raise LookupError(msg)
             logger.info("Bonus %s rejected by %s", bonus_id, rejected_by)
-            return dict(row)
+            out = dict(row)
+            out.pop("_existed", None)
+            return out
 
-    async def delete_manual_bonus(self, bonus_id: int) -> bool:
-        """Delete a pending manual bonus. False when it is not one (or does not exist)."""
+    async def delete_manual_bonus(self, bonus_id: int) -> str:
+        """Delete a pending manual bonus: 'deleted', 'missing' (no such id) or 'conflict'
+        (exists but is not a pending manual bonus). One statement, one snapshot."""
         async with self.db_pool.acquire() as conn:
-            deleted = await conn.fetchval(
+            row = await conn.fetchrow(
                 """
-                DELETE FROM hr_bonus_ledger
-                WHERE id = $1 AND source = 'manual' AND status = 'pending'
-                RETURNING id
+                WITH del AS (
+                    DELETE FROM hr_bonus_ledger
+                    WHERE id = $1 AND source = 'manual' AND status = 'pending'
+                    RETURNING id
+                )
+                SELECT (SELECT id FROM del) AS deleted_id,
+                       EXISTS (SELECT 1 FROM hr_bonus_ledger WHERE id = $1) AS existed
                 """,
                 bonus_id,
             )
-        return deleted is not None
+        if row["deleted_id"] is not None:
+            return "deleted"
+        return "conflict" if row["existed"] else "missing"
 
     async def get_bonus_summary(
         self,

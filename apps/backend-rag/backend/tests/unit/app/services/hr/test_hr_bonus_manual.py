@@ -110,29 +110,42 @@ class TestCreateManualBonus:
 class TestRejectAndDelete:
     @pytest.mark.asyncio
     async def test_reject_pending(self, svc, pool):
-        pool._conn.fetchrow = AsyncMock(return_value={"id": 3, "status": "rejected"})
+        pool._conn.fetchrow = AsyncMock(
+            return_value={"id": 3, "status": "rejected", "_existed": True}
+        )
         row = await svc.reject_bonus(3, "tm-1", "duplicate")
-        assert row["status"] == "rejected"
+        assert row == {"id": 3, "status": "rejected"}
         sql = pool._conn.fetchrow.await_args.args[0]
-        assert "status = 'pending'" in sql
+        assert "status = 'pending'" in sql and sql.count("hr_bonus_ledger") == 2  # one statement
 
     @pytest.mark.asyncio
-    async def test_reject_not_pending_raises(self, svc, pool):
-        pool._conn.fetchrow = AsyncMock(return_value=None)
+    async def test_reject_unknown_id_is_lookup_error(self, svc, pool):
+        pool._conn.fetchrow = AsyncMock(return_value={"id": None, "_existed": False})
+        with pytest.raises(LookupError):
+            await svc.reject_bonus(3, "tm-1")
+
+    @pytest.mark.asyncio
+    async def test_reject_existing_not_pending_is_value_error(self, svc, pool):
+        pool._conn.fetchrow = AsyncMock(return_value={"id": None, "_existed": True})
         with pytest.raises(ValueError):
             await svc.reject_bonus(3, "tm-1")
 
     @pytest.mark.asyncio
     async def test_delete_is_restricted_to_pending_manual_rows(self, svc, pool):
-        pool._conn.fetchval = AsyncMock(return_value=5)
-        assert await svc.delete_manual_bonus(5) is True
-        sql = pool._conn.fetchval.await_args.args[0]
+        pool._conn.fetchrow = AsyncMock(return_value={"deleted_id": 5, "existed": True})
+        assert await svc.delete_manual_bonus(5) == "deleted"
+        sql = pool._conn.fetchrow.await_args.args[0]
         assert "source = 'manual'" in sql and "status = 'pending'" in sql
 
     @pytest.mark.asyncio
-    async def test_delete_of_anything_else_is_false(self, svc, pool):
-        pool._conn.fetchval = AsyncMock(return_value=None)
-        assert await svc.delete_manual_bonus(5) is False
+    async def test_delete_of_another_row_is_a_conflict(self, svc, pool):
+        pool._conn.fetchrow = AsyncMock(return_value={"deleted_id": None, "existed": True})
+        assert await svc.delete_manual_bonus(5) == "conflict"
+
+    @pytest.mark.asyncio
+    async def test_delete_of_an_unknown_id_is_missing(self, svc, pool):
+        pool._conn.fetchrow = AsyncMock(return_value={"deleted_id": None, "existed": False})
+        assert await svc.delete_manual_bonus(5) == "missing"
 
 
 class TestPracticeTypes:
