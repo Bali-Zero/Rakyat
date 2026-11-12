@@ -77,7 +77,7 @@ export const TEAM_ROSTER: RosterMember[] = [
     role: "Board Member",
     dept: "leadership",
     email: "ruslana@balizero.com",
-    photo: "/static/team/ruslana.jpg",
+    photo: "/static/team/ruslana-2026-11.jpg",
   },
 
   // ── Setup ───────────────────────────────────────────────────────────────
