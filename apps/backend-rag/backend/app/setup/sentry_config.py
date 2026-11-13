@@ -245,7 +245,20 @@ _LABELLED_ID_RE = re.compile(
 # `request.query_string`, HTTP breadcrumbs carry the full URL). Same two keys as the access-log
 # filter in `core/secret_log_redaction.py`.
 _SEARCH_PARAM_KEYS = frozenset({"search", "q"})
-_SEARCH_PARAM_RE = re.compile(r"(?i)([?&;])(search|q)=[^&#\s\"'<>]*")
+# Any "?key=value" / "&key=value" / ";key=value" pair inside a string. The key is matched
+# URL-decoded and case-insensitively (a percent-encoded "search" is still search), so the pair is
+# found by shape and judged by _is_search_param. Bounded key length and single character classes:
+# linear.
+_URL_PARAM_RE = re.compile(r"([?&;])([^=&#\s\"'<>]{1,60})=([^&#;\s\"'<>]*)")
+
+
+def _redact_search_params_in_text(s: str) -> str:
+    def _sub(match: re.Match[str]) -> str:
+        if _is_search_param(match.group(2)):
+            return f"{match.group(1)}{match.group(2)}={PII_REDACTION_PLACEHOLDER}"
+        return match.group(0)
+
+    return _URL_PARAM_RE.sub(_sub, s)
 
 
 def _is_search_param(key: Any) -> bool:
@@ -267,7 +280,7 @@ def _redact_string(s: str) -> str:
     See the free-text block above for the two tiers and for what this still
     cannot reach (bare personal names, unlabelled passport numbers).
     """
-    s = _SEARCH_PARAM_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}={PII_REDACTION_PLACEHOLDER}", s)
+    s = _redact_search_params_in_text(s)
     s = _EMAIL_RE.sub(PII_REDACTION_PLACEHOLDER, s)
     s = _CLIENT_ID_RE.sub(PII_REDACTION_PLACEHOLDER, s)
     s = _NPWP_RE.sub(PII_REDACTION_PLACEHOLDER, s)

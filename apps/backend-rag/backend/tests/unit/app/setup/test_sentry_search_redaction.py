@@ -123,3 +123,48 @@ def test_innocence_look_alike_words_and_values_stay_readable():
     assert _redact_string(text) == text
     assert _scrub({"search_results": 3, "quota": "ok"}) == {"search_results": 3, "quota": "ok"}
     assert _scrub({"search": 3}) == {"search": 3}  # only text values are search text
+
+
+def test_percent_encoded_and_mixed_case_keys_in_urls_are_redacted():
+    for url in (
+        f"https://kita.example/clients?se%61rch={VALUE}",
+        f"https://kita.example/clients?%73EARCH={VALUE}&page=2",
+        f"https://kita.example/p?a=1;q={VALUE}",
+        f"https://kita.example/p?page=2&%51={VALUE}",
+    ):
+        assert VALUE not in _redact_string(url), url
+    assert "page=2" in _redact_string(f"https://x/p?%51={VALUE}&page=2")
+
+
+def test_a_referer_with_an_encoded_search_key_never_reaches_the_envelope(transport):
+    app = FastAPI()
+
+    @app.get("/api/ping")
+    async def ping():
+        raise RuntimeError("ping failed")
+
+    res = TestClient(app, raise_server_exceptions=False).get(
+        "/api/ping",
+        headers={"Referer": f"https://kita.example/clients?se%61rch={VALUE}"},
+    )
+    assert res.status_code == 500
+    sentry_sdk.flush()
+    blob = json.dumps(transport.payloads)
+    assert "ping failed" in blob
+    assert VALUE not in blob
+
+
+def test_an_encoded_url_in_a_log_breadcrumb_is_redacted(transport):
+    import logging
+
+    logging.getLogger("zantara.backend").info(
+        f"navigating to https://kita.example/p?%73earch={VALUE}&page=2"
+    )
+    try:
+        raise RuntimeError("after breadcrumb")
+    except RuntimeError:
+        sentry_sdk.capture_exception()
+    sentry_sdk.flush()
+    blob = json.dumps(transport.payloads)
+    assert "after breadcrumb" in blob
+    assert VALUE not in blob
