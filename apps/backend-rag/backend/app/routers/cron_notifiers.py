@@ -72,7 +72,7 @@ async def run_visa_expiry_notifier(request: Request) -> dict[str, Any]:
 
 @router.post("/unpaid-invoices")
 async def run_unpaid_invoice_notifier(request: Request) -> dict[str, Any]:
-    """Check invoices unpaid for 7+ days and remind Asya."""
+    """Digest of invoices still unpaid 3 days after issue (once per invoice) to Asya."""
     _verify_api_key(request)
     db_pool = _get_db_pool(request)
 
