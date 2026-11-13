@@ -53,6 +53,7 @@ _SENTRY_INIT_STARTED = False
 _PII_KEY_SUBSTRINGS: tuple[str, ...] = (
     "npwp",
     "nib",
+    "document_number",
     "tax_id",
     "passport",
     "email",

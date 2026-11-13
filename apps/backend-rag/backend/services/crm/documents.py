@@ -236,6 +236,55 @@ CATEGORIZATION_RULES: dict[str, dict[str, list[str]]] = {
 }
 
 
+_BOUNDARY_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "son",
+        "fam",
+        "kk",
+        "cv",
+        "imk",
+        "itk",
+        "itas",
+        "itap",
+        "voa",
+        "b211",
+        "c1",
+        "c2",
+        "merp",
+        "sktt",
+        "imta",
+        "nib",
+        "oss",
+        "siup",
+        "tdp",
+        "wlkp",
+        "bpjs",
+        "spt",
+        "pph",
+        "ppn",
+        "lkpm",
+        "mou",
+        "form",
+        "ktp",
+        "foto",
+        "npwp",
+        "sk",
+    }
+)
+
+
+def _keyword_matches(normalized_name: str, raw_lower: str, keyword: str) -> bool:
+    """Match a rule keyword safely without short-token substring false-positives."""
+    stripped = keyword.strip(" _-.")
+    if stripped in _BOUNDARY_KEYWORDS or re.fullmatch(r"[a-z0-9]{1,4}", stripped):
+        if stripped.isalpha():
+            pat = rf"(?<![a-z]){re.escape(stripped)}(?![a-z])"
+        else:
+            pat = rf"(?<![a-z0-9]){re.escape(stripped)}(?![a-z0-9])"
+        return bool(re.search(pat, normalized_name) or re.search(pat, raw_lower))
+    return keyword in normalized_name or keyword in raw_lower
+
+
 def auto_categorize_document(filename: str) -> dict[str, Any]:
     """Automatically categorize a document based on its filename."""
     if not filename:
@@ -243,14 +292,17 @@ def auto_categorize_document(filename: str) -> dict[str, Any]:
 
     filename_lower = filename.lower()
     filename_normalized = filename_lower.replace("_", " ").replace("-", " ")
-    is_family_doc = any(kw in filename_normalized for kw in FAMILY_MEMBER_KEYWORDS)
+    is_family_doc = any(
+        _keyword_matches(filename_normalized, filename_lower, kw)
+        for kw in FAMILY_MEMBER_KEYWORDS
+    )
 
     for category, doc_types in CATEGORIZATION_RULES.items():
         if category == "family" and not is_family_doc:
             continue
         for doc_type, keywords in doc_types.items():
             for keyword in keywords:
-                if keyword in filename_normalized:
+                if _keyword_matches(filename_normalized, filename_lower, keyword):
                     return {
                         "document_type": _format_document_type(doc_type),
                         "document_category": category,

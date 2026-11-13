@@ -419,6 +419,7 @@ class ServiceAccountDriveService:
     # endpoint both saw google_drive_folder_id IS NULL and each created a root.
     DRIVE_FOLDER_LOCK_CLASS = 742001
     DRIVE_ARCHIVE_LOCK_CLASS = 742002
+    DRIVE_COMPANY_FOLDER_LOCK_CLASS = 742003
     _archive_locks: dict[str, asyncio.Lock] = {}
 
     STANDARD_SUBFOLDERS = standard_subfolder_paths()
@@ -741,6 +742,119 @@ class ServiceAccountDriveService:
             raise RuntimeError("Distributed Drive folder lock unavailable")
         return await self.ensure_client_folder(client_id, client_name, client_type, db_pool)
 
+    async def ensure_company_folder(
+        self,
+        company_id: int,
+        company_name: str | None = None,
+        db_pool: Any | None = None,
+        conn: Any | None = None,
+    ) -> dict[str, Any]:
+        """Idempotent chokepoint for company Drive root + subfolder provisioning."""
+        if conn is None:
+            if db_pool is None:
+                raise RuntimeError("Distributed Drive folder lock unavailable")
+            async with db_pool.acquire() as acquired:
+                return await self.ensure_company_folder(
+                    company_id,
+                    company_name,
+                    db_pool=db_pool,
+                    conn=acquired,
+                )
+
+        parent_folder_id = self._parent_folder_for_client_type("company")
+        created = False
+
+        await conn.execute(
+            "SELECT pg_advisory_lock($1, $2)",
+            self.DRIVE_COMPANY_FOLDER_LOCK_CLASS,
+            company_id,
+        )
+        try:
+            row = await conn.fetchrow(
+                "SELECT company_name, google_drive_folder_id "
+                "FROM companies WHERE id = $1 AND COALESCE(status, '') != 'deleted'",
+                company_id,
+            )
+            if row is None:
+                raise RuntimeError(f"Company {company_id} not found or deleted")
+            existing = row["google_drive_folder_id"]
+            if existing:
+                return {
+                    "success": True,
+                    "created": False,
+                    "root_folder_id": existing,
+                    "root_folder_url": f"https://drive.google.com/drive/folders/{existing}",
+                    "folder_id": existing,
+                    "folder_url": f"https://drive.google.com/drive/folders/{existing}",
+                    "subfolders": {},
+                }
+
+            clean_name = str(company_name or row["company_name"] or f"Company_{company_id}").strip()
+            root_folder_name = f"[COMPANY #{company_id}] {clean_name}"
+
+            async with canonical_folder_lock(conn, parent_folder_id, root_folder_name):
+                found = await self.find_folder(root_folder_name, parent_folder_id)
+                if found:
+                    root_folder_id = found["id"]
+                    root_folder_url = found.get(
+                        "webViewLink",
+                        f"https://drive.google.com/drive/folders/{found['id']}",
+                    )
+                    logger.info(
+                        "♻️ Reusing existing Drive folder for company %s: %s",
+                        company_id,
+                        root_folder_id,
+                    )
+                else:
+                    root_folder = await self.create_folder(
+                        name=root_folder_name,
+                        parent_id=parent_folder_id,
+                    )
+                    root_folder_id = root_folder["id"]
+                    root_folder_url = root_folder.get(
+                        "webViewLink",
+                        f"https://drive.google.com/drive/folders/{root_folder_id}",
+                    )
+                    created = True
+
+            await conn.execute(
+                "UPDATE companies SET google_drive_folder_id = $1, updated_at = NOW() WHERE id = $2",
+                root_folder_id,
+                company_id,
+            )
+        finally:
+            await conn.execute(
+                "SELECT pg_advisory_unlock($1, $2)",
+                self.DRIVE_COMPANY_FOLDER_LOCK_CLASS,
+                company_id,
+            )
+
+        subfolders: dict[str, Any] = {}
+        if created:
+            subfolders = await self._create_standard_subfolders(
+                root_folder_id,
+                client_id=company_id,
+                db_pool=db_pool,
+                client_type="company",
+                conn=conn,
+                persist_client_subfolders=False,
+            )
+            logger.info(
+                "✅ Created company folder structure for company %s: %s",
+                company_id,
+                root_folder_id,
+            )
+
+        return {
+            "success": True,
+            "created": created,
+            "root_folder_id": root_folder_id,
+            "root_folder_url": root_folder_url,
+            "folder_id": root_folder_id,
+            "folder_url": root_folder_url,
+            "subfolders": subfolders,
+        }
+
     async def _create_standard_subfolders(
         self,
         root_folder_id: str,
@@ -748,14 +862,20 @@ class ServiceAccountDriveService:
         db_pool: Any | None = None,
         client_type: str = "individual",
         conn: Any | None = None,
+        persist_client_subfolders: bool = True,
     ) -> dict[str, Any]:
-        """Create the standard subfolder tree under a client root folder."""
+        """Create the standard subfolder tree under a client or company root folder."""
         if conn is None:
             if db_pool is None:
                 raise RuntimeError("Distributed Drive folder lock unavailable")
             async with db_pool.acquire() as acquired:
                 return await self._create_standard_subfolders(
-                    root_folder_id, client_id, db_pool, client_type, conn=acquired
+                    root_folder_id,
+                    client_id,
+                    db_pool,
+                    client_type,
+                    conn=acquired,
+                    persist_client_subfolders=persist_client_subfolders,
                 )
         subfolders: dict[str, Any] = {}
         folder_id_cache = {"": root_folder_id}
@@ -784,7 +904,7 @@ class ServiceAccountDriveService:
                 continue
 
         # Persist subfolder IDs to DB so DrivePollService can match files to clients
-        if db_pool:
+        if db_pool and persist_client_subfolders:
             try:
                 for subfolder_path, subfolder_data in subfolders.items():
                     if "/" not in subfolder_path:  # top-level only

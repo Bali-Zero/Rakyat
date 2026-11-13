@@ -1316,6 +1316,10 @@ async def build_routing_proposal(
             "reason": entity["reason"].get("reason"),
             "auto_attach_eligible": decision == DECISION_AUTO_ATTACH
             and target["client_id"] is not None,
+            # Consumed as a triage/review readiness signal (`batch_triage`);
+            # company auto-attach stays gated on HITL until a company concordance gate exists.
+            "company_attach_eligible": decision == DECISION_AUTO_ATTACH
+            and target["company_id"] is not None,
             "fase": "4-routing",
         }
         return {
