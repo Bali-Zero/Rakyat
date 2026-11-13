@@ -75,10 +75,20 @@ uv pip compile requirements.txt -o requirements.lock.txt \
 
 ```bash
 cd apps/backend-rag
-uv venv                                              # creates .venv/
+uv venv --python '>=3.11.5,<3.12'                    # creates .venv/
 source .venv/bin/activate
-uv pip install --require-hashes -r requirements.lock.txt
+uv pip install -r requirements.lock.txt
 ```
+
+The interpreter must be CPython 3.11.5 or newer, below 3.12, because the locks
+are compiled for that floor (see "Why `3.11.5`" above). On 3.11.4 the install
+stops at `soupsieve==4.1 depends on Python>=3.11.5`.
+- A bare `uv venv` takes the newest Python uv finds, which can be 3.12.
+- `requires-python = ">=3.11.5"` in `pyproject.toml` makes uv warn about an
+  interpreter under the floor, but it does not stop it.
+- No `--require-hashes`: the lock's `-e ../../packages/cell-core` line has no
+  hash, so that mode refuses the whole file, as in CI and the Dockerfile. uv
+  still verifies the hashes the lock does carry, by default.
 
 Editable `cell-core` is included via the `-e ../../packages/cell-core` line
 in the lock file — runs from `apps/backend-rag/` cwd, same as pip used to.

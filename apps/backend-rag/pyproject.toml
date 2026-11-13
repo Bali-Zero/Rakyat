@@ -8,7 +8,8 @@
 name = "nuzantara-backend-rag"
 version = "1.0.0"
 description = "NUZANTARA RAG Backend with FastAPI"
-requires-python = ">=3.10"
+# Floor of the compiled locks (docs/uv-migration.md): soupsieve 4.x needs 3.11.5.
+requires-python = ">=3.11.5"
 
 # ============================================================================
 # BLACK - Code Formatter
