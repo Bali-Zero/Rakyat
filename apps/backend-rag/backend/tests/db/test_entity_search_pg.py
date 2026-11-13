@@ -181,6 +181,7 @@ async def firms(pool: asyncpg.Pool) -> None:  # noqa: F811
     await link_company(pool, holder, "CV Bali Foods", npwp="00.111.222.3-444.000")
     await link_company(pool, holder, "PT Kéy Ünit Tbk")
     await link_company(pool, holder, "PT X")
+    await link_company(pool, holder, "Delta Mining")
 
 
 class TestCompanySearch:
@@ -192,6 +193,11 @@ class TestCompanySearch:
     async def test_typed_prefix_is_ignored(self, pool, firms):  # noqa: F811
         assert await companies(pool, "PT Acme") == ["PT Acme Synthetic"]
         assert await companies(pool, "cv bali") == ["CV Bali Foods"]
+
+    @pytest.mark.asyncio
+    async def test_typed_affix_finds_a_name_stored_without_it(self, pool, firms):  # noqa: F811
+        assert await companies(pool, "PT Delta") == ["Delta Mining"]
+        assert await companies(pool, "CV Delta Mining Tbk") == ["Delta Mining"]
 
     @pytest.mark.asyncio
     async def test_accent_and_case_insensitive(self, pool, firms):  # noqa: F811
@@ -216,4 +222,4 @@ class TestCompanySearch:
 
     @pytest.mark.asyncio
     async def test_no_search_lists_all(self, pool, firms):  # noqa: F811
-        assert len(await companies(pool, None)) == 4
+        assert len(await companies(pool, None)) == 5
