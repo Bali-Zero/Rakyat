@@ -308,6 +308,91 @@ class TestListPractices:
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("smart", "available", "expect_in", "expect_not_in", "expect_params"),
+        [
+            ("clause", True, "AND SMART($2::text)", "ILIKE", "acme"),
+            (None, True, "c.full_name ILIKE $2", "SMART", "%5\\%%"),
+            ("unused", False, "c.full_name ILIKE $2", "SMART", "%5\\%%"),
+        ],
+    )
+    async def test_list_search_paths(
+        self,
+        mock_db_pool: MagicMock,
+        mock_db_conn: AsyncMock,
+        admin_user: dict,
+        smart: Any,
+        available: bool,
+        expect_in: str,
+        expect_not_in: str,
+        expect_params: str,
+    ) -> None:
+        from backend.app.routers.crm_practices import list_practices
+        from backend.services.crm.entity_search import EntitySearch
+
+        mock_db_conn.fetch = AsyncMock(return_value=[])
+        built = EntitySearch(" AND SMART($2::text)", ["acme"], 3) if smart == "clause" else None
+        build = AsyncMock(return_value=built)
+        with (
+            patch("backend.app.routers.crm_practices.get_practices_user_filter", return_value=None),
+            patch(
+                "backend.app.routers.crm_practices.smart_search_available",
+                AsyncMock(return_value=available),
+            ),
+            patch("backend.app.routers.crm_practices.build_practice_search", build),
+        ):
+            result = await list_practices(
+                client_id=None,
+                status="inquiry",
+                assigned_to=None,
+                practice_type=None,
+                priority=None,
+                month=None,
+                search="5%" if smart != "clause" else "Acme",
+                include_history=False,
+                limit=10,
+                offset=0,
+                db_pool=mock_db_pool,
+                current_user=admin_user,
+            )
+        assert result == []
+        if not available:
+            build.assert_not_awaited()
+        sql, *params = mock_db_conn.fetch.await_args.args
+        assert expect_in in sql
+        assert expect_not_in not in sql
+        assert params[:2] == ["inquiry", expect_params]
+
+    @pytest.mark.asyncio
+    async def test_list_blank_search_adds_no_clause(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from backend.app.routers.crm_practices import list_practices
+
+        mock_db_conn.fetch = AsyncMock(return_value=[])
+        build = AsyncMock()
+        with (
+            patch("backend.app.routers.crm_practices.get_practices_user_filter", return_value=None),
+            patch("backend.app.routers.crm_practices.build_practice_search", build),
+        ):
+            await list_practices(
+                client_id=None,
+                status=None,
+                assigned_to=None,
+                practice_type=None,
+                priority=None,
+                month=None,
+                search="   ",
+                include_history=False,
+                limit=10,
+                offset=0,
+                db_pool=mock_db_pool,
+                current_user=admin_user,
+            )
+        build.assert_not_awaited()
+        assert "ILIKE" not in mock_db_conn.fetch.await_args.args[0]
+
+    @pytest.mark.asyncio
     async def test_list_with_all_filters(
         self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
     ) -> None:
@@ -1010,7 +1095,7 @@ class TestOpenInquiry:
 
         update_sql, *update_params = mock_db_conn.fetchrow.call_args_list[2].args
         assert "practice_type_id = $1" in update_sql
-        assert "quoted_price = $2" in update_sql
+        assert "quoted_price = COALESCE(quoted_price, $2)" in update_sql
         assert update_params[0] == 24
         assert update_params[1] == Decimal("36000000")
 
