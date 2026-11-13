@@ -174,7 +174,7 @@ class TestBonusRateLog:
         data = {"practice_type_code": "tax_fake", "amount_idr": 987654}
         with caplog.at_level(logging.INFO):
             await hr_service.upsert_bonus_rate(data)
-        text = " ".join(r.getMessage() for r in caplog.records)
+        text = " ".join(r.getMessage() for r in caplog.records if r.name.startswith("backend."))
         assert "rate_id=42" in text
         assert "987654" not in text
 

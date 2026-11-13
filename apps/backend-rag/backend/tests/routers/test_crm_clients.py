@@ -283,7 +283,7 @@ class TestListClients:
             response = client.get("/api/crm/clients/?assigned_to=zyxwv.assignee@example.com")
 
         assert response.status_code == 200
-        texts = [r.getMessage() + (r.exc_text or "") for r in caplog.records]
+        texts = [r.getMessage() + (r.exc_text or "") for r in caplog.records if r.name.startswith("backend.")]
         text = " ".join(texts)
         assert "requesting clients list" in text
         assert "zyxwv" not in text

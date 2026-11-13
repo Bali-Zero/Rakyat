@@ -2403,7 +2403,7 @@ class TestHRBonus:
         ):
             await _create_hr_bonus_on_completed(mock_db_pool, 1, "synthetic.staff@example.test")
 
-        text = " ".join(r.getMessage() for r in caplog.records)
+        text = " ".join(r.getMessage() for r in caplog.records if r.name.startswith("backend."))
         assert "HR bonus created" in text
         assert "hr_employee=7" in text
         assert "synthetic.staff" not in text

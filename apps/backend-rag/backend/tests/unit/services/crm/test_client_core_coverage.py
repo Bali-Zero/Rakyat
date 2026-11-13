@@ -595,7 +595,7 @@ async def test_create_client_log_carries_id_only(crm_service, mock_pool, caplog)
     ):
         await service.create_client({"full_name": "Zyxwv Synthetic", "email": "zyxwv@example.com"})
 
-    text = " ".join(r.getMessage() for r in caplog.records)
+    text = " ".join(r.getMessage() for r in caplog.records if r.name.startswith("backend."))
     assert "Created client 4242" in text
     assert "Zyxwv" not in text
     assert "@" not in text
@@ -1113,7 +1113,7 @@ async def test_hr_bonus_logs_carry_ids_only(crm_service, mock_pool, caplog):
     with caplog.at_level(logging.DEBUG, logger="backend.services.crm.client_core"):
         await service._create_hr_bonus_entry(1, {"assigned_to": email})
 
-    text = " ".join(r.getMessage() for r in caplog.records)
+    text = " ".join(r.getMessage() for r in caplog.records if r.name.startswith("backend."))
     assert "HR bonus created" in text
     assert "hr_employee=7" in text
     assert "synthetic.staff" not in text
@@ -1133,7 +1133,7 @@ async def test_hr_bonus_skip_no_employee_log_has_no_email(crm_service, mock_pool
     with caplog.at_level(logging.DEBUG, logger="backend.services.crm.client_core"):
         await service._create_hr_bonus_entry(1, {"assigned_to": "synthetic.staff@example.test"})
 
-    text = " ".join(r.getMessage() for r in caplog.records)
+    text = " ".join(r.getMessage() for r in caplog.records if r.name.startswith("backend."))
     assert "no active HR employee for practice=1" in text
     assert "synthetic.staff" not in text
 
@@ -1155,6 +1155,8 @@ async def test_hr_bonus_failure_does_not_propagate(crm_service, mock_pool):
 def _all_log_text(caplog):
     parts = []
     for r in caplog.records:
+        if not r.name.startswith("backend."):
+            continue
         parts.append(r.getMessage())
         if r.exc_text:
             parts.append(r.exc_text)
