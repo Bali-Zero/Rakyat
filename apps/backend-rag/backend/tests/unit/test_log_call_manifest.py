@@ -162,6 +162,8 @@ class _Collector(ast.NodeVisitor):
                 for key, value in zip(kw.value.keys, kw.value.values, strict=True):
                     name = _un(key) if key is not None else "**"
                     rec["fields"][f"{kw.arg}.{name}"] = _un(value)
+                    if key is not None:
+                        exprs.append(key)
                     exprs.append(value)
             else:
                 rec["fields"][kw.arg] = _un(kw.value)
@@ -307,6 +309,18 @@ GUILT = {
     "repr(e)": 'try:\n    pass\nexcept Exception as e:\n    logger.warning("x", extra={"r": repr(e)})\n',
     "e.args": 'try:\n    pass\nexcept Exception as e:\n    log_success(logger, "x", a=e.args)\n',
     "e.detail": 'try:\n    pass\nexcept Exception as e:\n    logger.error("x %s", e.detail)\n',
+    "key str(e)": 'try:\n    pass\nexcept Exception as e:\n    logger.info("x", extra={str(e): 1})\n',
+    "key repr(e)": 'try:\n    pass\nexcept Exception as e:\n    logger.info("x", extra={repr(e): 1})\n',
+    "key e.args": 'try:\n    pass\nexcept Exception as e:\n    logger.info("x", extra={e.args: 1})\n',
+    "key f-string of the exception": (
+        'try:\n    pass\nexcept Exception as e:\n    logger.info("x", extra={f"k{e}": 1})\n'
+    ),
+    "key is the exception object": (
+        'try:\n    pass\nexcept Exception as e:\n    logger.info("x", extra={e: 1})\n'
+    ),
+    "key str(e) in a context dict": (
+        'try:\n    pass\nexcept Exception as e:\n    logger.info("x", context={str(e): 1})\n'
+    ),
     "f-string of the exception": 'try:\n    pass\nexcept Exception as boom:\n    logger.info(f"x {boom}")\n',
 }
 
@@ -315,6 +329,11 @@ INNOCENCE = {
     "exc_info False": 'try:\n    pass\nexcept Exception as e:\n    logger.error("x", exc_info=False)\n',
     "no exc_info": 'logger.info("x %s", 1)\n',
     "ids only": 'log_success(logger, "x", practice_id=1)\n',
+    "literal keys": 'logger.info("x", extra={"practice_id": 1, "doc_id": 2})\n',
+    "literal keys with type(e) value": (
+        "try:\n    pass\nexcept Exception as e:\n"
+        '    logger.info("x", extra={"error_type": type(e).__name__})\n'
+    ),
     "typed field of a custom exception": (
         'try:\n    pass\nexcept Exception as dup:\n    logger.info("x %s", dup.existing_client_id)\n'
     ),
