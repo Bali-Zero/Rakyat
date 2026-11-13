@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { logRouteTouch } from "@/lib/api/route-touch";
 import { toError } from "@/lib/types/common";
+import { safeUpstreamError } from "@/lib/search-redaction";
 
 // Use Node.js runtime (not Edge) for long-running SSE streams.
 // Edge has a 30s timeout which kills workspace-stream responses.
@@ -101,11 +102,11 @@ async function proxy(req: NextRequest): Promise<Response> {
   const targetUrl = `${backendBase}${upstreamPath}${url.search}`;
   const isPublicVisaEvaluation =
     url.pathname === VISA_ORACLE_EVALUATE_PATH && req.method === "POST";
-  // Never put Visa Oracle's semantic request_category query in logs or error
-  // metadata. The upstream still receives the full targetUrl.
-  const logTargetUrl = isPublicVisaEvaluation
-    ? `${backendBase}${url.pathname}`
-    : targetUrl;
+  // Logs and error metadata carry the path only, never the query string: it holds Visa Oracle's
+  // semantic request_category and the typed search text of the client, practice and company
+  // search bars (`?search=`, `?q=`: names, e-mails, phones). The upstream still receives the
+  // full targetUrl.
+  const logTargetUrl = `${backendBase}${url.pathname}`;
 
   // Extract correlation ID for logging
   const correlationId = req.headers.get("X-Correlation-ID") || "unknown";
@@ -278,7 +279,7 @@ async function proxy(req: NextRequest): Promise<Response> {
               : "binary"
             : "none",
           contentType: headers.get("content-type"),
-          targetUrl,
+          targetUrl: logTargetUrl,
         },
       });
     }
@@ -554,7 +555,8 @@ async function proxy(req: NextRequest): Promise<Response> {
           targetUrl: logTargetUrl,
         },
       },
-      toError(error),
+      // a fetch error can print the whole target URL, query included
+      safeUpstreamError(toError(error), targetUrl, logTargetUrl, url.search),
     );
     return new Response(
       JSON.stringify({

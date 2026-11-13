@@ -41,11 +41,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
-import {
-  QUOTED_PRICE_REQUIRED_TEXT_ID,
-  isQuotedPriceRefusal,
-  needsQuotedPriceBefore,
-} from "@/lib/api/crm/state-machine";
 import { api } from "@/lib/api";
 import { logger } from "@/lib/logger";
 import { toError } from "@/lib/types/common";
@@ -71,7 +66,6 @@ import {
   initializeAnalytics,
 } from "@/lib/analytics";
 import { useTeamMemberOptions } from "@/hooks/useTeamMembers";
-import { useDebounce } from "@/hooks/useDebounce";
 import {
   PROCESS_VIEW_MODE_KEY,
   loadViewMode,
@@ -235,11 +229,6 @@ export default function PratichePage() {
   const [practices, setPractices] = useState<Practice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  // The backend folds case, accents, word order and phone formats; the list on screen was loaded
-  // for `loadedSearch`. The local text filter only answers while that differs from the typed text.
-  const debouncedSearch = useDebounce(searchQuery.trim(), 300);
-  const [loadedSearch, setLoadedSearch] = useState("");
-  const loadedMonthRef = useRef<string | null>(null);
   // P2.2: persist the view toggle across navigations (lazy-init + write-through)
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     loadViewMode(PROCESS_VIEW_MODE_KEY, ["kanban", "list"], "kanban"),
@@ -322,13 +311,9 @@ export default function PratichePage() {
   useEffect(() => {
     // Initialize analytics on component mount
     initializeAnalytics();
-  }, []);
 
-  useEffect(() => {
-    let cancelled = false;
     const loadPractices = async () => {
-      // A new month shows the skeleton; a new search text refines the list in place.
-      if (loadedMonthRef.current !== selectedMonth) setIsLoading(true);
+      setIsLoading(true);
       try {
         // RBAC is enforced server-side (can_view_all_practices in crm_utils.py).
         // Non-admin users automatically see only their assigned practices.
@@ -338,15 +323,9 @@ export default function PratichePage() {
           limit: 200,
           month: selectedMonth,
           include_history: true,
-          ...(debouncedSearch ? { search: debouncedSearch } : {}),
         });
-        // A newer month or text started another load: this answer is stale.
-        if (cancelled) return;
-        loadedMonthRef.current = selectedMonth;
         setPractices(data);
-        setLoadedSearch(debouncedSearch);
       } catch (error) {
-        if (cancelled) return;
         logger.error(
           "Failed to load practices",
           { component: "Process", action: "loadPractices" },
@@ -354,15 +333,12 @@ export default function PratichePage() {
         );
         toast.error("Error", "Failed to load process");
       } finally {
-        if (!cancelled) setIsLoading(false);
+        setIsLoading(false);
       }
     };
 
     loadPractices();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedMonth, debouncedSearch]);
+  }, [selectedMonth]);
 
   useEffect(() => {
     // Live "Process Type" filter options — same catalog endpoint the
@@ -474,12 +450,7 @@ export default function PratichePage() {
         { component: "Process", action: "updateStatus" },
         toError(error),
       );
-      toast.error(
-        "Error",
-        isQuotedPriceRefusal(error)
-          ? QUOTED_PRICE_REQUIRED_TEXT_ID
-          : "Failed to update process status",
-      );
+      toast.error("Error", "Failed to update process status");
     } finally {
       setUpdatingId(null);
     }
@@ -618,7 +589,7 @@ export default function PratichePage() {
       practices
         .filter((p) => {
           // Search filter
-          if (searchQuery && searchQuery.trim() !== loadedSearch) {
+          if (searchQuery) {
             const matchesSearch =
               p.id.toString().includes(searchQuery) ||
               p.client_name
@@ -736,7 +707,7 @@ export default function PratichePage() {
 
           return sortOrder === "asc" ? comparison : -comparison;
         }),
-    [practices, searchQuery, loadedSearch, filters, sortField, sortOrder],
+    [practices, searchQuery, filters, sortField, sortOrder],
   );
 
   // Memoize practices by status to avoid unnecessary recalculations
@@ -2044,50 +2015,34 @@ export default function PratichePage() {
             </div>
           </div>
           <div className="max-h-[300px] overflow-y-auto p-1 space-y-0.5">
-            {STATUS_OPTIONS.map((option) => {
-              const needsPrice = needsQuotedPriceBefore(
-                option.value,
-                selectedPractice.quoted_price,
-                selectedPractice.status,
-              );
-              return (
-                <button
-                  key={option.value}
-                  title={needsPrice ? QUOTED_PRICE_REQUIRED_TEXT_ID : undefined}
-                  onClick={() =>
-                    handleStatusChange(selectedPractice.id, option.value)
-                  }
-                  disabled={
-                    selectedPractice.status === option.value ||
-                    needsPrice ||
-                    updatingId !== null
-                  }
-                  className={`w-full px-3 py-2 text-left text-sm rounded-md transition-colors flex items-center justify-between group ${
-                    selectedPractice.status === option.value
-                      ? "bg-[var(--bz-accent)]/10 text-[var(--bz-accent)] font-medium"
-                      : "text-[var(--bz-text-1)] hover:bg-[var(--bz-accent)]/10 hover:text-[var(--bz-accent)]"
-                  } ${updatingId !== null || needsPrice ? "opacity-50 cursor-not-allowed" : ""}`}
-                >
-                  <div className="flex flex-col">
-                    <span className="flex items-center gap-2">
-                      <span
-                        className="w-2 h-2 rounded-full"
-                        style={statusDotStyle(option.column)}
-                      />
-                      {option.label}
-                    </span>
-                    {needsPrice && (
-                      <span className="text-[10px] text-[var(--bz-text-2)] pl-4">
-                        {QUOTED_PRICE_REQUIRED_TEXT_ID}
-                      </span>
-                    )}
-                  </div>
-                  {selectedPractice.status === option.value && (
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                  )}
-                </button>
-              );
-            })}
+            {STATUS_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                onClick={() =>
+                  handleStatusChange(selectedPractice.id, option.value)
+                }
+                disabled={
+                  selectedPractice.status === option.value ||
+                  updatingId !== null
+                }
+                className={`w-full px-3 py-2 text-left text-sm rounded-md transition-colors flex items-center justify-between group ${
+                  selectedPractice.status === option.value
+                    ? "bg-[var(--bz-accent)]/10 text-[var(--bz-accent)] font-medium"
+                    : "text-[var(--bz-text-1)] hover:bg-[var(--bz-accent)]/10 hover:text-[var(--bz-accent)]"
+                } ${updatingId !== null ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className="w-2 h-2 rounded-full"
+                    style={statusDotStyle(option.column)}
+                  />
+                  {option.label}
+                </div>
+                {selectedPractice.status === option.value && (
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                )}
+              </button>
+            ))}
           </div>
           {/* Payment Status Section */}
           <div className="border-t border-[var(--bz-border)] px-3 py-2">

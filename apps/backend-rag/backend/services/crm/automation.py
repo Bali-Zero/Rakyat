@@ -283,16 +283,12 @@ class ProcessAutomationService:
         """
         Trigger when practice status changes to 'on_process'.
 
-        This normally happens after Asya confirms payment and moves the practice on.
+        This happens when Asya confirms payment and changes status
+        from 'waiting_payment' to 'on_process'.
 
         Sends:
-        1. Email to client: process starting
-        2. Email to team leader: start working
-
-        If the practice is already ``paid`` the payment confirmation emails (client
-        thank-you and team "Payment In", see ``PracticeStatusListener``) carry the same
-        message, so NO start email goes out here. When the practice reaches On Process
-        BEFORE any payment, the start emails are sent and must not claim a payment.
+        1. Email to client: Payment confirmation + process starting
+        2. Email to team leader: Payment received, start working
 
         Args:
             practice_id: ID of the practice
@@ -314,25 +310,6 @@ class ProcessAutomationService:
             if not client_data:
                 logger.error("Client for practice %s not found", practice_id)
                 return {"success": False, "error": "Client not found"}
-
-            if str(practice_data.get("payment_status") or "").lower() == "paid":
-                logger.info(
-                    "Process start emails skipped for practice %s: payment emails cover it",
-                    practice_id,
-                )
-                await _log_activity(
-                    self.db_pool,
-                    practice_id,
-                    triggered_by,
-                    "process_started",
-                    "Process started - no start emails (the payment emails already covered it)",
-                )
-                return {
-                    "success": True,
-                    "client_notified": False,
-                    "team_leader_notified": False,
-                    "skipped": "payment_emails_cover_start",
-                }
 
             team_leader_email = practice_data.get("assigned_to") or practice_data.get("created_by")
             if not team_leader_email:
@@ -430,7 +407,7 @@ class ProcessAutomationService:
         client_name: str,
         practice_data: dict,
     ) -> None:
-        """Send a warm, human email announcing the process start (no payment claim)."""
+        """Send warm, human email to client confirming payment and process start."""
         practice_type = practice_data.get("practice_type_name", "Immigration Service")
 
         subject = f"[CLIENT] 🎉 Great News {client_name}! We're Starting Your {practice_type}"
@@ -439,7 +416,7 @@ class ProcessAutomationService:
 
 Wonderful news! 🎉
 
-We're officially kicking off your {practice_type} process. We're genuinely excited to help you on this journey!
+We've received your payment (thank you so much!), and we're officially kicking off your {practice_type} process. We're genuinely excited to help you on this journey!
 
 Here's What Happens Next:
 
@@ -495,11 +472,11 @@ P.S. Keep an eye on your WhatsApp—we'll be sending you updates there too! 😊
         """Send friendly, motivating notification to team leader."""
         practice_type = practice_data.get("practice_type_name", "Immigration Service")
 
-        subject = f"[TEAM] 🚀 Let's Go! Process Started - {client_name}"
+        subject = f"[TEAM] 🚀 Let's Go! Payment Confirmed - {client_name}"
 
         body = f"""Hey there!
 
-Great news—{client_name}'s {practice_type} has just moved to On Process! 🎉
+Great news—payment has just been confirmed for {client_name}'s {practice_type}! 🎉
 
 This one's all yours. Here are the details:
 
@@ -507,6 +484,8 @@ This one's all yours. Here are the details:
 🔖 Service: {practice_type}
 🆔 Practice ID: {practice_data["id"]}
 💰 Amount: {practice_data.get("quoted_price", "N/A")}
+
+✅ Asya has confirmed the payment is in, so you're good to go!
 
 Your Mission (should you choose to accept it 😄):
 1. Review the client's documents in the CRM
@@ -579,3 +558,4 @@ P.S. The client is excited to get started—let's make it a great experience! �
             "process_started",
             description,
         )
+

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
+import { pathOnly } from "@/lib/search-redaction";
 
 /**
  * Ingest endpoint for client-side Core Web Vitals beacons.
@@ -57,7 +58,8 @@ export async function POST(request: Request) {
       metric: body.name,
       value: body.value,
       rating: body.rating ?? "unknown",
-      url: body.url ?? request.headers.get("referer") ?? null,
+      // the path only: a page URL can carry the typed search text in its query
+      url: pathOnly(body.url ?? request.headers.get("referer")),
       id: body.id ?? null,
       navigationType: body.navigationType ?? null,
     },

@@ -125,19 +125,6 @@ async def smart_search_available(conn: asyncpg.Connection) -> bool:
         return False
 
 
-async def search_tokens(conn: asyncpg.Connection, search: str) -> list[str]:
-    """The typed text as search tokens, folded by ``bz_fold`` in SQL (accents, case,
-    punctuation). A query made only of digits and phone punctuation is ONE numeric token.
-    Shared by the client, practice and company searches so they fold identically."""
-    text = search.strip()
-    numeric_query = bool(_NUMERIC_QUERY.fullmatch(text))
-    digits = "".join(_DIGITS.findall(text)) if numeric_query else ""
-    if numeric_query and len(digits) >= MIN_NUMERIC_DIGITS:
-        return [digits]
-    folded = await conn.fetchval("SELECT public.bz_fold($1::text)", text)
-    return [t for t in (folded or "").split(" ") if t][:MAX_TOKENS]
-
-
 async def build_client_search(
     conn: asyncpg.Connection, search: str, start_index: int
 ) -> ClientSearch | None:
@@ -147,7 +134,14 @@ async def build_client_search(
     substring search). A search that folds to nothing searchable (only punctuation) returns a
     clause that matches no row.
     """
-    tokens = await search_tokens(conn, search)
+    text = search.strip()
+    numeric_query = bool(_NUMERIC_QUERY.fullmatch(text))
+    digits = "".join(_DIGITS.findall(text)) if numeric_query else ""
+    if numeric_query and len(digits) >= MIN_NUMERIC_DIGITS:
+        tokens = [digits]
+    else:
+        folded = await conn.fetchval("SELECT public.bz_fold($1::text)", text)
+        tokens = [t for t in (folded or "").split(" ") if t][:MAX_TOKENS]
     if not tokens:
         return ClientSearch(" AND FALSE", [], "c.created_at DESC", start_index)
     if all(len(t) < MIN_TRIGRAM for t in tokens):

@@ -31,11 +31,8 @@ import { ApiError } from "@/lib/api/error-handler";
 import type { Practice } from "@/lib/api/crm/crm.types";
 import {
   OPEN_INQUIRY_TYPE_CODE,
-  QUOTED_PRICE_REQUIRED_TEXT_ID,
   STATUS_LABELS as STATUS_DROPDOWN_LABELS,
   getAllowedNextStatuses,
-  isQuotedPriceRefusal,
-  needsQuotedPriceBefore,
   needsServiceBefore,
   type PracticeStatus,
 } from "@/lib/api/crm/state-machine";
@@ -395,14 +392,6 @@ export default function CaseDetailPage() {
       );
       return;
     }
-    // The backend refuses to enter Sending Invoice without a Quoted Price: say so in
-    // plain words before the round-trip.
-    if (
-      needsQuotedPriceBefore(newStatus, practice.quoted_price, practice.status)
-    ) {
-      toast.error("Quoted Price kosong", QUOTED_PRICE_REQUIRED_TEXT_ID);
-      return;
-    }
     setIsJumpingStatus(newStatus);
     try {
       const user = await api.getProfile();
@@ -413,12 +402,7 @@ export default function CaseDetailPage() {
       await invalidateClient();
       toast.success("Status updated", `→ ${newStatus.replace(/_/g, " ")}`);
     } catch (err) {
-      toast.error(
-        "Failed to update status",
-        isQuotedPriceRefusal(err)
-          ? QUOTED_PRICE_REQUIRED_TEXT_ID
-          : (err as Error).message,
-      );
+      toast.error("Failed to update status", (err as Error).message);
     } finally {
       setIsJumpingStatus(null);
     }
@@ -476,19 +460,6 @@ export default function CaseDetailPage() {
         : "";
       if (editForm.start_date !== currentStartDate)
         updates.start_date = editForm.start_date || null;
-
-      if (
-        updates.status &&
-        needsQuotedPriceBefore(
-          updates.status,
-          practice.quoted_price,
-          practice.status,
-        )
-      ) {
-        toast.error("Quoted Price kosong", QUOTED_PRICE_REQUIRED_TEXT_ID);
-        setIsSaving(false);
-        return;
-      }
 
       if (Object.keys(updates).length === 0) {
         toast.error("No Changes", "No fields were modified.");
@@ -580,9 +551,7 @@ export default function CaseDetailPage() {
       // Status comes from ApiError.statusCode. The message tests remain only as a
       // fallback for errors that never went through the api client; a bare
       // `message.includes("404")` would also fire on a process id containing 404.
-      if (isQuotedPriceRefusal(err)) {
-        errorMessage = QUOTED_PRICE_REQUIRED_TEXT_ID;
-      } else if (err instanceof Error) {
+      if (err instanceof Error) {
         const status = err instanceof ApiError ? err.statusCode : undefined;
         if (
           status === 401 ||
@@ -932,23 +901,16 @@ export default function CaseDetailPage() {
               const isDone = idx < currentIdx;
               const isCurrent = idx === currentIdx;
               const isJumping = isJumpingStatus === step.key;
-              const stepNeedsPrice = needsQuotedPriceBefore(
-                step.key,
-                practice.quoted_price,
-                practice.status,
-              );
               return (
                 <React.Fragment key={step.key}>
                   <button
                     className="flex flex-col items-center gap-1 flex-shrink-0 group/step"
                     onClick={() => jumpToStatus(step.key)}
-                    disabled={isCurrent || !!isJumpingStatus || stepNeedsPrice}
+                    disabled={isCurrent || !!isJumpingStatus}
                     title={
                       isCurrent
                         ? `Current: ${step.label}`
-                        : stepNeedsPrice
-                          ? `${step.label} — ${QUOTED_PRICE_REQUIRED_TEXT_ID}`
-                          : `Jump to: ${step.label}`
+                        : `Jump to: ${step.label}`
                     }
                   >
                     <div
@@ -1886,19 +1848,11 @@ export default function CaseDetailPage() {
                   {getAllowedNextStatuses(
                     editForm.status as PracticeStatus,
                     isAdmin,
-                  ).map((status) => {
-                    const blocked = needsQuotedPriceBefore(
-                      status,
-                      practice?.quoted_price,
-                      practice?.status,
-                    );
-                    return (
-                      <option key={status} value={status} disabled={blocked}>
-                        {STATUS_DROPDOWN_LABELS[status] ?? status}
-                        {blocked ? ` — ${QUOTED_PRICE_REQUIRED_TEXT_ID}` : ""}
-                      </option>
-                    );
-                  })}
+                  ).map((status) => (
+                    <option key={status} value={status}>
+                      {STATUS_DROPDOWN_LABELS[status] ?? status}
+                    </option>
+                  ))}
                 </select>
               </div>
 

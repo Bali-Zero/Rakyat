@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 
 import { UNIVERSAL_NOISE, isKnownNoise } from "@/lib/sentry-noise";
+import { scrubSentryUrls } from "@/lib/sentry-url-scrub";
 
 Sentry.init({
   dataCollection: {
@@ -30,6 +31,9 @@ Sentry.init({
   // would delete the second (cross-family gate).
   ignoreErrors: [...UNIVERSAL_NOISE],
   beforeSend(event) {
-    return isKnownNoise(event, { browser: false }) ? null : event;
+    return isKnownNoise(event, { browser: false })
+      ? null
+      : scrubSentryUrls(event);
   },
+  beforeBreadcrumb: scrubSentryUrls,
 });

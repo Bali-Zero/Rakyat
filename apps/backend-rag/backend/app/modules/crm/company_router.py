@@ -21,11 +21,6 @@ from backend.app.modules.crm.company_schemas import (
 from backend.app.routers.documents_proxy import assert_drive_file_belongs_to_company
 from backend.app.utils.crm_utils import is_crm_admin, verify_client_access
 from backend.services.common.background import spawn
-from backend.services.crm.entity_search import (
-    build_company_search,
-    escape_like,
-    smart_search_available,
-)
 from backend.services.invoicing.invoice_company import link_lock_key
 
 logger = logging.getLogger(__name__)
@@ -101,38 +96,24 @@ async def list_companies(
     """
     params: list = []
 
+    if search:
+        query += " AND (c.company_name ILIKE $1 OR c.nib ILIKE $1 OR c.npwp_company ILIKE $1)"
+        params.append(f"%{search}%")
+
+    if status:
+        query += f" AND c.status = ${len(params) + 1}"
+        params.append(status)
+
+    if kbli:
+        query += f" AND c.kbli_code = ${len(params) + 1}"
+        params.append(kbli)
+
+    query += (
+        f" GROUP BY c.id ORDER BY c.company_name LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}"
+    )
+    params.extend([limit, skip])
+
     async with db.acquire() as conn:
-        if search and search.strip():
-            # Smart search (case, accents, word order, PT/CV affixes, NIB/NPWP digits); the
-            # legacy substring search answers when every token is short or migration 358 is absent.
-            smart = (
-                await build_company_search(conn, search, 1)
-                if await smart_search_available(conn)
-                else None
-            )
-            if smart is not None:
-                query += smart.clause
-                params.extend(smart.params)
-            else:
-                query += (
-                    " AND (c.company_name ILIKE $1 OR c.nib ILIKE $1 OR c.npwp_company ILIKE $1)"
-                )
-                params.append(f"%{escape_like(search.strip())}%")
-
-        if status:
-            query += f" AND c.status = ${len(params) + 1}"
-            params.append(status)
-
-        if kbli:
-            query += f" AND c.kbli_code = ${len(params) + 1}"
-            params.append(kbli)
-
-        query += (
-            f" GROUP BY c.id ORDER BY c.company_name"
-            f" LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}"
-        )
-        params.extend([limit, skip])
-
         rows = await conn.fetch(query, *params)
 
         companies = []

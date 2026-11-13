@@ -300,108 +300,10 @@ class TestListCompanies:
 
         mock_db_pool._mock_conn.fetch = AsyncMock(return_value=[])
 
-        from unittest.mock import patch
-
-        with (
-            patch(
-                "backend.app.modules.crm.company_router.smart_search_available",
-                AsyncMock(return_value=False),
-            ),
-            TestClient(test_app) as tc,
-        ):
+        with TestClient(test_app) as tc:
             resp = tc.get("/api/crm/companies?search=test&status=active&kbli=62019")
 
         assert resp.status_code == 200
-
-
-class TestListCompaniesSmartSearch:
-    def _client(self, mock_db_pool, mock_current_user):
-        from fastapi import FastAPI
-        from fastapi.testclient import TestClient
-
-        from backend.app.dependencies import get_current_user, get_database_pool
-        from backend.app.modules.crm.company_router import router
-
-        test_app = FastAPI()
-        test_app.include_router(router)
-        test_app.dependency_overrides[get_database_pool] = lambda: mock_db_pool
-        test_app.dependency_overrides[get_current_user] = lambda: mock_current_user
-        mock_db_pool._mock_conn.fetch = AsyncMock(return_value=[])
-        return TestClient(test_app)
-
-    def test_smart_clause_and_params_reach_the_query(self, mock_db_pool, mock_current_user):
-        from unittest.mock import patch
-
-        from backend.services.crm.entity_search import EntitySearch
-
-        smart = EntitySearch(" AND SMART($1::text)", ["acme"], 2)
-        with (
-            patch(
-                "backend.app.modules.crm.company_router.smart_search_available",
-                AsyncMock(return_value=True),
-            ),
-            patch(
-                "backend.app.modules.crm.company_router.build_company_search",
-                AsyncMock(return_value=smart),
-            ) as build,
-            self._client(mock_db_pool, mock_current_user) as tc,
-        ):
-            resp = tc.get("/api/crm/companies?search=PT%20Acme&status=active")
-        assert resp.status_code == 200
-        build.assert_awaited_once()
-        sql, *params = mock_db_pool._mock_conn.fetch.await_args.args
-        assert "AND SMART($1::text)" in sql
-        assert "ILIKE" not in sql
-        assert "c.status = $2" in sql
-        assert params[:2] == ["acme", "active"]
-
-    def test_short_tokens_keep_the_legacy_substring_search_escaped(
-        self, mock_db_pool, mock_current_user
-    ):
-        from unittest.mock import patch
-
-        with (
-            patch(
-                "backend.app.modules.crm.company_router.smart_search_available",
-                AsyncMock(return_value=True),
-            ),
-            patch(
-                "backend.app.modules.crm.company_router.build_company_search",
-                AsyncMock(return_value=None),
-            ),
-            self._client(mock_db_pool, mock_current_user) as tc,
-        ):
-            resp = tc.get("/api/crm/companies?search=5%25")
-        assert resp.status_code == 200
-        sql, *params = mock_db_pool._mock_conn.fetch.await_args.args
-        assert "c.company_name ILIKE $1" in sql
-        assert params[0] == "%5\\%%"
-
-    def test_without_migration_358_the_legacy_search_answers(self, mock_db_pool, mock_current_user):
-        from unittest.mock import patch
-
-        with (
-            patch(
-                "backend.app.modules.crm.company_router.smart_search_available",
-                AsyncMock(return_value=False),
-            ),
-            patch(
-                "backend.app.modules.crm.company_router.build_company_search",
-                AsyncMock(),
-            ) as build,
-            self._client(mock_db_pool, mock_current_user) as tc,
-        ):
-            resp = tc.get("/api/crm/companies?search=acme")
-        assert resp.status_code == 200
-        build.assert_not_awaited()
-        assert "c.company_name ILIKE $1" in mock_db_pool._mock_conn.fetch.await_args.args[0]
-
-    def test_blank_search_adds_no_clause(self, mock_db_pool, mock_current_user):
-        with self._client(mock_db_pool, mock_current_user) as tc:
-            resp = tc.get("/api/crm/companies?search=%20%20")
-        assert resp.status_code == 200
-        sql = mock_db_pool._mock_conn.fetch.await_args.args[0]
-        assert "ILIKE" not in sql and "bz_" not in sql
 
 
 class TestCreateCompany:
