@@ -380,7 +380,8 @@ yet every layer treated it as a Drive id. So provenance comes before display.
   remove on `contract` also deletes `docs.contract`. A slot is VERIFIED iff its value is a JSON
   string equal to the JSON string `doc_proof.<slot>.id`: exact equality, no format check, no hash, no
   lookup. Nothing is hashed anywhere. There is NO audit-table write in the door's transaction
-  (`security_audit_log` does not exist in production): it touches only `hr_employees` (and the row
+  (`security_audit_log` is created by v2 migration 359, but the door writes no audit row by design,
+  SPEC v2.1: provenance is `doc_proof`): it touches only `hr_employees` (and the row
   lock on `team_members`). `doc_proof.<slot>` keeps the LAST change (who, when); no per-change
   history is kept, and no code consumes one.
 - *Opaque until verified (R3).* An unverified slot value is never sent to Drive, logged at any
