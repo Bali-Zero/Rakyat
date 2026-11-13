@@ -34,6 +34,7 @@ import os
 import re
 import threading
 from typing import Any
+from urllib.parse import unquote_plus
 
 PII_REDACTION_PLACEHOLDER = "[REDACTED]"
 logger = logging.getLogger("zantara.backend")
@@ -138,7 +139,13 @@ _HR_ROUTE_PREFIX = "/api/hr/"
 
 # Keys to treat as "query-string-ish" — the value is a URL-encoded param
 # blob that we redact by key rather than parsing.
-_QUERY_KEYS: tuple[str, ...] = ("query_string", "query", "QUERY_STRING")
+_QUERY_KEYS: tuple[str, ...] = (
+    "query_string",
+    "query",
+    "QUERY_STRING",
+    "http.query",
+    "url.query",
+)
 
 # Email regex — mirrors the brief. Used both to mask stray emails in strings
 # and to scrub the URL path itself.
@@ -232,6 +239,19 @@ _LABELLED_ID_RE = re.compile(
 )
 
 
+# Typed search text (client, practice and company search bars): names, e-mails, phones and tax ids
+# are typed into `?search=` / `?q=`. The key says nothing about the content, so these two query
+# keys lose their VALUE wherever a query string or a URL appears (the ASGI integration attaches
+# `request.query_string`, HTTP breadcrumbs carry the full URL). Same two keys as the access-log
+# filter in `core/secret_log_redaction.py`.
+_SEARCH_PARAM_KEYS = frozenset({"search", "q"})
+_SEARCH_PARAM_RE = re.compile(r"(?i)([?&;])(search|q)=[^&#\s\"'<>]*")
+
+
+def _is_search_param(key: Any) -> bool:
+    return isinstance(key, str) and unquote_plus(key).strip().lower() in _SEARCH_PARAM_KEYS
+
+
 def _is_pii_key(key: Any) -> bool:
     if not isinstance(key, str):
         return False
@@ -247,6 +267,7 @@ def _redact_string(s: str) -> str:
     See the free-text block above for the two tiers and for what this still
     cannot reach (bare personal names, unlabelled passport numbers).
     """
+    s = _SEARCH_PARAM_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}={PII_REDACTION_PLACEHOLDER}", s)
     s = _EMAIL_RE.sub(PII_REDACTION_PLACEHOLDER, s)
     s = _CLIENT_ID_RE.sub(PII_REDACTION_PLACEHOLDER, s)
     s = _NPWP_RE.sub(PII_REDACTION_PLACEHOLDER, s)
@@ -269,7 +290,7 @@ def _redact_query_string(s: str) -> str:
     for pair in pairs:
         if "=" in pair:
             k, _, _v = pair.partition("=")
-            if _is_pii_key(k):
+            if _is_pii_key(k) or _is_search_param(k):
                 out.append(f"{k}={PII_REDACTION_PLACEHOLDER}")
             else:
                 out.append(pair)
@@ -283,7 +304,7 @@ def _scrub(obj: Any, parent_key: str | None = None) -> Any:
     if isinstance(obj, dict):
         scrubbed: dict[Any, Any] = {}
         for k, v in obj.items():
-            if _is_pii_key(k):
+            if _is_pii_key(k) or (_is_search_param(k) and isinstance(v, str)):
                 scrubbed[k] = PII_REDACTION_PLACEHOLDER
             elif isinstance(k, str) and k in _QUERY_KEYS and isinstance(v, str):
                 scrubbed[k] = _redact_query_string(v)
