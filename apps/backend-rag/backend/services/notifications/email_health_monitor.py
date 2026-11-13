@@ -25,6 +25,7 @@ would be re-entrant with the service that just recorded the failure).
 
 from __future__ import annotations
 
+import html
 import logging
 import os
 import urllib.error
@@ -163,7 +164,7 @@ class EmailHealthMonitor:
         # to the original subject so the recipient has context.
         retry_body = (
             f"<p>This is an automated retry of a previously-failed email.</p>"
-            f"<p><strong>Original subject:</strong> {(row['subject'] or '')[:200]}</p>"
+            f"<p><strong>Original subject:</strong> {html.escape((row['subject'] or '')[:200])}</p>"
             f"<p>If you did not expect this message or the original email arrived, "
             f"please disregard.</p>"
             f"<p><em>Retry attempt #{attempt_n} of {MAX_ATTEMPTS}</em></p>"

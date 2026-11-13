@@ -1,0 +1,1210 @@
+{
+ "entries": [
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "_create_drive_folder_with_observability",
+   "target": "logger.error",
+   "message": "'Drive folder creation exception for client %s (%s): %s'",
+   "args": [
+    "client_id",
+    "client_type",
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null,
+   "note": "client_type is one of {'individual','company'}: validated at app/routers/crm_clients.py:294-300 (field_validator on the create model), passed through app/routers/crm_clients.py:738"
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "_create_drive_folder_with_observability",
+   "target": "logger.error",
+   "message": "'Drive folder creation failed for client %s (%s)'",
+   "args": [
+    "client_id",
+    "client_type"
+   ],
+   "fields": {},
+   "exc_info": null,
+   "note": "client_type is one of {'individual','company'}: validated at app/routers/crm_clients.py:294-300 (field_validator on the create model), passed through app/routers/crm_clients.py:738"
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "create_client",
+   "target": "logger.info",
+   "message": "'create_client phone dedup hit: existing client id=%s'",
+   "args": [
+    "dup['id']"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "create_client",
+   "target": "logger.info",
+   "message": "'create_client phone dedup hit under lock: existing client id=%s'",
+   "args": [
+    "dup_err.existing_client_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "create_client",
+   "target": "logger.info",
+   "message": "'Company dedup: found existing company %s'",
+   "args": [
+    "existing_company_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "create_client",
+   "target": "logger.error",
+   "message": "'Drive folder creation scheduling failed (%s)'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "create_client",
+   "target": "logger.warning",
+   "message": "'Integrity error creating client (%s)'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "create_client",
+   "target": "logger.error",
+   "message": "'Portal profile creation setup failed (%s)'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "create_client",
+   "target": "logger.error",
+   "message": "'Welcome communication setup failed (%s)'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "create_client",
+   "target": "logger.error",
+   "message": "'create_client: missing email in current_user context'",
+   "args": [],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "delete_client",
+   "target": "log_success",
+   "message": "'Deleted (soft) client'",
+   "args": [],
+   "fields": {
+    "client_id": "client_id"
+   },
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "get_client_ai_summary",
+   "target": "logger.error",
+   "message": "'ai_summary fetch failed for client %d (%s)'",
+   "args": [
+    "int(client_id)",
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "get_client_ai_summary",
+   "target": "logger.info",
+   "message": "'ai_summary served client_id=%d elapsed_ms=%d'",
+   "args": [
+    "safe_client_id",
+    "int((time.time() - start_time) * 1000)"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "get_client_wa_case_intelligence",
+   "target": "logger.error",
+   "message": "'wa_case_intelligence fetch failed for client %d (%s)'",
+   "args": [
+    "int(client_id)",
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "get_current_user_or_internal",
+   "target": "logger.warning",
+   "message": "'get_current_user_or_internal: auth failed (%s)'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "list_clients",
+   "target": "logger.info",
+   "message": "'📋 [CRM Clients] Returning %d clients'",
+   "args": [
+    "len(clients)"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "list_clients",
+   "target": "logger.info",
+   "message": "'📋 [CRM Clients] requesting clients list (filters: %s)'",
+   "args": [
+    "sorted([k for k, v in (('assigned_to', assigned_to), ('rbac', rbac_filter)) if v])"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "update_client",
+   "target": "logger.error",
+   "message": "'Portal notification for profile update failed: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "update_client",
+   "target": "log_success",
+   "message": "'Updated client'",
+   "args": [],
+   "fields": {
+    "client_id": "client_id"
+   },
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "upload_client_avatar",
+   "target": "logger.error",
+   "message": "'Avatar upload to Tigris failed for client %s: %s'",
+   "args": [
+    "client_id",
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "upload_client_avatar",
+   "target": "logger.info",
+   "message": "'Avatar uploaded for client %s'",
+   "args": [
+    "client_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "upsert_client_by_phone",
+   "target": "logger.warning",
+   "message": "'upsert-by-phone: %s clients share a phone (action=%s id=%s) — review for possible duplicate-client merge'",
+   "args": [
+    "result['matched_count']",
+    "result['action']",
+    "result['client_id']"
+   ],
+   "fields": {},
+   "exc_info": null,
+   "note": "result['action'] is a string literal from the fixed set set at app/routers/crm_clients.py:1453,1472,1527,1529,1548,1585"
+  },
+  {
+   "file": "app/routers/crm_clients.py",
+   "function": "upsert_client_by_phone",
+   "target": "logger.warning",
+   "message": "'upsert-by-phone: cache invalidation failed: %s'",
+   "args": [
+    "type(exc).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "_create_hr_bonus_on_completed",
+   "target": "logger.info",
+   "message": "'HR bonus created: practice=%s, hr_employee=%s, rate_id=%s'",
+   "args": [
+    "practice_id",
+    "emp['id']",
+    "rate['id']"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "_create_hr_bonus_on_completed",
+   "target": "logger.warning",
+   "message": "'HR bonus hook failed for practice %s (%s)'",
+   "args": [
+    "practice_id",
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "_deny_practice_mutation",
+   "target": "logger.warning",
+   "message": "'crm.rbac_practice_write_denied'",
+   "args": [],
+   "fields": {
+    "extra.'practice_id'": "practice_id",
+    "extra.'user_email_present'": "bool(current_user.get('email'))"
+   },
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "_parse_month_param",
+   "target": "logger.debug",
+   "message": "'crm_practices.month_param_invalid'",
+   "args": [],
+   "fields": {
+    "extra.'error_type'": "type(exc).__name__"
+   },
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "add_document_to_practice",
+   "target": "log_success",
+   "message": "'Added document to practice'",
+   "args": [],
+   "fields": {
+    "practice_id": "practice_id"
+   },
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "add_required_document",
+   "target": "logger.error",
+   "message": "'Failed to add required document: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "add_required_document",
+   "target": "logger.info",
+   "message": "f'Added required document to practice {practice_id}'",
+   "args": [],
+   "fields": {
+    "extra.'practice_id'": "practice_id",
+    "extra.'doc_id'": "row['id']"
+   },
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "create_practice",
+   "target": "log_database_operation",
+   "message": "'CREATE'",
+   "args": [
+    "'practices'"
+   ],
+   "fields": {
+    "record_id": "new_practice['id']"
+   },
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "create_practice",
+   "target": "logger.warning",
+   "message": "'Could not create timeline event for practice create: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "create_practice",
+   "target": "logger.error",
+   "message": "'Practice kickoff communication setup failed: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "create_practice",
+   "target": "log_success",
+   "message": "'Created practice'",
+   "args": [],
+   "fields": {
+    "practice_id": "new_practice['id']",
+    "client_id": "practice.client_id"
+   },
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "delete_practice",
+   "target": "log_success",
+   "message": "'Deleted (soft) practice'",
+   "args": [],
+   "fields": {
+    "practice_id": "practice_id"
+   },
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "delete_required_document",
+   "target": "logger.info",
+   "message": "'Deleted required document %s from practice %s'",
+   "args": [
+    "doc_id",
+    "practice_id"
+   ],
+   "fields": {
+    "extra.'practice_id'": "practice_id",
+    "extra.'doc_id'": "doc_id"
+   },
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "delete_required_document",
+   "target": "logger.error",
+   "message": "'Failed to delete required document: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "get_practice",
+   "target": "logger.info",
+   "message": "'RBAC: Practice %s not visible to caller'",
+   "args": [
+    "practice_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "get_practices_stats",
+   "target": "logger.debug",
+   "message": "'get_practices_stats called without user context (internal call)'",
+   "args": [],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "get_required_documents",
+   "target": "logger.error",
+   "message": "'Failed to get required documents: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "list_practices",
+   "target": "logger.info",
+   "message": "'RBAC: Filtering practices by p.assigned_to'",
+   "args": [],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "regenerate_invoice",
+   "target": "logger.error",
+   "message": "'Failed to regenerate invoice for practice %s: %s'",
+   "args": [
+    "practice_id",
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "regenerate_invoice",
+   "target": "log_success",
+   "message": "'Invoice regenerated successfully'",
+   "args": [],
+   "fields": {
+    "practice_id": "practice_id"
+   },
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "update_practice",
+   "target": "logger.warning",
+   "message": "'Discount audit append failed for practice %s: %s'",
+   "args": [
+    "practice_id",
+    "type(audit_exc).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "update_practice",
+   "target": "logger.info",
+   "message": "'🚀 Invoice automation triggered for practice %s'",
+   "args": [
+    "practice_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "update_practice",
+   "target": "logger.info",
+   "message": "'🚀 Process completion automation triggered for practice %s'",
+   "args": [
+    "practice_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "update_practice",
+   "target": "logger.info",
+   "message": "'🚀 Waiting documents automation triggered for practice %s'",
+   "args": [
+    "practice_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "update_practice",
+   "target": "logger.warning",
+   "message": "'Could not create timeline event for status change: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "update_practice",
+   "target": "logger.error",
+   "message": "'Portal notification for practice status failed: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "update_practice",
+   "target": "log_success",
+   "message": "'Updated practice'",
+   "args": [],
+   "fields": {
+    "practice_id": "practice_id"
+   },
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "update_required_document",
+   "target": "logger.info",
+   "message": "'Updated required document %s for practice %s'",
+   "args": [
+    "doc_id",
+    "practice_id"
+   ],
+   "fields": {
+    "extra.'practice_id'": "practice_id",
+    "extra.'doc_id'": "doc_id"
+   },
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "update_required_document",
+   "target": "logger.error",
+   "message": "'Failed to update required document: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "upload_client_document",
+   "target": "logger.info",
+   "message": "'Client uploaded document for practice %s'",
+   "args": [
+    "practice_id"
+   ],
+   "fields": {
+    "extra.'practice_id'": "practice_id",
+    "extra.'required_doc_id'": "request.required_doc_id",
+    "extra.'document_id'": "doc_id"
+   },
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "upload_client_document",
+   "target": "logger.error",
+   "message": "'Failed to upload client document: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/hr_my_late_incident.py",
+   "function": "resolve_my_late_incident",
+   "target": "logger.info",
+   "message": "'resolve_my_late_incident: incident=%s -> state=%s'",
+   "args": [
+    "row['id']",
+    "next_state"
+   ],
+   "fields": {},
+   "exc_info": null,
+   "note": "next_state comes from next_state_for(row['state']) where row.state is filtered by state = ANY(_PENDING_STATES), a literal tuple at app/routers/hr_my_late_incident.py:32, queried at :78"
+  },
+  {
+   "file": "app/services/hr/hr_service.py",
+   "function": "HRService._my_attendance",
+   "target": "logger.warning",
+   "message": "'my overview: clock-in view unreadable (%s)'",
+   "args": [
+    "type(exc).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/services/hr/hr_service.py",
+   "function": "HRService._my_attendance",
+   "target": "logger.warning",
+   "message": "'my overview: late-incident table unreadable (%s)'",
+   "args": [
+    "type(exc).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/services/hr/hr_service.py",
+   "function": "HRService.approve_bonus",
+   "target": "logger.info",
+   "message": "'Bonus %s approved'",
+   "args": [
+    "bonus_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/services/hr/hr_service.py",
+   "function": "HRService.approve_leave",
+   "target": "logger.info",
+   "message": "'Leave request %s approved'",
+   "args": [
+    "request_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/services/hr/hr_service.py",
+   "function": "HRService.approve_payroll",
+   "target": "logger.info",
+   "message": "'Payroll period %s approved'",
+   "args": [
+    "period_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/services/hr/hr_service.py",
+   "function": "HRService.calculate_payroll",
+   "target": "logger.info",
+   "message": "f'Payroll calculated: {month}/{year}, {len(payslips)} employees'",
+   "args": [],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/services/hr/hr_service.py",
+   "function": "HRService.create_manual_bonus",
+   "target": "logger.info",
+   "message": "'Manual bonus %s created for employee %s'",
+   "args": [
+    "row['id']",
+    "employee_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/services/hr/hr_service.py",
+   "function": "HRService.mark_payroll_paid",
+   "target": "logger.info",
+   "message": "'Payroll period %s marked as paid'",
+   "args": [
+    "period_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/services/hr/hr_service.py",
+   "function": "HRService.merge_card_on",
+   "target": "logger.info",
+   "message": "f\"HR card merged: employee_id={row['id']}\"",
+   "args": [],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/services/hr/hr_service.py",
+   "function": "HRService.reject_bonus",
+   "target": "logger.info",
+   "message": "'Bonus %s rejected'",
+   "args": [
+    "bonus_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/services/hr/hr_service.py",
+   "function": "HRService.reject_leave",
+   "target": "logger.info",
+   "message": "'Leave request %s rejected'",
+   "args": [
+    "request_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/services/hr/hr_service.py",
+   "function": "HRService.request_leave",
+   "target": "logger.info",
+   "message": "f\"Leave request created: employee={data['employee_id']}, days={data['total_days']}\"",
+   "args": [],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/services/hr/hr_service.py",
+   "function": "HRService.upsert_bonus_rate",
+   "target": "logger.info",
+   "message": "'Bonus rate upserted: rate_id=%s'",
+   "args": [
+    "row['id']"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/services/hr/hr_service.py",
+   "function": "HRService.upsert_employee",
+   "target": "logger.info",
+   "message": "f\"HR employee upserted: employee_id={row['id']}\"",
+   "args": [],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "CRMAuditor._flush_buffer",
+   "target": "logger.warning",
+   "message": "'Failed to flush audit buffer (DB): %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "CRMAuditor._flush_buffer",
+   "target": "logger.warning",
+   "message": "'Failed to flush audit buffer (serialization): %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "CRMAuditor._flush_buffer",
+   "target": "logger.error",
+   "message": "'Failed to flush audit buffer: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "CRMAuditor._flush_buffer",
+   "target": "logger.debug",
+   "message": "f'Flushed {len(self._buffer)} audit entries'",
+   "args": [],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "CRMAuditor.log",
+   "target": "logger.warning",
+   "message": "'Failed to log audit entry (DB): %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "CRMAuditor.log",
+   "target": "logger.error",
+   "message": "'Failed to log audit entry: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService._create_hr_bonus_entry",
+   "target": "logger.info",
+   "message": "'HR bonus created: practice=%s, hr_employee=%s, rate_id=%s'",
+   "args": [
+    "practice_id",
+    "emp['id']",
+    "rate['id']"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService._create_hr_bonus_entry",
+   "target": "logger.error",
+   "message": "'HR bonus hook failed for practice %s (%s)'",
+   "args": [
+    "practice_id",
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService._create_hr_bonus_entry",
+   "target": "logger.warning",
+   "message": "'HR bonus hook failed for practice %s (DB, %s)'",
+   "args": [
+    "practice_id",
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService._create_hr_bonus_entry",
+   "target": "logger.warning",
+   "message": "'HR bonus hook failed for practice %s (data, %s)'",
+   "args": [
+    "practice_id",
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService._create_hr_bonus_entry",
+   "target": "logger.debug",
+   "message": "'HR bonus skip: duplicate for practice=%s'",
+   "args": [
+    "practice_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService._create_hr_bonus_entry",
+   "target": "logger.debug",
+   "message": "'HR bonus skip: no active HR employee for practice=%s'",
+   "args": [
+    "practice_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService._create_hr_bonus_entry",
+   "target": "logger.debug",
+   "message": "'HR bonus skip: no active rate for practice %s'",
+   "args": [
+    "practice_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService._create_hr_bonus_entry",
+   "target": "logger.debug",
+   "message": "'HR bonus skip: practice %s has no practice_type'",
+   "args": [
+    "practice_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.batch_create_clients",
+   "target": "logger.warning",
+   "message": "'Batch create failed (DB): %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.batch_create_clients",
+   "target": "logger.warning",
+   "message": "'Batch create failed (validation): %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.batch_create_clients",
+   "target": "logger.error",
+   "message": "'Batch create failed: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.batch_create_clients",
+   "target": "logger.info",
+   "message": "f'Batch created {len(ids)} clients'",
+   "args": [],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.create_client",
+   "target": "logger.info",
+   "message": "'Created client %s'",
+   "args": [
+    "result['id']"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.create_client",
+   "target": "logger.error",
+   "message": "'Failed to create client (%s)'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.create_client",
+   "target": "logger.warning",
+   "message": "'Failed to create client (DB, %s)'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.create_client",
+   "target": "logger.warning",
+   "message": "'Failed to create client (validation, %s)'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.create_practice",
+   "target": "logger.warning",
+   "message": "'Failed to create practice (DB): %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.create_practice",
+   "target": "logger.warning",
+   "message": "'Failed to create practice (validation): %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.create_practice",
+   "target": "logger.error",
+   "message": "'Failed to create practice: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.create_practice",
+   "target": "logger.info",
+   "message": "f\"Created practice {result['id']} for client {validated.client_id}\"",
+   "args": [],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.get_client",
+   "target": "logger.warning",
+   "message": "'Failed to get client (DB): %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.get_client",
+   "target": "logger.error",
+   "message": "'Failed to get client: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.initialize",
+   "target": "logger.warning",
+   "message": "'Failed to initialize CRM service (DB): %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.initialize",
+   "target": "logger.error",
+   "message": "'Failed to initialize CRM service: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.initialize",
+   "target": "logger.info",
+   "message": "'✅ EnhancedCRMService initialized successfully'",
+   "args": [],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.update_client",
+   "target": "logger.info",
+   "message": "'Updated client %s'",
+   "args": [
+    "client_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.update_client",
+   "target": "logger.warning",
+   "message": "'Failed to update client (DB): %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.update_client",
+   "target": "logger.warning",
+   "message": "'Failed to update client (validation): %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.update_client",
+   "target": "logger.error",
+   "message": "'Failed to update client: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.update_practice_status",
+   "target": "logger.info",
+   "message": "'Practice %s status changed'",
+   "args": [
+    "practice_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.update_practice_status",
+   "target": "logger.warning",
+   "message": "'Failed to update practice status (DB): %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "EnhancedCRMService.update_practice_status",
+   "target": "logger.error",
+   "message": "'Failed to update practice status: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "services/crm/client_core.py",
+   "function": "init_audit_table",
+   "target": "logger.info",
+   "message": "'CRM audit table initialized'",
+   "args": [],
+   "fields": {},
+   "exc_info": null
+  }
+ ]
+}
