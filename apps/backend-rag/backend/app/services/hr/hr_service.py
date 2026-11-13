@@ -294,7 +294,7 @@ class HRService:
                 data.get("bpjs_ketenagakerjaan_number"),
                 data.get("notes"),
             )
-            logger.info(f"HR employee upserted: team_member_id={data['team_member_id']}")
+            logger.info(f"HR employee upserted: employee_id={row['id']}")
             return self._legacy_row(row)
 
     # ─── STAFF CARD (contract: STAFF_CARD.md) ───────────────────────
@@ -463,7 +463,7 @@ class HRService:
             raise HRCardError(HRCardCode.DB_ERROR) from None
         if row is None:
             return None
-        logger.info(f"HR card merged: team_member_id={team_member_id}")
+        logger.info(f"HR card merged: employee_id={row['id']}")
         return row["id"]
 
     async def lock_visible_person(self, conn: Any, team_member_id: str, email: str) -> bool:
@@ -554,8 +554,7 @@ class HRService:
                 data.get("notes"),
             )
             logger.info(
-                "Bonus rate upserted: practice_type=%s, rate_id=%s",
-                data["practice_type_code"],
+                "Bonus rate upserted: rate_id=%s",
                 row["id"],
             )
             return dict(row)
@@ -686,7 +685,7 @@ class HRService:
                     bonus_id,
                     approved_by,
                 )
-            logger.info("Bonus %s approved by %s", bonus_id, approved_by)
+            logger.info("Bonus %s approved", bonus_id)
             return dict(row)
 
     # ─── MANUAL BONUSES ──────────────────────────────────────────────
@@ -802,7 +801,7 @@ class HRService:
                     raise ValueError(msg)
                 msg = f"Bonus {bonus_id} not found"
                 raise LookupError(msg)
-            logger.info("Bonus %s rejected by %s", bonus_id, rejected_by)
+            logger.info("Bonus %s rejected", bonus_id)
             out = dict(row)
             out.pop("_existed", None)
             return out
@@ -1213,7 +1212,7 @@ class HRService:
                     period_id,
                     approved_by,
                 )
-            logger.info("Payroll period %s approved by %s", period_id, approved_by)
+            logger.info("Payroll period %s approved", period_id)
             return dict(row)
 
     async def mark_payroll_paid(self, period_id: int) -> dict[str, Any]:
@@ -1362,7 +1361,7 @@ class HRService:
                     req["start_date"].year,
                 )
 
-                logger.info("Leave request %s approved by %s", request_id, reviewed_by)
+                logger.info("Leave request %s approved", request_id)
                 return dict(req)
 
     async def reject_leave(
@@ -1405,7 +1404,7 @@ class HRService:
                     req["start_date"].year,
                 )
 
-                logger.info("Leave request %s rejected by %s", request_id, reviewed_by)
+                logger.info("Leave request %s rejected", request_id)
                 return dict(req)
 
     async def get_leave_request(
