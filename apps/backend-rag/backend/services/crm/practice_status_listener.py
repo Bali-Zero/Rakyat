@@ -275,7 +275,7 @@ Great news — we've received your payment! 🎉
 Your {practice_type} is now officially confirmed and our team is getting ready to start.
 
 What happens next:
-• You'll receive a separate email once we officially kick off the process
+• We'll keep you posted by email as your process moves forward
 • You can track your progress anytime at https://my.balizero.com
 • Your advisor ({team_member_email or "our team"}) will reach out on WhatsApp shortly
 

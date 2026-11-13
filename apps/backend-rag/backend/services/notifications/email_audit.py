@@ -178,6 +178,18 @@ async def claim_email_once(
                 )
                 if already:
                     return False, None
+                # The new claim covers every earlier failed attempt of the group: close
+                # them so the retry worker can never mail a "[RETRY]" duplicate later.
+                await conn.execute(
+                    """
+                    UPDATE email_send_log
+                    SET status = 'superseded', retry_after = NULL
+                    WHERE practice_id = $1 AND email_type = ANY($2::text[])
+                      AND status = 'failed'
+                    """,
+                    practice_id,
+                    list(once_group),
+                )
                 row_id = await conn.fetchval(
                     """
                     INSERT INTO email_send_log

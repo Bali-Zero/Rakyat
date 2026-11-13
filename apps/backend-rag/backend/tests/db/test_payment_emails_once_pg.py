@@ -325,6 +325,46 @@ async def test_a_failed_first_attempt_does_not_block_the_next_paid(pool, posts):
     assert sorted(_kinds(posts)) == ["pay_client", "pay_team"]
 
 
+@pytest.mark.asyncio
+async def test_a_recovered_send_closes_the_earlier_failed_attempts(pool, posts):
+    """Gate finding P2: both first sends fail and schedule a retry; a later paid succeeds.
+    The old failed rows must leave the retry worker's reach, or the team mail goes twice."""
+    pid = await _seed(pool)
+    listener = _listener(pool)
+    posts.fail = True
+    await _paid(listener, pid)
+    await pool.execute(
+        "UPDATE email_send_log SET retry_after = NOW() - interval '1 minute' WHERE practice_id = $1",
+        pid,
+    )
+    posts.fail = False
+    posts.sent.clear()
+    await _paid(listener, pid, old="partial")
+    assert sorted(_kinds(posts)) == ["pay_client", "pay_team"]
+    assert not await pool.fetch(
+        "SELECT 1 FROM email_send_log WHERE practice_id = $1 AND status = 'failed'", pid
+    ), "a failed row survived the recovery and the retry worker would resend it"
+    assert await pool.fetchval(
+        "SELECT count(*) FROM email_send_log WHERE practice_id = $1 AND status = 'superseded'", pid
+    )
+    assert not await pool.fetch(
+        "SELECT 1 FROM email_send_log WHERE practice_id = $1 AND retry_after IS NOT NULL "
+        "AND status = 'failed'",
+        pid,
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_payment_mail_promises_no_separate_start_email(pool, posts):
+    """Gate finding P2: a paid practice gets no start email, so the thank-you must not promise one."""
+    pid = await _seed(pool)
+    await _paid(_listener(pool), pid)
+    client = [m for m in posts.sent if "Payment Received" in m["subject"]]
+    assert len(client) == 1
+    text = json.dumps(client[0])
+    assert "separate email" not in text and "kick off" not in text
+
+
 # ── the claim itself ────────────────────────────────────────────────────────
 
 
