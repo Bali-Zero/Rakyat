@@ -69,6 +69,8 @@ async def pool():
     try:
         admin = await asyncpg.connect(_base_dsn(), database="postgres")
     except Exception:
+        if os.environ.get("TEST_DATABASE_URL"):
+            raise  # a configured database that is unreachable is a failure, never a skip
         pytest.skip("no Postgres reachable for the unpaid-invoice reminder test")
     dbname = f"unpaid_rem_{uuid.uuid4().hex[:10]}"
     await admin.execute(f'CREATE DATABASE "{dbname}"')
@@ -292,7 +294,7 @@ async def test_digest_carries_no_client_data(pool, send):
 
 async def test_database_error_is_reported_not_raised():
     class BrokenPool:
-        def acquire(self):
+        def acquire(self, **_kw):
             raise RuntimeError("db down")
 
     result = await UnpaidInvoiceNotifier(BrokenPool()).check_and_notify()
@@ -314,3 +316,15 @@ def test_digest_escapes_html():
         "13 November 2026",
     )
     assert "<script>" not in body and "&lt;script&gt;" in body and "a&amp;b" in body
+
+
+async def test_query_failure_still_writes_a_heartbeat_with_the_error(pool, send, monkeypatch):
+    monkeypatch.setattr(mod, "_DUE_SQL", "SELECT * FROM table_that_does_not_exist")
+    result = await UnpaidInvoiceNotifier(pool).check_and_notify()
+    assert result["notified"] is False and result["error"] == "UndefinedTableError"
+    async with pool.acquire() as conn:
+        value = await conn.fetchval(
+            "SELECT value FROM system_settings WHERE key = $1", HEARTBEAT_KEY
+        )
+    assert '"error": "UndefinedTableError"' in value
+    send.assert_not_awaited()

@@ -135,12 +135,25 @@ class UnpaidInvoiceNotifier:
             INVOICE_REMINDER_FROM.isoformat(),
         )
         try:
-            async with self.db_pool.acquire() as conn:
+            async with self.db_pool.acquire(timeout=30) as conn:
                 if not await conn.fetchval("SELECT pg_try_advisory_lock($1)", _ADVISORY_LOCK_KEY):
                     logger.info("[UnpaidInvoiceNotifier] another run holds the lock - skipped")
                     return {"due_count": 0, "notified": False, "skipped": True, "locked": True}
                 try:
-                    result = await self._run_locked(conn)
+                    try:
+                        result = await self._run_locked(conn)
+                    except Exception as exc:
+                        logger.error(
+                            "[UnpaidInvoiceNotifier] run failed: %s",
+                            type(exc).__name__,
+                            exc_info=True,
+                        )
+                        result = {
+                            "due_count": 0,
+                            "notified": False,
+                            "skipped": False,
+                            "error": type(exc).__name__,
+                        }
                     await self._write_heartbeat(conn, result)
                     return result
                 finally:

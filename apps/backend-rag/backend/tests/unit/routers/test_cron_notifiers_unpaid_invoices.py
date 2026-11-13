@@ -48,3 +48,18 @@ def test_wrong_key_never_runs_it(client):
         resp = client.post("/api/cron/notifiers/unpaid-invoices", headers={"X-API-Key": "nope"})
     assert resp.status_code == 401
     run.assert_not_awaited()
+
+
+def test_all_run_reports_partial_failure_when_the_digest_was_not_delivered(client):
+    failed = {"due_count": 1, "notified": False, "skipped": False, "error": "send_failed"}
+    with patch(TARGET, new=AsyncMock(return_value=failed)):
+        body = client.post("/api/cron/notifiers/all", headers={"X-API-Key": KEY}).json()
+    assert body["status"] == "partial_failure"
+    assert {"notifier": "unpaid_invoices", "error": "send_failed"} in body["errors"]
+
+
+def test_all_run_stays_ok_when_nothing_is_due(client):
+    quiet = {"due_count": 0, "notified": False, "skipped": True}
+    with patch(TARGET, new=AsyncMock(return_value=quiet)):
+        body = client.post("/api/cron/notifiers/all", headers={"X-API-Key": KEY}).json()
+    assert not any(e["notifier"] == "unpaid_invoices" for e in body["errors"])

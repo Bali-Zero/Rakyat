@@ -455,6 +455,11 @@ async def run_all_notifiers(request: Request) -> dict[str, Any]:
 
         notifier = UnpaidInvoiceNotifier(db_pool)
         results["unpaid_invoices"] = await notifier.check_and_notify()
+        if results["unpaid_invoices"].get("error"):
+            # The notifier reports failures as a returned value, not a raise.
+            errors.append(
+                {"notifier": "unpaid_invoices", "error": str(results["unpaid_invoices"]["error"])}
+            )
     except Exception as e:
         logger.error("Unpaid invoice notifier failed: %s", e, exc_info=True)
         results["unpaid_invoices"] = {"error": str(e)}
