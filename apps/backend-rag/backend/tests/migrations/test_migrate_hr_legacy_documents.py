@@ -288,7 +288,7 @@ async def test_dry_run_writes_nothing_and_a_second_run_changes_nothing(pool: asy
     assert first["done"] == 3 and first["source_unchanged"] == 3
     after = (await _profile(pool, "tm-a"), await _profile(pool, "tm-t1"))
     second = await job.run(pool, drive, manifest, apply=True)
-    assert second["verified"] == 3 and second["done"] == second["reused"] == 0
+    assert second["changed"] == 3 and second["done"] == second["reused"] == 0
     assert len(drive.copies) == 3 and not drive.trashed
     assert (await _profile(pool, "tm-a"), await _profile(pool, "tm-t1")) == after
     _untouched(drive, L1, L2, L3)
@@ -335,10 +335,11 @@ async def test_real_client_copies_with_the_door_shape_and_only_reads_the_source(
     copied = {"id": "CopyReturnedByDrive1234", "mimeType": "image/jpeg", "parents": ["pf1"]}
     drive, http = _real_drive(
         [
-            (200, unit),
-            (200, person),
+            (200, person),  # member_folder: the person folders of the member
+            (200, unit),  # ensure_folder: the unit folder
+            (200, person),  # ensure_folder: the person folder
+            (200, {"files": []}),  # the reuse lookup
             (200, source),
-            (200, {"files": []}),
             (200, copied),
             (200, source),
         ]
@@ -348,13 +349,13 @@ async def test_real_client_copies_with_the_door_shape_and_only_reads_the_source(
         counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=True)
     assert counts["done"] == 1 and counts["source_unchanged"] == 1
     sent = [(method, unquote_plus(uri), body) for uri, method, body, _ in http.request_sequence]
-    assert [m for m, _, _ in sent] == ["GET", "GET", "GET", "GET", "POST", "GET"]
+    assert [m for m, _, _ in sent] == ["GET"] * 5 + ["POST", "GET"]
     on_source = [(m, u) for m, u, _ in sent if f"/files/{L1}" in u]
     assert [m for m, _ in on_source] == ["GET", "POST", "GET"]  # read, copy, read: never a write
     assert f"/files/{L1}/copy?" in on_source[1][1] and "supportsAllDrives=true" in on_source[1][1]
     assert "mimeType != 'application/vnd.google-apps.folder'" in sent[3][1]  # the reuse lookup
     assert f"{job.SRC_PROP}' and value='{job.sha256_hex(L1)[:16]}'" in sent[3][1]
-    body = json.loads(sent[4][2])
+    body = json.loads(sent[5][2])
     assert body["parents"] == ["pf1"] and body["name"].startswith("KTP - Fake A - ")
     assert body["name"].endswith(".jpg")
     assert body["appProperties"] == {
@@ -462,7 +463,7 @@ async def test_the_slot_is_re_read_before_any_drive_call(  # noqa: F811
     monkeypatch.setattr(job, "classify", classify_then_door_writes)
     monkeypatch.setattr(job, "process_slot", process_after_the_door_write)
     counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=apply)
-    assert counts["verified"] == 1 and counts["done"] == counts["eligible"] == 0
+    assert counts["changed"] == 1 and counts["done"] == counts["eligible"] == 0
     assert ("get", L1) not in drive.calls
     assert not [c for c in drive.calls if c[0] == "get"]  # no Drive read of any file
     assert not drive.copies
@@ -563,3 +564,99 @@ def test_render_rebuilds_the_line_from_the_closed_grammar() -> None:
     assert job.render(ok) == (
         b'{"manifest": 2, "mode": "dry-run", "outcomes": {"changed": 1, "eligible": 1}}\n'
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("conflict", [False, True])
+async def test_another_manifest_source_with_the_same_tags_is_never_reused_or_trashed(  # noqa: F811
+    pool: asyncpg.Pool, conflict: bool
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    drive.add_source(L2)
+    person = drive.seed_person()
+    drive.files[L2]["parent"] = person
+    drive.files[L2]["appProperties"] = {
+        hd.MEMBER_PROP: "tm-a",
+        hd.SLOT_PROP: "ktp",
+        job.SRC_PROP: job.sha256_hex(L1)[:16],
+    }
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1, "kk": L2}})
+
+    async def door_lands(copy_id: str) -> None:
+        await _door_write_after_the_copy(pool, copy_id)
+
+    if conflict:
+        drive.on_copy = door_lands
+    counts = await job.run(pool, drive, _manifest((emp, "ktp", L1), (emp, "kk", L2)), apply=True)
+    assert counts["reused"] == 0 and len(drive.copies) == 2  # a fresh copy for ktp, one for kk
+    assert L2 not in drive.trashed and ("trash", L2) not in drive.calls
+    docs = project_documents(await _profile(pool, "tm-a"))
+    if conflict:
+        assert counts["conflict"] == 1 and counts["done"] == 1
+    else:
+        assert counts["done"] == 2 and docs["ktp"]["file_id"] == drive.copies[0] != L2
+        assert docs["kk"]["file_id"] == drive.copies[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("apply", [True, False])
+async def test_a_person_folder_that_is_a_source_is_never_used_or_moved(  # noqa: F811
+    pool: asyncpg.Pool, apply: bool
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    drive.folders["u-other"] = {
+        "id": "u-other",
+        "name": "OPS",
+        "parents": [hd.settings.hr_documents_drive_root_id],
+        "appProperties": {},
+    }
+    drive.folders[L2] = {  # the person folder IS the value of tm-a's kk slot
+        "id": L2,
+        "name": "Fake A",
+        "parents": ["u-other"],
+        "appProperties": {hd.MEMBER_PROP: "tm-a"},
+    }
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1, "kk": L2}})
+    before = await _profile(pool, "tm-a")
+    counts = await job.run(pool, drive, _manifest((emp, "ktp", L1), (emp, "kk", L2)), apply=apply)
+    assert counts["folder:source_protected"] == 2 and counts["done"] == 0
+    assert ("move", L2) not in drive.calls and drive.folders[L2]["parents"] == ["u-other"]
+    assert not drive.copies and not drive.moves and not drive.trashed
+    assert await _profile(pool, "tm-a") == before
+
+
+@pytest.mark.asyncio
+async def test_a_resume_needs_no_readable_source(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+    manifest = _manifest((emp, "ktp", L1))
+    real_commit = Transaction.commit
+
+    async def lost_before_commit(self: Any) -> None:
+        raise ConnectionResetError
+
+    monkeypatch.setattr(Transaction, "commit", lost_before_commit)
+    first = await job.run(pool, drive, manifest, apply=True)
+    monkeypatch.setattr(Transaction, "commit", real_commit)
+    assert first["uncertain"] == 1 and len(drive.copies) == 1
+
+    del drive.files[L1]  # the source can no longer be read: its get_file_metadata is a 404
+    second = await job.run(pool, drive, manifest, apply=True)
+    assert second["reused"] == 1 and second["source_unreadable"] == 1
+    assert second["drive_error:404"] == 0 and len(drive.copies) == 1 and not drive.trashed
+    assert project_documents(await _profile(pool, "tm-a"))["ktp"]["file_id"] == drive.copies[0]
+
+
+@pytest.mark.asyncio
+async def test_trash_refuses_a_source_id() -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    protected = frozenset({job.sha256_hex(L1)})
+    assert await job._trash(drive, L1, protected) is False
+    assert L1 not in drive.trashed and ("trash", L1) not in drive.calls
+    assert await job._trash(drive, L2, protected) is True and drive.trashed == [L2]

@@ -10,12 +10,13 @@ file into the person's folder and writes the COPY's id with its proof, as the do
 Per slot, holding the door's member advisory lock for the whole operation:
 
 1. re-read the slot: still present-but-unverified, its sha256 the manifest's, the value id-shaped
-   (`^[A-Za-z0-9_-]{25,100}$` with a letter). Otherwise nothing is sent anywhere. Only then is the
-   source's metadata read (the dry-run stops here);
+   (`^[A-Za-z0-9_-]{25,100}$` with a letter). Otherwise `changed`, and nothing is sent anywhere;
 2. reuse an earlier copy (appProperties `nz_hr_member`, `nz_hr_slot` and `nz_hr_src` =
-   sha256(value)[:16], inside the person folder, never the source itself), else `files.copy` the
-   source there with the door's title and appProperties plus `nz_hr_src`. Only a non-empty id
-   string Drive returned is ever used, never one coerced;
+   sha256(value)[:16], inside the person folder): a resume needs no readable source. Otherwise
+   read the source's metadata (the dry-run stops before any write) and `files.copy` it there with
+   the door's title and appProperties plus `nz_hr_src`. Only a non-empty id string Drive returned
+   is ever used, never one coerced. No id whose sha256 is ANY manifest digest is ever reused,
+   trashed or used as the person folder (whose reconciliation may move it);
 3. compare-and-set: the door's own UPDATE (slot + `doc_proof.<slot>`; the contract slot also drops
    `docs.contract`), only where the slot still holds the manifest-hashed unverified value. No row:
    `conflict`, and the copy is trashed by its own Drive id while the lock is still held. A database
@@ -27,10 +28,10 @@ A source file is only read and copied: never updated, moved, trashed or re-share
 parents and trashed flag are read under the lock before the copy and again after the last slot.
 
 Output: ONE JSON line, rebuilt from a closed grammar of codes and bounded integers. Per manifest
-slot: done, reused, verified (already verified: the `changed` case of a rerun), changed, conflict,
-uncertain, outside_manifest, source_folder, eligible (dry-run), drive_error:<status>, folder:<code>,
-lock_timeout, db_error; besides: copy_left (a copy a failed trash left behind), source:<class>,
-source_unchanged / source_changed / source_unreadable and log_records. Containment: file
+slot: done, reused, changed, conflict, uncertain, outside_manifest, source_folder, eligible
+(dry-run), drive_error:<status>, folder:<code> (`folder:source_protected` included), lock_timeout,
+db_error; besides: copy_left (a copy a failed trash left behind), source:<class>, source_unchanged /
+source_changed / source_unreadable (the audit of every source the run read) and log_records. Containment: file
 descriptors 1 and 2 point at /dev/null for the whole run (a print, a traceback, a library or a C
 extension writing there reaches nothing) and the line goes out on a private duplicate of stdout;
 every log record is only counted; the identifier loggers sit at WARNING; Sentry must be unbound.
@@ -74,11 +75,11 @@ FAILED_CODES = frozenset(
     }
 )
 _OUTCOME = re.compile(
-    r"done|reused|verified|changed|conflict|uncertain|outside_manifest|source_folder|eligible"
+    r"done|reused|changed|conflict|uncertain|outside_manifest|source_folder|eligible"
     r"|copy_left|lock_timeout|db_error|source_unchanged|source_changed|source_unreadable"
     r"|log_records|source:(?:pdf|image|folder|google|other)|drive_error:(?:[1-5][0-9]{2}|other)"
     r"|folder:(?:not_found|hr_record_required|drive_unavailable|lock_timeout|db_error"
-    r"|commit_unknown)"
+    r"|commit_unknown|source_protected)"
 )
 _MAX_COUNT = 1_000_000
 
@@ -294,10 +295,6 @@ def eligible(profile: Any, slot: str, digest: str) -> str | None:
     return value
 
 
-def _settled(profile: Any, slot: str) -> str:
-    return "verified" if project_documents(profile)[slot]["file_id"] is not None else "changed"
-
-
 @dataclass(frozen=True)
 class Item:
     emp_id: int
@@ -329,7 +326,7 @@ def classify(rows: list[Any], manifest: dict[tuple[int, str], str], counts: Coun
             ):
                 counts["outside_manifest"] += 1  # the hash matches, the second fence does not
             else:
-                counts[_settled(profile, slot)] += 1
+                counts["changed"] += 1
     counts["changed"] += len(set(manifest) - seen)
     return out
 
@@ -361,7 +358,14 @@ class _BadDriveId(Exception):
     pass
 
 
-async def _trash(drive: Any, copy_id: str) -> bool:
+def is_source(file_id: Any, protected: frozenset[str]) -> bool:
+    """True for an id whose sha256 is ANY manifest digest: a source, never a copy."""
+    return not isinstance(file_id, str) or sha256_hex(file_id) in protected
+
+
+async def _trash(drive: Any, copy_id: str, protected: frozenset[str]) -> bool:
+    if is_source(copy_id, protected):
+        return False
     try:
         await drive.trash_file(copy_id)
     except Exception:
@@ -369,7 +373,9 @@ async def _trash(drive: Any, copy_id: str) -> bool:
     return True
 
 
-async def _compensate(svc: hd.HRDocumentService, item: Item, copy_id: str) -> bool:
+async def _compensate(
+    svc: hd.HRDocumentService, item: Item, copy_id: str, protected: frozenset[str]
+) -> bool:
     """After a CERTAIN rollback: under the member lock, re-read the slot and trash the copy unless
     the slot holds it. True when nothing is left behind."""
     try:
@@ -379,7 +385,7 @@ async def _compensate(svc: hd.HRDocumentService, item: Item, copy_id: str) -> bo
             row = await conn.fetchrow(_ROW_SQL, item.emp_id)
             if row is not None and _slot_value(_profile(row["p"]) or {}, item.slot) == copy_id:
                 return True
-            return await _trash(svc.drive, copy_id)
+            return await _trash(svc.drive, copy_id, protected)
     except Exception:
         return False
 
@@ -387,13 +393,17 @@ async def _compensate(svc: hd.HRDocumentService, item: Item, copy_id: str) -> bo
 async def process_slot(
     svc: hd.HRDocumentService,
     item: Item,
-    folder: tuple[str, Any] | None,
+    folder: tuple[str | None, Any],
+    apply: bool,
+    protected: frozenset[str],
     counts: Counter,
     sources: list[tuple[str, tuple[Any, ...]]],
 ) -> None:
     """One manifest slot, under the member advisory lock from the re-read to the commit. `folder`
-    None is the dry-run: the lock, the re-read and the source's metadata, then a rollback."""
+    is (person folder id or None, card context). Without `apply` (the dry-run) it stops before
+    the first write: lock, re-read, reuse lookup, the source's metadata, rollback."""
     drive = svc.drive
+    folder_id, ctx = folder
     copy_id: str | None = None
     reused = False
     step = "lock"
@@ -406,46 +416,54 @@ async def process_slot(
                 await conn.execute(_LOCK_SQL, item.member_id)
                 step = "read"
                 row = await conn.fetchrow(_ROW_SQL, item.emp_id)
-                profile = _profile(row["p"]) if row is not None else None
                 value = None
                 if row is not None and str(row["team_member_id"]) == item.member_id:
-                    value = eligible(profile, item.slot, item.digest)
+                    value = eligible(_profile(row["p"]), item.slot, item.digest)
                 if value is None:
                     await tx.rollback()
-                    counts[_settled(profile, item.slot)] += 1
+                    counts["changed"] += 1
                     return
                 step = "drive"
-                meta = await drive.get_file_metadata(value)
-                kind = source_class(meta.get("mimeType"))
-                counts[f"source:{kind}"] += 1
-                if kind == "folder" or folder is None:
-                    await tx.rollback()
-                    counts["source_folder" if kind == "folder" else "eligible"] += 1
-                    return
-                sources.append((value, _fingerprint(meta)))
-                folder_id, ctx = folder
                 props = {
                     hd.MEMBER_PROP: item.member_id,
                     hd.SLOT_PROP: item.slot,
                     SRC_PROP: item.digest[:16],
                 }
-                earlier = [
-                    f["id"]
-                    for f in await drive.list_files_by_app_properties(props, folder_id, None)
-                    if drive_id(f.get("id"))
-                    and f["id"] != value
-                    and folder_id in (f.get("parents") or [])
-                ]
-                if earlier:
+                earlier = []
+                if folder_id is not None:
+                    earlier = [
+                        f["id"]
+                        for f in await drive.list_files_by_app_properties(props, folder_id, None)
+                        if drive_id(f.get("id"))
+                        and not is_source(f["id"], protected)
+                        and folder_id in (f.get("parents") or [])
+                    ]
+                if earlier:  # a resume: the copy exists, the source need not be readable
                     copy_id, reused = min(earlier), True
+                    if not apply:
+                        await tx.rollback()
+                        counts["eligible"] += 1
+                        return
+                    try:  # the source audit only (Acceptance 5); never a reason to stop
+                        sources.append((value, _fingerprint(await drive.get_file_metadata(value))))
+                    except Exception:
+                        counts["source_unreadable"] += 1
                 else:
+                    meta = await drive.get_file_metadata(value)
+                    kind = source_class(meta.get("mimeType"))
+                    counts[f"source:{kind}"] += 1
+                    if kind == "folder" or not apply or folder_id is None:
+                        await tx.rollback()
+                        counts["source_folder" if kind == "folder" else "eligible"] += 1
+                        return
+                    sources.append((value, _fingerprint(meta)))
                     ext = _EXT.get(meta.get("mimeType"))
                     title = hd.document_title(
                         item.slot, ctx.full_name, business_today(), ext or "_"
                     )
                     title = title if ext else title.removesuffix("._")
                     made = (await drive.copy_file(value, folder_id, title, props)).get("id")
-                    if not drive_id(made) or made == value:
+                    if not drive_id(made) or is_source(made, protected):
                         raise _BadDriveId
                     copy_id = made
                 step = "cas"
@@ -460,7 +478,7 @@ async def process_slot(
                     item.digest,
                 )
                 if written is None:
-                    left = not await _trash(drive, copy_id)  # the lock is still held
+                    left = not await _trash(drive, copy_id, protected)  # the lock is still held
                     try:
                         await tx.rollback()
                     except Exception:
@@ -489,10 +507,33 @@ async def process_slot(
                 return
             counts["lock_timeout" if isinstance(exc, _LOCK_ERRORS) else "db_error"] += 1
             if step == "cas" and copy_id is not None:
-                counts["copy_left"] += int(not await _compensate(svc, item, copy_id))
+                counts["copy_left"] += int(not await _compensate(svc, item, copy_id, protected))
             return
-    await svc._follow_unit_change(item.member_id, folder[1].unit)
+    await svc._follow_unit_change(item.member_id, ctx.unit)
     counts["reused" if reused else "done"] += 1
+
+
+async def member_folder(
+    svc: hd.HRDocumentService, member_id: str, apply: bool, protected: frozenset[str]
+) -> tuple[str | None, Any] | str:
+    """(person folder id, card context), or a `folder:<code>`. No folder the job would create,
+    use or MOVE (the door's reconciliation moves a person folder whose unit changed) may be a
+    manifest source. The dry-run only looks: (the one existing folder or None, None)."""
+    try:
+        found = await svc.drive.find_folders_by_app_property(hd.MEMBER_PROP, member_id)
+    except Exception:
+        return "folder:drive_unavailable"
+    if any(is_source(f.get("id"), protected) for f in found):
+        return "folder:source_protected"
+    if not apply:
+        return (found[0]["id"] if len(found) == 1 else None), None
+    try:
+        folder_id, ctx = await svc.ensure_folder(member_id)
+    except hd.HRDocError as exc:
+        return f"folder:{exc.code.value}"
+    if not drive_id(folder_id) or is_source(folder_id, protected):
+        return "folder:source_protected"
+    return folder_id, ctx
 
 
 async def run(
@@ -502,24 +543,18 @@ async def run(
     async with pool.acquire() as conn:
         rows = await conn.fetch(_SCAN_SQL)
     svc = hd.HRDocumentService(pool, drive)
+    protected = frozenset(manifest.values())
     sources: list[tuple[str, tuple[Any, ...]]] = []
-    folders: dict[str, tuple[str, Any] | str] = {}
+    folders: dict[str, tuple[str | None, Any] | str] = {}
     for item in classify(rows, manifest, counts):
-        folder: tuple[str, Any] | None = None
-        if apply:
-            if item.member_id not in folders:
-                try:
-                    folder_id, ctx = await svc.ensure_folder(item.member_id)
-                    folders[item.member_id] = (str(folder_id), ctx)
-                except hd.HRDocError as exc:
-                    folders[item.member_id] = f"folder:{exc.code.value}"
-            found = folders[item.member_id]
-            if isinstance(found, str):
-                counts[found] += 1
-                continue
-            folder = found
-        await process_slot(svc, item, folder, counts, sources)
-    for value, fingerprint in sources:  # Acceptance 5: the sources this run copied, re-read
+        if item.member_id not in folders:
+            folders[item.member_id] = await member_folder(svc, item.member_id, apply, protected)
+        found = folders[item.member_id]
+        if isinstance(found, str):
+            counts[found] += 1
+            continue
+        await process_slot(svc, item, found, apply, protected, counts, sources)
+    for value, fingerprint in sources:  # Acceptance 5: every source this run read, re-read
         try:
             meta = await drive.get_file_metadata(value)
         except Exception:
