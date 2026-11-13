@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -171,7 +172,8 @@ async def test_a_nik_like_value_outside_the_manifest_never_reaches_drive(  # noq
     manifest = _manifest((emp, "kk", NIK2), (emp, "npwp", L1), (emp, "bpjs_kes", L3))
     with caplog.at_level(logging.DEBUG):
         counts = await job.run(pool, drive, manifest, apply=True)
-    assert counts["outside_manifest"] == 2 and counts["done"] == 1 and counts["changed"] == 1
+    assert counts["unlisted"] == 1 and counts["fence_failed"] == 1  # ktp, kk
+    assert counts["done"] == 1 and counts["changed"] == 1 and job.per_entry(counts) == 3
     assert NIK not in repr(drive.calls) and NIK2 not in repr(drive.calls)
     assert L2 not in repr(drive.calls)
     assert NIK not in caplog.text and NIK2 not in caplog.text and L1 not in caplog.text
@@ -211,7 +213,7 @@ async def test_a_door_write_between_copy_and_cas_is_a_conflict(pool: asyncpg.Poo
     assert counts["conflict"] == 1 and counts["done"] == 0 and counts["copy_left"] == 0
     assert drive.trashed == drive.copies  # the copy, by its own Drive id; never the source
     assert project_documents(await _profile(pool, "tm-a"))["ktp"]["file_id"] == door_id
-    assert counts["source_unchanged"] == 1
+    assert counts["source_baselined"] == counts["audit_unchanged"] == 1
     _untouched(drive, L1)
 
 
@@ -281,11 +283,13 @@ async def test_dry_run_writes_nothing_and_a_second_run_changes_nothing(pool: asy
 
     dry = await job.run(pool, drive, manifest, apply=False)
     assert dry["eligible"] == 3 and dry["source:pdf"] == 3
+    assert job.LIVE.acceptance5 == "nothing_migrated"
     assert {c[0] for c in drive.calls} == {"get"} and not drive.folders
     assert (await _profile(pool, "tm-a"), await _profile(pool, "tm-t1")) == before
 
     first = await job.run(pool, drive, manifest, apply=True)
-    assert first["done"] == 3 and first["source_unchanged"] == 3
+    assert first["done"] == 3 and first["source_baselined"] == first["audit_unchanged"] == 3
+    assert job.LIVE.acceptance5 == "observed" and first["copy_held"] == 3
     after = (await _profile(pool, "tm-a"), await _profile(pool, "tm-t1"))
     second = await job.run(pool, drive, manifest, apply=True)
     assert second["changed"] == 3 and second["done"] == second["reused"] == 0
@@ -335,27 +339,32 @@ async def test_real_client_copies_with_the_door_shape_and_only_reads_the_source(
     copied = {"id": "CopyReturnedByDrive1234", "mimeType": "image/jpeg", "parents": ["pf1"]}
     drive, http = _real_drive(
         [
+            (200, source),  # the baseline, before any mutation (R5.4)
             (200, person),  # member_folder: the person folders of the member
             (200, unit),  # ensure_folder: the unit folder
             (200, person),  # ensure_folder: the person folder
             (200, {"files": []}),  # the reuse lookup
             (200, source),
             (200, copied),
-            (200, source),
+            (200, source),  # the audit
+            (200, person),  # the copy census: the person folder
+            (200, {"files": [copied]}),  # the copy census: the entry's tagged files
         ]
     )
     emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
     with caplog.at_level(logging.DEBUG):
         counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=True)
-    assert counts["done"] == 1 and counts["source_unchanged"] == 1
+    assert counts["done"] == 1 and counts["source_baselined"] == counts["audit_unchanged"] == 1
     sent = [(method, unquote_plus(uri), body) for uri, method, body, _ in http.request_sequence]
-    assert [m for m, _, _ in sent] == ["GET"] * 5 + ["POST", "GET"]
+    assert [m for m, _, _ in sent] == ["GET"] * 6 + ["POST"] + ["GET"] * 3
+    assert counts["copy_held"] == 1 and counts["copy_residual"] == 0
     on_source = [(m, u) for m, u, _ in sent if f"/files/{L1}" in u]
-    assert [m for m, _ in on_source] == ["GET", "POST", "GET"]  # read, copy, read: never a write
-    assert f"/files/{L1}/copy?" in on_source[1][1] and "supportsAllDrives=true" in on_source[1][1]
-    assert "mimeType != 'application/vnd.google-apps.folder'" in sent[3][1]  # the reuse lookup
-    assert f"{job.SRC_PROP}' and value='{job.sha256_hex(L1)[:16]}'" in sent[3][1]
-    body = json.loads(sent[5][2])
+    # baseline, read, copy, audit: a source is only ever read, and copied
+    assert [m for m, _ in on_source] == ["GET", "GET", "POST", "GET"]
+    assert f"/files/{L1}/copy?" in on_source[2][1] and "supportsAllDrives=true" in on_source[2][1]
+    assert "mimeType != 'application/vnd.google-apps.folder'" in sent[4][1]  # the reuse lookup
+    assert f"{job.SRC_PROP}' and value='{job.sha256_hex(L1)[:16]}'" in sent[4][1]
+    body = json.loads(sent[6][2])
     assert body["parents"] == ["pf1"] and body["name"].startswith("KTP - Fake A - ")
     assert body["name"].endswith(".jpg")
     assert body["appProperties"] == {
@@ -445,23 +454,16 @@ async def test_the_slot_is_re_read_before_any_drive_call(  # noqa: F811
     drive = Drive()
     drive.add_source(L1)
     emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
-    real_classify = job.classify
-    real_process = job.process_slot
+    real_reread = job._eligible_under_lock
     landed: list[bool] = []
 
-    def classify_then_door_writes(rows: Any, manifest: Any, counts: Any) -> Any:
-        out = real_classify(rows, manifest, counts)  # classify is sync: the write follows below
-        landed.append(False)
-        return out
-
-    async def process_after_the_door_write(*args: Any, **kwargs: Any) -> None:
-        if landed and not landed[0]:  # between classify and the locked re-read
-            landed[0] = True
+    async def door_writes_before_the_first_locked_re_read(conn: Any, item: Any) -> Any:
+        if not landed:  # after classify, before the first locked re-read (baseline or slot)
+            landed.append(True)
             await _door_write_after_the_copy(pool, "")
-        await real_process(*args, **kwargs)
+        return await real_reread(conn, item)
 
-    monkeypatch.setattr(job, "classify", classify_then_door_writes)
-    monkeypatch.setattr(job, "process_slot", process_after_the_door_write)
+    monkeypatch.setattr(job, "_eligible_under_lock", door_writes_before_the_first_locked_re_read)
     counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=apply)
     assert counts["changed"] == 1 and counts["done"] == counts["eligible"] == 0
     assert ("get", L1) not in drive.calls
@@ -510,7 +512,8 @@ async def test_a_copy_without_a_usable_id_writes_nothing(  # noqa: F811
     drive.copy_result = answer
     emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
     counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=True)
-    assert counts["drive_error:other"] == 1 and counts["done"] == 0
+    assert counts["copy_unidentified"] == counts["returned_unusable"] == 1
+    assert counts["done"] == 0 and len(drive.copies) == 1 and not drive.trashed
     assert (await _profile(pool, "tm-a"))["docs"]["ktp"] == L1
     assert "doc_proof" not in await _profile(pool, "tm-a")
 
@@ -558,12 +561,40 @@ def test_a_failed_import_prints_one_code_and_nothing_else(tmp_path: Path) -> Non
 
 
 def test_render_rebuilds_the_line_from_the_closed_grammar() -> None:
-    bad = {"mode": "apply", "manifest": 1, "outcomes": {"1" + "A" * 32: 1}}
-    assert job.render(bad) == b'{"failed": "internal_error"}\n'
-    ok = {"mode": "dry-run", "manifest": 2, "outcomes": {"eligible": 1, "changed": 1}}
-    assert job.render(ok) == (
-        b'{"manifest": 2, "mode": "dry-run", "outcomes": {"changed": 1, "eligible": 1}}\n'
+    fallback = b'{"failed": "internal_error"}\n'
+    ok = {
+        "acceptance5": "nothing_migrated",
+        "manifest": 2,
+        "mode": "dry-run",
+        "outcomes": {"eligible": 1, "changed": 1, "unlisted": 4},
+        "run": "interrupted",
+    }
+    line = job.render(ok)
+    assert line == (
+        b'{"acceptance5": "nothing_migrated", "manifest": 2, "mode": "dry-run",'
+        b' "outcomes": {"changed": 1, "eligible": 1, "unlisted": 4}, "run": "interrupted"}\n'
     )
+    assert job.exit_code(line) == 130
+    assert job.exit_code(job.render({**ok, "run": "completed"})) == 0
+    assert job.exit_code(job.render({**ok, "run": "deadline"})) == 124
+    for bad in (
+        {**ok, "run": "paused"},
+        {**ok, "acceptance5": "maybe"},
+        {**ok, "manifest": 3},  # the per-entry codes no longer sum to the manifest
+        {**ok, "outcomes": {"eligible": 2, "1" + "A" * 32: 1}},
+        {k: v for k, v in ok.items() if k != "acceptance5"},
+    ):
+        assert job.render(bad) == fallback and job.exit_code(job.render(bad)) == 1
+    for code in sorted(job.FAILED_CODES):
+        assert job.render({"failed": code}) == b'{"failed": "%s"}\n' % code.encode()
+        assert job.exit_code(job.render({"failed": code})) == 1
+    assert job.render({"failed": "anything"}) == fallback
+    with_counts = {"failed": "internal_error", "outcomes": {"done": 1, "copy_left": 1}}
+    assert job.render(with_counts, 3) == (
+        b'{"failed": "internal_error", "outcomes": {"copy_left": 1, "done": 1}}\n'
+    )
+    assert job.render(with_counts, 0) == fallback  # more entries than the manifest
+    assert job.render(with_counts) == fallback  # no manifest to bound them
 
 
 @pytest.mark.asyncio
@@ -648,6 +679,7 @@ async def test_a_resume_needs_no_readable_source(  # noqa: F811
     del drive.files[L1]  # the source can no longer be read: its get_file_metadata is a 404
     second = await job.run(pool, drive, manifest, apply=True)
     assert second["reused"] == 1 and second["source_unreadable"] == 1
+    assert job.LIVE.acceptance5 == "not_demonstrated"  # the reused copy's source was not observed
     assert second["drive_error:404"] == 0 and len(drive.copies) == 1 and not drive.trashed
     assert project_documents(await _profile(pool, "tm-a"))["ktp"]["file_id"] == drive.copies[0]
 
@@ -660,3 +692,859 @@ async def test_trash_refuses_a_source_id() -> None:
     assert await job._trash(drive, L1, protected) is False
     assert L1 not in drive.trashed and ("trash", L1) not in drive.calls
     assert await job._trash(drive, L2, protected) is True and drive.trashed == [L2]
+
+
+# ── SPEC v2.2 R5.1: one protected Drive boundary ──
+
+_P = frozenset({job.sha256_hex(L1)})
+_OK = "fo-ok"
+_MUTATIONS = [
+    ("trash_file", (L1,)),
+    ("move_file", (L1, "u-a", "u-b")),
+    ("move_file", ("pf", L1, "u-b")),
+    ("move_file", ("pf", f"u-a,{L1}", "u-b")),
+    ("move_file", ("pf", "", "u-b")),
+    ("move_file", ("pf", "u-a", L1)),
+    ("create_folder", ("x", L1)),
+    ("create_folder", ("x", None)),
+    ("copy_file", (L2, L1, "t", {})),
+    ("copy_file", ("", _OK, "t", {})),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("method", "args"), _MUTATIONS)
+async def test_the_boundary_refuses_a_protected_id_in_every_position(
+    method: str, args: tuple[Any, ...]
+) -> None:
+    inner = Drive()
+    pd = job.ProtectedDrive(inner, _P)
+    with pytest.raises(job.SourceProtected):
+        await getattr(pd, method)(*args)
+    assert pd.refusals == 1 and not inner.calls and not inner.moves and not inner.trashed
+    assert not inner.copies and not inner.folders
+
+
+@pytest.mark.asyncio
+async def test_the_boundary_passes_unprotected_mutations_and_every_read() -> None:
+    inner = Drive()
+    inner.add_source(L1)
+    pd = job.ProtectedDrive(inner, _P)
+    made = await pd.create_folder("x", _OK)
+    copied = await pd.copy_file(L1, made["id"], "t", {"k": "v"})  # a source may be READ by a copy
+    await pd.move_file(made["id"], _OK, "u-b")
+    await pd.trash_file(copied["id"])
+    assert (await pd.get_file_metadata(L1))["id"] == L1
+    assert await pd.find_folder("x", "u-b") is not None
+    assert await pd.find_folders_by_app_property("k", "v") == []
+    assert await pd.list_files_by_app_properties({"k": "v"}, made["id"], None) == []
+    assert pd.refusals == 0 and L1 not in inner.trashed and inner.trashed == [copied["id"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("returned", [{"id": L1}, {"id": ""}, {"id": None}, {}, []])
+async def test_the_boundary_rejects_an_unusable_or_protected_returned_id(returned: Any) -> None:
+    inner = Drive()
+    inner.add_source(L2)
+    inner.copy_result = returned
+    pd = job.ProtectedDrive(inner, _P)
+    with pytest.raises(job.UnusableReturnedId):
+        await pd.copy_file(L2, _OK, "t", {})
+    assert pd.unusable == 1 and pd.refusals == 0 and ("copy", L2, _OK) in inner.calls
+
+
+@pytest.mark.parametrize("name", ["upload_file_to_folder", "service", "update", "_n"])
+def test_the_boundary_exposes_nothing_else(name: str) -> None:
+    pd = job.ProtectedDrive(Drive(), _P)
+    with pytest.raises(AttributeError):
+        getattr(pd, name)
+
+
+def _protected_folder_on_the_nth_lookup(drive: Drive, n: int, fid: str, unit_id: str) -> None:
+    """The person-folder lookups disagree: the n-th returns a manifest source under `unit_id`."""
+    real = drive.find_folders_by_app_property
+    seen = {"n": 0}
+
+    async def lookup(key: str, value: str) -> Any:
+        seen["n"] += 1
+        if seen["n"] == n:
+            return [
+                {"id": fid, "name": "Fake A", "parents": [unit_id], "appProperties": {key: value}}
+            ]
+        return await real(key, value)
+
+    drive.find_folders_by_app_property = lookup  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_lookups_that_disagree_never_move_a_source(pool: asyncpg.Pool) -> None:  # noqa: F811
+    drive = Drive()
+    drive.add_source(L1)
+    drive.folders["u-other"] = {
+        "id": "u-other",
+        "name": "OPS",
+        "parents": [hd.settings.hr_documents_drive_root_id],
+        "appProperties": {},
+    }
+    # the job's pre-check sees no folder; ensure_folder's own lookup then returns a manifest
+    # source (tm-a's kk value) under another unit, which the door would move
+    _protected_folder_on_the_nth_lookup(drive, 2, L2, "u-other")
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1, "kk": L2}})
+    before = await _profile(pool, "tm-a")
+    counts = await job.run(pool, drive, _manifest((emp, "ktp", L1), (emp, "kk", L2)), apply=True)
+    assert counts["folder:source_protected"] == 2 and counts["protected_refusal"] == 1
+    assert not drive.moves and ("move", L2) not in drive.calls
+    assert not drive.copies and not drive.trashed
+    assert await _profile(pool, "tm-a") == before
+
+
+@pytest.mark.asyncio
+async def test_the_unit_follow_up_never_moves_a_source(pool: asyncpg.Pool) -> None:  # noqa: F811
+    drive = Drive()
+    drive.add_source(L1)
+    drive.seed_person("tm-a", "TAX")
+    # lookups 1 and 2 (pre-check, folder step) find the real person folder; the follow-up after
+    # the commit (3) returns a manifest source while the card's unit has changed meanwhile
+    _protected_folder_on_the_nth_lookup(drive, 3, L2, "u-seed")
+
+    async def unit_changes(copy_id: str) -> None:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE hr_employees SET profile = jsonb_set(profile, '{unit}', '\"Ops\"')"
+                " WHERE team_member_id = 'tm-a'"
+            )
+
+    drive.on_copy = unit_changes
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1, "kk": L2}})
+    counts = await job.run(pool, drive, _manifest((emp, "ktp", L1), (emp, "kk", L2)), apply=True)
+    assert counts["done"] >= 1 and counts["protected_refusal"] >= 1
+    assert not any(m[0] == L2 for m in drive.moves) and ("move", L2) not in drive.calls
+    assert project_documents(await _profile(pool, "tm-a"))["ktp"]["file_id"] == drive.copies[0]
+    _untouched(drive, L1)
+
+
+# ── SPEC v2.2 R5.3: interruption is a drain; R5.4: baseline and audit ──
+
+_PER_SLOT = re.compile(
+    r"done|reused|changed|conflict|uncertain|copy_unidentified|not_started|source_folder"
+    r"|eligible|lock_timeout|db_error|drive_error:.*|folder:.*"
+)
+
+
+def _per_slot(counts: Any) -> int:
+    return sum(v for k, v in counts.items() if _PER_SLOT.fullmatch(k))
+
+
+def _no_folder_step_for(drive: Drive, member: str) -> None:
+    """After the stop flag, no folder step ran for a member not yet prepared."""
+    mine = [f for f in drive.folders.values() if f["appProperties"].get(hd.MEMBER_PROP) == member]
+    assert not mine
+
+
+async def _three_slots(pool: asyncpg.Pool, drive: Drive) -> dict[tuple[int, str], str]:  # noqa: F811
+    for src in (L1, L2, L3):
+        drive.add_source(src)
+    a = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1, "kk": L2}})
+    t = await _set(pool, "tm-t1", {"unit": "Ops", "docs": {"bpjs_tk": L3}})
+    return _manifest((a, "ktp", L1), (a, "kk", L2), (t, "bpjs_tk", L3))
+
+
+@pytest.mark.asyncio
+async def test_the_job_and_the_door_hold_the_same_boundary(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    manifest = await _three_slots(pool, drive)
+    seen: list[Any] = []
+    real = job.process_slot
+
+    async def spy(svc: Any, *args: Any, **kwargs: Any) -> None:
+        seen.append(svc.drive)
+        await real(svc, *args, **kwargs)
+
+    monkeypatch.setattr(job, "process_slot", spy)
+    await job.run(pool, drive, manifest, apply=True)
+    assert len(seen) == 3 and all(d is seen[0] for d in seen)
+    assert type(seen[0]) is job.ProtectedDrive and seen[0]._inner is drive
+
+
+@pytest.mark.asyncio
+async def test_an_unidentified_copy_is_reused_by_the_next_run(pool: asyncpg.Pool) -> None:  # noqa: F811
+    drive = Drive()
+    drive.add_source(L1)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+    manifest = _manifest((emp, "ktp", L1))
+    drive.copy_result = {"id": None}
+    first = await job.run(pool, drive, manifest, apply=True)
+    assert first["copy_unidentified"] == 1 and len(drive.copies) == 1
+    drive.copy_result = None
+    second = await job.run(pool, drive, manifest, apply=True)
+    assert second["reused"] == 1 and len(drive.copies) == 1 and not drive.trashed
+    assert project_documents(await _profile(pool, "tm-a"))["ktp"]["file_id"] == drive.copies[0]
+
+
+@pytest.mark.asyncio
+async def test_a_signal_during_a_copy_drains_after_that_slot(pool: asyncpg.Pool) -> None:  # noqa: F811
+    drive = Drive()
+    manifest = await _three_slots(pool, drive)
+    stop = job.Stop()
+
+    async def signal_arrives(copy_id: str) -> None:
+        stop.set()
+        stop.set()  # a second signal changes nothing
+
+    drive.on_copy = signal_arrives
+    counts = await job.run(pool, drive, manifest, apply=True, stop=stop)
+    assert counts["done"] == 1 and counts["not_started"] == 2 and _per_slot(counts) == 3
+    assert counts["source_baselined"] == counts["audit_unchanged"] == 3  # the audit still ran
+    assert len(drive.copies) == 1 and not drive.trashed
+    assert project_documents(await _profile(pool, "tm-a"))["ktp"]["file_id"] == drive.copies[0]
+    assert (await _profile(pool, "tm-a"))["docs"]["kk"] == L2  # never started
+    _no_folder_step_for(drive, "tm-t1")
+    _untouched(drive, L1, L2, L3)
+
+
+@pytest.mark.asyncio
+async def test_a_signal_during_the_conflict_trash_lets_the_trash_finish(pool: asyncpg.Pool) -> None:  # noqa: F811
+    drive = Drive()
+    emp = await _seed_conflict(pool, drive)
+    drive.add_source(L2)
+    t = await _set(pool, "tm-t1", {"unit": "Ops", "docs": {"bpjs_tk": L2}})
+    stop = job.Stop()
+
+    async def signal_arrives(copy_id: str) -> None:
+        stop.set()
+
+    drive.on_trash = signal_arrives
+    manifest = _manifest((emp, "ktp", L1), (t, "bpjs_tk", L2))
+    counts = await job.run(pool, drive, manifest, apply=True, stop=stop)
+    assert counts["conflict"] == 1 and counts["copy_left"] == 0 and counts["not_started"] == 1
+    assert drive.trashed == drive.copies and len(drive.copies) == 1
+    _no_folder_step_for(drive, "tm-t1")
+    _untouched(drive, L1, L2)
+
+
+@pytest.mark.asyncio
+async def test_a_signal_during_the_compensation_lets_it_finish(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    manifest = await _three_slots(pool, drive)
+    bad = "SELECT $1::text, $2::text, $3::text, $4::text, $5::text, $6::text, 1/0"
+    monkeypatch.setitem(job.CAS_SQL, "ktp", bad)
+    stop = job.Stop()
+
+    async def signal_arrives(copy_id: str) -> None:
+        stop.set()
+
+    drive.on_trash = signal_arrives
+    counts = await job.run(pool, drive, manifest, apply=True, stop=stop)
+    assert counts["db_error"] == 1 and counts["copy_left"] == 0 and counts["not_started"] == 2
+    assert drive.trashed == drive.copies and len(drive.copies) == 1
+    _no_folder_step_for(drive, "tm-t1")
+    assert (await _profile(pool, "tm-a"))["docs"]["ktp"] == L1
+
+
+@pytest.mark.asyncio
+async def test_a_failed_compensation_is_counted_as_copy_left(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+    bad = "SELECT $1::text, $2::text, $3::text, $4::text, $5::text, $6::text, 1/0"
+    monkeypatch.setitem(job.CAS_SQL, "ktp", bad)
+    drive.fail_trash = True
+    counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=True)
+    assert counts["db_error"] == 1 and counts["copy_left"] == 1 and not drive.trashed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lands", [True, False])
+async def test_a_signal_during_a_lost_commit_still_reconciles(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch, lands: bool
+) -> None:
+    drive = Drive()
+    manifest = await _three_slots(pool, drive)
+    stop = job.Stop()
+    real_commit = Transaction.commit
+    calls: list[int] = []
+
+    async def signal_then_lose(self: Any) -> None:
+        if calls:
+            return await real_commit(self)
+        calls.append(1)
+        stop.set()
+        if lands:
+            await real_commit(self)
+        raise ConnectionResetError
+
+    monkeypatch.setattr(Transaction, "commit", signal_then_lose)
+    counts = await job.run(pool, drive, manifest, apply=True, stop=stop)
+    assert counts["not_started"] == 2 and _per_slot(counts) == 3
+    if lands:
+        assert counts["done"] == 1 and counts["uncertain"] == 0
+        assert project_documents(await _profile(pool, "tm-a"))["ktp"]["file_id"] == drive.copies[0]
+    else:
+        assert counts["uncertain"] == 1 and counts["done"] == 0
+        assert (await _profile(pool, "tm-a"))["docs"]["ktp"] == L1
+    assert len(drive.copies) == 1 and not drive.trashed  # an uncertain copy is never trashed
+
+
+@pytest.mark.asyncio
+async def test_an_unavailable_reconcile_is_uncertain_and_keeps_the_copy(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+
+    async def lost(self: Any) -> None:
+        raise ConnectionResetError
+
+    async def unavailable(self: Any, *args: Any) -> Any:
+        return None, None
+
+    monkeypatch.setattr(Transaction, "commit", lost)
+    monkeypatch.setattr(hd.HRDocumentService, "_reconcile", unavailable)
+    counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=True)
+    assert counts["uncertain"] == 1 and len(drive.copies) == 1 and not drive.trashed
+
+
+@pytest.mark.asyncio
+async def test_a_signal_during_the_follow_up_keeps_the_slot_done(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    manifest = await _three_slots(pool, drive)
+    stop = job.Stop()
+    real = hd.HRDocumentService._follow_unit_change
+
+    async def signal_in_follow_up(self: Any, *args: Any) -> None:
+        stop.set()
+        await real(self, *args)
+
+    monkeypatch.setattr(hd.HRDocumentService, "_follow_unit_change", signal_in_follow_up)
+    counts = await job.run(pool, drive, manifest, apply=True, stop=stop)
+    assert counts["done"] == 1 and counts["not_started"] == 2 and _per_slot(counts) == 3
+
+
+class _Abort(BaseException):
+    pass
+
+
+@pytest.mark.asyncio
+async def test_a_success_is_counted_before_the_follow_up(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+
+    async def aborts(self: Any, *args: Any) -> None:
+        raise _Abort
+
+    monkeypatch.setattr(hd.HRDocumentService, "_follow_unit_change", aborts)
+    svc = hd.HRDocumentService(pool, job.ProtectedDrive(drive, _P))
+    folder = await job.member_folder(svc, "tm-a", True, _P)
+    item = job.Item(emp, "tm-a", "ktp", job.sha256_hex(L1))
+    counts: Any = job.Counter()
+    with pytest.raises(_Abort):
+        await job.process_slot(svc, item, folder, True, _P, counts)
+    assert counts["done"] == 1
+    assert project_documents(await _profile(pool, "tm-a"))["ktp"]["file_id"] == drive.copies[0]
+
+
+@pytest.mark.asyncio
+async def test_a_base_exception_at_the_cas_step_compensates_then_propagates(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+
+    class _Clock:
+        @staticmethod
+        def now(tz: Any) -> Any:
+            raise _Abort  # the first statement of the CAS step
+
+    monkeypatch.setattr(job, "datetime", _Clock)
+    with pytest.raises(_Abort):
+        await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=True)
+    assert len(drive.copies) == 1 and drive.trashed == drive.copies
+    assert (await _profile(pool, "tm-a"))["docs"]["ktp"] == L1
+
+
+@pytest.mark.asyncio
+async def test_a_signal_during_the_audit_lets_it_finish(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    manifest = await _three_slots(pool, drive)
+    stop = job.Stop()
+    real = job.audit
+
+    async def signal_then_audit(*args: Any) -> Any:
+        stop.set()
+        return await real(*args)
+
+    monkeypatch.setattr(job, "audit", signal_then_audit)
+    counts = await job.run(pool, drive, manifest, apply=True, stop=stop)
+    assert counts["done"] == 3 and _per_slot(counts) == 3 and stop.is_set
+    assert counts["source_baselined"] == counts["audit_unchanged"] == 3
+
+
+@pytest.mark.asyncio
+async def test_the_audit_sees_a_source_that_changed(pool: asyncpg.Pool) -> None:  # noqa: F811
+    drive = Drive()
+    manifest = await _three_slots(pool, drive)
+
+    async def someone_moves_a_source(copy_id: str) -> None:
+        drive.files[L3]["parent"] = "elsewhere"  # outside the job: Drive itself, not the boundary
+
+    drive.on_copy = someone_moves_a_source
+    counts = await job.run(pool, drive, manifest, apply=True)
+    assert counts["source_baselined"] == 3
+    assert counts["audit_changed"] == 1 and counts["audit_unchanged"] == 2
+    assert job.LIVE.acceptance5 == "not_demonstrated"
+
+
+@pytest.mark.asyncio
+async def test_baseline_and_audit_count_distinct_sources(pool: asyncpg.Pool) -> None:  # noqa: F811
+    drive = Drive()
+    drive.add_source(L1)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1, "kk": L1}})
+    t = await _set(pool, "tm-t1", {"unit": "Ops", "docs": {"bpjs_tk": L2}})  # unreadable
+    manifest = _manifest((emp, "ktp", L1), (emp, "kk", L1), (t, "bpjs_tk", L2))
+    counts = await job.run(pool, drive, manifest, apply=True)
+    assert counts["done"] == 2 and counts["drive_error:404"] == 1
+    assert counts["source_baselined"] == 1 and counts["source_unreadable"] == 1
+    assert counts["audit_unchanged"] == 1 and counts["audit_unreadable"] == 0
+    assert job.LIVE.acceptance5 == "observed"  # both migrated slots share the one observed source
+
+
+_HARNESS = """
+import asyncio, json, os, signal, sys, time
+from pathlib import Path
+sys.path.insert(0, os.getcwd())
+from backend.scripts import migrate_hr_legacy_documents as job
+from backend.app.services.hr import hr_documents as hd
+from backend.tests.migrations.test_migrate_hr_legacy_documents import Drive, L1, L2, L3
+
+job.MANIFEST = Path(sys.argv[1])
+scenario, state = sys.argv[2], Path(sys.argv[3])
+drive = Drive()
+for src in (L1, L2, L3):
+    drive.add_source(src)
+
+def dump():
+    state.write_text(json.dumps({
+        "copies": drive.copies, "files": drive.files, "folders": drive.folders,
+        "trashed": drive.trashed, "n": drive._n,
+    }))
+
+class Abort(BaseException):
+    pass
+
+if scenario.startswith("SIG"):
+    sig = getattr(signal, scenario)
+
+    async def two_signals(copy_id):
+        os.kill(os.getpid(), sig)
+        await asyncio.sleep(0.05)
+        os.kill(os.getpid(), sig)  # the second, during the same slot
+        await asyncio.sleep(0.05)
+
+    drive.on_copy = two_signals
+elif scenario == "deadline_copy":
+    job.SLOT_S = 1
+
+    async def blocked(copy_id):
+        dump()  # the copy exists in Drive; its request never returns
+        await asyncio.to_thread(time.sleep, 60)
+
+    drive.on_copy = blocked
+elif scenario == "deadline_reread":
+    job.SLOT_S = 1
+    real = job._eligible_under_lock
+    calls = []
+
+    async def blocked_reread(conn, item):
+        calls.append(1)
+        if len(calls) > 3:  # after the three baseline reads: the first slot's own re-read
+            await conn.execute("SELECT pg_sleep(30)")
+        return await real(conn, item)
+
+    job._eligible_under_lock = blocked_reread
+elif scenario == "fatal_cas":
+    class Clock:
+        @staticmethod
+        def now(tz):
+            raise Abort  # the first statement of the CAS step
+
+    job.datetime = Clock
+    drive.fail_trash = True
+elif scenario == "fatal_follow":
+    async def aborts(self, *args):
+        raise Abort
+
+    hd.HRDocumentService._follow_unit_change = aborts
+
+async def the_fake():
+    return drive
+
+hd.get_hr_drive_service = the_fake
+fd = job.seal_streams()
+code = job.main(["--apply"], fd)
+dump()
+os._exit(code)
+"""
+
+
+async def _entry_path(pool: asyncpg.Pool, tmp_path: Path, scenario: str) -> tuple[int, Any, Any]:  # noqa: F811
+    """The real entry path (`main`, sealed streams, signal handlers, watchdog) in a subprocess,
+    on the throwaway Postgres and the fake Drive; returns (exit code, printed line, Drive state)."""
+    import asyncio
+
+    from backend.tests.migrations.test_hr_card_write_path import SCHEMA, _dsn
+
+    drive = Drive()
+    manifest = await _three_slots(pool, drive)
+    entries = [[i, slot, digest] for (i, slot), digest in manifest.items()]
+    (tmp_path / "m.json").write_text(json.dumps({"entries": entries}))
+    sep = "&" if "?" in _dsn() else "?"
+    env = {**os.environ, "DATABASE_URL": f"{_dsn()}{sep}search_path={SCHEMA}"}
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        _HARNESS,
+        str(tmp_path / "m.json"),
+        scenario,
+        str(tmp_path / "drive.json"),
+        cwd=_API,
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, err = await asyncio.wait_for(proc.communicate(), 120)
+    assert err == b""
+    state_file = tmp_path / "drive.json"
+    state = json.loads(state_file.read_text()) if state_file.exists() else None
+    return proc.returncode, json.loads(out), state
+
+
+async def _no_lock_left(pool: asyncpg.Pool) -> None:  # noqa: F811
+    async with pool.acquire() as conn:
+        assert await conn.fetchval("SELECT pg_try_advisory_lock(hashtext('hr_docs_folder:tm-a'))")
+        await conn.execute("SELECT pg_advisory_unlock_all()")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sig", ["SIGINT", "SIGTERM", "SIGHUP"])
+async def test_a_real_signal_drains_the_real_entry_path(  # noqa: F811
+    pool: asyncpg.Pool, tmp_path: Path, sig: str
+) -> None:
+    code, line, state = await _entry_path(pool, tmp_path, sig)
+    assert code == 130 and line["run"] == "interrupted" and line["manifest"] == 3
+    o = line["outcomes"]
+    assert o["done"] == 1 and o["not_started"] == 2 and job.per_entry(o) == 3
+    assert o["source_baselined"] == o["audit_unchanged"] == 3 and o["copy_held"] == 1
+    assert line["acceptance5"] == "observed"
+    assert len(state["copies"]) == 1 and state["trashed"] == []
+    assert project_documents(await _profile(pool, "tm-a"))["ktp"]["file_id"] == state["copies"][0]
+    assert (await _profile(pool, "tm-a"))["docs"]["kk"] == L2
+    await _no_lock_left(pool)
+
+
+@pytest.mark.asyncio
+async def test_a_request_blocked_past_the_slot_deadline_ends_the_process(  # noqa: F811
+    pool: asyncpg.Pool, tmp_path: Path
+) -> None:
+    import time
+
+    began = time.monotonic()
+    code, line, state = await _entry_path(pool, tmp_path, "deadline_copy")
+    assert time.monotonic() - began < 30  # the worker sleeps 60 s: the watchdog did not wait
+    assert code == 124 and line["run"] == "deadline"
+    assert line["acceptance5"] == "not_demonstrated"
+    o = line["outcomes"]
+    assert o["uncertain"] == 1 and o["not_started"] == 2 and job.per_entry(o) == 3
+    assert (await _profile(pool, "tm-a"))["docs"]["ktp"] == L1  # unwritten: rolled back
+    await _no_lock_left(pool)
+
+    drive = Drive()  # the Drive the dead process left: its copy exists, tagged
+    drive.files.update(state["files"])
+    drive.folders.update(state["folders"])
+    drive.copies.extend(state["copies"])
+    drive._n = state["n"]
+    manifest = await _three_slots_manifest(pool)
+    counts = await job.run(pool, drive, manifest, apply=True)
+    assert counts["reused"] == 1 and counts["done"] == 2 and len(drive.copies) == 3
+    assert counts["copy_held"] == 3 and counts["copy_residual"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_deadline_in_the_re_read_counts_deadline(  # noqa: F811
+    pool: asyncpg.Pool, tmp_path: Path
+) -> None:
+    code, line, _ = await _entry_path(pool, tmp_path, "deadline_reread")
+    assert code == 124 and line["run"] == "deadline"
+    o = line["outcomes"]
+    assert o["deadline"] == 1 and o["not_started"] == 2 and job.per_entry(o) == 3
+    await _no_lock_left(pool)
+
+
+@pytest.mark.asyncio
+async def test_a_fatal_after_a_failed_compensation_keeps_copy_left_on_the_line(  # noqa: F811
+    pool: asyncpg.Pool, tmp_path: Path
+) -> None:
+    code, line, state = await _entry_path(pool, tmp_path, "fatal_cas")
+    assert code == 1 and set(line) == {"failed", "outcomes"}
+    assert line["failed"] == "internal_error"
+    assert line["outcomes"]["copy_left"] == 1 and line["outcomes"]["db_error"] == 1
+    assert len(state["copies"]) == 1 and state["trashed"] == []
+    assert (await _profile(pool, "tm-a"))["docs"]["ktp"] == L1
+
+
+@pytest.mark.asyncio
+async def test_a_fatal_in_the_follow_up_keeps_the_confirmed_done_on_the_line(  # noqa: F811
+    pool: asyncpg.Pool, tmp_path: Path
+) -> None:
+    code, line, state = await _entry_path(pool, tmp_path, "fatal_follow")
+    assert code == 1 and line["failed"] == "internal_error" and line["outcomes"]["done"] == 1
+    assert project_documents(await _profile(pool, "tm-a"))["ktp"]["file_id"] == state["copies"][0]
+
+
+async def _three_slots_manifest(pool: asyncpg.Pool) -> dict[tuple[int, str], str]:  # noqa: F811
+    async with pool.acquire() as conn:
+        a = await conn.fetchval("SELECT id FROM hr_employees WHERE team_member_id = 'tm-a'")
+        t = await conn.fetchval("SELECT id FROM hr_employees WHERE team_member_id = 'tm-t1'")
+    return _manifest((a, "ktp", L1), (a, "kk", L2), (t, "bpjs_tk", L3))
+
+
+# ── SPEC v2.2 R5.3 precedence and R5.4 census, in-process ──
+
+
+@pytest.mark.asyncio
+async def test_a_signal_during_the_baseline_starts_no_slot(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    manifest = await _three_slots(pool, drive)
+    stop = job.Stop()
+    real = job.baseline
+
+    async def signal_in_baseline(*args: Any) -> Any:
+        stop.set()  # no slot in flight
+        return await real(*args)
+
+    monkeypatch.setattr(job, "baseline", signal_in_baseline)
+    counts = await job.run(pool, drive, manifest, apply=True, stop=stop)
+    assert counts["not_started"] == 3 and job.per_entry(counts) == 3 and not drive.copies
+    assert counts["source_baselined"] == counts["audit_unchanged"] == 3
+    assert job.LIVE.acceptance5 == "nothing_migrated" and not drive.folders
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fails", [False, True])
+async def test_a_signal_during_a_folder_step_and_its_precedence(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch, fails: bool
+) -> None:
+    drive = Drive()
+    manifest = await _three_slots(pool, drive)
+    stop = job.Stop()
+    real = hd.HRDocumentService.ensure_folder
+
+    async def signal_in_folder_step(self: Any, member_id: str, **kwargs: Any) -> Any:
+        stop.set()
+        if fails:
+            raise hd.HRDocError(hd.HRDocCode.DRIVE_UNAVAILABLE)
+        return await real(self, member_id, **kwargs)
+
+    monkeypatch.setattr(hd.HRDocumentService, "ensure_folder", signal_in_folder_step)
+    counts = await job.run(pool, drive, manifest, apply=True, stop=stop)
+    # tm-a's folder step ENDED: its two slots keep its outcome; tm-t1's never ran
+    if fails:
+        assert counts["folder:drive_unavailable"] == 2 and counts["not_started"] == 1
+    else:
+        assert counts["not_started"] == 3
+    assert job.per_entry(counts) == 3 and not drive.copies
+
+
+@pytest.mark.asyncio
+async def test_the_census_counts_every_copy_of_an_entry(pool: asyncpg.Pool) -> None:  # noqa: F811
+    drive = Drive()
+    drive.add_source(L1)
+    drive.add_source(L2)
+    person = drive.seed_person()
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1, "kk": L2}})
+    manifest = _manifest((emp, "ktp", L1), (emp, "kk", L2))
+    for slot, src, cid in (
+        ("ktp", L1, "aa-copy-1"),
+        ("ktp", L1, "ab-copy-2"),
+        ("kk", L2, "kk-copy"),
+    ):
+        drive.files[cid] = {  # copies a transport retry and a dead run left behind
+            "name": "x",
+            "parent": person,
+            "mime": "application/pdf",
+            "appProperties": {
+                hd.MEMBER_PROP: "tm-a",
+                hd.SLOT_PROP: slot,
+                job.SRC_PROP: job.sha256_hex(src)[:16],
+            },
+        }
+    dry = await job.run(pool, drive, manifest, apply=False)
+    assert dry["copy_reusable"] == 2 and dry["copy_residual"] == 1 and dry["eligible"] == 2
+    async with pool.acquire() as conn:  # kk changes under the job: its copy becomes residual
+        await conn.execute(
+            "UPDATE hr_employees SET profile = jsonb_set(profile, '{docs,kk}', '\"other\"')"
+            " WHERE team_member_id = 'tm-a'"
+        )
+    counts = await job.run(pool, drive, manifest, apply=True)
+    assert counts["reused"] == 1 and counts["changed"] == 1 and not drive.copies
+    assert project_documents(await _profile(pool, "tm-a"))["ktp"]["file_id"] == "aa-copy-1"
+    assert counts["copy_held"] == 1 and counts["copy_residual"] == 2 and not drive.trashed
+
+
+@pytest.mark.asyncio
+async def test_the_census_skips_an_ambiguous_person_folder(pool: asyncpg.Pool) -> None:  # noqa: F811
+    drive = Drive()
+    drive.add_source(L1)
+    drive.seed_person()
+    drive.folders["pf-twin"] = {
+        "id": "pf-twin",
+        "name": "Fake A",
+        "parents": ["u-seed"],
+        "appProperties": {hd.MEMBER_PROP: "tm-a"},
+    }
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+    counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=True)
+    assert counts["folder:drive_unavailable"] == 1 and counts["census_skipped"] == 1
+    assert not drive.copies and not drive.moves
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("where", "outcome", "fatal"),
+    [
+        ("lock", "db_error", False),
+        ("lookup", "drive_error:other", False),
+        ("copy", "drive_error:other", False),
+        ("lookup_base", "drive_error:other", True),
+        ("commit_base", "uncertain", True),
+    ],
+)
+async def test_each_failing_step_counts_exactly_one_outcome(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch, where: str, outcome: str, fatal: bool
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+    exc: BaseException = _Abort() if fatal else RuntimeError("boom")
+
+    async def raises(*args: Any, **kwargs: Any) -> Any:
+        raise exc
+
+    if where == "lock":
+        monkeypatch.setattr(job, "_LOCK_SQL", "SELECT 1/0, $1::text")
+    elif where.startswith("lookup"):
+        monkeypatch.setattr(drive, "list_files_by_app_properties", raises)
+    elif where == "copy":
+        drive.on_copy = raises
+    else:
+        monkeypatch.setattr(Transaction, "commit", raises)
+    manifest = _manifest((emp, "ktp", L1))
+    if fatal:
+        with pytest.raises(_Abort):
+            await job.run(pool, drive, manifest, apply=True)
+    else:
+        await job.run(pool, drive, manifest, apply=True)
+    counts = job.LIVE.counts
+    assert counts[outcome] == 1 and job.per_entry(counts) == 1
+    assert (await _profile(pool, "tm-a"))["docs"]["ktp"] == L1
+    assert not drive.trashed
+
+
+# ── owner ruling 2026-11-13 (SPEC v2.2 rev 4) ──
+
+
+@pytest.mark.asyncio
+async def test_empty_metadata_is_unreadable_and_not_observed(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+    real = drive.get_file_metadata
+
+    async def answers_without_fields(file_id: str) -> Any:
+        meta = await real(file_id)
+        return {"id": meta["id"], "mimeType": meta["mimeType"]}  # no modifiedTime, no parents
+
+    monkeypatch.setattr(drive, "get_file_metadata", answers_without_fields)
+    counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=True)
+    assert counts["done"] == 1 and counts["source_unreadable"] == 1
+    assert counts["source_baselined"] == 0 and job.LIVE.acceptance5 == "not_demonstrated"
+
+
+@pytest.mark.asyncio
+async def test_the_census_never_counts_a_tagged_source_as_a_copy(pool: asyncpg.Pool) -> None:  # noqa: F811
+    drive = Drive()
+    drive.add_source(L1)
+    person = drive.seed_person()
+    drive.files[L1]["parent"] = person
+    drive.files[L1]["appProperties"] = {
+        hd.MEMBER_PROP: "tm-a",
+        hd.SLOT_PROP: "ktp",
+        job.SRC_PROP: job.sha256_hex(L1)[:16],
+    }
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+    dry = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=False)
+    assert dry["copy_reusable"] == dry["copy_residual"] == dry["copy_held"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_listing_at_the_page_cap_is_census_skipped(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    person = drive.seed_person()
+    for cid in ("aa-copy-1", "ab-copy-2"):
+        drive.files[cid] = {
+            "name": "x",
+            "parent": person,
+            "mime": "application/pdf",
+            "appProperties": {
+                hd.MEMBER_PROP: "tm-a",
+                hd.SLOT_PROP: "ktp",
+                job.SRC_PROP: job.sha256_hex(L1)[:16],
+            },
+        }
+    monkeypatch.setattr(job, "_LIST_CAP", 2)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+    dry = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=False)
+    assert dry["census_skipped"] == 1 and dry["copy_reusable"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_failed_rollback_before_commit_still_compensates(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+    bad = "SELECT $1::text, $2::text, $3::text, $4::text, $5::text, $6::text, 1/0"
+    monkeypatch.setitem(job.CAS_SQL, "ktp", bad)
+    real_rollback = Transaction.rollback
+
+    async def rollback_fails(self: Any) -> None:
+        monkeypatch.setattr(Transaction, "rollback", real_rollback)
+        raise ConnectionResetError  # unconfirmed: no COMMIT was ever sent, the server rolls back
+
+    monkeypatch.setattr(Transaction, "rollback", rollback_fails)
+    counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=True)
+    assert counts["db_error"] == 1 and job.per_entry(counts) == 1
+    assert counts["copy_left"] == 0 and drive.trashed == drive.copies  # re-locked, re-read, trashed
+    assert (await _profile(pool, "tm-a"))["docs"]["ktp"] == L1
