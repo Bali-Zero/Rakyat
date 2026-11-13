@@ -399,6 +399,7 @@ class InvoiceAutomationService:
                 "invoice_number": invoice_number,
                 "drive_file_id": drive_file_id,
                 "drive_link": drive_web_link,
+                "email_attempted": email_attempted,
                 "email_sent": email_sent,
                 "accounting_notified": asya_notified,
             }
