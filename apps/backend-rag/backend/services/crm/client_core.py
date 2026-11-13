@@ -1160,8 +1160,8 @@ class EnhancedCRMService:
                 )
                 if not emp:
                     logger.debug(
-                        "HR bonus skip: no HR employee for email=%s",
-                        assigned_to,
+                        "HR bonus skip: no active HR employee for practice=%s",
+                        practice_id,
                     )
                     return
 
@@ -1192,8 +1192,10 @@ class EnhancedCRMService:
                 )
 
                 logger.info(
-                    f"HR bonus created: practice={practice_id}, "
-                    f"employee={assigned_to}, amount={rate['amount_idr']} IDR",
+                    "HR bonus created: practice=%s, hr_employee=%s, rate_id=%s",
+                    practice_id,
+                    emp["id"],
+                    rate["id"],
                 )
 
         except (asyncpg.PostgresError, asyncpg.InterfaceError, OSError) as e:

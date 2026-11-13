@@ -2381,6 +2381,36 @@ class TestHRBonus:
         mock_db_conn.execute.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_hr_bonus_created_log_carries_ids_only(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        from backend.app.routers import crm_practices
+        from backend.app.routers.crm_practices import _create_hr_bonus_on_completed
+
+        mock_db_conn.fetchval = AsyncMock(side_effect=[True, None])
+        mock_db_conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"code": "kitas_sponsor"},
+                {"id": 11, "amount_idr": 987654},
+                {"id": 7},
+            ]
+        )
+        with (
+            patch.object(crm_practices, "_notify_hr_bonus_pending", new=AsyncMock()),
+            caplog.at_level(logging.INFO, logger=crm_practices.logger.name),
+        ):
+            await _create_hr_bonus_on_completed(mock_db_pool, 1, "synthetic.staff@example.test")
+
+        text = " ".join(r.getMessage() for r in caplog.records)
+        assert "HR bonus created" in text
+        assert "hr_employee=7" in text
+        assert "synthetic.staff" not in text
+        assert "987654" not in text
+        assert "@" not in text
+
+    @pytest.mark.asyncio
     async def test_hr_bonus_existing_entry(
         self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock
     ) -> None:

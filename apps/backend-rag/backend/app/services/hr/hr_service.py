@@ -554,7 +554,9 @@ class HRService:
                 data.get("notes"),
             )
             logger.info(
-                f"Bonus rate upserted: {data['practice_type_code']} = {data['amount_idr']} IDR"
+                "Bonus rate upserted: practice_type=%s, rate_id=%s",
+                data["practice_type_code"],
+                row["id"],
             )
             return dict(row)
 

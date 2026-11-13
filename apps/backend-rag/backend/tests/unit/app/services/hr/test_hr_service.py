@@ -165,6 +165,20 @@ class TestBonusRates:
 # ============================================================================
 
 
+class TestBonusRateLog:
+    @pytest.mark.asyncio
+    async def test_rate_upsert_log_has_no_amount(self, hr_service, mock_db_pool, caplog):
+        import logging
+
+        mock_db_pool._mock_conn.fetchrow = AsyncMock(return_value={"id": 42})
+        data = {"practice_type_code": "tax_fake", "amount_idr": 987654}
+        with caplog.at_level(logging.INFO):
+            await hr_service.upsert_bonus_rate(data)
+        text = " ".join(r.getMessage() for r in caplog.records)
+        assert "rate_id=42" in text
+        assert "987654" not in text
+
+
 class TestBonusRateDefaults:
     @pytest.mark.asyncio
     async def test_a_rate_without_effective_from_is_stored_as_of_today(

@@ -1065,6 +1065,46 @@ async def test_hr_bonus_skips_when_table_not_exists(crm_service, mock_pool):
 
 
 @pytest.mark.asyncio
+async def test_hr_bonus_logs_carry_ids_only(crm_service, mock_pool, caplog):
+    import logging
+
+    service, _ = crm_service
+    pool, conn = mock_pool
+    email = "synthetic.staff@example.test"
+    conn.fetchval = AsyncMock(side_effect=[True, None])
+    conn.fetchrow = AsyncMock(
+        side_effect=[{"code": "kitas_sponsor"}, {"id": 11, "amount_idr": 987654}, {"id": 7}]
+    )
+    conn.execute = AsyncMock()
+    with caplog.at_level(logging.DEBUG, logger="backend.services.crm.client_core"):
+        await service._create_hr_bonus_entry(1, {"assigned_to": email})
+
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "HR bonus created" in text
+    assert "hr_employee=7" in text
+    assert "synthetic.staff" not in text
+    assert "987654" not in text
+
+
+@pytest.mark.asyncio
+async def test_hr_bonus_skip_no_employee_log_has_no_email(crm_service, mock_pool, caplog):
+    import logging
+
+    service, _ = crm_service
+    pool, conn = mock_pool
+    conn.fetchval = AsyncMock(return_value=True)
+    conn.fetchrow = AsyncMock(
+        side_effect=[{"code": "kitas_sponsor"}, {"id": 11, "amount_idr": 987654}, None]
+    )
+    with caplog.at_level(logging.DEBUG, logger="backend.services.crm.client_core"):
+        await service._create_hr_bonus_entry(1, {"assigned_to": "synthetic.staff@example.test"})
+
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "no active HR employee for practice=1" in text
+    assert "synthetic.staff" not in text
+
+
+@pytest.mark.asyncio
 async def test_hr_bonus_failure_does_not_propagate(crm_service, mock_pool):
     service, _ = crm_service
     pool, conn = mock_pool

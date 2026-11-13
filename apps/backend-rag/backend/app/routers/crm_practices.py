@@ -260,8 +260,10 @@ async def _create_hr_bonus_on_completed(
                 awarded_date,
             )
             logger.info(
-                f"HR bonus created: practice={practice_id}, "
-                f"employee={assigned_to}, amount={rate['amount_idr']} IDR"
+                "HR bonus created: practice=%s, hr_employee=%s, rate_id=%s",
+                practice_id,
+                emp["id"],
+                rate["id"],
             )
 
             # Notify HR admin (Asya) via email
