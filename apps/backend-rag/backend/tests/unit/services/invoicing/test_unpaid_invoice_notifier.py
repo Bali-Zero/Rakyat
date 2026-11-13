@@ -315,7 +315,10 @@ def test_digest_escapes_html():
         ],
         "13 November 2026",
     )
-    assert "<script>" not in body and "&lt;script&gt;" in body and "a&amp;b" in body
+    # every interpolated field is escaped, and no raw form survives
+    assert "&lt;b&gt;X&lt;/b&gt;" in body and "<b>X</b>" not in body
+    assert "&lt;script&gt;" in body and "<script>" not in body
+    assert "a&amp;b" in body and "a&b<" not in body
 
 
 async def test_query_failure_still_writes_a_heartbeat_with_the_error(pool, send, monkeypatch):
