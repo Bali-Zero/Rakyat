@@ -17,6 +17,7 @@ Design:
 import asyncio
 import json
 import os
+import re
 from typing import Any
 
 import asyncpg
@@ -60,6 +61,15 @@ _MILESTONE_EMAIL_TYPES: dict[str, str] = {
     "approved": "status_approved_client",
     "completed": "completion_client",
 }
+
+# Providers the audit table accepts (ck_email_send_log_provider); anything else is stored as NULL.
+_AUDIT_PROVIDERS = frozenset({"brevo", "zoho"})
+_PROVIDER_IN_MESSAGE = re.compile(r"\bvia (brevo|zoho|resend)\b", re.IGNORECASE)
+
+
+class EmailNotDelivered(RuntimeError):
+    """The internal send endpoint answered 200 but reported ``success=false``."""
+
 
 _RECONNECT_DELAY_S = 5  # seconds to wait before reconnecting after error
 
@@ -453,11 +463,12 @@ Zantara — Bali Zero Team
             client_id=client_id,
         )
         try:
-            await self._send_via_internal_api(to_email, subject, body, **send_kwargs)
+            provider = await self._send_via_internal_api(to_email, subject, body, **send_kwargs)
         except Exception as exc:
-            err = format_send_error(exc)
+            # The stored text never echoes the recipient: provider errors often do.
+            err = _bounded_scrub(format_send_error(exc), 400)
             await record_email_result(
-                self._db_pool, row_id, status="failed", provider="brevo", error_message=err
+                self._db_pool, row_id, status="failed", provider=None, error_message=err
             )
             notify_email_failure_critical(
                 email_type=email_type,
@@ -467,7 +478,12 @@ Zantara — Bali Zero Team
                 error=err,
             )
             raise
-        await record_email_result(self._db_pool, row_id, status="sent", provider="brevo")
+        await record_email_result(
+            self._db_pool,
+            row_id,
+            status="sent",
+            provider=provider if provider in _AUDIT_PROVIDERS else None,
+        )
 
     async def _send_via_internal_api(
         self,
@@ -478,9 +494,14 @@ Zantara — Bali Zero Team
         bcc: str | None = None,
         include_logo: bool = False,
         prebuilt_html: bool = False,
-    ) -> None:
+    ) -> str | None:
         """
         Send email via the internal /api/notifications/send-email endpoint.
+
+        Returns the provider the endpoint reports having used ("brevo", "zoho", ...) or None
+        when it does not say. Raises :class:`EmailNotDelivered` when the endpoint answers 200
+        with ``success=false`` (every provider failed, or delivery is uncertain): HTTP 200 alone
+        is not a delivery.
 
         This endpoint handles Zoho SMTP vs Brevo routing automatically
         (intra-domain @balizero.com → Zoho, external → Brevo) and supports CC/BCC.
@@ -508,6 +529,19 @@ Zantara — Bali Zero Team
                 json=payload,
             )
             response.raise_for_status()
+        try:
+            answer = response.json()
+        except Exception:
+            return None
+        if not isinstance(answer, dict):
+            return None
+        message = str(answer.get("message") or "")
+        if answer.get("success") is False:
+            raise EmailNotDelivered(
+                _bounded_scrub(message, 200) or "send endpoint reported failure"
+            )
+        found = _PROVIDER_IN_MESSAGE.search(message)
+        return found.group(1).lower() if found else None
 
 
 # ── Email copy for status milestones ──────────────────────────────────────────

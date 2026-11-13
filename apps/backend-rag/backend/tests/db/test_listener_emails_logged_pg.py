@@ -94,7 +94,7 @@ async def test_a_failed_client_send_is_a_failed_row_that_is_never_retried_as_a_s
     posts.fail = True
     await _status_change(_listener(pool), pid, "completed")
     [row] = await _rows(pool)
-    assert row["status"] == "failed" and row["provider"] == "brevo"
+    assert row["status"] == "failed" and row["provider"] is None
     assert row["error_message"] and row["retry_after"] is None
 
 
@@ -146,3 +146,25 @@ async def test_on_process_is_still_logged_once_by_its_own_sender(pool, posts):
         "process_start_client",
         "process_start_team",
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_200_with_success_false_leaves_a_failed_row_without_the_address(pool, posts):
+    """D1-8 (gate P1 + P2): all providers failed behind an HTTP 200: failed row, NULL provider,
+    and the stored text has no recipient address."""
+    pid = await _seed(pool, payment="paid")
+    posts.answer = {"success": False, "message": f"All providers failed for {CLIENT}: brevo, zoho"}
+    await _status_change(_listener(pool), pid, "completed")
+    [row] = await _rows(pool)
+    assert row["status"] == "failed" and row["provider"] is None
+    assert row["error_message"] and CLIENT not in row["error_message"]
+    assert row["retry_after"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_provider_in_the_row_is_the_one_the_endpoint_reports(pool, posts):
+    """D1-9 (gate P2): an internal recipient delivered through Zoho is a zoho row."""
+    pid = await _seed(pool)
+    posts.answer = {"success": True, "message": f"Email sent to {TEAM} via zoho"}
+    await _paid(_listener(pool), pid)
+    assert {r["provider"] for r in await _rows(pool)} == {"zoho"}
