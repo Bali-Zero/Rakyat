@@ -241,6 +241,19 @@ export interface PortalProfile {
   address?: string;
   memberSince: string;
   assignedTo?: AssignedTeamMember;
+  /**
+   * True when the API sent passportNumber/dateOfBirth masked (DAI-140):
+   * passport keeps its last 3 characters, date of birth only its year. The
+   * full values come from `revealProfileIdentity()`.
+   */
+  identityMasked?: boolean;
+  /** Computed server-side (WITA) so a masked date of birth can still glow. */
+  birthdayToday?: boolean;
+}
+
+export interface PortalProfileIdentity {
+  passportNumber?: string;
+  dateOfBirth?: string;
 }
 
 // ============================================================================
