@@ -20,6 +20,7 @@ import {
   pickCurrentPassport,
   countVoidPassports,
   downloadHrefFor,
+  getDocumentOpenUrl,
 } from "./utils";
 import { dateValidity } from "./documentValidity";
 import { resolveCardDay } from "./witaClock";
@@ -78,14 +79,18 @@ export function PassportCard({
 
   const expiryDays = expiry.daysLeft;
 
-  // Convert Drive view URL to direct download URL
-  const getDownloadUrl = downloadHrefFor;
+  // Where Download goes. Portal uploads carry `file_id` + `file_url` and never
+  // `google_drive_file_url`, so the Documents tab's rule comes first; the
+  // card's own URL rule (proxy for Drive, https as itself) is the fallback.
+  const passportDownloadUrl = passportDoc
+    ? (getDocumentOpenUrl(passportDoc) ??
+      downloadHrefFor(passportDoc.google_drive_file_url))
+    : null;
 
   const handleDownload = (e: React.MouseEvent) => {
     e.preventDefault();
-    if (passportImageUrl) {
-      const downloadUrl = getDownloadUrl(passportImageUrl);
-      if (!downloadUrl) return;
+    const downloadUrl = passportDownloadUrl;
+    if (downloadUrl) {
       const link = document.createElement("a");
       link.href = downloadUrl;
       link.download = `passport_${client.full_name?.replace(/\s+/g, "_") || "document"}.pdf`;
@@ -298,7 +303,7 @@ export function PassportCard({
             size="sm"
             className="gap-1.5 border-[var(--line-control)]"
             onClick={handleDownload}
-            disabled={!passportImageUrl}
+            disabled={!passportDownloadUrl}
             aria-label="Download passport"
           >
             <Download className="h-4 w-4" aria-hidden="true" />
