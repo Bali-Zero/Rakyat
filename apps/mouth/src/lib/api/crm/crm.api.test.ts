@@ -455,6 +455,27 @@ describe("CrmApi", () => {
           "/api/crm/practices?status=active&limit=10",
         );
       });
+
+      it("should send the search text, encoded, with the other filters", async () => {
+        mockClient.request.mockResolvedValue([]);
+
+        await crmApi.getPractices({
+          search: "m\u00fcller +62 812",
+          month: "2026-11",
+        });
+
+        expect(mockClient.request).toHaveBeenCalledWith(
+          "/api/crm/practices?month=2026-11&search=m%C3%BCller+%2B62+812",
+        );
+      });
+
+      it("should not send an empty search", async () => {
+        mockClient.request.mockResolvedValue([]);
+
+        await crmApi.getPractices({ search: "" });
+
+        expect(mockClient.request).toHaveBeenCalledWith("/api/crm/practices");
+      });
     });
 
     describe("createPractice", () => {
