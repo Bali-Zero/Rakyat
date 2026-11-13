@@ -333,6 +333,9 @@ class InvoiceAutomationService:
                     filename=filename,
                     entity=issuer_decision.entity,
                     amount=final_amount_float,
+                    client_email_status=(
+                        "sent" if email_sent else ("failed" if email_attempted else "no_email")
+                    ),
                 )
                 asya_notified = True
                 accounting_notified = True
@@ -534,15 +537,43 @@ class InvoiceAutomationService:
         filename: str,
         entity: InvoiceEntity,
         amount: float,
+        client_email_status: str = "sent",
     ) -> bool:
-        """Send notification email to accounting (Asya) via internal email API."""
+        """Send notification email to accounting (Asya) via internal email API.
+
+        ``client_email_status`` says what really happened to the client's own mail:
+        "sent", "failed" (the send raised) or "no_email" (the client has no address).
+        The text never claims the client was emailed unless it was.
+        """
         subject = f"[TEAM] New Invoice {invoice_number} - {client_data['full_name']}"
+        name = client_data["full_name"]
+        if client_email_status == "no_email":
+            intro = (
+                f"Hi Asya — a new invoice has been generated for {name}. The client has NO email "
+                "address on file, so the invoice was NOT emailed to them. PDF attached."
+            )
+            first_step = (
+                "Send the invoice to the client yourself: contact them by WhatsApp or another "
+                "channel (they were not emailed) and follow up on payment"
+            )
+        elif client_email_status == "failed":
+            intro = (
+                f"Hi Asya — a new invoice has been generated for {name}, but the email to the "
+                "client FAILED, so they have NOT received it. PDF attached."
+            )
+            first_step = (
+                "Send the invoice to the client yourself by WhatsApp or another channel "
+                "(the automatic email failed) and follow up on payment"
+            )
+        else:
+            intro = f"Hi Asya — a new invoice has been generated and sent to {name}. PDF attached."
+            first_step = "Reach out to the client via WhatsApp for payment follow-up"
         body_html = team_email_html(
             title=f"New Invoice {invoice_number}",
-            intro=f"Hi Asya — a new invoice has been generated and sent to {client_data['full_name']}. PDF attached.",
+            intro=intro,
             meta_rows=[
                 ("Client", client_data["full_name"]),
-                ("Email", client_data.get("email") or "—"),
+                ("Email", client_data.get("email") or "— (no email on file)"),
                 ("Practice", f"#{practice_data['id']}"),
                 ("Issuing Company", entity.company_name),
                 ("Bank Name", entity.bank_name),
@@ -551,7 +582,7 @@ class InvoiceAutomationService:
             body_html=(
                 "<b>Next steps:</b>"
                 "<ol style='margin:6px 0 4px 18px;padding:0;'>"
-                "<li>Reach out to the client via WhatsApp for payment follow-up</li>"
+                f"<li>{first_step}</li>"
                 "<li>Keep an eye on our bank account</li>"
                 "<li>Once payment comes through, update the status to ON PROCESS</li>"
                 "</ol>"
