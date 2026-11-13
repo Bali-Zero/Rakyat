@@ -2385,7 +2385,7 @@ class TestHRBonus:
         mock_db_conn.fetchval = AsyncMock(return_value=True)
         mock_db_conn.fetchrow = AsyncMock(
             side_effect=[
-                {"code": "kitas_sponsor"},  # practice type
+                {"code": "kitas_sponsor", "name": "KITAS Sponsor"},  # practice type
                 None,  # no rate
             ]
         )
@@ -2403,7 +2403,7 @@ class TestHRBonus:
         mock_db_conn.fetchval = AsyncMock(return_value=True)
         mock_db_conn.fetchrow = AsyncMock(
             side_effect=[
-                {"code": "kitas_sponsor"},  # practice type
+                {"code": "kitas_sponsor", "name": "KITAS Sponsor"},  # practice type
                 {"id": 1, "amount_idr": 500000},  # rate
                 None,  # no employee
             ]
@@ -2425,7 +2425,7 @@ class TestHRBonus:
         mock_db_conn.fetchval = AsyncMock(side_effect=[True, None])
         mock_db_conn.fetchrow = AsyncMock(
             side_effect=[
-                {"code": "kitas_sponsor"},
+                {"code": "kitas_sponsor", "name": "KITAS Sponsor"},
                 {"id": 11, "amount_idr": 987654},
                 {"id": 7},
             ]
@@ -2452,7 +2452,7 @@ class TestHRBonus:
         mock_db_conn.fetchval = AsyncMock(side_effect=[True, 99])  # table exists, existing entry
         mock_db_conn.fetchrow = AsyncMock(
             side_effect=[
-                {"code": "kitas_sponsor"},  # practice type
+                {"code": "kitas_sponsor", "name": "KITAS Sponsor"},  # practice type
                 {"id": 1, "amount_idr": 500000},  # rate
                 {"id": 7},  # employee
             ]
@@ -2469,7 +2469,7 @@ class TestHRBonus:
         mock_db_conn.fetchval = AsyncMock(side_effect=[True, None])  # table exists, no existing
         mock_db_conn.fetchrow = AsyncMock(
             side_effect=[
-                {"code": "kitas_sponsor"},
+                {"code": "kitas_sponsor", "name": "KITAS Sponsor"},
                 {"id": 1, "amount_idr": 500000},
                 {"id": 7},
             ]
@@ -2512,7 +2512,7 @@ class TestNotifyHRBonus:
             await _notify_hr_bonus_pending(
                 mock_pool,
                 "team@balizero.com",
-                "kitas_sponsor",
+                "KITAS Sponsor",
                 500000,
                 42,
             )
@@ -2523,6 +2523,60 @@ class TestNotifyHRBonus:
         assert call_kwargs.kwargs["email_type"] == "hr_bonus"
         assert call_kwargs.kwargs["practice_id"] == 42
         assert call_kwargs.kwargs["pool"] is mock_pool
+        assert call_kwargs.kwargs["subject"] == "HR Bonus Pending: KITAS Sponsor — Rp 500.000"
+        assert "KITAS Sponsor" in call_kwargs.kwargs["body"]
+
+    @pytest.mark.parametrize("missing", [None, "", "   "])
+    @pytest.mark.asyncio
+    async def test_notify_never_shows_the_code_when_the_name_is_missing(
+        self, missing: str | None
+    ) -> None:
+        from backend.app.routers.crm_practices import _notify_hr_bonus_pending
+
+        with patch(
+            "backend.app.routers.crm_practices.send_internal_email", new=AsyncMock()
+        ) as mock_send:
+            await _notify_hr_bonus_pending(MagicMock(), "team@balizero.com", missing, 500000, 42)
+        kwargs = mock_send.call_args.kwargs
+        assert kwargs["subject"] == "HR Bonus Pending: Unnamed service — Rp 500.000"
+        assert "Unnamed service (#42)" in kwargs["body"]
+        assert "_" not in kwargs["subject"].split(":", 1)[1].split("—")[0]
+
+    @pytest.mark.asyncio
+    async def test_notify_escapes_the_name_in_the_body_but_not_the_subject_text(self) -> None:
+        from backend.app.routers.crm_practices import _notify_hr_bonus_pending
+
+        with patch(
+            "backend.app.routers.crm_practices.send_internal_email", new=AsyncMock()
+        ) as mock_send:
+            await _notify_hr_bonus_pending(
+                MagicMock(), "team@balizero.com", "R&D <b>Visa</b>", 1000, 7
+            )
+        kwargs = mock_send.call_args.kwargs
+        assert "R&amp;D &lt;b&gt;Visa&lt;/b&gt;" in kwargs["body"]
+        assert "<b>" not in kwargs["body"].split("<strong>Practice:</strong>")[1].split("<br>")[0]
+
+    @pytest.mark.asyncio
+    async def test_hook_passes_the_service_name_from_practice_types_to_the_mail(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock
+    ) -> None:
+        from backend.app.routers import crm_practices
+
+        mock_db_conn.fetchval = AsyncMock(side_effect=[True, None])
+        mock_db_conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"code": "kitas_sponsor", "name": "KITAS Sponsor"},
+                {"id": 1, "amount_idr": 500000},
+                {"id": 7},
+            ]
+        )
+        mock_db_conn.execute = AsyncMock(return_value=None)
+        with patch.object(crm_practices, "_notify_hr_bonus_pending", new=AsyncMock()) as notify:
+            await crm_practices._create_hr_bonus_on_completed(mock_db_pool, 5, "team@balizero.com")
+        first_sql = mock_db_conn.fetchrow.await_args_list[0].args[0]
+        assert "pt.name" in first_sql and "pt.code AS name" not in first_sql
+        assert notify.await_args.args[2] == "KITAS Sponsor"
+        assert "kitas_sponsor" not in [str(a) for a in notify.await_args.args[2:]]
 
 
 # ---------------------------------------------------------------------------

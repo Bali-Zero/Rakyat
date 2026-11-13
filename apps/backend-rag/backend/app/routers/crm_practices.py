@@ -192,7 +192,7 @@ async def _create_hr_bonus_on_completed(
 
             pt = await conn.fetchrow(
                 """
-                SELECT pt.code FROM practice_types pt
+                SELECT pt.code, pt.name FROM practice_types pt
                 JOIN practices p ON p.practice_type_id = pt.id
                 WHERE p.id = $1
                 """,
@@ -202,6 +202,7 @@ async def _create_hr_bonus_on_completed(
                 return
 
             practice_type_code = pt["code"]
+            practice_type_name = pt["name"]
 
             rate = await conn.fetchrow(
                 """
@@ -270,7 +271,7 @@ async def _create_hr_bonus_on_completed(
             await _notify_hr_bonus_pending(
                 db_pool,
                 assigned_to,
-                practice_type_code,
+                practice_type_name,
                 rate["amount_idr"],
                 practice_id,
             )
@@ -278,10 +279,20 @@ async def _create_hr_bonus_on_completed(
         logger.warning("HR bonus hook failed for practice %s (%s)", practice_id, type(e).__name__)
 
 
+def hr_bonus_service_label(practice_type_name: str | None) -> str:
+    """Service display name for the HR bonus mail; never the raw service code.
+
+    A missing or blank ``practice_types.name`` falls back to a neutral label; the mail body
+    already shows the practice id next to it.
+    """
+    name = " ".join((practice_type_name or "").split())
+    return name or "Unnamed service"
+
+
 async def _notify_hr_bonus_pending(
     db_pool: asyncpg.Pool,
     employee_email: str,
-    practice_type: str,
+    practice_type_name: str | None,
     amount_idr: int,
     practice_id: int,
 ) -> None:
@@ -293,7 +304,7 @@ async def _notify_hr_bonus_pending(
     from html import escape
 
     amount_fmt = f"Rp {amount_idr:,}".replace(",", ".")
-    practice_label = practice_type.replace("_", " ").title()
+    practice_label = hr_bonus_service_label(practice_type_name)
 
     safe_email = escape(employee_email)
     safe_label = escape(practice_label)
