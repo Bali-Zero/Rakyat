@@ -30,7 +30,9 @@ from backend.services.crm.practice_state_machine import (
     OPEN_INQUIRY_TYPE_CODE,
     STATES_WITHOUT_SERVICE,
     InvalidTransitionError,
+    QuotedPriceRequiredError,
     normalize_state,
+    validate_quoted_price_for_invoice,
     validate_service_selected,
     validate_transition,
 )
@@ -596,6 +598,12 @@ async def create_practice(
 
             # Use base_price if no quoted price provided
             quoted_price = practice.quoted_price or practice_type_row["base_price"]
+
+            # A practice cannot be CREATED straight into Sending Invoice without a price either.
+            try:
+                validate_quoted_price_for_invoice(practice.status, quoted_price)
+            except QuotedPriceRequiredError as e:
+                raise HTTPException(status_code=422, detail=str(e)) from e
 
             # Auto-assign: if not explicitly set, inherit from client or use creator
             assigned_to = practice.assigned_to
@@ -1589,6 +1597,22 @@ async def update_practice(
                 update_fields.append(f"{column_name} = ${param_index}")
                 params.append(value)
                 param_index += 1
+
+            # Owner decision 2026-11-13: no move INTO Sending Invoice without a Quoted Price.
+            # The effective price is the one this same PATCH writes (explicit, or back-filled
+            # from a service chosen in it), else the one on the row; a PATCH that sets price
+            # and status together passes. Only entering the status is gated: a practice
+            # already in Sending Invoice keeps accepting unrelated edits.
+            if updates.status and normalize_state(old_status or "") != "sending_invoice":
+                try:
+                    validate_quoted_price_for_invoice(
+                        updates.status,
+                        update_set["quoted_price"]
+                        if "quoted_price" in update_set
+                        else old_quoted_price,
+                    )
+                except QuotedPriceRequiredError as e:
+                    raise HTTPException(status_code=422, detail=str(e)) from e
 
             # Autoset date fields on status transitions (only if not already in DB
             # and caller did not pass an explicit value). Uses NOW() server-side,

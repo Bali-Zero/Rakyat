@@ -19,6 +19,10 @@ import asyncpg
 from backend.phone_lock import lock_phone_cores
 from backend.services.common.background import spawn
 from backend.services.crm.gender import normalize_gender
+from backend.services.crm.practice_state_machine import (
+    normalize_state,
+    validate_quoted_price_for_invoice,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -312,6 +316,21 @@ class CRMQueryOptimizer:
                 practice_id = update.pop("id")
                 if not update:
                     continue
+                # Entering Sending Invoice needs a Quoted Price: this batch's own, else the row's.
+                if normalize_state(str(update.get("status") or "")) == "sending_invoice":
+                    row = await conn.fetchrow(
+                        "SELECT status, quoted_price FROM practices WHERE id = $1", practice_id
+                    )
+                    if (
+                        row is not None
+                        and normalize_state(row["status"] or "") != "sending_invoice"
+                    ):
+                        validate_quoted_price_for_invoice(
+                            "sending_invoice",
+                            update["quoted_price"]
+                            if "quoted_price" in update
+                            else row["quoted_price"],
+                        )
                 fields = []
                 values = []
                 for i, (key, value) in enumerate(update.items(), start=1):

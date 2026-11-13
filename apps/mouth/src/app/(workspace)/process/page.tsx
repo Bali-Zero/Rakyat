@@ -41,6 +41,11 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
+import {
+  QUOTED_PRICE_REQUIRED_TEXT_ID,
+  isQuotedPriceRefusal,
+  needsQuotedPriceBefore,
+} from "@/lib/api/crm/state-machine";
 import { api } from "@/lib/api";
 import { logger } from "@/lib/logger";
 import { toError } from "@/lib/types/common";
@@ -450,7 +455,12 @@ export default function PratichePage() {
         { component: "Process", action: "updateStatus" },
         toError(error),
       );
-      toast.error("Error", "Failed to update process status");
+      toast.error(
+        "Error",
+        isQuotedPriceRefusal(error)
+          ? QUOTED_PRICE_REQUIRED_TEXT_ID
+          : "Failed to update process status",
+      );
     } finally {
       setUpdatingId(null);
     }
@@ -2015,34 +2025,50 @@ export default function PratichePage() {
             </div>
           </div>
           <div className="max-h-[300px] overflow-y-auto p-1 space-y-0.5">
-            {STATUS_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                onClick={() =>
-                  handleStatusChange(selectedPractice.id, option.value)
-                }
-                disabled={
-                  selectedPractice.status === option.value ||
-                  updatingId !== null
-                }
-                className={`w-full px-3 py-2 text-left text-sm rounded-md transition-colors flex items-center justify-between group ${
-                  selectedPractice.status === option.value
-                    ? "bg-[var(--bz-accent)]/10 text-[var(--bz-accent)] font-medium"
-                    : "text-[var(--bz-text-1)] hover:bg-[var(--bz-accent)]/10 hover:text-[var(--bz-accent)]"
-                } ${updatingId !== null ? "opacity-50 cursor-not-allowed" : ""}`}
-              >
-                <div className="flex items-center gap-2">
-                  <span
-                    className="w-2 h-2 rounded-full"
-                    style={statusDotStyle(option.column)}
-                  />
-                  {option.label}
-                </div>
-                {selectedPractice.status === option.value && (
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                )}
-              </button>
-            ))}
+            {STATUS_OPTIONS.map((option) => {
+              const needsPrice = needsQuotedPriceBefore(
+                option.value,
+                selectedPractice.quoted_price,
+                selectedPractice.status,
+              );
+              return (
+                <button
+                  key={option.value}
+                  title={needsPrice ? QUOTED_PRICE_REQUIRED_TEXT_ID : undefined}
+                  onClick={() =>
+                    handleStatusChange(selectedPractice.id, option.value)
+                  }
+                  disabled={
+                    selectedPractice.status === option.value ||
+                    needsPrice ||
+                    updatingId !== null
+                  }
+                  className={`w-full px-3 py-2 text-left text-sm rounded-md transition-colors flex items-center justify-between group ${
+                    selectedPractice.status === option.value
+                      ? "bg-[var(--bz-accent)]/10 text-[var(--bz-accent)] font-medium"
+                      : "text-[var(--bz-text-1)] hover:bg-[var(--bz-accent)]/10 hover:text-[var(--bz-accent)]"
+                  } ${updatingId !== null || needsPrice ? "opacity-50 cursor-not-allowed" : ""}`}
+                >
+                  <div className="flex flex-col">
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="w-2 h-2 rounded-full"
+                        style={statusDotStyle(option.column)}
+                      />
+                      {option.label}
+                    </span>
+                    {needsPrice && (
+                      <span className="text-[10px] text-[var(--bz-text-2)] pl-4">
+                        {QUOTED_PRICE_REQUIRED_TEXT_ID}
+                      </span>
+                    )}
+                  </div>
+                  {selectedPractice.status === option.value && (
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              );
+            })}
           </div>
           {/* Payment Status Section */}
           <div className="border-t border-[var(--bz-border)] px-3 py-2">
