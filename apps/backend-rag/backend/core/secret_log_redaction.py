@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 from urllib.parse import unquote_plus
 
 # `bot<digits>:<35ish url-safe chars>` — Telegram's own shape. The id half is
@@ -181,6 +182,15 @@ install_telegram_token_redaction = install_secret_log_redaction
 # that level changes.
 _SENSITIVE_QUERY_KEYS = frozenset({"search", "q"})
 _ACCESS_LOGGERS = ("uvicorn.access",)
+
+
+def redact_query_params(params: Mapping[str, str] | None) -> dict[str, str]:
+    """Parsed query params for a trace or an audit row: the VALUE of ``search`` / ``q`` is
+    replaced (names, e-mails and phones are typed there), every other param is kept."""
+    return {
+        key: "***" if str(key).strip().lower() in _SENSITIVE_QUERY_KEYS else value
+        for key, value in dict(params or {}).items()
+    }
 
 
 def redact_query_values(target: str) -> str:

@@ -182,6 +182,7 @@ async def firms(pool: asyncpg.Pool) -> None:  # noqa: F811
     await link_company(pool, holder, "PT Kéy Ünit Tbk")
     await link_company(pool, holder, "PT X")
     await link_company(pool, holder, "Delta Mining")
+    await link_company(pool, holder, "ABC Trading")
 
 
 class TestCompanySearch:
@@ -198,6 +199,11 @@ class TestCompanySearch:
     async def test_typed_affix_finds_a_name_stored_without_it(self, pool, firms):  # noqa: F811
         assert await companies(pool, "PT Delta") == ["Delta Mining"]
         assert await companies(pool, "CV Delta Mining Tbk") == ["Delta Mining"]
+
+    @pytest.mark.asyncio
+    async def test_a_leading_accented_letter_is_not_dropped(self, pool, firms):  # noqa: F811
+        assert await companies(pool, "\u00c1BC") == ["ABC Trading"]
+        assert await companies(pool, "PT \u00c1BC trading") == ["ABC Trading"]
 
     @pytest.mark.asyncio
     async def test_accent_and_case_insensitive(self, pool, firms):  # noqa: F811
@@ -222,4 +228,4 @@ class TestCompanySearch:
 
     @pytest.mark.asyncio
     async def test_no_search_lists_all(self, pool, firms):  # noqa: F811
-        assert len(await companies(pool, None)) == 5
+        assert len(await companies(pool, None)) == 6

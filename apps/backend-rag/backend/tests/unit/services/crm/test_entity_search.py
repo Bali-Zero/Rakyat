@@ -134,6 +134,13 @@ class TestCompanySearch:
         assert (await build_company_search(conn, "CV Acme Tbk", 1)).params == ["acme"]
 
     @pytest.mark.asyncio
+    async def test_a_leading_accented_letter_survives_the_affix_rule(self, conn):
+        for typed in ("\u00c1BC", "PT \u00c1BC", "cv \u00c1bc Tbk"):
+            built = await build_company_search(conn, typed, 1)
+            assert built is not None, typed
+            assert built.params == ["abc"], typed
+
+    @pytest.mark.asyncio
     async def test_plain_lowercase_name_matches_the_same_key(self, conn):
         assert (await build_company_search(conn, "acme", 1)).params == ["acme"]
 

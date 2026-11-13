@@ -192,6 +192,31 @@ async def test_happy_path_logs_api_call_with_correct_metadata(
 
 
 @pytest.mark.asyncio
+async def test_search_values_never_reach_the_audit_row(
+    middleware: ActivityLoggingMiddleware, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    logger_mock = MagicMock()
+    logger_mock.log_api_call = AsyncMock()
+    logger_mock.log_session = AsyncMock()
+    monkeypatch.setattr("backend.middleware.activity_logging.activity_logger", logger_mock)
+    request = _make_request(
+        path="/api/crm/practices",
+        method="GET",
+        user={"email": "user@balizero.com"},
+        headers={"User-Agent": "pytest/1.0"},
+        cookies={},
+        query_params={"search": "uji-nonpii-name", "q": "uji-nonpii-q", "month": "2026-11"},
+        client_host="203.0.113.10",
+    )
+
+    await middleware.dispatch(request, AsyncMock(return_value=_make_response(200)))
+
+    kwargs = logger_mock.log_api_call.await_args.kwargs
+    assert kwargs["query_params"] == {"search": "***", "q": "***", "month": "2026-11"}
+    assert "uji-nonpii" not in repr(kwargs)
+
+
+@pytest.mark.asyncio
 async def test_get_requests_do_not_forward_request_body(
     middleware: ActivityLoggingMiddleware, monkeypatch: pytest.MonkeyPatch
 ) -> None:

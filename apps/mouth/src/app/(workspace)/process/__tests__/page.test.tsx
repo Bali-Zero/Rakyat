@@ -488,21 +488,22 @@ describe("Cases Page", () => {
       });
     });
 
-    it("finds a client typed lowercase without accents", async () => {
+    it("finds a client typed lowercase without accents, even one not in the loaded list", async () => {
       const user = userEvent.setup();
       const accented: Practice = {
         ...mockPractices[0],
         id: 9,
         client_name: "M\u00fcller Anna",
       };
+      // The month list (first 200 cards) does not hold her; only the search can return her.
       vi.mocked(api.crm.getPractices).mockImplementation(async (params) =>
         params?.search
           ? serverSearch([accented, ...mockPractices], params.search)
-          : [accented, ...mockPractices],
+          : mockPractices,
       );
       render(<PratichePage />);
       await waitFor(() => {
-        expect(screen.getByText("M\u00fcller Anna")).toBeInTheDocument();
+        expect(screen.getByText("John Doe")).toBeInTheDocument();
       });
 
       await user.type(

@@ -121,12 +121,13 @@ async def build_company_search(
     """AND-clause for ``companies c``; None = use the legacy ILIKE on the raw text.
 
     A token matches a company when it is inside the compact folded name (after the PT / CV / Tbk
-    affixes are dropped from the typed text) or, when numeric, inside the NIB / NPWP digits.
+    affixes are dropped from the folded typed words) or, when numeric, inside the NIB / NPWP digits.
     """
-    text = search.strip()
-    # Affixes are a name rule: a query with no letter (an NIB / NPWP fragment) is left alone.
-    stripped = (strip_company_affixes(text) or text) if any(ch.isalpha() for ch in text) else text
-    tokens = await search_tokens(conn, stripped)
+    tokens = await search_tokens(conn, search)
+    # The affix rule runs on the FOLDED tokens (plain a-z0-9 words), never on the raw text: the
+    # shared rule trims every non-ASCII edge letter, so "ÁBC" would lose its first letter.
+    folded = " ".join(tokens)
+    tokens = (strip_company_affixes(folded) or folded).split()
     if not tokens:
         return EntitySearch(" AND FALSE", [], start_index)
     if all(len(t) < MIN_TRIGRAM for t in tokens):

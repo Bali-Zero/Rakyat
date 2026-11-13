@@ -230,10 +230,12 @@ export default function PratichePage() {
   const [practices, setPractices] = useState<Practice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  // Ids the backend smart search matched for `query` (case, accents, word order, phone formats).
+  // Practices the backend smart search returned for `query` in `month` (case, accents, word
+  // order, phone formats). Valid only while both still match what is on screen.
   const [serverMatch, setServerMatch] = useState<{
     query: string;
-    ids: Set<number>;
+    month: string;
+    rows: Practice[];
   } | null>(null);
   const debouncedSearch = useDebounce(searchQuery.trim(), 300);
   // P2.2: persist the view toggle across navigations (lazy-init + write-through)
@@ -360,12 +362,14 @@ export default function PratichePage() {
         search: debouncedSearch,
         month: selectedMonth,
         limit: 200,
+        include_history: true,
       })
       .then((rows) => {
         if (!cancelled) {
           setServerMatch({
             query: debouncedSearch,
-            ids: new Set(rows.map((r) => r.id)),
+            month: selectedMonth,
+            rows,
           });
         }
       })
@@ -627,133 +631,141 @@ export default function PratichePage() {
   const activeFiltersCount = Object.values(filters).filter(Boolean).length;
 
   // Memoize filtered and sorted practices to avoid unnecessary recalculations
-  const filteredPractices = useMemo(
-    () =>
-      practices
-        .filter((p) => {
-          // Search filter
-          if (searchQuery.trim() && serverMatch?.query === searchQuery.trim()) {
-            if (!serverMatch.ids.has(p.id)) return false;
-          } else if (searchQuery) {
-            const matchesSearch =
-              p.id.toString().includes(searchQuery) ||
-              p.client_name
-                ?.toLowerCase()
-                .includes(searchQuery.toLowerCase()) ||
-              p.practice_type_code
-                ?.toLowerCase()
-                .includes(searchQuery.toLowerCase());
-            if (!matchesSearch) return false;
-          }
+  const filteredPractices = useMemo(() => {
+    // The backend answer replaces the loaded list for this query and month, so a match older
+    // than the first 200 loaded cards is still shown; local edits win over the returned copy.
+    const serverRows =
+      searchQuery.trim() &&
+      serverMatch?.query === searchQuery.trim() &&
+      serverMatch.month === selectedMonth
+        ? serverMatch.rows
+        : null;
+    const loaded = new Map(practices.map((p) => [p.id, p]));
+    const source = serverRows
+      ? serverRows.map((p) => loaded.get(p.id) ?? p)
+      : practices;
+    return source
+      .filter((p) => {
+        // Search filter (the local one answers until the backend does, or if it fails)
+        if (!serverRows && searchQuery) {
+          const matchesSearch =
+            p.id.toString().includes(searchQuery) ||
+            p.client_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            p.practice_type_code
+              ?.toLowerCase()
+              .includes(searchQuery.toLowerCase());
+          if (!matchesSearch) return false;
+        }
 
-          // Status filter
-          if (
-            filters.status &&
-            !matchesStatusFilter(p.status, filters.status)
-          ) {
+        // Status filter
+        if (filters.status && !matchesStatusFilter(p.status, filters.status)) {
+          return false;
+        }
+
+        // Type filter
+        if (filters.type && p.practice_type_code !== filters.type) {
+          return false;
+        }
+
+        // Assigned to filter
+        if (filters.assigned_to && p.client_lead !== filters.assigned_to) {
+          return false;
+        }
+
+        // Payment filter
+        if (filters.payment_filter === "unpaid") {
+          if (p.payment_status !== "unpaid" && p.payment_status !== "partial") {
             return false;
           }
+        }
 
-          // Type filter
-          if (filters.type && p.practice_type_code !== filters.type) {
-            return false;
-          }
+        // Priority filter
+        if (filters.priority && p.priority !== filters.priority) {
+          return false;
+        }
 
-          // Assigned to filter
-          if (filters.assigned_to && p.client_lead !== filters.assigned_to) {
-            return false;
-          }
+        // Expiring soon filter (within 30 days)
+        if (filters.expiring) {
+          if (!p.expiry_date) return false;
+          const daysLeft = Math.ceil(
+            (new Date(p.expiry_date).getTime() - Date.now()) / 86400000,
+          );
+          if (daysLeft < 0 || daysLeft > 30) return false;
+        }
 
-          // Payment filter
-          if (filters.payment_filter === "unpaid") {
-            if (
-              p.payment_status !== "unpaid" &&
-              p.payment_status !== "partial"
-            ) {
-              return false;
-            }
-          }
+        // Stale filter: not updated in >14 days (only non-completed)
+        if (filters.stale) {
+          if (p.status === "completed") return false;
+          if (!p.updated_at) return true;
+          const ageDays = Math.floor(
+            (Date.now() - new Date(p.updated_at).getTime()) / 86400000,
+          );
+          if (ageDays <= 14) return false;
+        }
 
-          // Priority filter
-          if (filters.priority && p.priority !== filters.priority) {
-            return false;
-          }
+        return true;
+      })
+      .sort((a, b) => {
+        let comparison = 0;
 
-          // Expiring soon filter (within 30 days)
-          if (filters.expiring) {
-            if (!p.expiry_date) return false;
-            const daysLeft = Math.ceil(
-              (new Date(p.expiry_date).getTime() - Date.now()) / 86400000,
+        switch (sortField) {
+          case "id":
+            comparison = (a.id || 0) - (b.id || 0);
+            break;
+          case "practice_type_code":
+            comparison = (a.practice_type_code || "").localeCompare(
+              b.practice_type_code || "",
             );
-            if (daysLeft < 0 || daysLeft > 30) return false;
-          }
-
-          // Stale filter: not updated in >14 days (only non-completed)
-          if (filters.stale) {
-            if (p.status === "completed") return false;
-            if (!p.updated_at) return true;
-            const ageDays = Math.floor(
-              (Date.now() - new Date(p.updated_at).getTime()) / 86400000,
+            break;
+          case "client_name":
+            comparison = (a.client_name || "").localeCompare(
+              b.client_name || "",
             );
-            if (ageDays <= 14) return false;
+            break;
+          case "client_lead":
+            comparison = (a.client_lead || "").localeCompare(
+              b.client_lead || "",
+            );
+            break;
+          case "status":
+            comparison = (a.status || "").localeCompare(b.status || "");
+            break;
+          case "priority": {
+            const priorityOrder: Record<string, number> = {
+              urgent: 0,
+              high: 1,
+              normal: 2,
+            };
+            comparison =
+              (priorityOrder[a.priority || "normal"] ?? 2) -
+              (priorityOrder[b.priority || "normal"] ?? 2);
+            break;
           }
+          case "created_at":
+            comparison =
+              new Date(a.created_at || 0).getTime() -
+              new Date(b.created_at || 0).getTime();
+            break;
+          case "updated_at":
+            comparison =
+              new Date(a.updated_at || 0).getTime() -
+              new Date(b.updated_at || 0).getTime();
+            break;
+          default:
+            comparison = 0;
+        }
 
-          return true;
-        })
-        .sort((a, b) => {
-          let comparison = 0;
-
-          switch (sortField) {
-            case "id":
-              comparison = (a.id || 0) - (b.id || 0);
-              break;
-            case "practice_type_code":
-              comparison = (a.practice_type_code || "").localeCompare(
-                b.practice_type_code || "",
-              );
-              break;
-            case "client_name":
-              comparison = (a.client_name || "").localeCompare(
-                b.client_name || "",
-              );
-              break;
-            case "client_lead":
-              comparison = (a.client_lead || "").localeCompare(
-                b.client_lead || "",
-              );
-              break;
-            case "status":
-              comparison = (a.status || "").localeCompare(b.status || "");
-              break;
-            case "priority": {
-              const priorityOrder: Record<string, number> = {
-                urgent: 0,
-                high: 1,
-                normal: 2,
-              };
-              comparison =
-                (priorityOrder[a.priority || "normal"] ?? 2) -
-                (priorityOrder[b.priority || "normal"] ?? 2);
-              break;
-            }
-            case "created_at":
-              comparison =
-                new Date(a.created_at || 0).getTime() -
-                new Date(b.created_at || 0).getTime();
-              break;
-            case "updated_at":
-              comparison =
-                new Date(a.updated_at || 0).getTime() -
-                new Date(b.updated_at || 0).getTime();
-              break;
-            default:
-              comparison = 0;
-          }
-
-          return sortOrder === "asc" ? comparison : -comparison;
-        }),
-    [practices, searchQuery, serverMatch, filters, sortField, sortOrder],
-  );
+        return sortOrder === "asc" ? comparison : -comparison;
+      });
+  }, [
+    practices,
+    searchQuery,
+    serverMatch,
+    selectedMonth,
+    filters,
+    sortField,
+    sortOrder,
+  ]);
 
   // Memoize practices by status to avoid unnecessary recalculations
   // Simplified 5-step workflow: inquiry → waiting_documents → sending_invoice → on_process → completed
