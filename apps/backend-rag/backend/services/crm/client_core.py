@@ -1020,34 +1020,37 @@ class EnhancedCRMService:
         """Aggiorna stato pratica con audit trail."""
         try:
             async with self.db_pool.acquire() as conn:
-                old = await conn.fetchrow(
-                    "SELECT status, client_id, quoted_price FROM practices WHERE id = $1",
-                    practice_id,
-                )
+                # One transaction: FOR UPDATE keeps a concurrent price write out until the move lands.
+                async with conn.transaction():
+                    old = await conn.fetchrow(
+                        "SELECT status, client_id, quoted_price FROM practices WHERE id = $1"
+                        " FOR UPDATE",
+                        practice_id,
+                    )
 
-                if not old:
-                    raise ResourceNotFoundError("Practice", str(practice_id))
+                    if not old:
+                        raise ResourceNotFoundError("Practice", str(practice_id))
 
-                old_status = old["status"]
-                # Entering Sending Invoice needs a Quoted Price (the row's: this path sets no price).
-                if (
-                    normalize_state(new_status or "") == "sending_invoice"
-                    and normalize_state(old_status or "") != "sending_invoice"
-                ):
-                    validate_quoted_price_for_invoice(new_status, old["quoted_price"])
+                    old_status = old["status"]
+                    # Entering Sending Invoice needs a Quoted Price (the row's: this path sets no price).
+                    if (
+                        normalize_state(new_status or "") == "sending_invoice"
+                        and normalize_state(old_status or "") != "sending_invoice"
+                    ):
+                        validate_quoted_price_for_invoice(new_status, old["quoted_price"])
 
-                row = await conn.fetchrow(
-                    """
-                    UPDATE practices
-                    SET status = $1, updated_at = NOW()
-                    WHERE id = $2
-                    RETURNING *
-                    """,
-                    new_status,
-                    practice_id,
-                )
+                    row = await conn.fetchrow(
+                        """
+                        UPDATE practices
+                        SET status = $1, updated_at = NOW()
+                        WHERE id = $2
+                        RETURNING *
+                        """,
+                        new_status,
+                        practice_id,
+                    )
 
-                result = dict(row)
+                    result = dict(row)
 
             await self.auditor.log_practice_status_change(
                 practice_id=practice_id,

@@ -1583,6 +1583,27 @@ async def update_practice(
                 "missing_documents": "missing_documents",
             }
 
+            # Owner decision 2026-11-13: no move INTO Sending Invoice without a Quoted Price.
+            # The effective price is the one this same PATCH writes (explicit, or back-filled
+            # from a service chosen in it), else the one on the row; a PATCH that sets price
+            # and status together passes. Only entering the status is gated: a practice
+            # already in Sending Invoice keeps accepting unrelated edits.
+            entering_sending_invoice = bool(
+                updates.status
+                and normalize_state(updates.status) == "sending_invoice"
+                and normalize_state(old_status or "") != "sending_invoice"
+            )
+            if updates.status and normalize_state(old_status or "") != "sending_invoice":
+                try:
+                    validate_quoted_price_for_invoice(
+                        updates.status,
+                        update_set["quoted_price"]
+                        if "quoted_price" in update_set
+                        else old_quoted_price,
+                    )
+                except QuotedPriceRequiredError as e:
+                    raise HTTPException(status_code=422, detail=str(e)) from e
+
             for field, value in update_set.items():
                 if field not in field_mapping:
                     raise HTTPException(status_code=400, detail=f"Invalid field name: {field}")
@@ -1597,22 +1618,6 @@ async def update_practice(
                 update_fields.append(f"{column_name} = ${param_index}")
                 params.append(value)
                 param_index += 1
-
-            # Owner decision 2026-11-13: no move INTO Sending Invoice without a Quoted Price.
-            # The effective price is the one this same PATCH writes (explicit, or back-filled
-            # from a service chosen in it), else the one on the row; a PATCH that sets price
-            # and status together passes. Only entering the status is gated: a practice
-            # already in Sending Invoice keeps accepting unrelated edits.
-            if updates.status and normalize_state(old_status or "") != "sending_invoice":
-                try:
-                    validate_quoted_price_for_invoice(
-                        updates.status,
-                        update_set["quoted_price"]
-                        if "quoted_price" in update_set
-                        else old_quoted_price,
-                    )
-                except QuotedPriceRequiredError as e:
-                    raise HTTPException(status_code=422, detail=str(e)) from e
 
             # Autoset date fields on status transitions (only if not already in DB
             # and caller did not pass an explicit value). Uses NOW() server-side,
@@ -1693,6 +1698,17 @@ async def update_practice(
             params.append(practice_id)
 
             async with conn.transaction():
+                if entering_sending_invoice and "quoted_price" not in update_set:
+                    # The price on the row was read before this transaction: lock it and
+                    # re-check, so a concurrent write of 0/NULL cannot slip a move through.
+                    locked_price = await conn.fetchval(
+                        "SELECT quoted_price FROM practices WHERE id = $1 FOR UPDATE",
+                        practice_id,
+                    )
+                    try:
+                        validate_quoted_price_for_invoice(updates.status, locked_price)
+                    except QuotedPriceRequiredError as e:
+                        raise HTTPException(status_code=422, detail=str(e)) from e
                 if invoice_company_pos is not None and (
                     invoice_company_id_in is not None or invoice_company_name_in
                 ):
