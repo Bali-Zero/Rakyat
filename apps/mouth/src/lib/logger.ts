@@ -7,6 +7,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { debug, warn, error as logError } from "@/lib/utils/console";
 import type { Metadata } from "./types/common";
+import { stripUrlQueries } from "./search-redaction";
 
 export enum LogLevel {
   DEBUG = "DEBUG",
@@ -83,7 +84,10 @@ class Logger {
           .join(", ")}]`
       : "";
 
-    const logMessage = `${emoji} ${time} [${level}] ${message}${contextStr}`;
+    // Any URL in a message or its context must not print the typed search text.
+    const logMessage = stripUrlQueries(
+      `${emoji} ${time} [${level}] ${message}${contextStr}`,
+    );
 
     switch (level) {
       case LogLevel.DEBUG:

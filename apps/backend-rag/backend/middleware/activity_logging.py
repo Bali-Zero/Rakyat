@@ -19,6 +19,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from backend.app.utils.logging_utils import get_logger, sanitize_log_path
+from backend.core.secret_log_redaction import redact_query_params
 from backend.middleware.correlation import get_correlation_id
 from backend.middleware.visa_oracle_privacy import is_private_visa_evaluation
 from backend.services.monitoring.activity_logger import activity_logger
@@ -186,7 +187,9 @@ class ActivityLoggingMiddleware(BaseHTTPMiddleware):
             # Log API call (async, non-blocking)
             try:
                 # Get query params
-                query_params = dict(request.query_params) if request.query_params else None
+                query_params = (
+                    redact_query_params(request.query_params) if request.query_params else None
+                )
 
                 # Get request body (if applicable)
                 request_body = None
