@@ -1489,6 +1489,7 @@ async def update_practice(
             new_practice_type_code = update_set.pop("practice_type_code", None)
             if "practice_type_code" in updates.model_fields_set and not new_practice_type_code:
                 raise HTTPException(status_code=400, detail="practice_type_code cannot be null")
+            service_base_price = None  # base price a chosen service back-fills into a NULL price
             if new_practice_type_code:
                 # A live practice may not be regressed to the placeholder: the
                 # status gate above only fires on a status CHANGE, so a PATCH
@@ -1522,12 +1523,10 @@ async def update_practice(
                 # placeholder has no base_price). Back-fill from the chosen
                 # service so the invoice step never sees a NULL price, unless
                 # the caller sets the price explicitly in this same PATCH.
-                if (
-                    "quoted_price" not in update_set
-                    and old_quoted_price is None
-                    and new_type_row["base_price"] is not None
-                ):
-                    update_set["quoted_price"] = new_type_row["base_price"]
+                # The fill itself is `COALESCE(quoted_price, base)` in the UPDATE, so it is
+                # decided on the row as it is when the write happens, not on this early read.
+                if "quoted_price" not in update_set and new_type_row["base_price"] is not None:
+                    service_base_price = new_type_row["base_price"]
 
             invoice_company_pos: int | None = None
             if invoice_company_touched:
@@ -1594,7 +1593,9 @@ async def update_practice(
                         updates.status,
                         update_set["quoted_price"]
                         if "quoted_price" in update_set
-                        else old_quoted_price,
+                        else (
+                            old_quoted_price if old_quoted_price is not None else service_base_price
+                        ),
                     )
                 except QuotedPriceRequiredError as e:
                     raise HTTPException(status_code=422, detail=str(e)) from e
@@ -1612,6 +1613,11 @@ async def update_practice(
                 column_name = field_mapping[field]
                 update_fields.append(f"{column_name} = ${param_index}")
                 params.append(value)
+                param_index += 1
+
+            if service_base_price is not None:
+                update_fields.append(f"quoted_price = COALESCE(quoted_price, ${param_index})")
+                params.append(service_base_price)
                 param_index += 1
 
             # Autoset date fields on status transitions (only if not already in DB
@@ -1707,7 +1713,11 @@ async def update_practice(
                                 updates.status,
                                 update_set["quoted_price"]
                                 if "quoted_price" in update_set
-                                else locked["quoted_price"],
+                                else (
+                                    locked["quoted_price"]
+                                    if locked["quoted_price"] is not None
+                                    else service_base_price
+                                ),
                             )
                         except QuotedPriceRequiredError as e:
                             raise HTTPException(status_code=422, detail=str(e)) from e

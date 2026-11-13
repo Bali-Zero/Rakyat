@@ -29,6 +29,12 @@ R12b Same race, price kept: A passes and lands in sending_invoice
     -> test_a_concurrent_move_out_with_the_price_kept_lets_the_reentry_pass
 R12c A practice that stays in sending_invoice keeps accepting unrelated edits (no gate)
     -> test_a_practice_that_stays_in_sending_invoice_is_never_gated
+R13 Service back-fill is decided on the LOCKED price: A reads NULL and picks a priced service,
+    B commits price 0 first -> A gets 422 and does not overwrite B's 0
+    -> test_a_concurrent_zero_price_beats_a_stale_service_backfill
+R13b Reverse: A read a price, B commits NULL: the back-fill applies and the move passes
+    -> test_a_concurrent_null_price_still_gets_the_service_backfill
+R13c A service pick never overwrites an existing price (COALESCE) -> test_a_service_pick_keeps_an_existing_price
 R9  A refused PATCH writes nothing else (price, notes sent in the same PATCH stay unchanged)
     -> test_patch_without_a_price_is_refused_and_status_unchanged
 
@@ -313,3 +319,67 @@ async def test_a_practice_that_stays_in_sending_invoice_is_never_gated(
     assert out["status"] == "sending_invoice"
     again = await patch(pool, practice, status="sending_invoice")
     assert again["status"] == "sending_invoice"
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_zero_price_beats_a_stale_service_backfill(
+    pool: asyncpg.Pool, invoice_automation_double: MagicMock
+) -> None:
+    practice = await priceless(pool, await client(pool))  # price NULL: A will plan a back-fill
+    async with pool.acquire() as other:
+        txn = other.transaction()
+        await txn.start()
+        await other.execute("UPDATE practices SET quoted_price = 0 WHERE id = $1", practice)
+        mover = asyncio.create_task(
+            patch(
+                pool,
+                practice,
+                status="sending_invoice",
+                practice_type_code="tax_annual_company",
+            )
+        )
+        await asyncio.sleep(0.5)
+        assert not mover.done()
+        await txn.commit()
+    with pytest.raises(HTTPException) as caught:
+        await mover
+    assert (caught.value.status_code, caught.value.detail) == (422, QUOTED_PRICE_REQUIRED_DETAIL)
+    assert await pool.fetchval("SELECT quoted_price FROM practices WHERE id=$1", practice) == 0
+    assert await status_of(pool, practice) == "waiting_documents"
+    invoice_automation_double.trigger_on_sending_invoice.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_null_price_still_gets_the_service_backfill(
+    pool: asyncpg.Pool,
+) -> None:
+    practice = await priceless(pool, await client(pool))
+    await pool.execute("UPDATE practices SET quoted_price = 500 WHERE id = $1", practice)
+    async with pool.acquire() as other:
+        txn = other.transaction()
+        await txn.start()
+        await other.execute("UPDATE practices SET quoted_price = NULL WHERE id = $1", practice)
+        mover = asyncio.create_task(
+            patch(
+                pool,
+                practice,
+                status="sending_invoice",
+                practice_type_code="tax_annual_company",
+            )
+        )
+        await asyncio.sleep(0.5)
+        assert not mover.done()
+        await txn.commit()
+    out = await mover
+    assert out["status"] == "sending_invoice"
+    assert (
+        await pool.fetchval("SELECT quoted_price FROM practices WHERE id=$1", practice) == 1000000
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_service_pick_keeps_an_existing_price(pool: asyncpg.Pool) -> None:
+    practice = await priceless(pool, await client(pool))
+    await pool.execute("UPDATE practices SET quoted_price = 500 WHERE id = $1", practice)
+    await patch(pool, practice, practice_type_code="tax_annual_company")
+    assert await pool.fetchval("SELECT quoted_price FROM practices WHERE id=$1", practice) == 500
