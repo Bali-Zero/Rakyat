@@ -26,6 +26,14 @@ from backend.app.core.config import settings
 from backend.app.utils.logging_utils import get_logger
 from backend.services.crm.automation import ProcessAutomationService
 from backend.services.invoicing.accounting import ACCOUNTING_EMAIL
+from backend.services.notifications.email_audit import (
+    _bounded_scrub,
+    claim_email_once,
+    format_send_error,
+    log_email_attempt,
+    notify_email_failure_critical,
+    record_email_result,
+)
 from backend.services.notifications.email_branding import logo_header_html, team_email_html
 
 logger = get_logger(__name__)
@@ -44,6 +52,8 @@ _CLIENT_NOTIFY_STATUSES: set[str] = {
     "approved",  # M5: practice approved
     "completed",  # M5: documents delivered
 }
+
+_PAYMENT_EMAIL_TYPES = ("payment_client", "payment_team")
 
 _RECONNECT_DELAY_S = 5  # seconds to wait before reconnecting after error
 
@@ -209,7 +219,14 @@ class PracticeStatusListener:
             )
 
     async def _send_payment_emails(self, practice_id: int, triggered_by: str) -> None:
-        """Fetch practice + client data, send payment confirmation emails."""
+        """Fetch practice + client data, send the payment confirmation emails ONCE.
+
+        The thank-you goes out on the FIRST transition to paid only. The "already sent"
+        fact lives in ``email_send_log`` (``payment_client`` / ``payment_team`` rows still
+        'sending', 'sent' or 'retry_scheduled'); :func:`claim_email_once` makes the check
+        and the first insert atomic, so two paid ticks racing cannot both send. A later
+        unpaid -> paid cycle therefore sends nothing.
+        """
         practice_data = await self._process_svc._fetch_practice_data(practice_id)
         if not practice_data:
             logger.error("M4: practice %s not found", practice_id)
@@ -225,9 +242,32 @@ class PracticeStatusListener:
         client_email = client_data.get("email")
         team_member_email = practice_data.get("assigned_to") or practice_data.get("created_by")
 
+        client_subject = f"[CLIENT] ✅ Payment Received — Your {practice_type} is Now in Motion!"
+        team_subject = f"[PAYMENT IN] ✅ {client_name} — {practice_type} — Proceed Now"
+
+        # Once per practice: the first mail to be sent (client, else team) takes the claim.
+        first_type = "payment_client" if client_email else "payment_team"
+        first_to = client_email or team_member_email
+        claim_id: int | None = None
+        if first_to:
+            claimed, claim_id = await claim_email_once(
+                self._db_pool,
+                email_type=first_type,
+                once_group=_PAYMENT_EMAIL_TYPES,
+                to_email=first_to,
+                subject=client_subject if client_email else team_subject,
+                practice_id=practice_id,
+                client_id=practice_data.get("client_id"),
+            )
+            if not claimed:
+                logger.info(
+                    "M4: payment emails already sent for practice %s, skipping", practice_id
+                )
+                return
+
         # ── Email 1: Client — payment received ──────────────────────────
         if client_email:
-            subject = f"[CLIENT] ✅ Payment Received — Your {practice_type} is Now in Motion!"
+            subject = client_subject
             body = f"""Hi {client_name},
 
 Great news — we've received your payment! 🎉
@@ -235,7 +275,7 @@ Great news — we've received your payment! 🎉
 Your {practice_type} is now officially confirmed and our team is getting ready to start.
 
 What happens next:
-• You'll receive a separate email once we officially kick off the process
+• We'll keep you posted by email as your process moves forward
 • You can track your progress anytime at https://my.balizero.com
 • Your advisor ({team_member_email or "our team"}) will reach out on WhatsApp shortly
 
@@ -248,10 +288,14 @@ Zantara — Bali Zero Team
 📧 {ACCOUNTING_EMAIL} | 🌐 www.balizero.com | 📱 WhatsApp: {settings.CLIENT_CONTACT_WHATSAPP}
 """
             try:
-                await self._send_via_internal_api(
+                await self._send_logged(
+                    "payment_client",
+                    practice_id,
+                    practice_data.get("client_id"),
                     client_email,
                     subject,
                     body,
+                    row_id=claim_id,
                     cc=team_member_email
                     if team_member_email and team_member_email != client_email
                     else None,
@@ -270,7 +314,7 @@ Zantara — Bali Zero Team
 
         # ── Email 2: Team member — with Asya in CC ───────────────────────
         if team_member_email:
-            subject = f"[PAYMENT IN] ✅ {client_name} — {practice_type} — Proceed Now"
+            subject = team_subject
             body = team_email_html(
                 title=f"💰 Payment In — {client_name}",
                 intro=(
@@ -298,10 +342,14 @@ Zantara — Bali Zero Team
             )
             try:
                 # Use internal /send-email endpoint: handles Zoho/Brevo routing + CC support
-                await self._send_via_internal_api(
-                    to_email=team_member_email,
-                    subject=subject,
-                    body=body,
+                await self._send_logged(
+                    "payment_team",
+                    practice_id,
+                    practice_data.get("client_id"),
+                    team_member_email,
+                    subject,
+                    body,
+                    row_id=claim_id if not client_email else None,
                     cc=ACCOUNTING_EMAIL,
                     prebuilt_html=True,
                 )
@@ -407,6 +455,51 @@ Zantara — Bali Zero Team
                 exc,
                 exc_info=True,
             )
+
+    async def _send_logged(
+        self,
+        email_type: str,
+        practice_id: int,
+        client_id: int | None,
+        to_email: str,
+        subject: str,
+        body: str,
+        *,
+        row_id: int | None = None,
+        **send_kwargs: Any,
+    ) -> None:
+        """Send through the internal API and leave the attempt in ``email_send_log``.
+
+        ``row_id`` is a row already inserted for this send (the once-claim); otherwise
+        one is inserted here. The outcome is recorded either way; a failure pages the
+        owner like every other CRM mail and is re-raised so the caller still sees it.
+        Nothing here logs the address or the body.
+        """
+        if row_id is None:
+            row_id = await log_email_attempt(
+                self._db_pool,
+                email_type=email_type,
+                to_email=to_email,
+                subject=subject,
+                practice_id=practice_id,
+                client_id=client_id,
+            )
+        try:
+            await self._send_via_internal_api(to_email, subject, body, **send_kwargs)
+        except Exception as exc:
+            err = format_send_error(exc)
+            await record_email_result(
+                self._db_pool, row_id, status="failed", provider="brevo", error_message=err
+            )
+            notify_email_failure_critical(
+                email_type=email_type,
+                to_email=to_email,
+                subject=subject,
+                practice_id=practice_id,
+                error=_bounded_scrub(err, 400),
+            )
+            raise
+        await record_email_result(self._db_pool, row_id, status="sent", provider="brevo")
 
     async def _send_via_internal_api(
         self,
