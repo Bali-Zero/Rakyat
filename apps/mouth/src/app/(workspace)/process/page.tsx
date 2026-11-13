@@ -71,6 +71,7 @@ import {
   initializeAnalytics,
 } from "@/lib/analytics";
 import { useTeamMemberOptions } from "@/hooks/useTeamMembers";
+import { useDebounce } from "@/hooks/useDebounce";
 import {
   PROCESS_VIEW_MODE_KEY,
   loadViewMode,
@@ -234,6 +235,11 @@ export default function PratichePage() {
   const [practices, setPractices] = useState<Practice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  // The backend folds case, accents, word order and phone formats; the list on screen was loaded
+  // for `loadedSearch`. The local text filter only answers while that differs from the typed text.
+  const debouncedSearch = useDebounce(searchQuery.trim(), 300);
+  const [loadedSearch, setLoadedSearch] = useState("");
+  const loadedMonthRef = useRef<string | null>(null);
   // P2.2: persist the view toggle across navigations (lazy-init + write-through)
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     loadViewMode(PROCESS_VIEW_MODE_KEY, ["kanban", "list"], "kanban"),
@@ -316,9 +322,13 @@ export default function PratichePage() {
   useEffect(() => {
     // Initialize analytics on component mount
     initializeAnalytics();
+  }, []);
 
+  useEffect(() => {
+    let cancelled = false;
     const loadPractices = async () => {
-      setIsLoading(true);
+      // A new month shows the skeleton; a new search text refines the list in place.
+      if (loadedMonthRef.current !== selectedMonth) setIsLoading(true);
       try {
         // RBAC is enforced server-side (can_view_all_practices in crm_utils.py).
         // Non-admin users automatically see only their assigned practices.
@@ -328,9 +338,15 @@ export default function PratichePage() {
           limit: 200,
           month: selectedMonth,
           include_history: true,
+          ...(debouncedSearch ? { search: debouncedSearch } : {}),
         });
+        // A newer month or text started another load: this answer is stale.
+        if (cancelled) return;
+        loadedMonthRef.current = selectedMonth;
         setPractices(data);
+        setLoadedSearch(debouncedSearch);
       } catch (error) {
+        if (cancelled) return;
         logger.error(
           "Failed to load practices",
           { component: "Process", action: "loadPractices" },
@@ -338,12 +354,15 @@ export default function PratichePage() {
         );
         toast.error("Error", "Failed to load process");
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
 
     loadPractices();
-  }, [selectedMonth]);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMonth, debouncedSearch]);
 
   useEffect(() => {
     // Live "Process Type" filter options — same catalog endpoint the
@@ -599,7 +618,7 @@ export default function PratichePage() {
       practices
         .filter((p) => {
           // Search filter
-          if (searchQuery) {
+          if (searchQuery && searchQuery.trim() !== loadedSearch) {
             const matchesSearch =
               p.id.toString().includes(searchQuery) ||
               p.client_name
@@ -717,7 +736,7 @@ export default function PratichePage() {
 
           return sortOrder === "asc" ? comparison : -comparison;
         }),
-    [practices, searchQuery, filters, sortField, sortOrder],
+    [practices, searchQuery, loadedSearch, filters, sortField, sortOrder],
   );
 
   // Memoize practices by status to avoid unnecessary recalculations

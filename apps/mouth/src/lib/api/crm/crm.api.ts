@@ -111,6 +111,7 @@ export class CrmApi {
       limit?: number;
       offset?: number;
       month?: string;
+      search?: string;
       include_history?: boolean;
     } = {},
   ): Promise<Practice[]> {
@@ -121,6 +122,7 @@ export class CrmApi {
     if (params.limit) queryParams.append("limit", params.limit.toString());
     if (params.offset) queryParams.append("offset", params.offset.toString());
     if (params.month) queryParams.append("month", params.month);
+    if (params.search) queryParams.append("search", params.search);
     if (params.include_history) queryParams.append("include_history", "true");
 
     const queryString = queryParams.toString();
