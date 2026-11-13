@@ -46,6 +46,7 @@ class Drive(FakeDrive):
         self.on_trash: Any = None
         self.copy_result: Any = None  # when set, what `copy_file` returns instead of the real id
         self.fail_trash = False
+        self.truncated = False  # the real client's page cap reached with a page still pending
 
     def add_source(self, fid: str, mime: str = "application/pdf") -> None:
         self.files[fid] = {
@@ -86,8 +87,10 @@ class Drive(FakeDrive):
             return self.copy_result
         return {"id": cid, "mimeType": self.files[cid]["mime"], "parents": [parent_id]}
 
-    async def list_files_by_app_properties(self, props, parent_id, mimes):
+    async def list_files_by_app_properties(self, props, parent_id, mimes, strict=False):
         self.calls.append(("list", tuple(sorted(props.items())), parent_id))
+        if strict and self.truncated:
+            raise RuntimeError("listing truncated")
         return [
             {"id": fid, "mimeType": f["mime"], "parents": [f["parent"]]}
             for fid, f in self.files.items()
@@ -1189,21 +1192,39 @@ elif scenario == "fatal_follow":
         raise Abort
 
     hd.HRDocumentService._follow_unit_change = aborts
+elif scenario == "stdout_full":
+    job.SHUTDOWN_S = 1
 
 async def the_fake():
     return drive
 
 hd.get_hr_drive_service = the_fake
 fd = job.seal_streams()
+if scenario == "stdout_full":  # a reader that never reads: the line's write blocks
+    os.set_blocking(fd, False)
+    for size in (4096, 1):  # to the last byte: a short line must not fit either
+        try:
+            while True:
+                os.write(fd, b" " * size)
+        except BlockingIOError:
+            pass
+    os.set_blocking(fd, True)
 code = job.main(["--apply"], fd)
 dump()
 os._exit(code)
 """
 
 
-async def _entry_path(pool: asyncpg.Pool, tmp_path: Path, scenario: str) -> tuple[int, Any, Any]:  # noqa: F811
+async def _entry_path(  # noqa: F811
+    pool: asyncpg.Pool,
+    tmp_path: Path,
+    scenario: str,
+    read: bool = True,
+) -> tuple[int, Any, Any]:
     """The real entry path (`main`, sealed streams, signal handlers, watchdog) in a subprocess,
-    on the throwaway Postgres and the fake Drive; returns (exit code, printed line, Drive state)."""
+    on the throwaway Postgres and the fake Drive; returns (exit code, printed line, Drive state).
+    Without `read` nothing reads stdout until the process has ended (asyncio's pipe transport
+    would drain it in the background, so a plain Popen); the line is then None."""
     import asyncio
 
     from backend.tests.migrations.test_hr_card_write_path import SCHEMA, _dsn
@@ -1214,13 +1235,18 @@ async def _entry_path(pool: asyncpg.Pool, tmp_path: Path, scenario: str) -> tupl
     (tmp_path / "m.json").write_text(json.dumps({"entries": entries}))
     sep = "&" if "?" in _dsn() else "?"
     env = {**os.environ, "DATABASE_URL": f"{_dsn()}{sep}search_path={SCHEMA}"}
+    argv = [sys.executable, "-c", _HARNESS, str(tmp_path / "m.json"), scenario]
+    argv.append(str(tmp_path / "drive.json"))
+    state_file = tmp_path / "drive.json"
+    if not read:
+        pipe = subprocess.PIPE
+        with subprocess.Popen(argv, cwd=_API, env=env, stdout=pipe, stderr=pipe) as popen:
+            code = await asyncio.to_thread(popen.wait, 120)
+            _, err = popen.communicate()
+        assert err == b""
+        return code, None, json.loads(state_file.read_text()) if state_file.exists() else None
     proc = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-c",
-        _HARNESS,
-        str(tmp_path / "m.json"),
-        scenario,
-        str(tmp_path / "drive.json"),
+        *argv,
         cwd=_API,
         env=env,
         stdout=asyncio.subprocess.PIPE,
@@ -1228,7 +1254,6 @@ async def _entry_path(pool: asyncpg.Pool, tmp_path: Path, scenario: str) -> tupl
     )
     out, err = await asyncio.wait_for(proc.communicate(), 120)
     assert err == b""
-    state_file = tmp_path / "drive.json"
     state = json.loads(state_file.read_text()) if state_file.exists() else None
     return proc.returncode, json.loads(out), state
 
@@ -1505,27 +1530,43 @@ async def test_the_census_never_counts_a_tagged_source_as_a_copy(pool: asyncpg.P
 
 
 @pytest.mark.asyncio
-async def test_a_listing_at_the_page_cap_is_census_skipped(  # noqa: F811
-    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_truncated_listing_is_census_skipped_and_never_reused(pool: asyncpg.Pool) -> None:  # noqa: F811
     drive = Drive()
     drive.add_source(L1)
     person = drive.seed_person()
-    for cid in ("aa-copy-1", "ab-copy-2"):
-        drive.files[cid] = {
-            "name": "x",
-            "parent": person,
-            "mime": "application/pdf",
-            "appProperties": {
-                hd.MEMBER_PROP: "tm-a",
-                hd.SLOT_PROP: "ktp",
-                job.SRC_PROP: job.sha256_hex(L1)[:16],
-            },
-        }
-    monkeypatch.setattr(job, "_LIST_CAP", 2)
+    drive.files["aa-copy-1"] = {
+        "name": "x",
+        "parent": person,
+        "mime": "application/pdf",
+        "appProperties": {
+            hd.MEMBER_PROP: "tm-a",
+            hd.SLOT_PROP: "ktp",
+            job.SRC_PROP: job.sha256_hex(L1)[:16],
+        },
+    }
+    drive.truncated = True
     emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
     dry = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=False)
-    assert dry["census_skipped"] == 1 and dry["copy_reusable"] == 0
+    assert dry["census_skipped"] == 1 and dry["copy_reusable"] == dry["copy_residual"] == 0
+    assert dry["drive_error:other"] == 1 and job.per_entry(dry) == 1  # no reuse from a part
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strict", [True, False])
+async def test_the_real_client_signals_a_listing_cut_at_its_page_cap(strict: bool) -> None:
+    from backend.tests.migrations.test_hr_document_door_path import _real_drive
+
+    pages = [
+        (200, {"files": [{"id": f"File{n:02d}", "parents": ["pf1"]}], "nextPageToken": f"t{n}"})
+        for n in range(20)
+    ]
+    drive, http = _real_drive(pages)
+    if strict:
+        with pytest.raises(RuntimeError):
+            await drive.list_files_by_app_properties({"k": "v"}, "pf1", None, strict=True)
+    else:
+        assert len(await drive.list_files_by_app_properties({"k": "v"}, "pf1", None)) == 20
+    assert len(http.request_sequence) == 20
 
 
 @pytest.mark.asyncio
@@ -1548,3 +1589,154 @@ async def test_a_failed_rollback_before_commit_still_compensates(  # noqa: F811
     assert counts["db_error"] == 1 and job.per_entry(counts) == 1
     assert counts["copy_left"] == 0 and drive.trashed == drive.copies  # re-locked, re-read, trashed
     assert (await _profile(pool, "tm-a"))["docs"]["ktp"] == L1
+
+
+# ── final gate round 4 (5c379990b47a) ──
+
+
+class _ReleaseFailsOnce:
+    """The pool, except that the first connection release raises after it ran."""
+
+    def __init__(self, pool: asyncpg.Pool) -> None:  # noqa: F811
+        self._pool, self.failed = pool, False
+
+    def acquire(self, *args: Any, **kwargs: Any) -> Any:
+        outer, inner = self, self._pool.acquire(*args, **kwargs)
+
+        class Ctx:
+            async def __aenter__(self) -> Any:
+                return await inner.__aenter__()
+
+            async def __aexit__(self, *exc: Any) -> None:
+                await inner.__aexit__(*exc)
+                if not outer.failed:
+                    outer.failed = True
+                    raise ConnectionResetError
+
+        return Ctx()
+
+
+async def _slot_of(pool: asyncpg.Pool, drive: Drive, emp: int, db_pool: Any = None) -> Any:  # noqa: F811
+    svc = hd.HRDocumentService(pool, job.ProtectedDrive(drive, _P))
+    folder = await job.member_folder(svc, "tm-a", True, _P)
+    if db_pool is not None:
+        svc = hd.HRDocumentService(db_pool, job.ProtectedDrive(drive, _P))
+    return svc, folder, job.Item(emp, "tm-a", "ktp", job.sha256_hex(L1))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["changed", "conflict"])
+async def test_a_failed_release_after_the_outcome_does_not_reclassify_it(  # noqa: F811
+    pool: asyncpg.Pool, outcome: str
+) -> None:
+    drive = Drive()
+    if outcome == "conflict":
+        emp = await _seed_conflict(pool, drive)
+    else:
+        drive.add_source(L1)
+        emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L2}})  # not the manifest's
+    svc, folder, item = await _slot_of(pool, drive, emp, _ReleaseFailsOnce(pool))
+    counts: Any = job.Counter()
+    job.LIVE.reset(None, "apply")
+    await job.process_slot(svc, item, folder, True, _P, counts)
+    assert svc.db_pool.failed and counts[outcome] == 1 and job.per_entry(counts) == 1
+    assert job.LIVE.step == "settled"  # what a deadline would read: nothing in flight
+    assert drive.trashed == drive.copies and counts["copy_left"] == 0
+
+
+def test_a_deadline_after_the_outcome_adds_nothing_for_that_entry() -> None:
+    job.LIVE.reset(3, "apply")
+    job.LIVE.counts["conflict"] += 1
+    job.LIVE.step = "settled"
+    out = job.LIVE.deadline_result()["outcomes"]
+    assert out == {"conflict": 1, "not_started": 2}
+
+
+@pytest.mark.asyncio
+async def test_a_fatal_in_the_compensation_keeps_the_outcome_and_copy_left(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+    bad = "SELECT $1::text, $2::text, $3::text, $4::text, $5::text, $6::text, 1/0"
+    monkeypatch.setitem(job.CAS_SQL, "ktp", bad)
+
+    async def aborts(file_id: str) -> None:
+        raise _Abort
+
+    drive.on_trash = aborts
+    svc, folder, item = await _slot_of(pool, drive, emp)
+    counts: Any = job.Counter()
+    with pytest.raises(_Abort):
+        await job.process_slot(svc, item, folder, True, _P, counts)
+    assert counts["db_error"] == 1 and counts["copy_left"] == 1 and job.per_entry(counts) == 1
+    assert (await _profile(pool, "tm-a"))["docs"]["ktp"] == L1
+
+
+@pytest.mark.asyncio
+async def test_a_fatal_in_the_reconcile_keeps_the_entry_uncertain(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+
+    async def lost(self: Any) -> None:
+        raise ConnectionResetError
+
+    async def aborts(self: Any, *args: Any) -> Any:
+        raise _Abort
+
+    svc, folder, item = await _slot_of(pool, drive, emp)
+    monkeypatch.setattr(Transaction, "commit", lost)
+    monkeypatch.setattr(hd.HRDocumentService, "_reconcile", aborts)
+    counts: Any = job.Counter()
+    with pytest.raises(_Abort):
+        await job.process_slot(svc, item, folder, True, _P, counts)
+    assert counts["uncertain"] == 1 and job.per_entry(counts) == 1
+    assert len(drive.copies) == 1 and not drive.trashed  # the next run reuses it
+
+
+@pytest.mark.asyncio
+async def test_a_fatal_in_the_conflict_trash_stays_a_conflict_and_compensates(  # noqa: F811
+    pool: asyncpg.Pool,
+) -> None:
+    drive = Drive()
+    emp = await _seed_conflict(pool, drive)
+    calls: list[str] = []
+
+    async def first_aborts(file_id: str) -> None:
+        calls.append(file_id)
+        if len(calls) == 1:
+            raise _Abort
+
+    drive.on_trash = first_aborts
+    svc, folder, item = await _slot_of(pool, drive, emp)
+    counts: Any = job.Counter()
+    with pytest.raises(_Abort):
+        await job.process_slot(svc, item, folder, True, _P, counts)
+    assert counts["conflict"] == 1 and job.per_entry(counts) == 1 and counts["copy_left"] == 0
+    assert len(calls) == 2 and drive.trashed == drive.copies  # compensation trashed it
+
+
+@pytest.mark.parametrize(
+    ("meta", "valid"),
+    [
+        ({"modifiedTime": "t", "parents": ["p"], "trashed": False}, True),
+        ({"modifiedTime": "t", "parents": ["p"]}, True),
+        ({"modifiedTime": "t", "parents": ["p"], "trashed": None}, False),
+        ({"modifiedTime": "t", "parents": ["p"], "trashed": "false"}, False),
+    ],
+)
+def test_a_present_trashed_field_must_be_a_real_bool(meta: Any, valid: bool) -> None:
+    assert (job._fingerprint(meta) is not None) is valid
+
+
+@pytest.mark.asyncio
+async def test_a_line_the_channel_never_takes_still_ends_with_124(  # noqa: F811
+    pool: asyncpg.Pool, tmp_path: Path
+) -> None:
+    code, line, _ = await _entry_path(pool, tmp_path, "stdout_full", read=False)
+    assert code == 124 and line is None
+    await _no_lock_left(pool)

@@ -855,13 +855,18 @@ class ServiceAccountDriveService:
         return found
 
     async def list_files_by_app_properties(
-        self, props: dict[str, str], parent_id: str, mimes: Sequence[str] | None
+        self,
+        props: dict[str, str],
+        parent_id: str,
+        mimes: Sequence[str] | None,
+        strict: bool = False,
     ) -> list[dict[str, Any]]:
         """Live (not trashed) files directly inside `parent_id` whose appProperties equal ALL of
         `props` and whose mimeType is one of `mimes` (`None`: any type but a folder). Every input
         is one the caller resolved itself (a member id, a slot, a folder id Drive returned, a
         closed set of types); nothing read from stored data may be passed here. Returns id,
-        mimeType, parents and appProperties."""
+        mimeType, parents and appProperties. The listing reads at most 20 pages; with `strict` a
+        listing that stopped there with a page still pending raises instead of returning a part."""
         esc = lambda v: str(v).replace("\\", "\\\\").replace("'", "\\'")  # noqa: E731
         clauses = [
             f"appProperties has {{ key='{esc(k)}' and value='{esc(v)}' }}" for k, v in props.items()
@@ -889,6 +894,8 @@ class ServiceAccountDriveService:
             page_token = result.get("nextPageToken")
             if not page_token:
                 break
+        if strict and page_token:
+            raise RuntimeError("listing truncated")
         return found
 
     async def copy_file(

@@ -408,7 +408,9 @@ def _fingerprint(meta: Any) -> tuple[Any, ...] | None:
     modified, parents, trashed = meta.get("modifiedTime"), meta.get("parents"), meta.get("trashed")
     if not isinstance(modified, str) or not modified or not isinstance(parents, list):
         return None
-    if not all(isinstance(x, str) for x in parents) or not isinstance(trashed, bool | None):
+    if not all(isinstance(x, str) for x in parents):
+        return None
+    if "trashed" in meta and not isinstance(trashed, bool):  # present means a real bool
         return None
     return (modified, tuple(sorted(parents)), bool(trashed))
 
@@ -473,7 +475,13 @@ class ProtectedDrive:
     async def get_file_metadata(self, file_id: str) -> dict[str, Any]:
         return await self._inner.get_file_metadata(file_id)
 
-    async def list_files_by_app_properties(self, props: Any, parent_id: str, mimes: Any) -> Any:
+    async def list_files_by_app_properties(
+        self, props: Any, parent_id: str, mimes: Any, strict: bool = False
+    ) -> Any:
+        if strict:
+            return await self._inner.list_files_by_app_properties(
+                props, parent_id, mimes, strict=True
+            )
         return await self._inner.list_files_by_app_properties(props, parent_id, mimes)
 
     async def find_folder(self, name: str, parent_id: str) -> Any:
@@ -542,7 +550,6 @@ SETUP_S, BASELINE_S, FOLDER_S, SLOT_S, AUDIT_S, CENSUS_S, SHUTDOWN_S = (
     120,
     60,
 )
-_LIST_CAP = 2000  # `list_files_by_app_properties` reads at most 20 pages of 100
 _MAY_HAVE_COPIED = frozenset({"copy", "cas", "commit"})
 _NOTHING_SENT = frozenset({"lock", "read", "drive"})
 
@@ -561,6 +568,7 @@ class Live:
 
     def __init__(self) -> None:
         self.watch: _NoWatch = _NoWatch()
+        self.lock = threading.Lock()  # the watchdog reads (counts, step) as one snapshot
         self.reset(None, "dry-run")
 
     def reset(self, manifest: int | None, mode: str) -> None:
@@ -573,10 +581,11 @@ class Live:
         self.acceptance5 = "not_demonstrated"
 
     def deadline_result(self) -> dict[str, Any]:
-        counts = dict(self.counts)
-        if self.step in _MAY_HAVE_COPIED:
+        with self.lock:
+            counts, step = dict(self.counts), self.step
+        if step in _MAY_HAVE_COPIED:
             counts["uncertain"] = counts.get("uncertain", 0) + 1
-        elif self.step in _NOTHING_SENT:
+        elif step in _NOTHING_SENT:
             counts["deadline"] = counts.get("deadline", 0) + 1
         rest = (self.manifest or 0) - per_entry(counts)
         if rest > 0:
@@ -637,11 +646,11 @@ class Watch(_NoWatch):
         """Termination never waits on publication (owner ruling, rev 4): one non-blocking write
         attempt, then `os._exit` whatever happened. A line the channel did not take is lost: a hard
         stop without guaranteed accounting. If the main thread holds the line (its write is what
-        blocked past the shutdown deadline), the process ends with 1."""
-        code = 1
+        blocked past the shutdown deadline), the process ends with 124 all the same."""
+        code = _RUNS["deadline"]  # also when the main thread holds the line (its write blocked)
         try:
-            line = render(LIVE.deadline_result())
             if _claim_emit():
+                line = render(LIVE.deadline_result())
                 code = exit_code(line)
                 os.set_blocking(self._out, False)
                 os.write(self._out, line)
@@ -776,11 +785,8 @@ async def census(
             continue
         props = {hd.MEMBER_PROP: member, hd.SLOT_PROP: slot, SRC_PROP: digest[:16]}
         try:
-            listed = await drive.list_files_by_app_properties(props, folder_id, None)
-        except Exception:
-            counts["census_skipped"] += 1
-            continue
-        if len(listed) >= _LIST_CAP:  # the client stops paging there: coverage not complete
+            listed = await drive.list_files_by_app_properties(props, folder_id, None, strict=True)
+        except Exception:  # a truncated listing included: coverage not complete
             counts["census_skipped"] += 1
             continue
         copies = sorted(  # the reuse predicate (R5.2), ids de-duplicated
@@ -814,13 +820,30 @@ async def process_slot(
     """One manifest slot, under the member advisory lock from the re-read to the commit (SPEC v2.1
     R5; the state table of v2.2 R5.3). `folder` is (person folder id or None, card context).
     Without `apply` (the dry-run) it stops before the first write: lock, re-read, reuse lookup,
-    the source's metadata, rollback. A success is counted BEFORE the unit follow-up."""
+    the source's metadata, rollback. The entry's ONE outcome is settled once (`settle`): nothing
+    after it - a failed connection release, a cleanup, a deadline - re-classifies it. A success is
+    settled at the confirmed commit, BEFORE the unit follow-up."""
     drive = svc.drive
     folder_id, ctx = folder
     copy_id: str | None = None
     value: str | None = None
-    reused = False
+    reused = missed = landed = settled = False
     step = LIVE.step = "lock"
+
+    def settle(code: str) -> None:  # the outcome and the end of the in-flight state, together
+        nonlocal settled
+        if not settled:
+            settled = True
+            with LIVE.lock:
+                counts[code] += 1
+                LIVE.step = "settled"
+
+    def land() -> None:
+        nonlocal landed
+        landed = True
+        LIVE.migrated.add(value or "")
+        settle("reused" if reused else "done")
+
     try:
         async with svc.db_pool.acquire() as conn:
             tx = conn.transaction()
@@ -829,7 +852,7 @@ async def process_slot(
                 value = await _eligible_under_lock(conn, item)
                 if value is None:
                     await tx.rollback()
-                    counts["changed"] += 1
+                    settle("changed")
                     return
                 step = LIVE.step = "drive"
                 props = {
@@ -839,9 +862,12 @@ async def process_slot(
                 }
                 earlier = []
                 if folder_id is not None:  # R5.2: no id that is a manifest source, ever
+                    listed = await drive.list_files_by_app_properties(
+                        props, folder_id, None, strict=True
+                    )
                     earlier = [
                         f["id"]
-                        for f in await drive.list_files_by_app_properties(props, folder_id, None)
+                        for f in listed
                         if not protected_id(f.get("id"), protected)
                         and folder_id in (f.get("parents") or [])
                     ]
@@ -849,7 +875,7 @@ async def process_slot(
                     copy_id, reused = min(earlier), True
                     if not apply:
                         await tx.rollback()
-                        counts["eligible"] += 1
+                        settle("eligible")
                         return
                 else:
                     meta = await drive.get_file_metadata(value)
@@ -857,7 +883,7 @@ async def process_slot(
                     counts[f"source:{kind}"] += 1
                     if kind == "folder" or not apply or folder_id is None:
                         await tx.rollback()
-                        counts["source_folder" if kind == "folder" else "eligible"] += 1
+                        settle("source_folder" if kind == "folder" else "eligible")
                         return
                     ext = _EXT.get(meta.get("mimeType"))
                     title = hd.document_title(
@@ -881,51 +907,55 @@ async def process_slot(
                     item.digest,
                 )
                 if written is None:
+                    missed = True
                     left = not await _trash(drive, copy_id, protected)  # the lock is still held
                     try:
                         await tx.rollback()
                     except Exception:
                         pass
-                    counts["conflict"] += 1
                     counts["copy_left"] += int(left)
+                    settle("conflict")
                     return
             except BaseException:
                 try:
-                    await tx.rollback()
+                    await tx.rollback()  # unconfirmed is fine: no COMMIT was sent (owner ruling 2)
                 except Exception:
                     pass
                 raise
             step = LIVE.step = "commit"
             await tx.commit()
-            step = LIVE.step = "done"
+            land()
     except BaseException as exc:
-        landed = step == "done"
-        if step == "commit":
-            holds, _ = await svc._reconcile(item.member_id, item.slot, copy_id or "")
-            landed = bool(holds)
-            if not landed:
-                counts["uncertain"] += 1  # the copy stays: the next run reuses it
+        if settled:
+            pass  # e.g. the connection's release failed after the outcome: it stands
+        elif step == "commit":
+            try:
+                holds, _ = await svc._reconcile(item.member_id, item.slot, copy_id or "")
+            except BaseException:
+                settle("uncertain")  # the copy stays: the next run reuses it
+                raise
+            if holds:
+                land()
+            else:
+                settle("uncertain")
         elif step == "copy":
-            counts[
-                "copy_unidentified" if isinstance(exc, UnusableReturnedId) else drive_code(exc)
-            ] += 1
+            settle("copy_unidentified" if isinstance(exc, UnusableReturnedId) else drive_code(exc))
         elif step == "drive":
-            counts[drive_code(exc)] += 1
-        elif step != "done":
-            counts["lock_timeout" if isinstance(exc, _LOCK_ERRORS) else "db_error"] += 1
+            settle(drive_code(exc))
+        else:
+            lock_error = isinstance(exc, _LOCK_ERRORS)
+            settle("conflict" if missed else "lock_timeout" if lock_error else "db_error")
             if step == "cas" and copy_id is not None:
-                counts["copy_left"] += int(not await _compensate(svc, item, copy_id, protected))
-        if landed:
-            LIVE.step = "done"
-            LIVE.migrated.add(value or "")
-            counts["reused" if reused else "done"] += 1
+                try:
+                    left = not await _compensate(svc, item, copy_id, protected)
+                except BaseException:
+                    counts["copy_left"] += 1  # conservative: the copy may be left
+                    raise
+                counts["copy_left"] += int(left)
         if not isinstance(exc, Exception):
             raise
         if not landed:
             return
-    else:
-        LIVE.migrated.add(value or "")
-        counts["reused" if reused else "done"] += 1
     await svc._follow_unit_change(item.member_id, ctx.unit)
 
 
