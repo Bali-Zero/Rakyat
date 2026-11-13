@@ -55,7 +55,7 @@ def _session(**extra: object) -> dict[str, object]:
 
 
 def _app(mock_db_pool, session: dict[str, object], portal_service=None) -> TestClient:
-    pool, _conn = mock_db_pool
+    pool = mock_db_pool
     application = FastAPI()
     application.include_router(portal_module.router)
     application.dependency_overrides[portal_module.get_current_client] = lambda: session
@@ -65,8 +65,8 @@ def _app(mock_db_pool, session: dict[str, object], portal_service=None) -> TestC
     return TestClient(application, raise_server_exceptions=False)
 
 
-def test_get_profile_masks_passport_and_date_of_birth(mock_db_pool) -> None:
-    _pool, conn = mock_db_pool
+def test_get_profile_masks_passport_and_date_of_birth(mock_db_pool, mock_db_conn) -> None:
+    conn = mock_db_conn
     conn.fetchrow = AsyncMock(return_value=_ROW)
 
     response = _app(mock_db_pool, _session()).get("/api/portal/profile")
@@ -107,9 +107,9 @@ def test_patch_profile_response_is_masked_too(mock_db_pool) -> None:
 
 
 def test_reveal_returns_full_values_for_own_session_and_audits_without_values(
-    mock_db_pool, monkeypatch
+    mock_db_pool, mock_db_conn, monkeypatch
 ) -> None:
-    _pool, conn = mock_db_pool
+    conn = mock_db_conn
     conn.fetchrow = AsyncMock(return_value={"passport_number": PASSPORT, "date_of_birth": DOB})
     audit = AsyncMock()
     monkeypatch.setattr(
@@ -140,8 +140,8 @@ def test_reveal_returns_full_values_for_own_session_and_audits_without_values(
     [_session(impersonating=True), _session(client_id=None)],
     ids=["impersonation", "no-client"],
 )
-def test_reveal_fails_closed_for_another_session(mock_db_pool, session) -> None:
-    _pool, conn = mock_db_pool
+def test_reveal_fails_closed_for_another_session(mock_db_pool, mock_db_conn, session) -> None:
+    conn = mock_db_conn
     conn.fetchrow = AsyncMock(return_value={"passport_number": PASSPORT, "date_of_birth": DOB})
 
     response = _app(mock_db_pool, session).post("/api/portal/profile/reveal")
@@ -151,8 +151,8 @@ def test_reveal_fails_closed_for_another_session(mock_db_pool, session) -> None:
     conn.fetchrow.assert_not_awaited()
 
 
-def test_reveal_404_when_client_row_missing(mock_db_pool) -> None:
-    _pool, conn = mock_db_pool
+def test_reveal_404_when_client_row_missing(mock_db_pool, mock_db_conn) -> None:
+    conn = mock_db_conn
     conn.fetchrow = AsyncMock(return_value=None)
 
     response = _app(mock_db_pool, _session()).post("/api/portal/profile/reveal")
