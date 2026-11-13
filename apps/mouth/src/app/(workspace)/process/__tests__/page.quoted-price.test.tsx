@@ -97,16 +97,30 @@ describe("process board: Quoted Price gate", () => {
       practice({ quoted_price: undefined }),
     ]);
     await openMenuFor("Synthetic Alpha");
-    const option = screen.getByRole("button", { name: /Sending Invoice/ });
+    const option = screen.getByRole("button", { name: /^Sending Invoice/ });
     expect(option).toBeDisabled();
     expect(screen.getAllByText(HINT).length).toBeGreaterThan(0);
+  });
+
+  it("also blocks the legacy Sending Invoice aliases, which the backend normalises", async () => {
+    mocks.getPractices.mockResolvedValue([
+      practice({ quoted_price: undefined }),
+    ]);
+    await openMenuFor("Synthetic Alpha");
+    for (const name of [
+      /Quotation Sent/,
+      /Payment Pending/,
+      /Waiting Payment/,
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
   });
 
   it("treats a zero price like a missing one", async () => {
     mocks.getPractices.mockResolvedValue([practice({ quoted_price: 0 })]);
     await openMenuFor("Synthetic Alpha");
     expect(
-      screen.getByRole("button", { name: /Sending Invoice/ }),
+      screen.getByRole("button", { name: /^Sending Invoice/ }),
     ).toBeDisabled();
   });
 
@@ -115,7 +129,7 @@ describe("process board: Quoted Price gate", () => {
       practice({ quoted_price: 1_500_000 }),
     ]);
     await openMenuFor("Synthetic Alpha");
-    const option = screen.getByRole("button", { name: /Sending Invoice/ });
+    const option = screen.getByRole("button", { name: /^Sending Invoice/ });
     expect(option).toBeEnabled();
     expect(screen.queryByText(HINT)).toBeNull();
     await userEvent.setup().click(option);
@@ -166,7 +180,7 @@ describe("process board: Quoted Price gate", () => {
     await openMenuFor("Synthetic Alpha");
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: /Sending Invoice/ }));
+      .click(screen.getByRole("button", { name: /^Sending Invoice/ }));
     await waitFor(() =>
       expect(mocks.toastError).toHaveBeenCalledWith("Error", HINT),
     );

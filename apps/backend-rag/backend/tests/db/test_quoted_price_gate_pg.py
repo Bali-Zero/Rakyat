@@ -17,6 +17,11 @@ R7  Creating a practice straight in sending_invoice follows the same rule
     -> test_create_in_sending_invoice_without_a_price_is_refused, test_create_in_sending_invoice_with_a_price_passes
 R8  A discount that makes the total 0 does not make the price missing
     -> test_a_discount_to_zero_total_still_passes
+R10 An explicit `quoted_price: null` sent with the status gets the gate's 422, not the generic
+    "cannot be null" 400 -> test_patch_with_an_explicit_null_price_gets_the_gate_refusal
+R11 A concurrent write of price 0 committed between the early read and the UPDATE cannot slip
+    the move through (the row is locked and re-checked in the transaction)
+    -> test_a_concurrent_zero_price_write_cannot_slip_the_move_through
 R9  A refused PATCH writes nothing else (price, notes sent in the same PATCH stay unchanged)
     -> test_patch_without_a_price_is_refused_and_status_unchanged
 
@@ -27,6 +32,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
+
+import asyncio
 
 import asyncpg
 import pytest
@@ -214,3 +221,33 @@ async def test_create_in_sending_invoice_with_a_price_passes(pool: asyncpg.Pool)
         current_user=USER,
     )
     assert await status_of(pool, created.id) == "sending_invoice"
+
+
+@pytest.mark.asyncio
+async def test_patch_with_an_explicit_null_price_gets_the_gate_refusal(pool: asyncpg.Pool) -> None:
+    practice = await priceless(pool, await client(pool))
+    with pytest.raises(HTTPException) as caught:
+        await patch(pool, practice, status="sending_invoice", quoted_price=None)
+    assert (caught.value.status_code, caught.value.detail) == (422, QUOTED_PRICE_REQUIRED_DETAIL)
+    assert await status_of(pool, practice) == "waiting_documents"
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_zero_price_write_cannot_slip_the_move_through(
+    pool: asyncpg.Pool, invoice_automation_double: MagicMock
+) -> None:
+    created = await create(pool, await client(pool))  # priced: the early read sees a price
+    await pool.execute("UPDATE practices SET status = 'waiting_documents' WHERE id=$1", created.id)
+    async with pool.acquire() as other:
+        txn = other.transaction()
+        await txn.start()
+        await other.execute("UPDATE practices SET quoted_price = 0 WHERE id = $1", created.id)
+        mover = asyncio.create_task(patch(pool, created.id, status="sending_invoice"))
+        await asyncio.sleep(0.5)  # the PATCH has read the old price and waits on the row lock
+        assert not mover.done()
+        await txn.commit()
+    with pytest.raises(HTTPException) as caught:
+        await mover
+    assert (caught.value.status_code, caught.value.detail) == (422, QUOTED_PRICE_REQUIRED_DETAIL)
+    assert await status_of(pool, created.id) == "waiting_documents"
+    invoice_automation_double.trigger_on_sending_invoice.assert_not_called()

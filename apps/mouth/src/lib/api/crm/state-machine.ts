@@ -107,14 +107,28 @@ export function hasQuotedPrice(value: unknown): boolean {
  * with no Quoted Price. A practice already in Sending Invoice is never blocked
  * (only entering the status is gated).
  */
+const LEGACY_SENDING_INVOICE = new Set<string>([
+  "quotation_sent",
+  "payment_pending",
+  "waiting_payment",
+]);
+
+/** Mirrors the backend's `normalize_state` for the one state this gate cares about. */
+function isSendingInvoice(state: string | null | undefined): boolean {
+  return (
+    !!state &&
+    (state === "sending_invoice" || LEGACY_SENDING_INVOICE.has(state))
+  );
+}
+
 export function needsQuotedPriceBefore(
   target: PracticeStatus | string,
   quotedPrice: unknown,
   current?: string | null,
 ): boolean {
   return (
-    target === "sending_invoice" &&
-    current !== "sending_invoice" &&
+    isSendingInvoice(target) &&
+    !isSendingInvoice(current) &&
     !hasQuotedPrice(quotedPrice)
   );
 }

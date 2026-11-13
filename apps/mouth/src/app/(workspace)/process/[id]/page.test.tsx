@@ -387,22 +387,29 @@ describe("CaseDetailPage", () => {
     expect(screen.getAllByText("unpaid").length).toBeGreaterThan(0);
   });
 
-  it("explains in Indonesian, before any request, why Sending Invoice needs a Quoted Price", async () => {
-    const user = await renderLoaded(makePractice({ quoted_price: null }));
-
-    await user.click(screen.getByTitle("Jump to: Invoice"));
-
-    expect(mocks.toastError).toHaveBeenCalledWith(
-      "Quoted Price kosong",
-      "Isi Quoted Price dulu sebelum Sending Invoice",
+  it("disables the Invoice step with the Indonesian reason when the Quoted Price is null", async () => {
+    await renderLoaded(
+      makePractice({ quoted_price: null as unknown as number }),
     );
+
+    const step = screen.getByTitle(
+      "Invoice — Isi Quoted Price dulu sebelum Sending Invoice",
+    );
+    expect(step).toBeDisabled();
     expect(mocks.updatePractice).not.toHaveBeenCalled();
   });
 
   it("treats a zero Quoted Price like a missing one", async () => {
-    const user = await renderLoaded(makePractice({ quoted_price: 0 }));
-    await user.click(screen.getByTitle("Jump to: Invoice"));
-    expect(mocks.updatePractice).not.toHaveBeenCalled();
+    await renderLoaded(makePractice({ quoted_price: 0 }));
+    const step = screen.getByTitle(
+      "Invoice — Isi Quoted Price dulu sebelum Sending Invoice",
+    );
+    expect(step).toBeDisabled();
+  });
+
+  it("keeps the Invoice step enabled when there is a price", async () => {
+    await renderLoaded();
+    expect(screen.getByTitle("Jump to: Invoice")).toBeEnabled();
   });
 
   it("lets the jump through when the practice has a Quoted Price", async () => {
@@ -433,7 +440,9 @@ describe("CaseDetailPage", () => {
   });
 
   it("disables Sending Invoice in the edit form, with the reason, when there is no price", async () => {
-    const user = await renderLoaded(makePractice({ quoted_price: null }));
+    const user = await renderLoaded(
+      makePractice({ quoted_price: null as unknown as number }),
+    );
     await user.click(screen.getByRole("button", { name: "Edit" }));
     const option = screen.getByRole("option", {
       name: /Sending Invoice — Isi Quoted Price dulu sebelum Sending Invoice/,

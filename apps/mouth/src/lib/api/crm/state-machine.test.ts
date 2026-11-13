@@ -204,6 +204,27 @@ describe("Quoted Price gate for Sending Invoice (backend mirror)", () => {
     }
   });
 
+  it("normalises legacy names: a priceless legacy sending-invoice practice is not blocked, a legacy target is", () => {
+    for (const legacy of [
+      "quotation_sent",
+      "payment_pending",
+      "waiting_payment",
+    ]) {
+      expect(needsQuotedPriceBefore("sending_invoice", null, legacy)).toBe(
+        false,
+      );
+      expect(needsQuotedPriceBefore(legacy, null, "waiting_documents")).toBe(
+        true,
+      );
+      expect(needsQuotedPriceBefore(legacy, 5, "waiting_documents")).toBe(
+        false,
+      );
+    }
+    expect(
+      needsQuotedPriceBefore("in_progress", null, "waiting_documents"),
+    ).toBe(false);
+  });
+
   it("blocks entering sending_invoice without a price and nothing else", () => {
     expect(
       needsQuotedPriceBefore("sending_invoice", null, "waiting_documents"),

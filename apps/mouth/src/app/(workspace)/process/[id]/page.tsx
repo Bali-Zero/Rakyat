@@ -932,16 +932,23 @@ export default function CaseDetailPage() {
               const isDone = idx < currentIdx;
               const isCurrent = idx === currentIdx;
               const isJumping = isJumpingStatus === step.key;
+              const stepNeedsPrice = needsQuotedPriceBefore(
+                step.key,
+                practice.quoted_price,
+                practice.status,
+              );
               return (
                 <React.Fragment key={step.key}>
                   <button
                     className="flex flex-col items-center gap-1 flex-shrink-0 group/step"
                     onClick={() => jumpToStatus(step.key)}
-                    disabled={isCurrent || !!isJumpingStatus}
+                    disabled={isCurrent || !!isJumpingStatus || stepNeedsPrice}
                     title={
                       isCurrent
                         ? `Current: ${step.label}`
-                        : `Jump to: ${step.label}`
+                        : stepNeedsPrice
+                          ? `${step.label} — ${QUOTED_PRICE_REQUIRED_TEXT_ID}`
+                          : `Jump to: ${step.label}`
                     }
                   >
                     <div
