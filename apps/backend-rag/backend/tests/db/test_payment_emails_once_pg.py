@@ -117,6 +117,7 @@ class _Posts:
     def __init__(self) -> None:
         self.sent: list[dict[str, Any]] = []
         self.fail = False
+        self.answer: dict[str, Any] | None = None  # None: the endpoint says "sent via brevo"
 
     def client_cls(self) -> Any:
         posts = self
@@ -125,6 +126,9 @@ class _Posts:
             def raise_for_status(self) -> None:
                 if posts.fail:
                     raise RuntimeError("provider down")
+
+            def json(self) -> dict[str, Any]:
+                return posts.answer or {"success": True, "message": "Email sent via brevo"}
 
         class _Client:
             def __init__(self, *a: Any, **k: Any) -> None: ...
