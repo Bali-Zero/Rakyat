@@ -28,6 +28,10 @@ from backend.app.utils.logging_utils import get_logger
 from backend.core.cache import invalidate_crm_stats
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 from backend.services.invoicing.accounting import ACCOUNTING_EMAIL
+from backend.services.invoicing.client_email_outcome import (
+    activity_description,
+    client_email_outcome,
+)
 from backend.services.invoicing.entities import (
     DEFAULT_ENTITY_KEY,
     ENTITIES,
@@ -333,9 +337,7 @@ class InvoiceAutomationService:
                     filename=filename,
                     entity=issuer_decision.entity,
                     amount=final_amount_float,
-                    client_email_status=(
-                        "sent" if email_sent else ("failed" if email_attempted else "no_email")
-                    ),
+                    client_email_status=client_email_outcome(email_sent, email_attempted),
                 )
                 asya_notified = True
                 accounting_notified = True
@@ -382,6 +384,7 @@ class InvoiceAutomationService:
                 "invoice_generated_at": datetime.now(tz=timezone.utc).isoformat(),
                 "invoice_drive_id": drive_file_id,
                 "invoice_drive_link": drive_web_link,
+                "email_attempted": email_attempted,
                 "email_sent": email_sent,
                 "accounting_notified": asya_notified,
                 "source": "local_pdf",
@@ -395,6 +398,13 @@ class InvoiceAutomationService:
                 invoice_attempt_id=invoice_attempt_id,
             )
 
+            if email_sent:
+                await self._record_invoice_sent_on_client_timeline(
+                    practice_data=practice_data,
+                    invoice_number=invoice_number,
+                    triggered_by=triggered_by,
+                )
+
             logger.info("Invoice automation completed successfully for practice %s", practice_id)
 
             return {
@@ -402,6 +412,7 @@ class InvoiceAutomationService:
                 "invoice_number": invoice_number,
                 "drive_file_id": drive_file_id,
                 "drive_link": drive_web_link,
+                "email_attempted": email_attempted,
                 "email_sent": email_sent,
                 "accounting_notified": asya_notified,
             }
@@ -601,6 +612,40 @@ class InvoiceAutomationService:
 
         logger.info("Accounting notification sent to %s from zantara@", ACCOUNTING_EMAIL)
         return True
+
+    async def _record_invoice_sent_on_client_timeline(
+        self, practice_data: dict, invoice_number: str, triggered_by: str | None
+    ) -> None:
+        """Client-visible "Invoice sent" entry, written ONLY after the client mail really went out.
+
+        The status move writes "Invoice being prepared" before this automation runs; on no_email
+        or failed nothing client-visible is added (the team and accounting notices cover those).
+        Best effort: a missing table or a write error never fails the invoice flow.
+        """
+        if practice_data.get("client_visible") is False or practice_data.get("client_id") is None:
+            return
+        try:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO timeline_events (
+                        client_id, practice_id, event_type, title, description,
+                        event_date, client_visible, color, created_by
+                    )
+                    VALUES ($1, $2, 'payment_due', 'Invoice sent', $3, NOW(), true, 'warning', $4)
+                    """,
+                    practice_data["client_id"],
+                    practice_data["id"],
+                    f"Invoice {invoice_number}",
+                    triggered_by,
+                )
+        except Exception as exc:
+            if getattr(exc, "sqlstate", None) != "42P01":
+                logger.warning(
+                    "Could not write the invoice-sent timeline entry for practice %s: %s",
+                    practice_data.get("id"),
+                    type(exc).__name__,
+                )
 
     async def _fetch_practice_data(self, practice_id: int) -> dict | None:
         """Fetch practice data from database."""
@@ -909,7 +954,13 @@ class InvoiceAutomationService:
                 practice_id,
                 "invoice_generated",
                 triggered_by,
-                f"Invoice {invoice_info['invoice_number']} created and sent",
+                activity_description(
+                    invoice_info["invoice_number"],
+                    client_email_outcome(
+                        bool(invoice_info.get("email_sent")),
+                        bool(invoice_info.get("email_attempted")),
+                    ),
+                ),
             )
 
         logger.info("Practice %s updated with invoice information", practice_id)

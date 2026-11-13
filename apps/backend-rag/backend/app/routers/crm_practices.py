@@ -43,6 +43,10 @@ from backend.services.crm.practice_state_machine import (
 )
 from backend.services.invoicing import InvoiceAutomationService
 from backend.services.invoicing import invoice_company as invoice_company_service
+from backend.services.invoicing.client_email_outcome import (
+    client_email_outcome,
+    regenerated_message,
+)
 from backend.services.portal._mixins.documents import PortalDocumentsMixin
 from backend.services.portal.required_slots import mark_required_slot_uploaded
 
@@ -361,6 +365,18 @@ PAYMENT_STATUS_VALUES = {"unpaid", "partial", "paid"}
 # ================================================
 # PYDANTIC MODELS
 # ================================================
+
+
+# Client-visible timeline entry written when a practice enters a status. The entry is written at
+# the moment of the move, BEFORE the invoice automation has run, so for sending_invoice it must
+# not claim the invoice was sent: whether the client was emailed is only known afterwards
+# (and is told truthfully to the team by the accounting mail).
+STATUS_TIMELINE_EVENTS: dict[str, tuple[str, str, str]] = {
+    "waiting_documents": ("document_request", "Documents needed", "warning"),
+    "sending_invoice": ("payment_due", "Invoice being prepared", "warning"),
+    "on_process": ("milestone", "Application in process", "info"),
+    "completed": ("completion", "Case completed", "success"),
+}
 
 
 class PracticeCreate(BaseModel):
@@ -1850,19 +1866,8 @@ async def update_practice(
                         updated_practice.get("client_visible", practice_client_visible)
                     )
                     if is_visible:
-                        status_event_map = {
-                            "waiting_documents": (
-                                "document_request",
-                                "Documents needed",
-                                "warning",
-                            ),
-                            "sending_invoice": ("payment_due", "Invoice sent", "warning"),
-                            "on_process": ("milestone", "Application in process", "info"),
-                            "completed": ("completion", "Case completed", "success"),
-                        }
-
-                        if updates.status in status_event_map:
-                            event_type, title, color = status_event_map[updates.status]
+                        if updates.status in STATUS_TIMELINE_EVENTS:
+                            event_type, title, color = STATUS_TIMELINE_EVENTS[updates.status]
                             description = (
                                 updated_practice.get("client_summary")
                                 or f"Status: {updates.status}"
@@ -2533,7 +2538,12 @@ async def regenerate_invoice(
 
         return {
             "success": True,
-            "message": f"Invoice {result.get('invoice_number')} regenerated and sent successfully",
+            "message": regenerated_message(
+                result.get("invoice_number"),
+                client_email_outcome(
+                    bool(result.get("email_sent")), bool(result.get("email_attempted"))
+                ),
+            ),
             "invoice_number": result.get("invoice_number"),
             "drive_file_id": result.get("drive_file_id"),
             "drive_link": result.get("drive_link"),
