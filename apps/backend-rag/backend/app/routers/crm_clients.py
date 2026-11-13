@@ -607,9 +607,8 @@ async def create_client(
         creator_email = (current_user.get("email") or "").strip().lower() if current_user else None
         if not creator_email:
             logger.error(
-                f"create_client: missing email in current_user context. "
-                f"Keys: {list(current_user.keys()) if current_user else 'None'}, "
-                f"sub: {current_user.get('sub') if current_user else 'N/A'}"
+                "create_client: missing email in current_user context. Keys: %s",
+                list(current_user.keys()) if current_user else "None",
             )
             raise HTTPException(
                 status_code=401,
@@ -846,7 +845,7 @@ async def list_clients(
 
         logger.info(
             "📋 [CRM Clients] User %s requesting clients list (assigned_to_filter=%s, rbac_filter=%s)",
-            current_user_email,
+            current_user.get("user_id") or current_user.get("id"),
             assigned_to,
             rbac_filter,
         )
@@ -1016,9 +1015,7 @@ async def list_clients(
             rows = await conn.fetch(query, *params)
 
             clients = [ClientResponse(**dict(row)) for row in rows]
-            logger.info(
-                f"📋 [CRM Clients] Returning {len(clients)} clients for {current_user_email}",
-            )
+            logger.info("📋 [CRM Clients] Returning %d clients", len(clients))
             return clients
 
     except HTTPException:
@@ -1117,7 +1114,7 @@ async def get_client_avatar(
                 header, b64 = avatar_url.split(",", 1)
                 media_type = "image/jpeg"
                 if header.startswith("data:") and ";" in header:
-                    media_type = header[len("data:"):].split(";", 1)[0] or media_type
+                    media_type = header[len("data:") :].split(";", 1)[0] or media_type
                 image_bytes = base64.b64decode(b64)
             except (ValueError, binascii.Error) as e:
                 raise HTTPException(status_code=422, detail="Malformed avatar data") from e
@@ -1774,8 +1771,7 @@ async def update_client(
                     _converged = False
                     for _ in range(3):
                         _cur = await conn.fetchrow(
-                            "SELECT phone, phone_normalized, whatsapp"
-                            "  FROM clients WHERE id = $1",
+                            "SELECT phone, phone_normalized, whatsapp  FROM clients WHERE id = $1",
                             client_id,
                         )
                         _want = {
@@ -2066,11 +2062,7 @@ async def get_clients_stats(
         # scoped (non-admin) requests $1 is the user email in every query below
         # (the only pre-existing param, STATS_DAYS_RECENT, shifts to $2 in the
         # new_last_30_days query).
-        user_email = (
-            current_user.get("email", "").lower()
-            if isinstance(current_user, dict)
-            else ""
-        )
+        user_email = current_user.get("email", "").lower() if isinstance(current_user, dict) else ""
         scoped = bool(user_email) and not is_crm_admin(current_user)
 
         async with db_pool.acquire() as conn:

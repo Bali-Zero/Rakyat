@@ -568,6 +568,40 @@ async def test_create_client_success(crm_service, mock_pool):
 
 
 @pytest.mark.asyncio
+async def test_create_client_log_carries_id_only(crm_service, mock_pool, caplog):
+    import logging
+
+    service, _ = crm_service
+    pool, conn = mock_pool
+    conn.fetchval = AsyncMock(return_value=None)
+    conn.fetchrow = AsyncMock(
+        return_value={
+            "id": 4242,
+            "full_name": "Zyxwv Synthetic",
+            "email": "zyxwv@example.com",
+            "phone": None,
+            "whatsapp": None,
+            "nationality": None,
+            "passport_number": None,
+            "status": "active",
+            "client_type": "individual",
+            "assigned_to": None,
+            "custom_fields": {},
+        }
+    )
+    with (
+        patch.object(service.auditor, "log_client_created", new_callable=AsyncMock),
+        caplog.at_level(logging.DEBUG, logger="backend.services.crm.client_core"),
+    ):
+        await service.create_client({"full_name": "Zyxwv Synthetic", "email": "zyxwv@example.com"})
+
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "Created client 4242" in text
+    assert "Zyxwv" not in text
+    assert "@" not in text
+
+
+@pytest.mark.asyncio
 async def test_create_client_duplicate_raises(crm_service, mock_pool):
     service, _ = crm_service
     pool, conn = mock_pool

@@ -733,7 +733,7 @@ class EnhancedCRMService:
                 metadata=metadata,
             )
 
-            logger.info(f"Created client {result['id']}: {validated.full_name}")
+            logger.info("Created client %s", result["id"])
             return result
 
         except ValidationError:
