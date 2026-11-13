@@ -78,6 +78,14 @@ class TestAutoCategorizeDocument:
         result = auto_categorize_document("birth_certificate_child_2020.pdf")
         assert result["document_category"] == "family"
 
+    def test_boundary_allows_digit_suffix_for_pure_alpha_codes(self):
+        spt_res = auto_categorize_document("SPT2023.pdf")
+        assert spt_res["document_category"] == "tax"
+        npwp_res = auto_categorize_document("npwp123.pdf")
+        assert npwp_res["document_category"] in ("pma", "tax")
+        neg_res = auto_categorize_document("hospital_invoice.pdf")
+        assert neg_res["document_category"] == "other"
+
 
 class TestExtractExpiryDate:
     """Tests for extract_expiry_date function."""

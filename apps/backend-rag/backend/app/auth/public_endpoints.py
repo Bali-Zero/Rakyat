@@ -315,6 +315,12 @@ _INFRA = (
         "wa-mirror intake document upload — X-CRM-Write-Key + WA_MIRROR_CRM_WRITE_ENABLED auth in-router",
         match="template",
     ),
+    PublicEndpoint(
+        "/api/crm/internal/companies/{company_uuid}/documents/upload",
+        Category.INFRA,
+        "wa-mirror intake standalone company document upload — X-CRM-Write-Key + WA_MIRROR_CRM_WRITE_ENABLED auth in-router",
+        match="template",
+    ),
     # BOT-V4 S2 broker transport (Codex re-verdict, finding 1): the Pro
     # broker daemon authenticates with the DEDICATED WA_BROKER_KEY via
     # require_wa_broker_key (constant-time, fail-closed when unconfigured,

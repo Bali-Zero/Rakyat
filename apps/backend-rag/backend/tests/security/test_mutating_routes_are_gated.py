@@ -325,6 +325,11 @@ INTENTIONALLY_PUBLIC_MUTATIONS: tuple[IntentionalPublicMutation, ...] = (
         "/api/crm/internal/clients/{client_id}/documents/upload",
         "wa-mirror intake document upload — same X-CRM-Write-Key gate as upsert-by-phone.",
     ),
+    IntentionalPublicMutation(
+        "POST",
+        "/api/crm/internal/companies/{company_uuid}/documents/upload",
+        "wa-mirror intake standalone company document upload — same X-CRM-Write-Key gate as upsert-by-phone.",
+    ),
     # ── BOT-V4 broker: dedicated WA_BROKER_KEY checked in-router ──
     IntentionalPublicMutation(
         "POST",
