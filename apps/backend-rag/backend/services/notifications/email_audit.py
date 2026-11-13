@@ -49,6 +49,8 @@ CRITICAL_EMAIL_TYPES: frozenset[str] = frozenset(
         "invoice_client",
         "welcome",
         "process_start_client",
+        "payment_client",
+        "payment_team",
     }
 )
 
@@ -69,6 +71,7 @@ NON_RESURRECTABLE_EMAIL_TYPES: frozenset[str] = frozenset(
         "completion_client",
         "welcome",
         "process_start_client",
+        "payment_client",
     }
 )
 
@@ -122,6 +125,73 @@ async def log_email_attempt(
         # reaches the log, same helper the Telegram alert below uses.
         logger.warning("email_audit: log_email_attempt failed: %s", _bounded_scrub(str(exc), 400))
         return None
+
+
+# A row in one of these states means the email went out or is still on its way: it
+# counts as "already sent" for :func:`claim_email_once`. A 'failed' or 'escalated' row
+# does not (the mail never reached anyone, so a later attempt may send it).
+_CLAIM_BLOCKING_STATUSES = ("sending", "sent", "retry_scheduled")
+
+
+async def claim_email_once(
+    pool: asyncpg.Pool,
+    *,
+    email_type: str,
+    once_group: tuple[str, ...],
+    to_email: str,
+    subject: str | None = None,
+    practice_id: int,
+    client_id: int | None = None,
+) -> tuple[bool, int | None]:
+    """Atomically log a 'sending' row unless the group already has one for this practice.
+
+    "Once per practice" for the ``once_group`` email types: a transaction-scoped advisory
+    lock serialises concurrent claims for the same practice, then the claim checks
+    ``email_send_log`` for a blocking row of any type in the group and, if none, inserts
+    the caller's 'sending' row. Returns ``(True, row_id)`` for the one winner and
+    ``(False, None)`` for everyone else.
+
+    If the database fails the claim is not enforced: it returns ``(True, None)`` so the
+    mail still goes out, the same "audit never gates the send" stance as
+    :func:`log_email_attempt`.
+    """
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext($1))",
+                    f"email_once:{'|'.join(sorted(once_group))}:{practice_id}",
+                )
+                already = await conn.fetchval(
+                    """
+                    SELECT 1 FROM email_send_log
+                    WHERE practice_id = $1 AND email_type = ANY($2::text[])
+                      AND status = ANY($3::text[])
+                    LIMIT 1
+                    """,
+                    practice_id,
+                    list(once_group),
+                    list(_CLAIM_BLOCKING_STATUSES),
+                )
+                if already:
+                    return False, None
+                row_id = await conn.fetchval(
+                    """
+                    INSERT INTO email_send_log
+                        (email_type, practice_id, client_id, to_email, subject, status)
+                    VALUES ($1, $2, $3, $4, $5, 'sending')
+                    RETURNING id
+                    """,
+                    email_type,
+                    practice_id,
+                    client_id,
+                    to_email,
+                    (subject or "")[:500],
+                )
+                return True, int(row_id) if row_id is not None else None
+    except Exception as exc:
+        logger.warning("email_audit: claim_email_once failed: %s", _bounded_scrub(str(exc), 400))
+        return True, None
 
 
 async def record_email_result(
