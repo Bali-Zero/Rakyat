@@ -22,6 +22,13 @@ R10 An explicit `quoted_price: null` sent with the status gets the gate's 422, n
 R11 A concurrent write of price 0 committed between the early read and the UPDATE cannot slip
     the move through (the row is locked and re-checked in the transaction)
     -> test_a_concurrent_zero_price_write_cannot_slip_the_move_through
+R12 PATCH A reads sending_invoice, then B commits waiting_documents + price 0: A re-entering
+    sending_invoice gets the 422 (decided on the LOCKED status and price)
+    -> test_a_concurrent_move_out_with_a_zero_price_cannot_be_undone_by_a_stale_status
+R12b Same race, price kept: A passes and lands in sending_invoice
+    -> test_a_concurrent_move_out_with_the_price_kept_lets_the_reentry_pass
+R12c A practice that stays in sending_invoice keeps accepting unrelated edits (no gate)
+    -> test_a_practice_that_stays_in_sending_invoice_is_never_gated
 R9  A refused PATCH writes nothing else (price, notes sent in the same PATCH stay unchanged)
     -> test_patch_without_a_price_is_refused_and_status_unchanged
 
@@ -30,10 +37,9 @@ Requires the mandate-owned disposable PostgreSQL; skipped otherwise. Synthetic d
 
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
-
-import asyncio
 
 import asyncpg
 import pytest
@@ -251,3 +257,59 @@ async def test_a_concurrent_zero_price_write_cannot_slip_the_move_through(
     assert (caught.value.status_code, caught.value.detail) == (422, QUOTED_PRICE_REQUIRED_DETAIL)
     assert await status_of(pool, created.id) == "waiting_documents"
     invoice_automation_double.trigger_on_sending_invoice.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_move_out_with_a_zero_price_cannot_be_undone_by_a_stale_status(
+    pool: asyncpg.Pool, invoice_automation_double: MagicMock
+) -> None:
+    created = await create(pool, await client(pool))
+    await pool.execute("UPDATE practices SET status = 'sending_invoice' WHERE id=$1", created.id)
+    async with pool.acquire() as other:
+        txn = other.transaction()
+        await txn.start()
+        await other.execute(
+            "UPDATE practices SET status = 'waiting_documents', quoted_price = 0 WHERE id = $1",
+            created.id,
+        )
+        mover = asyncio.create_task(patch(pool, created.id, status="sending_invoice"))
+        await asyncio.sleep(0.5)  # A has read sending_invoice and waits on the row lock
+        assert not mover.done()
+        await txn.commit()
+    with pytest.raises(HTTPException) as caught:
+        await mover
+    assert (caught.value.status_code, caught.value.detail) == (422, QUOTED_PRICE_REQUIRED_DETAIL)
+    assert await status_of(pool, created.id) == "waiting_documents"
+    invoice_automation_double.trigger_on_sending_invoice.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_move_out_with_the_price_kept_lets_the_reentry_pass(
+    pool: asyncpg.Pool,
+) -> None:
+    created = await create(pool, await client(pool))
+    await pool.execute("UPDATE practices SET status = 'sending_invoice' WHERE id=$1", created.id)
+    async with pool.acquire() as other:
+        txn = other.transaction()
+        await txn.start()
+        await other.execute(
+            "UPDATE practices SET status = 'waiting_documents' WHERE id = $1", created.id
+        )
+        mover = asyncio.create_task(patch(pool, created.id, status="sending_invoice"))
+        await asyncio.sleep(0.5)
+        assert not mover.done()
+        await txn.commit()
+    out = await mover
+    assert out["status"] == "sending_invoice"
+    assert await status_of(pool, created.id) == "sending_invoice"
+
+
+@pytest.mark.asyncio
+async def test_a_practice_that_stays_in_sending_invoice_is_never_gated(
+    pool: asyncpg.Pool,
+) -> None:
+    practice = await priceless(pool, await client(pool), status="sending_invoice")
+    out = await patch(pool, practice, notes="edit while priceless in sending_invoice")
+    assert out["status"] == "sending_invoice"
+    again = await patch(pool, practice, status="sending_invoice")
+    assert again["status"] == "sending_invoice"

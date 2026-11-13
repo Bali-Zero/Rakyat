@@ -1588,11 +1588,6 @@ async def update_practice(
             # from a service chosen in it), else the one on the row; a PATCH that sets price
             # and status together passes. Only entering the status is gated: a practice
             # already in Sending Invoice keeps accepting unrelated edits.
-            entering_sending_invoice = bool(
-                updates.status
-                and normalize_state(updates.status) == "sending_invoice"
-                and normalize_state(old_status or "") != "sending_invoice"
-            )
             if updates.status and normalize_state(old_status or "") != "sending_invoice":
                 try:
                     validate_quoted_price_for_invoice(
@@ -1698,17 +1693,24 @@ async def update_practice(
             params.append(practice_id)
 
             async with conn.transaction():
-                if entering_sending_invoice and "quoted_price" not in update_set:
-                    # The price on the row was read before this transaction: lock it and
-                    # re-check, so a concurrent write of 0/NULL cannot slip a move through.
-                    locked_price = await conn.fetchval(
-                        "SELECT quoted_price FROM practices WHERE id = $1 FOR UPDATE",
+                if updates.status and normalize_state(updates.status) == "sending_invoice":
+                    # The gate above ran on values read before this transaction. Lock the row
+                    # and decide on the LOCKED status and price: a concurrent commit (price
+                    # to 0/NULL, or a move out of sending_invoice) cannot slip a move in.
+                    locked = await conn.fetchrow(
+                        "SELECT status, quoted_price FROM practices WHERE id = $1 FOR UPDATE",
                         practice_id,
                     )
-                    try:
-                        validate_quoted_price_for_invoice(updates.status, locked_price)
-                    except QuotedPriceRequiredError as e:
-                        raise HTTPException(status_code=422, detail=str(e)) from e
+                    if locked and normalize_state(locked["status"] or "") != "sending_invoice":
+                        try:
+                            validate_quoted_price_for_invoice(
+                                updates.status,
+                                update_set["quoted_price"]
+                                if "quoted_price" in update_set
+                                else locked["quoted_price"],
+                            )
+                        except QuotedPriceRequiredError as e:
+                            raise HTTPException(status_code=422, detail=str(e)) from e
                 if invoice_company_pos is not None and (
                     invoice_company_id_in is not None or invoice_company_name_in
                 ):
