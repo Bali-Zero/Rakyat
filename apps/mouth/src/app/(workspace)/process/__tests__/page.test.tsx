@@ -546,7 +546,8 @@ describe("Cases Page", () => {
         fireEvent.contextMenu(screen.getByText("Müller Anna"));
         await screen.findByText("Update Status");
         // the menu is rendered last, after the board columns
-        await user.click(screen.getAllByText("On Process").at(-1)!);
+        const onProcess = screen.getAllByText("On Process");
+        await user.click(onProcess[onProcess.length - 1]);
 
         await waitFor(() => {
           expect(api.crm.updatePractice).toHaveBeenCalledWith(9, {
