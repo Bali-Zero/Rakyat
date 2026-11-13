@@ -25,6 +25,9 @@ FAKE_STATUS = "synthetic-status-zq"
 FAKE_CODE = "SYNTHCODE-ZQ"
 FAKE_CLAIM = "synthetic_claim_key_zq"
 FAKE_EXC = "synthetic exception text zq"
+FAKE_FULL_NAME = "Qwxzy Synthetic Vellum"
+FAKE_CLIENT_EMAIL = "qwxzy.vellum@example.com"
+FAKE_COMPANY_NIB = "9120000055577"
 
 _STANDARD = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime", "taskName"}
 
@@ -97,7 +100,7 @@ def pool_conn() -> tuple[MagicMock, AsyncMock]:
 
 @pytest.fixture
 def admin_user() -> dict[str, Any]:
-    return {"id": "admin-1", "email": "zero@balizero.com", "role": "admin"}
+    return {"id": "admin-1", "email": "admin@example.invalid", "role": "admin"}
 
 
 # --------------------------------------------------------------------------- hr_service
@@ -337,6 +340,90 @@ class TestCrmClientsLogs:
         _assert_clean(caplog, FAKE_CLAIM, FAKE_EMAIL, FAKE_NAME)
 
     @pytest.mark.asyncio
+    async def test_company_dedup_by_nib_logs_the_company_id_only(self, pool_conn, caplog):
+        from backend.app.routers import crm_clients as module
+
+        pool, conn = pool_conn
+        conn.fetchval = AsyncMock(return_value=77)  # existing company found by NIB
+        row = {
+            "id": 5,
+            "uuid": "11111111-1111-1111-1111-111111111111",
+            "full_name": FAKE_FULL_NAME,
+            "email": FAKE_CLIENT_EMAIL,
+            "phone": None,
+            "whatsapp": None,
+            "company_name": "Synthetic Co",
+            "nationality": None,
+            "passport_number": None,
+            "passport_expiry": None,
+            "date_of_birth": None,
+            "gender": None,
+            "birthplace": None,
+            "status": "active",
+            "client_type": "individual",
+            "assigned_to": None,
+            "tax_consultant": None,
+            "avatar_url": None,
+            "address": None,
+            "notes": None,
+            "first_contact_date": None,
+            "last_interaction_date": None,
+            "last_sentiment": None,
+            "last_interaction_summary": None,
+            "tags": [],
+            "lead_source": None,
+            "service_interest": [],
+            "custom_fields": {},
+            "tax_id": None,
+            "npwp": None,
+            "nib": None,
+            "current_visa_type": None,
+            "current_visa_sponsor": None,
+            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "created_by": FAKE_EMAIL,
+        }
+        service = MagicMock()
+        service.create_client = AsyncMock(return_value=row)
+        real_dump = module.ClientCreate.model_dump
+
+        def dump_with_nib(self, *args, **kwargs):
+            return {**real_dump(self, *args, **kwargs), "nib": FAKE_COMPANY_NIB}
+
+        with (
+            patch.object(module.ClientCreate, "model_dump", dump_with_nib),
+            patch("backend.app.routers.crm_clients.invalidate_cache", AsyncMock()),
+            patch(
+                "backend.services.integrations.service_account_drive_service.ServiceAccountDriveService",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "backend.services.crm.welcome.welcome_whatsapp_service.send_client_welcome",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "backend.services.crm.welcome.welcome_email_service.schedule_client_welcome_email",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "backend.services.portal.portal_profile_service.PortalProfileService",
+                return_value=MagicMock(ensure_portal_profile=AsyncMock(return_value=None)),
+            ),
+            caplog.at_level(logging.DEBUG),
+        ):
+            await module.create_client(
+                client=module.ClientCreate(full_name=FAKE_FULL_NAME, company_name="Synthetic Co"),
+                background_tasks=MagicMock(),
+                current_user={"email": FAKE_EMAIL, "role": "admin"},
+                client_service=service,
+                db_pool=pool,
+            )
+        text = _assert_clean(
+            caplog, FAKE_COMPANY_NIB, FAKE_FULL_NAME, FAKE_CLIENT_EMAIL, FAKE_EMAIL
+        )
+        assert "Company dedup: found existing company 77" in text
+
+    @pytest.mark.asyncio
     async def test_ai_summary_served_logs_no_schema_or_fingerprint(
         self, pool_conn, admin_user, caplog
     ):
@@ -417,3 +504,28 @@ class TestClientCoreLogs:
             await svc.update_practice_status(8, "b")
         text = _assert_clean(caplog, FAKE_EXC, FAKE_EMAIL)
         assert "RuntimeError" in text
+
+    @pytest.mark.asyncio
+    async def test_client_created_logs_the_id_not_the_name_or_email(self, crm_service, caplog):
+        svc, conn = crm_service
+        conn.fetchval = AsyncMock(return_value=None)
+        conn.fetchrow = AsyncMock(
+            return_value={
+                "id": 4242,
+                "full_name": FAKE_FULL_NAME,
+                "email": FAKE_CLIENT_EMAIL,
+                "phone": None,
+                "whatsapp": None,
+                "nationality": None,
+                "passport_number": None,
+                "status": "active",
+                "client_type": "individual",
+                "assigned_to": None,
+                "custom_fields": {},
+            }
+        )
+        svc.auditor.log_client_created = AsyncMock()
+        with caplog.at_level(logging.DEBUG):
+            await svc.create_client({"full_name": FAKE_FULL_NAME, "email": FAKE_CLIENT_EMAIL})
+        text = _assert_clean(caplog, FAKE_FULL_NAME, "Qwxzy", FAKE_CLIENT_EMAIL)
+        assert "Created client 4242" in text
