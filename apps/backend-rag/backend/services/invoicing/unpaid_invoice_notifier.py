@@ -1,247 +1,228 @@
 """
-Unpaid Invoice Notifier Service.
+Unpaid Invoice Notifier.
 
-Detects practices stuck in `sending_invoice` status for 7+ days
-(invoice sent but no payment received) and sends a summary reminder
-email to Asya (accounting) listing all overdue invoices.
+Owner decision 2026-11-13: when an invoice issued by the new invoicing flow is
+still unpaid 3 days after issue, accounting (Asya) gets ONE digest email
+naming it, once per invoice. The backlog issued before the new flow is never
+emailed.
+
+Rules, each pinned by a test in tests/unit/services/invoicing/
+test_unpaid_invoice_notifier.py (and the Postgres twin test):
+  * issue date = invoices.created_at (first issue; a regeneration upserts the
+    row and never moves it);
+  * only invoices created at or after INVOICE_REMINDER_FROM (2026-11-11 00:00 WITA);
+  * only while the practice payment_status is unpaid or partial, and the
+    practice is not cancelled;
+  * each invoice is reminded once: invoice_payment_reminders (migration 360)
+    is recorded only AFTER the mail was delivered, under a Postgres advisory
+    lock so two overlapping runs cannot both send;
+  * the digest carries no client data: invoice number, service, amount,
+    days unpaid, team member.
 """
 
-import os
-from datetime import datetime, timezone
+import html
+import json
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import asyncpg
-import httpx
 
+from backend.app.services.internal_email import send_internal_email
 from backend.app.utils.logging_utils import get_logger
 from backend.services.invoicing.accounting import ACCOUNTING_EMAIL
 
 logger = get_logger(__name__)
 
-# How many days before an invoice is considered overdue
-OVERDUE_DAYS: int = 7
+# Days after issue before an unpaid invoice is reminded.
+REMINDER_DAYS: int = 3
 
-# Internal Brevo email endpoint (from=zantara@balizero.com)
-_EMAIL_API_URL: str = os.getenv(
-    "INTERNAL_EMAIL_API_URL",
-    "https://nuzantara-rag.fly.dev/api/notifications/send-email",
-)
-_EMAIL_API_KEY: str = os.getenv("NUZANTARA_API_KEY", "")
+# First WITA calendar day of the new invoicing flow (2026-11-11 00:00 WITA).
+WITA = timezone(timedelta(hours=8))
+INVOICE_REMINDER_FROM: datetime = datetime(2026, 11, 11, 0, 0, tzinfo=WITA)
+
+EMAIL_TYPE = "unpaid_invoice_digest"
+# system_settings row rewritten on EVERY run: the persisted proof that the job executed.
+HEARTBEAT_KEY = "unpaid_invoice_reminder_last_run"
+
+# Held for the whole run (check, send, record) so overlapping runs serialise.
+_ADVISORY_LOCK_KEY = 7_360_001
+
+_DUE_SQL = """
+    SELECT
+        i.id                                            AS invoice_id,
+        i.practice_id,
+        i.invoice_number,
+        i.amount_idr,
+        i.paid_amount_idr,
+        p.payment_status,
+        p.assigned_to,
+        COALESCE(pt.name, 'Service')                    AS service_name,
+        EXTRACT(DAY FROM NOW() - i.created_at)::int     AS days_unpaid
+    FROM invoices i
+    JOIN practices p            ON p.id = i.practice_id
+    LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
+    WHERE i.created_at >= $1
+      AND i.created_at <= NOW() - ($2 * INTERVAL '1 day')
+      AND p.payment_status IN ('unpaid', 'partial')
+      AND p.status <> 'cancelled'
+      AND NOT EXISTS (
+            SELECT 1 FROM invoice_payment_reminders r WHERE r.invoice_id = i.id
+      )
+    ORDER BY i.created_at ASC
+"""
+
+
+def _fmt_idr(value: Any) -> str:
+    return f"Rp {float(value or 0):,.0f}".replace(",", ".")
+
+
+def _build_digest(invoices: list[dict[str, Any]], today: str) -> tuple[str, str]:
+    n = len(invoices)
+    subject = (
+        f"[UNPAID] {n} invoice{'s' if n != 1 else ''} unpaid after {REMINDER_DAYS} days - {today}"
+    )
+    cell = "padding:8px 12px;border-bottom:1px solid #eee;"
+    rows = []
+    for inv in invoices:
+        amount = _fmt_idr(inv.get("amount_idr"))
+        if inv.get("payment_status") == "partial":
+            outstanding = float(inv.get("amount_idr") or 0) - float(inv.get("paid_amount_idr") or 0)
+            amount += f" (partial, outstanding {_fmt_idr(max(outstanding, 0))})"
+        rows.append(
+            "<tr>"
+            f"<td style='{cell}'>{html.escape(inv.get('invoice_number') or '-')}</td>"
+            f"<td style='{cell}'>{html.escape(inv.get('service_name') or '-')}</td>"
+            f"<td style='{cell}text-align:right;'>{html.escape(amount)}</td>"
+            f"<td style='{cell}text-align:center;'><strong>{int(inv.get('days_unpaid') or 0)}</strong></td>"
+            f"<td style='{cell}'>{html.escape(inv.get('assigned_to') or '-')}</td>"
+            "</tr>"
+        )
+    body = f"""
+<div style="font-family:Arial,sans-serif;max-width:760px;margin:0 auto;color:#333;">
+  <h2 style="color:#363A3E;">Invoices still unpaid</h2>
+  <p>Hi Asya, {n} invoice{"s are" if n != 1 else " is"} still unpaid {REMINDER_DAYS} days after issue.
+  Each invoice appears in this reminder once.</p>
+  <table style="width:100%;border-collapse:collapse;margin:16px 0 24px;font-size:14px;">
+    <thead>
+      <tr style="background:#363A3E;color:#fff;">
+        <th style="padding:10px 12px;text-align:left;">Invoice #</th>
+        <th style="padding:10px 12px;text-align:left;">Service</th>
+        <th style="padding:10px 12px;text-align:right;">Amount</th>
+        <th style="padding:10px 12px;text-align:center;">Days unpaid</th>
+        <th style="padding:10px 12px;text-align:left;">Team member</th>
+      </tr>
+    </thead>
+    <tbody>{"".join(rows)}</tbody>
+  </table>
+  <p>Please check the bank account; if a payment has arrived, update the payment status in the CRM.</p>
+  <p style="color:#888;font-size:13px;">Zantara CRM</p>
+</div>
+""".strip()
+    return subject, body
 
 
 class UnpaidInvoiceNotifier:
-    """
-    Scans practices in `sending_invoice` status for 7+ days and
-    notifies Asya (accounting) with a single summary email.
-    """
+    """Sends accounting one digest of invoices unpaid after REMINDER_DAYS."""
 
     def __init__(self, db_pool: asyncpg.Pool) -> None:
         self.db_pool = db_pool
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     async def check_and_notify(self) -> dict[str, Any]:
-        """
-        Find all practices in sending_invoice status for 7+ days.
-        Send one summary email to Asya listing all unpaid invoices.
-
-        Returns:
-            dict with keys:
-                - overdue_count (int): number of overdue invoices found
-                - notified (bool): whether the email was sent
-                - skipped (bool): True when no overdue invoices exist
-        """
+        """Run once. Returns due_count / notified / skipped (+ error)."""
         logger.info(
-            "[UnpaidInvoiceNotifier] Starting overdue invoice check (threshold: %s days)",
-            OVERDUE_DAYS,
+            "[UnpaidInvoiceNotifier] run start (threshold %s days, from %s)",
+            REMINDER_DAYS,
+            INVOICE_REMINDER_FROM.isoformat(),
         )
-
         try:
-            invoices = await self._get_overdue_invoices()
+            async with self.db_pool.acquire(timeout=30) as conn:
+                if not await conn.fetchval("SELECT pg_try_advisory_lock($1)", _ADVISORY_LOCK_KEY):
+                    logger.info("[UnpaidInvoiceNotifier] another run holds the lock - skipped")
+                    return {"due_count": 0, "notified": False, "skipped": True, "locked": True}
+                try:
+                    try:
+                        result = await self._run_locked(conn)
+                    except Exception as exc:
+                        logger.error(
+                            "[UnpaidInvoiceNotifier] run failed: %s",
+                            type(exc).__name__,
+                            exc_info=True,
+                        )
+                        result = {
+                            "due_count": 0,
+                            "notified": False,
+                            "skipped": False,
+                            "error": type(exc).__name__,
+                        }
+                    await self._write_heartbeat(conn, result)
+                    return result
+                finally:
+                    await conn.execute("SELECT pg_advisory_unlock($1)", _ADVISORY_LOCK_KEY)
         except Exception as exc:
             logger.error(
-                "[UnpaidInvoiceNotifier] Failed to query overdue invoices",
-                exc_info=True,
-            )
-            return {"overdue_count": 0, "notified": False, "skipped": False, "error": str(exc)}
-
-        if not invoices:
-            logger.info("[UnpaidInvoiceNotifier] No overdue invoices found — skipping notification")
-            return {"overdue_count": 0, "notified": False, "skipped": True}
-
-        logger.info(f"[UnpaidInvoiceNotifier] Found {len(invoices)} overdue invoice(s)")
-
-        try:
-            await self._send_asya_reminder(invoices)
-            logger.info(
-                f"[UnpaidInvoiceNotifier] Reminder sent to {ACCOUNTING_EMAIL} "
-                f"for {len(invoices)} invoice(s)",
-            )
-            return {"overdue_count": len(invoices), "notified": True, "skipped": False}
-        except Exception as exc:
-            logger.error(
-                "[UnpaidInvoiceNotifier] Failed to send reminder email",
-                exc_info=True,
+                "[UnpaidInvoiceNotifier] run failed: %s", type(exc).__name__, exc_info=True
             )
             return {
-                "overdue_count": len(invoices),
+                "due_count": 0,
                 "notified": False,
                 "skipped": False,
-                "error": str(exc),
+                "error": type(exc).__name__,
             }
 
-    # ------------------------------------------------------------------
-    # Private: database query
-    # ------------------------------------------------------------------
+    async def _run_locked(self, conn: asyncpg.Connection) -> dict[str, Any]:
+        rows = await conn.fetch(_DUE_SQL, INVOICE_REMINDER_FROM, REMINDER_DAYS)
+        invoices = [dict(r) for r in rows]
+        if not invoices:
+            logger.info("[UnpaidInvoiceNotifier] run done: nothing due, no email")
+            return {"due_count": 0, "notified": False, "skipped": True}
 
-    async def _get_overdue_invoices(self) -> list[dict[str, Any]]:
-        """
-        Query practices in `sending_invoice` status whose `updated_at`
-        is older than OVERDUE_DAYS days.
-
-        Returns:
-            List of dicts with keys:
-                id, client_name, client_email, client_phone,
-                practice_type_name, quoted_price, days_overdue,
-                invoice_number (from documents->'invoice'->>'invoice_number',
-                may be None)
-        """
-        # NOTE: INTERVAL cannot take a $1 placeholder directly in asyncpg;
-        # multiply a plain INTERVAL '1 day' by the integer parameter instead.
-        query = """
-            SELECT
-                p.id,
-                c.full_name                                          AS client_name,
-                c.email                                              AS client_email,
-                c.phone                                              AS client_phone,
-                pt.name                                              AS practice_type_name,
-                p.quoted_price,
-                EXTRACT(DAY FROM NOW() - p.updated_at)::int         AS days_overdue,
-                p.documents -> 'invoice' ->> 'invoice_number'       AS invoice_number
-            FROM practices p
-            JOIN clients c      ON c.id = p.client_id
-            LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
-            WHERE p.status = 'sending_invoice'
-              AND p.updated_at < NOW() - ($1 * INTERVAL '1 day')
-            ORDER BY p.updated_at ASC
-        """
-
-        async with self.db_pool.acquire() as conn:
-            rows = await conn.fetch(query, OVERDUE_DAYS)
-
-        return [dict(row) for row in rows]
-
-    # ------------------------------------------------------------------
-    # Private: email
-    # ------------------------------------------------------------------
-
-    async def _send_asya_reminder(self, invoices: list[dict[str, Any]]) -> None:
-        """
-        Send a friendly reminder email to Asya (accounting) listing all
-        overdue invoices as an HTML table.
-
-        Args:
-            invoices: list of invoice dicts from _get_overdue_invoices()
-        """
-        n = len(invoices)
-        today_str = datetime.now(tz=timezone.utc).date().strftime("%d %B %Y")
-        subject = f"[OVERDUE] \U0001f4b0 {n} invoices awaiting payment \u2014 {today_str}"
-
-        # Build HTML table rows
-        table_rows: list[str] = []
-        for inv in invoices:
-            invoice_number: str = inv.get("invoice_number") or "—"
-            client_name: str = inv.get("client_name") or "—"
-            phone: str = inv.get("client_phone") or "—"
-            quoted_price: float = float(inv.get("quoted_price") or 0)
-            days_overdue: int = int(inv.get("days_overdue") or OVERDUE_DAYS)
-
-            # Format IDR with thousand separators (no decimals)
-            amount_formatted = f"Rp {quoted_price:,.0f}".replace(",", ".")
-
-            # Highlight rows that are very overdue (≥14 days) in light red
-            row_style = ' style="background:#fff0f0;"' if days_overdue >= 14 else ""
-
-            table_rows.append(
-                f"<tr{row_style}>"
-                f"<td style='padding:8px 12px;border-bottom:1px solid #eee;'>{invoice_number}</td>"
-                f"<td style='padding:8px 12px;border-bottom:1px solid #eee;'>{client_name}</td>"
-                f"<td style='padding:8px 12px;border-bottom:1px solid #eee;'>{phone}</td>"
-                f"<td style='padding:8px 12px;border-bottom:1px solid #eee;text-align:right;'>"
-                f"{amount_formatted}</td>"
-                f"<td style='padding:8px 12px;border-bottom:1px solid #eee;text-align:center;'>"
-                f"<strong>{days_overdue}</strong></td>"
-                "</tr>",
-            )
-
-        table_html = "\n".join(table_rows)
-
-        html_body = f"""
-<div style="font-family:Arial,sans-serif;max-width:720px;margin:0 auto;color:#333;">
-
-  <h2 style="color:#d4845a;">💰 Invoices awaiting payment</h2>
-
-  <p>Hi Asya! ☺️</p>
-
-  <p>
-    Hope you are having a great day!
-    There are <strong>{n} invoice(s)</strong> sent more than
-    {OVERDUE_DAYS} days ago that still have no payment received.
-  </p>
-
-  <table style="width:100%;border-collapse:collapse;margin-top:16px;margin-bottom:24px;
-                font-size:14px;">
-    <thead>
-      <tr style="background:#0c0c0e;color:#fff;">
-        <th style="padding:10px 12px;text-align:left;">Invoice #</th>
-        <th style="padding:10px 12px;text-align:left;">Client</th>
-        <th style="padding:10px 12px;text-align:left;">Phone</th>
-        <th style="padding:10px 12px;text-align:right;">Amount (IDR)</th>
-        <th style="padding:10px 12px;text-align:center;">Days waiting</th>
-      </tr>
-    </thead>
-    <tbody>
-      {table_html}
-    </tbody>
-  </table>
-
-  <p><strong>✨ For each client, please:</strong></p>
-  <ol style="line-height:1.9;">
-    <li>Contact them via WhatsApp and gently remind them of the payment</li>
-    <li>Verify whether the payment has already arrived in the bank</li>
-    <li>If paid, update the status to <strong>ON PROCESS</strong> in the CRM</li>
-  </ol>
-
-  <p style="color:#888;font-size:13px;margin-top:32px;">
-    As always, you are the best — thanks for keeping everything under control! 🙏<br><br>
-    With appreciation,<br>
-    <em>Zantara CRM Assistant 🤖</em><br><br>
-    <em>P.S. This is an automated reminder, but the thanks is absolutely sincere! 😊</em>
-  </p>
-
-</div>
-""".strip()
-
-        logger.info(
-            "[UnpaidInvoiceNotifier] Sending reminder to %s via Brevo (%s invoice(s))",
-            ACCOUNTING_EMAIL,
-            n,
+        today = datetime.now(tz=WITA).strftime("%d %B %Y")
+        subject, body = _build_digest(invoices, today)
+        delivered = await send_internal_email(
+            to=ACCOUNTING_EMAIL,
+            subject=subject,
+            body=body,
+            log_context=f"unpaid_invoice_digest n={len(invoices)}",
+            email_type=EMAIL_TYPE,
+            pool=self.db_pool,
         )
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                _EMAIL_API_URL,
-                headers={"X-API-Key": _EMAIL_API_KEY},
-                json={
-                    "to": ACCOUNTING_EMAIL,
-                    "subject": subject,
-                    "body": html_body,
-                },
+        if not delivered:
+            logger.error(
+                "[UnpaidInvoiceNotifier] digest not delivered (%s due) - will retry next run",
+                len(invoices),
             )
-            response.raise_for_status()
+            return {
+                "due_count": len(invoices),
+                "notified": False,
+                "skipped": False,
+                "error": "send_failed",
+            }
 
-        logger.info(
-            f"[UnpaidInvoiceNotifier] Brevo accepted reminder email (status {response.status_code})",
+        await conn.executemany(
+            "INSERT INTO invoice_payment_reminders (invoice_id, days_unpaid) VALUES ($1, $2) "
+            "ON CONFLICT (invoice_id) DO NOTHING",
+            [(inv["invoice_id"], int(inv["days_unpaid"] or 0)) for inv in invoices],
         )
+        logger.info(
+            "[UnpaidInvoiceNotifier] run done: digest sent for %s invoice(s)", len(invoices)
+        )
+        return {"due_count": len(invoices), "notified": True, "skipped": False}
+
+    async def _write_heartbeat(self, conn: asyncpg.Connection, result: dict[str, Any]) -> None:
+        payload = json.dumps(
+            {
+                "ran_at": datetime.now(tz=timezone.utc).isoformat(),
+                "due_count": result.get("due_count", 0),
+                "notified": bool(result.get("notified")),
+                "error": result.get("error"),
+            }
+        )
+        try:
+            await conn.execute(
+                "INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2, NOW()) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+                HEARTBEAT_KEY,
+                payload,
+            )
+        except Exception as exc:
+            logger.warning("[UnpaidInvoiceNotifier] heartbeat write failed: %s", type(exc).__name__)
