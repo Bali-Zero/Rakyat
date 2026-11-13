@@ -130,6 +130,22 @@ const mockPractices: Practice[] = [
   },
 ];
 
+// Stand-in for the backend smart search: case, accents and word order are free.
+const fold = (text: string) =>
+  text
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+const serverSearch = (rows: Practice[], query: string) => {
+  const tokens = fold(query).split(/\s+/).filter(Boolean);
+  return rows.filter((p) => {
+    const hay = fold(
+      `${p.client_name ?? ""} ${p.practice_type_code ?? ""} ${p.id}`,
+    );
+    return tokens.every((t) => hay.includes(t));
+  });
+};
+
 describe("Cases Page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -138,7 +154,11 @@ describe("Cases Page", () => {
     // starts from the default ("kanban") instead of a previous test's click.
     localStorage.clear();
     vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.mocked(api.crm.getPractices).mockResolvedValue(mockPractices);
+    vi.mocked(api.crm.getPractices).mockImplementation(async (params) =>
+      params?.search
+        ? serverSearch(mockPractices, params.search)
+        : mockPractices,
+    );
     // Process Type filter now reads the live catalog (kita-prune lot 6)
     // instead of a hardcoded legacy list; one category/service is enough
     // to exercise the dropdown, and its code matches mockPractices above.
@@ -450,6 +470,72 @@ describe("Cases Page", () => {
         expect(screen.getByText("John Doe")).toBeInTheDocument();
         expect(screen.queryByText("Bob Qodugil")).not.toBeInTheDocument(); // Property purchase
       });
+    });
+
+    it("asks the backend smart search once typing settles", async () => {
+      const user = userEvent.setup();
+      render(<PratichePage />);
+      await waitFor(() => {
+        expect(screen.getByText("John Doe")).toBeInTheDocument();
+      });
+
+      await user.type(screen.getByPlaceholderText(/Search process/i), "john");
+
+      await waitFor(() => {
+        expect(api.crm.getPractices).toHaveBeenCalledWith(
+          expect.objectContaining({ search: "john", limit: 200 }),
+        );
+      });
+    });
+
+    it("finds a client typed lowercase without accents", async () => {
+      const user = userEvent.setup();
+      const accented: Practice = {
+        ...mockPractices[0],
+        id: 9,
+        client_name: "M\u00fcller Anna",
+      };
+      vi.mocked(api.crm.getPractices).mockImplementation(async (params) =>
+        params?.search
+          ? serverSearch([accented, ...mockPractices], params.search)
+          : [accented, ...mockPractices],
+      );
+      render(<PratichePage />);
+      await waitFor(() => {
+        expect(screen.getByText("M\u00fcller Anna")).toBeInTheDocument();
+      });
+
+      await user.type(
+        screen.getByPlaceholderText(/Search process/i),
+        "anna muller",
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("M\u00fcller Anna")).toBeInTheDocument();
+        expect(screen.queryByText("John Doe")).not.toBeInTheDocument();
+      });
+    });
+
+    it("keeps the local filter when the smart search fails", async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.crm.getPractices).mockImplementation(async (params) => {
+        if (params?.search) throw new Error("search down");
+        return mockPractices;
+      });
+      render(<PratichePage />);
+      await waitFor(() => {
+        expect(screen.getByText("John Doe")).toBeInTheDocument();
+      });
+
+      await user.type(screen.getByPlaceholderText(/Search process/i), "John");
+
+      await waitFor(() => {
+        expect(api.crm.getPractices).toHaveBeenCalledWith(
+          expect.objectContaining({ search: "John" }),
+        );
+      });
+      expect(screen.getByText("John Doe")).toBeInTheDocument();
+      expect(screen.queryByText("Jane Smith")).not.toBeInTheDocument();
     });
 
     it('should show "no results" when search has no matches', async () => {

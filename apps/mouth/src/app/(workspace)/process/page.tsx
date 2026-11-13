@@ -66,6 +66,7 @@ import {
   initializeAnalytics,
 } from "@/lib/analytics";
 import { useTeamMemberOptions } from "@/hooks/useTeamMembers";
+import { useDebounce } from "@/hooks/useDebounce";
 import {
   PROCESS_VIEW_MODE_KEY,
   loadViewMode,
@@ -229,6 +230,12 @@ export default function PratichePage() {
   const [practices, setPractices] = useState<Practice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  // Ids the backend smart search matched for `query` (case, accents, word order, phone formats).
+  const [serverMatch, setServerMatch] = useState<{
+    query: string;
+    ids: Set<number>;
+  } | null>(null);
+  const debouncedSearch = useDebounce(searchQuery.trim(), 300);
   // P2.2: persist the view toggle across navigations (lazy-init + write-through)
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     loadViewMode(PROCESS_VIEW_MODE_KEY, ["kanban", "list"], "kanban"),
@@ -339,6 +346,42 @@ export default function PratichePage() {
 
     loadPractices();
   }, [selectedMonth]);
+
+  useEffect(() => {
+    // The backend folds case, accents, word order and phone formats the same way the client
+    // search does; until its answer arrives (or if it fails) the local filter below answers.
+    if (!debouncedSearch) {
+      setServerMatch(null);
+      return;
+    }
+    let cancelled = false;
+    api.crm
+      .getPractices({
+        search: debouncedSearch,
+        month: selectedMonth,
+        limit: 200,
+      })
+      .then((rows) => {
+        if (!cancelled) {
+          setServerMatch({
+            query: debouncedSearch,
+            ids: new Set(rows.map((r) => r.id)),
+          });
+        }
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setServerMatch(null);
+        logger.error(
+          "[Process] Smart search failed, using the local filter",
+          { component: "Process", action: "smartSearch" },
+          toError(err),
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedSearch, selectedMonth]);
 
   useEffect(() => {
     // Live "Process Type" filter options — same catalog endpoint the
@@ -589,7 +632,9 @@ export default function PratichePage() {
       practices
         .filter((p) => {
           // Search filter
-          if (searchQuery) {
+          if (searchQuery.trim() && serverMatch?.query === searchQuery.trim()) {
+            if (!serverMatch.ids.has(p.id)) return false;
+          } else if (searchQuery) {
             const matchesSearch =
               p.id.toString().includes(searchQuery) ||
               p.client_name
@@ -707,7 +752,7 @@ export default function PratichePage() {
 
           return sortOrder === "asc" ? comparison : -comparison;
         }),
-    [practices, searchQuery, filters, sortField, sortOrder],
+    [practices, searchQuery, serverMatch, filters, sortField, sortOrder],
   );
 
   // Memoize practices by status to avoid unnecessary recalculations

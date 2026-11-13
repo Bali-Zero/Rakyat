@@ -39696,6 +39696,8 @@ export interface operations {
         priority?: string | null;
         /** @description Filter by month YYYY-MM */
         month?: string | null;
+        /** @description Smart search: client name or e-mail, service, practice number, phone */
+        search?: string | null;
         /** @description Include status transition history */
         include_history?: boolean;
         limit?: number;
