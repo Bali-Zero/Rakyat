@@ -104,30 +104,20 @@ class EmailHealthMonitor:
 
             # Claim each row by flipping status away from 'failed' so a
             # parallel cron pass won't pick it up even after this tx commits.
-            # The claim is conditional: the SELECT above holds no lock once it
-            # returns (no transaction), so a row may have left 'failed' meanwhile
-            # (a later successful send closed it as 'superseded'). Only a row this
-            # UPDATE still finds 'failed' is ours; any other is skipped, never
-            # revived and never mailed.
-            claimed = []
             for row in rows:
-                took = await conn.fetchval(
+                await conn.execute(
                     """
                     UPDATE email_send_log
                        SET status = 'retry_scheduled'
-                     WHERE id = $1 AND status = 'failed'
-                    RETURNING id
+                     WHERE id = $1
                     """,
                     row["id"],
                 )
-                if took is None:
-                    continue
-                claimed.append(row)
                 stats["considered"] += 1
 
         # Retry outside the claim transaction so we don't hold locks across
         # network I/O.
-        for row in claimed:
+        for row in rows:
             stats["retried"] += 1
             succeeded = await self._retry_single(row)
             if succeeded:
