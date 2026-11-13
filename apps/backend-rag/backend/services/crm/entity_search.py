@@ -41,10 +41,10 @@ __all__ = [
 ]
 
 # The expressions migration 358 indexes (alias-independent for the planner).
-CLIENT_KEY = "public.bz_client_key(c.full_name, c.email)"
-CLIENT_PHONE_KEY = "public.bz_phone_key(c.phone, c.phone_normalized, c.whatsapp)"
-COMPANY_NAME_KEY = "public.bz_name_key(c.company_name)"
-COMPANY_IDENT_KEY = "public.bz_ident_key(c.nib, c.npwp_company)"
+CLIENT_NAME_EXPR = "public.bz_client_key(c.full_name, c.email)"
+CLIENT_PHONE_EXPR = "public.bz_phone_key(c.phone, c.phone_normalized, c.whatsapp)"
+COMPANY_NAME_EXPR = "public.bz_name_key(c.company_name)"
+COMPANY_IDENT_EXPR = "public.bz_ident_key(c.nib, c.npwp_company)"
 
 
 @dataclass
@@ -100,7 +100,7 @@ async def build_practice_search(
         params.append(token)
         index += 1
         arms = [
-            _like(CLIENT_KEY, param),
+            _like(CLIENT_NAME_EXPR, param),
             _like("public.bz_name_key(pt.name)", param),
             _like("public.bz_name_key(pt.code)", param),
         ]
@@ -109,7 +109,7 @@ async def build_practice_search(
             core = cores.get(token, "")
             if len(core) >= MIN_NUMERIC_DIGITS:
                 params.append(core)
-                arms.append(_like(CLIENT_PHONE_KEY, f"${index}::text"))
+                arms.append(_like(CLIENT_PHONE_EXPR, f"${index}::text"))
                 index += 1
         clauses.append("(" + " OR ".join(arms) + ")")
     return EntitySearch(" AND " + " AND ".join(clauses), params, index)
@@ -138,8 +138,8 @@ async def build_company_search(
         param = f"${index}::text"
         params.append(token)
         index += 1
-        arms = [_like(COMPANY_NAME_KEY, param)]
+        arms = [_like(COMPANY_NAME_EXPR, param)]
         if _DIGITS.fullmatch(token):
-            arms.append(_like(COMPANY_IDENT_KEY, param))
+            arms.append(_like(COMPANY_IDENT_EXPR, param))
         clauses.append("(" + " OR ".join(arms) + ")")
     return EntitySearch(" AND " + " AND ".join(clauses), params, index)
