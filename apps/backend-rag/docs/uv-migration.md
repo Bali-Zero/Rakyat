@@ -46,12 +46,19 @@ builder stage (Fly.io production image).
    ```bash
    cd apps/backend-rag
    uv pip compile requirements.txt -o requirements.lock.txt \
-       --generate-hashes --python-version 3.11
+       --generate-hashes --python-version 3.11.5
    uv pip compile requirements-prod.txt -o requirements-prod.lock.txt \
-       --generate-hashes --python-version 3.11
+       --generate-hashes --python-version 3.11.5
    ```
 3. Commit `requirements*.txt` AND `requirements*.lock.txt` together — they
    must always agree.
+
+Why `3.11.5` and not `3.11` (2026-11-13): uv reads a bare `3.11` as 3.11.0,
+and soupsieve 3.0.2+ declares `Requires-Python >=3.11.5`, so a `3.11` target
+can never resolve soupsieve 4.0, the first release that fixes CVE-2026-126190.
+Every runtime that installs these locks is past that floor: the Fly image
+(`python:3.11-slim`, 3.11.18), CI (`setup-python 3.11`, 3.11.18) and the Pro
+mirror venv (3.11.11). Do not lower it back to `3.11`.
 
 ### Upgrade an existing dependency
 
@@ -60,7 +67,7 @@ Same as add, but pass `--upgrade-package <name>` (or `--upgrade` for all):
 ```bash
 cd apps/backend-rag
 uv pip compile requirements.txt -o requirements.lock.txt \
-    --generate-hashes --python-version 3.11 \
+    --generate-hashes --python-version 3.11.5 \
     --upgrade-package fastapi
 ```
 
