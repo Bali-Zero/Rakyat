@@ -1,41 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { pathOnly, stripUrlQueries } from "./search-redaction";
+import { pathOnly, safeUpstreamError } from "./search-redaction";
 
 const VALUE = "zetaquorum-fixture-search";
-const TAIL = "zetaquorum-fixture-tail";
-
-// Every shape a search value can take after the "?" or "#" of a URL.
-const HOSTILE = [
-  `search=${VALUE}`,
-  `q=${VALUE}&page=2`,
-  `se%61rch=${VALUE}`,
-  `%73EARCH=${VALUE}`,
-  `a=1;q=${VALUE}`,
-  `q=prefix;${TAIL}`,
-  `q=prefix%3B${TAIL}`,
-  `q=a%26b%3D${TAIL}`,
-  `x=1#q=${VALUE}`,
-];
-
-describe("stripUrlQueries", () => {
-  it.each(HOSTILE)("cuts the query of ?%s", (query) => {
-    const out = stripUrlQueries(`GET https://x/clients?${query} -> 200`);
-    expect(out).toBe("GET https://x/clients -> 200");
-    expect(out).not.toContain(VALUE);
-    expect(out).not.toContain(TAIL);
-  });
-
-  it("cuts a fragment and a relative URL's query", () => {
-    expect(stripUrlQueries(`/process#q=${VALUE}`)).toBe("/process");
-    expect(stripUrlQueries(`/process?search=${VALUE}`)).toBe("/process");
-  });
-
-  it("leaves paths and plain text alone", () => {
-    const text =
-      "https://x/api/crm/practices/12/documents issue #123 and q-learning, search results";
-    expect(stripUrlQueries(text)).toBe(text);
-  });
-});
 
 describe("pathOnly", () => {
   it("drops the query and the fragment", () => {
@@ -45,8 +11,50 @@ describe("pathOnly", () => {
     expect(pathOnly("/process?search=x")).toBe("/process");
   });
 
+  it.each([
+    `https://kita.example/clients]?q=${VALUE}`,
+    `https://kita.example/clients)?q=${VALUE}`,
+    `https://kita.example/clients:?q=${VALUE}`,
+    `https://kita.example/clients?q=prefix;${VALUE}`,
+    `https://kita.example/clients?q=a%26b%3D${VALUE}`,
+    `https://kita.example/clients#q=${VALUE}`,
+  ])("never keeps the value of %s", (raw) => {
+    expect(pathOnly(raw)).not.toContain(VALUE);
+  });
+
   it("returns null for nothing", () => {
     expect(pathOnly(null)).toBeNull();
     expect(pathOnly("")).toBeNull();
+  });
+});
+
+describe("safeUpstreamError", () => {
+  const target = `http://backend/api/crm/clients?search=${VALUE}`;
+  const search = `?search=${VALUE}`;
+
+  it("removes the exact URL and query from message and stack, and drops the cause", () => {
+    const raw = Object.assign(
+      new TypeError(`Failed to parse URL from ${target}`),
+      { cause: new Error(`inner ${target}`) },
+    );
+    const safe = safeUpstreamError(
+      raw,
+      target,
+      "http://backend/api/crm/clients",
+      search,
+    );
+    expect(safe.name).toBe("TypeError");
+    expect(safe.message).toBe(
+      "Failed to parse URL from http://backend/api/crm/clients",
+    );
+    expect(String(safe.stack)).not.toContain(VALUE);
+    expect((safe as { cause?: unknown }).cause).toBeUndefined();
+  });
+
+  it("leaves an unrelated error as it was (innocence)", () => {
+    const raw = new Error("connect ECONNREFUSED 10.0.0.1:443");
+    const safe = safeUpstreamError(raw, target, "http://backend/x", search);
+    expect(safe.message).toBe("connect ECONNREFUSED 10.0.0.1:443");
+    expect(safe.stack).toBe(raw.stack);
   });
 });

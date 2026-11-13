@@ -34,7 +34,7 @@ import os
 import re
 import threading
 from typing import Any
-from urllib.parse import unquote_plus
+from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
 PII_REDACTION_PLACEHOLDER = "[REDACTED]"
 logger = logging.getLogger("zantara.backend")
@@ -141,11 +141,6 @@ _HR_ROUTE_PREFIX = "/api/hr/"
 # blob that we redact by key rather than parsing.
 _QUERY_KEYS: tuple[str, ...] = ("query_string", "query", "QUERY_STRING")
 
-# Query-string fields whose WHOLE value is dropped: what is typed in the search bars (`search`,
-# `q`) travels there with names, e-mails and phones, and no parse of the pairs is trusted to find
-# it (`;`, `%3B`, `%26`, encoded keys). The path and the other fields of the event stay.
-_DROP_QUERY_KEYS: tuple[str, ...] = ("query_string", "QUERY_STRING", "http.query", "url.query")
-
 # Email regex — mirrors the brief. Used both to mask stray emails in strings
 # and to scrub the URL path itself.
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[\w.-]+")
@@ -244,10 +239,78 @@ _LABELLED_ID_RE = re.compile(
 # `request.query_string`, HTTP breadcrumbs carry the full URL). Same two keys as the access-log
 # filter in `core/secret_log_redaction.py`.
 _SEARCH_PARAM_KEYS = frozenset({"search", "q"})
-# In any URL-shaped string (request.url, Referer, breadcrumb url, messages) the query string and
-# the fragment are DROPPED, not parsed: a "?" or "#" right after a path-like character starts a
-# suffix that runs to the next whitespace or quote. Only the path survives.
-_URL_SUFFIX_RE = re.compile(r"(?<=[\w/%.~-])[?#][^\s\"'<>\\]*")
+# STRUCTURED FIELDS ONLY (no regex over free text: text is not reliably URL-shaped, and a cutter
+# corrupts "Foo#bar", "Ready? retry" and SQL "#>>"). Typed search text travels in the query string
+# of a URL, so the event is cleaned by FIELD: query-string fields are replaced, URL-valued fields
+# keep their path only, and the request headers that carry a URL as an opaque string (Referer,
+# Link, Location) are dropped. Exception messages, log messages and every other free text are left
+# to the existing PII patterns.
+_QUERY_FIELD_KEYS = frozenset(
+    {"query_string", "QUERY_STRING", "http.query", "http.fragment", "url.query", "url.fragment"}
+)
+_URL_FIELD_KEYS = frozenset({"url", "http.url", "url.full"})
+_URL_HEADER_NAMES = frozenset({"referer", "referrer", "link", "location"})
+
+
+def _path_only_url(value: str) -> str:
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return PII_REDACTION_PLACEHOLDER
+    if not parts.query and not parts.fragment:
+        return value
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def _scrub_headers(headers: Any) -> Any:
+    if isinstance(headers, dict):
+        return {
+            k: v
+            for k, v in headers.items()
+            if not (isinstance(k, str) and k.lower() in _URL_HEADER_NAMES)
+        }
+    if isinstance(headers, list):
+        return [
+            pair
+            for pair in headers
+            if not (
+                isinstance(pair, (list, tuple))
+                and pair
+                and isinstance(pair[0], str)
+                and pair[0].lower() in _URL_HEADER_NAMES
+            )
+        ]
+    return headers
+
+
+def _scrub_url_fields(obj: Any) -> Any:
+    """Clean query strings and URLs by field name, anywhere in the event (request, breadcrumbs,
+    spans, contexts). Never raises on odd shapes: unknown values pass through unchanged."""
+    if isinstance(obj, dict):
+        out: dict[Any, Any] = {}
+        for k, v in obj.items():
+            if isinstance(k, str) and k in _QUERY_FIELD_KEYS and isinstance(v, str):
+                out[k] = PII_REDACTION_PLACEHOLDER
+            elif isinstance(k, str) and k.lower() == "headers":
+                out[k] = _scrub_headers(v)
+            elif isinstance(k, str) and k in _URL_FIELD_KEYS and isinstance(v, str):
+                out[k] = _path_only_url(v)
+            elif (
+                k == "description"
+                and isinstance(v, str)
+                and isinstance(obj.get("op"), str)
+                and obj["op"].startswith("http")
+            ):
+                method, sep, target = v.partition(" ")
+                out[k] = f"{method} {_path_only_url(target)}" if sep else _path_only_url(v)
+            else:
+                out[k] = _scrub_url_fields(v)
+        return out
+    if isinstance(obj, list):
+        return [_scrub_url_fields(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_scrub_url_fields(v) for v in obj)
+    return obj
 
 
 def _is_search_param(key: Any) -> bool:
@@ -269,7 +332,6 @@ def _redact_string(s: str) -> str:
     See the free-text block above for the two tiers and for what this still
     cannot reach (bare personal names, unlabelled passport numbers).
     """
-    s = _URL_SUFFIX_RE.sub("", s)
     s = _EMAIL_RE.sub(PII_REDACTION_PLACEHOLDER, s)
     s = _CLIENT_ID_RE.sub(PII_REDACTION_PLACEHOLDER, s)
     s = _NPWP_RE.sub(PII_REDACTION_PLACEHOLDER, s)
@@ -307,8 +369,6 @@ def _scrub(obj: Any, parent_key: str | None = None) -> Any:
         scrubbed: dict[Any, Any] = {}
         for k, v in obj.items():
             if _is_pii_key(k) or (_is_search_param(k) and isinstance(v, str)):
-                scrubbed[k] = PII_REDACTION_PLACEHOLDER
-            elif isinstance(k, str) and k in _DROP_QUERY_KEYS and isinstance(v, str):
                 scrubbed[k] = PII_REDACTION_PLACEHOLDER
             elif isinstance(k, str) and k in _QUERY_KEYS and isinstance(v, str):
                 scrubbed[k] = _redact_query_string(v)
@@ -402,6 +462,7 @@ def _before_send_impl(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, 
     to be added at cron entrypoints (`cron-wrapper.sh`, `auto_sentinel.sh`,
     `cron_notifiers.py`) in a follow-up before a dedup filter can land here.
     """
+    event = _scrub_url_fields(event)
     if _is_hr_route_event(event):
         event = _drop_hr_request_payload(event)
     return _scrub(event)

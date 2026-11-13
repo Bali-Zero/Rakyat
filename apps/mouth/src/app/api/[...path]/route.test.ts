@@ -581,6 +581,46 @@ describe("proxy catch-all route — public Visa Oracle boundary", () => {
     expect(serializedLogs).toContain("/api/crm/practices");
   });
 
+  it("never puts the search text in the error it logs for a failed upstream call", async () => {
+    const value = "zetaquorum-fixture-search";
+    const req = new MockNextRequest(
+      `http://localhost/api/crm/practices?search=${value}`,
+      { method: "GET" },
+    );
+    // a fetch parse error prints the whole target URL, query included
+    vi.mocked(global.fetch).mockRejectedValueOnce(
+      Object.assign(
+        new TypeError(
+          `Failed to parse URL from http://backend.test/api/crm/practices?search=${value}`,
+        ),
+        {
+          cause: new Error(
+            `inner http://backend.test/api/crm/practices?search=${value}`,
+          ),
+        },
+      ),
+    );
+
+    await POST(req as never);
+
+    const errors = vi
+      .mocked(logger.error)
+      .mock.calls.map(([message, ctx, err]) => {
+        const e = err as Error | undefined;
+        return (
+          JSON.stringify([message, ctx]) +
+          String(e?.message) +
+          String(e?.stack) +
+          String((e as { cause?: unknown } | undefined)?.cause)
+        );
+      });
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.join("\n")).not.toContain(value);
+    // innocence: the failure is still diagnosable
+    expect(errors.join("\n")).toContain("Failed to parse URL from");
+    expect(errors.join("\n")).toContain("/api/crm/practices");
+  });
+
   it("does not log identifying request context for an upstream auth rejection", async () => {
     vi.mocked(global.fetch).mockResolvedValueOnce(
       new Response("rejected", { status: 401 }),

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { logRouteTouch } from "@/lib/api/route-touch";
 import { toError } from "@/lib/types/common";
+import { safeUpstreamError } from "@/lib/search-redaction";
 
 // Use Node.js runtime (not Edge) for long-running SSE streams.
 // Edge has a 30s timeout which kills workspace-stream responses.
@@ -554,7 +555,8 @@ async function proxy(req: NextRequest): Promise<Response> {
           targetUrl: logTargetUrl,
         },
       },
-      toError(error),
+      // a fetch error can print the whole target URL, query included
+      safeUpstreamError(toError(error), targetUrl, logTargetUrl, url.search),
     );
     return new Response(
       JSON.stringify({

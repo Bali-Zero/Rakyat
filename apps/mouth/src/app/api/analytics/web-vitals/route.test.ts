@@ -13,7 +13,6 @@ vi.mock("@sentry/nextjs", () => ({
   setUser: vi.fn(),
 }));
 
-import { logger } from "@/lib/logger";
 import { POST } from "./route";
 
 const VALUE = "zetaquorum-fixture-search";
@@ -68,14 +67,12 @@ describe("web-vitals ingest never logs the typed search text", () => {
     expect(out).toContain("/process");
   });
 
-  it("and the logger itself cuts a URL printed in a message or its metadata", () => {
-    logger.info(`opened https://kita.example/clients?q=prefix;${TAIL}`, {
-      metadata: { next: `/process?search=${VALUE}#q=${VALUE}` },
-    });
-    const out = printed.join("\n");
-    expect(out).not.toContain(VALUE);
-    expect(out).not.toContain(TAIL);
-    expect(out).toContain("https://kita.example/clients");
-    expect(out).toContain("/process");
+  it.each([
+    `https://kita.example/process]?q=${VALUE}`,
+    `https://kita.example/process)?q=${VALUE}`,
+    `https://kita.example/process:?q=${VALUE}`,
+  ])("whatever ends the path before the query: %s", async (referer) => {
+    await POST(beacon({ name: "LCP", value: 12 }, referer));
+    expect(printed.join("\n")).not.toContain(VALUE);
   });
 });

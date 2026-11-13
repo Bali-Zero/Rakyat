@@ -1,17 +1,9 @@
 /**
  * The typed search text of the client, practice and company search bars travels in the query
- * string of a URL (`?search=`, `?q=`: names, e-mails, phones, tax ids). No parse of the pairs is
- * trusted to find it (`;`, `%3B`, `%26`, encoded keys, fragments), so anything that may print or
- * store a URL keeps its PATH only: the query string and the fragment are cut.
+ * string of a URL (`?search=`, `?q=`: names, e-mails, phones, tax ids). Nothing here scrubs free
+ * text (text is not reliably URL-shaped): a URL that is going to be logged is REBUILT from its
+ * parts, so its query and fragment never enter the line in the first place.
  */
-
-// A "?" or "#" right after a path-like character starts a suffix that runs to the next
-// whitespace, quote or backslash (the quote and backslash of a JSON-stringified context).
-const URL_SUFFIX = /(?<=[\w/%.~-])[?#][^\s"'<>\\]*/g;
-
-export function stripUrlQueries(text: string): string {
-  return text.replace(URL_SUFFIX, "");
-}
 
 /** The path of a URL or referrer, never its query or fragment; null when it is not a URL. */
 export function pathOnly(raw: string | null | undefined): string | null {
@@ -21,4 +13,26 @@ export function pathOnly(raw: string | null | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The error of a failed upstream call, rebuilt so that neither its message nor its stack carries
+ * the exact target URL or the exact query string of the request (a fetch parse error prints the
+ * whole URL). The cause chain is dropped: it can hold the same URL.
+ */
+export function safeUpstreamError(
+  error: Error,
+  targetUrl: string,
+  logTargetUrl: string,
+  search: string,
+): Error {
+  const clean = (text: string) => {
+    let out = text.split(targetUrl).join(logTargetUrl);
+    if (search) out = out.split(search).join("");
+    return out;
+  };
+  const safe = new Error(clean(error.message));
+  safe.name = error.name;
+  if (error.stack) safe.stack = clean(error.stack);
+  return safe;
 }

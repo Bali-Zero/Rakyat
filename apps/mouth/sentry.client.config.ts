@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 
 import { dropProtectedUiBreadcrumb } from "@/lib/sentry-breadcrumbs";
 import { IGNORE_ERRORS, isKnownNoise } from "@/lib/sentry-noise";
+import { scrubSentryUrls } from "@/lib/sentry-url-scrub";
 
 Sentry.init({
   dataCollection: {
@@ -30,7 +31,10 @@ Sentry.init({
   ],
   ignoreErrors: [...IGNORE_ERRORS],
   // Clicks and keys inside a page's protected HR region leave no breadcrumb.
-  beforeBreadcrumb: dropProtectedUiBreadcrumb,
+  beforeBreadcrumb(breadcrumb, hint) {
+    const kept = dropProtectedUiBreadcrumb(breadcrumb, hint);
+    return kept ? scrubSentryUrls(kept) : kept;
+  },
   beforeSend(event) {
     // Non inviare errori in development
     if (process.env.NODE_ENV === "development") {
@@ -41,6 +45,6 @@ Sentry.init({
     // order rather than importance. src/lib/sentry-noise.ts says what is
     // filtered and — the load-bearing half — what deliberately is not: 401/403
     // stays, because muting it is how #5096 would come back invisibly.
-    return isKnownNoise(event) ? null : event;
+    return isKnownNoise(event) ? null : scrubSentryUrls(event);
   },
 });

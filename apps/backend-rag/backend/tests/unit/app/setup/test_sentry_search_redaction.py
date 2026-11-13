@@ -1,9 +1,10 @@
-"""Typed search text never reaches Sentry: the query string and fragment of every URL are dropped.
+"""Typed search text never reaches Sentry: events are cleaned by FIELD, not by regex over text.
 
-Rule under test: in an event, a URL-shaped string keeps its PATH only (the query and the fragment
-are cut, not parsed), structured query-string fields are dropped whole, and dict params named
-search / q lose their text value. Guilt cases go through the real SDK with the repo's hooks and an
-in-memory transport; innocence cases show that paths and non-URL fields are untouched.
+Rules under test (STRUCTURED FIELDS ONLY): query-string fields are replaced, URL-valued fields
+keep their path only, the Referer / Link / Location request headers are dropped, dict params named
+search / q lose their text value. Free text (exception and log messages, SQL, stack frames) is NOT
+touched by any URL cutter. Guilt cases go through the real SDK with the repo's hooks and an
+in-memory transport; the rest call the hook on synthetic events.
 """
 
 from __future__ import annotations
@@ -22,7 +23,6 @@ from backend.app.setup.sentry_config import (
     PII_REDACTION_PLACEHOLDER,
     _before_send,
     _before_send_transaction,
-    _redact_string,
     _scrub,
 )
 
@@ -39,8 +39,13 @@ HOSTILE_QUERIES = [
     f"q=prefix;{TAIL}",
     f"q=prefix%3B{TAIL}",
     f"q=a%26b%3D{TAIL}",
-    f"page=2&%51={VALUE}",
+    f"q=prefix {TAIL}",
+    f'q=prefix"{TAIL}',
     f"x=1#q={VALUE}",
+]
+# URL ends the old cutters could not see.
+HOSTILE_URLS = [f"https://kita.example/clients{end}?q={VALUE}" for end in ("", "]", ")", ":")] + [
+    f"https://kita.example/clients?{q}" for q in HOSTILE_QUERIES
 ]
 
 
@@ -72,14 +77,18 @@ def transport():
     sentry_sdk.init()
 
 
-def _app() -> TestClient:
+def _failing_app() -> TestClient:
     app = FastAPI()
 
     @app.get("/api/crm/practices")
     async def practices(search: str | None = None, q: str | None = None):
         sentry_sdk.add_breadcrumb(
             category="httplib",
-            data={"url": f"http://internal/api/crm/practices?month=2026-11&search={VALUE}"},
+            data={
+                "url": f"http://internal/api/crm/practices?month=2026-11&search={VALUE}",
+                "http.query": f"month=2026-11&search={VALUE}",
+                "http.fragment": "",
+            },
         )
         raise RuntimeError("practices failed")
 
@@ -95,65 +104,58 @@ def _assert_clean(transport: MemoryTransport) -> str:
 
 
 def test_a_failing_search_request_sends_no_search_value_to_sentry(transport):
-    res = _app().get("/api/crm/practices", params={"search": VALUE, "q": VALUE})
+    res = _failing_app().get("/api/crm/practices", params={"search": VALUE, "q": VALUE})
     assert res.status_code == 500
     blob = _assert_clean(transport)
     assert "practices failed" in blob
     assert "/api/crm/practices" in blob  # the path stays
 
 
-@pytest.mark.parametrize("query", HOSTILE_QUERIES)
-def test_a_referer_header_keeps_only_its_path(transport, query):
+@pytest.mark.parametrize("header", ["Referer", "Link", "Location"])
+@pytest.mark.parametrize("url", HOSTILE_URLS)
+def test_url_headers_never_reach_the_event(transport, header, url):
     app = FastAPI()
 
     @app.get("/api/ping")
     async def ping():
         raise RuntimeError("ping failed")
 
-    res = TestClient(app, raise_server_exceptions=False).get(
-        "/api/ping", headers={"Referer": f"https://kita.example/clients?{query}"}
-    )
+    res = TestClient(app, raise_server_exceptions=False).get("/api/ping", headers={header: url})
     assert res.status_code == 500
     blob = _assert_clean(transport)
     assert "ping failed" in blob
+
+
+@pytest.mark.parametrize("url", HOSTILE_URLS)
+def test_url_valued_fields_keep_their_path_only(url):
+    event = {
+        "request": {"url": url, "query_string": "q=x", "method": "GET"},
+        "breadcrumbs": {"values": [{"category": "httplib", "data": {"url": url, "http.url": url}}]},
+        "contexts": {"trace": {"data": {"url.full": url, "url.query": "q=x"}}},
+        "spans": [
+            {"op": "http.client", "description": f"GET {url}", "data": {"http.query": "q=x"}}
+        ],
+    }
+    out = _before_send(event, {})
+    blob = json.dumps(out)
+    assert VALUE not in blob and TAIL not in blob
     assert "https://kita.example/clients" in blob
-
-
-@pytest.mark.parametrize("query", HOSTILE_QUERIES)
-def test_a_url_in_a_log_breadcrumb_keeps_only_its_path(transport, query):
-    logging.getLogger("zantara.backend").info(f"navigating to https://kita.example/p?{query}")
-    try:
-        raise RuntimeError("after breadcrumb")
-    except RuntimeError:
-        sentry_sdk.capture_exception()
-    blob = _assert_clean(transport)
-    assert "after breadcrumb" in blob
-    assert "https://kita.example/p" in blob
-
-
-@pytest.mark.parametrize("query", HOSTILE_QUERIES)
-def test_urls_in_any_string_lose_query_and_fragment(query):
-    out = _redact_string(f"GET http://x/api/crm/companies?{query} -> 200")
-    assert VALUE not in out and TAIL not in out
-    assert out.startswith("GET http://x/api/crm/companies")
-    assert "200" in out
-    assert _redact_string(f"/relative/path?{query}") == "/relative/path"
-
-
-def test_structured_query_fields_are_dropped_whole():
-    out = _scrub(
-        {
-            "request": {"query_string": f"q=prefix;{TAIL}&month=2026-11"},
-            "data": {
-                "http.query": f"search={VALUE}",
-                "url.query": f"q={VALUE}",
-                "http.fragment": "",
-            },
-        }
-    )
     assert out["request"]["query_string"] == PII_REDACTION_PLACEHOLDER
-    assert out["data"]["http.query"] == PII_REDACTION_PLACEHOLDER
-    assert out["data"]["url.query"] == PII_REDACTION_PLACEHOLDER
+    assert out["spans"][0]["description"].startswith("GET https://kita.example/clients")
+
+
+def test_headers_given_as_pairs_are_filtered_too():
+    event = {
+        "request": {
+            "headers": [["Referer", f"https://x/p?q={VALUE}"], ["Accept", "text/html"]],
+        }
+    }
+    assert _before_send(event, {})["request"]["headers"] == [["Accept", "text/html"]]
+
+
+def test_an_unparsable_url_becomes_the_placeholder_and_never_raises():
+    out = _before_send({"request": {"url": "http://[bad?q=" + VALUE}}, {})
+    assert VALUE not in json.dumps(out)
 
 
 def test_dict_params_named_search_are_redacted():
@@ -165,18 +167,57 @@ def test_dict_params_named_search_are_redacted():
     }
 
 
-def test_innocence_paths_and_non_url_fields_are_untouched():
-    assert _redact_string("https://x/api/crm/practices/12/documents") == (
-        "https://x/api/crm/practices/12/documents"
-    )
-    assert _redact_string("worker restarted after 3 retries, state=ok") == (
-        "worker restarted after 3 retries, state=ok"
-    )
-    assert _redact_string("issue #123 and q-learning, search results") == (
-        "issue #123 and q-learning, search results"
-    )
-    assert _scrub({"search_results": 3, "quota": "ok", "search": 3}) == {
-        "search_results": 3,
-        "quota": "ok",
-        "search": 3,
+# --- innocence: free text and diagnostics are NOT touched by any URL cutter ------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Foo#bar",
+        "Ready? retry now",
+        "SELECT metadata#>>'{a}' FROM t WHERE x = $1",
+        "issue #123 and q-learning, search results",
+        "worker restarted after 3 retries, state=ok",
+        "https://x/api/crm/practices/12/documents",
+    ],
+)
+def test_innocence_free_text_is_left_alone(text):
+    event = {
+        "message": text,
+        "exception": {"values": [{"type": "ValueError", "value": text}]},
+        "logentry": {"message": text},
     }
+    out = _before_send(event, {})
+    assert out["message"] == text
+    assert out["exception"]["values"][0]["value"] == text
+    assert out["logentry"]["message"] == text
+
+
+def test_innocence_a_stack_trace_and_ordinary_fields_survive(transport):
+    app = FastAPI()
+
+    @app.get("/api/boom")
+    async def boom():
+        raise ValueError("Ready? retry now; Foo#bar")
+
+    res = TestClient(app, raise_server_exceptions=False).get("/api/boom")
+    assert res.status_code == 500
+    sentry_sdk.flush()
+    blob = json.dumps(transport.payloads)
+    assert "Ready? retry now; Foo#bar" in blob
+    assert "stacktrace" in blob
+
+
+def test_innocence_a_log_message_is_not_rewritten(transport):
+    logging.getLogger("zantara.backend").info("fetched /api/ping?ready=1 ok")
+    try:
+        raise RuntimeError("after breadcrumb")
+    except RuntimeError:
+        sentry_sdk.capture_exception()
+    sentry_sdk.flush()
+    assert "after breadcrumb" in json.dumps(transport.payloads)
+
+
+def test_innocence_non_query_fields_named_like_urls_are_untouched():
+    out = _scrub({"search_results": 3, "quota": "ok", "search": 3})
+    assert out == {"search_results": 3, "quota": "ok", "search": 3}
