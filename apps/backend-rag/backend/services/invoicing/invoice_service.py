@@ -28,6 +28,10 @@ from backend.app.utils.logging_utils import get_logger
 from backend.core.cache import invalidate_crm_stats
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 from backend.services.invoicing.accounting import ACCOUNTING_EMAIL
+from backend.services.invoicing.client_email_outcome import (
+    activity_description,
+    client_email_outcome,
+)
 from backend.services.invoicing.entities import (
     DEFAULT_ENTITY_KEY,
     ENTITIES,
@@ -333,9 +337,7 @@ class InvoiceAutomationService:
                     filename=filename,
                     entity=issuer_decision.entity,
                     amount=final_amount_float,
-                    client_email_status=(
-                        "sent" if email_sent else ("failed" if email_attempted else "no_email")
-                    ),
+                    client_email_status=client_email_outcome(email_sent, email_attempted),
                 )
                 asya_notified = True
                 accounting_notified = True
@@ -382,6 +384,7 @@ class InvoiceAutomationService:
                 "invoice_generated_at": datetime.now(tz=timezone.utc).isoformat(),
                 "invoice_drive_id": drive_file_id,
                 "invoice_drive_link": drive_web_link,
+                "email_attempted": email_attempted,
                 "email_sent": email_sent,
                 "accounting_notified": asya_notified,
                 "source": "local_pdf",
@@ -951,7 +954,13 @@ class InvoiceAutomationService:
                 practice_id,
                 "invoice_generated",
                 triggered_by,
-                f"Invoice {invoice_info['invoice_number']} created and sent",
+                activity_description(
+                    invoice_info["invoice_number"],
+                    client_email_outcome(
+                        bool(invoice_info.get("email_sent")),
+                        bool(invoice_info.get("email_attempted")),
+                    ),
+                ),
             )
 
         logger.info("Practice %s updated with invoice information", practice_id)

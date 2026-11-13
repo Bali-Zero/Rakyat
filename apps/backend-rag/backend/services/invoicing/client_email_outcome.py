@@ -32,3 +32,13 @@ def regenerated_message(invoice_number: str | None, outcome: str) -> str:
         f"{label} regenerated, but the client has NO email on file and was NOT emailed: "
         "contact them by WhatsApp or another channel"
     )
+
+
+def activity_description(invoice_number: str | None, outcome: str) -> str:
+    """Team-visible activity-log line for a generated invoice, true to the outcome."""
+    label = f"Invoice {invoice_number}" if invoice_number else "Invoice"
+    if outcome == SENT:
+        return f"{label} created and sent"
+    if outcome == FAILED:
+        return f"{label} created; the email to the client FAILED, client NOT emailed"
+    return f"{label} created; the client has NO email on file, client NOT emailed"

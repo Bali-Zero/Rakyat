@@ -8,6 +8,9 @@ T7 the client's timeline ends on the real outcome: a client-visible "Invoice sen
    -> test_timeline_gets_invoice_sent_only_after_a_real_send,
       test_timeline_write_is_skipped_for_a_hidden_practice,
       test_a_failing_timeline_write_does_not_fail_the_invoice_flow
+T8 the team-visible activity log line says "created and sent" only when the client mail went out;
+   on no_email / failed it says the client was NOT emailed
+   -> test_activity_log_line_matches_the_real_outcome (sent / failed / no_email)
 """
 
 from __future__ import annotations
@@ -160,3 +163,27 @@ async def test_a_failing_timeline_write_does_not_fail_the_invoice_flow(
     result = await service.trigger_on_sending_invoice(1, "agent@example.test")
     assert result["success"] is True
     assert result["email_sent"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("overrides", "mail_raises", "expected"),
+    [
+        ({}, False, "created and sent"),
+        ({}, True, "the email to the client FAILED, client NOT emailed"),
+        ({"email": None}, False, "NO email on file, client NOT emailed"),
+    ],
+    ids=["sent", "failed", "no_email"],
+)
+async def test_activity_log_line_matches_the_real_outcome(
+    env, synth, monkeypatch, overrides, mail_raises, expected
+) -> None:
+    result, conn = await run_flow(env, monkeypatch, overrides=overrides, mail_raises=mail_raises)
+    assert result["success"] is True
+    rows = [c.args for c in conn.execute.await_args_list if "activity_log" in str(c.args[0])]
+    assert len(rows) == 1
+    description = rows[0][-1]
+    assert description.startswith(f"Invoice {result['invoice_number']}")
+    assert expected in description
+    if expected != "created and sent":
+        assert "created and sent" not in description
