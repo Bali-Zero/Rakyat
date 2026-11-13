@@ -260,8 +260,10 @@ async def _create_hr_bonus_on_completed(
                 awarded_date,
             )
             logger.info(
-                f"HR bonus created: practice={practice_id}, "
-                f"employee={assigned_to}, amount={rate['amount_idr']} IDR"
+                "HR bonus created: practice=%s, hr_employee=%s, rate_id=%s",
+                practice_id,
+                emp["id"],
+                rate["id"],
             )
 
             # Notify HR admin (Asya) via email
@@ -273,7 +275,7 @@ async def _create_hr_bonus_on_completed(
                 practice_id,
             )
     except Exception as e:
-        logger.warning("HR bonus hook failed for practice %s: %s", practice_id, e)
+        logger.warning("HR bonus hook failed for practice %s (%s)", practice_id, type(e).__name__)
 
 
 async def _notify_hr_bonus_pending(
@@ -737,7 +739,10 @@ async def create_practice(
                 except Exception as e:
                     # Undefined table (timeline_events missing) is safe to ignore during rollout.
                     if getattr(e, "sqlstate", None) != "42P01":
-                        logger.warning("Could not create timeline event for practice create: %s", e)
+                        logger.warning(
+                            "Could not create timeline event for practice create: %s",
+                            type(e).__name__,
+                        )
 
                 # Update client's last_interaction_date
                 await conn.execute(
@@ -764,7 +769,7 @@ async def create_practice(
 
             log_success(
                 logger,
-                f"Created practice: {practice.practice_type_code}",
+                "Created practice",
                 practice_id=new_practice["id"],
                 client_id=practice.client_id,
             )
@@ -787,7 +792,7 @@ async def create_practice(
                     db_pool,
                 )
             except Exception as e:
-                logger.error("Practice kickoff communication setup failed: %s", e)
+                logger.error("Practice kickoff communication setup failed: %s", type(e).__name__)
 
             return PracticeResponse(**new_practice)
 
@@ -813,7 +818,7 @@ def _parse_month_param(month: str | None) -> tuple[datetime, datetime] | None:
     except (ValueError, IndexError) as exc:
         logger.debug(
             "crm_practices.month_param_invalid",
-            extra={"raw_month": str(month)[:16], "error_type": type(exc).__name__},
+            extra={"error_type": type(exc).__name__},
         )
         return None
 
@@ -941,9 +946,7 @@ async def list_practices(
                     query_parts.append(f" AND p.assigned_to = ${param_index}")
                     params.append(practices_filter)
                     param_index += 1
-                    logger.info(
-                        "RBAC: Filtering practices for %s (p.assigned_to)", practices_filter
-                    )
+                    logger.info("RBAC: Filtering practices by p.assigned_to")
 
             # Month filter
             month_range = _parse_month_param(month)
@@ -1279,9 +1282,7 @@ async def get_practice(
                 )
                 row = await conn.fetchrow(base_query, practice_id, practices_filter)
                 if not row:
-                    logger.info(
-                        "RBAC: Practice %s not visible to %s", practice_id, practices_filter
-                    )
+                    logger.info("RBAC: Practice %s not visible to caller", practice_id)
             else:
                 row = await conn.fetchrow(base_query, practice_id)
 
@@ -1741,7 +1742,7 @@ async def update_practice(
                     logger.warning(
                         "Discount audit append failed for practice %s: %s",
                         practice_id,
-                        audit_exc,
+                        type(audit_exc).__name__,
                     )
 
                 # Create timeline event for client-visible status changes (optional)
@@ -1795,7 +1796,7 @@ async def update_practice(
                                 if getattr(e, "sqlstate", None) != "42P01":
                                     logger.warning(
                                         "Could not create timeline event for status change: %s",
-                                        e,
+                                        type(e).__name__,
                                     )
 
                 # Log activity
@@ -1864,7 +1865,9 @@ async def update_practice(
                         ),
                     )
                 except Exception as e:
-                    logger.error("Portal notification for practice status failed: %s", e)
+                    logger.error(
+                        "Portal notification for practice status failed: %s", type(e).__name__
+                    )
 
             # 🚀 Waiting Documents Automation: Trigger when status changes to 'waiting_documents'
             if updates.status == "waiting_documents" and old_status != "waiting_documents":
@@ -1925,7 +1928,6 @@ async def update_practice(
                 logger,
                 "Updated practice",
                 practice_id=practice_id,
-                updated_by=user_email,
             )
             await invalidate_cache("zantara:crm_practices_stats:*")
             await invalidate_cache(f"zantara:{REVENUE_GROWTH_CACHE_NAMESPACE}:*")
@@ -2015,7 +2017,6 @@ async def delete_practice(
                 logger,
                 "Deleted (soft) practice",
                 practice_id=practice_id,
-                deleted_by=user_email,
             )
             await invalidate_cache("zantara:crm_practices_stats:*")
             await invalidate_cache("zantara:crm_clients_stats:*")
@@ -2098,7 +2099,6 @@ async def add_document_to_practice(
                 logger,
                 "Added document to practice",
                 practice_id=practice_id,
-                document_name=document_name,
             )
 
             await invalidate_cache("zantara:crm_practices_stats:*")
@@ -2436,8 +2436,6 @@ async def regenerate_invoice(
             logger,
             "Invoice regenerated successfully",
             practice_id=practice_id,
-            invoice_number=result.get("invoice_number"),
-            triggered_by=user_email,
         )
 
         return {
@@ -2454,7 +2452,7 @@ async def regenerate_invoice(
         raise
     except Exception as e:
         logger.error(
-            "Failed to regenerate invoice for practice %s: %s", practice_id, e, exc_info=True
+            "Failed to regenerate invoice for practice %s: %s", practice_id, type(e).__name__
         )
         raise handle_database_error(e)
 
@@ -2542,7 +2540,7 @@ async def get_required_documents(
                 for row in rows
             ]
     except Exception as e:
-        logger.error("Failed to get required documents: %s", e, exc_info=True)
+        logger.error("Failed to get required documents: %s", type(e).__name__)
         raise handle_database_error(e)
 
 
@@ -2613,11 +2611,10 @@ async def add_required_document(
             )
 
             logger.info(
-                f"Added required document {doc.document_type} to practice {practice_id}",
+                f"Added required document to practice {practice_id}",
                 extra={
                     "practice_id": practice_id,
-                    "document_type": doc.document_type,
-                    "user": current_user.get("email"),
+                    "doc_id": row["id"],
                 },
             )
 
@@ -2641,7 +2638,7 @@ async def add_required_document(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Failed to add required document: %s", e, exc_info=True)
+        logger.error("Failed to add required document: %s", type(e).__name__)
         raise handle_database_error(e)
 
 
@@ -2696,7 +2693,6 @@ async def delete_required_document(
                 extra={
                     "practice_id": practice_id,
                     "doc_id": doc_id,
-                    "user": current_user.get("email"),
                 },
             )
 
@@ -2705,7 +2701,7 @@ async def delete_required_document(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Failed to delete required document: %s", e, exc_info=True)
+        logger.error("Failed to delete required document: %s", type(e).__name__)
         raise handle_database_error(e)
 
 
@@ -2785,8 +2781,6 @@ async def update_required_document(
                 extra={
                     "practice_id": practice_id,
                     "doc_id": doc_id,
-                    "status": update.status,
-                    "user": current_user.get("email"),
                 },
             )
 
@@ -2810,7 +2804,7 @@ async def update_required_document(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Failed to update required document: %s", e, exc_info=True)
+        logger.error("Failed to update required document: %s", type(e).__name__)
         raise handle_database_error(e)
 
 
@@ -2893,7 +2887,6 @@ async def upload_client_document(
                     "practice_id": practice_id,
                     "required_doc_id": request.required_doc_id,
                     "document_id": doc_id,
-                    "user": current_user.get("email"),
                 },
             )
 
@@ -2907,5 +2900,5 @@ async def upload_client_document(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Failed to upload client document: %s", e, exc_info=True)
+        logger.error("Failed to upload client document: %s", type(e).__name__)
         raise handle_database_error(e)

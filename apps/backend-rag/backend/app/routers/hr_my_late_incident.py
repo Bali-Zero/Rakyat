@@ -98,7 +98,8 @@ async def resolve_my_late_incident(
         )
 
     logger.info(
-        "resolve_my_late_incident: user=%s incident=%s -> state=%s",
-        email, row["id"], next_state,
+        "resolve_my_late_incident: incident=%s -> state=%s",
+        row["id"],
+        next_state,
     )
     return {"success": True, "state": next_state}

@@ -568,6 +568,40 @@ async def test_create_client_success(crm_service, mock_pool):
 
 
 @pytest.mark.asyncio
+async def test_create_client_log_carries_id_only(crm_service, mock_pool, caplog):
+    import logging
+
+    service, _ = crm_service
+    pool, conn = mock_pool
+    conn.fetchval = AsyncMock(return_value=None)
+    conn.fetchrow = AsyncMock(
+        return_value={
+            "id": 4242,
+            "full_name": "Zyxwv Synthetic",
+            "email": "zyxwv@example.com",
+            "phone": None,
+            "whatsapp": None,
+            "nationality": None,
+            "passport_number": None,
+            "status": "active",
+            "client_type": "individual",
+            "assigned_to": None,
+            "custom_fields": {},
+        }
+    )
+    with (
+        patch.object(service.auditor, "log_client_created", new_callable=AsyncMock),
+        caplog.at_level(logging.DEBUG, logger="backend.services.crm.client_core"),
+    ):
+        await service.create_client({"full_name": "Zyxwv Synthetic", "email": "zyxwv@example.com"})
+
+    text = " ".join(r.getMessage() for r in caplog.records if r.name.startswith("backend."))
+    assert "Created client 4242" in text
+    assert "Zyxwv" not in text
+    assert "@" not in text
+
+
+@pytest.mark.asyncio
 async def test_create_client_duplicate_raises(crm_service, mock_pool):
     service, _ = crm_service
     pool, conn = mock_pool
@@ -1065,6 +1099,46 @@ async def test_hr_bonus_skips_when_table_not_exists(crm_service, mock_pool):
 
 
 @pytest.mark.asyncio
+async def test_hr_bonus_logs_carry_ids_only(crm_service, mock_pool, caplog):
+    import logging
+
+    service, _ = crm_service
+    pool, conn = mock_pool
+    email = "synthetic.staff@example.test"
+    conn.fetchval = AsyncMock(side_effect=[True, None])
+    conn.fetchrow = AsyncMock(
+        side_effect=[{"code": "kitas_sponsor"}, {"id": 11, "amount_idr": 987654}, {"id": 7}]
+    )
+    conn.execute = AsyncMock()
+    with caplog.at_level(logging.DEBUG, logger="backend.services.crm.client_core"):
+        await service._create_hr_bonus_entry(1, {"assigned_to": email})
+
+    text = " ".join(r.getMessage() for r in caplog.records if r.name.startswith("backend."))
+    assert "HR bonus created" in text
+    assert "hr_employee=7" in text
+    assert "synthetic.staff" not in text
+    assert "987654" not in text
+
+
+@pytest.mark.asyncio
+async def test_hr_bonus_skip_no_employee_log_has_no_email(crm_service, mock_pool, caplog):
+    import logging
+
+    service, _ = crm_service
+    pool, conn = mock_pool
+    conn.fetchval = AsyncMock(return_value=True)
+    conn.fetchrow = AsyncMock(
+        side_effect=[{"code": "kitas_sponsor"}, {"id": 11, "amount_idr": 987654}, None]
+    )
+    with caplog.at_level(logging.DEBUG, logger="backend.services.crm.client_core"):
+        await service._create_hr_bonus_entry(1, {"assigned_to": "synthetic.staff@example.test"})
+
+    text = " ".join(r.getMessage() for r in caplog.records if r.name.startswith("backend."))
+    assert "no active HR employee for practice=1" in text
+    assert "synthetic.staff" not in text
+
+
+@pytest.mark.asyncio
 async def test_hr_bonus_failure_does_not_propagate(crm_service, mock_pool):
     service, _ = crm_service
     pool, conn = mock_pool
@@ -1073,8 +1147,101 @@ async def test_hr_bonus_failure_does_not_propagate(crm_service, mock_pool):
     with patch("backend.services.crm.client_core.logger") as mock_logger:
         await service._create_hr_bonus_entry(1, {"assigned_to": "agent@balizero.com"})
 
-    mock_logger.exception.assert_called_once()
-    assert mock_logger.exception.call_args.args[0] == "HR bonus hook failed for practice %s: %s"
+    mock_logger.exception.assert_not_called()
+    mock_logger.error.assert_called_once()
+    assert mock_logger.error.call_args.args[0] == "HR bonus hook failed for practice %s (%s)"
+
+
+def _all_log_text(caplog):
+    parts = []
+    for r in caplog.records:
+        if not r.name.startswith("backend."):
+            continue
+        parts.append(r.getMessage())
+        if r.exc_text:
+            parts.append(r.exc_text)
+        if r.exc_info:
+            import traceback
+
+            parts.append("".join(traceback.format_exception(*r.exc_info)))
+    return " ".join(parts)
+
+
+@pytest.mark.asyncio
+async def test_hr_bonus_error_logs_carry_no_exception_text(crm_service, mock_pool, caplog):
+    import logging
+
+    import asyncpg
+
+    service, _ = crm_service
+    pool, conn = mock_pool
+    leak = "duplicate key value (employee_email)=(zyxwv@example.com) amount 987654"
+    for exc in (asyncpg.PostgresError(leak), KeyError(leak), RuntimeError(leak)):
+        caplog.clear()
+        conn.fetchval = AsyncMock(side_effect=exc)
+        with caplog.at_level(logging.DEBUG, logger="backend.services.crm.client_core"):
+            await service._create_hr_bonus_entry(1, {"assigned_to": "zyxwv@example.com"})
+        text = _all_log_text(caplog)
+        assert "HR bonus hook failed for practice 1" in text
+        assert "zyxwv" not in text
+        assert "987654" not in text
+
+
+@pytest.mark.asyncio
+async def test_create_client_error_logs_carry_no_exception_text(crm_service, mock_pool, caplog):
+    import logging
+
+    import asyncpg
+
+    from backend.app.core.exceptions import DatabaseError
+
+    service, _ = crm_service
+    pool, conn = mock_pool
+    leak = "Key (email)=(zyxwv@example.com) already exists"
+    # Invalid synthetic email: the Pydantic error echoes the input.
+    cases = [
+        ({"full_name": "Zyxwv Synthetic", "email": "zyxwv-not-an-email"}, None),
+        ({"full_name": "Zyxwv Synthetic"}, asyncpg.PostgresError(leak)),
+        ({"full_name": "Zyxwv Synthetic"}, RuntimeError(leak)),
+    ]
+    for data, exc in cases:
+        caplog.clear()
+        conn.fetchval = AsyncMock(side_effect=exc) if exc else AsyncMock(return_value=None)
+        with caplog.at_level(logging.DEBUG, logger="backend.services.crm.client_core"):
+            with pytest.raises(Exception) as info:
+                await service.create_client(data)
+        assert isinstance(info.value, DatabaseError) or "alid" in type(info.value).__name__
+        text = _all_log_text(caplog)
+        assert "zyxwv" not in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_update_and_get_client_error_logs_carry_no_exception_text(
+    crm_service, mock_pool, caplog
+):
+    import logging
+
+    import asyncpg
+
+    from backend.app.core.exceptions import DatabaseError
+
+    service, _ = crm_service
+    pool, conn = mock_pool
+    leak = "Key (email)=(zyxwv@example.com) amount 987654"
+    for exc in (asyncpg.PostgresError(leak), RuntimeError(leak)):
+        conn.fetchrow = AsyncMock(side_effect=exc)
+        for call in (
+            lambda: service.update_client(1, {"full_name": "Zyxwv Synthetic"}),
+            lambda: service.get_client(1, include_practices=False),
+        ):
+            caplog.clear()
+            with caplog.at_level(logging.DEBUG, logger="backend.services.crm.client_core"):
+                with pytest.raises(DatabaseError):
+                    await call()
+            text = _all_log_text(caplog)
+            assert "Failed to" in text
+            assert "zyxwv" not in text
+            assert "987654" not in text
 
 
 # ─────────────────────────────────────────────────────────────────────────────
