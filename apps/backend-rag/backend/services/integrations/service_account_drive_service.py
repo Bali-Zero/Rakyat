@@ -855,19 +855,23 @@ class ServiceAccountDriveService:
         return found
 
     async def list_files_by_app_properties(
-        self, props: dict[str, str], parent_id: str, mimes: Sequence[str]
+        self, props: dict[str, str], parent_id: str, mimes: Sequence[str] | None
     ) -> list[dict[str, Any]]:
         """Live (not trashed) files directly inside `parent_id` whose appProperties equal ALL of
-        `props` and whose mimeType is one of `mimes`. Every input is one the caller resolved
-        itself (a member id, a slot, a folder id Drive returned, a closed set of types); nothing
-        read from stored data may be passed here. Returns id, mimeType, parents and appProperties."""
+        `props` and whose mimeType is one of `mimes` (`None`: any type but a folder). Every input
+        is one the caller resolved itself (a member id, a slot, a folder id Drive returned, a
+        closed set of types); nothing read from stored data may be passed here. Returns id,
+        mimeType, parents and appProperties."""
         esc = lambda v: str(v).replace("\\", "\\\\").replace("'", "\\'")  # noqa: E731
         clauses = [
             f"appProperties has {{ key='{esc(k)}' and value='{esc(v)}' }}" for k, v in props.items()
         ]
         clauses.append(f"'{esc(parent_id)}' in parents")
         clauses.append("trashed = false")
-        clauses.append("(" + " or ".join(f"mimeType = '{esc(m)}'" for m in mimes) + ")")
+        if mimes is None:
+            clauses.append("mimeType != 'application/vnd.google-apps.folder'")
+        else:
+            clauses.append("(" + " or ".join(f"mimeType = '{esc(m)}'" for m in mimes) + ")")
         found: list[dict[str, Any]] = []
         page_token = None
         for _ in range(20):
@@ -886,6 +890,19 @@ class ServiceAccountDriveService:
             if not page_token:
                 break
         return found
+
+    async def copy_file(
+        self, file_id: str, parent_id: str, name: str, app_properties: dict[str, str]
+    ) -> dict[str, Any]:
+        """`files.copy` of `file_id` into `parent_id`, named `name`, with `app_properties`. The
+        source is only read. Returns the COPY's id, mimeType and parents; logs nothing."""
+        request = self.service.files().copy(
+            fileId=file_id,
+            body={"name": name, "parents": [parent_id], "appProperties": dict(app_properties)},
+            fields="id, mimeType, parents",
+            supportsAllDrives=True,
+        )
+        return await asyncio.to_thread(request.execute)
 
     async def trash_file(self, file_id: str) -> None:
         """Move one file to the Drive trash (recoverable). Never a permanent delete."""
