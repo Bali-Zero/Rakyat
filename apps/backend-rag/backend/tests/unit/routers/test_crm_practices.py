@@ -1095,7 +1095,7 @@ class TestOpenInquiry:
 
         update_sql, *update_params = mock_db_conn.fetchrow.call_args_list[2].args
         assert "practice_type_id = $1" in update_sql
-        assert "quoted_price = $2" in update_sql
+        assert "quoted_price = COALESCE(quoted_price, $2)" in update_sql
         assert update_params[0] == 24
         assert update_params[1] == Decimal("36000000")
 

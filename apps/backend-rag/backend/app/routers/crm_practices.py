@@ -35,7 +35,9 @@ from backend.services.crm.practice_state_machine import (
     OPEN_INQUIRY_TYPE_CODE,
     STATES_WITHOUT_SERVICE,
     InvalidTransitionError,
+    QuotedPriceRequiredError,
     normalize_state,
+    validate_quoted_price_for_invoice,
     validate_service_selected,
     validate_transition,
 )
@@ -601,6 +603,12 @@ async def create_practice(
 
             # Use base_price if no quoted price provided
             quoted_price = practice.quoted_price or practice_type_row["base_price"]
+
+            # A practice cannot be CREATED straight into Sending Invoice without a price either.
+            try:
+                validate_quoted_price_for_invoice(practice.status, quoted_price)
+            except QuotedPriceRequiredError as e:
+                raise HTTPException(status_code=422, detail=str(e)) from e
 
             # Auto-assign: if not explicitly set, inherit from client or use creator
             assigned_to = practice.assigned_to
@@ -1511,6 +1519,7 @@ async def update_practice(
             new_practice_type_code = update_set.pop("practice_type_code", None)
             if "practice_type_code" in updates.model_fields_set and not new_practice_type_code:
                 raise HTTPException(status_code=400, detail="practice_type_code cannot be null")
+            service_base_price = None  # base price a chosen service back-fills into a NULL price
             if new_practice_type_code:
                 # A live practice may not be regressed to the placeholder: the
                 # status gate above only fires on a status CHANGE, so a PATCH
@@ -1544,12 +1553,10 @@ async def update_practice(
                 # placeholder has no base_price). Back-fill from the chosen
                 # service so the invoice step never sees a NULL price, unless
                 # the caller sets the price explicitly in this same PATCH.
-                if (
-                    "quoted_price" not in update_set
-                    and old_quoted_price is None
-                    and new_type_row["base_price"] is not None
-                ):
-                    update_set["quoted_price"] = new_type_row["base_price"]
+                # The fill itself is `COALESCE(quoted_price, base)` in the UPDATE, so it is
+                # decided on the row as it is when the write happens, not on this early read.
+                if "quoted_price" not in update_set and new_type_row["base_price"] is not None:
+                    service_base_price = new_type_row["base_price"]
 
             invoice_company_pos: int | None = None
             if invoice_company_touched:
@@ -1605,6 +1612,24 @@ async def update_practice(
                 "missing_documents": "missing_documents",
             }
 
+            # Owner decision 2026-11-13: no move INTO Sending Invoice without a Quoted Price.
+            # The effective price is the one this same PATCH writes (explicit, or back-filled
+            # from a service chosen in it), else the one on the row; a PATCH that sets price
+            # and status together passes. Only entering the status is gated: a practice
+            # already in Sending Invoice keeps accepting unrelated edits.
+            if updates.status and normalize_state(old_status or "") != "sending_invoice":
+                try:
+                    validate_quoted_price_for_invoice(
+                        updates.status,
+                        update_set["quoted_price"]
+                        if "quoted_price" in update_set
+                        else (
+                            old_quoted_price if old_quoted_price is not None else service_base_price
+                        ),
+                    )
+                except QuotedPriceRequiredError as e:
+                    raise HTTPException(status_code=422, detail=str(e)) from e
+
             for field, value in update_set.items():
                 if field not in field_mapping:
                     raise HTTPException(status_code=400, detail=f"Invalid field name: {field}")
@@ -1618,6 +1643,11 @@ async def update_practice(
                 column_name = field_mapping[field]
                 update_fields.append(f"{column_name} = ${param_index}")
                 params.append(value)
+                param_index += 1
+
+            if service_base_price is not None:
+                update_fields.append(f"quoted_price = COALESCE(quoted_price, ${param_index})")
+                params.append(service_base_price)
                 param_index += 1
 
             # Autoset date fields on status transitions (only if not already in DB
@@ -1699,6 +1729,28 @@ async def update_practice(
             params.append(practice_id)
 
             async with conn.transaction():
+                if updates.status and normalize_state(updates.status) == "sending_invoice":
+                    # The gate above ran on values read before this transaction. Lock the row
+                    # and decide on the LOCKED status and price: a concurrent commit (price
+                    # to 0/NULL, or a move out of sending_invoice) cannot slip a move in.
+                    locked = await conn.fetchrow(
+                        "SELECT status, quoted_price FROM practices WHERE id = $1 FOR UPDATE",
+                        practice_id,
+                    )
+                    if locked and normalize_state(locked["status"] or "") != "sending_invoice":
+                        try:
+                            validate_quoted_price_for_invoice(
+                                updates.status,
+                                update_set["quoted_price"]
+                                if "quoted_price" in update_set
+                                else (
+                                    locked["quoted_price"]
+                                    if locked["quoted_price"] is not None
+                                    else service_base_price
+                                ),
+                            )
+                        except QuotedPriceRequiredError as e:
+                            raise HTTPException(status_code=422, detail=str(e)) from e
                 if invoice_company_pos is not None and (
                     invoice_company_id_in is not None or invoice_company_name_in
                 ):
