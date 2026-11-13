@@ -3,8 +3,10 @@ Drive. Synthetic data only; the schema has no `security_audit_log`, as productio
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -23,7 +25,7 @@ from backend.tests.unit.app.services.hr.test_hr_documents import FakeDrive
 pytestmark = pytest.mark.integration
 
 NIK = "3171234567890001"  # synthetic 16 digits
-NIK2 = "3171234567890002"
+NIK2 = "3171234567890002" * 2  # 30 digits: an admitted length, no letter
 L1, L2, L3 = (f"1{c}AbCdEfGhIjKlMnOpQrStUvWxYz01234" for c in "XYZ")  # 33 id-shaped chars
 
 
@@ -40,6 +42,9 @@ class Drive(FakeDrive):
         self.calls: list[tuple[Any, ...]] = []
         self.copies: list[str] = []
         self.on_copy: Any = None
+        self.on_trash: Any = None
+        self.copy_result: Any = None  # when set, what `copy_file` returns instead of the real id
+        self.fail_trash = False
 
     def add_source(self, fid: str, mime: str = "application/pdf") -> None:
         self.files[fid] = {
@@ -76,6 +81,8 @@ class Drive(FakeDrive):
         self.copies.append(cid)
         if self.on_copy is not None:
             await self.on_copy(cid)
+        if self.copy_result is not None:
+            return self.copy_result
         return {"id": cid, "mimeType": self.files[cid]["mime"], "parents": [parent_id]}
 
     async def list_files_by_app_properties(self, props, parent_id, mimes):
@@ -91,7 +98,27 @@ class Drive(FakeDrive):
 
     async def trash_file(self, file_id):
         self.calls.append(("trash", file_id))
+        if self.on_trash is not None:
+            await self.on_trash(file_id)
+        if self.fail_trash:
+            raise RuntimeError("trash refused")
         await super().trash_file(file_id)
+
+    def seed_person(self, member: str = "tm-a", unit: str = "TAX") -> str:
+        """The unit folder and person folder `ensure_folder(member)` finds."""
+        self.folders["u-seed"] = {
+            "id": "u-seed",
+            "name": unit,
+            "parents": [hd.settings.hr_documents_drive_root_id],
+            "appProperties": {},
+        }
+        self.folders["pf-seed"] = {
+            "id": "pf-seed",
+            "name": "Fake A",
+            "parents": ["u-seed"],
+            "appProperties": {hd.MEMBER_PROP: member},
+        }
+        return "pf-seed"
 
     async def move_file(self, file_id, from_parent_id, to_parent_id):
         self.calls.append(("move", file_id))
@@ -133,13 +160,20 @@ async def test_a_nik_like_value_outside_the_manifest_never_reaches_drive(  # noq
 ) -> None:
     drive = Drive()
     drive.add_source(L1)
-    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": NIK, "kk": NIK2, "npwp": L1}})
-    # kk is IN the manifest by hash, but digits only: the second fence keeps it from Drive too
-    manifest = _manifest((emp, "kk", NIK2), (emp, "npwp", L1))
+    drive.add_source(L2)
+    emp = await _set(
+        pool,
+        "tm-a",
+        {"unit": "Tax", "docs": {"ktp": NIK, "kk": NIK2, "npwp": L1, "bpjs_kes": L2}},
+    )
+    # kk is IN the manifest by hash, but digits only: the second fence keeps it from Drive too;
+    # bpjs_kes is id-shaped but the manifest holds the hash of ANOTHER value: changed
+    manifest = _manifest((emp, "kk", NIK2), (emp, "npwp", L1), (emp, "bpjs_kes", L3))
     with caplog.at_level(logging.DEBUG):
         counts = await job.run(pool, drive, manifest, apply=True)
-    assert counts["outside_manifest"] == 2 and counts["done"] == 1
+    assert counts["outside_manifest"] == 2 and counts["done"] == 1 and counts["changed"] == 1
     assert NIK not in repr(drive.calls) and NIK2 not in repr(drive.calls)
+    assert L2 not in repr(drive.calls)
     assert NIK not in caplog.text and NIK2 not in caplog.text and L1 not in caplog.text
     p = await _profile(pool, "tm-a")
     assert p["docs"]["ktp"] == NIK and p["docs"]["kk"] == NIK2  # left in place for a human
@@ -165,9 +199,16 @@ async def test_a_door_write_between_copy_and_cas_is_a_conflict(pool: asyncpg.Poo
                 hd._WRITE_SQL[("ktp", False)], "tm-a", "ktp", door_id, "zero@balizero.com", "now"
             )
 
+    async def lock_still_held(copy_id: str) -> None:
+        async with pool.acquire() as other, other.transaction():
+            assert not await other.fetchval(
+                "SELECT pg_try_advisory_xact_lock(hashtext('hr_docs_folder:'||$1))", "tm-a"
+            )
+
     drive.on_copy = door_upload_lands
+    drive.on_trash = lock_still_held
     counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=True)
-    assert counts["conflict"] == 1 and counts["done"] == 0
+    assert counts["conflict"] == 1 and counts["done"] == 0 and counts["copy_left"] == 0
     assert drive.trashed == drive.copies  # the copy, by its own Drive id; never the source
     assert project_documents(await _profile(pool, "tm-a"))["ktp"]["file_id"] == door_id
     assert counts["source_unchanged"] == 1
@@ -294,9 +335,9 @@ async def test_real_client_copies_with_the_door_shape_and_only_reads_the_source(
     copied = {"id": "CopyReturnedByDrive1234", "mimeType": "image/jpeg", "parents": ["pf1"]}
     drive, http = _real_drive(
         [
-            (200, source),
             (200, unit),
             (200, person),
+            (200, source),
             (200, {"files": []}),
             (200, copied),
             (200, source),
@@ -311,7 +352,7 @@ async def test_real_client_copies_with_the_door_shape_and_only_reads_the_source(
     on_source = [(m, u) for m, u, _ in sent if f"/files/{L1}" in u]
     assert [m for m, _ in on_source] == ["GET", "POST", "GET"]  # read, copy, read: never a write
     assert f"/files/{L1}/copy?" in on_source[1][1] and "supportsAllDrives=true" in on_source[1][1]
-    assert "mimeType != 'application/vnd.google-apps.folder'" in sent[3][1]
+    assert "mimeType != 'application/vnd.google-apps.folder'" in sent[3][1]  # the reuse lookup
     assert f"{job.SRC_PROP}' and value='{job.sha256_hex(L1)[:16]}'" in sent[3][1]
     body = json.loads(sent[4][2])
     assert body["parents"] == ["pf1"] and body["name"].startswith("KTP - Fake A - ")
@@ -323,3 +364,202 @@ async def test_real_client_copies_with_the_door_shape_and_only_reads_the_source(
     }
     assert project_documents(await _profile(pool, "tm-a"))["ktp"]["file_id"] == copied["id"]
     assert L1 not in caplog.text and copied["id"] not in caplog.text
+
+
+async def _door_write_after_the_copy(pool: asyncpg.Pool, copy_id: str) -> None:  # noqa: F811
+    async with pool.acquire() as other:
+        await other.fetchrow(
+            hd._WRITE_SQL[("ktp", False)], "tm-a", "ktp", "door0upload0id0000000000000000001",
+            "zero@balizero.com", "now",
+        )  # fmt: skip
+
+
+async def _seed_conflict(pool: asyncpg.Pool, drive: Drive) -> int:  # noqa: F811
+    drive.add_source(L1)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+
+    async def door_lands(copy_id: str) -> None:
+        await _door_write_after_the_copy(pool, copy_id)
+
+    drive.on_copy = door_lands
+    return emp
+
+
+@pytest.mark.asyncio
+async def test_a_failed_trash_on_a_conflict_is_counted_as_copy_left(pool: asyncpg.Pool) -> None:  # noqa: F811
+    drive = Drive()
+    emp = await _seed_conflict(pool, drive)
+    drive.fail_trash = True
+    counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=True)
+    assert counts["conflict"] == 1 and counts["copy_left"] == 1 and counts["done"] == 0
+    assert not drive.trashed and len(drive.copies) == 1
+    _untouched(drive, L1)
+
+
+@pytest.mark.asyncio
+async def test_a_db_error_at_the_cas_step_trashes_the_copy_and_leaves_the_slot(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+    bad = "SELECT $1::text, $2::text, $3::text, $4::text, $5::text, $6::text, 1/0"
+    monkeypatch.setitem(job.CAS_SQL, "ktp", bad)
+    counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=True)
+    assert counts["db_error"] == 1 and counts["copy_left"] == 0 and counts["done"] == 0
+    assert len(drive.copies) == 1 and drive.trashed == drive.copies
+    assert (await _profile(pool, "tm-a"))["docs"]["ktp"] == L1
+    _untouched(drive, L1)
+
+
+@pytest.mark.asyncio
+async def test_a_commit_that_landed_but_whose_answer_was_lost_is_done(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+    real_commit = Transaction.commit
+    calls: list[int] = []
+
+    async def commit_then_lose(self: Any) -> None:
+        await real_commit(self)
+        if not calls:
+            calls.append(1)
+            raise ConnectionResetError
+
+    monkeypatch.setattr(Transaction, "commit", commit_then_lose)
+    counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=True)
+    assert counts["done"] == 1 and counts["uncertain"] == 0
+    p = await _profile(pool, "tm-a")
+    assert project_documents(p)["ktp"]["file_id"] == drive.copies[0]
+    _untouched(drive, L1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("apply", [True, False])
+async def test_the_slot_is_re_read_before_any_drive_call(  # noqa: F811
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch, apply: bool
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+    real_classify = job.classify
+    real_process = job.process_slot
+    landed: list[bool] = []
+
+    def classify_then_door_writes(rows: Any, manifest: Any, counts: Any) -> Any:
+        out = real_classify(rows, manifest, counts)  # classify is sync: the write follows below
+        landed.append(False)
+        return out
+
+    async def process_after_the_door_write(*args: Any, **kwargs: Any) -> None:
+        if landed and not landed[0]:  # between classify and the locked re-read
+            landed[0] = True
+            await _door_write_after_the_copy(pool, "")
+        await real_process(*args, **kwargs)
+
+    monkeypatch.setattr(job, "classify", classify_then_door_writes)
+    monkeypatch.setattr(job, "process_slot", process_after_the_door_write)
+    counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=apply)
+    assert counts["verified"] == 1 and counts["done"] == counts["eligible"] == 0
+    assert ("get", L1) not in drive.calls
+    assert not [c for c in drive.calls if c[0] == "get"]  # no Drive read of any file
+    assert not drive.copies
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("conflict", [False, True])
+async def test_the_source_is_never_reused_or_trashed(  # noqa: F811
+    pool: asyncpg.Pool, conflict: bool
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    person = drive.seed_person()
+    drive.files[L1]["parent"] = person
+    drive.files[L1]["appProperties"] = {
+        hd.MEMBER_PROP: "tm-a",
+        hd.SLOT_PROP: "ktp",
+        job.SRC_PROP: hashlib.sha256(L1.encode()).hexdigest()[:16],
+    }
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+
+    async def door_lands(copy_id: str) -> None:
+        await _door_write_after_the_copy(pool, copy_id)
+
+    if conflict:
+        drive.on_copy = door_lands
+    counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=True)
+    assert len(drive.copies) == 1 and L1 not in drive.trashed and ("trash", L1) not in drive.calls
+    if conflict:
+        assert counts["conflict"] == 1 and drive.trashed == drive.copies
+    else:
+        assert counts["done"] == 1 and counts["reused"] == 0 and not drive.trashed
+        slot = project_documents(await _profile(pool, "tm-a"))["ktp"]["file_id"]
+        assert slot == drive.copies[0] != L1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", [{"id": None}, {"id": ""}])
+async def test_a_copy_without_a_usable_id_writes_nothing(  # noqa: F811
+    pool: asyncpg.Pool, answer: dict[str, Any]
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    drive.copy_result = answer
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+    counts = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=True)
+    assert counts["drive_error:other"] == 1 and counts["done"] == 0
+    assert (await _profile(pool, "tm-a"))["docs"]["ktp"] == L1
+    assert "doc_proof" not in await _profile(pool, "tm-a")
+
+
+_API = Path(__file__).resolve().parents[3]  # apps/backend-rag
+
+
+def test_a_sealed_run_cannot_leak_through_any_channel() -> None:
+    script = (
+        "import logging, os, sys\n"
+        "sys.path.insert(0, os.getcwd())\n"
+        "import backend.scripts.migrate_hr_legacy_documents as job\n"
+        f"NIK = {NIK!r}\n"
+        "fd = job.seal_streams()\n"
+        "print(NIK)\n"
+        "sys.stderr.write(NIK)\n"
+        "os.write(1, NIK.encode())\n"
+        "os.write(2, NIK.encode())\n"
+        "logging.getLogger('x').error(NIK)\n"
+        "job.emit(fd, {'failed': 'internal_error'})\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=_API,
+        env=os.environ.copy(),
+        capture_output=True,
+        timeout=120,
+    )
+    assert done.stdout == b'{"failed": "internal_error"}\n'
+    assert done.stderr == b""
+
+
+def test_a_failed_import_prints_one_code_and_nothing_else(tmp_path: Path) -> None:
+    env = {k: v for k, v in os.environ.items() if k not in ("JWT_SECRET_KEY", "API_KEYS")}
+    done = subprocess.run(
+        [sys.executable, "-I", str(Path(job.__file__).resolve())],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        timeout=120,
+    )
+    assert done.returncode == 1
+    assert done.stdout == b'{"failed": "import_failed"}\n'
+    assert done.stderr == b""
+
+
+def test_render_rebuilds_the_line_from_the_closed_grammar() -> None:
+    bad = {"mode": "apply", "manifest": 1, "outcomes": {"1" + "A" * 32: 1}}
+    assert job.render(bad) == b'{"failed": "internal_error"}\n'
+    ok = {"mode": "dry-run", "manifest": 2, "outcomes": {"eligible": 1, "changed": 1}}
+    assert job.render(ok) == (
+        b'{"manifest": 2, "mode": "dry-run", "outcomes": {"changed": 1, "eligible": 1}}\n'
+    )

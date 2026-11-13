@@ -10,24 +10,30 @@ file into the person's folder and writes the COPY's id with its proof, as the do
 Per slot, holding the door's member advisory lock for the whole operation:
 
 1. re-read the slot: still present-but-unverified, its sha256 the manifest's, the value id-shaped
-   (`^[A-Za-z0-9_-]{25,100}$` with a letter). Otherwise nothing is sent anywhere;
+   (`^[A-Za-z0-9_-]{25,100}$` with a letter). Otherwise nothing is sent anywhere. Only then is the
+   source's metadata read (the dry-run stops here);
 2. reuse an earlier copy (appProperties `nz_hr_member`, `nz_hr_slot` and `nz_hr_src` =
-   sha256(value)[:16], inside the person folder), else `files.copy` the source there with the
-   door's title and appProperties plus `nz_hr_src`;
+   sha256(value)[:16], inside the person folder, never the source itself), else `files.copy` the
+   source there with the door's title and appProperties plus `nz_hr_src`. Only a non-empty id
+   string Drive returned is ever used, never one coerced;
 3. compare-and-set: the door's own UPDATE (slot + `doc_proof.<slot>`; the contract slot also drops
    `docs.contract`), only where the slot still holds the manifest-hashed unverified value. No row:
-   `conflict`, and the copy is trashed by its own Drive id;
-4. a failure at or after COMMIT is re-read under the door's locks before anything is decided.
+   `conflict`, and the copy is trashed by its own Drive id while the lock is still held. A database
+   error before COMMIT (a certain rollback) trashes it too, under the lock, after a re-read;
+4. a failure at or after COMMIT is re-read under the door's locks: landed is `done`, otherwise
+   `uncertain` and the copy stays for the next run to reuse.
 
-A source file is only read and copied: never updated, moved, trashed or re-shared. Every source's
-modifiedTime, parents and trashed flag are read before the first copy and again after the last.
+A source file is only read and copied: never updated, moved, trashed or re-shared. Its modifiedTime,
+parents and trashed flag are read under the lock before the copy and again after the last slot.
 
-Output: ONE JSON line of counts, nothing else. Outcomes per manifest slot: done, reused, verified
-(already verified: the `changed` case of a rerun), changed, conflict, uncertain, outside_manifest,
-source_folder, drive_error:<status>, folder:<code>, lock_timeout, db_error; plus source:<class>,
-eligible (dry-run), source_unchanged / source_changed / source_unreadable (apply) and log_records.
-No value, name, file name or Drive id reaches stdout, stderr, a log or Sentry: Sentry must not be
-bound, every log record is only counted, and the loggers that print identifiers sit at WARNING.
+Output: ONE JSON line, rebuilt from a closed grammar of codes and bounded integers. Per manifest
+slot: done, reused, verified (already verified: the `changed` case of a rerun), changed, conflict,
+uncertain, outside_manifest, source_folder, eligible (dry-run), drive_error:<status>, folder:<code>,
+lock_timeout, db_error; besides: copy_left (a copy a failed trash left behind), source:<class>,
+source_unchanged / source_changed / source_unreadable and log_records. Containment: file
+descriptors 1 and 2 point at /dev/null for the whole run (a print, a traceback, a library or a C
+extension writing there reaches nothing) and the line goes out on a private duplicate of stdout;
+every log record is only counted; the identifier loggers sit at WARNING; Sentry must be unbound.
 """
 
 import warnings
@@ -57,6 +63,24 @@ IDENTIFIER_LOGGERS = (
     "googleapiclient.discovery_cache",
     "googleapiclient.http",
 )
+FAILED_CODES = frozenset(
+    {
+        "import_failed",
+        "manifest_invalid",
+        "sentry_bound",
+        "connect_failed",
+        "drive_client_failed",
+        "internal_error",
+    }
+)
+_OUTCOME = re.compile(
+    r"done|reused|verified|changed|conflict|uncertain|outside_manifest|source_folder|eligible"
+    r"|copy_left|lock_timeout|db_error|source_unchanged|source_changed|source_unreadable"
+    r"|log_records|source:(?:pdf|image|folder|google|other)|drive_error:(?:[1-5][0-9]{2}|other)"
+    r"|folder:(?:not_found|hr_record_required|drive_unavailable|lock_timeout|db_error"
+    r"|commit_unknown)"
+)
+_MAX_COUNT = 1_000_000
 
 
 class _Counted(logging.Handler):
@@ -83,7 +107,56 @@ def contain_logging() -> _Counted:
     return counted
 
 
+def seal_streams() -> int:
+    """Point fd 1 and fd 2 at /dev/null for the rest of the process; return a private,
+    non-inheritable duplicate of the original stdout, the only way out (`emit`)."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    out = os.dup(1)
+    null = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(null, 1)
+    os.dup2(null, 2)
+    os.close(null)
+    return out
+
+
+def render(result: dict[str, Any]) -> bytes:
+    """The ONE line the job prints, rebuilt from validated parts: closed codes, bounded ints."""
+    if set(result) == {"failed"} and result["failed"] in FAILED_CODES:
+        return json.dumps({"failed": result["failed"]}).encode() + b"\n"
+    outcomes = result.get("outcomes")
+    ok = (
+        set(result) == {"mode", "manifest", "outcomes"}
+        and result["mode"] in ("apply", "dry-run")
+        and type(result["manifest"]) is int
+        and 0 <= result["manifest"] < _MAX_COUNT
+        and isinstance(outcomes, dict)
+        and all(
+            isinstance(k, str)
+            and _OUTCOME.fullmatch(k) is not None
+            and type(v) is int
+            and 0 <= v < _MAX_COUNT
+            for k, v in outcomes.items()
+        )
+    )
+    if not ok:
+        return b'{"failed": "internal_error"}\n'
+    line = {
+        "manifest": result["manifest"],
+        "mode": result["mode"],
+        "outcomes": {k: outcomes[k] for k in sorted(outcomes)},
+    }
+    return json.dumps(line).encode() + b"\n"
+
+
+def emit(fd: int, result: dict[str, Any]) -> None:
+    data = render(result)
+    while data:
+        data = data[os.write(fd, data) :]
+
+
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+_OUT = 1
 
 if __name__ == "__main__":
     if sys.flags.isolated != 1:
@@ -92,6 +165,8 @@ if __name__ == "__main__":
     if sys.argv[1:] not in ([], ["--apply"]):
         os.write(2, b"usage: migrate_hr_legacy_documents.py [--apply]\n")
         os._exit(2)
+    _OUT = seal_streams()
+    sys.excepthook = lambda *_: emit(_OUT, {"failed": "internal_error"})
     contain_logging()
     sys.path.insert(0, _ROOT)
     for _dir in [
@@ -101,7 +176,7 @@ if __name__ == "__main__":
         if _dir and os.path.isabs(_dir) and os.path.isdir(_dir) and _dir not in sys.path:
             sys.path.append(_dir)
 
-try:  # a failed import (a settings error quotes its input) is a fixed code, never a traceback
+try:
     import asyncpg
 
     from backend.app.core.config import settings
@@ -116,7 +191,7 @@ try:  # a failed import (a settings error quotes its input) is a fixed code, nev
 except BaseException:
     if __name__ != "__main__":
         raise
-    os.write(1, b'{"failed": "import_failed"}\n')
+    emit(_OUT, {"failed": "import_failed"})
     os._exit(1)
 
 MANIFEST = Path(__file__).resolve().with_name("hr_legacy_documents_manifest.json")
@@ -124,6 +199,7 @@ ACTOR = "r5:migrate_hr_legacy_documents"  # `doc_proof.<slot>.by` of every slot 
 SRC_PROP = "nz_hr_src"
 _ID_SHAPE = re.compile(r"[A-Za-z0-9_-]{25,100}")
 _LETTER = re.compile(r"[A-Za-z]")
+_DRIVE_ID = re.compile(r"[A-Za-z0-9_-]{1,200}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _EXT = {"application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png"}
 _SCAN_SQL = "SELECT id, team_member_id, profile::text AS p FROM hr_employees ORDER BY id"
@@ -194,6 +270,11 @@ def id_shaped(value: str) -> bool:
     return _ID_SHAPE.fullmatch(value) is not None and _LETTER.search(value) is not None
 
 
+def drive_id(value: Any) -> bool:
+    """A file id as Drive returns one: a non-empty string of its alphabet, never coerced."""
+    return isinstance(value, str) and _DRIVE_ID.fullmatch(value) is not None
+
+
 def _profile(raw: Any) -> Any:
     return json.loads(raw) if raw is not None else None
 
@@ -225,12 +306,10 @@ class Item:
     digest: str
 
 
-def classify(
-    rows: list[Any], manifest: dict[tuple[int, str], str], counts: Counter
-) -> list[tuple[Item, str]]:
-    """(item, value) for every manifest slot that may be migrated now; every other present-but-
-    unverified slot and every other manifest slot is only counted."""
-    out: list[tuple[Item, str]] = []
+def classify(rows: list[Any], manifest: dict[tuple[int, str], str], counts: Counter) -> list[Item]:
+    """Every manifest slot that may be migrated now (its value is re-read under the lock, never
+    carried from here); every other present-but-unverified slot and manifest slot is counted."""
+    out: list[Item] = []
     seen: set[tuple[int, str]] = set()
     for row in rows:
         profile = _profile(row["p"])
@@ -241,11 +320,8 @@ def classify(
                 counts["outside_manifest"] += int(legacy)
                 continue
             seen.add(key)
-            value = eligible(profile, slot, manifest[key])
-            if value is not None:
-                out.append(
-                    (Item(row["id"], str(row["team_member_id"]), slot, manifest[key]), value)
-                )
+            if eligible(profile, slot, manifest[key]) is not None:
+                out.append(Item(row["id"], str(row["team_member_id"]), slot, manifest[key]))
             elif (
                 legacy
                 and not id_shaped(v := _slot_value(profile, slot))
@@ -281,9 +357,42 @@ def _fingerprint(meta: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
-async def migrate_slot(
-    svc: hd.HRDocumentService, item: Item, folder_id: str, ctx: Any, mime: Any
-) -> str:
+class _BadDriveId(Exception):
+    pass
+
+
+async def _trash(drive: Any, copy_id: str) -> bool:
+    try:
+        await drive.trash_file(copy_id)
+    except Exception:
+        return False
+    return True
+
+
+async def _compensate(svc: hd.HRDocumentService, item: Item, copy_id: str) -> bool:
+    """After a CERTAIN rollback: under the member lock, re-read the slot and trash the copy unless
+    the slot holds it. True when nothing is left behind."""
+    try:
+        async with svc.db_pool.acquire() as conn, conn.transaction():
+            await conn.execute(f"SET LOCAL lock_timeout = {int(CARD_EDIT_LOCK_TIMEOUT_MS)}")
+            await conn.execute(_LOCK_SQL, item.member_id)
+            row = await conn.fetchrow(_ROW_SQL, item.emp_id)
+            if row is not None and _slot_value(_profile(row["p"]) or {}, item.slot) == copy_id:
+                return True
+            return await _trash(svc.drive, copy_id)
+    except Exception:
+        return False
+
+
+async def process_slot(
+    svc: hd.HRDocumentService,
+    item: Item,
+    folder: tuple[str, Any] | None,
+    counts: Counter,
+    sources: list[tuple[str, tuple[Any, ...]]],
+) -> None:
+    """One manifest slot, under the member advisory lock from the re-read to the commit. `folder`
+    None is the dry-run: the lock, the re-read and the source's metadata, then a rollback."""
     drive = svc.drive
     copy_id: str | None = None
     reused = False
@@ -303,23 +412,42 @@ async def migrate_slot(
                     value = eligible(profile, item.slot, item.digest)
                 if value is None:
                     await tx.rollback()
-                    return _settled(profile, item.slot)
+                    counts[_settled(profile, item.slot)] += 1
+                    return
                 step = "drive"
+                meta = await drive.get_file_metadata(value)
+                kind = source_class(meta.get("mimeType"))
+                counts[f"source:{kind}"] += 1
+                if kind == "folder" or folder is None:
+                    await tx.rollback()
+                    counts["source_folder" if kind == "folder" else "eligible"] += 1
+                    return
+                sources.append((value, _fingerprint(meta)))
+                folder_id, ctx = folder
                 props = {
                     hd.MEMBER_PROP: item.member_id,
                     hd.SLOT_PROP: item.slot,
                     SRC_PROP: item.digest[:16],
                 }
-                earlier = await drive.list_files_by_app_properties(props, folder_id, None)
+                earlier = [
+                    f["id"]
+                    for f in await drive.list_files_by_app_properties(props, folder_id, None)
+                    if drive_id(f.get("id"))
+                    and f["id"] != value
+                    and folder_id in (f.get("parents") or [])
+                ]
                 if earlier:
-                    copy_id, reused = min(str(f["id"]) for f in earlier), True
+                    copy_id, reused = min(earlier), True
                 else:
-                    ext = _EXT.get(mime)
+                    ext = _EXT.get(meta.get("mimeType"))
                     title = hd.document_title(
                         item.slot, ctx.full_name, business_today(), ext or "_"
                     )
                     title = title if ext else title.removesuffix("._")
-                    copy_id = str((await drive.copy_file(value, folder_id, title, props))["id"])
+                    made = (await drive.copy_file(value, folder_id, title, props)).get("id")
+                    if not drive_id(made) or made == value:
+                        raise _BadDriveId
+                    copy_id = made
                 step = "cas"
                 stamp = datetime.now(UTC).isoformat(timespec="seconds")
                 written = await conn.fetchrow(
@@ -332,33 +460,39 @@ async def migrate_slot(
                     item.digest,
                 )
                 if written is None:
-                    await tx.rollback()
-                    step = "conflict"
-                    await drive.trash_file(copy_id)
-                    return "conflict"
-            except BaseException:
-                if step != "conflict":
+                    left = not await _trash(drive, copy_id)  # the lock is still held
                     try:
                         await tx.rollback()
                     except Exception:
                         pass
+                    counts["conflict"] += 1
+                    counts["copy_left"] += int(left)
+                    return
+            except BaseException:
+                try:
+                    await tx.rollback()
+                except Exception:
+                    pass
                 raise
             step = "commit"
             await tx.commit()
             step = "done"
     except Exception as exc:
-        if step == "conflict":
-            return "conflict"  # the copy could not be trashed: it stays, never the source
         if step == "commit":
             holds, _ = await svc._reconcile(item.member_id, item.slot, copy_id or "")
             if not holds:
-                return "uncertain"
+                counts["uncertain"] += 1  # the copy stays: the next run reuses it
+                return
         elif step != "done":
             if step == "drive":
-                return drive_code(exc)
-            return "lock_timeout" if isinstance(exc, _LOCK_ERRORS) else "db_error"
-    await svc._follow_unit_change(item.member_id, ctx.unit)
-    return "reused" if reused else "done"
+                counts[drive_code(exc)] += 1
+                return
+            counts["lock_timeout" if isinstance(exc, _LOCK_ERRORS) else "db_error"] += 1
+            if step == "cas" and copy_id is not None:
+                counts["copy_left"] += int(not await _compensate(svc, item, copy_id))
+            return
+    await svc._follow_unit_change(item.member_id, folder[1].unit)
+    counts["reused" if reused else "done"] += 1
 
 
 async def run(
@@ -367,39 +501,25 @@ async def run(
     counts: Counter = Counter()
     async with pool.acquire() as conn:
         rows = await conn.fetch(_SCAN_SQL)
-    ready: list[tuple[Item, Any]] = []
-    before: list[tuple[str, tuple[Any, ...]]] = []
-    for item, value in classify(rows, manifest, counts):
-        try:
-            meta = await drive.get_file_metadata(value)
-        except Exception as exc:
-            counts[drive_code(exc)] += 1
-            continue
-        cls = source_class(meta.get("mimeType"))
-        counts[f"source:{cls}"] += 1
-        if cls == "folder":
-            counts["source_folder"] += 1
-            continue
-        before.append((value, _fingerprint(meta)))
-        ready.append((item, meta.get("mimeType")))
-    if not apply:
-        counts["eligible"] += len(ready)
-        return counts
     svc = hd.HRDocumentService(pool, drive)
+    sources: list[tuple[str, tuple[Any, ...]]] = []
     folders: dict[str, tuple[str, Any] | str] = {}
-    for item, mime in ready:
-        if item.member_id not in folders:
-            try:
-                folder_id, ctx = await svc.ensure_folder(item.member_id)
-                folders[item.member_id] = (str(folder_id), ctx)
-            except hd.HRDocError as exc:
-                folders[item.member_id] = f"folder:{exc.code.value}"
-        found = folders[item.member_id]
-        if isinstance(found, str):
-            counts[found] += 1
-            continue
-        counts[await migrate_slot(svc, item, found[0], found[1], mime)] += 1
-    for value, fingerprint in before:
+    for item in classify(rows, manifest, counts):
+        folder: tuple[str, Any] | None = None
+        if apply:
+            if item.member_id not in folders:
+                try:
+                    folder_id, ctx = await svc.ensure_folder(item.member_id)
+                    folders[item.member_id] = (str(folder_id), ctx)
+                except hd.HRDocError as exc:
+                    folders[item.member_id] = f"folder:{exc.code.value}"
+            found = folders[item.member_id]
+            if isinstance(found, str):
+                counts[found] += 1
+                continue
+            folder = found
+        await process_slot(svc, item, folder, counts, sources)
+    for value, fingerprint in sources:  # Acceptance 5: the sources this run copied, re-read
         try:
             meta = await drive.get_file_metadata(value)
         except Exception:
@@ -432,25 +552,21 @@ async def _main(apply: bool) -> dict[str, Any]:
     finally:
         await pool.close()
     counts["log_records"] = counted.records
-    return {
-        "mode": "apply" if apply else "dry-run",
-        "manifest": len(manifest),
-        "outcomes": dict(sorted(counts.items())),
-    }
+    return {"mode": "apply" if apply else "dry-run", "manifest": len(manifest), "outcomes": counts}
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str], out: int) -> int:
     try:
-        out: dict[str, Any] = asyncio.run(_main(argv == ["--apply"]))
+        result: dict[str, Any] = asyncio.run(_main(argv == ["--apply"]))
+        result["outcomes"] = dict(result["outcomes"])
         code = 0
     except Fatal as exc:
-        out, code = {"failed": exc.code}, 1
+        result, code = {"failed": exc.code}, 1
     except BaseException:
-        out, code = {"failed": "internal_error"}, 1
-    sys.stdout.write(json.dumps(out, sort_keys=True) + "\n")
-    sys.stdout.flush()
+        result, code = {"failed": "internal_error"}, 1
+    emit(out, result)
     return code
 
 
 if __name__ == "__main__":
-    os._exit(main(sys.argv[1:]))
+    os._exit(main(sys.argv[1:], _OUT))
