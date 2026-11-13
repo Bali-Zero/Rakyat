@@ -1042,7 +1042,7 @@ class EnhancedCRMService:
                 metadata=metadata,
             )
 
-            logger.info("Practice %s status: %s -> %s", practice_id, old_status, new_status)
+            logger.info("Practice %s status changed", practice_id)
 
             # HR Bonus hook: auto-create bonus entry when practice completed
             if new_status == "completed" and old_status != "completed":
@@ -1142,8 +1142,8 @@ class EnhancedCRMService:
                 )
                 if not rate:
                     logger.debug(
-                        "HR bonus skip: no active rate for practice_type=%s",
-                        practice_type_code,
+                        "HR bonus skip: no active rate for practice %s",
+                        practice_id,
                     )
                     return
 

@@ -606,8 +606,7 @@ async def create_client(
         creator_email = (current_user.get("email") or "").strip().lower() if current_user else None
         if not creator_email:
             logger.error(
-                "create_client: missing email in current_user context. Keys: %s",
-                list(current_user.keys()) if current_user else "None",
+                "create_client: missing email in current_user context",
             )
             raise HTTPException(
                 status_code=401,
@@ -1206,7 +1205,7 @@ async def upload_client_avatar(
         )
     await invalidate_cache("zantara:crm_clients_stats:*")
 
-    logger.info("Avatar uploaded for client %s -> %s", client_id, key)
+    logger.info("Avatar uploaded for client %s", client_id)
     return {"success": True, "avatar_url": public_url}
 
 
@@ -2424,20 +2423,9 @@ async def get_client_ai_summary(
                 # injection vector even though FastAPI already validates the
                 # path param as int (defense in depth).
                 safe_client_id = int(client_id)
-                safe_schema = (
-                    str(row["ai_summary_schema_version"] or "")
-                    .replace(
-                        "\n",
-                        " ",
-                    )
-                    .replace("\r", " ")[:64]
-                )
-                safe_fp = (row["ai_summary_file_hash"] or "")[:12]
                 logger.info(
-                    "ai_summary served client_id=%d schema=%s fp=%s elapsed_ms=%d",
+                    "ai_summary served client_id=%d elapsed_ms=%d",
                     safe_client_id,
-                    safe_schema,
-                    safe_fp,
                     int((time.time() - start_time) * 1000),
                 )
                 return AiSummaryResponse(

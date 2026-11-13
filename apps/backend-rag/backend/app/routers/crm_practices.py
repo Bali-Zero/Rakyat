@@ -769,7 +769,7 @@ async def create_practice(
 
             log_success(
                 logger,
-                f"Created practice: {practice.practice_type_code}",
+                "Created practice",
                 practice_id=new_practice["id"],
                 client_id=practice.client_id,
             )
@@ -818,7 +818,7 @@ def _parse_month_param(month: str | None) -> tuple[datetime, datetime] | None:
     except (ValueError, IndexError) as exc:
         logger.debug(
             "crm_practices.month_param_invalid",
-            extra={"raw_month": str(month)[:16], "error_type": type(exc).__name__},
+            extra={"error_type": type(exc).__name__},
         )
         return None
 
@@ -2436,7 +2436,6 @@ async def regenerate_invoice(
             logger,
             "Invoice regenerated successfully",
             practice_id=practice_id,
-            invoice_number=result.get("invoice_number"),
         )
 
         return {
@@ -2612,10 +2611,10 @@ async def add_required_document(
             )
 
             logger.info(
-                f"Added required document {doc.document_type} to practice {practice_id}",
+                f"Added required document to practice {practice_id}",
                 extra={
                     "practice_id": practice_id,
-                    "document_type": doc.document_type,
+                    "doc_id": row["id"],
                 },
             )
 
@@ -2782,7 +2781,6 @@ async def update_required_document(
                 extra={
                     "practice_id": practice_id,
                     "doc_id": doc_id,
-                    "status": update.status,
                 },
             )
 
