@@ -1200,6 +1200,21 @@ elif scenario == "fatal_follow":
     hd.HRDocumentService._follow_unit_change = aborts
 elif scenario == "stdout_full":
     job.SHUTDOWN_S = 1
+elif scenario == "census_slow":
+    job.CENSUS_S = 1
+    real_census = job.census
+
+    async def slow_census(*args, **kwargs):
+        real_list = drive.list_files_by_app_properties
+
+        async def slow(*a, **k):  # each listing well within the deadline, a member's not
+            await asyncio.to_thread(time.sleep, 0.6)
+            return await real_list(*a, **k)
+
+        drive.list_files_by_app_properties = slow
+        return await real_census(*args, **kwargs)
+
+    job.census = slow_census
 
 async def the_fake():
     return drive
@@ -1817,3 +1832,16 @@ async def test_a_truncated_folder_lookup_is_census_skipped(pool: asyncpg.Pool) -
     dry = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=False)
     assert dry["census_skipped"] == 1 and dry["copy_reusable"] == dry["copy_residual"] == 0
     assert dry["folder:drive_unavailable"] == 1 and job.per_entry(dry) == 1
+
+
+# ── final gate round 6 (9c76ba0f3828) ──
+
+
+@pytest.mark.asyncio
+async def test_the_census_deadline_bounds_a_whole_member(  # noqa: F811
+    pool: asyncpg.Pool, tmp_path: Path
+) -> None:
+    code, line, _ = await _entry_path(pool, tmp_path, "census_slow")
+    assert code == 124 and line["run"] == "deadline"  # two 0.6 s listings of one member, 1 s bound
+    assert line["outcomes"]["done"] == 3 and job.per_entry(line["outcomes"]) == 3
+    await _no_lock_left(pool)

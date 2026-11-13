@@ -769,14 +769,18 @@ async def census(
     async with pool.acquire() as conn:
         rows = {r["id"]: r for r in await conn.fetch(_SCAN_SQL)}
     folders: dict[str, str | None] = {}
-    for (emp_id, slot), digest in sorted(manifest.items()):
-        watch.arm(CENSUS_S)
+    entries = []
+    for (emp_id, slot), digest in manifest.items():
         row = rows.get(emp_id)
-        if row is None:
+        if row is None:  # no Drive call for it
             counts["census_skipped"] += 1
             continue
-        member, profile = str(row["team_member_id"]), _profile(row["p"])
-        if member not in folders:
+        entries.append((str(row["team_member_id"]), emp_id, slot, digest, row))
+    entries.sort(key=lambda e: e[:3])  # a member's entries together
+    for member, _emp_id, slot, digest, row in entries:
+        profile = _profile(row["p"])
+        if member not in folders:  # R5.3: one deadline per census member, every call of it included
+            watch.arm(CENSUS_S)
             try:
                 found = await drive.find_folders_by_app_property(
                     hd.MEMBER_PROP, member, strict=True
