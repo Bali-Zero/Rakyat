@@ -261,6 +261,35 @@ class TestListClients:
         assert "%alice%" in fetch_args
 
     @pytest.mark.integration
+    def test_list_clients_log_carries_no_identity_or_filter_values(
+        self,
+        client: TestClient,
+        mock_db_pool,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import logging
+
+        _pool, conn = mock_db_pool
+        conn.fetch = AsyncMock(return_value=[_client_row()])
+
+        with (
+            patch(
+                "backend.app.routers.crm_clients.get_crm_user_filter",
+                return_value="zyxwv.rbac@example.com",
+            ),
+            patch("backend.app.routers.crm_clients.is_crm_admin", return_value=True),
+            caplog.at_level(logging.DEBUG),
+        ):
+            response = client.get("/api/crm/clients/?assigned_to=zyxwv.assignee@example.com")
+
+        assert response.status_code == 200
+        texts = [r.getMessage() + (r.exc_text or "") for r in caplog.records]
+        text = " ".join(texts)
+        assert "requesting clients list" in text
+        assert "zyxwv" not in text
+        assert "@" not in text.split("requesting clients list", 1)[1].split("\n")[0]
+
+    @pytest.mark.integration
     def test_list_clients_unnamed_filter_adds_placeholder_predicate(
         self,
         client: TestClient,

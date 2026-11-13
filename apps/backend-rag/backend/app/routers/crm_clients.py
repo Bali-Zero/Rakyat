@@ -742,7 +742,7 @@ async def create_client(
                 db_pool=db_pool,
             )
         except Exception as e:
-            logger.error("Drive folder creation scheduling failed: %s", e)
+            logger.error("Drive folder creation scheduling failed (%s)", type(e).__name__)
             _report_drive_folder_failure(new_client["id"], client.full_name, client.client_type, e)
 
         # Invalidazione extra cache HTTP (il service invalida la memory cache)
@@ -758,7 +758,7 @@ async def create_client(
             background_tasks.add_task(send_client_welcome, new_client["id"], db_pool)
             background_tasks.add_task(schedule_client_welcome_email, new_client["id"], db_pool)
         except Exception as e:
-            logger.error("Welcome communication setup failed: %s", e)
+            logger.error("Welcome communication setup failed (%s)", type(e).__name__)
 
         # Auto-create portal profile (team_members with role='client')
         try:
@@ -772,12 +772,12 @@ async def create_client(
                 full_name=new_client.get("full_name", ""),
             )
         except Exception as e:
-            logger.error("Portal profile creation setup failed: %s", e)
+            logger.error("Portal profile creation setup failed (%s)", type(e).__name__)
 
         return ClientResponse(**new_client)
 
     except ResourceConflictError as e:
-        logger.warning("Integrity error creating client: %s", e)
+        logger.warning("Integrity error creating client (%s)", type(e).__name__)
         raise HTTPException(status_code=400, detail=str(e)) from e
     except HTTPException:
         # Intentional HTTP errors (409 duplicate-phone gate, 401 missing email)
@@ -843,11 +843,10 @@ async def list_clients(
         # RBAC: non-admin users only see their own clients
         rbac_filter = get_crm_user_filter(current_user)
 
+        # Filter KEY names only: the values can hold emails.
         logger.info(
-            "📋 [CRM Clients] User %s requesting clients list (assigned_to_filter=%s, rbac_filter=%s)",
-            current_user.get("user_id") or current_user.get("id"),
-            assigned_to,
-            rbac_filter,
+            "📋 [CRM Clients] requesting clients list (filters: %s)",
+            sorted([k for k, v in (("assigned_to", assigned_to), ("rbac", rbac_filter)) if v]),
         )
 
         async with db_pool.acquire() as conn:

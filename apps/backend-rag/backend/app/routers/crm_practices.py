@@ -275,7 +275,7 @@ async def _create_hr_bonus_on_completed(
                 practice_id,
             )
     except Exception as e:
-        logger.warning("HR bonus hook failed for practice %s: %s", practice_id, e)
+        logger.warning("HR bonus hook failed for practice %s (%s)", practice_id, type(e).__name__)
 
 
 async def _notify_hr_bonus_pending(

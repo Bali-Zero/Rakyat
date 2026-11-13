@@ -739,13 +739,13 @@ class EnhancedCRMService:
         except ValidationError:
             raise
         except PydanticValidationError as e:
-            logger.warning(f"Failed to create client (validation): {sanitize_error_message(e)}")
+            logger.warning("Failed to create client (validation, %s)", type(e).__name__)
             raise DatabaseError("Failed to create client", operation="insert")
         except (asyncpg.PostgresError, asyncpg.InterfaceError, OSError) as e:
-            logger.warning(f"Failed to create client (DB): {sanitize_error_message(e)}")
+            logger.warning("Failed to create client (DB, %s)", type(e).__name__)
             raise DatabaseError("Failed to create client", operation="insert")
         except Exception as e:
-            logger.exception(f"Failed to create client: {sanitize_error_message(e)}")
+            logger.error("Failed to create client (%s)", type(e).__name__)
             raise DatabaseError("Failed to create client", operation="insert")
 
     @cache_invalidating(
@@ -1199,11 +1199,15 @@ class EnhancedCRMService:
                 )
 
         except (asyncpg.PostgresError, asyncpg.InterfaceError, OSError) as e:
-            logger.warning("HR bonus hook failed for practice %s (DB): %s", practice_id, e)
+            logger.warning(
+                "HR bonus hook failed for practice %s (DB, %s)", practice_id, type(e).__name__
+            )
         except (KeyError, TypeError) as e:
-            logger.warning("HR bonus hook failed for practice %s (data): %s", practice_id, e)
+            logger.warning(
+                "HR bonus hook failed for practice %s (data, %s)", practice_id, type(e).__name__
+            )
         except Exception as e:
-            logger.exception("HR bonus hook failed for practice %s: %s", practice_id, e)
+            logger.error("HR bonus hook failed for practice %s (%s)", practice_id, type(e).__name__)
 
     # ==================== UTILITY METHODS ====================
 
