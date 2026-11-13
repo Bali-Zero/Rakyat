@@ -828,8 +828,12 @@ class ServiceAccountDriveService:
         logger.info("Moved file %s from %s to %s", file_id, from_parent_id, to_parent_id)
         return result
 
-    async def find_folders_by_app_property(self, key: str, value: str) -> list[dict[str, Any]]:
-        """Every live (not trashed) physical folder carrying appProperties[key] == value."""
+    async def find_folders_by_app_property(
+        self, key: str, value: str, strict: bool = False
+    ) -> list[dict[str, Any]]:
+        """Every live (not trashed) physical folder carrying appProperties[key] == value. The
+        lookup reads at most 20 pages; with `strict` a lookup that stopped there with a page still
+        pending raises instead of returning a part."""
         esc = lambda s: s.replace("\\", "\\\\").replace("'", "\\'")  # noqa: E731
         query = (
             f"appProperties has {{ key='{esc(key)}' and value='{esc(value)}' }} "
@@ -852,6 +856,8 @@ class ServiceAccountDriveService:
             page_token = result.get("nextPageToken")
             if not page_token:
                 break
+        if strict and page_token:
+            raise RuntimeError("lookup truncated")
         return found
 
     async def list_files_by_app_properties(

@@ -487,7 +487,9 @@ class ProtectedDrive:
     async def find_folder(self, name: str, parent_id: str) -> Any:
         return await self._inner.find_folder(name, parent_id)
 
-    async def find_folders_by_app_property(self, key: str, value: str) -> Any:
+    async def find_folders_by_app_property(self, key: str, value: str, strict: bool = False) -> Any:
+        if strict:
+            return await self._inner.find_folders_by_app_property(key, value, strict=True)
         return await self._inner.find_folders_by_app_property(key, value)
 
     async def create_folder(
@@ -760,7 +762,9 @@ async def census(
     """R5.4, both modes, read-only: every copy Drive holds for EVERY manifest entry, eligible or
     not (a transport retry may have made more than one). Each tagged non-source file in the person
     folder is `copy_held` (the slot holds it), `copy_reusable` (the slot is still eligible and it
-    is the lowest id, the one the next run reuses) or `copy_residual`. Never trashes anything."""
+    is the lowest id, the one the next run reuses) or `copy_residual`. Never trashes anything. A
+    folder lookup or a listing the Drive client cut at its page cap makes the entry
+    `census_skipped`: coverage not complete."""
     watch.arm(CENSUS_S)
     async with pool.acquire() as conn:
         rows = {r["id"]: r for r in await conn.fetch(_SCAN_SQL)}
@@ -774,8 +778,10 @@ async def census(
         member, profile = str(row["team_member_id"]), _profile(row["p"])
         if member not in folders:
             try:
-                found = await drive.find_folders_by_app_property(hd.MEMBER_PROP, member)
-            except Exception:
+                found = await drive.find_folders_by_app_property(
+                    hd.MEMBER_PROP, member, strict=True
+                )
+            except Exception:  # a truncated lookup included: no folder is conclusive
                 found = []
             one = len(found) == 1 and not protected_id(found[0].get("id"), protected)
             folders[member] = found[0]["id"] if one else None
@@ -798,7 +804,7 @@ async def census(
             }
         )
         ok = isinstance(profile, dict)
-        held = project_documents(profile)[slot]["file_id"] if ok else None
+        held = _slot_value(profile, slot) if ok else None  # R5.4: what the slot holds, proof or not
         still = ok and eligible(profile, slot, digest) is not None
         for cid in copies:
             if cid == held:
@@ -966,8 +972,8 @@ async def member_folder(
     existing folder or None, None). A refusal of the boundary inside `ensure_folder` (which reports
     every Drive error as drive_unavailable) is named `folder:source_protected`."""
     try:
-        found = await svc.drive.find_folders_by_app_property(hd.MEMBER_PROP, member_id)
-    except Exception:
+        found = await svc.drive.find_folders_by_app_property(hd.MEMBER_PROP, member_id, strict=True)
+    except Exception:  # a truncated lookup included
         return "folder:drive_unavailable"
     if any(protected_id(f.get("id"), protected) for f in found):
         return "folder:source_protected"

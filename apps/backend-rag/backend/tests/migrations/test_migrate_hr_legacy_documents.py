@@ -47,6 +47,7 @@ class Drive(FakeDrive):
         self.copy_result: Any = None  # when set, what `copy_file` returns instead of the real id
         self.fail_trash = False
         self.truncated = False  # the real client's page cap reached with a page still pending
+        self.truncated_folders = False  # the same, for the person-folder lookup
 
     def add_source(self, fid: str, mime: str = "application/pdf") -> None:
         self.files[fid] = {
@@ -86,6 +87,11 @@ class Drive(FakeDrive):
         if self.copy_result is not None:
             return self.copy_result
         return {"id": cid, "mimeType": self.files[cid]["mime"], "parents": [parent_id]}
+
+    async def find_folders_by_app_property(self, key, value, strict=False):
+        if strict and self.truncated_folders:
+            raise RuntimeError("lookup truncated")
+        return await super().find_folders_by_app_property(key, value)
 
     async def list_files_by_app_properties(self, props, parent_id, mimes, strict=False):
         self.calls.append(("list", tuple(sorted(props.items())), parent_id))
@@ -768,13 +774,13 @@ def _protected_folder_on_the_nth_lookup(drive: Drive, n: int, fid: str, unit_id:
     real = drive.find_folders_by_app_property
     seen = {"n": 0}
 
-    async def lookup(key: str, value: str) -> Any:
+    async def lookup(key: str, value: str, **kwargs: Any) -> Any:
         seen["n"] += 1
         if seen["n"] == n:
             return [
                 {"id": fid, "name": "Fake A", "parents": [unit_id], "appProperties": {key: value}}
             ]
-        return await real(key, value)
+        return await real(key, value, **kwargs)
 
     drive.find_folders_by_app_property = lookup  # type: ignore[method-assign]
 
@@ -1553,19 +1559,34 @@ async def test_a_truncated_listing_is_census_skipped_and_never_reused(pool: asyn
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("strict", [True, False])
-async def test_the_real_client_signals_a_listing_cut_at_its_page_cap(strict: bool) -> None:
+@pytest.mark.parametrize("lookup", ["files", "folders"])
+async def test_the_real_client_signals_a_listing_cut_at_its_page_cap(
+    strict: bool, lookup: str
+) -> None:
     from backend.tests.migrations.test_hr_document_door_path import _real_drive
 
-    pages = [
-        (200, {"files": [{"id": f"File{n:02d}", "parents": ["pf1"]}], "nextPageToken": f"t{n}"})
+    pages = [  # sparse: one folder or file in twenty pages, a page still pending at the cap
+        (
+            200,
+            {
+                "files": [{"id": "Only01", "parents": ["pf1"]}] if n == 7 else [],
+                "nextPageToken": f"t{n}",
+            },
+        )
         for n in range(20)
     ]
     drive, http = _real_drive(pages)
+
+    async def call(**kwargs: Any) -> Any:
+        if lookup == "folders":
+            return await drive.find_folders_by_app_property("k", "v", **kwargs)
+        return await drive.list_files_by_app_properties({"k": "v"}, "pf1", None, **kwargs)
+
     if strict:
         with pytest.raises(RuntimeError):
-            await drive.list_files_by_app_properties({"k": "v"}, "pf1", None, strict=True)
+            await call(strict=True)
     else:
-        assert len(await drive.list_files_by_app_properties({"k": "v"}, "pf1", None)) == 20
+        assert [f["id"] for f in await call()] == ["Only01"]  # the default: a part, unchanged
     assert len(http.request_sequence) == 20
 
 
@@ -1740,3 +1761,59 @@ async def test_a_line_the_channel_never_takes_still_ends_with_124(  # noqa: F811
     code, line, _ = await _entry_path(pool, tmp_path, "stdout_full", read=False)
     assert code == 124 and line is None
     await _no_lock_left(pool)
+
+
+# ── final gate round 5 (6d97f80ba9e1) ──
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("proof", ["missing", "mismatched"])
+async def test_a_copy_the_slot_holds_is_held_whatever_its_proof(  # noqa: F811
+    pool: asyncpg.Pool, proof: str
+) -> None:
+    drive = Drive()
+    drive.add_source(L1)
+    person = drive.seed_person()
+    held = "CopyHeldBySlot0000000000000000001"
+    for cid in (held, "CopyResidual00000000000000000002"):
+        drive.files[cid] = {
+            "name": "x",
+            "parent": person,
+            "mime": "application/pdf",
+            "appProperties": {
+                hd.MEMBER_PROP: "tm-a",
+                hd.SLOT_PROP: "ktp",
+                job.SRC_PROP: job.sha256_hex(L1)[:16],
+            },
+        }
+    profile: dict[str, Any] = {"unit": "Tax", "docs": {"ktp": held}}
+    if proof == "mismatched":
+        profile["doc_proof"] = {
+            "ktp": {"id": "AnotherId0000000000000000000003", "by": "x", "at": "t"}
+        }
+    emp = await _set(pool, "tm-a", profile)
+    assert project_documents(profile)["ktp"]["file_id"] is None  # not verified
+    dry = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=False)
+    assert dry["copy_held"] == 1 and dry["copy_residual"] == 1 and dry["copy_reusable"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_folder_lookup_is_census_skipped(pool: asyncpg.Pool) -> None:  # noqa: F811
+    drive = Drive()
+    drive.add_source(L1)
+    person = drive.seed_person()
+    drive.files["aa-copy-1"] = {
+        "name": "x",
+        "parent": person,
+        "mime": "application/pdf",
+        "appProperties": {
+            hd.MEMBER_PROP: "tm-a",
+            hd.SLOT_PROP: "ktp",
+            job.SRC_PROP: job.sha256_hex(L1)[:16],
+        },
+    }
+    drive.truncated_folders = True
+    emp = await _set(pool, "tm-a", {"unit": "Tax", "docs": {"ktp": L1}})
+    dry = await job.run(pool, drive, _manifest((emp, "ktp", L1)), apply=False)
+    assert dry["census_skipped"] == 1 and dry["copy_reusable"] == dry["copy_residual"] == 0
+    assert dry["folder:drive_unavailable"] == 1 and job.per_entry(dry) == 1
