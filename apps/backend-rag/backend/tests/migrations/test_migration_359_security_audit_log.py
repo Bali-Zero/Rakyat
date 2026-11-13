@@ -1,17 +1,21 @@
 """Migration 359 (security_audit_log promoted to v2): SQL contract, idempotence, real writer path.
 
-The text tests run everywhere. The integration test works in its own schema (`secaudit359`)
-against TEST_DATABASE_URL like the other tests in this directory, applies the migration twice and
-writes one row through SecurityAuditService.log_event, the real insert path of the portal
-impersonation audit and the auth revoke-all route. All values are synthetic.
+The text tests run everywhere. The integration test builds its own throwaway DATABASE (the
+migration names `public.` explicitly, so a schema would not isolate it) from the server behind
+TEST_DATABASE_URL, applies the migration twice and writes one row through
+SecurityAuditService.log_event, the real insert path of the portal impersonation audit and the auth
+revoke-all route. It never skips on pre-existing state and never touches the target database: only
+the throwaway database it created is dropped. All values are synthetic.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import asyncpg
 import pytest
@@ -23,7 +27,6 @@ MIGRATION = (
     Path(__file__).resolve().parents[2] / "db" / "migrations_v2" / "359_security_audit_log.sql"
 )
 LEGACY = Path(__file__).resolve().parents[2] / "migrations" / "migration_090_security_audit_log.py"
-SCHEMA = "secaudit359"
 
 COLUMNS = (
     "id BIGSERIAL PRIMARY KEY",
@@ -75,36 +78,34 @@ def _dsn() -> str:
     )
 
 
-async def _init_codecs(conn: asyncpg.Connection) -> None:
-    # Same jsonb codec the application pool registers (encoder=json.dumps).
-    await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
+def _dsn_for(dbname: str) -> str:
+    parts = urlsplit(_dsn())
+    return urlunsplit(parts._replace(path=f"/{dbname}"))
 
 
 @pytest.fixture
 async def conn() -> AsyncIterator[asyncpg.Connection]:
-    c = await asyncpg.connect(_dsn())
+    """A connection to a brand-new throwaway database; only that database is dropped."""
+    name = f"mig359_{uuid.uuid4().hex[:12]}"
+    admin = await asyncpg.connect(_dsn())
+    c: asyncpg.Connection | None = None
     try:
-        await c.execute("SELECT pg_advisory_lock(hashtext('r2-migration-359-test'))")
-        await c.execute(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; CREATE SCHEMA {SCHEMA};")
-        # public stays on the path after the test schema: the migration names public.* explicitly,
-        # so the table lands in public; the cleanup below removes it again.
-        await c.execute(f"SET search_path TO {SCHEMA}, public")
-        await _init_codecs(c)
+        await admin.execute(f'CREATE DATABASE "{name}"')
+        c = await asyncpg.connect(_dsn_for(name))
+        # Same jsonb codec the application pool registers (encoder=json.dumps).
+        await c.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
         yield c
     finally:
-        await c.execute("RESET search_path")
-        await c.execute("DROP TABLE IF EXISTS public.security_audit_log")
-        await c.execute(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE")
-        await c.execute("SELECT pg_advisory_unlock(hashtext('r2-migration-359-test'))")
-        await c.close()
+        if c is not None:
+            await c.close()
+        await admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        await admin.close()
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_apply_twice_then_write_through_audit_service(conn: asyncpg.Connection) -> None:
-    pre_existing = await conn.fetchval("SELECT to_regclass('public.security_audit_log')")
-    if pre_existing is not None:
-        pytest.skip("TEST_DATABASE_URL already has public.security_audit_log; not touching it")
+    assert await conn.fetchval("SELECT to_regclass('public.security_audit_log')") is None
 
     forward, _ = _parts()
     await conn.execute(forward)
