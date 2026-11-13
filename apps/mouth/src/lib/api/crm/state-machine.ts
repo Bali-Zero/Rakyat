@@ -81,6 +81,55 @@ export function needsServiceBefore(
 }
 
 /**
+ * Quoted Price gate (owner decision 2026-11-13). Mirrors
+ * `validate_quoted_price_for_invoice` in the backend module: a practice cannot move INTO
+ * Sending Invoice without a Quoted Price (null or 0). The backend refuses with a 422 whose
+ * detail is `QUOTED_PRICE_REQUIRED_DETAIL`; this module only lets the UI say so in plain
+ * words BEFORE the round-trip, and map the refusal if it still comes back.
+ */
+export const QUOTED_PRICE_REQUIRED_DETAIL =
+  "Quoted Price is required before Sending Invoice";
+export const QUOTED_PRICE_REQUIRED_TEXT_ID =
+  "Isi Quoted Price dulu sebelum Sending Invoice";
+
+/** True when `value` is a number (or numeric string) greater than zero. */
+export function hasQuotedPrice(value: unknown): boolean {
+  if (value === null || value === undefined || typeof value === "boolean") {
+    return false;
+  }
+  if (typeof value === "string" && value.trim() === "") return false;
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0;
+}
+
+/**
+ * True when moving a practice from `current` to `target` would enter Sending Invoice
+ * with no Quoted Price. A practice already in Sending Invoice is never blocked
+ * (only entering the status is gated).
+ */
+export function needsQuotedPriceBefore(
+  target: PracticeStatus | string,
+  quotedPrice: unknown,
+  current?: string | null,
+): boolean {
+  return (
+    target === "sending_invoice" &&
+    current !== "sending_invoice" &&
+    !hasQuotedPrice(quotedPrice)
+  );
+}
+
+/** True when `error` is the backend's Quoted Price refusal (422 + the fixed detail). */
+export function isQuotedPriceRefusal(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { detail, message } = error as { detail?: unknown; message?: unknown };
+  return [detail, message].some(
+    (text) =>
+      typeof text === "string" && text.includes(QUOTED_PRICE_REQUIRED_DETAIL),
+  );
+}
+
+/**
  * Return the list of states the user can transition INTO from `current`,
  * including `current` itself (so the dropdown can keep its existing
  * selection without flagging it as illegal).

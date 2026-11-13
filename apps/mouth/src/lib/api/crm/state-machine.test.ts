@@ -17,6 +17,11 @@ import {
   getAllowedNextStatuses,
   type PracticeStatus,
   OPEN_INQUIRY_TYPE_CODE,
+  QUOTED_PRICE_REQUIRED_DETAIL,
+  QUOTED_PRICE_REQUIRED_TEXT_ID,
+  hasQuotedPrice,
+  isQuotedPriceRefusal,
+  needsQuotedPriceBefore,
   needsServiceBefore,
 } from "./state-machine";
 
@@ -166,5 +171,79 @@ describe("needsServiceBefore — open inquiry gate (backend mirror)", () => {
     ).toBe(false);
     expect(needsServiceBefore("waiting_documents", undefined)).toBe(false);
     expect(needsServiceBefore("waiting_documents", null)).toBe(false);
+  });
+});
+
+describe("Quoted Price gate for Sending Invoice (backend mirror)", () => {
+  it("pins the backend detail and the Indonesian text", () => {
+    expect(QUOTED_PRICE_REQUIRED_DETAIL).toBe(
+      "Quoted Price is required before Sending Invoice",
+    );
+    expect(QUOTED_PRICE_REQUIRED_TEXT_ID).toBe(
+      "Isi Quoted Price dulu sebelum Sending Invoice",
+    );
+  });
+
+  it("hasQuotedPrice: only a number above zero counts", () => {
+    for (const bad of [
+      null,
+      undefined,
+      0,
+      "0",
+      "",
+      "  ",
+      "abc",
+      NaN,
+      -5,
+      true,
+    ]) {
+      expect(hasQuotedPrice(bad)).toBe(false);
+    }
+    for (const good of [1, 0.5, "1500000", "2.5", 1_500_000]) {
+      expect(hasQuotedPrice(good)).toBe(true);
+    }
+  });
+
+  it("blocks entering sending_invoice without a price and nothing else", () => {
+    expect(
+      needsQuotedPriceBefore("sending_invoice", null, "waiting_documents"),
+    ).toBe(true);
+    expect(needsQuotedPriceBefore("sending_invoice", 0, "on_process")).toBe(
+      true,
+    );
+    expect(
+      needsQuotedPriceBefore("sending_invoice", 1000, "waiting_documents"),
+    ).toBe(false);
+    for (const target of [
+      "waiting_documents",
+      "on_process",
+      "completed",
+      "cancelled",
+      "inquiry",
+    ]) {
+      expect(needsQuotedPriceBefore(target, null, "inquiry")).toBe(false);
+    }
+  });
+
+  it("never blocks a practice that is already in sending_invoice", () => {
+    expect(
+      needsQuotedPriceBefore("sending_invoice", null, "sending_invoice"),
+    ).toBe(false);
+  });
+
+  it("recognises the backend refusal by detail or message, and nothing else", () => {
+    expect(isQuotedPriceRefusal({ detail: QUOTED_PRICE_REQUIRED_DETAIL })).toBe(
+      true,
+    );
+    expect(isQuotedPriceRefusal(new Error(QUOTED_PRICE_REQUIRED_DETAIL))).toBe(
+      true,
+    );
+    expect(isQuotedPriceRefusal(new Error("Invalid status transition"))).toBe(
+      false,
+    );
+    expect(isQuotedPriceRefusal(null)).toBe(false);
+    expect(
+      isQuotedPriceRefusal("Quoted Price is required before Sending Invoice"),
+    ).toBe(false);
   });
 });

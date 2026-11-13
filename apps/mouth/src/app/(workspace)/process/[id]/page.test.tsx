@@ -387,6 +387,93 @@ describe("CaseDetailPage", () => {
     expect(screen.getAllByText("unpaid").length).toBeGreaterThan(0);
   });
 
+  it("explains in Indonesian, before any request, why Sending Invoice needs a Quoted Price", async () => {
+    const user = await renderLoaded(makePractice({ quoted_price: null }));
+
+    await user.click(screen.getByTitle("Jump to: Invoice"));
+
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      "Quoted Price kosong",
+      "Isi Quoted Price dulu sebelum Sending Invoice",
+    );
+    expect(mocks.updatePractice).not.toHaveBeenCalled();
+  });
+
+  it("treats a zero Quoted Price like a missing one", async () => {
+    const user = await renderLoaded(makePractice({ quoted_price: 0 }));
+    await user.click(screen.getByTitle("Jump to: Invoice"));
+    expect(mocks.updatePractice).not.toHaveBeenCalled();
+  });
+
+  it("lets the jump through when the practice has a Quoted Price", async () => {
+    const user = await renderLoaded();
+    await user.click(screen.getByTitle("Jump to: Invoice"));
+    await waitFor(() => {
+      expect(mocks.updatePractice).toHaveBeenCalledWith(42, {
+        status: "sending_invoice",
+      });
+    });
+    expect(mocks.toastError).not.toHaveBeenCalled();
+  });
+
+  it("maps the backend refusal to the Indonesian text if it still comes back", async () => {
+    mocks.updatePractice.mockRejectedValueOnce(
+      new ApiError("Quoted Price is required before Sending Invoice", 422, {
+        detail: "Quoted Price is required before Sending Invoice",
+      }),
+    );
+    const user = await renderLoaded();
+    await user.click(screen.getByTitle("Jump to: Invoice"));
+    await waitFor(() => {
+      expect(mocks.toastError).toHaveBeenCalledWith(
+        "Failed to update status",
+        "Isi Quoted Price dulu sebelum Sending Invoice",
+      );
+    });
+  });
+
+  it("disables Sending Invoice in the edit form, with the reason, when there is no price", async () => {
+    const user = await renderLoaded(makePractice({ quoted_price: null }));
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const option = screen.getByRole("option", {
+      name: /Sending Invoice — Isi Quoted Price dulu sebelum Sending Invoice/,
+    });
+    expect(option).toBeDisabled();
+  });
+
+  it("keeps Sending Invoice selectable in the edit form when the practice has a price", async () => {
+    const user = await renderLoaded();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    expect(
+      screen.getByRole("option", { name: "Sending Invoice" }),
+    ).toBeEnabled();
+  });
+
+  it("shows the Indonesian text when the edit form is refused by the backend", async () => {
+    mocks.updatePractice.mockRejectedValueOnce(
+      new ApiError("Quoted Price is required before Sending Invoice", 422, {
+        detail: "Quoted Price is required before Sending Invoice",
+      }),
+    );
+    const user = await renderLoaded();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const modal = screen.getByRole("heading", { name: "Edit Process #42" })
+      .parentElement?.parentElement as HTMLElement;
+    await user.selectOptions(
+      within(modal).getAllByRole("combobox")[0],
+      "sending_invoice",
+    );
+    await user.click(
+      within(modal).getByRole("button", { name: "Save Changes" }),
+    );
+    await waitFor(() => {
+      expect(mocks.toastError).toHaveBeenCalledWith(
+        "Error",
+        "Isi Quoted Price dulu sebelum Sending Invoice",
+      );
+    });
+  });
+
   it("jumps to another workflow state and persists it", async () => {
     const user = await renderLoaded();
 

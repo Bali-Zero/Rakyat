@@ -44,6 +44,11 @@ from backend.services.crm.cache_query import (
     query_cache,
 )
 from backend.services.crm.gender import normalize_gender
+from backend.services.crm.practice_state_machine import (
+    QuotedPriceRequiredError,
+    normalize_state,
+    validate_quoted_price_for_invoice,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -947,6 +952,8 @@ class EnhancedCRMService:
         """Crea pratica con validazione."""
         try:
             validated = PracticeValidator(**practice_data)
+            # No practice is created straight into Sending Invoice without a Quoted Price.
+            validate_quoted_price_for_invoice(validated.status, validated.quoted_price)
 
             async with self.db_pool.acquire() as conn:
                 query = """
@@ -985,6 +992,8 @@ class EnhancedCRMService:
             logger.info(f"Created practice {result['id']} for client {validated.client_id}")
             return result
 
+        except QuotedPriceRequiredError:
+            raise
         except PydanticValidationError as e:
             logger.warning("Failed to create practice (validation): %s", type(e).__name__)
             raise DatabaseError("Failed to create practice", operation="insert")
@@ -1012,7 +1021,7 @@ class EnhancedCRMService:
         try:
             async with self.db_pool.acquire() as conn:
                 old = await conn.fetchrow(
-                    "SELECT status, client_id FROM practices WHERE id = $1",
+                    "SELECT status, client_id, quoted_price FROM practices WHERE id = $1",
                     practice_id,
                 )
 
@@ -1020,6 +1029,12 @@ class EnhancedCRMService:
                     raise ResourceNotFoundError("Practice", str(practice_id))
 
                 old_status = old["status"]
+                # Entering Sending Invoice needs a Quoted Price (the row's: this path sets no price).
+                if (
+                    normalize_state(new_status or "") == "sending_invoice"
+                    and normalize_state(old_status or "") != "sending_invoice"
+                ):
+                    validate_quoted_price_for_invoice(new_status, old["quoted_price"])
 
                 row = await conn.fetchrow(
                     """
@@ -1050,7 +1065,7 @@ class EnhancedCRMService:
 
             return result
 
-        except ResourceNotFoundError:
+        except (ResourceNotFoundError, QuotedPriceRequiredError):
             raise
         except (asyncpg.PostgresError, asyncpg.InterfaceError, OSError) as e:
             logger.warning("Failed to update practice status (DB): %s", type(e).__name__)
