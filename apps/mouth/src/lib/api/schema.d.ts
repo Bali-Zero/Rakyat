@@ -6900,7 +6900,7 @@ export interface paths {
     put?: never;
     /**
      * Run Unpaid Invoice Notifier
-     * @description Check invoices unpaid for 7+ days and remind Asya.
+     * @description Digest of invoices still unpaid 3 days after issue (once per invoice) to Asya.
      */
     post: operations["run_unpaid_invoice_notifier_api_cron_notifiers_unpaid_invoices_post"];
     delete?: never;

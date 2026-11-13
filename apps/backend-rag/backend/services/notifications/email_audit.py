@@ -72,6 +72,9 @@ NON_RESURRECTABLE_EMAIL_TYPES: frozenset[str] = frozenset(
         "welcome",
         "process_start_client",
         "payment_client",
+        # The daily notifier run is its own retry (the invoices stay due until
+        # the digest is delivered); a "[RETRY]" stub on top would be a duplicate.
+        "unpaid_invoice_digest",
     }
 )
 
