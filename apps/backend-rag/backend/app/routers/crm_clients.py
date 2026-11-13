@@ -167,7 +167,7 @@ async def get_current_user_or_internal(request: Request) -> dict | None:
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning("get_current_user_or_internal: auth failed: %s", e)
+        logger.warning("get_current_user_or_internal: auth failed (%s)", type(e).__name__)
         raise HTTPException(status_code=401, detail="authentication required") from e
 
 
@@ -226,10 +226,9 @@ async def _create_drive_folder_with_observability(
                 f"ensure_client_folder returned success=False: {result.get('error')}"
             )
             logger.error(
-                "Drive folder creation failed for client %s (%s): %s",
+                "Drive folder creation failed for client %s (%s)",
                 client_id,
                 client_type,
-                result.get("error"),
             )
             _report_drive_folder_failure(client_id, client_name, client_type, err)
     except Exception as e:
@@ -237,7 +236,7 @@ async def _create_drive_folder_with_observability(
             "Drive folder creation exception for client %s (%s): %s",
             client_id,
             client_type,
-            e,
+            type(e).__name__,
         )
         _report_drive_folder_failure(client_id, client_name, client_type, e)
 
@@ -678,9 +677,8 @@ async def create_client(
                     )
                     if existing_company_id:
                         logger.info(
-                            "Company dedup: found existing company %s by NIB %s",
+                            "Company dedup: found existing company %s",
                             existing_company_id,
-                            nib,
                         )
 
             if not existing_company_id:
@@ -1193,7 +1191,9 @@ async def upload_client_avatar(
             ACL="public-read",
         )
     except Exception as e:
-        logger.error("Avatar upload to Tigris failed for client %s: %s", client_id, e)
+        logger.error(
+            "Avatar upload to Tigris failed for client %s: %s", client_id, type(e).__name__
+        )
         raise HTTPException(status_code=502, detail="Avatar storage failed") from e
 
     public_url = f"https://{_tigris.PUBLIC_HOST}/{key}"
@@ -1593,7 +1593,7 @@ async def upsert_client_by_phone(
     try:
         await invalidate_cache("zantara:crm_clients_stats:*")
     except Exception as exc:  # pragma: no cover - cache best-effort
-        logger.warning("upsert-by-phone: cache invalidation failed: %s", exc)
+        logger.warning("upsert-by-phone: cache invalidation failed: %s", type(exc).__name__)
 
     if result.get("matched_count", 0) > 1:
         # Do NOT log the phone (PII / UU PDP + log-injection: it's user-supplied).
@@ -1842,13 +1842,12 @@ async def update_client(
                     ),
                 )
             except Exception as e:
-                logger.error("Portal notification for profile update failed: %s", e)
+                logger.error("Portal notification for profile update failed: %s", type(e).__name__)
 
             log_success(
                 logger,
                 "Updated client",
                 client_id=client_id,
-                updated_by=user_email,
             )
 
             # Track metrics
@@ -1918,7 +1917,6 @@ async def delete_client(
                 logger,
                 "Deleted (soft) client",
                 client_id=client_id,
-                deleted_by=user_email,
             )
 
             # Track metrics
@@ -2475,9 +2473,10 @@ async def get_client_ai_summary(
         raise
     except Exception as e:
         # CodeQL log-injection: cast to int defangs any non-numeric path.
-        logger.exception(
-            "ai_summary fetch failed for client %d",
+        logger.error(
+            "ai_summary fetch failed for client %d (%s)",
             int(client_id),
+            type(e).__name__,
         )
         raise handle_database_error(e) from e
 
@@ -2537,9 +2536,10 @@ async def get_client_wa_case_intelligence(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(
-            "wa_case_intelligence fetch failed for client %d",
+        logger.error(
+            "wa_case_intelligence fetch failed for client %d (%s)",
             int(client_id),
+            type(e).__name__,
         )
         raise handle_database_error(e) from e
 

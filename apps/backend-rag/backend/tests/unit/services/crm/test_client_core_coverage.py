@@ -1215,6 +1215,35 @@ async def test_create_client_error_logs_carry_no_exception_text(crm_service, moc
         assert "zyxwv" not in text.lower()
 
 
+@pytest.mark.asyncio
+async def test_update_and_get_client_error_logs_carry_no_exception_text(
+    crm_service, mock_pool, caplog
+):
+    import logging
+
+    import asyncpg
+
+    from backend.app.core.exceptions import DatabaseError
+
+    service, _ = crm_service
+    pool, conn = mock_pool
+    leak = "Key (email)=(zyxwv@example.com) amount 987654"
+    for exc in (asyncpg.PostgresError(leak), RuntimeError(leak)):
+        conn.fetchrow = AsyncMock(side_effect=exc)
+        for call in (
+            lambda: service.update_client(1, {"full_name": "Zyxwv Synthetic"}),
+            lambda: service.get_client(1, include_practices=False),
+        ):
+            caplog.clear()
+            with caplog.at_level(logging.DEBUG, logger="backend.services.crm.client_core"):
+                with pytest.raises(DatabaseError):
+                    await call()
+            text = _all_log_text(caplog)
+            assert "Failed to" in text
+            assert "zyxwv" not in text
+            assert "987654" not in text
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # get_enhanced_crm_service singleton
 # ─────────────────────────────────────────────────────────────────────────────

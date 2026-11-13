@@ -2311,6 +2311,39 @@ class TestDeleteRequiredDocument:
 # ---------------------------------------------------------------------------
 
 
+class TestRouterErrorLogsCarryNoPII:
+    @pytest.mark.asyncio
+    async def test_required_documents_error_log_has_type_only(
+        self,
+        mock_db_pool: MagicMock,
+        mock_db_conn: AsyncMock,
+        admin_user: dict,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import logging
+
+        from backend.app.routers import crm_practices
+
+        mock_db_conn.fetch = AsyncMock(
+            side_effect=RuntimeError("Key (email)=(zyxwv@example.com) amount 987654")
+        )
+        with caplog.at_level(logging.DEBUG, logger=crm_practices.logger.name):
+            with pytest.raises(HTTPException):
+                await crm_practices.get_required_documents(
+                    practice_id=7, current_user=admin_user, db_pool=mock_db_pool
+                )
+
+        parts = []
+        for r in caplog.records:
+            if r.name.startswith("backend."):
+                parts += [r.getMessage(), r.exc_text or "", repr(r.exc_info)]
+        text = " ".join(parts)
+        assert "Failed to get required documents: RuntimeError" in text
+        assert "zyxwv" not in text
+        assert "987654" not in text
+        assert all(r.exc_info is None for r in caplog.records if r.name.startswith("backend."))
+
+
 class TestHRBonus:
     @pytest.mark.asyncio
     async def test_hr_bonus_no_assigned_to(self, mock_db_pool: MagicMock) -> None:
