@@ -106,6 +106,54 @@ async def test_retry_claims_row_and_succeeds(monitor, fake_pool):
     assert sent_update_calls, "expected UPDATE ... status='sent' to run"
 
 
+async def _retry_body_for(monitor, fake_pool, subject: str) -> dict:
+    fake_pool._conn.fetch.return_value = [
+        {
+            "id": 42,
+            "email_type": "hr_bonus_pending",
+            "to_email": "hr@example.com",
+            "subject": subject,
+            "practice_id": 7,
+            "client_id": 99,
+            "attempt_number": 1,
+        }
+    ]
+    fake_pool._conn.fetchval.return_value = 43
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_client.post = AsyncMock(return_value=mock_response)
+    with patch(
+        "backend.services.notifications.email_health_monitor.get_email_client",
+        new=AsyncMock(return_value=mock_client),
+    ):
+        await monitor.check_and_retry_failed_emails()
+    return mock_client.post.await_args.kwargs["json"]
+
+
+@pytest.mark.asyncio
+async def test_retry_body_escapes_markup_in_the_original_subject(monitor, fake_pool):
+    """A catalog service name in the subject ("R&D <b>Visa</b>") must not become live HTML in
+    the retry body; the subject line itself is plain text and stays as saved."""
+    sent = await _retry_body_for(monitor, fake_pool, "HR Bonus Pending: R&D <b>Visa</b>")
+    assert "<b>" not in sent["body"]
+    assert "R&amp;D &lt;b&gt;Visa&lt;/b&gt;" in sent["body"]
+    assert sent["subject"] == "[RETRY] HR Bonus Pending: R&D <b>Visa</b>"
+
+
+@pytest.mark.asyncio
+async def test_retry_body_keeps_a_plain_subject_readable(monitor, fake_pool):
+    sent = await _retry_body_for(monitor, fake_pool, "Documents Needed")
+    assert "<strong>Original subject:</strong> Documents Needed</p>" in sent["body"]
+
+
+@pytest.mark.asyncio
+async def test_retry_body_escapes_after_truncating_to_200(monitor, fake_pool):
+    sent = await _retry_body_for(monitor, fake_pool, "A" * 199 + "<script>")
+    assert "<script" not in sent["body"]
+    assert "A" * 199 + "&lt;</p>" in sent["body"]
+
+
 @pytest.mark.asyncio
 async def test_retry_closes_original_row_on_success(monitor, fake_pool):
     """After a successful retry, BOTH the new row and the original

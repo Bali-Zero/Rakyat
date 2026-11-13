@@ -828,8 +828,12 @@ class ServiceAccountDriveService:
         logger.info("Moved file %s from %s to %s", file_id, from_parent_id, to_parent_id)
         return result
 
-    async def find_folders_by_app_property(self, key: str, value: str) -> list[dict[str, Any]]:
-        """Every live (not trashed) physical folder carrying appProperties[key] == value."""
+    async def find_folders_by_app_property(
+        self, key: str, value: str, strict: bool = False
+    ) -> list[dict[str, Any]]:
+        """Every live (not trashed) physical folder carrying appProperties[key] == value. The
+        lookup reads at most 20 pages; with `strict` a lookup that stopped there with a page still
+        pending raises instead of returning a part."""
         esc = lambda s: s.replace("\\", "\\\\").replace("'", "\\'")  # noqa: E731
         query = (
             f"appProperties has {{ key='{esc(key)}' and value='{esc(value)}' }} "
@@ -852,22 +856,33 @@ class ServiceAccountDriveService:
             page_token = result.get("nextPageToken")
             if not page_token:
                 break
+        if strict and page_token:
+            raise RuntimeError("lookup truncated")
         return found
 
     async def list_files_by_app_properties(
-        self, props: dict[str, str], parent_id: str, mimes: Sequence[str]
+        self,
+        props: dict[str, str],
+        parent_id: str,
+        mimes: Sequence[str] | None,
+        strict: bool = False,
     ) -> list[dict[str, Any]]:
         """Live (not trashed) files directly inside `parent_id` whose appProperties equal ALL of
-        `props` and whose mimeType is one of `mimes`. Every input is one the caller resolved
-        itself (a member id, a slot, a folder id Drive returned, a closed set of types); nothing
-        read from stored data may be passed here. Returns id, mimeType, parents and appProperties."""
+        `props` and whose mimeType is one of `mimes` (`None`: any type but a folder). Every input
+        is one the caller resolved itself (a member id, a slot, a folder id Drive returned, a
+        closed set of types); nothing read from stored data may be passed here. Returns id,
+        mimeType, parents and appProperties. The listing reads at most 20 pages; with `strict` a
+        listing that stopped there with a page still pending raises instead of returning a part."""
         esc = lambda v: str(v).replace("\\", "\\\\").replace("'", "\\'")  # noqa: E731
         clauses = [
             f"appProperties has {{ key='{esc(k)}' and value='{esc(v)}' }}" for k, v in props.items()
         ]
         clauses.append(f"'{esc(parent_id)}' in parents")
         clauses.append("trashed = false")
-        clauses.append("(" + " or ".join(f"mimeType = '{esc(m)}'" for m in mimes) + ")")
+        if mimes is None:
+            clauses.append("mimeType != 'application/vnd.google-apps.folder'")
+        else:
+            clauses.append("(" + " or ".join(f"mimeType = '{esc(m)}'" for m in mimes) + ")")
         found: list[dict[str, Any]] = []
         page_token = None
         for _ in range(20):
@@ -885,7 +900,22 @@ class ServiceAccountDriveService:
             page_token = result.get("nextPageToken")
             if not page_token:
                 break
+        if strict and page_token:
+            raise RuntimeError("listing truncated")
         return found
+
+    async def copy_file(
+        self, file_id: str, parent_id: str, name: str, app_properties: dict[str, str]
+    ) -> dict[str, Any]:
+        """`files.copy` of `file_id` into `parent_id`, named `name`, with `app_properties`. The
+        source is only read. Returns the COPY's id, mimeType and parents; logs nothing."""
+        request = self.service.files().copy(
+            fileId=file_id,
+            body={"name": name, "parents": [parent_id], "appProperties": dict(app_properties)},
+            fields="id, mimeType, parents",
+            supportsAllDrives=True,
+        )
+        return await asyncio.to_thread(request.execute)
 
     async def trash_file(self, file_id: str) -> None:
         """Move one file to the Drive trash (recoverable). Never a permanent delete."""
