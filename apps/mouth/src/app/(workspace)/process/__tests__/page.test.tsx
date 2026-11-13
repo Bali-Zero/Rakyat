@@ -130,6 +130,22 @@ const mockPractices: Practice[] = [
   },
 ];
 
+// Stand-in for the backend smart search: case, accents and word order are free.
+const fold = (text: string) =>
+  text
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+const serverSearch = (rows: Practice[], query: string) => {
+  const tokens = fold(query).split(/\s+/).filter(Boolean);
+  return rows.filter((p) => {
+    const hay = fold(
+      `${p.client_name ?? ""} ${p.practice_type_code ?? ""} ${p.id}`,
+    );
+    return tokens.every((t) => hay.includes(t));
+  });
+};
+
 describe("Cases Page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -138,7 +154,11 @@ describe("Cases Page", () => {
     // starts from the default ("kanban") instead of a previous test's click.
     localStorage.clear();
     vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.mocked(api.crm.getPractices).mockResolvedValue(mockPractices);
+    vi.mocked(api.crm.getPractices).mockImplementation(async (params) =>
+      params?.search
+        ? serverSearch(mockPractices, params.search)
+        : mockPractices,
+    );
     // Process Type filter now reads the live catalog (kita-prune lot 6)
     // instead of a hardcoded legacy list; one category/service is enough
     // to exercise the dropdown, and its code matches mockPractices above.
@@ -449,6 +469,164 @@ describe("Cases Page", () => {
       await waitFor(() => {
         expect(screen.getByText("John Doe")).toBeInTheDocument();
         expect(screen.queryByText("Bob Qodugil")).not.toBeInTheDocument(); // Property purchase
+      });
+    });
+
+    describe("smart search through the backend", () => {
+      const accented: Practice = {
+        ...mockPractices[0],
+        id: 9,
+        client_name: "Müller Anna",
+      };
+      const withAccented = (rows: Practice[], params?: { search?: string }) =>
+        params?.search
+          ? serverSearch([accented, ...rows], params.search)
+          : rows;
+
+      it("loads the list for the typed text, month and history included", async () => {
+        const user = userEvent.setup();
+        render(<PratichePage />);
+        await waitFor(() => {
+          expect(screen.getByText("John Doe")).toBeInTheDocument();
+        });
+
+        await user.type(screen.getByPlaceholderText(/Search process/i), "john");
+
+        await waitFor(() => {
+          expect(api.crm.getPractices).toHaveBeenCalledWith(
+            expect.objectContaining({
+              search: "john",
+              limit: 200,
+              include_history: true,
+            }),
+          );
+        });
+      });
+
+      it("finds a client typed lowercase without accents", async () => {
+        const user = userEvent.setup();
+        vi.mocked(api.crm.getPractices).mockImplementation(async (params) =>
+          withAccented(mockPractices, params),
+        );
+        render(<PratichePage />);
+        await waitFor(() => {
+          expect(screen.getByText("John Doe")).toBeInTheDocument();
+        });
+
+        await user.type(
+          screen.getByPlaceholderText(/Search process/i),
+          "anna muller",
+        );
+
+        await waitFor(() => {
+          expect(screen.getByText("Müller Anna")).toBeInTheDocument();
+          expect(screen.queryByText("John Doe")).not.toBeInTheDocument();
+        });
+      });
+
+      it("lets staff edit a card that only the search returned", async () => {
+        const user = userEvent.setup();
+        (api.crm.updatePractice as any) = vi.fn().mockResolvedValue({});
+        vi.mocked(api.crm.getPractices).mockImplementation(async (params) =>
+          withAccented(mockPractices, params),
+        );
+        render(<PratichePage />);
+        await waitFor(() => {
+          expect(screen.getByText("John Doe")).toBeInTheDocument();
+        });
+        await user.type(
+          screen.getByPlaceholderText(/Search process/i),
+          "muller",
+        );
+        await waitFor(() => {
+          expect(screen.getByText("Müller Anna")).toBeInTheDocument();
+          expect(screen.queryByText("John Doe")).not.toBeInTheDocument();
+        });
+
+        fireEvent.contextMenu(screen.getByText("Müller Anna"));
+        await screen.findByText("Update Status");
+        // the menu is rendered last, after the board columns
+        await user.click(screen.getAllByText("On Process").at(-1)!);
+
+        await waitFor(() => {
+          expect(api.crm.updatePractice).toHaveBeenCalledWith(9, {
+            status: "on_process",
+          });
+        });
+        await waitFor(() => {
+          // the old status is read from the same list the card is shown from
+          expect(analytics.trackCaseStatusChanged).toHaveBeenCalledWith(
+            9,
+            "inquiry",
+            "on_process",
+          );
+        });
+      });
+
+      it("keeps the list and the local filter when the search fails", async () => {
+        const user = userEvent.setup();
+        vi.mocked(api.crm.getPractices).mockImplementation(async (params) => {
+          if (params?.search) throw new Error("search down");
+          return mockPractices;
+        });
+        render(<PratichePage />);
+        await waitFor(() => {
+          expect(screen.getByText("John Doe")).toBeInTheDocument();
+        });
+
+        await user.type(screen.getByPlaceholderText(/Search process/i), "John");
+
+        await waitFor(() => {
+          expect(api.crm.getPractices).toHaveBeenCalledWith(
+            expect.objectContaining({ search: "John" }),
+          );
+        });
+        expect(screen.getByText("John Doe")).toBeInTheDocument();
+        expect(screen.queryByText("Jane Smith")).not.toBeInTheDocument();
+      });
+
+      it("ignores an older answer that arrives after a newer one", async () => {
+        const user = userEvent.setup();
+        let releaseOld: (rows: Practice[]) => void = () => {};
+        vi.mocked(api.crm.getPractices).mockImplementation(async (params) => {
+          if (params?.search === "jo") {
+            return new Promise<Practice[]>((resolve) => {
+              releaseOld = resolve;
+            });
+          }
+          return params?.search
+            ? serverSearch(mockPractices, params.search)
+            : mockPractices;
+        });
+        render(<PratichePage />);
+        await waitFor(() => {
+          expect(screen.getByText("John Doe")).toBeInTheDocument();
+        });
+        const box = screen.getByPlaceholderText(/Search process/i);
+
+        await user.type(box, "jo");
+        await waitFor(() => {
+          expect(api.crm.getPractices).toHaveBeenCalledWith(
+            expect.objectContaining({ search: "jo" }),
+          );
+        });
+        await user.type(box, "hn");
+        await waitFor(() => {
+          expect(api.crm.getPractices).toHaveBeenCalledWith(
+            expect.objectContaining({ search: "john" }),
+          );
+        });
+        // the stale "jo" answer carries a card the local text filter would also accept
+        releaseOld([
+          mockPractices[0],
+          { ...mockPractices[0], id: 7, client_name: "Johnny Stale" },
+        ]);
+
+        await waitFor(() => {
+          expect(screen.getByText("John Doe")).toBeInTheDocument();
+        });
+        expect(screen.queryByText("Johnny Stale")).not.toBeInTheDocument();
+        expect(screen.queryByText("Jane Smith")).not.toBeInTheDocument();
       });
     });
 

@@ -26,6 +26,11 @@ from backend.app.utils.logging_utils import get_logger, log_database_operation, 
 from backend.app.utils.service_accounts import CLIENT_ROLES, normalize_role
 from backend.core.cache import cached, invalidate_cache
 from backend.services.common.background import spawn
+from backend.services.crm.entity_search import (
+    build_practice_search,
+    escape_like,
+    smart_search_available,
+)
 from backend.services.crm.practice_state_machine import (
     OPEN_INQUIRY_TYPE_CODE,
     STATES_WITHOUT_SERVICE,
@@ -860,6 +865,11 @@ async def list_practices(
     practice_type: str | None = Query(None, description="Filter by practice type code"),
     priority: str | None = Query(None, description="Filter by priority"),
     month: str | None = Query(None, description="Filter by month YYYY-MM"),
+    search: str | None = Query(
+        None,
+        max_length=200,
+        description="Smart search: client name or e-mail, service, practice number, phone",
+    ),
     include_history: bool = Query(False, description="Include status transition history"),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),
@@ -894,6 +904,7 @@ async def list_practices(
     practice_type = resolve_query_param(practice_type)
     priority = resolve_query_param(priority)
     month = resolve_query_param(month)
+    search = resolve_query_param(search)
     include_history = resolve_query_param(include_history, False)
     limit = resolve_query_param(limit, DEFAULT_LIMIT)
     offset = resolve_query_param(offset, 0)
@@ -958,6 +969,25 @@ async def list_practices(
                     params.append(practices_filter)
                     param_index += 1
                     logger.info("RBAC: Filtering practices by p.assigned_to")
+
+            # Smart search (same behaviour as the client search; legacy substring fallback)
+            if isinstance(search, str) and search.strip():
+                smart = (
+                    await build_practice_search(conn, search, param_index)
+                    if await smart_search_available(conn)
+                    else None
+                )
+                if smart is not None:
+                    query_parts.append(smart.clause)
+                    params.extend(smart.params)
+                    param_index = smart.next_index
+                else:
+                    query_parts.append(
+                        f" AND (c.full_name ILIKE ${param_index} OR pt.code ILIKE ${param_index}"
+                        f" OR p.id::text LIKE ${param_index})"
+                    )
+                    params.append(f"%{escape_like(search.strip())}%")
+                    param_index += 1
 
             # Month filter
             month_range = _parse_month_param(month)
