@@ -29,6 +29,7 @@ import httpx
 
 from backend.app.services.hr.hr_leave_routing import (
     RUSLANA_EMAIL,
+    RUSLANA_REPORTS,
     SETUP_DIRECTOR_EMAIL,
     SETUP_DIRECTOR_REPORTS,
     TAX_SUPERVISOR_EMAIL,
@@ -121,9 +122,8 @@ TELEGRAM_MAX_MSG_LEN: int = 4000
 # change there is a change here.
 # - tax team (any *.tax@balizero.com)   -> Tax Supervisor (reorganisation 2026-11-09)
 # - setup team, HR & Accounting         -> Direktur
-# - rina                                -> Ruslana
+# - rina, rio, dea, candra              -> Ruslana (hr_leave_routing.RUSLANA_REPORTS)
 # - everyone else                       -> only zero@ in CC
-RUSLANA_REPORTS: frozenset[str] = frozenset({"rina@balizero.com"})
 
 # Background scheduler intervals.
 ESCALATION_SCAN_INTERVAL_SECONDS: int = 15 * 60  # every 15 minutes
@@ -141,7 +141,7 @@ def resolve_responsible_manager(email: str) -> str | None:
     Routing rules (per Zero, 2026-04-07 and 2026-10-20):
         - *.tax@balizero.com                        -> angel.tax@balizero.com
         - setup team, asya@                         -> adit@balizero.com
-        - rina@                                    -> ruslana@balizero.com
+        - rina@, rio@, dea@, candra@               -> ruslana@balizero.com
         - everyone else                            -> None (zero@ only)
     """
     normalized = email.lower().strip()

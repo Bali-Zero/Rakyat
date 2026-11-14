@@ -56,8 +56,16 @@ class TestRequireCanReviewLeave:
         assert req["id"] == 1
 
     @pytest.mark.asyncio
-    async def test_ruslana_can_no_longer_review_someone_else_s_leave(self) -> None:
+    async def test_ruslana_approves_dea_since_2026_11_15(self) -> None:
         service = _mock_service_returning_request("dea@balizero.com")
+        req = await _require_can_review_leave(
+            service, {"email": "ruslana@balizero.com", "role": "member"}, 1
+        )
+        assert req["id"] == 1
+
+    @pytest.mark.asyncio
+    async def test_ruslana_can_no_longer_review_someone_else_s_leave(self) -> None:
+        service = _mock_service_returning_request("krisna@balizero.com")
         with pytest.raises(HTTPException) as exc:
             await _require_can_review_leave(
                 service, {"email": "ruslana@balizero.com", "role": "member"}, 1
@@ -76,9 +84,9 @@ class TestRequireCanReviewLeave:
         assert req["id"] == 1
 
     @pytest.mark.asyncio
-    async def test_direktur_approves_dea_as_setup_lead(self) -> None:
+    async def test_direktur_approves_krisna_as_setup_lead(self) -> None:
         # Reorganisation 2026-11-09: the Direktur leads the setup team.
-        service = _mock_service_returning_request("dea@balizero.com")
+        service = _mock_service_returning_request("krisna@balizero.com")
         req = await _require_can_review_leave(
             service,
             {"email": "adit@balizero.com", "role": "member"},
