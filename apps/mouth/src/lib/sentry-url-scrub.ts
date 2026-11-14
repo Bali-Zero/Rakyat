@@ -19,7 +19,18 @@ const QUERY_FIELDS = new Set([
 ]);
 const URL_FIELDS = new Set(["url", "http.url", "url.full"]);
 const URL_HEADERS = new Set(["referer", "referrer", "link", "location"]);
+const SEARCH_PARAM_KEYS = new Set(["search", "q"]);
 const MAX_DEPTH = 12;
+
+function isSearchParamKey(key: string): boolean {
+  try {
+    return SEARCH_PARAM_KEYS.has(
+      decodeURIComponent(key.replace(/\+/g, " ")).trim().toLowerCase(),
+    );
+  } catch {
+    return SEARCH_PARAM_KEYS.has(key.trim().toLowerCase());
+  }
+}
 
 function pathOnlyUrl(value: string): string {
   try {
@@ -61,7 +72,9 @@ function scrub(value: unknown, depth: number): unknown {
   const source = value as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   for (const [key, v] of Object.entries(source)) {
-    if (QUERY_FIELDS.has(key) && typeof v === "string") {
+    if (isSearchParamKey(key) && typeof v === "string") {
+      out[key] = PLACEHOLDER;
+    } else if (QUERY_FIELDS.has(key) && typeof v === "string") {
       out[key] = PLACEHOLDER;
     } else if (key.toLowerCase() === "headers") {
       out[key] = scrubHeaders(v);
@@ -78,6 +91,21 @@ function scrub(value: unknown, depth: number): unknown {
         space < 0
           ? pathOnlyUrl(v)
           : `${v.slice(0, space)} ${pathOnlyUrl(v.slice(space + 1))}`;
+    } else if (key === "name" && typeof v === "string") {
+      const attrs = source.attributes;
+      const op =
+        attrs && typeof attrs === "object" && !Array.isArray(attrs)
+          ? (attrs as Record<string, unknown>)["sentry.op"]
+          : undefined;
+      if (typeof op === "string" && op.startsWith("http")) {
+        const space = v.indexOf(" ");
+        out[key] =
+          space < 0
+            ? pathOnlyUrl(v)
+            : `${v.slice(0, space)} ${pathOnlyUrl(v.slice(space + 1))}`;
+      } else {
+        out[key] = scrub(v, depth + 1);
+      }
     } else {
       out[key] = scrub(v, depth + 1);
     }

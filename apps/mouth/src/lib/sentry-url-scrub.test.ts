@@ -74,4 +74,39 @@ describe("scrubSentryUrls", () => {
     const event = { request: { url: "https://kita.example/clients/12" } };
     expect(scrubSentryUrls(event)).toEqual(event);
   });
+
+  it("redacts dict values under keys search and q (parity with backend _scrub)", () => {
+    const out = scrubSentryUrls({
+      query_params: { search: VALUE, q: VALUE, " Q ": VALUE, month: "2026-11" },
+    });
+    expect(out).toEqual({
+      query_params: {
+        search: "[REDACTED]",
+        q: "[REDACTED]",
+        " Q ": "[REDACTED]",
+        month: "2026-11",
+      },
+    });
+  });
+
+  it("scrubs streamed-span names and attributes for http spans", () => {
+    const url = `https://kita.example/clients?q=${VALUE}`;
+    const out = scrubSentryUrls({
+      trace_id: "t",
+      span_id: "s",
+      name: `GET ${url}`,
+      start_timestamp: 0,
+      status: "ok",
+      is_segment: true,
+      attributes: {
+        "sentry.op": "http.client",
+        "url.full": url,
+        "http.query": `q=${VALUE}`,
+      },
+    });
+    const blob = JSON.stringify(out);
+    expect(blob).not.toContain(VALUE);
+    expect(out.name).toBe("GET https://kita.example/clients");
+    expect(out.attributes["http.query"]).toBe("[REDACTED]");
+  });
 });

@@ -181,4 +181,5 @@ def test_redact_query_params_replaces_only_the_search_values():
         " Q ": "***",
         "page": "2",
     }
+    assert redact_query_params({"se%61rch": VALUE}) == {"se%61rch": "***"}
     assert redact_query_params(None) == {}

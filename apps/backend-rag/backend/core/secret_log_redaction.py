@@ -184,11 +184,18 @@ _SENSITIVE_QUERY_KEYS = frozenset({"search", "q"})
 _ACCESS_LOGGERS = ("uvicorn.access",)
 
 
+def _is_sensitive_query_key(key: object) -> bool:
+    try:
+        return unquote_plus(str(key)).strip().lower() in _SENSITIVE_QUERY_KEYS
+    except Exception:
+        return str(key).strip().lower() in _SENSITIVE_QUERY_KEYS
+
+
 def redact_query_params(params: Mapping[str, str] | None) -> dict[str, str]:
     """Parsed query params for a trace or an audit row: the VALUE of ``search`` / ``q`` is
     replaced (names, e-mails and phones are typed there), every other param is kept."""
     return {
-        key: "***" if str(key).strip().lower() in _SENSITIVE_QUERY_KEYS else value
+        key: "***" if _is_sensitive_query_key(key) else value
         for key, value in dict(params or {}).items()
     }
 

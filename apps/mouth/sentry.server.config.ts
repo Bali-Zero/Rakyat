@@ -30,6 +30,7 @@ Sentry.init({
   // an actionable timeout. The same words, opposite meanings, and a shared list
   // would delete the second (cross-family gate).
   ignoreErrors: [...UNIVERSAL_NOISE],
+  beforeSendSpan: scrubSentryUrls,
   beforeSend(event) {
     return isKnownNoise(event, { browser: false })
       ? null

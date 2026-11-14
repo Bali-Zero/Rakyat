@@ -30,6 +30,8 @@ Sentry.init({
     const kept = dropProtectedUiBreadcrumb(breadcrumb, hint);
     return kept ? scrubSentryUrls(kept) : kept;
   },
+  // v11 span streaming: transactions go through beforeSendSpan, not beforeSendTransaction.
+  beforeSendSpan: scrubSentryUrls,
   beforeSend(event) {
     // Non inviare errori in development
     if (process.env.NODE_ENV === "development") {
