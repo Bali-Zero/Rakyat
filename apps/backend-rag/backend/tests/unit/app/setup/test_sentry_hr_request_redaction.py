@@ -67,7 +67,6 @@ def transport():
     )
     yield t
     sentry_sdk.get_client().close()
-    sentry_sdk.init()  # leave a disabled client behind
 
 
 def _app() -> TestClient:
@@ -236,7 +235,6 @@ async def test_a_non_writer_upload_is_refused_before_the_sdk_reads_the_body():
         assert body.pulled <= 1
     finally:
         sentry_sdk.get_client().close()
-        sentry_sdk.init()
 
 
 def test_production_init_turns_request_bodies_off(monkeypatch):

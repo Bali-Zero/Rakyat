@@ -74,7 +74,6 @@ def transport():
     )
     yield t
     sentry_sdk.get_client().close()
-    sentry_sdk.init()
 
 
 def _failing_app() -> TestClient:
@@ -184,7 +183,6 @@ def traced_transport():
     )
     yield t
     sentry_sdk.get_client().close()
-    sentry_sdk.init()
 
 
 @pytest.mark.parametrize("header", ["Referer", "Link", "Location"])
