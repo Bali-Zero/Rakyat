@@ -58,7 +58,7 @@ class TestCanViewAllPractices:
         # owner order 2026-11-15: Tax Consultant gains Tax Lead's staff access but
         # the full-view practice list stays email-based, so it does not widen.
         assert (
-            can_view_all_practices({"email": "dea@balizero.com", "role": "Tax Consultant"}) is False
+            can_view_all_practices({"email": "tc@example.test", "role": "Tax Consultant"}) is False
         )
 
     def test_the_retired_tax_login_no_longer_sees_all_practices(self):

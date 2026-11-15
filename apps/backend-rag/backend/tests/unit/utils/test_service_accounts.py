@@ -158,7 +158,7 @@ class TestTeamRolesAreAnAllowList:
         assert is_human_team_member(role) is True
 
     def test_tax_consultant_is_a_staff_title_like_tax_lead(self) -> None:
-        """Owner order 2026-11-15: dea@ and candra@ hold "Tax Consultant"."""
+        """Owner order 2026-11-15: the new tax title."""
         assert is_human_team_member("Tax Consultant") is True
         assert is_human_team_member("  tax consultant ") is True
         assert normalize_role("Tax Consultant") in TEAM_ROLES
