@@ -128,7 +128,16 @@ def is_crm_admin(user: dict) -> bool:
 #: Job titles (``team_members.role``, lower-cased) that may flip a document's
 #: client visibility besides the CRM admins.
 DOCUMENT_VISIBILITY_ROLES = frozenset(
-    {"team leader", "tax lead", "supervisor", "direktur", "tax supervisor", "tax responsible"}
+    {
+        "team leader",
+        "tax lead",
+        "supervisor",
+        "direktur",
+        "tax supervisor",
+        "tax responsible",
+        # owner order 2026-11-15: same as Tax Lead
+        "tax consultant",
+    }
 )
 
 

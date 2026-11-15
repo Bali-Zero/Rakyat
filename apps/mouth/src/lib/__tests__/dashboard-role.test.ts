@@ -35,6 +35,8 @@ describe("normalizeDashboardRole", () => {
     ["Team Leader", "Tax Responsible"],
     ["Executive Consultant", "Senior Consultant"],
     ["Accounting", "HR & Accounting"],
+    // owner order 2026-11-15
+    ["Tax Lead", "Tax Consultant"],
   ])("%s and its replacement %s resolve to the same widget", (oldTitle, newTitle) => {
     expect(normalizeDashboardRole(newTitle, false)).toBe(
       normalizeDashboardRole(oldTitle, false),
