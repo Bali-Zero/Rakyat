@@ -72,6 +72,44 @@ class TestRequireCanReviewLeave:
             )
         assert exc.value.status_code == 403
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("requester", ["rio@balizero.com", "candra@balizero.com"])
+    async def test_ruslana_approves_rio_and_candra_since_2026_11_15(self, requester: str) -> None:
+        service = _mock_service_returning_request(requester)
+        req = await _require_can_review_leave(
+            service, {"email": "ruslana@balizero.com", "role": "member"}, 1
+        )
+        assert req["id"] == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("requester", ["dea@balizero.com", "candra@balizero.com"])
+    async def test_tax_supervisor_can_no_longer_review_dea_or_candra(self, requester: str) -> None:
+        user = {"email": "angel.tax@balizero.com", "role": "member"}
+        assert is_hr_admin(user) is False
+        service = _mock_service_returning_request(requester)
+        with pytest.raises(HTTPException) as exc:
+            await _require_can_review_leave(service, user, 1)
+        assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_a_member_who_is_not_ruslana_cannot_review_rio(self) -> None:
+        user = {"email": "krisna@balizero.com", "role": "member"}
+        assert is_hr_admin(user) is False
+        service = _mock_service_returning_request("rio@balizero.com")
+        with pytest.raises(HTTPException) as exc:
+            await _require_can_review_leave(service, user, 1)
+        assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_hr_admin_adit_may_review_dea_by_owner_decision_not_a_leak(self) -> None:
+        # INTENDED behaviour (owner decision): adit@ is an HR extra admin, and HR admins
+        # may review ANY leave, including the ones routed to Ruslana.
+        user = {"email": "adit@balizero.com", "role": "member"}
+        assert is_hr_admin(user) is True
+        service = _mock_service_returning_request("dea@balizero.com")
+        req = await _require_can_review_leave(service, user, 1)
+        assert req["id"] == 1
+
     # ─── Supervisor delegation ───────────────────────────────────────
     @pytest.mark.asyncio
     async def test_tax_supervisor_approves_kadek(self) -> None:
