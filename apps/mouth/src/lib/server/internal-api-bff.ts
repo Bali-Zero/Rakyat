@@ -36,6 +36,7 @@ const INTERNAL_ROLES = new Set([
   "supervisor",
   "tax",
   "tax care",
+  "tax consultant", // owner order 2026-11-15: same access as Tax Lead
   "tax lead",
   "tax manager",
   "tax responsible",
@@ -145,6 +146,7 @@ export const EDITORIAL_APPROVER_ROLES: ReadonlySet<string> = new Set([
   "senior consultant",
   "specialist advisor",
   "supervisor",
+  "tax consultant", // owner order 2026-11-15: same access as Tax Lead
   "tax lead",
   "tax manager",
   "tax responsible",

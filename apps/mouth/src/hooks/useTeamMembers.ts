@@ -59,6 +59,8 @@ const TEAM_ROLES = new Set([
   "tax responsible",
   "senior consultant",
   "hr & accounting",
+  // owner order 2026-11-15: Tax Consultant, same access as Tax Lead
+  "tax consultant",
 ]);
 
 export function isTeamRole(role: string | null | undefined): boolean {

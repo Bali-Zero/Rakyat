@@ -54,6 +54,13 @@ class TestCanViewAllPractices:
         ):
             assert can_view_all_practices({"email": email, "role": "member"}) is True, email
 
+    def test_tax_consultant_is_not_a_view_all_title(self):
+        # owner order 2026-11-15: Tax Consultant gains Tax Lead's staff access but
+        # the full-view practice list stays email-based, so it does not widen.
+        assert (
+            can_view_all_practices({"email": "dea@balizero.com", "role": "Tax Consultant"}) is False
+        )
+
     def test_the_retired_tax_login_no_longer_sees_all_practices(self):
         assert can_view_all_practices({"email": "tax@balizero.com", "role": "member"}) is False
 
@@ -153,7 +160,9 @@ class TestIsActiveTaxDepartmentMember:
 
 
 class TestCanChangeDocumentVisibility:
-    @pytest.mark.parametrize("role", ["Team Leader", "TAX LEAD", " supervisor ", "admin", "CEO"])
+    @pytest.mark.parametrize(
+        "role", ["Team Leader", "TAX LEAD", " supervisor ", "admin", "CEO", "Tax Consultant"]
+    )
     def test_allowed_roles(self, role):
         from backend.app.utils.crm_utils import can_change_document_visibility
 

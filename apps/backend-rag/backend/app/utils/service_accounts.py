@@ -122,6 +122,8 @@ TEAM_ROLES = frozenset(
         "Tax Responsible",
         "Senior Consultant",
         "HR & Accounting",
+        # owner order 2026-11-15: Tax Consultant (Dea, Candra) has Tax Lead's access
+        "Tax Consultant",
     )
 )
 

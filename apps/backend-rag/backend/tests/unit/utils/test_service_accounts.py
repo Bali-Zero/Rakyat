@@ -157,6 +157,12 @@ class TestTeamRolesAreAnAllowList:
         """Innocence: the allow-list is the census, not a guess (scar family #3)."""
         assert is_human_team_member(role) is True
 
+    def test_tax_consultant_is_a_staff_title_like_tax_lead(self) -> None:
+        """Owner order 2026-11-15: dea@ and candra@ hold "Tax Consultant"."""
+        assert is_human_team_member("Tax Consultant") is True
+        assert is_human_team_member("  tax consultant ") is True
+        assert normalize_role("Tax Consultant") in TEAM_ROLES
+
     def test_matching_is_case_and_padding_insensitive(self) -> None:
         assert is_human_team_member("  TAX LEAD  ") is True
         assert is_human_team_member("board member") is True
