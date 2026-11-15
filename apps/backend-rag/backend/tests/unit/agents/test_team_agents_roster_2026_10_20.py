@@ -5,8 +5,10 @@ Offboarding 2026-11-03: the person-level mapping for natalie@ is gone."""
 
 from backend.services.agents.team_agent_config import (
     ROLE_CRM_FULL,
+    ROLE_EXECUTIVE_CONSULTANT,
     ROLE_FINANCE_VIEWER,
     ROLE_MANAGER,
+    ROLE_TAX_SPECIALIST,
     TEAM_AGENTS,
     get_agent_role,
     is_tool_allowed,
@@ -73,6 +75,29 @@ class TestFinanceViewerRole:
         ):
             assert not is_tool_allowed(ROLE_FINANCE_VIEWER, tool), tool
         assert is_tool_allowed(ROLE_FINANCE_VIEWER, "log_interaction")
+
+
+class TestTaxAndSetupMoves2026_11_15:
+    """Owner order 2026-11-15: Dea and Candra are Tax Consultants, Rio a Junior Consultant (setup)."""
+
+    def test_dea_and_candra_are_tax_specialists(self) -> None:
+        for email in ("dea@balizero.com", "candra@balizero.com"):
+            assert get_agent_role(email) is ROLE_TAX_SPECIALIST, email
+            assert get_agent_role(email).role_id == "tax_specialist", email
+
+    def test_dea_is_no_longer_executive_consultant(self) -> None:
+        assert get_agent_role("dea@balizero.com").role_id != "executive_consultant"
+        assert get_agent_role("dea@balizero.com") is not ROLE_EXECUTIVE_CONSULTANT
+
+    def test_rio_is_executive_consultant(self) -> None:
+        assert get_agent_role("rio@balizero.com") is ROLE_EXECUTIVE_CONSULTANT
+        assert get_agent_role("rio@balizero.com").role_id == "executive_consultant"
+
+    def test_tax_specialist_keeps_its_lkpm_tools(self) -> None:
+        for email in ("dea@balizero.com", "candra@balizero.com"):
+            role = get_agent_role(email)
+            assert is_tool_allowed(role, "get_lkpm_status"), email
+            assert is_tool_allowed(role, "create_lkpm_report"), email
 
 
 def test_every_balizero_agent_email_is_lowercase_and_unique() -> None:
