@@ -26,7 +26,12 @@ ARI = "ari.firda@balizero.com"
 ASYA = "asya@balizero.com"
 KADEK = "kadek.tax@balizero.com"
 KRISNA = "krisna@balizero.com"
-ALL_EMAILS = (ANGEL, ADIT, ARI, ASYA, KADEK, KRISNA)
+RUSLANA = "ruslana@balizero.com"
+RINA = "rina@balizero.com"
+RIO = "rio@balizero.com"
+DEA = "dea@balizero.com"
+CANDRA = "candra@balizero.com"
+ALL_EMAILS = (ANGEL, ADIT, ARI, ASYA, KADEK, KRISNA, RUSLANA, RINA, RIO, DEA, CANDRA)
 
 
 def _row(rid: int, email: str, status: str = "pending") -> dict[str, Any]:
@@ -67,8 +72,8 @@ ROWS = [
 ]
 
 
-async def _list(email: str) -> list[dict[str, Any]]:
-    service = _service(ROWS)
+async def _list(email: str, rows: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    service = _service(ROWS if rows is None else rows)
     with patch.object(hr_router, "_get_hr_service", return_value=service):
         out = await list_leave_requests(
             employee_id=None,
@@ -77,6 +82,11 @@ async def _list(email: str) -> list[dict[str, Any]]:
             db_pool=MagicMock(),
         )
     return out["requests"]
+
+
+# One pending request per person, ids follow ALL_EMAILS order (Angel=1 ... Candra=11).
+ROWS_ALL = [_row(i + 1, e) for i, e in enumerate(ALL_EMAILS)]
+ID_OF = {e: i + 1 for i, e in enumerate(ALL_EMAILS)}
 
 
 class TestReportsOf:
@@ -106,7 +116,9 @@ class TestApproverListScope:
         assert ids.isdisjoint({2, 3, 4, 5})
 
     @pytest.mark.asyncio
-    async def test_direktur_is_an_hr_admin_and_sees_everyone_but_never_reviews_his_own(self) -> None:
+    async def test_direktur_is_an_hr_admin_and_sees_everyone_but_never_reviews_his_own(
+        self,
+    ) -> None:
         # Owner decision 2026-11-10: the Direktur is an HR admin, so the admin view applies.
         rows = await _list(ADIT)
         by_id = {r["id"]: r for r in rows}
@@ -136,6 +148,32 @@ class TestApproverListScope:
     async def test_hr_admin_view_is_unchanged_everything_visible(self) -> None:
         rows = await _list("zero@balizero.com")
         assert {r["id"] for r in rows} == {1, 2, 3, 4, 5, 6}
+
+
+class TestRuslanaLineListScope:
+    """Owner order 2026-11-15: Ruslana approves Rina, Rio, Dea and Candra; the department heads lose Rio, Dea, Candra."""
+
+    def test_ruslana_reports_are_exactly_her_four(self) -> None:
+        assert reports_of(RUSLANA) == frozenset({RINA, RIO, DEA, CANDRA})
+
+    def test_department_heads_no_longer_have_the_three(self) -> None:
+        assert not reports_of(ANGEL) & {DEA, CANDRA}
+        assert RIO not in reports_of(ADIT)
+
+    @pytest.mark.asyncio
+    async def test_ruslana_sees_her_four_reports_and_her_own_nothing_else(self) -> None:
+        rows = await _list(RUSLANA, ROWS_ALL)
+        by_id = {r["id"]: r for r in rows}
+        assert set(by_id) == {ID_OF[e] for e in (RUSLANA, RINA, RIO, DEA, CANDRA)}
+        for e in (RINA, RIO, DEA, CANDRA):
+            assert by_id[ID_OF[e]]["can_review"] is True
+        assert by_id[ID_OF[RUSLANA]]["can_review"] is False  # her own
+
+    @pytest.mark.asyncio
+    async def test_tax_supervisor_scope_no_longer_contains_dea_or_candra(self) -> None:
+        by_id = {r["id"]: r for r in await _list(ANGEL, ROWS_ALL)}
+        assert set(by_id) == {ID_OF[ANGEL], ID_OF[KADEK]}
+        assert ID_OF[DEA] not in by_id and ID_OF[CANDRA] not in by_id
 
 
 class TestReviewEndpointsStayScoped:
