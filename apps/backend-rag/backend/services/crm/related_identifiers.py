@@ -102,9 +102,10 @@ def canonicalize(id_type: str, value: str) -> str:
     """Canonical form of a value, or ``InvalidIdentifier`` when it is not a valid key."""
     if id_type not in ID_TYPES:
         raise InvalidIdentifier("unknown identifier type")
-    if not isinstance(value, str) or not value or len(value) > MAX_RAW_LENGTH:
+    core = value.strip(_ASCII_WS) if isinstance(value, str) else ""
+    if not core or len(core) > MAX_RAW_LENGTH:
         raise InvalidIdentifier("invalid identifier value")
-    if any(ord(c) < 32 or ord(c) == 127 for c in value):
+    if any(ord(c) < 32 or ord(c) == 127 for c in core):
         raise InvalidIdentifier("invalid identifier value")
     canonical = canonical_form(id_type, value)
     if not is_valid(id_type, canonical):
