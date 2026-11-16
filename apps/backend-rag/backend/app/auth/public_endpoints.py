@@ -309,6 +309,17 @@ _INFRA = (
         "wa-mirror CRM lead upsert — X-CRM-Write-Key + WA_MIRROR_CRM_WRITE_ENABLED auth in-router",
         match="exact",
     ),
+    # Related-subject registry (slice 1): the registry's own flag
+    # RELATED_SUBJECT_REGISTRY_ENABLED (default off, 503) plus the same scoped
+    # X-CRM-Write-Key, checked in-router (verify_related_subject_write). Public to
+    # bypass HybridAuthMiddleware; the key is the only credential. See
+    # backend/app/routers/crm_related_subjects.py.
+    PublicEndpoint(
+        "/api/crm/related-subjects/register",
+        Category.INFRA,
+        "related-subject registry — X-CRM-Write-Key + RELATED_SUBJECT_REGISTRY_ENABLED auth in-router",
+        match="exact",
+    ),
     PublicEndpoint(
         "/api/crm/internal/clients/{client_id}/documents/upload",
         Category.INFRA,

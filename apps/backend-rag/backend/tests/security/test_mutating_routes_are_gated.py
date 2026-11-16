@@ -322,6 +322,12 @@ INTENTIONALLY_PUBLIC_MUTATIONS: tuple[IntentionalPublicMutation, ...] = (
     ),
     IntentionalPublicMutation(
         "POST",
+        "/api/crm/related-subjects/register",
+        "related-subject registry — X-CRM-Write-Key + RELATED_SUBJECT_REGISTRY_ENABLED "
+        "checked in-router (crm_related_subjects.py); flag off = 503.",
+    ),
+    IntentionalPublicMutation(
+        "POST",
         "/api/crm/internal/clients/{client_id}/documents/upload",
         "wa-mirror intake document upload — same X-CRM-Write-Key gate as upsert-by-phone.",
     ),
