@@ -248,7 +248,7 @@ async def register_related_subject(
     _actor: str = Depends(verify_related_subject_write),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> Response:
-    """Register one related subject (dry run by default). Fixed answers only, see module doc."""
+    """Register one related subject (dry run by default). Answers carry fixed codes only."""
     raw = await request.body()
     if len(raw) > MAX_BODY_BYTES:
         return _invalid([{"loc": ("body",), "type": "too_long"}])
