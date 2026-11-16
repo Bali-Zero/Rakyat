@@ -11,7 +11,7 @@ from typing import Any
 
 import asyncpg
 
-from backend.app.services.hr.hr_card_models import project_documents
+from backend.app.services.hr.hr_card_models import avatar_path, project_documents
 from backend.app.services.hr.hr_service import business_today
 from backend.app.utils.service_accounts import GROUP_STAFF_ROLES_SQL
 
@@ -36,7 +36,7 @@ VISIBLE_PERSON_PREDICATE = f"""
 """
 
 _ROSTER_SQL = f"""
-    SELECT tm.id AS team_member_id, tm.full_name, tm.role, tm.department,
+    SELECT tm.id AS team_member_id, tm.full_name, tm.role, tm.department, tm.avatar,
            e.id AS employee_id, e.hire_date, e.is_active AS employee_active, e.profile
     FROM team_members tm
     LEFT JOIN hr_employees e ON e.team_member_id = tm.id
@@ -129,6 +129,7 @@ class HRPeopleService:
                     "employee_id": eid,
                     "has_record": has_record,
                     "name": r["full_name"],
+                    "avatar_url": avatar_path(r["avatar"]),
                     "role": r["role"],
                     "department": r["department"],
                     "unit": unit if isinstance(unit, str) and unit else None,

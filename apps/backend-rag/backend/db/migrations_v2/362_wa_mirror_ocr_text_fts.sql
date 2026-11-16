@@ -1,5 +1,5 @@
 -- ============================================================
--- 361_wa_mirror_ocr_text_fts.sql
+-- 362_wa_mirror_ocr_text_fts.sql
 -- Full-text index over the text extracted from WhatsApp media
 -- (whatsapp_message_context.ocr_result->>'text'), so media content is
 -- searchable like message bodies are (idx_wmc_body_fts, migration 193).

@@ -31,7 +31,7 @@ SNIPPET_MAX_CHARS = 200
 
 # These two expressions must stay byte-identical to the indexed ones, or the
 # planner cannot use the GIN indexes: idx_wmc_body_fts (migration 193) and
-# idx_wmc_ocr_text_fts (migration 361, partial on ocr_status = 'done').
+# idx_wmc_ocr_text_fts (migration 362, partial on ocr_status = 'done').
 _BODY_TSV = "to_tsvector('simple', COALESCE(body, message_text, ''))"
 _OCR_TSV = "to_tsvector('simple', COALESCE(ocr_result->>'text', ''))"
 

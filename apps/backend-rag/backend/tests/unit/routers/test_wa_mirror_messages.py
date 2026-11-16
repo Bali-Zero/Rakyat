@@ -408,7 +408,7 @@ def test_search_query_expressions_match_the_indexes() -> None:
 
     migrations = Path(__file__).resolve().parents[3] / "db" / "migrations_v2"
     body_index = (migrations / "193_wa_dashboard_v1.sql").read_text()
-    ocr_index = (migrations / "361_wa_mirror_ocr_text_fts.sql").read_text()
+    ocr_index = (migrations / "362_wa_mirror_ocr_text_fts.sql").read_text()
     assert f"GIN ({_BODY_TSV})" in body_index
     assert f"GIN ({_OCR_TSV})" in ocr_index
 

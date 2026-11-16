@@ -80,6 +80,8 @@ export interface HrDocuments {
 export interface HrStaffCard {
   employee_id: number;
   full_name: string | null;
+  /** Local staff portrait path (/static/team/<slug>.jpg); null when none. */
+  avatar_url?: string | null;
   role: string | null;
   department: string | null;
   hire_date: string | null;

@@ -39,10 +39,15 @@ def mock_db_pool():
 @pytest.fixture
 def app(mock_db_pool):
     from backend.app.dependencies import get_database_pool
+    from backend.app.routers.team_activity import get_admin_user
 
     test_app = FastAPI()
     test_app.include_router(router)
     test_app.dependency_overrides[get_database_pool] = lambda: mock_db_pool
+    test_app.dependency_overrides[get_admin_user] = lambda: {
+        "email": "admin@example.com",
+        "role": "admin",
+    }
     return test_app
 
 
@@ -559,19 +564,25 @@ def test_subscribe_db_error(client, mock_db_pool):
 
 
 def test_unsubscribe_success(client, mock_db_pool):
+    from backend.app.routers.news import generate_news_unsubscribe_token
+
     conn = mock_db_pool._mock_conn
     conn.execute = AsyncMock()
+    tok = generate_news_unsubscribe_token("user@example.com")
 
-    response = client.post("/api/news/unsubscribe?email=user@example.com")
+    response = client.post(f"/api/news/unsubscribe?email=user@example.com&token={tok}")
     assert response.status_code == 200
     assert response.json()["success"] is True
 
 
 def test_unsubscribe_db_error(client, mock_db_pool):
+    from backend.app.routers.news import generate_news_unsubscribe_token
+
     conn = mock_db_pool._mock_conn
     conn.execute = AsyncMock(side_effect=Exception("DB error"))
+    tok = generate_news_unsubscribe_token("user@example.com")
 
-    response = client.post("/api/news/unsubscribe?email=user@example.com")
+    response = client.post(f"/api/news/unsubscribe?email=user@example.com&token={tok}")
     assert response.status_code == 500
 
 

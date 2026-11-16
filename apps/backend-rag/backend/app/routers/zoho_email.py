@@ -10,7 +10,6 @@ Endpoints:
 - Attachments: /emails/{id}/attachments/{aid}
 """
 
-import secrets
 from typing import Any
 
 import asyncpg
@@ -20,6 +19,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.routers.google_drive import consume_oauth_state, issue_oauth_state
 from backend.app.utils.logging_utils import get_logger
 from backend.core.cache import invalidate_cache
 from backend.services.integrations.zoho_email_service import ZohoEmailService
@@ -164,7 +164,7 @@ def _get_user_id(current_user: dict) -> str:
     Raises:
         HTTPException: If user_id is invalid
     """
-    user_id = current_user.get("user_id")
+    user_id = current_user.get("user_id") or current_user.get("id")
 
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID not found in token")
@@ -187,18 +187,15 @@ async def get_auth_url(
     Get Zoho OAuth authorization URL.
 
     Returns URL to redirect user to Zoho login page.
-    The state parameter includes user_id for CSRF protection.
+    Persists a one-time server-side state nonce bound to the authenticated user (TTL=600s).
     """
     oauth_service = _get_oauth_service(db_pool)
-
-    # Generate state token with user_id for CSRF protection
     user_id = _get_user_id(current_user)
-    state_token = secrets.token_urlsafe(32)
-    state = f"{user_id}:{state_token}"
+    state = await issue_oauth_state("zoho", mode="user", user_id=user_id)
 
     try:
         auth_url = oauth_service.get_authorization_url(state)
-        return {"auth_url": auth_url, "state": state_token}
+        return {"auth_url": auth_url, "state": state}
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -213,46 +210,35 @@ async def oauth_callback(
     """
     OAuth callback handler.
 
-    Exchanges authorization code for tokens and stores them.
-    Redirects to /email page with success or error status.
+    Validates and atomically consumes the one-time server-side state nonce,
+    derives user_id exclusively from the server-side state record, and stores tokens.
     """
-    # Frontend URL for redirects (from settings)
     frontend_url = settings.frontend_url
 
-    # Handle OAuth errors
     if error:
-        logger.warning("Zoho OAuth error: %s", error)
+        logger.warning("Zoho OAuth error received in callback")
         return RedirectResponse(url=f"{frontend_url}/email?error=oauth_denied")
 
-    # Validate required parameters
-    if not code or not state:
-        logger.warning("Missing code or state in OAuth callback")
-        return RedirectResponse(url=f"{frontend_url}/email?error=missing_params")
+    if not isinstance(code, str) or not code or not isinstance(state, str) or not state:
+        logger.warning("Missing code or state in Zoho OAuth callback")
+        raise HTTPException(status_code=400, detail="Missing OAuth code or state")
+
+    record = await consume_oauth_state(
+        "zoho",
+        state,
+        expected_modes=("user", "admin"),
+    )
+    user_id = record["user_id"]
 
     try:
-        # Extract user_id from state (format: user_id:random_token)
-        logger.info(f"OAuth callback received - state: {state[:50]}..., code length: {len(code)}")
-
-        parts = state.split(":", 1)
-        if len(parts) != 2:
-            raise ValueError("Invalid state format")
-
-        user_id = parts[0]  # Keep as string (VARCHAR)
-        logger.info("Extracted user_id: %s", user_id)
-
-        # Exchange code for tokens
         oauth_service = _get_oauth_service(db_pool)
-        logger.info("Calling exchange_code for user %s", user_id)
         await oauth_service.exchange_code(code, user_id)
-
-        logger.info("Zoho OAuth successful for user %s", user_id)
+        logger.info("Zoho OAuth successful")
         return RedirectResponse(url=f"{frontend_url}/email?connected=true")
-
-    except ValueError as e:
-        logger.error("OAuth callback ValueError: %s", e, exc_info=True)
-        return RedirectResponse(url=f"{frontend_url}/email?error=invalid_state")
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"OAuth callback exception: {type(e).__name__}: {e}", exc_info=True)
+        logger.error("OAuth callback exception: %s: %s", type(e).__name__, e, exc_info=True)
         return RedirectResponse(url=f"{frontend_url}/email?error=connection_failed")
 
 

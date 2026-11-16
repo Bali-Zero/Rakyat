@@ -37,9 +37,6 @@ export interface paths {
      *
      *     Headers:
      *         X-Admin-Secret: Must match ADMIN_SECRET_KEY env var
-     *
-     *     Returns:
-     *         Google OAuth URL to visit
      */
     get: operations["auth_system_user_admin_google_drive_auth_system_get"];
     put?: never;
@@ -59,11 +56,7 @@ export interface paths {
     };
     /**
      * Auth Callback System
-     * @description Handle OAuth callback for system user.
-     *
-     *     Query params:
-     *         code: The authorization code from Google
-     *         secret: Admin secret (same as X-Admin-Secret)
+     * @description Handle OAuth callback for system user using a one-time server-side state nonce.
      */
     get: operations["auth_callback_system_admin_google_drive_callback_system_get"];
     put?: never;
@@ -106,30 +99,9 @@ export interface paths {
     };
     /**
      * Admin Zoho Callback
-     * @description Handle Zoho OAuth callback.
+     * @description Handle Zoho OAuth callback using a one-time server-side state nonce.
      */
     get: operations["admin_zoho_callback_admin_zoho_callback_get"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/admin/zoho/debug-callback": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Admin Zoho Debug Callback
-     * @description Debug endpoint to capture OAuth callback parameters.
-     *     Use this when normal callback fails. It displays the code for easy copy-paste.
-     */
-    get: operations["admin_zoho_debug_callback_admin_zoho_debug_callback_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -3186,7 +3158,7 @@ export interface paths {
     head?: never;
     /**
      * Update Preferences
-     * @description Update newsletter preferences.
+     * @description Update newsletter preferences (requires valid subscriber token or admin/owner auth).
      */
     patch: operations["update_preferences_api_blog_newsletter_preferences_patch"];
     trace?: never;
@@ -3243,7 +3215,7 @@ export interface paths {
     put?: never;
     /**
      * Unsubscribe
-     * @description Unsubscribe from the newsletter.
+     * @description Unsubscribe from the newsletter (requires valid subscriber token or admin/owner auth).
      */
     post: operations["unsubscribe_api_blog_newsletter_unsubscribe_post"];
     delete?: never;
@@ -6643,6 +6615,26 @@ export interface paths {
      * @description Client uploads a document for a required field.
      */
     post: operations["upload_client_document_api_crm_practices__practice_id__upload_client_document_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/crm/related-subjects/register": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Register Related Subject
+     * @description Register one related subject (dry run by default). Answers carry fixed codes only.
+     */
+    post: operations["register_related_subject_api_crm_related_subjects_register_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -10508,9 +10500,7 @@ export interface paths {
     };
     /**
      * List Files
-     * @description List files in a folder.
-     *
-     *     Files are filtered based on user's Google Drive permissions.
+     * @description List files in a folder (Admin only on direct SYSTEM Drive router).
      */
     get: operations["list_files_api_integrations_google_drive_files_get"];
     put?: never;
@@ -10530,7 +10520,7 @@ export interface paths {
     };
     /**
      * Get File
-     * @description Get file metadata.
+     * @description Get file metadata (Admin only on direct SYSTEM Drive router).
      */
     get: operations["get_file_api_integrations_google_drive_files__file_id__get"];
     put?: never;
@@ -10572,7 +10562,7 @@ export interface paths {
     };
     /**
      * Search Files
-     * @description Search files by name.
+     * @description Search files by name (Admin only on direct SYSTEM Drive router).
      */
     get: operations["search_files_api_integrations_google_drive_search_get"];
     put?: never;
@@ -10657,8 +10647,7 @@ export interface paths {
     };
     /**
      * Get System Status
-     * @description Check if system-wide Google Drive OAuth is connected.
-     *     This token is used by all team members for file operations.
+     * @description Check if system-wide Google Drive OAuth is connected (Admin only).
      */
     get: operations["get_system_status_api_integrations_google_drive_system_status_get"];
     put?: never;
@@ -10702,7 +10691,7 @@ export interface paths {
      * @description Get Zoho OAuth authorization URL.
      *
      *     Returns URL to redirect user to Zoho login page.
-     *     The state parameter includes user_id for CSRF protection.
+     *     Persists a one-time server-side state nonce bound to the authenticated user (TTL=600s).
      */
     get: operations["get_auth_url_api_integrations_zoho_auth_url_get"];
     put?: never;
@@ -10721,10 +10710,13 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * Zoho Oauth Callback Redirect
-     * @description Registered OAuth redirect URI. Exchanges code for tokens automatically.
+     * Oauth Callback
+     * @description OAuth callback handler.
+     *
+     *     Validates and atomically consumes the one-time server-side state nonce,
+     *     derives user_id exclusively from the server-side state record, and stores tokens.
      */
-    get: operations["zoho_oauth_callback_redirect_api_integrations_zoho_callback_get"];
+    get: operations["oauth_callback_api_integrations_zoho_callback_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -12550,12 +12542,13 @@ export interface paths {
     /**
      * List News
      * @description List news items with filtering, search, and pagination.
+     *     Non-admin / anonymous callers are strictly locked to status='approved'.
      */
     get: operations["list_news_api_news_get"];
     put?: never;
     /**
      * Create News
-     * @description Create a new news item (from scraper or manual)
+     * @description Create a new news item (admin only)
      */
     post: operations["create_news_api_news_post"];
     delete?: never;
@@ -12575,7 +12568,7 @@ export interface paths {
     put?: never;
     /**
      * Create News Bulk
-     * @description Create multiple news items at once (for scraper batch uploads)
+     * @description Create multiple news items at once (admin only)
      */
     post: operations["create_news_bulk_api_news_bulk_post"];
     delete?: never;
@@ -12655,7 +12648,7 @@ export interface paths {
     put?: never;
     /**
      * Unsubscribe From News
-     * @description Unsubscribe from news alerts
+     * @description Unsubscribe from news alerts (requires valid HMAC token or owner/admin auth)
      */
     post: operations["unsubscribe_from_news_api_news_unsubscribe_post"];
     delete?: never;
@@ -12675,7 +12668,7 @@ export interface paths {
     put?: never;
     /**
      * Update News Image
-     * @description Update cover image URL for a news item (called by post-publish poller).
+     * @description Update cover image URL for a news item (admin only).
      */
     post: operations["update_news_image_api_news__news_id__image_post"];
     delete?: never;
@@ -12699,7 +12692,7 @@ export interface paths {
     head?: never;
     /**
      * Update News Status
-     * @description Update news item status (approve/reject)
+     * @description Update news item status (admin only)
      */
     patch: operations["update_news_status_api_news__news_id__status_patch"];
     trace?: never;
@@ -25753,6 +25746,8 @@ export interface components {
     PersonRow: {
       /** Active */
       active: boolean;
+      /** Avatar Url */
+      avatar_url?: string | null;
       /** Department */
       department: string | null;
       /** Employee Id */
@@ -26246,6 +26241,8 @@ export interface components {
       language?: string | null;
       /** Subscriberid */
       subscriberId?: string | null;
+      /** Token */
+      token?: string | null;
     };
     /**
      * PreviewUpload
@@ -28095,6 +28092,8 @@ export interface components {
     StaffCard: {
       /** Address */
       address?: string | null;
+      /** Avatar Url */
+      avatar_url?: string | null;
       /** Bank Account */
       bank_account?: string | null;
       /** Bank Account Holder */
@@ -30902,9 +30901,9 @@ export interface operations {
   };
   auth_callback_system_admin_google_drive_callback_system_get: {
     parameters: {
-      query: {
-        code: string;
-        secret: string;
+      query?: {
+        code?: string | null;
+        state?: string | null;
       };
       header?: never;
       path?: never;
@@ -30969,9 +30968,9 @@ export interface operations {
   };
   admin_zoho_callback_admin_zoho_callback_get: {
     parameters: {
-      query: {
-        code: string;
-        secret: string;
+      query?: {
+        code?: string | null;
+        state?: string | null;
       };
       header?: never;
       path?: never;
@@ -30988,39 +30987,6 @@ export interface operations {
           "application/json": {
             [key: string]: unknown;
           };
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  admin_zoho_debug_callback_admin_zoho_debug_callback_get: {
-    parameters: {
-      query?: {
-        code?: string | null;
-        state?: string | null;
-        error?: string | null;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": unknown;
         };
       };
       /** @description Validation Error */
@@ -40688,6 +40654,26 @@ export interface operations {
       };
     };
   };
+  register_related_subject_api_crm_related_subjects_register_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+    };
+  };
   get_client_full_context_api_crm_shared_memory_client__client_id__full_context_get: {
     parameters: {
       query?: never;
@@ -45864,9 +45850,9 @@ export interface operations {
   };
   oauth_callback_api_integrations_google_drive_callback_get: {
     parameters: {
-      query: {
-        code: string;
-        state: string;
+      query?: {
+        code?: string | null;
+        state?: string | null;
         error?: string | null;
       };
       header?: never;
@@ -46179,14 +46165,12 @@ export interface operations {
       };
     };
   };
-  zoho_oauth_callback_redirect_api_integrations_zoho_callback_get: {
+  oauth_callback_api_integrations_zoho_callback_get: {
     parameters: {
-      query: {
+      query?: {
         code?: string | null;
         state?: string | null;
         error?: string | null;
-        location?: string | null;
-        kwargs: unknown;
       };
       header?: never;
       path?: never;
@@ -49289,6 +49273,8 @@ export interface operations {
     parameters: {
       query: {
         email: string;
+        /** @description HMAC unsubscribe token */
+        token?: string | null;
       };
       header?: never;
       path?: never;

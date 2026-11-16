@@ -311,7 +311,7 @@ class HRService:
                e.npwp, e.bpjs_kesehatan_number, e.bpjs_ketenagakerjaan_number,
                e.bank_name, e.bank_account, e.bank_account_holder, e.profile,
                e.base_salary_idr,
-               tm.full_name, tm.role, tm.department
+               tm.full_name, tm.role, tm.department, tm.avatar
         FROM hr_employees e
         JOIN team_members tm ON tm.id = e.team_member_id
         WHERE tm.id = $1 AND COALESCE(tm.role, '') <> 'client'

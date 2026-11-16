@@ -244,7 +244,7 @@ async def test_capabilities_fail_closed_when_github_publisher_is_unconfigured(
 ) -> None:
     monkeypatch.setattr(github_publisher, "token", None)
     monkeypatch.setattr(github_publisher, "owner", "Bali-Zero")
-    monkeypatch.setattr(github_publisher, "repo", "Teman2")
+    monkeypatch.setattr(github_publisher, "repo", "Rakyat")
     monkeypatch.setattr(intel.os, "access", lambda *_args: True)
 
     result = await intel.workspace_marketing_capabilities()

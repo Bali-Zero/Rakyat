@@ -126,6 +126,13 @@ class TestB1_NoUndocumentedPublicRoutes:
             "/api/export/clients.csv",
             "/api/agentic-rag/query",  # removed 2026-04-03 F-7 fix
             "/api/agentic-rag/stream",  # removed 2026-04-03 F-7 fix
+            "/api/blog/newsletter/subscribers",  # RT-01 fix
+            "/api/blog/newsletter/log",  # RT-01 fix
+            "/api/blog/newsletter/preferences",  # RT-01 fix
+            "/api/news/bulk",  # RT-02 fix
+            "/api/news/uuid-1/image",  # RT-02 fix
+            "/api/news/uuid-1/status",  # RT-02 fix
+            "/api/integrations/google-drive/system/status",  # RT-03 fix
         ]
         for path in sensitive:
             req = self._mock_request(path)
@@ -208,9 +215,13 @@ class TestB2_RegistryEntriesResolveToRoutes:
 
 class TestHelperFunctions:
     def test_find_entry_returns_matching_entry(self):
-        entry = find_entry("/api/blog/posts/123")
+        entry = find_entry("/api/blog/ask")
         assert entry is not None
-        assert entry.prefix == "/api/blog/"
+        assert entry.prefix == "/api/blog/ask"
+        prefix_entry = find_entry("/api/auth/verify-magic/sample-token")
+        assert prefix_entry is not None
+        assert prefix_entry.prefix == "/api/auth/verify-magic/"
+        assert find_entry("/api/blog/posts/123") is None
 
     def test_find_entry_returns_none_for_unknown(self):
         assert find_entry("/api/nonexistent/route") is None

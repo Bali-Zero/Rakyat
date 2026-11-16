@@ -65,7 +65,7 @@ const FOUNDERS_SPEC: SPEntry[] = [
   },
   {
     slug: "heru",
-    roleOverride: "Komisaris",
+    roleOverride: "Commissioner",
     department: "Founder · Partner for 30 years",
     accent: "#a78bfa",
   },

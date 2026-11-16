@@ -28,6 +28,7 @@ class FakeConn:
                 "full_name": "Made Contoh",
                 "role": "staff",
                 "department": "setup",
+                "avatar": "/static/team/contoh.jpg",
                 "employee_id": 1,
                 "hire_date": date(2025, 1, 1),
                 "employee_active": True,
@@ -38,6 +39,7 @@ class FakeConn:
                 "full_name": "Wayan Tanpa",
                 "role": "staff",
                 "department": "tax",
+                "avatar": "data:image/png;base64,AAAA",
                 "employee_id": None,
                 "hire_date": None,
                 "employee_active": None,
@@ -48,6 +50,7 @@ class FakeConn:
                 "full_name": "Ketut Lama",
                 "role": "staff",
                 "department": "tax",
+                "avatar": None,
                 "employee_id": 3,
                 "hire_date": date(2020, 1, 1),
                 "employee_active": False,
@@ -109,6 +112,17 @@ async def test_roster_flags_and_a_bounded_number_of_queries():
     assert by["c"]["flags"]["papers_missing"] == 5 and by["c"]["active"] is False
     assert len(pool.conn.calls) == 4  # roster + three aggregates, whatever the roster size
     assert pool.conn.calls[0][1] == (None,)
+
+
+@pytest.mark.asyncio
+async def test_roster_carries_the_portrait_path_of_a_local_photo_and_nothing_else():
+    pool = FakePool()
+    by = {r["team_member_id"]: r for r in await HRPeopleService(pool).roster(None)}
+    assert by["a"]["avatar_url"] == "/static/team/contoh.jpg"
+    assert by["b"]["avatar_url"] is None  # a data URI is not a portrait path
+    assert by["c"]["avatar_url"] is None  # no avatar stored
+    assert "tm.avatar" in pool.conn.calls[0][0]
+    assert "avatar" not in {k for r in by.values() for k in r if k != "avatar_url"}
 
 
 @pytest.mark.asyncio

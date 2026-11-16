@@ -26,6 +26,7 @@ import sys
 
 import asyncpg
 
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.services.hardening.quota_monitor import QuotaMonitor
 from backend.services.review.telegram_adapter import TelegramReviewAdapter
 from backend.services.war_room.repository import WarRoomRepository
@@ -43,11 +44,11 @@ def _configure_logging() -> None:
 async def run() -> int:
     _configure_logging()
     dsn = os.environ.get("DATABASE_URL")
-    owner_chat_id = os.environ.get("TELEGRAM_OWNER_CHAT_ID")
+    owner_chat_id = os.environ.get("TELEGRAM_OWNER_CHAT_ID") or ""
     if not dsn:
         logger.error("DATABASE_URL not set")
         return 1
-    if not owner_chat_id:
+    if not owner_chat_id and not telegram_is_retired():
         logger.error("TELEGRAM_OWNER_CHAT_ID not set")
         return 1
 
@@ -64,7 +65,7 @@ async def run() -> int:
 
     try:
         repo = WarRoomRepository(db_pool=pool)
-        telegram = TelegramReviewAdapter()
+        telegram = TelegramReviewAdapter(bot_token="retired" if telegram_is_retired() else None)
         monitor = QuotaMonitor(
             repo=repo,
             telegram=telegram,

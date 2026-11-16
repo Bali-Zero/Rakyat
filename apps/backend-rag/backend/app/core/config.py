@@ -658,11 +658,11 @@ class Settings(BaseSettings):
         description="GitHub Personal Access Token for publishing articles. Set via GITHUB_TOKEN env var.",
     )
     github_owner: str = Field(
-        default="Balizero1987",
+        default="Bali-Zero",
         description="GitHub repository owner. Set via GITHUB_OWNER env var.",
     )
     github_repo: str = Field(
-        default="Teman2",
+        default="Rakyat",
         description="GitHub repository name. Set via GITHUB_REPO env var.",
     )
 
@@ -1225,6 +1225,11 @@ class Settings(BaseSettings):
     # `fly secrets set WA_MIRROR_CRM_WRITE_KEY=...`.
     wa_mirror_crm_write_key: str | None = None
     wa_mirror_crm_write_enabled: bool = False
+
+    # Related-subject registry (slice 1): POST /api/crm/related-subjects/register, same scoped
+    # X-CRM-Write-Key as above. Own kill switch, default off (503): the WA Mirror flag alone
+    # never opens it.
+    related_subject_registry_enabled: bool = False
 
     # Scoped service key EXCLUSIVE to wa_inbox_bot.py's own call to
     # POST /api/agentic-rag/query, used ONLY to gate WA sender-profile
