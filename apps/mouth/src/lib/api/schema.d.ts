@@ -3186,7 +3186,7 @@ export interface paths {
     head?: never;
     /**
      * Update Preferences
-     * @description Update newsletter preferences.
+     * @description Update newsletter preferences (requires valid subscriber token or admin/owner auth).
      */
     patch: operations["update_preferences_api_blog_newsletter_preferences_patch"];
     trace?: never;
@@ -3243,7 +3243,7 @@ export interface paths {
     put?: never;
     /**
      * Unsubscribe
-     * @description Unsubscribe from the newsletter.
+     * @description Unsubscribe from the newsletter (requires valid subscriber token or admin/owner auth).
      */
     post: operations["unsubscribe_api_blog_newsletter_unsubscribe_post"];
     delete?: never;
@@ -12550,12 +12550,13 @@ export interface paths {
     /**
      * List News
      * @description List news items with filtering, search, and pagination.
+     *     Non-admin / anonymous callers are strictly locked to status='approved'.
      */
     get: operations["list_news_api_news_get"];
     put?: never;
     /**
      * Create News
-     * @description Create a new news item (from scraper or manual)
+     * @description Create a new news item (admin only)
      */
     post: operations["create_news_api_news_post"];
     delete?: never;
@@ -12575,7 +12576,7 @@ export interface paths {
     put?: never;
     /**
      * Create News Bulk
-     * @description Create multiple news items at once (for scraper batch uploads)
+     * @description Create multiple news items at once (admin only)
      */
     post: operations["create_news_bulk_api_news_bulk_post"];
     delete?: never;
@@ -12655,7 +12656,7 @@ export interface paths {
     put?: never;
     /**
      * Unsubscribe From News
-     * @description Unsubscribe from news alerts
+     * @description Unsubscribe from news alerts (requires valid HMAC token or owner/admin auth)
      */
     post: operations["unsubscribe_from_news_api_news_unsubscribe_post"];
     delete?: never;
@@ -12675,7 +12676,7 @@ export interface paths {
     put?: never;
     /**
      * Update News Image
-     * @description Update cover image URL for a news item (called by post-publish poller).
+     * @description Update cover image URL for a news item (admin only).
      */
     post: operations["update_news_image_api_news__news_id__image_post"];
     delete?: never;
@@ -12699,7 +12700,7 @@ export interface paths {
     head?: never;
     /**
      * Update News Status
-     * @description Update news item status (approve/reject)
+     * @description Update news item status (admin only)
      */
     patch: operations["update_news_status_api_news__news_id__status_patch"];
     trace?: never;
@@ -26226,6 +26227,8 @@ export interface components {
       language?: string | null;
       /** Subscriberid */
       subscriberId?: string | null;
+      /** Token */
+      token?: string | null;
     };
     /**
      * PreviewUpload
@@ -49203,6 +49206,8 @@ export interface operations {
     parameters: {
       query: {
         email: string;
+        /** @description HMAC unsubscribe token */
+        token?: string | null;
       };
       header?: never;
       path?: never;

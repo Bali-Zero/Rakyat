@@ -67,6 +67,7 @@ be disjoint).
 from __future__ import annotations
 
 import re
+import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
@@ -494,27 +495,23 @@ INTENTIONALLY_PUBLIC_MUTATIONS: tuple[IntentionalPublicMutation, ...] = (
         "POST",
         "/api/blog/newsletter/unsubscribe",
         "Opt-out — legal requirement to stay reachable without a session. "
-        "VERIFIED 2026-07-17: the registry reason says 'token-based "
-        "verification' but UnsubscribeRequest.token (newsletter.py:141) is "
-        "accepted in the schema and NEVER read by the handler (newsletter.py "
-        ":394-431) — it looks up by raw subscriberId/email only, no proof of "
-        "ownership. Low severity (unsubscribe-only, no PII read/write beyond "
-        "a flag), common industry pattern (CAN-SPAM one-click), but the "
-        "'token-based' claim is currently false — see PENDING-ARMS.",
+        "CLOSED 2026-11-16 (RT-01): handler now enforces constant-time "
+        "secrets.compare_digest verification of HMAC subscriber token (or DB "
+        "confirmation_token / owner-or-admin auth), rejecting bare email/id "
+        "requests with 401/403.",
     ),
     IntentionalPublicMutation(
         "POST",
         "/api/news/subscribe",
         "Same public opt-in shape as /api/blog/newsletter/subscribe "
-        "(news.py:480) — no auth Depends, but the action itself (add an "
-        "email to a mailing list) carries the same risk profile as the "
-        "already-explicit blog equivalent.",
+        "(news.py) — public mailing-list opt-in.",
     ),
     IntentionalPublicMutation(
         "POST",
         "/api/news/unsubscribe",
-        "Same public opt-out shape as /api/blog/newsletter/unsubscribe "
-        "(news.py:512) — legal requirement to stay reachable unauthenticated.",
+        "Public opt-out — CLOSED 2026-11-16 (RT-02): handler enforces "
+        "constant-time HMAC unsubscribe token verification (or authenticated "
+        "owner/admin), rejecting bare email requests with 401/403.",
     ),
     # ── Observability: no-PII, best-effort ingestion, explicit registry row ──
     IntentionalPublicMutation(
@@ -715,59 +712,13 @@ INTENTIONALLY_PUBLIC_MUTATIONS: tuple[IntentionalPublicMutation, ...] = (
 # 6 -> 0 trajectory: delete a row when its route is really gated (an anti-decay
 # test below FAILS if a row's route gains an auth Depends or stops being public,
 # forcing the delete). Full detail + severity: the ledger PENDING-ARMS lines.
-KNOWN_UNGATED_PUBLIC_MUTATIONS: tuple[KnownUngatedMutation, ...] = (
-    KnownUngatedMutation(
-        "POST",
-        "/api/news",
-        "operator[business]",
-        "ledger:PENDING-ARMS news.py",
-        "news.py:290 create_news — zero Depends beyond DB pool; INSERTs "
-        "news_items with status='approved' (auto-approved). Anyone can inject "
-        "content onto the public balizero.com news feed. HIGH.",
-    ),
-    KnownUngatedMutation(
-        "POST",
-        "/api/news/bulk",
-        "operator[business]",
-        "ledger:PENDING-ARMS news.py",
-        "news.py:351 create_news_bulk — bulk version of the above, N articles "
-        "per call, same zero-auth. HIGH.",
-    ),
-    KnownUngatedMutation(
-        "POST",
-        "/api/news/{news_id}/image",
-        "operator[business]",
-        "ledger:PENDING-ARMS news.py",
-        "news.py:414 update_news_image — anyone can overwrite the image_url of "
-        "ANY news item with an arbitrary URL (defacement/hotlink). HIGH.",
-    ),
-    KnownUngatedMutation(
-        "PATCH",
-        "/api/news/{news_id}/status",
-        "operator[business]",
-        "ledger:PENDING-ARMS news.py",
-        "news.py:442 update_news_status — anyone can flip ANY news item between "
-        "pending/approved/rejected/archived (unpublish live / approve pending). HIGH.",
-    ),
-    KnownUngatedMutation(
-        "POST",
-        "/api/blog/newsletter/log",
-        "operator[business]",
-        "ledger:PENDING-ARMS newsletter.py",
-        "newsletter.py:564 log_newsletter_send — docstring says '(admin "
-        "endpoint)' but zero Depends; anyone can insert fake newsletter_send_log "
-        "rows (pollutes internal delivery reporting). MEDIUM.",
-    ),
-    KnownUngatedMutation(
-        "PATCH",
-        "/api/blog/newsletter/preferences",
-        "operator[business]",
-        "ledger:PENDING-ARMS newsletter.py",
-        "newsletter.py:434 update_preferences — zero Depends; anyone who knows/"
-        "guesses a subscriber email or numeric id can change their "
-        "categories/frequency/language, no ownership proof. MEDIUM.",
-    ),
-)
+# 6 -> 0 trajectory COMPLETED 2026-11-16 (RT-01 + RT-02): all 6 previously
+# ungated public mutations (POST /api/news, POST /api/news/bulk,
+# POST /api/news/{news_id}/image, PATCH /api/news/{news_id}/status,
+# POST /api/blog/newsletter/log, PATCH /api/blog/newsletter/preferences) are
+# now closed via narrowed PUBLIC_ENDPOINTS + in-router Depends(get_admin_user) /
+# HMAC subscriber token verification.
+KNOWN_UNGATED_PUBLIC_MUTATIONS: tuple[KnownUngatedMutation, ...] = ()
 
 
 _JUSTIFIED_INDEX: dict[tuple[str, str], IntentionalPublicMutation] = {
@@ -883,9 +834,31 @@ class TestPureCoreGuiltAndInnocence:
         flagged = _unaccounted([(sample_method, sample_path, True)])
         assert flagged == []
 
-    def test_innocence_known_ungated_public_mutation_passes(self) -> None:
+    def test_innocence_known_ungated_public_mutation_passes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A DECLARED hole is 'accounted for' (recorded owned debt), so it does
         NOT fail the build — that is what keeps the gate mergeable/armable."""
+        if not _KNOWN_UNGATED_INDEX:
+            # 6 -> 0 ratchet complete: patch module _ACCOUNTED and call the REAL
+            # _unaccounted() helper directly (guilt + innocence, non-tautological).
+            sample = KnownUngatedMutation(
+                "POST",
+                "/api/synthetic/declared-hole",
+                "operator[test]",
+                "ledger:SYNTHETIC",
+                "Synthetic fixture verifying _unaccounted() against _ACCOUNTED at zero debt.",
+            )
+            monkeypatch.setattr(
+                sys.modules[__name__],
+                "_ACCOUNTED",
+                _ACCOUNTED | {(sample.method, sample.path)},
+            )
+            assert _unaccounted([(sample.method, sample.path, True)]) == []
+            assert _unaccounted([("POST", "/api/synthetic/unaccounted-hole", True)]) == [
+                "POST /api/synthetic/unaccounted-hole"
+            ]
+            return
         sample_method, sample_path = next(iter(_KNOWN_UNGATED_INDEX))
         flagged = _unaccounted([(sample_method, sample_path, True)])
         assert flagged == []
@@ -906,7 +879,10 @@ def test_every_public_mutating_route_is_accounted_for(app: FastAPI) -> None:
     public prefix (or a widened PUBLIC_ENDPOINTS entry that newly covers an
     existing mutation) fails here immediately, forcing a reviewed decision:
     justified-safe, declared-hole, or narrow the prefix."""
-    rows = [(m, path, find_entry(path) is not None) for m, path, _ in _iter_mutating(app)]
+    rows = [
+        (m, path, find_entry(path, method=m) is not None)
+        for m, path, _ in _iter_mutating(app)
+    ]
     unaccounted = _unaccounted(rows)
     assert not unaccounted, (
         f"{len(unaccounted)} mutating route(s) bypass HybridAuthMiddleware "
@@ -937,7 +913,7 @@ def test_known_ungated_entries_are_still_live_public_and_ungated(app: FastAPI) -
         if route is None:
             stale.append(f"{e.method} {e.path} — route no longer exists (delete the entry)")
             continue
-        if find_entry(e.path) is None:
+        if find_entry(e.path, method=e.method) is None:
             stale.append(
                 f"{e.method} {e.path} — no longer public (prefix narrowed → delete the entry)"
             )
@@ -963,7 +939,11 @@ def test_no_stale_justified_entries(app: FastAPI) -> None:
     """ANTI-DECAY: a justified-safe row whose route no longer exists, or is no
     longer public, is stale — delete it (mirrors route_risk_registry.py's own
     `test_no_dead_registry_entries`)."""
-    live_public = {(m, path) for m, path, _ in _iter_mutating(app) if find_entry(path) is not None}
+    live_public = {
+        (m, path)
+        for m, path, _ in _iter_mutating(app)
+        if find_entry(path, method=m) is not None
+    }
     stale = [
         f"{e.method} {e.path}"
         for e in INTENTIONALLY_PUBLIC_MUTATIONS

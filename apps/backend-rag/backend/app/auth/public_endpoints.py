@@ -144,10 +144,17 @@ class PublicEndpoint:
     prefix: str
     category: Category
     reason: str
-    match: str = "prefix"  # "prefix" | "exact"
+    match: str = "prefix"  # "prefix" | "exact" | "template"
     requires_route_auth: bool = False
+    methods: tuple[str, ...] | None = None
+    exclude: tuple[str, ...] = ()
 
-    def matches(self, path: str) -> bool:
+    def matches(self, path: str, method: str | None = None) -> bool:
+        if self.exclude and path.rstrip("/") in {ex.rstrip("/") for ex in self.exclude}:
+            return False
+        if method is not None and self.methods is not None:
+            if method.upper() not in self.methods:
+                return False
         if self.match == "exact":
             return path == self.prefix
         if self.match == "template":
@@ -510,38 +517,84 @@ _PUBLIC_KNOWLEDGE = (
 )
 
 _MARKETING = (
+    # RT-02 (2026-11-16): replaced blanket "/api/news" prefix with method-scoped
+    # exact/template entries so ALL admin mutating routes (POST /api/news,
+    # POST /api/news/bulk, POST /api/news/{news_id}/image,
+    # PATCH /api/news/{news_id}/status) are blocked at HybridAuthMiddleware AND
+    # independently gated by Depends(get_admin_user) in news.py.
     PublicEndpoint(
         "/api/news",
         Category.MARKETING,
-        "Public news/intel feed — approved articles for balizero.com homepage and blog",
+        "Public news/intel feed list — approved articles only; POST create gated by get_admin_user in-router",
+        match="exact",
+        methods=("GET", "HEAD"),
     ),
     PublicEndpoint(
-        "/api/blog/",
+        "/api/news/categories",
         Category.MARKETING,
-        "Public blog articles and content",
+        "Public news category counts for approved articles",
+        match="exact",
+        methods=("GET", "HEAD"),
     ),
-    # Removed 2026-04-18: /api/vitals — no router implements this path.
-    # Stale entry from a removed web-vitals prototype. If frontend performance
-    # telemetry is re-introduced, add it under whatever real path lands.
+    PublicEndpoint(
+        "/api/news/feed/rss",
+        Category.MARKETING,
+        "Public RSS XML feed for approved news items",
+        match="exact",
+        methods=("GET", "HEAD"),
+    ),
+    PublicEndpoint(
+        "/api/news/subscribe",
+        Category.MARKETING,
+        "Public news alert subscription opt-in",
+        match="exact",
+        methods=("POST",),
+    ),
+    PublicEndpoint(
+        "/api/news/unsubscribe",
+        Category.MARKETING,
+        "Public news alert opt-out — HMAC token or owner/admin auth verified in-router",
+        match="exact",
+        methods=("POST",),
+    ),
+    PublicEndpoint(
+        "/api/news/{slug}",
+        Category.MARKETING,
+        "Public single approved news item by slug (excludes /api/news/bulk admin endpoint)",
+        match="template",
+        methods=("GET", "HEAD"),
+        exclude=("/api/news/bulk",),
+    ),
+    # RT-01 (2026-11-16): removed blanket "/api/blog/" prefix that exposed
+    # /api/blog/newsletter/subscribers, /log, and /preferences anonymously.
+    # (/api/blog/articles lives in Next.js apps/mouth, not FastAPI.)
     PublicEndpoint(
         "/api/blog/newsletter/subscribe",
         Category.MARKETING,
         "Newsletter subscription — public marketing endpoint",
+        match="exact",
+        methods=("POST",),
     ),
     PublicEndpoint(
         "/api/blog/newsletter/confirm",
         Category.MARKETING,
-        "Newsletter confirmation — token-based verification",
+        "Newsletter confirmation — token-based verification (GET link + POST)",
+        match="exact",
+        methods=("GET", "POST"),
     ),
     PublicEndpoint(
         "/api/blog/newsletter/unsubscribe",
         Category.MARKETING,
-        "Newsletter unsubscribe — token-based verification (legal requirement)",
+        "Newsletter unsubscribe — HMAC/DB token verification enforced in-router (legal requirement)",
+        match="exact",
+        methods=("POST",),
     ),
     PublicEndpoint(
         "/api/blog/ask",
         Category.MARKETING,
         "AskZantara widget on blog articles — public Q&A feature",
+        match="exact",
+        methods=("POST",),
     ),
 )
 
@@ -940,17 +993,17 @@ PUBLIC_ENDPOINTS: tuple[PublicEndpoint, ...] = (
 )
 
 
-def is_public_path(path: str) -> bool:
+def is_public_path(path: str, method: str | None = None) -> bool:
     """Return True if `path` matches any registered public endpoint."""
     for ep in PUBLIC_ENDPOINTS:
-        if ep.matches(path):
+        if ep.matches(path, method=method):
             return True
     return False
 
 
-def find_entry(path: str) -> PublicEndpoint | None:
+def find_entry(path: str, method: str | None = None) -> PublicEndpoint | None:
     """Return the registry entry that matches `path`, or None."""
     for ep in PUBLIC_ENDPOINTS:
-        if ep.matches(path):
+        if ep.matches(path, method=method):
             return ep
     return None
