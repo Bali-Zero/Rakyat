@@ -150,6 +150,34 @@ def can_change_document_visibility(user: dict) -> bool:
     return (user.get("role") or "").lower().strip() in DOCUMENT_VISIBILITY_ROLES
 
 
+#: Job titles (``team_members.role``, lower-cased) that may CREATE a company
+#: besides the CRM admins. Edit and delete stay admin-only (``is_crm_admin``).
+#: Mirrored on the desk by ``apps/mouth/.../modals/company-create.ts``.
+COMPANY_CREATE_ROLES = frozenset(
+    {
+        # is_crm_admin role branch
+        "admin",
+        "board member",
+        "ceo",
+        "founder",
+        # tax team
+        "tax consultant",
+        "tax lead",
+        "tax supervisor",
+        "tax responsible",
+    }
+)
+
+
+def can_create_company(user: dict) -> bool:
+    """CRM admins, plus the tax team (``COMPANY_CREATE_ROLES``), may create a company."""
+    if not user:
+        return False
+    if is_crm_admin(user):
+        return True
+    return (user.get("role") or "").lower().strip() in COMPANY_CREATE_ROLES
+
+
 def can_view_all_practices(user: dict) -> bool:
     """
     Check if a user can see ALL practices (admin, super admin, accounting).

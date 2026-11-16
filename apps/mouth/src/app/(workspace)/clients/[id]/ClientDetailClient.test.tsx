@@ -63,6 +63,7 @@ vi.mock("@/lib/api", () => ({
   api: {
     getProfile: vi.fn().mockResolvedValue({
       email: "synthetic.team@example.test",
+      role: "Tax Consultant",
     }),
     // K3b added a synchronous read for the ownership predicate (copper
     // stamp, masthead subtitle) — same shape as `getUserProfile` everywhere
@@ -70,7 +71,12 @@ vi.mock("@/lib/api", () => ({
     // calls it would throw "api.getUserProfile is not a function" on every
     // test in this file, which is why it is added here rather than guarded
     // with optional chaining in the component itself.
-    getUserProfile: vi.fn(() => ({ email: "synthetic.team@example.test" })),
+    // Role "Tax Consultant": a viewer `viewerCanCreateCompany` offers
+    // "Add company" to (tax team may create a company).
+    getUserProfile: vi.fn(() => ({
+      email: "synthetic.team@example.test",
+      role: "Tax Consultant",
+    })),
     crm: {
       updateClient: mockUpdateClient,
       createInteraction: vi.fn(),
@@ -837,6 +843,36 @@ describe("ClientDetailClient", () => {
     await user.click(screen.getByRole("button", { name: "Add company" }));
 
     expect(await screen.findByTestId("AddCompanyModal")).toBeInTheDocument();
+  });
+
+  // GUILT: a role the backend 403s on POST /api/crm/companies is not offered
+  // the button (would only end in "Failed to create company").
+  it("hides Add company from a role that may not create a company", async () => {
+    const { api } = await import("@/lib/api");
+    vi.mocked(api.getUserProfile).mockReturnValue({
+      email: "synthetic.team@example.test",
+      role: "consultant",
+    } as ReturnType<typeof api.getUserProfile>);
+    onTestFinished(() => {
+      vi.mocked(api.getUserProfile).mockReturnValue({
+        email: "synthetic.team@example.test",
+        role: "Tax Consultant",
+      } as ReturnType<typeof api.getUserProfile>);
+    });
+    mockUseClientDetail.mockReturnValue({
+      data: companyLessProfile(),
+      isLoading: false,
+      error: null,
+    });
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    expect(
+      await screen.findByText("No company linked yet."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add company" }),
+    ).not.toBeInTheDocument();
   });
 
   // Trigger: staff opened Documents, saw no passport and assumed it was lost —

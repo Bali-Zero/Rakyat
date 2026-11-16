@@ -83,6 +83,7 @@ import {
 import { clearCompanyDetailCache } from "./components/company/companyDetailCache";
 import { BusinessStoryPanel } from "./components/BusinessStoryPanel";
 import { viewerCanChangeDocumentVisibility } from "./components/modals/document-visibility";
+import { viewerCanCreateCompany } from "./components/modals/company-create";
 import { startEarly, earlyKey } from "./components/early-fetch";
 import { TabSkeleton } from "./components/TabSkeleton";
 
@@ -1142,13 +1143,15 @@ export function ClientDetailClient({
                   tone="wait"
                   title="Company & tax"
                   actions={
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setIsAddingCompany(true)}
-                    >
-                      Add company
-                    </Button>
+                    viewerCanCreateCompany(currentUserRole) ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setIsAddingCompany(true)}
+                      >
+                        Add company
+                      </Button>
+                    ) : undefined
                   }
                 >
                   <EmptyState>No company linked yet.</EmptyState>
@@ -1296,6 +1299,7 @@ export function ClientDetailClient({
               onOpenDocuments={() => handleTabChange("documents")}
               onOpenRemoved={openRemovedDocuments}
               companyLinks={company_links}
+              canCreateCompany={viewerCanCreateCompany(currentUserRole)}
             />
           )}
 
