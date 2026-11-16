@@ -554,6 +554,25 @@ async def test_c5_shared_key_with_distinct_extra_keys_gives_one_created_rest_con
     await _assert_no_subject_without_identifiers(conn)
 
 
+@pytest.mark.asyncio
+async def test_c5_identifiers_are_inserted_in_sorted_key_order(conn):
+    seen = []
+
+    class _Spy(_Conn):
+        async def fetchval(self, sql, *args):
+            if sql.startswith("INSERT INTO related_subject_identifiers"):
+                seen.append((args[0], args[1]))
+            return await super().fetchval(sql, *args)
+
+    ids = (("passport", "ZZ0000009"), ("nik", "3201234567890123"), ("passport", "ZZ0000001"))
+    await register_subject(_Spy(conn), subj(ids=ids), dry_run=False)
+    assert seen == [
+        ("nik", "3201234567890123"),
+        ("passport", "ZZ0000001"),
+        ("passport", "ZZ0000009"),
+    ]
+
+
 def deadlock_hook(times):
     state = {"left": times}
 
@@ -766,6 +785,17 @@ async def test_c8_flag_off_is_503_even_with_a_valid_key(pool, monkeypatch):
 async def test_c8_wrong_or_missing_key_is_401(pool, enabled, headers):
     resp = await post(Stack(pool, middleware=False), body(), headers)
     assert (resp.status_code, resp.json()) == (401, {"detail": "unauthorized"})
+
+
+@pytest.mark.asyncio
+async def test_c8_key_comparison_is_constant_time(pool, enabled, monkeypatch):
+    import hmac
+
+    calls = []
+    real = hmac.compare_digest
+    monkeypatch.setattr(hmac, "compare_digest", lambda a, b: calls.append(1) or real(a, b))
+    resp = await post(Stack(pool, middleware=False), body(dry_run=True))
+    assert resp.status_code == 200 and calls == [1]
 
 
 @pytest.mark.asyncio
