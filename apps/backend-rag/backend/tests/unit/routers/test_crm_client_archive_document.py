@@ -12,7 +12,7 @@ from backend.app.routers.crm_enhanced_documents import (
 )
 
 MOD = "backend.app.routers.crm_enhanced_documents"
-ADMIN = {"email": "Zero@balizero.com", "role": "admin"}
+ADMIN = {"email": "Archive.Admin@Example.test", "role": "admin"}
 
 
 class _Tx:
@@ -87,7 +87,7 @@ async def test_new_file_inserts_once_hidden_with_no_side_effects(guards):
     sql, *args = inserts[0]
     assert "'active'" in sql and "'google_drive'" in sql
     assert args[0] == 7 and args[4] == "drive-1"
-    assert args[7] == "zero@balizero.com"
+    assert args[7] == "archive.admin@example.test"
     assert args[8] is False
     guards.owner.assert_awaited_once_with("drive-1", 7, conn)
     guards.ocr.assert_not_called()
