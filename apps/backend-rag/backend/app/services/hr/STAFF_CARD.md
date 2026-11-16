@@ -42,7 +42,7 @@ request at `:523`): `user_id` is the token's `sub` (`deps/auth.py:66`), `role` i
 current email are NOT checked there (revocation is a separate Redis check). So the route trusts
 nothing from the claim except the id it uses as a key, and the SQL enforces the rest itself:
 `get_card_for_member(id)` is `WHERE tm.id = $1 AND COALESCE(tm.role,'') <> 'client' AND
-tm.active = true`, i.e. the PRIMARY KEY, the role of the STORED row (never the claim) and the
+(tm.active = true OR role = 'group_staff')`, i.e. the PRIMARY KEY, the role of the STORED row (never the claim) and the
 stored `active`. The route's own `role == client` claim check (403) is only an early refusal;
 a client row behind a staff claim, a deactivated member holding a valid token, or an id that
 is not a key (an email in the id slot) all get 404. It never looks anyone up by email, so two
@@ -301,7 +301,7 @@ narrowed 2026-11-13: global admin alone no longer suffices.
   import's `StaffCardPatch` unchanged (C6 validators, not loosened). `clear` is a closed list:
   `npwp`, `bpjs_kesehatan_number`, `bpjs_ketenagakerjaan_number`, `bank_name`, `bank_account`,
   `bank_account_holder`, `legal_name`, `nik`, `birth_place`, `birth_date`, `gender`, `address`,
-  `religion`, `marital_status`, `employer_entity`, `unit`, `end_date`, `contract_number`. Not
+  `religion`, `marital_status`, `employer_entity`, `unit`, `position`, `end_date`, `contract_number`. Not
   clearable: `hire_date` (a record always has one), `is_active` (a boolean you set), `ptkp_status`
   (NOT NULL with a default), documents. 422 when a key is both set and cleared, when a set key is an
   explicit `null` (a null sets nothing; name the key under `clear`), when `docs`,

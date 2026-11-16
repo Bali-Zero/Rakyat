@@ -3,16 +3,16 @@ import { KBLIDecoderCTA } from "./_components/KBLIDecoderCTA";
 import { KBLIBreadcrumbJsonLd } from "@/components/kbli/KBLIStructuredData";
 
 export const metadata: Metadata = {
-  title: "KBLI Decoder — Temukan Kode Klasifikasi Bisnis Anda",
+  title: "KBLI Decoder — Find Your Business Classification Code",
   description:
-    "Tidak yakin kode KBLI mana yang sesuai untuk bisnis Anda? Tim Bali Zero menganalisis aktivitas usaha Anda dan menemukan klasifikasi KBLI 2025 yang tepat untuk pendaftaran PT PMA.",
+    "Not sure which KBLI 2025 code fits your business activity? Map your planned operations to verified Indonesian KBLI 2025 classifications and PT PMA eligibility rules.",
   alternates: {
     canonical: "https://balizero.com/kbli/decoder",
   },
   openGraph: {
-    title: "KBLI Decoder — Temukan Kode Klasifikasi Bisnis Anda",
+    title: "KBLI Decoder — Find Your Business Classification Code",
     description:
-      "Tidak yakin kode KBLI mana yang sesuai untuk bisnis Anda? Tim Bali Zero menganalisis aktivitas usaha Anda dan menemukan klasifikasi KBLI 2025 yang tepat untuk pendaftaran PT PMA.",
+      "Not sure which KBLI 2025 code fits your business activity? Map your planned operations to verified Indonesian KBLI 2025 classifications and PT PMA eligibility rules.",
     url: "https://balizero.com/kbli/decoder",
     siteName: "Bali Zero",
     type: "website",

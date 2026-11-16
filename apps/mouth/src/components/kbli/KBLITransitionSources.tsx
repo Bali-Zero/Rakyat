@@ -104,11 +104,6 @@ export function KBLITransitionSources({
               licensing sources for this page. They are not the official BPS
               2020 → 2025 crosswalk and do not establish predecessor ancestry.
             </p>
-            {transition.mappingNote && (
-              <p className="mt-2 text-[11px] text-[var(--foreground-muted)]">
-                Legacy PP28 source-matching note: {transition.mappingNote}
-              </p>
-            )}
           </div>
         </div>
       )}

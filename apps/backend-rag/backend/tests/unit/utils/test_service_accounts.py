@@ -16,6 +16,8 @@ import pytest
 from backend.app.utils.service_accounts import (
     CLIENT_ROLES,
     EXTERNAL_ROLES,
+    GROUP_STAFF_ROLES,
+    GROUP_STAFF_ROLES_SQL,
     NON_HUMAN_ROLES,
     NON_HUMAN_ROLES_SQL,
     NON_TEAM_ROLES,
@@ -332,3 +334,20 @@ def test_reorganisation_2026_11_09_titles_are_human_team_roles() -> None:
 
     for role in ("Direktur", "Tax Supervisor", "Tax Responsible", "Senior Consultant", "HR & Accounting"):
         assert is_human_team_member(role), role
+
+
+class TestGroupStaffRole:
+    """Staff of a group company: an HR card, but not a colleague and not in rosters."""
+
+    def test_not_a_colleague_and_not_assignable(self) -> None:
+        from backend.services.crm_assignment_routing import ASSIGNABLE_ROLES
+
+        assert "group_staff" not in TEAM_ROLES
+        assert "group_staff" not in {r.lower() for r in ASSIGNABLE_ROLES}
+        assert is_human_team_member("group_staff") is False
+
+    def test_group_staff_roles_are_a_separate_set_and_literal(self) -> None:
+        assert GROUP_STAFF_ROLES == frozenset({"group_staff"})
+        assert not (GROUP_STAFF_ROLES & NON_HUMAN_ROLES)
+        assert NON_HUMAN_ROLES == frozenset({"client", "monitoring"})
+        assert GROUP_STAFF_ROLES_SQL == "'group_staff'"

@@ -5,28 +5,28 @@ import { AlertTriangle } from "lucide-react";
 import { WhatsAppLeadButton } from "@/components/lead/WhatsAppLeadButton";
 
 const DECODER_WA_CONTEXT: { label: string; value: string }[] = [
-  { label: "Layanan", value: "KBLI Decoder" },
-  { label: "Halaman", value: "/kbli/decoder" },
+  { label: "Service", value: "KBLI Decoder" },
+  { label: "Page", value: "/kbli/decoder" },
 ];
 
 const PAIN_POINTS: string[] = [
-  "Kode KBLI salah = permohonan PT PMA ditolak atau harus diulang",
-  "1.563 kode KBLI 2025 — satu aktivitas bisnis bisa masuk beberapa klasifikasi",
-  "Daftar Negatif Investasi berubah setiap tahun — kode lama bisa tidak berlaku",
+  "Choosing the wrong KBLI code can stall PT PMA incorporation or OSS licensing",
+  "1,559 KBLI 2025 codes — a single business model often spans multiple classifications",
+  "Foreign ownership caps (Perpres 10/2021 & 49/2021) and risk tiers (PP 28/2025) vary code by code",
 ];
 
 const STEPS: { step: string; text: string }[] = [
   {
     step: "1",
-    text: "Deskripsikan aktivitas bisnis Anda via WhatsApp — dalam bahasa apa pun",
+    text: "Describe your planned business activity via WhatsApp",
   },
   {
     step: "2",
-    text: "Tim kami menganalisis dan memetakan ke kode KBLI 2025 yang tepat",
+    text: "Our corporate team maps your activity to the appropriate KBLI 2025 code(s)",
   },
   {
     step: "3",
-    text: "Anda menerima rekomendasi kode beserta catatan eligibilitas PMA-nya",
+    text: "Receive recommended KBLI codes with foreign ownership and licensing notes",
   },
 ];
 
@@ -54,9 +54,9 @@ export function KBLIDecoderCTA() {
         className="text-base md:text-lg mb-8"
         style={{ color: "var(--text-secondary)" }}
       >
-        Tidak yakin kode KBLI mana yang sesuai? Ceritakan aktivitas bisnis Anda
-        — tim kami menemukan kode yang tepat dari 1.563 klasifikasi KBLI 2025
-        dan memverifikasi eligibilitas PMA-nya.
+        Not sure which KBLI code fits your business? Tell us what you plan to
+        operate — our team maps your activity across all 1,559 KBLI 2025
+        classifications and checks PT PMA eligibility.
       </p>
 
       <div className="mb-12">
@@ -69,7 +69,7 @@ export function KBLIDecoderCTA() {
             color: "var(--text-on-accent)",
           }}
         >
-          Mulai Konsultasi via WhatsApp →
+          Start Consultation on WhatsApp →
         </WhatsAppLeadButton>
       </div>
 
@@ -78,7 +78,7 @@ export function KBLIDecoderCTA() {
           className="text-xs font-semibold uppercase tracking-widest mb-4"
           style={{ color: "var(--text-secondary)" }}
         >
-          Mengapa kode yang tepat penting
+          Why the right code matters
         </h2>
         <ul className="space-y-3" role="list">
           {PAIN_POINTS.map((point) => (
@@ -105,7 +105,7 @@ export function KBLIDecoderCTA() {
           className="text-xs font-semibold uppercase tracking-widest mb-4"
           style={{ color: "var(--text-secondary)" }}
         >
-          Cara kerja
+          How it works
         </h2>
         <ol className="space-y-5" role="list">
           {STEPS.map(({ step, text }) => (
@@ -132,13 +132,13 @@ export function KBLIDecoderCTA() {
       </div>
 
       <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-        Ingin cari kode sendiri?{" "}
+        Prefer to browse codes yourself?{" "}
         <Link
           href="/kbli"
           className="underline underline-offset-2"
           style={{ color: "var(--text-primary)" }}
         >
-          Buka KBLI Navigator →
+          Open KBLI Navigator →
         </Link>
       </p>
     </section>

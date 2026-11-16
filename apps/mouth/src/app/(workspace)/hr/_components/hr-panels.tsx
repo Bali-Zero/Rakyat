@@ -772,7 +772,9 @@ export function MeDetail({
               ["Employer", s(c, "employer_entity")],
               [
                 "Role",
-                [s(c, "role"), s(c, "unit")].filter(Boolean).join(" · ") ||
+                [s(c, "position") ?? s(c, "role"), s(c, "unit")]
+                  .filter(Boolean)
+                  .join(" · ") ||
                   null,
               ],
               ["Started", dayLabel(s(c, "hire_date"))],

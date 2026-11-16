@@ -53,7 +53,14 @@ export function KBLIPanelCodeDetail({
         <h3 className="mt-1 text-lg font-bold leading-snug text-white">
           {detail.titleEn}
         </h3>
-        <p className="mt-0.5 text-sm text-zinc-400">{detail.titleId}</p>
+        {detail.titleId && (
+          <p className="mt-1 text-sm text-zinc-400">
+            <span className="mr-1.5 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+              Official ID:
+            </span>
+            <span lang="id">{detail.titleId}</span>
+          </p>
+        )}
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
