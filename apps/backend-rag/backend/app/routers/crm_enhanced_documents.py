@@ -14,7 +14,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
-from pydantic import BaseModel, BeforeValidator, Field, StrictInt
+from pydantic import BaseModel, BeforeValidator, Field, StrictBool, StrictInt
 from pydantic_core import PydanticCustomError
 
 from backend.app.core.config import settings
@@ -244,6 +244,81 @@ async def create_document(
             "success": True,
             "ocr_triggered": ocr_triggered,
         }
+
+
+class ClientArchiveDocumentCreate(BaseModel):
+    """Body of the archive registration. Visibility has no default: the caller states it."""
+
+    file_id: str
+    document_type: str
+    document_category: str | None = None
+    file_name: str | None = None
+    google_drive_file_url: str | None = None
+    notes: str | None = None
+    client_visible: StrictBool
+
+
+@router.post("/clients/{client_id}/documents/archive")
+async def register_archive_document(
+    client_id: int,
+    data: ClientArchiveDocumentCreate,
+    pool: Any = Depends(get_database_pool),
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """
+    Register an existing Drive file as a client document (archive path, admin only).
+
+    No OCR, no portal message, no write to clients; visibility is explicit and the
+    registration is idempotent on (client_id, file_id).
+    """
+    if not is_crm_admin(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    async with pool.acquire() as conn:
+        await verify_client_access(client_id, current_user, conn, allow_assigned=True, write=True)
+        await assert_drive_file_belongs_to_client(data.file_id, client_id, conn)
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(742021, hashtext($1))",
+                f"{client_id}:{data.file_id}",
+            )
+            existing_id = await conn.fetchval(
+                f"""
+                SELECT d.id FROM documents d
+                WHERE d.client_id = $1 AND d.file_id = $2
+                  AND {admin_document_not_deleted_clause("d")}
+                ORDER BY d.id LIMIT 1
+                """,
+                client_id,
+                data.file_id,
+            )
+            if existing_id is not None:
+                return {
+                    "id": existing_id,
+                    "success": True,
+                    "deduplicated": True,
+                    "ocr_triggered": False,
+                }
+            doc_id = await conn.fetchval(
+                """
+                INSERT INTO documents (
+                    client_id, document_type, document_category, file_name, file_id,
+                    google_drive_file_url, notes, status, storage_type, uploaded_by,
+                    client_visible
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 'google_drive', $8, $9)
+                RETURNING id
+                """,
+                client_id,
+                data.document_type,
+                data.document_category,
+                data.file_name,
+                data.file_id,
+                data.google_drive_file_url,
+                data.notes,
+                (current_user.get("email") or "system").lower(),
+                data.client_visible,
+            )
+        await invalidate_cache("zantara:crm_clients_stats:*")
+        return {"id": doc_id, "success": True, "deduplicated": False, "ocr_triggered": False}
 
 
 @router.post("/clients/{client_id}/documents/bulk")
