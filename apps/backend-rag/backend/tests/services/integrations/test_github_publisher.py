@@ -662,3 +662,14 @@ class TestPublishingAppliesNoMergeLabel:
         with pytest.raises(GitHubPublisherError, match="PR refused"):
             await _publish(pub)
         assert not [u for u in fake.urls("POST") if u.endswith("/labels")]
+
+
+def test_default_settings_target_bali_zero_rakyat(monkeypatch):
+    """Settings defaults must point GitHubPublisher at Bali-Zero/Rakyat, never retired Teman2."""
+    from backend.app.core.config import Settings
+
+    monkeypatch.delenv("GITHUB_OWNER", raising=False)
+    monkeypatch.delenv("GITHUB_REPO", raising=False)
+    cfg = Settings(_env_file=None)
+    assert cfg.github_owner == "Bali-Zero"
+    assert cfg.github_repo == "Rakyat"

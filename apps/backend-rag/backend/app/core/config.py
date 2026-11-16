@@ -658,11 +658,11 @@ class Settings(BaseSettings):
         description="GitHub Personal Access Token for publishing articles. Set via GITHUB_TOKEN env var.",
     )
     github_owner: str = Field(
-        default="Balizero1987",
+        default="Bali-Zero",
         description="GitHub repository owner. Set via GITHUB_OWNER env var.",
     )
     github_repo: str = Field(
-        default="Teman2",
+        default="Rakyat",
         description="GitHub repository name. Set via GITHUB_REPO env var.",
     )
 
