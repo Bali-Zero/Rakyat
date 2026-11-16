@@ -69,14 +69,21 @@ function compose(entries: EditorialEntry[]): TeamMember[] {
 const LEADERSHIP: TeamMember[] = compose([
   {
     slug: "heru",
-    roleOverride: "Komisaris · Founder (30 years)",
+    roleOverride: "Commissioner · Founder (30 years)",
   },
   {
     slug: "zainal",
+    roleOverride: "CEO · Founder",
   },
   {
     slug: "ruslana",
     roleOverride: "Special Advisory",
+  },
+  {
+    slug: "dian",
+  },
+  {
+    slug: "adi",
   },
 ]);
 
@@ -158,7 +165,31 @@ const ACCOUNTING_TEAM: TeamMember[] = compose([
   {
     slug: "rina",
   },
+  {
+    slug: "oman",
+  },
+  {
+    slug: "dini",
+  },
 ]);
+
+const IMMIGRATION_TEAM: TeamMember[] = compose([
+  { slug: "agus" },
+  { slug: "farid" },
+  { slug: "nanang" },
+]);
+
+const OPERATIONS_TEAM: TeamMember[] = compose([
+  { slug: "yoyok" },
+  { slug: "yudi" },
+  { slug: "megi" },
+  { slug: "david" },
+  { slug: "novi" },
+  { slug: "lia" },
+  { slug: "yanti" },
+]);
+
+const SECURITY_TEAM: TeamMember[] = compose([{ slug: "ropik" }]);
 
 // Marketing is an editorial grouping unique to this page (Zero is not in the public roster;
 // Subhi lives under support in the SSOT but is presented here with Marketing & AI).
@@ -193,10 +224,32 @@ const GROUPS = [
   },
   {
     id: "accounting",
-    eyebrow: "Accounting & Reception",
+    eyebrow: "Accounting, Finance & Reception",
     title: "The backbone of every month-end",
     description: null,
     people: ACCOUNTING_TEAM,
+  },
+  {
+    id: "immigration",
+    eyebrow: "Immigration",
+    title: "Immigration, Denpasar and Ngurah Rai",
+    description: null,
+    people: IMMIGRATION_TEAM,
+  },
+  {
+    id: "operations",
+    eyebrow: "Operations",
+    title: "Licensing, permits and the daily running of the office",
+    description:
+      "Business licensing and OSS, immigration processing, work permits and general affairs.",
+    people: OPERATIONS_TEAM,
+  },
+  {
+    id: "security",
+    eyebrow: "Security",
+    title: "Keeping the office safe",
+    description: null,
+    people: SECURITY_TEAM,
   },
   {
     id: "marketing",
@@ -331,7 +384,7 @@ export default function TeamPage() {
         <section aria-labelledby="leadership" className={styles.section}>
           <div className={styles.leadershipIntro}>
             <span className={styles.eyebrow}>Leadership</span>
-            <h2 id="leadership">The founders and the advisor</h2>
+            <h2 id="leadership">The founders, the advisor and the managers</h2>
             <p className={styles.sectionSubtitle}>
               The {LEADERSHIP_COUNT_WORD} people who set direction and sign off on
               every high-risk file.

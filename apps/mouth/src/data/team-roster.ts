@@ -30,7 +30,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type TeamDept =
-  "leadership" | "setup" | "tax" | "accounting" | "support";
+  | "leadership"
+  | "setup"
+  | "tax"
+  | "accounting"
+  | "support"
+  | "immigration"
+  | "operations"
+  | "security";
 
 export interface RosterMember {
   slug: string;
@@ -58,18 +65,18 @@ export const TEAM_ROSTER: RosterMember[] = [
   {
     slug: "zainal",
     name: "Zainal Abidin",
-    role: "Chief Executive Officer · Founder",
+    role: "CEO",
     dept: "leadership",
     email: "zainal@balizero.com",
-    photo: "/static/team/zainal-ceo.jpg",
+    photo: "/static/team/zainal-a1.jpg",
   },
   {
     slug: "heru",
     name: "Pak Heru",
-    role: "Komisaris · Founder",
+    role: "Commissioner",
     dept: "leadership",
     email: "heru@balizero.com",
-    photo: "/static/team/heru-komisaris.jpg",
+    photo: "/static/team/heru-a1.jpg",
   },
   {
     slug: "ruslana",
@@ -78,6 +85,22 @@ export const TEAM_ROSTER: RosterMember[] = [
     dept: "leadership",
     email: "ruslana@balizero.com",
     photo: "/static/team/ruslana-2026-11.jpg",
+  },
+  {
+    slug: "dian",
+    name: "Dian Purnomo",
+    role: "Corporate Manager",
+    dept: "leadership",
+    email: "dian.corporate@balizero.com",
+    photo: "/static/team/dian.jpg",
+  },
+  {
+    slug: "adi",
+    name: "Adi",
+    role: "Operations Manager",
+    dept: "leadership",
+    email: "adi.manager@balizero.com",
+    photo: "/static/team/adi.jpg",
   },
 
   // ── Setup ───────────────────────────────────────────────────────────────
@@ -199,6 +222,116 @@ export const TEAM_ROSTER: RosterMember[] = [
     dept: "accounting",
     email: "asya@balizero.com",
     photo: "/static/team/asya.jpg",
+  },
+  {
+    slug: "oman",
+    name: "Oman Maturi",
+    role: "Bank Relations",
+    dept: "accounting",
+    email: "oman@balizero.com",
+    photo: "/static/team/oman.jpg",
+  },
+  {
+    slug: "dini",
+    name: "Herdini Agustin",
+    role: "Finance & HR",
+    dept: "accounting",
+    email: "dini@balizero.com",
+    photo: "/static/team/dini.jpg",
+  },
+
+  // ── Immigration ─────────────────────────────────────────────────────────
+  {
+    slug: "agus",
+    name: "Agus Satrio",
+    role: "Chief Immigration Denpasar",
+    dept: "immigration",
+    email: "agus@balizero.com",
+    photo: "/static/team/agus.jpg",
+  },
+  {
+    slug: "farid",
+    name: "Farid Catur Prasetyo",
+    role: "Chief Immigration Ngurah Rai",
+    dept: "immigration",
+    email: "farid@balizero.com",
+    photo: "/static/team/farid.jpg",
+  },
+  {
+    slug: "nanang",
+    name: "Nanang Tri Jaya",
+    role: "Immigration Denpasar",
+    dept: "immigration",
+    email: "nanang@balizero.com",
+    photo: "/static/team/nanang.jpg",
+  },
+
+  // ── Operations ──────────────────────────────────────────────────────────
+  {
+    slug: "yoyok",
+    name: "Yoyok Supriadi",
+    role: "General Affairs",
+    dept: "operations",
+    email: "yoyok@balizero.com",
+    photo: "/static/team/yoyok.jpg",
+  },
+  {
+    slug: "yudi",
+    name: "Yudi Agus Setiawan",
+    role: "General Affairs",
+    dept: "operations",
+    email: "yudi@balizero.com",
+    photo: "/static/team/yudi.jpg",
+  },
+  {
+    slug: "megi",
+    name: "Megi Saputra",
+    role: "Business Licensing & OSS",
+    dept: "operations",
+    email: "megi@balizero.com",
+    photo: "/static/team/megi.jpg",
+  },
+  {
+    slug: "david",
+    name: "David Prawira",
+    role: "Immigration Processing",
+    dept: "operations",
+    email: "david@balizero.com",
+    photo: "/static/team/david.jpg",
+  },
+  {
+    slug: "novi",
+    name: "Novitasari",
+    role: "Immigration Processing Supervisor",
+    dept: "operations",
+    email: "novi@balizero.com",
+    photo: "/static/team/novi.jpg",
+  },
+  {
+    slug: "lia",
+    name: "Lia Amaliya",
+    role: "Immigration Processing",
+    dept: "operations",
+    email: "lia@balizero.com",
+    photo: "/static/team/lia.jpg",
+  },
+  {
+    slug: "yanti",
+    name: "Sri Wijayanti",
+    role: "Work Permit Supervisor",
+    dept: "operations",
+    email: "yanti@balizero.com",
+    photo: "/static/team/yanti.jpg",
+  },
+
+  // ── Security ────────────────────────────────────────────────────────────
+  {
+    slug: "ropik",
+    name: "Ropik",
+    role: "Security",
+    dept: "security",
+    email: "ropik@balizero.com",
+    photo: "/static/team/ropik.jpg",
   },
 
   // ── Support ─────────────────────────────────────────────────────────────

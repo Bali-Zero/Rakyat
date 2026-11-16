@@ -1,0 +1,1765 @@
+"""Related-subject registry, slice 1: every acceptance criterion on a real PostgreSQL.
+
+Each test builds a throwaway schema in the TEST database, applies migration 361's forward part
+and reduced CRM tables, and runs the registry service or the real route (with the real
+middleware stack) against it. Synthetic placeholders only.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import re
+import traceback
+from contextlib import asynccontextmanager, contextmanager
+from datetime import date
+from pathlib import Path
+from uuid import uuid4
+
+import asyncpg
+import httpx
+import pytest
+import pytest_asyncio
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+import backend.app.routers.crm_related_subjects as route_module
+from backend.app.core.config import settings
+from backend.app.dependencies import get_database_pool
+from backend.db.migration_base import split_migration_sql
+from backend.middleware import request_tracing
+from backend.middleware.activity_logging import ActivityLoggingMiddleware
+from backend.middleware.error_monitoring import ErrorMonitoringMiddleware
+from backend.middleware.hybrid_auth import HybridAuthMiddleware, role_boundary_refuses
+from backend.middleware.request_tracing import RequestTracingMiddleware
+from backend.services.crm.related_identifiers import NORM_VERSION, canonical_form, sql_canonical
+from backend.services.crm.related_subjects import (
+    REGISTRY_ACTOR,
+    RegistryUnavailable,
+    SubjectInput,
+    prepare_identifiers,
+    register_subject,
+)
+from backend.services.monitoring.activity_logger import activity_logger
+
+MIGRATIONS = Path(route_module.__file__).resolve().parents[2] / "db" / "migrations_v2"
+MIGRATION = MIGRATIONS / "361_related_subjects_registry.sql"
+URL = "/api/crm/related-subjects/register"
+KEY = "test-crm-write-key-0000"
+HEADERS = {"X-CRM-Write-Key": KEY, "Content-Type": "application/json"}
+SHA = "5f3c" * 16
+REF = "REF-7319"
+TIER = "TIER-Q9"
+NEW_TABLES = {"related_subjects", "related_subject_identifiers"}
+AUDIT_TABLES = {"api_audit_trail", "session_tracking"}
+SENTINEL_NAME = "Zz Sentinel Name"
+SENTINEL_ID = "ZZSENT0001"
+
+CRM_SCHEMA = """
+CREATE TABLE clients (
+    id serial PRIMARY KEY, full_name text, passport_number varchar(100), deleted_at timestamptz
+);
+CREATE TABLE client_family_members (
+    id serial PRIMARY KEY, client_id int, full_name text, passport_number varchar(100)
+);
+CREATE TABLE companies (
+    id serial PRIMARY KEY, company_name text, npwp_company varchar(100), nib varchar(100)
+);
+CREATE TABLE api_audit_trail (
+    id serial PRIMARY KEY, user_email varchar(255), method varchar(10) NOT NULL,
+    endpoint varchar(500) NOT NULL, query_params jsonb DEFAULT '{}', request_body jsonb,
+    response_status integer, response_body jsonb, response_time_ms integer, error_message text,
+    ip_address varchar(50), user_agent text, correlation_id varchar(100),
+    session_id varchar(255), created_at timestamp DEFAULT now()
+);
+CREATE TABLE session_tracking (
+    id serial PRIMARY KEY, session_id varchar(255) UNIQUE NOT NULL,
+    user_email varchar(255) NOT NULL, ip_address varchar(50), user_agent text,
+    device_type varchar(50), browser varchar(100), os varchar(100),
+    login_at timestamp DEFAULT now(), logout_at timestamp,
+    last_activity_at timestamp DEFAULT now(), duration_seconds integer,
+    actions_count integer DEFAULT 0, is_active boolean DEFAULT true
+);
+"""
+
+
+# Every row written to any table of the schema is recorded (table, operation), same-value
+# updates and insert-then-delete included, and every TRUNCATE (statement-level; a CASCADE fires
+# the trigger of each table it reaches). Row-level, so a statement that touches no row
+# records nothing. The whole test is measured: see the `pool` fixture and `writes(...)`.
+WRITE_LOG_SQL = """
+CREATE TABLE write_log (id bigserial PRIMARY KEY, tbl text NOT NULL, op text NOT NULL);
+CREATE FUNCTION log_write() RETURNS trigger LANGUAGE plpgsql AS $f$
+BEGIN
+    INSERT INTO write_log (tbl, op) VALUES (TG_TABLE_NAME, TG_OP);
+    RETURN NULL;
+END
+$f$;
+CREATE FUNCTION log_truncate() RETURNS trigger LANGUAGE plpgsql AS $f$
+BEGIN
+    INSERT INTO write_log (tbl, op) VALUES (TG_TABLE_NAME, 'TRUNCATE');
+    RETURN NULL;
+END
+$f$;
+DO $do$
+DECLARE t text;
+BEGIN
+    FOR t IN SELECT table_name FROM information_schema.tables
+             WHERE table_schema = current_schema() AND table_name <> 'write_log'
+    LOOP
+        EXECUTE format(
+            'CREATE TRIGGER log_write AFTER INSERT OR UPDATE OR DELETE ON %I '
+            'FOR EACH ROW EXECUTE FUNCTION log_write()', t);
+        EXECUTE format(
+            'CREATE TRIGGER log_truncate BEFORE TRUNCATE ON %I '
+            'FOR EACH STATEMENT EXECUTE FUNCTION log_truncate()', t);
+    END LOOP;
+END
+$do$;
+"""
+
+
+async def log_mark(c) -> int:
+    return await c.fetchval("SELECT coalesce(max(id), 0) FROM write_log")
+
+
+async def written(c, since: int = 0) -> set[str]:
+    return {
+        r["tbl"] for r in await c.fetch("SELECT DISTINCT tbl FROM write_log WHERE id > $1", since)
+    }
+
+
+@asynccontextmanager
+async def unmeasured(c):
+    """The ONE way a test seeds or cleans up mid-test: rows written inside are taken out of the
+    measurement. The guard is never switched off; only what happens in this block is excused."""
+    mark = await log_mark(c)
+    yield
+    await c.execute("DELETE FROM write_log WHERE id > $1", mark)
+
+
+class Declared(set):
+    """The tables a test declares it writes. Empty unless the test says otherwise."""
+
+    def __call__(self, *tables: str) -> None:
+        self.update(tables)
+
+
+def check_declared_writes(actual: set[str], declared: set[str]) -> None:
+    """The teardown assertion of every PostgreSQL test: written tables == declared tables."""
+    assert actual == declared, (
+        f"write measurement: wrote {sorted(actual)}, declared {sorted(declared)}"
+    )
+
+
+@pytest.fixture
+def writes():
+    return Declared()
+
+
+# ── database fixtures ─────────────────────────────────────────────────────────
+
+
+@pytest_asyncio.fixture
+async def pool(writes):
+    dsn = os.environ.get("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL required for the real PostgreSQL registry proof")
+    admin = await asyncpg.connect(dsn)
+    name = await admin.fetchval("SELECT current_database()")
+    if not re.search(r"_test(?:_run_[0-9]+_[0-9]+)?(?:_gw[0-9]+)?$", name):
+        await admin.close()
+        pytest.fail("A test database or isolated test worker is required")
+    schema = "related_subjects_" + uuid4().hex
+    await admin.execute(f'CREATE SCHEMA "{schema}"')
+    created = await asyncpg.create_pool(
+        dsn, min_size=1, max_size=6, server_settings={"search_path": schema}
+    )
+    try:
+        forward, _ = split_migration_sql(MIGRATION.read_text())
+        async with created.acquire() as conn:
+            await conn.execute(forward)
+            await conn.execute(CRM_SCHEMA)
+            await conn.execute(WRITE_LOG_SQL)
+        yield created
+        # Default-on write measurement: every test that uses this schema ends here, and the
+        # tables it wrote (trigger-fed log, every row write incl. same-value updates and
+        # insert-then-delete) must be exactly the ones it declared through `writes(...)`.
+        async with created.acquire() as c:
+            check_declared_writes(await written(c), set(writes))
+    finally:
+        await created.close()
+        await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
+        await admin.close()
+
+
+@pytest_asyncio.fixture
+async def conn(pool):
+    async with pool.acquire() as c:
+        yield c
+
+
+async def snapshot(c, *, exclude: set[str] = frozenset()) -> dict[str, tuple[int, str]]:
+    """Row count and content hash of every table in the test schema."""
+    names = [
+        r["table_name"]
+        for r in await c.fetch(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = current_schema() ORDER BY 1"
+        )
+    ]
+    out = {}
+    for name in names:
+        if name in exclude or name == "write_log":
+            continue
+        row = await c.fetchrow(
+            f"SELECT count(*) AS n, coalesce(md5(string_agg(t::text, $$|$$ ORDER BY t::text)), $$$$) "
+            f'AS h FROM "{name}" t'
+        )
+        out[name] = (row["n"], row[1])
+    return out
+
+
+def changed(before: dict, after: dict) -> set[str]:
+    return {name for name in after if after[name] != before.get(name)}
+
+
+@asynccontextmanager
+async def writes_only(c, tables=frozenset(), *, exact_content=False):
+    """A narrower window INSIDE a test (the whole test is measured anyway, by the schema fixture).
+
+    The tables that received any row write during the window are exactly ``tables``, and the
+    content snapshots show no change outside them (``exact_content``: exactly those changed).
+    """
+    tables = set(tables)
+    before = await snapshot(c)
+    mark = await log_mark(c)
+    yield
+    after = await snapshot(c)
+    assert await written(c, mark) == tables
+    assert changed(before, after) <= tables
+    if exact_content:
+        assert changed(before, after) == tables
+    if not tables:
+        assert after == before
+
+
+def writes_nothing(c):
+    return writes_only(c, set())
+
+
+# ── builders ──────────────────────────────────────────────────────────────────
+
+
+def subj(kind="person", ids=(("passport", "ZZ0000001"),), dob=None, name=None, **kw):
+    return SubjectInput(
+        kind=kind,
+        identifiers=prepare_identifiers(kind, [(t, v, {}) for t, v in ids]),
+        evidence={"plan_sha256": SHA, "subject_ref": REF, "tier": TIER},
+        display_name=name,
+        date_of_birth=dob,
+        **kw,
+    )
+
+
+def body(kind="person", ids=(("passport", "ZZ0000001"),), **over):
+    data = {
+        "kind": kind,
+        "identifiers": [{"type": t, "value": v} for t, v in ids],
+        "evidence": {"plan_sha256": SHA, "subject_ref": REF, "tier": TIER},
+        "dry_run": False,
+    }
+    data.update(over)
+    return data
+
+
+@pytest.fixture
+def enabled(monkeypatch):
+    monkeypatch.setattr(settings, "related_subject_registry_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "wa_mirror_crm_write_key", KEY, raising=False)
+
+
+# ── a real-stack app, with spies where the generic handlers would speak ──────
+
+
+class _Alerts:
+    def __init__(self):
+        self.calls = []
+
+    async def send_http_error_alert(self, **kwargs):
+        self.calls.append(kwargs)
+
+    async def send_latency_alert(self, **kwargs):
+        self.calls.append(kwargs)
+
+
+class _Probe:
+    """Innermost pure-ASGI middleware: records what reaches the middleware layer."""
+
+    def __init__(self, app, sink):
+        self.app = app
+        self.sink = sink
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        try:
+            await self.app(scope, receive, send)
+        except Exception as exc:
+            self.sink["raised"].append(type(exc).__name__)
+            raise
+        finally:
+            if "request_body" in (scope.get("state") or {}):
+                self.sink["request_body_set"] = True
+
+
+class Stack:
+    def __init__(self, pool, *, middleware=True):
+        self.alerts = _Alerts()
+        self.has_middleware = middleware
+        self.sink = {"raised": [], "handlers": [], "request_body_set": False}
+        app = FastAPI()
+        app.state.db_pool = pool
+        app.include_router(route_module.router)
+
+        def spy(label):
+            async def handler(request, exc):
+                self.sink["handlers"].append(label)
+                return JSONResponse(status_code=500, content={"detail": "generic"})
+
+            return handler
+
+        app.add_exception_handler(HTTPException, spy("http"))
+        app.add_exception_handler(StarletteHTTPException, spy("starlette"))
+        app.add_exception_handler(RequestValidationError, spy("validation"))
+        app.add_exception_handler(Exception, spy("general"))
+        if middleware:
+            app.add_middleware(_Probe, sink=self.sink)
+            app.add_middleware(HybridAuthMiddleware)
+            app.add_middleware(RequestTracingMiddleware)
+            app.add_middleware(ErrorMonitoringMiddleware, alert_service=self.alerts)
+            app.add_middleware(ActivityLoggingMiddleware)
+        self.app = app
+
+    def client(self):
+        return httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app, raise_app_exceptions=True),
+            base_url="http://test",
+        )
+
+
+@pytest.fixture
+def audit_logger(pool):
+    previous = (activity_logger.pool, activity_logger._initialized)
+    activity_logger.pool, activity_logger._initialized = pool, True
+    yield activity_logger
+    activity_logger.pool, activity_logger._initialized = previous
+
+
+# ── privacy by derivation: forbidden tokens come from the request itself ─────
+
+# Protocol words that legitimately appear in answers and logs. Everything else a request carries
+# (every leaf string and number, every canonical identifier form) is forbidden in every observable.
+PROTOCOL_WORDS = frozenset(
+    {
+        "person", "company", "passport", "permit", "nik", "npwp", "nib", "ahu", "true", "false",
+        "null", "kind", "display_name", "date_of_birth", "nationality", "sex", "identifiers",
+        "type", "value", "evidence", "plan_sha256", "subject_ref", "tier", "files",
+        "independent_files", "strengths", "dry_run",
+    }
+)  # fmt: skip
+MIN_TOKEN = 4  # shorter strings collide with ordinary words and numbers; test values are longer
+CLOSED_LOC = frozenset(
+    {
+        "kind", "display_name", "date_of_birth", "nationality", "sex", "identifiers", "type",
+        "value", "evidence", "plan_sha256", "subject_ref", "tier", "files", "independent_files",
+        "strengths", "dry_run", "body", "_",
+    }
+)  # fmt: skip
+CLOSED_CODES = frozenset(
+    {
+        "missing", "extra_forbidden", "string_type", "string_too_short", "string_too_long",
+        "string_pattern_mismatch", "bool_type", "int_type", "greater_than_equal",
+        "less_than_equal", "date_type", "date_from_datetime_inexact", "date_parsing",
+        "literal_error", "list_type", "too_short", "too_long", "model_type", "dict_type",
+        "json_invalid", "invalid_text", "invalid_identifier", "kind_type_mismatch",
+        "duplicate_identifier", "invalid",
+    }
+)  # fmt: skip
+CLOSED_WORDS = {
+    401: {"unauthorized"},
+    500: {"internal_error"},
+    503: {"registry_unavailable", "registry_busy", "database_error"},
+}
+CLOSED_OUTCOMES = {
+    "created", "would_create", "already_registered", "conflict", "existing_client",
+    "existing_family_member", "existing_company",
+}  # fmt: skip
+CLOSED_REASONS = {"set_differs", "partial_overlap", "two_owners", "contradiction"}
+CLOSED_BASES = {"identifiers_only", "identifiers_and_dob"}
+CLOSED_200_KEYS = {"outcome", "dry_run", "subject_id", "match_basis", "reason"}
+
+
+def _leaves(node, out):
+    if isinstance(node, dict):
+        for value in node.values():
+            _leaves(value, out)
+        for key in node:  # a caller-chosen KEY is a value too
+            out.add(str(key))
+    elif isinstance(node, list):
+        for item in node:
+            _leaves(item, out)
+    elif isinstance(node, str):
+        out.add(node)
+    elif isinstance(node, (int, float)) and not isinstance(node, bool):
+        out.add(str(node))
+
+
+def _identifier_forms(node, out):
+    if isinstance(node, dict):
+        if isinstance(node.get("type"), str) and isinstance(node.get("value"), str):
+            canonical = (
+                canonical_form(node["type"], node["value"])
+                if node["type"] in ("passport", "permit", "nik", "npwp", "nib", "ahu")
+                else ""
+            )
+            out.add(canonical)  # fmt: skip
+        for value in node.values():
+            _identifier_forms(value, out)
+    elif isinstance(node, list):
+        for item in node:
+            _identifier_forms(item, out)
+
+
+def forbidden_tokens(payload) -> set[str]:
+    """Every string/number the request carries, plus canonical identifier forms, minus protocol words."""
+    found: set[str] = set()
+    parsed = payload
+    if isinstance(payload, (bytes, str)):
+        text = payload.decode("utf-8", "replace") if isinstance(payload, bytes) else payload
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            parsed = None
+            # not JSON: whole quoted strings (closed or cut off), identifier-like words that
+            # carry a digit, and the text itself. Plain words would collide with ordinary text.
+            found.update(re.findall(r'"([^"]*)"', text))
+            found.update(re.findall(r'"([^"]*)$', text))
+            found.update(
+                w
+                for w in re.findall(r"[A-Za-z0-9][A-Za-z0-9._\-]{3,}", text)
+                if re.search(r"[0-9]", w)
+            )
+            found.add(text.strip())
+    if parsed is not None:
+        _leaves(parsed, found)
+        _identifier_forms(parsed, found)
+    found.add(KEY)
+    return {t.lower() for t in found if len(t) >= MIN_TOKEN and t.lower() not in PROTOCOL_WORDS}
+
+
+def subject_tokens(subject) -> set[str]:
+    found = {subject.display_name, subject.nationality, subject.sex, str(subject.date_of_birth)}
+    for ident in subject.identifiers:
+        found.update({ident.id_raw, ident.id_norm})
+        _leaves(ident.evidence, found)
+    _leaves(subject.evidence, found)
+    return {
+        t.lower()
+        for t in found
+        if t and t != "None" and len(t) >= MIN_TOKEN and t.lower() not in PROTOCOL_WORDS
+    }
+
+
+@contextmanager
+def capture_logs():
+    """Capture every record of every logger (propagating or not) at DEBUG."""
+    records: list[logging.LogRecord] = []
+
+    class _H(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    handler = _H(level=logging.DEBUG)
+    targets = [logging.getLogger()] + [
+        lg
+        for lg in logging.Logger.manager.loggerDict.values()
+        if isinstance(lg, logging.Logger) and not lg.propagate
+    ]
+    saved = [(lg, lg.level) for lg in targets]
+    for lg in targets:
+        lg.addHandler(handler)
+    logging.getLogger().setLevel(logging.DEBUG)
+    try:
+        yield records
+    finally:
+        for lg, level in saved:
+            lg.removeHandler(handler)
+            lg.setLevel(level)
+
+
+def record_text(record: logging.LogRecord) -> str:
+    parts = [repr(sorted(vars(record).items(), key=lambda kv: kv[0]))]
+    try:
+        parts.append(record.getMessage())
+    except Exception:
+        pass
+    if record.exc_info and record.exc_info[0] is not None:
+        parts.append("".join(traceback.format_exception(*record.exc_info)))
+    return " ".join(parts)
+
+
+def assert_no_tokens(tokens, label, text):
+    hit = sorted(t for t in tokens if t in text.lower())
+    assert not hit, (
+        f"{label} carries {len(hit)} request-derived token(s): {[h[:3] + '..' for h in hit]}"
+    )
+
+
+async def observe(stack, tokens, response_text, records, trace_before):
+    """No request-derived token in ANY observable; nothing reached the middleware."""
+    assert_no_tokens(tokens, "response", response_text)
+    assert_no_tokens(tokens, "log records", " ".join(record_text(r) for r in records))
+    traces = {k: v for k, v in request_tracing._trace_storage.items() if k not in trace_before}
+    assert_no_tokens(tokens, "request traces", str(traces))
+    assert_no_tokens(tokens, "alert arguments", str(stack.alerts.calls))
+    if stack.has_middleware and activity_logger._initialized and activity_logger.pool:
+        async with activity_logger.pool.acquire() as c:
+            audit = str(await c.fetch("SELECT * FROM api_audit_trail")) + str(
+                await c.fetch("SELECT * FROM session_tracking")
+            )
+        assert_no_tokens(tokens, "audit rows", audit)
+    assert stack.sink["raised"] == [] and stack.sink["handlers"] == []
+
+
+def assert_answer_shape(resp):
+    """Closed lists for every answer: 200 keys/values, 422 loc/code, fixed words for 401/500/503."""
+    data = resp.json()
+    if resp.status_code == 200:
+        assert set(data) <= CLOSED_200_KEYS and data["outcome"] in CLOSED_OUTCOMES
+        assert data.get("reason") in (None, *CLOSED_REASONS)
+        assert data.get("match_basis") in (None, *CLOSED_BASES)
+        assert isinstance(data["dry_run"], bool)
+        assert isinstance(data.get("subject_id", 0), int)
+    elif resp.status_code == 422:
+        assert set(data) == {"detail"} and isinstance(data["detail"], list) and data["detail"]
+        for item in data["detail"]:
+            assert set(item) == {"loc", "code"}
+            assert isinstance(item["loc"], list)
+            assert all(
+                (isinstance(p, int) and not isinstance(p, bool)) or p in CLOSED_LOC
+                for p in item["loc"]
+            ), item["loc"]
+            assert item["code"] in CLOSED_CODES, item["code"]
+    else:
+        assert resp.status_code in CLOSED_WORDS, resp.status_code
+        assert set(data) == {"detail"} and data["detail"] in CLOSED_WORDS[resp.status_code]
+
+
+async def post(stack, payload, headers=HEADERS):
+    """Every HTTP call of this file: derives the forbidden tokens from the payload, observes
+    every channel, and checks the answer shape against closed lists."""
+    raw = payload if isinstance(payload, (bytes, str)) else json.dumps(payload)
+    tokens = forbidden_tokens(payload)
+    trace_before = set(request_tracing._trace_storage)
+    with capture_logs() as records:
+        async with stack.client() as http:
+            resp = await http.post(URL, content=raw, headers=headers)
+    await observe(stack, tokens, resp.text + " " + str(resp.headers), records, trace_before)
+    assert_answer_shape(resp)
+    return resp
+
+
+async def reg(conn, subject, *, dry_run=True):
+    """register_subject with the service log checked against the subject's own values."""
+    tokens = subject_tokens(subject)
+    with capture_logs() as records:
+        try:
+            return await register_subject(conn, subject, dry_run=dry_run)
+        finally:
+            assert_no_tokens(
+                tokens, "service log records", " ".join(record_text(r) for r in records)
+            )
+
+
+# ── guard on the guard ───────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_guard_an_undeclared_write_fails_the_teardown_assertion(writes, conn):
+    """An INSERT then DELETE on `clients` leaves no row and an equal snapshot, yet the write
+    log names the table, and `check_declared_writes` (the very function the schema fixture
+    runs at the end of every test) refuses it unless the test declared it.
+
+    Done by calling the checking function directly on the real log of this test: the same
+    function, the same log, without a nested pytest session.
+    """
+    writes("clients")  # declared here only so that THIS test's own teardown passes
+    before = await snapshot(conn)
+    await conn.execute("INSERT INTO clients (full_name) VALUES ('Zz Probe')")
+    await conn.execute("DELETE FROM clients WHERE full_name = 'Zz Probe'")
+    assert await snapshot(conn) == before
+    actual = await written(conn)
+    assert actual == {"clients"}
+    with pytest.raises(AssertionError, match="wrote \\['clients'\\], declared \\[\\]"):
+        check_declared_writes(actual, set())  # the empty (default) declaration
+    with pytest.raises(AssertionError):
+        check_declared_writes(set(), {"clients"})  # a declared write that did not happen
+    check_declared_writes(actual, set(writes))
+
+
+@pytest.mark.asyncio
+async def test_guard_a_truncate_is_a_write_and_a_cascade_names_every_table_it_reaches(writes, conn):
+    await conn.execute("TRUNCATE clients")
+    plain = await written(conn)
+    assert plain == {"clients"}
+    with pytest.raises(AssertionError, match="wrote \\['clients'\\], declared \\[\\]"):
+        check_declared_writes(plain, set())
+    mark = await log_mark(conn)
+    await conn.execute(
+        "ALTER TABLE client_family_members ADD FOREIGN KEY (client_id) REFERENCES clients(id)"
+    )
+    await conn.execute("TRUNCATE clients CASCADE")
+    cascaded = await written(conn, mark)
+    assert cascaded == {"clients", "client_family_members"}
+    with pytest.raises(AssertionError):
+        check_declared_writes(cascaded, {"clients"})
+    writes("clients", "client_family_members")
+
+
+@pytest.mark.asyncio
+async def test_guard_seeding_through_unmeasured_is_excused_but_a_later_write_is_not(writes, conn):
+    async with unmeasured(conn):
+        await conn.execute("INSERT INTO clients (full_name) VALUES ('Zz Seed')")
+    assert await written(conn) == set()
+    await conn.execute("UPDATE clients SET full_name = full_name")  # same-value update
+    assert await written(conn) == {"clients"}
+    writes("clients")
+
+
+# ── criterion 1: service level, one connection, counters on the two tables only ──
+
+
+@pytest.mark.asyncio
+async def test_c1_batch_counters_cover_the_two_new_tables_only(writes, conn):
+    tr = conn.transaction()
+    await tr.start()
+    try:
+        for n in range(3):
+            out = await reg(
+                conn, subj(ids=(("passport", f"ZZ000000{n}"),), name=f"Zz Probe {n}"), dry_run=False
+            )
+            assert out["outcome"] == "created"
+        await reg(conn, subj(ids=(("passport", "ZZ0000000"),)), dry_run=False)
+        rows = await conn.fetch(
+            "SELECT relname, n_tup_ins, n_tup_upd, n_tup_del FROM pg_stat_xact_user_tables "
+            "WHERE schemaname = current_schema()"
+        )
+    finally:
+        await tr.rollback()
+    # write_log is the measuring instrument (trigger target), not a table the registry writes.
+    touched = {
+        r["relname"]
+        for r in rows
+        if r["relname"] != "write_log" and r["n_tup_ins"] + r["n_tup_upd"] + r["n_tup_del"] > 0
+    }
+    assert touched == NEW_TABLES
+    assert all(r["n_tup_ins"] > 0 for r in rows if r["relname"] in NEW_TABLES)
+    assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 0
+
+
+# ── criterion 2: HTTP level, what a call writes ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_c2_http_call_writes_two_tables_and_the_audit_row_only(
+    writes, pool, conn, enabled, audit_logger
+):
+    writes("related_subjects", "related_subject_identifiers", "api_audit_trail")
+    stack = Stack(pool)
+    async with writes_only(conn, NEW_TABLES | {"api_audit_trail"}, exact_content=True):
+        resp = await post(stack, body(display_name=SENTINEL_NAME, ids=(("passport", SENTINEL_ID),)))
+    assert resp.status_code == 200 and resp.json()["outcome"] == "created"
+    audit = await conn.fetch("SELECT * FROM api_audit_trail")
+    assert len(audit) == 1 and audit[0]["request_body"] is None
+    assert SENTINEL_NAME not in str(dict(audit[0])) and SENTINEL_ID not in str(dict(audit[0]))
+    assert stack.sink["request_body_set"] is False
+
+
+@pytest.mark.asyncio
+async def test_c2_session_header_and_user_email_also_update_session_tracking(
+    writes, pool, conn, enabled, audit_logger
+):
+    writes("related_subjects", "related_subject_identifiers", "api_audit_trail", "session_tracking")
+    stack = Stack(pool)
+    async with unmeasured(conn):
+        await conn.execute(
+            "INSERT INTO session_tracking (session_id, user_email) "
+            "VALUES ('sess-probe-1', 'staff@example.test')"
+        )
+    headers = {**HEADERS, "X-Session-ID": "sess-probe-1", "X-User-Email": "staff@example.test"}
+    async with writes_only(conn, NEW_TABLES | AUDIT_TABLES, exact_content=True):
+        resp = await post(
+            stack, body(display_name=SENTINEL_NAME, ids=(("passport", SENTINEL_ID),)), headers
+        )
+    assert resp.status_code == 200
+    dump = str(await conn.fetch("SELECT * FROM session_tracking")) + str(
+        await conn.fetch("SELECT * FROM api_audit_trail")
+    )
+    assert SENTINEL_NAME not in dump and SENTINEL_ID not in dump
+    assert all(r["request_body"] is None for r in await conn.fetch("SELECT * FROM api_audit_trail"))
+
+
+# ── criterion 3: replay ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_c3_replay_is_already_registered_and_changes_no_row(writes, pool, conn, enabled):
+    writes("related_subjects", "related_subject_identifiers")
+    stack = Stack(pool, middleware=False)
+    payload = body(
+        kind="person", ids=(("passport", "ZZ0000001"), ("nik", "3201234567890123")),
+        date_of_birth="1990-01-02", display_name="Zz Probe Subject",
+    )  # fmt: skip
+    first = await post(stack, payload)
+    assert first.json()["outcome"] == "created"
+    async with writes_nothing(conn):
+        again = await post(stack, payload)
+    assert again.json()["outcome"] == "already_registered"
+    assert again.json()["match_basis"] == "identifiers_and_dob"
+    assert again.json()["subject_id"] == first.json()["subject_id"]
+
+
+# ── criterion 4: the key-set rule ────────────────────────────────────────────
+
+
+async def _seed(conn, ids=(("nik", "3201234567890123"), ("passport", "ZZ0000001")), dob=None):
+    async with unmeasured(conn):
+        out = await reg(conn, subj(ids=ids, dob=dob, name="Zz Probe Subject"), dry_run=False)
+    assert out["outcome"] == "created"
+    return out["subject_id"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ids", "reason"),
+    [
+        ((("passport", "ZZ0000001"),), "set_differs"),
+        (
+            (("nik", "3201234567890123"), ("passport", "ZZ0000001"), ("passport", "ZZ0000002")),
+            "set_differs",
+        ),
+        ((("passport", "ZZ0000001"), ("passport", "ZZ0000003")), "partial_overlap"),
+    ],
+    ids=["subset", "superset", "partial-overlap-with-new-key"],
+)
+async def test_c4_key_set_differs_is_conflict_and_writes_nothing(writes, conn, ids, reason):
+    owner = await _seed(conn)
+    async with writes_nothing(conn):
+        out = await reg(conn, subj(ids=ids), dry_run=False)
+    assert out["outcome"] == "conflict" and out["reason"] == reason
+    assert out["subject_id"] == owner
+
+
+@pytest.mark.asyncio
+async def test_c4_keys_of_two_owners_conflict(writes, conn):
+    await _seed(conn)
+    await _seed(conn, ids=(("passport", "ZZ0000005"),))
+    async with writes_nothing(conn):
+        out = await reg(
+            conn, subj(ids=(("passport", "ZZ0000001"), ("passport", "ZZ0000005"))), dry_run=False
+        )
+    assert (out["outcome"], out["reason"]) == ("conflict", "two_owners")
+
+
+@pytest.mark.asyncio
+async def test_c4_equal_set_with_a_different_birth_date_is_a_contradiction(writes, conn):
+    await _seed(conn, dob=date(1990, 1, 2))
+    async with writes_nothing(conn):
+        out = await reg(conn, subj(ids=(("nik", "3201234567890123"), ("passport", "ZZ0000001")), dob=date(1991, 1, 2)), dry_run=False)  # fmt: skip
+    assert (out["outcome"], out["reason"]) == ("conflict", "contradiction")
+
+
+@pytest.mark.asyncio
+async def test_c4_equal_set_match_basis_follows_the_birth_dates(writes, conn):
+    ids = (("nik", "3201234567890123"), ("passport", "ZZ0000001"))
+    ids2 = (("passport", "ZZ0000009"),)
+    await _seed(conn, ids=ids, dob=date(1990, 1, 2))
+    await _seed(conn, ids=ids2)
+    async with writes_nothing(conn):
+        both = await reg(conn, subj(ids=ids, dob=date(1990, 1, 2)), dry_run=False)
+        request_without = await reg(conn, subj(ids=ids), dry_run=False)
+        owner_without = await reg(conn, subj(ids=ids2, dob=date(1990, 1, 2)), dry_run=False)
+    assert (both["outcome"], both["match_basis"]) == ("already_registered", "identifiers_and_dob")
+    assert (request_without["outcome"], request_without["match_basis"]) == (
+        "already_registered",
+        "identifiers_only",
+    )
+    assert (owner_without["outcome"], owner_without["match_basis"]) == (
+        "already_registered",
+        "identifiers_only",
+    )
+
+
+@pytest.mark.asyncio
+async def test_c4_kind_change_keeping_the_identifiers_is_422_and_writes_nothing(
+    writes, pool, conn, enabled
+):
+    stack = Stack(pool, middleware=False)
+    await _seed(conn)
+    async with writes_nothing(conn):
+        resp = await post(stack, body(kind="company", ids=(("passport", "ZZ0000001"),)))
+    assert resp.status_code == 422
+    assert resp.json()["detail"][0]["code"] == "kind_type_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_c4_creation_stores_actor_canonical_keys_and_norm_version(writes, conn):
+    writes("related_subjects", "related_subject_identifiers")
+    out = await reg(
+        conn,
+        subj(
+            ids=(("passport", "zz 000-0001"), ("nik", "3201 2345 6789 0123")),
+            name="Zz Probe Subject",
+        ),
+        dry_run=False,  # fmt: skip
+    )
+    sid = out["subject_id"]
+    row = await conn.fetchrow("SELECT * FROM related_subjects WHERE id = $1", sid)
+    assert row["created_by"] == REGISTRY_ACTOR == "system:related-subject-registry"
+    assert row["merged_into"] is None and row["kind"] == "person"
+    assert json.loads(row["evidence"]) == {"plan_sha256": SHA, "subject_ref": REF, "tier": TIER}
+    keys = await conn.fetch(
+        "SELECT id_type, id_norm, id_raw, norm_version FROM related_subject_identifiers "
+        "WHERE subject_id = $1 ORDER BY id_type",
+        sid,
+    )
+    assert [(k["id_type"], k["id_norm"], k["norm_version"]) for k in keys] == [
+        ("nik", "3201234567890123", NORM_VERSION),
+        ("passport", "ZZ0000001", NORM_VERSION),
+    ]
+    assert {k["id_raw"] for k in keys} == {"zz 000-0001", "3201 2345 6789 0123"}
+
+
+# ── criterion 5: concurrency ─────────────────────────────────────────────────
+
+
+class _Conn:
+    """Connection proxy that can wait on a barrier or fail before a given statement."""
+
+    def __init__(self, real, hook=None):
+        self._real = real
+        self._hook = hook
+
+    def transaction(self, *a, **kw):
+        return self._real.transaction(*a, **kw)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    async def _run(self, method, sql, args):
+        if self._hook is not None:
+            await self._hook(sql)
+        return await getattr(self._real, method)(sql, *args)
+
+    async def fetch(self, sql, *args):
+        return await self._run("fetch", sql, args)
+
+    async def fetchrow(self, sql, *args):
+        return await self._run("fetchrow", sql, args)
+
+    async def fetchval(self, sql, *args):
+        return await self._run("fetchval", sql, args)
+
+    async def execute(self, sql, *args):
+        return await self._run("execute", sql, args)
+
+
+def barrier_hook(barrier):
+    state = {"waited": False}
+
+    async def hook(sql):
+        if sql.startswith("INSERT INTO related_subjects ") and not state["waited"]:
+            state["waited"] = True
+            await asyncio.wait_for(barrier.wait(), timeout=20)
+
+    return hook
+
+
+async def _race(pool, subjects):
+    barrier = asyncio.Barrier(len(subjects))
+
+    async def one(s):
+        async with pool.acquire() as c:
+            return await reg(_Conn(c, barrier_hook(barrier)), s, dry_run=False)
+
+    return await asyncio.gather(*(one(s) for s in subjects))
+
+
+async def _assert_no_subject_without_identifiers(conn):
+    orphans = await conn.fetchval(
+        "SELECT count(*) FROM related_subjects s WHERE NOT EXISTS "
+        "(SELECT 1 FROM related_subject_identifiers i WHERE i.subject_id = s.id)"
+    )
+    assert orphans == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("callers", [2, 3])
+async def test_c5_identical_requests_make_exactly_one_subject(writes, pool, conn, callers):
+    writes("related_subjects", "related_subject_identifiers")
+    ids = (("nik", "3201234567890123"), ("passport", "ZZ0000001"))
+    results = await _race(pool, [subj(ids=ids, name="Zz Probe Subject") for _ in range(callers)])
+    outcomes = sorted(r["outcome"] for r in results)
+    assert outcomes == ["already_registered"] * (callers - 1) + ["created"]
+    assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
+    assert await conn.fetchval("SELECT count(*) FROM related_subject_identifiers") == 2
+    await _assert_no_subject_without_identifiers(conn)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("callers", [2, 3])
+async def test_c5_shared_key_with_distinct_extra_keys_gives_one_created_rest_conflict(
+    writes, pool, conn, callers
+):
+    writes("related_subjects", "related_subject_identifiers")
+    subjects = [
+        subj(ids=(("passport", "ZZ0000001"), ("nik", f"320123456789012{n}")))
+        for n in range(callers)
+    ]
+    results = await _race(pool, subjects)
+    assert sorted(r["outcome"] for r in results) == ["conflict"] * (callers - 1) + ["created"]
+    assert all(r["reason"] == "partial_overlap" for r in results if r["outcome"] == "conflict")
+    assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
+    assert await conn.fetchval("SELECT count(*) FROM related_subject_identifiers") == 2
+    await _assert_no_subject_without_identifiers(conn)
+
+
+@pytest.mark.asyncio
+async def test_c5_identifiers_are_inserted_in_sorted_key_order(writes, conn):
+    writes("related_subjects", "related_subject_identifiers")
+    seen = []
+
+    class _Spy(_Conn):
+        async def fetchval(self, sql, *args):
+            if sql.startswith("INSERT INTO related_subject_identifiers"):
+                seen.append((args[0], args[1]))
+            return await super().fetchval(sql, *args)
+
+    ids = (("passport", "ZZ0000009"), ("nik", "3201234567890123"), ("passport", "ZZ0000001"))
+    await reg(_Spy(conn), subj(ids=ids), dry_run=False)
+    assert seen == [
+        ("nik", "3201234567890123"),
+        ("passport", "ZZ0000001"),
+        ("passport", "ZZ0000009"),
+    ]
+
+
+def failing_hook(times, factory):
+    state = {"left": times}
+
+    async def hook(sql):
+        if sql.startswith("INSERT INTO related_subject_identifiers") and state["left"] > 0:
+            state["left"] -= 1
+            raise factory()
+
+    return hook
+
+
+def deadlock_hook(times):
+    return failing_hook(times, lambda: asyncpg.DeadlockDetectedError("deadlock detected"))
+
+
+def serialization_hook(times):
+    return failing_hook(times, lambda: asyncpg.SerializationError("could not serialize access"))
+
+
+class _FailingCommit:
+    """Transaction whose COMMIT fails: the work is rolled back, then the injected error raises."""
+
+    def __init__(self, real, state, factory):
+        self._real, self._state, self._factory = real, state, factory
+
+    async def __aenter__(self):
+        return await self._real.__aenter__()
+
+    async def __aexit__(self, exc_type, exc, tb):
+        if exc_type is None and self._state["left"] > 0:
+            self._state["left"] -= 1
+            await self._real.__aexit__(Exception, Exception("forced rollback"), None)
+            raise self._factory()
+        return await self._real.__aexit__(exc_type, exc, tb)
+
+
+class _CommitConn(_Conn):
+    def __init__(self, real, times, factory):
+        super().__init__(real)
+        self._commit = {"left": times}
+        self._factory = factory
+
+    def transaction(self, *a, **kw):
+        return _FailingCommit(self._real.transaction(*a, **kw), self._commit, self._factory)
+
+
+class _PoolOf:
+    """Pool proxy: connections are wrapped by ``wrap``; ``fail_enter``/``fail_exit`` inject."""
+
+    def __init__(self, pool, wrap=lambda c: c, fail_enter=None, fail_exit=None):
+        self.pool, self.wrap = pool, wrap
+        self.fail_enter, self.fail_exit = fail_enter, fail_exit
+
+    def acquire(self):
+        outer = self
+
+        class _Ctx:
+            async def __aenter__(_s):
+                if outer.fail_enter:
+                    raise outer.fail_enter
+                _s.c = await outer.pool.acquire()
+                return outer.wrap(_s.c)
+
+            async def __aexit__(_s, *exc):
+                await outer.pool.release(_s.c)
+                if outer.fail_exit:
+                    raise outer.fail_exit
+                return False
+
+        return _Ctx()
+
+
+@pytest.mark.asyncio
+async def test_c5_one_forced_deadlock_is_retried_to_the_right_outcome(writes, conn):
+    writes("related_subjects", "related_subject_identifiers")
+    ids = (("nik", "3201234567890123"), ("passport", "ZZ0000001"))
+    out = await reg(_Conn(conn, deadlock_hook(1)), subj(ids=ids), dry_run=False)
+    assert out["outcome"] == "created"
+    assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
+    assert await conn.fetchval("SELECT count(*) FROM related_subject_identifiers") == 2
+
+
+@pytest.mark.asyncio
+async def test_c5_a_second_forced_deadlock_is_the_fixed_503_and_leaves_nothing(
+    writes, pool, conn, enabled
+):
+    async with writes_nothing(conn):
+        with pytest.raises(RegistryUnavailable) as caught:
+            await reg(_Conn(conn, deadlock_hook(2)), subj(), dry_run=False)
+    assert caught.value.code == "registry_busy"
+
+    class _Pool:
+        def acquire(self_inner):
+            class _Ctx:
+                async def __aenter__(_s):
+                    _s.c = await pool.acquire()
+                    return _Conn(_s.c, deadlock_hook(2))
+
+                async def __aexit__(_s, *exc):
+                    await pool.release(_s.c)
+                    return False
+
+            return _Ctx()
+
+    async with writes_nothing(conn):
+        resp = await post(Stack(_Pool(), middleware=False), body())
+    assert (resp.status_code, resp.json()) == (503, {"detail": "registry_busy"})
+
+
+@pytest.mark.asyncio
+async def test_c5_one_forced_serialization_failure_is_retried_to_the_right_outcome(writes, conn):
+    writes("related_subjects", "related_subject_identifiers")
+    ids = (("nik", "3201234567890123"), ("passport", "ZZ0000001"))
+    out = await reg(_Conn(conn, serialization_hook(1)), subj(ids=ids), dry_run=False)
+    assert out["outcome"] == "created"
+    assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
+    assert await conn.fetchval("SELECT count(*) FROM related_subject_identifiers") == 2
+
+
+@pytest.mark.asyncio
+async def test_c5_a_second_forced_serialization_failure_is_the_fixed_503_and_writes_nothing(
+    writes, pool, conn, enabled
+):
+    async with writes_nothing(conn):
+        with pytest.raises(RegistryUnavailable) as caught:
+            await reg(_Conn(conn, serialization_hook(2)), subj(), dry_run=False)
+    assert caught.value.code == "registry_busy"
+    wrapped = _PoolOf(pool, lambda c: _Conn(c, serialization_hook(2)))
+    async with writes_nothing(conn):
+        resp = await post(Stack(wrapped, middleware=False), body())
+    assert (resp.status_code, resp.json()) == (503, {"detail": "registry_busy"})
+
+
+@pytest.mark.asyncio
+async def test_c5_a_failed_commit_with_a_serialization_error_is_retried_once(
+    writes, conn, pool, enabled
+):
+    writes("related_subjects", "related_subject_identifiers")
+    one = _CommitConn(conn, 1, lambda: asyncpg.SerializationError("x"))
+    assert (await reg(one, subj(), dry_run=False))["outcome"] == "created"
+    assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
+    async with unmeasured(conn):
+        await conn.execute("DELETE FROM related_subjects")
+    two = _CommitConn(conn, 2, lambda: asyncpg.SerializationError("x"))
+    async with writes_nothing(conn):
+        with pytest.raises(RegistryUnavailable):
+            await reg(two, subj(), dry_run=False)
+
+
+@pytest.mark.asyncio
+async def test_c5_a_lost_race_that_loses_again_is_the_fixed_503(writes, conn):
+    state = {"n": 0}
+
+    async def hook(sql):
+        if sql.startswith("INSERT INTO related_subject_identifiers"):
+            state["n"] += 1
+            if state["n"] <= 2:
+                raise_race(conn)
+
+    def raise_race(_c):
+        from backend.services.crm import related_subjects as mod
+
+        raise mod._LostRace
+
+    with pytest.raises(RegistryUnavailable):
+        await reg(_Conn(conn, hook), subj(), dry_run=False)
+    assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 0
+
+
+# ── criterion 6: CRM matches ─────────────────────────────────────────────────
+
+
+async def _crm_fixtures(conn):
+    async with unmeasured(conn):
+        await _insert_crm_fixtures(conn)
+
+
+async def _insert_crm_fixtures(conn):
+    await conn.execute(
+        "INSERT INTO clients (full_name, passport_number, deleted_at) VALUES "
+        "('Fixture live', 'ab-123 456', NULL), ('Fixture gone', 'CD 000111', now()), "
+        "('Fixture blank', NULL, NULL)"
+    )
+    await conn.execute(
+        "INSERT INTO client_family_members (client_id, full_name, passport_number) "
+        "VALUES (1, 'Fixture family', 'ef/777888')"
+    )
+    await conn.execute(
+        "INSERT INTO companies (company_name, npwp_company, nib) VALUES "
+        "('Fixture Co A', '12.345.678.9-012.345', NULL), "
+        "('Fixture Co B', '0987654321098765', NULL), "
+        "('Fixture Co C', '123456789012', '1234-5678-90123'), "
+        "('Fixture Co D', '11223344556677', NULL)"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "ids", "outcome"),
+    [
+        ("person", (("passport", "AB123456"),), "existing_client"),
+        ("person", (("passport", "ab 123-456"),), "existing_client"),
+        ("person", (("passport", "EF777888"),), "existing_family_member"),
+        ("company", (("npwp", "0123456789012345"),), "existing_company"),
+        ("company", (("npwp", "123456789012345"),), "existing_company"),
+        ("company", (("npwp", "0987654321098765"),), "existing_company"),
+        ("company", (("npwp", "987654321098765"),), "existing_company"),
+        ("company", (("nib", "1234567890123"),), "existing_company"),
+        ("company", (("nib", "1234 5678 90123"),), "existing_company"),
+        ("company", (("npwp", "5555555555555555"), ("nib", "1234567890123")), "existing_company"),
+        ("person", (("passport", "CD000111"),), "created"),
+        ("person", (("passport", "ZZ0000001"),), "created"),
+        ("company", (("npwp", "5555555555555555"),), "created"),
+        ("company", (("npwp", "0011223344556677"),), "created"),
+    ],
+)
+async def test_c6_crm_matches_in_every_stored_spelling(writes, conn, kind, ids, outcome):
+    await _crm_fixtures(conn)
+    await _seed(conn, ids=(("passport", "ZZ0000500"),))
+    if outcome == "created":
+        writes("related_subjects", "related_subject_identifiers")
+        out = await reg(conn, subj(kind=kind, ids=ids), dry_run=False)
+    else:
+        async with writes_nothing(conn):
+            out = await reg(conn, subj(kind=kind, ids=ids), dry_run=False)
+    assert out["outcome"] == outcome
+
+
+@pytest.mark.asyncio
+async def test_c6_python_and_sql_canonical_forms_agree_on_the_vectors(writes, conn):
+    vectors = {
+        "passport": ["ab 123-456", "ZZ0000001", "ß1234", "éx12", "x-1.2/3", "ＡＢ123456", ""],
+        "nib": ["1234-5678-90123", "٣٢1234567890123", "abc", "", "12 34"],
+        "npwp": [
+            "12.345.678.9-012.345", "0123456789012345", "12345678901234", "１" * 15,
+            "1234567890123456789", "", "9" * 15, "9" * 16,
+        ],
+    }  # fmt: skip
+    for id_type, values in vectors.items():
+        for value in values:
+            sql_value = await conn.fetchval(f"SELECT {sql_canonical(id_type, '$1::text')}", value)
+            assert sql_value == canonical_form(id_type, value), (id_type, len(value))
+
+
+# ── criterion 7: validation ──────────────────────────────────────────────────
+
+INVALID_BODIES = {
+    "kind_type_mismatch": body(kind="company", ids=(("passport", SENTINEL_ID),), display_name=SENTINEL_NAME),
+    "person_npwp": body(kind="person", ids=(("npwp", "6054321098765432"), ("passport", SENTINEL_ID)), display_name=SENTINEL_NAME),
+    "failing_validator": body(ids=(("passport", "ZQ447"),), display_name=SENTINEL_NAME),
+    "yearless_ahu": body(kind="company", ids=(("ahu", "AHU-7731.AH.04.09"),), display_name=SENTINEL_NAME),
+    "duplicate_key": body(ids=(("passport", SENTINEL_ID), ("passport", "zzsent-0001")), display_name=SENTINEL_NAME),
+    "nested_invalid": {
+        **body(ids=(("passport", SENTINEL_ID),), display_name=SENTINEL_NAME),
+        "identifiers": [
+            {"type": "passport", "value": SENTINEL_ID, "evidence": {"files": SENTINEL_NAME}}
+        ],
+    },
+    "nested_unknown_key": {
+        **body(ids=(("passport", SENTINEL_ID),), display_name=SENTINEL_NAME),
+        "identifiers": [{"type": "passport", "value": SENTINEL_ID, SENTINEL_NAME: 1}],
+    },
+    "unknown_top_key": {**body(ids=(("passport", SENTINEL_ID),)), SENTINEL_NAME: SENTINEL_ID},
+    "bad_date": body(ids=(("passport", SENTINEL_ID),), date_of_birth=SENTINEL_NAME),
+    "not_an_object": [SENTINEL_NAME, SENTINEL_ID],
+    "malformed_json": '{"kind": "person", "display_name": "' + SENTINEL_NAME + '", "identifiers": [',
+}  # fmt: skip
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", sorted(INVALID_BODIES))
+async def test_c7_invalid_bodies_are_422_write_nothing_and_echo_nothing(
+    writes, pool, conn, enabled, case
+):
+    stack = Stack(pool, middleware=False)
+    async with writes_nothing(conn):
+        resp = await post(stack, INVALID_BODIES[case])
+    assert resp.status_code == 422, resp.text
+    assert SENTINEL_NAME not in resp.text and SENTINEL_ID not in resp.text
+    assert "zzsent" not in resp.text.lower() and "Sentinel" not in resp.text
+    detail = resp.json()["detail"]
+    assert detail and all(set(item) == {"loc", "code"} for item in detail)
+
+
+@pytest.mark.asyncio
+async def test_c7_codes_name_the_failure(writes, pool, enabled):
+    stack = Stack(pool, middleware=False)
+    codes = {}
+    for case in ("kind_type_mismatch", "failing_validator", "duplicate_key", "malformed_json"):
+        codes[case] = (await post(stack, INVALID_BODIES[case])).json()["detail"][0]["code"]
+    assert codes == {
+        "kind_type_mismatch": "kind_type_mismatch",
+        "failing_validator": "invalid_identifier",
+        "duplicate_key": "duplicate_identifier",
+        "malformed_json": "json_invalid",
+    }
+    odd = (await post(stack, INVALID_BODIES["nested_unknown_key"])).json()["detail"][0]
+    assert odd["loc"][-1] == "_" and odd["code"] == "extra_forbidden"
+
+
+# ── criterion 8: auth and dry run ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_c8_flag_off_is_503_even_with_a_valid_key(writes, pool, monkeypatch):
+    monkeypatch.setattr(settings, "related_subject_registry_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "wa_mirror_crm_write_key", KEY, raising=False)
+    monkeypatch.setattr(settings, "wa_mirror_crm_write_enabled", True, raising=False)
+    resp = await post(Stack(pool, middleware=False), body())
+    assert (resp.status_code, resp.json()) == (503, {"detail": "registry_unavailable"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Content-Type": "application/json"},
+        {"Content-Type": "application/json", "X-CRM-Write-Key": "nope"},
+        {"Content-Type": "application/json", "X-CRM-Write-Key": ""},
+        {"Content-Type": "application/json", "Authorization": "Bearer portal-token-probe"},
+    ],
+)
+async def test_c8_wrong_or_missing_key_is_401(writes, pool, enabled, headers):
+    resp = await post(Stack(pool, middleware=False), body(), headers)
+    assert (resp.status_code, resp.json()) == (401, {"detail": "unauthorized"})
+
+
+@pytest.mark.asyncio
+async def test_c8_key_comparison_is_constant_time(writes, pool, enabled, monkeypatch):
+    import hmac
+
+    calls = []
+    real = hmac.compare_digest
+    monkeypatch.setattr(hmac, "compare_digest", lambda a, b: calls.append(1) or real(a, b))
+    resp = await post(Stack(pool, middleware=False), body(dry_run=True))
+    assert resp.status_code == 200 and calls == [1]
+
+
+@pytest.mark.asyncio
+async def test_c8_unconfigured_key_is_401_not_open(writes, pool, monkeypatch):
+    monkeypatch.setattr(settings, "related_subject_registry_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "wa_mirror_crm_write_key", None, raising=False)
+    resp = await post(Stack(pool, middleware=False), body(), {"X-CRM-Write-Key": ""})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_c8_dry_run_absent_and_true_write_nothing_on_every_outcome(
+    writes, pool, conn, enabled
+):
+    stack = Stack(pool, middleware=False)
+    await _crm_fixtures(conn)
+    owner = ("nik", "3201234567890123"), ("passport", "ZZ0000001")
+
+    def variants(payload):
+        absent = {k: v for k, v in payload.items() if k != "dry_run"}
+        return [absent, {**payload, "dry_run": True}]
+
+    async with writes_nothing(conn):
+        for payload in variants(body(ids=owner)):  # empty registry
+            resp = await post(stack, payload)
+            assert resp.json() == {"outcome": "would_create", "dry_run": True}
+
+    await _seed(conn)
+    cases = {
+        "already_registered": body(ids=owner),
+        "conflict": body(ids=(("passport", "ZZ0000001"),)),
+        "existing_client": body(ids=(("passport", "AB123456"),)),
+        "existing_family_member": body(ids=(("passport", "EF777888"),)),
+        "existing_company": body(kind="company", ids=(("npwp", "0123456789012345"),)),
+        "would_create": body(ids=(("passport", "ZZ0000077"),)),
+    }
+    async with writes_nothing(conn):
+        for outcome, payload in cases.items():
+            for variant in variants(payload):
+                resp = await post(stack, variant)
+                assert resp.json()["outcome"] == outcome and resp.json()["dry_run"] is True
+
+
+# ── criterion 9: privacy ─────────────────────────────────────────────────────
+
+
+class _Boom:
+    """Pool whose connections fail like a database that echoes the statement values."""
+
+    def __init__(self, exc):
+        self.exc = exc
+
+    def acquire(self):
+        exc = self.exc
+
+        class _Ctx:
+            async def __aenter__(_s):
+                class _C:
+                    def transaction(self):
+                        raise exc
+
+                return _C()
+
+            async def __aexit__(_s, *a):
+                return False
+
+        return _Ctx()
+
+
+async def _asgi_post(app, receive):
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST",
+        "scheme": "http", "path": URL, "raw_path": URL.encode(), "query_string": b"",
+        "root_path": "", "client": ("127.0.0.1", 1), "server": ("test", 80), "state": {},
+        "headers": [
+            (b"x-crm-write-key", KEY.encode()),
+            (b"content-type", b"application/json"),
+            (b"user-agent", b"probe"),
+        ],
+    }  # fmt: skip
+    await app(scope, receive, send)
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    text = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+    return start["status"], text.decode(), str(start["headers"])
+
+
+async def _privacy_run(pool, conn, caplog, setup, payload, *, expect_status):
+    stack = Stack(pool)
+    setup(stack)
+    resp = await post(stack, payload)
+    assert resp.status_code == expect_status, resp.text
+    return resp, stack
+
+
+SECRET_BODY = body(display_name=SENTINEL_NAME, ids=(("passport", SENTINEL_ID),))
+
+
+@pytest.mark.asyncio
+async def test_c9_privacy_on_success_and_conflict(
+    writes, pool, conn, enabled, audit_logger, caplog
+):
+    writes("related_subjects", "related_subject_identifiers", "api_audit_trail")
+    await _privacy_run(pool, conn, caplog, lambda s: None, SECRET_BODY, expect_status=200)
+    resp, _ = await _privacy_run(
+        pool, conn, caplog, lambda s: None,
+        body(display_name=SENTINEL_NAME, ids=(("passport", SENTINEL_ID), ("passport", "ZZ0000002"))),
+        expect_status=200,
+    )  # fmt: skip
+    assert resp.json()["outcome"] == "conflict"
+
+
+@pytest.mark.asyncio
+async def test_c9_privacy_on_422(writes, pool, conn, enabled, audit_logger, caplog):
+    writes("api_audit_trail")
+    for case in sorted(INVALID_BODIES):
+        await _privacy_run(
+            pool, conn, caplog, lambda s: None, INVALID_BODIES[case], expect_status=422
+        )
+
+
+@pytest.mark.asyncio
+async def test_c9_privacy_on_a_forced_database_error(
+    writes, pool, conn, enabled, audit_logger, caplog
+):
+    writes("api_audit_trail")
+    leaky = asyncpg.UniqueViolationError(
+        f"duplicate key value violates unique constraint: Key (id_norm)=({SENTINEL_ID}) {SENTINEL_NAME}"
+    )
+
+    def setup(stack):
+        stack.app.state.db_pool = _Boom(leaky)
+
+    resp, _ = await _privacy_run(pool, conn, caplog, setup, SECRET_BODY, expect_status=503)
+    assert resp.json() == {"detail": "database_error"}
+
+
+@pytest.mark.asyncio
+async def test_c9_privacy_on_an_unexpected_service_failure(
+    writes, pool, conn, enabled, audit_logger, caplog
+):
+    writes("api_audit_trail")
+    resp, stack = await _privacy_run(
+        pool, conn, caplog,
+        lambda s: setattr(s.app.state, "db_pool", _Boom(RuntimeError(SENTINEL_NAME + SENTINEL_ID))),
+        SECRET_BODY, expect_status=500,
+    )  # fmt: skip
+    assert resp.json() == {"detail": "internal_error"}
+
+
+@pytest.mark.asyncio
+async def test_c9_privacy_on_injected_body_parsing_failure(
+    writes, pool, conn, enabled, audit_logger, caplog, monkeypatch
+):
+    writes("api_audit_trail")
+
+    def boom(*a, **kw):
+        raise RuntimeError(f"{SENTINEL_NAME} {SENTINEL_ID}")
+
+    monkeypatch.setattr(route_module.RelatedSubjectRegisterRequest, "model_validate_json", boom)
+    resp, _ = await _privacy_run(pool, conn, caplog, lambda s: None, SECRET_BODY, expect_status=500)
+    assert resp.json() == {"detail": "internal_error"}
+
+
+@pytest.mark.asyncio
+async def test_c9_privacy_on_injected_auth_dependency_failure(
+    writes, pool, conn, enabled, audit_logger, caplog
+):
+    writes("api_audit_trail")
+
+    async def broken():
+        raise RuntimeError(f"{SENTINEL_NAME} {SENTINEL_ID}")
+
+    def setup(stack):
+        stack.app.dependency_overrides[route_module.verify_related_subject_write] = broken
+
+    resp, _ = await _privacy_run(pool, conn, caplog, setup, SECRET_BODY, expect_status=500)
+    assert resp.json() == {"detail": "internal_error"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["http_503_with_detail", "runtime_error"])
+async def test_c9_privacy_on_injected_pool_dependency_failure(
+    writes, pool, conn, enabled, audit_logger, caplog, kind
+):
+    writes("api_audit_trail")
+
+    def broken():
+        if kind == "runtime_error":
+            raise RuntimeError(f"{SENTINEL_NAME} {SENTINEL_ID}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"The database connection pool is not initialized. Initialization error: {SENTINEL_NAME} {SENTINEL_ID}",
+            headers={"X-Error-Type": SENTINEL_ID},
+        )
+
+    def setup(stack):
+        stack.app.dependency_overrides[get_database_pool] = broken
+
+    resp, _ = await _privacy_run(
+        pool, conn, caplog, setup, SECRET_BODY,
+        expect_status=500 if kind == "runtime_error" else 503,
+    )  # fmt: skip
+    assert SENTINEL_ID not in str(resp.headers)
+
+
+@pytest.mark.asyncio
+async def test_c9_oversized_body_is_refused_with_a_fixed_code(writes, pool, enabled):
+    resp = await post(Stack(pool, middleware=False), "x" * (route_module.MAX_BODY_BYTES + 1))
+    assert resp.status_code == 422 and resp.json()["detail"][0]["code"] == "too_long"
+
+
+LEAKY = f"{SENTINEL_NAME} {SENTINEL_ID}"
+
+
+class _Hostile(Exception):
+    def __str__(self):
+        raise ValueError(LEAKY)
+
+    def __repr__(self):
+        raise ValueError(LEAKY)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [499, 600, 0, 402, 404, 418])
+async def test_c9_privacy_on_a_dependency_http_exception_with_any_status(
+    writes, pool, conn, enabled, audit_logger, caplog, status
+):
+    writes("api_audit_trail")
+
+    async def broken():
+        raise HTTPException(status_code=status, detail=LEAKY, headers={"X-Leak": SENTINEL_ID})
+
+    def setup(stack):
+        stack.app.dependency_overrides[route_module.verify_related_subject_write] = broken
+
+    resp, _ = await _privacy_run(pool, conn, caplog, setup, SECRET_BODY, expect_status=500)
+    assert resp.json() == {"detail": "internal_error"} and "x-leak" not in resp.headers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("status", "code"), [(401, "unauthorized"), (503, "registry_unavailable")])
+async def test_c9_a_dependency_http_exception_keeps_only_its_fixed_code(
+    writes, pool, conn, enabled, audit_logger, caplog, status, code
+):
+    writes("api_audit_trail")
+
+    async def broken():
+        raise HTTPException(status_code=status, detail=LEAKY)
+
+    def setup(stack):
+        stack.app.dependency_overrides[route_module.verify_related_subject_write] = broken
+
+    resp, _ = await _privacy_run(pool, conn, caplog, setup, SECRET_BODY, expect_status=status)
+    assert resp.json() == {"detail": code}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("where", ["auth", "pool"])
+async def test_c9_privacy_on_an_exception_whose_text_cannot_be_rendered(
+    writes, pool, conn, enabled, audit_logger, caplog, where
+):
+    writes("api_audit_trail")
+
+    async def broken_auth():
+        raise _Hostile()
+
+    def broken_pool():
+        raise _Hostile()
+
+    def setup(stack):
+        if where == "auth":
+            stack.app.dependency_overrides[route_module.verify_related_subject_write] = broken_auth
+        else:
+            stack.app.dependency_overrides[get_database_pool] = broken_pool
+
+    resp, _ = await _privacy_run(pool, conn, caplog, setup, SECRET_BODY, expect_status=500)
+    assert resp.json() == {"detail": "internal_error"}
+
+
+@pytest.mark.asyncio
+async def test_c9_privacy_when_reading_the_body_fails(
+    writes, pool, conn, enabled, audit_logger, caplog
+):
+    writes("api_audit_trail")
+    stack = Stack(pool)
+    tokens = forbidden_tokens(SECRET_BODY) | {t.lower() for t in (LEAKY,)}
+    trace_before = set(request_tracing._trace_storage)
+
+    async def receive():
+        raise RuntimeError(LEAKY)
+
+    with capture_logs() as records:
+        status, text, headers = await _asgi_post(stack.app, receive)
+    assert status == 500 and json.loads(text) == {"detail": "internal_error"}
+    await observe(stack, tokens, text + headers, records, trace_before)
+
+
+@pytest.mark.asyncio
+async def test_c9_privacy_when_pool_acquisition_fails(
+    writes, pool, conn, enabled, audit_logger, caplog
+):
+    writes("api_audit_trail")
+
+    def setup(stack):
+        stack.app.state.db_pool = _PoolOf(pool, fail_enter=RuntimeError(LEAKY))
+
+    resp, _ = await _privacy_run(pool, conn, caplog, setup, SECRET_BODY, expect_status=500)
+    assert resp.json() == {"detail": "internal_error"}
+
+    def setup_db(stack):
+        stack.app.state.db_pool = _PoolOf(pool, fail_enter=asyncpg.PostgresError(LEAKY))
+
+    resp, _ = await _privacy_run(pool, conn, caplog, setup_db, SECRET_BODY, expect_status=503)
+    assert resp.json() == {"detail": "database_error"}
+
+
+@pytest.mark.asyncio
+async def test_c9_privacy_when_releasing_the_connection_fails(
+    writes, pool, conn, enabled, audit_logger, caplog
+):
+    writes("related_subjects", "related_subject_identifiers", "api_audit_trail")
+
+    def setup(stack):
+        stack.app.state.db_pool = _PoolOf(pool, fail_exit=RuntimeError(LEAKY))
+
+    resp, _ = await _privacy_run(pool, conn, caplog, setup, SECRET_BODY, expect_status=500)
+    assert resp.json() == {"detail": "internal_error"}
+    # The work had committed before the release failed: a replay finds it, nothing is doubled.
+    assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("factory", "status", "code"),
+    [
+        (lambda: RuntimeError(LEAKY), 500, "internal_error"),
+        (lambda: asyncpg.QueryCanceledError(LEAKY), 503, "database_error"),
+        (lambda: asyncpg.SerializationError(LEAKY), 503, "registry_busy"),
+    ],
+    ids=["runtime", "database", "serialization-twice"],
+)
+async def test_c9_privacy_when_the_commit_fails(
+    writes, pool, conn, enabled, audit_logger, caplog, factory, status, code
+):
+    writes("api_audit_trail")
+
+    def setup(stack):
+        stack.app.state.db_pool = _PoolOf(pool, lambda c: _CommitConn(c, 2, factory))
+
+    async with writes_only(conn, {"api_audit_trail"}):
+        resp, _ = await _privacy_run(pool, conn, caplog, setup, SECRET_BODY, expect_status=status)
+    assert resp.json() == {"detail": code}
+
+
+@pytest.mark.asyncio
+async def test_c9_privacy_when_building_the_success_response_fails(
+    writes, pool, conn, enabled, audit_logger, caplog, monkeypatch
+):
+    writes("related_subjects", "related_subject_identifiers", "api_audit_trail")
+
+    def boom(*a, **kw):
+        raise RuntimeError(LEAKY)
+
+    monkeypatch.setattr(route_module, "JSONResponse", boom)
+    resp, _ = await _privacy_run(pool, conn, caplog, lambda s: None, SECRET_BODY, expect_status=500)
+    assert resp.json() == {"detail": "internal_error"}
+
+
+class _Stop(BaseException):
+    pass
+
+
+@pytest.mark.asyncio
+async def test_c9_a_base_exception_that_is_not_an_exception_still_propagates(writes, pool, enabled):
+    async def stop():
+        raise _Stop()
+
+    stack = Stack(pool, middleware=False)
+    stack.app.dependency_overrides[route_module.verify_related_subject_write] = stop
+    with pytest.raises(_Stop):
+        await post(stack, SECRET_BODY)
+
+
+@pytest.mark.asyncio
+async def test_c9_the_failure_answer_cannot_raise(monkeypatch):
+    monkeypatch.setattr(route_module.logger, "error", lambda *a, **k: 1 / 0)
+    assert route_module._failure_response(_Hostile()).status_code == 500
+
+    class _Liar(Exception):
+        @property
+        def __class__(self):
+            raise ValueError(LEAKY)
+
+    assert route_module._failure_response(_Liar()).body == b'{"detail": "internal_error"}'
+
+
+# ── criterion 10: portal ─────────────────────────────────────────────────────
+
+
+def test_c10_router_is_not_a_portal_route_and_portal_roles_are_refused():
+    paths = {r.path for r in route_module.router.routes}
+    assert paths == {URL}
+    assert not any(p.startswith("/api/portal") for p in paths)
+    for role in ("client", "partner"):
+        assert role_boundary_refuses("POST", URL, role) is True
+
+
+def test_c10_no_portal_router_module_includes_the_registry():
+    routers = MIGRATIONS.parents[1] / "app" / "routers"
+    for source in routers.glob("portal*.py"):
+        assert "crm_related_subjects" not in source.read_text()
+
+
+# ── criterion 11: migration ──────────────────────────────────────────────────
+
+
+def test_c11_migration_is_361_alone_and_rollback_drops_both_tables():
+    numbered = sorted(p.name for p in MIGRATIONS.glob("361_*.sql"))
+    assert numbered == ["361_related_subjects_registry.sql"]
+    _, rollback = split_migration_sql(MIGRATION.read_text())
+    assert rollback is not None
+    assert "DROP TABLE IF EXISTS related_subject_identifiers" in rollback
+    assert "DROP TABLE IF EXISTS related_subjects" in rollback
+
+
+@pytest.mark.asyncio
+async def test_c11_database_refuses_short_duplicate_and_self_merged_rows(writes, conn):
+    writes("related_subjects", "related_subject_identifiers")
+    sid = await conn.fetchval(
+        "INSERT INTO related_subjects (kind, evidence, created_by) VALUES ('person', '{}', 'x') RETURNING id"
+    )
+    insert = (
+        "INSERT INTO related_subject_identifiers (id_type, id_norm, id_raw, norm_version, subject_id) "
+        "VALUES ($1, $2, $2, 1, $3)"
+    )
+    with pytest.raises(asyncpg.CheckViolationError):
+        await conn.execute(insert, "passport", "ABC", sid)
+    await conn.execute(insert, "passport", "ABCD1234", sid)
+    with pytest.raises(asyncpg.UniqueViolationError):
+        await conn.execute(insert, "passport", "ABCD1234", sid)
+    with pytest.raises(asyncpg.CheckViolationError):
+        await conn.execute(insert, "visa", "ABCD1234", sid)
+    with pytest.raises(asyncpg.CheckViolationError):
+        await conn.execute("UPDATE related_subjects SET merged_into = id WHERE id = $1", sid)
+    with pytest.raises(asyncpg.CheckViolationError):
+        await conn.execute(
+            "INSERT INTO related_subjects (kind, evidence, created_by) VALUES ('robot', '{}', 'x')"
+        )
+    await conn.execute("DELETE FROM related_subjects WHERE id = $1", sid)
+    assert await conn.fetchval("SELECT count(*) FROM related_subject_identifiers") == 0
+
+
+@pytest.mark.asyncio
+async def test_c11_rollback_section_drops_both_tables(writes, pool):
+    _, rollback = split_migration_sql(MIGRATION.read_text())
+    async with pool.acquire() as c:
+        await c.execute(rollback)
+        left = await c.fetchval(
+            "SELECT count(*) FROM information_schema.tables "
+            "WHERE table_schema = current_schema() AND table_name = ANY($1::text[])",
+            sorted(NEW_TABLES),
+        )
+    assert left == 0

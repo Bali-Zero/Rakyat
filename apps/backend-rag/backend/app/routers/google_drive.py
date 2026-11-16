@@ -4,21 +4,152 @@ Google Drive API Router
 Handles OAuth flow and file operations for Google Drive integration.
 """
 
+import hmac
+import json
 import logging
+import os
+import re
 import secrets
+import time
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
+from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.routers.team_activity import get_admin_user
 from backend.app.utils.crm_utils import is_super_admin
+from backend.core.redis_manager import RedisManager
 from backend.services.integrations.google_drive_service import GoogleDriveService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/integrations/google-drive", tags=["Google Drive"])
+
+OAUTH_STATE_TTL_SECONDS = 600
+_STATE_NONCE_RE = re.compile(r"^[A-Za-z0-9_-]{24,128}$")
+_ATOMIC_CONSUME_LUA = (
+    "local v = redis.call('GET', KEYS[1]); "
+    "if v then redis.call('DEL', KEYS[1]) end; "
+    "return v"
+)
+# Bounded in-process fallback used ONLY in non-production environments (e.g. unit tests)
+# when RedisManager has not been initialized. Production ALWAYS fails closed without Redis.
+_NONPROD_OAUTH_STATES: dict[str, tuple[str, float]] = {}
+
+
+def _is_production_env() -> bool:
+    env = str(getattr(settings, "environment", "") or os.environ.get("ENVIRONMENT", "")).strip().lower()
+    return env in {"production", "prod"}
+
+
+def _resolve_user_id(current_user: dict[str, Any]) -> str:
+    user_id = current_user.get("user_id") or current_user.get("id")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="User ID missing from token")
+    return str(user_id)
+
+
+async def issue_oauth_state(
+    provider: str,
+    *,
+    mode: str,
+    user_id: str,
+    ttl_seconds: int = OAUTH_STATE_TTL_SECONDS,
+) -> str:
+    """Generate and persist a one-time cryptographic OAuth state nonce (TTL=600s)."""
+    nonce = secrets.token_urlsafe(32)
+    key = f"oauth_state:{provider}:{nonce}"
+    payload = json.dumps(
+        {"nonce": nonce, "provider": provider, "mode": mode, "user_id": str(user_id)},
+        separators=(",", ":"),
+    )
+
+    redis_client = RedisManager.get_instance().get_async_client()
+    if redis_client is not None:
+        try:
+            await redis_client.set(key, payload, ex=ttl_seconds)
+            return nonce
+        except Exception as exc:
+            logger.error("[OAUTH] Failed to persist OAuth state for %s: %s", provider, exc)
+            raise HTTPException(status_code=503, detail="OAuth state store unavailable") from exc
+
+    if _is_production_env():
+        logger.error("[OAUTH] Redis unavailable in production; refusing to issue %s state", provider)
+        raise HTTPException(status_code=503, detail="OAuth state store unavailable")
+
+    now = time.monotonic()
+    if len(_NONPROD_OAUTH_STATES) >= 512:
+        expired = [k for k, (_, exp) in _NONPROD_OAUTH_STATES.items() if exp <= now]
+        for k in expired:
+            _NONPROD_OAUTH_STATES.pop(k, None)
+    _NONPROD_OAUTH_STATES[key] = (payload, now + ttl_seconds)
+    return nonce
+
+
+async def consume_oauth_state(
+    provider: str,
+    state: str | None,
+    *,
+    expected_modes: tuple[str, ...],
+) -> dict[str, str]:
+    """Atomically validate and one-time consume a server-issued OAuth state nonce."""
+    if not isinstance(state, str) or not _STATE_NONCE_RE.fullmatch(state):
+        raise HTTPException(status_code=400, detail="Invalid or missing OAuth state")
+
+    key = f"oauth_state:{provider}:{state}"
+    redis_client = RedisManager.get_instance().get_async_client()
+    raw: str | bytes | None = None
+
+    if redis_client is not None:
+        try:
+            getdel = getattr(redis_client, "getdel", None)
+            if callable(getdel):
+                raw = await getdel(key)
+            else:
+                raw = await redis_client.eval(_ATOMIC_CONSUME_LUA, 1, key)
+        except Exception as exc:
+            logger.error("[OAUTH] Failed to consume OAuth state for %s: %s", provider, exc)
+            raise HTTPException(status_code=403, detail="OAuth state store unavailable") from exc
+    elif _is_production_env():
+        logger.error("[OAUTH] Redis unavailable in production; rejecting %s OAuth callback", provider)
+        raise HTTPException(status_code=403, detail="OAuth state store unavailable")
+    else:
+        entry = _NONPROD_OAUTH_STATES.pop(key, None)
+        if entry is not None:
+            payload_str, expires_at = entry
+            if time.monotonic() < expires_at:
+                raw = payload_str
+
+    if raw is None:
+        raise HTTPException(status_code=400, detail="Invalid, expired, or already used OAuth state")
+
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8")
+
+    try:
+        record = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Malformed OAuth state record") from exc
+
+    stored_nonce = str(record.get("nonce") or "")
+    stored_provider = str(record.get("provider") or "")
+    stored_mode = str(record.get("mode") or "")
+    stored_user_id = str(record.get("user_id") or "")
+
+    if (
+        not stored_nonce
+        or not hmac.compare_digest(stored_nonce, state)
+        or stored_provider != provider
+        or stored_mode not in expected_modes
+        or not stored_user_id
+    ):
+        raise HTTPException(status_code=403, detail="OAuth state context mismatch")
+
+    return {"mode": stored_mode, "user_id": stored_user_id, "provider": stored_provider}
 
 
 # =========================================================================
@@ -81,7 +212,7 @@ async def get_connection_status(
     service = GoogleDriveService(db_pool)
 
     return ConnectionStatus(
-        connected=await service.is_connected(current_user["user_id"]),
+        connected=await service.is_connected(_resolve_user_id(current_user)),
         configured=service.is_configured(),
         root_folder_id=service.root_folder_id,
     )
@@ -106,19 +237,17 @@ async def get_auth_url(
             detail="Google Drive OAuth not configured. Contact administrator.",
         )
 
-    # Create state token with user ID for CSRF protection
-    state = f"{current_user['user_id']}:{secrets.token_urlsafe(32)}"
-
-    # Store state in session/cache for verification (simplified: using query param)
+    user_id = _resolve_user_id(current_user)
+    state = await issue_oauth_state("google_drive", mode="user", user_id=user_id)
     auth_url = service.get_authorization_url(state)
 
-    return {"auth_url": auth_url}
+    return {"auth_url": auth_url, "state": state}
 
 
 @router.get("/callback")
 async def oauth_callback(
-    code: str = Query(...),
-    state: str = Query(...),
+    code: str | None = Query(None),
+    state: str | None = Query(None),
     error: str | None = Query(None),
     db_pool=Depends(get_database_pool),
 ) -> RedirectResponse:
@@ -127,111 +256,49 @@ async def oauth_callback(
 
     Google redirects here after user grants consent.
     """
-    # Frontend base URL for redirects
     frontend_url = "https://kita.balizero.com"
 
-    # Handle OAuth errors
     if error:
-        logger.error("[GDRIVE] OAuth error: %s", error)
+        logger.error("[GDRIVE] OAuth error received in callback")
         return RedirectResponse(
-            url=f"{frontend_url}/settings/integrations?error={error}",
+            url=f"{frontend_url}/settings/integrations?{urlencode({'error': 'oauth_denied'})}",
             status_code=302,
         )
 
-    # Handle system user OAuth (state=system from admin auth endpoint)
-    if state == "system":
-        import os
-        from datetime import datetime, timedelta, timezone
+    if not isinstance(code, str) or not code or not isinstance(state, str) or not state:
+        raise HTTPException(status_code=400, detail="Missing OAuth code or state")
 
-        import asyncpg
-        import httpx
-
-        from backend.app.core.config import settings
-
-        client_id = settings.google_drive_client_id
-        client_secret = settings.google_drive_client_secret
-        redirect_uri = settings.google_drive_redirect_uri
-
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(
-                    "https://oauth2.googleapis.com/token",
-                    data={
-                        "client_id": client_id,
-                        "client_secret": client_secret,
-                        "code": code,
-                        "grant_type": "authorization_code",
-                        "redirect_uri": redirect_uri,
-                    },
-                )
-
-                if resp.status_code != 200:
-                    logger.error(f"[GDRIVE] System token exchange failed: {resp.text}")
-                    return RedirectResponse(
-                        url=f"{frontend_url}/settings/integrations?error=system_token_failed",
-                        status_code=302,
-                    )
-
-                data = resp.json()
-                access_token = data["access_token"]
-                refresh_token = data.get("refresh_token")
-                expires_in = data.get("expires_in", 3600)
-
-            conn = await asyncpg.connect(os.environ["DATABASE_URL"])
-            try:
-                await conn.execute(
-                    """
-                    INSERT INTO google_drive_tokens (user_id, access_token, refresh_token, expires_at, updated_at)
-                    VALUES ('SYSTEM', $1, $2, $3, NOW())
-                    ON CONFLICT (user_id) DO UPDATE SET
-                        access_token = EXCLUDED.access_token,
-                        refresh_token = COALESCE(EXCLUDED.refresh_token, google_drive_tokens.refresh_token),
-                        expires_at = EXCLUDED.expires_at,
-                        updated_at = NOW()
-                    """,
-                    access_token,
-                    refresh_token,
-                    datetime.now(tz=timezone.utc).replace(tzinfo=None)
-                    + timedelta(seconds=expires_in),
-                )
-            finally:
-                await conn.close()
-
-            logger.info("[GDRIVE] System user OAuth token renewed successfully")
-            return RedirectResponse(
-                url=f"{frontend_url}/settings/integrations?success=system_drive_connected",
-                status_code=302,
-            )
-        except Exception as e:
-            logger.error("[GDRIVE] System token exchange error: %s", e)
-            return RedirectResponse(
-                url=f"{frontend_url}/settings/integrations?error=system_token_error",
-                status_code=302,
-            )
-
-    # Extract user_id from state
-    try:
-        user_id, _ = state.split(":", 1)
-    except ValueError:
-        logger.error("[GDRIVE] Invalid state parameter")
-        return RedirectResponse(
-            url=f"{frontend_url}/settings/integrations?error=invalid_state",
-            status_code=302,
-        )
+    record = await consume_oauth_state(
+        "google_drive",
+        state,
+        expected_modes=("user", "system", "admin"),
+    )
+    is_system_flow = record["mode"] in ("system", "admin")
+    target_user_id = (
+        GoogleDriveService.SYSTEM_USER_ID if is_system_flow else record["user_id"]
+    )
 
     service = GoogleDriveService(db_pool)
 
     try:
-        await service.exchange_code(code, user_id)
-        logger.info("[GDRIVE] Successfully connected for user %s", user_id)
+        await service.exchange_code(code, target_user_id)
+        success_flag = (
+            "system_drive_connected" if is_system_flow else "google_drive_connected"
+        )
+        logger.info("[GDRIVE] OAuth token stored (system_flow=%s)", is_system_flow)
         return RedirectResponse(
-            url=f"{frontend_url}/settings/integrations?success=google_drive_connected",
+            url=f"{frontend_url}/settings/integrations?success={success_flag}",
             status_code=302,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("[GDRIVE] Token exchange failed: %s", e)
+        error_flag = (
+            "system_token_failed" if is_system_flow else "token_exchange_failed"
+        )
         return RedirectResponse(
-            url=f"{frontend_url}/settings/integrations?error=token_exchange_failed",
+            url=f"{frontend_url}/settings/integrations?error={error_flag}",
             status_code=302,
         )
 
@@ -245,7 +312,7 @@ async def disconnect(
     Disconnect Google Drive for current user.
     """
     service = GoogleDriveService(db_pool)
-    success = await service.disconnect(current_user["user_id"])
+    success = await service.disconnect(_resolve_user_id(current_user))
     return {"success": success}
 
 
@@ -256,11 +323,11 @@ async def disconnect(
 
 @router.get("/system/status")
 async def get_system_status(
+    _admin_user: dict = Depends(get_admin_user),
     db_pool=Depends(get_database_pool),
 ) -> SystemConnectionStatus:
     """
-    Check if system-wide Google Drive OAuth is connected.
-    This token is used by all team members for file operations.
+    Check if system-wide Google Drive OAuth is connected (Admin only).
     """
     service = GoogleDriveService(db_pool)
 
@@ -272,7 +339,6 @@ async def get_system_status(
     connected_as = None
     if is_connected:
         try:
-            # Make a test API call to get user info
             import httpx
 
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -297,7 +363,7 @@ async def get_system_status(
 
 @router.get("/system/authorize")
 async def get_system_auth_url(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_admin_user),
     db_pool=Depends(get_database_pool),
 ) -> dict[str, str]:
     """
@@ -306,9 +372,6 @@ async def get_system_auth_url(
     ADMIN ONLY: Only super admins can authorize.
     This connects the owner's 30TB system account for all team members.
     """
-    user_email = current_user.get("email", "")
-
-    # Check admin permission
     if not is_super_admin(current_user):
         raise HTTPException(
             status_code=403,
@@ -323,17 +386,20 @@ async def get_system_auth_url(
             detail="Google Drive OAuth non configurato. Imposta GOOGLE_DRIVE_CLIENT_ID e GOOGLE_DRIVE_CLIENT_SECRET.",
         )
 
-    # Create state token with SYSTEM marker
-    state = f"{GoogleDriveService.SYSTEM_USER_ID}:{secrets.token_urlsafe(32)}"
+    state = await issue_oauth_state(
+        "google_drive",
+        mode="system",
+        user_id=GoogleDriveService.SYSTEM_USER_ID,
+    )
     auth_url = service.get_authorization_url(state)
 
-    logger.info("[GDRIVE] Admin %s requested SYSTEM OAuth URL", user_email)
-    return {"auth_url": auth_url}
+    logger.info("[GDRIVE] Super-admin requested SYSTEM OAuth URL")
+    return {"auth_url": auth_url, "state": state}
 
 
 @router.post("/system/disconnect")
 async def disconnect_system(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_admin_user),
     db_pool=Depends(get_database_pool),
 ) -> dict[str, Any]:
     """
@@ -341,9 +407,6 @@ async def disconnect_system(
 
     ADMIN ONLY: Only admin emails can disconnect the SYSTEM account.
     """
-    user_email = current_user.get("email", "")
-
-    # Check admin permission
     if not is_super_admin(current_user):
         raise HTTPException(
             status_code=403,
@@ -353,12 +416,12 @@ async def disconnect_system(
     service = GoogleDriveService(db_pool)
     success = await service.disconnect(GoogleDriveService.SYSTEM_USER_ID)
 
-    logger.info("[GDRIVE] Admin %s disconnected SYSTEM OAuth", user_email)
+    logger.info("[GDRIVE] Super-admin disconnected SYSTEM OAuth")
     return {"success": success, "message": "Sistema Google Drive disconnesso"}
 
 
 # =========================================================================
-# FILE OPERATIONS
+# FILE OPERATIONS (ADMIN ONLY — raw SYSTEM Drive view)
 # =========================================================================
 
 
@@ -367,13 +430,11 @@ async def list_files(
     folder_id: str | None = Query(None, description="Folder ID (default: root)"),
     page_token: str | None = Query(None, description="Pagination token"),
     page_size: int = Query(50, ge=1, le=100),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_admin_user),
     db_pool=Depends(get_database_pool),
 ) -> FileListResponse:
     """
-    List files in a folder.
-
-    Files are filtered based on user's Google Drive permissions.
+    List files in a folder (Admin only on direct SYSTEM Drive router).
     """
     service = GoogleDriveService(db_pool)
 
@@ -410,7 +471,8 @@ async def list_files(
         # Get breadcrumb path
         breadcrumb = []
         if folder_id:
-            breadcrumb = await service.get_folder_path(current_user["user_id"], folder_id)
+            actor_id = str(current_user.get("user_id") or current_user.get("id") or "SYSTEM")
+            breadcrumb = await service.get_folder_path(actor_id, folder_id)
 
         return FileListResponse(
             files=files,
@@ -425,11 +487,11 @@ async def list_files(
 @router.get("/files/{file_id}")
 async def get_file(
     file_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_admin_user),
     db_pool=Depends(get_database_pool),
 ) -> FileItem:
     """
-    Get file metadata.
+    Get file metadata (Admin only on direct SYSTEM Drive router).
     """
     service = GoogleDriveService(db_pool)
 
@@ -459,11 +521,11 @@ async def get_file(
 async def search_files(
     q: str = Query(..., min_length=2, description="Search query"),
     page_size: int = Query(20, ge=1, le=50),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_admin_user),
     db_pool=Depends(get_database_pool),
 ) -> list[FileItem]:
     """
-    Search files by name.
+    Search files by name (Admin only on direct SYSTEM Drive router).
     """
     service = GoogleDriveService(db_pool)
 

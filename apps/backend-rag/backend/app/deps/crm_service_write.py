@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hmac
+
 from fastapi import HTTPException, Request
 
 
@@ -23,3 +25,21 @@ async def verify_crm_write_key(request: Request) -> str:
     if not configured or not provided or provided != configured:
         raise HTTPException(status_code=401, detail="invalid or missing X-CRM-Write-Key")
     return "wa-mirror-crm-writer@balizero.com"
+
+
+async def verify_related_subject_write(request: Request) -> str:
+    """Gate of the related-subject registry: its own flag plus the scoped CRM write key.
+
+    The WA Mirror flag does not open this route; ``RELATED_SUBJECT_REGISTRY_ENABLED``
+    does, and it is off by default (503). The key comparison is constant-time.
+    """
+    from backend.app.core.config import settings as _settings
+    from backend.services.crm.related_subjects import REGISTRY_ACTOR
+
+    if not getattr(_settings, "related_subject_registry_enabled", False):
+        raise HTTPException(status_code=503, detail="related subject registry disabled")
+    provided = (request.headers.get("X-CRM-Write-Key") or "").strip().encode()
+    configured = (getattr(_settings, "wa_mirror_crm_write_key", None) or "").strip().encode()
+    if not configured or not provided or not hmac.compare_digest(provided, configured):
+        raise HTTPException(status_code=401, detail="invalid or missing X-CRM-Write-Key")
+    return REGISTRY_ACTOR

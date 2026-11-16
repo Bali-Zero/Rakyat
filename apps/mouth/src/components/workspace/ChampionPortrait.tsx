@@ -34,6 +34,25 @@ const FACE_FRAMING: Record<string, readonly [number, number, number]> = {
   "vino.jpg": [50, 34, 1.35],
   "zainal-ceo.jpg": [50, 34, 1.35],
   "zero.jpg": [50, 34, 1.35],
+  // Group-staff A1 portraits: face centre measured with Apple Vision on the
+  // processed 640x800 files; zoom kept low enough to show the hair.
+  "zainal-a1.jpg": [40, 43, 1.5],
+  "heru-a1.jpg": [49, 39, 1.7],
+  "dian.jpg": [57, 46, 1.5],
+  "adi.jpg": [58, 46, 1.5],
+  "agus.jpg": [41, 42, 1.5],
+  "farid.jpg": [45, 48, 1.5],
+  "nanang.jpg": [46, 39, 1.5],
+  "yoyok.jpg": [43, 49, 1.5],
+  "yudi.jpg": [43, 43, 1.5],
+  "megi.jpg": [43, 43, 1.5],
+  "david.jpg": [42, 42, 1.5],
+  "novi.jpg": [44, 42, 1.5],
+  "lia.jpg": [53, 52, 1.5],
+  "yanti.jpg": [43, 47, 1.6],
+  "oman.jpg": [62, 38, 1.5],
+  "dini.jpg": [61, 52, 1.5],
+  "ropik.jpg": [55, 33, 1.6],
 };
 
 /**
