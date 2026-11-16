@@ -17951,6 +17951,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/wa/messages/search": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Search Wa Mirror Messages
+     * @description Search message bodies and text extracted from media (OCR, PDF, docs).
+     */
+    get: operations["search_wa_mirror_messages_api_wa_messages_search_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/war-room/metrics/costs": {
     parameters: {
       query?: never;
@@ -29854,6 +29874,72 @@ export interface components {
       limit: number;
       /** Offset */
       offset: number;
+    };
+    /**
+     * WaMirrorSearchHit
+     * @description A message response plus where the search term matched.
+     */
+    WaMirrorSearchHit: {
+      /**
+       * Attention Priority
+       * @description HIGH | MEDIUM | LOW | None
+       */
+      attention_priority?: string | null;
+      /** Attention Reason */
+      attention_reason?: string[] | null;
+      /**
+       * Attention Resolved
+       * @default false
+       */
+      attention_resolved: boolean;
+      /** Body */
+      body: string;
+      /** Body Truncated */
+      body_truncated: boolean;
+      /** Client Id */
+      client_id: number | null;
+      /** Counterpart Phone */
+      counterpart_phone: string | null;
+      /** Direction */
+      direction: string;
+      /** Has Media */
+      has_media: boolean;
+      /** Has Ocr */
+      has_ocr: boolean;
+      /** Id */
+      id: number;
+      /** Match In Media */
+      match_in_media: boolean;
+      /** Media Mime */
+      media_mime: string | null;
+      /** Media Type */
+      media_type: string;
+      /**
+       * Message Date
+       * Format: date-time
+       */
+      message_date: string;
+      /** Practice Id */
+      practice_id: number | null;
+      /** Snippet */
+      snippet?: string | null;
+      /**
+       * Source
+       * @default wa_mirror
+       */
+      source: string;
+      /** Team Member Phone */
+      team_member_phone: string | null;
+    };
+    /**
+     * WaMirrorSearchResponse
+     * @description wa-mirror search response.
+     */
+    WaMirrorSearchResponse: {
+      /** Items */
+      items: components["schemas"]["WaMirrorSearchHit"][];
+      /** Limit */
+      limit: number;
     };
     /** WaPackageBuildRequest */
     WaPackageBuildRequest: {
@@ -57863,6 +57949,41 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["WaMirrorMessagesResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  search_wa_mirror_messages_api_wa_messages_search_get: {
+    parameters: {
+      query: {
+        /** @description Search text */
+        q: string;
+        limit?: number;
+        /** @description Restrict to a CRM client id */
+        client_id?: number | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WaMirrorSearchResponse"];
         };
       };
       /** @description Validation Error */
