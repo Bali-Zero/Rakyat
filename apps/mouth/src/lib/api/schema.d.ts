@@ -28122,10 +28122,10 @@ export interface components {
        * @default true
        */
       on_payroll: boolean;
-      /** Ptkp Status */
-      ptkp_status?: string | null;
       /** Position */
       position?: string | null;
+      /** Ptkp Status */
+      ptkp_status?: string | null;
       /** Religion */
       religion?: string | null;
       /** Role */
