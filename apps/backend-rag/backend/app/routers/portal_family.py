@@ -3,6 +3,11 @@ Portal Family Router.
 
 Returns the authenticated client's family members from
 `client_family_members`, split into adults/minors by date_of_birth.
+
+Passport number and date of birth leave this route masked, with the same
+masks as the profile endpoint: passport keeps its last 3 characters, date of
+birth keeps its year (DAI-149). There is no family reveal endpoint. The
+adult/minor split runs on the full date before masking.
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.app.dependencies import get_database_pool
-from backend.app.routers.portal import get_current_client
+from backend.app.routers.portal import _mask_passport_number, get_current_client
 from backend.app.utils.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -36,10 +41,11 @@ def _shape_member(row: asyncpg.Record) -> dict[str, Any]:
         "id": row["id"],
         "full_name": row["full_name"],
         "relationship": row["relationship"],
-        "date_of_birth": dob.isoformat() if dob else None,
+        "date_of_birth": str(dob.year) if dob else None,
         "is_adult": _is_adult(dob),
         "nationality": row["nationality"],
-        "passport_number": row["passport_number"],
+        "passport_number": _mask_passport_number(row["passport_number"]),
+        "identity_masked": True,
         "passport_expiry": row["passport_expiry"].isoformat() if row["passport_expiry"] else None,
         "visa_type": row["current_visa_type"],
         "visa_expiry": row["visa_expiry"].isoformat() if row["visa_expiry"] else None,
