@@ -432,11 +432,6 @@ _OAUTH = (
         "Google Drive OAuth callback — required by OAuth 2.0 flow",
     ),
     PublicEndpoint(
-        "/api/integrations/google-drive/system/status",
-        Category.OAUTH_CALLBACK,
-        "OAuth status check — REVIEW: should require auth",
-    ),
-    PublicEndpoint(
         "/api/admin/drive/health",
         Category.OAUTH_CALLBACK,
         "Drive health check — public status for diagnostics",

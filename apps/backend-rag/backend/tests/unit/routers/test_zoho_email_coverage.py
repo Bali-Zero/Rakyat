@@ -172,54 +172,51 @@ def test_oauth_callback_with_error_param(client, mock_oauth_service):
 
 
 def test_oauth_callback_missing_code(client, mock_oauth_service):
-    """Should redirect with missing_params when code absent."""
-    with (
-        patch("backend.app.routers.zoho_email._get_oauth_service", return_value=mock_oauth_service),
-        patch("backend.app.routers.zoho_email.settings") as mock_settings,
+    """Should reject with 400 when authorization code or state is absent."""
+    with patch(
+        "backend.app.routers.zoho_email._get_oauth_service", return_value=mock_oauth_service
     ):
-        mock_settings.frontend_url = "https://kita.balizero.com"
         response = client.get("/api/integrations/zoho/callback?state=user:token")
-    assert response.status_code in (302, 307)
-    assert "error=missing_params" in response.headers.get("location", "")
+    assert response.status_code == 400
 
 
 def test_oauth_callback_invalid_state_format(client, mock_db_pool, mock_oauth_service):
-    """Should redirect with invalid_state for malformed state."""
-    with (
-        patch("backend.app.routers.zoho_email._get_oauth_service", return_value=mock_oauth_service),
-        patch("backend.app.routers.zoho_email.settings") as mock_settings,
+    """Should fail closed (400/403) for malformed or unissued forged state."""
+    with patch(
+        "backend.app.routers.zoho_email._get_oauth_service", return_value=mock_oauth_service
     ):
-        mock_settings.frontend_url = "https://kita.balizero.com"
-        response = client.get("/api/integrations/zoho/callback?code=auth_code&state=invalidstate")
-    assert response.status_code in (302, 307)
-    assert "error=invalid_state" in response.headers.get("location", "")
+        resp_malformed = client.get("/api/integrations/zoho/callback?code=auth_code&state=invalidstate")
+        resp_forged = client.get(
+            "/api/integrations/zoho/callback?code=auth_code&state=user-uuid-123:forged_token"
+        )
+    assert resp_malformed.status_code in (400, 403)
+    assert resp_forged.status_code in (400, 403)
 
 
 def test_oauth_callback_success(client, mock_oauth_service):
-    """Should redirect with connected=true on success."""
+    """Should redirect with connected=true when a server-issued one-time state is consumed."""
     with (
         patch("backend.app.routers.zoho_email._get_oauth_service", return_value=mock_oauth_service),
         patch("backend.app.routers.zoho_email.settings") as mock_settings,
     ):
-        mock_settings.frontend_url = "https://kita.balizero.com"
-        response = client.get(
-            "/api/integrations/zoho/callback?code=valid_code&state=user-uuid-123:random_token"
-        )
+        mock_settings.frontend_url = "https://app.example.test"
+        state = client.get("/api/integrations/zoho/auth/url").json()["state"]
+        response = client.get(f"/api/integrations/zoho/callback?code=valid_code&state={state}")
     assert response.status_code in (302, 307)
     assert "connected=true" in response.headers.get("location", "")
+    mock_oauth_service.exchange_code.assert_awaited_once_with("valid_code", "user-uuid-123")
 
 
 def test_oauth_callback_exchange_fails(client, mock_oauth_service):
-    """Should redirect with connection_failed when exchange raises."""
+    """Should redirect with connection_failed when exchange raises after valid state verification."""
     mock_oauth_service.exchange_code.side_effect = Exception("Exchange failed")
     with (
         patch("backend.app.routers.zoho_email._get_oauth_service", return_value=mock_oauth_service),
         patch("backend.app.routers.zoho_email.settings") as mock_settings,
     ):
-        mock_settings.frontend_url = "https://kita.balizero.com"
-        response = client.get(
-            "/api/integrations/zoho/callback?code=valid_code&state=user-uuid-123:random_token"
-        )
+        mock_settings.frontend_url = "https://app.example.test"
+        state = client.get("/api/integrations/zoho/auth/url").json()["state"]
+        response = client.get(f"/api/integrations/zoho/callback?code=valid_code&state={state}")
     assert response.status_code in (302, 307)
     assert "error=connection_failed" in response.headers.get("location", "")
 
