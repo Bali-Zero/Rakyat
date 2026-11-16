@@ -402,7 +402,16 @@ def forbidden_tokens(payload) -> set[str]:
             parsed = json.loads(text)
         except ValueError:
             parsed = None
-            found.update(re.findall(r"[A-Za-z0-9][A-Za-z0-9._\-]{3,}", text))
+            # not JSON: whole quoted strings (closed or cut off), identifier-like words that
+            # carry a digit, and the text itself. Plain words would collide with ordinary text.
+            found.update(re.findall(r'"([^"]*)"', text))
+            found.update(re.findall(r'"([^"]*)$', text))
+            found.update(
+                w
+                for w in re.findall(r"[A-Za-z0-9][A-Za-z0-9._\-]{3,}", text)
+                if re.search(r"[0-9]", w)
+            )
+            found.add(text.strip())
     if parsed is not None:
         _leaves(parsed, found)
         _identifier_forms(parsed, found)
