@@ -61,7 +61,8 @@ async def env() -> AsyncIterator[Env]:
         await admin.execute(
             f"SET search_path TO {SCHEMA};"
             "CREATE TABLE team_members (id VARCHAR(36) PRIMARY KEY, full_name TEXT,"
-            " email TEXT UNIQUE, role TEXT, department TEXT, active BOOLEAN NOT NULL DEFAULT TRUE);"
+            " email TEXT UNIQUE, role TEXT, department TEXT, active BOOLEAN NOT NULL DEFAULT TRUE,"
+            " avatar TEXT);"
             "CREATE TABLE practices (id SERIAL PRIMARY KEY, status TEXT);"
         )
         await admin.execute(UPGRADE_SQL)

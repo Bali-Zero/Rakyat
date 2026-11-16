@@ -217,6 +217,32 @@ describe("My HR page (/hr/me), off-payroll viewer", () => {
 });
 
 describe("My HR page (/hr/me)", () => {
+  it("shows the member's portrait in the header when the card carries one", async () => {
+    localStorage.setItem("auth_token", tokenFor("A"));
+    render(<MyHrPage />);
+    await waitFor(() => expect(pending).toHaveLength(1));
+    const body = overview("A");
+    body.card.avatar_url = "/static/team/contoh.jpg";
+    await act(async () => pending[0].resolve(body));
+    expect(screen.getByAltText("Made Contoh")).toHaveAttribute(
+      "src",
+      "/static/team/contoh.jpg",
+    );
+  });
+
+  it("shows initials, and no image, when the card has no avatar", async () => {
+    localStorage.setItem("auth_token", tokenFor("A"));
+    render(<MyHrPage />);
+    await waitFor(() => expect(pending).toHaveLength(1));
+    const body = overview("A");
+    body.card.avatar_url = null;
+    await act(async () => pending[0].resolve(body));
+    expect(screen.queryByAltText("Made Contoh")).toBeNull();
+    expect(screen.getByRole("img", { name: "Made Contoh" })).toHaveTextContent(
+      "MC",
+    );
+  });
+
   it("reads the overview with the bearer and renders Pay, Time and Me", async () => {
     const token = tokenFor("A");
     localStorage.setItem("auth_token", token);

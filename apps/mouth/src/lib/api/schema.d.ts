@@ -25726,6 +25726,8 @@ export interface components {
     PersonRow: {
       /** Active */
       active: boolean;
+      /** Avatar Url */
+      avatar_url?: string | null;
       /** Department */
       department: string | null;
       /** Employee Id */
@@ -28070,6 +28072,8 @@ export interface components {
     StaffCard: {
       /** Address */
       address?: string | null;
+      /** Avatar Url */
+      avatar_url?: string | null;
       /** Bank Account */
       bank_account?: string | null;
       /** Bank Account Holder */

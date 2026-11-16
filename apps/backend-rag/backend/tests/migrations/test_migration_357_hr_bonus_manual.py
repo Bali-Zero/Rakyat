@@ -54,7 +54,7 @@ def _dsn() -> str:
 
 
 _DDL = """
-CREATE TABLE team_members (id VARCHAR(36) PRIMARY KEY);
+CREATE TABLE team_members (id VARCHAR(36) PRIMARY KEY, avatar TEXT);
 CREATE TABLE practices (id SERIAL PRIMARY KEY, status TEXT);
 CREATE TABLE hr_employees (id SERIAL PRIMARY KEY,
     team_member_id VARCHAR(36) REFERENCES team_members(id));

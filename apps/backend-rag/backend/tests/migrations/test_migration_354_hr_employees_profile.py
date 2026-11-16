@@ -30,7 +30,7 @@ MIGRATION = (
 _HR_DDL = """
 CREATE TABLE team_members (
     id VARCHAR(36) PRIMARY KEY, full_name TEXT, email TEXT UNIQUE, role TEXT, department TEXT,
-    active BOOLEAN NOT NULL DEFAULT TRUE);
+    active BOOLEAN NOT NULL DEFAULT TRUE, avatar TEXT);
 CREATE TABLE hr_employees (
     id SERIAL PRIMARY KEY,
     team_member_id VARCHAR(36) NOT NULL UNIQUE REFERENCES team_members(id) ON DELETE RESTRICT,
