@@ -67,6 +67,7 @@ be disjoint).
 from __future__ import annotations
 
 import re
+import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
@@ -586,16 +587,6 @@ INTENTIONALLY_PUBLIC_MUTATIONS: tuple[IntentionalPublicMutation, ...] = (
         "(preview.py:46) is a real in-router dependency, independent of the "
         "middleware's public-path skip.",
     ),
-    IntentionalPublicMutation(
-        "POST",
-        "/api/news",
-        "CLOSED 2026-11-16 (RT-02): shares exact path '/api/news' with public "
-        "GET list_news, and is independently re-gated inside news.py::create_news "
-        "via Depends(get_admin_user) -> Depends(get_current_user) (401 on "
-        "anonymous, 403 on non-admin). Sibling admin mutations (/bulk, "
-        "/{news_id}/image, /{news_id}/status) are ALSO excluded from "
-        "PUBLIC_ENDPOINTS at the middleware layer.",
-    ),
     # ── GARUDA VOA L2/L3 (PR #4946 allowlist additions) — reviewed 2026-08-26,
     #    against the handlers in garuda_voa_public.py / garuda_orders_router.py,
     #    NOT copied from either module's own docstrings. ──
@@ -843,27 +834,30 @@ class TestPureCoreGuiltAndInnocence:
         flagged = _unaccounted([(sample_method, sample_path, True)])
         assert flagged == []
 
-    def test_innocence_known_ungated_public_mutation_passes(self) -> None:
+    def test_innocence_known_ungated_public_mutation_passes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A DECLARED hole is 'accounted for' (recorded owned debt), so it does
         NOT fail the build — that is what keeps the gate mergeable/armable."""
         if not _KNOWN_UNGATED_INDEX:
-            # 6 -> 0 ratchet complete: exercise the _ACCOUNTED membership path
-            # with a synthetic KnownUngatedMutation so the pure-core test stays
-            # meaningful when zero declared debt remains.
+            # 6 -> 0 ratchet complete: patch module _ACCOUNTED and call the REAL
+            # _unaccounted() helper directly (guilt + innocence, non-tautological).
             sample = KnownUngatedMutation(
                 "POST",
                 "/api/synthetic/declared-hole",
                 "operator[test]",
                 "ledger:SYNTHETIC",
-                "Synthetic fixture verifying _ACCOUNTED logic at zero debt.",
+                "Synthetic fixture verifying _unaccounted() against _ACCOUNTED at zero debt.",
             )
-            with_sample = _ACCOUNTED | {(sample.method, sample.path)}
-            flagged = [
-                f"{m} {p}"
-                for m, p, is_pub in [(sample.method, sample.path, True)]
-                if is_pub and (m, p) not in with_sample
+            monkeypatch.setattr(
+                sys.modules[__name__],
+                "_ACCOUNTED",
+                _ACCOUNTED | {(sample.method, sample.path)},
+            )
+            assert _unaccounted([(sample.method, sample.path, True)]) == []
+            assert _unaccounted([("POST", "/api/synthetic/unaccounted-hole", True)]) == [
+                "POST /api/synthetic/unaccounted-hole"
             ]
-            assert flagged == []
             return
         sample_method, sample_path = next(iter(_KNOWN_UNGATED_INDEX))
         flagged = _unaccounted([(sample_method, sample_path, True)])
@@ -885,7 +879,10 @@ def test_every_public_mutating_route_is_accounted_for(app: FastAPI) -> None:
     public prefix (or a widened PUBLIC_ENDPOINTS entry that newly covers an
     existing mutation) fails here immediately, forcing a reviewed decision:
     justified-safe, declared-hole, or narrow the prefix."""
-    rows = [(m, path, find_entry(path) is not None) for m, path, _ in _iter_mutating(app)]
+    rows = [
+        (m, path, find_entry(path, method=m) is not None)
+        for m, path, _ in _iter_mutating(app)
+    ]
     unaccounted = _unaccounted(rows)
     assert not unaccounted, (
         f"{len(unaccounted)} mutating route(s) bypass HybridAuthMiddleware "
@@ -916,7 +913,7 @@ def test_known_ungated_entries_are_still_live_public_and_ungated(app: FastAPI) -
         if route is None:
             stale.append(f"{e.method} {e.path} — route no longer exists (delete the entry)")
             continue
-        if find_entry(e.path) is None:
+        if find_entry(e.path, method=e.method) is None:
             stale.append(
                 f"{e.method} {e.path} — no longer public (prefix narrowed → delete the entry)"
             )
@@ -942,7 +939,11 @@ def test_no_stale_justified_entries(app: FastAPI) -> None:
     """ANTI-DECAY: a justified-safe row whose route no longer exists, or is no
     longer public, is stale — delete it (mirrors route_risk_registry.py's own
     `test_no_dead_registry_entries`)."""
-    live_public = {(m, path) for m, path, _ in _iter_mutating(app) if find_entry(path) is not None}
+    live_public = {
+        (m, path)
+        for m, path, _ in _iter_mutating(app)
+        if find_entry(path, method=m) is not None
+    }
     stale = [
         f"{e.method} {e.path}"
         for e in INTENTIONALLY_PUBLIC_MUTATIONS

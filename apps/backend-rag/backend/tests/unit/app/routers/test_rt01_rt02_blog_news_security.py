@@ -450,9 +450,14 @@ class TestRT02NewsMutationsAndDraftLockdown:
     def test_news_mutations_block_anonymous_and_non_admin(
         self, client, method: str, path: str, payload
     ):
-        # 1. Anonymous -> 401
-        anon = client.request(method, path, json=payload) if payload is not None else client.request(method, path)
+        # 1. Anonymous -> 401 enforced directly at HybridAuthMiddleware (NOT bypassed as public)
+        anon = (
+            client.request(method, path, json=payload)
+            if payload is not None
+            else client.request(method, path)
+        )
         assert anon.status_code == 401
+        assert anon.headers.get("X-Auth-Type") != "public"
 
         # 2. Non-admin -> 403
         staff_token = _mint_jwt(email="staff@example.com", role="member")

@@ -517,10 +517,11 @@ _PUBLIC_KNOWLEDGE = (
 )
 
 _MARKETING = (
-    # RT-02 (2026-11-16): replaced blanket "/api/news" prefix with exact/template
-    # entries so admin mutating routes (/api/news/bulk, /{news_id}/image,
-    # /{news_id}/status) are blocked at the middleware layer and POST /api/news
-    # is independently gated by Depends(get_admin_user) in news.py.
+    # RT-02 (2026-11-16): replaced blanket "/api/news" prefix with method-scoped
+    # exact/template entries so ALL admin mutating routes (POST /api/news,
+    # POST /api/news/bulk, POST /api/news/{news_id}/image,
+    # PATCH /api/news/{news_id}/status) are blocked at HybridAuthMiddleware AND
+    # independently gated by Depends(get_admin_user) in news.py.
     PublicEndpoint(
         "/api/news",
         Category.MARKETING,

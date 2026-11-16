@@ -62,6 +62,9 @@ def _escape_xml_text(value: str | None) -> str:
     return xml_escape(str(value), {'"': "&quot;", "'": "&apos;"})
 
 
+_cookie_verifier: Any = None
+
+
 async def _is_optional_admin(
     request: Request,
     user: dict[str, Any] | None = Depends(get_current_user_optional),
@@ -72,22 +75,15 @@ async def _is_optional_admin(
     cookie_token = get_jwt_from_cookie(request)
     if cookie_token:
         try:
-            from backend.app.core.config import settings
-            from backend.app.utils.jwt_decode import decode_jwt
-            from backend.services.security.token_revocation import is_session_revoked
+            global _cookie_verifier
+            if _cookie_verifier is None:
+                from backend.middleware.hybrid_auth import HybridAuthMiddleware
 
-            payload = decode_jwt(
-                cookie_token,
-                settings.jwt_secret_key,
-                algorithms=[settings.jwt_algorithm],
-            )
-            if payload.get("email") and not await is_session_revoked(payload):
-                cookie_user = {
-                    "email": payload.get("email"),
-                    "role": payload.get("role") or "",
-                }
-                if is_crm_admin(cookie_user):
-                    return True
+                _cookie_verifier = HybridAuthMiddleware(request.app)
+
+            cookie_user = await _cookie_verifier.authenticate_jwt_token(cookie_token)
+            if cookie_user and is_crm_admin(cookie_user):
+                return True
         except Exception:
             return False
     return False
