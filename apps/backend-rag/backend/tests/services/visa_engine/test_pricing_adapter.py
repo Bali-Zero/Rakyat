@@ -341,3 +341,38 @@ def test_onshore_conversion_falls_back_to_base_key_when_no_onshore_row_in_catalo
     assert res.pricing_key == PricingKey(
         category="kitas_permits", item_key="Custom Permit (Offshore)"
     )
+
+    # Without a catalog instance, resolve_channel_pricing_key and build_price_quote
+    # keep the verified base key rather than synthesising an unverified sibling SKU.
+    from datetime import date
+
+    from backend.services.visa_engine.pricing_adapter import (
+        PricingResolution,
+        resolve_channel_pricing_key,
+    )
+
+    base_key = PricingKey(category="kitas_permits", item_key="Custom Permit (Offshore)")
+    assert (
+        resolve_channel_pricing_key(
+            base_key, application_channel="ONSHORE_CONVERSION", pricing_catalog=None
+        )
+        == base_key
+    )
+    manual_res = PricingResolution(
+        status="AVAILABLE",
+        reason_code="PRICE_AVAILABLE",
+        evaluated_at=_NOW,
+        catalog_last_updated=date(2026, 4, 21),
+        catalog_version="2026.1",
+        catalog_sha256="a" * 64,
+        row_sha256="b" * 64,
+        amount=12_000_000,
+    )
+    quote_without_catalog = build_price_quote(
+        product,
+        manual_res,
+        decision_id=uuid.UUID("00000000-0000-4000-8000-000000000099"),
+        application_channel="ONSHORE_CONVERSION",
+    )
+    assert quote_without_catalog is not None
+    assert quote_without_catalog.pricing_key == base_key

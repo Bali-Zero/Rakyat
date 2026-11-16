@@ -157,7 +157,8 @@ describe("mapOracleFactsToApplicantFacts — full contract (acceptance test 1)",
 // visible as uncertainty and therefore preserves the human-review hold.
 // Slice A6-bis adds two more (`diaspora_documents`, `retirement_basis`),
 // nine in total; PR-M (owner ruling 2026-09-27) adds the E33F penjamin
-// sibling, `retirement_penjamin_confirmed` — ten.
+// sibling, `retirement_penjamin_confirmed` — ten; NC-08 adds
+// `secondhome_property_title` — eleven.
 describe("resolveConservativeAnswers — the wire seam (A6-2)", () => {
   it("resolves exactly the eleven declared conservative questions and retains other unsure answers", () => {
     expect(

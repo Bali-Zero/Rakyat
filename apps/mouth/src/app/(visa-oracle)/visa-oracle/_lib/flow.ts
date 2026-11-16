@@ -1174,7 +1174,7 @@ export function getCategoryQuestionIds(facts: OracleFacts): readonly string[] {
           ]
         : branch === "property"
           ? [
-              "secondhome_property_value_usd",
+              ...secondHomePropertyQuestionIds(facts),
               // `el.e33f.retirement` reads BOTH `secondhome.
               // passive_monthly_income_usd` and `family.sponsor_confirmed`
               // (fact-mapper.ts) — measured 2026-09-13: without asking

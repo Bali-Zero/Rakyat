@@ -161,10 +161,8 @@ def resolve_channel_pricing_key(
     if pricing_key is None or application_channel != "ONSHORE_CONVERSION":
         return pricing_key
     candidates = _onshore_candidate_item_keys(pricing_key.item_key)
-    if not candidates:
+    if not candidates or pricing_catalog is None:
         return pricing_key
-    if pricing_catalog is None:
-        return PricingKey(category=pricing_key.category, item_key=candidates[0])
     try:
         if pricing_catalog.loaded is not True:
             return pricing_key
@@ -295,6 +293,7 @@ def build_price_quote(
     decision_id: uuid.UUID,
     stay_days: int | None = None,
     application_channel: str | None = None,
+    pricing_catalog: ExactPricingCatalog | None = None,
 ) -> PriceQuote | None:
     """Convert one exact-key resolution into the signed decision contract."""
 
@@ -302,7 +301,10 @@ def build_price_quote(
     if base_key is None or resolution.status != "AVAILABLE":
         return None
     pricing_key = resolution.pricing_key or effective_pricing_key(
-        product, stay_days, application_channel=application_channel
+        product,
+        stay_days,
+        application_channel=application_channel,
+        pricing_catalog=pricing_catalog,
     )
     if pricing_key is None:
         return None

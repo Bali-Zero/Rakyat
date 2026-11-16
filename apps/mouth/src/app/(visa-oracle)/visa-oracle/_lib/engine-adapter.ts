@@ -1130,6 +1130,13 @@ function secondHomeBelowThresholdReason(
         ? facts.secondhome_basis
         : undefined;
   if (basis === "property") {
+    if (
+      facts.secondhome_property_title ===
+        "non_qualifying_leasehold_villa_offplan" ||
+      facts.secondhome_property_title === "unsure"
+    ) {
+      return undefined;
+    }
     const value = Number(facts.secondhome_property_value_usd);
     if (
       !Number.isFinite(value) ||
@@ -1455,7 +1462,10 @@ function secondHomeBasisClearsThreshold(facts: OracleFacts): boolean {
         : facts.category === "second_home"
           ? facts.secondhome_basis
           : undefined;
-  if (basis === "property") {
+    if (basis === "property") {
+    if (facts.secondhome_property_title !== "completed_strata") {
+      return false;
+    }
     const value = Number(facts.secondhome_property_value_usd);
     return (
       Number.isFinite(value) && value >= SECOND_HOME_PROPERTY_THRESHOLD_USD
@@ -1996,12 +2006,57 @@ export const GENERIC_REVIEW_REASON: LocalizedText = text(
 // `REVIEW_REASON_COPY` is correct for every caller now, STEPCHILD included —
 // pinned by the "gives a STEPCHILD walk the same ambiguous-sponsor copy..."
 // test in engine-adapter.test.ts.
+export const SECOND_HOME_PROPERTY_TITLE_STUDIO_COPY: {
+  readonly non_qualifying: LocalizedText;
+  readonly unsure: LocalizedText;
+} = {
+  non_qualifying: text(
+    `The Second Home Visa (E33) is granted against a guarantee: a completed apartment or flat under strata title (hak pakai atas satuan rumah susun) in your own name worth at least ${usd(SECOND_HOME_PROPERTY_THRESHOLD_USD, "en-US")}, or a bank deposit of at least ${usd(SECOND_HOME_DEPOSIT_THRESHOLD_USD, "en-US")} held in your own name at a state bank. Under Permenkumham 22/2023, villas, leasehold or freehold land, HGB titles, and off-plan units do not count toward the property route, so this route is not confirmed on your answers yet. The Second Home Studio shows the property and deposit routes and the numbers for your case.`,
+    `Visa Rumah Kedua (E33) diberikan atas dasar jaminan: apartemen atau rumah susun selesai dibangun dengan hak pakai atas satuan rumah susun atas nama Anda sendiri senilai minimal ${usd(SECOND_HOME_PROPERTY_THRESHOLD_USD, "id-ID")}, atau deposito bank minimal ${usd(SECOND_HOME_DEPOSIT_THRESHOLD_USD, "id-ID")} atas nama Anda sendiri di bank milik negara. Berdasarkan Permenkumham 22/2023, vila, tanah sewa (leasehold) atau hak milik, HGB, dan unit inden (off-plan) tidak termasuk dalam jalur properti yang memenuhi syarat, sehingga jalur ini belum dapat dikonfirmasi berdasarkan jawaban Anda. Second Home Studio menampilkan jalur properti dan deposito beserta angka untuk kasus Anda.`,
+  ),
+  unsure: text(
+    `The Second Home Visa (E33) is granted against a guarantee: a completed apartment or flat under strata title (hak pakai atas satuan rumah susun) in your own name worth at least ${usd(SECOND_HOME_PROPERTY_THRESHOLD_USD, "en-US")}, or a bank deposit of at least ${usd(SECOND_HOME_DEPOSIT_THRESHOLD_USD, "en-US")} held in your own name at a state bank. Because you were unsure whether the property has a completed strata title in your own name, this route is not confirmed on your answers yet. The Second Home Studio shows the property and deposit routes and the numbers for your case.`,
+    `Visa Rumah Kedua (E33) diberikan atas dasar jaminan: apartemen atau rumah susun selesai dibangun dengan hak pakai atas satuan rumah susun atas nama Anda sendiri senilai minimal ${usd(SECOND_HOME_PROPERTY_THRESHOLD_USD, "id-ID")}, atau deposito bank minimal ${usd(SECOND_HOME_DEPOSIT_THRESHOLD_USD, "id-ID")} atas nama Anda sendiri di bank milik negara. Karena Anda belum yakin apakah properti tersebut memiliki hak pakai atas satuan rumah susun yang telah selesai atas nama Anda sendiri, jalur ini belum dapat dikonfirmasi berdasarkan jawaban Anda. Second Home Studio menampilkan jalur properti dan deposito beserta angka untuk kasus Anda.`,
+  ),
+};
+
+function secondHomeStudioReviewReason(
+  facts: OracleFacts,
+): LocalizedText | undefined {
+  const basis =
+    facts.category === "invest"
+      ? facts.investment_vehicle
+      : facts.category === "retirement"
+        ? facts.retirement_basis
+        : facts.category === "second_home"
+          ? facts.secondhome_basis
+          : undefined;
+  if (basis !== undefined && basis !== "property") {
+    return undefined;
+  }
+  if (
+    facts.secondhome_property_title ===
+    "non_qualifying_leasehold_villa_offplan"
+  ) {
+    return SECOND_HOME_PROPERTY_TITLE_STUDIO_COPY.non_qualifying;
+  }
+  if (facts.secondhome_property_title === "unsure") {
+    return SECOND_HOME_PROPERTY_TITLE_STUDIO_COPY.unsure;
+  }
+  return undefined;
+}
+
 function reviewReason(
   code: string,
   sourceIds: readonly string[],
   trustedIds: ReadonlySet<string>,
+  facts?: OracleFacts,
 ): OutcomeReason {
-  const message = REVIEW_REASON_COPY[code];
+  const factDerived =
+    code === SECOND_HOME_STUDIO_REVIEW_REASON_CODE && facts
+      ? secondHomeStudioReviewReason(facts)
+      : undefined;
+  const message = factDerived ?? REVIEW_REASON_COPY[code];
   if (message === undefined) {
     if (process.env.NODE_ENV !== "production") {
       throw new VisaOracleResponseError("RESPONSE_INVARIANT");
@@ -3157,7 +3212,12 @@ function buildValidatedOutcome(
         pathsRemaining: Math.max(1, options.interviewBranchesRemaining ?? 1),
         reviewReasons: response.decision.review_reasons.map((item) => {
           requireReviewHoldRefs(item.source_refs);
-          return reviewReason(item.code, item.source_refs, trustedIds);
+          return reviewReason(
+            item.code,
+            item.source_refs,
+            trustedIds,
+            options.facts,
+          );
         }) as [OutcomeReason, ...OutcomeReason[]],
       };
     case "NO_SUPPORTED_PATH": {

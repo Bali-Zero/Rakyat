@@ -322,8 +322,8 @@ describe("tree.ts — strict date parsing (finding #8, adversarial review 2026-0
   // `conservative`; slice A6-bis (`diaspora_documents`, `retirement_basis`
   // — both Group A, "no-fact-path") moves two more; PR-M adds
   // `retirement_penjamin_confirmed` (E33F penjamin sibling, conservative
-  // "no", owner ruling 2026-09-27) — leaving 45 `human-review` blocks and
-  // 10 `conservative` ones.
+  // "no", owner ruling 2026-09-27) and NC-08 adds `secondhome_property_title`
+  // — leaving 45 `human-review` blocks and 11 `conservative` ones.
   it("every human-review notSure block declares a because, and the A6-2 cardinality is pinned", () => {
     const entries = Object.entries(QUESTIONS);
     expect(

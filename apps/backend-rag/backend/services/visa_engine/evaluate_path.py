@@ -965,12 +965,14 @@ def _duration_display(
         return {}
     options: list[JsonValue] = []
     for option in product.duration_options:
-        option_pricing_key = resolve_channel_pricing_key(
-            option.pricing_key,
-            application_channel=application_channel,
-            pricing_catalog=pricing_catalog,
+        option_pricing_key = (
+            resolve_channel_pricing_key(
+                option.pricing_key,
+                application_channel=application_channel,
+                pricing_catalog=pricing_catalog,
+            )
+            or option.pricing_key
         )
-        assert option_pricing_key is not None
         resolution = resolve_pricing_key(
             option_pricing_key, pricing_catalog=pricing_catalog, evaluated_at=evaluated_at
         )
@@ -1213,6 +1215,7 @@ def _attach_price_quotes(
             decision_id=decision.decision_id,
             stay_days=stay_days,
             application_channel=application_channel,
+            pricing_catalog=pricing_catalog,
         )
         if quote is not None:
             quotes.append(quote)
@@ -1221,10 +1224,18 @@ def _attach_price_quotes(
     return Decision.model_validate(payload)
 
 
-#: The disclosures that force a human hold: ``CRIMINAL_RECORD`` plus active
-#: immigration enforcement disclosures ``BLACKLIST_ENTRY`` (penangkalan / cekal,
-#: UU 6/2011 Pasal 13/102) and ``IMMIGRATION_INVESTIGATION`` (Pasal 75/78).
-#: This is the floor value ``_resolve_holding_flags`` falls back to when
+#: The disclosures that force a human hold (owner ruling 2026-09-13 —
+#: memory `decision-oracle-human-review-only-for-criminal-matters-ceremony-
+#: roles-authorized-2026-09-13`, narrowed/amended by explicit owner order
+#: 2026-11-16 on NC-03 / P30 & P30b: "aggiungi BLACKLIST_ENTRY e
+#: IMMIGRATION_INVESTIGATION a HOLDING_DISCLOSED_FLAGS in evaluate_path.py
+#: insieme alle chiavi _REVIEW corrispondenti in REVIEW_REASON_COPY
+#: (engine-adapter.ts)"): ``CRIMINAL_RECORD`` plus active statutory entry ban
+#: ``BLACKLIST_ENTRY`` (Penangkalan / cekal, UU 6/2011 Pasal 13(1)(a), 102)
+#: and active pro-justitia immigration investigation
+#: ``IMMIGRATION_INVESTIGATION`` (Penyidikan Keimigrasian / tindakan
+#: administratif, UU 6/2011 Pasal 75, Bab X Pasal 104–112). This is the floor
+#: value ``_resolve_holding_flags`` falls back to when
 #: ``VISA_ORACLE_HOLDING_FLAGS`` is unset — see that function for the
 #: fleet-wide kill switch that can widen this set without a redeploy.
 #:
@@ -1285,9 +1296,10 @@ def _resolve_holding_flags() -> frozenset[DisclosedReviewFlag]:
       kill switch — this is intentionally stricter than "keep what parsed").
     - every token recognised -> exactly that set.
 
-    ``CRIMINAL_RECORD`` is unioned into every return path below — no env
-    value, malformed or not, can ever release the one disclosure
-    ``HOLDING_DISCLOSED_FLAGS`` never releases. ``ACTIVITY_BOUNDARY`` is no
+    ``HOLDING_DISCLOSED_FLAGS`` (``CRIMINAL_RECORD``, ``BLACKLIST_ENTRY``
+    and ``IMMIGRATION_INVESTIGATION``) is unioned into every return path
+    below — no env value, malformed or not, can ever release those three
+    floor disclosures. ``ACTIVITY_BOUNDARY`` is no
     longer in that floor (Slice A3'-B): by default it resolves to a named
     dead end, not a hold (see ``DEAD_END_DISCLOSED_FLAGS``), but the kill
     switch can still widen the hold to include it explicitly, and every
@@ -1750,19 +1762,21 @@ def _apply_disclosed_review_flags(
     applicant disclosure, not a legal eligibility claim, so they must not
     borrow a regulatory citation that the signed RulePack did not declare.
 
-    Only the flags in ``_resolve_holding_flags()`` (``CRIMINAL_RECORD``
-    always, plus whatever ``VISA_ORACLE_HOLDING_FLAGS`` restores) rewrite
-    the decision to a hold on their own — this ALWAYS takes priority over
-    the dead-end branch below, on any pack state, per the 2026-09-13
-    ruling (see ``HOLDING_DISCLOSED_FLAGS`` above). A flag in
+    Only the flags in ``_resolve_holding_flags()`` (``HOLDING_DISCLOSED_FLAGS``
+    — ``CRIMINAL_RECORD``, ``BLACKLIST_ENTRY`` and
+    ``IMMIGRATION_INVESTIGATION`` — always, plus whatever
+    ``VISA_ORACLE_HOLDING_FLAGS`` restores) rewrite the decision to a hold on
+    their own — this ALWAYS takes priority over the dead-end branch below, on
+    any pack state, per the 2026-09-13 ruling as amended by the 2026-11-16
+    owner order on NC-03 (see ``HOLDING_DISCLOSED_FLAGS`` above). A flag in
     ``DEAD_END_DISCLOSED_FLAGS`` (``ACTIVITY_BOUNDARY`` by default — Slice
     A3'-B) that is disclosed ALONGSIDE a holding flag, or that reaches a
     pack already at ``HUMAN_REVIEW_REQUIRED``, joins that same hold instead
     of dead-ending: there is no dead end to name once the outcome is
     already a human review, so the dead-end flag is named by its own
     ``_REVIEW`` code and folded into the hold's seed — byte-identical to
-    before Slice A3'-B moved it out of ``HOLDING_DISCLOSED_FLAGS`` (gate-
-    a3p-b rework HIGH-1; see ``test_activity_boundary_oracle_innocence``,
+    when ``ACTIVITY_BOUNDARY`` is itself held via ``VISA_ORACLE_HOLDING_FLAGS``
+    (gate-a3p-b rework HIGH-1; see ``test_activity_boundary_oracle_innocence``,
     B3).
 
     A dead-end flag that is NOT held and does NOT reach an
@@ -1776,11 +1790,11 @@ def _apply_disclosed_review_flags(
     decision is kept verbatim, today's path.
 
     Every other disclosed flag becomes a named ``notices`` condition on the
-    decision the pack already reached, per the 2026-09-13 ruling. Both the
-    conditioning and the dead-end flags are sorted into ``DisclosedReviewFlag``'s
-    own declaration order before their reasons are built (gate vo-gate-a1,
-    OBS-5 LOW), so two requests naming the same flags in a different order
-    produce byte-identical output.
+    decision the pack already reached, per the 2026-09-13 ruling. Holding,
+    dead-end and conditioning flags are all sorted into ``DisclosedReviewFlag``'s
+    own declaration order before their seeds and reasons are built (gate
+    vo-gate-a1 OBS-5 LOW + PR #359 gate F4), so two requests naming the same
+    flags in a different order produce byte-identical output.
     """
 
     if not flags:
@@ -1789,7 +1803,12 @@ def _apply_disclosed_review_flags(
         return decision
 
     holding_flags = _resolve_holding_flags()
-    _raw_holding = tuple(flag for flag in flags if flag in holding_flags)
+    _raw_holding = tuple(
+        sorted(
+            (flag for flag in flags if flag in holding_flags),
+            key=lambda flag: _DISCLOSED_FLAG_DECLARATION_ORDER[flag],
+        )
+    )
     # A dead-end flag (``ACTIVITY_BOUNDARY`` by default) only actually
     # dead-ends when it would otherwise be the thing deciding the outcome.
     # The moment a real holding flag is ALSO disclosed, or the pack is
@@ -1802,7 +1821,14 @@ def _apply_disclosed_review_flags(
     # not their no-path code — instead of being dropped or overridden.
     if _raw_holding or decision.state is DecisionState.HUMAN_REVIEW_REQUIRED:
         holding = tuple(
-            flag for flag in flags if flag in holding_flags or flag in DEAD_END_DISCLOSED_FLAGS
+            sorted(
+                (
+                    flag
+                    for flag in flags
+                    if flag in holding_flags or flag in DEAD_END_DISCLOSED_FLAGS
+                ),
+                key=lambda flag: _DISCLOSED_FLAG_DECLARATION_ORDER[flag],
+            )
         )
     else:
         holding = _raw_holding

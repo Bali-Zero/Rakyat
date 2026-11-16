@@ -3564,6 +3564,68 @@ describe("criminal review elements and unmapped review reasons (slice A5)", () =
     },
   );
 
+  it("renders fact-aware property-title copy on SECOND_HOME_BELOW_THRESHOLD_STUDIO instead of claiming a declared figure when secondhome_property_title is non-qualifying or unsure (F2 / P03)", () => {
+    const response = makeVisaOracleResponse("HUMAN_REVIEW_REQUIRED");
+    response.decision.review_reasons[0].code =
+      "SECOND_HOME_BELOW_THRESHOLD_STUDIO";
+
+    const nonQualifying = buildEngineOutcome(response, {
+      facts: {
+        category: "second_home",
+        secondhome_basis: "property",
+        secondhome_property_title: "non_qualifying_leasehold_villa_offplan",
+      },
+    });
+    if (nonQualifying.state !== "HUMAN_REVIEW_REQUIRED")
+      throw new Error("unexpected state");
+    expect(nonQualifying.reviewReasons[0].message.en).toContain(
+      "villas, leasehold or freehold land, HGB titles, and off-plan units",
+    );
+    expect(nonQualifying.reviewReasons[0].message.en).not.toContain(
+      "The figure you declared",
+    );
+    expect(nonQualifying.reviewReasons[0].message.id).toContain(
+      "vila, tanah sewa (leasehold) atau hak milik, HGB, dan unit inden (off-plan)",
+    );
+    expect(nonQualifying.reviewReasons[0].message.id).not.toContain(
+      "Angka yang Anda nyatakan",
+    );
+
+    const unsureTitle = buildEngineOutcome(response, {
+      facts: {
+        category: "invest",
+        investment_vehicle: "property",
+        secondhome_property_title: "unsure",
+      },
+    });
+    if (unsureTitle.state !== "HUMAN_REVIEW_REQUIRED")
+      throw new Error("unexpected state");
+    expect(unsureTitle.reviewReasons[0].message.en).toContain(
+      "unsure whether the property has a completed strata title",
+    );
+    expect(unsureTitle.reviewReasons[0].message.en).not.toContain(
+      "The figure you declared",
+    );
+    expect(unsureTitle.reviewReasons[0].message.id).toContain(
+      "belum yakin apakah properti tersebut memiliki hak pakai atas satuan rumah susun",
+    );
+
+    // Control: completed_strata with a below-threshold dollar figure keeps the threshold copy.
+    const completedBelow = buildEngineOutcome(response, {
+      facts: {
+        category: "second_home",
+        secondhome_basis: "property",
+        secondhome_property_title: "completed_strata",
+        secondhome_property_value_usd: "500000",
+      },
+    });
+    if (completedBelow.state !== "HUMAN_REVIEW_REQUIRED")
+      throw new Error("unexpected state");
+    expect(completedBelow.reviewReasons[0].message).toEqual(
+      REVIEW_REASON_COPY.SECOND_HOME_BELOW_THRESHOLD_STUDIO,
+    );
+  });
+
   // This throw cannot fire in playwright.config.ts's e2e run because that
   // runs a production build (NODE_ENV === "production").
   it("throws for an unmapped review reason outside production (GUILT-a)", () => {

@@ -96,6 +96,13 @@ COUNTEREXAMPLES = (
         "why": "same basis, conditioned on whose name holds the deposit",
     },
     {
+        "id": "property-not-completed-strata",
+        "walk_fixture": "offshore_retirement_property.json",
+        "ui": {"secondhome_property_title": "non_qualifying_leasehold_villa_offplan"},
+        "engine": {"secondhome.qualifying_property_value_usd": 0},
+        "why": "the Second Home property basis requires a completed strata title, not a villa, leasehold, HGB or off-plan unit",
+    },
+    {
         "id": "no-passive-income",
         "walk_fixture": "offshore_retirement_bank_deposit.json",
         "ui": {"secondhome_passive_income_usd": "0"},

@@ -214,7 +214,22 @@ const WALKS: readonly WalkCase[] = [
     branch: [
       ["retirement_age_notice", "continue"],
       ["retirement_basis", "property"],
+      ["secondhome_property_title", "completed_strata"],
       ["secondhome_property_value_usd", "1200000"],
+      ["secondhome_passive_income_usd", "5000"],
+      ["retirement_penjamin_confirmed", "yes"],
+      ["stay_days", "365"],
+    ],
+    flags: [],
+  },
+  {
+    name: "retirement · property (non-qualifying leasehold/villa/off-plan) — FREED (NC-08 / F3): skips USD prompt, maps qualifying_property_value_usd=0",
+    category: "retirement",
+    tripScope: "single",
+    branch: [
+      ["retirement_age_notice", "continue"],
+      ["retirement_basis", "property"],
+      ["secondhome_property_title", "non_qualifying_leasehold_villa_offplan"],
       ["secondhome_passive_income_usd", "5000"],
       ["retirement_penjamin_confirmed", "yes"],
       ["stay_days", "365"],
