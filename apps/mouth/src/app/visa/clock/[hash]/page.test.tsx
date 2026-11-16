@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import VisaClockResultPage from "./page";
 
 /**
@@ -61,7 +61,7 @@ vi.mock("@balizero/core", async (importOriginal) => {
     ),
     AppStampReveal: ({ code }: any) => <div>{code}</div>,
     AppResultTimeline: () => (
-      <div data-testid="timeline">five-checkpoint timeline</div>
+      <div data-testid="timeline">timeline-stub</div>
     ),
     AppEmailOptIn: ({ promise }: any) => (
       <div data-testid="email-optin">{promise}</div>
@@ -384,21 +384,70 @@ describe("visa clock — WITA civil-day boundary & UTC date formatting", () => {
   });
 
   it("on 2026-11-16 in WITA (both 00:30 WITA and 23:30 WITA), expiry 2026-11-16 renders 0 days left", async () => {
-    await renderAtInstant("2026-11-15T16:30:00Z", "2026-11-16");
+    for (const nowIso of [
+      "2026-11-15T16:30:00Z", // 00:30 WITA on 2026-11-16
+      "2026-11-16T15:30:00Z", // 23:30 WITA on 2026-11-16
+    ]) {
+      cleanup();
+      ctaProps.current = null;
+      await renderAtInstant(nowIso, "2026-11-16");
 
-    expect(
-      screen.getByText(/Expires 16 Nov 2026 — 0 days from today\./i),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/Valid until 16 Nov 2026/i)).toBeInTheDocument();
-    expect(document.body.textContent).not.toMatch(/already ended|day ago/i);
-    expect(document.body.textContent).not.toContain("-0");
+      expect(
+        screen.getByText(/Expires 16 Nov 2026 — 0 days from today\./i),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/Valid until 16 Nov 2026/i)).toBeInTheDocument();
+      expect(document.body.textContent).not.toMatch(/already ended|day ago/i);
+      expect(document.body.textContent).not.toContain("-0");
 
-    const rows = (ctaProps.current?.whatsappContext ?? []) as {
-      label: string;
-      value: string;
-    }[];
-    expect(rows).toContainEqual({ label: "Entry", value: "18 Oct 2026" });
-    expect(rows).toContainEqual({ label: "Expiry", value: "16 Nov 2026" });
-    expect(rows).toContainEqual({ label: "Days left", value: "0" });
+      const captured = ctaProps.current as Record<string, unknown> | null;
+      const rows = (captured?.whatsappContext ?? []) as {
+        label: string;
+        value: string;
+      }[];
+      expect(rows).toContainEqual({ label: "Entry", value: "18 Oct 2026" });
+      expect(rows).toContainEqual({ label: "Expiry", value: "16 Nov 2026" });
+      expect(rows).toContainEqual({ label: "Days left", value: "0" });
+    }
+  });
+
+  it("renders actual checkpoint count in heading and email promise instead of hardcoded 5", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-25T04:00:00Z"));
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        hash: "b1_three_checkpoints",
+        visa_type: "B1",
+        entry_date: "2026-10-18",
+        expiry_date: "2026-11-16",
+        extensions_possible: 1,
+        extension_days: 30,
+        checkpoints: [
+          { label: "D-14", at: "2026-11-02", title: "Imigrasi", body: "…" },
+          { label: "D-7", at: "2026-11-09", title: "Pickup", body: "…" },
+          { label: "D-1", at: "2026-11-15", title: "Final", body: "…" },
+        ],
+        result_url: "/visa/clock/b1_three_checkpoints",
+        session_jwt: null,
+      }),
+    });
+    render(
+      <Suspense fallback={<div>suspended</div>}>
+        <VisaClockResultPage
+          params={settledParams({ hash: "b1_three_checkpoints" })}
+        />
+      </Suspense>,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("wa-cta")).toBeInTheDocument(),
+    );
+
+    expect(screen.getByText("3-checkpoint timeline")).toBeInTheDocument();
+    expect(screen.getByTestId("email-optin")).toHaveTextContent(
+      "Get reminder emails at each of the 3 checkpoints. One-click unsubscribe.",
+    );
+    expect(document.body.textContent).not.toMatch(
+      /five-checkpoint|5 checkpoints/i,
+    );
   });
 });

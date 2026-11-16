@@ -84,7 +84,7 @@ export default function VisaClockPage() {
   return (
     <AppFrame
       funnel="visa"
-      title="Your timeline in five checkpoints."
+      title="Your timeline in up to five checkpoints."
       subtitle="Fill in the two blanks."
       trustStrip={
         <AppTrustStrip
@@ -96,7 +96,7 @@ export default function VisaClockPage() {
               value: String(VISA_OPTIONS.length),
               label: "visa types covered",
             },
-            { value: "5", label: "checkpoints (D-60 → D-1)" },
+            { value: "Up to 5", label: "checkpoints (D-60 → D-1)" },
           ]}
         />
       }

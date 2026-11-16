@@ -453,7 +453,7 @@ export default function VoaEligibilityPage() {
   ];
 
   const onComplete = async (values: Record<string, unknown>) => {
-    if (inFlight.current) return;
+    if (inFlight.current) return false;
     inFlight.current = true;
     setSubmitError(null);
     setSubmitting(true);

@@ -1,8 +1,8 @@
-"""Visa Clock branch: compute 5-checkpoint timeline.
+"""Visa Clock branch: compute stay-expiry timeline (up to 5 checkpoints).
 
 Input: visa_type + entry_date.
-Output: expiry_date + list of 5 checkpoints (D-60, D-30, D-14, D-7, D-1)
-        with ISO dates and what the user should do on each.
+Output: expiry_date + checkpoints on or after entry_date from
+        (D-60, D-30, D-14, D-7, D-1) with ISO dates and what the user should do.
 """
 
 from __future__ import annotations
@@ -74,8 +74,9 @@ def clock_timeline(*, visa_type: VisaType, entry_date: date) -> ClockTimeline:
     duration_days = DEFAULT_DURATION_DAYS.get(visa_type, 60)
     ext_count, ext_days = EXTENSION_POLICY.get(visa_type, (0, 0))
 
-    # Indonesian immigration counts arrival day as Day 1 inclusive
-    # (e.g. B1 30d entered 2026-10-18 expires 2026-11-16, matching SafeClock).
+    # Prudent Day-1 inclusive stay count: arrival calendar day counts as Day 1
+    # to avoid overstay exposure under UU 6/2011 Pasal 78 (e.g. B1 30d entered
+    # 2026-10-18 expires 2026-11-16; civil-day math in frontend voa/SafeClock.tsx).
     expiry = entry_date + timedelta(days=max(duration_days - 1, 0))
 
     checkpoints = [

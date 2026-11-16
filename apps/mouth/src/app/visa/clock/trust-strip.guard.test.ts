@@ -23,6 +23,7 @@ const src = readFileSync(join(__dirname, "page.tsx"), "utf-8");
 describe("visa/clock trust strip", () => {
   it("POSITIVE CONTROL: reads the page that renders the strip", () => {
     expect(src).toContain("<AppTrustStrip");
+    expect(src).toContain('value: "Up to 5"');
     expect(src).toContain('label: "checkpoints (D-60 → D-1)"');
   });
 

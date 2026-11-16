@@ -81,6 +81,19 @@ export default function VisaClockResultPage({
     ...c,
     past: c.at < today,
   }));
+  const checkpointCount = checkpoints.length;
+  const timelineHeading =
+    checkpointCount === 1
+      ? "1-checkpoint timeline"
+      : checkpointCount > 1
+        ? `${checkpointCount}-checkpoint timeline`
+        : "Timeline checkpoints";
+  const emailPromise =
+    checkpointCount === 1
+      ? "Get a reminder email at the checkpoint. One-click unsubscribe."
+      : checkpointCount > 1
+        ? `Get reminder emails at each of the ${checkpointCount} checkpoints. One-click unsubscribe.`
+        : "Get timeline reminder emails. One-click unsubscribe.";
   // SIGNED, deliberately un-clamped, computed as whole civil days in
   // Asia/Makassar (WITA) rather than `Math.ceil((expiry - now) / 86_400_000)`
   // — which yielded `-0` between 00:00 and 08:00 WITA on Day 1 of an overstay
@@ -227,7 +240,7 @@ export default function VisaClockResultPage({
             color: "var(--color-text-muted)",
           }}
         >
-          Five-checkpoint timeline
+          {timelineHeading}
         </div>
         <AppResultTimeline
           checkpoints={checkpoints}
@@ -249,7 +262,7 @@ export default function VisaClockResultPage({
         <AppEmailOptIn
           app="visa_clock"
           resultHash={data.hash}
-          promise="Get reminder emails at each of the 5 checkpoints. One-click unsubscribe."
+          promise={emailPromise}
           payload={{
             visa_type: data.visa_type,
             entry_date: data.entry_date,

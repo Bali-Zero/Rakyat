@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+import pytest
+
 from backend.services.visa_check.catalogue import VisaType
 from backend.services.visa_check.clock import clock_timeline
 
@@ -58,3 +60,43 @@ class TestTimeline:
         tl = clock_timeline(visa_type=VisaType.C1, entry_date=date(2026, 1, 1))
         assert tl.extensions_possible == 2
         assert tl.extension_days == 60
+
+
+class TestGetClockLegacyRow:
+    @pytest.mark.asyncio
+    async def test_get_clock_recomputes_inclusive_expiry_on_legacy_saved_row(
+        self, monkeypatch
+    ):
+        """Pre-deploy rows stored entry_date + duration_days (2026-11-17 for B1
+        entered 2026-10-18). GET /api/visa/clock/{hash} must return the
+        recomputed inclusive expiry (2026-11-16) so expiry_date and D-1
+        (2026-11-15) never drift by one day."""
+        from datetime import datetime, timezone
+        from unittest.mock import AsyncMock
+
+        from backend.app.routers import visa_check as router_mod
+        from backend.services.visa_check.repository import VisaClockResult
+
+        async def _fake_load_clock(self, _hash: str) -> VisaClockResult:
+            return VisaClockResult(
+                hash="legacyclock12345",
+                visa_type=VisaType.B1,
+                entry_date=date(2026, 10, 18),
+                expiry_date=date(2026, 11, 17),  # legacy pre-deploy entry + 30
+                extensions_possible=1,
+                extension_days=30,
+                created_at=datetime.now(timezone.utc),
+            )
+
+        monkeypatch.setattr(
+            router_mod.VisaCheckRepository, "load_clock", _fake_load_clock
+        )
+        monkeypatch.setattr(
+            router_mod.VisaCheckRepository, "bump_view_count", AsyncMock()
+        )
+
+        resp = await router_mod.get_clock(hash="legacyclock12345", db_pool=None)
+        assert resp.expiry_date == date(2026, 11, 16)
+        assert [c.label for c in resp.checkpoints] == ["D-14", "D-7", "D-1"]
+        assert resp.checkpoints[-1].at == date(2026, 11, 15)
+        assert resp.expiry_date - resp.checkpoints[-1].at == timedelta(days=1)
