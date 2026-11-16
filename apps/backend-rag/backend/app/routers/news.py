@@ -3,18 +3,90 @@ News Router - API endpoints for Intel Feed news system
 Handles CRUD operations, search, and subscriptions
 """
 
+import hashlib
+import hmac
 import logging
+import secrets
 from datetime import datetime, timezone
 from typing import Any
+from xml.sax.saxutils import escape as xml_escape
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from backend.app.dependencies import get_database_pool
+from backend.app.deps.auth import get_current_user_optional
+from backend.app.routers.team_activity import get_admin_user
+from backend.app.utils.cookie_auth import get_jwt_from_cookie
+from backend.app.utils.crm_utils import is_crm_admin
 from backend.core.cache import invalidate_cache
 
 logger = logging.getLogger(__name__)
+
+
+def generate_news_unsubscribe_token(email: str) -> str:
+    """Generate an HMAC-SHA256 opt-out token for a news_subscriptions email."""
+    from backend.app.core.config import settings
+
+    secret = (settings.jwt_secret_key or "").encode()
+    if not secret:
+        raise RuntimeError("JWT_SECRET_KEY is required for news unsubscribe token signing")
+    normalized = email.strip().lower()
+    return hmac.new(
+        secret,
+        f"news-unsubscribe:v1:{normalized}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _verify_news_unsubscribe_token(email: str, token: str | None) -> bool:
+    """Constant-time verification of HMAC news unsubscribe token."""
+    if not token or not isinstance(token, str) or not token.strip():
+        return False
+    expected = generate_news_unsubscribe_token(email)
+    return secrets.compare_digest(token.strip(), expected)
+
+
+def _escape_cdata(value: str | None) -> str:
+    """Neutralize CDATA closing sequence `]]>` to prevent XML injection."""
+    if not value:
+        return ""
+    return str(value).replace("]]>", "]]]]><![CDATA[>")
+
+
+def _escape_xml_text(value: str | None) -> str:
+    """Escape XML special characters in non-CDATA RSS elements."""
+    if not value:
+        return ""
+    return xml_escape(str(value), {'"': "&quot;", "'": "&apos;"})
+
+
+_cookie_verifier: Any = None
+
+
+async def _is_optional_admin(
+    request: Request,
+    user: dict[str, Any] | None = Depends(get_current_user_optional),
+) -> bool:
+    """True only when the caller presents a verified admin credential."""
+    if user and is_crm_admin(user):
+        return True
+    cookie_token = get_jwt_from_cookie(request)
+    if cookie_token:
+        try:
+            global _cookie_verifier
+            if _cookie_verifier is None:
+                from backend.middleware.hybrid_auth import HybridAuthMiddleware
+
+                _cookie_verifier = HybridAuthMiddleware(request.app)
+
+            cookie_user = await _cookie_verifier.authenticate_jwt_token(cookie_token)
+            if cookie_user and is_crm_admin(cookie_user):
+                return True
+        except Exception:
+            return False
+    return False
 
 
 async def _enqueue_post_publish(
@@ -121,16 +193,19 @@ async def list_news(
     priority: str | None = Query(None, description="Filter by priority"),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    is_admin: bool = Depends(_is_optional_admin),
     pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> NewsListResponse:
     """
     List news items with filtering, search, and pagination.
+    Non-admin / anonymous callers are strictly locked to status='approved'.
     """
+    effective_status = status if is_admin else "approved"
 
     try:
         # Build query
         conditions = ["status = $1"]
-        params = [status]
+        params: list[Any] = [effective_status]
         param_idx = 2
 
         if category:
@@ -206,7 +281,7 @@ async def list_news(
 
     except Exception as e:
         logger.error("Error listing news: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.get("/categories")
@@ -231,7 +306,7 @@ async def get_categories(
         }
     except Exception as e:
         logger.error("Error getting categories: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.get("/{slug}")
@@ -284,15 +359,16 @@ async def get_news_by_slug(
         raise
     except Exception as e:
         logger.error("Error getting news by slug: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.post("")
 async def create_news(
     item: NewsItemCreate,
+    _admin: dict[str, Any] = Depends(get_admin_user),
     pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    """Create a new news item (from scraper or manual)"""
+    """Create a new news item (admin only)"""
 
     try:
         async with pool.acquire() as conn:
@@ -345,15 +421,16 @@ async def create_news(
 
     except Exception as e:
         logger.error("Error creating news: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.post("/bulk")
 async def create_news_bulk(
     items: list[NewsItemCreate],
+    _admin: dict[str, Any] = Depends(get_admin_user),
     pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    """Create multiple news items at once (for scraper batch uploads)"""
+    """Create multiple news items at once (admin only)"""
     created = 0
     duplicates = 0
 
@@ -408,16 +485,17 @@ async def create_news_bulk(
 
     except Exception as e:
         logger.error("Error bulk creating news: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.post("/{news_id}/image")
 async def update_news_image(
     news_id: str,
     body: dict,
+    _admin: dict[str, Any] = Depends(get_admin_user),
     pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    """Update cover image URL for a news item (called by post-publish poller)."""
+    """Update cover image URL for a news item (admin only)."""
     image_url = body.get("image_url")
     if not image_url:
         raise HTTPException(status_code=400, detail="image_url required")
@@ -436,16 +514,17 @@ async def update_news_image(
         raise
     except Exception as e:
         logger.error("Error updating news image: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.patch("/{news_id}/status")
 async def update_news_status(
     news_id: str,
     status: str,
+    _admin: dict[str, Any] = Depends(get_admin_user),
     pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    """Update news item status (approve/reject)"""
+    """Update news item status (admin only)"""
     if status not in ("pending", "approved", "rejected", "archived"):
         raise HTTPException(status_code=400, detail="Invalid status")
 
@@ -469,7 +548,7 @@ async def update_news_status(
         raise
     except Exception as e:
         logger.error("Error updating news status: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 # ============================================================================
@@ -506,15 +585,30 @@ async def subscribe_to_news(
 
     except Exception as e:
         logger.error("Error subscribing: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.post("/unsubscribe")
 async def unsubscribe_from_news(
     email: str,
+    token: str | None = Query(None, description="HMAC unsubscribe token"),
+    current_user: dict[str, Any] | None = Depends(get_current_user_optional),
     pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    """Unsubscribe from news alerts"""
+    """Unsubscribe from news alerts (requires valid HMAC token or owner/admin auth)"""
+    has_token = bool(token and token.strip())
+    if current_user is None and not has_token:
+        raise HTTPException(status_code=401, detail="Unsubscribe token required")
+
+    is_admin = bool(current_user and is_crm_admin(current_user))
+    token_valid = _verify_news_unsubscribe_token(email, token)
+    owner_match = (
+        not has_token
+        and current_user is not None
+        and (current_user.get("email") or "").strip().lower() == email.strip().lower()
+    )
+    if not (is_admin or token_valid or owner_match):
+        raise HTTPException(status_code=403, detail="Invalid unsubscribe token")
 
     try:
         async with pool.acquire() as conn:
@@ -532,7 +626,7 @@ async def unsubscribe_from_news(
 
     except Exception as e:
         logger.error("Error unsubscribing: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 # ============================================================================
@@ -543,20 +637,23 @@ async def unsubscribe_from_news(
 @router.get("/feed/rss")
 async def get_rss_feed(
     category: str | None = None,
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=100),
     pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> Response:
     """Generate RSS feed for news items"""
 
     try:
         conditions = ["status = 'approved'"]
-        params = []
+        params: list[Any] = []
+        param_idx = 1
 
         if category:
-            conditions.append("category = $1")
+            conditions.append(f"category = ${param_idx}")
             params.append(category)
+            param_idx += 1
 
         where_clause = " AND ".join(conditions)
+        params.append(limit)
 
         async with pool.acquire() as conn:
             query = f"""
@@ -564,11 +661,11 @@ async def get_rss_feed(
                 FROM news_items
                 WHERE {where_clause}
                 ORDER BY published_at DESC
-                LIMIT {limit}
+                LIMIT ${param_idx}
             """
-            rows = await conn.fetch(query, *params) if params else await conn.fetch(query)
+            rows = await conn.fetch(query, *params)
 
-        # Build RSS XML
+        # Build RSS XML with CDATA breakout neutralization + XML element escaping
         items_xml = ""
         for row in rows:
             pub_date = (
@@ -576,14 +673,19 @@ async def get_rss_feed(
                 if row["published_at"]
                 else ""
             )
+            safe_title = _escape_cdata(row["title"])
+            safe_summary = _escape_cdata(row["summary"] or "")
+            safe_link = _escape_xml_text(f"https://balizero.com/news/{row['slug'] or ''}")
+            safe_category = _escape_xml_text(row["category"])
+            safe_pub_date = _escape_xml_text(pub_date)
             items_xml += f"""
         <item>
-            <title><![CDATA[{row["title"]}]]></title>
-            <link>https://balizero.com/news/{row["slug"]}</link>
-            <description><![CDATA[{row["summary"] or ""}]]></description>
-            <category>{row["category"]}</category>
-            <pubDate>{pub_date}</pubDate>
-            <guid>https://balizero.com/news/{row["slug"]}</guid>
+            <title><![CDATA[{safe_title}]]></title>
+            <link>{safe_link}</link>
+            <description><![CDATA[{safe_summary}]]></description>
+            <category>{safe_category}</category>
+            <pubDate>{safe_pub_date}</pubDate>
+            <guid>{safe_link}</guid>
         </item>"""
 
         rss = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -599,10 +701,8 @@ async def get_rss_feed(
     </channel>
 </rss>"""
 
-        from fastapi.responses import Response
-
         return Response(content=rss, media_type="application/rss+xml")
 
     except Exception as e:
         logger.error("Error generating RSS feed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e

@@ -363,7 +363,8 @@ class HybridAuthMiddleware(BaseHTTPMiddleware):
         if self._is_protected_infra_endpoint(request):
             return True
 
-        entry = find_entry(path)
+        req_method = request.method if isinstance(getattr(request, "method", None), str) else None
+        entry = find_entry(path, method=req_method)
         is_public = entry is not None
 
         # Debug log for KBLI endpoints
@@ -409,7 +410,10 @@ class HybridAuthMiddleware(BaseHTTPMiddleware):
             client_ip = request.client.host if request.client else "unknown"
             client_reference = hash_subject(client_ip) or "unknown"
             user_agent = request.headers.get("user-agent", "unknown")
-            matched_entry = find_entry(path)
+            req_method = (
+                request.method if isinstance(getattr(request, "method", None), str) else None
+            )
+            matched_entry = find_entry(path, method=req_method)
 
             privacy_restricted = path in _PII_RESTRICTED_PUBLIC_ENDPOINTS
             access_context: dict[str, Any] = {
