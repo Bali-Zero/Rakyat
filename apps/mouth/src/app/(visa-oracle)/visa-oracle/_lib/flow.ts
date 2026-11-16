@@ -992,6 +992,15 @@ const FIXED_CATEGORY_QUESTIONS: Record<CategoryKey, readonly string[]> = {
   ],
 };
 
+function secondHomePropertyQuestionIds(facts: OracleFacts): readonly string[] {
+  return [
+    "secondhome_property_title",
+    ...(facts.secondhome_property_title === "completed_strata"
+      ? ["secondhome_property_value_usd"]
+      : []),
+  ];
+}
+
 /**
  * The behavioral question sequence for the selected interview category.
  * This is navigation only. It never interprets answers as eligibility and
@@ -1033,7 +1042,7 @@ export function getCategoryQuestionIds(facts: OracleFacts): readonly string[] {
             "investment_role",
           ]
         : branch === "property"
-          ? ["secondhome_property_value_usd"]
+          ? secondHomePropertyQuestionIds(facts)
           : branch === "bank_deposit"
             ? [
                 "secondhome_deposit_usd",
@@ -1134,7 +1143,7 @@ export function getCategoryQuestionIds(facts: OracleFacts): readonly string[] {
             "secondhome_own_name",
           ]
         : branch === "property"
-          ? ["secondhome_property_value_usd"]
+          ? secondHomePropertyQuestionIds(facts)
           : [];
     return ["secondhome_basis", ...branchQuestions, "stay_days"];
   }

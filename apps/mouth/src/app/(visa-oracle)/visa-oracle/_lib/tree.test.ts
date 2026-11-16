@@ -338,7 +338,7 @@ describe("tree.ts — strict date parsing (finding #8, adversarial review 2026-0
     ).toHaveLength(45);
     expect(
       entries.filter(([, q]) => q.notSure?.mode === "conservative"),
-    ).toHaveLength(10);
+    ).toHaveLength(11);
   });
 
   // INNOCENCE (FIX-B, spec F2): exactly 18 questions declare no `notSure`

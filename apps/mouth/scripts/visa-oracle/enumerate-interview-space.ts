@@ -252,6 +252,7 @@ export const BRANCH_RELEVANT_FACT_KEYS: readonly string[] = [
   "retirement_basis",
   "retirement_undecided_basis",
   "secondhome_basis",
+  "secondhome_property_title",
   "sponsor_category",
   "stay_days",
   "wants_onshore_conversion",

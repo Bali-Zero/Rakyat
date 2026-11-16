@@ -8,6 +8,7 @@
     "category",
     "trip_scope",
     "secondhome_basis",
+    "secondhome_property_title",
     "secondhome_property_value_usd",
     "stay_days",
     "review_gate"

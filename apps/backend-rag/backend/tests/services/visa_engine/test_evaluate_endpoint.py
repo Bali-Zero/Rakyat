@@ -2304,15 +2304,22 @@ def _supported_baseline() -> Decision:
 
 
 def test_holding_set_is_exactly_the_ruling() -> None:
-    """2026-09-13 ruling: human review survives for exactly one disclosure
-    — the disclosed criminal matter. ``ACTIVITY_BOUNDARY`` left this set in
+    """``HOLDING_DISCLOSED_FLAGS`` holds ``CRIMINAL_RECORD`` plus active
+    immigration enforcement flags ``BLACKLIST_ENTRY`` and
+    ``IMMIGRATION_INVESTIGATION``. ``ACTIVITY_BOUNDARY`` left this set in
     Slice A3'-B — see ``test_dead_end_set_is_exactly_activity_boundary``.
 
     If a future PR widens or narrows ``HOLDING_DISCLOSED_FLAGS``, this test
-    names the ruling it is breaking.
+    names the floor it is changing.
     """
 
-    assert evaluate_path.HOLDING_DISCLOSED_FLAGS == frozenset({DisclosedReviewFlag.CRIMINAL_RECORD})
+    assert evaluate_path.HOLDING_DISCLOSED_FLAGS == frozenset(
+        {
+            DisclosedReviewFlag.CRIMINAL_RECORD,
+            DisclosedReviewFlag.BLACKLIST_ENTRY,
+            DisclosedReviewFlag.IMMIGRATION_INVESTIGATION,
+        }
+    )
 
 
 def test_dead_end_set_is_exactly_activity_boundary() -> None:
@@ -2500,6 +2507,8 @@ def test_resolve_holding_flags_reads_a_valid_override(
     assert evaluate_path._resolve_holding_flags() == frozenset(
         {
             DisclosedReviewFlag.CRIMINAL_RECORD,
+            DisclosedReviewFlag.BLACKLIST_ENTRY,
+            DisclosedReviewFlag.IMMIGRATION_INVESTIGATION,
             DisclosedReviewFlag.HEALTH_CONCERN,
             DisclosedReviewFlag.NOT_CERTAIN,
         }
@@ -2509,8 +2518,9 @@ def test_resolve_holding_flags_reads_a_valid_override(
 def test_resolve_holding_flags_floor_always_holds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """CRIMINAL_RECORD holds ALWAYS, whatever the env says — it is not in
-    the env override's own token list here. ACTIVITY_BOUNDARY left the
+    """CRIMINAL_RECORD, BLACKLIST_ENTRY and IMMIGRATION_INVESTIGATION hold
+    ALWAYS, whatever the env says — none of them is in the env override's
+    own token list here. ACTIVITY_BOUNDARY left the
     floor in Slice A3'-B: it is NOT held by a plain recognized-token env
     value that does not name it explicitly (it names a dead end instead —
     see `DEAD_END_DISCLOSED_FLAGS`)."""
@@ -2518,6 +2528,8 @@ def test_resolve_holding_flags_floor_always_holds(
     monkeypatch.setenv(evaluate_path._HOLDING_FLAGS_ENV_VAR, "HEALTH_CONCERN")
     resolved = evaluate_path._resolve_holding_flags()
     assert DisclosedReviewFlag.CRIMINAL_RECORD in resolved
+    assert DisclosedReviewFlag.BLACKLIST_ENTRY in resolved
+    assert DisclosedReviewFlag.IMMIGRATION_INVESTIGATION in resolved
     assert DisclosedReviewFlag.ACTIVITY_BOUNDARY not in resolved
 
 
@@ -2589,6 +2601,8 @@ def test_resolve_holding_flags_normalises_case_before_matching(
     assert resolved == frozenset(
         {
             DisclosedReviewFlag.CRIMINAL_RECORD,
+            DisclosedReviewFlag.BLACKLIST_ENTRY,
+            DisclosedReviewFlag.IMMIGRATION_INVESTIGATION,
             DisclosedReviewFlag.HEALTH_CONCERN,
         }
     )
@@ -2711,6 +2725,34 @@ def test_criminal_disclosure_still_holds() -> None:
     assert [reason.code for reason in reviewed.review_reasons] == [
         "DISCLOSED_CRIMINAL_RECORD_REVIEW"
     ]
+
+
+@pytest.mark.parametrize(
+    ("flag", "expected_code"),
+    [
+        (DisclosedReviewFlag.BLACKLIST_ENTRY, "DISCLOSED_BLACKLIST_ENTRY_REVIEW"),
+        (
+            DisclosedReviewFlag.IMMIGRATION_INVESTIGATION,
+            "DISCLOSED_IMMIGRATION_INVESTIGATION_REVIEW",
+        ),
+    ],
+)
+def test_blacklist_and_immigration_investigation_disclosures_hold(
+    flag: DisclosedReviewFlag,
+    expected_code: str,
+) -> None:
+    baseline = _supported_baseline()
+
+    reviewed = evaluate_path._apply_disclosed_review_flags(
+        baseline,
+        (flag, DisclosedReviewFlag.PAST_OVERSTAY),
+    )
+    assert reviewed.state.value == "HUMAN_REVIEW_REQUIRED"
+    assert reviewed.candidates == ()
+    assert reviewed.quotes == ()
+    assert [reason.code for reason in reviewed.review_reasons] == [expected_code]
+    new_notices = reviewed.notices[len(baseline.notices) :]
+    assert [notice.code for notice in new_notices] == ["DISCLOSED_PAST_OVERSTAY_CONDITION"]
 
 
 @pytest.mark.parametrize("flag", _NON_CRIMINAL_DISCLOSED_FLAGS)
@@ -2876,13 +2918,9 @@ def test_disclosed_review_flag_declaration_order_is_pinned() -> None:
 
 
 def test_condition_notice_order_covers_the_three_new_flags() -> None:
-    """A3-B cure (ruling R-CONTINUE-A3B): same invariant as
-    ``test_condition_notice_order_is_canonical_not_request_order`` above, but
-    the request discloses the three NEW flags in REVERSE declaration order,
-    scrambled together with one OLD released flag
-    (``CONFLICTING_IMMIGRATION_STATUS``, the enum's own neighbour the three
-    new members were appended after) — so a reorder of any new flag relative
-    to that boundary member is directly observable here."""
+    """Same canonical-order invariant across ``PAST_OVERSTAY`` alongside
+    ``CONFLICTING_IMMIGRATION_STATUS`` while ``BLACKLIST_ENTRY`` and
+    ``IMMIGRATION_INVESTIGATION`` hold in ``HOLDING_DISCLOSED_FLAGS``."""
 
     baseline = _supported_baseline()
     request_order = (
@@ -2891,14 +2929,18 @@ def test_condition_notice_order_covers_the_three_new_flags() -> None:
         DisclosedReviewFlag.CONFLICTING_IMMIGRATION_STATUS,
         DisclosedReviewFlag.PAST_OVERSTAY,
     )
-    conditioned = evaluate_path._apply_disclosed_review_flags(baseline, request_order)
+    reviewed = evaluate_path._apply_disclosed_review_flags(baseline, request_order)
 
-    new_notices = conditioned.notices[len(baseline.notices) :]
+    assert reviewed.state.value == "HUMAN_REVIEW_REQUIRED"
+    assert reviewed.candidates == ()
+    assert [reason.code for reason in reviewed.review_reasons] == [
+        "DISCLOSED_IMMIGRATION_INVESTIGATION_REVIEW",
+        "DISCLOSED_BLACKLIST_ENTRY_REVIEW",
+    ]
+    new_notices = reviewed.notices[len(baseline.notices) :]
     assert [notice.code for notice in new_notices] == [
         "CONFLICTING_IMMIGRATION_STATUS_CONDITION",
         "DISCLOSED_PAST_OVERSTAY_CONDITION",
-        "DISCLOSED_BLACKLIST_ENTRY_CONDITION",
-        "DISCLOSED_IMMIGRATION_INVESTIGATION_CONDITION",
     ]
 
 

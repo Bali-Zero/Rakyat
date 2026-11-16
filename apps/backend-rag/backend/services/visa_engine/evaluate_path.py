@@ -178,6 +178,7 @@ from backend.services.visa_engine.pricing_adapter import (
     UnavailablePricingCatalog,
     build_price_quote,
     resolve_candidate_pricing,
+    resolve_channel_pricing_key,
     resolve_pricing_key,
     select_duration_option,
 )
@@ -940,12 +941,22 @@ def _requested_stay_days(facts: ApplicantFacts) -> int | None:
     return fact.value if fact.status == "KNOWN" else None
 
 
+def _requested_application_channel(facts: ApplicantFacts) -> str | None:
+    """The applicant's stated application channel, or ``None`` when it is not a known answer."""
+
+    fact = facts.facts.process_application_channel
+    if fact.status != "KNOWN":
+        return None
+    return fact.value.value if hasattr(fact.value, "value") else str(fact.value)
+
+
 def _duration_display(
     product: VisaProductVersion,
     *,
     stay_days: int | None,
     pricing_catalog: ExactPricingCatalog,
     evaluated_at: datetime,
+    application_channel: str | None = None,
 ) -> dict[str, JsonValue]:
     """Additive duration fields; empty for a product that offers a single length."""
 
@@ -954,13 +965,19 @@ def _duration_display(
         return {}
     options: list[JsonValue] = []
     for option in product.duration_options:
+        option_pricing_key = resolve_channel_pricing_key(
+            option.pricing_key,
+            application_channel=application_channel,
+            pricing_catalog=pricing_catalog,
+        )
+        assert option_pricing_key is not None
         resolution = resolve_pricing_key(
-            option.pricing_key, pricing_catalog=pricing_catalog, evaluated_at=evaluated_at
+            option_pricing_key, pricing_catalog=pricing_catalog, evaluated_at=evaluated_at
         )
         options.append(
             {
                 "days": option.days,
-                "pricing_key": option.pricing_key.model_dump(mode="json"),
+                "pricing_key": option_pricing_key.model_dump(mode="json"),
                 "selected": option.days == selected.days,
                 "status": resolution.status,
                 "reason_code": resolution.reason_code,
@@ -1062,6 +1079,7 @@ def _build_display(
     request_trace: str,
     pricing_catalog: ExactPricingCatalog,
     stay_days: int | None = None,
+    application_channel: str | None = None,
 ) -> dict[str, JsonValue]:
     """The B.2 ``display`` block — pack-backed candidate display data.
 
@@ -1093,6 +1111,7 @@ def _build_display(
             pricing_catalog=pricing_catalog,
             evaluated_at=decision.evaluated_at,
             stay_days=stay_days,
+            application_channel=application_channel,
         )
         entries.append(
             {
@@ -1131,6 +1150,7 @@ def _build_display(
                     stay_days=stay_days,
                     pricing_catalog=pricing_catalog,
                     evaluated_at=decision.evaluated_at,
+                    application_channel=application_channel,
                 ),
             }
         )
@@ -1164,6 +1184,7 @@ def _attach_price_quotes(
     *,
     pricing_catalog: ExactPricingCatalog,
     stay_days: int | None = None,
+    application_channel: str | None = None,
 ) -> Decision:
     """Attach exact-key PricingTool quotes before decision sealing/persistence."""
 
@@ -1184,9 +1205,14 @@ def _attach_price_quotes(
             pricing_catalog=pricing_catalog,
             evaluated_at=decision.evaluated_at,
             stay_days=stay_days,
+            application_channel=application_channel,
         )
         quote = build_price_quote(
-            product, resolution, decision_id=decision.decision_id, stay_days=stay_days
+            product,
+            resolution,
+            decision_id=decision.decision_id,
+            stay_days=stay_days,
+            application_channel=application_channel,
         )
         if quote is not None:
             quotes.append(quote)
@@ -1195,12 +1221,10 @@ def _attach_price_quotes(
     return Decision.model_validate(payload)
 
 
-#: The disclosure that still forces a human hold (owner ruling 2026-09-13 —
-#: memory `decision-oracle-human-review-only-for-criminal-matters-ceremony-
-#: roles-authorized-2026-09-13`: "human review survives for a disclosed
-#: criminal matter and nothing else; every other disclosure becomes a named
-#: condition on a kept candidate or a named dead end"). This is the floor
-#: value ``_resolve_holding_flags`` falls back to when
+#: The disclosures that force a human hold: ``CRIMINAL_RECORD`` plus active
+#: immigration enforcement disclosures ``BLACKLIST_ENTRY`` (penangkalan / cekal,
+#: UU 6/2011 Pasal 13/102) and ``IMMIGRATION_INVESTIGATION`` (Pasal 75/78).
+#: This is the floor value ``_resolve_holding_flags`` falls back to when
 #: ``VISA_ORACLE_HOLDING_FLAGS`` is unset — see that function for the
 #: fleet-wide kill switch that can widen this set without a redeploy.
 #:
@@ -1216,7 +1240,11 @@ def _attach_price_quotes(
 #: fleet-wide kill switch can still widen the hold to include it explicitly
 #: (``_resolve_holding_flags``).
 HOLDING_DISCLOSED_FLAGS: frozenset[DisclosedReviewFlag] = frozenset(
-    {DisclosedReviewFlag.CRIMINAL_RECORD}
+    {
+        DisclosedReviewFlag.CRIMINAL_RECORD,
+        DisclosedReviewFlag.BLACKLIST_ENTRY,
+        DisclosedReviewFlag.IMMIGRATION_INVESTIGATION,
+    }
 )
 
 #: Env override for ``HOLDING_DISCLOSED_FLAGS`` — a comma-separated list of
@@ -1341,16 +1369,15 @@ _DISCLOSED_REVIEW_REASON_CODES: MappingProxyType[DisclosedReviewFlag, str] = Map
     }
 )
 
-#: The nine disclosures that become a named ``notices`` condition on the
+#: The ten disclosures that become a named ``notices`` condition on the
 #: pack's own kept candidate instead of a hold (owner ruling 2026-09-13,
-#: OD-5 of `VISA-ORACLE-DW-20260919/PLAN.md`; narrowed from ten to nine by
-#: gate vo-gate-a1's OBS-1 HIGH — see ``HOLDING_DISCLOSED_FLAGS`` above).
+#: OD-5 of `VISA-ORACLE-DW-20260919/PLAN.md`; ``CRIMINAL_RECORD``,
+#: ``BLACKLIST_ENTRY`` and ``IMMIGRATION_INVESTIGATION`` are absent — they
+#: only hold, never condition, while in ``HOLDING_DISCLOSED_FLAGS``).
 #: Every code matches ``ReasonCode``'s open pattern (``models.py:95``), so
-#: this needs no schema bump and no pack re-sign. ``CRIMINAL_RECORD`` is
-#: deliberately absent — it only holds, never conditions, while it remains
-#: in ``HOLDING_DISCLOSED_FLAGS``. ``ACTIVITY_BOUNDARY`` is also absent, for
-#: a different reason since Slice A3'-B: it neither holds nor conditions —
-#: it names a dead end (``DEAD_END_DISCLOSED_FLAGS`` below).
+#: this needs no schema bump and no pack re-sign. ``ACTIVITY_BOUNDARY`` is
+#: also absent, for a different reason since Slice A3'-B: it neither holds
+#: nor conditions — it names a dead end (``DEAD_END_DISCLOSED_FLAGS`` below).
 _DISCLOSED_CONDITION_REASON_CODES: MappingProxyType[DisclosedReviewFlag, str] = MappingProxyType(
     {
         DisclosedReviewFlag.HEALTH_CONCERN: "DISCLOSED_HEALTH_CONCERN_CONDITION",
@@ -1365,8 +1392,6 @@ _DISCLOSED_CONDITION_REASON_CODES: MappingProxyType[DisclosedReviewFlag, str] = 
             "CONFLICTING_IMMIGRATION_STATUS_CONDITION"
         ),
         DisclosedReviewFlag.PAST_OVERSTAY: "DISCLOSED_PAST_OVERSTAY_CONDITION",
-        DisclosedReviewFlag.BLACKLIST_ENTRY: "DISCLOSED_BLACKLIST_ENTRY_CONDITION",
-        DisclosedReviewFlag.IMMIGRATION_INVESTIGATION: "DISCLOSED_IMMIGRATION_INVESTIGATION_CONDITION",
     }
 )
 
@@ -2321,6 +2346,7 @@ async def run_evaluation(
                 compiled,
                 pricing_catalog=pricing_catalog,
                 stay_days=_requested_stay_days(facts),
+                application_channel=_requested_application_channel(facts),
             )
         except Exception as exc:
             logger.warning(
@@ -2412,6 +2438,7 @@ async def run_evaluation(
             request_trace=request_trace,
             pricing_catalog=pricing_catalog,
             stay_days=_requested_stay_days(facts),
+            application_channel=_requested_application_channel(facts),
         )
         validated = VisaOracleEvaluateResponse.model_validate(envelope)
     except Exception as exc:

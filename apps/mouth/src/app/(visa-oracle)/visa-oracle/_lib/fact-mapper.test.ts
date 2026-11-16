@@ -159,7 +159,7 @@ describe("mapOracleFactsToApplicantFacts — full contract (acceptance test 1)",
 // nine in total; PR-M (owner ruling 2026-09-27) adds the E33F penjamin
 // sibling, `retirement_penjamin_confirmed` — ten.
 describe("resolveConservativeAnswers — the wire seam (A6-2)", () => {
-  it("resolves exactly the ten declared conservative questions and retains other unsure answers", () => {
+  it("resolves exactly the eleven declared conservative questions and retains other unsure answers", () => {
     expect(
       Object.entries(QUESTIONS)
         .filter(([, q]) => q.notSure?.mode === "conservative")
@@ -172,6 +172,7 @@ describe("resolveConservativeAnswers — the wire seam (A6-2)", () => {
       "secondhome_deposit_usd",
       "secondhome_own_name",
       "secondhome_passive_income_usd",
+      "secondhome_property_title",
       "secondhome_property_value_usd",
       "secondhome_state_bank",
       "study_admission_confirmed",
@@ -1626,6 +1627,13 @@ describe("mapDisclosedReviewFlags — monotone abstention metadata", () => {
     // PR-M: a retiree who is "not sure" they have a penjamin is a "no", not a
     // human-review hold — the row also pins that AMBIGUOUS_SPONSOR stays off.
     ["retirement_penjamin_confirmed", "family.sponsor_confirmed", "no"],
+    // NC-08: unsure whether the property has a completed strata title resolves
+    // conservatively to the non-qualifying option -> KNOWN(0) property value.
+    [
+      "secondhome_property_title",
+      "secondhome.qualifying_property_value_usd",
+      "non_qualifying_leasehold_villa_offplan",
+    ],
   ] as const;
 
   it.each(CONSERVATIVE_ANSWERS)(
@@ -1758,6 +1766,59 @@ describe("mapDisclosedReviewFlags — monotone abstention metadata", () => {
     expect(mapDisclosedReviewFlags({ retirement_basis: "property" })).toEqual(
       [],
     );
+  });
+
+  it("NC-08 / P03: non-qualifying leasehold/villa/HGB/off-plan title maps qualifying_property_value_usd to KNOWN(0) even over a stale USD value, while completed_strata maps the documented USD value", () => {
+    const nonQualifyingCases: OracleFacts[] = [
+      {
+        category: "second_home",
+        secondhome_basis: "property",
+        secondhome_property_title: "non_qualifying_leasehold_villa_offplan",
+      },
+      {
+        category: "second_home",
+        secondhome_basis: "property",
+        secondhome_property_title: "non_qualifying_leasehold_villa_offplan",
+        secondhome_property_value_usd: "1100000",
+      },
+      {
+        category: "invest",
+        investment_vehicle: "property",
+        secondhome_property_title: "non_qualifying_leasehold_villa_offplan",
+        secondhome_property_value_usd: "1100000",
+      },
+      {
+        category: "second_home",
+        secondhome_basis: "property",
+        secondhome_property_title: "unsure",
+      },
+    ];
+    for (const facts of nonQualifyingCases) {
+      const mapped = mapFacts(facts);
+      expect(mapped.disclosed_review_flags).toEqual([]);
+      expect(mapped.facts["secondhome.qualifying_property_value_usd"]).toEqual({
+        status: "KNOWN",
+        value: 0,
+      });
+      expect(mapped.facts["secondhome.bank_deposit_usd"]).toEqual({
+        status: "KNOWN",
+        value: 0,
+      });
+    }
+
+    const qualifying = mapFacts({
+      category: "second_home",
+      secondhome_basis: "property",
+      secondhome_property_title: "completed_strata",
+      secondhome_property_value_usd: "1100000",
+    });
+    expect(qualifying.disclosed_review_flags).toEqual([]);
+    expect(
+      qualifying.facts["secondhome.qualifying_property_value_usd"],
+    ).toEqual({
+      status: "KNOWN",
+      value: 1_100_000,
+    });
   });
 });
 

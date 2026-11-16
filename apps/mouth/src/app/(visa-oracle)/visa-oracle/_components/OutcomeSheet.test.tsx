@@ -884,6 +884,7 @@ describe("OutcomeSheet — PR-O4 review causes", () => {
   // `retirement_basis` ("undecided"), nine in total.
   const NINE_DECLARED_CONSERVATIVE_QUESTIONS = [
     "secondhome_deposit_usd",
+    "secondhome_property_title",
     "secondhome_property_value_usd",
     "secondhome_passive_income_usd",
     "secondhome_state_bank",

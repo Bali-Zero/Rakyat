@@ -1587,6 +1587,34 @@ export const QUESTIONS: Record<string, OracleQuestion> = {
     // `el.e33.deposit-basis` / `el.e33e.retirement` require the applicant's own name.
     notSure: { mode: "conservative", conservativeValue: "no" },
   },
+  // NC-08 (Permenkumham 22/2023): only a completed apartment/flat under strata
+  // title (hak pakai atas satuan rumah susun) in the applicant's own name
+  // qualifies for the E33 property route. Villas, leasehold/freehold land, HGB
+  // titles, and off-plan units map `secondhome.qualifying_property_value_usd`
+  // to KNOWN(0) and skip the dollar-value prompt.
+  secondhome_property_title: {
+    id: "secondhome_property_title",
+    i18nKey: "q.secondhome_property_title",
+    kind: "choice",
+    group: "details",
+    decisionMapping: { kind: "HUMAN_CONTEXT" },
+    options: [
+      {
+        key: "completed_strata",
+        labelI18nKey: "q.secondhome_property_title.opt.completed_strata",
+      },
+      {
+        key: "non_qualifying_leasehold_villa_offplan",
+        labelI18nKey:
+          "q.secondhome_property_title.opt.non_qualifying_leasehold_villa_offplan",
+      },
+    ],
+    whyWeAsk: { i18nKey: "why.secondhome_property_title" },
+    notSure: {
+      mode: "conservative",
+      conservativeValue: "non_qualifying_leasehold_villa_offplan",
+    },
+  },
   secondhome_property_value_usd: {
     id: "secondhome_property_value_usd",
     i18nKey: "q.secondhome_property_value_usd",

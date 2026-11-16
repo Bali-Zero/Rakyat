@@ -1854,6 +1854,10 @@ export const REVIEW_REASON_COPY: Record<string, LocalizedText> = {
     "This case is paused because whether your sponsor holds a stay permit of their own has not been established here — confirming the sponsor's own stay permit is what resolves it.",
     "Kasus ini ditunda karena belum dapat dipastikan di sini apakah sponsor Anda memiliki izin tinggal sendiri — konfirmasi izin tinggal sponsor tersebut adalah yang akan menyelesaikannya.",
   ),
+  DISCLOSED_BLACKLIST_ENTRY_REVIEW: text(
+    "You flagged a blacklist entry in your disclosures, so no path can be confirmed yet. A Bali Zero advisor can go over your situation with you.",
+    "Pengungkapan Anda menandai adanya pencantuman dalam daftar hitam, sehingga belum ada jalur yang dapat dikonfirmasi. Konsultan Bali Zero dapat membahas situasi tersebut bersama Anda.",
+  ),
   DISCLOSED_CRIMINAL_RECORD_REVIEW: text(
     "You flagged a criminal record concern in your disclosures, so no path can be confirmed yet. A Bali Zero advisor can review the details with you.",
     "Anda menandai adanya masalah catatan kriminal dalam pengungkapan Anda, sehingga belum ada jalur yang dapat dikonfirmasi. Konsultan Bali Zero dapat meninjau detailnya bersama Anda.",
@@ -1865,6 +1869,10 @@ export const REVIEW_REASON_COPY: Record<string, LocalizedText> = {
   DISCLOSED_HEALTH_CONCERN_REVIEW: text(
     "You flagged a health concern in your disclosures, so no path can be confirmed yet. A Bali Zero advisor can review the details with you.",
     "Anda menandai adanya masalah kesehatan dalam pengungkapan Anda, sehingga belum ada jalur yang dapat dikonfirmasi. Konsultan Bali Zero dapat meninjau detailnya bersama Anda.",
+  ),
+  DISCLOSED_IMMIGRATION_INVESTIGATION_REVIEW: text(
+    "You flagged an open immigration investigation in your disclosures, so no path can be confirmed yet. A Bali Zero advisor can review its status with you.",
+    "Anda menandai adanya pemeriksaan keimigrasian yang sedang berjalan dalam pengungkapan Anda, sehingga belum ada jalur yang dapat dikonfirmasi. Konsultan Bali Zero dapat meninjau statusnya bersama Anda.",
   ),
   // fact-mapper.ts: raised when trip_scope === "multiple".
   DISCLOSED_MULTI_PURPOSE_TRIP_REVIEW: text(
@@ -2070,22 +2078,13 @@ export const NOTICE_CONDITION_COPY: Record<string, LocalizedText> = {
     "Your answers about your current immigration status conflict with each other. A Bali Zero advisor can confirm which status is correct with you before submission and tell you what to prepare.",
     "Jawaban Anda tentang status keimigrasian Anda saat ini saling bertentangan. Konsultan Bali Zero dapat memastikan status mana yang benar bersama Anda sebelum pengajuan dan memberi tahu apa yang perlu disiapkan.",
   ),
-  // Slice A3-M (DRAFT-SPEC-A3-1.v2-M §4.1, M4): three new keys beside the
-  // eleven above, backed by `_DISCLOSED_CONDITION_REASON_CODES`
-  // (evaluate_path.py:1174-1176). N2 copy rules (A2): name what is checked,
-  // by whom, when, and what to prepare — never "cleared", "approved" or
-  // "guaranteed".
+  // Slice A3-M (DRAFT-SPEC-A3-1.v2-M §4.1, M4): backed by
+  // `_DISCLOSED_CONDITION_REASON_CODES` (evaluate_path.py). BLACKLIST_ENTRY
+  // and IMMIGRATION_INVESTIGATION moved to `HOLDING_DISCLOSED_FLAGS` +
+  // `REVIEW_REASON_COPY` (NC-03), leaving PAST_OVERSTAY as the condition row.
   DISCLOSED_PAST_OVERSTAY_CONDITION: text(
     "You flagged a past overstay in your disclosures. A Bali Zero advisor can review the dates and any penalty record with you before submission and tell you what to prepare.",
     "Anda menandai riwayat overstay dalam pengungkapan Anda. Konsultan Bali Zero dapat meninjau tanggal dan catatan sanksi terkait bersama Anda sebelum pengajuan dan memberi tahu apa yang perlu disiapkan.",
-  ),
-  DISCLOSED_BLACKLIST_ENTRY_CONDITION: text(
-    "You flagged a blacklist entry in your disclosures. A Bali Zero advisor can go over your situation with you before submission and tell you what to prepare.",
-    "Pengungkapan Anda menandai adanya pencantuman dalam daftar hitam. Konsultan Bali Zero dapat membahas situasi tersebut bersama Anda sebelum pengajuan dan memberi tahu apa yang perlu disiapkan.",
-  ),
-  DISCLOSED_IMMIGRATION_INVESTIGATION_CONDITION: text(
-    "You flagged an open immigration investigation. A Bali Zero advisor can review its status with you before submission and tell you what supporting documentation, if any, to prepare.",
-    "Anda menandai adanya pemeriksaan keimigrasian yang sedang berjalan. Konsultan Bali Zero dapat meninjau statusnya bersama Anda sebelum pengajuan dan memberi tahu dokumen pendukung, jika ada, yang perlu disiapkan.",
   ),
 };
 
