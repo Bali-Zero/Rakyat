@@ -225,11 +225,23 @@ def project_documents(profile: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
+_AVATAR_PATH = re.compile(r"^/static/team/[a-z0-9_-]+\.(jpg|jpeg|png|webp)$", re.IGNORECASE)
+
+
+def avatar_path(value: Any) -> str | None:
+    """`team_members.avatar` as the portrait path the UI may render, else None.
+
+    Only the local staff-photo shape (`/static/team/<slug>.jpg`) leaves the backend: a data URI,
+    a remote URL or any other string is not a portrait and never reaches an HR response."""
+    return value if isinstance(value, str) and _AVATAR_PATH.match(value) else None
+
+
 class StaffCard(BaseModel):
     """The member's own card: every value in full except the HR free-text `notes`."""
 
     employee_id: int
     full_name: str | None = None
+    avatar_url: str | None = None
     role: str | None = None
     department: str | None = None
     hire_date: date | None = None
@@ -318,6 +330,7 @@ def member_card(card: dict[str, Any]) -> StaffCard:
     values: dict[str, Any] = {
         "employee_id": _int_or_none(card.get("id")) or 0,
         "full_name": _str_or_none(card.get("full_name")),
+        "avatar_url": avatar_path(card.get("avatar")),
         "role": _str_or_none(card.get("role")),
         "department": _str_or_none(card.get("department")),
         "hire_date": _date_or_none(card.get("hire_date")),

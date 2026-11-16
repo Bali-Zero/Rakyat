@@ -26,6 +26,7 @@ class PersonRow(BaseModel):
     employee_id: int | None
     has_record: bool
     name: str | None
+    avatar_url: str | None = None  # /static/team/<slug>.jpg from team_members.avatar
     role: str | None
     department: str | None
     unit: str | None

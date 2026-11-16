@@ -58,6 +58,7 @@ import {
   type SessionIdentity,
 } from "@/lib/auth/session-identity";
 import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
+import { ChampionPortrait } from "@/components/workspace/ChampionPortrait";
 import { DocumentsBlock, type DocResult } from "./_components/documents-block";
 import {
   CardEditForm,
@@ -134,6 +135,26 @@ const plural = (n: number, one: string, many: string) =>
 
 function Avatar({ person, size = 40 }: { person: PersonRow; size?: number }) {
   const c = colorOf(person);
+  if (person.avatar_url) {
+    // The photo fills a box of the same size as the initials disc, so the rows never shift;
+    // ChampionPortrait itself falls back to initials when the file cannot load.
+    return (
+      <span
+        className="inline-flex shrink-0"
+        style={{ width: size, height: size, fontSize: size * 0.38 }}
+        data-testid="hr-person-portrait"
+        aria-hidden
+      >
+        <ChampionPortrait
+          name={nameOf(person)}
+          src={person.avatar_url}
+          face
+          sizes={`${size}px`}
+          className="h-full w-full"
+        />
+      </span>
+    );
+  }
   return (
     <span
       className="inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white"

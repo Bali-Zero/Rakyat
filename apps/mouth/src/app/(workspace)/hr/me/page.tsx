@@ -12,6 +12,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CalendarHeart, Sparkles } from "lucide-react";
 import { DESK_SERIF } from "@balizero/core";
+import { ChampionPortrait } from "@/components/workspace/ChampionPortrait";
 import { ApiError } from "@/lib/api/error-handler";
 import { getMyHrOverview, type MyHrOverview } from "@/lib/api/hr/hr";
 import {
@@ -137,16 +138,28 @@ export default function MyHrPage() {
   return (
     <div className="sentry-block max-w-[1180px]" data-sentry-block="">
       <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className={`text-[14px] font-medium ${SOFT}`}>{greeting()},</p>
-          <h1 className={`text-[40px] leading-tight ${INK}`} style={DESK_SERIF}>
-            {first} 👋
-          </h1>
-          <p className={`mt-1 text-[14px] ${SOFT}`}>
-            {[c.position?.trim() || c.role, c.unit, c.employer_entity]
-              .filter(Boolean)
-              .join(" · ")}
-          </p>
+        <div className="flex items-center gap-4">
+          <ChampionPortrait
+            name={c.full_name ?? c.legal_name ?? "You"}
+            src={c.avatar_url}
+            face
+            sizes="72px"
+            className="h-[72px] w-[72px]"
+          />
+          <div>
+            <p className={`text-[14px] font-medium ${SOFT}`}>{greeting()},</p>
+            <h1
+              className={`text-[40px] leading-tight ${INK}`}
+              style={DESK_SERIF}
+            >
+              {first} 👋
+            </h1>
+            <p className={`mt-1 text-[14px] ${SOFT}`}>
+              {[c.position?.trim() || c.role, c.unit, c.employer_entity]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          </div>
         </div>
         {since && (
           <Chip tone={TONE.me}>

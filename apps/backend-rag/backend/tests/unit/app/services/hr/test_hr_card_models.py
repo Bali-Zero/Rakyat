@@ -131,6 +131,27 @@ def test_the_read_model_never_raises_on_stored_content():
     assert member_card({"id": None, "profile": "x"}).employee_id == 0
 
 
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        ("/static/team/contoh.jpg", "/static/team/contoh.jpg"),
+        ("/static/team/contoh-2026.webp", "/static/team/contoh-2026.webp"),
+        ("data:image/png;base64,AAAA", None),
+        ("https://example.test/p.jpg", None),
+        ("/static/team/../x.jpg", None),
+        ("", None),
+        (None, None),
+        (7, None),
+    ],
+)
+def test_the_card_exposes_only_a_local_staff_portrait_path(stored, expected):
+    assert member_card({"id": 1, "avatar": stored}).avatar_url == expected
+
+
+def test_a_card_without_an_avatar_key_has_no_portrait():
+    assert member_card({"id": 1}).avatar_url is None
+
+
 @pytest.mark.parametrize("value", [True, False])
 def test_on_payroll_accepts_a_strict_boolean(value):
     assert StaffProfilePatch(on_payroll=value).on_payroll is value
