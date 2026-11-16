@@ -225,7 +225,9 @@ def project_documents(profile: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
-_AVATAR_PATH = re.compile(r"^/static/team/[a-z0-9_-]+\.(jpg|jpeg|png|webp)$", re.IGNORECASE)
+# ASCII only, lowercase only (stored files are lowercase `.jpg`), slug starts alphanumeric so no
+# leading dot. Matched with fullmatch: `$` would also accept a trailing newline.
+_AVATAR_PATH = re.compile(r"/static/team/[a-z0-9][a-z0-9_-]*\.(?:jpe?g|png|webp)", re.ASCII)
 
 
 def avatar_path(value: Any) -> str | None:
@@ -233,7 +235,7 @@ def avatar_path(value: Any) -> str | None:
 
     Only the local staff-photo shape (`/static/team/<slug>.jpg`) leaves the backend: a data URI,
     a remote URL or any other string is not a portrait and never reaches an HR response."""
-    return value if isinstance(value, str) and _AVATAR_PATH.match(value) else None
+    return value if isinstance(value, str) and _AVATAR_PATH.fullmatch(value) else None
 
 
 class StaffCard(BaseModel):

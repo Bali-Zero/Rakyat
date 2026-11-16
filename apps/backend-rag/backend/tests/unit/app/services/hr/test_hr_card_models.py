@@ -139,6 +139,13 @@ def test_the_read_model_never_raises_on_stored_content():
         ("data:image/png;base64,AAAA", None),
         ("https://example.test/p.jpg", None),
         ("/static/team/../x.jpg", None),
+        ("/static/team/contoh.jpg\n", None),
+        ("/static/team/contoh\u212a.jpg", None),  # Kelvin sign
+        ("/static/team/contoh\u00e9.jpg", None),
+        ("/static/team/contoh.jpg?x=1", None),
+        ("/static/team/.hidden.jpg", None),
+        ("/static/team/a/b.jpg", None),
+        ("/static/team/CONTOH.JPG", None),
         ("", None),
         (None, None),
         (7, None),
