@@ -24,9 +24,9 @@ ACCEPTED = {
         ("123456", "123456"),
     ],
     "permit": [
-        ("1A2345678B", "1A2345678B"),
-        ("a12b-3456789c", "A12B3456789C"),
-        ("C12 1234567890123", "C121234567890123"),
+        ("1A2345678B", "1A2345678B"),  # pragma: allowlist secret
+        ("a12b-3456789c", "A12B3456789C"),  # pragma: allowlist secret
+        ("C12 1234567890123", "C121234567890123"),  # pragma: allowlist secret
         ("9Z8ABCDEFGHIJKLMNZ", "9Z8ABCDEFGHIJKLMNZ"),
     ],
     "nik": [
@@ -52,9 +52,29 @@ ACCEPTED = {
     ],
 }
 REJECTED = {
-    "passport": ["ABCDEF", "12345", "A1234567890123", "", "éé" + "1234", "AB 12\x00345"],
-    "permit": ["123456789", "AB1234567C", "1A2B", "A1B2345678C", "1A2345678", "c12" + "1" * 12],
-    "nik": ["320123456789012", "32012345678901234", "320123456789012A", "", "abcdefghijklmnop"],
+    "passport": [
+        "ABCDEF",
+        "12345",
+        "A1234567890123",  # pragma: allowlist secret
+        "",
+        "éé" + "1234",
+        "AB 12\x00345",
+    ],
+    "permit": [
+        "123456789",
+        "AB1234567C",  # pragma: allowlist secret
+        "1A2B",
+        "A1B2345678C",  # pragma: allowlist secret
+        "1A2345678",  # pragma: allowlist secret
+        "c12" + "1" * 12,
+    ],
+    "nik": [
+        "320123456789012",
+        "32012345678901234",
+        "320123456789012A",  # pragma: allowlist secret
+        "",
+        "abcdefghijklmnop",
+    ],
     "npwp": ["12345678901234", "01234567890123456", "", "abcdefghijklmno"],
     "nib": ["123456789012", "12345678901234", "ABCDEFGHIJKLM", ""],
     "ahu": [
