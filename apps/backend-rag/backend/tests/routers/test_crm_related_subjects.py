@@ -56,6 +56,7 @@ SHA = "5f3c" * 16
 REF = "REF-7319"
 TIER = "TIER-Q9"
 NEW_TABLES = {"related_subjects", "related_subject_identifiers"}
+REGISTRY_TABLES = frozenset(NEW_TABLES)
 AUDIT_TABLES = {"api_audit_trail", "session_tracking"}
 SENTINEL_NAME = "Zz Sentinel Name"
 SENTINEL_ID = "ZZSENT0001"
@@ -194,21 +195,33 @@ def check_declared_writes(actual: set[str], declared: set[str]) -> None:
 def check_operations(ops: Counter, declared: Declared) -> None:
     """The operation-level half of the teardown assertion: every (table, operation) written is
     an allowed one (default INSERT-only registry), declared INSERT counts are exact, and every
-    created subject has at least one identifier. A same-value UPDATE, a DELETE or a TRUNCATE
-    of a registry table is therefore refused unless the test declared it."""
+    a test that declares registry writes MUST declare the exact INSERT counts of both registry
+    tables (the omission fails the teardown). A same-value UPDATE, a DELETE or a TRUNCATE of a
+    registry table is refused unless the test declared it."""
     for (table, op), n in sorted(ops.items()):
         allowed = DEFAULT_OPS.get(table, set()) | declared.extra_ops.get(table, set())
         assert op in allowed, (
             f"write measurement: {op} on {table} ({n} row writes) is not allowed "
             f"(allowed: {sorted(allowed)})"
         )
+    for table in sorted(REGISTRY_TABLES & set(declared)):
+        assert table in declared.expected_counts, (
+            f"write measurement: {table} declared without its exact INSERT count "
+            "(writes.counts(related_subjects=..., related_subject_identifiers=...))"
+        )
     for table, expected in sorted(declared.expected_counts.items()):
         assert ops[(table, "INSERT")] == expected, (
             f"write measurement: {ops[(table, 'INSERT')]} INSERTs on {table}, declared {expected}"
         )
-    assert ops[("related_subject_identifiers", "INSERT")] >= ops[("related_subjects", "INSERT")], (
-        "write measurement: a subject was created without an identifier"
+
+
+async def check_no_orphan_subjects(c) -> None:
+    """Every subject owns at least one identifier (per subject, not an aggregate balance)."""
+    orphans = await c.fetchval(
+        "SELECT count(*) FROM related_subjects s WHERE NOT EXISTS "
+        "(SELECT 1 FROM related_subject_identifiers i WHERE i.subject_id = s.id)"
     )
+    assert orphans == 0, f"write measurement: {orphans} subject(s) without an identifier"
 
 
 @pytest.fixture
@@ -247,6 +260,7 @@ async def pool(writes):
         async with created.acquire() as c:
             check_declared_writes(await written(c), set(writes))
             check_operations(await written_ops(c), writes)
+            await check_no_orphan_subjects(c)
     finally:
         await created.close()
         await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
@@ -690,6 +704,61 @@ async def test_guard_a_truncate_is_a_write_and_a_cascade_names_every_table_it_re
     writes.ops("client_family_members", "TRUNCATE")
 
 
+def test_guard_registry_declared_without_counts_fails_the_teardown_check():
+    """The omission is impossible: declaring registry writes WITHOUT their exact INSERT counts
+    fails `check_operations`, the function the schema fixture runs at the end of every test."""
+    for tables in (("related_subjects",), ("related_subject_identifiers",), tuple(NEW_TABLES)):
+        bare = Declared()
+        bare(*tables)
+        with pytest.raises(AssertionError, match="without its exact INSERT count"):
+            check_operations(Counter(), bare)
+    partial = Declared()
+    partial(*NEW_TABLES)
+    partial.counts(related_subjects=1)
+    with pytest.raises(AssertionError, match="related_subject_identifiers declared without"):
+        check_operations(Counter(), partial)
+    full = Declared()
+    full(*NEW_TABLES)
+    full.counts(related_subjects=0, related_subject_identifiers=0)
+    check_operations(Counter(), full)
+
+
+@pytest.mark.asyncio
+async def test_guard_a_subject_without_an_identifier_is_refused_even_when_the_totals_balance(
+    writes, conn
+):
+    """Two subjects, two identifiers: the totals balance, yet one subject owns both identifiers
+    and the other owns none. The per-subject check refuses it; an aggregate comparison would not.
+    Built with the test's own SQL, then the per-subject function is called directly."""
+    writes(*NEW_TABLES)
+    writes.counts(related_subjects=2, related_subject_identifiers=2)
+    writes.ops("related_subjects", "DELETE")
+    writes.ops("related_subject_identifiers", "DELETE")
+    key = json.dumps({"plan_sha256": SHA, "subject_ref": REF, "tier": TIER})
+    owner = await conn.fetchval(
+        "INSERT INTO related_subjects (kind, evidence, created_by) VALUES ('person', $1::jsonb, 'x') RETURNING id",
+        key,
+    )
+    await conn.fetchval(
+        "INSERT INTO related_subjects (kind, evidence, created_by) VALUES ('person', $1::jsonb, 'x') RETURNING id",
+        key,
+    )
+    for norm in ("ZZ0000071", "ZZ0000072"):
+        await conn.execute(
+            "INSERT INTO related_subject_identifiers (id_type, id_norm, id_raw, norm_version, subject_id) "
+            "VALUES ('passport', $1, $1, 1, $2)",
+            norm,
+            owner,
+        )
+    ops = await written_ops(conn)
+    counted = Declared()
+    counted.counts(related_subjects=2, related_subject_identifiers=2)
+    check_operations(ops, counted)  # the aggregate view sees nothing wrong
+    with pytest.raises(AssertionError, match="1 subject\\(s\\) without an identifier"):
+        await check_no_orphan_subjects(conn)
+    await conn.execute("DELETE FROM related_subjects")  # leave a clean state for the teardown
+
+
 def test_guard_operations_and_counts_are_checked_not_only_tables():
     """`check_operations` is the operation-level half of the teardown assertion."""
     nothing = Declared()
@@ -712,8 +781,6 @@ def test_guard_operations_and_counts_are_checked_not_only_tables():
     check_operations(inserts, counted)
     with pytest.raises(AssertionError, match="declared 1"):
         check_operations(inserts + Counter({("related_subjects", "INSERT"): 1}), counted)
-    with pytest.raises(AssertionError, match="without an identifier"):
-        check_operations(Counter({("related_subjects", "INSERT"): 1}), nothing)
 
 
 @pytest.mark.asyncio
@@ -735,26 +802,35 @@ async def test_c1_batch_counters_cover_the_two_new_tables_only(writes, conn):
     tr = conn.transaction()
     await tr.start()
     try:
+        start = await log_mark(conn)
         for n in range(3):
             out = await reg(
                 conn, subj(ids=(("passport", f"ZZ000000{n}"),), name=f"Zz Probe {n}"), dry_run=False
             )
             assert out["outcome"] == "created"
-        await reg(conn, subj(ids=(("passport", "ZZ0000000"),)), dry_run=False)
+        # The replay has its own no-write window, read BEFORE the rollback removes the log.
+        replay_mark = await log_mark(conn)
+        again = await reg(conn, subj(ids=(("passport", "ZZ0000000"),)), dry_run=False)
+        assert again["outcome"] == "already_registered"
+        replay_ops = await written_ops(conn, replay_mark)
+        batch_ops = await written_ops(conn, start)
         rows = await conn.fetch(
             "SELECT relname, n_tup_ins, n_tup_upd, n_tup_del FROM pg_stat_xact_user_tables "
             "WHERE schemaname = current_schema()"
         )
+        await check_no_orphan_subjects(conn)
     finally:
         await tr.rollback()
+    assert replay_ops == Counter()
+    # Exactly what three creations write: INSERTs only, nothing else anywhere.
+    assert batch_ops == Counter(
+        {("related_subjects", "INSERT"): 3, ("related_subject_identifiers", "INSERT"): 3}
+    )
     # write_log is the measuring instrument (trigger target), not a table the registry writes.
-    touched = {
-        r["relname"]
-        for r in rows
-        if r["relname"] != "write_log" and r["n_tup_ins"] + r["n_tup_upd"] + r["n_tup_del"] > 0
-    }
-    assert touched == NEW_TABLES
-    assert all(r["n_tup_ins"] > 0 for r in rows if r["relname"] in NEW_TABLES)
+    stats = {r["relname"]: (r["n_tup_ins"], r["n_tup_upd"], r["n_tup_del"]) for r in rows}
+    assert {t for t, v in stats.items() if t != "write_log" and any(v)} == NEW_TABLES
+    assert stats["related_subjects"] == (3, 0, 0)
+    assert stats["related_subject_identifiers"] == (3, 0, 0)
     assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 0
 
 
@@ -1012,11 +1088,7 @@ async def _race(pool, subjects):
 
 
 async def _assert_no_subject_without_identifiers(conn):
-    orphans = await conn.fetchval(
-        "SELECT count(*) FROM related_subjects s WHERE NOT EXISTS "
-        "(SELECT 1 FROM related_subject_identifiers i WHERE i.subject_id = s.id)"
-    )
-    assert orphans == 0
+    await check_no_orphan_subjects(conn)
 
 
 @pytest.mark.asyncio
@@ -1297,6 +1369,7 @@ async def test_c6_crm_matches_in_every_stored_spelling(writes, conn, kind, ids, 
     await _seed(conn, ids=(("passport", "ZZ0000500"),))
     if outcome == "created":
         writes("related_subjects", "related_subject_identifiers")
+        writes.counts(related_subjects=1, related_subject_identifiers=1)
         out = await reg(conn, subj(kind=kind, ids=ids), dry_run=False)
     else:
         async with writes_nothing(conn):
@@ -1855,6 +1928,7 @@ async def test_c11_database_refuses_short_duplicate_and_self_merged_rows(writes,
     writes("related_subjects", "related_subject_identifiers")
     writes.ops("related_subjects", "DELETE")
     writes.ops("related_subject_identifiers", "DELETE")  # the cascade of the subject delete
+    writes.counts(related_subjects=1, related_subject_identifiers=1)
     sid = await conn.fetchval(
         "INSERT INTO related_subjects (kind, evidence, created_by) VALUES ('person', '{}', 'x') RETURNING id"
     )
