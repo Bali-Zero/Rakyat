@@ -167,7 +167,7 @@ test.describe("W2 — /team keeps the directory it had, plus the tool links", ()
 
     const nav = page.getByRole("navigation", { name: "Team sections" });
     const links = await nav.getByRole("link").all();
-    expect(links.length).toBe(5);
+    expect(links.length).toBe(8);
     for (const link of links) {
       const href = await link.getAttribute("href");
       expect(href).toMatch(/^#/);
