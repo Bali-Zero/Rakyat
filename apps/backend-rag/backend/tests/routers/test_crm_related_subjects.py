@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import traceback
+from collections import Counter
 from contextlib import asynccontextmanager, contextmanager
 from datetime import date
 from pathlib import Path
@@ -55,6 +56,7 @@ SHA = "5f3c" * 16
 REF = "REF-7319"
 TIER = "TIER-Q9"
 NEW_TABLES = {"related_subjects", "related_subject_identifiers"}
+REGISTRY_TABLES = frozenset(NEW_TABLES)
 AUDIT_TABLES = {"api_audit_trail", "session_tracking"}
 SENTINEL_NAME = "Zz Sentinel Name"
 SENTINEL_ID = "ZZSENT0001"
@@ -133,6 +135,14 @@ async def written(c, since: int = 0) -> set[str]:
     }
 
 
+async def written_ops(c, since: int = 0) -> Counter:
+    """(table, operation) -> number of row writes (a TRUNCATE counts once per table)."""
+    rows = await c.fetch(
+        "SELECT tbl, op, count(*) AS n FROM write_log WHERE id > $1 GROUP BY 1, 2", since
+    )
+    return Counter({(r["tbl"], r["op"]): r["n"] for r in rows})
+
+
 @asynccontextmanager
 async def unmeasured(c):
     """The ONE way a test seeds or cleans up mid-test: rows written inside are taken out of the
@@ -142,11 +152,37 @@ async def unmeasured(c):
     await c.execute("DELETE FROM write_log WHERE id > $1", mark)
 
 
+# The operation each table may legitimately receive, by default. The registry is write-once
+# (INSERT only); the audit trail is append-only; the activity logger only UPDATEs a session row
+# that already exists. Anything else a test does must be declared with `writes.ops(...)`.
+DEFAULT_OPS = {
+    "related_subjects": {"INSERT"},
+    "related_subject_identifiers": {"INSERT"},
+    "api_audit_trail": {"INSERT"},
+    "session_tracking": {"UPDATE"},
+}
+
+
 class Declared(set):
-    """The tables a test declares it writes. Empty unless the test says otherwise."""
+    """What a test declares it writes. Empty unless the test says otherwise.
+
+    ``writes(*tables)``: the tables written. ``writes.ops(table, *ops)``: operations beyond the
+    default ones for that table. ``writes.counts(**inserts)``: exact INSERT row counts.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.extra_ops: dict[str, set[str]] = {}
+        self.expected_counts: dict[str, int] = {}
 
     def __call__(self, *tables: str) -> None:
         self.update(tables)
+
+    def ops(self, table: str, *ops: str) -> None:
+        self.extra_ops.setdefault(table, set()).update(ops)
+
+    def counts(self, **inserts: int) -> None:
+        self.expected_counts.update(inserts)
 
 
 def check_declared_writes(actual: set[str], declared: set[str]) -> None:
@@ -154,6 +190,40 @@ def check_declared_writes(actual: set[str], declared: set[str]) -> None:
     assert actual == declared, (
         f"write measurement: wrote {sorted(actual)}, declared {sorted(declared)}"
     )
+
+
+def check_operations(ops: Counter, declared: Declared) -> None:
+    """The operation-level half of the teardown assertion: every (table, operation) written is
+    an allowed one (default INSERT-only registry), declared INSERT counts are exact, and every
+    a test that declares registry writes MUST declare the exact INSERT counts of both registry
+    tables (the omission fails the teardown). A same-value UPDATE, a DELETE or a TRUNCATE of a
+    registry table is refused unless the test declared it."""
+    for (table, op), n in sorted(ops.items()):
+        allowed = DEFAULT_OPS.get(table, set()) | declared.extra_ops.get(table, set())
+        assert op in allowed, (
+            f"write measurement: {op} on {table} ({n} row writes) is not allowed "
+            f"(allowed: {sorted(allowed)})"
+        )
+    for table in sorted(REGISTRY_TABLES & set(declared)):
+        assert table in declared.expected_counts, (
+            f"write measurement: {table} declared without its exact INSERT count "
+            "(writes.counts(related_subjects=..., related_subject_identifiers=...))"
+        )
+    for table, expected in sorted(declared.expected_counts.items()):
+        assert ops[(table, "INSERT")] == expected, (
+            f"write measurement: {ops[(table, 'INSERT')]} INSERTs on {table}, declared {expected}"
+        )
+
+
+async def check_no_orphan_subjects(c) -> None:
+    """Every subject owns at least one identifier (per subject, not an aggregate balance)."""
+    if await c.fetchval("SELECT to_regclass('related_subjects')") is None:
+        return  # the rollback test dropped the registry tables: nothing left to own anything
+    orphans = await c.fetchval(
+        "SELECT count(*) FROM related_subjects s WHERE NOT EXISTS "
+        "(SELECT 1 FROM related_subject_identifiers i WHERE i.subject_id = s.id)"
+    )
+    assert orphans == 0, f"write measurement: {orphans} subject(s) without an identifier"
 
 
 @pytest.fixture
@@ -191,6 +261,8 @@ async def pool(writes):
         # insert-then-delete) must be exactly the ones it declared through `writes(...)`.
         async with created.acquire() as c:
             check_declared_writes(await written(c), set(writes))
+            check_operations(await written_ops(c), writes)
+            await check_no_orphan_subjects(c)
     finally:
         await created.close()
         await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
@@ -599,6 +671,7 @@ async def test_guard_an_undeclared_write_fails_the_teardown_assertion(writes, co
     function, the same log, without a nested pytest session.
     """
     writes("clients")  # declared here only so that THIS test's own teardown passes
+    writes.ops("clients", "INSERT", "DELETE")
     before = await snapshot(conn)
     await conn.execute("INSERT INTO clients (full_name) VALUES ('Zz Probe')")
     await conn.execute("DELETE FROM clients WHERE full_name = 'Zz Probe'")
@@ -629,6 +702,87 @@ async def test_guard_a_truncate_is_a_write_and_a_cascade_names_every_table_it_re
     with pytest.raises(AssertionError):
         check_declared_writes(cascaded, {"clients"})
     writes("clients", "client_family_members")
+    writes.ops("clients", "TRUNCATE")
+    writes.ops("client_family_members", "TRUNCATE")
+
+
+def test_guard_registry_declared_without_counts_fails_the_teardown_check():
+    """The omission is impossible: declaring registry writes WITHOUT their exact INSERT counts
+    fails `check_operations`, the function the schema fixture runs at the end of every test."""
+    for tables in (("related_subjects",), ("related_subject_identifiers",), tuple(NEW_TABLES)):
+        bare = Declared()
+        bare(*tables)
+        with pytest.raises(AssertionError, match="without its exact INSERT count"):
+            check_operations(Counter(), bare)
+    partial = Declared()
+    partial(*NEW_TABLES)
+    partial.counts(related_subjects=1)
+    with pytest.raises(AssertionError, match="related_subject_identifiers declared without"):
+        check_operations(Counter(), partial)
+    full = Declared()
+    full(*NEW_TABLES)
+    full.counts(related_subjects=0, related_subject_identifiers=0)
+    check_operations(Counter(), full)
+
+
+@pytest.mark.asyncio
+async def test_guard_a_subject_without_an_identifier_is_refused_even_when_the_totals_balance(
+    writes, conn
+):
+    """Two subjects, two identifiers: the totals balance, yet one subject owns both identifiers
+    and the other owns none. The per-subject check refuses it; an aggregate comparison would not.
+    Built with the test's own SQL, then the per-subject function is called directly."""
+    writes(*NEW_TABLES)
+    writes.counts(related_subjects=2, related_subject_identifiers=2)
+    writes.ops("related_subjects", "DELETE")
+    writes.ops("related_subject_identifiers", "DELETE")
+    key = json.dumps({"plan_sha256": SHA, "subject_ref": REF, "tier": TIER})
+    owner = await conn.fetchval(
+        "INSERT INTO related_subjects (kind, evidence, created_by) VALUES ('person', $1::jsonb, 'x') RETURNING id",
+        key,
+    )
+    await conn.fetchval(
+        "INSERT INTO related_subjects (kind, evidence, created_by) VALUES ('person', $1::jsonb, 'x') RETURNING id",
+        key,
+    )
+    for norm in ("ZZ0000071", "ZZ0000072"):
+        await conn.execute(
+            "INSERT INTO related_subject_identifiers (id_type, id_norm, id_raw, norm_version, subject_id) "
+            "VALUES ('passport', $1, $1, 1, $2)",
+            norm,
+            owner,
+        )
+    ops = await written_ops(conn)
+    counted = Declared()
+    counted.counts(related_subjects=2, related_subject_identifiers=2)
+    check_operations(ops, counted)  # the aggregate view sees nothing wrong
+    with pytest.raises(AssertionError, match="1 subject\\(s\\) without an identifier"):
+        await check_no_orphan_subjects(conn)
+    await conn.execute("DELETE FROM related_subjects")  # leave a clean state for the teardown
+
+
+def test_guard_operations_and_counts_are_checked_not_only_tables():
+    """`check_operations` is the operation-level half of the teardown assertion."""
+    nothing = Declared()
+    check_operations(Counter(), nothing)
+    inserts = Counter(
+        {("related_subjects", "INSERT"): 1, ("related_subject_identifiers", "INSERT"): 2}
+    )
+    check_operations(inserts, nothing)  # a creation: INSERTs only
+    for table in ("related_subjects", "related_subject_identifiers"):
+        for op in ("UPDATE", "DELETE", "TRUNCATE"):
+            with pytest.raises(AssertionError, match=f"{op} on {table}"):
+                check_operations(inserts + Counter({(table, op): 1}), nothing)
+    with pytest.raises(AssertionError, match="UPDATE on clients"):
+        check_operations(Counter({("clients", "UPDATE"): 1}), nothing)
+    allowed = Declared()
+    allowed.ops("related_subjects", "UPDATE")
+    check_operations(inserts + Counter({("related_subjects", "UPDATE"): 1}), allowed)
+    counted = Declared()
+    counted.counts(related_subjects=1, related_subject_identifiers=2)
+    check_operations(inserts, counted)
+    with pytest.raises(AssertionError, match="declared 1"):
+        check_operations(inserts + Counter({("related_subjects", "INSERT"): 1}), counted)
 
 
 @pytest.mark.asyncio
@@ -639,6 +793,7 @@ async def test_guard_seeding_through_unmeasured_is_excused_but_a_later_write_is_
     await conn.execute("UPDATE clients SET full_name = full_name")  # same-value update
     assert await written(conn) == {"clients"}
     writes("clients")
+    writes.ops("clients", "UPDATE")
 
 
 # ── criterion 1: service level, one connection, counters on the two tables only ──
@@ -649,26 +804,35 @@ async def test_c1_batch_counters_cover_the_two_new_tables_only(writes, conn):
     tr = conn.transaction()
     await tr.start()
     try:
+        start = await log_mark(conn)
         for n in range(3):
             out = await reg(
                 conn, subj(ids=(("passport", f"ZZ000000{n}"),), name=f"Zz Probe {n}"), dry_run=False
             )
             assert out["outcome"] == "created"
-        await reg(conn, subj(ids=(("passport", "ZZ0000000"),)), dry_run=False)
+        # The replay has its own no-write window, read BEFORE the rollback removes the log.
+        replay_mark = await log_mark(conn)
+        again = await reg(conn, subj(ids=(("passport", "ZZ0000000"),)), dry_run=False)
+        assert again["outcome"] == "already_registered"
+        replay_ops = await written_ops(conn, replay_mark)
+        batch_ops = await written_ops(conn, start)
         rows = await conn.fetch(
             "SELECT relname, n_tup_ins, n_tup_upd, n_tup_del FROM pg_stat_xact_user_tables "
             "WHERE schemaname = current_schema()"
         )
+        await check_no_orphan_subjects(conn)
     finally:
         await tr.rollback()
+    assert replay_ops == Counter()
+    # Exactly what three creations write: INSERTs only, nothing else anywhere.
+    assert batch_ops == Counter(
+        {("related_subjects", "INSERT"): 3, ("related_subject_identifiers", "INSERT"): 3}
+    )
     # write_log is the measuring instrument (trigger target), not a table the registry writes.
-    touched = {
-        r["relname"]
-        for r in rows
-        if r["relname"] != "write_log" and r["n_tup_ins"] + r["n_tup_upd"] + r["n_tup_del"] > 0
-    }
-    assert touched == NEW_TABLES
-    assert all(r["n_tup_ins"] > 0 for r in rows if r["relname"] in NEW_TABLES)
+    stats = {r["relname"]: (r["n_tup_ins"], r["n_tup_upd"], r["n_tup_del"]) for r in rows}
+    assert {t for t, v in stats.items() if t != "write_log" and any(v)} == NEW_TABLES
+    assert stats["related_subjects"] == (3, 0, 0)
+    assert stats["related_subject_identifiers"] == (3, 0, 0)
     assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 0
 
 
@@ -680,6 +844,7 @@ async def test_c2_http_call_writes_two_tables_and_the_audit_row_only(
     writes, pool, conn, enabled, audit_logger
 ):
     writes("related_subjects", "related_subject_identifiers", "api_audit_trail")
+    writes.counts(related_subjects=1, related_subject_identifiers=1)
     stack = Stack(pool)
     async with writes_only(conn, NEW_TABLES | {"api_audit_trail"}, exact_content=True):
         resp = await post(stack, body(display_name=SENTINEL_NAME, ids=(("passport", SENTINEL_ID),)))
@@ -695,6 +860,7 @@ async def test_c2_session_header_and_user_email_also_update_session_tracking(
     writes, pool, conn, enabled, audit_logger
 ):
     writes("related_subjects", "related_subject_identifiers", "api_audit_trail", "session_tracking")
+    writes.counts(related_subjects=1, related_subject_identifiers=1)
     stack = Stack(pool)
     async with unmeasured(conn):
         await conn.execute(
@@ -720,6 +886,7 @@ async def test_c2_session_header_and_user_email_also_update_session_tracking(
 @pytest.mark.asyncio
 async def test_c3_replay_is_already_registered_and_changes_no_row(writes, pool, conn, enabled):
     writes("related_subjects", "related_subject_identifiers")
+    writes.counts(related_subjects=1, related_subject_identifiers=2)
     stack = Stack(pool, middleware=False)
     payload = body(
         kind="person", ids=(("passport", "ZZ0000001"), ("nik", "3201234567890123")),
@@ -738,10 +905,31 @@ async def test_c3_replay_is_already_registered_and_changes_no_row(writes, pool, 
 
 
 async def _seed(conn, ids=(("nik", "3201234567890123"), ("passport", "ZZ0000001")), dob=None):
+    """Seed one registry subject with the fixture's OWN SQL: plain INSERTs, no service call.
+
+    The block is excused from the measurement (it is the test's setup); nothing the code under
+    test does can hide in it, because the code under test does not run here.
+    """
+    prepared = prepare_identifiers("person", [(t, v, {}) for t, v in ids])
     async with unmeasured(conn):
-        out = await reg(conn, subj(ids=ids, dob=dob, name="Zz Probe Subject"), dry_run=False)
-    assert out["outcome"] == "created"
-    return out["subject_id"]
+        sid = await conn.fetchval(
+            "INSERT INTO related_subjects (kind, display_name, date_of_birth, evidence, created_by) "
+            "VALUES ('person', 'Zz Probe Subject', $1, $2::jsonb, $3) RETURNING id",
+            dob,
+            json.dumps({"plan_sha256": SHA, "subject_ref": REF, "tier": TIER}),
+            REGISTRY_ACTOR,
+        )
+        for ident in prepared:
+            await conn.execute(
+                "INSERT INTO related_subject_identifiers "
+                "(id_type, id_norm, id_raw, norm_version, subject_id) VALUES ($1, $2, $3, $4, $5)",
+                ident.id_type,
+                ident.id_norm,
+                ident.id_raw,
+                NORM_VERSION,
+                sid,
+            )
+    return sid
 
 
 @pytest.mark.asyncio
@@ -820,6 +1008,7 @@ async def test_c4_kind_change_keeping_the_identifiers_is_422_and_writes_nothing(
 @pytest.mark.asyncio
 async def test_c4_creation_stores_actor_canonical_keys_and_norm_version(writes, conn):
     writes("related_subjects", "related_subject_identifiers")
+    writes.counts(related_subjects=1, related_subject_identifiers=2)
     out = await reg(
         conn,
         subj(
@@ -901,17 +1090,14 @@ async def _race(pool, subjects):
 
 
 async def _assert_no_subject_without_identifiers(conn):
-    orphans = await conn.fetchval(
-        "SELECT count(*) FROM related_subjects s WHERE NOT EXISTS "
-        "(SELECT 1 FROM related_subject_identifiers i WHERE i.subject_id = s.id)"
-    )
-    assert orphans == 0
+    await check_no_orphan_subjects(conn)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("callers", [2, 3])
 async def test_c5_identical_requests_make_exactly_one_subject(writes, pool, conn, callers):
     writes("related_subjects", "related_subject_identifiers")
+    writes.counts(related_subjects=1, related_subject_identifiers=2)
     ids = (("nik", "3201234567890123"), ("passport", "ZZ0000001"))
     results = await _race(pool, [subj(ids=ids, name="Zz Probe Subject") for _ in range(callers)])
     outcomes = sorted(r["outcome"] for r in results)
@@ -927,6 +1113,7 @@ async def test_c5_shared_key_with_distinct_extra_keys_gives_one_created_rest_con
     writes, pool, conn, callers
 ):
     writes("related_subjects", "related_subject_identifiers")
+    writes.counts(related_subjects=1, related_subject_identifiers=2)
     subjects = [
         subj(ids=(("passport", "ZZ0000001"), ("nik", f"320123456789012{n}")))
         for n in range(callers)
@@ -942,6 +1129,7 @@ async def test_c5_shared_key_with_distinct_extra_keys_gives_one_created_rest_con
 @pytest.mark.asyncio
 async def test_c5_identifiers_are_inserted_in_sorted_key_order(writes, conn):
     writes("related_subjects", "related_subject_identifiers")
+    writes.counts(related_subjects=1, related_subject_identifiers=3)
     seen = []
 
     class _Spy(_Conn):
@@ -1034,6 +1222,7 @@ class _PoolOf:
 @pytest.mark.asyncio
 async def test_c5_one_forced_deadlock_is_retried_to_the_right_outcome(writes, conn):
     writes("related_subjects", "related_subject_identifiers")
+    writes.counts(related_subjects=1, related_subject_identifiers=2)
     ids = (("nik", "3201234567890123"), ("passport", "ZZ0000001"))
     out = await reg(_Conn(conn, deadlock_hook(1)), subj(ids=ids), dry_run=False)
     assert out["outcome"] == "created"
@@ -1071,6 +1260,7 @@ async def test_c5_a_second_forced_deadlock_is_the_fixed_503_and_leaves_nothing(
 @pytest.mark.asyncio
 async def test_c5_one_forced_serialization_failure_is_retried_to_the_right_outcome(writes, conn):
     writes("related_subjects", "related_subject_identifiers")
+    writes.counts(related_subjects=1, related_subject_identifiers=2)
     ids = (("nik", "3201234567890123"), ("passport", "ZZ0000001"))
     out = await reg(_Conn(conn, serialization_hook(1)), subj(ids=ids), dry_run=False)
     assert out["outcome"] == "created"
@@ -1097,6 +1287,7 @@ async def test_c5_a_failed_commit_with_a_serialization_error_is_retried_once(
     writes, conn, pool, enabled
 ):
     writes("related_subjects", "related_subject_identifiers")
+    writes.counts(related_subjects=1, related_subject_identifiers=1)
     one = _CommitConn(conn, 1, lambda: asyncpg.SerializationError("x"))
     assert (await reg(one, subj(), dry_run=False))["outcome"] == "created"
     assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
@@ -1180,6 +1371,7 @@ async def test_c6_crm_matches_in_every_stored_spelling(writes, conn, kind, ids, 
     await _seed(conn, ids=(("passport", "ZZ0000500"),))
     if outcome == "created":
         writes("related_subjects", "related_subject_identifiers")
+        writes.counts(related_subjects=1, related_subject_identifiers=1)
         out = await reg(conn, subj(kind=kind, ids=ids), dry_run=False)
     else:
         async with writes_nothing(conn):
@@ -1402,12 +1594,18 @@ async def test_c9_privacy_on_success_and_conflict(
     writes, pool, conn, enabled, audit_logger, caplog
 ):
     writes("related_subjects", "related_subject_identifiers", "api_audit_trail")
-    await _privacy_run(pool, conn, caplog, lambda s: None, SECRET_BODY, expect_status=200)
-    resp, _ = await _privacy_run(
-        pool, conn, caplog, lambda s: None,
-        body(display_name=SENTINEL_NAME, ids=(("passport", SENTINEL_ID), ("passport", "ZZ0000002"))),
-        expect_status=200,
-    )  # fmt: skip
+    writes.counts(related_subjects=1, related_subject_identifiers=1)
+    async with writes_only(
+        conn, {"related_subjects", "related_subject_identifiers", "api_audit_trail"}
+    ):
+        await _privacy_run(pool, conn, caplog, lambda s: None, SECRET_BODY, expect_status=200)
+    # The conflict call has its OWN window: the HTTP path may only append its audit row.
+    async with writes_only(conn, {"api_audit_trail"}):
+        resp, _ = await _privacy_run(
+            pool, conn, caplog, lambda s: None,
+            body(display_name=SENTINEL_NAME, ids=(("passport", SENTINEL_ID), ("passport", "ZZ0000002"))),
+            expect_status=200,
+        )  # fmt: skip
     assert resp.json()["outcome"] == "conflict"
 
 
@@ -1621,6 +1819,7 @@ async def test_c9_privacy_when_releasing_the_connection_fails(
     writes, pool, conn, enabled, audit_logger, caplog
 ):
     writes("related_subjects", "related_subject_identifiers", "api_audit_trail")
+    writes.counts(related_subjects=1, related_subject_identifiers=1)
 
     def setup(stack):
         stack.app.state.db_pool = _PoolOf(pool, fail_exit=RuntimeError(LEAKY))
@@ -1659,6 +1858,7 @@ async def test_c9_privacy_when_building_the_success_response_fails(
     writes, pool, conn, enabled, audit_logger, caplog, monkeypatch
 ):
     writes("related_subjects", "related_subject_identifiers", "api_audit_trail")
+    writes.counts(related_subjects=1, related_subject_identifiers=1)
 
     def boom(*a, **kw):
         raise RuntimeError(LEAKY)
@@ -1728,6 +1928,9 @@ def test_c11_migration_is_361_alone_and_rollback_drops_both_tables():
 @pytest.mark.asyncio
 async def test_c11_database_refuses_short_duplicate_and_self_merged_rows(writes, conn):
     writes("related_subjects", "related_subject_identifiers")
+    writes.ops("related_subjects", "DELETE")
+    writes.ops("related_subject_identifiers", "DELETE")  # the cascade of the subject delete
+    writes.counts(related_subjects=1, related_subject_identifiers=1)
     sid = await conn.fetchval(
         "INSERT INTO related_subjects (kind, evidence, created_by) VALUES ('person', '{}', 'x') RETURNING id"
     )
