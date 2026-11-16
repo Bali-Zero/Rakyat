@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 from uuid import uuid4
@@ -179,6 +180,32 @@ def changed(before: dict, after: dict) -> set[str]:
     return {name for name in after if after[name] != before.get(name)}
 
 
+@asynccontextmanager
+async def writes_only(c, tables=frozenset(), *, exact_content=False):
+    """The ONE measure of "what a call wrote", for every test that makes a claim about it.
+
+    Arms the row-level write log before the call. Afterwards: the tables that received any row
+    write (same-value updates and insert-then-delete included) are exactly ``tables``, and the
+    content snapshots show no change outside them (``exact_content``: exactly those changed).
+    With no tables, the snapshots must also be equal.
+    """
+    tables = set(tables)
+    before = await snapshot(c)
+    await clear_writes(c)
+    yield
+    after = await snapshot(c)
+    assert await written(c) == tables
+    assert changed(before, after) <= tables
+    if exact_content:
+        assert changed(before, after) == tables
+    if not tables:
+        assert after == before
+
+
+def writes_nothing(c):
+    return writes_only(c, set())
+
+
 # ── builders ──────────────────────────────────────────────────────────────────
 
 
@@ -331,13 +358,9 @@ async def test_c2_http_call_writes_two_tables_and_the_audit_row_only(
     pool, conn, enabled, audit_logger
 ):
     stack = Stack(pool)
-    before = await snapshot(conn)
-    await clear_writes(conn)
-    resp = await post(stack, body(display_name=SENTINEL_NAME, ids=(("passport", SENTINEL_ID),)))
+    async with writes_only(conn, NEW_TABLES | {"api_audit_trail"}, exact_content=True):
+        resp = await post(stack, body(display_name=SENTINEL_NAME, ids=(("passport", SENTINEL_ID),)))
     assert resp.status_code == 200 and resp.json()["outcome"] == "created"
-    after = await snapshot(conn)
-    assert changed(before, after) == NEW_TABLES | {"api_audit_trail"}
-    assert await written(conn) == NEW_TABLES | {"api_audit_trail"}
     audit = await conn.fetch("SELECT * FROM api_audit_trail")
     assert len(audit) == 1 and audit[0]["request_body"] is None
     assert SENTINEL_NAME not in str(dict(audit[0])) and SENTINEL_ID not in str(dict(audit[0]))
@@ -353,16 +376,12 @@ async def test_c2_session_header_and_user_email_also_update_session_tracking(
         "INSERT INTO session_tracking (session_id, user_email) "
         "VALUES ('sess-probe-1', 'staff@example.test')"
     )
-    before = await snapshot(conn)
-    await clear_writes(conn)
     headers = {**HEADERS, "X-Session-ID": "sess-probe-1", "X-User-Email": "staff@example.test"}
-    resp = await post(
-        stack, body(display_name=SENTINEL_NAME, ids=(("passport", SENTINEL_ID),)), headers
-    )
+    async with writes_only(conn, NEW_TABLES | AUDIT_TABLES, exact_content=True):
+        resp = await post(
+            stack, body(display_name=SENTINEL_NAME, ids=(("passport", SENTINEL_ID),)), headers
+        )
     assert resp.status_code == 200
-    after = await snapshot(conn)
-    assert changed(before, after) == NEW_TABLES | AUDIT_TABLES
-    assert await written(conn) == NEW_TABLES | AUDIT_TABLES
     dump = str(await conn.fetch("SELECT * FROM session_tracking")) + str(
         await conn.fetch("SELECT * FROM api_audit_trail")
     )
@@ -382,12 +401,11 @@ async def test_c3_replay_is_already_registered_and_changes_no_row(pool, conn, en
     )  # fmt: skip
     first = await post(stack, payload)
     assert first.json()["outcome"] == "created"
-    before = await snapshot(conn)
-    again = await post(stack, payload)
+    async with writes_nothing(conn):
+        again = await post(stack, payload)
     assert again.json()["outcome"] == "already_registered"
     assert again.json()["match_basis"] == "identifiers_and_dob"
     assert again.json()["subject_id"] == first.json()["subject_id"]
-    assert await snapshot(conn) == before
 
 
 # ── criterion 4: the key-set rule ────────────────────────────────────────────
@@ -416,32 +434,29 @@ async def _seed(conn, ids=(("nik", "3201234567890123"), ("passport", "ZZ0000001"
 )
 async def test_c4_key_set_differs_is_conflict_and_writes_nothing(conn, ids, reason):
     owner = await _seed(conn)
-    before = await snapshot(conn)
-    out = await register_subject(conn, subj(ids=ids), dry_run=False)
+    async with writes_nothing(conn):
+        out = await register_subject(conn, subj(ids=ids), dry_run=False)
     assert out["outcome"] == "conflict" and out["reason"] == reason
     assert out["subject_id"] == owner
-    assert await snapshot(conn) == before
 
 
 @pytest.mark.asyncio
 async def test_c4_keys_of_two_owners_conflict(conn):
     await _seed(conn)
     await _seed(conn, ids=(("passport", "ZZ0000005"),))
-    before = await snapshot(conn)
-    out = await register_subject(
-        conn, subj(ids=(("passport", "ZZ0000001"), ("passport", "ZZ0000005"))), dry_run=False
-    )
+    async with writes_nothing(conn):
+        out = await register_subject(
+            conn, subj(ids=(("passport", "ZZ0000001"), ("passport", "ZZ0000005"))), dry_run=False
+        )
     assert (out["outcome"], out["reason"]) == ("conflict", "two_owners")
-    assert await snapshot(conn) == before
 
 
 @pytest.mark.asyncio
 async def test_c4_equal_set_with_a_different_birth_date_is_a_contradiction(conn):
     await _seed(conn, dob=date(1990, 1, 2))
-    before = await snapshot(conn)
-    out = await register_subject(conn, subj(ids=(("nik", "3201234567890123"), ("passport", "ZZ0000001")), dob=date(1991, 1, 2)), dry_run=False)  # fmt: skip
+    async with writes_nothing(conn):
+        out = await register_subject(conn, subj(ids=(("nik", "3201234567890123"), ("passport", "ZZ0000001")), dob=date(1991, 1, 2)), dry_run=False)  # fmt: skip
     assert (out["outcome"], out["reason"]) == ("conflict", "contradiction")
-    assert await snapshot(conn) == before
 
 
 @pytest.mark.asyncio
@@ -450,13 +465,12 @@ async def test_c4_equal_set_match_basis_follows_the_birth_dates(conn):
     ids2 = (("passport", "ZZ0000009"),)
     await _seed(conn, ids=ids, dob=date(1990, 1, 2))
     await _seed(conn, ids=ids2)
-    before = await snapshot(conn)
-    await clear_writes(conn)
-    both = await register_subject(conn, subj(ids=ids, dob=date(1990, 1, 2)), dry_run=False)
-    request_without = await register_subject(conn, subj(ids=ids), dry_run=False)
-    owner_without = await register_subject(
-        conn, subj(ids=ids2, dob=date(1990, 1, 2)), dry_run=False
-    )
+    async with writes_nothing(conn):
+        both = await register_subject(conn, subj(ids=ids, dob=date(1990, 1, 2)), dry_run=False)
+        request_without = await register_subject(conn, subj(ids=ids), dry_run=False)
+        owner_without = await register_subject(
+            conn, subj(ids=ids2, dob=date(1990, 1, 2)), dry_run=False
+        )
     assert (both["outcome"], both["match_basis"]) == ("already_registered", "identifiers_and_dob")
     assert (request_without["outcome"], request_without["match_basis"]) == (
         "already_registered",
@@ -466,8 +480,6 @@ async def test_c4_equal_set_match_basis_follows_the_birth_dates(conn):
         "already_registered",
         "identifiers_only",
     )
-    assert await snapshot(conn) == before
-    assert await written(conn) == set()
 
 
 @pytest.mark.asyncio
@@ -476,11 +488,10 @@ async def test_c4_kind_change_keeping_the_identifiers_is_422_and_writes_nothing(
 ):
     stack = Stack(pool, middleware=False)
     await _seed(conn)
-    before = await snapshot(conn)
-    resp = await post(stack, body(kind="company", ids=(("passport", "ZZ0000001"),)))
+    async with writes_nothing(conn):
+        resp = await post(stack, body(kind="company", ids=(("passport", "ZZ0000001"),)))
     assert resp.status_code == 422
     assert resp.json()["detail"][0]["code"] == "kind_type_mismatch"
-    assert await snapshot(conn) == before
 
 
 @pytest.mark.asyncio
@@ -621,15 +632,76 @@ async def test_c5_identifiers_are_inserted_in_sorted_key_order(conn):
     ]
 
 
-def deadlock_hook(times):
+def failing_hook(times, factory):
     state = {"left": times}
 
     async def hook(sql):
         if sql.startswith("INSERT INTO related_subject_identifiers") and state["left"] > 0:
             state["left"] -= 1
-            raise asyncpg.DeadlockDetectedError("deadlock detected")
+            raise factory()
 
     return hook
+
+
+def deadlock_hook(times):
+    return failing_hook(times, lambda: asyncpg.DeadlockDetectedError("deadlock detected"))
+
+
+def serialization_hook(times):
+    return failing_hook(times, lambda: asyncpg.SerializationError("could not serialize access"))
+
+
+class _FailingCommit:
+    """Transaction whose COMMIT fails: the work is rolled back, then the injected error raises."""
+
+    def __init__(self, real, state, factory):
+        self._real, self._state, self._factory = real, state, factory
+
+    async def __aenter__(self):
+        return await self._real.__aenter__()
+
+    async def __aexit__(self, exc_type, exc, tb):
+        if exc_type is None and self._state["left"] > 0:
+            self._state["left"] -= 1
+            await self._real.__aexit__(Exception, Exception("forced rollback"), None)
+            raise self._factory()
+        return await self._real.__aexit__(exc_type, exc, tb)
+
+
+class _CommitConn(_Conn):
+    def __init__(self, real, times, factory):
+        super().__init__(real)
+        self._commit = {"left": times}
+        self._factory = factory
+
+    def transaction(self, *a, **kw):
+        return _FailingCommit(self._real.transaction(*a, **kw), self._commit, self._factory)
+
+
+class _PoolOf:
+    """Pool proxy: connections are wrapped by ``wrap``; ``fail_enter``/``fail_exit`` inject."""
+
+    def __init__(self, pool, wrap=lambda c: c, fail_enter=None, fail_exit=None):
+        self.pool, self.wrap = pool, wrap
+        self.fail_enter, self.fail_exit = fail_enter, fail_exit
+
+    def acquire(self):
+        outer = self
+
+        class _Ctx:
+            async def __aenter__(_s):
+                if outer.fail_enter:
+                    raise outer.fail_enter
+                _s.c = await outer.pool.acquire()
+                return outer.wrap(_s.c)
+
+            async def __aexit__(_s, *exc):
+                await outer.pool.release(_s.c)
+                if outer.fail_exit:
+                    raise outer.fail_exit
+                return False
+
+        return _Ctx()
 
 
 @pytest.mark.asyncio
@@ -643,10 +715,10 @@ async def test_c5_one_forced_deadlock_is_retried_to_the_right_outcome(conn):
 
 @pytest.mark.asyncio
 async def test_c5_a_second_forced_deadlock_is_the_fixed_503_and_leaves_nothing(pool, conn, enabled):
-    with pytest.raises(RegistryUnavailable) as caught:
-        await register_subject(_Conn(conn, deadlock_hook(2)), subj(), dry_run=False)
+    async with writes_nothing(conn):
+        with pytest.raises(RegistryUnavailable) as caught:
+            await register_subject(_Conn(conn, deadlock_hook(2)), subj(), dry_run=False)
     assert caught.value.code == "registry_busy"
-    assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 0
 
     class _Pool:
         def acquire(self_inner):
@@ -661,9 +733,44 @@ async def test_c5_a_second_forced_deadlock_is_the_fixed_503_and_leaves_nothing(p
 
             return _Ctx()
 
-    resp = await post(Stack(_Pool(), middleware=False), body())
+    async with writes_nothing(conn):
+        resp = await post(Stack(_Pool(), middleware=False), body())
     assert (resp.status_code, resp.json()) == (503, {"detail": "registry_busy"})
-    assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 0
+
+
+@pytest.mark.asyncio
+async def test_c5_one_forced_serialization_failure_is_retried_to_the_right_outcome(conn):
+    ids = (("nik", "3201234567890123"), ("passport", "ZZ0000001"))
+    out = await register_subject(_Conn(conn, serialization_hook(1)), subj(ids=ids), dry_run=False)
+    assert out["outcome"] == "created"
+    assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
+    assert await conn.fetchval("SELECT count(*) FROM related_subject_identifiers") == 2
+
+
+@pytest.mark.asyncio
+async def test_c5_a_second_forced_serialization_failure_is_the_fixed_503_and_writes_nothing(
+    pool, conn, enabled
+):
+    async with writes_nothing(conn):
+        with pytest.raises(RegistryUnavailable) as caught:
+            await register_subject(_Conn(conn, serialization_hook(2)), subj(), dry_run=False)
+    assert caught.value.code == "registry_busy"
+    wrapped = _PoolOf(pool, lambda c: _Conn(c, serialization_hook(2)))
+    async with writes_nothing(conn):
+        resp = await post(Stack(wrapped, middleware=False), body())
+    assert (resp.status_code, resp.json()) == (503, {"detail": "registry_busy"})
+
+
+@pytest.mark.asyncio
+async def test_c5_a_failed_commit_with_a_serialization_error_is_retried_once(conn, pool, enabled):
+    one = _CommitConn(conn, 1, lambda: asyncpg.SerializationError("x"))
+    assert (await register_subject(one, subj(), dry_run=False))["outcome"] == "created"
+    assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
+    await conn.execute("DELETE FROM related_subjects")
+    two = _CommitConn(conn, 2, lambda: asyncpg.SerializationError("x"))
+    async with writes_nothing(conn):
+        with pytest.raises(RegistryUnavailable):
+            await register_subject(two, subj(), dry_run=False)
 
 
 @pytest.mark.asyncio
@@ -730,11 +837,13 @@ async def _crm_fixtures(conn):
 )
 async def test_c6_crm_matches_in_every_stored_spelling(conn, kind, ids, outcome):
     await _crm_fixtures(conn)
-    before = await snapshot(conn)
-    out = await register_subject(conn, subj(kind=kind, ids=ids), dry_run=False)
+    await _seed(conn, ids=(("passport", "ZZ0000500"),))
+    if outcome == "created":
+        out = await register_subject(conn, subj(kind=kind, ids=ids), dry_run=False)
+    else:
+        async with writes_nothing(conn):
+            out = await register_subject(conn, subj(kind=kind, ids=ids), dry_run=False)
     assert out["outcome"] == outcome
-    if outcome != "created":
-        assert await snapshot(conn) == before
 
 
 @pytest.mark.asyncio
@@ -782,14 +891,13 @@ INVALID_BODIES = {
 @pytest.mark.parametrize("case", sorted(INVALID_BODIES))
 async def test_c7_invalid_bodies_are_422_write_nothing_and_echo_nothing(pool, conn, enabled, case):
     stack = Stack(pool, middleware=False)
-    before = await snapshot(conn)
-    resp = await post(stack, INVALID_BODIES[case])
+    async with writes_nothing(conn):
+        resp = await post(stack, INVALID_BODIES[case])
     assert resp.status_code == 422, resp.text
     assert SENTINEL_NAME not in resp.text and SENTINEL_ID not in resp.text
     assert "zzsent" not in resp.text.lower() and "Sentinel" not in resp.text
     detail = resp.json()["detail"]
     assert detail and all(set(item) == {"loc", "code"} for item in detail)
-    assert await snapshot(conn) == before
 
 
 @pytest.mark.asyncio
@@ -864,17 +972,12 @@ async def test_c8_dry_run_absent_and_true_write_nothing_on_every_outcome(pool, c
         absent = {k: v for k, v in payload.items() if k != "dry_run"}
         return [absent, {**payload, "dry_run": True}]
 
-    empty = await snapshot(conn)
-    await clear_writes(conn)
-    for payload in variants(body(ids=owner)):  # empty registry
-        resp = await post(stack, payload)
-        assert resp.json() == {"outcome": "would_create", "dry_run": True}
-    assert await snapshot(conn) == empty
-    assert await written(conn) == set()
+    async with writes_nothing(conn):
+        for payload in variants(body(ids=owner)):  # empty registry
+            resp = await post(stack, payload)
+            assert resp.json() == {"outcome": "would_create", "dry_run": True}
 
     await _seed(conn)
-    seeded = await snapshot(conn)
-    await clear_writes(conn)
     cases = {
         "already_registered": body(ids=owner),
         "conflict": body(ids=(("passport", "ZZ0000001"),)),
@@ -883,12 +986,11 @@ async def test_c8_dry_run_absent_and_true_write_nothing_on_every_outcome(pool, c
         "existing_company": body(kind="company", ids=(("npwp", "0123456789012345"),)),
         "would_create": body(ids=(("passport", "ZZ0000077"),)),
     }
-    for outcome, payload in cases.items():
-        for variant in variants(payload):
-            resp = await post(stack, variant)
-            assert resp.json()["outcome"] == outcome and resp.json()["dry_run"] is True
-    assert await snapshot(conn) == seeded
-    assert await written(conn) == set()
+    async with writes_nothing(conn):
+        for outcome, payload in cases.items():
+            for variant in variants(payload):
+                resp = await post(stack, variant)
+                assert resp.json()["outcome"] == outcome and resp.json()["dry_run"] is True
 
 
 # ── criterion 9: privacy ─────────────────────────────────────────────────────
@@ -945,6 +1047,39 @@ def _leaks(text):
     ]
 
 
+async def _assert_private(stack, conn, caplog, trace_before, response_text):
+    """No submitted value in the response, any log record field, the audit row, the traces or
+    the alert arguments; nothing reached the middleware and no generic handler ran."""
+    audit = str(await conn.fetch("SELECT * FROM api_audit_trail"))
+    observed = (
+        response_text + " " + audit + " " + _everything_observable(stack, caplog, trace_before)
+    )
+    assert _leaks(observed) == [], _leaks(observed)
+    assert stack.sink["raised"] == [] and stack.sink["handlers"] == []
+
+
+async def _asgi_post(app, receive):
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST",
+        "scheme": "http", "path": URL, "raw_path": URL.encode(), "query_string": b"",
+        "root_path": "", "client": ("127.0.0.1", 1), "server": ("test", 80), "state": {},
+        "headers": [
+            (b"x-crm-write-key", KEY.encode()),
+            (b"content-type", b"application/json"),
+            (b"user-agent", b"probe"),
+        ],
+    }  # fmt: skip
+    await app(scope, receive, send)
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    text = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+    return start["status"], text.decode(), str(start["headers"])
+
+
 async def _privacy_run(pool, conn, caplog, setup, payload, *, expect_status):
     caplog.set_level(logging.DEBUG)
     stack = Stack(pool)
@@ -952,10 +1087,7 @@ async def _privacy_run(pool, conn, caplog, setup, payload, *, expect_status):
     trace_before = set(request_tracing._trace_storage)
     resp = await post(stack, payload)
     assert resp.status_code == expect_status, resp.text
-    audit = str(await conn.fetch("SELECT * FROM api_audit_trail"))
-    observed = resp.text + " " + audit + " " + _everything_observable(stack, caplog, trace_before)
-    assert _leaks(observed) == [], _leaks(observed)
-    assert stack.sink["raised"] == [] and stack.sink["handlers"] == []
+    await _assert_private(stack, conn, caplog, trace_before, resp.text + " " + str(resp.headers))
     return resp, stack
 
 
@@ -1060,6 +1192,171 @@ async def test_c9_privacy_on_injected_pool_dependency_failure(
 async def test_c9_oversized_body_is_refused_with_a_fixed_code(pool, enabled):
     resp = await post(Stack(pool, middleware=False), "x" * (route_module.MAX_BODY_BYTES + 1))
     assert resp.status_code == 422 and resp.json()["detail"][0]["code"] == "too_long"
+
+
+LEAKY = f"{SENTINEL_NAME} {SENTINEL_ID}"
+
+
+class _Hostile(Exception):
+    def __str__(self):
+        raise ValueError(LEAKY)
+
+    def __repr__(self):
+        raise ValueError(LEAKY)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [499, 600, 0, 402, 404, 418])
+async def test_c9_privacy_on_a_dependency_http_exception_with_any_status(
+    pool, conn, enabled, audit_logger, caplog, status
+):
+    async def broken():
+        raise HTTPException(status_code=status, detail=LEAKY, headers={"X-Leak": SENTINEL_ID})
+
+    def setup(stack):
+        stack.app.dependency_overrides[route_module.verify_related_subject_write] = broken
+
+    resp, _ = await _privacy_run(pool, conn, caplog, setup, SECRET_BODY, expect_status=500)
+    assert resp.json() == {"detail": "internal_error"} and "x-leak" not in resp.headers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("status", "code"), [(401, "unauthorized"), (503, "registry_unavailable")])
+async def test_c9_a_dependency_http_exception_keeps_only_its_fixed_code(
+    pool, conn, enabled, audit_logger, caplog, status, code
+):
+    async def broken():
+        raise HTTPException(status_code=status, detail=LEAKY)
+
+    def setup(stack):
+        stack.app.dependency_overrides[route_module.verify_related_subject_write] = broken
+
+    resp, _ = await _privacy_run(pool, conn, caplog, setup, SECRET_BODY, expect_status=status)
+    assert resp.json() == {"detail": code}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("where", ["auth", "pool"])
+async def test_c9_privacy_on_an_exception_whose_text_cannot_be_rendered(
+    pool, conn, enabled, audit_logger, caplog, where
+):
+    async def broken_auth():
+        raise _Hostile()
+
+    def broken_pool():
+        raise _Hostile()
+
+    def setup(stack):
+        if where == "auth":
+            stack.app.dependency_overrides[route_module.verify_related_subject_write] = broken_auth
+        else:
+            stack.app.dependency_overrides[get_database_pool] = broken_pool
+
+    resp, _ = await _privacy_run(pool, conn, caplog, setup, SECRET_BODY, expect_status=500)
+    assert resp.json() == {"detail": "internal_error"}
+
+
+@pytest.mark.asyncio
+async def test_c9_privacy_when_reading_the_body_fails(pool, conn, enabled, audit_logger, caplog):
+    caplog.set_level(logging.DEBUG)
+    stack = Stack(pool)
+    trace_before = set(request_tracing._trace_storage)
+
+    async def receive():
+        raise RuntimeError(LEAKY)
+
+    status, text, headers = await _asgi_post(stack.app, receive)
+    assert status == 500 and json.loads(text) == {"detail": "internal_error"}
+    await _assert_private(stack, conn, caplog, trace_before, text + headers)
+
+
+@pytest.mark.asyncio
+async def test_c9_privacy_when_pool_acquisition_fails(pool, conn, enabled, audit_logger, caplog):
+    def setup(stack):
+        stack.app.state.db_pool = _PoolOf(pool, fail_enter=RuntimeError(LEAKY))
+
+    resp, _ = await _privacy_run(pool, conn, caplog, setup, SECRET_BODY, expect_status=500)
+    assert resp.json() == {"detail": "internal_error"}
+
+    def setup_db(stack):
+        stack.app.state.db_pool = _PoolOf(pool, fail_enter=asyncpg.PostgresError(LEAKY))
+
+    resp, _ = await _privacy_run(pool, conn, caplog, setup_db, SECRET_BODY, expect_status=503)
+    assert resp.json() == {"detail": "database_error"}
+
+
+@pytest.mark.asyncio
+async def test_c9_privacy_when_releasing_the_connection_fails(
+    pool, conn, enabled, audit_logger, caplog
+):
+    def setup(stack):
+        stack.app.state.db_pool = _PoolOf(pool, fail_exit=RuntimeError(LEAKY))
+
+    resp, _ = await _privacy_run(pool, conn, caplog, setup, SECRET_BODY, expect_status=500)
+    assert resp.json() == {"detail": "internal_error"}
+    # The work had committed before the release failed: a replay finds it, nothing is doubled.
+    assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("factory", "status", "code"),
+    [
+        (lambda: RuntimeError(LEAKY), 500, "internal_error"),
+        (lambda: asyncpg.QueryCanceledError(LEAKY), 503, "database_error"),
+        (lambda: asyncpg.SerializationError(LEAKY), 503, "registry_busy"),
+    ],
+    ids=["runtime", "database", "serialization-twice"],
+)
+async def test_c9_privacy_when_the_commit_fails(
+    pool, conn, enabled, audit_logger, caplog, factory, status, code
+):
+    def setup(stack):
+        stack.app.state.db_pool = _PoolOf(pool, lambda c: _CommitConn(c, 2, factory))
+
+    resp, _ = await _privacy_run(pool, conn, caplog, setup, SECRET_BODY, expect_status=status)
+    assert resp.json() == {"detail": code}
+    assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 0
+
+
+@pytest.mark.asyncio
+async def test_c9_privacy_when_building_the_success_response_fails(
+    pool, conn, enabled, audit_logger, caplog, monkeypatch
+):
+    def boom(*a, **kw):
+        raise RuntimeError(LEAKY)
+
+    monkeypatch.setattr(route_module, "JSONResponse", boom)
+    resp, _ = await _privacy_run(pool, conn, caplog, lambda s: None, SECRET_BODY, expect_status=500)
+    assert resp.json() == {"detail": "internal_error"}
+
+
+class _Stop(BaseException):
+    pass
+
+
+@pytest.mark.asyncio
+async def test_c9_a_base_exception_that_is_not_an_exception_still_propagates(pool, enabled):
+    async def stop():
+        raise _Stop()
+
+    stack = Stack(pool, middleware=False)
+    stack.app.dependency_overrides[route_module.verify_related_subject_write] = stop
+    with pytest.raises(_Stop):
+        await post(stack, SECRET_BODY)
+
+
+@pytest.mark.asyncio
+async def test_c9_the_failure_answer_cannot_raise(monkeypatch):
+    monkeypatch.setattr(route_module.logger, "error", lambda *a, **k: 1 / 0)
+    assert route_module._failure_response(_Hostile()).status_code == 500
+
+    class _Liar(Exception):
+        @property
+        def __class__(self):
+            raise ValueError(LEAKY)
+
+    assert route_module._failure_response(_Liar()).body == b'{"detail": "internal_error"}'
 
 
 # ── criterion 10: portal ─────────────────────────────────────────────────────
