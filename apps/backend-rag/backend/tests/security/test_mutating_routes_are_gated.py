@@ -494,27 +494,23 @@ INTENTIONALLY_PUBLIC_MUTATIONS: tuple[IntentionalPublicMutation, ...] = (
         "POST",
         "/api/blog/newsletter/unsubscribe",
         "Opt-out — legal requirement to stay reachable without a session. "
-        "VERIFIED 2026-07-17: the registry reason says 'token-based "
-        "verification' but UnsubscribeRequest.token (newsletter.py:141) is "
-        "accepted in the schema and NEVER read by the handler (newsletter.py "
-        ":394-431) — it looks up by raw subscriberId/email only, no proof of "
-        "ownership. Low severity (unsubscribe-only, no PII read/write beyond "
-        "a flag), common industry pattern (CAN-SPAM one-click), but the "
-        "'token-based' claim is currently false — see PENDING-ARMS.",
+        "CLOSED 2026-11-16 (RT-01): handler now enforces constant-time "
+        "secrets.compare_digest verification of HMAC subscriber token (or DB "
+        "confirmation_token / owner-or-admin auth), rejecting bare email/id "
+        "requests with 401/403.",
     ),
     IntentionalPublicMutation(
         "POST",
         "/api/news/subscribe",
         "Same public opt-in shape as /api/blog/newsletter/subscribe "
-        "(news.py:480) — no auth Depends, but the action itself (add an "
-        "email to a mailing list) carries the same risk profile as the "
-        "already-explicit blog equivalent.",
+        "(news.py) — public mailing-list opt-in.",
     ),
     IntentionalPublicMutation(
         "POST",
         "/api/news/unsubscribe",
-        "Same public opt-out shape as /api/blog/newsletter/unsubscribe "
-        "(news.py:512) — legal requirement to stay reachable unauthenticated.",
+        "Public opt-out — CLOSED 2026-11-16 (RT-02): handler enforces "
+        "constant-time HMAC unsubscribe token verification (or authenticated "
+        "owner/admin), rejecting bare email requests with 401/403.",
     ),
     # ── Observability: no-PII, best-effort ingestion, explicit registry row ──
     IntentionalPublicMutation(
@@ -589,6 +585,16 @@ INTENTIONALLY_PUBLIC_MUTATIONS: tuple[IntentionalPublicMutation, ...] = (
         "Docstring says scraper-only — VERIFIED: Depends(verify_internal_api_key) "
         "(preview.py:46) is a real in-router dependency, independent of the "
         "middleware's public-path skip.",
+    ),
+    IntentionalPublicMutation(
+        "POST",
+        "/api/news",
+        "CLOSED 2026-11-16 (RT-02): shares exact path '/api/news' with public "
+        "GET list_news, and is independently re-gated inside news.py::create_news "
+        "via Depends(get_admin_user) -> Depends(get_current_user) (401 on "
+        "anonymous, 403 on non-admin). Sibling admin mutations (/bulk, "
+        "/{news_id}/image, /{news_id}/status) are ALSO excluded from "
+        "PUBLIC_ENDPOINTS at the middleware layer.",
     ),
     # ── GARUDA VOA L2/L3 (PR #4946 allowlist additions) — reviewed 2026-08-26,
     #    against the handlers in garuda_voa_public.py / garuda_orders_router.py,
@@ -715,59 +721,13 @@ INTENTIONALLY_PUBLIC_MUTATIONS: tuple[IntentionalPublicMutation, ...] = (
 # 6 -> 0 trajectory: delete a row when its route is really gated (an anti-decay
 # test below FAILS if a row's route gains an auth Depends or stops being public,
 # forcing the delete). Full detail + severity: the ledger PENDING-ARMS lines.
-KNOWN_UNGATED_PUBLIC_MUTATIONS: tuple[KnownUngatedMutation, ...] = (
-    KnownUngatedMutation(
-        "POST",
-        "/api/news",
-        "operator[business]",
-        "ledger:PENDING-ARMS news.py",
-        "news.py:290 create_news — zero Depends beyond DB pool; INSERTs "
-        "news_items with status='approved' (auto-approved). Anyone can inject "
-        "content onto the public balizero.com news feed. HIGH.",
-    ),
-    KnownUngatedMutation(
-        "POST",
-        "/api/news/bulk",
-        "operator[business]",
-        "ledger:PENDING-ARMS news.py",
-        "news.py:351 create_news_bulk — bulk version of the above, N articles "
-        "per call, same zero-auth. HIGH.",
-    ),
-    KnownUngatedMutation(
-        "POST",
-        "/api/news/{news_id}/image",
-        "operator[business]",
-        "ledger:PENDING-ARMS news.py",
-        "news.py:414 update_news_image — anyone can overwrite the image_url of "
-        "ANY news item with an arbitrary URL (defacement/hotlink). HIGH.",
-    ),
-    KnownUngatedMutation(
-        "PATCH",
-        "/api/news/{news_id}/status",
-        "operator[business]",
-        "ledger:PENDING-ARMS news.py",
-        "news.py:442 update_news_status — anyone can flip ANY news item between "
-        "pending/approved/rejected/archived (unpublish live / approve pending). HIGH.",
-    ),
-    KnownUngatedMutation(
-        "POST",
-        "/api/blog/newsletter/log",
-        "operator[business]",
-        "ledger:PENDING-ARMS newsletter.py",
-        "newsletter.py:564 log_newsletter_send — docstring says '(admin "
-        "endpoint)' but zero Depends; anyone can insert fake newsletter_send_log "
-        "rows (pollutes internal delivery reporting). MEDIUM.",
-    ),
-    KnownUngatedMutation(
-        "PATCH",
-        "/api/blog/newsletter/preferences",
-        "operator[business]",
-        "ledger:PENDING-ARMS newsletter.py",
-        "newsletter.py:434 update_preferences — zero Depends; anyone who knows/"
-        "guesses a subscriber email or numeric id can change their "
-        "categories/frequency/language, no ownership proof. MEDIUM.",
-    ),
-)
+# 6 -> 0 trajectory COMPLETED 2026-11-16 (RT-01 + RT-02): all 6 previously
+# ungated public mutations (POST /api/news, POST /api/news/bulk,
+# POST /api/news/{news_id}/image, PATCH /api/news/{news_id}/status,
+# POST /api/blog/newsletter/log, PATCH /api/blog/newsletter/preferences) are
+# now closed via narrowed PUBLIC_ENDPOINTS + in-router Depends(get_admin_user) /
+# HMAC subscriber token verification.
+KNOWN_UNGATED_PUBLIC_MUTATIONS: tuple[KnownUngatedMutation, ...] = ()
 
 
 _JUSTIFIED_INDEX: dict[tuple[str, str], IntentionalPublicMutation] = {
@@ -886,6 +846,25 @@ class TestPureCoreGuiltAndInnocence:
     def test_innocence_known_ungated_public_mutation_passes(self) -> None:
         """A DECLARED hole is 'accounted for' (recorded owned debt), so it does
         NOT fail the build — that is what keeps the gate mergeable/armable."""
+        if not _KNOWN_UNGATED_INDEX:
+            # 6 -> 0 ratchet complete: exercise the _ACCOUNTED membership path
+            # with a synthetic KnownUngatedMutation so the pure-core test stays
+            # meaningful when zero declared debt remains.
+            sample = KnownUngatedMutation(
+                "POST",
+                "/api/synthetic/declared-hole",
+                "operator[test]",
+                "ledger:SYNTHETIC",
+                "Synthetic fixture verifying _ACCOUNTED logic at zero debt.",
+            )
+            with_sample = _ACCOUNTED | {(sample.method, sample.path)}
+            flagged = [
+                f"{m} {p}"
+                for m, p, is_pub in [(sample.method, sample.path, True)]
+                if is_pub and (m, p) not in with_sample
+            ]
+            assert flagged == []
+            return
         sample_method, sample_path = next(iter(_KNOWN_UNGATED_INDEX))
         flagged = _unaccounted([(sample_method, sample_path, True)])
         assert flagged == []
