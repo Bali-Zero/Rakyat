@@ -149,6 +149,11 @@ def is_human_team_member(role: str | None) -> bool:
     return normalize_role(role) in TEAM_ROLES
 
 
+def is_group_staff(role: str | None) -> bool:
+    """True for a group-company staff row (HR card only, never an app identity)."""
+    return normalize_role(role) in GROUP_STAFF_ROLES
+
+
 def non_human_roles_sql_array() -> list[str]:
     """The exclusion set as a sorted list, for ``role <> ALL($n::text[])``.
 

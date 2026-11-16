@@ -25,8 +25,8 @@ ALL_MEMBERS: list[dict[str, Any]] = [
     {
         "id": "1",
         "email": "surya@balizero.com",
-        "name": "Surya",
-        "full_name": "Surya",
+        "name": "Member A",
+        "full_name": "Member A",
         "role": "Tax Care",
         "department": "tax",
         "active": True,

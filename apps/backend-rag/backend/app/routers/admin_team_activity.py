@@ -553,7 +553,8 @@ async def get_practice_stats(
                     FROM practices p
                     JOIN clients c ON p.client_id = c.id
                     LEFT JOIN team_members tm
-                        ON tm.email ILIKE c.assigned_to
+                        ON LOWER(BTRIM(COALESCE(tm.role, ''))) NOT IN ('group_staff')
+                        AND (tm.email ILIKE c.assigned_to
                         OR (
                             -- handle bare-username aliases like "ari" → "ari.firda@balizero.com"
                             c.assigned_to NOT LIKE '%@%'
@@ -563,7 +564,7 @@ async def get_practice_stats(
                             -- handle old-format aliases like "ari@balizero.com" → "ari.firda@balizero.com"
                             c.assigned_to LIKE '%@%'
                             AND tm.name ILIKE SPLIT_PART(c.assigned_to, '@', 1)
-                        )
+                        ))
                     WHERE c.assigned_to IS NOT NULL
                       AND c.assigned_to != ''
                       AND c.deleted_at IS NULL

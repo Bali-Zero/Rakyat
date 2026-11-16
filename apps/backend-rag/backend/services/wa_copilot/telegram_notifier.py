@@ -380,6 +380,7 @@ WHERE a.status = 'open'
   AND tm.telegram_chat_id IS NOT NULL
   AND tm.notify_telegram = true
   AND tm.active = true
+  AND LOWER(BTRIM(COALESCE(tm.role, ''))) NOT IN ('group_staff')
 ORDER BY a.priority DESC NULLS LAST, a.due_at ASC NULLS LAST
 LIMIT $2;
 """

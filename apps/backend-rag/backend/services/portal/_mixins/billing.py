@@ -461,6 +461,7 @@ class PortalBillingMixin:
             FROM clients c
             LEFT JOIN team_members tm ON tm.email = c.assigned_to AND tm.active = true
                 AND tm.role IS DISTINCT FROM 'client'
+                AND LOWER(BTRIM(COALESCE(tm.role, ''))) NOT IN ('group_staff')
             WHERE c.id = $1 AND c.deleted_at IS NULL
             """,
             client_id,

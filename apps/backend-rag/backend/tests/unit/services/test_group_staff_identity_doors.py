@@ -1,0 +1,182 @@
+"""group_staff (HR card, no app) is refused by every identity door and team lookup."""
+
+from __future__ import annotations
+
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import HTTPException
+
+from backend.app.utils.service_accounts import is_group_staff
+
+ROOT = Path(__file__).resolve().parents[3]  # backend/
+GUARD = re.compile(r"NOT IN \('group_staff'\)|<> 'group_staff'")
+
+
+class _Conn:
+    """Recording connection; `row` is what fetchrow returns after the first call."""
+
+    def __init__(self, rows=None):
+        self.rows = list(rows or [])
+        self.sql: list[str] = []
+
+    async def fetchrow(self, sql, *a):
+        self.sql.append(sql)
+        return self.rows.pop(0) if self.rows else None
+
+    async def fetch(self, sql, *a):
+        self.sql.append(sql)
+        return []
+
+    async def fetchval(self, sql, *a):
+        self.sql.append(sql)
+        return None
+
+    async def close(self):
+        return None
+
+    async def execute(self, sql, *a):
+        self.sql.append(sql)
+
+    def transaction(self):
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=None)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        return cm
+
+
+def _pool(conn):
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=conn)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=cm)
+    return pool
+
+
+def test_is_group_staff_is_normalised() -> None:
+    assert is_group_staff("group_staff") and is_group_staff(" Group_Staff ")
+    assert not is_group_staff("client") and not is_group_staff(None)
+    assert not is_group_staff("Tax Care")
+
+
+# Lookup SQL that must carry the guard. Source-level for queries buried in large
+# functions; each file is named so a removed guard fails here.
+@pytest.mark.parametrize(
+    "path",
+    [
+        "services/whatsapp_identity.py",
+        "services/wa_copilot/identity_resolver.py",
+        "app/modules/notifications/service.py",
+        "services/wa_copilot/telegram_notifier.py",
+        "services/crm/assignment.py",
+        "app/routers/portal.py",
+        "services/portal/_mixins/billing.py",
+        "app/routers/crm_enhanced_alerts.py",
+        "app/routers/admin_team_activity.py",
+    ],
+)
+def test_colleague_shaped_lookup_excludes_group_staff(path: str) -> None:
+    assert GUARD.search((ROOT / path).read_text())
+
+
+@pytest.mark.asyncio
+async def test_wa_identity_sql_and_resolver_refuse_group_staff() -> None:
+    from backend.services.whatsapp_identity import _TEAM_DB_LOOKUP_SQL
+    from backend.services.wa_copilot.identity_resolver import resolve_team_email
+
+    assert "<> 'group_staff'" in _TEAM_DB_LOOKUP_SQL
+    conn = _Conn()
+    await resolve_team_email(conn, {"team_member_email": "x@example.test"})
+    assert all("<> 'group_staff'" in s for s in conn.sql) and conn.sql
+
+
+@pytest.mark.asyncio
+async def test_team_leader_lookup_excludes_group_staff() -> None:
+    from backend.app.modules.notifications.service import NotificationService
+
+    conn = _Conn()
+    svc = NotificationService(db_pool=_pool(conn), email_provider=MagicMock())
+    await svc._get_team_leader_email(1)
+    assert "NOT IN ('group_staff')" in conn.sql[0]
+
+
+@pytest.mark.asyncio
+async def test_team_whatsapp_sender_refuses_a_group_staff_row() -> None:
+    # the heavy WhatsApp client is irrelevant here: the refusal happens before any send
+    with patch.dict(
+        "sys.modules", {"backend.services.integrations.whatsapp_service": MagicMock()}
+    ):
+        from backend.services.crm.team_whatsapp_sender import (
+            TeamMemberNotFound,
+            send_to_team_member,
+        )
+
+    row = {"email": "s@example.test", "active": True, "whatsapp": "62800", "role": "group_staff"}
+    with pytest.raises(TeamMemberNotFound):
+        await send_to_team_member(_pool(_Conn([row])), "s@example.test", "hi")
+
+
+@pytest.mark.asyncio
+async def test_invite_redemption_refuses_a_group_staff_row() -> None:
+    from backend.services.portal.invite_service import (
+        PLACEHOLDER_PIN_HASH,
+        InviteService,
+    )
+
+    invitation = {
+        "id": 1,
+        "client_id": 5,
+        "email": "s@example.test",
+        "expires_at": datetime(2999, 1, 1, tzinfo=timezone.utc),
+        "used_at": None,
+        "client_name": "C",
+    }
+    member = {"id": "tm-1", "active": True, "pin_hash": PLACEHOLDER_PIN_HASH, "role": "group_staff"}
+    conn = _Conn([invitation, member])
+    with pytest.raises(ValueError, match="cannot be registered"):
+        await InviteService(_pool(conn)).complete_registration("tok", "1234")
+    assert not any("UPDATE team_members" in s for s in conn.sql)
+
+
+@pytest.mark.asyncio
+async def test_pin_login_service_refuses_group_staff_before_checking_the_pin() -> None:
+    from backend.app.modules.identity.service import IdentityService
+
+    row = {"id": "tm-1", "role": "group_staff", "pin_hash": "x", "locked_until": None}
+    conn = _Conn([row])
+    svc = IdentityService()
+    svc.verify_password = MagicMock(return_value=True)
+    with patch.object(svc, "get_db_connection", AsyncMock(return_value=conn)):
+        assert await svc.authenticate_user("s@example.test", "1234") is None
+    svc.verify_password.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_login_route_refuses_group_staff_with_a_generic_401() -> None:
+    from backend.app.routers import auth
+    from backend.app.routers.auth import LoginRequest, login
+
+    row = {
+        "id": "tm-1", "email": "s@example.test", "name": "S", "password_hash": "x",
+        "role": "group_staff", "active": True, "linked_client_id": None,
+    }
+    audit = MagicMock(pool=object(), log_auth_event=AsyncMock())
+    req = MagicMock()
+    req.client.host = "127.0.0.1"
+    req.headers.get.return_value = "ua"
+    verify = MagicMock(return_value=True)
+    with (
+        patch("backend.services.monitoring.audit_service.get_audit_service", return_value=audit),
+        patch.object(auth, "verify_password", verify),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await login(
+                LoginRequest(email="s@example.com", credentials="1234"),
+                req, MagicMock(), _pool(_Conn([row])),
+            )
+    assert exc.value.status_code == 401
+    verify.assert_not_called()

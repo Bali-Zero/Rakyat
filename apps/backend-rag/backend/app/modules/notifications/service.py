@@ -446,6 +446,7 @@ class NotificationService:
                   -- (role='client'); a colliding email must not be read as a
                   -- valid owner (PENDING-ARMS 2026-08-21).
                   AND tm.role IS DISTINCT FROM 'client'
+                  AND LOWER(BTRIM(COALESCE(tm.role, ''))) NOT IN ('group_staff')
                 """,
                 client_id,
             )

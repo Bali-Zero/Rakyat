@@ -309,6 +309,7 @@ class TestGetActiveTeamMembersCount:
         sql = mock_conn.fetchval.call_args.args[0]
         assert "team_members" in sql
         assert "active = TRUE" in sql
+        assert "role <> ALL($1::text[])" in sql
         # a colleague headcount: machines, clients and group staff are left out
         assert mock_conn.fetchval.call_args.args[1] == roster_excluded_roles_sql_array()
         assert "group_staff" in mock_conn.fetchval.call_args.args[1]

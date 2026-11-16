@@ -143,7 +143,9 @@ export default function MyHrPage() {
             {first} 👋
           </h1>
           <p className={`mt-1 text-[14px] ${SOFT}`}>
-            {[c.position ?? c.role, c.unit, c.employer_entity].filter(Boolean).join(" · ")}
+            {[c.position?.trim() || c.role, c.unit, c.employer_entity]
+              .filter(Boolean)
+              .join(" · ")}
           </p>
         </div>
         {since && (

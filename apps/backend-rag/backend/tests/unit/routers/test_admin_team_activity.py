@@ -134,6 +134,7 @@ class TestGroupStaffExcluded:
         for kwargs in ({"start_date": None, "days": 30}, {"start_date": "2026-01-01", "days": 30}):
             conn.fetch.reset_mock()
             await get_team_stats(_admin={"email": "admin"}, db_pool=mock_db_pool, **kwargs)
+            assert "tm.role <> ALL($2::text[])" in conn.fetch.call_args.args[0]
             assert "group_staff" in conn.fetch.call_args.args[-1]
 
 
