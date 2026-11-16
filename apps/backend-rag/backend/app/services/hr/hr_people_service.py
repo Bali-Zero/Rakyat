@@ -13,6 +13,7 @@ import asyncpg
 
 from backend.app.services.hr.hr_card_models import project_documents
 from backend.app.services.hr.hr_service import business_today
+from backend.app.utils.service_accounts import GROUP_STAFF_ROLES_SQL
 
 DOC_SLOTS = ("ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk")  # + the contract file = 6 papers
 
@@ -22,8 +23,8 @@ DOC_SLOTS = ("ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk")  # + the contract file 
 # not make it a person). Then: a member WITH an hr_employees row is a person; without one only
 # a company address with a named staff role is (`member` is the role of test/bot logins). Used
 # by both SQLs below, over the aliases `tm` (team_members) and `e` (hr_employees, LEFT JOINed).
-VISIBLE_PERSON_PREDICATE = """
-      tm.active = true
+VISIBLE_PERSON_PREDICATE = f"""
+      (tm.active = true OR lower(trim(COALESCE(tm.role, ''))) IN ({GROUP_STAFF_ROLES_SQL}))
       AND lower(trim(COALESCE(tm.role, ''))) NOT IN ('client', 'monitoring', 'partner')
       AND (
         e.id IS NOT NULL

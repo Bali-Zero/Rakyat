@@ -35,6 +35,7 @@ ClearKey = Literal[
     "marital_status",
     "employer_entity",
     "unit",
+    "position",
     "on_payroll",
     "end_date",
     "contract_number",

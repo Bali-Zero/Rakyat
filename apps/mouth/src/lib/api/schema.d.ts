@@ -20728,6 +20728,7 @@ export interface components {
         | "marital_status"
         | "employer_entity"
         | "unit"
+        | "position"
         | "on_payroll"
         | "end_date"
         | "contract_number"
@@ -28121,6 +28122,8 @@ export interface components {
        * @default true
        */
       on_payroll: boolean;
+      /** Position */
+      position?: string | null;
       /** Ptkp Status */
       ptkp_status?: string | null;
       /** Religion */
@@ -28203,6 +28206,8 @@ export interface components {
       nik?: string | null;
       /** On Payroll */
       on_payroll?: boolean | null;
+      /** Position */
+      position?: string | null;
       /** Religion */
       religion?: string | null;
       /** Unit */

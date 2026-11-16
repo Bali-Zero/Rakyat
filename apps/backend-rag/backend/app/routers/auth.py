@@ -21,7 +21,7 @@ from backend.app.models import UserProfile
 from backend.app.utils.cookie_auth import clear_auth_cookies, get_jwt_from_cookie, set_auth_cookies
 from backend.app.utils.jwt_decode import decode_jwt
 from backend.app.utils.logging_utils import get_logger, log_error, log_warning
-from backend.app.utils.service_accounts import is_human_team_member
+from backend.app.utils.service_accounts import is_group_staff, is_human_team_member
 from backend.services.common.background import spawn
 from backend.services.pii.violation_store import hash_subject
 
@@ -416,7 +416,8 @@ async def login(
                         )
                 raise HTTPException(status_code=401, detail="Invalid email or PIN")
 
-            if not user["active"]:
+            # Group staff hold an HR card, never an app login: same path as an inactive row.
+            if not user["active"] or is_group_staff(user["role"]):
                 await audit_service.log_auth_event(
                     email=request.email,
                     action="failed_login",

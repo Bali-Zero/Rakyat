@@ -102,6 +102,7 @@ export interface HrStaffCard {
   marital_status: string | null;
   employer_entity: string | null;
   unit: string | null;
+  position?: string | null;
   /** false = the person is not on payroll (absent on older answers means true). */
   on_payroll?: boolean;
   contract: HrContract | null;

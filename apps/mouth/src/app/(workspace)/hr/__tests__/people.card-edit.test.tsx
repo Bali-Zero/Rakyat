@@ -361,6 +361,13 @@ describe("People card edit (/hr)", () => {
     expect(screen.getAllByText(new RegExp(FIX.unit)).length).toBeGreaterThan(0);
   });
 
+  it("shows the position next to the unit and offers a Position field", async () => {
+    await openA("A", { position: "Fixture Position" });
+    expect(screen.getAllByText(/Fixture Position/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit$/ }));
+    expect(field("Position").value).toBe("Fixture Position");
+  });
+
   it("shows no chip for a person on payroll, and the switch starts on", async () => {
     await openA();
     expect(screen.queryByText("Not on payroll")).toBeNull();

@@ -13,6 +13,7 @@ import jwt
 
 from backend.app.core.config import settings
 from backend.app.modules.identity.models import User
+from backend.app.utils.service_accounts import is_group_staff
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,10 @@ class IdentityService:
 
             if not row:
                 logger.warning("User not found or inactive: %s", email)
+                return None
+
+            if is_group_staff(row["role"]):
+                logger.warning("Group staff account refused for PIN login: %s", email)
                 return None
 
             # Check if account is locked

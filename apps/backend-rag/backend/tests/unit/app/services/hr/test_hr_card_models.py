@@ -155,3 +155,10 @@ def test_on_payroll_rejects_anything_but_a_boolean(bad):
 def test_the_read_side_defaults_to_on_payroll(profile, expected):
     card = {"id": 1, "is_active": True, "profile": profile}
     assert member_card(card).on_payroll is expected
+
+
+def test_position_is_a_profile_key_and_reads_back():
+    patch = _ok(profile={"position": "Staff role"})
+    assert patch.profile.position == "Staff role"
+    _bad(profile={"position": "x" * 101})
+    assert member_card({"profile": {"position": "Staff role"}}).position == "Staff role"

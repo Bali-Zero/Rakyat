@@ -88,6 +88,7 @@ export const FORM_GROUPS: { title: string; fields: FieldDef[] }[] = [
     fields: [
       f("employer_entity", "Employer entity", "profile", "text", 255),
       f("unit", "Unit", "profile", "text", 100),
+      f("position", "Position", "profile", "text", 100),
       f("hire_date", "Hire date", "card", "date", 10, {
         clearable: false,
         required: true,
