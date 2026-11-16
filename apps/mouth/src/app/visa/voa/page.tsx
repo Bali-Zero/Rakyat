@@ -13,7 +13,13 @@ import { buildWhatsAppLink } from "@/lib/whatsapp-utm";
 import { WhatsAppLeadButton } from "@/components/lead/WhatsAppLeadButton";
 import type { CaseType, Purpose } from "@/components/garuda/declineEducation";
 import { ContentLangSync } from "@/i18n/ContentLangSync";
-import { voaCopy, type VoaCopyKey } from "./voa-copy";
+import {
+  SUBMITTED_CHECK_PREFIX,
+  formatVoaNationality,
+  getVoaNationalityOptions,
+  voaCopy,
+  type VoaCopyKey,
+} from "./voa-copy";
 import { useVoaLocale } from "./useVoaLocale";
 
 /**
@@ -56,18 +62,17 @@ const PURPOSES: { id: Purpose; labelKey: VoaCopyKey }[] = [
   { id: "business-meeting", labelKey: "purpose.business-meeting" },
 ];
 
-const NATIONALITIES: { iso: string; labelKey: VoaCopyKey }[] = [
-  { iso: "USA", labelKey: "nationality.USA" },
-  { iso: "GBR", labelKey: "nationality.GBR" },
-  { iso: "ITA", labelKey: "nationality.ITA" },
-  { iso: "DEU", labelKey: "nationality.DEU" },
-  { iso: "FRA", labelKey: "nationality.FRA" },
-  { iso: "AUS", labelKey: "nationality.AUS" },
-  { iso: "CAN", labelKey: "nationality.CAN" },
-  { iso: "NLD", labelKey: "nationality.NLD" },
-  { iso: "SGP", labelKey: "nationality.SGP" },
-  { iso: "OTHER", labelKey: "nationality.OTHER" },
-];
+const PINNED_NATIONALITY_LABEL_KEYS: Partial<Record<string, VoaCopyKey>> = {
+  USA: "nationality.USA",
+  GBR: "nationality.GBR",
+  ITA: "nationality.ITA",
+  DEU: "nationality.DEU",
+  FRA: "nationality.FRA",
+  AUS: "nationality.AUS",
+  CAN: "nationality.CAN",
+  NLD: "nationality.NLD",
+  SGP: "nationality.SGP",
+};
 
 const labelStyle: React.CSSProperties = {
   margin: 0,
@@ -140,6 +145,16 @@ export default function VoaEligibilityPage() {
   // asks two extra contract-required fields the issuance case must NOT send).
   // Mirrored here as the wizard's own step 1 answer is set.
   const [caseType, setCaseType] = useState<CaseType | undefined>();
+  const pinnedNationalityLabels = Object.fromEntries(
+    Object.entries(PINNED_NATIONALITY_LABEL_KEYS).map(([iso, key]) => [
+      iso,
+      t(key!),
+    ]),
+  );
+  const nationalityOptions = getVoaNationalityOptions(
+    locale,
+    pinnedNationalityLabels,
+  );
 
   const steps: WizardStep[] = [
     {
@@ -222,10 +237,15 @@ export default function VoaEligibilityPage() {
       title: t("step.trip.title"),
       summary: (v) => {
         const trip = v as
-          { nationality?: string; travellers?: number } | undefined;
+          | { nationality?: string; travellers?: number }
+          | undefined;
         return trip?.nationality
           ? t("trip.summary", {
-              nationality: trip.nationality,
+              nationality: formatVoaNationality(
+                trip.nationality,
+                locale,
+                pinnedNationalityLabels[trip.nationality],
+              ),
               travellers: trip.travellers ?? 1,
             })
           : "?";
@@ -255,9 +275,9 @@ export default function VoaEligibilityPage() {
                 aria-label={t("trip.nationality.aria")}
               >
                 <option value="">{t("trip.nationality.placeholder")}</option>
-                {NATIONALITIES.map((n) => (
+                {nationalityOptions.map((n) => (
                   <option key={n.iso} value={n.iso}>
-                    {t(n.labelKey)}
+                    {n.label}
                   </option>
                 ))}
               </select>
@@ -310,7 +330,9 @@ export default function VoaEligibilityPage() {
       id: "dates",
       title: t("step.dates.title"),
       summary: () => t("step.dates.summary"),
-      render: ({ value, setValue }) => {
+      render: ({ value, values: allValues, setValue }) => {
+        const activeCaseType =
+          (allValues.case_type as CaseType | undefined) ?? caseType;
         const v =
           (value as {
             entry_date?: string;
@@ -343,7 +365,7 @@ export default function VoaEligibilityPage() {
                 aria-label={t("dates.passport.aria")}
               />
             </div>
-            {caseType === "extension" ? (
+            {activeCaseType === "extension" ? (
               <>
                 <div>
                   <p style={labelStyle}>{t("dates.voaExpiry.question")}</p>
@@ -407,7 +429,9 @@ export default function VoaEligibilityPage() {
           </div>
         );
       },
-      validate: (v) => {
+      validate: (v, allValues) => {
+        const activeCaseType =
+          (allValues.case_type as CaseType | undefined) ?? caseType;
         const answered = v as
           | {
               entry_date?: string;
@@ -418,7 +442,7 @@ export default function VoaEligibilityPage() {
           | undefined;
         if (!answered?.entry_date || !answered?.passport_expiry_date)
           return t("validate.bothDates");
-        if (caseType === "extension" && !answered.voa_expiry_date) {
+        if (activeCaseType === "extension" && !answered.voa_expiry_date) {
           return t("validate.voaExpiry");
         }
         if (!answered.retention_notice_acknowledged)
@@ -490,6 +514,26 @@ export default function VoaEligibilityPage() {
         const location = res.headers.get("Location");
         const resultId = location?.split("/").pop();
         if (resultId) {
+          if (typeof window !== "undefined") {
+            try {
+              window.sessionStorage.setItem(
+                `${SUBMITTED_CHECK_PREFIX}${resultId}`,
+                JSON.stringify({
+                  case_type: requestCaseType,
+                  nationality: trip.nationality ?? "",
+                  purpose: values.purpose as Purpose,
+                  travellers: trip.travellers ?? 1,
+                  self_pay: trip.self_pay ?? true,
+                  extension_already_used:
+                    requestCaseType === "extension"
+                      ? (dates.extension_already_used ?? false)
+                      : false,
+                }),
+              );
+            } catch {
+              /* ignore sessionStorage quota / privacy errors */
+            }
+          }
           router.push(`/visa/voa/${resultId}`);
           return;
         }
@@ -518,6 +562,7 @@ export default function VoaEligibilityPage() {
           .
         </>,
       );
+      return false;
     }
   };
 

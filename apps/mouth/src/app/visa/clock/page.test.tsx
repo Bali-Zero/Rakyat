@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import VisaClockPage from "./page";
 
@@ -112,5 +114,46 @@ describe("VisaClockPage — submit telemetry (W0b)", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(trackerMocks.formSubmitFailed).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+describe("VisaClockPage — backend catalogue parity (no retired B211A 422)", () => {
+  it("excludes retired B211A and offers only valid backend VisaType codes with accurate C7 labels", () => {
+    const cataloguePath = join(
+      __dirname,
+      "../../../../../backend-rag/backend/services/visa_check/catalogue.py",
+    );
+    const catalogueSrc = readFileSync(cataloguePath, "utf-8");
+    const enumBlock =
+      catalogueSrc.split("class VisaType(str, Enum):")[1]?.split("@dataclass")[0] ??
+      "";
+    const backendVisaTypes = new Set(
+      [...enumBlock.matchAll(/=\s*"([^"]+)"/g)].map((m) => m[1]),
+    );
+    expect(backendVisaTypes.size).toBeGreaterThanOrEqual(15);
+
+    render(<VisaClockPage />);
+    const select = screen.getByLabelText("Visa type") as HTMLSelectElement;
+    const options = Array.from(select.options).filter((o) => o.value !== "");
+
+    expect(options.length).toBeGreaterThan(0);
+    const codes = options.map((o) => o.value);
+    expect(codes).not.toContain("B211A");
+    expect(codes).toContain("C1");
+    for (const code of codes) {
+      expect(
+        backendVisaTypes.has(code),
+        `${code} is not a valid VisaType in catalogue.py`,
+      ).toBe(true);
+    }
+
+    const labelByCode = Object.fromEntries(
+      options.map((o) => [o.value, o.textContent ?? ""]),
+    );
+    expect(labelByCode.C7).toMatch(/Art & Culture Performance/i);
+    expect(labelByCode.C7).not.toMatch(/Job training/i);
+    expect(labelByCode.C7A).toMatch(/Music Performance/i);
+    expect(labelByCode.C7B).toMatch(/Music Crew/i);
+    expect(labelByCode.C7B).not.toMatch(/Sport/i);
   });
 });

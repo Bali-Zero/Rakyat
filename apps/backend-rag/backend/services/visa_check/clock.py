@@ -74,11 +74,14 @@ def clock_timeline(*, visa_type: VisaType, entry_date: date) -> ClockTimeline:
     duration_days = DEFAULT_DURATION_DAYS.get(visa_type, 60)
     ext_count, ext_days = EXTENSION_POLICY.get(visa_type, (0, 0))
 
-    expiry = entry_date + timedelta(days=duration_days)
+    # Indonesian immigration counts arrival day as Day 1 inclusive
+    # (e.g. B1 30d entered 2026-10-18 expires 2026-11-16, matching SafeClock).
+    expiry = entry_date + timedelta(days=max(duration_days - 1, 0))
 
     checkpoints = [
-        Checkpoint(label=label, at=expiry - timedelta(days=offset), title=title, body=body)
+        Checkpoint(label=label, at=at, title=title, body=body)
         for label, offset, title, body in _CHECKPOINT_TEMPLATE
+        if (at := expiry - timedelta(days=offset)) >= entry_date
     ]
 
     return ClockTimeline(

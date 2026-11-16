@@ -9,12 +9,16 @@ export interface WizardStep {
   /** Render props for the step body. */
   render: (helpers: {
     value: unknown;
+    values: Record<string, unknown>;
     setValue: (v: unknown) => void;
     next: () => void;
     back: () => void;
   }) => ReactNode;
   /** Optional custom validation. Return string to block Next, null to allow. */
-  validate?: (value: unknown) => string | null;
+  validate?: (
+    value: unknown,
+    values: Record<string, unknown>,
+  ) => string | null;
   /**
    * Compact single-line summary of the answered value. Used by the
    * Stacked Context pattern ("— Italian" above the next step). Keep short.
@@ -52,7 +56,9 @@ const DEFAULT_LABELS: AppWizardLabels = {
 
 export interface AppWizardProps {
   steps: WizardStep[];
-  onComplete: (values: Record<string, unknown>) => void;
+  onComplete: (
+    values: Record<string, unknown>,
+  ) => void | boolean | Promise<void | boolean>;
   /** Optional localStorage key to persist {idx, values} for 1h resume. */
   persistKey?: string;
   onStepChange?: (step: number, total: number) => void;
@@ -168,7 +174,7 @@ export const AppWizard: FC<AppWizardProps> = ({
   const next = () => {
     if (pending) return;
     const currentValue = values[step.id];
-    const err = step.validate?.(currentValue) ?? null;
+    const err = step.validate?.(currentValue, values) ?? null;
     if (err) {
       setError(err);
       setJiggle(true);
@@ -182,11 +188,34 @@ export const AppWizard: FC<AppWizardProps> = ({
       return;
     }
     if (idx === steps.length - 1) {
-      if (persistKey && typeof window !== "undefined") {
-        window.localStorage.removeItem(persistKey);
-      }
       haptic([20, 30, 20]);
-      onComplete(values);
+      const clearPersisted = () => {
+        if (persistKey && typeof window !== "undefined") {
+          window.localStorage.removeItem(persistKey);
+        }
+      };
+      let outcome: unknown;
+      try {
+        outcome = onComplete(values);
+      } catch {
+        return;
+      }
+      if (
+        outcome !== null &&
+        typeof outcome === "object" &&
+        typeof (outcome as PromiseLike<unknown>).then === "function"
+      ) {
+        void (outcome as PromiseLike<unknown>).then(
+          (resolved) => {
+            if (resolved !== false) clearPersisted();
+          },
+          () => {
+            /* Keep persisted answers when async onComplete rejects so user can retry. */
+          },
+        );
+      } else if (outcome !== false) {
+        clearPersisted();
+      }
       return;
     }
     haptic(6);
@@ -277,6 +306,7 @@ export const AppWizard: FC<AppWizardProps> = ({
       >
         {step.render({
           value: values[step.id],
+          values,
           setValue,
           next,
           back,

@@ -11,19 +11,18 @@ import {
 
 const VISA_OPTIONS = [
   { code: "B1", label: "B1 Visa on Arrival (VOA)" },
-  { code: "B211A", label: "B211A Tourism" },
   { code: "C1", label: "C1 Tourism" },
   { code: "C2", label: "C2 Business" },
-  { code: "C7", label: "C7 Job training" },
-  { code: "C7A", label: "C7A Music/Art" },
-  { code: "C7B", label: "C7B Sport" },
-  { code: "E33G", label: "E33G Digital Nomad KITAS" },
+  { code: "C7", label: "C7 Art & Culture Performance" },
+  { code: "C7A", label: "C7A Music Performance" },
+  { code: "C7B", label: "C7B Music Crew" },
+  { code: "E33G", label: "E33G Remote Worker / Digital Nomad KITAS" },
   { code: "E33", label: "E33 Second Home KITAS" },
   { code: "E28A", label: "E28A Investor KITAS" },
   { code: "E23", label: "E23 Work KITAS" },
-  { code: "E33F", label: "E33F Retirement KITAS" },
+  { code: "E33F", label: "E33F Retirement KITAS (1 Year)" },
   { code: "E31", label: "E31 Family KITAS" },
-  { code: "E30A", label: "E30A Student KITAS" },
+  { code: "E30A", label: "E30A Student KITAS (Primary & Secondary)" },
 ];
 
 const fieldStyle: React.CSSProperties = {
