@@ -4947,6 +4947,29 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/crm/clients/{client_id}/documents/archive": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Register Archive Document
+     * @description Register an existing Drive file as a client document (archive path, admin only).
+     *
+     *     No OCR, no portal message, no write to clients; visibility is explicit and the
+     *     registration is idempotent on (client_id, file_id).
+     */
+    post: operations["register_archive_document_api_crm_clients__client_id__documents_archive_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/crm/clients/{client_id}/documents/bulk": {
     parameters: {
       query?: never;
@@ -20903,6 +20926,26 @@ export interface components {
       duration_ms: number;
       /** Status */
       status: string;
+    };
+    /**
+     * ClientArchiveDocumentCreate
+     * @description Body of the archive registration. Visibility has no default: the caller states it.
+     */
+    ClientArchiveDocumentCreate: {
+      /** Client Visible */
+      client_visible: boolean;
+      /** Document Category */
+      document_category?: string | null;
+      /** Document Type */
+      document_type: string;
+      /** File Id */
+      file_id: string;
+      /** File Name */
+      file_name?: string | null;
+      /** Google Drive File Url */
+      google_drive_file_url?: string | null;
+      /** Notes */
+      notes?: string | null;
     };
     /** ClientCompanyLinkCreate */
     ClientCompanyLinkCreate: {
@@ -37563,6 +37606,43 @@ export interface operations {
     requestBody: {
       content: {
         "application/json": components["schemas"]["DocumentCreate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  register_archive_document_api_crm_clients__client_id__documents_archive_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        client_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ClientArchiveDocumentCreate"];
       };
     };
     responses: {
